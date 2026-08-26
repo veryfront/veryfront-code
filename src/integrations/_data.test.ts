@@ -40,6 +40,23 @@ function getLocalToolIds(connectorName: string, tools: { id?: string }[]): (stri
 }
 
 describe("integration endpoint specs", () => {
+  it("restricts Datadog API hosts to supported sites", () => {
+    const datadog = getConnector("datadog");
+    const supportedSites = [
+      "datadoghq.com",
+      "us3.datadoghq.com",
+      "us5.datadoghq.com",
+      "datadoghq.eu",
+      "ap1.datadoghq.com",
+      "ap2.datadoghq.com",
+      "ddog-gov.com",
+    ];
+
+    for (const tool of datadog.tools) {
+      assertEquals(tool.endpoint?.params?.site?.enum, supportedSites);
+    }
+  });
+
   it("keeps all source connectors while showing only the supported end-user surface by default", () => {
     const supportedConnectors = [
       "airtable",
@@ -600,28 +617,6 @@ describe("integration endpoint specs", () => {
         expectedEndpointCount,
         `Expected ${connectorName} to expose ${expectedEndpointCount} callable endpoint tools`,
       );
-    }
-  });
-
-  it("binds credential-bearing custom hosts to integration environment configuration", () => {
-    const expectedHosts = {
-      adyen: "{{env.ADYEN_CHECKOUT_HOST}}",
-      databricks: "{{env.DATABRICKS_HOST}}",
-      "azure-document-intelligence": "{{env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT}}",
-    } as const;
-
-    for (const [name, expectedHost] of Object.entries(expectedHosts)) {
-      const connector = getConnector(name);
-      for (const tool of connector.tools) {
-        if (!tool.endpoint) continue;
-        assertEquals(
-          new URL(tool.endpoint.url.replace(expectedHost, "trusted.example.com")).host,
-          "trusted.example.com",
-        );
-        assertEquals(tool.endpoint.params?.checkoutHost, undefined);
-        assertEquals(tool.endpoint.params?.workspaceHost, undefined);
-        assertEquals(tool.endpoint.params?.resourceHost, undefined);
-      }
     }
   });
 

@@ -275,6 +275,9 @@ function fieldValue(
   if (!valueMatchesType(value, field.type)) {
     requestInvalid(`Local integration argument "${name}" must have type "${field.type}"`);
   }
+  if ("enum" in field && field.enum !== undefined) {
+    assertEnum(value, field.enum, name);
+  }
   const pattern = fieldPattern(field);
   if (pattern !== undefined) {
     assertPattern(value, pattern, name);
@@ -317,6 +320,24 @@ function assertPattern(value: unknown, pattern: string, name: string): void {
   if (!apply(regexpTest, matcher, [value])) {
     requestInvalid(`Local integration argument "${name}" does not match its allowed pattern`);
   }
+}
+
+/**
+ * Rejects a string argument outside its catalog-declared allowlist.
+ *
+ * Runs inside {@link fieldValue}, so the check applies both to the pre-auth
+ * argument snapshot and to request construction: a value outside the enum
+ * (e.g. an attacker-controlled provider "site" domain) is rejected before any
+ * credential is resolved or interpolated into the endpoint URL.
+ */
+function assertEnum(value: unknown, allowed: readonly string[], name: string): void {
+  if (typeof value !== "string") {
+    requestInvalid(`Local integration argument "${name}" must use a string allowlist`);
+  }
+  for (let index = 0; index < allowed.length; index++) {
+    if (allowed[index] === value) return;
+  }
+  requestInvalid(`Local integration argument "${name}" is not an allowed value`);
 }
 
 /**
@@ -400,21 +421,6 @@ export function snapshotLocalIntegrationEndpointArguments(
   body: string | undefined;
   endpointOrigin: string | undefined;
 } {
-  const snapshot = snapshotLocalIntegrationEndpointInput(endpoint, args);
-  return {
-    ...snapshot,
-    endpointOrigin: resolveLocalIntegrationEndpointOrigin(endpoint, snapshot.args),
-  };
-}
-
-/** @internal Validate and serialize endpoint input without resolving its URL authority. */
-export function snapshotLocalIntegrationEndpointInput(
-  endpoint: IntegrationEndpoint,
-  args: Record<string, unknown>,
-): {
-  args: Record<string, unknown>;
-  body: string | undefined;
-} {
   const snapshot = snapshotAndValidateArguments(endpoint, args);
   // Assembled rather than checked field by field: an omitted field still
   // contributes its catalog default, so fields that each fit can still add up
@@ -426,21 +432,14 @@ export function snapshotLocalIntegrationEndpointInput(
   // the ordinary nested objects a snapshot contains, so a second assembly can
   // produce a body that was never bounded -- or throw outright.
   const body = assembleBody(endpoint, snapshot);
-  return { args: snapshot, body };
-}
-
-/** @internal Resolve the admitted origin after host templates have been pinned. */
-export function resolveLocalIntegrationEndpointOrigin(
-  endpoint: IntegrationEndpoint,
-  args: Record<string, unknown>,
-): string | undefined {
-  return callStringBoolean(
+  const endpointOrigin = callStringBoolean(
       stringIncludes,
       endpoint.url,
       "{{oauth.raw.instance_url}}",
     )
     ? undefined
-    : urlValue(urlOrigin, resolveEndpointUrl(endpoint, args));
+    : urlValue(urlOrigin, resolveEndpointUrl(endpoint, snapshot));
+  return { args: snapshot, body, endpointOrigin };
 }
 
 /**

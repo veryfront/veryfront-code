@@ -324,14 +324,6 @@ export const connectors: IntegrationConfig[] = [
       "required": false,
       "sensitive": false,
       "docsUrl": "https://docs.adyen.com/account/account-structure/",
-    }, {
-      "name": "ADYEN_CHECKOUT_HOST",
-      "description":
-        "Adyen Checkout API host. Defaults to checkout-test.adyen.com for test. For live, set your prefixed live host including the checkout path segment.",
-      "required": true,
-      "sensitive": false,
-      "placeholder": "checkout-test.adyen.com",
-      "default": "checkout-test.adyen.com",
     }],
     "tools": [{
       "id": "adyen__create_payment_session",
@@ -341,7 +333,17 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{{env.ADYEN_CHECKOUT_HOST}}/v71/sessions",
+        "url": "https://{checkoutHost}/v71/sessions",
+        "params": {
+          "checkoutHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Adyen Checkout API host. Use checkout-test.adyen.com for test; for live use your prefixed host including the checkout path segment, e.g. {prefix}-checkout-live.adyenpayments.com/checkout",
+            "required": true,
+            "default": "checkout-test.adyen.com",
+          },
+        },
         "body": {
           "amount": {
             "type": "object",
@@ -388,8 +390,16 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{{env.ADYEN_CHECKOUT_HOST}}/v71/sessions/{sessionId}",
+        "url": "https://{checkoutHost}/v71/sessions/{sessionId}",
         "params": {
+          "checkoutHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Adyen Checkout API host. Use checkout-test.adyen.com for test; for live use your prefixed host including the checkout path segment, e.g. {prefix}-checkout-live.adyenpayments.com/checkout",
+            "required": true,
+            "default": "checkout-test.adyen.com",
+          },
           "sessionId": {
             "type": "string",
             "in": "path",
@@ -412,7 +422,17 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
-        "url": "https://{{env.ADYEN_CHECKOUT_HOST}}/v71/paymentMethods",
+        "url": "https://{checkoutHost}/v71/paymentMethods",
+        "params": {
+          "checkoutHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Adyen Checkout API host. Use checkout-test.adyen.com for test; for live use your prefixed host including the checkout path segment, e.g. {prefix}-checkout-live.adyenpayments.com/checkout",
+            "required": true,
+            "default": "checkout-test.adyen.com",
+          },
+        },
         "body": {
           "merchantAccount": {
             "type": "string",
@@ -440,7 +460,17 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{{env.ADYEN_CHECKOUT_HOST}}/v71/paymentLinks",
+        "url": "https://{checkoutHost}/v71/paymentLinks",
+        "params": {
+          "checkoutHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Adyen Checkout API host. Use checkout-test.adyen.com for test; for live use your prefixed host including the checkout path segment, e.g. {prefix}-checkout-live.adyenpayments.com/checkout",
+            "required": true,
+            "default": "checkout-test.adyen.com",
+          },
+        },
         "body": {
           "amount": {
             "type": "object",
@@ -494,8 +524,16 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{{env.ADYEN_CHECKOUT_HOST}}/v71/payments/{paymentPspReference}/captures",
+        "url": "https://{checkoutHost}/v71/payments/{paymentPspReference}/captures",
         "params": {
+          "checkoutHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Adyen Checkout API host. Use checkout-test.adyen.com for test; for live use your prefixed host including the checkout path segment, e.g. {prefix}-checkout-live.adyenpayments.com/checkout",
+            "required": true,
+            "default": "checkout-test.adyen.com",
+          },
           "paymentPspReference": {
             "type": "string",
             "in": "path",
@@ -529,8 +567,16 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{{env.ADYEN_CHECKOUT_HOST}}/v71/payments/{paymentPspReference}/refunds",
+        "url": "https://{checkoutHost}/v71/payments/{paymentPspReference}/refunds",
         "params": {
+          "checkoutHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Adyen Checkout API host. Use checkout-test.adyen.com for test; for live use your prefixed host including the checkout path segment, e.g. {prefix}-checkout-live.adyenpayments.com/checkout",
+            "required": true,
+            "default": "checkout-test.adyen.com",
+          },
           "paymentPspReference": {
             "type": "string",
             "in": "path",
@@ -602,7 +648,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 3,
         "title": "Configure environment variables",
         "description":
-          "Set ADYEN_API_KEY to the generated key. ADYEN_CHECKOUT_HOST defaults to checkout-test.adyen.com; for live, set it to your prefixed live host. Optionally set ADYEN_MERCHANT_ACCOUNT to your merchant account name (shown in the Customer Area) - it is required as the merchantAccount field in every request body.",
+          "Set ADYEN_API_KEY to the generated key. Optionally set ADYEN_MERCHANT_ACCOUNT to your merchant account name (shown in the Customer Area) - it is required as the merchantAccount field in every request body.",
       }, {
         "step": 4,
         "title": "Going live",
@@ -610,7 +656,7 @@ export const connectors: IntegrationConfig[] = [
           "Live mode needs a separate API key generated in the live Customer Area (https://ca-live.adyen.com), and live API calls use your unique live URL prefix. Find the prefix under Developers > API URLs in the live Customer Area.",
       }],
       "notes": [
-        "ADYEN_CHECKOUT_HOST defaults to checkout-test.adyen.com for test. For live, set it to your prefixed live host including the checkout path segment. Test and live URLs have different structures.",
+        "Each tool takes a checkoutHost parameter. For test, keep the default checkout-test.adyen.com. For live, pass your prefixed live host including the checkout path segment, e.g. 1797a841fbb37ca7-AdyenDemo-checkout-live.adyenpayments.com/checkout (test and live URLs have different structures).",
         "Amounts are in minor units (e.g. value 1000 with currency EUR is EUR 10.00).",
         "Refund outcomes are asynchronous: the API acknowledges the request and the final result is delivered via a REFUND webhook.",
         "The Checkout API does not provide a payment listing endpoint; use get_session_result or webhooks to track payment outcomes.",
@@ -4802,7 +4848,7 @@ export const connectors: IntegrationConfig[] = [
     }, {
       "name": "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT",
       "description":
-        "Hostname of your resource endpoint, e.g. myresource.cognitiveservices.azure.com",
+        "Hostname of your resource endpoint, e.g. myresource.cognitiveservices.azure.com — pass it as the {resourceHost} parameter on each tool call",
       "required": true,
       "sensitive": false,
       "docsUrl": "https://portal.azure.com",
@@ -4816,8 +4862,15 @@ export const connectors: IntegrationConfig[] = [
       "endpoint": {
         "method": "POST",
         "url":
-          "https://{{env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT}}/documentintelligence/documentModels/prebuilt-invoice:analyze?api-version=2024-11-30",
+          "https://{resourceHost}/documentintelligence/documentModels/prebuilt-invoice:analyze?api-version=2024-11-30",
         "params": {
+          "resourceHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Your Document Intelligence resource hostname, e.g. myresource.cognitiveservices.azure.com (see AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)",
+            "required": true,
+          },
           "pages": {
             "type": "string",
             "in": "query",
@@ -4851,8 +4904,15 @@ export const connectors: IntegrationConfig[] = [
       "endpoint": {
         "method": "POST",
         "url":
-          "https://{{env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT}}/documentintelligence/documentModels/prebuilt-receipt:analyze?api-version=2024-11-30",
+          "https://{resourceHost}/documentintelligence/documentModels/prebuilt-receipt:analyze?api-version=2024-11-30",
         "params": {
+          "resourceHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Your Document Intelligence resource hostname, e.g. myresource.cognitiveservices.azure.com (see AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)",
+            "required": true,
+          },
           "pages": {
             "type": "string",
             "in": "query",
@@ -4886,8 +4946,15 @@ export const connectors: IntegrationConfig[] = [
       "endpoint": {
         "method": "POST",
         "url":
-          "https://{{env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT}}/documentintelligence/documentModels/prebuilt-layout:analyze?api-version=2024-11-30",
+          "https://{resourceHost}/documentintelligence/documentModels/prebuilt-layout:analyze?api-version=2024-11-30",
         "params": {
+          "resourceHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Your Document Intelligence resource hostname, e.g. myresource.cognitiveservices.azure.com (see AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)",
+            "required": true,
+          },
           "pages": {
             "type": "string",
             "in": "query",
@@ -4921,8 +4988,15 @@ export const connectors: IntegrationConfig[] = [
       "endpoint": {
         "method": "GET",
         "url":
-          "https://{{env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT}}/documentintelligence/documentModels/{modelId}/analyzeResults/{resultId}?api-version=2024-11-30",
+          "https://{resourceHost}/documentintelligence/documentModels/{modelId}/analyzeResults/{resultId}?api-version=2024-11-30",
         "params": {
+          "resourceHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Your Document Intelligence resource hostname, e.g. myresource.cognitiveservices.azure.com (see AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)",
+            "required": true,
+          },
           "modelId": {
             "type": "string",
             "in": "path",
@@ -4948,8 +5022,15 @@ export const connectors: IntegrationConfig[] = [
       "endpoint": {
         "method": "POST",
         "url":
-          "https://{{env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT}}/documentintelligence/documentModels/prebuilt-read:analyze?api-version=2024-11-30",
+          "https://{resourceHost}/documentintelligence/documentModels/prebuilt-read:analyze?api-version=2024-11-30",
         "params": {
+          "resourceHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Your Document Intelligence resource hostname, e.g. myresource.cognitiveservices.azure.com (see AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)",
+            "required": true,
+          },
           "pages": {
             "type": "string",
             "in": "query",
@@ -4982,8 +5063,16 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url":
-          "https://{{env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT}}/documentintelligence/documentModels?api-version=2024-11-30",
+        "url": "https://{resourceHost}/documentintelligence/documentModels?api-version=2024-11-30",
+        "params": {
+          "resourceHost": {
+            "type": "string",
+            "in": "path",
+            "description":
+              "Your Document Intelligence resource hostname, e.g. myresource.cognitiveservices.azure.com (see AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)",
+            "required": true,
+          },
+        },
         "response": { "transform": "value" },
       },
     }],
@@ -5027,7 +5116,7 @@ export const connectors: IntegrationConfig[] = [
         "step": 3,
         "title": "Run an analysis",
         "description":
-          "Call Analyze Invoice with a urlSource pointing at a sample invoice; requests go to the host set in AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT. The API replies 202 Accepted; copy the result ID (GUID) from the Operation-Location response header.",
+          "Call Analyze Invoice with your resource hostname as resourceHost and a urlSource pointing at a sample invoice. The API replies 202 Accepted; copy the result ID (GUID) from the Operation-Location response header.",
       }, {
         "step": 4,
         "title": "Fetch the result",
@@ -12798,8 +12887,14 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{{env.DATABRICKS_HOST}}/api/2.1/clusters/list",
+        "url": "https://{workspaceHost}/api/2.1/clusters/list",
         "params": {
+          "workspaceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
+            "required": true,
+          },
           "page_size": {
             "type": "number",
             "in": "query",
@@ -12838,8 +12933,14 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{{env.DATABRICKS_HOST}}/api/2.2/jobs/list",
+        "url": "https://{workspaceHost}/api/2.2/jobs/list",
         "params": {
+          "workspaceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
+            "required": true,
+          },
           "limit": {
             "type": "number",
             "in": "query",
@@ -12877,7 +12978,15 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{{env.DATABRICKS_HOST}}/api/2.2/jobs/run-now",
+        "url": "https://{workspaceHost}/api/2.2/jobs/run-now",
+        "params": {
+          "workspaceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
+            "required": true,
+          },
+        },
         "body": {
           "job_id": { "type": "number", "description": "ID of the job to run", "required": true },
           "job_parameters": {
@@ -12899,8 +13008,14 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{{env.DATABRICKS_HOST}}/api/2.2/jobs/runs/list",
+        "url": "https://{workspaceHost}/api/2.2/jobs/runs/list",
         "params": {
+          "workspaceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
+            "required": true,
+          },
           "job_id": {
             "type": "number",
             "in": "query",
@@ -12948,7 +13063,15 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{{env.DATABRICKS_HOST}}/api/2.2/jobs/runs/cancel",
+        "url": "https://{workspaceHost}/api/2.2/jobs/runs/cancel",
+        "params": {
+          "workspaceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
+            "required": true,
+          },
+        },
         "body": {
           "run_id": {
             "type": "number",
@@ -12966,8 +13089,14 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{{env.DATABRICKS_HOST}}/api/2.2/jobs/runs/get",
+        "url": "https://{workspaceHost}/api/2.2/jobs/runs/get",
         "params": {
+          "workspaceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
+            "required": true,
+          },
           "run_id": {
             "type": "number",
             "in": "query",
@@ -12984,7 +13113,15 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{{env.DATABRICKS_HOST}}/api/2.0/sql/statements",
+        "url": "https://{workspaceHost}/api/2.0/sql/statements",
+        "params": {
+          "workspaceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
+            "required": true,
+          },
+        },
         "body": {
           "statement": {
             "type": "string",
@@ -13026,8 +13163,14 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{{env.DATABRICKS_HOST}}/api/2.0/sql/statements/{statementId}",
+        "url": "https://{workspaceHost}/api/2.0/sql/statements/{statementId}",
         "params": {
+          "workspaceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
+            "required": true,
+          },
           "statementId": {
             "type": "string",
             "in": "path",
@@ -13044,7 +13187,15 @@ export const connectors: IntegrationConfig[] = [
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{{env.DATABRICKS_HOST}}/api/2.0/sql/warehouses",
+        "url": "https://{workspaceHost}/api/2.0/sql/warehouses",
+        "params": {
+          "workspaceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Databricks workspace host, e.g. dbc-a1b2345c-d6e7.cloud.databricks.com",
+            "required": true,
+          },
+        },
         "response": {
           "historicalSummary": {
             "collectionKeys": ["warehouses"],
@@ -13169,6 +13320,15 @@ export const connectors: IntegrationConfig[] = [
             "description":
               "Datadog site domain, e.g. datadoghq.com, datadoghq.eu, us3.datadoghq.com",
             "default": "datadoghq.com",
+            "enum": [
+              "datadoghq.com",
+              "us3.datadoghq.com",
+              "us5.datadoghq.com",
+              "datadoghq.eu",
+              "ap1.datadoghq.com",
+              "ap2.datadoghq.com",
+              "ddog-gov.com",
+            ],
           },
         },
       },
@@ -13186,6 +13346,15 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "Datadog site domain, e.g. datadoghq.com, datadoghq.eu",
             "default": "datadoghq.com",
+            "enum": [
+              "datadoghq.com",
+              "us3.datadoghq.com",
+              "us5.datadoghq.com",
+              "datadoghq.eu",
+              "ap1.datadoghq.com",
+              "ap2.datadoghq.com",
+              "ddog-gov.com",
+            ],
           },
           "name": {
             "type": "string",
@@ -13235,6 +13404,15 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "Datadog site domain",
             "default": "datadoghq.com",
+            "enum": [
+              "datadoghq.com",
+              "us3.datadoghq.com",
+              "us5.datadoghq.com",
+              "datadoghq.eu",
+              "ap1.datadoghq.com",
+              "ap2.datadoghq.com",
+              "ddog-gov.com",
+            ],
           },
           "monitorId": {
             "type": "string",
@@ -13258,6 +13436,15 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "Datadog site domain",
             "default": "datadoghq.com",
+            "enum": [
+              "datadoghq.com",
+              "us3.datadoghq.com",
+              "us5.datadoghq.com",
+              "datadoghq.eu",
+              "ap1.datadoghq.com",
+              "ap2.datadoghq.com",
+              "ddog-gov.com",
+            ],
           },
           "monitorId": {
             "type": "string",
@@ -13286,6 +13473,15 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "Datadog site domain",
             "default": "datadoghq.com",
+            "enum": [
+              "datadoghq.com",
+              "us3.datadoghq.com",
+              "us5.datadoghq.com",
+              "datadoghq.eu",
+              "ap1.datadoghq.com",
+              "ap2.datadoghq.com",
+              "ddog-gov.com",
+            ],
           },
         },
         "response": {
@@ -13314,6 +13510,15 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "Datadog site domain",
             "default": "datadoghq.com",
+            "enum": [
+              "datadoghq.com",
+              "us3.datadoghq.com",
+              "us5.datadoghq.com",
+              "datadoghq.eu",
+              "ap1.datadoghq.com",
+              "ap2.datadoghq.com",
+              "ddog-gov.com",
+            ],
           },
           "from": {
             "type": "number",
@@ -13349,6 +13554,15 @@ export const connectors: IntegrationConfig[] = [
             "in": "path",
             "description": "Datadog site domain",
             "default": "datadoghq.com",
+            "enum": [
+              "datadoghq.com",
+              "us3.datadoghq.com",
+              "us5.datadoghq.com",
+              "datadoghq.eu",
+              "ap1.datadoghq.com",
+              "ap2.datadoghq.com",
+              "ddog-gov.com",
+            ],
           },
         },
         "body": {

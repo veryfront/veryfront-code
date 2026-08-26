@@ -10,6 +10,7 @@ import {
   assertInstanceOf,
   assertRejects,
   assertStrictEquals,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
@@ -26,6 +27,7 @@ import {
   _createLocalIntegrationToolSourceForTesting,
   type LocalIntegrationToolSourceOptions,
 } from "./local-tool-source.ts";
+import { connectors } from "./_data.ts";
 
 const TEST_CREDENTIAL = "LOCAL_INTEGRATION_SECRET_MUST_NOT_LEAK";
 const testCredentialProvider = () => TEST_CREDENTIAL;
@@ -538,111 +540,71 @@ describe("createLocalIntegrationToolSource", () => {
     ]);
   });
 
-  it("resolves declared endpoint hosts before listing and authenticated execution", async () => {
-    const requests: string[] = [];
+  it("keeps exposed host enums detached from runtime enforcement", async () => {
+    let credentialProviderCalls = 0;
+    let transportCalls = 0;
+    const requestedOrigins: string[] = [];
     const source = _createLocalIntegrationToolSourceForTesting(
       {
-        tools: [
-          "adyen__get_session_result",
-          "databricks__list_clusters",
-          "azure-document-intelligence__list_document_models",
-        ],
-        credentialProvider: (name) => {
-          if (name === "ADYEN_CHECKOUT_HOST") return undefined;
-          if (name === "DATABRICKS_HOST") return "workspace.cloud.databricks.com";
-          if (name === "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT") {
-            return "documents.cognitiveservices.azure.com";
-          }
+        tools: ["datadog__validate_api_key"],
+        credentialProvider: () => {
+          credentialProviderCalls += 1;
           return TEST_CREDENTIAL;
         },
       },
       (request) => {
-        requests.push(request.url.href);
-        if (request.url.hostname === "documents.cognitiveservices.azure.com") {
-          return Promise.resolve(Response.json({ value: [] }));
-        }
-        return Promise.resolve(Response.json({}));
+        transportCalls += 1;
+        requestedOrigins.push(request.url.origin);
+        return Promise.resolve(Response.json({ valid: true }));
       },
     );
+    const definition = (await source.listTools())[0]!;
+    const siteEnum = (definition.parameters as {
+      properties: { site: { enum: string[] } };
+    }).properties.site.enum;
+    assertThrows(() => siteEnum.push("attacker.example"), TypeError);
+    credentialProviderCalls = 0;
 
-    assertEquals((await source.listTools()).map((definition) => definition.name), [
-      "adyen__get_session_result",
-      "databricks__list_clusters",
-      "azure-document-intelligence__list_document_models",
-    ]);
-    await source.executeTool("adyen__get_session_result", {
-      sessionId: "session-1",
-      sessionResult: "result-1",
-    });
-    await source.executeTool("databricks__list_clusters", {});
-    await source.executeTool("azure-document-intelligence__list_document_models", {});
+    const error = await assertRejects(
+      () =>
+        source.executeTool("datadog__validate_api_key", {
+          site: "attacker.example",
+        }),
+      VeryfrontError,
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-request-invalid");
+    assertEquals(credentialProviderCalls, 0);
+    assertEquals(transportCalls, 0);
 
-    assertEquals(requests, [
-      "https://checkout-test.adyen.com/v71/sessions/session-1?sessionResult=result-1",
-      "https://workspace.cloud.databricks.com/api/2.1/clusters/list?page_size=25",
-      "https://documents.cognitiveservices.azure.com/documentintelligence/documentModels?api-version=2024-11-30",
-    ]);
+    assertEquals(await source.executeTool("datadog__validate_api_key", {}), { valid: true });
+    assertEquals(credentialProviderCalls, 2);
+    assertEquals(transportCalls, 1);
+    assertEquals(requestedOrigins, ["https://api.datadoghq.com"]);
   });
 
-  it("rejects invalid declared endpoint hosts before resolving API credentials", async () => {
-    for (
-      const endpointHost of [
-        "http://attacker.example",
-        "user@attacker.example",
-        "attacker.example?redirect=elsewhere",
-        "/attacker.example",
-      ]
-    ) {
-      let apiCredentialReads = 0;
-      const source = createLocalIntegrationToolSource({
-        tools: ["databricks__list_clusters"],
-        credentialProvider: (name) => {
-          if (name === "DATABRICKS_HOST") return endpointHost;
-          apiCredentialReads += 1;
-          return TEST_CREDENTIAL;
-        },
-      });
+  it("rejects unsupported capabilities on enumerated-host endpoints", async () => {
+    const datadog = connectors.find((connector) => connector.name === "datadog")!;
+    const tool = datadog.tools.find((candidate) => candidate.id === "datadog__validate_api_key")!;
+    const endpoint = tool.endpoint!;
+    const originalType = endpoint.type;
 
-      await assertConfigurationError(() => source.listTools(), "endpoint host");
-      assertEquals(apiCredentialReads, 0);
-    }
-  });
-
-  it("sanitizes endpoint host credential-provider failures", async () => {
-    const providerDetail = `${TEST_CREDENTIAL} from sensitive provider detail`;
-
-    for (const operation of ["list", "execute"] as const) {
-      let transportCalls = 0;
-      const source = _createLocalIntegrationToolSourceForTesting(
-        {
-          tools: ["databricks__list_clusters"],
-          credentialProvider: (name) => {
-            if (name === "DATABRICKS_HOST") throw new Error(providerDetail);
-            return TEST_CREDENTIAL;
+    try {
+      endpoint.type = "graphql";
+      const isolated = await import("./local-tool-source.ts?enumerated-host-capability-regression");
+      await assertConfigurationError(async () => {
+        const source = isolated._createLocalIntegrationToolSourceForTesting(
+          {
+            tools: ["datadog__validate_api_key"],
+            credentialProvider: testCredentialProvider,
           },
-        },
-        () => {
-          transportCalls += 1;
-          return Promise.resolve(Response.json({}));
-        },
-      );
-
-      const error = await assertRejects(
-        () =>
-          operation === "list" ? source.listTools() : source.executeTool(
-            "databricks__list_clusters",
-            {},
-          ),
-        VeryfrontError,
-      );
-
-      assertInstanceOf(error, VeryfrontError);
-      assertEquals(error.slug, "local-integration-credential-unavailable");
-      assert(error.message.includes("DATABRICKS_HOST"), error.message);
-      assertEquals(error.message.includes(providerDetail), false);
-      assertEquals(error.message.includes(TEST_CREDENTIAL), false);
-      assertEquals(error.cause, undefined);
-      assertEquals(transportCalls, 0);
+          () => Promise.resolve(Response.json({ valid: true })),
+        );
+        await source.listTools();
+      }, "GraphQL");
+    } finally {
+      if (originalType === undefined) delete endpoint.type;
+      else endpoint.type = originalType;
     }
   });
 

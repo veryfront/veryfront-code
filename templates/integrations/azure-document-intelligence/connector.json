@@ -26,7 +26,7 @@
     },
     {
       "name": "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT",
-      "description": "Hostname of your resource endpoint, e.g. myresource.cognitiveservices.azure.com",
+      "description": "Hostname of your resource endpoint, e.g. myresource.cognitiveservices.azure.com — pass it as the {resourceHost} parameter on each tool call",
       "required": true,
       "sensitive": false,
       "docsUrl": "https://portal.azure.com"
@@ -40,8 +40,14 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{{env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT}}/documentintelligence/documentModels/prebuilt-invoice:analyze?api-version=2024-11-30",
+        "url": "https://{resourceHost}/documentintelligence/documentModels/prebuilt-invoice:analyze?api-version=2024-11-30",
         "params": {
+          "resourceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Document Intelligence resource hostname, e.g. myresource.cognitiveservices.azure.com (see AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)",
+            "required": true
+          },
           "pages": {
             "type": "string",
             "in": "query",
@@ -72,8 +78,14 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{{env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT}}/documentintelligence/documentModels/prebuilt-receipt:analyze?api-version=2024-11-30",
+        "url": "https://{resourceHost}/documentintelligence/documentModels/prebuilt-receipt:analyze?api-version=2024-11-30",
         "params": {
+          "resourceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Document Intelligence resource hostname, e.g. myresource.cognitiveservices.azure.com (see AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)",
+            "required": true
+          },
           "pages": {
             "type": "string",
             "in": "query",
@@ -104,8 +116,14 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{{env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT}}/documentintelligence/documentModels/prebuilt-layout:analyze?api-version=2024-11-30",
+        "url": "https://{resourceHost}/documentintelligence/documentModels/prebuilt-layout:analyze?api-version=2024-11-30",
         "params": {
+          "resourceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Document Intelligence resource hostname, e.g. myresource.cognitiveservices.azure.com (see AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)",
+            "required": true
+          },
           "pages": {
             "type": "string",
             "in": "query",
@@ -136,8 +154,14 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{{env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT}}/documentintelligence/documentModels/{modelId}/analyzeResults/{resultId}?api-version=2024-11-30",
+        "url": "https://{resourceHost}/documentintelligence/documentModels/{modelId}/analyzeResults/{resultId}?api-version=2024-11-30",
         "params": {
+          "resourceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Document Intelligence resource hostname, e.g. myresource.cognitiveservices.azure.com (see AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)",
+            "required": true
+          },
           "modelId": {
             "type": "string",
             "in": "path",
@@ -160,8 +184,14 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{{env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT}}/documentintelligence/documentModels/prebuilt-read:analyze?api-version=2024-11-30",
+        "url": "https://{resourceHost}/documentintelligence/documentModels/prebuilt-read:analyze?api-version=2024-11-30",
         "params": {
+          "resourceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Document Intelligence resource hostname, e.g. myresource.cognitiveservices.azure.com (see AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)",
+            "required": true
+          },
           "pages": {
             "type": "string",
             "in": "query",
@@ -192,7 +222,15 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{{env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT}}/documentintelligence/documentModels?api-version=2024-11-30",
+        "url": "https://{resourceHost}/documentintelligence/documentModels?api-version=2024-11-30",
+        "params": {
+          "resourceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "Your Document Intelligence resource hostname, e.g. myresource.cognitiveservices.azure.com (see AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)",
+            "required": true
+          }
+        },
         "response": {
           "transform": "value"
         }
@@ -222,11 +260,7 @@
       "icon": "layout"
     }
   ],
-  "suggestedWith": [
-    "azure-blob-storage",
-    "sharepoint",
-    "onedrive"
-  ],
+  "suggestedWith": ["azure-blob-storage", "sharepoint", "onedrive"],
   "SETUP_GUIDE": {
     "title": "Azure Document Intelligence setup",
     "steps": [
@@ -243,7 +277,7 @@
       {
         "step": 3,
         "title": "Run an analysis",
-        "description": "Call Analyze Invoice with a urlSource pointing at a sample invoice; requests go to the host set in AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT. The API replies 202 Accepted; copy the result ID (GUID) from the Operation-Location response header."
+        "description": "Call Analyze Invoice with your resource hostname as resourceHost and a urlSource pointing at a sample invoice. The API replies 202 Accepted; copy the result ID (GUID) from the Operation-Location response header."
       },
       {
         "step": 4,

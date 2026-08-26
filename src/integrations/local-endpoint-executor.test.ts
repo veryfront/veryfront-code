@@ -350,6 +350,64 @@ describe("local integration endpoint executor", () => {
     assertEquals(transportCalls, 0);
   });
 
+  it("enforces endpoint parameter enums before transport or credential work", async () => {
+    const requests: string[] = [];
+    const transport: LocalIntegrationEndpointTransport = (request) => {
+      requests.push(request.url.href);
+      return Promise.resolve(Response.json({ ok: true }));
+    };
+    const datadogEndpoint = endpoint({
+      method: "GET",
+      url: "https://api.{site}/api/v1/validate",
+      params: {
+        site: {
+          type: "string",
+          in: "path",
+          description: "Datadog site domain",
+          default: "datadoghq.com",
+          enum: ["datadoghq.com", "datadoghq.eu"],
+        },
+      },
+    });
+
+    // The pre-auth snapshot is what `executeTool` runs before minting any
+    // credential, so a non-enum site must already fail there.
+    const snapshotError = assertThrows(
+      () =>
+        snapshotLocalIntegrationEndpointArguments(datadogEndpoint, {
+          site: "attacker.example",
+        }),
+      VeryfrontError,
+    );
+    assertInstanceOf(snapshotError, VeryfrontError);
+    assertEquals(snapshotError.slug, "local-integration-request-invalid");
+
+    const error = await assertRejects(
+      () =>
+        executeLocalIntegrationEndpoint({
+          endpoint: datadogEndpoint,
+          args: { site: "attacker.example" },
+          authHeaders: { Authorization: `Bearer ${SECRET}` },
+          allowedOrigin: "https://api.attacker.example",
+          transport,
+        }),
+      VeryfrontError,
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-request-invalid");
+    assertEquals(requests, []);
+
+    await executeLocalIntegrationEndpoint({
+      endpoint: datadogEndpoint,
+      args: { site: "datadoghq.eu" },
+      authHeaders: { Authorization: `Bearer ${SECRET}` },
+      allowedOrigin: "https://api.datadoghq.eu",
+      transport,
+    });
+
+    assertEquals(requests, ["https://api.datadoghq.eu/api/v1/validate"]);
+  });
+
   it("uses an exact-origin, redirect-rejecting transport contract", async () => {
     let authorized = false;
     await executeLocalIntegrationEndpoint({
