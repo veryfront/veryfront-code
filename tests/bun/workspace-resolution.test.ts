@@ -702,6 +702,53 @@ describe("Bun workspace resolution", () => {
     }
   });
 
+  it("keeps canonical tracking while another config-cache alias still owns it", async () => {
+    clearConfigCache();
+    ensureBuiltinSchemaValidator();
+    const adapter = createMockAdapter();
+    const loadMarker = `__vfBunAliasOwner_${crypto.randomUUID().replaceAll("-", "_")}`;
+    try {
+      await withTempDir(async (rootDir) => {
+        const physicalProjectDir = `${rootDir}/physical-project`;
+        const linkedProjectDir = `${rootDir}/linked-project`;
+        const physicalConfigPath = `${physicalProjectDir}/veryfront.config.ts`;
+        const linkedConfigPath = `${linkedProjectDir}/veryfront.config.ts`;
+        const helperPath = `${physicalProjectDir}/config-helper.cjs`;
+        const source = 'import title from "./config-helper.cjs";\nexport default { title };\n';
+        await mkdir(physicalProjectDir, { recursive: true });
+        await writeTextFile(physicalConfigPath, source);
+        await writeTextFile(
+          helperPath,
+          `globalThis[${JSON.stringify(loadMarker)}] = ` +
+            `(globalThis[${JSON.stringify(loadMarker)}] ?? 0) + 1;\n` +
+            `module.exports = "generation-" + globalThis[${JSON.stringify(loadMarker)}];\n`,
+        );
+        await symlink(physicalProjectDir, linkedProjectDir);
+        adapter.fs.files.set(physicalConfigPath, source);
+        adapter.fs.files.set(linkedConfigPath, source);
+
+        assertEquals((await getConfig(physicalProjectDir, adapter)).title, "generation-1");
+        assertEquals((await getConfig(linkedProjectDir, adapter)).title, "generation-2");
+
+        const cacheCapacity = __getBunProjectConfigModuleTrackingCapacityForTests();
+        for (let index = 0; index < cacheCapacity - 1; index++) {
+          await getConfig(`${rootDir}/defaults-${index}`, adapter);
+        }
+
+        // The physical cache key is now the LRU entry that left the config
+        // cache, while the linked key still owns the same canonical tracking
+        // record. Eviction must not split the helper into a third generation.
+        const projectRequire = createRequire(physicalConfigPath);
+        assertEquals(projectRequire(helperPath), "generation-2");
+        assertEquals((await getConfig(linkedProjectDir, adapter)).title, "generation-2");
+        assertEquals((globalThis as Record<string, unknown>)[loadMarker], 2);
+      }, { prefix: "vf-config-bun-alias-owner-" });
+    } finally {
+      clearConfigCache();
+      delete (globalThis as Record<string, unknown>)[loadMarker];
+    }
+  });
+
   it("reloads a CommonJS helper required by a top-level-await config dependency", async () => {
     clearConfigCache();
     ensureBuiltinSchemaValidator();
@@ -991,6 +1038,71 @@ describe("Bun workspace resolution", () => {
       gate.resolve();
       delete globals[activeMarker];
       delete globals[gateMarker];
+    }
+  });
+
+  it("retries an invalidated config before returning deferred computed imports", async () => {
+    clearConfigCache();
+    ensureBuiltinSchemaValidator();
+    const adapter = createMockAdapter();
+    const activeMarker = `__vfBunDeferredInvalidatedActive_${
+      crypto.randomUUID().replaceAll("-", "_")
+    }`;
+    const gateMarker = `__vfBunDeferredInvalidatedGate_${crypto.randomUUID().replaceAll("-", "_")}`;
+    const resultMarker = `__vfBunDeferredInvalidatedResult_${
+      crypto.randomUUID().replaceAll("-", "_")
+    }`;
+    const gate = Promise.withResolvers<void>();
+    const globals = globalThis as Record<string, unknown>;
+    globals[gateMarker] = gate.promise;
+    try {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        const helperPath = `${projectDir}/deferred-helper.ts`;
+        const source = 'const dependency = "./deferred-helper.ts";\n' +
+          `globalThis[${JSON.stringify(activeMarker)}] = true;\n` +
+          `await globalThis[${JSON.stringify(gateMarker)}];\n` +
+          "export default { extensions: [{\n" +
+          '  name: "deferred-invalidated", version: "1", capabilities: [],\n' +
+          "  async setup() {\n" +
+          "    const { default: value } = await import(dependency);\n" +
+          `    globalThis[${JSON.stringify(resultMarker)}] = value;\n` +
+          "  },\n" +
+          "] };\n";
+        await writeTextFile(configPath, source);
+        await writeTextFile(helperPath, 'export default "before";\n');
+        adapter.fs.files.set(configPath, source);
+
+        const invalidatedLoad = getConfig(projectDir, adapter);
+        await waitFor(() => globals[activeMarker] === true);
+        await writeTextFile(helperPath, 'export default "after";\n');
+        clearConfigCache();
+        const currentLoad = getConfig(projectDir, adapter);
+        gate.resolve();
+
+        const invalidatedConfig = await invalidatedLoad;
+        await currentLoad;
+        const extension = invalidatedConfig.extensions?.[0] as {
+          setup?: () => Promise<void>;
+        };
+        await extension.setup?.();
+        assertEquals(globals[resultMarker], "after");
+
+        await writeTextFile(helperPath, 'export default "latest";\n');
+        clearConfigCache();
+        const latestConfig = await getConfig(projectDir, adapter);
+        const latestExtension = latestConfig.extensions?.[0] as {
+          setup?: () => Promise<void>;
+        };
+        await latestExtension.setup?.();
+        assertEquals(globals[resultMarker], "latest");
+      }, { prefix: "vf-config-bun-deferred-invalidated-" });
+    } finally {
+      gate.resolve();
+      clearConfigCache();
+      delete globals[activeMarker];
+      delete globals[gateMarker];
+      delete globals[resultMarker];
     }
   });
 

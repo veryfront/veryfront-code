@@ -670,13 +670,13 @@ interface BunProjectConfigModuleCacheEntry {
   readonly dynamicImportObserver?: BunProjectDynamicImportObserver;
 }
 
+const bunProjectConfigTrackingOwnerCounts = new IntrinsicMap<string, number>();
+
 const configCacheByProject = new LRUCache<string, ConfigCacheEntry>({
   maxEntries: DEFAULT_CONFIG_CACHE_MAX_ENTRIES,
   onEvict: (_key, value) => {
     const entry = value as ConfigCacheEntry;
-    if (entry.bunTrackingKey !== undefined) {
-      bunProjectConfigModuleCacheKeys.delete(entry.bunTrackingKey);
-    }
+    releaseBunProjectConfigTrackingOwner(entry.bunTrackingKey);
   },
 });
 const bunProjectConfigModuleTrackingEntries = new IntrinsicMap<
@@ -684,6 +684,7 @@ const bunProjectConfigModuleTrackingEntries = new IntrinsicMap<
   BunProjectConfigModuleCacheEntry
 >();
 let clearingBunProjectConfigModuleTracking = false;
+const BUN_PROJECT_CONFIG_LOAD_INVALIDATED = Symbol("bun-project-config-load-invalidated");
 const bunProjectConfigModuleCacheKeys = new LRUCache<
   string,
   BunProjectConfigModuleCacheEntry
@@ -713,6 +714,40 @@ function setBunProjectConfigModuleTracking(
 ): void {
   mapSet(bunProjectConfigModuleTrackingEntries, key, entry);
   bunProjectConfigModuleCacheKeys.set(key, entry);
+}
+
+function retainBunProjectConfigTrackingOwner(trackingKey: string | undefined): void {
+  if (trackingKey === undefined) return;
+  mapSet(
+    bunProjectConfigTrackingOwnerCounts,
+    trackingKey,
+    (mapGet(bunProjectConfigTrackingOwnerCounts, trackingKey) ?? 0) + 1,
+  );
+}
+
+function releaseBunProjectConfigTrackingOwner(trackingKey: string | undefined): void {
+  if (trackingKey === undefined) return;
+  const ownerCount = mapGet(bunProjectConfigTrackingOwnerCounts, trackingKey);
+  if (ownerCount !== undefined && ownerCount > 1) {
+    mapSet(bunProjectConfigTrackingOwnerCounts, trackingKey, ownerCount - 1);
+    return;
+  }
+  mapDelete(bunProjectConfigTrackingOwnerCounts, trackingKey);
+  bunProjectConfigModuleCacheKeys.delete(trackingKey);
+}
+
+function setConfigCacheEntry(cacheKey: string, entry: ConfigCacheEntry): void {
+  const previous = configCacheByProject.get(cacheKey);
+  if (previous?.bunTrackingKey === entry.bunTrackingKey) {
+    configCacheByProject.set(cacheKey, entry);
+    return;
+  }
+
+  // Retain the incoming owner before set() can evict another cache alias of
+  // the same canonical config path at capacity.
+  retainBunProjectConfigTrackingOwner(entry.bunTrackingKey);
+  configCacheByProject.set(cacheKey, entry);
+  releaseBunProjectConfigTrackingOwner(previous?.bunTrackingKey);
 }
 
 /**
@@ -1327,7 +1362,7 @@ function createHostedConfigFlight(
     const merged = validationBoundary ? validationBoundary(validate) : validate();
     throwIfHostedConfigAborted(controllerSignal);
     if (usePersistentCache && cacheRevision === revisionAtStart) {
-      configCacheByProject.set(hostedCacheKey, {
+      setConfigCacheEntry(hostedCacheKey, {
         revision: revisionAtStart,
         config: merged,
         provenance: configFileProvenance(payload.evaluationOptions.fileName),
@@ -3841,6 +3876,7 @@ function isBunAsyncModuleRequireError(error: unknown): boolean {
 interface BunAsyncConfigImportResult {
   readonly configModule: object;
   readonly observer: BunProjectDynamicImportObserver;
+  readonly hasComputedDynamicImport: boolean;
 }
 
 async function importFreshBunAsyncConfig(
@@ -3968,6 +4004,7 @@ async function importFreshBunAsyncConfig(
     },
   });
   let initialEvaluationComplete = false;
+  let hasComputedDynamicImport = false;
   let configModule: object | undefined;
   let loadFailure: { error: unknown } | undefined;
   try {
@@ -3989,7 +4026,9 @@ async function importFreshBunAsyncConfig(
               dependencyCollectionState,
             ),
         );
-        return await rewriteComputedDynamicProjectConfigImports(rewritten, observerKey);
+        const observed = await rewriteComputedDynamicProjectConfigImports(rewritten, observerKey);
+        hasComputedDynamicImport ||= observed !== rewritten;
+        return observed;
       },
     ) as object;
   } catch (error) {
@@ -4026,6 +4065,7 @@ async function importFreshBunAsyncConfig(
   return {
     configModule: configModule!,
     observer: { key: observerKey, dispose: disposeObserver },
+    hasComputedDynamicImport,
   };
 }
 
@@ -4970,6 +5010,7 @@ async function loadAndMergeConfig(
       let configModule: object | undefined;
       let trackingEntry: BunProjectConfigModuleCacheEntry | undefined;
       let dynamicImportObserver: BunProjectDynamicImportObserver | undefined;
+      let hasComputedDynamicImport = false;
       let trackingPublished = false;
       try {
         if (!hasTopLevelAwait) {
@@ -5029,6 +5070,7 @@ async function loadAndMergeConfig(
           );
           configModule = imported.configModule;
           dynamicImportObserver = imported.observer;
+          hasComputedDynamicImport = imported.hasComputedDynamicImport;
         }
         const merged = validateAndMergeConfig(selectConfigModuleValue(configModule));
         if (cacheRevision !== revisionAtStart) {
@@ -5040,6 +5082,7 @@ async function loadAndMergeConfig(
             evictBunProjectConfigModules(trackingEntry);
             trackingEntry = undefined;
           }
+          if (hasComputedDynamicImport) throw BUN_PROJECT_CONFIG_LOAD_INVALIDATED;
           return merged;
         }
         if (trackingEntry !== undefined) {
@@ -5555,7 +5598,7 @@ function getConfigInternal(
             );
             const provenance = configFileProvenance(configFile);
             if (usePersistentCache && cacheRevision === revisionAtStart) {
-              configCacheByProject.set(effectiveCacheKey, {
+              setConfigCacheEntry(effectiveCacheKey, {
                 revision: revisionAtStart,
                 config: merged,
                 provenance,
@@ -5572,6 +5615,9 @@ function getConfigInternal(
             });
             return createConfigLoadResult(merged, provenance);
           } catch (error) {
+            if (error === BUN_PROJECT_CONFIG_LOAD_INVALIDATED) {
+              return await getConfigInternal(projectDir, adapter, options);
+            }
             if (isPreservedConfigLoadError(error)) throw error;
             logger.warn("Failed to load config file", { configFile });
             throw configLoadFailure(configFile, error);
@@ -5588,7 +5634,7 @@ function getConfigInternal(
         const config = createFreshDefaults() as VeryfrontConfig;
         const provenance = defaultConfigProvenance();
         if (usePersistentCache && cacheRevision === revisionAtStart) {
-          configCacheByProject.set(effectiveCacheKey, {
+          setConfigCacheEntry(effectiveCacheKey, {
             revision: revisionAtStart,
             config,
             provenance,
@@ -5779,6 +5825,7 @@ export function __getTrustedConfigFlightStateForTests(): Readonly<{
 
 export function clearConfigCache(): void {
   configCacheByProject.clear();
+  mapClear(bunProjectConfigTrackingOwnerCounts);
   hostedConfigFailureCacheByProject.clear();
   clearBunProjectConfigModuleTracking();
   cacheRevision++;
