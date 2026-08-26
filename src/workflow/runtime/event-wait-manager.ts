@@ -281,7 +281,10 @@ export class EventWaitManager {
     const durableWait = run.workerId === undefined
       ? await this.persistOwnerlessEventWait(run, wait)
       : await this.persistOwnedEventWait(run, wait);
-    if (durableWait !== wait) return projectEventWait(durableWait);
+    if (durableWait !== wait) {
+      this.scheduleExpiry(durableWait);
+      return projectEventWait(durableWait);
+    }
 
     this.rearmExpiryAfterSlowPersistence(wait);
     return projectEventWait(wait);
@@ -471,6 +474,20 @@ export class EventWaitManager {
   /** Release an in-process deadline after another owner resolves the wait. */
   clearWaitExpiry(waitId: string): void {
     this.clearExpiry(waitId);
+  }
+
+  /** Arm this process for a timed wait that was already persisted elsewhere. */
+  async rearmLiveWaitExpiry(run: WorkflowRun, nodeId: string): Promise<void> {
+    const waits = await this.config.backend.getPendingEventWaits?.(run.id) ?? [];
+    const currentState = run.nodeStates[nodeId];
+    const wait = waits.find((candidate) =>
+      isSameWaitNodeExecution(candidate, {
+        nodeId,
+        waitInstanceId: currentState?._waitInstanceId,
+      })
+    );
+    if (!wait?.expiresAt) return;
+    this.scheduleExpiry(wait);
   }
 
   /**
