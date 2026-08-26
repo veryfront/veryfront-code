@@ -29,6 +29,7 @@ import {
   isEvalRecord,
   normalizeEvalString,
 } from "./validation.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 type MetricEvaluator = (record: EvalRecord) => EvalMetricResult | Promise<EvalMetricResult>;
 
@@ -158,7 +159,7 @@ function sortJsonValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortJsonValue);
   if (!value || typeof value !== "object") return value;
   const sorted = Object.create(null) as Record<string, unknown>;
-  for (const key of Object.keys(value).sort()) {
+  for (const key of Object.keys(value).sort(compareStrings)) {
     sorted[key] = sortJsonValue((value as Record<string, unknown>)[key]);
   }
   return sorted;

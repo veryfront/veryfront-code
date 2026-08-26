@@ -54,6 +54,7 @@ export function cloneStoredOAuthState<T extends StoredOAuthState>(state: T): T {
     ...(state.codeVerifier === undefined ? {} : { codeVerifier: state.codeVerifier }),
     ...(state.redirectUri === undefined ? {} : { redirectUri: state.redirectUri }),
     ...(state.scopes === undefined ? {} : { scopes: [...state.scopes] }),
+    ...(state.scopeSource === undefined ? {} : { scopeSource: state.scopeSource }),
     createdAt: state.createdAt,
     ...(metadata === undefined ? {} : { metadata }),
   } as T;
@@ -75,6 +76,7 @@ export function normalizeStoredOAuthStateForStorage(
     const createdAt = ownDataValue(value, "createdAt");
     const codeVerifier = ownDataValue(value, "codeVerifier");
     const scopes = ownDataValue(value, "scopes");
+    const scopeSource = ownDataValue(value, "scopeSource");
     const metadata = ownDataValue(value, "metadata");
     const normalizedUserId = normalizeOAuthUserId(userId);
 
@@ -93,6 +95,9 @@ export function normalizeStoredOAuthStateForStorage(
     }
     const normalizedScopes = normalizeOAuthScopeSet(scopes);
     if (!normalizedScopes) return null;
+    if (scopeSource !== undefined && scopeSource !== "default" && scopeSource !== "explicit") {
+      return null;
+    }
     let normalizedMetadata: OAuthStateMetadata | undefined;
     if (metadata !== undefined) {
       const snapshot = snapshotOAuthStateMetadata(metadata);
@@ -106,6 +111,7 @@ export function normalizeStoredOAuthStateForStorage(
       redirectUri,
       createdAt,
       scopes: normalizedScopes,
+      ...(scopeSource === undefined ? {} : { scopeSource }),
       ...(codeVerifier === undefined ? {} : { codeVerifier }),
       ...(normalizedMetadata === undefined ? {} : { metadata: normalizedMetadata }),
     });

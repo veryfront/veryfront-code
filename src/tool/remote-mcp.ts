@@ -32,6 +32,41 @@ const MAX_REMOTE_MCP_TOOL_SCHEMA_NODES = 4_096;
 const MAX_REMOTE_MCP_CURSOR_LENGTH = 4_096;
 const MAX_REMOTE_MCP_CORRELATION_ID_LENGTH = 256;
 const UTF8_ENCODER = new TextEncoder();
+const NativeURL = URL;
+const nativeEncodeURIComponent = encodeURIComponent;
+const reflectApply = Reflect.apply;
+const urlHrefGetter = Object.getOwnPropertyDescriptor(
+  NativeURL.prototype,
+  "href",
+)?.get;
+const urlProtocolGetter = Object.getOwnPropertyDescriptor(
+  NativeURL.prototype,
+  "protocol",
+)?.get;
+const urlUsernameGetter = Object.getOwnPropertyDescriptor(
+  NativeURL.prototype,
+  "username",
+)?.get;
+const urlPasswordGetter = Object.getOwnPropertyDescriptor(
+  NativeURL.prototype,
+  "password",
+)?.get;
+const urlSearchGetter = Object.getOwnPropertyDescriptor(
+  NativeURL.prototype,
+  "search",
+)?.get;
+const urlHashGetter = Object.getOwnPropertyDescriptor(
+  NativeURL.prototype,
+  "hash",
+)?.get;
+const urlOriginGetter = Object.getOwnPropertyDescriptor(
+  NativeURL.prototype,
+  "origin",
+)?.get;
+const urlPathnameGetter = Object.getOwnPropertyDescriptor(
+  NativeURL.prototype,
+  "pathname",
+)?.get;
 
 class RemoteMCPHttpError extends Error {
   constructor(status: number) {
@@ -377,21 +412,22 @@ function buildOauthConnectUrl(
   integration: string,
   context?: ToolExecutionContext,
 ): string {
-  const encodedIntegration = encodeURIComponent(integration);
+  const encodedIntegration = nativeEncodeURIComponent(integration);
   const projectId = typeof context?.projectId === "string" && context.projectId.length > 0
     ? context.projectId
     : null;
+  const path = `/oauth/connect/${encodedIntegration}`;
+  const query = projectId ? `?projectId=${nativeEncodeURIComponent(projectId)}` : "";
 
   try {
-    const url = new URL(`/oauth/connect/${encodedIntegration}`, endpoint);
-    if (projectId) {
-      url.searchParams.set("projectId", projectId);
+    if (!urlOriginGetter) {
+      throw new TypeError("Remote MCP endpoint URL primordials are unavailable");
     }
-    return url.toString();
+    const url = new NativeURL(endpoint);
+    const origin = reflectApply(urlOriginGetter, url, []) as string;
+    return `${origin}${path}${query}`;
   } catch {
-    return projectId
-      ? `/oauth/connect/${encodedIntegration}?projectId=${encodeURIComponent(projectId)}`
-      : `/oauth/connect/${encodedIntegration}`;
+    return `${path}${query}`;
   }
 }
 
@@ -724,21 +760,28 @@ function validateEndpoint(endpoint: unknown): string {
     throw new TypeError("Remote MCP endpoint must be a non-empty absolute HTTP(S) URL");
   }
 
+  if (!urlHrefGetter || !urlProtocolGetter || !urlUsernameGetter || !urlPasswordGetter) {
+    throw new TypeError("Remote MCP endpoint URL primordials are unavailable");
+  }
   let url: URL;
   try {
-    url = new URL(endpoint);
+    url = new NativeURL(endpoint);
   } catch (cause) {
     throw new TypeError("Remote MCP endpoint must be a non-empty absolute HTTP(S) URL", {
       cause,
     });
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
+  const protocol = reflectApply(urlProtocolGetter, url, []) as string;
+  if (protocol !== "http:" && protocol !== "https:") {
     throw new TypeError("Remote MCP endpoint must use http: or https:");
   }
-  if (url.username.length > 0 || url.password.length > 0) {
+  if (
+    reflectApply(urlUsernameGetter, url, []) ||
+    reflectApply(urlPasswordGetter, url, [])
+  ) {
     throw new TypeError("Remote MCP endpoint must not include credentials");
   }
-  return url.toString();
+  return reflectApply(urlHrefGetter, url, []) as string;
 }
 
 async function postJsonRpc(
@@ -919,23 +962,17 @@ function endpointBindsToolAuthorization(endpoint: string): boolean {
   const apiBaseUrl = getApiBaseUrlEnv();
   if (typeof apiBaseUrl !== "string" || apiBaseUrl.length === 0) return false;
   const endpointUrl = parseMcpRequestEndpoint(endpoint);
-  if (!endpointUrl) return false;
+  const apiBase = parseMcpRequestEndpoint(apiBaseUrl);
+  if (!endpointUrl || !apiBase || endpointUrl.origin !== apiBase.origin) return false;
 
-  try {
-    const apiBase = new URL(apiBaseUrl);
-    if (endpointUrl.origin !== apiBase.origin) return false;
+  const basePath = apiBase.pathname.replace(/\/+$/, "");
+  const controlPlanePath = `${basePath}/mcp`;
+  if (endpointUrl.pathname === controlPlanePath) return true;
 
-    const basePath = apiBase.pathname.replace(/\/+$/, "");
-    const controlPlanePath = `${basePath}/mcp`;
-    if (endpointUrl.pathname === controlPlanePath) return true;
-
-    const projectPathPrefix = `${basePath}/projects/`;
-    if (!endpointUrl.pathname.startsWith(projectPathPrefix)) return false;
-    const projectScopedPath = endpointUrl.pathname.slice(projectPathPrefix.length);
-    return /^[^/]+\/mcp\/?$/.test(projectScopedPath);
-  } catch {
-    return false;
-  }
+  const projectPathPrefix = `${basePath}/projects/`;
+  if (!endpointUrl.pathname.startsWith(projectPathPrefix)) return false;
+  const projectScopedPath = endpointUrl.pathname.slice(projectPathPrefix.length);
+  return /^[^/]+\/mcp\/?$/.test(projectScopedPath);
 }
 
 function buildRunContextMeta(
@@ -1103,12 +1140,35 @@ export interface RemoteMCPToolSourceTransportOptions {
   requestFetch: typeof fetch;
 }
 
-function parseTrustedEndpoint(value: string): URL | undefined {
+interface ParsedTrustedEndpoint {
+  normalized: string;
+  origin: string;
+  pathname: string;
+}
+
+function parseTrustedEndpoint(value: string): ParsedTrustedEndpoint | undefined {
+  if (
+    !urlProtocolGetter || !urlUsernameGetter || !urlPasswordGetter ||
+    !urlSearchGetter || !urlHashGetter || !urlOriginGetter ||
+    !urlPathnameGetter
+  ) return undefined;
   try {
-    const url = new URL(value);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
-    if (url.username || url.password || url.search || url.hash) return undefined;
-    return url;
+    const url = new NativeURL(value);
+    const protocol = reflectApply(urlProtocolGetter, url, []) as string;
+    if (protocol !== "http:" && protocol !== "https:") return undefined;
+    if (
+      reflectApply(urlUsernameGetter, url, []) ||
+      reflectApply(urlPasswordGetter, url, []) ||
+      reflectApply(urlSearchGetter, url, []) ||
+      reflectApply(urlHashGetter, url, [])
+    ) return undefined;
+    const origin = reflectApply(urlOriginGetter, url, []) as string;
+    const pathname = reflectApply(urlPathnameGetter, url, []) as string;
+    return {
+      normalized: `${origin}${pathname}`,
+      origin,
+      pathname,
+    };
   } catch {
     return undefined;
   }
@@ -1120,22 +1180,30 @@ function parseTrustedEndpoint(value: string): URL | undefined {
  * Trusted transport is selected from the parsed scheme, origin, and path only;
  * query parameters remain part of the request URL and cannot change that target.
  */
-function parseMcpRequestEndpoint(value: string): URL | undefined {
+function parseMcpRequestEndpoint(value: string): ParsedTrustedEndpoint | undefined {
+  if (
+    !urlProtocolGetter || !urlUsernameGetter || !urlPasswordGetter ||
+    !urlHashGetter || !urlOriginGetter || !urlPathnameGetter
+  ) return undefined;
   try {
-    const url = new URL(value);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
-    if (url.username || url.password || url.hash) return undefined;
-    return url;
+    const url = new NativeURL(value);
+    const protocol = reflectApply(urlProtocolGetter, url, []) as string;
+    if (protocol !== "http:" && protocol !== "https:") return undefined;
+    if (
+      reflectApply(urlUsernameGetter, url, []) ||
+      reflectApply(urlPasswordGetter, url, []) ||
+      reflectApply(urlHashGetter, url, [])
+    ) return undefined;
+    const origin = reflectApply(urlOriginGetter, url, []) as string;
+    const pathname = reflectApply(urlPathnameGetter, url, []) as string;
+    return { normalized: `${origin}${pathname}`, origin, pathname };
   } catch {
     return undefined;
   }
 }
 
 function normalizeMcpRequestEndpoint(value: string): string | undefined {
-  const url = parseMcpRequestEndpoint(value);
-  if (!url) return undefined;
-  url.search = "";
-  return url.toString();
+  return parseMcpRequestEndpoint(value)?.normalized;
 }
 
 /**
@@ -1148,13 +1216,13 @@ export function createRemoteMCPToolSourceFactoryWithTransport(
   options: RemoteMCPToolSourceTransportOptions,
 ): (config: RemoteMCPToolSourceConfig) => RemoteToolSource {
   const trustedEndpoints = new Set<string>();
-  const trustedEndpointUrls: URL[] = [];
+  const trustedEndpointUrls: ParsedTrustedEndpoint[] = [];
   for (const value of options.trustedEndpoints) {
     const endpointUrl = parseTrustedEndpoint(value);
     if (!endpointUrl) {
       throw new TypeError("Invalid trusted endpoint");
     }
-    trustedEndpoints.add(endpointUrl.toString());
+    trustedEndpoints.add(endpointUrl.normalized);
     trustedEndpointUrls.push(endpointUrl);
   }
 
@@ -1171,18 +1239,14 @@ export function createRemoteMCPToolSourceFactoryWithTransport(
 function isTrustedDeploymentMcpEndpoint(
   endpoint: string,
   trustedEndpoints: ReadonlySet<string>,
-  trustedEndpointUrls: readonly URL[],
+  trustedEndpointUrls: readonly ParsedTrustedEndpoint[],
 ): boolean {
   const normalizedEndpoint = normalizeMcpRequestEndpoint(endpoint);
   if (!normalizedEndpoint) return false;
   if (trustedEndpoints.has(normalizedEndpoint)) return true;
 
-  let endpointUrl: URL;
-  try {
-    endpointUrl = new URL(normalizedEndpoint);
-  } catch {
-    return false;
-  }
+  const endpointUrl = parseMcpRequestEndpoint(endpoint);
+  if (!endpointUrl) return false;
 
   for (const trustedUrl of trustedEndpointUrls) {
     if (endpointUrl.origin !== trustedUrl.origin) continue;

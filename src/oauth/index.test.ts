@@ -46,6 +46,7 @@ const expectedRuntimeExports = [
   "gmailConfig",
   "hubspotConfig",
   "intercomConfig",
+  "isSupersededOAuthGrant",
   "jiraConfig",
   "linearConfig",
   "mailchimpConfig",

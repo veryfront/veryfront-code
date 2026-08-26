@@ -1,5 +1,5 @@
-import { isAbsolute, join, relative, resolve } from "veryfront/platform/path";
-import { runtime } from "veryfront/platform";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "veryfront/platform/path";
+import { isNotFoundError, runtime, type RuntimeAdapter } from "veryfront/platform";
 import { getConfig, type VeryfrontConfig } from "veryfront/config";
 import { CONFIG_INVALID } from "veryfront/errors";
 import { buildProduction } from "veryfront/build";
@@ -86,7 +86,12 @@ export function resolveBuildOutputDir(
   config: Pick<VeryfrontConfig, "build">,
   options: { clearsOutputDir?: boolean } = {},
 ): string {
-  const outputDir = explicitOutputDir ?? resolveConfiguredOutputDir(projectDir, config);
+  const configuredOutputDir = resolveConfiguredOutputDir(
+    projectDir,
+    config,
+    options.clearsOutputDir !== false,
+  );
+  const outputDir = explicitOutputDir ?? configuredOutputDir;
   // The guard below exists because the caller wipes the directory first. A
   // caller that only writes into it is not dangerous, and rejecting it would
   // block legitimate invocations — see the embedded preset.
@@ -99,10 +104,132 @@ export function resolveBuildOutputDir(
 function resolveConfiguredOutputDir(
   projectDir: string,
   config: Pick<VeryfrontConfig, "build">,
+  requireProjectContained: boolean,
 ): string {
   const configured = config.build?.outDir;
   if (configured === undefined || configured === "") return join(projectDir, "dist");
-  return resolve(projectDir, configured);
+  const resolvedProject = resolve(projectDir);
+  const resolvedOutput = resolve(resolvedProject, configured);
+  const relativeOutput = relative(resolvedProject, resolvedOutput).replace(/\\/g, "/");
+  if (
+    requireProjectContained &&
+    (relativeOutput === "" || relativeOutput === "." || relativeOutput === ".." ||
+      relativeOutput.startsWith("../") || isAbsolute(relativeOutput))
+  ) {
+    throw CONFIG_INVALID.create({
+      detail: "build.outDir must resolve to a directory inside the project",
+    });
+  }
+  return resolvedOutput;
+}
+
+function hasOwnSymlinkFreeSemantics(fs: RuntimeAdapter["fs"]): boolean {
+  const descriptor = Object.getOwnPropertyDescriptor(fs, "symlinkSemantics");
+  return descriptor !== undefined && "value" in descriptor && descriptor.value === "none";
+}
+
+/** Resolve an output through its nearest existing ancestor. */
+async function canonicalizeBuildOutputPath(
+  fs: RuntimeAdapter["fs"],
+  path: string,
+): Promise<string> {
+  const absolutePath = resolve(path);
+  if (hasOwnSymlinkFreeSemantics(fs)) return absolutePath;
+
+  const realPath = fs.realPath?.bind(fs);
+  if (!realPath) {
+    throw CONFIG_INVALID.create({
+      detail: "Cannot verify build.outDir symlink containment with this filesystem adapter",
+    });
+  }
+
+  const suffix: string[] = [];
+  let candidate = absolutePath;
+  while (true) {
+    try {
+      return resolve(await realPath(candidate), ...suffix);
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+
+    const parent = dirname(candidate);
+    if (parent === candidate) {
+      throw CONFIG_INVALID.create({
+        detail: "Cannot resolve build.outDir through an existing project ancestor",
+      });
+    }
+    suffix.unshift(basename(candidate));
+    candidate = parent;
+  }
+}
+
+/** Reject any existing symlink below the project on the configured output path. */
+async function assertBuildOutputPathIsSymlinkFree(
+  fs: RuntimeAdapter["fs"],
+  projectDir: string,
+  outputDir: string,
+): Promise<void> {
+  if (hasOwnSymlinkFreeSemantics(fs)) return;
+
+  const lstat = fs.lstat?.bind(fs);
+  if (!lstat) {
+    throw CONFIG_INVALID.create({
+      detail: "Cannot verify that build.outDir is free of symbolic links",
+    });
+  }
+
+  const relativeOutput = relative(resolve(projectDir), resolve(outputDir)).replace(/\\/g, "/");
+  let candidate = resolve(projectDir);
+  for (const segment of relativeOutput.split("/")) {
+    candidate = join(candidate, segment);
+    const info = await lstat(candidate).catch((error) => {
+      if (isNotFoundError(error)) return undefined;
+      throw error;
+    });
+    if (!info) return;
+    if (info.isSymlink) {
+      throw CONFIG_INVALID.create({
+        detail:
+          "build.outDir must not traverse symbolic links because production static serving does not follow them",
+      });
+    }
+  }
+}
+
+/**
+ * Verify configured production output containment against physical paths.
+ *
+ * The configured directory can be absent before the first build, so its
+ * nearest existing ancestor is canonicalized. This exposes an intermediate
+ * symlink before build setup can follow it while creating or clearing output.
+ * Embedded builds do not clear or serve this directory and retain their
+ * intentional external-output support.
+ *
+ * @internal
+ */
+export async function assertConfiguredBuildOutputPhysicallyContained(
+  adapter: Pick<RuntimeAdapter, "fs">,
+  projectDir: string,
+  config: Pick<VeryfrontConfig, "build">,
+  options: { clearsOutputDir?: boolean } = {},
+): Promise<void> {
+  if (options.clearsOutputDir === false) return;
+
+  const configuredOutput = resolveConfiguredOutputDir(projectDir, config, true);
+  const [canonicalProject, canonicalOutput] = await Promise.all([
+    canonicalizeBuildOutputPath(adapter.fs, projectDir),
+    canonicalizeBuildOutputPath(adapter.fs, configuredOutput),
+  ]);
+  const relativeOutput = relative(canonicalProject, canonicalOutput).replace(/\\/g, "/");
+  if (
+    relativeOutput === "" || relativeOutput === "." || relativeOutput === ".." ||
+    relativeOutput.startsWith("../") || isAbsolute(relativeOutput)
+  ) {
+    throw CONFIG_INVALID.create({
+      detail: "build.outDir must remain physically inside the project after resolving symlinks",
+    });
+  }
+  await assertBuildOutputPathIsSymlinkFree(adapter.fs, projectDir, configuredOutput);
 }
 
 /**
@@ -173,6 +300,7 @@ export function buildCommand(options: BuildOptions): Promise<void> {
           // with whatever one-off shims had been added and failed on the rest.
           extensions = await setupBuildCliExtensions(options.projectDir, config);
           await ensureBuiltinContentProcessor();
+          await assertConfiguredBuildOutputPhysicallyContained(adapter, options.projectDir, config);
 
           if (isJsonMode()) {
             streamJsonLine({ type: "step", name: "config", status: "completed" });

@@ -114,17 +114,34 @@ sync with the server's run state.
 Nothing serves those paths by default. Mount `createWorkflowHandler` on a
 catch-all route to answer all of them at once:
 
+Before mounting this route, provide `lib/auth.ts` through your application's
+server-side authentication layer. Its `getSession(request)` function must verify
+a signed, HttpOnly, same-origin session cookie and return
+`Promise<{ user: { id: string } } | null>`. Do not decode an unsigned cookie or
+accept a browser-supplied user ID header as authentication.
+
 ```ts theme={null}
 // app/api/workflows/[...path]/route.ts
 import { createWorkflowHandler } from "veryfront/workflow";
+import { getSession } from "../../../../lib/auth.ts";
 import { workflows } from "../../../../lib/workflows.ts";
 
-export const { GET, POST } = createWorkflowHandler(workflows);
+export const { GET, POST } = createWorkflowHandler(workflows, {
+  authorize: async (request) => (await getSession(request))?.user.id ?? null,
+});
 ```
 
 Pass the same client the rest of the app starts workflows with. A client created
 inside the route file would carry its own in-memory backend and would not see
 those runs.
+
+The `authorize` callback must validate the request with your server-side session
+implementation and return the authenticated user's stable ID. It can also deny
+access to individual routes. Returning `null` denies the request. Veryfront uses
+the returned ID for approval decisions and does not trust the approver name in
+the browser request. Non-canonical route encodings are rejected before this
+callback runs, so route-specific policies cannot authorize a different path
+from the operation the handler dispatches.
 
 The handler covers every path the hooks call:
 
@@ -141,6 +158,70 @@ The handler covers every path the hooks call:
 Mounting somewhere else means telling both sides. Pass `basePath` to the handler
 and the matching `apiBase` to every hook.
 
+### Call the hooks across origins
+
+A cross-origin `apiBase` needs CORS on both the preflight and the actual
+response. `createWorkflowHandler` owns `GET` and `POST`; the route module must
+export `OPTIONS` and add the same CORS headers to the handler responses. Allow
+only the application origins you control, and list every request header the
+hooks send:
+
+```ts theme={null}
+// app/api/workflows/[...path]/route.ts
+import { createWorkflowHandler } from "veryfront/workflow";
+import { getSession } from "../../../../lib/auth.ts";
+import { workflows } from "../../../../lib/workflows.ts";
+
+const applicationOrigin = "https://app.example.com";
+const handlers = createWorkflowHandler(workflows, {
+  authorize: async (request) => (await getSession(request))?.user.id ?? null,
+});
+
+function cors(request: Request, response: Response): Response {
+  if (request.headers.get("Origin") !== applicationOrigin) return response;
+  const headers = new Headers(response.headers);
+  headers.set("Access-Control-Allow-Origin", applicationOrigin);
+  headers.set("Access-Control-Allow-Credentials", "true");
+  headers.append("Vary", "Origin");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+export async function GET(request: Request): Promise<Response> {
+  return cors(request, await handlers.GET(request));
+}
+
+export async function POST(request: Request): Promise<Response> {
+  return cors(request, await handlers.POST(request));
+}
+
+export function OPTIONS(request: Request): Response {
+  if (request.headers.get("Origin") !== applicationOrigin) {
+    return new Response(null, { status: 403 });
+  }
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": applicationOrigin,
+      "Access-Control-Allow-Credentials": "true",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type, X-CSRF-Token",
+      "Vary": "Origin",
+    },
+  });
+}
+```
+
+Pass an authorization header through the hook `headers` option when the
+workflow origin uses bearer authentication. Set `credentials: "include"` only
+for a credentialed cookie session; that mode requires the exact-origin
+`Access-Control-Allow-Origin` and `Access-Control-Allow-Credentials: true`
+headers shown above. The preflight must allow `Content-Type`, `Authorization`,
+and any configured CSRF header the client sends.
+
 ### Stream run events
 
 Use the SSE route when a dashboard, operator, or CI client needs durable progress
@@ -149,8 +230,14 @@ without polling the run endpoint:
 ```ts
 const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
-export function observeWorkflowRun(runId: string): EventSource {
-  const events = new EventSource(`/api/workflows/runs/${runId}/events`);
+export function observeWorkflowRun(
+  runId: string,
+  options: { withCredentials?: boolean } = {},
+): EventSource {
+  const events = new EventSource(
+    `/api/workflows/runs/${encodeURIComponent(runId)}/events`,
+    { withCredentials: options.withCredentials ?? false },
+  );
 
   events.addEventListener("snapshot", (message) => {
     const run = JSON.parse((message as MessageEvent).data);
@@ -187,6 +274,13 @@ export function observeWorkflowRun(runId: string): EventSource {
   return events;
 }
 ```
+
+This native `EventSource` example assumes the handler authorizes a same-origin
+cookie session, which the browser sends automatically. For a cross-origin
+cookie session, call `observeWorkflowRun(runId, { withCredentials: true })` and
+allow credentialed CORS on the workflow origin. Native `EventSource` cannot set
+an `Authorization` header. Bearer-token clients must use a fetch-based SSE
+client and pass the same authorization header used by the workflow hooks.
 
 The first frame is normally `snapshot`, using the same public run projection as
 `GET /runs/{runId}`. When the stored run cannot be serialized, the stream opens
