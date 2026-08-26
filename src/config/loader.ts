@@ -1865,7 +1865,7 @@ const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
 // home directory was redacted either way -- but it reported a local path as a
 // remote URL, which is this PR's original misclassification running backwards.
 const FILE_URL_ABSOLUTE_PATH = new RegExp(
-  String.raw`file:///${URL_TOKEN_TAIL_SOURCE}`,
+  `file:///${URL_TOKEN_TAIL_SOURCE}`,
   "giu",
 );
 // Unanchored on the left. A boundary here refuses a path glued to preceding
