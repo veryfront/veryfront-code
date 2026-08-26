@@ -1210,6 +1210,30 @@ export default config as const;
         assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
       });
 
+      it("redacts a path with a CSI introducer glued to its first character", async () => {
+        const posix = await loadFailure(
+          "vf-config-csi-glued-posix-",
+          `throw new Error(String.fromCharCode(27) + "[/home/alice/veryfront.config.ts");\n`,
+        );
+
+        // `/` is a valid CSI intermediate byte and `h` a valid final, so the CSI
+        // pass consumes `ESC[/h` and leaves `ome/alice/...`, which no later path
+        // pattern recognises. Both are legal CSI sequences, so the grammar cannot
+        // tell them from a path -- the path has to be matched while still intact.
+        assertEquals(posix.message.includes("alice"), false);
+        assertEquals(posix.message.includes("ome/alice"), false);
+
+        const drive = await loadFailure(
+          "vf-config-csi-glued-drive-",
+          `throw new Error(String.fromCharCode(27) + "[" + String.fromCharCode(67) + ":\\\\Users\\\\alice\\\\veryfront.config.ts");\n`,
+        );
+
+        // Same shape: `C` is a valid final byte, so the drive letter is consumed
+        // and `:\Users\alice` no longer matches WINDOWS_ABSOLUTE_PATH.
+        assertEquals(drive.message.includes("alice"), false);
+        assertEquals(drive.message.includes("Users"), false);
+      });
+
       it("strips a colon-parameter CSI sequence, not only the digit-and-semicolon form", async () => {
         const escape = String.fromCharCode(27);
         const error = await loadFailure(

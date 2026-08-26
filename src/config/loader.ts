@@ -1805,8 +1805,17 @@ function summarizeConfigLoadCause(error: unknown): string | undefined {
   // consume the first character of a key such as API_KEY. Either ordering alone
   // can therefore expose a usable value after the transformation.
   const initiallyRedacted = sanitizeUrlCredentials(message);
+  // Redact paths on both sides of de-colorization too, and for the same reason.
+  // A CSI introducer sitting directly against an absolute path consumes the
+  // start of it: `/` is a valid intermediate byte and `h` a valid final, so
+  // `ESC[/home/alice/x` loses `ESC[/h` and leaves `ome/alice/x`, which no later
+  // path pattern recognises. `ESC[C:\\Users\\alice` loses the drive letter the
+  // same way. Both are legal CSI sequences, so no tightening of the grammar can
+  // tell them apart from a path -- the only fix is to match the path while it is
+  // still intact.
+  const pathsPreRedacted = redactMachinePaths(initiallyRedacted);
   const deColorized = replaceMatchesWithCapturedExec(
-    initiallyRedacted,
+    pathsPreRedacted,
     ANSI_CSI_SEQUENCE,
     "",
   );
