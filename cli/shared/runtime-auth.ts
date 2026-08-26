@@ -1,4 +1,4 @@
-import { getEnv, setEnv } from "#veryfront/compat/process.ts";
+import { getEnv, setEnv } from "../../src/platform/compat/process.ts";
 import { readToken } from "../auth/token-store.ts";
 import { readConfigFile } from "./config.ts";
 import { readProjectLink } from "./project-link.ts";
