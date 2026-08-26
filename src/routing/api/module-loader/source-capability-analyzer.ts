@@ -175,11 +175,9 @@ export async function rewriteImportMetaUrl(
   source: string,
   moduleUrl: string,
 ): Promise<string | null> {
+  if (!source.includes(IMPORT_KEYWORD)) return source;
   const importIndex = source.indexOf(IMPORT_KEYWORD);
-  if (
-    importIndex === -1 ||
-    source.indexOf(META_KEYWORD, importIndex + IMPORT_KEYWORD.length) === -1
-  ) return source;
+  if (!source.includes(META_KEYWORD, importIndex + IMPORT_KEYWORD.length)) return source;
   const program = await parseSource(source);
   if (program === null) return null;
 
