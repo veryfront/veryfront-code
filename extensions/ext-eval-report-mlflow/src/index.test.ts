@@ -524,6 +524,19 @@ describe("ext-eval-report-mlflow", () => {
     );
   });
 
+  it("treats an empty configured OAuth endpoint as unset", () => {
+    clearMlflowEnv();
+    Deno.env.set("MLFLOW_TRACKING_URI", "https://operator-mlflow.test");
+    Deno.env.set("MLFLOW_OAUTH_TOKEN_URL", "https://identity.test/token");
+    Deno.env.set("MLFLOW_OAUTH_CLIENT_ID", "operator-client-id");
+    Deno.env.set("MLFLOW_OAUTH_CLIENT_SECRET", "operator-client-secret");
+
+    const extension = factory({ oauthTokenUrl: "" });
+    const registry = createEvalReportExporterRegistry();
+
+    extension.setup?.(createContext(registry));
+  });
+
   it("exchanges generic OAuth client credentials before writing tracking data", async () => {
     clearMlflowEnv();
     Deno.env.set("MLFLOW_TRACKING_URI", "https://mlflow.test");

@@ -525,11 +525,12 @@ async function createOAuthTrackingAuthHeaders(
 function resolveExporterConfig(
   config: EvalReportMlflowExtensionConfig,
 ): EvalReportMlflowExtensionConfig & { id: string } {
+  const configuredOAuthTokenUrl = config.oauthTokenUrl || undefined;
   // Environment credentials may only use the environment-selected transport.
   // Config-controlled endpoints and fetch implementations must provide their
   // own credentials so host secrets never cross that trust boundary.
   const allowEnvironmentCredentials = config.trackingUri === undefined &&
-    config.fetch === undefined && !config.oauthTokenUrl;
+    config.fetch === undefined && !configuredOAuthTokenUrl;
   return {
     id: DEFAULT_EXPORTER_ID,
     trackingUri: config.trackingUri ?? readEnv(ENV_TRACKING_URI),
@@ -543,7 +544,7 @@ function resolveExporterConfig(
       (allowEnvironmentCredentials ? readEnv(ENV_TRACKING_USERNAME) : undefined),
     trackingPassword: config.trackingPassword ??
       (allowEnvironmentCredentials ? readEnv(ENV_TRACKING_PASSWORD) : undefined),
-    oauthTokenUrl: config.oauthTokenUrl ??
+    oauthTokenUrl: configuredOAuthTokenUrl ??
       (allowEnvironmentCredentials ? readEnv(ENV_OAUTH_TOKEN_URL) : undefined),
     oauthClientId: config.oauthClientId ??
       (allowEnvironmentCredentials ? readEnv(ENV_OAUTH_CLIENT_ID) : undefined),
