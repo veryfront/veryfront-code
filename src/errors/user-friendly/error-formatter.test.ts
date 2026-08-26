@@ -171,7 +171,7 @@ describe("formatUserError", () => {
     assertEquals(output.includes("file:///home/user"), false);
   });
 
-  it("should withhold single-label private hostnames used as callable labels", () => {
+  it("should withhold ASCII and Unicode single-label hostnames used as callable labels", () => {
     const environmentKeys = ["VERYFRONT_ENV", "NODE_ENV", "DENO_ENV"] as const;
     const previousEnvironment = environmentKeys.map((key) => [key, Deno.env.get(key)] as const);
     for (const key of environmentKeys) Deno.env.delete(key);
@@ -181,6 +181,7 @@ describe("formatUserError", () => {
       "Error: unknown error private_callable_host",
       "    at private-control-plane (node:internal/process/task_queues:1:1)",
       "    at intranet (node:internal/process/task_queues:2:2)",
+      "    at 内部 (node:internal/process/task_queues:3:3)",
     ].join("\n");
 
     let output: string;
@@ -195,6 +196,7 @@ describe("formatUserError", () => {
 
     assertEquals(output.includes("private-control-plane"), false);
     assertEquals(output.includes("intranet"), false);
+    assertEquals(output.includes("内部"), false);
     assertEquals(output.includes("at <anonymous>"), true);
   });
 

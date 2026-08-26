@@ -188,6 +188,21 @@ describe("safe-diagnostics", () => {
     }
   });
 
+  it("should bound filesystem diagnostics before redacting path aliases", () => {
+    const privatePath = "file:///audit-root/private-source-marker";
+    const diagnostic = `${"x".repeat(ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS * 100)} ${privatePath}`;
+
+    const sanitized = snapshotThrowableDiagnosticRedactingPath(
+      new Error(diagnostic),
+      privatePath,
+      "<absolute-path>",
+    );
+
+    assertEquals(sanitized.length, ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS);
+    assert(sanitized.endsWith("...[truncated]"));
+    assertEquals(sanitized.includes("private-source-marker"), false);
+  });
+
   it("should redact the platform filesystem spelling decoded from file URLs", () => {
     for (
       const [requestedPath, diagnostic] of [

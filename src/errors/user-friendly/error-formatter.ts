@@ -149,7 +149,6 @@ const HOSTNAME_SHAPED_CALLABLE_LABEL =
 /** A private single-label hostname is indistinguishable from a callable name. */
 const SINGLE_LABEL_HOSTNAME_SHAPED_CALLABLE_LABEL =
   /^(?=.{1,63}$)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i;
-const INTERNATIONALIZED_HOSTNAME_SEPARATOR = /[.\u3002\uff0e\uff61]/;
 const SINGLE_LABEL_IPV4_CANDIDATE = /^(?:0x[0-9a-f]+|\d+)$/i;
 const CANONICAL_IPV4_HOSTNAME = /^(?:\d{1,3}\.){3}\d{1,3}$/;
 
@@ -157,24 +156,23 @@ const CANONICAL_IPV4_HOSTNAME = /^(?:\d{1,3}\.){3}\d{1,3}$/;
  * Report labels that WHATWG host parsing recognizes as internationalized DNS.
  *
  * The URL parser maps Unicode labels to punycode and treats the ideographic,
- * fullwidth, and halfwidth full stops as label separators. Restrict parsing to
- * labels that are both non-ASCII and multi-label candidates, then run the same
- * conservative hostname pattern over the canonical ASCII spelling. Capturing
- * the constructor and hostname getter keeps project code from changing this
- * classification through live global or prototype hooks.
+ * fullwidth, and halfwidth full stops as label separators. Both single-label
+ * and multi-label Unicode hostnames canonicalize to ASCII hostname spellings,
+ * so apply the corresponding conservative pattern to the canonical result.
+ * Capturing the constructor and hostname getter keeps project code from
+ * changing this classification through live global or prototype hooks.
  */
 function isInternationalizedHostnameShapedCallableLabel(label: string): boolean {
-  if (
-    !urlHostnameGetter || !includesNonAsciiCodeUnit(label) ||
-    !testRegExp(INTERNATIONALIZED_HOSTNAME_SEPARATOR, label)
-  ) {
+  if (!urlHostnameGetter || !includesNonAsciiCodeUnit(label)) {
     return false;
   }
 
   try {
     const url = new urlConstructor(`http://${label}/`);
     const hostname = reflectApply(urlHostnameGetter, url, []);
-    return typeof hostname === "string" && testRegExp(HOSTNAME_SHAPED_CALLABLE_LABEL, hostname);
+    return typeof hostname === "string" &&
+      (testRegExp(HOSTNAME_SHAPED_CALLABLE_LABEL, hostname) ||
+        testRegExp(SINGLE_LABEL_HOSTNAME_SHAPED_CALLABLE_LABEL, hostname));
   } catch {
     return false;
   }

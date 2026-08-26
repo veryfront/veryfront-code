@@ -8,7 +8,10 @@ import { SERVER_ERROR_CATALOG } from "./server-errors.ts";
 // (`https:/host/x`), opaque (`file:/x`), and network-path spellings into URLs
 // with the supplied base.
 const RECOVERY_URL_PATTERN = /(?:[a-z][a-z0-9+.-]*:|\/\/|(?:\\\\){2})[^\s"]+/gi;
+const RECOVERY_HOSTNAME_PATTERN =
+  /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\b/gi;
 const PUBLIC_RECOVERY_ORIGIN = "https://veryfront.com";
+const PUBLIC_RECOVERY_HOSTNAME = new URL(PUBLIC_RECOVERY_ORIGIN).hostname;
 
 function normalizeSerializedRecoveryUrl(value: string): string {
   return value.replaceAll("\\\\", "/");
@@ -104,6 +107,14 @@ describe("errors/catalog/server-errors", () => {
           [],
           `cache-path-mismatch must not name internal tokens: ${text}`,
         );
+
+        for (const match of text.matchAll(RECOVERY_HOSTNAME_PATTERN)) {
+          assertEquals(
+            match[0].toLowerCase(),
+            PUBLIC_RECOVERY_HOSTNAME,
+            `cache-path-mismatch must not name private hostname ${match[0]}`,
+          );
+        }
       }
     });
 
@@ -168,6 +179,15 @@ describe("errors/catalog/server-errors", () => {
       assertEquals(
         [...serialized.matchAll(RECOVERY_URL_PATTERN)].map((match) => match[0]),
         ["HTTPS://internal.example/recovery"],
+      );
+    });
+
+    it("should recognize bare hostname references in recovery copy", () => {
+      const text = "Contact private-control-plane.example for recovery";
+
+      assertEquals(
+        [...text.matchAll(RECOVERY_HOSTNAME_PATTERN)].map((match) => match[0]),
+        ["private-control-plane.example"],
       );
     });
   });

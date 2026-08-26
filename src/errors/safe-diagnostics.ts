@@ -750,13 +750,16 @@ function platformPathFromNormalizedFileUrl(
   return hasDrive ? decodedBody : `/${decodedBody}`;
 }
 
-/** Snapshot a diagnostic after removing a trusted filesystem path, before bounding it. */
+/** Snapshot a bounded diagnostic after removing a trusted filesystem path. */
 export function snapshotThrowableDiagnosticRedactingPath(
   error: unknown,
   path: string,
   replacement: string,
 ): string {
-  const diagnostic = readThrowableDiagnostic(error);
+  // Bound once before each platform and file-URL alias is redacted. A project
+  // adapter controls Error.message, so running every pass over the complete
+  // untrusted value would multiply work during fallback handling.
+  const diagnostic = sanitizeDiagnosticText(readThrowableDiagnostic(error));
   const normalizationSource = fileUrlNormalizationSource(path);
   const normalizedPath = normalizeFilesystemPathForDiagnostic(normalizationSource);
   const posixDoubleSeparatorPath = normalizePosixDoubleSeparatorPathForDiagnostic(

@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import { ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS } from "./safe-diagnostics.ts";
 import {
   createErrorScope,
   safeFileRead,
@@ -309,6 +310,48 @@ describe("error-context", () => {
       })();
 
       assertEquals(await resultPromise, []);
+    });
+
+    it("bounds oversized adapter diagnostics in every filesystem helper", async () => {
+      const captured: { message: string; data: Record<string, unknown> }[] = [];
+      const originalLogDebug = serverLogger.debug;
+      serverLogger.debug = ((message: string, data: Record<string, unknown>) => {
+        captured.push({ message, data });
+      }) as typeof serverLogger.debug;
+      const oversizedMessage = "x".repeat(ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS * 100);
+
+      try {
+        await safeFileRead(
+          { fs: { readFile: () => Promise.reject(new Error(oversizedMessage)) } },
+          "/private/read-file",
+          "read-file",
+        );
+        await safeFileStat(
+          { fs: { stat: () => Promise.reject(new Error(oversizedMessage)) } },
+          "/private/stat-file",
+          "stat-file",
+        );
+        await safeReadDir<string>(
+          {
+            fs: {
+              async *readDir(): AsyncIterable<string> {
+                yield await Promise.reject(new Error(oversizedMessage));
+              },
+            },
+          },
+          "/private/read-directory",
+          "read-directory",
+        );
+      } finally {
+        serverLogger.debug = originalLogDebug;
+      }
+
+      assertEquals(captured.length, 3);
+      for (const diagnostic of captured) {
+        const errorMessage = String(diagnostic.data.errorMessage);
+        assertEquals(errorMessage.length, ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS);
+        assertEquals(errorMessage.endsWith("...[truncated]"), true);
+      }
     });
 
     it("redacts normalized and truncated absolute paths from safe filesystem diagnostics", async () => {
