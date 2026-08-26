@@ -76,12 +76,30 @@ export async function capturePreviewSourceSnapshotMarker(
   };
 }
 
+/**
+ * Attempts to observe a settled generation before giving up.
+ *
+ * capturePreviewSourceSnapshotMarker() returns undefined when the generation
+ * moves between its two observations. A project whose source is still being
+ * written -- the first document request after project creation is the common
+ * case -- can lose that race repeatedly while being perfectly healthy, and one
+ * observation is not evidence the source is unreadable. Re-observing costs two
+ * adapter reads and is side-effect free, so a bounded retry converts the
+ * dominant transient failure into a slightly slower success.
+ *
+ * Bounded, not unbounded: a source that genuinely never settles must still fail
+ * loudly rather than hold the request open.
+ */
+const REQUIRED_SNAPSHOT_MARKER_ATTEMPTS = 3;
+
 export async function captureRequiredPreviewSourceSnapshotMarker(
   fs: FileSystemAdapter,
   projectSlug: string,
 ): Promise<PreviewSourceSnapshotMarker> {
-  const marker = await capturePreviewSourceSnapshotMarker(fs);
-  if (marker?.identity !== undefined && marker.version !== undefined) return marker;
+  for (let attempt = 0; attempt < REQUIRED_SNAPSHOT_MARKER_ATTEMPTS; attempt++) {
+    const marker = await capturePreviewSourceSnapshotMarker(fs);
+    if (marker?.identity !== undefined && marker.version !== undefined) return marker;
+  }
   throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
     detail:
       `The filesystem adapter serving "${projectSlug}" cannot identify the strict source snapshot and concrete generation that produced preview document configuration.`,
