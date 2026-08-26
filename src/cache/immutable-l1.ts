@@ -22,12 +22,12 @@
  */
 
 import { logger as baseLogger } from "#veryfront/utils";
-import { getEnvValue } from "./backends/helpers.ts";
+import { getEnvValue } from "#veryfront/cache/backends/helpers.ts";
 import {
   cacheCredentialIdentity,
   resolveCacheRequestAuthority,
   type ResolvedCacheAuthority,
-} from "./request-authority.ts";
+} from "#veryfront/cache/request-authority.ts";
 
 const logger = baseLogger.component("immutable-l1");
 

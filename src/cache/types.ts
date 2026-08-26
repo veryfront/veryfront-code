@@ -32,6 +32,22 @@ export type CacheRevisionMutation =
   }
   | { readonly kind: "delete" };
 
+/** Options for a single logical backend read. */
+export interface CacheReadOptions {
+  /**
+   * Invoked with the authority the backend resolved at the moment it performed
+   * an underlying network read serving this call — the credential and project
+   * the value was actually fetched under, as opposed to whatever the caller
+   * resolved before awaiting. A failed batch request falls back to individual
+   * reads that resolve authority again, so one logical read can report more
+   * than once; a caller holding a returned value in front of the backend's
+   * authority gate must treat every reported authority as one the value may
+   * have been fetched under. Backends that do not gate reads on a per-request
+   * authority never invoke it.
+   */
+  onAuthority?: (authority: ResolvedCacheAuthority) => void;
+}
+
 /**
  * Provides storage operations for memory, disk, API, and extension-backed distributed caches.
  * All cache backends must implement this interface.
@@ -54,9 +70,10 @@ export interface CacheBackend {
   /**
    * Get a value from the cache.
    * @param key - Cache key
+   * @param options - Read options; see {@link CacheReadOptions}
    * @returns The cached value or null if not found
    */
-  get(key: string): Promise<string | null>;
+  get(key: string, options?: CacheReadOptions): Promise<string | null>;
 
   /**
    * Read one value while enforcing an exact UTF-8 payload-byte ceiling before
@@ -82,9 +99,10 @@ export interface CacheBackend {
    * Get multiple values from the cache in a single batch.
    * A batch may contain at most the shared `MAX_BATCH_SIZE` items.
    * @param keys - Array of cache keys
+   * @param options - Read options; see {@link CacheReadOptions}
    * @returns Map of key to value (null for missing keys)
    */
-  getBatch?(keys: string[]): Promise<Map<string, string | null>>;
+  getBatch?(keys: string[], options?: CacheReadOptions): Promise<Map<string, string | null>>;
 
   /**
    * Set a value in the cache.

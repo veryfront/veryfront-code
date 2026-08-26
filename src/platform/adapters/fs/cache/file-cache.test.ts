@@ -6,7 +6,7 @@ import {
   initializeFileCacheBackend,
   isFileCacheDistributedEnabled,
 } from "./file-cache.ts";
-import { CacheBackends } from "#veryfront/cache/backend.ts";
+import { CacheBackends, type CacheReadOptions } from "#veryfront/cache/backend.ts";
 import { getCacheStats } from "#veryfront/utils/memory/index.ts";
 import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
@@ -14,7 +14,11 @@ import type { ResolvedCacheAuthority } from "#veryfront/cache/request-authority.
 import type { FileCacheOptions } from "./types.ts";
 import { runtime } from "#veryfront/platform/adapters/registry.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
-import { IMMUTABLE_L1_TTL_ENV_VAR } from "#veryfront/cache/immutable-l1.ts";
+import {
+  IMMUTABLE_L1_MAX_TTL_MS,
+  IMMUTABLE_L1_TTL_ENV_VAR,
+} from "#veryfront/cache/immutable-l1.ts";
+import { FakeTime } from "#std/testing/time";
 
 /** `file:release:<projectSlug>:<releaseId>:<path>`, immutable by construction. */
 const IMMUTABLE_RELEASE_KEY = "file:release:proj-a:rel-1:/app/page.tsx";
@@ -157,7 +161,7 @@ async function useCountingDistributedBackend(
         // Present only when the shape supplies one, so the default backend keeps
         // the `cacheAuthority === undefined` shape a Redis backend really has.
         ...(shape.cacheAuthority ? { cacheAuthority: shape.cacheAuthority } : {}),
-        get: async (key: string) => {
+        get: async (key: string, options?: CacheReadOptions) => {
           gets += 1;
           // Captured before blocking, so a held read carries the value the
           // backend held when it started rather than a later one.
@@ -166,6 +170,12 @@ async function useCountingDistributedBackend(
             markReadStarted?.();
             await released;
           }
+          // Reported when the read completes, mirroring `ApiCacheBackend`'s
+          // fallback path: a batch that fails re-resolves its authority for
+          // the individual reads it retries with, so the authority that
+          // performed the read is the one in force at this point, not the one
+          // in force when the read was initiated.
+          if (shape.cacheAuthority) options?.onAuthority?.(shape.cacheAuthority());
           return captured;
         },
         set: async (key: string, value: string) => {
@@ -1063,6 +1073,52 @@ describe("Distributed cache functions", () => {
       );
     });
 
+    it("clamps an explicit per-instance lifetime to the security maximum", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-instance-ttl-clamp");
+      // Only the env resolver clamps to IMMUTABLE_L1_MAX_TTL_MS, so an internal
+      // caller passing both ttl and immutableL1Ttl above it would otherwise buy
+      // an hour of credential-revocation and publish-visibility lag. The fake
+      // clock makes that hour observable: past the 60-second maximum the tier
+      // must refetch, however far inside the configured hour the entry still is.
+      const harness = await useCountingDistributedBackend(distributedModule, {
+        ttl: 7_200_000,
+        immutableL1Ttl: 3_600_000,
+      });
+      await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "page-source");
+
+      using time = new FakeTime();
+      const warming = readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+      await time.tickAsync(5);
+      assertEquals(await warming, "page-source", "the warming read still returns the value");
+
+      // Positive control: within the clamped lifetime the tier serves the
+      // entry, so the refetch below is the clamp and not a disabled tier.
+      harness.resetBackendGets();
+      const withinBound = readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+      await time.tickAsync(5);
+      assertEquals(await withinBound, "page-source");
+      assertEquals(
+        harness.backendGets(),
+        0,
+        "within the clamped lifetime the tier must still serve the entry",
+      );
+
+      await time.tickAsync(IMMUTABLE_L1_MAX_TTL_MS + 1_000);
+      harness.resetBackendGets();
+      const pastBound = readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+      await time.tickAsync(5);
+      assertEquals(
+        await pastBound,
+        "page-source",
+        "the value itself must still be readable through the backend",
+      );
+      assertEquals(
+        harness.backendGets(),
+        1,
+        "a per-instance lifetime above the security maximum must be clamped to it",
+      );
+    });
+
     it("does not extend an aging backend entry by a fresh process-local lifetime", async () => {
       const distributedModule = await import("./file-cache.ts?issue-602-l1-backend-remaining-ttl");
       const harness = await useCountingDistributedBackend(distributedModule, {
@@ -1433,6 +1489,65 @@ describe("Distributed cache functions", () => {
         harness.backendGets(),
         0,
         "the scope must follow the backend's own authority, so a different ambient project cannot change it",
+      );
+    });
+
+    it("binds admission to the authority that performed the backend read", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-read-authority");
+      // The scope a read looks up under is snapshotted BEFORE the backend is
+      // awaited, but a batched read that fails over to individual gets
+      // re-resolves its credential mid-flight. Holding the read makes that
+      // window wide enough to switch the credential inside it: the value is
+      // fetched under token-b while the snapshot named token-a, and it must
+      // be held under the credential that fetched it.
+      let backendToken = "token-a";
+      const harness = await useCountingDistributedBackend(distributedModule, {}, {
+        backendType: "api",
+        cacheAuthority: (): ResolvedCacheAuthority => ({
+          token: backendToken,
+          projectRef: "proj-a",
+          tokenSource: "explicit-endpoint",
+        }),
+      });
+      await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "page-source");
+
+      harness.holdReads();
+      const warming = readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+      await harness.readStarted();
+      backendToken = "token-b";
+      harness.releaseReads();
+      assertEquals(
+        await warming,
+        "page-source",
+        "the mid-switch read itself still returns the backend value",
+      );
+
+      // The entry belongs to the credential that performed the read...
+      harness.resetBackendGets();
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        "page-source",
+        "the reading credential must still see the value",
+      );
+      assertEquals(
+        harness.backendGets(),
+        0,
+        "the entry must be held under the credential the backend read was performed under",
+      );
+
+      // ...and is never served under the credential the pre-read snapshot
+      // named, which did not fetch it.
+      backendToken = "token-a";
+      harness.resetBackendGets();
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        "page-source",
+        "the snapshot credential still reads the value, through the backend",
+      );
+      assertEquals(
+        harness.backendGets(),
+        1,
+        "a value fetched under another credential must not be served under the snapshot's credential",
       );
     });
 

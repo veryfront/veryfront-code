@@ -26,12 +26,15 @@ import {
   setInRequestCache,
 } from "#veryfront/cache/request-cache-batcher.ts";
 import {
+  buildImmutableL1Scope,
   createImmutableFileCacheL1,
+  IMMUTABLE_L1_MAX_TTL_MS,
   type ImmutableFileCacheL1,
   isImmutableReleaseFileCacheKey,
   resolveImmutableL1Scope,
   resolveImmutableL1TtlMs,
 } from "#veryfront/cache/immutable-l1.ts";
+import type { ResolvedCacheAuthority } from "#veryfront/cache/request-authority.ts";
 
 const logger = baseLogger.component("file-cache");
 
@@ -108,6 +111,34 @@ registerCache("file-cache-immutable-l1", () => ({
 function publishToRequestCache(key: string, serialized: string | null): void {
   immutableL1?.dropKey(key);
   setInRequestCache(key, serialized);
+}
+
+/**
+ * The scope the authorities that performed a backend read agree on, or `null`
+ * when the fetched value must not be admitted.
+ *
+ * An authority-gated backend reports the authority it resolved at the moment
+ * it performed each underlying network read (a failed batch request falls back
+ * to individual reads that resolve authority again, so one logical read can
+ * report several). The value is admissible only when every reported authority
+ * yields the same non-null scope. No report means there is no evidence of
+ * which credential fetched the value, and divergent reports mean the value
+ * cannot be attributed to any single one, so both refuse admission — failing
+ * toward an extra backend read, never toward holding a value under a
+ * credential that did not fetch it.
+ */
+function immutableL1ReadScope(
+  backendType: string,
+  readAuthorities: readonly ResolvedCacheAuthority[],
+): string | null {
+  let scope: string | null = null;
+  for (const authority of readAuthorities) {
+    const authorityScope = buildImmutableL1Scope(backendType, authority);
+    if (authorityScope === null) return null;
+    if (scope !== null && scope !== authorityScope) return null;
+    scope = authorityScope;
+  }
+  return scope;
 }
 
 // Shared backend state across all FileCache instances
@@ -198,6 +229,13 @@ export class FileCache {
     let ttl = this.immutableL1TtlOverride;
     if (ttl === undefined || !Number.isFinite(ttl)) {
       ttl = immutableL1TtlMs ?? 0;
+    } else if (ttl > IMMUTABLE_L1_MAX_TTL_MS) {
+      // The per-instance option obeys the same hard maximum the env resolver
+      // enforces. The TTL is the width of the credential-revocation window and
+      // of the cross-pod publish-visibility window, so an internal caller must
+      // not be able to widen either past the security bound by configuring the
+      // instance instead of the environment.
+      ttl = IMMUTABLE_L1_MAX_TTL_MS;
     }
     // The public filesystem config exposes `ttl` and not `immutableL1Ttl`, so
     // `ttl` is where a caller states its whole freshness bound. A `ttl` below
@@ -302,25 +340,48 @@ export class FileCache {
           }
 
           const readToken = l1?.beginRead(key);
+          // `l1Scope` above is a PRE-read snapshot, and the ambient credential
+          // or project context can change while the backend read is in flight
+          // (most reachably when a failed batch request falls back to
+          // individual reads that re-resolve authority after the first network
+          // attempt). A gated backend therefore reports the authority it
+          // resolves at the moment it performs each read, and the admission
+          // below is bound to that report rather than to the snapshot, so a
+          // value fetched under one credential is never held under another.
+          // Non-gated backends return the same bytes for a key whatever the
+          // ambient context, so for them the snapshot scope stands.
+          const readAuthorities: ResolvedCacheAuthority[] = [];
+          const observeReadAuthority = useL1 && typeof backend.cacheAuthority === "function"
+            ? {
+              onAuthority: (authority: ResolvedCacheAuthority): void => {
+                readAuthorities.push(authority);
+              },
+            }
+            : undefined;
           // Use request-scoped batching to dedupe and batch cache requests
           // Note: key already includes the full prefix from buildFileCacheKeyPrefix (e.g., "file:env:project:...")
           // The backend will add its own namespace prefix, so we pass the key as-is
-          const raw = await getCachedWithBatching(backend, key);
+          const raw = await getCachedWithBatching(backend, key, observeReadAuthority);
           if (raw) {
             const entry = JSON.parse(raw) as CacheEntry<T>;
             if (useL1 && l1 && readToken) {
-              // The backend entry's timestamp starts the public cache TTL.
-              // Re-reading an older entry must not stamp a fresh full L1
-              // lifetime that continues after the backend would expire it.
-              const backendRemainingTtl = entry.timestamp + this.options.ttl -
-                readToken.startedAtMs;
-              l1.admit(
-                l1Scope,
-                key,
-                raw,
-                readToken,
-                Math.min(immutableL1Ttl, backendRemainingTtl),
-              );
+              const admissionScope = observeReadAuthority === undefined
+                ? l1Scope
+                : immutableL1ReadScope(backend.type, readAuthorities);
+              if (admissionScope !== null) {
+                // The backend entry's timestamp starts the public cache TTL.
+                // Re-reading an older entry must not stamp a fresh full L1
+                // lifetime that continues after the backend would expire it.
+                const backendRemainingTtl = entry.timestamp + this.options.ttl -
+                  readToken.startedAtMs;
+                l1.admit(
+                  admissionScope,
+                  key,
+                  raw,
+                  readToken,
+                  Math.min(immutableL1Ttl, backendRemainingTtl),
+                );
+              }
             }
             // When using backend (Redis/API), trust the backend's TTL for expiry.
             // The backend TTL is derived from this.options.ttl and handles expiry.

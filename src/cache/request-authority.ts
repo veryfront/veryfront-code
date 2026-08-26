@@ -12,10 +12,10 @@
 
 import { logger as baseLogger } from "#veryfront/utils";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { getEnvValue } from "./backends/helpers.ts";
-import { getVerifiedCacheApiCredential } from "./verified-api-credential-context.ts";
-import { tryGetCacheKeyContext } from "./cache-key-builder.ts";
-import { hashString } from "./hash.ts";
+import { getEnvValue } from "#veryfront/cache/backends/helpers.ts";
+import { getVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
+import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
 
 const logger = baseLogger.component("cache-request-authority");
 

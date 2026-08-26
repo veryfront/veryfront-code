@@ -13,10 +13,13 @@ export interface FileCacheOptions {
    * Lifetime of a process-local immutable release entry, in milliseconds.
    * `0` disables that tier. Defaults to the configured process-wide value; a
    * non-finite value falls back to that default too, because Infinity would
-   * stamp entries that never expire. The effective lifetime never exceeds
-   * `ttl`: `ttl` is the freshness bound the public config exposes, and this
-   * tier must not serve a value the backend cache has already expired. See
-   * cache/immutable-l1.ts for what this bounds.
+   * stamp entries that never expire. A value above `IMMUTABLE_L1_MAX_TTL_MS`
+   * is clamped to it — the same security maximum the env resolver enforces,
+   * because this lifetime is the width of the credential-revocation and
+   * cross-pod publish-visibility windows. The effective lifetime also never
+   * exceeds `ttl`: `ttl` is the freshness bound the public config exposes,
+   * and this tier must not serve a value the backend cache has already
+   * expired. See cache/immutable-l1.ts for what this bounds.
    *
    * The store behind it is process-global and keyed by authority scope, not
    * by instance, but this lifetime is enforced twice: stamped at admission

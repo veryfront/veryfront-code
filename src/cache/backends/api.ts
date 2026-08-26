@@ -3,7 +3,7 @@ import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { isValidCachePattern, sanitizeCacheKey } from "../keys/index.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
-import type { CacheBackend } from "../types.ts";
+import type { CacheBackend, CacheReadOptions } from "../types.ts";
 import { buildBatchResults } from "../batch-results.ts";
 import { resolveCacheRequestAuthority, type ResolvedCacheAuthority } from "../request-authority.ts";
 import { REQUEST_ERROR } from "#veryfront/errors";
@@ -37,6 +37,12 @@ const MAX_CONFIGURED_RESPONSE_BYTES = 128 * 1024 * 1024;
 type CacheRequestOptions = {
   failOnError?: boolean;
   boundedJsonString?: { fieldName: string; maximumBytes: number };
+  /**
+   * Reports the authority this request resolves at the moment it performs the
+   * read, so a caller holding results in front of the authority gate can bind
+   * what it holds to the credential and project that actually fetched them.
+   */
+  onAuthority?: (authority: ResolvedCacheAuthority) => void;
 };
 
 export class ApiCacheBackend implements CacheBackend {
@@ -146,7 +152,14 @@ export class ApiCacheBackend implements CacheBackend {
     }
     // Shared with the process-local file-cache tier, which must scope what it
     // holds on exactly the authority this read would have been made under.
-    const { token, projectRef, tokenSource } = this.cacheAuthority();
+    // Resolved here, when the request is performed, and reported to the caller
+    // before the gate below: a batched read that fails over to individual gets
+    // re-resolves the authority per attempt, and a caller admitting results
+    // into a local tier must learn about every authority that could have
+    // fetched them.
+    const authority = this.cacheAuthority();
+    options.onAuthority?.(authority);
+    const { token, projectRef, tokenSource } = authority;
 
     if (!token || !projectRef) {
       logger.debug("Missing auth or project context", {
@@ -279,11 +292,13 @@ export class ApiCacheBackend implements CacheBackend {
     }
   }
 
-  async get(key: string): Promise<string | null> {
+  async get(key: string, options?: CacheReadOptions): Promise<string | null> {
     const prefixedKey = await this.prefixKey(key);
     const result = await this.request<{ value: string | null }>(
       "GET",
       `/get?key=${encodeURIComponent(prefixedKey)}`,
+      undefined,
+      { onAuthority: options?.onAuthority },
     );
     return result?.value ?? null;
   }
@@ -305,7 +320,10 @@ export class ApiCacheBackend implements CacheBackend {
     return result;
   }
 
-  async getBatch(keys: string[]): Promise<Map<string, string | null>> {
+  async getBatch(
+    keys: string[],
+    options?: CacheReadOptions,
+  ): Promise<Map<string, string | null>> {
     if (keys.length === 0) return new Map<string, string | null>();
 
     const prefixedByKey = new Map(
@@ -315,13 +333,14 @@ export class ApiCacheBackend implements CacheBackend {
       "POST",
       "/get-batch",
       { keys: keys.map((k) => prefixedByKey.get(k) as string) },
+      { onAuthority: options?.onAuthority },
     );
 
     if (!response?.values) {
       logger.debug("Batch endpoint failed, falling back to individual gets", {
         keyCount: keys.length,
       });
-      return this.getIndividually(keys);
+      return this.getIndividually(keys, options);
     }
 
     return buildBatchResults(keys, (key) => {
@@ -330,8 +349,13 @@ export class ApiCacheBackend implements CacheBackend {
     });
   }
 
-  private async getIndividually(keys: string[]): Promise<Map<string, string | null>> {
-    const results = await Promise.all(keys.map(async (key) => [key, await this.get(key)] as const));
+  private async getIndividually(
+    keys: string[],
+    options?: CacheReadOptions,
+  ): Promise<Map<string, string | null>> {
+    const results = await Promise.all(
+      keys.map(async (key) => [key, await this.get(key, options)] as const),
+    );
     return new Map(results);
   }
 
