@@ -1063,6 +1063,31 @@ describe("Distributed cache functions", () => {
       );
     });
 
+    it("does not extend an aging backend entry by a fresh process-local lifetime", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-backend-remaining-ttl");
+      const harness = await useCountingDistributedBackend(distributedModule, {
+        ttl: 200,
+        immutableL1Ttl: 200,
+      });
+
+      await harness.cache.setAsync(IMMUTABLE_RELEASE_KEY, "page-source");
+      await new Promise<void>((resolve) => setTimeout(resolve, 160));
+      await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY);
+
+      harness.resetBackendGets();
+      await new Promise<void>((resolve) => setTimeout(resolve, 80));
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        "page-source",
+        "the value itself remains available through the fake backend",
+      );
+      assertEquals(
+        harness.backendGets(),
+        1,
+        "an L1 admission near backend expiry must not receive a fresh full lifetime",
+      );
+    });
+
     it("reports the process-local tier to the memory profiler", async () => {
       const distributedModule = await import("./file-cache.ts?issue-602-l1-profiler");
       const harness = await useCountingDistributedBackend(distributedModule);

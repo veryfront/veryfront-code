@@ -309,7 +309,18 @@ export class FileCache {
           if (raw) {
             const entry = JSON.parse(raw) as CacheEntry<T>;
             if (useL1 && l1 && readToken) {
-              l1.admit(l1Scope, key, raw, readToken, immutableL1Ttl);
+              // The backend entry's timestamp starts the public cache TTL.
+              // Re-reading an older entry must not stamp a fresh full L1
+              // lifetime that continues after the backend would expire it.
+              const backendRemainingTtl = entry.timestamp + this.options.ttl -
+                readToken.startedAtMs;
+              l1.admit(
+                l1Scope,
+                key,
+                raw,
+                readToken,
+                Math.min(immutableL1Ttl, backendRemainingTtl),
+              );
             }
             // When using backend (Redis/API), trust the backend's TTL for expiry.
             // The backend TTL is derived from this.options.ttl and handles expiry.
