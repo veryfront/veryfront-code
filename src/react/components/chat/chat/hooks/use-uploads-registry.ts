@@ -18,7 +18,9 @@
  * which is where pluggable *storage* lives: it resolves a `BlobStorage`
  * (Veryfront Cloud when deployed, local disk in dev; or S3/GCS/your own). So
  * this hook needs only the `url` — "point storage anywhere" is the handler's
- * job, not the client's.
+ * job, not the client's. Because this hook lists the whole storage backend,
+ * that handler must opt in with `allowListing: true`; enable it only when the
+ * route authorization grants every caller access to every stored upload.
  *
  * @module react/components/chat/hooks/use-uploads-registry
  */
@@ -36,7 +38,8 @@ const useIsomorphicLayoutEffect = typeof document === "undefined"
 export interface UseAttachmentsOptions {
   /**
    * Upload endpoint — `GET` lists, `POST` (multipart `file`) uploads, `DELETE`
-   * removes. Usually {@link createChatUploadHandler}'s route. @default "/api/uploads"
+   * removes. Usually {@link createChatUploadHandler}'s route, configured with
+   * `allowListing: true` behind storage-wide authorization. @default "/api/uploads"
    */
   url?: string;
   /** localStorage key for the persisted list. @default "vf-uploads" */

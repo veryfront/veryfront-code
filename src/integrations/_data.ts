@@ -47722,6 +47722,7 @@ export const connectors: IntegrationConfig[] = [
               "SOQL CaseComment query. Add WHERE ParentId = '<caseId>' to inspect one case.",
             "default":
               "SELECT Id, ParentId, CommentBody, CreatedDate, CreatedById, IsPublished FROM CaseComment ORDER BY CreatedDate DESC LIMIT 50",
+            "exposeDefault": true,
           },
         },
         "response": { "transform": "records" },

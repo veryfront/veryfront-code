@@ -457,15 +457,6 @@ describe("integration endpoint specs", () => {
       const query = tool.endpoint?.params?.q;
       if (query?.default === undefined) continue;
 
-      if (tool.id === "salesforce__list_case_activity") {
-        assertEquals(
-          query.exposeDefault,
-          undefined,
-          "Expected unscoped CaseComment query to stay out of model-facing schemas",
-        );
-        continue;
-      }
-
       assertEquals(
         query.exposeDefault,
         true,
@@ -481,10 +472,11 @@ describe("integration endpoint specs", () => {
       "salesforce__search_accounts",
       "salesforce__search_contacts",
       "salesforce__list_cases",
+      "salesforce__list_case_activity",
       "salesforce__search_knowledge_articles",
       "salesforce__list_opportunities",
     ]);
-    assertEquals(exposedDefaults, 6);
+    assertEquals(exposedDefaults, 7);
   });
 
   it("declares Service Cloud support tools", () => {

@@ -69,8 +69,6 @@ const REQUIRED_EXPORTS = {
     "resolveModel",
     "hasModelProvider",
     "getRegisteredModelProviders",
-    "runWithVeryfrontCloudContext",
-    "runWithVeryfrontCloudContextAsync",
   ],
   "./fs": ["readTextFile", "writeTextFile", "join", "resolve", "exists", "mkdir"],
 };
