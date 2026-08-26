@@ -997,6 +997,102 @@ describe("server/handlers/request/agent-stream.handler", () => {
     );
   });
 
+  it("preserves forwarded integration definitions selected by the source agent", async () => {
+    let capturedAllowedTools: string[] | undefined;
+    let capturedForwardedProps: Record<string, unknown> | undefined;
+
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+      getAgent: (id) =>
+        id === "assistant-1"
+          ? createAgentWithConfig("assistant-1", {
+            tools: { gmail__list_emails: true },
+          })
+          : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: (agent) => {
+        capturedAllowedTools = (agent.config as typeof agent.config & RuntimeRemoteToolConfig)
+          .__vfAllowedRemoteTools;
+
+        return {
+          stream: async (_messages, context, callbacks) => {
+            capturedForwardedProps = context?.forwardedProps as
+              | Record<string, unknown>
+              | undefined;
+            callbacks?.onFinish?.({
+              text: "ok",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              usage: undefined,
+            });
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            });
+          },
+        };
+      },
+    });
+
+    const body = createAgentStreamRequestBody({
+      forwardedProps: {
+        runtimeOverrides: {
+          allowedTools: ["gmail__list_emails", "gmail__get_email"],
+          integrationToolDefinitions: [
+            {
+              name: "gmail__list_emails",
+              description: "List email",
+              inputSchema: { type: "object" },
+            },
+            {
+              name: "gmail__get_email",
+              description: "Get an email",
+              inputSchema: { type: "object" },
+            },
+          ],
+        },
+      },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertEquals(result.response?.status, 200);
+    assertEquals(capturedAllowedTools, ["gmail__list_emails"]);
+    assertEquals(capturedForwardedProps, {
+      runtimeOverrides: {
+        allowedTools: ["gmail__list_emails"],
+        integrationToolDefinitions: [
+          {
+            name: "gmail__list_emails",
+            description: "List email",
+            inputSchema: { type: "object" },
+          },
+          {
+            name: "gmail__get_email",
+            description: "Get an email",
+            inputSchema: { type: "object" },
+          },
+        ],
+      },
+    });
+  });
+
   it("loads and applies integration restrictions from the exact requested source", async () => {
     let capturedSourcePolicy: ReturnType<typeof getRuntimeSourceIntegrationPolicy>;
     let discoveryConfig: HandlerContext["config"];

@@ -250,14 +250,25 @@ function sanitizeForwardedRuntimeAllowedTools(input: {
   return Object.keys(nextForwardedProps).length > 0 ? nextForwardedProps : undefined;
 }
 
-function sanitizeRuntimeRunAgentInput(input: RuntimeRunAgentInput): RuntimeRunAgentInput {
+function getExplicitAgentToolNames(agent: Agent): string[] {
+  const tools = agent.config.tools;
+  return tools && tools !== true ? Object.keys(tools) : [];
+}
+
+function sanitizeRuntimeRunAgentInput(
+  input: RuntimeRunAgentInput,
+  sourceAuthorizedToolNames: string[],
+): RuntimeRunAgentInput {
   const clientProfile = resolveRuntimeClientProfile(input.forwardedProps);
 
   return {
     ...input,
     forwardedProps: sanitizeForwardedRuntimeAllowedTools({
       forwardedProps: input.forwardedProps,
-      availableToolNames: input.tools.map((tool) => tool.name),
+      availableToolNames: [
+        ...input.tools.map((tool) => tool.name),
+        ...sourceAuthorizedToolNames,
+      ],
       allowStudioRuntimeTools: clientAllowsStudioMcp(clientProfile),
     }),
   };
@@ -835,6 +846,7 @@ export class AgentStreamHandler extends BaseHandler {
                   : agent;
                 const runtimeInput = sanitizeRuntimeRunAgentInput(
                   toRuntimeRunAgentInput(payload),
+                  getExplicitAgentToolNames(runtimeBaseAgent),
                 );
                 const localTools = this.deps.getLocalTools?.(runtimeBaseAgent.id);
                 const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
