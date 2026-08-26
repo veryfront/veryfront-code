@@ -12,7 +12,7 @@ export type { CacheBackendType, CacheSetBatchEntry } from "./schemas/index.ts";
 
 // Import for use in interface
 import type { CacheBackendType, CacheSetBatchEntry } from "./schemas/index.ts";
-import type { ResolvedCacheAuthority } from "./request-authority.ts";
+import type { ResolvedCacheAuthority } from "#veryfront/cache/request-authority.ts";
 
 /** Maximum number of code units in a cache revision identifier. */
 export const MAX_CACHE_REVISION_LENGTH = 256;

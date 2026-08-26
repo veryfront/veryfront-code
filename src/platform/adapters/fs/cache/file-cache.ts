@@ -303,30 +303,38 @@ export class FileCache {
       async () => {
         const l1 = immutableL1;
         const immutableL1Ttl = this.getImmutableL1Ttl();
-        // The process-local tier holds only immutable release-scoped values, and
-        // only under the authority the backend read itself would have used.
-        // Anything else, including every branch-scoped key, falls through to the
-        // backend on every request.
-        const l1Scope = l1 && immutableL1Ttl > 0 && isImmutableReleaseFileCacheKey(key)
-          ? resolveImmutableL1Scope(backend.type, backend.cacheAuthority?.())
-          : null;
-        // A value already in the request-scoped cache may be this request's own
-        // optimistic write rather than something the backend confirmed, so it
-        // must neither be answered from nor promoted into the process-local tier.
-        //
-        // `pending` matters for the same reason and is not covered by `cache`.
-        // `getCachedWithBatching` hands a read that starts now the promise of a
-        // read that started EARLIER, and the generation token this call is about
-        // to take is read AFTER any invalidation that landed in between. Without
-        // this, a read starting after a delete or a prefix invalidation carries
-        // a post-bump token while receiving a pre-invalidation value, and
-        // reinstates exactly what was just invalidated for the whole TTL.
-        const requestCtx = getRequestCacheContext();
-        const inRequestScope = (requestCtx?.cache.has(key) ?? false) ||
-          (requestCtx?.pending.has(key) ?? false);
-        const useL1 = l1Scope !== null && !inRequestScope;
 
         try {
+          // The process-local tier holds only immutable release-scoped values,
+          // and only under the authority the backend read itself would have
+          // used. Anything else, including every branch-scoped key, falls
+          // through to the backend on every request.
+          //
+          // Resolved inside this try block deliberately: `cacheAuthority()`
+          // reaches into the dynamically installed request-context adapter,
+          // which can throw. Before the tier existed that failure surfaced
+          // during the awaited backend read and the catch below turned it into
+          // a miss, so it must stay inside the same error boundary rather than
+          // reject an immutable-key read outright.
+          const l1Scope = l1 && immutableL1Ttl > 0 && isImmutableReleaseFileCacheKey(key)
+            ? resolveImmutableL1Scope(backend.type, backend.cacheAuthority?.())
+            : null;
+          // A value already in the request-scoped cache may be this request's own
+          // optimistic write rather than something the backend confirmed, so it
+          // must neither be answered from nor promoted into the process-local tier.
+          //
+          // `pending` matters for the same reason and is not covered by `cache`.
+          // `getCachedWithBatching` hands a read that starts now the promise of a
+          // read that started EARLIER, and the generation token this call is about
+          // to take is read AFTER any invalidation that landed in between. Without
+          // this, a read starting after a delete or a prefix invalidation carries
+          // a post-bump token while receiving a pre-invalidation value, and
+          // reinstates exactly what was just invalidated for the whole TTL.
+          const requestCtx = getRequestCacheContext();
+          const inRequestScope = (requestCtx?.cache.has(key) ?? false) ||
+            (requestCtx?.pending.has(key) ?? false);
+          const useL1 = l1Scope !== null && !inRequestScope;
+
           if (useL1 && l1) {
             // The instance's own lifetime is enforced at lookup as well as
             // stamped at admission, so a short-TTL instance is never served
@@ -383,8 +391,18 @@ export class FileCache {
                     Number.isFinite(entry.backendTtlMs)
                   ? entry.backendTtlMs
                   : this.options.ttl;
-                const backendRemainingTtl = entry.timestamp + writerTtlMs -
-                  readToken.startedAtMs;
+                // `entry.timestamp` is the WRITER's wall clock and
+                // `startedAtMs` this reader's, and the two hosts' clocks can
+                // skew. A reader whose clock runs behind the writer's would
+                // derive a remaining lifetime LONGER than the writer declared,
+                // so the derived value is clamped to `writerTtlMs`: whatever
+                // the clocks say, an entry is never held past the lifetime its
+                // writer recorded. `immutableL1Ttl` below, itself clamped to
+                // the security maximum, stays the outer bound.
+                const backendRemainingTtl = Math.min(
+                  writerTtlMs,
+                  entry.timestamp + writerTtlMs - readToken.startedAtMs,
+                );
                 l1.admit(
                   admissionScope,
                   key,
@@ -420,15 +438,19 @@ export class FileCache {
     if (!this.options.enabled) return;
 
     const size = estimateSize(value);
-    // `backendTtlMs` records the lifetime the backend write below will use, so
-    // a reader with a different configured ttl can bound L1 admission by this
-    // entry's actual backend expiry. Harmless on the fallback path, which
-    // never serializes the entry.
+    // `backendTtlMs` records the freshness bound this writer configured, so a
+    // reader with a different ttl can bound L1 admission by it. This is the
+    // configured `ttl` and NOT `backendTtlSeconds * 1000`: the backend write
+    // below rounds the ttl UP to whole seconds, and recording the rounded
+    // value would widen a sub-second writer's declared freshness window (a
+    // 200 ms ttl would be held for a full second). The declared bound is
+    // never later than the rounded-up backend expiry. Harmless on the
+    // fallback path, which never serializes the entry.
     const entry: CacheEntry<T> = {
       value,
       timestamp: Date.now(),
       size,
-      backendTtlMs: this.backendTtlSeconds * 1000,
+      backendTtlMs: this.options.ttl,
     };
     // A write invalidates any held entry whichever storage path is taken below,
     // including the fallback one that never reaches the request cache. The
@@ -473,15 +495,19 @@ export class FileCache {
     if (!this.options.enabled) return Promise.resolve();
 
     const size = estimateSize(value);
-    // `backendTtlMs` records the lifetime the backend write below will use, so
-    // a reader with a different configured ttl can bound L1 admission by this
-    // entry's actual backend expiry. Harmless on the fallback path, which
-    // never serializes the entry.
+    // `backendTtlMs` records the freshness bound this writer configured, so a
+    // reader with a different ttl can bound L1 admission by it. This is the
+    // configured `ttl` and NOT `backendTtlSeconds * 1000`: the backend write
+    // below rounds the ttl UP to whole seconds, and recording the rounded
+    // value would widen a sub-second writer's declared freshness window (a
+    // 200 ms ttl would be held for a full second). The declared bound is
+    // never later than the rounded-up backend expiry. Harmless on the
+    // fallback path, which never serializes the entry.
     const entry: CacheEntry<T> = {
       value,
       timestamp: Date.now(),
       size,
-      backendTtlMs: this.backendTtlSeconds * 1000,
+      backendTtlMs: this.options.ttl,
     };
     // A write invalidates any held entry whichever storage path is taken below,
     // including the fallback one that never reaches the request cache. The

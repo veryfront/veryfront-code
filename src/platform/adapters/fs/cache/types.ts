@@ -3,10 +3,12 @@ export interface CacheEntry<T> {
   timestamp: number;
   size: number;
   /**
-   * The backend lifetime the writing instance stored the entry with, in
-   * milliseconds from `timestamp`. Recorded because instances configure their
-   * TTLs independently: a reader must bound what it holds in the process-local
-   * immutable tier by the writer's actual backend expiry, not by its own
+   * The freshness lifetime the writing instance configured (its `ttl`), in
+   * milliseconds from `timestamp`. The backend write rounds this up to whole
+   * seconds, so the recorded bound is never later than the entry's actual
+   * backend expiry. Recorded because instances configure their TTLs
+   * independently: a reader must bound what it holds in the process-local
+   * immutable tier by the writer's declared lifetime, not by its own
    * configured `ttl`. Absent from entries serialized before this field
    * existed; readers fall back to their own `ttl` for those.
    */

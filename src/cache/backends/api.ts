@@ -5,7 +5,10 @@ import { isValidCachePattern, sanitizeCacheKey } from "../keys/index.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
 import type { CacheBackend, CacheReadOptions } from "../types.ts";
 import { buildBatchResults } from "../batch-results.ts";
-import { resolveCacheRequestAuthority, type ResolvedCacheAuthority } from "../request-authority.ts";
+import {
+  resolveCacheRequestAuthority,
+  type ResolvedCacheAuthority,
+} from "#veryfront/cache/request-authority.ts";
 import { REQUEST_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import {
