@@ -48,10 +48,12 @@ export function useWorkflowStart<TInput = unknown>(
   );
   const currentRequestContext = useRef(requestContext);
   currentRequestContext.current = requestContext;
-  const requestSequence = useRef(0);
 
-  const [startingRequestContext, setStartingRequestContext] = useState<
-    typeof requestContext | null
+  const [startingState, setStartingState] = useState<
+    {
+      count: number;
+      requestContext: typeof requestContext;
+    } | null
   >(null);
   const [lastRun, setLastRun] = useState<
     {
@@ -68,12 +70,14 @@ export function useWorkflowStart<TInput = unknown>(
 
   const start = useCallback(
     async (input: TInput): Promise<string> => {
-      const sequence = ++requestSequence.current;
       const startedRequestContext = requestContext;
       const isCurrentRequest = (): boolean =>
-        sequence === requestSequence.current &&
         startedRequestContext === currentRequestContext.current;
-      setStartingRequestContext(startedRequestContext);
+      setStartingState((current) =>
+        current?.requestContext === startedRequestContext
+          ? { ...current, count: current.count + 1 }
+          : { count: 1, requestContext: startedRequestContext }
+      );
       setErrorState(null);
 
       try {
@@ -115,7 +119,10 @@ export function useWorkflowStart<TInput = unknown>(
         }
         throw startError;
       } finally {
-        if (isCurrentRequest()) setStartingRequestContext(null);
+        setStartingState((current) => {
+          if (current?.requestContext !== startedRequestContext) return current;
+          return current.count === 1 ? null : { ...current, count: current.count - 1 };
+        });
       }
     },
     [credentials, normalizedApiBase, onError, onStart, requestContext, stableHeaders, workflowId],
@@ -125,7 +132,7 @@ export function useWorkflowStart<TInput = unknown>(
     setErrorState(null);
   }, []);
 
-  const isStarting = startingRequestContext === requestContext;
+  const isStarting = startingState?.requestContext === requestContext && startingState.count > 0;
   const lastRunId = lastRun?.requestContext === requestContext ? lastRun.runId : null;
   const error = errorState?.requestContext === requestContext ? errorState.error : null;
 

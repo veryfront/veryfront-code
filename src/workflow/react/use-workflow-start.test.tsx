@@ -89,6 +89,53 @@ describe("useWorkflowStart", () => {
     }
   });
 
+  it("keeps concurrent starts in the same request context independent", async () => {
+    const restoreDom = installDom();
+    const firstResponse = Promise.withResolvers<Response>();
+    const secondResponse = Promise.withResolvers<Response>();
+    const responses = [firstResponse, secondResponse];
+    const startedRunIds: string[] = [];
+    let requestCount = 0;
+    let hook: UseWorkflowStartResult<{ order: number }> | null = null;
+
+    installMockFetch(
+      (() => responses[requestCount++]!.promise) as typeof fetch,
+    );
+
+    function Capture(): null {
+      hook = useWorkflowStart({
+        workflowId: "workflow-1",
+        onStart: (runId) => startedRunIds.push(runId),
+      });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      const firstStart = hook!.start({ order: 1 });
+      const secondStart = hook!.start({ order: 2 });
+      assertEquals(requestCount, 2);
+
+      firstResponse.resolve(Response.json({ runId: "run-first" }));
+      assertEquals(await firstStart, "run-first");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(hook!.isStarting, true, "the second start is still in flight");
+      assertEquals(hook!.lastRunId, "run-first");
+      assertEquals(startedRunIds, ["run-first"]);
+
+      secondResponse.resolve(Response.json({ runId: "run-second" }));
+      assertEquals(await secondStart, "run-second");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(hook!.isStarting, false);
+      assertEquals(hook!.lastRunId, "run-second");
+      assertEquals(startedRunIds, ["run-first", "run-second"]);
+    } finally {
+      flushSync(() => root.unmount());
+      restoreDom();
+    }
+  });
+
   it("keeps an approval decision launched from a layout effect current on mount", async () => {
     const restoreDom = installDom();
     const decisionResponse = Promise.withResolvers<Response>();
@@ -130,7 +177,64 @@ describe("useWorkflowStart", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       assertEquals(hook!.isSubmitting, false);
       assertEquals(hook!.approval?.status, "approved");
-      assertEquals(hook!.approval?.resolvedBy, "server-user");
+      assertEquals(
+        (hook!.approval as { resolvedBy?: string } | null)?.resolvedBy,
+        "server-user",
+      );
+      assertEquals(decisions, ["server-user"]);
+    } finally {
+      flushSync(() => root.unmount());
+      restoreDom();
+    }
+  });
+
+  it("coalesces concurrent decisions for the same approval", async () => {
+    const restoreDom = installDom();
+    const decisionResponse = Promise.withResolvers<Response>();
+    const decisions: string[] = [];
+    let postCount = 0;
+    let hook: UseApprovalResult | null = null;
+
+    installMockFetch(
+      ((_input: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          postCount++;
+          return decisionResponse.promise;
+        }
+        return Promise.resolve(Response.json({ id: "approval-1", status: "pending" }));
+      }) as typeof fetch,
+    );
+
+    function Capture(): null {
+      hook = useApproval({
+        runId: "run-1",
+        approvalId: "approval-1",
+        approver: "browser-user",
+        onDecision: (decision) => decisions.push(decision.approver),
+      });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const winningDecision = hook!.approve();
+      const duplicateDecision = hook!.reject();
+      await Promise.resolve();
+      assertEquals(postCount, 1, "only one decision may reach the atomic backend gate");
+
+      decisionResponse.resolve(Response.json({ resolvedBy: "server-user" }));
+      await Promise.all([winningDecision, duplicateDecision]);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      assertEquals(hook!.isSubmitting, false);
+      assertEquals(hook!.approval?.status, "approved");
+      assertEquals(
+        (hook!.approval as { resolvedBy?: string } | null)?.resolvedBy,
+        "server-user",
+      );
       assertEquals(decisions, ["server-user"]);
     } finally {
       flushSync(() => root.unmount());

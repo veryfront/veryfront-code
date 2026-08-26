@@ -158,6 +158,70 @@ The handler covers every path the hooks call:
 Mounting somewhere else means telling both sides. Pass `basePath` to the handler
 and the matching `apiBase` to every hook.
 
+### Call the hooks across origins
+
+A cross-origin `apiBase` needs CORS on both the preflight and the actual
+response. `createWorkflowHandler` owns `GET` and `POST`; the route module must
+export `OPTIONS` and add the same CORS headers to the handler responses. Allow
+only the application origins you control, and list every request header the
+hooks send:
+
+```ts theme={null}
+// app/api/workflows/[...path]/route.ts
+import { createWorkflowHandler } from "veryfront/workflow";
+import { getSession } from "../../../../lib/auth.ts";
+import { workflows } from "../../../../lib/workflows.ts";
+
+const applicationOrigin = "https://app.example.com";
+const handlers = createWorkflowHandler(workflows, {
+  authorize: async (request) => (await getSession(request))?.user.id ?? null,
+});
+
+function cors(request: Request, response: Response): Response {
+  if (request.headers.get("Origin") !== applicationOrigin) return response;
+  const headers = new Headers(response.headers);
+  headers.set("Access-Control-Allow-Origin", applicationOrigin);
+  headers.set("Access-Control-Allow-Credentials", "true");
+  headers.append("Vary", "Origin");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+export async function GET(request: Request): Promise<Response> {
+  return cors(request, await handlers.GET(request));
+}
+
+export async function POST(request: Request): Promise<Response> {
+  return cors(request, await handlers.POST(request));
+}
+
+export function OPTIONS(request: Request): Response {
+  if (request.headers.get("Origin") !== applicationOrigin) {
+    return new Response(null, { status: 403 });
+  }
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": applicationOrigin,
+      "Access-Control-Allow-Credentials": "true",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type, X-CSRF-Token",
+      "Vary": "Origin",
+    },
+  });
+}
+```
+
+Pass an authorization header through the hook `headers` option when the
+workflow origin uses bearer authentication. Set `credentials: "include"` only
+for a credentialed cookie session; that mode requires the exact-origin
+`Access-Control-Allow-Origin` and `Access-Control-Allow-Credentials: true`
+headers shown above. The preflight must allow `Content-Type`, `Authorization`,
+and any configured CSRF header the client sends.
+
 ### Stream run events
 
 Use the SSE route when a dashboard, operator, or CI client needs durable progress

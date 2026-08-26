@@ -55,8 +55,14 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
   );
   const currentRequestContext = useRef(requestContext);
   currentRequestContext.current = requestContext;
-  const decisionSequence = useRef(0);
   const decisionRequestContext = useRef(requestContext);
+  const activeDecision = useRef<
+    {
+      id: object;
+      promise: Promise<void>;
+      requestContext: typeof requestContext;
+    } | null
+  >(null);
 
   const [approvalState, setApprovalState] = useState<
     {
@@ -74,7 +80,6 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
 
   useEffect(() => {
     if (decisionRequestContext.current === requestContext) return;
-    decisionSequence.current++;
     decisionRequestContext.current = requestContext;
     setIsSubmitting(false);
   }, [requestContext]);
@@ -134,82 +139,92 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
   ]);
 
   const submitDecision = useCallback(
-    async (decision: ApprovalDecision): Promise<void> => {
-      if (!runId || !approvalId) return;
+    (decision: ApprovalDecision): Promise<void> => {
+      if (!runId || !approvalId) return Promise.resolve();
+      if (activeDecision.current?.requestContext === requestContext) {
+        return activeDecision.current.promise;
+      }
+
       decisionRequestContext.current = requestContext;
-      const sequence = ++decisionSequence.current;
       const submittedRequestContext = requestContext;
       const isCurrentRequest = (): boolean =>
-        sequence === decisionSequence.current &&
         submittedRequestContext === currentRequestContext.current;
+      const decisionId = {};
 
       setIsSubmitting(true);
       setError(null);
 
-      try {
-        const requestUrl = `${normalizedApiBase}/runs/${
-          encodeWorkflowPathSegment(runId, "Workflow run ID")
-        }/approvals/${encodeWorkflowPathSegment(approvalId, "Workflow approval ID")}`;
-        const response = await fetch(requestUrl, {
-          method: "POST",
-          headers: workflowJsonMutationHeaders(requestUrl, stableHeaders),
-          credentials,
-          body: JSON.stringify(decision),
-        });
-
-        if (!response.ok) {
-          throw REQUEST_ERROR.create({
-            detail: `Failed to submit decision: ${response.status}`,
-            status: response.status,
+      const promise = Promise.resolve().then(async (): Promise<void> => {
+        try {
+          const requestUrl = `${normalizedApiBase}/runs/${
+            encodeWorkflowPathSegment(runId, "Workflow run ID")
+          }/approvals/${encodeWorkflowPathSegment(approvalId, "Workflow approval ID")}`;
+          const response = await fetch(requestUrl, {
+            method: "POST",
+            headers: workflowJsonMutationHeaders(requestUrl, stableHeaders),
+            credentials,
+            body: JSON.stringify(decision),
           });
-        }
 
-        const responseText = await response.text();
-        let responseBody: unknown;
-        if (responseText) {
-          try {
-            responseBody = JSON.parse(responseText) as unknown;
-          } catch {
-            // Successful legacy/proxied endpoints may return a non-JSON body.
+          if (!response.ok) {
+            throw REQUEST_ERROR.create({
+              detail: `Failed to submit decision: ${response.status}`,
+              status: response.status,
+            });
           }
-        }
-        const responseResolvedBy = responseBody !== null && typeof responseBody === "object" &&
-            "resolvedBy" in responseBody
-          ? responseBody.resolvedBy
-          : undefined;
-        const resolvedDecision: ApprovalDecision = {
-          ...decision,
-          approver: typeof responseResolvedBy === "string" ? responseResolvedBy : decision.approver,
-        };
 
-        if (!isCurrentRequest()) return;
-
-        setApprovalState((prev) => {
-          if (!prev || prev.requestContext !== submittedRequestContext) return prev;
-
-          return {
-            requestContext: prev.requestContext,
-            approval: {
-              ...prev.approval,
-              status: decision.approved ? "approved" : "rejected",
-              resolvedAt: new Date(),
-              resolvedBy: resolvedDecision.approver,
-              comment: decision.comment,
-            },
+          const responseText = await response.text();
+          let responseBody: unknown;
+          if (responseText) {
+            try {
+              responseBody = JSON.parse(responseText) as unknown;
+            } catch {
+              // Successful legacy/proxied endpoints may return a non-JSON body.
+            }
+          }
+          const responseResolvedBy = responseBody !== null && typeof responseBody === "object" &&
+              "resolvedBy" in responseBody
+            ? responseBody.resolvedBy
+            : undefined;
+          const resolvedDecision: ApprovalDecision = {
+            ...decision,
+            approver: typeof responseResolvedBy === "string"
+              ? responseResolvedBy
+              : decision.approver,
           };
-        });
 
-        onDecision?.(resolvedDecision);
-      } catch (err) {
-        const submitError = toError(err);
-        if (isCurrentRequest()) {
-          setError(submitError);
-          onError?.(submitError);
+          if (!isCurrentRequest()) return;
+
+          setApprovalState((prev) => {
+            if (!prev || prev.requestContext !== submittedRequestContext) return prev;
+
+            return {
+              requestContext: prev.requestContext,
+              approval: {
+                ...prev.approval,
+                status: decision.approved ? "approved" : "rejected",
+                resolvedAt: new Date(),
+                resolvedBy: resolvedDecision.approver,
+                comment: decision.comment,
+              },
+            };
+          });
+
+          onDecision?.(resolvedDecision);
+        } catch (err) {
+          const submitError = toError(err);
+          if (isCurrentRequest()) {
+            setError(submitError);
+            onError?.(submitError);
+          }
+          throw submitError;
+        } finally {
+          if (activeDecision.current?.id === decisionId) activeDecision.current = null;
+          if (isCurrentRequest()) setIsSubmitting(false);
         }
-        throw submitError;
-      } finally {
-        if (isCurrentRequest()) setIsSubmitting(false);
-      }
+      });
+      activeDecision.current = { id: decisionId, promise, requestContext };
+      return promise;
     },
     [
       runId,

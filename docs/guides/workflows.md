@@ -335,9 +335,12 @@ approval, the decision lands in the workflow context under the wait node's id,
 so later steps read `ctx["editor-review"]` as
 `{ approved, approver, comment, data, decidedAt }`.
 
-The approval endpoint served by `createWorkflowHandler` accepts the same
-decision as a JSON body of the shape `{ approved, approver, comment?, data? }`.
-See [Workflows: advanced](./workflows-advanced.md) for the handler routes.
+The approval endpoint served by `createWorkflowHandler` accepts a JSON body of
+the shape `{ approved, approver, comment?, data? }`. The body-level `approver`
+is compatibility input, not an identity claim. The handler replaces it with
+the authenticated identity returned by its server-side `authorize` callback,
+and that server-derived identity is what the workflow context persists. See
+[Workflows: advanced](./workflows-advanced.md) for the handler routes.
 
 ### Wait for events
 
