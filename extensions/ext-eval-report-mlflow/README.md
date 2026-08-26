@@ -57,8 +57,8 @@ veryfront eval eval:service-now-classification
 | Variable                                        | Required | Description                                                                                                                                                                                                                 |
 | ----------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `MLFLOW_TRACKING_URI`                           | See note | MLflow Tracking server URI for environment-based activation. Required unless the extension configuration supplies `trackingUri`, which activates the exporter directly; the exporter is not registered when both are unset. |
-| `MLFLOW_EXPERIMENT_NAME`                        | No       | Experiment name. Defaults from project/eval context, then `veryfront-evals`.                                                                                                                                                |
-| `MLFLOW_RUN_NAME`                               | No       | Run name. Defaults to `<eval-id>-<run-id>`.                                                                                                                                                                                 |
+| `MLFLOW_EXPERIMENT_NAME`                        | No       | Experiment name. Defaults from project/eval context, then `veryfront-evals`. Applies only to environment-based activation; a configured `trackingUri` must set `experimentName` in config.                                  |
+| `MLFLOW_RUN_NAME`                               | No       | Run name. Defaults to `<eval-id>-<run-id>`. Applies only to environment-based activation; a configured `trackingUri` must set `runName` in config.                                                                          |
 | `MLFLOW_ARTIFACTS_URI`                          | No       | HTTP(S) MLflow artifact proxy endpoint used when the run artifact root is not directly writable as HTTP(S). Applies only to environment-based activation; a configured `trackingUri` must set `artifactsUri` in config.     |
 | `MLFLOW_ARTIFACTS_PORT`                         | No       | Local convenience port used to derive the artifact proxy URI from `MLFLOW_TRACKING_URI` when `MLFLOW_ARTIFACTS_URI` is unset. Applies only to environment-based activation, like `MLFLOW_ARTIFACTS_URI`.                    |
 | `MLFLOW_TRACKING_TOKEN`                         | No       | Bearer token sent to MLflow Tracking REST endpoints. Prefer this over embedding credentials in `MLFLOW_TRACKING_URI`.                                                                                                       |
@@ -69,9 +69,9 @@ veryfront eval eval:service-now-classification
 | `MLFLOW_OAUTH_CLIENT_SECRET`                    | No       | OAuth 2.0 client secret.                                                                                                                                                                                                    |
 | `MLFLOW_OAUTH_SCOPE`                            | No       | Optional OAuth client-credentials scope.                                                                                                                                                                                    |
 | `MLFLOW_EXPORT_ARTIFACTS`                       | No       | `true` by default. Set to `false` to export the run, metrics, parameters, and tags without report artifacts.                                                                                                                |
-| `MLFLOW_REQUEST_TIMEOUT_MS`                     | No       | Per-request timeout in milliseconds. Defaults to `10000`; must be `1`–`60000`.                                                                                                                                              |
-| `MLFLOW_RETRY_ATTEMPTS`                         | No       | Retries for safe reads, artifact `PUT`s, and run-status updates. Defaults to `2`; must be `0`–`5`.                                                                                                                          |
-| `MLFLOW_RETRY_DELAY_MS`                         | No       | Initial exponential-backoff delay in milliseconds. Defaults to `250`; must be `0`–`5000`.                                                                                                                                   |
+| `MLFLOW_REQUEST_TIMEOUT_MS`                     | No       | Per-request timeout in milliseconds. Defaults to `10000`; must be `1`-`60000`.                                                                                                                                              |
+| `MLFLOW_RETRY_ATTEMPTS`                         | No       | Retries for safe reads, artifact `PUT`s, and run-status updates. Defaults to `2`; must be `0`-`5`.                                                                                                                          |
+| `MLFLOW_RETRY_DELAY_MS`                         | No       | Initial exponential-backoff delay in milliseconds. Defaults to `250`; must be `0`-`5000`.                                                                                                                                   |
 | `MLFLOW_RUN_URL_TEMPLATE`                       | No       | Optional HTTPS tracking-UI URL with `{experimentId}` and `{runId}`; `{trackingUri}` is also available.                                                                                                                      |
 | `VERYFRONT_EVAL_EXPORTERS`                      | No       | Comma- or whitespace-separated exporter ids that override automatic MLflow selection. Use `mlflow` for this extension.                                                                                                      |
 | `VERYFRONT_EVAL_EXPORT`                         | No       | Legacy singular exporter override used only when `VERYFRONT_EVAL_EXPORTERS` is unset.                                                                                                                                       |
@@ -92,7 +92,10 @@ configured `trackingUri` likewise does not inherit `MLFLOW_ARTIFACTS_URI` or
 `MLFLOW_ARTIFACTS_PORT`. Set `artifactsUri` (or `artifactsPort`) in the same
 configuration when that deployment needs an explicit artifact proxy. It also
 does not inherit `MLFLOW_RUN_URL_TEMPLATE`; set `runUrlTemplate` when receipts
-must use a custom tracking UI route. Existing configurations that previously
+must use a custom tracking UI route. The same boundary applies to
+`MLFLOW_EXPERIMENT_NAME` and `MLFLOW_RUN_NAME`; set `experimentName` and
+`runName` in the same configuration to name the tenant experiment and run.
+Existing configurations that previously
 combined a configured endpoint with `MLFLOW_TRACKING_TOKEN` must migrate the
 token explicitly:
 

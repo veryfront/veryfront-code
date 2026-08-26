@@ -506,10 +506,12 @@ describe("ext-eval-report-mlflow", () => {
     );
   });
 
-  it("does not inherit ambient host artifact endpoints for a configured tracking URI", async () => {
+  it("does not inherit ambient host artifact endpoints or naming for a configured tracking URI", async () => {
     clearMlflowEnv();
     Deno.env.set("MLFLOW_ARTIFACTS_URI", "https://operator-artifacts.test");
     Deno.env.set("MLFLOW_ARTIFACTS_PORT", "5600");
+    Deno.env.set("MLFLOW_EXPERIMENT_NAME", "operator-experiment");
+    Deno.env.set("MLFLOW_RUN_NAME", "operator-run");
     const registry = createEvalReportExporterRegistry();
     const { requests, fetchImpl } = createMlflowFetchRecorder({
       artifactUri: "mlflow-artifacts:/exp-1/run-1/artifacts",
@@ -530,6 +532,32 @@ describe("ext-eval-report-mlflow", () => {
         "https://tenant-mlflow.test/api/2.0/mlflow-artifacts/artifacts/exp-1/run-1/artifacts/veryfront-eval/summary.json",
         "https://tenant-mlflow.test/api/2.0/mlflow-artifacts/artifacts/exp-1/run-1/artifacts/veryfront-eval/results.jsonl",
       ],
+    );
+
+    const experimentLookup = requests.find((request) =>
+      request.url.includes("/experiments/get-by-name")
+    );
+    assertExists(experimentLookup);
+    assertEquals(
+      new URL(experimentLookup.url).searchParams.get("experiment_name"),
+      "eval:smoke",
+    );
+
+    const runCreate = requests.find((request) =>
+      request.url.endsWith("/api/2.0/mlflow/runs/create")
+    );
+    assertExists(runCreate);
+    assertEquals(
+      JSON.parse(String(runCreate.body)).run_name,
+      "eval:smoke-evalrun_1",
+    );
+    assertEquals(
+      requests.some((request) =>
+        request.url.includes("operator-experiment") ||
+        String(request.body ?? "").includes("operator-experiment") ||
+        String(request.body ?? "").includes("operator-run")
+      ),
+      false,
     );
   });
 

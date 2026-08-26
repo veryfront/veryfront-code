@@ -531,9 +531,10 @@ function resolveExporterConfig(
   // own credentials so host secrets never cross that trust boundary.
   const allowEnvironmentCredentials = config.trackingUri === undefined &&
     config.fetch === undefined && !configuredOAuthTokenUrl;
-  // Ambient artifact and UI endpoints describe the environment-selected
-  // tracking deployment. A configured trackingUri targets a different
-  // deployment, so supply those settings in the same configuration.
+  // Ambient artifact endpoints, UI settings, and experiment/run naming
+  // describe the environment-selected tracking deployment. A configured
+  // trackingUri targets a different deployment, so supply those settings in
+  // the same configuration.
   const allowEnvironmentDeploymentEndpoints = config.trackingUri === undefined;
   return {
     id: DEFAULT_EXPORTER_ID,
@@ -542,8 +543,10 @@ function resolveExporterConfig(
       (allowEnvironmentDeploymentEndpoints ? readEnv(ENV_ARTIFACTS_PORT) : undefined),
     artifactsUri: config.artifactsUri ??
       (allowEnvironmentDeploymentEndpoints ? readEnv(ENV_ARTIFACTS_URI) : undefined),
-    experimentName: config.experimentName ?? readEnv(ENV_EXPERIMENT_NAME),
-    runName: config.runName ?? readEnv(ENV_RUN_NAME),
+    experimentName: config.experimentName ??
+      (allowEnvironmentDeploymentEndpoints ? readEnv(ENV_EXPERIMENT_NAME) : undefined),
+    runName: config.runName ??
+      (allowEnvironmentDeploymentEndpoints ? readEnv(ENV_RUN_NAME) : undefined),
     trackingToken: config.trackingToken ??
       (allowEnvironmentCredentials ? readEnv(ENV_TRACKING_TOKEN) : undefined),
     trackingUsername: config.trackingUsername ??
