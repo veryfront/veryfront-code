@@ -1120,7 +1120,10 @@ function resolvesToPrototypeMutator(
       resolvesToGlobalIntrinsic(expression.object, "Reflect", scope, nodeScopes);
   }
   if (isAliasAssignmentExpression(expression)) {
-    return resolvesToPrototypeMutator(expression.right, scope, nodeScopes, seen);
+    const leftMayRemain = expression.operator !== "=" && isNode(expression.left) &&
+      resolvesToPrototypeMutator(expression.left, scope, nodeScopes, new Set(seen));
+    return leftMayRemain ||
+      resolvesToPrototypeMutator(expression.right, scope, nodeScopes, new Set(seen));
   }
   const branches = expressionBranches(expression);
   if (branches !== null) {
@@ -1649,13 +1652,22 @@ function resolvesToGlobalIntrinsicMember(
     )
   ) return true;
   if (isAliasAssignmentExpression(expression)) {
-    return resolvesToGlobalIntrinsicMember(
+    const leftMayRemain = expression.operator !== "=" && isNode(expression.left) &&
+      resolvesToGlobalIntrinsicMember(
+        expression.left,
+        objectName,
+        propertyName,
+        scope,
+        nodeScopes,
+        new Set(seen),
+      );
+    return leftMayRemain || resolvesToGlobalIntrinsicMember(
       expression.right,
       objectName,
       propertyName,
       scope,
       nodeScopes,
-      seen,
+      new Set(seen),
     );
   }
   const branches = expressionBranches(expression);
@@ -3198,6 +3210,14 @@ function isAliasInitializerUse(
     link = parents.get(current);
   }
   if (!link) return false;
+  if (
+    current.type === "AssignmentExpression" &&
+    ALIAS_ASSIGNMENT_OPERATORS.has(String(current.operator)) &&
+    isNode(current.left) &&
+    (current.left.type === "Identifier" ||
+      isSafeGlobalObjectDestructuring(current.left)) &&
+    link.parent.type === "ExpressionStatement" && link.key === "expression"
+  ) return true;
   return (link.parent.type === "VariableDeclarator" && link.key === "init" &&
     isNode(link.parent.id) &&
     (link.parent.id.type === "Identifier" ||
@@ -3253,10 +3273,7 @@ function isInertCapabilityInspection(
 ): boolean {
   let current = node;
   let link = parents.get(current);
-  while (
-    link && TS_EXPRESSION_WRAPPER_TYPES.has(link.parent.type) &&
-    link.key === "expression"
-  ) {
+  while (link && isInertInspectionValueFlow(link)) {
     current = link.parent;
     link = parents.get(current);
   }
@@ -3267,6 +3284,16 @@ function isInertCapabilityInspection(
   ) return true;
   return link.parent.type === "BinaryExpression" &&
     (link.parent.operator === "===" || link.parent.operator === "!==") &&
+    (link.key === "left" || link.key === "right");
+}
+
+function isInertInspectionValueFlow(link: ParentLink): boolean {
+  if (TS_EXPRESSION_WRAPPER_TYPES.has(link.parent.type) && link.key === "expression") return true;
+  if (
+    link.parent.type === "ConditionalExpression" &&
+    (link.key === "consequent" || link.key === "alternate")
+  ) return true;
+  return link.parent.type === "LogicalExpression" &&
     (link.key === "left" || link.key === "right");
 }
 
@@ -3432,7 +3459,9 @@ function applyMemberCapability(
   }
   if (
     resolvesToDenoCommand(node, scope, nodeScopes) &&
-    !isNewExpressionCallee(node, parents) && !isAliasInitializerUse(node, parents)
+    !isNewExpressionCallee(node, parents) &&
+    !isInertCapabilityInspection(node, parents) &&
+    !isAliasInitializerUse(node, parents)
   ) {
     analysis.hasDynamicCodeGeneration = true;
   }

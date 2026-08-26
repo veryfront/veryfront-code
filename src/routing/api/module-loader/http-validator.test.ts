@@ -1214,6 +1214,13 @@ describe("routing/api/module-loader/http-validator", () => {
           ` export const support = { setProto: typeof setProto === "function" };`,
         [],
       );
+      await validateHTTPImports(
+        `const flag = true;` +
+          ` const objectSupport = typeof (Object.setPrototypeOf ?? undefined) === "function";` +
+          ` const reflectSupport = (flag ? Reflect.setPrototypeOf : undefined) !== undefined;` +
+          ` export const GET = () => Response.json({ objectSupport, reflectSupport });`,
+        [],
+      );
       for (
         const inspection of [
           `Object.setPrototypeOf == Reflect.setPrototypeOf`,
@@ -1227,6 +1234,43 @@ describe("routing/api/module-loader/http-validator", () => {
           "coercing comparisons can invoke hooks on a prototype mutator",
         );
       }
+    });
+
+    it("should allow a tracked prototype-mutator alias assigned as a statement", async () => {
+      await validateHTTPImports(
+        `let mutate; mutate = Object.setPrototypeOf;` +
+          ` const holder = {}; mutate(holder, null);` +
+          ` export const GET = () => new Response(String(Object.getPrototypeOf(holder)));`,
+        [],
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `let mutate; mutate = Object.setPrototypeOf; const holder = {};` +
+              ` mutate(holder, () => {}); const make = holder.constructor;` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "the standalone alias assignment must remain tracked at its later call",
+      );
+    });
+
+    it("should retain prototype-mutator capability through logical assignments", async () => {
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `let mutate = Object.setPrototypeOf; const holder = {};` +
+              ` (mutate ||= (_target, _prototype) => false)(holder, () => {});` +
+              ` const make = holder.constructor;` +
+              ` make('return import("https://blocked.example/mod.js")')();`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "logical assignment can preserve an existing prototype-mutator alias",
+      );
     });
 
     it("should reject unresolved constructor keys after prototype mutation", async () => {
@@ -1915,6 +1959,22 @@ describe("routing/api/module-loader/http-validator", () => {
         `const Command = Deno.Command;` +
           ` export const supported = typeof Command === "function";`,
         [],
+      );
+      await validateHTTPImports(
+        `const flag = true;` +
+          ` export const supported = typeof (flag ? Deno.Command : undefined) === "function";`,
+        [],
+      );
+      await assertRejects(
+        async () =>
+          await validateHTTPImports(
+            `let Command = Deno.Command;` +
+              ` new (Command ||= class {})("deno", { args: ["run", "./unchecked.ts"] });`,
+            [],
+          ),
+        Error,
+        "dynamic code generation",
+        "logical assignment can preserve an existing subprocess constructor alias",
       );
       for (
         const source of [
