@@ -544,8 +544,7 @@ export class WorkflowExecutor {
         },
         onWaiting: (waitingRun, nodeId, waitConfig) =>
           this.config.onWaiting?.(waitingRun, nodeId, waitConfig),
-        onWaitingBatchComplete: (waitingRun) =>
-          this.config.onWaitingBatchComplete?.(waitingRun),
+        onWaitingBatchComplete: (waitingRun) => this.config.onWaitingBatchComplete?.(waitingRun),
       });
     }, {
       "workflow.id": run.workflowId,

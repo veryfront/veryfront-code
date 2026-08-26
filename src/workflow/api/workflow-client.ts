@@ -127,15 +127,14 @@ export class WorkflowClient {
           // The persisted event identity is the restart fallback for dynamic
           // definitions that cannot be indexed before their input is known.
           const registeredEventConfig = this.waitNodeConfigs.get(`${run.workflowId}::${nodeId}`);
-          const persistedEventConfig: WaitNodeConfig | undefined =
-            input.eventName === undefined
-              ? undefined
-              : {
-                type: "wait",
-                waitType: "event",
-                eventName: input.eventName,
-                ...(input.timeout === undefined ? {} : { timeout: input.timeout }),
-              };
+          const persistedEventConfig: WaitNodeConfig | undefined = input.eventName === undefined
+            ? undefined
+            : {
+              type: "wait",
+              waitType: "event",
+              eventName: input.eventName,
+              ...(input.timeout === undefined ? {} : { timeout: input.timeout }),
+            };
           const eventConfig = activeWaitConfig ?? registeredEventConfig ?? persistedEventConfig;
           if (eventConfig?.waitType === "event") {
             try {
