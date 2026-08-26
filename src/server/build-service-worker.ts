@@ -3,6 +3,7 @@ import type {
   ManifestChunkInfo,
 } from "#veryfront/build/production-build/manifest.ts";
 import { normalizeChunkPath } from "./utils/chunk-utils.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 function sanitizeCacheKey(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]/g, "");
@@ -53,7 +54,7 @@ function buildManifestAssets(manifest: BuildManifest): string[] {
     }
   }
 
-  return Array.from(assets).sort();
+  return Array.from(assets).sort(compareStrings);
 }
 
 export function generateServiceWorker(manifest: BuildManifest): string {

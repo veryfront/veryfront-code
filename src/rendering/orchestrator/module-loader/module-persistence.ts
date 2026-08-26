@@ -21,6 +21,7 @@ import {
 } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import { isMemberNameBefore } from "#veryfront/transforms/mdx/esm-module-loader/utils/source-spans.ts";
 import { buildModuleTransformCacheVariant } from "./module-cache-lookup.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const logger = rendererLogger.component("module-loader");
 
@@ -615,7 +616,7 @@ function isIdentifierPart(char: string | undefined): boolean {
 export async function persistTransformedModule(
   input: PersistTransformedModuleInput,
 ): Promise<string> {
-  const unresolvedSpecifiers = [...new Set(input.unresolvedSpecifiers ?? [])].sort();
+  const unresolvedSpecifiers = [...new Set(input.unresolvedSpecifiers ?? [])].sort(compareStrings);
   const serializedUnresolvedSpecifiers = JSON.stringify(unresolvedSpecifiers);
   // Evidence changes the artifact identity only when evidence exists. This
   // keeps the common no-evidence path stable and prevents concurrent writers
