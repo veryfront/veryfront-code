@@ -2,9 +2,15 @@ import {
   type HostToolSet,
   type RemoteMCPToolSourceConfig,
   type RemoteToolSource,
+  type ToolExecutionContext,
+  type ToolSet,
 } from "#veryfront/tool";
+import { hasTrustedHostToolProvenance } from "#veryfront/tool/host-tool-provenance.ts";
 import { runWithRequestContextAsync, serverLogger } from "#veryfront/utils";
-import { runWithRequestContext as runWithProjectRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import {
+  runWithoutRequestContext as runWithoutProjectRequestContext,
+  runWithRequestContext as runWithProjectRequestContext,
+} from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import {
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,
@@ -53,6 +59,10 @@ import type { AgentConfig, AgentSystem } from "../types.ts";
 import type { RuntimeToolFilterConfig } from "../runtime/runtime-tool-config.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { runWithEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
+
+const apply = Reflect.apply;
+const TypeErrorConstructor = TypeError;
 
 /** Configuration used by default hosted chat runtime. */
 export type DefaultHostedChatRuntimeConfig = {
@@ -192,10 +202,12 @@ function incrementSteeringRevision(context: DefaultHostedChatRuntimeTaskContext)
 async function buildToolAssembly(
   input: CreateDefaultHostedChatRuntimeOptions & {
     taskContext: DefaultHostedChatRuntimeTaskContext;
+    cloudContext: VeryfrontCloudContext;
   },
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
   const liveProjectSteering = input.options.liveProjectSteering;
-  return prepareConfigDerivedHostedChatRuntimeToolAssembly({
+  const localTools = await input.buildLocalTools(input.taskContext);
+  const toolAssembly = await prepareConfigDerivedHostedChatRuntimeToolAssembly({
     taskContext: input.taskContext,
     instructions: input.options.instructions,
     ...(liveProjectSteering === undefined ? {} : {
@@ -210,7 +222,7 @@ async function buildToolAssembly(
           availableToolNames: modelVisibleToolNames,
         }),
     }),
-    localTools: await input.buildLocalTools(input.taskContext),
+    localTools,
     hostToolPolicy: input.hostToolPolicy,
     apiUrl: input.config.apiUrl,
     apiMcpUrl: input.config.apiMcpUrl,
@@ -259,6 +271,14 @@ async function buildToolAssembly(
       }
     },
   });
+  return {
+    ...toolAssembly,
+    runtimeTools: scopeHostedRuntimeTools({
+      tools: toolAssembly.runtimeTools,
+      taskContext: input.taskContext,
+      cloudContext: input.cloudContext,
+    }),
+  };
 }
 
 function createRuntimeAgentConfig(input: {
@@ -348,6 +368,78 @@ function createCloudContext(input: {
   };
 }
 
+function withoutHostedCredentials<TResult>(input: {
+  taskContext: DefaultHostedChatRuntimeTaskContext;
+  cloudContext: VeryfrontCloudContext;
+  operation: () => Promise<TResult>;
+}): Promise<TResult> {
+  const publicCloudContext: VeryfrontCloudContext = {
+    apiBaseUrl: input.cloudContext.apiBaseUrl,
+    projectSlug: input.cloudContext.projectSlug,
+    serviceLayer: input.cloudContext.serviceLayer,
+    billingGroupId: input.cloudContext.billingGroupId,
+    billingGroupUsed: input.cloudContext.billingGroupUsed,
+  };
+  const runWithPublicCloudContext = () =>
+    runWithVeryfrontCloudContextAsync(publicCloudContext, input.operation);
+  if (!input.taskContext.projectSlug) {
+    return runWithoutProjectRequestContext(runWithPublicCloudContext);
+  }
+  return runWithProjectRequestContext(
+    {
+      projectSlug: input.taskContext.projectSlug,
+      projectId: input.taskContext.projectId || undefined,
+      token: "",
+      productionMode: false,
+    },
+    runWithPublicCloudContext,
+  );
+}
+
+function snapshotHostedToolResult(result: unknown): unknown {
+  if (result === undefined) return undefined;
+  const snapshot = snapshotBoundedJsonValue(result);
+  if (!snapshot.success) {
+    throw new TypeError("Hosted project tool result must be a bounded JSON value");
+  }
+  return snapshot.value;
+}
+
+/** @internal Scope local tool execution and sanitize errors without trusted provenance. */
+export function scopeHostedRuntimeTools(input: {
+  tools: ToolSet;
+  taskContext: DefaultHostedChatRuntimeTaskContext;
+  cloudContext: VeryfrontCloudContext;
+}): ToolSet {
+  return Object.fromEntries(
+    Object.entries(input.tools).map(([toolName, tool]) => {
+      const execute = tool.execute;
+      const preserveTrustedError = hasTrustedHostToolProvenance(tool);
+      return [
+        toolName,
+        {
+          ...tool,
+          execute: (toolInput: unknown, context?: ToolExecutionContext) =>
+            withoutHostedCredentials({
+              taskContext: input.taskContext,
+              cloudContext: input.cloudContext,
+              operation: async () => {
+                try {
+                  return snapshotHostedToolResult(
+                    await apply(execute, tool, [toolInput, context]),
+                  );
+                } catch (error) {
+                  if (preserveTrustedError) throw error;
+                  throw new TypeErrorConstructor("Hosted project tool execution failed");
+                }
+              },
+            }),
+        },
+      ];
+    }),
+  );
+}
+
 function runWithDefaultHostedRequestContext<TResult>(
   input: {
     taskContext: DefaultHostedChatRuntimeTaskContext;
@@ -367,7 +459,6 @@ function runWithDefaultHostedRequestContext<TResult>(
     userId: input.taskContext.userId,
     conversationId: input.taskContext.conversationId,
   };
-
   return runWithRequestContextAsync(
     requestContext,
     () => {
@@ -410,7 +501,7 @@ export async function createDefaultHostedChatRuntime(
       try {
         const toolAssembly = await runWithHostedRunEventWriterCapability(
           effectiveRunEventWriterCapability,
-          () => buildToolAssembly({ ...input, taskContext }),
+          () => buildToolAssembly({ ...input, taskContext, cloudContext }),
         );
         const runtimeAgentConfig = createRuntimeAgentConfig({
           options: input.options,
@@ -437,7 +528,6 @@ export async function createDefaultHostedChatRuntime(
             conversationId: taskContext.conversationId,
             projectId: taskContext.projectId,
             projectSlug: taskContext.projectSlug,
-            authToken: taskContext.authToken,
             maxOutputTokens: input.options.maxOutputTokens,
             resolveProjectContext: () => ({
               ...(taskContext.projectId ? { projectId: taskContext.projectId } : {}),

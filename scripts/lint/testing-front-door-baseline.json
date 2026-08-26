@@ -366,7 +366,6 @@
     "src/server/handlers/request/module/page-module-handler.test.ts": 2,
     "src/server/handlers/request/ssr/error-page-fallback.test.ts": 2,
     "src/server/handlers/request/ssr/not-found-fallback.test.ts": 2,
-    "src/server/handlers/request/ssr/ssr-snapshot.test.ts": 2,
     "src/server/handlers/utils/dependency-snapshot-protocol.test.ts": 1,
     "src/server/runtime-handler/index.test.ts": 2,
     "src/server/services/rsc/endpoints/action-handler.test.ts": 2,
