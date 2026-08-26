@@ -76,6 +76,7 @@ try {
       schemaVersion: 1,
       mode: "unrestricted",
     },
+    applicationIdentity: null,
   }).then(
     () => {
       resolved = true;

@@ -58,7 +58,7 @@ export function parseReviewWakeupRun(run) {
   const displayTitle = typeof run?.display_title === "string"
     ? run.display_title
     : "";
-  const titleMatch = /^automated-review-wakeup-pr-([1-9]\d*)$/.exec(
+  const titleMatch = /^automated-review-wakeup-pr-([1-9]\d*)-eligible$/.exec(
     displayTitle,
   );
   const pullNumber = titleMatch ? Number(titleMatch[1]) : undefined;
@@ -66,7 +66,6 @@ export function parseReviewWakeupRun(run) {
   if (
     !trustedPath ||
     run?.event !== "pull_request_review" ||
-    run?.conclusion !== "success" ||
     !Number.isSafeInteger(run?.id) ||
     run.id < 1 ||
     !Number.isSafeInteger(pullNumber) ||

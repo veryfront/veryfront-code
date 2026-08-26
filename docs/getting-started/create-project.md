@@ -45,6 +45,12 @@ veryfront init web-app --template minimal
 veryfront init workflow-app --template agentic-workflow
 ```
 
+If the project needs end-user login, add it after the initial app is running
+with `veryfront generate auth <provider>` or by configuring
+[`security.auth.oidc`](../guides/application-auth.md). This works for new
+projects and existing apps because the scaffold adds config and environment
+placeholders without replacing your routes.
+
 ### Choose a runtime
 
 By default, `veryfront init` scaffolds projects for **Node.js**. Pass

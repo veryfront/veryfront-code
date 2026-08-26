@@ -12,6 +12,7 @@ import {
   snapshotConflictResponse,
   stripSnapshotHeader,
 } from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
+import { createApplicationRequestHeaders } from "#veryfront/security/http/application-request.ts";
 import { resolveSSRControlOutcome } from "#veryfront/rendering/ssr-outcome.ts";
 import { shouldHideRouteInProduction } from "../route-visibility-policy.ts";
 
@@ -61,7 +62,10 @@ export function handleDataEndpoint(
         // leaking into application-visible request/query state.
         const applicationUrl = new URL(requestUrl);
         applicationUrl.pathname = encSlug ? `/${encSlug}` : "/";
-        const applicationHeaders = stripSnapshotHeader(req.headers);
+        const applicationHeaders = createApplicationRequestHeaders(
+          stripSnapshotHeader(req.headers),
+          { denyHeaders: ctx.applicationIdentityHeaderNames },
+        );
         const applicationRequest = new Request(applicationUrl, {
           method: req.method,
           headers: applicationHeaders,
@@ -75,6 +79,7 @@ export function handleDataEndpoint(
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
           dependencyPinningSource: dependencySource,
+          applicationIdentity: ctx.applicationIdentity ?? null,
         });
 
         const data = {

@@ -28,15 +28,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/incident",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/incident",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
-          },
           "sysparm_query": {
             "type": "string",
             "in": "query",
@@ -68,15 +61,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/incident/{sysId}",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/incident/{sysId}",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
-          },
           "sysId": {
             "type": "string",
             "in": "path",
@@ -102,16 +88,7 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{instanceHost}/api/now/v1/table/incident",
-        "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
-          }
-        },
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/incident",
         "body": {
           "short_description": {
             "type": "string",
@@ -151,15 +128,8 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
-        "url": "https://{instanceHost}/api/now/v1/table/incident/{sysId}",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/incident/{sysId}",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
-          },
           "sysId": {
             "type": "string",
             "in": "path",
@@ -205,15 +175,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/interaction",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/interaction",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
-          },
           "sysparm_query": {
             "type": "string",
             "in": "query",
@@ -245,15 +208,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/interaction/{sysId}",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/interaction/{sysId}",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
-          },
           "sysId": {
             "type": "string",
             "in": "path",
@@ -279,16 +235,7 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{instanceHost}/api/now/v1/table/interaction",
-        "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
-          }
-        },
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/interaction",
         "body": {
           "short_description": {
             "type": "string",
@@ -332,15 +279,8 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",
-        "url": "https://{instanceHost}/api/now/v1/table/interaction/{sysId}",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/interaction/{sysId}",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
-          },
           "sysId": {
             "type": "string",
             "in": "path",
@@ -386,15 +326,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/sc_request",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/sc_request",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
-          },
           "sysparm_query": {
             "type": "string",
             "in": "query",
@@ -426,15 +359,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/sc_request/{sysId}",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/sc_request/{sysId}",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
-          },
           "sysId": {
             "type": "string",
             "in": "path",
@@ -460,15 +386,8 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{instanceHost}/api/sn_sc/v1/servicecatalog/items/{catalogItemSysId}/order_now",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/sn_sc/v1/servicecatalog/items/{catalogItemSysId}/order_now",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
-          },
           "catalogItemSysId": {
             "type": "string",
             "in": "path",
@@ -499,15 +418,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/sc_req_item",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/sc_req_item",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
-          },
           "sysparm_query": {
             "type": "string",
             "in": "query",
@@ -539,15 +451,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/sc_req_item/{sysId}",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/sc_req_item/{sysId}",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
-          },
           "sysId": {
             "type": "string",
             "in": "path",
@@ -573,16 +478,7 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{instanceHost}/api/now/v1/table/sc_req_item",
-        "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
-          }
-        },
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/sc_req_item",
         "body": {
           "request": {
             "type": "string",
@@ -639,15 +535,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/kb_knowledge",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/kb_knowledge",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
-          },
           "sysparm_query": {
             "type": "string",
             "in": "query",
@@ -679,15 +568,8 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/sys_user",
+        "url": "https://{{env.SERVICENOW_INSTANCE}}/api/now/v1/table/sys_user",
         "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true,
-            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
-          },
           "sysparm_query": {
             "type": "string",
             "in": "query",
@@ -736,8 +618,9 @@
   "envVars": [
     {
       "name": "SERVICENOW_INSTANCE",
-      "description": "ServiceNow instance URL (e.g. your-instance.service-now.com)",
-      "required": true
+      "description": "ServiceNow instance host without scheme, e.g. your-instance.service-now.com",
+      "required": true,
+      "sensitive": true
     },
     {
       "name": "SERVICENOW_ACCESS_TOKEN",

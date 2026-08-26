@@ -72,6 +72,9 @@ describe("hosted config compatibility", () => {
         `import { getEnv } from "veryfront";\n` +
         `export default { title: getEnv("TITLE") ?? "Demo" };`,
         `export default { extensions: [{ name: "ext-css-lightning", enabled: false }] };`,
+        `export default { security: { auth: { oidc: { issuerEnvVar: "OIDC_ISSUER", clientIdEnvVar: "OIDC_CLIENT_ID", clientSecretEnvVar: "OIDC_CLIENT_SECRET", sessionSecretEnvVar: "VERYFRONT_AUTH_SESSION_SECRET", scopes: ["openid"], claims: { email: "email" } } } } };`,
+        `import { getEnv } from "veryfront";\n` +
+        `export default { security: { auth: { bearer: { token: getEnv("API_TOKEN") } } } };`,
       ]
     ) {
       assertEquals(
@@ -80,6 +83,18 @@ describe("hosted config compatibility", () => {
         `expected no incompatibility for: ${source}`,
       );
     }
+  });
+
+  it("rejects trusted-proxy auth on Veryfront Cloud with an actionable diagnostic", async () => {
+    const incompatibility = await findHostedConfigIncompatibility(
+      `export default { security: { auth: { trustedProxy: { trustedPeers: ["127.0.0.1"], headers: { subject: "x-auth-subject" } } } } };`,
+    );
+
+    assertEquals(incompatibility?.code, "unsupported-hosted-feature");
+    assertEquals(incompatibility?.reason, "hosted-trusted-proxy-auth");
+    assertStringIncludes(incompatibility?.summary ?? "", "trusted-proxy");
+    assertStringIncludes(incompatibility?.summary ?? "", "Veryfront Cloud");
+    assertStringIncludes(incompatibility?.remedy ?? "", "OIDC");
   });
 
   it("refuses a literal config the hosted result policy always rejects", async () => {
