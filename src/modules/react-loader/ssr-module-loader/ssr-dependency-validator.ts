@@ -67,7 +67,8 @@ function mapBatch<T, U>(
   callback: (value: T, index: number) => U,
 ): U[] {
   const mapped: U[] = [];
-  const limit = end < values.length ? end : values.length;
+  let limit = end;
+  if (limit > values.length) limit = values.length;
   for (let index = start; index < limit; index++) {
     mapped[index - start] = callback(values[index]!, index);
   }
@@ -168,8 +169,10 @@ function selectPropagatedFailure(
   results: PromiseSettledResult<unknown>[],
 ): PromiseRejectedResult | undefined {
   let firstRejection: PromiseRejectedResult | undefined;
-  for (let index = 0; index < results.length; index++) {
+  let index = 0;
+  while (index < results.length) {
     const result = results[index]!;
+    index++;
     if (result.status !== "rejected") continue;
     firstRejection ??= result;
     if (isTerminalHttpModuleFetchFailure(result.reason)) return result;

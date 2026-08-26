@@ -325,11 +325,12 @@ function createContainmentContext(
   const symlinkFree = semantics !== undefined && "value" in semantics &&
     semantics.value === "none";
   const realPathMethod = fs === undefined ? undefined : captureRealPath(fs);
-  const canonicalize = realPathMethod !== undefined
-    ? (path: string) => ReflectApply(realPathMethod, fs, [path]) as Promise<string>
-    : adapter === undefined
-    ? realPath
-    : null;
+  let canonicalize: ((path: string) => Promise<string>) | null;
+  if (realPathMethod !== undefined) {
+    canonicalize = (path: string) => ReflectApply(realPathMethod, fs, [path]) as Promise<string>;
+  } else {
+    canonicalize = adapter === undefined ? realPath : null;
+  }
   let canonicalRoot: Promise<string> | undefined;
   return {
     projectDir: normalizedProjectDir,
