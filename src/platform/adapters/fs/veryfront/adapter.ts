@@ -57,6 +57,9 @@ const BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS = 30_000;
 const ArrayPrototypeSort = Array.prototype.sort;
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicObjectDefineProperty = Object.defineProperty;
+const IntrinsicMap = Map;
+const MapPrototypeGet = Map.prototype.get;
+const MapPrototypeSet = Map.prototype.set;
 // Process-wide uniqueness prevents a recreated adapter from matching stale
 // derived-state generations left behind by its predecessor.
 let sourceSnapshotGeneration = 0;
@@ -85,17 +88,27 @@ function sourceSnapshotsEqual(
 ): boolean {
   if (!previous || previous.length !== next.length) return false;
 
-  const previousByPath = new Map(previous.map((file) => [file.path, file]));
-  return next.every((file) => {
-    const prior = previousByPath.get(file.path);
-    return prior !== undefined &&
-      prior.id === file.id &&
-      prior.version_id === file.version_id &&
-      prior.content === file.content &&
-      prior.type === file.type &&
-      prior.size === file.size &&
-      prior.updated_at === file.updated_at;
-  });
+  const previousByPath = new IntrinsicMap<string, SourceSnapshotFile>();
+  for (let index = 0; index < previous.length; index++) {
+    const file = previous[index]!;
+    IntrinsicReflectApply(MapPrototypeSet, previousByPath, [file.path, file]);
+  }
+  for (let index = 0; index < next.length; index++) {
+    const file = next[index]!;
+    const prior = IntrinsicReflectApply(MapPrototypeGet, previousByPath, [file.path]) as
+      | SourceSnapshotFile
+      | undefined;
+    if (
+      prior === undefined ||
+      prior.id !== file.id ||
+      prior.version_id !== file.version_id ||
+      prior.content !== file.content ||
+      prior.type !== file.type ||
+      prior.size !== file.size ||
+      prior.updated_at !== file.updated_at
+    ) return false;
+  }
+  return true;
 }
 
 function frameSourceSnapshotValue(value: string | number | null): string {

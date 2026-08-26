@@ -1605,6 +1605,64 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(ssrInvalidations, 1);
     });
 
+    it("detects changed branch snapshots when Array.prototype.every is replaced", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.resolve([{
+          path: "pages/review.tsx",
+          version_id: `version-${listAllFilesCalls}`,
+          content: `export const version = ${listAllFilesCalls};`,
+        }]);
+      };
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+      const initialVersion = adapter.getSourceSnapshotVersion();
+      const initialFingerprint = await adapter.getSourceSnapshotFingerprint();
+      const previousEvery = Object.getOwnPropertyDescriptor(Array.prototype, "every");
+      try {
+        Object.defineProperty(Array.prototype, "every", {
+          configurable: true,
+          writable: true,
+          value: () => true,
+        });
+        (adapter as unknown as { sourceSnapshotCheckedAt: number }).sourceSnapshotCheckedAt = 0;
+        await adapter.ensureSourceSnapshotFresh("prototype-sensitive-refresh");
+      } finally {
+        if (previousEvery) Object.defineProperty(Array.prototype, "every", previousEvery);
+      }
+
+      assertNotEquals(adapter.getSourceSnapshotVersion(), initialVersion);
+      assertNotEquals(await adapter.getSourceSnapshotFingerprint(), initialFingerprint);
+    });
+
     it("keeps freshness followers attached until SSR invalidation completes", async () => {
       const invalidationStarted = Promise.withResolvers<void>();
       const releaseInvalidation = Promise.withResolvers<void>();
