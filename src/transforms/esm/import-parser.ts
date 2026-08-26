@@ -299,6 +299,7 @@ export const importParserInternals = Object.freeze({
   isFileUrlSpecifier,
   isPathWithinProject,
   fileUrlToPath,
+  resolveRelative,
   toAuthoredSpecifier,
 });
 
@@ -610,16 +611,5 @@ async function findFirstExistingFile(
 }
 
 function resolveRelative(fromDir: string, importPath: string): string {
-  const parts = fromDir.split("/").filter(Boolean);
-  const importParts = importPath.split("/").filter(Boolean);
-
-  for (const part of importParts) {
-    if (part === "..") {
-      parts.pop();
-      continue;
-    }
-    if (part !== ".") parts.push(part);
-  }
-
-  return "/" + parts.join("/");
+  return resolve(fromDir, importPath);
 }

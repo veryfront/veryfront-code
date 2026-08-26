@@ -371,6 +371,23 @@ describe("transforms/esm/import-parser", () => {
     );
   });
 
+  it("preserves a Windows drive root for recursive relative imports", () => {
+    assertEquals(
+      importParserInternals.resolveRelative(
+        "C:/project/components",
+        "./Grandchild.tsx",
+      ),
+      "C:/project/components/Grandchild.tsx",
+    );
+    assertEquals(
+      importParserInternals.resolveRelative(
+        "C:/project/components",
+        "../Grandchild.tsx",
+      ),
+      "C:/project/Grandchild.tsx",
+    );
+  });
+
   // Regression: symlinkSemantics was read as an inherited property, so a
   // marker inherited through the prototype chain (for example Object.prototype
   // pollution with "none") switched realPath() off and an in-project symlink
