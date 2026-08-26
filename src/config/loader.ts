@@ -1663,6 +1663,17 @@ const ANSI_CSI_SEQUENCE = /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\
 // the caller. Optional rather than required, because `ESC[/home` has no final
 // byte before the path at all.
 //
+// The backslash branch of the lookahead requires *both* UNC separators, not one.
+// A backslash is 0x5C, inside the final-byte range, so in an introducer followed by
+// a UNC path the optional final byte ate the first separator while the lookahead was
+// satisfied by the second. The pass then emitted a single-separator path, which
+// WINDOWS_ABSOLUTE_PATH does not recognise -- it requires a doubled separator or a
+// drive letter -- so the UNC path reached the caller. `origin/main` redacts that same
+// input, so this pre-pass introduced the leak rather than inheriting it. Demanding
+// both separators makes the engine backtrack the optional final byte to zero width
+// and leave the prefix whole. A forward slash needs no such care: 0x2F sits below the
+// final-byte range, and the intermediate run already stops at 0x2E to protect it.
+//
 // The sequence is taken here rather than by making de-colorization emit a space
 // instead of nothing. That pass must keep emitting nothing: `sk-` + `ESC[0m` +
 // `ABCD1234EFGH5678` only rejoins into a contiguous credential if the removal
@@ -1670,7 +1681,7 @@ const ANSI_CSI_SEQUENCE = /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\
 // Fixing a path boundary must not reopen that.
 const CSI_GLUED_PATH =
   // deno-lint-ignore no-control-regex
-  /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002E]*[\u0040-\u007E]?(?=[\\/]|[A-Za-z]:[\\/])/g;
+  /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002E]*[\u0040-\u007E]?(?=\\\\|\/|[A-Za-z]:[\\/])/g;
 // The same pre-pass for a special-scheme URL start, which the CSI grammar eats
 // exactly as it eats a path. In `ESC[https:registry.internal/x`, `h` is a legal
 // final byte, so the CSI pass left `ttps:registry.internal/x`:

@@ -1421,6 +1421,42 @@ export default config as const;
         assertEquals(credential.message.includes("ABCD1234EFGH5678"), false);
       });
 
+      it("keeps both UNC separators when a CSI introducer precedes them", async () => {
+        const unc = await loadFailure(
+          "vf-config-csi-unc-",
+          `throw new Error(String.fromCharCode(27) + "[\\\\\\\\server\\\\share\\\\veryfront.config.ts");\n`,
+        );
+
+        // A backslash is 0x5C, inside the CSI final-byte range, so the optional
+        // final byte consumed the first of the two separators while the lookahead
+        // was satisfied by the second. The pre-pass emitted a single-separator
+        // path, WINDOWS_ABSOLUTE_PATH requires a doubled one, and the whole UNC
+        // path reached the caller. `origin/main` redacts this input, so the
+        // pre-pass introduced the leak rather than inheriting it.
+        assertEquals(unc.message.includes("server"), false);
+        assertEquals(unc.message.includes("share"), false);
+        assertStringIncludes(unc.message, "[path]");
+
+        const eightBit = await loadFailure(
+          "vf-config-csi-unc-eight-bit-",
+          `throw new Error(String.fromCharCode(155) + "\\\\\\\\server\\\\share\\\\veryfront.config.ts");\n`,
+        );
+
+        assertEquals(eightBit.message.includes("server"), false);
+        assertStringIncludes(eightBit.message, "[path]");
+
+        // The completed form already worked: `m` is consumed as the final byte, so
+        // both separators survived. Pinned so a later change cannot regress the
+        // half that was never broken while fixing the half that was.
+        const completed = await loadFailure(
+          "vf-config-csi-unc-completed-",
+          `throw new Error(String.fromCharCode(27) + "[31m\\\\\\\\server\\\\share\\\\veryfront.config.ts");\n`,
+        );
+
+        assertEquals(completed.message.includes("server"), false);
+        assertStringIncludes(completed.message, "[path]");
+      });
+
       it("reports a CSI-glued file URL as a path, not a remote URL", async () => {
         const error = await loadFailure(
           "vf-config-csi-glued-file-url-",
