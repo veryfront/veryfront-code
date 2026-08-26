@@ -996,9 +996,9 @@ export default config as const;
           `throw new Error("Attempt 3https://registry.internal/config.ts failed");\n`,
         );
 
-        // REMOTE_URL is unanchored on the left for this: with a left boundary the
-        // glued scheme is not recognised as a URL, and the hostname survives into
-        // a caller-visible detail.
+        // SCHEME_URL is unanchored on the left for this: with a left boundary
+        // the glued scheme is not recognised as a URL, and the hostname survives
+        // into a caller-visible detail.
         assertStringIncludes(error.message, "[url]");
         assertEquals(error.message.includes("registry.internal"), false);
       });
@@ -1021,8 +1021,9 @@ export default config as const;
           `throw new Error("Failed at" + String.fromCharCode(67) + ":\\\\Users\\\\alice\\\\veryfront.config.ts");\n`,
         );
 
-        // A left boundary on WINDOWS_ABSOLUTE_PATH refuses this, and REMOTE_URL
-        // cannot claim a backslash form, so the path would reach the caller.
+        // A left boundary on WINDOWS_ABSOLUTE_PATH refuses this, and neither
+        // SCHEME_URL nor MALFORMED_SCHEME_URL can claim a backslash form, so the
+        // path would reach the caller.
         assertStringIncludes(error.message, "[path]");
         assertEquals(error.message.includes("Users"), false);
         assertEquals(error.message.includes("alice"), false);
