@@ -799,6 +799,36 @@ Deno.test("prepareHostedChatRuntimeToolAssembly resolves an owner's denied short
   assertEquals(taskContext.availableToolNames?.includes("researcher--fetch-paper") ?? false, false);
 });
 
+Deno.test("prepareHostedChatRuntimeToolAssembly applies explicit denials to provider tools", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    allowedProviderToolNames: ["web_search"],
+    sourceProviderToolNames: ["web_search"],
+    deniedToolNames: ["web_search"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(
+    toolAssembly.providerToolNames,
+    [],
+    "an explicit denial must remove the provider tool even when it is allowlisted",
+  );
+  assertEquals(taskContext.availableToolNames?.includes("web_search") ?? false, false);
+});
+
 Deno.test("prepareHostedChatRuntimeToolAssembly separates provider tools from remote MCP tools", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",

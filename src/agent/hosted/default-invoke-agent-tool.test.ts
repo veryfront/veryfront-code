@@ -167,6 +167,51 @@ it("fixed hosted delegates inherit project-agent settings without overriding exp
   });
 });
 
+it("fixed hosted delegates cannot re-enable denied tools through explicit input", () => {
+  const configured = defaultHostedInvokeAgentToolInternals.applyChildAgentExecutionConfig(
+    {
+      description: "extract application",
+      prompt: "Extract the application.",
+      context: {},
+      agent_id: "extraction-agent",
+      tools: ["get_file", "load_skill", "web_search"],
+    },
+    {
+      system: "Follow the extraction policy.",
+      toolNames: ["get_file"],
+      deniedToolNames: ["load_skill", "web_search"],
+      mcpServers: [],
+    },
+  );
+
+  assertEquals(
+    configured.tools,
+    ["get_file"],
+    "explicit tool requests must be capped by the child's denial ceiling",
+  );
+});
+
+it("fixed hosted delegates drop denied tools from assembled fork tool sources", () => {
+  const echoTool = {
+    description: "Echo",
+    execute: () => ({ ok: true }),
+  };
+  const filtered = defaultHostedInvokeAgentToolInternals.withoutDeniedForkTools(
+    {
+      ok: true,
+      forkTools: {
+        get_file: echoTool,
+        load_skill: echoTool,
+        "researcher--fetch-paper": { ...echoTool, shortName: "fetch-paper" },
+      },
+    },
+    ["load_skill", "fetch-paper"],
+  );
+
+  assert(filtered.ok);
+  assertEquals(Object.keys(filtered.forkTools), ["get_file"]);
+});
+
 it("fixed hosted delegates keep every explicit input over project-agent settings", () => {
   const configured = defaultHostedInvokeAgentToolInternals.applyChildAgentExecutionConfig(
     {

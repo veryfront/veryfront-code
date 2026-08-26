@@ -113,6 +113,13 @@ export type DefaultHostedChildAgentExecutionConfig = {
   maxSteps?: number;
   thinking?: HostedChildForkToolInput["thinking"];
   toolNames?: string[];
+  /**
+   * Tool names the child's agent configuration denied explicitly (`false`
+   * entries). An authorization ceiling for child execution: explicit
+   * `invoke_agent` tool requests cannot re-enable them, and they are removed
+   * from the assembled fork tool sources.
+   */
+  deniedToolNames?: string[];
   mcpServers?: readonly AgentServiceMcpServerConfig[];
   availableSkillIds?: string[];
   skillSelectorPolicy?: import("#veryfront/skill/selector.ts").ResolvedSkillSelectorPolicy;
@@ -338,6 +345,31 @@ async function prepareForkToolSources<TContext extends DefaultHostedInvokeAgentC
   });
 }
 
+/**
+ * Removes explicitly denied tool names from the assembled fork tool set. The
+ * assembled sources contain the full discovered and remote catalogs, so an
+ * unrestricted child selector (or an explicit request) would otherwise still
+ * surface a tool the child's agent configuration switched off.
+ */
+function withoutDeniedForkTools(
+  toolSources: DefaultHostedChildForkToolAssemblySourceResult,
+  deniedToolNames: readonly string[] | undefined,
+): DefaultHostedChildForkToolAssemblySourceResult {
+  if (!toolSources.ok || !deniedToolNames?.length) {
+    return toolSources;
+  }
+  const denied = new Set(deniedToolNames);
+  return {
+    ...toolSources,
+    forkTools: Object.fromEntries(
+      Object.entries(toolSources.forkTools).filter(([toolName, tool]) =>
+        !denied.has(toolName) &&
+        (tool.shortName === undefined || !denied.has(tool.shortName))
+      ),
+    ),
+  };
+}
+
 async function prepareForkToolAssembly<TContext extends DefaultHostedInvokeAgentContext>(
   options: DefaultHostedInvokeAgentToolOptions<TContext>,
   config: DefaultHostedInvokeAgentConfig,
@@ -353,14 +385,17 @@ async function prepareForkToolAssembly<TContext extends DefaultHostedInvokeAgent
   },
 ): Promise<DefaultHostedChildForkToolAssemblyResult> {
   const toolAssembly = await prepareDefaultHostedChildForkToolAssembly({
-    prepareToolSources: () =>
-      prepareForkToolSources(
-        options,
-        config,
-        input.childAgentId,
-        input.childConfig,
-        input.abortSignal,
-        input.durableChildRun,
+    prepareToolSources: async () =>
+      withoutDeniedForkTools(
+        await prepareForkToolSources(
+          options,
+          config,
+          input.childAgentId,
+          input.childConfig,
+          input.abortSignal,
+          input.durableChildRun,
+        ),
+        input.childConfig?.deniedToolNames,
       ),
     provider: input.provider,
     forkModel: input.forkModel,
@@ -567,6 +602,14 @@ function applyChildAgentExecutionConfig(
     return input;
   }
 
+  // Explicit denials are an authorization ceiling: a parent-supplied tool
+  // list in `invoke_agent` cannot re-enable a name the child's configuration
+  // switched off.
+  const deniedToolNames = childConfig.deniedToolNames;
+  const requestedTools = input.tools !== undefined && deniedToolNames?.length
+    ? input.tools.filter((toolName) => !deniedToolNames.includes(toolName))
+    : input.tools;
+
   return {
     ...input,
     ...(input.model === undefined && childConfig.model ? { model: childConfig.model } : {}),
@@ -579,15 +622,16 @@ function applyChildAgentExecutionConfig(
     ...(input.thinking === undefined && childConfig.thinking !== undefined
       ? { thinking: childConfig.thinking }
       : {}),
-    ...(input.tools === undefined && childConfig.toolNames !== undefined
-      ? { tools: childConfig.toolNames }
-      : {}),
+    ...(requestedTools === undefined
+      ? (childConfig.toolNames !== undefined ? { tools: childConfig.toolNames } : {})
+      : { tools: requestedTools }),
   };
 }
 
 /** Test-only helpers for fixed-target hosted delegation behavior. */
 export const defaultHostedInvokeAgentToolInternals = {
   applyChildAgentExecutionConfig,
+  withoutDeniedForkTools,
 };
 
 /** Execute default hosted invoke agent tool. */

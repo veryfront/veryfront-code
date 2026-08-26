@@ -440,8 +440,13 @@ export async function prepareHostedChatRuntimeToolAssembly<
   const localProviderToolNames = new Set(
     Object.keys(sortedLocalTools).filter((toolName) => providerNativeToolNames.includes(toolName)),
   );
+  // Explicit denials also bind provider-native tools: a denied name must not
+  // reach the model through the provider channel after the host and remote
+  // paths filtered it out.
+  const deniedProviderToolNames = new Set(input.deniedToolNames ?? []);
   const selectedProviderToolNames = providerNativeToolNames.filter(
     (toolName) =>
+      !deniedProviderToolNames.has(toolName) &&
       !localProviderToolNames.has(toolName) &&
       (allowedProviderToolNames
         ? allowedProviderToolNames.has(toolName)
