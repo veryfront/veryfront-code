@@ -21,16 +21,22 @@ type DenoRequestHandler = (
  * Matched on `name` and `code` rather than `instanceof Deno.errors.AddrInUse`.
  * The error is constructed in the host realm, so a cross-realm `instanceof`
  * is unreliable -- the same reason `isErrorAcrossRealms` exists in this file.
- * `AddrNotAvailable` is included because a stale bind address fails the same
- * way from the caller's point of view: the listener never came up at that
- * host and port.
+ * Deliberately narrow to "that port is taken". An earlier revision also claimed
+ * `AddrNotAvailable`/`EADDRNOTAVAIL` on the reasoning that a stale bind address
+ * fails the same way from the caller's side. It does not:
+ * `isAddressFamilyUnavailableError` in cli/commands/dev/port-fallback.ts exists
+ * to tell the two apart, because probing a family a host does not have must not
+ * make every port look busy -- an IPv4-only container would otherwise never find
+ * a free port to fall back to. Relabelling it inverted that classification
+ * exactly (`portInUse` false -> true, `familyUnavail` true -> false), so a host
+ * configuration fault would have been reported as a port collision and the CLI
+ * would have advised changing the port. Anything that is not in-use is now
+ * rethrown untouched, which preserves its own name, code and message.
  */
-function isAddressBindFailure(error: unknown): boolean {
+function isAddressInUseError(error: unknown): boolean {
   if (!isErrorAcrossRealms(error)) return false;
-  const { name } = error;
-  if (name === "AddrInUse" || name === "AddrNotAvailable") return true;
-  const code = (error as { code?: unknown }).code;
-  return code === "EADDRINUSE" || code === "EADDRNOTAVAIL";
+  if (error.name === "AddrInUse") return true;
+  return (error as { code?: unknown }).code === "EADDRINUSE";
 }
 
 /**
@@ -42,13 +48,25 @@ function isAddressBindFailure(error: unknown): boolean {
  * named; anything else could be infrastructure, so the caller reports the port
  * alone, which is the actionable half either way.
  *
+ * The 127/8 test parses a complete dotted quad rather than matching a `127.`
+ * prefix. `127.api.prod.internal` is a DNS name, not a loopback literal, and a
+ * prefix check exposed it -- the same leak this function exists to prevent,
+ * reintroduced by the shape of the allowlist.
+ *
  * An IPv6 literal is bracketed, because `::1` and `4321` joined by a colon reads
  * as another segment of the address rather than as a port.
  */
+function isIpv4LoopbackLiteral(host: string): boolean {
+  const octets = host.split(".");
+  if (octets.length !== 4) return false;
+  if (!octets.every((octet) => /^[0-9]{1,3}$/.test(octet) && Number(octet) <= 255)) return false;
+  return Number(octets[0]) === 127;
+}
+
 function describeBindHost(hostname: string): string | undefined {
   const host = hostname.toLowerCase();
   const isLoopbackOrWildcard = host === "localhost" || host === "::1" ||
-    host === "::" || host === "0.0.0.0" || host.startsWith("127.");
+    host === "::" || host === "0.0.0.0" || isIpv4LoopbackLiteral(host);
   if (!isLoopbackOrWildcard) return undefined;
   return host.includes(":") ? `[${hostname}]` : hostname;
 }
@@ -241,7 +259,7 @@ export async function createDenoServerWithRuntime(
     // Only a bind failure is relabelled. Catching everything here would report
     // an unrelated startup fault as an address collision, which is worse than
     // the raw error it replaces, so anything else is rethrown untouched.
-    if (!isAddressBindFailure(error)) throw error;
+    if (!isAddressInUseError(error)) throw error;
     // The canonical phrase is kept at the front of the message on purpose. The
     // CLI classifies a taken port by matching it (`isPortInUseError`,
     // cli/commands/dev/port-fallback.ts), and dropping it silently disabled the

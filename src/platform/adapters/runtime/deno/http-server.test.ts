@@ -315,6 +315,61 @@ describe("Deno HTTP server lifecycle", () => {
     assertStringIncludes(error.message.toLowerCase(), "address already in use");
   });
 
+  it("leaves an address-unavailable failure classified as itself", async () => {
+    // `isAddressFamilyUnavailableError` in cli/commands/dev/port-fallback.ts
+    // tells "this host has no address in that family" apart from "that port is
+    // taken", because probing a family a host does not have must not make every
+    // port look busy -- an IPv4-only container would never find a free port to
+    // fall back to. An earlier revision relabelled AddrNotAvailable as in-use,
+    // which inverted that classification exactly.
+    const notAvailable = new Error("Cannot assign requested address (os error 99)");
+    notAvailable.name = "AddrNotAvailable";
+
+    const error = await assertRejects(
+      () =>
+        createDenoServerWithRuntime(
+          {
+            serve() {
+              throw notAvailable;
+            },
+          } as unknown as DenoServeRuntime,
+          () => new Response("ok"),
+          { hostname: "0.0.0.0", port: 4321 },
+        ),
+      Error,
+      "Cannot assign requested address",
+    ) as Error;
+
+    assertStrictEquals(error, notAvailable);
+    assertEquals(error.message.toLowerCase().includes("already in use"), false);
+  });
+
+  it("treats a DNS name that merely starts with 127. as private", async () => {
+    // `127.api.prod.internal` is a hostname, not a loopback literal. A `127.`
+    // prefix check exposed it -- the same leak the redaction exists to prevent,
+    // reintroduced by the shape of the allowlist.
+    const addrInUse = new Error("Address already in use (os error 98)");
+    addrInUse.name = "AddrInUse";
+
+    const error = await assertRejects(
+      () =>
+        createDenoServerWithRuntime(
+          {
+            serve() {
+              throw addrInUse;
+            },
+          } as unknown as DenoServeRuntime,
+          () => new Response("ok"),
+          { hostname: "127.api.prod.internal", port: 4321 },
+        ),
+      Error,
+      "4321",
+    ) as Error;
+
+    assertEquals(error.message.includes("127.api.prod.internal"), false);
+    assertEquals(error.message.includes("prod.internal"), false);
+  });
+
   it("brackets an IPv6 bind host so the port stays readable", async () => {
     // `::1` and `4321` joined by a colon reads as another segment of the
     // address rather than as a port.
