@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
@@ -232,16 +237,29 @@ function startVeryfrontDev(
   };
 }
 
+interface PageReader {
+  read(): Promise<ReadableStreamReadResult<Uint8Array>>;
+  cancel(): Promise<void>;
+  releaseLock(): void;
+}
+
+interface PageResponse {
+  readonly body: { getReader(): PageReader } | null;
+}
+
+type PageRequest = (url: string, timeoutMs: number) => Promise<PageResponse>;
+
 async function waitForPageContent(
   port: number,
   expected: string,
-  timeoutMs = TEST_TIMEOUTS.SERVER_STARTUP,
+  timeoutMs: number = TEST_TIMEOUTS.SERVER_STARTUP,
+  requestPage: PageRequest = fetchWithTimeout,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const response = await fetchWithTimeout(`http://127.0.0.1:${port}/`, 1_000);
-      const content = await response.text();
+      const response = await requestPage(`http://127.0.0.1:${port}/`, 1_000);
+      const content = await readResponseTextAndRelease(response);
       if (content.includes(expected)) return;
     } catch {
       // The server may be between reloads.
@@ -249,6 +267,25 @@ async function waitForPageContent(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`Timed out waiting for page content "${expected}"`);
+}
+
+async function readResponseTextAndRelease(response: PageResponse): Promise<string> {
+  const body = response.body;
+  if (body === null) return "";
+
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let content = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return content + decoder.decode();
+      content += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
 }
 
 async function requestPageAndApi(port: number): Promise<void> {
@@ -272,6 +309,84 @@ async function requestPageAndApi(port: number): Promise<void> {
 describe(
   "veryfront dev output",
   () => {
+    it("releases page response readers after successful and failed reads", async () => {
+      const failedResponse = new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.error(new DOMException("Body read aborted", "AbortError"));
+          },
+        }),
+      );
+      const successfulResponse = new Response("updated dev logs page");
+      const failedBody = failedResponse.body;
+      const successfulBody = successfulResponse.body;
+      assert(failedBody !== null);
+      assert(successfulBody !== null);
+
+      await assertRejects(
+        () => readResponseTextAndRelease(failedResponse),
+        DOMException,
+        "Body read aborted",
+      );
+      assertEquals(
+        await readResponseTextAndRelease(successfulResponse),
+        "updated dev logs page",
+      );
+      assert(!failedBody.locked);
+      assert(!successfulBody.locked);
+    });
+
+    it("cancels page readers while polling after successful and failed reads", async () => {
+      const cancelled: string[] = [];
+      const released: string[] = [];
+      const failedResponse: PageResponse = {
+        body: {
+          getReader: () => ({
+            read: () => Promise.reject(new DOMException("Body read aborted", "AbortError")),
+            cancel: () => {
+              cancelled.push("failed");
+              return Promise.resolve();
+            },
+            releaseLock: () => released.push("failed"),
+          }),
+        },
+      };
+      let successfulRead = false;
+      const successfulResponse: PageResponse = {
+        body: {
+          getReader: () => ({
+            read: (): Promise<ReadableStreamReadResult<Uint8Array>> => {
+              if (successfulRead) return Promise.resolve({ done: true, value: undefined });
+              successfulRead = true;
+              return Promise.resolve({
+                done: false,
+                value: new TextEncoder().encode("updated dev logs page"),
+              });
+            },
+            cancel: () => {
+              cancelled.push("successful");
+              return Promise.resolve();
+            },
+            releaseLock: () => released.push("successful"),
+          }),
+        },
+      };
+      const responses = [failedResponse, successfulResponse];
+      const requests: Array<{ url: string; timeoutMs: number }> = [];
+
+      await waitForPageContent(4_246, "updated dev logs page", 1_000, (url, timeoutMs) => {
+        requests.push({ url, timeoutMs });
+        return Promise.resolve(responses.shift()!);
+      });
+
+      assertEquals(cancelled, ["failed", "successful"]);
+      assertEquals(released, ["failed", "successful"]);
+      assertEquals(requests, [
+        { url: "http://127.0.0.1:4246/", timeoutMs: 1_000 },
+        { url: "http://127.0.0.1:4246/", timeoutMs: 1_000 },
+      ]);
+    });
+
     it(
       "keeps default dev output focused on readiness and hides routine diagnostics",
       { timeout: TEST_TIMEOUTS.INTEGRATION },
