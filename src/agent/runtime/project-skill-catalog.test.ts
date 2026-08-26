@@ -662,7 +662,7 @@ Deno.test("getRuntimeProjectSkillCatalog returns builtin skills when project fil
   assertEquals(await catalog(), builtinSkills);
 });
 
-Deno.test("getRuntimeProjectSkillCatalog orders fallback builtin skills by code unit", async () => {
+it("orders fallback builtin skills by code unit", async () => {
   const { catalog } = createSkillCatalog({
     paths: null,
     builtinSkills: [
