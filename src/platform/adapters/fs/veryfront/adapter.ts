@@ -63,6 +63,7 @@ const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicObjectDefineProperty = Object.defineProperty;
 const IntrinsicObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const IntrinsicMap = Map;
+const MapPrototypeDelete = Map.prototype.delete;
 const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeSet = Map.prototype.set;
 // Process-wide uniqueness prevents a recreated adapter from matching stale
@@ -136,6 +137,7 @@ function sourceSnapshotsEqual(
       getOwnSourceSnapshotValue(prior, "updated_at") !==
         getOwnSourceSnapshotValue(file, "updated_at")
     ) return false;
+    IntrinsicReflectApply(MapPrototypeDelete, previousByPath, [path]);
   }
   return true;
 }

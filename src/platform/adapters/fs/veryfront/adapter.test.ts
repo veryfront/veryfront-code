@@ -2022,6 +2022,59 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(ssrInvalidations, 1);
     });
 
+    it("treats a repeated path that omits another file as a changed snapshot", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      const initialFiles = [
+        { path: "pages/a.tsx", version_id: "version-a", content: "a" },
+        { path: "pages/b.tsx", version_id: "version-b", content: "b" },
+      ];
+      const repeatedPathFiles = [
+        { path: "pages/a.tsx", version_id: "version-a", content: "a" },
+        { path: "pages/a.tsx", version_id: "version-a", content: "a" },
+      ];
+      let listAllFilesCalls = 0;
+      const client = (adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          listAllFiles: () => Promise<
+            Array<{ path: string; version_id: string; content: string }>
+          >;
+        };
+      }).client;
+      client.initialize = () => Promise.resolve();
+      client.getProjectSlug = () => "test-project";
+      client.getProjectId = () => "project-123";
+      client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      client.listAllFiles = () => {
+        listAllFilesCalls += 1;
+        return Promise.resolve(listAllFilesCalls === 1 ? initialFiles : repeatedPathFiles);
+      };
+      (adapter as unknown as { wsManager: { connect: (_projectId: string) => void } }).wsManager
+        .connect = () => {};
+
+      await adapter.initialize();
+      const initialVersion = adapter.getSourceSnapshotVersion();
+      const initialFingerprint = await adapter.getSourceSnapshotFingerprint();
+      (adapter as unknown as { sourceSnapshotCheckedAt: number }).sourceSnapshotCheckedAt = 0;
+
+      await adapter.ensureSourceSnapshotFresh("duplicate-path-refresh");
+
+      assertEquals(listAllFilesCalls, 2);
+      assertNotEquals(adapter.getSourceSnapshotVersion(), initialVersion);
+      assertNotEquals(await adapter.getSourceSnapshotFingerprint(), initialFingerprint);
+    });
+
     it("detects changed branch snapshots when Array.prototype.every is replaced", async () => {
       const adapter = createAdapter({
         veryfront: {

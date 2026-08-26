@@ -217,6 +217,43 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
     assertEquals(interceptedTokens, []);
   });
 
+  it("keeps credential-bearing adapter lookup independent of mutable timing hooks", async () => {
+    const adapter = new MultiProjectFSAdapter(baseConfig);
+    const selectedAdapter = new VeryfrontFSAdapter(baseConfig);
+    const internals = adapter as unknown as {
+      manager: ProxyFSAdapterManager;
+    };
+    const originalManager = internals.manager;
+    internals.manager = {
+      getAdapter: () => Promise.resolve(selectedAdapter),
+    } as unknown as ProxyFSAdapterManager;
+    const originalNow = Object.getOwnPropertyDescriptor(performance, "now");
+    let poisonedCalls = 0;
+
+    Object.defineProperty(performance, "now", {
+      configurable: true,
+      value: () => {
+        poisonedCalls += 1;
+        throw new Error("project timing hook must not run");
+      },
+    });
+    try {
+      await adapter.runWithContext(
+        "my-slug",
+        "signed-user-token",
+        () => adapter.getSourceSnapshotFingerprint(),
+      );
+    } finally {
+      if (originalNow) Object.defineProperty(performance, "now", originalNow);
+      else Reflect.deleteProperty(performance, "now");
+      internals.manager = originalManager;
+      adapter.dispose();
+      selectedAdapter.dispose();
+    }
+
+    assertEquals(poisonedCalls, 0);
+  });
+
   it("keeps credential partitioning independent of mutable Array.from", async () => {
     let poisonedCalls = 0;
     const manager = new ProxyFSAdapterManager({

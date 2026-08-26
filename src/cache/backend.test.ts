@@ -918,6 +918,43 @@ Deno.test("ApiCacheBackend prefers the request runtime token over the host fallb
   }
 });
 
+Deno.test("ApiCacheBackend refuses host fallback for an uncredentialed tenant context", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+  const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+  let fetchCalls = 0;
+
+  Deno.env.set("VERYFRONT_API_BASE_URL", "https://93.184.216.34");
+  Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      projectId: "attacker-selected-project",
+    }),
+  };
+  installMockFetch(() => {
+    fetchCalls += 1;
+    return Promise.resolve(Response.json({ deleted: 1 }));
+  });
+
+  try {
+    const cache = new ApiCacheBackend({
+      circuitBreakerName: "api-cache-uncredentialed-context-test",
+    });
+    assertEquals(await cache.delByPattern("agent:*"), 0);
+    assertEquals(fetchCalls, 0);
+  } finally {
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+    restoreMockFetch();
+    if (originalBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+    else Deno.env.set("VERYFRONT_API_BASE_URL", originalBaseUrl);
+    if (originalToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+    else Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
+  }
+});
+
 Deno.test("ApiCacheBackend getBatch returns nulls without auth context", async () => {
   const { ApiCacheBackend } = await importBackend();
 
@@ -1922,11 +1959,8 @@ Deno.test({
       const cache = new ApiCacheBackend({
         circuitBreakerName: "api-cache-tenant-endpoint-isolation-test",
       });
-      assertEquals(await cache.delByPattern("agent:*"), 1);
-      assertEquals(
-        capturedUrls,
-        ["https://93.184.216.34/projects/project-123/cache/del-pattern"],
-      );
+      assertEquals(await cache.delByPattern("agent:*"), 0);
+      assertEquals(capturedUrls, []);
     } finally {
       if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
       else globals.__vf_multi_project_adapter = originalAdapter;

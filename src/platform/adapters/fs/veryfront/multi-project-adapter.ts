@@ -32,6 +32,8 @@ const DEFAULT_MAX_ADAPTERS = 100;
 const DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1_000;
 const DEFAULT_MAX_IDLE_MS = 30 * 60 * 1_000;
 const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicPerformance = performance;
+const PerformanceNow = IntrinsicPerformance.now;
 const ObjectPrototypeIsPrototypeOf = Object.prototype.isPrototypeOf;
 const ProxyFSAdapterManagerPrototype = ProxyFSAdapterManager.prototype;
 const ProxyFSAdapterManagerGetAdapter = ProxyFSAdapterManagerPrototype.getAdapter;
@@ -45,6 +47,10 @@ const VeryfrontFSAdapterGetSourceSnapshotFingerprint =
   VeryfrontFSAdapterPrototype.getSourceSnapshotFingerprint;
 const VeryfrontFSAdapterGetSourceSnapshotIdentity =
   VeryfrontFSAdapterPrototype.getSourceSnapshotIdentity;
+
+function performanceNow(): number {
+  return IntrinsicReflectApply(PerformanceNow, IntrinsicPerformance, []) as number;
+}
 
 function isConcreteVeryfrontFSAdapter(adapter: VeryfrontFSAdapter): boolean {
   return IntrinsicReflectApply(
@@ -95,7 +101,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       environmentName?: string | null;
     },
   ): Promise<T> {
-    const startTime = performance.now();
+    const startTime = performanceNow();
     const productionMode = options?.productionMode ?? false;
     const releaseId = options?.releaseId ?? null;
     const branch = options?.branch ?? null;
@@ -123,7 +129,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
     }, async () => {
       logger.debug("Inside asyncLocalStorage.run callback", {
         projectSlug,
-        duration: `${(performance.now() - startTime).toFixed(2)}ms`,
+        duration: `${(performanceNow() - startTime).toFixed(2)}ms`,
       });
 
       // Release asset manifest fetchers are registered by the concrete adapter.
@@ -136,7 +142,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
       logger.debug("runWithContext callback complete", {
         projectSlug,
-        totalDuration: `${(performance.now() - startTime).toFixed(2)}ms`,
+        totalDuration: `${(performanceNow() - startTime).toFixed(2)}ms`,
       });
 
       return result;
@@ -158,7 +164,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
   async #getAdapter(
     onResolved?: (initializedNow: boolean) => void,
   ): Promise<VeryfrontFSAdapter> {
-    const startTime = performance.now();
+    const startTime = performanceNow();
     const context = getCurrentRequestContext();
 
     if (!context) {
@@ -207,7 +213,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
     logger.debug("getAdapter DONE", {
       projectSlug: context.projectSlug,
-      duration: `${(performance.now() - startTime).toFixed(2)}ms`,
+      duration: `${(performanceNow() - startTime).toFixed(2)}ms`,
     });
 
     return adapter;

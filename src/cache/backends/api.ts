@@ -173,6 +173,7 @@ export class ApiCacheBackend implements CacheBackend {
     const envToken = getEnvValue("VERYFRONT_API_TOKEN");
     const verifiedCredential = getVerifiedCacheApiCredential();
     const verifiedRequestToken = verifiedCredential?.token;
+    const cacheKeyContext = tryGetCacheKeyContext();
     if (this.hasExplicitApiBaseUrl && !this.explicitApiToken) {
       logger.warn("Caller-selected cache API endpoint omitted its credential", {
         apiOrigin: this.apiOrigin,
@@ -181,14 +182,19 @@ export class ApiCacheBackend implements CacheBackend {
     }
     // The private verified-request context cannot be changed through the
     // globally exposed filesystem request context.
-    const token = this.explicitApiToken ?? verifiedRequestToken ?? reqCtx?.token ?? hostToken ??
-      envToken ?? null;
+    const hasRequestSelectedTenant = reqCtx !== null || cacheKeyContext !== null;
+    const ambientToken = hasRequestSelectedTenant
+      ? reqCtx?.token ?? null
+      : hostToken ?? envToken ?? null;
+    const token = this.explicitApiToken ?? verifiedRequestToken ?? ambientToken;
     const tokenSource = this.explicitApiToken
       ? "explicit-endpoint"
       : verifiedRequestToken
       ? "verified-control-plane"
       : reqCtx?.token
       ? "request"
+      : hasRequestSelectedTenant
+      ? "none"
       : hostToken
       ? "host-env"
       : envToken
@@ -196,7 +202,7 @@ export class ApiCacheBackend implements CacheBackend {
       : "none";
     const projectRef = verifiedCredential?.projectId || verifiedCredential?.projectSlug ||
       reqCtx?.projectId || reqCtx?.projectSlug ||
-      tryGetCacheKeyContext()?.projectId || null;
+      cacheKeyContext?.projectId || null;
 
     if (!token || !projectRef) {
       logger.debug("Missing auth or project context", {
