@@ -58,8 +58,7 @@ function snapshotDiagnostic(error: unknown, filesystemPath?: string): {
     };
   }
   const snapshot = snapshotErrorForBoundary(error);
-  const message = filesystemPath !== undefined &&
-      isAbsoluteFilesystemPathForDiagnostic(filesystemPath)
+  const message = filesystemPath !== undefined
     ? snapshotThrowableDiagnosticRedactingPath(
       error,
       filesystemPath,

@@ -47,6 +47,7 @@ const arrayPop = Array.prototype.pop;
 const arrayPush = Array.prototype.push;
 const arraySplice = Array.prototype.splice;
 const nativeDecodeURIComponent = decodeURIComponent;
+const nativeEncodeURIComponent = encodeURIComponent;
 const nativeEncodeURI = encodeURI;
 const jsonStringify = JSON.stringify;
 const numberIsFinite = Number.isFinite;
@@ -646,6 +647,53 @@ function uriEncodedFilesystemPath(path: string): string | undefined {
   }
 }
 
+function componentEncodedFilesystemPath(path: string): string | undefined {
+  try {
+    const encoded = nativeEncodeURIComponent(path);
+    return encoded === path ? undefined : encoded;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Derive the application/x-www-form-urlencoded spelling used by URLSearchParams. */
+function formEncodedFilesystemPath(path: string): string | undefined {
+  let encoded: string;
+  try {
+    encoded = nativeEncodeURIComponent(path);
+  } catch {
+    return undefined;
+  }
+  const parts: string[] = [];
+  let segmentStart = 0;
+  for (let index = 0; index < encoded.length; index++) {
+    const codeUnit = charCodeAtString(encoded, index);
+    let replacement: string | undefined;
+    if (
+      codeUnit === 37 && charCodeAtString(encoded, index + 1) === 50 &&
+      charCodeAtString(encoded, index + 2) === 48
+    ) {
+      replacement = "+";
+      apply(arrayPush, parts, [sliceString(encoded, segmentStart, index), replacement]);
+      index += 2;
+      segmentStart = index + 1;
+      continue;
+    }
+    if (codeUnit === 33) replacement = "%21";
+    else if (codeUnit === 39) replacement = "%27";
+    else if (codeUnit === 40) replacement = "%28";
+    else if (codeUnit === 41) replacement = "%29";
+    else if (codeUnit === 126) replacement = "%7E";
+    if (replacement === undefined) continue;
+    apply(arrayPush, parts, [sliceString(encoded, segmentStart, index), replacement]);
+    segmentStart = index + 1;
+  }
+  if (segmentStart === 0) return encoded === path ? undefined : encoded;
+  apply(arrayPush, parts, [sliceString(encoded, segmentStart)]);
+  const formEncoded = apply(arrayJoin, parts, [""]) as string;
+  return formEncoded === path ? undefined : formEncoded;
+}
+
 /** Derive the path spelling Node uses in unquoted invalid-NUL diagnostics. */
 function nodeNullEscapedFilesystemPath(path: string): string | undefined {
   const parts: string[] = [];
@@ -691,6 +739,23 @@ function hasAsciiEllipsisAt(input: string, index: number): boolean {
   return charCodeAtString(input, index) === PERIOD_CODE_UNIT &&
     charCodeAtString(input, index + 1) === PERIOD_CODE_UNIT &&
     charCodeAtString(input, index + 2) === PERIOD_CODE_UNIT;
+}
+
+/** Detect an absolute path that an adapter introduced after receiving a relative request. */
+function containsAbsoluteFilesystemPathForDiagnostic(input: string): boolean {
+  for (let index = 0; index < input.length; index++) {
+    if (index > 0 && isPathContinuationCodeUnit(charCodeAtString(input, index - 1))) continue;
+    const codeUnit = charCodeAtString(input, index);
+    if (isPathSeparatorCodeUnit(codeUnit)) return true;
+    if (
+      isAsciiLetterCodeUnit(codeUnit) && charCodeAtString(input, index + 1) === COLON_CODE_UNIT &&
+      isPathSeparatorCodeUnit(charCodeAtString(input, index + 2))
+    ) {
+      return true;
+    }
+    if (lowercaseString(sliceString(input, index, index + 5)) === "file:") return true;
+  }
+  return false;
 }
 
 /** Detect a shortened trusted absolute path that cannot be safely redacted as a whole. */
@@ -931,6 +996,12 @@ export function snapshotThrowableDiagnosticRedactingPath(
   // adapter controls Error.message, so running every pass over the complete
   // untrusted value would multiply work during fallback handling.
   const diagnostic = sanitizeDiagnosticText(readThrowableDiagnostic(error));
+  if (
+    !isAbsoluteFilesystemPathForDiagnostic(path) &&
+    containsAbsoluteFilesystemPathForDiagnostic(diagnostic)
+  ) {
+    return `${FILESYSTEM_DIAGNOSTIC_FALLBACK} for ${replacement}`;
+  }
   const normalizationSource = fileUrlNormalizationSource(path);
   const normalizedPath = normalizeFilesystemPathForDiagnostic(normalizationSource);
   const posixDoubleSeparatorPath = normalizePosixDoubleSeparatorPathForDiagnostic(
@@ -941,6 +1012,8 @@ export function snapshotThrowableDiagnosticRedactingPath(
   const nodeBacktickQuotedPath = nodeInspectedFilesystemPath(path, 96);
   const nodeNullEscapedPath = nodeNullEscapedFilesystemPath(path);
   const uriEncodedPath = uriEncodedFilesystemPath(path);
+  const componentEncodedPath = componentEncodedFilesystemPath(path);
+  const formEncodedPath = formEncodedFilesystemPath(path);
   const rawCanonicalPlatformPath = platformPathFromNormalizedFileUrl(normalizationSource);
   const rawNormalizedPlatformPath = normalizationSource === normalizedPath
     ? undefined
@@ -1049,6 +1122,12 @@ export function snapshotThrowableDiagnosticRedactingPath(
   if (uriEncodedPath !== undefined) {
     redacted = redactPathFromText(redacted, uriEncodedPath, replacement);
   }
+  if (componentEncodedPath !== undefined) {
+    redacted = redactPathFromText(redacted, componentEncodedPath, replacement);
+  }
+  if (formEncodedPath !== undefined && formEncodedPath !== componentEncodedPath) {
+    redacted = redactPathFromText(redacted, formEncodedPath, replacement);
+  }
   if (normalizationSource !== path) {
     redacted = redactPathFromText(redacted, normalizationSource, replacement);
   }
@@ -1103,6 +1182,10 @@ export function snapshotThrowableDiagnosticRedactingPath(
       containsTruncatedFilesystemPathPrefix(redacted, nodeNullEscapedPath)) ||
     (uriEncodedPath !== undefined &&
       containsTruncatedFilesystemPathPrefix(redacted, uriEncodedPath)) ||
+    (componentEncodedPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, componentEncodedPath)) ||
+    (formEncodedPath !== undefined && formEncodedPath !== componentEncodedPath &&
+      containsTruncatedFilesystemPathPrefix(redacted, formEncodedPath)) ||
     (normalizationSource !== path &&
       containsTruncatedFilesystemPathPrefix(redacted, normalizationSource)) ||
     (normalizedPath !== path && normalizedPath !== normalizationSource &&

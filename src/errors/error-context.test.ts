@@ -957,6 +957,124 @@ describe("error-context", () => {
       }
     });
 
+    it("redacts component-encoded paths in every filesystem helper", async () => {
+      const captured: { message: string; data: Record<string, unknown> }[] = [];
+      const originalLogDebug = serverLogger.debug;
+      serverLogger.debug = ((message: string, data: Record<string, unknown>) => {
+        captured.push({ message, data });
+      }) as typeof serverLogger.debug;
+
+      const paths = [
+        "/definitely-private-read-marker/secret",
+        "/definitely-private-stat-marker/secret file",
+        "/definitely-private-directory-marker/secret",
+      ] as const;
+      try {
+        await safeFileRead(
+          {
+            fs: {
+              readFile: () =>
+                Promise.reject(new Error(`read failed ${encodeURIComponent(paths[0])}`)),
+            },
+          },
+          paths[0],
+          "read-file",
+        );
+        await safeFileStat(
+          {
+            fs: {
+              stat: () =>
+                Promise.reject(
+                  new Error(`stat failed ${new URLSearchParams({ path: paths[1] }).toString()}`),
+                ),
+            },
+          },
+          paths[1],
+          "stat-file",
+        );
+        await safeReadDir<string>(
+          {
+            fs: {
+              async *readDir(): AsyncIterable<string> {
+                yield await Promise.reject(
+                  new Error(`directory failed ${encodeURIComponent(paths[2])}`),
+                );
+              },
+            },
+          },
+          paths[2],
+          "read-directory",
+        );
+      } finally {
+        serverLogger.debug = originalLogDebug;
+      }
+
+      assertEquals(captured.length, 3);
+      for (const diagnostic of captured) {
+        assertExists(diagnostic);
+        const errorMessage = String(diagnostic.data.errorMessage);
+        assertEquals(errorMessage.includes("private-"), false);
+        assertEquals(errorMessage.includes("<absolute-path>"), true);
+      }
+    });
+
+    it("fails closed when adapters resolve relative paths in every filesystem helper", async () => {
+      const captured: { message: string; data: Record<string, unknown> }[] = [];
+      const originalLogDebug = serverLogger.debug;
+      serverLogger.debug = ((message: string, data: Record<string, unknown>) => {
+        captured.push({ message, data });
+      }) as typeof serverLogger.debug;
+
+      const resolvedPaths = [
+        "/workspace/project/config/private-read.json",
+        "/workspace/project/config/private-stat.json",
+        "/workspace/project/config/private-directory",
+      ] as const;
+      try {
+        await safeFileRead(
+          {
+            fs: {
+              readFile: () => Promise.reject(new Error(`read failed ${resolvedPaths[0]}`)),
+            },
+          },
+          "config/private-read.json",
+          "read-file",
+        );
+        await safeFileStat(
+          {
+            fs: {
+              stat: () => Promise.reject(new Error(`stat failed ${resolvedPaths[1]}`)),
+            },
+          },
+          "config/private-stat.json",
+          "stat-file",
+        );
+        await safeReadDir<string>(
+          {
+            fs: {
+              async *readDir(): AsyncIterable<string> {
+                yield await Promise.reject(new Error(`directory failed ${resolvedPaths[2]}`));
+              },
+            },
+          },
+          "config/private-directory",
+          "read-directory",
+        );
+      } finally {
+        serverLogger.debug = originalLogDebug;
+      }
+
+      assertEquals(captured.length, 3);
+      for (const diagnostic of captured) {
+        assertExists(diagnostic);
+        assertEquals(String(diagnostic.data.path).startsWith("config/"), true);
+        assertEquals(
+          diagnostic.data.errorMessage,
+          "Filesystem operation failed for <absolute-path>",
+        );
+      }
+    });
+
     it("redacts Node null-byte path aliases in every filesystem helper", async () => {
       const captured: { message: string; data: Record<string, unknown> }[] = [];
       const originalLogDebug = serverLogger.debug;
