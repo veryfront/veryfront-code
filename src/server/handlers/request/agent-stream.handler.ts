@@ -915,6 +915,18 @@ export class AgentStreamHandler extends BaseHandler {
                   sourceIntegrationPolicy,
                   async () => {
                     await this.deps.ensureProjectDiscovery(projectScopedContext);
+                    if (requestSourceFingerprint !== undefined) {
+                      const discoverySourceFingerprint =
+                        await requireAgentSourceSnapshotFingerprint(
+                          projectScopedContext,
+                          "agent-source-discovery-identity",
+                        );
+                      if (discoverySourceFingerprint !== requestSourceFingerprint) {
+                        throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+                          detail: "The branch source changed while project agents were discovered",
+                        });
+                      }
+                    }
 
                     const agent = this.deps.getAgent(payload.agentId);
                     if (!agent) {
