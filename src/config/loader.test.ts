@@ -1174,28 +1174,64 @@ export default config as const;
         assertEquals(error.message.includes("alice"), false);
       });
 
+      /**
+       * Fastest of `runs` timed `loadFailure` calls, with the error it raised.
+       *
+       * A single timing is the wrong instrument here. `loadFailure` writes a temp
+       * file and loads a module, which costs tens of milliseconds before any
+       * redaction runs, while the backtracking these two tests exist to catch
+       * costs about 16ms at 100k characters when it is bounded. The signal is
+       * therefore smaller than the harness noise, and one scheduler hiccup on a
+       * shared runner is enough to fail the ratio: this went red at
+       * `probe 5450ms vs control 39ms` on a change measured to leave every
+       * pattern's cost byte-identical.
+       *
+       * Noise only ever adds time, so the minimum of several runs is the closest
+       * available estimate of the true cost. Unbounded backtracking is not
+       * intermittent -- it is paid on every run -- so taking the minimum cannot
+       * hide the thing being guarded against, which is what makes this safe
+       * rather than a way of making a red test green.
+       */
+      async function fastestLoad(
+        prefix: string,
+        source: string,
+        runs = 3,
+      ): Promise<{ ms: number; error: VeryfrontError }> {
+        const start = Date.now();
+        let error = await loadFailure(prefix, source);
+        let ms = Date.now() - start;
+        for (let run = 1; run < runs; run += 1) {
+          const runStart = Date.now();
+          error = await loadFailure(prefix, source);
+          ms = Math.min(ms, Date.now() - runStart);
+        }
+
+        return { ms, error };
+      }
+
       it("summarizes a very long cause in time proportional to its length", async () => {
         // A wall-clock bound would couple this to runner speed, and a partial
         // reintroduction of backtracking that stayed under it would pass
         // silently. Instead time two inputs of the SAME length on the SAME
         // machine, differing only in whether the pathological retry can start:
-        // digits cannot begin a scheme, letters can. Both measurements pay the
-        // same fixed overhead, so the ratio isolates the backtracking cost.
+        // digits cannot begin a scheme, letters can, so the ratio isolates the
+        // backtracking cost from the harness overhead both inputs pay.
+        //
+        // That overhead is the same in expectation but NOT run to run, which is
+        // why each side is the fastest of several runs -- see `fastestLoad`. A
+        // single pair of timings failed here once at 5450ms vs 39ms on a change
+        // measured to leave every pattern's cost unchanged.
         const size = 100000;
 
-        const controlStart = Date.now();
-        await loadFailure(
+        const control = await fastestLoad(
           "vf-config-long-control-",
           `throw new Error("1".repeat(${size}));\n`,
         );
-        const controlMs = Math.max(1, Date.now() - controlStart);
-
-        const probeStart = Date.now();
-        const error = await loadFailure(
+        const controlMs = Math.max(1, control.ms);
+        const { ms: probeMs, error } = await fastestLoad(
           "vf-config-long-probe-",
           `throw new Error("a".repeat(${size}));\n`,
         );
-        const probeMs = Date.now() - probeStart;
 
         // Bounded, the two are within noise of each other. Unbounded, the probe
         // measured ~17.9s against an unchanged control.
@@ -1220,19 +1256,15 @@ export default config as const;
         // is how this guard silently went vacuous once, and why it is `ab://`.
         const repeats = 20000;
 
-        const controlStart = Date.now();
-        await loadFailure(
+        const control = await fastestLoad(
           "vf-config-starts-control-",
           `throw new Error("1b://(".repeat(${repeats}));\n`,
         );
-        const controlMs = Math.max(1, Date.now() - controlStart);
-
-        const probeStart = Date.now();
-        const error = await loadFailure(
+        const controlMs = Math.max(1, control.ms);
+        const { ms: probeMs, error } = await fastestLoad(
           "vf-config-starts-probe-",
           `throw new Error("ab://(".repeat(${repeats}));\n`,
         );
-        const probeMs = Date.now() - probeStart;
 
         assertEquals(
           probeMs < controlMs * 20,
