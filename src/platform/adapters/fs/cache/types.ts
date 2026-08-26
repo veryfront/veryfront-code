@@ -10,7 +10,7 @@ export interface CacheEntry<T> {
    * independently: a reader must bound what it holds in the process-local
    * immutable tier by the writer's declared lifetime, not by its own
    * configured `ttl`. Absent from entries serialized before this field
-   * existed; readers fall back to their own `ttl` for those.
+   * existed; readers do not admit those entries to the process-local tier.
    */
   backendTtlMs?: number;
 }

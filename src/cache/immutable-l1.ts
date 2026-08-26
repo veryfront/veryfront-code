@@ -336,7 +336,7 @@ function readPositiveIntegerEnv(
   const value = parsed;
   if (maxValue !== undefined && value > maxValue) {
     logger.warn(
-      "Configured cache limit exceeds its maximum and was clamped to the maximum",
+      "Configured cache limit exceeds its maximum. Veryfront clamps it to the maximum",
       { setting: name, configured: value, clampedTo: maxValue },
     );
     return maxValue;

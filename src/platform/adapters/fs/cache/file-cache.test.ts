@@ -73,6 +73,8 @@ interface CountingBackendHarness {
   cache: FileCacheLike;
   backendGets: () => number;
   resetBackendGets: () => void;
+  /** Store a serialized entry directly, including legacy entry shapes. */
+  storeInBackend: (key: string, value: string) => void;
   /** Drop a key from the fake backend without going through the cache. */
   removeFromBackend: (key: string) => void;
   /** Hold every backend read open until `releaseReads()`, to order a race. */
@@ -225,6 +227,9 @@ async function useCountingDistributedBackend(
     backendGets: () => gets,
     resetBackendGets: (): void => {
       gets = 0;
+    },
+    storeInBackend: (key: string, value: string): void => {
+      values.set(key, value);
     },
     removeFromBackend: (key: string): void => {
       values.delete(key);
@@ -1193,6 +1198,35 @@ describe("Distributed cache functions", () => {
         harness.backendGets(),
         1,
         "admission must be bounded by the writer's recorded backend lifetime, not this reader's ttl",
+      );
+    });
+
+    it("does not admit legacy backend entries without a recorded writer ttl", async () => {
+      const distributedModule = await import("./file-cache.ts?issue-602-l1-legacy-writer-ttl");
+      const harness = await useCountingDistributedBackend(distributedModule);
+      harness.storeInBackend(
+        IMMUTABLE_RELEASE_KEY,
+        JSON.stringify({
+          value: "legacy-source",
+          timestamp: Date.now(),
+          size: 13,
+        }),
+      );
+
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        "legacy-source",
+      );
+      harness.resetBackendGets();
+
+      assertEquals(
+        await readInRequest(harness.cache, "proj-a", IMMUTABLE_RELEASE_KEY),
+        "legacy-source",
+      );
+      assertEquals(
+        harness.backendGets(),
+        1,
+        "an entry with an unknown writer ttl must remain backend-authoritative",
       );
     });
 

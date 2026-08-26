@@ -385,31 +385,32 @@ export class FileCache {
                 // `ttl` is not that bound: a value written with a short TTL
                 // and read by a long-TTL instance would outlive its backend
                 // entry. Entries serialized before the field existed carry no
-                // record, so this reader's `ttl` is the only bound available
-                // for them.
+                // safe bound and therefore remain backend-authoritative.
                 const writerTtlMs = typeof entry.backendTtlMs === "number" &&
                     Number.isFinite(entry.backendTtlMs)
                   ? entry.backendTtlMs
-                  : this.options.ttl;
-                // `entry.timestamp` is the WRITER's wall clock and
-                // `startedAtWallClockMs` this reader's, and the two hosts'
-                // clocks can skew. A reader whose clock runs behind the
-                // writer's would derive a remaining lifetime LONGER than the
-                // writer declared, so the derived value is clamped to
-                // `writerTtlMs`: whatever the clocks say, an entry is never
-                // held past the lifetime its writer recorded. The L1 measures
-                // this derived lifetime on its separate monotonic clock.
-                const backendRemainingTtl = Math.min(
-                  writerTtlMs,
-                  entry.timestamp + writerTtlMs - readToken.startedAtWallClockMs,
-                );
-                l1.admit(
-                  admissionScope,
-                  key,
-                  raw,
-                  readToken,
-                  Math.min(immutableL1Ttl, backendRemainingTtl),
-                );
+                  : undefined;
+                if (writerTtlMs !== undefined) {
+                  // `entry.timestamp` is the WRITER's wall clock and
+                  // `startedAtWallClockMs` this reader's, and the two hosts'
+                  // clocks can skew. A reader whose clock runs behind the
+                  // writer's would derive a remaining lifetime LONGER than the
+                  // writer declared, so the derived value is clamped to
+                  // `writerTtlMs`: whatever the clocks say, an entry is never
+                  // held past the lifetime its writer recorded. The L1 measures
+                  // this derived lifetime on its separate monotonic clock.
+                  const backendRemainingTtl = Math.min(
+                    writerTtlMs,
+                    entry.timestamp + writerTtlMs - readToken.startedAtWallClockMs,
+                  );
+                  l1.admit(
+                    admissionScope,
+                    key,
+                    raw,
+                    readToken,
+                    Math.min(immutableL1Ttl, backendRemainingTtl),
+                  );
+                }
               }
             }
             // When using backend (Redis/API), trust the backend's TTL for expiry.
