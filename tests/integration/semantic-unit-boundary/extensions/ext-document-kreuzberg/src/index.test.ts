@@ -908,6 +908,56 @@ describe("ext-document-kreuzberg extension", () => {
     }
   });
 
+  it("keeps the hard timeout active after the subprocess closes stdout", async () => {
+    let resolveStatus!: (status: Deno.CommandStatus) => void;
+    const status = new Promise<Deno.CommandStatus>((resolve) => {
+      resolveStatus = resolve;
+    });
+    let killed = false;
+    const naturalExit = setTimeout(() => {
+      resolveStatus({ success: true, code: 0, signal: null });
+    }, 500);
+    const child = {
+      stdin: new WritableStream<Uint8Array>(),
+      stdout: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.close();
+        },
+      }),
+      stderr: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.close();
+        },
+      }),
+      status,
+      kill(signal: Deno.Signal) {
+        killed = true;
+        clearTimeout(naturalExit);
+        resolveStatus({ success: false, code: 137, signal });
+      },
+    } as unknown as Deno.ChildProcess;
+
+    try {
+      const buffer = new TextEncoder().encode("%PDF-1.4\n").buffer.slice(0) as ArrayBuffer;
+      await assertRejects(
+        () =>
+          extractWithNativeProcessDeno(
+            buffer,
+            "application/pdf",
+            { hardTimeoutMs: 20 },
+            "whole-file",
+            { child },
+          ),
+        Error,
+        "Text extraction exceeded the hard timeout after 0.02s",
+      );
+      assertEquals(killed, true);
+    } finally {
+      clearTimeout(naturalExit);
+      if (!killed) resolveStatus({ success: true, code: 0, signal: null });
+    }
+  });
+
   it("kills a hung extraction subprocess at the hard timeout", async () => {
     const fixture = await writeFixtureProcessScript(`
       for await (const _chunk of Deno.stdin.readable) { /* consume request */ }

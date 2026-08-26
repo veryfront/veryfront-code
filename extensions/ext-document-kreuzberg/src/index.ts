@@ -187,6 +187,8 @@ function sanitizeNativeProcessDiagnostic(diagnostic: string): string {
 export interface NativeExtractionProcessOverrides {
   execPath?: string;
   scriptUrl?: URL;
+  /** Injected subprocess used by lifecycle tests. */
+  child?: Deno.ChildProcess;
 }
 
 /**
@@ -220,7 +222,7 @@ export async function extractWithNativeProcessDeno(
   // for module resolution, and load the native binding. No net, run, or write.
   // Every flag below maps to a capability the extension declares (fs:read,
   // env:read, native:ffi); keep flags and declared capabilities in sync.
-  const child = new Deno.Command(execPath, {
+  const child = overrides.child ?? new Deno.Command(execPath, {
     args: [
       "run",
       "--quiet",
@@ -302,76 +304,82 @@ export async function extractWithNativeProcessDeno(
   })();
 
   try {
-    resetIdleTimer();
-    let pending = "";
-    const stdoutDecoder = new TextDecoder();
-    readLoop:
-    for await (const chunk of child.stdout) {
-      pending += stdoutDecoder.decode(chunk, { stream: true });
-      let newlineIndex = pending.indexOf("\n");
-      while (newlineIndex !== -1) {
-        const line = pending.slice(0, newlineIndex).trim();
-        pending = pending.slice(newlineIndex + 1);
-        newlineIndex = pending.indexOf("\n");
-        if (!line || callbackError) continue;
+    try {
+      resetIdleTimer();
+      let pending = "";
+      const stdoutDecoder = new TextDecoder();
+      readLoop:
+      for await (const chunk of child.stdout) {
+        pending += stdoutDecoder.decode(chunk, { stream: true });
+        let newlineIndex = pending.indexOf("\n");
+        while (newlineIndex !== -1) {
+          const line = pending.slice(0, newlineIndex).trim();
+          pending = pending.slice(newlineIndex + 1);
+          newlineIndex = pending.indexOf("\n");
+          if (!line || callbackError) continue;
 
-        let message: NativeProcessMessage;
-        try {
-          message = JSON.parse(line) as NativeProcessMessage;
-        } catch {
-          continue; // Ignore non-protocol output.
-        }
-        if (message.type === "progress") {
-          clearIdleTimer();
-          // Race callback delivery against timeout settlement: an async
-          // onProgress that never settles must not keep this await pending
-          // past the hard deadline, or hardTimeoutMs is never enforced.
-          const delivery = Promise.resolve()
-            .then(() => options.onProgress?.(message.event))
-            .then(() => "delivered" as const, (error) => {
-              callbackError ??= error instanceof Error ? error : new Error(String(error));
-              return "failed" as const;
-            });
-          const outcome = await Promise.race([delivery, timeoutFired]);
-          if (outcome === "timeout") break readLoop;
-          if (outcome === "failed") {
-            killChild();
-            continue;
+          let message: NativeProcessMessage;
+          try {
+            message = JSON.parse(line) as NativeProcessMessage;
+          } catch {
+            continue; // Ignore non-protocol output.
           }
-          resetIdleTimer();
-        } else if (message.type === "error") {
-          childError ??= message.error;
-        } else if (message.type === "done") {
-          content ??= message.content;
+          if (message.type === "progress") {
+            clearIdleTimer();
+            // Race callback delivery against timeout settlement: an async
+            // onProgress that never settles must not keep this await pending
+            // past the hard deadline, or hardTimeoutMs is never enforced.
+            const delivery = Promise.resolve()
+              .then(() => options.onProgress?.(message.event))
+              .then(() => "delivered" as const, (error) => {
+                callbackError ??= error instanceof Error ? error : new Error(String(error));
+                return "failed" as const;
+              });
+            const outcome = await Promise.race([delivery, timeoutFired]);
+            if (outcome === "timeout") break readLoop;
+            if (outcome === "failed") {
+              killChild();
+              continue;
+            }
+            resetIdleTimer();
+          } else if (message.type === "error") {
+            childError ??= message.error;
+          } else if (message.type === "done") {
+            content ??= message.content;
+          }
         }
       }
+    } finally {
+      // Progress cannot resume after stdout closes, but the hard deadline must
+      // remain active until the child itself exits and its streams settle.
+      clearIdleTimer();
     }
+
+    // The child has closed stdout by now (normal exit, crash, or kill); await
+    // everything so no process or stream leaks past this call.
+    const status = await child.status;
+    const stderrText = (await stderrPromise).trim();
+    await stdinPromise;
+
+    if (timeoutError) throw timeoutError;
+    if (callbackError) throw callbackError;
+    if (childError !== undefined) {
+      throw new Error(
+        sanitizeNativeProcessDiagnostic(childError) || "Native extraction process failed",
+      );
+    }
+    if (content !== undefined) return content;
+
+    const signalSuffix = status.signal ? `, signal ${status.signal}` : "";
+    const stderrSummary = sanitizeNativeProcessDiagnostic(stderrText);
+    const stderrSuffix = stderrSummary ? `: ${stderrSummary}` : "";
+    throw new Error(
+      `Native extraction process exited without a result (code ${status.code}${signalSuffix})${stderrSuffix}`,
+    );
   } finally {
     clearIdleTimer();
     clearTimeout(hardTimer);
   }
-
-  // The child has closed stdout by now (normal exit, crash, or kill); await
-  // everything so no process or stream leaks past this call.
-  const status = await child.status;
-  const stderrText = (await stderrPromise).trim();
-  await stdinPromise;
-
-  if (timeoutError) throw timeoutError;
-  if (callbackError) throw callbackError;
-  if (childError !== undefined) {
-    throw new Error(
-      sanitizeNativeProcessDiagnostic(childError) || "Native extraction process failed",
-    );
-  }
-  if (content !== undefined) return content;
-
-  const signalSuffix = status.signal ? `, signal ${status.signal}` : "";
-  const stderrSummary = sanitizeNativeProcessDiagnostic(stderrText);
-  const stderrSuffix = stderrSummary ? `: ${stderrSummary}` : "";
-  throw new Error(
-    `Native extraction process exited without a result (code ${status.code}${signalSuffix})${stderrSuffix}`,
-  );
 }
 
 async function extractWholeFileWithLoader(
