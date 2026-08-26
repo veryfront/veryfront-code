@@ -6,8 +6,6 @@
  */
 
 // Adapters
-export { getAdapter } from "./adapters/detect.ts";
-export { getLocalAdapter } from "./adapters/registry.ts";
 export { createMockAdapter } from "./adapters/mock.ts";
 export type { RuntimeAdapter } from "./adapters/base.ts";
 
@@ -77,7 +75,7 @@ export { resolveHostAddresses, type ResolveHostAddressesOptions } from "./compat
 export { createKVStore, MemoryKv } from "./compat/kv/index.ts";
 
 // Compat: runtime detection
-export { getDenoRuntime, isDeno } from "./compat/runtime.ts";
+export { isDeno } from "./compat/runtime.ts";
 
 // Adapters: filesystem
 export { createFSAdapter, VeryfrontFSAdapter } from "./adapters/fs/index.ts";

@@ -7,7 +7,8 @@
 
 import { cliLogger } from "#cli/utils";
 import { exitProcess } from "#cli/utils";
-import { env as getProcessEnv, getDenoRuntime, getEnv, onSignal } from "veryfront/platform";
+import { env as getProcessEnv, getEnv, onSignal } from "veryfront/platform";
+import { getDenoRuntime } from "#veryfront/platform/compat/runtime.ts";
 import { SERVER_PERMISSIONS } from "veryfront/security";
 
 interface SplitModeOptions {

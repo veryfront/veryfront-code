@@ -61,6 +61,7 @@
       "react-dom/server": ["./npm/node_modules/react-dom/server.node.js"],
       "veryfront": ["./src/index.ts"],
       "veryfront/*": ["./src/*"],
+      "veryfront/metrics": ["./src/metrics/public.ts"],
       "veryfront/workflow/registry": ["./src/workflow/registry-public.ts"],
       "veryfront/provider/openai-reasoning": ["./src/provider/shared/openai-reasoning.ts"],
       "veryfront/head": ["./src/react/runtime/core.ts"],

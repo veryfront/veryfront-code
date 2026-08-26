@@ -11,6 +11,8 @@ describe("platform/index.ts exports", () => {
     it("does not export the mutable runtime registry", async () => {
       const publicPlatform = await importIndex();
       assertEquals("runtime" in publicPlatform, false);
+      assertEquals("getAdapter" in publicPlatform, false);
+      assertEquals("getLocalAdapter" in publicPlatform, false);
     });
 
     it("should export createFSAdapter", async () => {
@@ -39,6 +41,7 @@ describe("platform/index.ts exports", () => {
       assertEquals("liveHostRuntime" in publicPlatform, false, "live adapter stays internal");
       assertEquals(typeof createInMemoryHostRuntime, "function", "in-memory factory is exported");
       assertEquals(typeof isHostExit, "function", "host exit guard is exported");
+      assertEquals("getDenoRuntime" in publicPlatform, false, "raw Deno stays internal");
     });
 
     it("should export createKVStore", async () => {

@@ -164,7 +164,7 @@ const result = await withSpan("load-data", async () => {
 
 | Name      | Description                                                                | Source                                                                                                     |
 | --------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `metrics` |                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/index.ts#L105)            |
+| `metrics` |                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/index.ts#L101)            |
 | `trace`   | Read-only tracing facade for the public `veryfront/observability` surface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/api-shim.ts#L640) |
 
 ## Deep imports

@@ -29,4 +29,7 @@ it("keeps process-wide env mutators outside veryfront/platform", () => {
   assertEquals("liveHostRuntime" in publicPlatform, false);
   assertEquals("onGlobalError" in publicPlatform, false);
   assertEquals("runtime" in publicPlatform, false);
+  assertEquals("getAdapter" in publicPlatform, false);
+  assertEquals("getLocalAdapter" in publicPlatform, false);
+  assertEquals("getDenoRuntime" in publicPlatform, false);
 });

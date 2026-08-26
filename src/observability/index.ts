@@ -78,11 +78,7 @@ export {
 
 // OpenTelemetry API shim (spans, metrics, context primitives). `trace` is the
 // read-only facade: the process-wide tracer-provider setter stays internal.
-export {
-  publicTrace as trace,
-  SpanKind,
-  SpanStatusCode,
-} from "./tracing/api-shim.ts";
+export { publicTrace as trace, SpanKind, SpanStatusCode } from "./tracing/api-shim.ts";
 export type {
   AttributeValue,
   Context,
