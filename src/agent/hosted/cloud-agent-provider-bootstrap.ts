@@ -158,23 +158,19 @@ async function importOpenTelemetryNodeTelemetryProvider() {
     );
     return OpenTelemetryNodeTelemetryProvider;
   } catch (error) {
-    if (!isMissingOptionalPackageError(error) && !isMissingFirstPartyExtensionModule(error)) {
+    if (!isMissingOpenTelemetryNodeTelemetryProviderError(error)) {
       throw error;
     }
     return null;
   }
 }
 
-// Runtime heuristic: detects a missing optional npm/Deno package by error message text.
-// These strings come from Node, Deno, and bundler runtimes and can vary by version.
-// If the wording changes, a missing optional package will throw instead of returning null,
-// turning an optional dependency into a hard startup failure — the safe fallback.
-function isMissingOptionalPackageError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.includes("Cannot find package") ||
-    message.includes("Cannot find module") ||
-    message.includes("ERR_MODULE_NOT_FOUND") ||
-    message.includes("Module not found");
+/** @internal Classify only absence of the optional OpenTelemetry extension itself. */
+export function isMissingOpenTelemetryNodeTelemetryProviderError(error: unknown): boolean {
+  return isMissingFirstPartyExtensionModule(error, [
+    "extensions/ext-observability-opentelemetry/src/index",
+    "@veryfront/ext-observability-opentelemetry",
+  ]);
 }
 
 /** Validates and snapshots an explicit runtime source identity, rejecting branch sources. */
