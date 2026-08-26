@@ -1,16 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import {
-  assert,
-  assertEquals,
-  assertRejects,
-  assertStringIncludes,
-} from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
 import { TEST_TIMEOUTS } from "../../../tests/_helpers/constants.ts";
 import { withTestContext } from "../../../tests/_helpers/context.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   fetchWithTimeout,
   pollUrlReady,
@@ -246,7 +242,7 @@ async function waitForPageContent(
   while (Date.now() < deadline) {
     try {
       const response = await fetchWithTimeout(`http://127.0.0.1:${port}/`, 1_000);
-      const content = await readPageResponseText(response);
+      const content = await readResponseTextAndRelease(response);
       if (content.includes(expected)) return;
     } catch {
       // The server may be between reloads.
@@ -256,11 +252,22 @@ async function waitForPageContent(
   throw new Error(`Timed out waiting for page content "${expected}"`);
 }
 
-async function readPageResponseText(response: Response): Promise<string> {
+async function readResponseTextAndRelease(response: Response): Promise<string> {
+  const body = response.body;
+  if (body === null) return "";
+
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let content = "";
   try {
-    return await response.text();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return content + decoder.decode();
+      content += decoder.decode(value, { stream: true });
+    }
   } finally {
-    await response.body?.cancel().catch(() => {});
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
   }
 }
 
@@ -285,33 +292,31 @@ async function requestPageAndApi(port: number): Promise<void> {
 describe(
   "veryfront dev output",
   () => {
-    it("releases page responses after successful and failed reads", async () => {
-      let cancellations = 0;
-      const response = (text: () => Promise<string>): Response =>
-        ({
-          text,
-          body: {
-            cancel: () => {
-              cancellations++;
-              return Promise.resolve();
-            },
-          },
-        }) as unknown as Response;
+    it("releases page responses when reading fails and retries", async () => {
+      let attempts = 0;
+      const bodies: ReadableStream<Uint8Array>[] = [];
 
-      await assertRejects(
-        () =>
-          readPageResponseText(
-            response(() => Promise.reject(new DOMException("Body read aborted", "AbortError"))),
-          ),
-        DOMException,
-        "Body read aborted",
-      );
-      assertEquals(
-        await readPageResponseText(response(() => Promise.resolve("updated dev logs page"))),
-        "updated dev logs page",
+      await withMockFetch(
+        () => {
+          attempts++;
+          const response = attempts === 1
+            ? new Response(
+              new ReadableStream<Uint8Array>({
+                pull(controller) {
+                  controller.error(new DOMException("Body read aborted", "AbortError"));
+                },
+              }),
+            )
+            : new Response("updated dev logs page");
+          if (response.body !== null) bodies.push(response.body);
+          return Promise.resolve(response);
+        },
+        () => waitForPageContent(30_010, "updated dev logs page", 250),
       );
 
-      assertEquals(cancellations, 2);
+      assertEquals(attempts, 2);
+      assertEquals(bodies.length, 2);
+      assert(bodies.every((body) => !body.locked));
     });
 
     it(
