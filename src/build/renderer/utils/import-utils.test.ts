@@ -187,6 +187,16 @@ describe("build/renderer/utils/import-utils", () => {
       );
     });
 
+    it("carries multiline arrow bodies into brace classification", () => {
+      assertEquals(
+        extractImports(
+          '{(() => { const ratio = (() =>\n{}) / value; return import("./child.mdx"); })()}',
+          { markdownCode: true },
+        ),
+        ["./child.mdx"],
+      );
+    });
+
     it("keeps imports after statement-position regex literals", () => {
       for (
         const [statement, child] of [
@@ -1215,6 +1225,7 @@ describe("build/renderer/utils/import-utils", () => {
           '{(() => { if /* note */ (ok) /"/.test(value); return import("./child.mdx"); })()}',
           '{(() => { return /* note */ /"/.test(value); return import("./child.mdx"); })()}',
           '{(() => { const ratio =\n{} / value; return import("./child.mdx"); })()}',
+          '{(() => { const ratio = (() =>\n{}) / value; return import("./child.mdx"); })()}',
           `{import(${" ".repeat(200)}"./child.mdx")}`,
           '<Widget label="`" child={import("./child.mdx")} />\n\n`later`',
           'export /* note */ const child = import("./child.mdx")',

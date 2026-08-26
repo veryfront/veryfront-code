@@ -986,6 +986,38 @@ describe("build/renderer/services/mdx-bundler", () => {
       });
     });
 
+    it("does not mistake an unrelated local jsx helper for provider wiring", async () => {
+      const active = resolveContract<ContentProcessor>("ContentProcessor");
+      const localFactoryProcessor: ContentProcessor = {
+        compileMdx: async (options) => ({
+          ...await active.compileMdx(options),
+          compiledCode: 'import { useMDXComponents as authoredHook } from "veryfront/mdx";\n' +
+            "function jsx(_components, output) { return output; }\n" +
+            "export default function MDXContent(props = {}) {\n" +
+            "  const components = { ...authoredHook() };\n" +
+            '  return jsx(components, React.createElement(props.components?.h1 ?? "h1"));\n' +
+            "}",
+        }),
+        compileMarkdown: (options) => active.compileMarkdown(options),
+        getRemarkPlugins: () => active.getRemarkPlugins(),
+        getRehypePlugins: () => active.getRehypePlugins(),
+      };
+
+      await withContractOverride("ContentProcessor", localFactoryProcessor, async () => {
+        const result = await bundleMDXWithOptions({
+          content: "# Local JSX helper",
+          filePath: "/tmp/local-jsx-helper.mdx",
+          projectDir: "/tmp",
+        });
+
+        const loaded = await importEmittedModule(result.code, { providerHeading: true });
+        assertEquals(
+          (renderEmittedComponent(loaded.default) as { type?: unknown }).type,
+          "provider-heading",
+        );
+      });
+    });
+
     it("does not mistake provider-hook calls in nested methods for provider wiring", async () => {
       const active = resolveContract<ContentProcessor>("ContentProcessor");
       const methodProcessor: ContentProcessor = {
@@ -1665,6 +1697,7 @@ describe("build/renderer/services/mdx-bundler", () => {
       const active = resolveContract<ContentProcessor>("ContentProcessor");
       const sourceModule = moduleDataUrl(
         'class Content { static #layout = "layout"; static title = "Page"; ' +
+          'static updateTitle() { this.title = "Updated"; } ' +
           "static getLayout() { return this.#layout; } } export default Content;",
       );
       const staticProcessor: ContentProcessor = {
@@ -1685,13 +1718,55 @@ describe("build/renderer/services/mdx-bundler", () => {
         });
 
         const loaded = await importEmittedModule(result.code) as unknown as {
-          default: { title: string; getLayout(): string };
+          default: { title: string; updateTitle(): void; getLayout(): string };
         };
+        Object.preventExtensions(loaded.default);
+        loaded.default.updateTitle();
+        assertEquals(loaded.default.title, "Updated");
         Object.freeze(loaded.default);
         assertEquals(Object.isFrozen(loaded.default), true);
         assertEquals(Object.keys(loaded.default).includes("title"), true);
-        assertEquals(loaded.default.title, "Page");
+        assertEquals(loaded.default.title, "Updated");
         assertEquals(loaded.default.getLayout(), "layout");
+      });
+    });
+
+    it("mirrors non-configurable static definitions onto the proxy target", async () => {
+      const active = resolveContract<ContentProcessor>("ContentProcessor");
+      const sourceModule = moduleDataUrl(
+        "class Content { static readLayout() { return this.layout; } } export default Content;",
+      );
+      const staticProcessor: ContentProcessor = {
+        compileMdx: async (options) => ({
+          ...await active.compileMdx(options),
+          compiledCode: `export { default } from ${JSON.stringify(sourceModule)};`,
+        }),
+        compileMarkdown: (options) => active.compileMarkdown(options),
+        getRemarkPlugins: () => active.getRemarkPlugins(),
+        getRehypePlugins: () => active.getRehypePlugins(),
+      };
+
+      await withContractOverride("ContentProcessor", staticProcessor, async () => {
+        const result = await bundleMDXWithOptions({
+          content: "# Non-configurable static",
+          filePath: "/tmp/non-configurable-static-default.mdx",
+          projectDir: "/tmp",
+        });
+
+        const loaded = await importEmittedModule(result.code) as unknown as {
+          default: { layout: string; readLayout(): string };
+        };
+        Object.defineProperty(loaded.default, "layout", {
+          value: "fixed",
+          configurable: false,
+          enumerable: true,
+        });
+        assertEquals(
+          Object.getOwnPropertyDescriptor(loaded.default, "layout")?.configurable,
+          false,
+        );
+        assertEquals(loaded.default.layout, "fixed");
+        assertEquals(loaded.default.readLayout(), "fixed");
       });
     });
 

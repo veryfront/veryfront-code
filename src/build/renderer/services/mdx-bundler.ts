@@ -512,13 +512,35 @@ function providerMapContributesToReturn(
   return pathSuppliesRenderedComponents(providerMapPath, defaultFunction);
 }
 
-function isRenderFactoryCall(node: ASTNode): boolean {
+function importSource(path: BabelBindingPath | undefined): string | undefined {
+  for (let current = path?.parentPath; current; current = current.parentPath) {
+    if (current.node.type === "ImportDeclaration") return nodeName(current.node.source);
+  }
+  return undefined;
+}
+
+function isRenderFactoryCall(path: BabelScopeAwarePath): boolean {
+  const node = path.node;
   if (node.type !== "CallExpression") return false;
   const callee = astNode(node.callee);
   if (callee?.type === "Identifier") {
-    return /^_*(?:createElement|jsx|jsxs|jsxDEV)\d*$/.test(nodeName(callee) ?? "");
+    const bindingPath = path.scope?.getBinding(nodeName(callee) ?? "")?.path;
+    if (bindingPath?.node.type !== "ImportSpecifier") return false;
+    const importedName = nodeName(bindingPath.node.imported);
+    const source = importSource(bindingPath);
+    return (source === "react" && importedName === "createElement") ||
+      ((source === "react/jsx-runtime" || source === "react/jsx-dev-runtime") &&
+        (importedName === "jsx" || importedName === "jsxs" || importedName === "jsxDEV"));
   }
-  return callee?.type === "MemberExpression" && nodeName(callee.property) === "createElement";
+  if (callee?.type !== "MemberExpression" || nodeName(callee.property) !== "createElement") {
+    return false;
+  }
+  const objectName = nodeName(callee.object);
+  if (!objectName) return false;
+  const bindingPath = path.scope?.getBinding(objectName)?.path;
+  return (bindingPath?.node.type === "ImportDefaultSpecifier" ||
+    bindingPath?.node.type === "ImportNamespaceSpecifier") &&
+    importSource(bindingPath) === "react";
 }
 
 function isHostElementRenderTarget(value: unknown): boolean {
@@ -540,7 +562,8 @@ function pathSuppliesRenderedComponents(
   ) {
     if (current.node.type === "ReturnStatement") return reachesRender;
     if (isFunctionNode(current.node)) return false;
-    const parent = current.parentPath?.node;
+    const parentPath = current.parentPath as BabelScopeAwarePath | null | undefined;
+    const parent = parentPath?.node;
     if (
       (parent?.type === "LogicalExpression" && parent.left === current.node) ||
       (parent?.type === "ConditionalExpression" && parent.test === current.node)
@@ -555,7 +578,7 @@ function pathSuppliesRenderedComponents(
     const argumentsList = Array.isArray(parent.arguments) ? parent.arguments : [];
     if (parent.callee === current.node) {
       reachesRender = true;
-    } else if (isRenderFactoryCall(parent)) {
+    } else if (parentPath && isRenderFactoryCall(parentPath)) {
       if (argumentsList[0] === current.node) reachesRender = true;
       if (
         argumentsList[1] === current.node && suppliesComponentsProperty &&
@@ -812,7 +835,12 @@ async function componentBackedProviderProxy(
         if (object.getOwnPropertyDescriptor(target, key)) {
           object.defineProperty(target, key, descriptor);
         } else {
+          if (!object.isExtensible(target)) return false;
           object.defineProperty(${originalName}, key, descriptor);
+          const sourceDescriptor = object.getOwnPropertyDescriptor(${originalName}, key);
+          if (sourceDescriptor?.configurable === false) {
+            object.defineProperty(target, key, sourceDescriptor);
+          }
         }
         return true;
       },
@@ -862,6 +890,18 @@ async function componentBackedProviderProxy(
           if (object.getOwnPropertyDescriptor(target, key)) continue;
           const descriptor = object.getOwnPropertyDescriptor(${originalName}, key);
           if (!descriptor) continue;
+          if ("value" in descriptor && typeof descriptor.value !== "function") {
+            const forwardedDescriptor = {
+              configurable: descriptor.configurable,
+              enumerable: descriptor.enumerable,
+              get: () => ${originalName}[key],
+            };
+            if (descriptor.writable) {
+              forwardedDescriptor.set = (value) => ${originalName}[key] = value;
+            }
+            object.defineProperty(target, key, forwardedDescriptor);
+            continue;
+          }
           if (descriptor.get) descriptor.get = ${bindMethodName}(descriptor.get);
           if (descriptor.set) descriptor.set = ${bindMethodName}(descriptor.set);
           if (typeof descriptor.value === "function") {

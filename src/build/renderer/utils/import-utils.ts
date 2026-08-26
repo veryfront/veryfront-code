@@ -29,6 +29,7 @@ interface MdxExpressionState {
   inJsxTag: boolean;
   jsxQuote?: string;
   canStartRegexAtLineStart: boolean;
+  lineStartFollowsArrow: boolean;
   lineStartRequiresExpression: boolean;
   pendingControlFlowCondition: boolean;
   readonly controlFlowParentheses: boolean[];
@@ -77,6 +78,7 @@ function delimiterCloseIndexes(
   line: string,
   pendingControlFlowCondition = false,
   lineStartRequiresExpression = false,
+  lineStartFollowsArrow = false,
 ): DelimiterCloseIndexes {
   const parentheses: Array<{ controlFlow: boolean }> = [];
   const blocks: JavaScriptBlockContext[] = [];
@@ -145,7 +147,13 @@ function delimiterCloseIndexes(
     }
     if (current === "{") {
       blocks.push(
-        javascriptBlockContext(line, index, blocks, lineStartRequiresExpression),
+        javascriptBlockContext(
+          line,
+          index,
+          blocks,
+          lineStartRequiresExpression,
+          lineStartFollowsArrow,
+        ),
       );
       continue;
     }
@@ -159,6 +167,7 @@ function javascriptBlockContext(
   openIndex: number,
   enclosingBlocks: readonly JavaScriptBlockContext[] = [],
   lineStartRequiresExpression = false,
+  lineStartFollowsArrow = false,
 ): JavaScriptBlockContext {
   const previousIndex = previousJavaScriptTokenIndex(line, openIndex);
   const previous = line[previousIndex];
@@ -184,7 +193,8 @@ function javascriptBlockContext(
         line.slice(0, openIndex),
       );
   const callableExpressionBody = functionExpressionBody ||
-    (previous === ">" && line[previousIndex - 1] === "=");
+    (previous === ">" && line[previousIndex - 1] === "=") ||
+    (previousIndex < 0 && lineStartFollowsArrow);
   const expressionBody = callableExpressionBody || classExpressionBody;
   const statementBody = (previousIndex < 0 && !lineStartRequiresExpression) || previous === ")" ||
     previous === ";" ||
@@ -207,11 +217,13 @@ function regexLineContext(
   canStartAtLineStart = true,
   pendingControlFlowCondition = false,
   lineStartRequiresExpression = false,
+  lineStartFollowsArrow = false,
 ): RegexLineContext {
   const closes = delimiterCloseIndexes(
     line,
     pendingControlFlowCondition,
     lineStartRequiresExpression,
+    lineStartFollowsArrow,
   );
   return {
     controlFlowCloses: closes.controlFlow,
@@ -260,6 +272,10 @@ function requiresExpressionAfter(line: ArrayLike<string>, endIndex: number): boo
   return word === "await" || word === "delete" || word === "extends" || word === "in" ||
     word === "instanceof" || word === "new" || word === "of" || word === "typeof" ||
     word === "void";
+}
+
+function endsWithArrow(line: ArrayLike<string>, endIndex: number): boolean {
+  return line[endIndex] === ">" && line[endIndex - 1] === "=";
 }
 
 function precedingWord(line: string, endIndex: number): string {
@@ -341,6 +357,7 @@ function findRegexLiteralEndAt(
     const previousIndex = previousSignificantIndex(contextCharacters, lineStart);
     let canStartAtLineStart = true;
     let lineStartRequiresExpression = false;
+    let lineStartFollowsArrow = false;
     if (previousIndex >= 0) {
       const previousLineStart = code.lastIndexOf("\n", previousIndex - 1) + 1;
       const previousLineEndIndex = code.indexOf("\n", previousIndex);
@@ -360,12 +377,14 @@ function findRegexLiteralEndAt(
         previousLine,
         previousLineIndex,
       );
+      lineStartFollowsArrow = endsWithArrow(previousLine, previousLineIndex);
     }
     context = regexLineContext(
       line,
       canStartAtLineStart,
       hasControlFlowKeywordBefore(contextCharacters, lineStart),
       lineStartRequiresExpression,
+      lineStartFollowsArrow,
     );
     contextCache.set(lineStart, context);
   }
@@ -503,6 +522,7 @@ function scanMdxExpressionLine(
           index,
           state.statementBlocks,
           state.lineStartRequiresExpression,
+          state.lineStartFollowsArrow,
         ),
       );
     }
@@ -522,6 +542,7 @@ function scanMdxExpressionLine(
     state.quote = undefined;
     state.inBlockComment = false;
     state.canStartRegexAtLineStart = true;
+    state.lineStartFollowsArrow = false;
     state.lineStartRequiresExpression = false;
     state.pendingControlFlowCondition = false;
     state.controlFlowParentheses.length = 0;
@@ -535,6 +556,7 @@ function scanMdxExpressionLine(
         lastSignificantIndex + 1,
         regexContext,
       );
+    state.lineStartFollowsArrow = endsWithArrow(line, lastSignificantIndex);
     state.lineStartRequiresExpression = requiresExpressionAfter(line, lastSignificantIndex);
   }
 }
@@ -564,6 +586,7 @@ function findMdxExpressionCharacters(code: string, jsxTagCharacters?: boolean[])
     inBlockComment: false,
     inJsxTag: false,
     canStartRegexAtLineStart: true,
+    lineStartFollowsArrow: false,
     lineStartRequiresExpression: false,
     pendingControlFlowCondition: false,
     controlFlowParentheses: [],
@@ -819,6 +842,7 @@ function maskMarkdownCode(
       inBlockComment: false,
       inJsxTag: false,
       canStartRegexAtLineStart: true,
+      lineStartFollowsArrow: false,
       lineStartRequiresExpression: false,
       pendingControlFlowCondition: false,
       controlFlowParentheses: [],
