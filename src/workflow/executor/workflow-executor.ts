@@ -55,6 +55,7 @@ import {
 } from "../runtime/workflow-run-control.ts";
 import { projectRunPendingApprovals } from "../runtime/pending-approval-metadata.ts";
 import { validateWorkflowPathSegment } from "../dsl/validation.ts";
+import { captureWorkflowNodes } from "./workflow-definition-snapshot.ts";
 
 const logger = baseLogger.component("workflow-executor");
 
@@ -588,16 +589,29 @@ export class WorkflowExecutor {
    * Resolve workflow nodes from definition
    */
   private resolveNodes(workflow: WorkflowDefinition, context: WorkflowContext): WorkflowNode[] {
-    const nodes = Array.isArray(workflow.steps) ? workflow.steps : workflow.steps(
-      {
-        input: context.input,
-        context,
-        blobStorage: this.config.blobStorage,
-        blob: this.blobResolver,
-      } satisfies StepBuilderContext,
-    );
+    let nodes: WorkflowNode[];
+    let staticSteps: boolean;
+    if (Array.isArray(workflow.steps)) {
+      nodes = workflow.steps;
+      staticSteps = true;
+    } else {
+      nodes = workflow.steps(
+        {
+          input: context.input,
+          context,
+          blobStorage: this.config.blobStorage,
+          blob: this.blobResolver,
+        } satisfies StepBuilderContext,
+      );
+      staticSteps = false;
+    }
 
     this.validateNodes(nodes, workflow.id);
+    if (!staticSteps) {
+      nodes = captureWorkflowNodes(nodes, `Workflow "${workflow.id}"`, {
+        emptyElementName: "step",
+      });
+    }
     return nodes;
   }
 

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryBackend } from "./memory.ts";
 import type { Checkpoint, PendingApproval, WorkflowQueueItem, WorkflowRun } from "../types.ts";
@@ -1169,6 +1169,62 @@ describe("MemoryBackend", () => {
         (await backend.takeRunEvent("run-events", "payment.confirmed"))?.id,
         "evt-after",
         "a refused claim must leave the event buffered",
+      );
+    });
+
+    it("claims only mail published on or before a wait deadline", async () => {
+      await backend.savePendingEventWait("run-events", createEventWait("evw-deadline"));
+      const deadline = new Date(10);
+      await backend.appendRunEvent("run-events", {
+        id: "evt-late",
+        eventName: "payment.confirmed",
+        payload: { timing: "late" },
+        publishedAt: new Date(11),
+      });
+      await backend.appendRunEvent("run-events", {
+        id: "evt-on-time",
+        eventName: "payment.confirmed",
+        payload: { timing: "on-time" },
+        publishedAt: deadline,
+      });
+
+      assertEquals(
+        (await backend.claimRunEventForWait(
+          "run-events",
+          "evw-deadline",
+          "payment.confirmed",
+          deadline,
+        ))?.id,
+        "evt-on-time",
+      );
+      assertEquals(
+        (await backend.takeRunEvent("run-events", "payment.confirmed"))?.id,
+        "evt-late",
+        "a post-deadline event must remain buffered after the eligible claim",
+      );
+    });
+
+    it("enumerates delivered delays and expired event waits as recoverable claims", async () => {
+      await backend.savePendingEventWait(
+        "run-events",
+        createEventWait("evw-delay", {
+          nodeId: "pause",
+          eventName: "__delay__",
+          waitKind: "delay",
+        }),
+      );
+      await backend.savePendingEventWait("run-events", createEventWait("evw-timeout"));
+      await backend.resolvePendingEventWait("run-events", "evw-delay", "delivered");
+      await backend.resolvePendingEventWait("run-events", "evw-timeout", "expired");
+
+      const claims = await backend.listTimedEventWaitClaims("run-events");
+      assertEquals(claims.map((wait) => wait.id), ["evw-delay", "evw-timeout"]);
+      assert(claims.every((wait) => wait.claimedAt instanceof Date));
+
+      await backend.restorePendingEventWait("run-events", "evw-delay");
+      assertEquals(
+        (await backend.listTimedEventWaitClaims("run-events")).map((wait) => wait.id),
+        ["evw-timeout"],
       );
     });
 

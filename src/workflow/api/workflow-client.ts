@@ -30,6 +30,7 @@ import {
   type EventWaitManagerConfig,
   type PublishEventOutcome,
 } from "../runtime/event-wait-manager.ts";
+import { captureWorkflowDefinition } from "../executor/workflow-definition-snapshot.ts";
 
 export type { PublishEventOutcome };
 import type { Workflow } from "../dsl/workflow.ts";
@@ -237,9 +238,10 @@ export class WorkflowClient {
 
   register(workflow: Workflow | WorkflowDefinition): void {
     const definition = "definition" in workflow ? workflow.definition : workflow;
-    const indexedDefinition = this.indexWaitNodeConfigs(definition);
+    const capturedDefinition = captureWorkflowDefinition(definition);
+    const indexedDefinition = this.indexWaitNodeConfigs(capturedDefinition);
     this.executor.register(indexedDefinition);
-    logger.debug("Registered workflow", { workflowId: definition.id });
+    logger.debug("Registered workflow", { workflowId: capturedDefinition.id });
   }
 
   /**

@@ -139,6 +139,8 @@ export interface PersistedPendingApproval extends PendingApproval {
 export interface PersistedPendingEventWait extends PendingEventWait {
   /** Worker that owned the run when the wait was appended. */
   workerId?: string;
+  /** Time a delivered or expired claim left the pending set. */
+  claimedAt?: Date;
 }
 
 /** One event durably buffered in a run's mailbox until a wait consumes it. */
@@ -330,6 +332,15 @@ export interface WorkflowBackend {
    * is terminal.
    */
   restorePendingEventWait?(runId: string, waitId: string): Promise<boolean>;
+  /**
+   * Enumerate timeout claims whose run transition may not have committed.
+   *
+   * A delivered delay and an expired event wait remain recoverable until the
+   * delay node completes or the event timeout fails its run. A replacement
+   * process uses this list to restore claims left between those two durable
+   * mutations.
+   */
+  listTimedEventWaitClaims?(runId?: string): Promise<PersistedPendingEventWait[]>;
 
   /**
    * Buffer one event in a run's durable mailbox.
@@ -366,6 +377,7 @@ export interface WorkflowBackend {
     runId: string,
     waitId: string,
     eventName: string,
+    publishedBefore?: Date,
   ): Promise<RunEventEnvelope | null>;
   /**
    * Enumerate recoverable in-flight delivery claims, optionally for one run.
@@ -573,6 +585,7 @@ type WithEventWaitSupport =
       | "listPendingEventWaits"
       | "resolvePendingEventWait"
       | "restorePendingEventWait"
+      | "listTimedEventWaitClaims"
       | "appendRunEvent"
       | "removeRunEvent"
       | "peekRunEvent"
@@ -591,11 +604,11 @@ type WithEventWaitSupport =
  * The whole group is required, not any single method: a backend that could
  * record a wait but not buffer an event, or buffer an event but not resolve a
  * wait, would park runs that nothing can ever wake. `restorePendingEventWait`,
- * `restoreRunEvent`, `restoreRunEventDelivery`, and
- * `finalizeRunEventDelivery`, and recoverable delivery claims are part of the group for
- * the same reason: without them a delivery that fails halfway leaves the run
- * parked on a wait already marked delivered, re-orders its mailbox, or loses
- * the event outright when a crash lands between the two separate restores.
+ * `restoreRunEvent`, `restoreRunEventDelivery`, `finalizeRunEventDelivery`,
+ * recoverable delivery claims, and recoverable timeout claims are part of the
+ * group for the same reason: without them a delivery that fails halfway leaves
+ * the run parked on a wait already marked delivered, re-orders its mailbox, or
+ * loses the event outright when a crash lands between the two separate restores.
  *
  * A backend that also supports worker execution ownership must implement
  * `savePendingEventWaitIfStatusAndWorker` as well. The executor assigns every
@@ -610,6 +623,7 @@ export function hasEventWaitSupport(backend: WorkflowBackend): backend is WithEv
     typeof backend.listPendingEventWaits === "function" &&
     typeof backend.resolvePendingEventWait === "function" &&
     typeof backend.restorePendingEventWait === "function" &&
+    typeof backend.listTimedEventWaitClaims === "function" &&
     typeof backend.appendRunEvent === "function" &&
     typeof backend.removeRunEvent === "function" &&
     typeof backend.peekRunEvent === "function" &&

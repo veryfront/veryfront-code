@@ -733,6 +733,7 @@ export class MemoryBackend implements WorkflowBackend {
     // the same record, and only the winner may act on the run.
     if (!wait || wait.status !== "pending") return Promise.resolve(false);
     wait.status = status;
+    if (status === "delivered" || status === "expired") wait.claimedAt = new Date();
     return Promise.resolve(true);
   }
 
@@ -746,7 +747,24 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.resolve(false);
     }
     wait.status = "pending";
+    delete wait.claimedAt;
     return Promise.resolve(true);
+  }
+
+  listTimedEventWaitClaims(runId?: string): Promise<PersistedPendingEventWait[]> {
+    const claims: PersistedPendingEventWait[] = [];
+    for (const [claimRunId, waits] of this.eventWaits) {
+      if (runId !== undefined && claimRunId !== runId) continue;
+      for (const wait of waits) {
+        if (
+          (wait.waitKind === "delay" && wait.status === "delivered") ||
+          (wait.waitKind === "event" && wait.status === "expired")
+        ) {
+          claims.push(structuredClone(wait));
+        }
+      }
+    }
+    return Promise.resolve(claims);
   }
 
   appendRunEvent(runId: string, event: RunEventEnvelope): Promise<void> {
@@ -827,19 +845,21 @@ export class MemoryBackend implements WorkflowBackend {
     runId: string,
     waitId: string,
     eventName: string,
+    publishedBefore?: Date,
   ): Promise<RunEventEnvelope | null> {
     const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
     if (!wait || wait.status !== "pending") return Promise.resolve(null);
     const mailbox = this.runEvents.get(runId);
     if (!mailbox) return Promise.resolve(null);
-    const taken = takeRetainedRunEvent(mailbox, eventName);
+    const taken = takeRetainedRunEvent(mailbox, eventName, publishedBefore);
     if (!taken) return Promise.resolve(null);
     wait.status = "delivered";
+    wait.claimedAt = new Date();
     const claims = this.runEventClaims.get(runId) ?? new Map<string, RunEventDeliveryClaim>();
     claims.set(taken.id, {
       wait: structuredClone(wait),
       event: structuredClone(taken),
-      claimedAt: new Date(),
+      claimedAt: wait.claimedAt,
     });
     this.runEventClaims.set(runId, claims);
     // Keep an empty mailbox as the claimed event's capacity reservation. The
@@ -882,7 +902,10 @@ export class MemoryBackend implements WorkflowBackend {
   ): Promise<boolean> {
     const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
     const restored = !!wait && (wait.status === "delivered" || wait.status === "expired");
-    if (restored) wait.status = "pending";
+    if (restored) {
+      wait.status = "pending";
+      delete wait.claimedAt;
+    }
     // The event goes back even when the wait belongs to another actor now: it
     // held its mailbox place before the claim.
     const mailbox = this.runEvents.get(runId) ?? [];

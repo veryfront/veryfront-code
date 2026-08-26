@@ -81,8 +81,12 @@ export function appendRetainedRunEvent(
 export function takeRetainedRunEvent(
   mailbox: RunEventEnvelope[],
   eventName: string,
+  publishedBefore?: Date,
 ): RunEventEnvelope | null {
-  const index = mailbox.findIndex((event) => event.eventName === eventName);
+  const index = mailbox.findIndex((event) =>
+    event.eventName === eventName &&
+    (publishedBefore === undefined || event.publishedAt.getTime() <= publishedBefore.getTime())
+  );
   if (index === -1) return null;
   return mailbox.splice(index, 1)[0] ?? null;
 }
