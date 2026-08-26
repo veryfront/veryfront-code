@@ -7,6 +7,9 @@
  */
 
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { fetchWithPinnedAddresses } from "#veryfront/platform/compat/http/pinned-fetch.ts";
+import { isBun } from "#veryfront/platform/compat/runtime.ts";
 import {
   guardedEgressFetch,
   isInternalEgressOverrideEnabled,
@@ -20,6 +23,13 @@ import {
 export const HOST_INTERNAL_EGRESS_OVERRIDE_ENV = "VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS";
 export const HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV =
   "VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS";
+
+const NODE_EXTRA_CA_CERTS_ENV = "NODE_EXTRA_CA_CERTS";
+const MAX_EXTRA_CA_BYTES = 1024 * 1024;
+const bunExtraCaFile = isBun ? getHostEnv(NODE_EXTRA_CA_CERTS_ENV)?.trim() : undefined;
+let bunTrustedCaCertificates: Promise<readonly string[]> | undefined;
+
+type BoundedFileReader = (path: string, byteLimit: number) => Promise<Uint8Array>;
 
 export class OutboundRequestBlockedError extends Error {
   override name = "OutboundRequestBlockedError";
@@ -66,9 +76,58 @@ function getTrustedHostTransport(): OutboundFetchTransport {
     return outboundFetchTransportForTests;
   }
 
-  // Omitting pinnedFetch is deliberate: Node and Bun then use the native
-  // address-pinned transport, while Deno uses its pinned SOCKS client.
+  // Node consumes NODE_EXTRA_CA_CERTS when the process starts. Bun does not,
+  // so supply the same host-owned trust extension to the already address-
+  // pinned Node-compatible transport. Deno uses its pinned SOCKS client and
+  // consumes --cert or DENO_CERT at process startup.
+  if (bunExtraCaFile) {
+    return {
+      fetch: capturedHostFetch,
+      async pinnedFetch(url, addresses, init) {
+        return await fetchWithPinnedAddresses(url, addresses, init, {
+          trustedCaCertificates: await loadBunTrustedCaCertificates(),
+        });
+      },
+    };
+  }
   return { fetch: capturedHostFetch };
+}
+
+async function loadBunTrustedCaCertificates(): Promise<readonly string[]> {
+  if (!bunExtraCaFile) return [];
+  return await (bunTrustedCaCertificates ??= (async () => {
+    const fileSystem = createFileSystem();
+    const readBounded = fileSystem.readFileBytesWithinLimit;
+    if (!readBounded) {
+      throw new Error("Bun cannot read NODE_EXTRA_CA_CERTS safely in this runtime.");
+    }
+
+    const { rootCertificates } = await import("node:tls");
+    return await loadTrustedCaCertificates(
+      bunExtraCaFile,
+      rootCertificates,
+      readBounded.bind(fileSystem),
+    );
+  })());
+}
+
+/** @internal Exported for boundary tests. */
+export async function loadTrustedCaCertificates(
+  filePath: string,
+  defaultRoots: readonly string[],
+  readFileWithinLimit: BoundedFileReader,
+): Promise<readonly string[]> {
+  let bytes: Uint8Array;
+  try {
+    bytes = await readFileWithinLimit(filePath, MAX_EXTRA_CA_BYTES);
+  } catch {
+    throw new Error("Bun could not read NODE_EXTRA_CA_CERTS.");
+  }
+  const extraCa = new TextDecoder().decode(bytes);
+  if (!extraCa.includes("-----BEGIN CERTIFICATE-----")) {
+    throw new Error("NODE_EXTRA_CA_CERTS must contain PEM certificates.");
+  }
+  return Object.freeze([...defaultRoots, extraCa]);
 }
 
 async function fetchWithHostTransport(
