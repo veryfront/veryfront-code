@@ -1642,11 +1642,6 @@ function getModuleHeaders(
 const COMPILED_TO_JS_EXTENSIONS = /\.(?:tsx?|jsx|mdx|md)$/;
 
 /**
- * Content type for a dev module response.
- *
- * Exported for testing.
- */
-/**
  * The source path a module request refers to.
  *
  * The import rewriter appends `.js` to any specifier whose extension it does
@@ -1661,6 +1656,11 @@ function getModuleSourcePath(modulePath: string): string {
   return modulePath.toLowerCase().replace(/\.(?:mjs|js)$/, "");
 }
 
+/**
+ * Content type for a dev module response.
+ *
+ * Exported for testing.
+ */
 export function getDevModuleContentType(modulePath: string): string {
   const normalizedPath = modulePath.toLowerCase();
   const sourcePath = getModuleSourcePath(modulePath);
