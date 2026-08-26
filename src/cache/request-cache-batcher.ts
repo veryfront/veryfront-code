@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { ensureError } from "#veryfront/errors";
 import { logger as baseLogger } from "#veryfront/utils";
 import { MAX_BATCH_SIZE } from "#veryfront/utils/constants/limits.ts";
-import type { CacheBackend } from "./backend.ts";
+import type { CacheBackend, CacheReadOptions } from "./backend.ts";
 import { buildBatchResults } from "./batch-results.ts";
 
 const logger = baseLogger.component("request-cache-batcher");
@@ -11,6 +11,8 @@ interface PendingRequest {
   key: string;
   resolve: (value: string | null) => void;
   reject: (error: Error) => void;
+  /** See {@link CacheReadOptions}; forwarded to the flush that serves this key. */
+  onAuthority?: CacheReadOptions["onAuthority"];
 }
 
 interface RequestCacheContext {
@@ -142,18 +144,23 @@ export function getRequestCacheContext(): RequestCacheContext | undefined {
 export async function getCachedWithBatching(
   backend: CacheBackend,
   key: string,
+  options?: CacheReadOptions,
 ): Promise<string | null> {
   const ctx = getRequestCacheContextStore();
-  if (!ctx) return backend.get(key);
+  if (!ctx) return backend.get(key, options);
 
   if (mapHas(ctx.cache, key)) return mapGet(ctx.cache, key) ?? null;
 
+  // A caller joining a read another caller already started gets that read's
+  // promise, and its own `options.onAuthority` is deliberately NOT attached to
+  // the in-flight request: the joining caller can see the key as pending and
+  // must not treat the shared result as a read it performed itself.
   const existingPending = mapGet(ctx.pending, key);
   if (existingPending) return existingPending;
 
   const mutationVersion = mapGet(ctx.mutationVersions, key) ?? 0;
   const backendPromise = new IntrinsicPromise<string | null>((resolve, reject) => {
-    pushArray(ctx.batchQueue, { key, resolve, reject });
+    pushArray(ctx.batchQueue, { key, resolve, reject, onAuthority: options?.onAuthority });
 
     if (ctx.batchQueue.length >= MAX_BATCH_SIZE) {
       void flushBatch(ctx, backend);
@@ -215,10 +222,31 @@ async function flushBatch(ctx: RequestCacheContext, backend: CacheBackend): Prom
     dedupeRatio: formatRatio(requests.length / uniqueKeys.length),
   });
 
+  // One flush is one round of backend reads serving every queued key, so each
+  // authority a gated backend resolves while performing those reads is
+  // reported to every caller that asked: with per-key attribution unavailable
+  // (a batch endpoint reads all keys under one authority, but its fallback
+  // issues one read per key), a caller must treat each reported authority as
+  // one its value may have been fetched under.
+  const authorityObservers: Array<NonNullable<CacheReadOptions["onAuthority"]>> = [];
+  for (let index = 0; index < requests.length; index++) {
+    const observer = requests[index]!.onAuthority;
+    if (observer) pushArray(authorityObservers, observer);
+  }
+  const readOptions: CacheReadOptions | undefined = authorityObservers.length > 0
+    ? {
+      onAuthority: (authority) => {
+        for (let index = 0; index < authorityObservers.length; index++) {
+          authorityObservers[index]!(authority);
+        }
+      },
+    }
+    : undefined;
+
   try {
     const results = backend.getBatch && uniqueKeys.length > 1
-      ? await backend.getBatch(uniqueKeys)
-      : await getIndividually(backend, uniqueKeys);
+      ? await backend.getBatch(uniqueKeys, readOptions)
+      : await getIndividually(backend, uniqueKeys, readOptions);
 
     for (let index = 0; index < requests.length; index++) {
       const request = requests[index]!;
@@ -236,12 +264,13 @@ async function flushBatch(ctx: RequestCacheContext, backend: CacheBackend): Prom
 async function getIndividually(
   backend: CacheBackend,
   keys: string[],
+  options?: CacheReadOptions,
 ): Promise<Map<string, string | null>> {
   const entries = new IntrinsicMap<string, string | null>();
   const reads: Array<Promise<void>> = [];
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index]!;
-    pushArray(reads, (async () => mapSet(entries, key, await backend.get(key)))());
+    pushArray(reads, (async () => mapSet(entries, key, await backend.get(key, options)))());
   }
   await IntrinsicReflectApply(PromiseAll, IntrinsicPromise, [reads]);
   return buildBatchResults(keys, (key) => mapGet(entries, key) ?? null);
