@@ -34,7 +34,8 @@
             "type": "string",
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true
+            "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
           },
           "sysparm_query": {
             "type": "string",
@@ -73,7 +74,8 @@
             "type": "string",
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true
+            "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
           },
           "sysId": {
             "type": "string",
@@ -106,7 +108,8 @@
             "type": "string",
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true
+            "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
           }
         },
         "body": {
@@ -154,7 +157,8 @@
             "type": "string",
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true
+            "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
           },
           "sysId": {
             "type": "string",
@@ -207,7 +211,8 @@
             "type": "string",
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true
+            "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
           },
           "sysparm_query": {
             "type": "string",
@@ -246,7 +251,8 @@
             "type": "string",
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true
+            "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
           },
           "sysId": {
             "type": "string",
@@ -279,7 +285,8 @@
             "type": "string",
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true
+            "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
           }
         },
         "body": {
@@ -331,7 +338,8 @@
             "type": "string",
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true
+            "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
           },
           "sysId": {
             "type": "string",
@@ -384,7 +392,8 @@
             "type": "string",
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true
+            "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
           },
           "sysparm_query": {
             "type": "string",
@@ -423,7 +432,8 @@
             "type": "string",
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true
+            "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
           },
           "sysId": {
             "type": "string",
@@ -456,7 +466,8 @@
             "type": "string",
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true
+            "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
           },
           "catalogItemSysId": {
             "type": "string",
@@ -494,7 +505,8 @@
             "type": "string",
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true
+            "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
           },
           "sysparm_query": {
             "type": "string",
@@ -533,7 +545,8 @@
             "type": "string",
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true
+            "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
           },
           "sysId": {
             "type": "string",
@@ -566,7 +579,8 @@
             "type": "string",
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true
+            "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
           }
         },
         "body": {
@@ -631,7 +645,8 @@
             "type": "string",
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true
+            "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
           },
           "sysparm_query": {
             "type": "string",
@@ -670,7 +685,8 @@
             "type": "string",
             "in": "path",
             "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true
+            "required": true,
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$"
           },
           "sysparm_query": {
             "type": "string",
@@ -689,130 +705,6 @@
             "in": "query",
             "description": "Comma-separated user fields",
             "default": "sys_id,user_name,name,email,active,department"
-          }
-        },
-        "response": {
-          "transform": "result"
-        }
-      }
-    },
-    {
-      "id": "servicenow__query_table",
-      "name": "Query Table",
-      "description": "Query any ServiceNow table with an encoded query (covers change requests, problems, CMDB, catalog tasks, etc.)",
-      "requiresWrite": false,
-      "endpoint": {
-        "method": "GET",
-        "url": "https://{instanceHost}/api/now/v1/table/{tableName}",
-        "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true
-          },
-          "tableName": {
-            "type": "string",
-            "in": "path",
-            "description": "Table name, e.g. incident, change_request, problem, cmdb_ci, sc_task",
-            "required": true
-          },
-          "sysparm_query": {
-            "type": "string",
-            "in": "query",
-            "description": "Encoded query, e.g. active=true^priority=1^ORDERBYDESCsys_created_on"
-          },
-          "sysparm_fields": {
-            "type": "string",
-            "in": "query",
-            "description": "Comma-separated fields to return"
-          },
-          "sysparm_limit": {
-            "type": "number",
-            "in": "query",
-            "description": "Maximum records to return",
-            "default": 25
-          },
-          "sysparm_offset": {
-            "type": "number",
-            "in": "query",
-            "description": "Record offset for pagination"
-          }
-        },
-        "response": {
-          "transform": "result"
-        }
-      }
-    },
-    {
-      "id": "servicenow__create_table_record",
-      "name": "Create Table Record",
-      "description": "Create a record in any ServiceNow table",
-      "requiresWrite": true,
-      "endpoint": {
-        "method": "POST",
-        "url": "https://{instanceHost}/api/now/v1/table/{tableName}",
-        "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true
-          },
-          "tableName": {
-            "type": "string",
-            "in": "path",
-            "description": "Table name, e.g. incident, change_request, problem, cmdb_ci, sc_task",
-            "required": true
-          }
-        },
-        "bodyMode": "passthrough",
-        "body": {
-          "record": {
-            "type": "object",
-            "description": "Field map for the new record, e.g. {\"short_description\":\"...\",\"priority\":\"2\"}",
-            "required": true
-          }
-        },
-        "response": {
-          "transform": "result"
-        }
-      }
-    },
-    {
-      "id": "servicenow__update_table_record",
-      "name": "Update Table Record",
-      "description": "Update a record in any ServiceNow table",
-      "requiresWrite": true,
-      "endpoint": {
-        "method": "PATCH",
-        "url": "https://{instanceHost}/api/now/v1/table/{tableName}/{sysId}",
-        "params": {
-          "instanceHost": {
-            "type": "string",
-            "in": "path",
-            "description": "ServiceNow instance host, for example example.service-now.com",
-            "required": true
-          },
-          "tableName": {
-            "type": "string",
-            "in": "path",
-            "description": "Table name, e.g. incident, change_request, problem, cmdb_ci, sc_task",
-            "required": true
-          },
-          "sysId": {
-            "type": "string",
-            "in": "path",
-            "description": "sys_id of the record",
-            "required": true
-          }
-        },
-        "bodyMode": "passthrough",
-        "body": {
-          "record": {
-            "type": "object",
-            "description": "Field map of fields to update",
-            "required": true
           }
         },
         "response": {

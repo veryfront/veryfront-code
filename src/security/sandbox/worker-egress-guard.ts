@@ -21,7 +21,7 @@
  */
 
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { resolveHostAddresses } from "#veryfront/platform/compat/dns.ts";
+import { DnsPermissionError, resolveHostAddresses } from "#veryfront/platform/compat/dns.ts";
 import { getDenoRuntime, isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { fetchWithPinnedAddresses } from "#veryfront/platform/compat/http/pinned-fetch.ts";
 
@@ -331,7 +331,24 @@ async function resolveWorkerHostEgressAddresses(
   if (isIpLiteral(host)) return [host];
 
   const resolveHost = options.resolveHost ?? defaultResolveHost;
-  const addresses = await waitForOperation(resolveHost(host), signal);
+  let addresses: string[];
+  try {
+    addresses = await waitForOperation(resolveHost(host), signal);
+  } catch (error) {
+    // The broker boundary forwards only WorkerEgressBlockedError messages and
+    // collapses everything else into a generic failure, so translate the DNS
+    // permission diagnosis here or it never reaches the primary consumer
+    // (veryfront-issue-inbox#744).
+    if (error instanceof DnsPermissionError) {
+      // Keep the resolver's error (and its NotCapable cause) on the chain so
+      // logs that walk causes still see the original permission failure.
+      throw new WorkerEgressBlockedError(
+        `Worker network egress blocked: ${error.message}`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
   if (addresses.length === 0) {
     throw new WorkerEgressBlockedError(
       `Worker network egress blocked: unable to resolve host ${hostname}`,

@@ -20,6 +20,8 @@ import {
   type RootPackageConfig,
 } from "./npm-extension-package-metadata.ts";
 
+const repoRoot = new URL("../../", import.meta.url);
+
 it("exports agent skill helpers as a public package subpath", async () => {
   const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
   const exports = denoConfig.exports as Record<string, string>;
@@ -53,6 +55,30 @@ it("exports CLI framework dependencies as public package subpaths", async () => 
     assertEquals(exports[`./${subpath}`], source);
     assertEquals(imports[`veryfront/${subpath}`], source);
   }
+});
+
+it("keeps process-wide Sentry controls internal", async () => {
+  const denoConfig = JSON.parse(await Deno.readTextFile(new URL("deno.json", repoRoot)));
+  const exports = denoConfig.exports as Record<string, string>;
+  const imports = denoConfig.imports as Record<string, string>;
+
+  assertEquals(exports["./observability/sentry"], undefined);
+  assertEquals(imports["veryfront/observability/sentry"], undefined);
+
+  // The public observability barrel must not re-export the process-wide
+  // reporter mutators either; they would let tenant code redirect framework
+  // error payloads.
+  const barrel = await Deno.readTextFile(new URL("src/observability/index.ts", repoRoot));
+  assertEquals(barrel.includes("initializeApplicationErrorReporter"), false);
+  assertEquals(barrel.includes("setApplicationErrorReporter"), false);
+
+  // The public agent barrel must not export the node runtime-infrastructure
+  // factories: their initializeApplicationErrors() publishes a reporter
+  // selected by caller-supplied env into the same process-wide singleton.
+  // Type re-exports stay allowed; only the factory values are internal.
+  const agentBarrel = await Deno.readTextFile(new URL("src/agent/index.ts", repoRoot));
+  assertEquals(agentBarrel.includes("createNodeAgentServiceRuntimeInfrastructure"), false);
+  assertEquals(agentBarrel.includes("createNodeHostedAgentServiceRuntimeInfrastructure"), false);
 });
 
 it("npm package provenance metadata points at veryfront-code", async () => {

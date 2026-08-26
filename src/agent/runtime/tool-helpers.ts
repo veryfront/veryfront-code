@@ -22,6 +22,7 @@ import {
   isIntegrationToolAllowedBySourcePolicy,
   type SourceIntegrationPolicyManifest,
 } from "#veryfront/integrations/source-policy.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const logger = serverLogger.component("agent");
 
@@ -143,7 +144,7 @@ function resolveVisibleRegistryTool(
 }
 
 function formatAvailableToolNames(names: Iterable<string>): string {
-  const sorted = [...new Set(names)].sort();
+  const sorted = [...new Set(names)].sort(compareStrings);
   return sorted.length > 0 ? sorted.join(", ") : "(none)";
 }
 
@@ -152,7 +153,7 @@ function throwUnknownConfiguredToolsError(
   availableLocalToolNames: Iterable<string>,
   availableRemoteToolNames: Iterable<string>,
 ): never {
-  const unknownList = unknownToolNames.sort().join(", ");
+  const unknownList = unknownToolNames.toSorted(compareStrings).join(", ");
   const availableNames = formatAvailableToolNames([
     ...availableLocalToolNames,
     ...availableRemoteToolNames,

@@ -56,6 +56,11 @@ describe("proxy request host normalization", () => {
         "example.com" + String.fromCharCode(0),
         "exam" + String.fromCharCode(13, 10) + "ple.com",
         "a".repeat(1025) + ".example",
+        // Raw-socket inputs that make Deno synthesize an unparseable req.url
+        // (veryfront-issue-inbox#828): each must be rejected, never parsed.
+        "foo bar",
+        "[",
+        "example.test:notaport",
       ]
     ) {
       assertThrows(
@@ -65,5 +70,24 @@ describe("proxy request host normalization", () => {
         "a Host authority with embedded control characters or over the length bound must be rejected, not silently normalized",
       );
     }
+  });
+
+  it("rejects an empty Host header instead of falling back to the absolute-form authority", () => {
+    // `GET http://evil.test/x HTTP/1.1` + `Host: ` produces a parseable
+    // req.url with an empty Host header. "" is not nullish, so the url.host
+    // fallback must not fire; the request is invalid and must throw for the
+    // router to map to 400 (veryfront-issue-inbox#828).
+    const url = new URL("http://evil.test/x");
+    const request = new Request(url, { headers: { host: "" } });
+    assertThrows(
+      () => resolveProxyRequestHost(request, url),
+      TypeError,
+      "Host header is invalid",
+    );
+    assertThrows(
+      () => resolveProxyRequestAuthority(request, url),
+      TypeError,
+      "Host header is invalid",
+    );
   });
 });

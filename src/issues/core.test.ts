@@ -6,6 +6,7 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { assertEquals, assertExists } from "#std/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import {
   createIssuesManager,
@@ -137,6 +138,122 @@ Deno.test("serializeYaml - escapes double quotes in the title", () => {
     true,
     "serializeYaml escapes double quotes inside the title",
   );
+});
+
+describe("serializeYaml/parseYaml round trip", () => {
+  it("a quoted title survives a round trip", () => {
+    const title = 'Fix "login" timeout';
+    const metadata: IssueMetadata = {
+      id: "ISSUE-001",
+      title,
+      state: "open",
+      labels: [],
+      assignees: [],
+      created_at: "2026-01-23T00:00:00.000Z",
+      updated_at: "2026-01-23T00:00:00.000Z",
+    };
+
+    assertEquals(
+      parseYaml(serializeYaml(metadata)).title,
+      title,
+      "the parser must undo the escaping the serializer applies",
+    );
+  });
+
+  it("repeated round trips do not compound escaping", () => {
+    const title = 'Fix "login" timeout';
+    const base: IssueMetadata = {
+      id: "ISSUE-001",
+      title,
+      state: "open",
+      labels: [],
+      assignees: [],
+      created_at: "2026-01-23T00:00:00.000Z",
+      updated_at: "2026-01-23T00:00:00.000Z",
+    };
+
+    let current = title;
+    for (let save = 0; save < 3; save++) {
+      current = parseYaml(serializeYaml({ ...base, title: current })).title as string;
+    }
+
+    assertEquals(
+      current,
+      title,
+      "each save re-escaped the previous escape, compounding the damage",
+    );
+  });
+
+  it("a backslash in the title survives a round trip", () => {
+    const title = 'Path C:\\temp and a "quote"';
+    const metadata: IssueMetadata = {
+      id: "ISSUE-001",
+      title,
+      state: "open",
+      labels: [],
+      assignees: [],
+      created_at: "2026-01-23T00:00:00.000Z",
+      updated_at: "2026-01-23T00:00:00.000Z",
+    };
+
+    assertEquals(
+      parseYaml(serializeYaml(metadata)).title,
+      title,
+      "a backslash must be escaped too, or it corrupts the escape that follows it",
+    );
+  });
+
+  it("splits a plain array item containing an apostrophe", () => {
+    // `won't-fix` is a valid plain YAML scalar. Treating its apostrophe as an
+    // opening quote swallowed the separator after it and coalesced the labels.
+    assertEquals(
+      parseYaml("labels: [won't-fix, bug]").labels,
+      ["won't-fix", "bug"],
+      "a quote only delimits at the start of an item",
+    );
+  });
+
+  it("labels containing commas survive a round trip", () => {
+    const labels = ["needs: triage, urgent", 'has "quotes"'];
+    const metadata: IssueMetadata = {
+      id: "ISSUE-001",
+      title: "Test issue",
+      state: "open",
+      labels,
+      assignees: [],
+      created_at: "2026-01-23T00:00:00.000Z",
+      updated_at: "2026-01-23T00:00:00.000Z",
+    };
+
+    assertEquals(
+      parseYaml(serializeYaml(metadata)).labels,
+      labels,
+      "an inline array must split on separators between items, not inside them",
+    );
+  });
+
+  it("quoted YAML keywords remain strings", () => {
+    const base: Omit<IssueMetadata, "title"> = {
+      id: "ISSUE-001",
+      state: "open",
+      labels: [],
+      assignees: [],
+      created_at: "2026-01-23T00:00:00.000Z",
+      updated_at: "2026-01-23T00:00:00.000Z",
+    };
+
+    for (const title of ["true", "false", "null", "~"]) {
+      assertEquals(parseYaml(serializeYaml({ ...base, title })).title, title);
+    }
+  });
+
+  it("decodes doubled apostrophes in single-quoted values", () => {
+    assertEquals(parseYaml("title: 'can''t fail'").title, "can't fail");
+    assertEquals(
+      parseYaml("labels: ['owner''s, urgent', bug]").labels,
+      ["owner's, urgent", "bug"],
+    );
+  });
 });
 
 Deno.test("serializeYaml - preserves empty arrays", () => {

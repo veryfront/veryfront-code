@@ -16,6 +16,16 @@ import {
 } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
 
+/**
+ * Route namespace for the local development dashboard's own API.
+ *
+ * Declared beside this policy so the request-security layer and the dashboard
+ * handler agree on one spelling of the surface whose mutations carry the
+ * dashboard's port-scoped session credential rather than the project's
+ * `security.csrf` token.
+ */
+export const DEV_DASHBOARD_API_PREFIX = "/_dev/api/";
+
 const PROXY_FORWARDING_HEADERS = Object.freeze(
   [
     "forwarded",

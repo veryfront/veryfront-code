@@ -16,7 +16,8 @@ import {
 import {
   executeLocalIntegrationEndpoint,
   type LocalIntegrationEndpointTransport,
-  snapshotLocalIntegrationEndpointArguments,
+  resolveLocalIntegrationEndpointOrigin,
+  snapshotLocalIntegrationEndpointInput,
 } from "#veryfront/integrations/local-endpoint-executor.ts";
 import {
   LOCAL_INTEGRATION_CREDENTIAL_UNAVAILABLE,
@@ -40,11 +41,14 @@ const mapSet = Map.prototype.set;
 const objectDefineProperty = Object.defineProperty;
 const objectEntries = Object.entries;
 const objectValues = Object.values;
+const RegExpConstructor = RegExp;
+const regexpExec = RegExp.prototype.exec;
 const SetConstructor = Set;
 const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
 const stringIncludes = String.prototype.includes;
 const stringIndexOf = String.prototype.indexOf;
+const stringEndsWith = String.prototype.endsWith;
 const stringReplace = String.prototype.replace;
 const stringReplaceAll = String.prototype.replaceAll;
 const stringSlice = String.prototype.slice;
@@ -381,6 +385,38 @@ function assertSupportedEndpoint(
 
   const environmentPrefix = "https://{{env.";
   if (!stringBoolean(stringStartsWith, endpoint.url, environmentPrefix)) {
+    const authorityMatch = apply(
+      regexpExec,
+      new RegExpConstructor(
+        "^https://\\{([A-Za-z][A-Za-z0-9_]*)\\}(?=/|$)",
+      ),
+      [endpoint.url],
+    ) as RegExpExecArray | null;
+    if (authorityMatch) {
+      const parameterName = authorityMatch[1]!;
+      const field = endpoint.params?.[parameterName];
+      const patternDescriptor = field && getOwnPropertyDescriptor(field, "pattern");
+      const pattern = patternDescriptor && "value" in patternDescriptor
+        ? patternDescriptor.value
+        : undefined;
+      if (
+        !field || field.type !== "string" || field.in !== "path" ||
+        (field.required !== true && field.default === undefined) ||
+        typeof pattern !== "string" ||
+        !stringBoolean(stringStartsWith, pattern, "^") ||
+        !stringBoolean(stringEndsWith, pattern, "$")
+      ) {
+        configurationError(
+          `Local integration tool "${toolId}" authority must use a required patterned string parameter`,
+        );
+      }
+      try {
+        new RegExpConstructor(pattern);
+      } catch {
+        configurationError(`Local integration tool "${toolId}" authority pattern is invalid`);
+      }
+      return {};
+    }
     return {
       endpointOrigin: assertHttpsCatalogUrl(
         endpoint.url,
@@ -493,6 +529,7 @@ function inputPropertySchema(
     description: string;
     default?: unknown;
     exposeDefault?: boolean;
+    pattern?: string;
   },
   credentialNames: readonly string[],
 ): JsonSchema {
@@ -507,6 +544,16 @@ function inputPropertySchema(
     description: removeCredentialNames(field.description, credentialNames),
   };
   if (field.type === "string[]") schema.items = { type: "string" };
+  // Own-property read: a prototype-traversing `field.pattern` would let an
+  // `Object.prototype.pattern` pollution inject a constraint into every
+  // model-facing schema (or execute an inherited getter).
+  const patternDescriptor = getOwnPropertyDescriptor(field, "pattern");
+  const pattern = patternDescriptor && "value" in patternDescriptor
+    ? patternDescriptor.value
+    : undefined;
+  if (field.type === "string" && typeof pattern === "string") {
+    schema.pattern = pattern;
+  }
   if (field.exposeDefault === true && field.default !== undefined) {
     schema.default = field.default;
   }
@@ -646,16 +693,17 @@ function createLocalIntegrationToolSourceInternal(
           }" is not granted by this source`,
         );
       }
-      const validated = snapshotLocalIntegrationEndpointArguments(tool.endpoint, args);
+      const validated = snapshotLocalIntegrationEndpointInput(tool.endpoint, args);
       const resolvedEndpoint = await resolveAdmittedEndpoint(tool, credentialProvider);
+      let endpoint = resolvedEndpoint.endpoint;
+      let allowedOrigin = resolvedEndpoint.origin ??
+        resolveLocalIntegrationEndpointOrigin(endpoint, validated.args);
       const auth = await mintLocalCredentialAuth(
         await resolveLocalCredentialAuth(tool.authPlan, credentialProvider),
         toolName,
         context?.abortSignal,
         transport,
       );
-      let endpoint = resolvedEndpoint.endpoint;
-      let allowedOrigin = resolvedEndpoint.origin;
       if (tool.connector.name === "salesforce") {
         if (!auth.instanceOrigin) {
           configurationError("Local Salesforce execution requires a validated instance origin");

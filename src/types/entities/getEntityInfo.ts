@@ -33,6 +33,7 @@ import {
   INVALID_ROUTE_FILE,
   ROUTE_CONFLICT,
 } from "#veryfront/errors/error-registry/route.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const logger = baseLogger.component("get-entity-by-slug");
 
@@ -1103,7 +1104,7 @@ async function resolveAdapterPageCandidate(
   assertMatchingCandidateLimit(discoveredPaths.size);
 
   const results: Array<EntityInfo | null> = [];
-  for (const path of [...discoveredPaths].sort()) {
+  for (const path of [...discoveredPaths].sort(compareStrings)) {
     context.throwIfCancelled();
     results.push(
       await getEntityInfoWithinRoot(

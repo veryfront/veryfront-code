@@ -6,6 +6,7 @@ import {
   normalizeEvalString,
   normalizeEvalStringList,
 } from "../../validation.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /** Public API contract for live eval case surface. */
 export type LiveEvalCaseSurface = "read-only" | "write" | "experimental";
@@ -244,7 +245,7 @@ export function buildLiveEvalCaseMetadata(
   }
 
   return {
-    tags: [...tags].sort(),
+    tags: [...tags].sort(compareStrings),
   };
 }
 

@@ -296,7 +296,7 @@ describe("createLocalIntegrationToolSource", () => {
       { tool: "aws__list-s3-buckets", detail: "endpoint" },
       { tool: "github__list_issues", detail: "GraphQL" },
       { tool: "gmail__list_emails", detail: "enrichment" },
-      { tool: "algolia__list_indices", detail: "fixed HTTPS URL" },
+      { tool: "algolia__list_indices", detail: "authority" },
       { tool: "alphavantage__quote", detail: "query" },
       { tool: "slack__list_channels", detail: "authorization-code" },
     ] as const;
@@ -628,10 +628,11 @@ describe("createLocalIntegrationToolSource", () => {
       );
 
       const error = await assertRejects(
-        () => operation === "list" ? source.listTools() : source.executeTool(
-          "databricks__list_clusters",
-          {},
-        ),
+        () =>
+          operation === "list" ? source.listTools() : source.executeTool(
+            "databricks__list_clusters",
+            {},
+          ),
         VeryfrontError,
       );
 
@@ -708,6 +709,66 @@ describe("createLocalIntegrationToolSource", () => {
     assertEquals(error.slug, "local-integration-request-invalid");
     assertEquals(credentialProviderCalls, 0);
     assertEquals(transportCalls, 0);
+  });
+
+  it("admits a patterned authority and pins credentials to the validated host", async () => {
+    let credentialProviderCalls = 0;
+    const requests: string[] = [];
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["servicenow__list_incidents"],
+        credentialProvider: () => {
+          credentialProviderCalls += 1;
+          return TEST_CREDENTIAL;
+        },
+      },
+      (request) => {
+        requests.push(request.url.href);
+        assertEquals(headerValue(request.init, "authorization"), `Bearer ${TEST_CREDENTIAL}`);
+        return Promise.resolve(Response.json({ result: [] }));
+      },
+    );
+
+    assertEquals((await source.listTools())[0]?.parameters, {
+      type: "object",
+      properties: {
+        instanceHost: {
+          type: "string",
+          description: "ServiceNow instance host, for example example.service-now.com",
+          pattern: "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.service-now\\.com$",
+        },
+        sysparm_query: {
+          type: "string",
+          description: "Encoded ServiceNow query",
+        },
+        sysparm_limit: {
+          type: "number",
+          description: "Maximum incidents to return",
+        },
+        sysparm_fields: {
+          type: "string",
+          description: "Comma-separated incident fields to return",
+        },
+      },
+      required: ["instanceHost"],
+      additionalProperties: false,
+    });
+    await source.executeTool("servicenow__list_incidents", {
+      instanceHost: "example.service-now.com",
+    });
+    const callsBeforeRejection = credentialProviderCalls;
+    await assertRejects(
+      () =>
+        source.executeTool("servicenow__list_incidents", {
+          instanceHost: "attacker.example",
+        }),
+      VeryfrontError,
+    );
+
+    assertEquals(credentialProviderCalls, callsBeforeRejection);
+    assertEquals(requests, [
+      "https://example.service-now.com/api/now/v1/table/incident?sysparm_query=active%3Dtrue%5EORDERBYDESCsys_updated_on&sysparm_limit=25&sysparm_fields=sys_id%2Cnumber%2Cshort_description%2Cdescription%2Cstate%2Cimpact%2Curgency%2Cpriority%2Cassignment_group%2Cassigned_to%2Copened_at%2Csys_updated_on",
+    ]);
   });
 
   it("rejects a dot-segment path argument before minting credentials", async () => {

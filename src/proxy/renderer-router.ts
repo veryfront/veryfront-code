@@ -8,6 +8,7 @@ import {
 import { isIP } from "node:net";
 import { resolve4 } from "node:dns/promises";
 import { proxyLogger } from "./logger.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const DEFAULT_REFRESH_MS = 15_000;
 const DEFAULT_REFRESH_TIMEOUT_MS = 5_000;
@@ -260,7 +261,7 @@ function normalizeTargets(
     }
     unique.add(target);
   }
-  return Object.freeze([...unique].sort());
+  return Object.freeze([...unique].sort(compareStrings));
 }
 
 function parseStaticTargets(value: string): readonly string[] {
