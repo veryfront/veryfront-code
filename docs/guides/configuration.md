@@ -29,9 +29,17 @@ Use `veryfront.config.ts` for stable project choices:
 - Tune discovery paths for agents, tools, skills, prompts, resources,
   workflows, or tasks.
 - Set project-level provider or MCP defaults.
+- Protect application routes with declarative `security.auth`.
 
 Do not add config just to mirror defaults. Keep the file small and add options
 when the project has a concrete reason to deviate.
+
+For application login, keep `security.auth` declarative. Veryfront supports
+function-valued config for general project configuration, but hosted auth should
+resolve to a static Basic, Bearer, OIDC, or trusted-proxy shape. Do not put
+provider clients, token verification code, network calls, or request-specific
+auth logic in `veryfront.config.ts`. See
+[Application authentication](./application-auth.md).
 
 ## Config file
 
@@ -88,12 +96,19 @@ defineConfig({
 ```ts
 defineConfig({
   build: {
-    outDir: "dist", // Output directory
+    outDir: "dist", // Project-relative production output directory
     trailingSlash: false, // Add trailing slashes to URLs
     serverExternalPackages: ["knex", "@prisma/client"],
   },
 });
 ```
+
+For the default production preset, `build.outDir` must resolve to a child of the
+project directory. Veryfront clears this directory before writing the build.
+Use `veryfront build --output <dir>` when a one-off build must write outside the
+project. The embedded preset does not clear its output root, so
+`build.outDir` can resolve outside the project when you use
+`veryfront build --preset embedded`.
 
 Use `serverExternalPackages` for npm packages that must run only on the server,
 such as database, cache, or messaging clients. Veryfront leaves these imports

@@ -19,8 +19,8 @@ import {
   resolveImmutableL1MaxTotalBytes,
   resolveImmutableL1MaxValueBytes,
   resolveImmutableL1Scope,
-  resolveOptionalImmutableL1Scope,
   resolveImmutableL1TtlMs,
+  resolveOptionalImmutableL1Scope,
 } from "./immutable-l1.ts";
 import type { ResolvedCacheAuthority } from "./request-authority.ts";
 import { runWithCacheKeyContext } from "./cache-key-builder.ts";

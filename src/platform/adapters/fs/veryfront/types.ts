@@ -1,4 +1,7 @@
-import type { ResolveFileOptions } from "../../base.ts";
+import type {
+  ResolveFileOptions,
+  SourceSnapshotFreshnessOptions,
+} from "#veryfront/platform/adapters/base.ts";
 import type { Project } from "../../veryfront-api-client/index.ts";
 import type { GitHubConfig } from "../github/types.ts";
 import type { DirectoryEntry } from "../shared-types.ts";
@@ -44,8 +47,28 @@ export interface FSAdapter {
 
   resolveFile?(basePath: string, options?: ResolveFileOptions): Promise<string | null>;
   refreshSourceSnapshot?(reason?: string): Promise<void>;
-  ensureSourceSnapshotFresh?(reason?: string): Promise<void>;
+  ensureSourceSnapshotFresh?(
+    reason?: string,
+    options?: SourceSnapshotFreshnessOptions,
+  ): Promise<void>;
+  /**
+   * Contract version for `ensureSourceSnapshotFresh` options. Version 1 means
+   * the adapter honors `maxAgeMs`, including zero as an unconditional refresh.
+   * Define this as an own, non-accessor data property, for example
+   * `readonly sourceSnapshotFreshnessOptionsVersion = 1 as const`.
+   * `FSAdapterWrapper` rejects inherited and accessor markers without invoking
+   * them, so a strict document render fails closed rather than trusting a
+   * dynamically computed capability.
+   */
+  readonly sourceSnapshotFreshnessOptionsVersion?: 1;
   getSourceSnapshotVersion?(): number | undefined | Promise<number | undefined>;
+  getSourceSnapshotFingerprint?(): string | undefined | Promise<string | undefined>;
+  /**
+   * Stable name for the source context the snapshot currently targets. See
+   * `FileSystemAdapter.getSourceSnapshotIdentity` in
+   * `#veryfront/platform/adapters/base.ts` for the contract.
+   */
+  getSourceSnapshotIdentity?(): string | undefined | Promise<string | undefined>;
 }
 
 export interface ContextualFSAdapter extends FSAdapter {

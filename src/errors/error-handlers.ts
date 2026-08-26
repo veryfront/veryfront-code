@@ -27,6 +27,12 @@ function safeLog(logFn: () => void): void {
   }
 }
 
+function detachThrowableForFallbackLog(error: unknown): Error {
+  const diagnostic = detachThrowableForBoundary(error);
+  diagnostic.stack = undefined;
+  return diagnostic;
+}
+
 function createRetryTimeoutError(): Error {
   const error = new NativeError("The operation was aborted");
   defineProperty(error, "name", {
@@ -46,7 +52,9 @@ export async function handleErrorWithFallback<T>(
   try {
     return await fn();
   } catch (error) {
-    safeLog(() => logger.warn("Operation failed, using fallback", error));
+    safeLog(() =>
+      logger.warn("Operation failed, using fallback", detachThrowableForFallbackLog(error))
+    );
     return fallback;
   }
 }
@@ -59,7 +67,9 @@ export function handleErrorWithFallbackSync<T>(
   try {
     return fn();
   } catch (error) {
-    safeLog(() => logger.warn("Operation failed, using fallback", error));
+    safeLog(() =>
+      logger.warn("Operation failed, using fallback", detachThrowableForFallbackLog(error))
+    );
     return fallback;
   }
 }

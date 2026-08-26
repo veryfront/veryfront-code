@@ -4,6 +4,7 @@ import {
   type AgentResponse,
   AgentRuntime,
   type AgentSystem,
+  getRuntimeAgentMarkdownDefinition,
 } from "#veryfront/agent";
 import { normalizeAgUiRuntimeMessages } from "#veryfront/agent/ag-ui/runtime-support.ts";
 import {
@@ -71,6 +72,7 @@ import { AgentRunCancelledError, type AgentRunSessionManager } from "./session-m
 import { composeInternalAgentRunSystemPrompt } from "./run-system-prompt.ts";
 import type { RuntimeRunAgentInput } from "./schema.ts";
 import { serverLogger } from "#veryfront/utils";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const getAnyObjectSchema = defineSchema((v) => v.record(v.string(), v.unknown()));
 const anyObjectSchema = lazySchema(getAnyObjectSchema) as Schema<Record<string, unknown>>;
@@ -100,6 +102,42 @@ type SandboxShellToolsExtensionModule = {
 function getAgentAllowedRemoteToolNames(agent: Agent): string[] {
   const raw = (agent.config as Agent["config"] & RuntimeRemoteToolConfig).__vfAllowedRemoteTools;
   return Array.isArray(raw) && raw.every((toolName) => typeof toolName === "string") ? raw : [];
+}
+
+/**
+ * Explicit `false` entries in the agent's tool map are authoritative denials.
+ * Remote grants and forwarded integration tool definitions are appended to
+ * the runtime tool surface independently of the merged tool map, so denied
+ * names must be subtracted from them too or a denied remote tool would stay
+ * discoverable and callable.
+ */
+export function getExplicitlyDeniedToolNames(agent: Agent): ReadonlySet<string> {
+  const configuredTools = agent.config.tools;
+  if (!configuredTools || configuredTools === true) {
+    return new Set<string>();
+  }
+
+  return new Set(
+    Object.entries(configuredTools)
+      .filter(([, entry]) => entry === false)
+      .map(([toolName]) => toolName),
+  );
+}
+
+function hasTrustedAgentToolDeclaration(agent: Agent, toolName: string): boolean {
+  const configuredTools = agent.config.tools;
+  if (configuredTools === true) {
+    const registryTool = toolRegistry.get(toolName);
+    return Boolean(
+      registryTool && isToolVisibleTo(registryTool, { agentId: agent.id }) ||
+        getAgentAllowedRemoteToolNames(agent).includes(toolName),
+    );
+  }
+  if (!isRecord(configuredTools) || !Object.hasOwn(configuredTools, toolName)) {
+    return false;
+  }
+  const entry = configuredTools[toolName];
+  return entry === true || Boolean(entry && typeof entry === "object");
 }
 
 function mergeRemoteToolNames(source: string[], forwarded: string[]): string[] {
@@ -178,6 +216,21 @@ function createInjectedStudioTool(
   };
 }
 
+function isExplicitlyDeniedToolName(
+  agent: Agent,
+  deniedToolNames: ReadonlySet<string>,
+  toolName: string,
+): boolean {
+  if (deniedToolNames.has(toolName)) return true;
+  const registryTool = toolRegistry.get(toolName);
+  return Boolean(
+    registryTool &&
+      isToolVisibleTo(registryTool, { agentId: agent.id }) &&
+      registryTool.shortName !== undefined &&
+      deniedToolNames.has(registryTool.shortName),
+  );
+}
+
 export function buildMergedTools(
   agent: Agent,
   input: RuntimeRunAgentInput,
@@ -186,18 +239,29 @@ export function buildMergedTools(
   availableLocalTools?: Record<string, Tool | boolean>,
 ) {
   const serverResolvedProjectToolNames = getServerResolvedProjectToolNames(input.forwardedProps);
-  const concreteSourceToolNames = agent.config.tools && agent.config.tools !== true
+  const explicitlyDeniedToolNames = getExplicitlyDeniedToolNames(agent);
+  const markdownDefinition = getRuntimeAgentMarkdownDefinition(agent);
+  const failClosedUnrestrictedSelector = markdownDefinition?.tools === true &&
+    Boolean(markdownDefinition.deniedTools?.length);
+  // Concrete source definitions stay authoritative, and so do explicit `false`
+  // denials: a request-injected tool must not resurrect a tool the agent
+  // author switched off by name (mirroring the AG-UI merge path).
+  const authoritativeSourceToolNames = agent.config.tools && agent.config.tools !== true
     ? new Set(
       Object.entries(agent.config.tools)
-        .filter(([, entry]) => entry && typeof entry === "object")
+        .filter(([, entry]) => (entry && typeof entry === "object") || entry === false)
         .map(([toolName]) => toolName),
     )
     : new Set<string>();
+  const configOwnsDelegation = hasTrustedAgentToolDeclaration(agent, INVOKE_AGENT_TOOL_ID);
   const injectedTools = Object.fromEntries(
     input.tools
       .filter((tool) =>
-        !concreteSourceToolNames.has(tool.name) &&
-        !serverResolvedProjectToolNames.has(tool.name)
+        !failClosedUnrestrictedSelector &&
+        !authoritativeSourceToolNames.has(tool.name) &&
+        !isExplicitlyDeniedToolName(agent, explicitlyDeniedToolNames, tool.name) &&
+        !serverResolvedProjectToolNames.has(tool.name) &&
+        !(tool.name === INVOKE_AGENT_TOOL_ID && configOwnsDelegation)
       )
       .map((tool) => [
         tool.name,
@@ -491,8 +555,8 @@ function getRuntimeToolAllowlist(
 /**
  * Intersects the merged run tool set with the restrictive tool allowlist.
  * Skill runtime tools are preserved for every agent. Delegation tools are
- * preserved only when the agent has at least one visible skill, mirroring
- * the hosted chat runtime's allowlist semantics.
+ * preserved only when the agent has at least one visible skill and its trusted
+ * configuration declares delegation, mirroring the hosted chat runtime.
  *
  * The allowlist bounds this run's direct tool surface only: preserved skill
  * delegation tools (`invoke_agent`) can spawn child runs whose tool assembly
@@ -522,8 +586,19 @@ function applyRuntimeToolAllowlist(
   if (!allowedToolNames) {
     return mergedTools;
   }
+  // The shared resolver never appends delegation to a request-derived
+  // allowlist. Preserve invoke_agent only when the trusted agent configuration
+  // declared it; caller-injected entries in mergedTools cannot establish that
+  // provenance. An empty allowlist stays deny-all, and explicit delegation
+  // denial still strips the tool below.
+  const preservesConfigDelegation = hasVisibleSkills &&
+    allowedToolNames.size > 0 &&
+    hasTrustedAgentToolDeclaration(agent, INVOKE_AGENT_TOOL_ID);
   return Object.fromEntries(
-    Object.entries(mergedTools).filter(([toolName]) => allowedToolNames.has(toolName)),
+    Object.entries(mergedTools).filter(([toolName]) =>
+      allowedToolNames.has(toolName) ||
+      (preservesConfigDelegation && toolName === INVOKE_AGENT_TOOL_ID)
+    ),
   );
 }
 
@@ -730,8 +805,11 @@ export async function createRuntimeAgentStreamResponse(
   try {
     const forwardedAllowedRemoteToolNames = getAllowedRemoteToolNames(input.forwardedProps);
     const sourceAllowedRemoteToolNames = getAgentAllowedRemoteToolNames(agent);
+    const sourceRemoteFilterBase = Object.hasOwn(agent.config, "__vfAllowedRemoteTools")
+      ? sourceAllowedRemoteToolNames
+      : undefined;
     const grantedRemoteToolNames = forwardedAllowedRemoteToolNames === undefined
-      ? undefined
+      ? sourceRemoteFilterBase
       : mergeRemoteToolNames(
         sourceAllowedRemoteToolNames,
         forwardedAllowedRemoteToolNames,
@@ -743,9 +821,15 @@ export async function createRuntimeAgentStreamResponse(
         { runId: input.runId, agentId: agent.id },
       );
     }
-    const forwardedIntegrationToolDefs = getForwardedIntegrationToolDefinitions(
+    const explicitlyDeniedToolNames = getExplicitlyDeniedToolNames(agent);
+    const forwardedIntegrationToolDefsWithDenied = getForwardedIntegrationToolDefinitions(
       input.forwardedProps,
     );
+    const forwardedIntegrationToolDefs = explicitlyDeniedToolNames.size === 0
+      ? forwardedIntegrationToolDefsWithDenied
+      : forwardedIntegrationToolDefsWithDenied?.filter(
+        (tool) => !isExplicitlyDeniedToolName(agent, explicitlyDeniedToolNames, tool.name),
+      );
     const availableForwardedToolNames = forwardedIntegrationToolDefs?.map((tool) => tool.name);
     // A restrictive toolAllowlist caps remote exposure too: it intersects the
     // tightest existing remote filter (forwarded grants, else the agent source's
@@ -753,9 +837,6 @@ export async function createRuntimeAgentStreamResponse(
     // declared remote-source surface and intersect with that. A bare allowlist
     // entry can narrow actual remote sources, but never becomes an implicit
     // project-scoped integration grant (#2768).
-    const sourceRemoteFilterBase = Object.hasOwn(agent.config, "__vfAllowedRemoteTools")
-      ? sourceAllowedRemoteToolNames
-      : undefined;
     const remoteFallbackBase = runtimeToolAllowlist !== null &&
         grantedRemoteToolNames === undefined &&
         sourceRemoteFilterBase === undefined
@@ -766,9 +847,14 @@ export async function createRuntimeAgentStreamResponse(
       : (grantedRemoteToolNames ?? sourceRemoteFilterBase ?? remoteFallbackBase ?? []).filter(
         (toolName) => runtimeToolAllowlist.has(toolName),
       );
+    const denialFilteredRemoteToolNames = explicitlyDeniedToolNames.size === 0
+      ? runtimeAllowedRemoteToolNames
+      : runtimeAllowedRemoteToolNames?.filter(
+        (toolName) => !isExplicitlyDeniedToolName(agent, explicitlyDeniedToolNames, toolName),
+      );
     const allowedRemoteToolNames = input.allowDelegation === false
-      ? runtimeAllowedRemoteToolNames?.filter((toolName) => toolName !== INVOKE_AGENT_TOOL_ID)
-      : runtimeAllowedRemoteToolNames;
+      ? denialFilteredRemoteToolNames?.filter((toolName) => toolName !== INVOKE_AGENT_TOOL_ID)
+      : denialFilteredRemoteToolNames;
     const sandboxTools = await buildProjectAgentSandboxTools({ agent, deps });
     closeSandbox = sandboxTools.closeSandbox ?? closeSandbox;
     const availableLocalTools = {
@@ -807,7 +893,8 @@ export async function createRuntimeAgentStreamResponse(
       getProviderNativeToolNames({ model: agent.config.model }),
     );
     const providerToolNames = effectiveProviderToolNames.filter((toolName) =>
-      modelSupportedProviderToolNames.has(toolName)
+      modelSupportedProviderToolNames.has(toolName) &&
+      !isExplicitlyDeniedToolName(agent, explicitlyDeniedToolNames, toolName)
     );
     const mergedToolNames = mergedTools && mergedTools !== true ? Object.keys(mergedTools) : [];
     const allowedRemoteToolNameSet = new Set(allowedRemoteToolNames ?? []);
@@ -826,7 +913,7 @@ export async function createRuntimeAgentStreamResponse(
           ...(allowedRemoteToolNames ?? []),
           ...forwardedToolNames,
         ]),
-      ].sort(),
+      ].sort(compareStrings),
       {
         model: agent.config.model,
         requiredToolNames: localToolNames,
@@ -872,7 +959,7 @@ export async function createRuntimeAgentStreamResponse(
         ...agent.config,
         system: createProviderAwareAgentSystemResolver(resolveSystemPrompt),
         tools: mergedTools,
-        ...(cappedProviderTools !== undefined ? { providerTools: cappedProviderTools } : {}),
+        ...(Array.isArray(agent.config.providerTools) ? { providerTools: providerToolNames } : {}),
         ...(allowedRemoteToolNames !== undefined
           ? { __vfAllowedRemoteTools: allowedRemoteToolNames }
           : {}),

@@ -249,9 +249,11 @@ export function resolveHostedChildToolNames(
   >,
 ): string[] | undefined {
   if (agentConfig.tools === true) {
+    if (agentConfig.deniedTools?.length) return [];
     return undefined;
   }
 
+  const deniedToolNames = new Set(agentConfig.deniedTools ?? []);
   const hasAuthorizedSkills = skillSelectorSnapshot === undefined ||
     skillSelectorSnapshot.allowedSkillIds.length > 0;
   return [
@@ -261,9 +263,9 @@ export function resolveHostedChildToolNames(
       ),
       ...(agentConfig.providerTools ?? []),
       ...(agentConfig.delegates ?? []).map((id) => `agent_${id}`),
-      ...(hasAuthorizedSkills ? ["load_skill"] : []),
+      ...(hasAuthorizedSkills && !deniedToolNames.has("load_skill") ? ["load_skill"] : []),
     ]),
-  ];
+  ].filter((toolName) => !deniedToolNames.has(toolName));
 }
 
 /** Builds host tools for a configured hosted child run. */
@@ -277,7 +279,13 @@ export function buildHostedChildGlobalTools(
 ): HostToolSet {
   return {
     ...(input.childConfig ? getDiscoveredHostTools({ agentId: input.childAgentId }) : {}),
-    ...(!input.childConfig || (input.childConfig.availableSkillIds?.length ?? 0) > 0
+    // An undefined selector (`tools: true`) authorizes the loader unless it is
+    // explicitly denied; a concrete selector must retain `load_skill` itself.
+    ...(!input.childConfig ||
+        ((input.childConfig.availableSkillIds?.length ?? 0) > 0 &&
+          (input.childConfig.toolNames === undefined
+            ? input.childConfig.deniedToolNames?.includes("load_skill") !== true
+            : input.childConfig.toolNames.includes("load_skill")))
       ? { load_skill: createLoadSkillTool(context, input.childToolContext) }
       : {}),
     ...(input.childConfig?.delegateIds?.length
@@ -359,6 +367,13 @@ export async function resolveHostedChildAgentExecutionConfig(
     selector: agentConfig.skills === false ? [] : agentConfig.skills,
   });
   const toolNames = resolveHostedChildToolNames(agentConfig, skillSelectorSnapshot);
+  // The skill catalog and the load_skill fork guidance both advertise the
+  // loader, so they must track its effective availability: an undefined
+  // selector (`tools: true`) exposes it unless explicitly denied, and a
+  // concrete selector exposes it only when it survived denial filtering.
+  const skillLoaderExposed = toolNames === undefined
+    ? agentConfig.deniedTools?.includes("load_skill") !== true
+    : toolNames.includes("load_skill");
   const thinking = agentConfig.thinking?.enabled === false ? 0 : agentConfig.thinking?.budgetTokens;
 
   return {
@@ -367,7 +382,7 @@ export async function resolveHostedChildAgentExecutionConfig(
       projectId: projectId || null,
       branchId,
       instructions: steering.instructions,
-      skills: skillSelectorSnapshot.definitions,
+      skills: skillLoaderExposed ? skillSelectorSnapshot.definitions : [],
       availableToolNames: toolNames,
     }),
     ...(agentConfig.model ? { model: agentConfig.model } : {}),
@@ -375,8 +390,9 @@ export async function resolveHostedChildAgentExecutionConfig(
     ...(agentConfig.maxSteps === undefined ? {} : { maxSteps: agentConfig.maxSteps }),
     ...(thinking === undefined ? {} : { thinking }),
     ...(toolNames === undefined ? {} : { toolNames }),
+    ...(agentConfig.deniedTools?.length ? { deniedToolNames: [...agentConfig.deniedTools] } : {}),
     mcpServers: resolveMcpServers(context.options, agentConfig),
-    availableSkillIds: skillSelectorSnapshot.allowedSkillIds,
+    availableSkillIds: skillLoaderExposed ? skillSelectorSnapshot.allowedSkillIds : [],
     skillSelectorPolicy: skillSelectorSnapshot.policy,
     ...(Object.keys(skillSelectorSnapshot.skillSourcePaths).length > 0
       ? { skillSourcePaths: skillSelectorSnapshot.skillSourcePaths }

@@ -47,6 +47,7 @@ import type { SkillDocumentParserProvider } from "#veryfront/extensions/parser/s
 import { SkillIdAdmission } from "#veryfront/skill/id-admission.ts";
 import { SKILL_READABLE_DIRS } from "#veryfront/skill/types.ts";
 import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const ArrayIsArray = Array.isArray;
 const NumberIsFinite = Number.isFinite;
@@ -165,7 +166,7 @@ export type RuntimeProjectInstructionsOptions = {
 };
 
 function sortSkillsById(skills: Iterable<RuntimeSkillDefinition>): RuntimeSkillDefinition[] {
-  return [...skills].sort((a, b) => a.id.localeCompare(b.id));
+  return [...skills].sort((a, b) => compareStrings(a.id, b.id));
 }
 
 function requireBuiltinSkills(
@@ -676,11 +677,11 @@ export async function getRuntimeProjectSkillCatalog(
     }
   }
   if (!hasAvailableListing) {
-    return [...builtinSkills];
+    return sortSkillsById(builtinSkills);
   }
   const allFiles = Object.freeze([...filesByPath.values()]);
   if (allFiles.length === 0) {
-    return [...builtinSkills];
+    return sortSkillsById(builtinSkills);
   }
 
   const projectSkillsById = new Map<string, RuntimeSkillDefinition>();
@@ -709,12 +710,13 @@ export async function getRuntimeProjectSkillCatalog(
       .filter((file) => isImmediateDirectorySkillPath(file.path, prefixWithSlash))
       .map((file) => file.path);
 
-    const candidates = [...dirPaths.sort(), ...flatPaths.sort()].flatMap((path) => {
-      const isFlat = path.endsWith(".md") && !path.endsWith("/SKILL.md");
-      const id = getProjectSkillId(path, isFlat);
-      if (!id || !claimProjectSkillId(claimedProjectSkillIds, id)) return [];
-      return [{ id, isFlat, path }];
-    });
+    const candidates = [...dirPaths.toSorted(compareStrings), ...flatPaths.toSorted(compareStrings)]
+      .flatMap((path) => {
+        const isFlat = path.endsWith(".md") && !path.endsWith("/SKILL.md");
+        const id = getProjectSkillId(path, isFlat);
+        if (!id || !claimProjectSkillId(claimedProjectSkillIds, id)) return [];
+        return [{ id, isFlat, path }];
+      });
     if (candidates.length === 0) {
       continue;
     }
@@ -781,7 +783,7 @@ export async function getRuntimeProjectSkillCatalog(
       ): candidate is { identity: ColocatedSkillIdentity; path: string } =>
         candidate.identity !== null && agentIds.has(candidate.identity.ownerAgentId),
     )
-    .sort((left, right) => left.path.localeCompare(right.path))
+    .sort((left, right) => compareStrings(left.path, right.path))
     .filter((candidate) => {
       const admission = skillIdAdmission.claim({
         id: candidate.identity.id,
@@ -888,7 +890,7 @@ function getProjectAgentIds(
 
 function assertUniqueCapabilityNamespaces(agentIds: ReadonlySet<string>): void {
   const ownersByNamespace = new Map<string, string>();
-  for (const agentId of [...agentIds].sort()) {
+  for (const agentId of [...agentIds].sort(compareStrings)) {
     const namespace = sanitizeCapabilityNamespace(agentId);
     const existingAgentId = ownersByNamespace.get(namespace);
     if (existingAgentId && existingAgentId !== agentId) {
@@ -972,5 +974,5 @@ function getProjectSkillReferences(input: {
     }
   }
 
-  return [...references].sort();
+  return [...references].sort(compareStrings);
 }

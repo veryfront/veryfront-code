@@ -13,6 +13,7 @@
 
 import {
   MemoryTokenStore,
+  isSupersededOAuthGrant,
   type OAuthTokens,
   type OAuthTokenSnapshot,
   type RefreshCapableTokenStore,
@@ -29,7 +30,11 @@ export interface TokenStore extends RefreshCapableTokenStore {
   getToken(userId: string, serviceId: string): Promise<OAuthToken | null>;
   setToken(userId: string, serviceId: string, token: OAuthToken): Promise<void>;
   revokeToken(userId: string, serviceId: string): Promise<void>;
-  isConnected(userId: string, serviceId: string): Promise<boolean>;
+  isConnected(
+    userId: string,
+    serviceId: string,
+    currentDefaultScopes: readonly string[],
+  ): Promise<boolean>;
 }
 
 const REQUIRED_STORE_METHODS = [
@@ -86,6 +91,7 @@ function assertRefreshCapableStore(
  */
 export function createTokenStore(store: RefreshCapableTokenStore): TokenStore {
   assertRefreshCapableStore(store);
+  const compareAndClearTokens = store.compareAndClearTokens?.bind(store);
 
   return {
     getTokens(serviceId: string, userId: string): Promise<OAuthTokens | null> {
@@ -111,6 +117,18 @@ export function createTokenStore(store: RefreshCapableTokenStore): TokenStore {
     ): Promise<boolean> {
       return store.compareAndSetTokens(serviceId, userId, expectedRevision, tokens);
     },
+
+    ...(compareAndClearTokens
+      ? {
+        compareAndClearTokens(
+          serviceId: string,
+          userId: string,
+          expectedRevision: string,
+        ): Promise<boolean> {
+          return compareAndClearTokens(serviceId, userId, expectedRevision);
+        },
+      }
+      : {}),
 
     withTokenRefreshLock<T>(
       serviceId: string,
@@ -144,9 +162,18 @@ export function createTokenStore(store: RefreshCapableTokenStore): TokenStore {
       return store.clearTokens(serviceId, userId);
     },
 
-    async isConnected(userId: string, serviceId: string): Promise<boolean> {
-      const token = await store.getTokens(serviceId, userId);
-      return !!token && (token.expiresAt === undefined || token.expiresAt > Date.now());
+    async isConnected(
+      userId: string,
+      serviceId: string,
+      currentDefaultScopes: readonly string[],
+    ): Promise<boolean> {
+      const snapshot = await store.getTokenSnapshot(serviceId, userId);
+      if (!snapshot) return false;
+      if (isSupersededOAuthGrant(serviceId, snapshot.tokens, currentDefaultScopes)) {
+        await clearSupersededToken(store, serviceId, userId, snapshot.revision);
+        return false;
+      }
+      return snapshot.tokens.expiresAt === undefined || snapshot.tokens.expiresAt > Date.now();
     },
   };
 }
@@ -155,21 +182,54 @@ function unexpiredAccessToken(token: OAuthToken, now = Date.now()): string | nul
   return token.expiresAt === undefined || now < token.expiresAt ? token.accessToken : null;
 }
 
+async function clearSupersededToken(
+  store: RefreshCapableTokenStore,
+  serviceId: string,
+  userId: string,
+  revision: string,
+): Promise<void> {
+  if (typeof store.compareAndClearTokens === "function") {
+    await store.compareAndClearTokens(serviceId, userId, revision);
+  }
+}
+
+async function currentAllowedAccessToken(
+  store: RefreshCapableTokenStore,
+  serviceId: string,
+  userId: string,
+  currentDefaultScopes: readonly string[],
+): Promise<string | null> {
+  const snapshot = await store.getTokenSnapshot(serviceId, userId);
+  if (!snapshot) return null;
+  if (isSupersededOAuthGrant(serviceId, snapshot.tokens, currentDefaultScopes)) {
+    await clearSupersededToken(store, serviceId, userId, snapshot.revision);
+    return null;
+  }
+  return unexpiredAccessToken(snapshot.tokens);
+}
+
 /**
  * Resolve an access token, refreshing it under the store's distributed lock.
  * Revisioned compare-and-set prevents a refresh from overwriting a concurrent
  * reconnect or revocation that did not participate in the refresh lock.
+ * Current configured defaults distinguish narrowed built-ins from custom
+ * services that intentionally retain a broad scope.
  */
 export async function getRefreshableAccessToken(
   store: TokenStore,
   serviceId: string,
   userId: string,
+  currentDefaultScopes: readonly string[],
   refresh: (refreshToken: string) => Promise<OAuthToken>,
 ): Promise<string | null> {
   const initial = await store.getTokenSnapshot(serviceId, userId);
   if (!initial) return null;
 
   const initialToken = initial.tokens;
+  if (isSupersededOAuthGrant(serviceId, initialToken, currentDefaultScopes)) {
+    await clearSupersededToken(store, serviceId, userId, initial.revision);
+    return null;
+  }
   const now = Date.now();
   if (
     initialToken.expiresAt === undefined ||
@@ -185,6 +245,10 @@ export async function getRefreshableAccessToken(
     if (!current) return null;
 
     const token = current.tokens;
+    if (isSupersededOAuthGrant(serviceId, token, currentDefaultScopes)) {
+      await clearSupersededToken(store, serviceId, userId, current.revision);
+      return null;
+    }
     const lockedNow = Date.now();
     if (
       token.expiresAt === undefined ||
@@ -200,12 +264,19 @@ export async function getRefreshableAccessToken(
     } catch {
       // A provider failure must not unconditionally delete a row that may
       // have been replaced by a concurrent reconnect outside the lock.
-      const latest = await store.getTokens(serviceId, userId);
-      return latest ? unexpiredAccessToken(latest) : null;
+      return await currentAllowedAccessToken(store, serviceId, userId, currentDefaultScopes);
     }
 
-    if (refreshed.refreshToken === undefined) {
-      refreshed = { ...refreshed, refreshToken: token.refreshToken };
+    refreshed = {
+      ...refreshed,
+      ...(refreshed.refreshToken === undefined ? { refreshToken: token.refreshToken } : {}),
+      ...(refreshed.scope === undefined && token.scope !== undefined ? { scope: token.scope } : {}),
+      ...(token.scopeSource === undefined ? {} : { scopeSource: token.scopeSource }),
+      ...(token.requestedScope === undefined ? {} : { requestedScope: token.requestedScope }),
+    };
+    if (isSupersededOAuthGrant(serviceId, refreshed, currentDefaultScopes)) {
+      await clearSupersededToken(store, serviceId, userId, current.revision);
+      return null;
     }
 
     const replaced = await store.compareAndSetTokens(
@@ -216,8 +287,7 @@ export async function getRefreshableAccessToken(
     );
     if (replaced) return refreshed.accessToken;
 
-    const latest = await store.getTokens(serviceId, userId);
-    return latest ? unexpiredAccessToken(latest) : null;
+    return await currentAllowedAccessToken(store, serviceId, userId, currentDefaultScopes);
   });
 }
 
@@ -289,6 +359,12 @@ export const tokenStore: TokenStore = {
       tokens,
     );
   },
+  compareAndClearTokens(serviceId, userId, expectedRevision) {
+    const compareAndClearTokens = getDefaultTokenStore().compareAndClearTokens;
+    return compareAndClearTokens
+      ? compareAndClearTokens(serviceId, userId, expectedRevision)
+      : Promise.resolve(false);
+  },
   withTokenRefreshLock(serviceId, userId, operation) {
     return getDefaultTokenStore().withTokenRefreshLock(serviceId, userId, operation);
   },
@@ -310,7 +386,7 @@ export const tokenStore: TokenStore = {
   revokeToken(userId, serviceId) {
     return getDefaultTokenStore().revokeToken(userId, serviceId);
   },
-  isConnected(userId, serviceId) {
-    return getDefaultTokenStore().isConnected(userId, serviceId);
+  isConnected(userId, serviceId, currentDefaultScopes) {
+    return getDefaultTokenStore().isConnected(userId, serviceId, currentDefaultScopes);
   },
 };

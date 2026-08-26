@@ -53,6 +53,31 @@ describe("hosted config compatibility", () => {
     assertStringIncludes(message, "Remedy sentence.");
   });
 
+  it("formats a result-phase rejection without a line or excerpt", () => {
+    const message = formatHostedConfigIncompatibility({
+      code: "unsupported-hosted-feature",
+      reason: "hosted-extensions",
+      summary: "Summary sentence.",
+      remedy: "Remedy sentence.",
+    }, "veryfront.config.ts");
+
+    assertStringIncludes(
+      message,
+      "veryfront.config.ts cannot be deployed",
+      "the message must name the config file that cannot be deployed",
+    );
+    assertEquals(
+      message.includes("veryfront.config.ts:"),
+      false,
+      "no line is claimed for a result-phase rejection",
+    );
+    assertEquals(
+      message.split("\n").length,
+      2,
+      "no blank excerpt line is printed",
+    );
+  });
+
   it("keeps a credential out of the excerpt it prints", async () => {
     const incompatibility = await findHostedConfigIncompatibility(
       `const client = connect("postgres://admin:hunter2@db.internal.test/app");\n` +
@@ -64,6 +89,64 @@ describe("hosted config compatibility", () => {
     assertStringIncludes(incompatibility?.excerpt ?? "", "connect(");
   });
 
+  it("masks a credential before it cuts an over-long line", async () => {
+    // The credential starts past character 150, so the mask has to run before
+    // the cut: truncating first would split the "user:password@host" shape
+    // this masks on and leave the password prefix in the message.
+    const padding = "a".repeat(150);
+    const incompatibility = await findHostedConfigIncompatibility(
+      `const client = connect("${padding}postgres://admin:hunter2@db.internal.test/app");\n` +
+        `export default { title: "Demo" };\n`,
+    );
+    const excerpt = incompatibility?.excerpt ?? "";
+
+    assertEquals(
+      excerpt.length,
+      161,
+      "a truncated excerpt is exactly MAX_SOURCE_EXCERPT_CHARACTERS (160) source characters " +
+        "plus the one-character ellipsis marker",
+    );
+    assertEquals(
+      excerpt.endsWith("…"),
+      true,
+      "a truncated excerpt must end with the ellipsis",
+    );
+    assertEquals(
+      excerpt.includes("hunter2"),
+      false,
+      "the credential must be redacted before truncation",
+    );
+    assertEquals(
+      excerpt.includes("hunter"),
+      false,
+      "not even a prefix of the credential may survive the cut",
+    );
+  });
+
+  it("strips control characters that would repaint the terminal", async () => {
+    const incompatibility = await findHostedConfigIncompatibility(
+      `const client = connect("\u001b[31mred\u0007rewritten");\n` +
+        `export default { title: "Demo" };\n`,
+    );
+    const excerpt = incompatibility?.excerpt ?? "";
+
+    const controlCharacters = Array.from(excerpt).filter((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code < 0x20 || (code >= 0x7f && code <= 0x9f);
+    });
+
+    assertStringIncludes(
+      excerpt,
+      "connect(",
+      "the excerpt must still show the offending call",
+    );
+    assertEquals(
+      controlCharacters,
+      [],
+      "no control character may reach the terminal that prints the excerpt",
+    );
+  });
+
   it("accepts the configuration shapes the hosted evaluator supports", async () => {
     for (
       const source of [
@@ -72,6 +155,9 @@ describe("hosted config compatibility", () => {
         `import { getEnv } from "veryfront";\n` +
         `export default { title: getEnv("TITLE") ?? "Demo" };`,
         `export default { extensions: [{ name: "ext-css-lightning", enabled: false }] };`,
+        `export default { security: { auth: { oidc: { issuerEnvVar: "OIDC_ISSUER", clientIdEnvVar: "OIDC_CLIENT_ID", clientSecretEnvVar: "OIDC_CLIENT_SECRET", sessionSecretEnvVar: "VERYFRONT_AUTH_SESSION_SECRET", scopes: ["openid"], claims: { email: "email" } } } } };`,
+        `import { getEnv } from "veryfront";\n` +
+        `export default { security: { auth: { bearer: { token: getEnv("API_TOKEN") } } } };`,
       ]
     ) {
       assertEquals(
@@ -80,6 +166,18 @@ describe("hosted config compatibility", () => {
         `expected no incompatibility for: ${source}`,
       );
     }
+  });
+
+  it("rejects trusted-proxy auth on Veryfront Cloud with an actionable diagnostic", async () => {
+    const incompatibility = await findHostedConfigIncompatibility(
+      `export default { security: { auth: { trustedProxy: { trustedPeers: ["127.0.0.1"], headers: { subject: "x-auth-subject" } } } } };`,
+    );
+
+    assertEquals(incompatibility?.code, "unsupported-hosted-feature");
+    assertEquals(incompatibility?.reason, "hosted-trusted-proxy-auth");
+    assertStringIncludes(incompatibility?.summary ?? "", "trusted-proxy");
+    assertStringIncludes(incompatibility?.summary ?? "", "Veryfront Cloud");
+    assertStringIncludes(incompatibility?.remedy ?? "", "OIDC");
   });
 
   it("refuses a literal config the hosted result policy always rejects", async () => {

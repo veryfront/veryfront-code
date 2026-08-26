@@ -132,13 +132,22 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   maxOutputTokens?: number;
   allowedTools?: string[];
   /**
+   * Tool names the agent configuration denied explicitly (`false` entries).
+   * They must never be re-added by runtime-essential tool preservation.
+   */
+  deniedTools?: string[];
+  /**
    * Integration tools the control plane resolved for this run. Verified before
    * it reaches here, and used only to widen the Veryfront API MCP allowlist.
    */
   serverResolvedIntegrationToolNames?: readonly string[];
   /** Provider-native selection kept separate from local and MCP tool bindings. */
   allowedProviderTools?: string[];
-  /** Preserve skill runtime infrastructure for a config-derived empty tool selector. */
+  /**
+   * Marks `allowedTools` as config-derived (no request-level override):
+   * skill runtime infrastructure is preserved for empty selectors and skill
+   * delegation stays available for empty and non-empty configured sets.
+   */
   includeRuntimeEssentialToolsWhenEmpty?: boolean;
   allowDelegation?: boolean;
   thinking?: TThinkingConfig;

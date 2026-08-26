@@ -10,14 +10,12 @@
  * @module cache/request-authority
  */
 
-import { logger as baseLogger } from "#veryfront/utils";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { getEnvValue } from "#veryfront/cache/backends/helpers.ts";
 import { getVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
-
-const logger = baseLogger.component("cache-request-authority");
+import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
 
 export type CacheRequestContext = {
   token?: string;
@@ -33,35 +31,14 @@ export interface ResolvedCacheAuthority {
   tokenSource: string;
 }
 
-let warnedMissingAdapterContract = false;
+const trustedRequestContextAccessor = currentRequestContext;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
 export function getCacheRequestContext(): CacheRequestContext | null {
-  const adapter = (globalThis as Record<string, unknown>).__vf_multi_project_adapter;
-
-  // The adapter is installed dynamically, so validate its shape instead of an
-  // unchecked cast. If it exists but no longer exposes getCurrentRequestContext
-  // (e.g., renamed/moved), the API cache would otherwise silently fail to
-  // authenticate forever with only a debug log, so warn once, loudly.
-  if (
-    adapter !== undefined &&
-    !(isRecord(adapter) && typeof adapter.getCurrentRequestContext === "function")
-  ) {
-    if (!warnedMissingAdapterContract) {
-      warnedMissingAdapterContract = true;
-      logger.warn("Multi-project adapter present but missing getCurrentRequestContext()");
-    }
-    return null;
-  }
-
-  if (!isRecord(adapter) || typeof adapter.getCurrentRequestContext !== "function") {
-    return null;
-  }
-
-  const ctx = (adapter.getCurrentRequestContext as () => unknown)();
+  const ctx = trustedRequestContextAccessor();
   return isRecord(ctx) ? (ctx as CacheRequestContext) : null;
 }
 
@@ -81,25 +58,31 @@ export function resolveCacheRequestAuthority(
   const envToken = getEnvValue("VERYFRONT_API_TOKEN");
   const verifiedCredential = getVerifiedCacheApiCredential();
   const verifiedRequestToken = verifiedCredential?.token;
+  const cacheKeyContext = tryGetCacheKeyContext();
 
   // The private verified-request context cannot be changed through the
   // globally exposed filesystem request context.
-  const token = explicitApiToken ?? verifiedRequestToken ?? hostToken ?? reqCtx?.token ??
-    envToken ?? null;
+  const hasRequestSelectedTenant = reqCtx !== null || cacheKeyContext !== null;
+  const ambientToken = hasRequestSelectedTenant
+    ? reqCtx?.token ?? null
+    : hostToken ?? envToken ?? null;
+  const token = explicitApiToken ?? verifiedRequestToken ?? ambientToken;
   const tokenSource = explicitApiToken
     ? "explicit-endpoint"
     : verifiedRequestToken
     ? "verified-control-plane"
-    : hostToken
-    ? "host-env"
     : reqCtx?.token
     ? "request"
+    : hasRequestSelectedTenant
+    ? "none"
+    : hostToken
+    ? "host-env"
     : envToken
     ? "env"
     : "none";
   const projectRef = verifiedCredential?.projectId || verifiedCredential?.projectSlug ||
     reqCtx?.projectId || reqCtx?.projectSlug ||
-    tryGetCacheKeyContext()?.projectId || null;
+    cacheKeyContext?.projectId || null;
 
   return { token, projectRef, tokenSource };
 }

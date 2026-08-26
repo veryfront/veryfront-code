@@ -1,13 +1,15 @@
 # Security module reference
 
-`src/security` owns Veryfront's request-security primitives and the internal
-worker boundary used to run project code. Its server-facing package entrypoint
-is `veryfront/security`, mapped to [`index.ts`](./index.ts). Browser code imports
-the CSRF mutation helper from `veryfront/index.client`.
+`src/security` owns Veryfront's request-security primitives, application
+authentication, and the internal worker boundary used to run project code. Its
+server-facing package entrypoint is `veryfront/security`, mapped to
+[`index.ts`](./index.ts). Browser code imports the CSRF mutation helper from
+`veryfront/index.client`.
 
-This module does not provide password hashing, JWT verification, SQL escaping,
-or a public sandbox API. Authentication here is limited to the runtime's Basic
-and bearer-token request gate. Public rate limiting belongs to
+This module does not provide password hashing, SQL escaping, direct LDAP
+binding, or a public sandbox API. Application authentication supports the
+runtime's Basic and bearer-token request gate, OIDC login, and self-hosted
+trusted-proxy identity. Public rate limiting belongs to
 [`veryfront/middleware`](../middleware/README.md).
 
 ## Published surface
@@ -34,8 +36,9 @@ removing a root export is an intentional package-surface change.
 
 Project security configuration is validated by the canonical configuration
 schema before `SecurityConfigLoader` derives a request-owned, frozen security
-context. Production derivation enables the default CSRF policy when the project
-does not specify one. A failed configuration load fails the current request and
+context. Derivation enables the default CSRF policy when the project does not
+specify one, in every environment, so local development and production resolve
+the same value. A failed configuration load fails the current request and
 remains retryable for a later request.
 
 `SecurityConfigLoader` is the canonical runtime configuration loader. Call
@@ -57,11 +60,22 @@ The synchronous helpers deliberately deny promise-returning validators.
 
 ### CSRF
 
-CSRF uses a double-submit cookie and header comparison. The default cookie is
-`__Host-vf_csrf`; it is host-only, path-scoped to `/`, and always secure.
-Cookie/header names and token lifetimes are bounded both in configuration and
-at the public helper boundary. State-changing requests are checked unless an
-exact, schema-validated exclusion applies.
+CSRF uses a double-submit cookie and header comparison. HTTPS and loopback
+origins use `__Host-vf_csrf`, which is host-only, path-scoped to `/`, and always
+secure. Plain-HTTP LAN development uses an origin-scoped
+`vf_csrf_http_<encoded-origin-and-config>` physical cookie, because browsers
+discard `Secure` `__Host-` cookies there and an HTTP sibling must not collide
+with an HTTPS token. Its companion `vf_csrf_names_<encoded-origin>` cookie lets
+`csrfMutationHeaders` discover that physical name; application code should not
+read or construct it directly. During migration, if an HTTP sibling still
+advertises a legacy shared token, HTTPS uses an origin-scoped
+`vf_csrf_https_<encoded-origin-and-config>` token instead of making that legacy
+cookie unreadable to the already-open HTTP app. The default header is
+`x-csrf-token`.
+Cookie/header names and token lifetimes are
+bounded both in configuration and at the public helper boundary.
+State-changing requests are checked unless an exact, schema-validated exclusion
+applies.
 
 Use `csrfMutationHeaders` for a browser mutation that does not use a Veryfront
 client hook. The helper adds the default CSRF header for same-origin requests
@@ -83,8 +97,12 @@ if (!response.ok) {
 }
 ```
 
-The default names require no options. If `security.csrf` sets custom names,
-pass the same names to the browser helper:
+Custom names need no options either. When `security.csrf` sets `cookieName` or
+`headerName`, the server publishes both in an origin-specific
+`vf_csrf_names_<encoded-origin>` cookie and the helper discovers them, so the
+call above is unchanged and the names stay defined in one place.
+
+Pass them explicitly only to override that discovery:
 
 ```ts
 const headers = csrfMutationHeaders("/api/cases", {
@@ -94,19 +112,51 @@ const headers = csrfMutationHeaders("/api/cases", {
 });
 ```
 
-`security.csrf` defaults to on in production and stays unset locally. Local
-development still issues the same token cookie so the helper sends a real
-header before deploy; validation itself remains off until `security.csrf` is
-configured. A local mutation that still arrives without a non-empty
-`x-csrf-token` header is logged once per method and path, because production
-defaults would reject it.
+The advertisement carries no secret. The header name is visible on every request
+the browser makes and the cookie name is visible in `document.cookie`, and the
+server always validates against its own configuration, so a tampered value only
+makes the browser send a header the server is not reading, which fails closed
+with `403`.
+
+`security.csrf` defaults to on, and `deriveSecurityContext` resolves that
+default identically in every environment. Local development therefore issues
+the same token cookie and runs the same validation as a deployed build, so a
+mutation that omits the header fails on the developer's machine rather than on
+the first deploy. `security.csrf: false` is the one opt-out; it suppresses both
+the check and the cookie, everywhere.
+
+A rejection answers with a body naming the cookie and header that project has
+in effect and pointing at `csrfMutationHeaders` only when the project is an
+explicitly local one _and_ the request satisfies `isTrustedLocalControlRequest`.
+`ctx.isLocalProject` on its own is filesystem topology, not environment: a
+deployed multi-project runtime that resolves a project directory on disk sets
+it too, and would otherwise describe that project's policy and its opt-out to
+anyone who could reach the origin. Requiring the loopback evidence as well
+keeps the diagnostic on the developer's own machine, and every other caller
+keeps the unchanged, opaque rejection.
+
+Two framework-owned local development mutations are exempt: the client log
+endpoint and the dashboard API. Neither is project code, neither holds the
+token cookie, and both re-apply `isTrustedLocalControlRequest` themselves. That
+gate rejects `sec-fetch-site: cross-site`, any proxy hop, and any host but a
+canonical local-development one, so it is a stricter cross-site defence than
+the double-submit pair rather than a hole beside it.
 
 ### Authentication
 
-`AuthHandler` accepts either one Basic credential pair or one bearer token.
-Ambiguous environment configuration fails closed. Unauthorized responses are
-non-cacheable and receive the resolved CORS and security policy. Credential
-verification uses constant-time comparison.
+`AuthHandler` accepts one Basic credential pair, one bearer token, one OIDC
+application login config, or one trusted-proxy config. Ambiguous environment
+configuration fails closed. Unauthorized responses are non-cacheable and receive
+the resolved CORS and security policy. Credential verification uses
+constant-time comparison.
+
+OIDC application auth runs before project middleware, uses authorization code
+flow with PKCE, verifies ID tokens through bounded discovery and JWKS caches,
+and stores transaction and session state in encrypted cookies. These cookies
+make horizontally scaled runtimes correctness-independent as long as every
+instance receives the same session secret. Trusted-proxy auth is self-hosted
+only and trusts exact native peer provenance, not caller-controlled forwarding
+headers.
 
 ### Local development control surfaces
 
@@ -363,21 +413,15 @@ replaced with defaults.
 (`routing/api/handler.ts` and `routing/api/route-executor.ts`), which resolve it
 through the single `isHostRealmApiExecution` accessor. Data fetchers and SSR
 have their own flags. Agent streams are gated by `allowHostProjectCodeExecution`
-alone, so on a shared runtime granted host project execution, API routes execute
-in the same host realm as streams.
+alone.
 
 A runtime that cannot honour a configured isolation flag never fakes it. A
 compiled binary cannot prepare isolated API route source
 (`security/sandbox/isolation-capability.ts`), so `WORKER_ISOLATION_API=1` in a
-compiled deployment resolves one of two ways, both logged once at startup: where
-the operator has explicitly granted host project code execution through
-`VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION`, the flag is downgraded and execution
-uses the host realm the operator already opted into; where that grant is absent,
-the flag stands and API ownership returns the typed
-`project-execution-unavailable` 503 naming it. The downgrade cannot grant
-execution on its own. Every execution gate is a conjunction with
-`allowHostProjectCodeExecution`, so the downgrade only ever lands API routes in
-the realm that grant already licenses for every other surface.
+compiled deployment keeps the requested isolation posture and API ownership
+returns the typed `project-execution-unavailable` 503 naming it. The broad
+`VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION` grant does not override the
+API-specific isolation flag.
 
 OpenAPI metadata is currently attached to handler functions. Because reading
 it requires route evaluation, runtime OpenAPI generation is available only for
@@ -407,8 +451,8 @@ posture fixed and declared in a single place.
 
 This is a deliberate posture, not a bypass. With the override set, tenant
 project code is evaluated in the shared host process. Per-request separation is
-the `runWithContext` source scope and the project-scoped registry transaction —
-**not** a process, memory, or CPU boundary between tenants. Deno Workers do not
+the `runWithContext` source scope and the project-scoped registry transaction,
+not a process, memory, or CPU boundary between tenants. Deno Workers do not
 change that; they share the host process.
 
 Operators who need a genuine tenant boundary must leave the override unset and

@@ -8,6 +8,16 @@
 
 import { getEnv, readTextFile } from "veryfront/platform";
 import type { StdinReader } from "veryfront/platform";
+import {
+  AUTH_PRESETS,
+  isAuthPreset,
+  isScaffoldType,
+  SCAFFOLD_TYPES,
+  scaffoldAuthFiles,
+  type ScaffoldHttpMethod,
+  scaffoldProjectFile,
+} from "../scaffold/engine.ts";
+import { getPreferredRouter } from "../commands/generate/command.ts";
 import { DevServerClient } from "./dev-server-client.ts";
 import { startStdioJsonRpc } from "./stdio.ts";
 import {
@@ -28,12 +38,88 @@ import {
 
 const DEFAULT_DEV_PORT = 8080;
 const NOT_RUNNING_MSG = "Dev server not running. Start with: veryfront";
+const HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"] as const;
 
 interface StandaloneTool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
   execute: (args: Record<string, unknown>) => Promise<unknown>;
+}
+
+function isScaffoldHttpMethod(value: unknown): value is ScaffoldHttpMethod {
+  return typeof value === "string" && HTTP_METHODS.includes(value as ScaffoldHttpMethod);
+}
+
+function getMethodsArg(args: Record<string, unknown>): ScaffoldHttpMethod[] | undefined {
+  const value = args.methods;
+  if (!Array.isArray(value)) return undefined;
+
+  const methods: ScaffoldHttpMethod[] = [];
+  for (const method of value) {
+    if (!isScaffoldHttpMethod(method)) return undefined;
+    methods.push(method);
+  }
+  return methods;
+}
+
+type ScaffoldToolArgs =
+  | { type: "auth"; name: typeof AUTH_PRESETS[number]; projectPath?: string }
+  | {
+    type: typeof SCAFFOLD_TYPES[number];
+    name: string;
+    projectPath?: string;
+    methods?: ScaffoldHttpMethod[];
+  };
+
+function parseScaffoldToolArgs(args: Record<string, unknown>): ScaffoldToolArgs {
+  const type = args.type;
+  const name = args.name;
+  const projectPath = args.projectPath;
+
+  if (typeof type !== "string") {
+    throw new JsonRpcError(-32602, "Invalid vf_scaffold arguments: type must be a string");
+  }
+  if (typeof name !== "string") {
+    throw new JsonRpcError(-32602, "Invalid vf_scaffold arguments: name must be a string");
+  }
+  if (
+    Object.hasOwn(args, "projectPath") &&
+    projectPath !== undefined &&
+    typeof projectPath !== "string"
+  ) {
+    throw new JsonRpcError(-32602, "Invalid vf_scaffold arguments: projectPath must be a string");
+  }
+  const parsedProjectPath = typeof projectPath === "string" ? projectPath : undefined;
+
+  if (type === "auth") {
+    if (!isAuthPreset(name)) {
+      throw new JsonRpcError(
+        -32602,
+        `Invalid vf_scaffold arguments: name must be one of ${AUTH_PRESETS.join(", ")}`,
+      );
+    }
+    return { type, name, projectPath: parsedProjectPath };
+  }
+
+  if (!isScaffoldType(type)) {
+    throw new JsonRpcError(-32602, "Invalid vf_scaffold arguments: unknown scaffold type");
+  }
+
+  if (Object.hasOwn(args, "methods") && !Array.isArray(args.methods)) {
+    throw new JsonRpcError(
+      -32602,
+      "Invalid vf_scaffold arguments: methods must be valid HTTP methods",
+    );
+  }
+  const methods = getMethodsArg(args);
+  if (Array.isArray(args.methods) && methods === undefined) {
+    throw new JsonRpcError(
+      -32602,
+      "Invalid vf_scaffold arguments: methods must be valid HTTP methods",
+    );
+  }
+  return { type, name, projectPath: parsedProjectPath, methods };
 }
 
 export interface StandaloneMCPConfig {
@@ -119,6 +205,7 @@ export class StandaloneMCPServer {
 
     const tool = this.tools.find((t) => t.name === toolName);
     if (!tool) throw new JsonRpcError(-32602, `Unknown tool: ${toolName}`);
+    if (toolName === "vf_scaffold") parseScaffoldToolArgs(args ?? {});
 
     try {
       const result = await tool.execute(args ?? {});
@@ -315,6 +402,68 @@ export class StandaloneMCPServer {
           } catch {
             return { version: VERSION };
           }
+        },
+      },
+      {
+        name: "vf_scaffold",
+        description:
+          "Generate Veryfront pages, API routes, layouts, components, tools, agents, prompts, workflows, tasks, resources, skills, or auth setup files. Returns created file paths and refuses existing target files.",
+        inputSchema: {
+          anyOf: [
+            {
+              type: "object",
+              properties: {
+                type: { type: "string", const: "auth" },
+                name: { type: "string", enum: [...AUTH_PRESETS], description: "Auth preset" },
+                projectPath: {
+                  type: "string",
+                  description: "Project directory (defaults to current working directory)",
+                },
+              },
+              required: ["type", "name"],
+            },
+            {
+              type: "object",
+              properties: {
+                type: {
+                  type: "string",
+                  enum: [...SCAFFOLD_TYPES],
+                  description: "Type of project file to scaffold",
+                },
+                name: {
+                  type: "string",
+                  description: "Name/path of the entity",
+                },
+                methods: {
+                  type: "array",
+                  items: { type: "string", enum: [...HTTP_METHODS] },
+                  description: "HTTP methods for API routes",
+                },
+                projectPath: {
+                  type: "string",
+                  description: "Project directory (defaults to current working directory)",
+                },
+              },
+              required: ["type", "name"],
+            },
+          ],
+        },
+        async execute(args) {
+          const parsed = parseScaffoldToolArgs(args);
+          const projectDir = parsed.projectPath ?? Deno.cwd();
+
+          if (parsed.type === "auth") {
+            return scaffoldAuthFiles({ projectDir, preset: parsed.name });
+          }
+
+          return scaffoldProjectFile({
+            projectDir,
+            type: parsed.type,
+            name: parsed.name,
+            methods: parsed.methods,
+            router: await getPreferredRouter(projectDir),
+            resultPathMode: "relative",
+          });
         },
       },
       {

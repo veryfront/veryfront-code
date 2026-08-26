@@ -15,7 +15,6 @@ import {
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { getAvailableTools } from "./tool-helpers.ts";
-import { parseInvokeAgentStreamValue } from "#veryfront/chat/invoke-agent-stream.ts";
 
 it("buildAgentDelegateTools exposes one tool per delegate, excluding self and dupes", () => {
   const tools = buildAgentDelegateTools({
@@ -152,7 +151,7 @@ describe("invoke_agent", () => {
     assertEquals(result, { text: "drafted copy", toolCalls: 0, status: "completed" });
   });
 
-  it("publishes child stream events to the parent tool call", async () => {
+  it("keeps generic invoke_agent child stream events private", async () => {
     const writer = {
       id: "writer",
       config: {},
@@ -184,23 +183,7 @@ describe("invoke_agent", () => {
       },
     });
 
-    assertEquals(
-      published.length >= 1,
-      true,
-      "invoke_agent must publish child stream events to the parent tool call",
-    );
-    const parsed = parseInvokeAgentStreamValue(published[0]);
-    assertEquals(
-      parsed?.toolCallId,
-      "call-1",
-      "published child events must carry the parent toolCallId",
-    );
-    assertEquals(parsed?.agentId, "writer", "published child events must name the invoked agent");
-    assertEquals(
-      parsed?.event,
-      { type: "text-delta", id: "child-1", delta: "hi" },
-      "published child events must preserve the child stream payload",
-    );
+    assertEquals(published, []);
   });
 
   it("reports an error when the invoked agent id is unknown", async () => {

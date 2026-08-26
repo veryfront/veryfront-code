@@ -195,7 +195,7 @@ export abstract class BaseHandler implements Handler {
       }
 
       const isProduction = (ctx.resolvedEnvironment ?? ctx.requestContext?.mode) === "production";
-      const branch = ctx.parsedDomain?.branch ?? null;
+      const branch = ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null;
 
       this.logDebug(
         "[withProxyContext] Setting up multi-project context",

@@ -4,7 +4,7 @@
 # Verifies, against the real `deno task build:npm` artifacts installed into a
 # throwaway npm project, that:
 #   1. a `veryfront` install with co-published required packages runs the CLI
-#      and activates the parser extension under Node
+#      and activates first-party extensions under Node and Deno
 #   2. the @huggingface/transformers optional peer is declared
 #   3. loading a missing extension fails naming the installable package
 #   4. installing @veryfront/ext-auth-jwt makes the extension load
@@ -184,6 +184,18 @@ if (ast?.type !== 'File') throw new Error('TSX parse failed');
 await extension.teardown?.();
 " || fail "root deferred builtin did not register a working CodeParser"
 
+echo "== 1b. root install: workspace-source fallback loads under Deno"
+deno eval --node-modules-dir=auto "
+const loader = await import('./node_modules/veryfront/esm/src/extensions/first-party-import.js');
+const extension = await loader.importFirstPartyExtensionModule(
+  'ext-bundler-esbuild',
+  '@veryfront/ext-bundler-esbuild',
+);
+if (typeof extension.EsbuildBundler !== 'function') {
+  throw new Error('Deno could not load the packed bundler extension');
+}
+" || fail "Deno could not load the packed bundler extension"
+
 echo "== 2. root install: transformers optional peer declared"
 node -e "
 const p = require('./node_modules/veryfront/package.json');
@@ -290,6 +302,21 @@ mkdir -p \
   "$WORKDIR/agents" \
   "$WORKDIR/lib" \
   "$WORKDIR/workflows"
+# The fixture points ANTHROPIC_BASE_URL at its own dev server, so the provider
+# transport reaches `/api/npm-black-hole` as a server-to-server POST holding no
+# `__Host-vf_csrf` cookie. No third-party API client can perform double-submit,
+# and `security.csrf.excludePaths` is the documented remedy for exactly that.
+# It is scoped to the stand-in provider route; the workflow routes the browser
+# calls stay enforced, and the smoke echoes their token below.
+cat >"$WORKDIR/veryfront.config.ts" <<'EOF'
+export default {
+  security: {
+    csrf: {
+      excludePaths: ["/api/npm-black-hole"],
+    },
+  },
+};
+EOF
 cat >"$WORKDIR/app/api/npm-black-hole/messages/route.ts" <<'EOF'
 export async function POST(request: Request): Promise<Response> {
   const body = await request.json() as { model?: unknown };
@@ -355,7 +382,9 @@ cat >"$WORKDIR/app/api/workflows/[...path]/route.ts" <<'EOF'
 import { createWorkflowHandler } from "veryfront/workflow";
 import { workflows } from "../../../../lib/workflows.ts";
 
-export const { GET, POST } = createWorkflowHandler(workflows);
+export const { GET, POST } = createWorkflowHandler(workflows, {
+  authorize: () => "npm-smoke-test",
+});
 EOF
 
 DEV_PORT="${VF_NPM_SSR_SMOKE_PORT:-43119}"
@@ -394,7 +423,9 @@ if [ "$DEV_READY" != "yes" ]; then
   fail "packed ai-agent starter dev server did not become ready"
 fi
 
+DEV_HEADERS="$WORKDIR/veryfront-response-headers.txt"
 DEV_STATUS="$(curl --silent --show-error --max-time 30 \
+  --header 'accept: text/html' --dump-header "$DEV_HEADERS" \
   --output "$DEV_RESPONSE" --write-out '%{http_code}' "$DEV_URL" || true)"
 
 if [ "$DEV_STATUS" != "200" ]; then
@@ -428,12 +459,30 @@ if grep -Eq \
   fail "packed ai-agent starter logged an SSR module-resolution failure"
 fi
 
+# `createWorkflowHandler` is mounted at a project API path, so the project's
+# `security.csrf` gate covers it in local development exactly as it does after
+# deploy. The framework's own workflow React hooks satisfy that gate by echoing
+# the issued cookie back in the header, and this smoke has to do the same.
+VF_CSRF_TOKEN="$(sed -n 's/^[Ss]et-[Cc]ookie: __Host-vf_csrf=\([^;]*\).*/\1/p' \
+  "$DEV_HEADERS" | head -n 1 | tr -d '\r')"
+
+if [ -z "$VF_CSRF_TOKEN" ]; then
+  cat "$DEV_HEADERS" >&2
+  fail "packed ai-agent starter served no __Host-vf_csrf cookie on its HTML document"
+fi
+
 echo "== 8. packed workflow: provider hang reaches a durable timeout"
-node --input-type=module - "$DEV_URL" <<'EOF' || {
+VF_CSRF_TOKEN="$VF_CSRF_TOKEN" node --input-type=module - "$DEV_URL" <<'EOF' || {
 const rootUrl = process.argv[2];
+const csrfToken = process.env.VF_CSRF_TOKEN;
+const mutationHeaders = {
+  "content-type": "application/json",
+  cookie: `__Host-vf_csrf=${csrfToken}`,
+  "x-csrf-token": csrfToken,
+};
 const startResponse = await fetch(new URL("api/workflows/timeout-smoke/start", rootUrl), {
   method: "POST",
-  headers: { "content-type": "application/json" },
+  headers: mutationHeaders,
   body: JSON.stringify({ input: { message: "hello" } }),
   signal: AbortSignal.timeout(30_000),
 });

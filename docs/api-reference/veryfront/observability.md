@@ -53,12 +53,10 @@ const result = await withSpan("load-data", async () => {
 | `getActiveContext`                       | Context for get active.                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L98)                         |
 | `getErrorCollector`                      | Return error collector.                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L406)                      |
 | `getGlobalMetricsAPI`                    |                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/api-shim.ts#L684)                     |
-| `getHostTelemetryEnv`                    |                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/telemetry-env.ts#L7)                  |
 | `getLogBuffer`                           | Return log buffer.                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L231)                           |
 | `getMetricsState`                        | State for get metrics.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L38)                         |
 | `getTraceContext`                        |                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L651)                   |
 | `initAutoInstrumentation`                | Initialize automatic instrumentation wrappers.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/auto-instrument/orchestrator.ts#L15)          |
-| `initializeApplicationErrorReporter`     | Activate an explicitly selected reporter initializer.                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L153)                   |
 | `initializeOTLP`                         | Initialize OTLP tracing export.                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L117)                   |
 | `initMetrics`                            | Initialize metrics collection.                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L20)                         |
 | `initTracing`                            | Initialize tracing for the current runtime.                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L18)                         |
@@ -230,33 +228,3 @@ import {
 | ----------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `OTLPConfig`      | Configuration used by otlpconfig. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L50)  |
 | `WithSpanOptions` |                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L293) |
-
-### `veryfront/observability/sentry`
-
-```ts
-import {
-  captureApplicationError,
-  flushApplicationErrors,
-  initializeSentry,
-} from "veryfront/observability/sentry";
-```
-
-#### Functions
-
-| Name                         | Description                                       | Source                                                                                                       |
-| ---------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `captureApplicationError`    |                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L266) |
-| `flushApplicationErrors`     |                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L294) |
-| `initializeSentry`           | Initialize the process-wide Sentry reporter once. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L86)              |
-| `initializeSentryFromEnv`    |                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L70)              |
-| `isSentryEnabled`            | Return whether Sentry is explicitly enabled.      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L39)              |
-| `resetSentryForTests`        |                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L131)             |
-| `resolveSentryConfigFromEnv` |                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L49)              |
-
-#### Types
-
-| Name                       | Description                                                             | Source                                                                                                              |
-| -------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `ApplicationErrorContext`  | Sanitized context attached when a runtime reports an application error. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-error-contract.ts#L5)  |
-| `ApplicationErrorReporter` | Provider-neutral application error capture and flush interface.         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-error-contract.ts#L27) |
-| `SentryConfig`             |                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L18)                     |

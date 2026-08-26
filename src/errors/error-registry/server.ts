@@ -158,7 +158,7 @@ export const SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE = defineError({
   status: 503,
   title: "Source snapshot freshness cannot be established",
   suggestion:
-    "Implement ensureSourceSnapshotFresh() or refreshSourceSnapshot() on the filesystem adapter that serves this mutable source",
+    "Implement unconditional refreshSourceSnapshot(), or implement ensureSourceSnapshotFresh() with maxAgeMs support and advertise sourceSnapshotFreshnessOptionsVersion: 1. Strict preview configuration also requires stable getSourceSnapshotIdentity() and concrete getSourceSnapshotVersion(); agent execution also requires getSourceSnapshotFingerprint().",
 });
 
 /** Registry fragment for SERVER errors (slug → definition). */

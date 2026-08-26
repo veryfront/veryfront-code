@@ -552,15 +552,7 @@ describe(
             productionMode?: boolean;
             releaseId?: string | null;
           }> = [];
-          const multiProjectFs = new MultiProjectFSAdapter({
-            veryfront: {
-              apiBaseUrl: "https://api.example.com",
-              proxyMode: true,
-              cache: { enabled: false },
-            },
-          });
-          const originalManager = (multiProjectFs as any).manager;
-          (multiProjectFs as any).manager = {
+          const manager = {
             getAdapter(
               resolvedSlug: string,
               _token: string,
@@ -579,6 +571,13 @@ describe(
             getStats: () => ({ adapters: 0, stats: [] }),
             dispose: () => {},
           };
+          const multiProjectFs = new MultiProjectFSAdapter({
+            veryfront: {
+              apiBaseUrl: "https://api.example.com",
+              proxyMode: true,
+              cache: { enabled: false },
+            },
+          }, manager as never);
 
           const mockAdapter = createMockAdapter();
           let servedHandler: ((request: Request) => Promise<Response> | Response) | undefined;
@@ -660,7 +659,6 @@ describe(
             else setEnv(trustEnvName, originalProxyTrust);
             invalidateProjectMiddlewareCache(projectSlug, projectId);
             await server?.stop();
-            (multiProjectFs as any).manager = originalManager;
             multiProjectFs.dispose();
           }
         });

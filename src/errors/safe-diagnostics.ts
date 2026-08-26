@@ -7,13 +7,18 @@ import {
 } from "./types.ts";
 import {
   buildErrorDocsUrl,
+  ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS,
   ERROR_OUTPUT_MAX_LENGTH_CHARS,
   sanitizeBoundedDiagnosticText,
   sanitizeBoundedErrorSlug,
   sanitizeBoundedStackText,
   sanitizeBoundedTerminalText,
 } from "./diagnostic-policy.ts";
-import { type RedactedValue, redactForSerialization } from "#veryfront/utils/logger/redact.ts";
+import {
+  type RedactedValue,
+  redactForSerialization,
+  redactPathFromText,
+} from "#veryfront/utils/logger/redact.ts";
 import {
   isNativeErrorWithoutHooks,
   isProxyWithoutHooks,
@@ -37,9 +42,18 @@ export {
 } from "./diagnostic-policy.ts";
 
 const freeze = Object.freeze;
+const arrayJoin = Array.prototype.join;
+const arrayPop = Array.prototype.pop;
+const arrayPush = Array.prototype.push;
+const arraySplice = Array.prototype.splice;
+const nativeDecodeURI = decodeURI;
+const nativeDecodeURIComponent = decodeURIComponent;
+const nativeEncodeURIComponent = encodeURIComponent;
+const nativeEncodeURI = encodeURI;
 const jsonStringify = JSON.stringify;
 const numberIsFinite = Number.isFinite;
 const numberIsInteger = Number.isInteger;
+const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
 const UNKNOWN_ERROR_SNAPSHOT: VeryfrontErrorSnapshot = freeze({
   slug: "unknown-error",
   category: "GENERAL",
@@ -54,6 +68,16 @@ const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const getPrototypeOf = Object.getPrototypeOf;
 const NativeError = Error;
 const NativeString = String;
+const NativeUint32Array = Uint32Array;
+const NativeURL = URL;
+const stringCharCodeAt = String.prototype.charCodeAt;
+const stringFromCodePoint = String.fromCodePoint;
+const stringSlice = String.prototype.slice;
+const stringToLowerCase = String.prototype.toLowerCase;
+const stringToUpperCase = String.prototype.toUpperCase;
+const mathFloor = Math.floor;
+const URL_HOSTNAME_GETTER = getOwnPropertyDescriptor(NativeURL.prototype, "hostname")?.get;
+const URL_PATHNAME_GETTER = getOwnPropertyDescriptor(NativeURL.prototype, "pathname")?.get;
 const NATIVE_ERROR_STACK_GETTER = getOwnPropertyDescriptor(new NativeError(), "stack")?.get;
 const ERROR_CATEGORIES: ReadonlySet<ErrorCategory> = new Set([
   "CONFIG",
@@ -69,6 +93,17 @@ const ERROR_CATEGORIES: ReadonlySet<ErrorCategory> = new Set([
   "GENERAL",
 ]);
 const MISSING_DATA_FIELD = Symbol("missing-data-field");
+const FORWARD_SLASH_CODE_UNIT = 47;
+const BACKSLASH_CODE_UNIT = 92;
+const PERIOD_CODE_UNIT = 46;
+const COLON_CODE_UNIT = 58;
+const VERTICAL_BAR_CODE_UNIT = 124;
+const ASCII_UPPERCASE_A_CODE_UNIT = 65;
+const ASCII_UPPERCASE_Z_CODE_UNIT = 90;
+const ASCII_LOWERCASE_OFFSET = 32;
+const MIN_TRUNCATED_TERMINAL_SEGMENT_CODE_UNITS = 8;
+const FILESYSTEM_DIAGNOSTIC_FALLBACK = "Filesystem operation failed";
+const UPPERCASE_HEX_DIGITS = "0123456789ABCDEF";
 const DOM_EXCEPTION_MESSAGE_GETTER = typeof DOMException === "function"
   ? getOwnPropertyDescriptor(DOMException.prototype, "message")?.get
   : undefined;
@@ -305,47 +340,925 @@ export function detachThrowableForBoundary(error: unknown): Error {
  * functions are intentionally opaque because `String(value)` can execute
  * project-owned `Symbol.toPrimitive`, `toString`, or proxy hooks.
  */
-export function snapshotThrowableDiagnostic(error: unknown): string {
+function readThrowableDiagnostic(error: unknown): string {
   if (isNativeErrorWithoutHooks(error)) {
     try {
       const message = getOwnPropertyDescriptor(error, "message");
       if (message) {
-        return sanitizeDiagnosticText(
-          "value" in message && typeof message.value === "string" ? message.value : "Unknown error",
-        );
+        return "value" in message && typeof message.value === "string"
+          ? message.value
+          : "Unknown error";
       }
 
       if (DOM_EXCEPTION_MESSAGE_GETTER) {
         try {
           const domMessage = apply(DOM_EXCEPTION_MESSAGE_GETTER, error, []);
           if (typeof domMessage === "string") {
-            return sanitizeDiagnosticText(domMessage);
+            return domMessage;
           }
         } catch {
           // Ordinary Error objects do not carry DOMException internal slots.
         }
       }
 
-      return sanitizeDiagnosticText("");
+      return "";
     } catch {
-      return sanitizeDiagnosticText("Unknown error");
+      return "Unknown error";
     }
   }
 
-  if (error === null) return sanitizeDiagnosticText("null");
+  if (error === null) return "null";
 
   switch (typeof error) {
     case "string":
-      return sanitizeDiagnosticText(error);
+      return error;
     case "number":
     case "bigint":
     case "boolean":
     case "symbol":
     case "undefined":
-      return sanitizeDiagnosticText(NativeString(error));
+      return NativeString(error);
     default:
-      return sanitizeDiagnosticText("Unknown error");
+      return "Unknown error";
   }
+}
+
+export function snapshotThrowableDiagnostic(error: unknown): string {
+  return sanitizeDiagnosticText(readThrowableDiagnostic(error));
+}
+
+function isPathSeparatorCodeUnit(codeUnit: number): boolean {
+  return codeUnit === FORWARD_SLASH_CODE_UNIT || codeUnit === BACKSLASH_CODE_UNIT;
+}
+
+function charCodeAtString(value: string, index: number): number {
+  return apply(stringCharCodeAt, value, [index]) as number;
+}
+
+function sliceString(value: string, start: number, end?: number): string {
+  return end === undefined
+    ? apply(stringSlice, value, [start]) as string
+    : apply(stringSlice, value, [start, end]) as string;
+}
+
+function lowercaseString(value: string): string {
+  return apply(stringToLowerCase, value, []) as string;
+}
+
+function uppercaseString(value: string): string {
+  return apply(stringToUpperCase, value, []) as string;
+}
+
+function isAsciiLetterCodeUnit(codeUnit: number): boolean {
+  return (codeUnit >= 65 && codeUnit <= 90) || (codeUnit >= 97 && codeUnit <= 122);
+}
+
+function trimUrlIgnoredAsciiWhitespace(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && charCodeAtString(value, start) <= 0x20) start++;
+  while (end > start && charCodeAtString(value, end - 1) <= 0x20) end--;
+  return start === 0 && end === value.length ? value : sliceString(value, start, end);
+}
+
+/** Remove ASCII controls that the WHATWG URL parser ignores anywhere in a URL. */
+function removeUrlIgnoredAsciiControls(value: string): string {
+  const segments: string[] = [];
+  let segmentStart = 0;
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = charCodeAtString(value, index);
+    if (codeUnit !== 9 && codeUnit !== 10 && codeUnit !== 13) continue;
+    apply(arrayPush, segments, [sliceString(value, segmentStart, index)]);
+    segmentStart = index + 1;
+  }
+  if (segmentStart === 0) return value;
+  apply(arrayPush, segments, [sliceString(value, segmentStart)]);
+  return apply(arrayJoin, segments, [""]) as string;
+}
+
+function fileUrlNormalizationSource(path: string): string {
+  const trimmed = trimUrlIgnoredAsciiWhitespace(path);
+  const canonical = removeUrlIgnoredAsciiControls(trimmed);
+  return lowercaseString(sliceString(canonical, 0, 5)) === "file:" ? canonical : path;
+}
+
+export function isAbsoluteFilesystemPathForDiagnostic(path: string): boolean {
+  const candidate = fileUrlNormalizationSource(path);
+  if (lowercaseString(sliceString(candidate, 0, 5)) === "file:") return true;
+  if (isPathSeparatorCodeUnit(charCodeAtString(candidate, 0))) return true;
+  return candidate.length >= 3 &&
+    isAsciiLetterCodeUnit(charCodeAtString(candidate, 0)) &&
+    charCodeAtString(candidate, 1) === COLON_CODE_UNIT &&
+    isPathSeparatorCodeUnit(charCodeAtString(candidate, 2));
+}
+
+function isWindowsFilesystemPath(path: string): boolean {
+  if (path.length >= 2) {
+    const first = charCodeAtString(path, 0);
+    const second = charCodeAtString(path, 1);
+    if (isPathSeparatorCodeUnit(first) && isPathSeparatorCodeUnit(second)) return true;
+  }
+  return path.length >= 3 &&
+    isAsciiLetterCodeUnit(charCodeAtString(path, 0)) &&
+    charCodeAtString(path, 1) === COLON_CODE_UNIT &&
+    isPathSeparatorCodeUnit(charCodeAtString(path, 2));
+}
+
+function normalizeFilesystemPathCodeUnit(codeUnit: number, foldAsciiCase: boolean): number {
+  if (isPathSeparatorCodeUnit(codeUnit)) return FORWARD_SLASH_CODE_UNIT;
+  return foldAsciiCase &&
+      codeUnit >= ASCII_UPPERCASE_A_CODE_UNIT &&
+      codeUnit <= ASCII_UPPERCASE_Z_CODE_UNIT
+    ? codeUnit + ASCII_LOWERCASE_OFFSET
+    : codeUnit;
+}
+
+/** Identify literal or percent-encoded dot segments in a file URL path. */
+function fileUrlDotSegmentLength(segment: string): number {
+  let dots = 0;
+  for (let cursor = 0; cursor < segment.length;) {
+    const codeUnit = charCodeAtString(segment, cursor);
+    if (codeUnit === 46) {
+      dots++;
+      cursor++;
+    } else if (
+      codeUnit === 37 &&
+      charCodeAtString(segment, cursor + 1) === 50 &&
+      (charCodeAtString(segment, cursor + 2) === 69 ||
+        charCodeAtString(segment, cursor + 2) === 101)
+    ) {
+      dots++;
+      cursor += 3;
+    } else {
+      return 0;
+    }
+    if (dots > 2) return 0;
+  }
+  return dots;
+}
+
+/** Identify the local file authority without treating malformed encodings as local. */
+function isLocalhostFileAuthority(authority: string): boolean {
+  try {
+    return lowercaseString(nativeDecodeURIComponent(authority)) === "localhost";
+  } catch {
+    return false;
+  }
+}
+
+/** Normalize lexical `.` and `..` segments without resolving the filesystem. */
+function normalizeFilesystemPathForDiagnostic(path: string): string {
+  const windowsPath = isWindowsFilesystemPath(path);
+  const hasFileScheme = lowercaseString(sliceString(path, 0, 5)) === "file:";
+  const hasDrive = path.length >= 3 &&
+    isAsciiLetterCodeUnit(charCodeAtString(path, 0)) &&
+    charCodeAtString(path, 1) === COLON_CODE_UNIT &&
+    isPathSeparatorCodeUnit(charCodeAtString(path, 2));
+  const hasUncRoot = !hasDrive && path.length >= 2 &&
+    isPathSeparatorCodeUnit(charCodeAtString(path, 0)) &&
+    isPathSeparatorCodeUnit(charCodeAtString(path, 1));
+  const leadingSeparator = !hasDrive && !hasUncRoot && isPathSeparatorCodeUnit(
+    charCodeAtString(path, 0),
+  );
+  let prefix: string;
+  let start: number;
+  let protectedSegments: number;
+  if (hasFileScheme) {
+    let cursor = 5;
+    if (
+      isPathSeparatorCodeUnit(charCodeAtString(path, cursor)) &&
+      isPathSeparatorCodeUnit(charCodeAtString(path, cursor + 1))
+    ) {
+      cursor += 2;
+      const authorityStart = cursor;
+      while (cursor < path.length && !isPathSeparatorCodeUnit(charCodeAtString(path, cursor))) {
+        cursor++;
+      }
+      const authority = sliceString(path, authorityStart, cursor);
+      while (cursor < path.length && isPathSeparatorCodeUnit(charCodeAtString(path, cursor))) {
+        cursor++;
+      }
+      prefix = `file://${isLocalhostFileAuthority(authority) ? "" : authority}/`;
+      start = cursor;
+    } else {
+      while (cursor < path.length && isPathSeparatorCodeUnit(charCodeAtString(path, cursor))) {
+        cursor++;
+      }
+      prefix = "file:/";
+      start = cursor;
+    }
+    protectedSegments = 0;
+  } else {
+    prefix = hasDrive
+      ? `${sliceString(path, 0, 2)}/`
+      : hasUncRoot
+      ? "//"
+      : leadingSeparator
+      ? "/"
+      : "";
+    start = hasDrive ? 3 : hasUncRoot ? 2 : leadingSeparator ? 1 : 0;
+    protectedSegments = hasUncRoot ? 2 : 0;
+  }
+  const segments: string[] = [];
+  for (let segmentStart = start; segmentStart < path.length;) {
+    let cursor = segmentStart;
+    while (cursor < path.length && !isPathSeparatorCodeUnit(charCodeAtString(path, cursor))) {
+      cursor++;
+    }
+    const segment = sliceString(path, segmentStart, cursor);
+    const dotSegmentLength = hasFileScheme
+      ? fileUrlDotSegmentLength(segment)
+      : segment === "."
+      ? 1
+      : segment === ".."
+      ? 2
+      : 0;
+    if (dotSegmentLength === 2) {
+      if (segments.length > protectedSegments) apply(arrayPop, segments, []);
+    } else if (segment && dotSegmentLength !== 1) {
+      apply(arrayPush, segments, [segment]);
+    }
+    while (cursor < path.length && isPathSeparatorCodeUnit(charCodeAtString(path, cursor))) {
+      cursor++;
+    }
+    segmentStart = cursor;
+  }
+  const normalized = `${prefix}${apply(arrayJoin, segments, ["/"])}`;
+  return windowsPath && normalized.length >= 1
+    ? uppercaseString(normalized[0]!) + sliceString(normalized, 1)
+    : normalized;
+}
+
+function normalizePosixDoubleSeparatorPathForDiagnostic(path: string): string | undefined {
+  if (
+    charCodeAtString(path, 0) !== FORWARD_SLASH_CODE_UNIT ||
+    charCodeAtString(path, 1) !== FORWARD_SLASH_CODE_UNIT
+  ) {
+    return undefined;
+  }
+  let cursor = 2;
+  while (charCodeAtString(path, cursor) === FORWARD_SLASH_CODE_UNIT) cursor++;
+  return normalizeFilesystemPathForDiagnostic(`/${sliceString(path, cursor)}`);
+}
+
+/** Derive the path spelling Node uses when inspecting backslashes and controls. */
+function nodeInspectedFilesystemPath(
+  path: string,
+  quoteDelimiterCodeUnit: number,
+): string | undefined {
+  const parts: string[] = [];
+  let segmentStart = 0;
+  for (let index = 0; index < path.length; index++) {
+    const codeUnit = charCodeAtString(path, index);
+    let escape: string | undefined;
+    if (codeUnit === BACKSLASH_CODE_UNIT) {
+      escape = "\\\\";
+    } else if (codeUnit === quoteDelimiterCodeUnit) {
+      escape = `\\${sliceString(path, index, index + 1)}`;
+    } else if (codeUnit === 8) {
+      escape = "\\b";
+    } else if (codeUnit === 9) {
+      escape = "\\t";
+    } else if (codeUnit === 10) {
+      escape = "\\n";
+    } else if (codeUnit === 12) {
+      escape = "\\f";
+    } else if (codeUnit === 13) {
+      escape = "\\r";
+    } else if (codeUnit <= 0x1f || (codeUnit >= 0x7f && codeUnit <= 0x9f)) {
+      escape = `\\x${UPPERCASE_HEX_DIGITS[(codeUnit >>> 4) & 0xf]}${
+        UPPERCASE_HEX_DIGITS[codeUnit & 0xf]
+      }`;
+    }
+    if (escape === undefined) continue;
+    apply(arrayPush, parts, [sliceString(path, segmentStart, index), escape]);
+    segmentStart = index + 1;
+  }
+  if (segmentStart === 0) return undefined;
+  apply(arrayPush, parts, [sliceString(path, segmentStart)]);
+  return apply(arrayJoin, parts, [""]);
+}
+
+function uriEncodedFilesystemPath(path: string): string | undefined {
+  try {
+    const encoded = nativeEncodeURI(path);
+    return encoded === path ? undefined : encoded;
+  } catch {
+    return undefined;
+  }
+}
+
+function uriDecodedFilesystemPath(path: string): string | undefined {
+  try {
+    const decoded = nativeDecodeURI(path);
+    return decoded === path ? undefined : decoded;
+  } catch {
+    return undefined;
+  }
+}
+
+function componentEncodedFilesystemPath(path: string): string | undefined {
+  try {
+    const encoded = nativeEncodeURIComponent(path);
+    return encoded === path ? undefined : encoded;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Derive the application/x-www-form-urlencoded spelling used by URLSearchParams. */
+function formEncodedFilesystemPath(path: string): string | undefined {
+  let encoded: string;
+  try {
+    encoded = nativeEncodeURIComponent(path);
+  } catch {
+    return undefined;
+  }
+  const parts: string[] = [];
+  let segmentStart = 0;
+  for (let index = 0; index < encoded.length; index++) {
+    const codeUnit = charCodeAtString(encoded, index);
+    let replacement: string | undefined;
+    if (
+      codeUnit === 37 && charCodeAtString(encoded, index + 1) === 50 &&
+      charCodeAtString(encoded, index + 2) === 48
+    ) {
+      replacement = "+";
+      apply(arrayPush, parts, [sliceString(encoded, segmentStart, index), replacement]);
+      index += 2;
+      segmentStart = index + 1;
+      continue;
+    }
+    if (codeUnit === 33) replacement = "%21";
+    else if (codeUnit === 39) replacement = "%27";
+    else if (codeUnit === 40) replacement = "%28";
+    else if (codeUnit === 41) replacement = "%29";
+    else if (codeUnit === 126) replacement = "%7E";
+    if (replacement === undefined) continue;
+    apply(arrayPush, parts, [sliceString(encoded, segmentStart, index), replacement]);
+    segmentStart = index + 1;
+  }
+  if (segmentStart === 0) return encoded === path ? undefined : encoded;
+  apply(arrayPush, parts, [sliceString(encoded, segmentStart)]);
+  const formEncoded = apply(arrayJoin, parts, [""]) as string;
+  return formEncoded === path ? undefined : formEncoded;
+}
+
+/** Derive the path spelling Node uses in unquoted invalid-NUL diagnostics. */
+function nodeNullEscapedFilesystemPath(path: string): string | undefined {
+  const parts: string[] = [];
+  let segmentStart = 0;
+  for (let index = 0; index < path.length; index++) {
+    if (charCodeAtString(path, index) !== 0) continue;
+    apply(arrayPush, parts, [sliceString(path, segmentStart, index), "\\x00"]);
+    segmentStart = index + 1;
+  }
+  if (segmentStart === 0) return undefined;
+  apply(arrayPush, parts, [sliceString(path, segmentStart)]);
+  return apply(arrayJoin, parts, [""]);
+}
+
+function minimumAbsolutePathPrefixLength(path: string): number {
+  let index = 0;
+  if (
+    path.length >= 3 && isAsciiLetterCodeUnit(charCodeAtString(path, 0)) &&
+    charCodeAtString(path, 1) === COLON_CODE_UNIT &&
+    isPathSeparatorCodeUnit(charCodeAtString(path, 2))
+  ) {
+    index = 3;
+  } else {
+    while (index < path.length && isPathSeparatorCodeUnit(charCodeAtString(path, index))) index++;
+  }
+  const rootLength = index;
+  while (index < path.length && !isPathSeparatorCodeUnit(charCodeAtString(path, index))) index++;
+  const firstSegmentPrefixLength = rootLength + MIN_TRUNCATED_TERMINAL_SEGMENT_CODE_UNITS;
+  return firstSegmentPrefixLength < index ? firstSegmentPrefixLength : index;
+}
+
+function isPathContinuationCodeUnit(codeUnit: number): boolean {
+  return isAsciiLetterCodeUnit(codeUnit) ||
+    (codeUnit >= 48 && codeUnit <= 57) ||
+    codeUnit === 45 ||
+    codeUnit === 46 ||
+    codeUnit === 58 ||
+    codeUnit === 95 ||
+    isPathSeparatorCodeUnit(codeUnit);
+}
+
+function hasAsciiEllipsisAt(input: string, index: number): boolean {
+  return charCodeAtString(input, index) === PERIOD_CODE_UNIT &&
+    charCodeAtString(input, index + 1) === PERIOD_CODE_UNIT &&
+    charCodeAtString(input, index + 2) === PERIOD_CODE_UNIT;
+}
+
+function isPercentEncodedPathSeparatorAt(input: string, index: number): boolean {
+  const encoded = lowercaseString(sliceString(input, index, index + 3));
+  return encoded === "%2f" || encoded === "%5c";
+}
+
+function isPercentEncodedColonAt(input: string, index: number): boolean {
+  return lowercaseString(sliceString(input, index, index + 3)) === "%3a";
+}
+
+/** Detect an absolute path that remains after trusted aliases are redacted. */
+function containsAbsoluteFilesystemPathForDiagnostic(input: string): boolean {
+  for (let index = 0; index < input.length; index++) {
+    if (index > 0) {
+      const previousCodeUnit = charCodeAtString(input, index - 1);
+      if (previousCodeUnit !== COLON_CODE_UNIT && isPathContinuationCodeUnit(previousCodeUnit)) {
+        continue;
+      }
+    }
+    const codeUnit = charCodeAtString(input, index);
+    if (isPathSeparatorCodeUnit(codeUnit) || isPercentEncodedPathSeparatorAt(input, index)) {
+      return true;
+    }
+    if (isAsciiLetterCodeUnit(codeUnit)) {
+      const literalDriveSeparatorIndex = index + 2;
+      if (
+        charCodeAtString(input, index + 1) === COLON_CODE_UNIT &&
+        (isPathSeparatorCodeUnit(charCodeAtString(input, literalDriveSeparatorIndex)) ||
+          isPercentEncodedPathSeparatorAt(input, literalDriveSeparatorIndex))
+      ) {
+        return true;
+      }
+      const encodedDriveSeparatorIndex = index + 4;
+      if (
+        isPercentEncodedColonAt(input, index + 1) &&
+        (isPathSeparatorCodeUnit(charCodeAtString(input, encodedDriveSeparatorIndex)) ||
+          isPercentEncodedPathSeparatorAt(input, encodedDriveSeparatorIndex))
+      ) {
+        return true;
+      }
+    }
+    const scheme = lowercaseString(sliceString(input, index, index + 7));
+    if (
+      sliceString(scheme, 0, 5) === "file:" ||
+      (scheme === "file%3a" &&
+        (isPathSeparatorCodeUnit(charCodeAtString(input, index + 7)) ||
+          isPercentEncodedPathSeparatorAt(input, index + 7)))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Detect a shortened trusted absolute path that cannot be safely redacted as a whole. */
+function containsTruncatedFilesystemPathPrefix(input: string, path: string): boolean {
+  const minimumPrefixLength = minimumAbsolutePathPrefixLength(path);
+  if (minimumPrefixLength === 0 || minimumPrefixLength >= path.length) return false;
+
+  const foldAsciiCase = isWindowsFilesystemPath(path);
+  const prefixTable = new NativeUint32Array(path.length);
+  for (let index = 1, prefixLength = 0; index < path.length;) {
+    if (
+      normalizeFilesystemPathCodeUnit(charCodeAtString(path, index), foldAsciiCase) ===
+        normalizeFilesystemPathCodeUnit(charCodeAtString(path, prefixLength), foldAsciiCase)
+    ) {
+      prefixTable[index] = ++prefixLength;
+      index++;
+    } else if (prefixLength > 0) {
+      prefixLength = prefixTable[prefixLength - 1]!;
+    } else {
+      prefixTable[index] = 0;
+      index++;
+    }
+  }
+
+  let matched = 0;
+  for (let index = 0; index < input.length; index++) {
+    const inputCodeUnit = normalizeFilesystemPathCodeUnit(
+      charCodeAtString(input, index),
+      foldAsciiCase,
+    );
+    while (
+      matched > 0 &&
+      inputCodeUnit !==
+        normalizeFilesystemPathCodeUnit(charCodeAtString(path, matched), foldAsciiCase)
+    ) {
+      matched = prefixTable[matched - 1]!;
+    }
+    if (
+      inputCodeUnit ===
+        normalizeFilesystemPathCodeUnit(charCodeAtString(path, matched), foldAsciiCase)
+    ) {
+      matched++;
+    }
+
+    if (matched === path.length) {
+      matched = prefixTable[matched - 1]!;
+      continue;
+    }
+    if (
+      matched >= minimumPrefixLength &&
+      (index + 1 === input.length ||
+        hasAsciiEllipsisAt(input, index + 1) ||
+        !isPathContinuationCodeUnit(charCodeAtString(input, index + 1)))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function punycodeDigit(codeUnit: number): number {
+  if (codeUnit >= 65 && codeUnit <= 90) return codeUnit - 65;
+  if (codeUnit >= 97 && codeUnit <= 122) return codeUnit - 97;
+  if (codeUnit >= 48 && codeUnit <= 57) return codeUnit - 22;
+  return 36;
+}
+
+function adaptPunycodeBias(delta: number, pointCount: number, first: boolean): number {
+  delta = first ? mathFloor(delta / 700) : mathFloor(delta / 2);
+  delta += mathFloor(delta / pointCount);
+  let adjustment = 0;
+  while (delta > 455) {
+    delta = mathFloor(delta / 35);
+    adjustment += 36;
+  }
+  return adjustment + mathFloor((36 * delta) / (delta + 38));
+}
+
+/** Decode one validated URL-host punycode label without a Node built-in. */
+function decodePunycodeLabel(label: string): string | undefined {
+  const output: number[] = [];
+  let delimiter = -1;
+  for (let index = 0; index < label.length; index++) {
+    if (charCodeAtString(label, index) === 45) delimiter = index;
+  }
+  let cursor = delimiter < 0 ? 0 : delimiter + 1;
+  if (delimiter >= 0) {
+    for (let index = 0; index < delimiter; index++) {
+      const codeUnit = charCodeAtString(label, index);
+      if (codeUnit >= 0x80) return undefined;
+      apply(arrayPush, output, [codeUnit]);
+    }
+  }
+
+  let codePoint = 128;
+  let bias = 72;
+  let insertion = 0;
+  while (cursor < label.length) {
+    const previousInsertion = insertion;
+    let weight = 1;
+    for (let thresholdBase = 36;; thresholdBase += 36) {
+      if (cursor >= label.length) return undefined;
+      const digit = punycodeDigit(charCodeAtString(label, cursor++));
+      if (digit >= 36 || digit > mathFloor((MAX_SAFE_INTEGER - insertion) / weight)) {
+        return undefined;
+      }
+      insertion += digit * weight;
+      const threshold = thresholdBase <= bias + 1
+        ? 1
+        : thresholdBase >= bias + 26
+        ? 26
+        : thresholdBase - bias;
+      if (digit < threshold) break;
+      const factor = 36 - threshold;
+      if (weight > mathFloor(MAX_SAFE_INTEGER / factor)) return undefined;
+      weight *= factor;
+    }
+
+    const pointCount = output.length + 1;
+    bias = adaptPunycodeBias(insertion - previousInsertion, pointCount, previousInsertion === 0);
+    const increment = mathFloor(insertion / pointCount);
+    if (increment > 0x10ffff - codePoint) return undefined;
+    codePoint += increment;
+    insertion %= pointCount;
+    if (codePoint >= 0xd800 && codePoint <= 0xdfff) return undefined;
+    apply(arraySplice, output, [insertion, 0, codePoint]);
+    insertion++;
+  }
+
+  const decoded: string[] = [];
+  for (let index = 0; index < output.length; index++) {
+    apply(arrayPush, decoded, [apply(stringFromCodePoint, NativeString, [output[index]!])]);
+  }
+  return apply(arrayJoin, decoded, [""]);
+}
+
+function domainToUnicode(authority: string): string {
+  const labels: string[] = [];
+  for (let start = 0; start <= authority.length;) {
+    let end = start;
+    while (end < authority.length && charCodeAtString(authority, end) !== PERIOD_CODE_UNIT) end++;
+    const label = sliceString(authority, start, end);
+    if (lowercaseString(sliceString(label, 0, 4)) === "xn--") {
+      const decoded = decodePunycodeLabel(sliceString(label, 4));
+      apply(arrayPush, labels, [decoded ?? label]);
+    } else {
+      apply(arrayPush, labels, [label]);
+    }
+    if (end === authority.length) break;
+    start = end + 1;
+  }
+  return apply(arrayJoin, labels, ["."]);
+}
+
+/**
+ * Derive the native filesystem spelling of a normalized file URL.
+ *
+ * Host APIs report the decoded platform path (e.g. Node's
+ * `open '/private/nope'` for `file:///private/nope`), which matches neither
+ * the requested URL nor its normalized form, so that spelling must be
+ * redacted as an additional alias. Returns undefined for non-file paths and
+ * for malformed percent encodings the platform would reject before reaching
+ * the host API.
+ */
+function platformPathFromNormalizedFileUrl(
+  normalizedPath: string,
+  preservePosixVerticalBar = false,
+  decodeAuthority = false,
+): string | undefined {
+  if (lowercaseString(sliceString(normalizedPath, 0, 5)) !== "file:") return undefined;
+  if (!URL_HOSTNAME_GETTER || !URL_PATHNAME_GETTER) return undefined;
+
+  let canonicalAuthority: string;
+  let canonicalPathname: string;
+  try {
+    const parsed = new NativeURL(normalizedPath);
+    const hostname = apply(URL_HOSTNAME_GETTER, parsed, []);
+    const pathname = apply(URL_PATHNAME_GETTER, parsed, []);
+    if (typeof hostname !== "string" || typeof pathname !== "string") return undefined;
+    canonicalAuthority = hostname;
+    canonicalPathname = pathname;
+  } catch {
+    return undefined;
+  }
+
+  let decodedBody: string;
+  try {
+    decodedBody = nativeDecodeURIComponent(canonicalPathname);
+  } catch {
+    return undefined;
+  }
+  let bodyStart = 0;
+  while (
+    bodyStart < decodedBody.length &&
+    isPathSeparatorCodeUnit(charCodeAtString(decodedBody, bodyStart))
+  ) {
+    bodyStart++;
+  }
+  decodedBody = sliceString(decodedBody, bodyStart);
+
+  if (canonicalAuthority && lowercaseString(canonicalAuthority) !== "localhost") {
+    if (preservePosixVerticalBar) return undefined;
+    const authority = decodeAuthority ? domainToUnicode(canonicalAuthority) : canonicalAuthority;
+    return authority ? `//${authority}/${decodedBody}` : undefined;
+  }
+  // The WHATWG file URL parser also accepts the legacy vertical-bar drive
+  // spelling ("file:///C|/nope"), which the host resolves to "C:\nope", so
+  // that form must normalize to a colon drive before the alias is derived.
+  const hasVerticalBarDrive = decodedBody.length >= 2 &&
+    isAsciiLetterCodeUnit(charCodeAtString(decodedBody, 0)) &&
+    charCodeAtString(decodedBody, 1) === VERTICAL_BAR_CODE_UNIT &&
+    (decodedBody.length === 2 || isPathSeparatorCodeUnit(charCodeAtString(decodedBody, 2)));
+  if (preservePosixVerticalBar) {
+    return hasVerticalBarDrive ? `/${decodedBody}` : undefined;
+  }
+  if (hasVerticalBarDrive) {
+    decodedBody = `${sliceString(decodedBody, 0, 1)}:${sliceString(decodedBody, 2)}`;
+  }
+  const hasDrive = decodedBody.length >= 2 &&
+    isAsciiLetterCodeUnit(charCodeAtString(decodedBody, 0)) &&
+    charCodeAtString(decodedBody, 1) === COLON_CODE_UNIT;
+  return hasDrive ? decodedBody : `/${decodedBody}`;
+}
+
+/** Snapshot a bounded diagnostic after removing a trusted filesystem path. */
+export function snapshotThrowableDiagnosticRedactingPath(
+  error: unknown,
+  path: string,
+  replacement: string,
+): string {
+  // A rejected path is caller-controlled. Do not normalize it or allocate a
+  // prefix table proportional to it when it is too large to appear in one
+  // bounded diagnostic field; a fixed fallback is both safer and sufficient.
+  if (path.length > ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS) {
+    return `${FILESYSTEM_DIAGNOSTIC_FALLBACK} for ${replacement}`;
+  }
+  // Bound once before each platform and file-URL alias is redacted. A project
+  // adapter controls Error.message, so running every pass over the complete
+  // untrusted value would multiply work during fallback handling.
+  const diagnostic = sanitizeDiagnosticText(readThrowableDiagnostic(error));
+  const normalizationSource = fileUrlNormalizationSource(path);
+  const normalizedPath = normalizeFilesystemPathForDiagnostic(normalizationSource);
+  const posixDoubleSeparatorPath = normalizePosixDoubleSeparatorPathForDiagnostic(
+    normalizationSource,
+  );
+  const nodeSingleQuotedPath = nodeInspectedFilesystemPath(path, 39);
+  const nodeDoubleQuotedPath = nodeInspectedFilesystemPath(path, 34);
+  const nodeBacktickQuotedPath = nodeInspectedFilesystemPath(path, 96);
+  const nodeNullEscapedPath = nodeNullEscapedFilesystemPath(path);
+  const uriDecodedPath = uriDecodedFilesystemPath(path);
+  const uriEncodedPath = uriEncodedFilesystemPath(path);
+  const componentEncodedPath = componentEncodedFilesystemPath(path);
+  const formEncodedPath = formEncodedFilesystemPath(path);
+  const rawCanonicalPlatformPath = platformPathFromNormalizedFileUrl(normalizationSource);
+  const rawNormalizedPlatformPath = normalizationSource === normalizedPath
+    ? undefined
+    : platformPathFromNormalizedFileUrl(normalizedPath);
+  const rawCanonicalUnicodePlatformPath = platformPathFromNormalizedFileUrl(
+    normalizationSource,
+    false,
+    true,
+  );
+  const rawNormalizedUnicodePlatformPath = normalizationSource === normalizedPath
+    ? undefined
+    : platformPathFromNormalizedFileUrl(normalizedPath, false, true);
+  const rawCanonicalPosixVerticalBarPath = platformPathFromNormalizedFileUrl(
+    normalizationSource,
+    true,
+  );
+  const rawNormalizedPosixVerticalBarPath = normalizationSource === normalizedPath
+    ? undefined
+    : platformPathFromNormalizedFileUrl(normalizedPath, true);
+  const rawCanonicalPosixDrivePath = rawCanonicalPlatformPath &&
+      isWindowsFilesystemPath(rawCanonicalPlatformPath)
+    ? `/${rawCanonicalPlatformPath}`
+    : undefined;
+  const rawNormalizedPosixDrivePath = rawNormalizedPlatformPath &&
+      isWindowsFilesystemPath(rawNormalizedPlatformPath)
+    ? `/${rawNormalizedPlatformPath}`
+    : undefined;
+  const canonicalPlatformPath = rawCanonicalPlatformPath === path ||
+      rawCanonicalPlatformPath === normalizationSource ||
+      rawCanonicalPlatformPath === normalizedPath
+    ? undefined
+    : rawCanonicalPlatformPath;
+  const normalizedPlatformPath = rawNormalizedPlatformPath === path ||
+      rawNormalizedPlatformPath === normalizationSource ||
+      rawNormalizedPlatformPath === normalizedPath ||
+      rawNormalizedPlatformPath === canonicalPlatformPath
+    ? undefined
+    : rawNormalizedPlatformPath;
+  const canonicalUnicodePlatformPath = rawCanonicalUnicodePlatformPath === path ||
+      rawCanonicalUnicodePlatformPath === normalizationSource ||
+      rawCanonicalUnicodePlatformPath === normalizedPath ||
+      rawCanonicalUnicodePlatformPath === canonicalPlatformPath ||
+      rawCanonicalUnicodePlatformPath === normalizedPlatformPath
+    ? undefined
+    : rawCanonicalUnicodePlatformPath;
+  const normalizedUnicodePlatformPath = rawNormalizedUnicodePlatformPath === path ||
+      rawNormalizedUnicodePlatformPath === normalizationSource ||
+      rawNormalizedUnicodePlatformPath === normalizedPath ||
+      rawNormalizedUnicodePlatformPath === canonicalPlatformPath ||
+      rawNormalizedUnicodePlatformPath === normalizedPlatformPath ||
+      rawNormalizedUnicodePlatformPath === canonicalUnicodePlatformPath
+    ? undefined
+    : rawNormalizedUnicodePlatformPath;
+  const canonicalPosixDrivePath = rawCanonicalPosixDrivePath === path ||
+      rawCanonicalPosixDrivePath === normalizationSource ||
+      rawCanonicalPosixDrivePath === normalizedPath ||
+      rawCanonicalPosixDrivePath === canonicalPlatformPath ||
+      rawCanonicalPosixDrivePath === normalizedPlatformPath
+    ? undefined
+    : rawCanonicalPosixDrivePath;
+  const normalizedPosixDrivePath = rawNormalizedPosixDrivePath === path ||
+      rawNormalizedPosixDrivePath === normalizationSource ||
+      rawNormalizedPosixDrivePath === normalizedPath ||
+      rawNormalizedPosixDrivePath === canonicalPlatformPath ||
+      rawNormalizedPosixDrivePath === normalizedPlatformPath ||
+      rawNormalizedPosixDrivePath === canonicalPosixDrivePath
+    ? undefined
+    : rawNormalizedPosixDrivePath;
+  const canonicalPosixVerticalBarPath = rawCanonicalPosixVerticalBarPath === path ||
+      rawCanonicalPosixVerticalBarPath === normalizationSource ||
+      rawCanonicalPosixVerticalBarPath === normalizedPath
+    ? undefined
+    : rawCanonicalPosixVerticalBarPath;
+  const normalizedPosixVerticalBarPath = rawNormalizedPosixVerticalBarPath === path ||
+      rawNormalizedPosixVerticalBarPath === normalizationSource ||
+      rawNormalizedPosixVerticalBarPath === normalizedPath ||
+      rawNormalizedPosixVerticalBarPath === canonicalPosixVerticalBarPath
+    ? undefined
+    : rawNormalizedPosixVerticalBarPath;
+  const jsonEscapedPath = jsonStringify(path);
+  const quoteIndependentEscapedPath = sliceString(
+    jsonEscapedPath,
+    1,
+    jsonEscapedPath.length - 1,
+  );
+  let redacted = redactPathFromText(diagnostic, path, replacement);
+  redacted = redactPathFromText(redacted, jsonEscapedPath, replacement);
+  if (quoteIndependentEscapedPath !== path) {
+    redacted = redactPathFromText(redacted, quoteIndependentEscapedPath, replacement);
+  }
+  if (nodeSingleQuotedPath !== undefined) {
+    redacted = redactPathFromText(redacted, nodeSingleQuotedPath, replacement);
+  }
+  if (nodeDoubleQuotedPath !== undefined && nodeDoubleQuotedPath !== nodeSingleQuotedPath) {
+    redacted = redactPathFromText(redacted, nodeDoubleQuotedPath, replacement);
+  }
+  if (
+    nodeBacktickQuotedPath !== undefined && nodeBacktickQuotedPath !== nodeSingleQuotedPath &&
+    nodeBacktickQuotedPath !== nodeDoubleQuotedPath
+  ) {
+    redacted = redactPathFromText(redacted, nodeBacktickQuotedPath, replacement);
+  }
+  if (nodeNullEscapedPath !== undefined && nodeNullEscapedPath !== nodeSingleQuotedPath) {
+    redacted = redactPathFromText(redacted, nodeNullEscapedPath, replacement);
+  }
+  if (uriDecodedPath !== undefined) {
+    redacted = redactPathFromText(redacted, uriDecodedPath, replacement);
+  }
+  if (uriEncodedPath !== undefined) {
+    redacted = redactPathFromText(redacted, uriEncodedPath, replacement);
+  }
+  if (componentEncodedPath !== undefined) {
+    redacted = redactPathFromText(redacted, componentEncodedPath, replacement);
+  }
+  if (formEncodedPath !== undefined && formEncodedPath !== componentEncodedPath) {
+    redacted = redactPathFromText(redacted, formEncodedPath, replacement);
+  }
+  if (normalizationSource !== path) {
+    redacted = redactPathFromText(redacted, normalizationSource, replacement);
+  }
+  if (normalizedPath !== path && normalizedPath !== normalizationSource) {
+    redacted = redactPathFromText(redacted, normalizedPath, replacement);
+  }
+  if (
+    posixDoubleSeparatorPath !== undefined &&
+    posixDoubleSeparatorPath !== path &&
+    posixDoubleSeparatorPath !== normalizedPath
+  ) {
+    redacted = redactPathFromText(redacted, posixDoubleSeparatorPath, replacement);
+  }
+  if (canonicalPosixDrivePath !== undefined) {
+    redacted = redactPathFromText(redacted, canonicalPosixDrivePath, replacement);
+  }
+  if (normalizedPosixDrivePath !== undefined) {
+    redacted = redactPathFromText(redacted, normalizedPosixDrivePath, replacement);
+  }
+  if (canonicalPosixVerticalBarPath !== undefined) {
+    redacted = redactPathFromText(redacted, canonicalPosixVerticalBarPath, replacement);
+  }
+  if (normalizedPosixVerticalBarPath !== undefined) {
+    redacted = redactPathFromText(redacted, normalizedPosixVerticalBarPath, replacement);
+  }
+  if (canonicalPlatformPath !== undefined) {
+    redacted = redactPathFromText(redacted, canonicalPlatformPath, replacement);
+  }
+  if (normalizedPlatformPath !== undefined) {
+    redacted = redactPathFromText(redacted, normalizedPlatformPath, replacement);
+  }
+  if (canonicalUnicodePlatformPath !== undefined) {
+    redacted = redactPathFromText(redacted, canonicalUnicodePlatformPath, replacement);
+  }
+  if (normalizedUnicodePlatformPath !== undefined) {
+    redacted = redactPathFromText(redacted, normalizedUnicodePlatformPath, replacement);
+  }
+  if (
+    containsAbsoluteFilesystemPathForDiagnostic(redacted) ||
+    containsTruncatedFilesystemPathPrefix(redacted, path) ||
+    containsTruncatedFilesystemPathPrefix(redacted, jsonEscapedPath) ||
+    (quoteIndependentEscapedPath !== path &&
+      containsTruncatedFilesystemPathPrefix(redacted, quoteIndependentEscapedPath)) ||
+    (nodeSingleQuotedPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, nodeSingleQuotedPath)) ||
+    (nodeDoubleQuotedPath !== undefined && nodeDoubleQuotedPath !== nodeSingleQuotedPath &&
+      containsTruncatedFilesystemPathPrefix(redacted, nodeDoubleQuotedPath)) ||
+    (nodeBacktickQuotedPath !== undefined &&
+      nodeBacktickQuotedPath !== nodeSingleQuotedPath &&
+      nodeBacktickQuotedPath !== nodeDoubleQuotedPath &&
+      containsTruncatedFilesystemPathPrefix(redacted, nodeBacktickQuotedPath)) ||
+    (nodeNullEscapedPath !== undefined && nodeNullEscapedPath !== nodeSingleQuotedPath &&
+      containsTruncatedFilesystemPathPrefix(redacted, nodeNullEscapedPath)) ||
+    (uriDecodedPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, uriDecodedPath)) ||
+    (uriEncodedPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, uriEncodedPath)) ||
+    (componentEncodedPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, componentEncodedPath)) ||
+    (formEncodedPath !== undefined && formEncodedPath !== componentEncodedPath &&
+      containsTruncatedFilesystemPathPrefix(redacted, formEncodedPath)) ||
+    (normalizationSource !== path &&
+      containsTruncatedFilesystemPathPrefix(redacted, normalizationSource)) ||
+    (normalizedPath !== path && normalizedPath !== normalizationSource &&
+      containsTruncatedFilesystemPathPrefix(redacted, normalizedPath)) ||
+    (posixDoubleSeparatorPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, posixDoubleSeparatorPath)) ||
+    (canonicalPosixDrivePath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, canonicalPosixDrivePath)) ||
+    (normalizedPosixDrivePath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, normalizedPosixDrivePath)) ||
+    (canonicalPosixVerticalBarPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, canonicalPosixVerticalBarPath)) ||
+    (normalizedPosixVerticalBarPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, normalizedPosixVerticalBarPath)) ||
+    (canonicalPlatformPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, canonicalPlatformPath)) ||
+    (normalizedPlatformPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, normalizedPlatformPath)) ||
+    (canonicalUnicodePlatformPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, canonicalUnicodePlatformPath)) ||
+    (normalizedUnicodePlatformPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, normalizedUnicodePlatformPath))
+  ) {
+    return `${FILESYSTEM_DIAGNOSTIC_FALLBACK} for ${replacement}`;
+  }
+  return sanitizeDiagnosticText(redacted);
 }
 
 /**

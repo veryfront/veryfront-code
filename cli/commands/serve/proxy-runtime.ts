@@ -1,4 +1,4 @@
-import { getEnv, setEnv } from "veryfront/platform/env";
+import { getEnv, setEnv } from "veryfront/platform";
 import { cliLogger } from "veryfront/utils/logger";
 import denoConfig from "../../../deno.json" with { type: "json" };
 import { ensureCliSchemaValidator } from "../../shared/default-contracts.ts";

@@ -220,6 +220,38 @@ describe("local integration endpoint executor", () => {
     assertEquals(result, { ok: true });
   });
 
+  it("formats Outlook thread ids as fixed Microsoft Graph conversation filters", async () => {
+    let requestUrl = "";
+    await executeLocalIntegrationEndpoint({
+      endpoint: endpoint({
+        method: "GET",
+        url: "https://graph.microsoft.com/v1.0/me/messages",
+        params: {
+          thread_id: {
+            type: "string",
+            in: "query",
+            queryName: "$filter",
+            queryValueFormat: "microsoft-graph-conversation-id",
+            description: "Conversation id",
+            required: true,
+          },
+        },
+      }),
+      args: { thread_id: "thread' or isRead eq false" },
+      authHeaders: {},
+      allowedOrigin: "https://graph.microsoft.com",
+      transport: (request) => {
+        requestUrl = request.url.href;
+        return Promise.resolve(Response.json({ value: [] }));
+      },
+    });
+
+    assertEquals(
+      requestUrl,
+      "https://graph.microsoft.com/v1.0/me/messages?%24filter=conversationId+eq+%27thread%27%27+or+isRead+eq+false%27",
+    );
+  });
+
   it("constructs admitted requests without ambient collection traversal", async () => {
     const restorers: Array<() => void> = [];
     let poisonCalls = 0;

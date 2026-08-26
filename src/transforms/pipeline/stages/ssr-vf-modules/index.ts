@@ -22,6 +22,7 @@ import { TransformStage } from "../../types.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { replaceSpecifiers } from "../../../esm/lexer.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { isFrameworkSourcePath } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { findRelativeImports, findVfModuleImports } from "./import-finder.ts";
 import {
@@ -240,7 +241,9 @@ export const ssrVfModulesPlugin: TransformPlugin = {
           embeddedSrcDir: EMBEDDED_SRC_DIR,
         });
 
-        const resolved = await resolveFrameworkFile(vfModulePath, fs);
+        const resolved = await resolveFrameworkFile(vfModulePath, fs, undefined, {
+          trustedFrameworkParent: ctx.filePath !== undefined && isFrameworkSourcePath(ctx.filePath),
+        });
         if (!resolved) {
           logger.warn(`${LOG_PREFIX} Could not resolve ${vfModulePath}`, {
             frameworkRoot: FRAMEWORK_ROOT,

@@ -4,10 +4,12 @@ import {
   assertEquals,
   assertExists,
   assertRejects,
+  assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { fromFileUrl } from "#veryfront/compat/path";
+import { MemoryTokenStore, type OAuthTokens } from "veryfront/oauth";
 
 import { getTemplate, getTemplateConfig, templateConfigs } from "./index.ts";
 import { STARTER_TEMPLATE_NAMES, type TemplateName } from "./types.ts";
@@ -35,6 +37,18 @@ async function collectTemplateTsFiles(dir: URL): Promise<URL[]> {
   }
 
   return files;
+}
+
+function hasEmbeddedCredential(content: string): boolean {
+  const credentialPatterns = [
+    /=sk-[A-Za-z0-9]/,
+    /Bearer [A-Za-z0-9._-]+/,
+    /client[_-]?secret\s*[:=]\s*["']?(?!<)[A-Za-z0-9._~+/=-]{12,}/i,
+    /-----BEGIN (?:RSA |EC |OPENSSH |)PRIVATE KEY-----/,
+    /eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/,
+    /[A-Za-z0-9+/]{48,}={0,2}/,
+  ];
+  return credentialPatterns.some((pattern) => pattern.test(content));
 }
 
 describe("templates", () => {
@@ -685,6 +699,51 @@ describe("templates", () => {
     );
   });
 
+  it("generated OAuth token store invalidates superseded broad grants before use", async () => {
+    const { createTokenStore, getRefreshableAccessToken } = await import(
+      "./integrations/_base/files/lib/token-store.ts"
+    );
+    const backend = new MemoryTokenStore();
+    const store = createTokenStore(backend);
+    await backend.setTokens("drive", "alice", {
+      accessToken: "legacy-drive-token",
+      refreshToken: "legacy-drive-refresh",
+      scope: "https://www.googleapis.com/auth/drive",
+      expiresAt: Date.now() + 60_000,
+    });
+    await backend.setTokens("outlook", "alice", {
+      accessToken: "legacy-outlook-token",
+      refreshToken: "legacy-outlook-refresh",
+      scope: "Mail.Read Group.Read.All Group-Conversation.Read.All offline_access",
+      expiresAt: Date.now() - 1,
+    });
+    let refreshCalls = 0;
+    const refresh = (_refreshToken: string): Promise<OAuthTokens> => {
+      refreshCalls++;
+      return Promise.resolve({ accessToken: "unexpected" });
+    };
+
+    assertEquals(
+      await store.isConnected("alice", "drive", [
+        "https://www.googleapis.com/auth/drive.readonly",
+      ]),
+      false,
+    );
+    assertEquals(await backend.getTokens("drive", "alice"), null);
+    assertEquals(
+      await getRefreshableAccessToken(
+        store,
+        "outlook",
+        "alice",
+        ["Mail.Read", "offline_access"],
+        refresh,
+      ),
+      null,
+    );
+    assertEquals(refreshCalls, 0);
+    assertEquals(await backend.getTokens("outlook", "alice"), null);
+  });
+
   it("keeps Gmail on the shared refresh-capable token store", async () => {
     const gmailClient = await Deno.readTextFile(
       new URL("./integrations/gmail/files/lib/gmail-client.ts", import.meta.url),
@@ -996,6 +1055,87 @@ describe("templates", () => {
         offenders.join(", ")
       }`,
     );
+  });
+
+  it("lists auth templates separately from starter and integration templates", async () => {
+    const { getAuthTemplate, listAuthTemplates, listIntegrations, listTemplates } = await import(
+      "./loader.ts"
+    );
+
+    assertEquals(await listAuthTemplates(), ["authelia", "microsoft-entra", "oidc"]);
+    assertEquals((await listTemplates()).some((name) => name.startsWith("auth:")), false);
+    assertEquals((await listIntegrations()).some((name) => name.startsWith("auth:")), false);
+    assertEquals(await getAuthTemplate("missing"), null);
+  });
+
+  it("layers auth templates over the base files with deterministic paths", async () => {
+    const { getAuthTemplate } = await import("./loader.ts");
+    const authelia = await getAuthTemplate("authelia");
+    const oidc = await getAuthTemplate("oidc");
+    const entra = await getAuthTemplate("microsoft-entra");
+
+    assertEquals(authelia?.map((file) => file.path), [
+      ".env.auth.example",
+      "AUTH_PROVIDER_SETUP.md",
+      "AUTH_SETUP.md",
+      "authelia.client.example.yml",
+      "veryfront.auth.config.example.ts",
+    ]);
+    assertEquals(oidc?.map((file) => file.path), [
+      ".env.auth.example",
+      "AUTH_PROVIDER_SETUP.md",
+      "AUTH_SETUP.md",
+      "veryfront.auth.config.example.ts",
+    ]);
+    assertEquals(entra?.map((file) => file.path), [
+      ".env.auth.example",
+      "AUTH_PROVIDER_SETUP.md",
+      "AUTH_SETUP.md",
+      "veryfront.auth.config.example.ts",
+    ]);
+  });
+
+  it("keeps auth templates provider-neutral and free of generated auth handlers", async () => {
+    const { getAuthTemplate } = await import("./loader.ts");
+    for (const preset of ["authelia", "oidc", "microsoft-entra"]) {
+      const files = await getAuthTemplate(preset);
+      assert(files !== null, `${preset} must exist`);
+      const paths = files.map((file) => file.path);
+      const forbiddenPathPattern =
+        /(^|\/)(?:middleware|proxy)\.[cm]?[tj]sx?$|(^|\/)(?:app|pages)\/api\/auth(?:\/|$)|(^|\/)(?:callback|token|session|logout)(?:\.|\/)/;
+      assertEquals(
+        paths.filter((path) => forbiddenPathPattern.test(path)),
+        [],
+        `${preset} must not generate auth handlers, middleware, callbacks, token, session, logout, or proxy files`,
+      );
+
+      const config = files.find((file) => file.path === "veryfront.auth.config.example.ts")
+        ?.content ?? "";
+      assertStringIncludes(config, "security:");
+      assertStringIncludes(config, "oidc:");
+      assertEquals(config.includes("adapter"), false);
+      assertEquals(config.includes("authelia:"), false);
+
+      const joined = files.map((file) => file.content).join("\n");
+      assertStringIncludes(joined, "APP_URL=https://<APP_HOST>");
+      assertStringIncludes(
+        joined,
+        "VERYFRONT_AUTH_SESSION_SECRET=<RANDOM_32_BYTE_OR_LONGER_SECRET>",
+      );
+      assertEquals(hasEmbeddedCredential(joined), false, `${preset} must not embed credentials`);
+      assertStringIncludes(joined, "issuer");
+      assertStringIncludes(joined, "callback");
+      assertStringIncludes(joined, "PKCE");
+      assertStringIncludes(joined, "Active Directory");
+      assertStringIncludes(joined, "AD FS");
+      if (preset === "authelia") {
+        assertStringIncludes(joined, "Authelia");
+        assertStringIncludes(joined, "openid");
+      }
+      if (preset === "microsoft-entra") {
+        assertStringIncludes(joined, "Microsoft Entra");
+      }
+    }
   });
 
   it("presents standalone inference before the optional Cloud gateway", async () => {

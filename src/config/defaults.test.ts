@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertGreater,
+  assertLessOrEqual,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   DATA_FETCH_TIMEOUT_MS,
@@ -7,9 +13,11 @@ import {
   DEFAULT_METRICS_COLLECT_INTERVAL_MS,
   DEFAULT_PORT,
   DEFAULT_PREFETCH_DELAY_MS,
+  DEFAULT_RENDER_CACHE_MAX_ENTRIES,
   DEFAULT_TIMEOUT_MS,
   defaultConfig,
   DURATION_HISTOGRAM_BOUNDARIES_MS,
+  MAX_HOSTED_RENDER_CACHE_ENTRIES,
   PAGE_TRANSITION_DELAY_MS,
   SANDBOX_TIMEOUT_MS,
   SIZE_HISTOGRAM_BOUNDARIES_KB,
@@ -68,6 +76,24 @@ describe("config/defaults", () => {
     it("should have correct PAGE_TRANSITION_DELAY_MS", () => {
       assertEquals(PAGE_TRANSITION_DELAY_MS, 150);
     });
+
+    it("never lets the hosted render-cache cap exceed the production default", () => {
+      assertEquals(
+        DEFAULT_RENDER_CACHE_MAX_ENTRIES,
+        500,
+        "default production render-cache capacity",
+      );
+      assertLessOrEqual(
+        MAX_HOSTED_RENDER_CACHE_ENTRIES,
+        DEFAULT_RENDER_CACHE_MAX_ENTRIES,
+        "shared hosted projects may lower, but never raise, the production render-cache capacity",
+      );
+      assertGreater(
+        MAX_HOSTED_RENDER_CACHE_ENTRIES,
+        0,
+        "the hosted render-cache cap must still admit at least one entry",
+      );
+    });
   });
 
   describe("DURATION_HISTOGRAM_BOUNDARIES_MS", () => {
@@ -118,6 +144,11 @@ describe("config/defaults", () => {
       assertEquals(Object.isFrozen(defaultConfig.cache), true);
       assertEquals(Object.isFrozen(defaultConfig.cache.jit), true);
       assertEquals(Object.isFrozen(defaultConfig.metrics), true);
+      assertEquals(
+        Object.isFrozen(defaultConfig.metrics.ssrBoundaries),
+        true,
+        "ssrBoundaries reachable from the shared defaults must be frozen",
+      );
     });
 
     it("should have server config with correct port and hostname", () => {
@@ -139,7 +170,11 @@ describe("config/defaults", () => {
     });
 
     it("should have metrics config referencing duration boundaries", () => {
-      assertEquals(defaultConfig.metrics.ssrBoundaries, DURATION_HISTOGRAM_BOUNDARIES_MS);
+      assertStrictEquals(
+        defaultConfig.metrics.ssrBoundaries,
+        DURATION_HISTOGRAM_BOUNDARIES_MS,
+        "metrics.ssrBoundaries must reference the exported boundaries, not a copy",
+      );
     });
   });
 });

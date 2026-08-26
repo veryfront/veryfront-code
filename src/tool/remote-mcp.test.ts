@@ -65,6 +65,61 @@ describe("tool/remote-mcp", () => {
     assertEquals(transportCalls, 1);
   });
 
+  it("normalizes empty fragment markers before matching trusted endpoints", async () => {
+    let transportCalls = 0;
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: ["http://veryfront-api/mcp#"],
+      requestFetch: async (_input, init) => {
+        transportCalls++;
+        const body = JSON.parse(
+          String(init && "body" in init ? init.body : undefined),
+        ) as { id: string };
+        return Response.json({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { tools: [] },
+        });
+      },
+    });
+
+    await createSource({ endpoint: "http://veryfront-api/mcp#" }).listTools();
+    assertEquals(transportCalls, 1);
+  });
+
+  it("pins trusted transport endpoints against mutable URL globals", async () => {
+    const trustedEndpoint = "http://veryfront-api/mcp";
+    let requestedEndpoint: RequestInfo | URL | undefined;
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: [trustedEndpoint],
+      requestFetch: async (input, init) => {
+        requestedEndpoint = input;
+        const body = JSON.parse(
+          String(init && "body" in init ? init.body : undefined),
+        ) as { id: string };
+        return Response.json({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: { tools: [] },
+        });
+      },
+    });
+    const originalURL = globalThis.URL;
+
+    try {
+      globalThis.URL = class extends originalURL {
+        constructor(_value: string | URL, base?: string | URL) {
+          super("http://attacker.example/exfil", base);
+        }
+      };
+      const source = createSource({ endpoint: trustedEndpoint });
+
+      assertEquals(await source.listTools(), []);
+      assertEquals(requestedEndpoint, trustedEndpoint);
+    } finally {
+      globalThis.URL = originalURL;
+    }
+  });
+
   it("keeps trailing-slash mismatches guarded and snapshots the allowlist", async () => {
     let transportCalls = 0;
     const trustedEndpoints = ["http://169.254.169.254/latest/meta-data/"];
@@ -437,6 +492,50 @@ describe("tool/remote-mcp", () => {
         { agent_id: "gmail-agent" },
       );
     });
+  });
+
+  it("pins control-plane metadata classification against mutable URL globals", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const originalURL = globalThis.URL;
+
+    await withEnv({ VERYFRONT_API_BASE_URL: "https://93.184.216.34" }, async () => {
+      const source = createRemoteMCPToolSource({
+        id: "veryfront-mcp",
+        endpoint: "https://93.184.216.34/projects/project-1/mcp",
+      });
+
+      try {
+        globalThis.URL = class extends originalURL {
+          constructor(_value: string | URL, base?: string | URL) {
+            super("https://attacker.example/mcp", base);
+          }
+        };
+        await withMockFetch(
+          async (input: string | URL | Request, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            requestBody = await request.json();
+            return Response.json({
+              jsonrpc: "2.0",
+              id: "veryfront-mcp:tools:call:gmail__get_profile",
+              result: { content: [], structuredContent: { ok: true } },
+            });
+          },
+          async () =>
+            await source.executeTool("gmail__get_profile", {}, {
+              runId: "run-local",
+              runIdBindsToolAuthorization: false,
+              agentId: "gmail-agent",
+            }),
+        );
+      } finally {
+        globalThis.URL = originalURL;
+      }
+    });
+
+    assertEquals(
+      (requestBody as { params?: { _meta?: Record<string, unknown> } }).params?._meta,
+      { agent_id: "gmail-agent" },
+    );
   });
 
   it("keeps run ids for same-origin MCP servers outside the control-plane path", async () => {
@@ -825,6 +924,61 @@ describe("tool/remote-mcp", () => {
       connectUrl: "https://93.184.216.34/oauth/connect/calendar?projectId=project-1",
       message: "Calendar needs to be reconnected before this tool can run.",
     });
+  });
+
+  it("pins reconnect metadata URL construction against mutable URL globals", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+    const originalURL = globalThis.URL;
+    const originalSearchParams = Object.getOwnPropertyDescriptor(
+      originalURL.prototype,
+      "searchParams",
+    );
+
+    try {
+      globalThis.URL = class extends originalURL {
+        constructor(_value: string | URL, base?: string | URL) {
+          super("https://attacker.example/oauth/connect/forged", base);
+        }
+      };
+      Object.defineProperty(originalURL.prototype, "searchParams", {
+        configurable: true,
+        get() {
+          return {
+            set() {
+              throw new Error("URLSearchParams hook must not run");
+            },
+          };
+        },
+      });
+
+      const result = await withMockFetch(
+        () =>
+          Promise.resolve(
+            new Response('{ "error": "invalid_grant" }', {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            }),
+          ),
+        async () =>
+          await source.executeTool("calendar__list_events", {}, { projectId: "project-1" }),
+      );
+
+      assertEquals(result, {
+        error: "reconnect_required",
+        code: "OAUTH_TOKEN_EXPIRED",
+        integration: "calendar",
+        connectUrl: "https://93.184.216.34/oauth/connect/calendar?projectId=project-1",
+        message: "Calendar needs to be reconnected before this tool can run.",
+      });
+    } finally {
+      globalThis.URL = originalURL;
+      if (originalSearchParams) {
+        Object.defineProperty(originalURL.prototype, "searchParams", originalSearchParams);
+      }
+    }
   });
 
   it("does not surface remote HTTP error bodies", async () => {

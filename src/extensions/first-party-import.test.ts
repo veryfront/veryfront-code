@@ -53,6 +53,84 @@ describe("first-party extension imports", () => {
     }
   });
 
+  describe("multi-line runtime messages", () => {
+    it("reads through the hint and location lines Deno appends", () => {
+      // Deno's real resolution error is three lines: the resolution itself,
+      // then an ANSI-coloured `hint:` line and an `at <location>` line. Matching
+      // only against the whole message missed every one of them in practice, so
+      // an uninstalled first-party extension read as a real load failure.
+      const denoMessage = [
+        'Import "@veryfront/ext-auth-jwt" not a dependency and not in import map from "file:///app/veryfront.config.ts"',
+        "  hint: If you want to use the npm package, try running `deno add npm:@veryfront/ext-auth-jwt`",
+        "    at file:///app/veryfront.config.ts:1:8",
+      ].join("\n");
+
+      assertEquals(
+        isMissingFirstPartyExtensionModule(new Error(denoMessage), [
+          "@veryfront/ext-auth-jwt",
+        ]),
+        true,
+      );
+    });
+
+    it("does not read past a line that is not a runtime trailer", () => {
+      // An extension or bundler can throw a resolution-shaped first line
+      // followed by its own diagnostic. Retrying the first line unconditionally
+      // would report the extension as absent and hide that diagnostic.
+      const configThrown = [
+        `Import "@veryfront/ext-auth-jwt" not a dependency`,
+        "caused while initializing the project config",
+      ].join("\n");
+
+      assertEquals(
+        isMissingFirstPartyExtensionModule(new Error(configThrown), [
+          "@veryfront/ext-auth-jwt",
+        ]),
+        false,
+      );
+    });
+
+    it("does not read past application lines that only start like trailers", () => {
+      for (
+        const message of [
+          [
+            `Import "@veryfront/ext-auth-jwt" not a dependency`,
+            "at initialization",
+          ].join("\n"),
+          [
+            `Import "@veryfront/ext-auth-jwt" not a dependency`,
+            "hint: inspect setup",
+          ].join("\n"),
+        ]
+      ) {
+        assertEquals(
+          isMissingFirstPartyExtensionModule(new Error(message), [
+            "@veryfront/ext-auth-jwt",
+          ]),
+          false,
+        );
+      }
+    });
+
+    it("keeps the multi-line Require stack form matching as a whole", () => {
+      // Matched against the whole message before the first-line retry, because
+      // this form is legitimately multi-line and its trailing lines are part of
+      // the pattern rather than noise after it.
+      const nodeMessage = [
+        `Cannot find module '@veryfront/ext-auth-jwt'`,
+        "Require stack:",
+        "- /app/server.js",
+      ].join("\n");
+
+      assertEquals(
+        isMissingFirstPartyExtensionModule(new Error(nodeMessage), [
+          "@veryfront/ext-auth-jwt",
+        ]),
+        true,
+      );
+    });
+  });
+
   describe("isMissingFirstPartyExtensionModule", () => {
     it("matches missing-module errors without an anchor", () => {
       assertEquals(
@@ -133,6 +211,75 @@ describe("first-party extension imports", () => {
           "file:///C:/repo/module%20with%20spaces.ts",
         ]),
         true,
+      );
+    });
+
+    it("parses Deno packed source probes without hiding transitive failures", () => {
+      const expectedSource =
+        "/app/node_modules/veryfront/esm/extensions/ext-bundler-esbuild/src/index.ts";
+      const missingWorkspaceSource = Object.assign(
+        new Error(
+          `Unable to load ${expectedSource}\n  Caused by:\n    No such file or directory (os error 2)`,
+        ),
+        { code: "ERR_MODULE_NOT_FOUND" },
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(missingWorkspaceSource, [
+          `file://${expectedSource}`,
+        ]),
+        true,
+      );
+
+      const missingWorkspacePath = Object.assign(
+        new Error(
+          `Unable to load ${expectedSource}\n  Caused by:\n    The system cannot find the path specified. (os error 3)`,
+        ),
+        { code: "ERR_MODULE_NOT_FOUND" },
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(missingWorkspacePath, [
+          `file://${expectedSource}`,
+        ]),
+        true,
+      );
+
+      const quotedImporterSourceMiss = Object.assign(
+        new Error(
+          `[ERR_MODULE_NOT_FOUND] Cannot find module 'file://${expectedSource}' imported from 'file:///app/node_modules/veryfront/esm/src/extensions/first-party-import.js'`,
+        ),
+        { code: "ERR_MODULE_NOT_FOUND" },
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(quotedImporterSourceMiss, [
+          `file://${expectedSource}`,
+        ]),
+        true,
+      );
+
+      const missingTransitiveDependency = Object.assign(
+        new Error(
+          "Unable to load /app/node_modules/missing-helper/index.ts\n  Caused by:\n    No such file or directory (os error 2)",
+        ),
+        { code: "ERR_MODULE_NOT_FOUND" },
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(missingTransitiveDependency, [
+          `file://${expectedSource}`,
+        ]),
+        false,
+      );
+
+      const quotedTransitiveDependency = Object.assign(
+        new Error(
+          "[ERR_MODULE_NOT_FOUND] Cannot find package 'missing-helper' imported from 'file:///app/node_modules/@veryfront/ext-bundler-esbuild/esm/src/index.js'",
+        ),
+        { code: "ERR_MODULE_NOT_FOUND" },
+      );
+      assertEquals(
+        isMissingFirstPartyExtensionModule(quotedTransitiveDependency, [
+          "@veryfront/ext-bundler-esbuild",
+        ]),
+        false,
       );
     });
 

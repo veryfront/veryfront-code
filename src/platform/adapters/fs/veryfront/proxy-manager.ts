@@ -12,6 +12,7 @@ const logger = baseLogger.component("proxy-fs-adapter-manager");
 
 const DEFAULT_MAX_ADAPTERS = 100;
 const DEFAULT_MAX_IDLE_MS = 30 * 60 * 1_000;
+const SHA256_DIGEST_BYTES = 32;
 
 function requirePositiveSafeInteger(value: number, name: string): number {
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -22,9 +23,20 @@ function requirePositiveSafeInteger(value: number, name: string): number {
 
 interface ProjectAdapter {
   adapter: VeryfrontFSAdapter;
+  capabilities: CapturedAdapterCapabilities;
   lastAccessed: number;
   initializing?: Promise<void>;
   identity: ProxyAdapterIdentity;
+}
+
+type CapturedAdapterMethod = (...args: never[]) => unknown;
+
+interface CapturedAdapterCapabilities {
+  dispose: CapturedAdapterMethod;
+  getCacheStats: CapturedAdapterMethod;
+  getContentContext: CapturedAdapterMethod;
+  initialize: CapturedAdapterMethod;
+  setContentContext: CapturedAdapterMethod;
 }
 
 interface ProxyAdapterIdentity {
@@ -42,11 +54,181 @@ type ProxyAdapterDiagnosticIdentity = Omit<ProxyAdapterIdentity, "credentialPrin
 const encodeText = TextEncoder.prototype.encode;
 const subtleDigest = crypto.subtle.digest.bind(crypto.subtle);
 const textEncoder = new TextEncoder();
+const NativeUint8Array = Uint8Array;
+const IntrinsicMap = Map;
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const IntrinsicObjectGetPrototypeOf = Object.getPrototypeOf;
+const IntrinsicPerformance = performance;
+const PerformanceNow = IntrinsicPerformance.now;
+const DateNow = Date.now;
+const IntrinsicObjectFreeze = Object.freeze;
+const ArrayPrototypeJoin = Array.prototype.join;
+const JsonStringify = JSON.stringify;
+const MapPrototypeClear = Map.prototype.clear;
+const MapPrototypeDelete = Map.prototype.delete;
+const MapPrototypeForEach = Map.prototype.forEach;
+const MapPrototypeGet = Map.prototype.get;
+const MapPrototypeHas = Map.prototype.has;
+const MapPrototypeSet = Map.prototype.set;
+const MapSizeGetter = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
+const NumberPrototypeToFixed = Number.prototype.toFixed;
+const NumberPrototypeToString = Number.prototype.toString;
+const StringPrototypePadStart = String.prototype.padStart;
+const StringPrototypeTrim = String.prototype.trim;
+const VeryfrontFSAdapterPrototype = VeryfrontFSAdapter.prototype;
+const VeryfrontFSAdapterDispose = VeryfrontFSAdapterPrototype.dispose;
+const VeryfrontFSAdapterGetCacheStats = VeryfrontFSAdapterPrototype.getCacheStats;
+const VeryfrontFSAdapterGetContentContext = VeryfrontFSAdapterPrototype.getContentContext;
+const VeryfrontFSAdapterInitialize = VeryfrontFSAdapterPrototype.initialize;
+const VeryfrontFSAdapterSetContentContext = VeryfrontFSAdapterPrototype.setContentContext;
+type GetAdapterParamsSchema = ReturnType<typeof getGetAdapterParamsSchema>;
+type GetAdapterParamsValidationResult = ReturnType<
+  GetAdapterParamsSchema["safeParse"]
+>;
+let capturedGetAdapterParamsSchema: GetAdapterParamsSchema | undefined;
+let capturedGetAdapterParamsSchemaSafeParse: GetAdapterParamsSchema["safeParse"] | undefined;
+
+function captureGetAdapterParamsValidator(): void {
+  if (capturedGetAdapterParamsSchema && capturedGetAdapterParamsSchemaSafeParse) return;
+  const schema = getGetAdapterParamsSchema();
+  capturedGetAdapterParamsSchema = schema;
+  capturedGetAdapterParamsSchemaSafeParse = schema.safeParse;
+}
+
+function performanceNow(): number {
+  return IntrinsicReflectApply(PerformanceNow, IntrinsicPerformance, []) as number;
+}
+
+function formatDuration(durationMs: number): string {
+  return `${IntrinsicReflectApply(NumberPrototypeToFixed, durationMs, [2]) as string}ms`;
+}
+
+function currentTime(): number {
+  return IntrinsicReflectApply(DateNow, Date, []) as number;
+}
+
+function mapClear<K, V>(map: Map<K, V>): void {
+  IntrinsicReflectApply(MapPrototypeClear, map, []);
+}
+
+function mapDelete<K, V>(map: Map<K, V>, key: K): boolean {
+  return IntrinsicReflectApply(MapPrototypeDelete, map, [key]) as boolean;
+}
+
+function mapForEach<K, V>(map: Map<K, V>, callback: (value: V, key: K) => void): void {
+  IntrinsicReflectApply(MapPrototypeForEach, map, [callback]);
+}
+
+function mapGet<K, V>(map: Map<K, V>, key: K): V | undefined {
+  return IntrinsicReflectApply(MapPrototypeGet, map, [key]) as V | undefined;
+}
+
+function mapHas<K, V>(map: Map<K, V>, key: K): boolean {
+  return IntrinsicReflectApply(MapPrototypeHas, map, [key]) as boolean;
+}
+
+function mapSet<K, V>(map: Map<K, V>, key: K, value: V): void {
+  IntrinsicReflectApply(MapPrototypeSet, map, [key, value]);
+}
+
+function mapSize<K, V>(map: Map<K, V>): number {
+  return IntrinsicReflectApply(MapSizeGetter, map, []) as number;
+}
+
+function trimString(value: string): string {
+  return IntrinsicReflectApply(StringPrototypeTrim, value, []) as string;
+}
+
+function captureAdapterMethod(
+  adapter: VeryfrontFSAdapter,
+  key: keyof CapturedAdapterCapabilities,
+  concreteMethod: CapturedAdapterMethod,
+): CapturedAdapterMethod {
+  const ownDescriptor = IntrinsicReflectApply(
+    IntrinsicObjectGetOwnPropertyDescriptor,
+    Object,
+    [adapter, key],
+  ) as PropertyDescriptor | undefined;
+  if (ownDescriptor !== undefined) {
+    if (!("value" in ownDescriptor) || typeof ownDescriptor.value !== "function") {
+      throw new TypeError(`Veryfront filesystem adapter ${key} must be a data-property method`);
+    }
+    return ownDescriptor.value as CapturedAdapterMethod;
+  }
+
+  let owner = IntrinsicReflectApply(IntrinsicObjectGetPrototypeOf, Object, [adapter]) as
+    | object
+    | null;
+  for (let depth = 0; owner !== null && depth < 64; depth++) {
+    if (owner === VeryfrontFSAdapterPrototype) return concreteMethod;
+    const descriptor = IntrinsicReflectApply(
+      IntrinsicObjectGetOwnPropertyDescriptor,
+      Object,
+      [owner, key],
+    ) as PropertyDescriptor | undefined;
+    if (descriptor !== undefined) {
+      if (!("value" in descriptor) || typeof descriptor.value !== "function") {
+        throw new TypeError(`Veryfront filesystem adapter ${key} must be a data-property method`);
+      }
+      return descriptor.value as CapturedAdapterMethod;
+    }
+    owner = IntrinsicReflectApply(IntrinsicObjectGetPrototypeOf, Object, [owner]) as object | null;
+  }
+  throw new TypeError(`Veryfront filesystem adapter ${key} must inherit a function`);
+}
+
+function captureAdapterCapabilities(adapter: VeryfrontFSAdapter): CapturedAdapterCapabilities {
+  return {
+    dispose: captureAdapterMethod(adapter, "dispose", VeryfrontFSAdapterDispose),
+    getCacheStats: captureAdapterMethod(
+      adapter,
+      "getCacheStats",
+      VeryfrontFSAdapterGetCacheStats,
+    ),
+    getContentContext: captureAdapterMethod(
+      adapter,
+      "getContentContext",
+      VeryfrontFSAdapterGetContentContext,
+    ),
+    initialize: captureAdapterMethod(adapter, "initialize", VeryfrontFSAdapterInitialize),
+    setContentContext: captureAdapterMethod(
+      adapter,
+      "setContentContext",
+      VeryfrontFSAdapterSetContentContext,
+    ),
+  };
+}
+
+function getAdapterContentContext(
+  projectAdapter: ProjectAdapter,
+): ResolvedContentContext | null | undefined {
+  return IntrinsicReflectApply(
+    projectAdapter.capabilities.getContentContext,
+    projectAdapter.adapter,
+    [],
+  ) as ResolvedContentContext | null | undefined;
+}
+
+function disposeProjectAdapter(projectAdapter: ProjectAdapter): void {
+  IntrinsicReflectApply(
+    projectAdapter.capabilities.dispose,
+    projectAdapter.adapter,
+    [],
+  );
+}
 
 async function hashCredentialPrincipal(token: string): Promise<string> {
-  const bytes = encodeText.call(textEncoder, token);
-  const digest = new Uint8Array(await subtleDigest("SHA-256", bytes));
-  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const bytes = IntrinsicReflectApply(encodeText, textEncoder, [token]) as ReturnType<
+    typeof encodeText
+  >;
+  const digest = new NativeUint8Array(await subtleDigest("SHA-256", bytes));
+  let principal = "";
+  for (let index = 0; index < SHA256_DIGEST_BYTES; index++) {
+    const encoded = IntrinsicReflectApply(NumberPrototypeToString, digest[index]!, [16]) as string;
+    principal += IntrinsicReflectApply(StringPrototypePadStart, encoded, [2, "0"]) as string;
+  }
+  return principal;
 }
 
 function buildDiagnosticCacheKey(identity: ProxyAdapterIdentity): string {
@@ -77,18 +259,21 @@ interface ProxyFSAdapterManagerConfig {
   maxAdapters?: number;
   cleanupIntervalMs?: number;
   maxIdleMs?: number;
+  now?: () => number;
 }
 
 export class ProxyFSAdapterManager {
-  private adapters = new Map<string, ProjectAdapter>();
-  private pendingAdapters = new Map<string, Promise<VeryfrontFSAdapter>>();
+  #adapters = new IntrinsicMap<string, ProjectAdapter>();
+  #pendingAdapters = new IntrinsicMap<string, Promise<ProjectAdapter>>();
   private adapterFactory: (config: FSAdapterConfig) => VeryfrontFSAdapter;
   private baseConfig: FSAdapterConfig;
   private maxAdapters: number;
   private maxIdleMs: number;
   private cleanupTimer?: ReturnType<typeof setInterval>;
+  #now: () => number;
 
   constructor(config: ProxyFSAdapterManagerConfig) {
+    captureGetAdapterParamsValidator();
     this.baseConfig = config.baseConfig;
     this.adapterFactory = config.adapterFactory ??
       ((adapterConfig) => new VeryfrontFSAdapter(adapterConfig));
@@ -97,6 +282,7 @@ export class ProxyFSAdapterManager {
       "maxAdapters",
     );
     this.maxIdleMs = config.maxIdleMs ?? DEFAULT_MAX_IDLE_MS;
+    this.#now = config.now ?? currentTime;
 
     if (config.cleanupIntervalMs) {
       this.cleanupTimer = setInterval(
@@ -119,8 +305,9 @@ export class ProxyFSAdapterManager {
     releaseId?: string | null,
     environmentName?: string | null,
     branch?: string | null,
+    onResolved?: (initializedNow: boolean) => void,
   ): Promise<VeryfrontFSAdapter> {
-    const getAdapterStartTime = performance.now();
+    const getAdapterStartTime = performanceNow();
 
     const effectiveProductionMode = productionMode ?? false;
     // All three must use the same predicate the cache key uses, or an identity
@@ -128,10 +315,10 @@ export class ProxyFSAdapterManager {
     const effectiveReleaseId = effectiveProductionMode ? (releaseId ?? null) : null;
     const effectiveEnvironmentName = environmentName || null;
     const effectiveBranch = effectiveProductionMode ? null : (branch ?? "main");
-
+    const canonicalProjectId = projectId === undefined ? undefined : trimString(projectId);
     if (
       this.baseConfig.veryfront?.proxyMode === true &&
-      (!projectId?.trim() || projectId !== projectId.trim())
+      (!canonicalProjectId || projectId !== canonicalProjectId)
     ) {
       throw INVALID_ARGUMENT.create({
         detail: "[ProxyFSAdapterManager] Hosted proxy adapters require a canonical project ID",
@@ -146,15 +333,19 @@ export class ProxyFSAdapterManager {
       branch: effectiveBranch,
     });
 
-    const validationResult = getGetAdapterParamsSchema().safeParse({
-      projectSlug,
-      token,
-      projectId,
-      productionMode: effectiveProductionMode,
-      releaseId: effectiveReleaseId,
-      environmentName: effectiveEnvironmentName,
-      branch: effectiveBranch,
-    });
+    const validationResult = IntrinsicReflectApply(
+      capturedGetAdapterParamsSchemaSafeParse!,
+      capturedGetAdapterParamsSchema!,
+      [{
+        projectSlug,
+        token,
+        projectId,
+        productionMode: effectiveProductionMode,
+        releaseId: effectiveReleaseId,
+        environmentName: effectiveEnvironmentName,
+        branch: effectiveBranch,
+      }],
+    ) as GetAdapterParamsValidationResult;
 
     if (!validationResult.success) {
       logger.error("Validation failed", {
@@ -167,18 +358,22 @@ export class ProxyFSAdapterManager {
           branch: effectiveBranch,
         },
       });
-      const detailMessage = validationResult.issues
-        .map((issue) =>
-          issue.path.length > 0 ? `${issue.path.join(".")}: ${issue.message}` : issue.message
-        )
-        .join("; ");
+      let detailMessage = "";
+      for (let index = 0; index < validationResult.issues.length; index++) {
+        const issue = validationResult.issues[index]!;
+        const path = issue.path.length > 0
+          ? IntrinsicReflectApply(ArrayPrototypeJoin, issue.path, ["."]) as string
+          : "";
+        if (index > 0) detailMessage += "; ";
+        detailMessage += path ? `${path}: ${issue.message}` : issue.message;
+      }
       throw INVALID_ARGUMENT.create({
         detail: `[ProxyFSAdapterManager] Invalid getAdapter parameters: ${detailMessage}`,
       });
     }
 
     const credentialPrincipal = await hashCredentialPrincipal(token);
-    const identity: ProxyAdapterIdentity = Object.freeze({
+    const identity: ProxyAdapterIdentity = IntrinsicObjectFreeze({
       projectSlug,
       projectId: projectId ?? null,
       credentialPrincipal,
@@ -205,15 +400,15 @@ export class ProxyFSAdapterManager {
       environmentName: effectiveEnvironmentName,
       branch: effectiveBranch,
       cacheKey: diagnosticCacheKey,
-      hasExisting: this.adapters.has(cacheKey),
-      totalCachedAdapters: this.adapters.size,
+      hasExisting: mapHas(this.#adapters, cacheKey),
+      totalCachedAdapters: mapSize(this.#adapters),
     });
 
-    const existing = this.adapters.get(cacheKey);
+    const existing = mapGet(this.#adapters, cacheKey);
     if (existing) {
-      existing.lastAccessed = Date.now();
+      existing.lastAccessed = this.#now();
 
-      const existingContext = existing.adapter.getContentContext();
+      const existingContext = getAdapterContentContext(existing);
       logger.debug("REUSING_CACHED_ADAPTER", {
         cacheKey: diagnosticCacheKey,
         requestedReleaseId: effectiveReleaseId,
@@ -222,51 +417,53 @@ export class ProxyFSAdapterManager {
       });
 
       try {
-        this.assertContextMatches(diagnosticCacheKey, existing, existingContext, identity);
+        this.#assertContextMatches(diagnosticCacheKey, existing, existingContext, identity);
       } catch (error) {
-        this.evictAdapterByCacheKey(cacheKey);
+        this.#evictAdapterByCacheKey(cacheKey);
         throw error;
       }
 
+      onResolved?.(false);
       return existing.adapter;
     }
 
-    const pending = this.pendingAdapters.get(cacheKey);
+    const pending = mapGet(this.#pendingAdapters, cacheKey);
     if (pending) {
       logger.debug("Waiting for pending adapter creation", {
         cacheKey: diagnosticCacheKey,
         projectSlug,
       });
 
-      const waitStartTime = performance.now();
-      const adapter = await pending;
-      const initialized = this.adapters.get(cacheKey);
+      const waitStartTime = performanceNow();
+      const projectAdapter = await pending;
+      const initialized = mapGet(this.#adapters, cacheKey);
       if (!initialized) {
-        adapter.dispose();
+        disposeProjectAdapter(projectAdapter);
         throw CACHE_INVARIANT_VIOLATION.create({
           detail: `[ProxyFSAdapterManager] Pending adapter completed without a cache identity`,
         });
       }
 
       try {
-        this.assertContextMatches(
+        this.#assertContextMatches(
           diagnosticCacheKey,
           initialized,
-          adapter.getContentContext(),
+          getAdapterContentContext(projectAdapter),
           identity,
         );
       } catch (error) {
-        this.evictAdapterByCacheKey(cacheKey);
+        this.#evictAdapterByCacheKey(cacheKey);
         throw error;
       }
 
       logger.debug("Pending adapter ready", {
         cacheKey: diagnosticCacheKey,
-        waitDuration: `${(performance.now() - waitStartTime).toFixed(2)}ms`,
-        totalDuration: `${(performance.now() - getAdapterStartTime).toFixed(2)}ms`,
+        waitDuration: formatDuration(performanceNow() - waitStartTime),
+        totalDuration: formatDuration(performanceNow() - getAdapterStartTime),
       });
 
-      return adapter;
+      onResolved?.(false);
+      return projectAdapter.adapter;
     }
 
     // A pending initialization already owns a cache slot. Counting only
@@ -274,8 +471,8 @@ export class ProxyFSAdapterManager {
     // initialize without bound and then commit past maxAdapters. Reuse an LRU
     // completed slot when possible; if every slot is initializing, fail fast
     // without starting more work.
-    if (this.adapters.size + this.pendingAdapters.size >= this.maxAdapters) {
-      const evicted = this.evictLeastRecentlyUsed();
+    if (mapSize(this.#adapters) + mapSize(this.#pendingAdapters) >= this.maxAdapters) {
+      const evicted = this.#evictLeastRecentlyUsed();
       if (!evicted) {
         throw SERVICE_OVERLOADED.create({
           detail: "Proxy filesystem adapter initialization capacity is exhausted",
@@ -286,10 +483,10 @@ export class ProxyFSAdapterManager {
     logger.debug("Creating new adapter", {
       cacheKey: diagnosticCacheKey,
       projectSlug,
-      elapsedBeforeCreate: `${(performance.now() - getAdapterStartTime).toFixed(2)}ms`,
+      elapsedBeforeCreate: formatDuration(performanceNow() - getAdapterStartTime),
     });
 
-    return this.createAdapter(
+    const projectAdapter = await this.#createAdapter(
       cacheKey,
       diagnosticCacheKey,
       projectSlug,
@@ -301,15 +498,17 @@ export class ProxyFSAdapterManager {
       effectiveBranch,
       identity,
     );
+    onResolved?.(true);
+    return projectAdapter.adapter;
   }
 
-  private assertContextMatches(
+  #assertContextMatches(
     diagnosticCacheKey: string,
     cached: ProjectAdapter,
     currentContext: ResolvedContentContext | null | undefined,
     expected: ProxyAdapterIdentity,
   ): void {
-    const cachedIdentityMismatch = this.getIdentityMismatchReason(cached.identity, expected);
+    const cachedIdentityMismatch = this.#getIdentityMismatchReason(cached.identity, expected);
     if (cachedIdentityMismatch) {
       logger.error("Adapter identity mismatch detected", {
         cacheKey: diagnosticCacheKey,
@@ -332,7 +531,7 @@ export class ProxyFSAdapterManager {
       });
     }
 
-    const mismatchReason = this.getContextMismatchReason(currentContext, expected);
+    const mismatchReason = this.#getContextMismatchReason(currentContext, expected);
     if (!mismatchReason) return;
 
     logger.error("Context mismatch detected", {
@@ -346,13 +545,17 @@ export class ProxyFSAdapterManager {
       detail: `[ProxyFSAdapterManager] FATAL: Context mismatch for cached adapter. ` +
         `This indicates a critical bug in adapter caching. ` +
         `Reason: ${mismatchReason}. ` +
-        `Expected: ${JSON.stringify(getDiagnosticIdentity(expected))} ` +
-        `Got: ${JSON.stringify(currentContext)} ` +
+        `Expected: ${
+          IntrinsicReflectApply(JsonStringify, JSON, [
+            getDiagnosticIdentity(expected),
+          ])
+        } ` +
+        `Got: ${IntrinsicReflectApply(JsonStringify, JSON, [currentContext])} ` +
         `CacheKey: ${diagnosticCacheKey}`,
     });
   }
 
-  private getIdentityMismatchReason(
+  #getIdentityMismatchReason(
     actual: ProxyAdapterIdentity,
     expected: ProxyAdapterIdentity,
   ): string | null {
@@ -371,7 +574,7 @@ export class ProxyFSAdapterManager {
     return null;
   }
 
-  private getContextMismatchReason(
+  #getContextMismatchReason(
     currentContext: ResolvedContentContext,
     expected: {
       productionMode: boolean;
@@ -411,7 +614,7 @@ export class ProxyFSAdapterManager {
     return null;
   }
 
-  private createAdapter(
+  #createAdapter(
     cacheKey: string,
     diagnosticCacheKey: string,
     projectSlug: string,
@@ -422,7 +625,7 @@ export class ProxyFSAdapterManager {
     environmentName: string | null,
     branch: string | null,
     identity: ProxyAdapterIdentity,
-  ): Promise<VeryfrontFSAdapter> {
+  ): Promise<ProjectAdapter> {
     logger.debug("Creating NEW adapter", {
       cacheKey: diagnosticCacheKey,
       projectSlug,
@@ -430,7 +633,7 @@ export class ProxyFSAdapterManager {
       releaseId,
       environmentName,
       branch,
-      totalCachedAdapters: this.adapters.size,
+      totalCachedAdapters: mapSize(this.#adapters),
     });
 
     const config: FSAdapterConfig = {
@@ -443,11 +646,12 @@ export class ProxyFSAdapterManager {
       },
       invalidationCallbacks: createDefaultInvalidationCallbacks({
         ...this.baseConfig.invalidationCallbacks,
-        evictCurrentAdapter: () => this.evictAdapterByCacheKey(cacheKey),
+        evictCurrentAdapter: () => this.#evictAdapterByCacheKey(cacheKey),
       }),
     };
 
     const adapter = this.adapterFactory(config);
+    const capabilities = captureAdapterCapabilities(adapter);
 
     let context: ResolvedContentContext;
     if (productionMode) {
@@ -480,14 +684,20 @@ export class ProxyFSAdapterManager {
       contextReleaseId: "releaseId" in context ? context.releaseId : "N/A",
     });
 
-    adapter.setContentContext(context);
+    IntrinsicReflectApply(capabilities.setContentContext, adapter, [context]);
 
-    const projectAdapter: ProjectAdapter = { adapter, lastAccessed: Date.now(), identity };
+    const projectAdapter: ProjectAdapter = {
+      adapter,
+      capabilities,
+      lastAccessed: this.#now(),
+      identity,
+    };
 
     // Defer initialization until after its promise is registered. This makes
     // capacity admission atomic even when initialize() throws synchronously.
-    const initPromise = Promise.resolve().then(async (): Promise<VeryfrontFSAdapter> => {
-      const initStartTime = performance.now();
+    const initPromise = (async (): Promise<ProjectAdapter> => {
+      await undefined;
+      const initStartTime = performanceNow();
 
       logger.debug("Adapter initialization START", {
         cacheKey: diagnosticCacheKey,
@@ -495,29 +705,33 @@ export class ProxyFSAdapterManager {
       });
 
       try {
-        projectAdapter.initializing = adapter.initialize();
+        projectAdapter.initializing = IntrinsicReflectApply(
+          capabilities.initialize,
+          adapter,
+          [],
+        ) as Promise<void>;
         await projectAdapter.initializing;
 
         logger.debug("Adapter initialization DONE", {
           cacheKey: diagnosticCacheKey,
           projectSlug,
-          duration: `${(performance.now() - initStartTime).toFixed(2)}ms`,
+          duration: formatDuration(performanceNow() - initStartTime),
         });
 
-        this.adapters.set(cacheKey, projectAdapter);
-        return adapter;
+        mapSet(this.#adapters, cacheKey, projectAdapter);
+        return projectAdapter;
       } catch (error) {
         logger.error("Adapter initialization failed", {
           cacheKey: diagnosticCacheKey,
           projectSlug,
-          duration: `${(performance.now() - initStartTime).toFixed(2)}ms`,
+          duration: formatDuration(performanceNow() - initStartTime),
           error: error instanceof Error ? error.message : String(error),
         });
 
         // The failed adapter is never cached, so nothing else releases the
         // resources it may have allocated before initialize() threw.
         try {
-          adapter.dispose();
+          disposeProjectAdapter(projectAdapter);
         } catch (disposeError) {
           logger.debug("Adapter dispose after failed initialization threw", {
             cacheKey: diagnosticCacheKey,
@@ -528,50 +742,50 @@ export class ProxyFSAdapterManager {
         throw error;
       } finally {
         projectAdapter.initializing = undefined;
-        this.pendingAdapters.delete(cacheKey);
+        mapDelete(this.#pendingAdapters, cacheKey);
       }
-    });
+    })();
 
-    this.pendingAdapters.set(cacheKey, initPromise);
+    mapSet(this.#pendingAdapters, cacheKey, initPromise);
     return initPromise;
   }
 
-  private evictLeastRecentlyUsed(): boolean {
+  #evictLeastRecentlyUsed(): boolean {
     let oldestCacheKey: string | null = null;
     let oldestTime = Infinity;
 
-    for (const [cacheKey, adapter] of this.adapters) {
+    mapForEach(this.#adapters, (adapter, cacheKey) => {
       if (adapter.lastAccessed < oldestTime) {
         oldestCacheKey = cacheKey;
         oldestTime = adapter.lastAccessed;
       }
-    }
+    });
 
     if (!oldestCacheKey) return false;
 
-    const adapter = this.adapters.get(oldestCacheKey);
+    const adapter = mapGet(this.#adapters, oldestCacheKey);
     if (!adapter) return false;
     logger.debug("Evicting LRU adapter", {
       cacheKey: buildDiagnosticCacheKey(adapter.identity),
     });
 
-    adapter.adapter.dispose();
-    this.adapters.delete(oldestCacheKey);
+    disposeProjectAdapter(adapter);
+    mapDelete(this.#adapters, oldestCacheKey);
     return true;
   }
 
   private cleanupIdleAdapters(): void {
-    const now = Date.now();
+    const now = this.#now();
 
-    for (const [cacheKey, adapter] of this.adapters) {
-      if (now - adapter.lastAccessed <= this.maxIdleMs) continue;
+    mapForEach(this.#adapters, (adapter, cacheKey) => {
+      if (now - adapter.lastAccessed <= this.maxIdleMs) return;
 
       logger.debug("Removing idle adapter", {
         cacheKey: buildDiagnosticCacheKey(adapter.identity),
       });
-      adapter.adapter.dispose();
-      this.adapters.delete(cacheKey);
-    }
+      disposeProjectAdapter(adapter);
+      mapDelete(this.#adapters, cacheKey);
+    });
   }
 
   hasAdapter(
@@ -583,8 +797,10 @@ export class ProxyFSAdapterManager {
     projectId?: string,
   ): boolean {
     this.assertValidSelection(projectSlug, productionMode, releaseId);
-    return Array.from(this.adapters.values()).some(({ identity }) =>
-      this.matchesAdapterSelection(
+    let found = false;
+    mapForEach(this.#adapters, ({ identity }) => {
+      if (found) return;
+      found = this.matchesAdapterSelection(
         identity,
         projectSlug,
         productionMode,
@@ -592,8 +808,9 @@ export class ProxyFSAdapterManager {
         branch,
         environmentName,
         projectId,
-      )
-    );
+      );
+    });
+    return found;
   }
 
   evictAdapter(
@@ -606,7 +823,7 @@ export class ProxyFSAdapterManager {
   ): void {
     this.assertValidSelection(projectSlug, productionMode, releaseId);
     let evicted = false;
-    for (const [cacheKey, { identity }] of this.adapters) {
+    mapForEach(this.#adapters, ({ identity }, cacheKey) => {
       if (
         !this.matchesAdapterSelection(
           identity,
@@ -617,21 +834,21 @@ export class ProxyFSAdapterManager {
           environmentName,
           projectId,
         )
-      ) continue;
-      this.evictAdapterByCacheKey(cacheKey);
+      ) return;
+      this.#evictAdapterByCacheKey(cacheKey);
       evicted = true;
-    }
+    });
     if (!evicted) logger.debug("No adapter to evict", { projectSlug });
   }
 
-  private evictAdapterByCacheKey(cacheKey: string): void {
-    const adapter = this.adapters.get(cacheKey);
+  #evictAdapterByCacheKey(cacheKey: string): void {
+    const adapter = mapGet(this.#adapters, cacheKey);
     if (!adapter) return;
     logger.debug("Evicting adapter", {
       cacheKey: buildDiagnosticCacheKey(adapter.identity),
     });
-    adapter.adapter.dispose();
-    this.adapters.delete(cacheKey);
+    disposeProjectAdapter(adapter);
+    mapDelete(this.#adapters, cacheKey);
   }
 
   private matchesAdapterSelection(
@@ -668,17 +885,21 @@ export class ProxyFSAdapterManager {
 
   getStats(): { adapters: number; stats: Record<string, CacheStats> } {
     const stats: Record<string, CacheStats> = {};
-    const diagnosticKeyCounts = new Map<string, number>();
+    const diagnosticKeyCounts = new IntrinsicMap<string, number>();
 
-    for (const adapter of this.adapters.values()) {
+    mapForEach(this.#adapters, (adapter) => {
       const diagnosticKey = buildDiagnosticCacheKey(adapter.identity);
-      const keyCount = (diagnosticKeyCounts.get(diagnosticKey) ?? 0) + 1;
-      diagnosticKeyCounts.set(diagnosticKey, keyCount);
+      const keyCount = (mapGet(diagnosticKeyCounts, diagnosticKey) ?? 0) + 1;
+      mapSet(diagnosticKeyCounts, diagnosticKey, keyCount);
       const statsKey = keyCount === 1 ? diagnosticKey : `${diagnosticKey}:instance:${keyCount}`;
-      stats[statsKey] = adapter.adapter.getCacheStats();
-    }
+      stats[statsKey] = IntrinsicReflectApply(
+        adapter.capabilities.getCacheStats,
+        adapter.adapter,
+        [],
+      ) as CacheStats;
+    });
 
-    return { adapters: this.adapters.size, stats };
+    return { adapters: mapSize(this.#adapters), stats };
   }
 
   dispose(): void {
@@ -687,14 +908,14 @@ export class ProxyFSAdapterManager {
       this.cleanupTimer = undefined;
     }
 
-    for (const adapter of this.adapters.values()) {
+    mapForEach(this.#adapters, (adapter) => {
       logger.debug("Disposing adapter", {
         cacheKey: buildDiagnosticCacheKey(adapter.identity),
       });
-      adapter.adapter.dispose();
-    }
+      disposeProjectAdapter(adapter);
+    });
 
-    this.adapters.clear();
+    mapClear(this.#adapters);
     logger.debug("Disposed");
   }
 }

@@ -11,7 +11,105 @@ import {
 } from "../safe-diagnostics.ts";
 
 const errorColor = "\x1b[38;2;239;68;68m"; // Red
+const arrayPrototypePush = Array.prototype.push;
 const objectHasOwn = Object.hasOwn;
+const reflectApply = Reflect.apply;
+const regExpPrototypeExec = RegExp.prototype.exec;
+const regExpPrototypeTest = RegExp.prototype.test;
+const urlConstructor = URL;
+const urlHostnameGetter = Object.getOwnPropertyDescriptor(URL.prototype, "hostname")?.get;
+const stringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const stringPrototypeEndsWith = String.prototype.endsWith;
+const stringPrototypeIncludes = String.prototype.includes;
+const stringPrototypeIndexOf = String.prototype.indexOf;
+const stringPrototypeLastIndexOf = String.prototype.lastIndexOf;
+const stringPrototypeSlice = String.prototype.slice;
+const stringPrototypeStartsWith = String.prototype.startsWith;
+const stringPrototypeTrim = String.prototype.trim;
+
+function execRegExp(pattern: RegExp, value: string): RegExpExecArray | null {
+  return reflectApply(regExpPrototypeExec, pattern, [value]);
+}
+
+function testRegExp(pattern: RegExp, value: string): boolean {
+  return reflectApply(regExpPrototypeTest, pattern, [value]);
+}
+
+function endsWithString(value: string, search: string): boolean {
+  return reflectApply(stringPrototypeEndsWith, value, [search]);
+}
+
+function includesNonAsciiCodeUnit(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    if (reflectApply(stringPrototypeCharCodeAt, value, [index]) > 0x7f) return true;
+  }
+  return false;
+}
+
+function includesString(value: string, search: string): boolean {
+  return reflectApply(stringPrototypeIncludes, value, [search]);
+}
+
+function indexOfString(value: string, search: string, position?: number): number {
+  return reflectApply(
+    stringPrototypeIndexOf,
+    value,
+    position === undefined ? [search] : [search, position],
+  );
+}
+
+function lastIndexOfString(value: string, search: string): number {
+  return reflectApply(stringPrototypeLastIndexOf, value, [search]);
+}
+
+function sliceString(value: string, start?: number, end?: number): string {
+  return reflectApply(stringPrototypeSlice, value, [start, end]);
+}
+
+function splitString(value: string, separator: string): string[] {
+  if (!separator) return [value];
+  const parts: string[] = [];
+  let start = 0;
+  for (
+    let end = indexOfString(value, separator, start);;
+    end = indexOfString(value, separator, start)
+  ) {
+    if (end === -1) {
+      reflectApply(arrayPrototypePush, parts, [sliceString(value, start)]);
+      return parts;
+    }
+    reflectApply(arrayPrototypePush, parts, [sliceString(value, start, end)]);
+    start = end + separator.length;
+  }
+}
+
+/** Split stack lines without dispatching through a mutable RegExp protocol hook. */
+function splitStackLines(value: string): string[] {
+  const lines: string[] = [];
+  let start = 0;
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = reflectApply(stringPrototypeCharCodeAt, value, [index]) as number;
+    if (codeUnit !== 10 && codeUnit !== 13) continue;
+    reflectApply(arrayPrototypePush, lines, [sliceString(value, start, index)]);
+    if (
+      codeUnit === 13 &&
+      reflectApply(stringPrototypeCharCodeAt, value, [index + 1]) === 10
+    ) {
+      index++;
+    }
+    start = index + 1;
+  }
+  reflectApply(arrayPrototypePush, lines, [sliceString(value, start)]);
+  return lines;
+}
+
+function startsWithString(value: string, search: string): boolean {
+  return reflectApply(stringPrototypeStartsWith, value, [search]);
+}
+
+function trimString(value: string): string {
+  return reflectApply(stringPrototypeTrim, value, []);
+}
 
 function getSolution(errorKey: string): (typeof ERROR_SOLUTIONS)[string] | undefined {
   return objectHasOwn(ERROR_SOLUTIONS, errorKey) ? ERROR_SOLUTIONS[errorKey] : undefined;
@@ -34,7 +132,7 @@ function buildSolutionDetailsLines(
 
   if (solution.example) {
     lines.push("", options?.exampleLabel ?? cyan("Example:"));
-    for (const line of solution.example.split("\n")) {
+    for (const line of splitString(solution.example, "\n")) {
       lines.push(`  ${dim(line)}`);
     }
   }
@@ -44,6 +142,220 @@ function buildSolutionDetailsLines(
   }
 
   return lines;
+}
+
+/**
+ * A URI scheme opening a source location. Opaque schemes carry no `//`, so a
+ * `data:` module or a `node:internal/...` builtin is a location just as much as
+ * a `file://` URL is, and its remainder is never safe to echo back.
+ */
+const URI_SCHEME_LOCATION = /^[a-zA-Z][\w+.-]*:/;
+
+/**
+ * Any path separator a source location can carry: POSIX, UNC, or drive. A
+ * callable label carries no legitimate separator, so a separator marks a source
+ * location wherever it appears — an absolute path, a UNC share, or the
+ * project-relative path a source map or custom formatter emits.
+ */
+const PATH_SEPARATOR = /[\\/]/;
+
+/** A single path segment followed by its source line and optional column. */
+// Spaces stay allowed in the segment: a source map or custom formatter can
+// emit `at private source.ts:1:1`, and a genuine callable label ending in
+// line:column digits is indistinguishable from a location, so withholding is
+// the safe reading either way.
+const FILE_LINE_COLUMN_LOCATION = /^[^\\/@]+:\d+(?::\d+)?$/;
+
+/**
+ * A bare source filename carrying no coordinates. A custom
+ * `Error.prepareStackTrace` can emit `at private.ts`, which has no separator,
+ * no URI scheme, and no `:line` suffix, yet still names a source file. The
+ * extension set is the one a JavaScript stack can actually name, so a callable
+ * label only collides with it when it is itself spelled like a module file.
+ */
+const SOURCE_FILE_BASENAME_LOCATION =
+  /\.(?:[cm]?[jt]sx?|json[c5]?|wasm|node|vue|svelte|astro|mdx?)(?:[?#].*)?$/i;
+
+/** A dot-separated callable label can be indistinguishable from a hostname. */
+const HOSTNAME_SHAPED_CALLABLE_LABEL =
+  /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:[a-z](?:[a-z0-9-]*[a-z0-9])?|\d{1,3})\.?$/i;
+/** A private single-label hostname is indistinguishable from a callable name. */
+const SINGLE_LABEL_HOSTNAME_SHAPED_CALLABLE_LABEL =
+  /^(?=.{1,63}$)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i;
+const SINGLE_LABEL_IPV4_CANDIDATE = /^(?:0x[0-9a-f]+|\d+)$/i;
+const CANONICAL_IPV4_HOSTNAME = /^(?:\d{1,3}\.){3}\d{1,3}$/;
+
+/**
+ * Report labels that WHATWG host parsing canonicalizes to hostname syntax.
+ *
+ * The URL parser maps Unicode labels to punycode, treats alternate full stops
+ * as label separators, and decodes percent-encoded ASCII such as `%2E`. Both
+ * single-label and multi-label candidates can therefore become an ASCII
+ * hostname even when the original spelling does not match the direct patterns.
+ * Capturing the constructor and hostname getter keeps project code from
+ * changing this classification through live global or prototype hooks.
+ */
+function isCanonicalHostnameShapedCallableLabel(label: string): boolean {
+  if (
+    !urlHostnameGetter ||
+    (!includesNonAsciiCodeUnit(label) && !includesString(label, "%"))
+  ) {
+    return false;
+  }
+
+  try {
+    const url = new urlConstructor(`http://${label}/`);
+    const hostname = reflectApply(urlHostnameGetter, url, []);
+    return typeof hostname === "string" &&
+      (testRegExp(HOSTNAME_SHAPED_CALLABLE_LABEL, hostname) ||
+        testRegExp(SINGLE_LABEL_HOSTNAME_SHAPED_CALLABLE_LABEL, hostname));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Report single-label integer, hexadecimal, and octal IPv4 spellings.
+ *
+ * WHATWG host parsing accepts forms such as `2130706433`, `0x7f000001`, and
+ * `017700000001` as `127.0.0.1`. Limit parsing to numeric candidates and then
+ * require the canonical result to be dotted IPv4, so an ordinary single-label
+ * callable name is not mistaken for a host.
+ */
+function isSingleLabelIpv4CallableLabel(label: string): boolean {
+  if (!urlHostnameGetter || !testRegExp(SINGLE_LABEL_IPV4_CANDIDATE, label)) return false;
+
+  try {
+    const url = new urlConstructor(`http://${label}/`);
+    const hostname = reflectApply(urlHostnameGetter, url, []);
+    return typeof hostname === "string" && testRegExp(CANONICAL_IPV4_HOSTNAME, hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isHostnameShapedCallableLabel(label: string): boolean {
+  return testRegExp(HOSTNAME_SHAPED_CALLABLE_LABEL, label) ||
+    testRegExp(SINGLE_LABEL_HOSTNAME_SHAPED_CALLABLE_LABEL, label) ||
+    isCanonicalHostnameShapedCallableLabel(label) ||
+    isSingleLabelIpv4CallableLabel(label);
+}
+
+/** A bracketed IPv6 literal can be emitted as a custom callable label. */
+const BRACKETED_IPV6_CALLABLE_LABEL = /^\[[0-9a-f:.]*:[0-9a-f:.]*(?:%[a-z0-9._~-]+)?\]$/i;
+
+/** An unbracketed IPv6 literal can likewise be emitted as a callable label. */
+const UNBRACKETED_IPV6_CALLABLE_LABEL = /^(?=(?:[^:]*:){2})[0-9a-f:.]+(?:%[a-z0-9._~-]+)?$/i;
+
+/** Standard V8 modifiers are syntax around the callable label, not part of it. */
+const CALLABLE_LABEL_PREFIX = /^(?:(?:async|new)\s+)+/;
+
+/** Standard V8 property aliases must be safe independently of their function name. */
+const CALLABLE_ALIAS_SUFFIX = /^(.+)\s+\[as\s+([^\]\r\n]+)\]$/;
+
+/** Capture one whitespace-delimited display token without using live string hooks. */
+const CALLABLE_LABEL_TOKEN_SEQUENCE = /^(\S+)(?:\s+([\s\S]*))?$/;
+
+/** A retained V8 label must contain only JavaScript identifier paths. */
+const CALLABLE_IDENTIFIER_PATH = /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/;
+
+/** Platform callables whose fixed display label cannot carry project data. */
+const TRUSTED_CALLABLE_LABEL = /^(?:JSON\.parse)$/;
+
+/** Captures a frame whose text after `at ` can be a bare source location. */
+const LOCATION_ONLY_FRAME = /^at\s+(.+)$/;
+
+/** Whether a frame's trailing segment is a source location rather than more label. */
+function isSourceLocationText(text: string): boolean {
+  const trimmed = trimString(text);
+  return testRegExp(URI_SCHEME_LOCATION, trimmed) || testRegExp(PATH_SEPARATOR, trimmed) ||
+    testRegExp(FILE_LINE_COLUMN_LOCATION, trimmed) ||
+    testRegExp(SOURCE_FILE_BASENAME_LOCATION, trimmed);
+}
+
+function isRetainableCallableLabel(label: string): boolean {
+  // A method can be named like a location ("123-app.ts:3:3" on Node 24), so a
+  // label gets the same source-location validation as location text itself.
+  const isTrusted = testRegExp(TRUSTED_CALLABLE_LABEL, label);
+  if (
+    !label || !testRegExp(CALLABLE_IDENTIFIER_PATH, label) ||
+    isSourceLocationText(label) ||
+    testRegExp(BRACKETED_IPV6_CALLABLE_LABEL, label) ||
+    testRegExp(UNBRACKETED_IPV6_CALLABLE_LABEL, label) ||
+    (!isTrusted && isHostnameShapedCallableLabel(label))
+  ) {
+    return false;
+  }
+  return isTrusted;
+}
+
+function isRetainableCallableLabelTokens(label: string): boolean {
+  if (!isRetainableCallableLabel(label)) return false;
+  let remaining = label;
+  while (remaining) {
+    const token = execRegExp(CALLABLE_LABEL_TOKEN_SEQUENCE, remaining);
+    if (!token || !isRetainableCallableLabel(token[1] ?? "")) return false;
+    remaining = token[2] ?? "";
+  }
+  return true;
+}
+
+/** Keep a frame's callable label only when the label itself carries no source location. */
+function retainCallableLabel(label: string): string {
+  const trimmed = trimString(label);
+  const prefix = execRegExp(CALLABLE_LABEL_PREFIX, trimmed)?.[0] ?? "";
+  const callableLabel = prefix ? trimString(sliceString(trimmed, prefix.length)) : trimmed;
+  const alias = execRegExp(CALLABLE_ALIAS_SUFFIX, callableLabel);
+  const aliasLabel = alias?.[2] === undefined ? undefined : trimString(alias[2]);
+  const aliasPrefix = aliasLabel ? execRegExp(CALLABLE_LABEL_PREFIX, aliasLabel)?.[0] : undefined;
+  const unprefixedAlias = aliasPrefix
+    ? trimString(sliceString(aliasLabel!, aliasPrefix.length))
+    : aliasLabel;
+  const isSafe = alias
+    ? isRetainableCallableLabelTokens(trimString(alias[1]!)) &&
+      isRetainableCallableLabelTokens(unprefixedAlias ?? "")
+    : isRetainableCallableLabelTokens(callableLabel);
+  return isSafe ? `at ${prefix}${callableLabel}` : "at <anonymous>";
+}
+
+/** Keep a development stack's callable label without exposing its source location. */
+function sanitizeUserFacingStackFrame(line: string): string {
+  const frame = trimString(sanitizeTerminalDiagnosticText(line));
+  const locationStart = lastIndexOfString(frame, " (");
+  if (startsWithString(frame, "at ") && locationStart > 3 && endsWithString(frame, ")")) {
+    return retainCallableLabel(sliceString(frame, 3, locationStart));
+  }
+  const locationOnly = execRegExp(LOCATION_ONLY_FRAME, frame);
+  if (locationOnly) {
+    return isSourceLocationText(locationOnly[1]!)
+      ? "at <anonymous>"
+      : retainCallableLabel(locationOnly[1]!);
+  }
+  // A callable label can itself contain "@" ("handler@alias@app.ts:2:2"), so
+  // every delimiter is a candidate split until one exposes a real location.
+  for (
+    let labelEnd = indexOfString(frame, "@");
+    labelEnd !== -1;
+    labelEnd = indexOfString(frame, "@", labelEnd + 1)
+  ) {
+    if (isSourceLocationText(sliceString(frame, labelEnd + 1))) {
+      return retainCallableLabel(sliceString(frame, 0, labelEnd));
+    }
+  }
+  // A delimiter whose trailing text matches no known location shape still
+  // marks a custom-formatted frame; fail closed instead of echoing it.
+  if (includesString(frame, "@") || isSourceLocationText(frame)) {
+    return "at <anonymous>";
+  }
+  // Standard V8 frames start with `at ` and SpiderMonkey-style frames carry a
+  // recognized `@location`. Any other shape can be supplied by
+  // Error.prepareStackTrace and may be arbitrary project data, so never echo it.
+  return "at <anonymous>";
+}
+
+/** @internal Test-only stack frame sanitization seam. */
+export function sanitizeUserFacingStackFrameForTesting(line: string): string {
+  return sanitizeUserFacingStackFrame(line);
 }
 
 /**
@@ -101,8 +413,10 @@ export function formatUserError(error: Error): string {
   const stack = snapshotErrorForBoundary(stableError).stack;
   if (!isProduction() && stack) {
     output.push(yellow("Stack trace:"));
-    for (const line of stack.split(/\r\n?|\n/).slice(1, 4)) {
-      output.push(dim(`  ${sanitizeTerminalDiagnosticText(line).trim()}`));
+    const stackLines = splitStackLines(stack);
+    for (let index = 1; index < stackLines.length && index < 4; index++) {
+      const line = stackLines[index]!;
+      output.push(dim(`  ${sanitizeUserFacingStackFrame(line)}`));
     }
     output.push("");
   }

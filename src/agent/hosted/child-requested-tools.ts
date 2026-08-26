@@ -17,6 +17,7 @@ import {
   PROJECT_STEERING_FILE_MUTATION_TOOL_NAMES,
   type ProjectSteeringPaths,
 } from "../project/steering-mutation.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /** Input payload for hosted child requested tools. */
 export interface HostedChildRequestedToolsInput {
@@ -248,7 +249,7 @@ export function selectHostedChildForkRuntimeTools(input: {
       ok: false,
       errorMessage: `Requested fork tools not available in runtime: ${
         unavailableRequested.join(", ")
-      }. Available: ${[...availableNames].sort().join(", ")}.`,
+      }. Available: ${[...availableNames].sort(compareStrings).join(", ")}.`,
     };
   }
 
@@ -276,11 +277,15 @@ export function selectHostedChildForkRuntimeTools(input: {
 export function sanitizeDefaultHostedChildRequestedTools(input: {
   prompt: string;
   requestedTools?: readonly string[];
+  excludedTools?: ReadonlySet<string>;
 }): string[] | undefined {
+  const excludedTools = input.excludedTools?.size
+    ? new Set([...DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES, ...input.excludedTools])
+    : DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES;
   return sanitizeHostedChildRequestedTools({
     prompt: input.prompt,
     requestedTools: input.requestedTools,
-    excludedTools: DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES,
+    excludedTools,
     companionTools: DEFAULT_HOSTED_CHILD_REQUESTED_TOOL_COMPANIONS,
     sandboxRequiredCuePattern: DEFAULT_HOSTED_CHILD_SANDBOX_REQUIRED_CUE_PATTERN,
     isTextArtifactPrompt: isHostedChildTextProjectArtifactPrompt,
@@ -294,10 +299,12 @@ export function selectDefaultHostedChildForkRuntimeTools(input: {
   forkTools: HostToolSet;
   effectivePrompt: string;
   requestedTools?: readonly string[];
+  excludedTools?: ReadonlySet<string>;
 }): HostedChildForkRuntimeToolSelectionResult {
   const effectiveRequestedTools = sanitizeDefaultHostedChildRequestedTools({
     prompt: input.effectivePrompt,
     requestedTools: input.requestedTools,
+    excludedTools: input.excludedTools,
   });
 
   return selectHostedChildForkRuntimeTools({
@@ -315,6 +322,7 @@ export function prepareDefaultHostedChildForkRuntimeTools(input: {
   forkTools: HostToolSet;
   effectivePrompt: string;
   requestedTools?: readonly string[];
+  excludedTools?: ReadonlySet<string>;
   activeProjectId?: string | null;
   activeBranchId?: string | null;
   steeringPaths?: ProjectSteeringPaths;
@@ -327,6 +335,7 @@ export function prepareDefaultHostedChildForkRuntimeTools(input: {
     forkTools: input.forkTools,
     effectivePrompt: input.effectivePrompt,
     requestedTools: input.requestedTools,
+    excludedTools: input.excludedTools,
   });
   if (!selectedTools.ok) {
     return selectedTools;
@@ -369,6 +378,7 @@ export async function prepareDefaultHostedChildForkToolAssembly(input: {
   forkModel?: string;
   effectivePrompt: string;
   requestedTools?: readonly string[];
+  excludedTools?: ReadonlySet<string>;
   activeProjectId?: string | null;
   activeBranchId?: string | null;
   steeringPaths?: ProjectSteeringPaths;
@@ -386,6 +396,7 @@ export async function prepareDefaultHostedChildForkToolAssembly(input: {
     forkTools: toolSources.forkTools,
     effectivePrompt: input.effectivePrompt,
     requestedTools: input.requestedTools,
+    excludedTools: input.excludedTools,
     activeProjectId: input.activeProjectId,
     activeBranchId: input.activeBranchId,
     steeringPaths: input.steeringPaths,

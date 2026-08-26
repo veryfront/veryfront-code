@@ -45,11 +45,14 @@ export class APIServer {
 
       return new Response(
         JSON.stringify({
-          error: error instanceof Error ? error.message : String(error),
+          error: "Failed to render page data",
         }),
         {
-          status: 404,
-          headers: { "content-type": "application/json" },
+          status: 500,
+          headers: {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+          },
         },
       );
     }

@@ -22,9 +22,55 @@ export interface RequestContext {
 }
 
 export const asyncLocalStorage = new AsyncLocalStorage<RequestContext>();
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicObjectDefineProperty = Object.defineProperty;
+const AsyncLocalStoragePrototype = AsyncLocalStorage.prototype;
+const AsyncLocalStorageDisable = AsyncLocalStoragePrototype.disable;
+const AsyncLocalStorageEnterWith = AsyncLocalStoragePrototype.enterWith;
+const AsyncLocalStorageGetStore = AsyncLocalStoragePrototype.getStore;
+const AsyncLocalStorageRun = AsyncLocalStoragePrototype.run;
+const AsyncLocalStorageExit = AsyncLocalStoragePrototype.exit;
+IntrinsicObjectDefineProperty(asyncLocalStorage, "disable", {
+  configurable: false,
+  value: AsyncLocalStorageDisable,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(asyncLocalStorage, "enterWith", {
+  configurable: false,
+  value: AsyncLocalStorageEnterWith,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(asyncLocalStorage, "getStore", {
+  configurable: false,
+  value: AsyncLocalStorageGetStore,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(asyncLocalStorage, "run", {
+  configurable: false,
+  value: AsyncLocalStorageRun,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(asyncLocalStorage, "exit", {
+  configurable: false,
+  value: AsyncLocalStorageExit,
+  writable: false,
+});
+
+function getRequestContextStore(): RequestContext | undefined {
+  return IntrinsicReflectApply(AsyncLocalStorageGetStore, asyncLocalStorage, []) as
+    | RequestContext
+    | undefined;
+}
+
+function runWithRequestContextStore<T>(
+  context: RequestContext,
+  fn: () => T,
+): T {
+  return IntrinsicReflectApply(AsyncLocalStorageRun, asyncLocalStorage, [context, fn]) as T;
+}
 
 export function getCurrentRequestContext(): RequestContext | null {
-  return asyncLocalStorage.getStore() ?? null;
+  return getRequestContextStore() ?? null;
 }
 
 // Shared client/server code reads the context through the client-safe holder;
@@ -41,24 +87,24 @@ registerRequestContextAccessor(getCurrentRequestContext);
  * re-enters it inside the callback, so that the correct project adapter can be resolved.
  */
 export function wrapWithCurrentContext<T extends (...args: never[]) => unknown>(fn: T): T {
-  const store = asyncLocalStorage.getStore();
+  const store = getRequestContextStore();
   if (!store) return fn;
 
   return ((...args: Parameters<T>) => {
-    return asyncLocalStorage.run(store, () => fn(...args));
+    return runWithRequestContextStore(store, () => fn(...args));
   }) as T;
 }
 
 export function getRequestScopedFile(cacheKey: string): string | undefined {
-  return asyncLocalStorage.getStore()?.fileCache?.get(cacheKey);
+  return getRequestContextStore()?.fileCache?.get(cacheKey);
 }
 
 export function setRequestScopedFile(cacheKey: string, content: string): void {
-  asyncLocalStorage.getStore()?.fileCache?.set(cacheKey, content);
+  getRequestContextStore()?.fileCache?.set(cacheKey, content);
 }
 
 export function clearRequestScopedFileCache(): number {
-  const fileCache = asyncLocalStorage.getStore()?.fileCache;
+  const fileCache = getRequestContextStore()?.fileCache;
   const cleared = fileCache?.size ?? 0;
   fileCache?.clear();
   return cleared;
@@ -92,7 +138,12 @@ export function runWithRequestContext<T>(
     environmentName: options.environmentName ?? null,
     fileCache: new Map<string, string>(),
   };
-  return asyncLocalStorage.run(context, fn);
+  return runWithRequestContextStore(context, fn);
+}
+
+/** Run an operation without inheriting a credential-bearing filesystem context. */
+export function runWithoutRequestContext<T>(fn: () => T): T {
+  return IntrinsicReflectApply(AsyncLocalStorageExit, asyncLocalStorage, [fn]) as T;
 }
 
 /**

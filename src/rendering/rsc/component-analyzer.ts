@@ -1,4 +1,4 @@
-import { join, relative } from "#veryfront/compat/path/index.ts";
+import { join, relative, resolve } from "#veryfront/compat/path/index.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { serverLogger } from "#veryfront/utils";
 import { capitalizeSeparatedWords } from "#veryfront/utils/case-utils.ts";
@@ -10,6 +10,7 @@ import { createError, toError } from "#veryfront/errors";
 import { extractExportNames } from "./export-extractor.ts";
 import { shortHash } from "#veryfront/utils/hash-utils.ts";
 import { hasClientFileName, hasUseClientDirective, hasUseServerDirective } from "./page-island.ts";
+import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 
 class DuplicateClientComponentIdError extends Error {}
 
@@ -59,12 +60,20 @@ export async function buildClientManifest(
   fs?: FileSystemAdapter,
 ): Promise<Map<string, ClientComponentMeta>> {
   const manifest = new Map<string, ClientComponentMeta>();
-  const appPath = join(projectDir, appDir);
+  const projectRoot = resolve(projectDir);
+  const normalizedAppDir = appDir.replace(/^\/+|\/+$/g, "") || "app";
+  const appPath = join(projectDir, normalizedAppDir);
+  const absoluteAppPath = resolve(projectRoot, normalizedAppDir);
+  if (!isWithinDirectory(projectRoot, absoluteAppPath)) return manifest;
 
   const fsAdapter = fs ?? (await getFsAdapter());
   if (!fsAdapter) return manifest;
 
   try {
+    if (!await isCanonicallyContainedAppRoot(projectDir, appPath, fsAdapter)) {
+      return manifest;
+    }
+
     await walkDirectory(
       appPath,
       async (filePath) => {
@@ -101,6 +110,38 @@ export async function buildClientManifest(
   }
 
   return manifest;
+}
+
+/**
+ * Confirm the lexically contained app root stays inside the project once
+ * symlinks are resolved. An adapter must either declare
+ * `symlinkSemantics: "none"` or provide canonical paths.
+ */
+async function isCanonicallyContainedAppRoot(
+  projectRoot: string,
+  appPath: string,
+  fsAdapter: FileSystemAdapter,
+): Promise<boolean> {
+  const semantics = Object.getOwnPropertyDescriptor(fsAdapter, "symlinkSemantics");
+  if (semantics && "value" in semantics && semantics.value === "none") return true;
+
+  const realPath = fsAdapter.realPath?.bind(fsAdapter);
+  if (!realPath) return false;
+
+  try {
+    const [canonicalProjectRoot, canonicalAppPath] = await Promise.all([
+      realPath(projectRoot),
+      realPath(appPath),
+    ]);
+    return isWithinDirectory(canonicalProjectRoot, canonicalAppPath);
+  } catch (error) {
+    // A missing app directory yields an empty manifest either way; any other
+    // canonicalization failure fails closed.
+    if (!isNotFoundError(error)) {
+      serverLogger.warn(`Failed to canonicalize app directory:`, error);
+    }
+    return false;
+  }
 }
 
 async function getFsAdapter(): Promise<FileSystemAdapter | undefined> {

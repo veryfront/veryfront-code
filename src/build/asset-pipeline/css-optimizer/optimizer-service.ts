@@ -48,6 +48,7 @@ import {
   globFiles,
   isSafeCSSRelativePath,
 } from "./utils.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 const encoder = new TextEncoder();
 
@@ -533,7 +534,7 @@ export class CSSOptimizerService {
 
   private async planFiles(): Promise<PlannedCSSFile[]> {
     const sourceFiles = this.options.inputFiles.length > 0
-      ? [...this.options.inputFiles].sort()
+      ? [...this.options.inputFiles].sort(compareStrings)
       : await findCSSFiles(this.options.inputDir, {
         fs: this.secureFs,
         maxFiles: MAX_CSS_FILES,
@@ -725,7 +726,7 @@ export class CSSOptimizerService {
 
     let totalBytes = 0;
     const sources: PurgeContentSource[] = [];
-    for (const path of [...paths].sort()) {
+    for (const path of [...paths].sort(compareStrings)) {
       const info = await this.adapter.fs.lstat!(path);
       if (
         !info.isFile ||

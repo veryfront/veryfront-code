@@ -2,6 +2,7 @@ import {
   allocatePort,
   assertCondition,
   ensureCommand,
+  fetchCsrfToken,
   installDependencies,
   type PackedWorkspace,
   packNpmPackage,
@@ -12,6 +13,7 @@ import {
   startDevServer,
   stopDevServer,
   waitForRoute,
+  withCsrfDoubleSubmit,
 } from "./runtime-e2e-helpers.ts";
 import { loadNpmCompatibilityArtifact } from "../ci/npm-compatibility-artifact.ts";
 
@@ -425,7 +427,9 @@ export const POST = createAgUiHandler("content-agent");
     `import { createWorkflowHandler } from "veryfront/workflow";
 import { workflows } from "../../../../lib/workflows.ts";
 
-export const { GET, POST } = createWorkflowHandler(workflows);
+export const { GET, POST } = createWorkflowHandler(workflows, {
+  authorize: () => "critical-flow-test",
+});
 `,
   );
 }
@@ -774,10 +778,25 @@ function scopedLogs(server: { stdout: string[]; stderr: string[] }): string {
     .join("\n\n");
 }
 
-async function postJson(url: URL, body: unknown): Promise<Response> {
+/**
+ * POST as the browser these routes are written for does.
+ *
+ * `createAgUiHandler` and `createWorkflowHandler` are mounted at project API
+ * paths, so the project's `security.csrf` gate covers them in every
+ * environment, deployed and local alike. The framework's own React clients
+ * satisfy it by echoing the issued cookie back in the header; this harness has
+ * to do the same or it is testing a shape no real caller has.
+ */
+async function postJson(
+  url: URL,
+  body: unknown,
+  csrfToken: string,
+): Promise<Response> {
   return await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: withCsrfDoubleSubmit(csrfToken, {
+      "content-type": "application/json",
+    }),
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(30_000),
   });
@@ -829,6 +848,7 @@ async function assertAgentRoute(
   rootUrl: URL,
   label: string,
   marker: string,
+  csrfToken: string,
 ): Promise<void> {
   const response = await postJson(new URL("/api/ag-ui", rootUrl), {
     messages: [{
@@ -836,7 +856,7 @@ async function assertAgentRoute(
       role: "user",
       parts: [{ type: "text", text: marker }],
     }],
-  });
+  }, csrfToken);
   const body = await response.text();
   assertCondition(
     response.ok,
@@ -896,7 +916,18 @@ async function assertRuntimeJourney(
     await waitForRoute(rootUrl.toString(), 60_000);
     await assertApplicationPage(rootUrl, label, "route/page");
     await assertApplicationApi(rootUrl, label);
-    await assertAgentRoute(rootUrl, label, agentMarker);
+
+    // Every mutation below is a project API route behind the project's own
+    // CSRF gate, which local development enforces exactly as a deployed build
+    // does. Reading the token here proves the dev server issues it, and the
+    // mutations then prove the double-submit round trip works in a packed CLI.
+    const csrfToken = await fetchCsrfToken(rootUrl);
+    assertCondition(
+      csrfToken.length > 0,
+      `${label} route/csrf: the dev server served no __Host-vf_csrf cookie on its HTML document`,
+    );
+
+    await assertAgentRoute(rootUrl, label, agentMarker, csrfToken);
     assertCondition(
       provider.received.filter((marker) => marker === agentMarker).length === 1,
       `${label} provider/request: expected exactly one direct-agent request`,
@@ -906,7 +937,7 @@ async function assertRuntimeJourney(
     const startedAt = Date.now();
     const startResponse = await postJson(startUrl, {
       input: { marker: workflowMarker },
-    });
+    }, csrfToken);
     const startBody = await startResponse.text();
     assertCondition(
       startResponse.ok,
