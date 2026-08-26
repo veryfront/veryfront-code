@@ -10,7 +10,9 @@ import { readTypeScriptDecoratorOptions } from "veryfront/extensions/bundler";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
+import { rewriteImportMetaUrl } from "./source-capability-analyzer.ts";
 import {
+  type LocalWorkerSpecifier,
   restrictedRuntimeModuleReason,
   type ValidatedModuleScan,
   validateHTTPImports,
@@ -537,7 +539,8 @@ async function canDirectImportModuleGraph(args: {
 }): Promise<boolean> {
   const { projectDir, fs, allowedHosts } = args;
   const projectRoot = pathHelper.resolve(projectDir);
-  const pending = [pathHelper.resolve(args.modulePath)];
+  const routeModulePath = pathHelper.resolve(args.modulePath);
+  const pending = [routeModulePath];
   const visited = new Set<string>();
   const importMap = await readDenoImportMap(fs, projectRoot);
   let canDirectImport = true;
@@ -547,6 +550,7 @@ async function canDirectImportModuleGraph(args: {
     if (markDirectGraphVisit(visited, filePath)) {
       const moduleResult = await inspectDirectGraphModule({
         filePath,
+        routeModulePath,
         projectRoot,
         fs,
         allowedHosts,
@@ -569,13 +573,14 @@ function markDirectGraphVisit(visited: Set<string>, filePath: string): boolean {
 
 async function inspectDirectGraphModule(options: {
   filePath: string;
+  routeModulePath: string;
   projectRoot: string;
   fs: FileSystem;
   allowedHosts: string[];
   importMap: DenoImportMap | null;
   pending: string[];
 }): Promise<DirectSpecifierResult> {
-  const { filePath, projectRoot, fs, allowedHosts, importMap, pending } = options;
+  const { filePath, routeModulePath, projectRoot, fs, allowedHosts, importMap, pending } = options;
   if (!isWithinDirectory(projectRoot, filePath)) return "reject";
   // JSON is data, so it cannot execute or introduce another module edge.
   if (isJSONModulePath(filePath)) return "direct";
@@ -592,7 +597,15 @@ async function inspectDirectGraphModule(options: {
   // this file's import list nor the HTTP plugin ever sees. Vet it as part of
   // the graph; one whose base this scanner does not follow cannot be walked,
   // so the route bundles instead.
-  if (!enqueueDirectWorkerEntries(scan.localWorkerSpecifiers, projectRoot, filePath, pending)) {
+  if (
+    !enqueueDirectWorkerEntries(
+      scan.localWorkerSpecifiers,
+      projectRoot,
+      filePath,
+      routeModulePath,
+      pending,
+    )
+  ) {
     return "reject";
   }
   const specifierResult = inspectDirectModuleSpecifiers({
@@ -619,14 +632,17 @@ async function readDirectGraphSource(fs: FileSystem, filePath: string): Promise<
 }
 
 function enqueueDirectWorkerEntries(
-  workerSpecifiers: readonly string[],
+  workerSpecifiers: readonly LocalWorkerSpecifier[],
   projectRoot: string,
   filePath: string,
+  routeModulePath: string,
   pending: string[],
 ): boolean {
-  for (const specifier of workerSpecifiers) {
+  for (const worker of workerSpecifiers) {
+    const specifier = worker.specifier;
     if (!specifier.startsWith("./") && !specifier.startsWith("../")) return false;
-    pending.push(resolveContainedLocalModule(projectRoot, filePath, specifier));
+    const importer = worker.resolutionBase === "route" ? routeModulePath : filePath;
+    pending.push(resolveContainedLocalModule(projectRoot, importer, specifier));
   }
   return true;
 }
@@ -1310,15 +1326,17 @@ function createNamespaceOnLoadHandler(options: {
         FILE_EXTENSIONS,
         projectDir,
       );
+      const executableModule = !isJSONModulePath(filePath);
       // A `.json` module is data the bundler parses as JSON, so it can neither
       // execute nor name an import. Scanning it as JavaScript would reject an
       // ordinary value such as `{ "label": "Function" }`.
-      if (!isJSONModulePath(filePath)) {
+      if (executableModule) {
         const scan = await validateHTTPImports(contents, allowedHosts);
         await validateBundledLocalWorkerEntries({
           sourceSnapshot,
           projectDir,
           routeModulePath,
+          modulePath: filePath,
           scan,
           allowedHosts,
           importMap: workerImportMap,
@@ -1326,7 +1344,9 @@ function createNamespaceOnLoadHandler(options: {
       }
 
       return {
-        contents,
+        contents: executableModule
+          ? await rewriteBundledImportMetaUrl(contents, pathHelper.toFileUrl(filePath).href)
+          : contents,
         loader: getLoaderForFile(filePath),
         resolveDir: pathHelper.dirname(filePath),
       };
@@ -1336,6 +1356,14 @@ function createNamespaceOnLoadHandler(options: {
       return { errors: [{ text: `Failed to load: ${msg}` }] };
     }
   });
+}
+
+async function rewriteBundledImportMetaUrl(source: string, moduleUrl: string): Promise<string> {
+  const rewritten = await rewriteImportMetaUrl(source, moduleUrl);
+  if (rewritten !== null) return rewritten;
+  throw new TypeError(
+    "[API] handler build failed: import.meta.url cannot be preserved because the module source could not be parsed",
+  );
 }
 
 function createRouteRuntimeShimPlugin(contents: string): Plugin {
@@ -1358,6 +1386,7 @@ async function validateBundledLocalWorkerEntries(options: {
   sourceSnapshot: ProjectSourceSnapshot;
   projectDir: string;
   routeModulePath: string;
+  modulePath: string;
   scan: ValidatedModuleScan;
   allowedHosts: string[];
   importMap: DenoImportMap | null;
@@ -1366,13 +1395,15 @@ async function validateBundledLocalWorkerEntries(options: {
     sourceSnapshot,
     projectDir,
     routeModulePath,
+    modulePath,
     scan,
     allowedHosts,
     importMap,
   } = options;
   const visited = new Set<string>();
-  for (const workerSpecifier of scan.localWorkerSpecifiers) {
-    const workerPath = resolveContainedLocalModule(projectDir, routeModulePath, workerSpecifier);
+  for (const worker of scan.localWorkerSpecifiers) {
+    const importer = worker.resolutionBase === "route" ? routeModulePath : modulePath;
+    const workerPath = resolveContainedLocalModule(projectDir, importer, worker.specifier);
     await validateBundledLocalWorkerGraph({
       sourceSnapshot,
       projectDir,
@@ -1429,8 +1460,8 @@ async function validateBundledLocalWorkerGraph(options: {
       if (localTarget !== null) pending.push(localTarget);
     }
 
-    for (const workerSpecifier of scan.localWorkerSpecifiers) {
-      pending.push(resolveContainedLocalModule(projectDir, filePath, workerSpecifier));
+    for (const worker of scan.localWorkerSpecifiers) {
+      pending.push(resolveContainedLocalModule(projectDir, filePath, worker.specifier));
     }
   }
 }
@@ -1662,20 +1693,27 @@ function createProjectBoundaryPlugin(
       build.onLoad({ filter: /.*/ }, async (args) => {
         try {
           const source = await sourceSnapshot.read(args.path);
+          const executableModule = !isJSONModulePath(source.logicalPath);
           // JSON is parsed as data, never executed; see the note above.
-          if (!isJSONModulePath(source.logicalPath)) {
+          if (executableModule) {
             const scan = await validateHTTPImports(source.contents, allowedHosts);
             await validateBundledLocalWorkerEntries({
               sourceSnapshot,
               projectDir,
               routeModulePath,
+              modulePath: source.logicalPath,
               scan,
               allowedHosts,
               importMap: workerImportMap,
             });
           }
           return {
-            contents: source.contents,
+            contents: executableModule
+              ? await rewriteBundledImportMetaUrl(
+                source.contents,
+                pathHelper.toFileUrl(source.logicalPath).href,
+              )
+              : source.contents,
             loader: getLoaderForFile(source.logicalPath),
             resolveDir: pathHelper.dirname(source.logicalPath),
           };
@@ -1750,6 +1788,7 @@ function buildTranspiledModuleSource(
         sourceSnapshot,
         projectDir,
         routeModulePath: resolvedPath,
+        modulePath: resolvedPath,
         scan: sourceScan,
         allowedHosts,
         importMap: workerImportMap,
@@ -1818,9 +1857,9 @@ function buildTranspiledModuleSource(
           'import { createRequire as __vf_createRequire } from "node:module";',
           `var require = __vf_createRequire(${safeProjectDir});`,
         ].join("\n");
-      const routeSourceUrl = JSON.stringify(pathHelper.toFileUrl(resolvedPath).href);
+      const routeSourceUrl = pathHelper.toFileUrl(resolvedPath).href;
       const workerShim = [
-        `const __vf_routeSourceUrl = ${routeSourceUrl};`,
+        `const __vf_routeSourceUrl = ${JSON.stringify(routeSourceUrl)};`,
         `const Worker = typeof globalThis.Worker === "function" ? class extends globalThis.Worker {`,
         `  constructor(specifier, options) {`,
         `    super(typeof specifier === "string" && (specifier.startsWith("./") || specifier.startsWith("../")) ? new URL(specifier, __vf_routeSourceUrl) : specifier, options);`,
@@ -1846,9 +1885,6 @@ function buildTranspiledModuleSource(
         // side of a collision. A raw banner would redeclare a route import such
         // as `import { Worker } from "worker-package"` and emit invalid ESM.
         inject: [ROUTE_RUNTIME_SHIM_SPECIFIER],
-        define: {
-          "import.meta.url": routeSourceUrl,
-        },
         external: [
           "zod",
           "node:*",
@@ -1859,7 +1895,7 @@ function buildTranspiledModuleSource(
           ...userExternals,
         ],
         stdin: {
-          contents: source,
+          contents: await rewriteBundledImportMetaUrl(source, routeSourceUrl),
           loader,
           resolveDir: pathHelper.dirname(resolvedPath),
           sourcefile: resolvedPath,

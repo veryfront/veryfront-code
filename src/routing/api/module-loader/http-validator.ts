@@ -1234,7 +1234,9 @@ const CODE_EVALUATION_MODULES = new Set([
   "inspector/promises",
   "node:inspector",
   "node:inspector/promises",
+  "node:repl",
   "node:vm",
+  "repl",
   "vm",
 ]);
 
@@ -1263,6 +1265,7 @@ const UNVALIDATED_SUBPROCESS_LOADER_MODULES = new Set([
   "child_process",
   "node:cluster",
   "cluster",
+  "node:test",
 ]);
 
 /**
@@ -1321,6 +1324,7 @@ type WorkerUrlClassification =
     kind: "local";
     specifier: string | null;
     requiresUnqualifiedWorkerShim?: boolean;
+    resolutionBase: "module" | "route";
   };
 
 const REMOTE_WORKER: WorkerUrlClassification = { kind: "remote" };
@@ -1333,7 +1337,7 @@ function classifyWorkerUrlLiteral(
 ): WorkerUrlClassification {
   if (REMOTE_OR_INLINE_WORKER_URL.test(value)) return REMOTE_WORKER;
   if (FILE_WORKER_URL.test(value)) return FILE_WORKER;
-  return { kind: "local", specifier };
+  return { kind: "local", specifier, resolutionBase: "route" };
 }
 
 /**
@@ -1352,12 +1356,16 @@ function classifyWorkerUrlBase(
   specifier: string,
 ): WorkerUrlClassification {
   let i = skipWhitespaceAndComments(source, index);
-  if (source[i] === ")" || source[i] === undefined) return { kind: "local", specifier };
+  if (source[i] === ")" || source[i] === undefined) {
+    return { kind: "local", specifier, resolutionBase: "module" };
+  }
   if (source[i] !== ",") return DYNAMIC_WORKER;
 
   i = skipWhitespaceAndComments(source, i + 1);
-  if (source[i] === ")") return { kind: "local", specifier };
-  if (IMPORT_META_URL_BASE.test(source.slice(i))) return { kind: "local", specifier };
+  if (source[i] === ")") return { kind: "local", specifier, resolutionBase: "module" };
+  if (IMPORT_META_URL_BASE.test(source.slice(i))) {
+    return { kind: "local", specifier, resolutionBase: "module" };
+  }
 
   const base = readConcatenatedStringLiteral(source, i);
   if (base === null) return DYNAMIC_WORKER;
@@ -1494,9 +1502,10 @@ function workerViolationDetail(violation: WorkerViolation): string {
 }
 
 /**
- * The module specifiers of every local worker this source starts, resolved
- * against the importing module, and null for a local worker whose base this
- * scanner does not follow.
+ * The module specifiers of every local worker this source starts, and null for
+ * a local worker whose base this scanner does not follow. Callers that need to
+ * distinguish module-relative URLs from route-relative string Workers must use
+ * the structured entries returned by `validateHTTPImports`.
  *
  * A worker entry is executed by the worker's own loader, which the HTTP plugin
  * never sees, so a caller that vets a module graph must vet these entries too.
@@ -1534,7 +1543,12 @@ export interface ValidatedModuleScan {
   readonly hasUnconstrainedDynamicImport: boolean;
   readonly requiresBundling: boolean;
   readonly parserBacked: boolean;
-  readonly localWorkerSpecifiers: readonly string[];
+  readonly localWorkerSpecifiers: readonly LocalWorkerSpecifier[];
+}
+
+export interface LocalWorkerSpecifier {
+  readonly specifier: string;
+  readonly resolutionBase: "module" | "route";
 }
 
 export async function validateHTTPImports(
@@ -1595,7 +1609,9 @@ export async function validateHTTPImports(
     requiresBundling: scan.requiresBundling,
     parserBacked: analysis !== null,
     localWorkerSpecifiers: workers.flatMap((worker) =>
-      worker.kind === "local" && worker.specifier !== null ? [worker.specifier] : []
+      worker.kind === "local" && worker.specifier !== null
+        ? [{ specifier: worker.specifier, resolutionBase: worker.resolutionBase }]
+        : []
     ),
   };
 }

@@ -408,6 +408,43 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
       }
     });
 
+    it("preserves the fetched remote module URL while bundling", async () => {
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin(["https://esm.sh"]);
+      plugin.setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+
+      const resolvedUrl = "https://esm.sh/module?target=es2020&bundle=true";
+      try {
+        installMockFetch(
+          (async () => {
+            return new Response(`export const moduleUrl = import.meta.url;`, {
+              status: 200,
+            });
+          }) as typeof fetch,
+        );
+        const result = await loadHandler({
+          path: "https://esm.sh/module",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+
+        assertEquals(
+          (result as { contents: string }).contents,
+          `export const moduleUrl = ${JSON.stringify(resolvedUrl)};`,
+          "a remote dependency must not resolve import.meta.url to the requesting route",
+        );
+      } finally {
+        restoreMockFetch();
+      }
+    });
+
     it("rejects local Worker entries declared by a fetched remote module", async () => {
       let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
       const plugin = createHTTPPlugin(["https://esm.sh"]);

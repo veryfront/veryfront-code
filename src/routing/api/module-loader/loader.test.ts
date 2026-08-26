@@ -3094,7 +3094,10 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     // A `.json` module is parsed as data, so it can neither execute nor name an
     // import. Scanning it as JavaScript rejected ordinary values.
     const tmpDir = await makeTempDir();
-    await fs.writeTextFile(join(tmpDir, "labels.json"), `{ "label": "Function" }\n`);
+    await fs.writeTextFile(
+      join(tmpDir, "labels.json"),
+      `{ "label": "Function import.meta.url" }\n`,
+    );
 
     const modulePath = join(tmpDir, "json-data-route.ts");
     await fs.writeTextFile(
@@ -3114,7 +3117,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
 
     assertEquals(
       await getText(route),
-      "Function",
+      "Function import.meta.url",
       "JSON data must not be read as executable source",
     );
   });
@@ -3125,7 +3128,10 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     // an import. The regex literal keeps the route off the direct path, so this
     // exercises the adapter loader that reads the JSON.
     const tmpDir = await makeTempDir();
-    await fs.writeTextFile(join(tmpDir, "labels.json"), `{ "label": "Function" }\n`);
+    await fs.writeTextFile(
+      join(tmpDir, "labels.json"),
+      `{ "label": "Function import.meta.url" }\n`,
+    );
 
     const modulePath = join(tmpDir, "bundled-json-route.ts");
     await fs.writeTextFile(
@@ -3146,7 +3152,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
 
     assertEquals(
       await getText(route),
-      "Function",
+      "Function import.meta.url",
       "bundled JSON data must not be read as executable source",
     );
   });
@@ -3202,6 +3208,40 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       await getText(route),
       "beside-routex",
       "bundling must preserve the route module as the base for adjacent resources",
+    );
+  });
+
+  denoIt("preserves import.meta.url for dependencies when bundling", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.mkdir(join(tmpDir, "lib"));
+    await fs.writeTextFile(join(tmpDir, "asset.txt"), "beside-route");
+    await fs.writeTextFile(join(tmpDir, "lib", "asset.txt"), "beside-helper");
+    await fs.writeTextFile(
+      join(tmpDir, "lib", "helper.ts"),
+      `export const readAdjacent = () => Deno.readTextFile(` +
+        `new URL("./asset.txt", import.meta.url));`,
+    );
+    const modulePath = join(tmpDir, "dependency-url-route.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { readAdjacent } from "./lib/helper.ts";`,
+        `const marker = /x/;`,
+        `export const GET = async () => new Response((await readAdjacent()) + marker.source);`,
+      ].join("\n"),
+    );
+
+    const route = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+
+    assertEquals(
+      await getText(route),
+      "beside-helperx",
+      "each bundled module must resolve adjacent resources against its own URL",
     );
   });
 
@@ -3963,7 +4003,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
-  it("validates bundled helper Worker entries against the route-relative execution base", async () => {
+  it("validates bundled helper Worker entries against their execution base", async () => {
     for (
       const { aliasInitializer, workerUrlExpression } of [
         { aliasInitializer: `globalThis`, workerUrlExpression: `"./worker.ts"` },
@@ -4032,8 +4072,10 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
             config: undefined,
           }),
         Error,
-        "Remote import blocked",
-        `Worker ${workerUrlExpression} via ${aliasInitializer} in a bundled helper must be validated against the route execution base`,
+        workerUrlExpression.includes("import.meta.url")
+          ? "mutable after validation"
+          : "Remote import blocked",
+        `Worker ${workerUrlExpression} via ${aliasInitializer} must use the matching module or route base`,
       );
     }
   });

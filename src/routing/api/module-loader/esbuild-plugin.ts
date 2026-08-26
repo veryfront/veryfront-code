@@ -14,6 +14,7 @@ import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs
 import * as pathHelper from "#veryfront/compat/path";
 import type { Message, Plugin } from "veryfront/extensions/bundler";
 import { isAllowedRemoteHost, validateHTTPImports } from "./http-validator.ts";
+import { rewriteImportMetaUrl } from "./source-capability-analyzer.ts";
 import {
   guardedOutboundFetch,
   OutboundRequestBlockedError,
@@ -71,6 +72,7 @@ type RemoteModuleFetchResult =
 async function validateRemoteModuleSource(
   contents: string,
   allowedHosts: string[],
+  moduleUrl: string,
 ): Promise<{
   readonly contents: string;
   readonly loader: "js";
@@ -81,7 +83,13 @@ async function validateRemoteModuleSource(
       "[API] handler build failed: a fetched remote module cannot start a local Worker whose graph is outside remote source validation.",
     );
   }
-  return { contents, loader: "js" };
+  const rewritten = await rewriteImportMetaUrl(contents, moduleUrl);
+  if (rewritten === null) {
+    throw new TypeError(
+      "[API] handler build failed: import.meta.url cannot be preserved because the remote module source could not be parsed",
+    );
+  }
+  return { contents: rewritten, loader: "js" };
 }
 
 function createHTTPModuleCache(projectDir: string | undefined): HTTPModuleCache | null {
@@ -411,7 +419,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
               const integrity = await computeIntegrity(text);
 
               if (integrity === lockfileEntry.integrity) {
-                const loaded = await validateRemoteModuleSource(text, allowedHosts);
+                const loaded = await validateRemoteModuleSource(text, allowedHosts, res.url);
                 await moduleCache?.write(args.path, text, lockfileEntry.resolved, integrity);
                 await moduleCache?.write(
                   lockfileEntry.resolved,
@@ -451,7 +459,11 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
                 await readCachedModule(args.path, lockfileEntry.integrity);
             if (cachedText) {
               logger.warn(`[http] serving cached remote import for ${args.path}`);
-              return await validateRemoteModuleSource(cachedText, allowedHosts);
+              return await validateRemoteModuleSource(
+                cachedText,
+                allowedHosts,
+                lockfileEntry.resolved,
+              );
             }
           }
         }
@@ -473,7 +485,11 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
               await readCachedModule(args.path, lockfileEntry?.integrity);
           if (cachedText) {
             logger.warn(`[http] serving cached remote import for ${args.path}`);
-            return await validateRemoteModuleSource(cachedText, allowedHosts);
+            return await validateRemoteModuleSource(
+              cachedText,
+              allowedHosts,
+              lockfileEntry?.resolved ?? requestUrl,
+            );
           }
 
           logger.error(`[http] fetch failed ${requestUrl} ${res.status}`);
@@ -489,7 +505,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         const text = res.text;
         const resolvedUrl = res.url;
         const integrity = await computeIntegrity(text);
-        const loaded = await validateRemoteModuleSource(text, allowedHosts);
+        const loaded = await validateRemoteModuleSource(text, allowedHosts, resolvedUrl);
 
         await persistLockfileEntry(args.path, {
           resolved: resolvedUrl,
