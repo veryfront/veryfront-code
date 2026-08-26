@@ -1840,8 +1840,7 @@ const SCHEME_URL = new RegExp(
 // minimum is not enough to separate a scheme from prose glued to a drive letter.
 // A glued *URL* still redacts: the match simply starts later in the token, so
 // `Failed athttps:/registry.internal/x` gives `Failed at[url]` and keeps `at`.
-const ASCII_SPECIAL_SCHEME_SOURCE = String
-  .raw`(?:[hH][tT][tT][pP][sS]?|[wW][sS][sS]?|[fF][tT][pP])`;
+const ASCII_SPECIAL_SCHEME_SOURCE = "(?:[hH][tT][tT][pP][sS]?|[wW][sS][sS]?|[fF][tT][pP])";
 const MALFORMED_SCHEME_URL = new RegExp(
   String.raw`${ASCII_SPECIAL_SCHEME_SOURCE}:/(?!/)(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
   "gu",
