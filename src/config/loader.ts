@@ -1738,7 +1738,30 @@ const CSI_GLUED_URL =
 // alphabetic message with no colon costs O(n^2) -- 100k characters measured at
 // ~17.9s, versus ~34ms bounded. Every registered scheme is far shorter than 31.
 const SCHEME_URL =
-  /[A-Za-z][A-Za-z0-9+.-]{1,31}:\/\/(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\))+/g;
+  /[A-Za-z][A-Za-z0-9+.-]{1,31}:\/\/(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\)|[()](?=[^\s"']))+/g;
+// The third alternative -- a lone `(` or `)` followed by something non-blank --
+// is what keeps an unbalanced parenthesis from ending the match. Without it the
+// hostname redacted but the tail did not, so
+// `https://host/a(TOKEN/c.ts` came back as `[url](TOKEN/c.ts` and a query-string
+// token printed verbatim into the caller-visible error
+// (veryfront-issue-inbox#845). It reproduces on `origin/main`, so this is a
+// pre-existing gap rather than one introduced with the URL passes.
+//
+// The lookahead is load-bearing, not decoration. `Failed (see https://host/x)`
+// must keep its own closing bracket: a trailing `)` has nothing but the end of
+// the token after it, so it stays outside the match and the sentence still
+// reads as prose.
+//
+// Dropping the balanced branch instead would be simpler and 25x faster, and was
+// rejected. It takes the quadratic guard's probe from ~45ms to ~0.2ms, which
+// leaves that guard passing while measuring nothing -- a failure mode that
+// already defanged it once -- and it emits `[url])` for a URL ending in `(b)`,
+// adding a cosmetic artefact to a change whose purpose is removing one.
+//
+// Both paren branches are ambiguous on `(`, so the cost was measured, not
+// assumed: on the guard's own `"ab://(".repeat(20_000)` input the probe moved
+// 22ms -> 53ms against an unchanged control, still 2x per doubling.
+//
 // Both the userinfo run and the parenthesised interior are length-bounded, and
 // the userinfo run also stops at `/`. Neither bound is cosmetic. An unbounded
 // greedy interior rescans the rest of the message from every `(` that never
@@ -1782,7 +1805,7 @@ const SCHEME_URL =
 // A glued *URL* still redacts: the match simply starts later in the token, so
 // `Failed athttps:/registry.internal/x` gives `Failed at[url]` and keeps `at`.
 const MALFORMED_SCHEME_URL =
-  /(?:https?|wss?|ftp):\/(?!\/)(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\))+/gi;
+  /(?:https?|wss?|ftp):\/(?!\/)(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\)|[()](?=[^\s"']))+/gi;
 // The zero-slash form of a WHATWG special scheme. `https:registry.internal/x`
 // parses to `https://registry.internal/x`, so the hostname is just as real as in
 // the two-slash form, but neither pattern above matches it -- both require at
@@ -1796,14 +1819,14 @@ const MALFORMED_SCHEME_URL =
 // literal list does not, so `HTTPS:registry.internal/x` matched nothing at all
 // and the hostname survived into the caller-visible detail.
 const ZERO_SLASH_SCHEME_URL =
-  /(?:https?|wss?|ftp):(?![\/\s])(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\))+/gi;
+  /(?:https?|wss?|ftp):(?![\/\s])(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\)|[()](?=[^\s"']))+/gi;
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
 // Case-insensitive for the same reason. `FILE:///home/alice` otherwise fell
 // past this pattern to SCHEME_URL and came back as `[url]`. Not a leak -- the
 // home directory was redacted either way -- but it reported a local path as a
 // remote URL, which is this PR's original misclassification running backwards.
-const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/(?:[^\s"'()]|\([^\s"']{0,512}\))+/gi;
+const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/(?:[^\s"'()]|\([^\s"']{0,512}\)|[()](?=[^\s"']))+/gi;
 // Unanchored on the left. A boundary here refuses a path glued to preceding
 // text (`Failed atC:\\Users\\alice\\...`), and neither URL pattern can claim a
 // backslash form, so the path would reach the caller intact. The scheme match in

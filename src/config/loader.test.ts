@@ -1515,6 +1515,42 @@ export default config as const;
         assertStringIncludes(completed.message, "[path]");
       });
 
+      it("redacts a URL whose parentheses do not balance", async () => {
+        // The shared interior matched either a non-paren character or a BALANCED
+        // `(...)` pair, so a lone paren ended the match: the hostname redacted
+        // and the tail printed verbatim, which is where a query-string token
+        // sits (veryfront-issue-inbox#845). Reproduces on `origin/main`, so this
+        // is a pre-existing gap, not one introduced with the URL passes.
+        const unclosed = await loadFailure(
+          "vf-config-paren-unclosed-",
+          `throw new Error("https://registry.internal/a(SUPERSECRET/c.ts");\n`,
+        );
+
+        assertEquals(unclosed.message.includes("SUPERSECRET"), false);
+        assertEquals(unclosed.message.includes("registry.internal"), false);
+        assertStringIncludes(unclosed.message, "[url]");
+
+        const unopened = await loadFailure(
+          "vf-config-paren-unopened-",
+          `throw new Error("https://registry.internal/a)SUPERSECRET/c.ts");\n`,
+        );
+
+        assertEquals(unopened.message.includes("SUPERSECRET"), false);
+        assertStringIncludes(unopened.message, "[url]");
+
+        // The counterpart that keeps the fix honest. A trailing `)` has nothing
+        // but the end of the token after it, so the lookahead leaves it outside
+        // the match and the sentence keeps its own bracket. Without this the
+        // obvious wider fix -- taking any paren -- would swallow it.
+        const prose = await loadFailure(
+          "vf-config-paren-prose-",
+          `throw new Error("Failed (see https://registry.internal/x)");\n`,
+        );
+
+        assertEquals(prose.message.includes("registry.internal"), false);
+        assertStringIncludes(prose.message, "(see [url])");
+      });
+
       it("reports a CSI-glued file URL as a path, not a remote URL", async () => {
         const error = await loadFailure(
           "vf-config-csi-glued-file-url-",
