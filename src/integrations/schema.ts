@@ -334,6 +334,16 @@ export const getIntegrationEndpointParamSchema = defineSchema((v) =>
         message: "Integration endpoint enum is supported only for string parameters",
       });
     }
+    if (
+      parameter.enum !== undefined && parameter.default !== undefined &&
+      (typeof parameter.default !== "string" || !parameter.enum.includes(parameter.default))
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["default"],
+        message: "Integration endpoint default must be one of the enum values",
+      });
+    }
   })
 );
 export const IntegrationEndpointParamSchema = lazySchema(getIntegrationEndpointParamSchema);

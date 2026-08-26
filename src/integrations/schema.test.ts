@@ -28,6 +28,21 @@ describe("IntegrationEndpointParamSchema", () => {
     assertEquals(parsed.enum, ["datadoghq.com", "datadoghq.eu"]);
   });
 
+  it("rejects defaults outside a declared value allowlist", () => {
+    assertThrows(
+      () =>
+        getIntegrationEndpointParamSchema().parse({
+          type: "string",
+          in: "path",
+          description: "Datadog site domain",
+          default: "attacker.example",
+          enum: ["datadoghq.com", "datadoghq.eu"],
+        }),
+      Error,
+      "must be one of the enum values",
+    );
+  });
+
   it("rejects value allowlists on non-string parameters", () => {
     assertThrows(
       () =>
