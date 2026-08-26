@@ -751,11 +751,9 @@ export function GET() {
     });
   });
 
-  // Production ran exactly this flag combination and every project API route
-  // returned a masked 500.
-  it("serves API routes when a compiled binary cannot honour WORKER_ISOLATION_API but host execution is granted", async () => {
+  it("fails closed when API isolation conflicts with a broad host execution grant", async () => {
     const projectDir = await createTestProject(
-      "isolation-downgrade-test",
+      "isolation-fail-closed-test",
       `
 export default function Home() {
   return <div>Home Page</div>;
@@ -770,26 +768,32 @@ export function GET() {
       },
     );
 
-    await withServer(projectDir, async (server) => {
-      const response = await fetch(`http://127.0.0.1:${server.port}/api/hello`);
-      const body = await response.text();
+    await withServer(
+      projectDir,
+      async (server) => {
+        const response = await fetch(`http://127.0.0.1:${server.port}/api/hello`);
+        const body = await response.text();
 
-      assertEquals(
-        response.status,
-        200,
-        `Should return 200\nResponse body: ${body}\n${server.logs.join("").slice(-16000)}`,
-      );
-      assertEquals(JSON.parse(body).message, "Hello from API");
-      assertStringIncludes(
-        server.logs.join(""),
-        "WORKER_ISOLATION_API downgraded",
-        "the downgrade must be logged",
-      );
-    }, "production", {
-      WORKER_ISOLATION_ENABLED: "1",
-      WORKER_ISOLATION_API: "1",
-      VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION: "1",
-    });
+        assertEquals(
+          response.status,
+          503,
+          `Should fail closed as 503, not execute in the host realm\nResponse body: ${body}\n${
+            server.logs.join("").slice(-16000)
+          }`,
+        );
+        assertStringIncludes(
+          body,
+          "WORKER_ISOLATION_API",
+          "the response must name the flag",
+        );
+      },
+      "production",
+      {
+        WORKER_ISOLATION_ENABLED: "1",
+        WORKER_ISOLATION_API: "1",
+        VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION: "1",
+      },
+    );
   });
 
   it("returns a typed 503 for API routes when WORKER_ISOLATION_API is unserviceable and ungranted", async () => {
@@ -809,22 +813,27 @@ export function GET() {
       },
     );
 
-    await withServer(projectDir, async (server) => {
-      const response = await fetch(`http://127.0.0.1:${server.port}/api/hello`);
-      const body = await response.text();
+    await withServer(
+      projectDir,
+      async (server) => {
+        const response = await fetch(`http://127.0.0.1:${server.port}/api/hello`);
+        const body = await response.text();
 
-      assertEquals(
-        response.status,
-        503,
-        `Should fail closed as 503, not a masked 500\nResponse body: ${body}\n${
-          server.logs.join("").slice(-16000)
-        }`,
-      );
-      assertStringIncludes(body, "WORKER_ISOLATION_API", "the response must name the flag");
-    }, "production", {
-      WORKER_ISOLATION_ENABLED: "1",
-      WORKER_ISOLATION_API: "1",
-    });
+        assertEquals(
+          response.status,
+          503,
+          `Should fail closed as 503, not a masked 500\nResponse body: ${body}\n${
+            server.logs.join("").slice(-16000)
+          }`,
+        );
+        assertStringIncludes(body, "WORKER_ISOLATION_API", "the response must name the flag");
+      },
+      "production",
+      {
+        WORKER_ISOLATION_ENABLED: "1",
+        WORKER_ISOLATION_API: "1",
+      },
+    );
   });
 
   it("should drain an active SSE response before production serve exits on SIGTERM", async () => {

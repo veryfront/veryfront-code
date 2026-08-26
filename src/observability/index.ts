@@ -177,5 +177,4 @@ export {
   type ApplicationErrorReporterSession,
   captureApplicationError,
   flushApplicationErrors,
-  initializeApplicationErrorReporter,
 } from "./application-errors.ts";

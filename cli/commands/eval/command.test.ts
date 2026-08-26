@@ -14,8 +14,10 @@ import {
   runEval,
 } from "veryfront/eval";
 import { createEvalReportExporterRegistry } from "veryfront/extensions/eval";
-import { markCurrentVeryfrontCloudBillingGroupUsed } from "veryfront/provider";
 import type { ModelRuntime } from "veryfront/provider";
+import {
+  markCurrentVeryfrontCloudBillingGroupUsed,
+} from "#veryfront/provider/veryfront-cloud/context.ts";
 import { type Tool, tool } from "veryfront/tool";
 import type { ProjectAgentRuntimeDiscovery } from "../../../src/agent/project/agent-runtime.ts";
 import { getActiveSourceIntegrationPolicy } from "../../../src/integrations/source-policy-context.ts";

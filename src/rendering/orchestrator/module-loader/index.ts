@@ -50,6 +50,7 @@ import {
   getModuleCacheKey,
   resolveCachedModulePath,
 } from "./module-cache-lookup.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 export { isBuildFailure } from "./build-failure.ts";
 
@@ -261,7 +262,7 @@ async function createSourceGraphPlan(
     }
   }
 
-  const sortedPaths = [...nodes.keys()].sort();
+  const sortedPaths = [...nodes.keys()].sort(compareStrings);
   const artifactIds = new Map(
     sortedPaths.map((path, index) => [path, index.toString(36)]),
   );

@@ -14,9 +14,12 @@ export interface DerivedSecurityContext {
 
 export interface DeriveSecurityContextOptions {
   /**
-   * Apply security defaults used by production runtimes. Defaults to the
-   * process environment; callers with an independently trusted runtime
-   * classification may override it explicitly.
+   * The caller's runtime classification.
+   *
+   * Security defaults no longer vary by environment: `security.csrf` resolves
+   * the same way everywhere so a mutation that works locally works after
+   * deploy. The option remains accepted, and validated, because callers pass
+   * it and an unrecognised or hostile option shape must still fail closed.
    */
   productionDefaults?: boolean;
   /**
@@ -267,10 +270,18 @@ export function deriveSecurityContext(
   const normalized: SecurityConfig = Object.assign(Object.create(null), snapshot);
   normalized.cors ??= false;
 
-  const productionDefaults = readProductionDefaults(options) ?? isProduction();
-  if (normalized.csrf === undefined && productionDefaults) {
-    normalized.csrf = true;
-  }
+  // The CSRF default is environment independent. Filling it in only for
+  // production meant a browser mutation that omitted the double-submit header
+  // passed every local run and then answered 403 on the first deployed build,
+  // so the contract was discoverable only after deploy. Every environment now
+  // resolves the same value, and `security.csrf: false` is the one documented
+  // way to leave mutations unchecked.
+  //
+  // `readProductionDefaults` still runs: it rejects hostile option shapes
+  // before any of them can reach a security decision, and callers keep passing
+  // the option even though it no longer selects the CSRF default.
+  readProductionDefaults(options);
+  normalized.csrf ??= true;
 
   // Assigned unconditionally, never merged. `SecurityConfig` carries an index
   // signature, so the clone above would happily copy a `derivedCsp` a project
@@ -332,11 +343,14 @@ export class SecurityConfigLoader {
     const derived = deriveSecurityContext(cfg, { productionDefaults: production });
     const security = derived.securityConfig;
 
-    if (production && !security.cors && !security.csrf) {
+    // `deriveSecurityContext` now defaults `security.csrf` to `true`, so this
+    // is reachable only when the project wrote `security.csrf: false` itself.
+    // The warning therefore reports a deliberate opt-out, not an unconfigured
+    // default.
+    if (production && !security.csrf) {
       logger.warn(
-        "Neither CORS nor CSRF protection is configured. " +
-          "CORS is disabled by default (same-origin only). " +
-          "Consider explicitly configuring security.cors and security.csrf.",
+        "security.csrf is set to false, so cross-site request forgery protection is off. " +
+          "CORS is not a substitute. Remove security.csrf: false before deploying.",
       );
     }
 

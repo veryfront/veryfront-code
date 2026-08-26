@@ -35,11 +35,11 @@ import {
 } from "veryfront/extensions/eval";
 import { createLLMProviderRegistry, LLMProviderRegistryName } from "veryfront/extensions/llm";
 import { exportEvalReport, resolveEvalRunProvenance, runEval } from "veryfront/eval";
+import { getVeryfrontCloudBootstrap } from "../../../src/platform/cloud/resolver.ts";
 import {
   getCurrentVeryfrontCloudContext,
-  getVeryfrontCloudBootstrap,
   runWithVeryfrontCloudContextAsync,
-} from "veryfront/provider";
+} from "../../../src/provider/veryfront-cloud/context.ts";
 import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
 import { brand, dim } from "#cli/ui";
 import { cliLogger, exitProcess, isQuiet, VERSION } from "#cli/utils";

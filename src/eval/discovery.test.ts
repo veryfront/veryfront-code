@@ -145,6 +145,43 @@ describe("eval/discovery", () => {
     assertEquals(result.errors.every((entry) => entry.error.includes("Duplicate eval id")), true);
   });
 
+  it("orders discovered evals and errors by code unit", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/evals/alpha.eval.ts": "",
+      "/project/evals/Alpha.eval.ts": "",
+      "/project/evals/broken-alpha.eval.ts": "",
+      "/project/evals/broken-Alpha.eval.ts": "",
+    });
+    const result = await discoverEvals({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+      moduleLoader: async (filePath) => {
+        if (filePath.includes("broken")) {
+          throw new Error(`missing import in ${filePath}`);
+        }
+        return {
+          default: evalAgent({
+            id: filePath.includes("Alpha") ? "eval:Alpha" : "eval:alpha",
+            target: "agent:researcher",
+            dataset: datasets.inline([{ id: "q1", input: "capital" }]),
+          }),
+        };
+      },
+    });
+
+    assertEquals(
+      result.evals.map((item) => item.id),
+      ["eval:Alpha", "eval:alpha"],
+      "eval discovery result order must use code-unit ordering for eval ids",
+    );
+    assertEquals(
+      result.errors.map((entry) => entry.filePath),
+      ["evals/broken-Alpha.eval.ts", "evals/broken-alpha.eval.ts"],
+      "eval discovery error order must use code-unit ordering for eval file paths",
+    );
+  });
+
   it("resolves the evals directory against the project dir for local filesystems", async () => {
     const adapter = createRuntimeAdapter({
       "/project/evals/local.eval.ts": "",

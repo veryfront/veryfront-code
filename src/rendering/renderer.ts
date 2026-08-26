@@ -148,8 +148,8 @@ export interface RendererOptions {
 
 /**
  * Cached render result for Singleflight deduplication.
- * Contains only the serializable parts of RenderResult (no stream).
- * Each caller gets a fresh RenderResult from this cached data.
+ * Contains serializable cache data plus an uncached leader's stream.
+ * Singleflight entries never carry streams because cache-sensitive renders bypass it.
  */
 interface CachedRenderData {
   html: string;
@@ -160,6 +160,13 @@ interface CachedRenderData {
   pageModule?: RenderResult["pageModule"];
   headers?: RenderResult["headers"];
   cookies?: RenderResult["cookies"];
+  stream?: RenderResult["stream"];
+}
+
+function getStreamAllReady(stream: RenderResult["stream"]): Promise<unknown> | null {
+  const allReady = (stream as { allReady?: unknown } | null | undefined)?.allReady;
+  if (!allReady || typeof (allReady as { then?: unknown }).then !== "function") return null;
+  return allReady as Promise<unknown>;
 }
 
 function createCacheRenderNonce(): string {
@@ -831,19 +838,25 @@ export class Renderer {
         )
         : await runRender();
     } catch (error) {
-      const attachedCookies = error instanceof Error
-        ? getAttachedDataResponseMetadata(error).cookies
-        : undefined;
+      const attachedMetadata = error instanceof Error ? getAttachedDataResponseMetadata(error) : {};
+      const attachedCookies = attachedMetadata.cookies;
       const unwrappedError = error instanceof Error
         ? unwrapDataResponseMetadataError(error)
         : error;
-      const controlCookies = resolveSSRControlOutcome(unwrappedError)?.cookies ??
-        resolveSSRControlOutcome(error)?.cookies;
+      const controlOutcome = resolveSSRControlOutcome(unwrappedError) ??
+        resolveSSRControlOutcome(error);
+      const controlCookies = controlOutcome?.cookies;
+      const attachedHeaders = attachedMetadata.headers;
+      const controlHeaders = controlOutcome?.headers;
       if (
         isFollower &&
-        ((attachedCookies?.length ?? 0) > 0 || (controlCookies?.length ?? 0) > 0)
+        ((attachedCookies?.length ?? 0) > 0 ||
+          (controlCookies?.length ?? 0) > 0 ||
+          Object.keys(attachedHeaders ?? {}).length > 0 ||
+          (typeof controlHeaders === "object" && controlHeaders !== null &&
+            Object.keys(controlHeaders).length > 0))
       ) {
-        logger.debug("Rerendering follower after cookie-bearing render failure", {
+        logger.debug("Rerendering follower after response-metadata-bearing render failure", {
           slug,
           projectId: ctx.projectId,
         });
@@ -882,8 +895,11 @@ export class Renderer {
       throw error;
     }
 
-    if (isFollower && cachedData.cookies?.length) {
-      logger.debug("Rerendering follower after cookie-bearing render", {
+    if (
+      isFollower &&
+      (cachedData.cookies?.length || Object.keys(cachedData.headers ?? {}).length > 0)
+    ) {
+      logger.debug("Rerendering follower after response-metadata-bearing render", {
         slug,
         projectId: ctx.projectId,
       });
@@ -920,7 +936,7 @@ export class Renderer {
       pageModule: cachedData.pageModule,
       ...(cachedData.headers ? { headers: cachedData.headers } : {}),
       ...(cachedData.cookies ? { cookies: cachedData.cookies } : {}),
-      stream: null,
+      stream: cachedData.stream ?? null,
     };
   }
 
@@ -998,12 +1014,12 @@ export class Renderer {
       const request = cacheKey !== null && options?.request
         ? new Request(options.request, { signal: renderAbortController.signal })
         : options?.request;
-      const result = await withTimeoutThrow(
-        services.pipeline.renderPage(slug, {
+      const renderToReady = async (): Promise<RenderResult> => {
+        const result = await services.pipeline.renderPage(slug, {
           ...options,
           request,
           abortSignal: renderAbortController.signal,
-          delivery: "string",
+          delivery: cacheKey === null ? options?.delivery : "string",
           projectId: ctx.projectId,
           projectSlug: ctx.projectSlug,
           environment: ctx.environment,
@@ -1011,7 +1027,34 @@ export class Renderer {
           releaseId: ctx.releaseId,
           skipCacheCheck: true,
           skipCachePersist: true,
-        }),
+        });
+        if (cacheKey === null) {
+          const allReady = getStreamAllReady(result.stream);
+          if (allReady) {
+            // Keep admission and the render deadline active through streamed
+            // work. A readiness rejection reports an error, not producer
+            // completion, so cancel the stream before releasing either slot.
+            try {
+              await allReady;
+            } catch (error) {
+              renderAbortController.abort(error);
+              try {
+                await result.stream?.cancel(error);
+              } catch (cancelError) {
+                logger.warn("Failed to cancel streamed render after readiness failure", {
+                  slug,
+                  projectId: ctx.projectId,
+                  error: cancelError instanceof Error ? cancelError.message : cancelError,
+                });
+              }
+              throw error;
+            }
+          }
+        }
+        return result;
+      };
+      const result = await withTimeoutThrow(
+        renderToReady(),
         RENDER_PIPELINE_TIMEOUT_MS,
         `Render pipeline for ${ctx.projectId}:${slug}`,
         {
@@ -1021,7 +1064,11 @@ export class Renderer {
         },
       );
 
-      if (cacheKey !== null && !result.cookies?.length) {
+      if (
+        cacheKey !== null &&
+        !result.cookies?.length &&
+        Object.keys(result.headers ?? {}).length === 0
+      ) {
         await this.cache.persistResult(
           result,
           slug,
@@ -1053,6 +1100,7 @@ export class Renderer {
         pageModule: result.pageModule,
         ...(result.headers ? { headers: result.headers } : {}),
         ...(result.cookies ? { cookies: result.cookies } : {}),
+        ...(cacheKey === null && result.stream ? { stream: result.stream } : {}),
       };
     } finally {
       if (globalAcquired) renderSemaphore.release();

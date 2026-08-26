@@ -12,6 +12,7 @@
  */
 import * as React from "react";
 import { cn } from "./theme.ts";
+import { compareStrings } from "#veryfront/utils/compare.ts";
 
 /** Props passed to a custom fenced-code renderer by a rich Markdown extension. */
 export interface CodeBlockProps {
@@ -181,7 +182,7 @@ export function Markdown({
   ...unsupportedProps
 }: MarkdownProps): React.ReactElement {
   const inheritedRenderer = React.useContext(MarkdownRendererContext);
-  const unsupportedNames = Object.keys(unsupportedProps).sort();
+  const unsupportedNames = Object.keys(unsupportedProps).sort(compareStrings);
   if (unsupportedNames.length > 0) {
     throw new TypeError(
       `Unsupported Markdown prop${unsupportedNames.length === 1 ? "" : "s"}: ${

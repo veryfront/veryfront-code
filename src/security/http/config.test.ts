@@ -234,7 +234,7 @@ describe("security/http/config", () => {
       restore();
     }
 
-    assertEquals(getOutput().includes("Neither CORS nor CSRF protection is configured"), false);
+    assertEquals(getOutput().includes("security.csrf is set to false"), false);
   });
 
   it("does not warn for the same-origin development default", async () => {
@@ -252,7 +252,7 @@ describe("security/http/config", () => {
       restore();
     }
 
-    assertEquals(getOutput().includes("Neither CORS nor CSRF protection is configured"), false);
+    assertEquals(getOutput().includes("security.csrf is set to false"), false);
   });
 
   it("honors explicit CSRF disablement in production", async () => {
@@ -273,7 +273,12 @@ describe("security/http/config", () => {
     }
 
     assertEquals(loader.getSecurityConfig()?.csrf, false);
-    assertEquals(getOutput().includes("Neither CORS nor CSRF protection is configured"), true);
+    assertEquals(getOutput().includes("security.csrf is set to false"), true);
+    assertEquals(
+      getOutput().includes("configure security.cors"),
+      false,
+      "CORS must not be recommended as an alternative to restoring CSRF",
+    );
   });
 
   it("derives a deep-frozen request-owned security context without mutating config", () => {
@@ -342,7 +347,7 @@ describe("security/http/config", () => {
     assertEquals(derivedCors.methods, ["GET"]);
   });
 
-  it("applies production defaults without overriding explicit security choices", () => {
+  it("applies security defaults without overriding explicit security choices", () => {
     const production = deriveSecurityContext(
       { security: { csrf: false, cors: false } },
       { productionDefaults: true },
@@ -354,8 +359,53 @@ describe("security/http/config", () => {
 
     assertEquals(production.securityConfig.csrf, false);
     assertEquals(production.securityConfig.cors, false);
-    assertEquals(development.securityConfig.csrf, undefined);
+    assertEquals(
+      development.securityConfig.csrf,
+      true,
+      "an explicit opt-out is the only way to leave a mutation unchecked",
+    );
     assertEquals(development.securityConfig.cors, false);
+  });
+
+  it("resolves the CSRF default identically in development and production", () => {
+    // The parity gap this closes: a browser mutation that omitted the
+    // double-submit header used to pass locally and then fail on the first
+    // deployed build, because only production filled the default in.
+    const production = deriveSecurityContext(
+      { security: {} },
+      { productionDefaults: true },
+    );
+    const development = deriveSecurityContext(
+      { security: {} },
+      { productionDefaults: false },
+    );
+    const configLess = deriveSecurityContext(undefined, { productionDefaults: false });
+
+    assertEquals(
+      development.securityConfig.csrf,
+      production.securityConfig.csrf,
+      "development must resolve security.csrf exactly as production does",
+    );
+    assertEquals(
+      configLess.securityConfig.csrf,
+      true,
+      "a project with no config file must get the same default",
+    );
+  });
+
+  it("keeps security.csrf false as the documented opt-out in every environment", () => {
+    for (const productionDefaults of [true, false]) {
+      const derived = deriveSecurityContext(
+        { security: { csrf: false } },
+        { productionDefaults },
+      );
+
+      assertEquals(
+        derived.securityConfig.csrf,
+        false,
+        `security.csrf: false must survive derivation with productionDefaults=${productionDefaults}`,
+      );
+    }
   });
 
   it("rejects hostile configuration shapes without invoking accessors", () => {
