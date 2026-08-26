@@ -531,18 +531,17 @@ function resolveExporterConfig(
   // own credentials so host secrets never cross that trust boundary.
   const allowEnvironmentCredentials = config.trackingUri === undefined &&
     config.fetch === undefined && !configuredOAuthTokenUrl;
-  // Ambient artifact endpoints describe the environment-selected tracking
-  // deployment. A configured trackingUri targets a different deployment, so it
-  // must not inherit MLFLOW_ARTIFACTS_URI or MLFLOW_ARTIFACTS_PORT from the
-  // host environment; supply artifact settings in the same configuration.
-  const allowEnvironmentArtifactEndpoints = config.trackingUri === undefined;
+  // Ambient artifact and UI endpoints describe the environment-selected
+  // tracking deployment. A configured trackingUri targets a different
+  // deployment, so supply those settings in the same configuration.
+  const allowEnvironmentDeploymentEndpoints = config.trackingUri === undefined;
   return {
     id: DEFAULT_EXPORTER_ID,
     trackingUri: config.trackingUri ?? readEnv(ENV_TRACKING_URI),
     artifactsPort: config.artifactsPort ??
-      (allowEnvironmentArtifactEndpoints ? readEnv(ENV_ARTIFACTS_PORT) : undefined),
+      (allowEnvironmentDeploymentEndpoints ? readEnv(ENV_ARTIFACTS_PORT) : undefined),
     artifactsUri: config.artifactsUri ??
-      (allowEnvironmentArtifactEndpoints ? readEnv(ENV_ARTIFACTS_URI) : undefined),
+      (allowEnvironmentDeploymentEndpoints ? readEnv(ENV_ARTIFACTS_URI) : undefined),
     experimentName: config.experimentName ?? readEnv(ENV_EXPERIMENT_NAME),
     runName: config.runName ?? readEnv(ENV_RUN_NAME),
     trackingToken: config.trackingToken ??
@@ -575,9 +574,16 @@ function resolveExporterConfig(
       0,
       MAX_RETRY_DELAY_MS,
     ),
-    runUrlTemplate: config.runUrlTemplate ?? readEnv(ENV_RUN_URL_TEMPLATE),
+    runUrlTemplate: config.runUrlTemplate ??
+      (allowEnvironmentDeploymentEndpoints ? readEnv(ENV_RUN_URL_TEMPLATE) : undefined),
     ...(config.fetch ? { fetch: config.fetch } : {}),
   };
+}
+
+function hasTrackingUri(
+  config: EvalReportMlflowExtensionConfig & { id: string },
+): config is EvalReportMlflowExtensionConfig & { id: string; trackingUri: string } {
+  return Boolean(config.trackingUri);
 }
 
 function stringValue(value: unknown): string | undefined {
@@ -1831,9 +1837,7 @@ const extEvalReportMlflow: ExtensionFactory = (config?: unknown) => {
       registry = ctx.require<EvalReportExporterRegistry>(
         EvalReportExporterRegistryName,
       );
-      const activationTrackingUri = factoryConfig.trackingUri ??
-        readEnv(ENV_TRACKING_URI);
-      if (!activationTrackingUri) {
+      if (!hasTrackingUri(factoryConfig)) {
         ctx.logger.debug(
           `[ext-eval-report-mlflow] Skipping EvalReportExporter "${factoryConfig.id}": no MLFLOW_TRACKING_URI configured`,
         );
@@ -1842,10 +1846,7 @@ const extEvalReportMlflow: ExtensionFactory = (config?: unknown) => {
 
       registry.register(
         new EvalReportMlflowExporter(
-          {
-            ...factoryConfig,
-            trackingUri: factoryConfig.trackingUri ?? activationTrackingUri,
-          },
+          factoryConfig,
           factoryConfig.fetch,
         ),
       );

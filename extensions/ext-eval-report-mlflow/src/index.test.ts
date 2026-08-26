@@ -533,6 +533,29 @@ describe("ext-eval-report-mlflow", () => {
     );
   });
 
+  it("does not inherit an ambient host run URL template for a configured tracking URI", async () => {
+    clearMlflowEnv();
+    Deno.env.set(
+      "MLFLOW_RUN_URL_TEMPLATE",
+      "https://operator-mlflow.test/experiments/{experimentId}/runs/{runId}",
+    );
+    const registry = createEvalReportExporterRegistry();
+    const { fetchImpl } = createMlflowFetchRecorder();
+    const extension = factory({
+      trackingUri: "https://tenant-mlflow.test",
+      fetch: fetchImpl,
+    });
+
+    await extension.setup?.(createContext(registry));
+    const results = await registry.export(createReport(), {});
+
+    assertEquals(results[0]?.ok, true);
+    assertEquals(
+      results[0]?.ok ? results[0].receipt?.url : undefined,
+      "https://tenant-mlflow.test/#/experiments/exp-1/runs/run-1",
+    );
+  });
+
   it("keeps environment artifact endpoints for environment-activated exporters", async () => {
     clearMlflowEnv();
     Deno.env.set("MLFLOW_TRACKING_URI", "https://mlflow.test");

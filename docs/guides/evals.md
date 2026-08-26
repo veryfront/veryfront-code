@@ -828,6 +828,12 @@ export default defineConfig({
 });
 ```
 
+A configured `trackingUri` also does not inherit `MLFLOW_ARTIFACTS_URI`,
+`MLFLOW_ARTIFACTS_PORT`, or `MLFLOW_RUN_URL_TEMPLATE`. If that deployment needs
+an artifact proxy, set `artifactsUri` or `artifactsPort` in the same extension
+config. Set `runUrlTemplate` there when receipts must use a custom tracking UI
+route.
+
 Automatic CLI selection follows `MLFLOW_TRACKING_URI` only. After migrating a
 configured endpoint away from that variable, select the exporter explicitly
 with `--export mlflow` or `VERYFRONT_EVAL_EXPORTERS=mlflow`; otherwise

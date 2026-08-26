@@ -89,10 +89,12 @@ Programmatic transport overrides (`trackingUri`, `fetch`, or `oauthTokenUrl`)
 do not inherit authentication credentials from the host environment. Supply
 the matching credential fields in the same extension configuration. A
 configured `trackingUri` likewise does not inherit `MLFLOW_ARTIFACTS_URI` or
-`MLFLOW_ARTIFACTS_PORT`: set `artifactsUri` (or `artifactsPort`) in the same
-configuration when that deployment needs an explicit artifact proxy. Existing
-configurations that previously combined a configured endpoint with
-`MLFLOW_TRACKING_TOKEN` must migrate the token explicitly:
+`MLFLOW_ARTIFACTS_PORT`. Set `artifactsUri` (or `artifactsPort`) in the same
+configuration when that deployment needs an explicit artifact proxy. It also
+does not inherit `MLFLOW_RUN_URL_TEMPLATE`; set `runUrlTemplate` when receipts
+must use a custom tracking UI route. Existing configurations that previously
+combined a configured endpoint with `MLFLOW_TRACKING_TOKEN` must migrate the
+token explicitly:
 
 ```ts
 import extEvalReportMlflow from "@veryfront/ext-eval-report-mlflow";
