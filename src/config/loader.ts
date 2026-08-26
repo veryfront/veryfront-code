@@ -1764,15 +1764,16 @@ const CSI_GLUED_URL =
 // guard's 20x ratio. Shapes that exercise the `)` branch stay at 0-3ms on both.
 //
 // The closing-paren lookahead asks a structural question -- is the rest of this
-// token nothing but trailing punctuation? -- rather than listing the characters
-// prose is allowed to end with. Listing them does not converge: `.,;:)]` still
+// token nothing but trailing punctuation or symbols? -- rather than listing the
+// characters prose is allowed to end with. Listing them does not converge: `.,;:)]` still
 // mangled `Failed (see https://host/x)! Retry` into `Failed (see [url] Retry`,
 // and adding `!` next would have left `?`, `}`, `>` and the rest of sentence
 // punctuation behind it. Worse, `?` can never go in such a list -- it legitimately
 // opens a query string, so excluding it would strand `https://host/a)?t=SECRET`
 // with its token in the caller-visible detail.
-// Unicode's `Punctuation` property supplies the structural category, covering
-// sentence marks such as `…`, `。`, `¿`, and `»` without another ASCII allowlist.
+// Unicode's `Punctuation` and `Symbol` properties supply the structural
+// categories, covering sentence marks such as `…`, `。`, `¿`, and `»` as well
+// as emoji suffixes without another allowlist.
 //
 // Asking the structural question settles both at once. A `)` whose remaining
 // token is only punctuation before a boundary is prose, so it stays outside the
@@ -1790,7 +1791,7 @@ const CSI_GLUED_URL =
 // redactors from drifting, the extraction keeps each complete expression below
 // the static-analysis complexity threshold.
 const URL_TOKEN_TAIL_SOURCE = String
-  .raw`(?:[^\s"'()]|\([^\s"']{0,512}\)|\((?=[^\s"'])|\)(?!\p{P}{0,16}(?:[\s"']|$)))+`;
+  .raw`(?:[^\s"'()]|\([^\s"']{0,512}\)|\((?=[^\s"'])|\)(?![\p{P}\p{S}]{0,16}(?:[\s"']|$)))+`;
 const SCHEME_URL = new RegExp(
   String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
   "gu",
@@ -1838,9 +1839,11 @@ const SCHEME_URL = new RegExp(
 // minimum is not enough to separate a scheme from prose glued to a drive letter.
 // A glued *URL* still redacts: the match simply starts later in the token, so
 // `Failed athttps:/registry.internal/x` gives `Failed at[url]` and keeps `at`.
+const ASCII_SPECIAL_SCHEME_SOURCE = String
+  .raw`(?:[hH][tT][tT][pP][sS]?|[wW][sS][sS]?|[fF][tT][pP])`;
 const MALFORMED_SCHEME_URL = new RegExp(
-  String.raw`(?:https?|wss?|ftp):/(?!/)(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
-  "giu",
+  String.raw`${ASCII_SPECIAL_SCHEME_SOURCE}:/(?!/)(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
+  "gu",
 );
 // The zero-slash form of a WHATWG special scheme. `https:registry.internal/x`
 // parses to `https://registry.internal/x`, so the hostname is just as real as in
@@ -1850,13 +1853,12 @@ const MALFORMED_SCHEME_URL = new RegExp(
 // `[A-Za-z][A-Za-z0-9+.-]+:` shape, because that would claim ordinary prose
 // (`warning:something`) and, at one character, drive letters.
 //
-// The `i` flag is load-bearing rather than tidy. A URL scheme is
-// case-insensitive, and the two patterns above get that free from `[A-Za-z]`; a
-// literal list does not, so `HTTPS:registry.internal/x` matched nothing at all
-// and the hostname survived into the caller-visible detail.
+// Scheme matching is ASCII-case-insensitive by construction. The Unicode `iu`
+// combination folds `ſ` to `s`, which would make ordinary `httpſ:failure` prose
+// look like a special-scheme URL even though URL schemes are ASCII-only.
 const ZERO_SLASH_SCHEME_URL = new RegExp(
-  String.raw`(?:https?|wss?|ftp):(?![/\s])(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
-  "giu",
+  String.raw`${ASCII_SPECIAL_SCHEME_SOURCE}:(?![/\s])(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
+  "gu",
 );
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;

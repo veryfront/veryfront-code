@@ -1134,6 +1134,16 @@ export default config as const;
         );
 
         assertStringIncludes(prose.message, "warning:something happened");
+
+        // URL schemes are ASCII. With both `i` and `u` on the literal scheme
+        // pattern, Unicode case folding made the long-s match ASCII `s` and
+        // incorrectly redacted this ordinary diagnostic.
+        const unicodeFold = await loadFailure(
+          "vf-config-zero-slash-unicode-fold-",
+          `throw new Error("The parser reported httpſ:failure code");\n`,
+        );
+
+        assertStringIncludes(unicodeFold.message, "httpſ:failure code");
       });
 
       it("redacts a URL whose userinfo contains an apostrophe", async () => {
@@ -1586,7 +1596,7 @@ export default config as const;
         assertEquals(question.message.includes("registry.internal"), false);
         assertStringIncludes(question.message, "Failed (see [url])? Retry");
 
-        for (const punctuation of ["…", "。", "¿", "»"] as const) {
+        for (const punctuation of ["…", "。", "¿", "»", "🙂"] as const) {
           const unicode = await loadFailure(
             "vf-config-paren-unicode-punctuation-",
             `throw new Error(${
