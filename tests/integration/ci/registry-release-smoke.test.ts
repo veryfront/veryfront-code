@@ -129,6 +129,7 @@ printf '%s' "\${VF_NPM_REGISTRY_PACKAGES:-}" >>"\$VF_INVOCATION_LOG"
     const npmLog = `${tempDir}/npm.log`;
     const npmCount = `${tempDir}/npm.count`;
     await Deno.mkdir(binDir);
+    await writeExecutable(`${binDir}/deno`, "#!/bin/bash\nexit 0\n");
     await writeExecutable(
       `${binDir}/npm`,
       `#!/usr/bin/env bash

@@ -1,10 +1,13 @@
 import type { Context, ExecutionContext } from "./types.ts";
 import { HTTP_REDIRECT_FOUND } from "#veryfront/utils";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 
 /** Context for middleware. */
 export class MiddlewareContext implements Context {
   req: Request;
   request: Request;
+  identity: ApplicationIdentity | null;
+  applicationIdentity: ApplicationIdentity | null;
   env: Record<string, unknown>;
   executionCtx?: ExecutionContext;
   var: Record<string, unknown> = {};
@@ -15,9 +18,12 @@ export class MiddlewareContext implements Context {
     req: Request,
     env: Record<string, unknown> = {},
     executionCtx?: ExecutionContext,
+    identity: ApplicationIdentity | null = null,
   ) {
     this.req = req;
     this.request = req; // Alias for compatibility
+    this.identity = identity;
+    this.applicationIdentity = identity;
     this.env = env;
     this.executionCtx = executionCtx;
   }

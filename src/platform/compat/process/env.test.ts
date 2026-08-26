@@ -1,11 +1,117 @@
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { fromFileUrl } from "#std/path";
+import { registerTrustedProjectEnvSnapshot } from "./env.ts";
+import { createProjectScopedDenoEnvView } from "./scoped-process-env.ts";
 
 const denoOnlyIt = isDeno ? it : it.skip;
 
 describe("host environment access", () => {
+  it("creates an immutable scoped Deno environment facade", () => {
+    const view = createProjectScopedDenoEnvView({
+      get: () => undefined,
+      set: () => {},
+      delete: () => {},
+      has: () => false,
+      toObject: () => ({}),
+    }, () => undefined);
+
+    assertEquals(Object.isFrozen(view), true);
+    for (const method of ["get", "set", "delete", "has", "toObject"] as const) {
+      const descriptor = Object.getOwnPropertyDescriptor(view, method);
+      assertEquals(descriptor?.writable, false);
+      assertEquals(descriptor?.configurable, false);
+    }
+    assertThrows(() => Object.defineProperty(view, "get", { value: () => "intercepted" }));
+  });
+
+  denoOnlyIt("passes only the active project environment to direct subprocesses", async () => {
+    const hostKey = "VF_SCOPE_SUBPROCESS_HOST_ONLY";
+    const projectKey = "VF_SCOPE_SUBPROCESS_PROJECT_ONLY";
+    const previousHost = Deno.env.get(hostKey);
+    Deno.env.set(hostKey, "host-secret");
+    let snapshot: Readonly<Record<string, string>> | undefined;
+    registerTrustedProjectEnvSnapshot(() => snapshot);
+    snapshot = { [projectKey]: "project-value" };
+
+    try {
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "eval",
+          `console.log(JSON.stringify({ host: Deno.env.get(${
+            JSON.stringify(hostKey)
+          }) ?? null, project: Deno.env.get(${JSON.stringify(projectKey)}) ?? null }))`,
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assert(output.success, new TextDecoder().decode(output.stderr));
+      assertEquals(
+        JSON.parse(new TextDecoder().decode(output.stdout).trim()),
+        { host: null, project: "project-value" },
+      );
+    } finally {
+      snapshot = undefined;
+      if (previousHost === undefined) Deno.env.delete(hostKey);
+      else Deno.env.set(hostKey, previousHost);
+    }
+  });
+
+  denoOnlyIt("loads the testing overlay after the project environment facade", async () => {
+    const storageUrl = new URL("../../../server/project-env/storage.ts", import.meta.url).href;
+    const bddUrl = new URL("../../../testing/bdd.ts", import.meta.url).href;
+    const source = `
+      const { runWithProjectEnv } = await import(${JSON.stringify(storageUrl)});
+      await import(${JSON.stringify(bddUrl)});
+      Deno.env.set("VF_LATE_TEST_ROOT", "root-value");
+      const scoped = runWithProjectEnv({ VF_LATE_TEST_PROJECT: "project-value" }, () => ({
+        root: Deno.env.get("VF_LATE_TEST_ROOT") ?? null,
+        project: Deno.env.get("VF_LATE_TEST_PROJECT") ?? null,
+        processRoot: process.env.VF_LATE_TEST_ROOT ?? null,
+        processProject: process.env.VF_LATE_TEST_PROJECT ?? null,
+      }));
+      console.log(JSON.stringify({
+        root: Deno.env.get("VF_LATE_TEST_ROOT") ?? null,
+        processRoot: process.env.VF_LATE_TEST_ROOT ?? null,
+        scoped,
+      }));
+    `;
+    const child = new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "--allow-env",
+        `--allow-read=${fromFileUrl(new URL("../../../../", import.meta.url))}`,
+        "-",
+      ],
+      clearEnv: true,
+      env: { DENO_TESTING: "1" },
+      stdin: "piped",
+      stdout: "piped",
+      stderr: "piped",
+    }).spawn();
+    const writer = child.stdin.getWriter();
+    await writer.write(new TextEncoder().encode(source));
+    await writer.close();
+    const output = await child.output();
+    const stderr = new TextDecoder().decode(output.stderr);
+
+    assert(output.success, stderr);
+    assertEquals(
+      JSON.parse(new TextDecoder().decode(output.stdout).trim()),
+      {
+        root: "root-value",
+        processRoot: "root-value",
+        scoped: {
+          root: null,
+          project: "project-value",
+          processRoot: null,
+          processProject: "project-value",
+        },
+      },
+    );
+  });
+
   denoOnlyIt("ignores forged test overlays when env permission is granted", async () => {
     const moduleUrl = new URL("./env.ts", import.meta.url).href;
     const source = `

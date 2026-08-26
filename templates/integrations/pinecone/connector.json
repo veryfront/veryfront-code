@@ -45,14 +45,27 @@
         "response": {
           "transform": "indexes",
           "historicalSummary": {
-            "collectionKeys": ["indexes"],
+            "collectionKeys": [
+              "indexes"
+            ],
             "collectionName": "indexes",
             "itemFields": [
-              { "name": "name" },
-              { "name": "dimension" },
-              { "name": "metric" },
-              { "name": "host" },
-              { "name": "status", "kind": "object" }
+              {
+                "name": "name"
+              },
+              {
+                "name": "dimension"
+              },
+              {
+                "name": "metric"
+              },
+              {
+                "name": "host"
+              },
+              {
+                "name": "status",
+                "kind": "object"
+              }
             ],
             "omitted": "index spec details and provider-specific payload fields"
           }
@@ -62,7 +75,7 @@
     {
       "id": "pinecone__describe_index",
       "name": "Describe Index",
-      "description": "Get an index's configuration and its data-plane host (needed for Query Vectors and Upsert Vectors)",
+      "description": "Get an index's configuration and its data-plane host. Drop the trailing '.pinecone.io' from the returned host to get the indexHostPrefix that Query Vectors and Upsert Vectors take.",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -127,16 +140,16 @@
     {
       "id": "pinecone__query_vectors",
       "name": "Query Vectors",
-      "description": "Query an index for the nearest vectors (run Describe Index first to get the index host)",
+      "description": "Query a Pinecone index for the nearest vectors. Select the index with indexHostPrefix (its data-plane host from Describe Index without the trailing '.pinecone.io').",
       "requiresWrite": false,
       "endpoint": {
         "method": "POST",
-        "url": "https://{indexHost}/query",
+        "url": "https://{indexHostPrefix}.pinecone.io/query",
         "params": {
-          "indexHost": {
+          "indexHostPrefix": {
             "type": "string",
             "in": "path",
-            "description": "Index data-plane host from Describe Index, e.g. my-index-abc1234.svc.aped-4627-b74a.pinecone.io",
+            "description": "Index data-plane host without the trailing '.pinecone.io': for a Describe Index host of 'my-index-abc1234.svc.aped-4627-b74a.pinecone.io' pass 'my-index-abc1234.svc.aped-4627-b74a'. Requests can only reach '<indexHostPrefix>.pinecone.io', so each call may target a different index while credentials stay confined to Pinecone-owned hosts.",
             "required": true
           },
           "api_version": {
@@ -182,16 +195,16 @@
     {
       "id": "pinecone__upsert_vectors",
       "name": "Upsert Vectors",
-      "description": "Write vectors into an index (run Describe Index first to get the index host)",
+      "description": "Write vectors into a Pinecone index selected via indexHostPrefix; verify the prefix names the intended index before writing",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{indexHost}/vectors/upsert",
+        "url": "https://{indexHostPrefix}.pinecone.io/vectors/upsert",
         "params": {
-          "indexHost": {
+          "indexHostPrefix": {
             "type": "string",
             "in": "path",
-            "description": "Index data-plane host from Describe Index, e.g. my-index-abc1234.svc.aped-4627-b74a.pinecone.io",
+            "description": "Index data-plane host without the trailing '.pinecone.io': for a Describe Index host of 'my-index-abc1234.svc.aped-4627-b74a.pinecone.io' pass 'my-index-abc1234.svc.aped-4627-b74a'. Requests can only reach '<indexHostPrefix>.pinecone.io', so each call may target a different index while credentials stay confined to Pinecone-owned hosts.",
             "required": true
           },
           "api_version": {
@@ -227,19 +240,23 @@
     {
       "id": "semantic_search",
       "title": "Search an index",
-      "prompt": "Describe my Pinecone index to get its host, then query it with an embedding vector and show the top matches with metadata.",
+      "prompt": "Describe my Pinecone index to get its data-plane host, then query it (using the host without the trailing '.pinecone.io' as indexHostPrefix) with an embedding vector and show the top matches with metadata.",
       "category": "data",
       "icon": "search"
     }
   ],
-  "suggestedWith": ["openai", "anthropic", "supabase"],
+  "suggestedWith": [
+    "openai",
+    "anthropic",
+    "supabase"
+  ],
   "SETUP_GUIDE": {
     "title": "Pinecone API Setup",
     "steps": [
       {
         "step": 1,
         "title": "Create a Pinecone account",
-        "description": "Sign up at https://app.pinecone.io — the free Starter plan includes serverless indexes for testing."
+        "description": "Sign up at https://app.pinecone.io. The free Starter plan includes serverless indexes for testing."
       },
       {
         "step": 2,
@@ -254,13 +271,14 @@
       {
         "step": 4,
         "title": "Verify access",
-        "description": "Run the List Indexes tool. To read or write vectors, first run Describe Index and use the returned 'host' value as the indexHost parameter for Query Vectors / Upsert Vectors."
+        "description": "Run the List Indexes tool. To read or write vectors, first run Describe Index for the index you want, take the returned 'host' value, and pass it without the trailing '.pinecone.io' as the indexHostPrefix parameter of Query Vectors / Upsert Vectors."
       }
     ],
     "notes": [
-      "Pinecone is two-step: control-plane tools (list/describe/create index) hit api.pinecone.io, while query/upsert hit the per-index host returned by Describe Index",
+      "Pinecone is two-step: control-plane tools (list/describe/create index) hit api.pinecone.io, while Query Vectors and Upsert Vectors target the index named by their indexHostPrefix parameter; each call may address a different index, and requests can only reach '<indexHostPrefix>.pinecone.io' hosts, never an arbitrary domain",
+      "Migrating from earlier versions: the old indexHost parameter (full host) and the interim PINECONE_INDEX_HOST environment variable are gone. Pass the Describe Index host without its '.pinecone.io' suffix as indexHostPrefix instead",
       "All requests send the X-Pinecone-API-Version header (default 2025-01)",
-      "Embeddings must be generated separately (e.g. with OpenAI) — vectors you query or upsert must match the index dimension"
+      "Embeddings must be generated separately (e.g. with OpenAI); vectors you query or upsert must match the index dimension"
     ],
     "documentation": "https://docs.pinecone.io/reference/api/introduction"
   }

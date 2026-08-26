@@ -106,6 +106,91 @@ describe("resolveFrameworkFile", () => {
   });
 
   for (
+    const privilegedPath of [
+      "/_vf_modules/_veryfront/platform/compat/process/env.js",
+      "/_vf_modules/_veryfront/platform/compat/process/env.js?ssr=true",
+      "/_vf_modules/_veryfront/platform/compat/process/env.ts",
+      "/_vf_modules/_veryfront/platform/compat/process/runtime-process.js",
+      "/_vf_modules/_veryfront/platform/compat/process/scoped-process-env.js",
+      "/_vf_modules/_veryfront/platform/compat/process.js",
+      "/_vf_modules/_veryfront/platform/cloud/resolver.js",
+      "file:///_vf_modules/_veryfront/platform/compat/process/env.js?ssr=true",
+    ]
+  ) {
+    it(`refuses privileged framework module ${privilegedPath}`, async () => {
+      const fs = createMockFs(
+        new Proxy({}, {
+          has: () => true,
+          get: () => "export function getHostEnv() {}",
+        }) as Record<string, string>,
+      );
+
+      const result = await resolveFrameworkFile(privilegedPath, fs, async () => true);
+
+      assertEquals(result, null);
+    });
+  }
+
+  it("refuses an unexported host-environment wrapper as a tenant entry", async () => {
+    const fs = createMockFs(
+      new Proxy({}, {
+        has: () => true,
+        get: () => "export function getHostTelemetryEnv() {}",
+      }) as Record<string, string>,
+    );
+
+    assertEquals(
+      await resolveFrameworkFile(
+        "/_vf_modules/_veryfront/observability/tracing/telemetry-env.js",
+        fs,
+        () => Promise.resolve(true),
+      ),
+      null,
+    );
+  });
+
+  it("resolves a non-public dependency for a trusted framework parent", async () => {
+    const sourcePath = join(
+      FRAMEWORK_ROOT,
+      "src",
+      "html",
+      "managed-head-protocol.ts",
+    );
+    const files: Record<string, string> = {
+      [sourcePath]: "export const MANAGED_HEAD_ATTRIBUTE = 'data-vf-head';",
+    };
+    const fs = createMockFs(files);
+
+    const result = await resolveFrameworkFile(
+      "/_vf_modules/_veryfront/html/managed-head-protocol.js?ssr=true",
+      fs,
+      createExistsFn(files),
+      { trustedFrameworkParent: true },
+    );
+
+    assertEquals(result?.sourcePath, sourcePath);
+  });
+
+  it("still resolves the public platform/env facade", async () => {
+    const sourcePath = join(
+      FRAMEWORK_ROOT,
+      "src",
+      "platform",
+      "env.ts",
+    );
+    const files: Record<string, string> = {
+      [sourcePath]: 'export { getEnv } from "./env.ts";',
+    };
+    const fs = createMockFs(files);
+    const result = await resolveFrameworkFile(
+      "/_vf_modules/_veryfront/platform/env.js?ssr=true",
+      fs,
+      createExistsFn(files),
+    );
+    assertEquals(result?.sourcePath, sourcePath);
+  });
+
+  for (
     const maliciousPath of [
       "/_vf_modules/_veryfront/../../secret.js",
       "/_vf_modules/_veryfront/%252e%252e/secret.js",

@@ -5,7 +5,8 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { describe, it } from "#veryfront/testing/bdd";
 import { assert, assertEquals, assertExists, assertMatch } from "#veryfront/testing/assert";
-import { formatCLIError } from "./cli-error-boundary.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { cliErrorBoundary, cliErrorBoundarySync, formatCLIError } from "./cli-error-boundary.ts";
 import { VeryfrontError } from "../types.ts";
 import { CONFIG_NOT_FOUND, UNKNOWN_ERROR } from "../error-registry.ts";
 import { ERROR_OUTPUT_MAX_LENGTH_CHARS } from "../safe-diagnostics.ts";
@@ -63,26 +64,33 @@ describe("cli-error-boundary", () => {
 
     it("should honor color-related environment variables by default", () => {
       const keys = ["FORCE_COLOR", "NO_COLOR", "TERM"] as const;
-      const original = new Map(keys.map((key) => [key, Deno.env.get(key)] as const));
+      const original = new Map(keys.map((key) => [key, getEnv(key)] as const));
       const error = CONFIG_NOT_FOUND.create();
 
       try {
-        Deno.env.delete("NO_COLOR");
-        Deno.env.delete("TERM");
-        Deno.env.set("FORCE_COLOR", "1");
+        deleteEnv("NO_COLOR");
+        deleteEnv("TERM");
+        setEnv("FORCE_COLOR", "1");
         assert(formatCLIError(error).includes("\x1b["));
 
-        Deno.env.delete("FORCE_COLOR");
-        Deno.env.set("NO_COLOR", "1");
+        setEnv("FORCE_COLOR", "0");
+        assertEquals(
+          formatCLIError(error).includes("\x1b["),
+          false,
+          "FORCE_COLOR=0 must disable color",
+        );
+
+        deleteEnv("FORCE_COLOR");
+        setEnv("NO_COLOR", "1");
         assertEquals(formatCLIError(error).includes("\x1b["), false);
 
-        Deno.env.delete("NO_COLOR");
-        Deno.env.set("TERM", "dumb");
+        deleteEnv("NO_COLOR");
+        setEnv("TERM", "dumb");
         assertEquals(formatCLIError(error).includes("\x1b["), false);
       } finally {
         for (const [key, value] of original) {
-          if (value === undefined) Deno.env.delete(key);
-          else Deno.env.set(key, value);
+          if (value === undefined) deleteEnv(key);
+          else setEnv(key, value);
         }
       }
     });
@@ -150,6 +158,60 @@ describe("cli-error-boundary", () => {
 
       // Should end with empty line
       assertEquals(lines[lines.length - 1], "");
+    });
+
+    it("should render the capped stack trace in verbose mode", () => {
+      const error = new Error("boom");
+      error.stack = `Error: boom\n${
+        Array.from(
+          { length: 10 },
+          (_, index) => `    at frame${index} (file:///app/f${index}.ts:1:1)`,
+        ).join("\n")
+      }`;
+
+      const output = formatCLIError(error, { color: false, verbose: true });
+
+      assert(output.includes("Stack trace:"), "verbose CLI output renders the stack trace section");
+      assert(output.includes("at frame4 "), "verbose output renders the fifth captured frame");
+      assertEquals(output.includes("at frame5 "), false, "CLI output caps the stack at 5 frames");
+    });
+
+    it("should hide the stack trace outside development and verbose mode", () => {
+      const originalEnv = getEnv("VERYFRONT_ENV");
+      const error = new Error("boom");
+      // Several frames, so suppressing only the first cannot satisfy this test.
+      const frames = [0, 1, 2, 3] as const;
+      error.stack = [
+        "Error: boom",
+        ...frames.map((n) => `    at frame${n} (file:///app/f${n}.ts:${n + 1}:1)`),
+      ].join("\n");
+
+      try {
+        setEnv("VERYFRONT_ENV", "production");
+
+        const output = formatCLIError(error, { color: false });
+
+        assertEquals(
+          output.includes("Stack trace:"),
+          false,
+          "production CLI output hides the stack trace section",
+        );
+        for (const n of frames) {
+          assertEquals(
+            output.includes(`file:///app/f${n}.ts`),
+            false,
+            `production CLI output leaks no stack frame paths (frame${n})`,
+          );
+          assertEquals(
+            output.includes(`at frame${n} `),
+            false,
+            `production CLI output leaks no stack frame names (frame${n})`,
+          );
+        }
+      } finally {
+        if (originalEnv === undefined) deleteEnv("VERYFRONT_ENV");
+        else setEnv("VERYFRONT_ENV", originalEnv);
+      }
     });
 
     it("should not include detail if not provided", () => {
@@ -270,6 +332,123 @@ describe("cli-error-boundary", () => {
       assert(output.length <= ERROR_OUTPUT_MAX_LENGTH_CHARS);
       assert(output.includes("...[truncated]"));
       assertEquals(output.includes("slug-secret"), false);
+    });
+  });
+
+  describe("cliErrorBoundary", () => {
+    function stubProcessExit(): {
+      codes: number[];
+      logs: number;
+      restore: () => void;
+    } {
+      const state = { codes: [] as number[], logs: 0 };
+      const runtimeName = "Deno" in globalThis ? "Deno" : "process";
+      const runtime = (globalThis as unknown as Record<string, unknown>)[runtimeName] as {
+        exit: (code?: number) => never;
+      };
+      const originalExit = runtime.exit;
+      const originalLog = console.log;
+
+      runtime.exit = (code = 0) => {
+        state.codes.push(code);
+        throw new Error("EXIT_STUB");
+      };
+      console.log = () => {
+        state.logs += 1;
+      };
+
+      return {
+        codes: state.codes,
+        get logs() {
+          return state.logs;
+        },
+        restore: () => {
+          runtime.exit = originalExit;
+          console.log = originalLog;
+        },
+      };
+    }
+
+    it("should exit with code 1 by default", async () => {
+      const stub = stubProcessExit();
+      let resolvedNormally = false;
+
+      try {
+        try {
+          await cliErrorBoundary(() => {
+            throw new Error("boom");
+          });
+          resolvedNormally = true;
+        } catch (error) {
+          assertEquals(
+            (error as Error).message,
+            "EXIT_STUB",
+            "boundary must reach the process exit call",
+          );
+        }
+      } finally {
+        stub.restore();
+      }
+
+      assertEquals(stub.codes, [1], "boundary must exit 1 by default");
+      assertEquals(resolvedNormally, false, "boundary must not return normally after a throw");
+      assertEquals(stub.logs, 1, "boundary must print the formatted error by default");
+    });
+
+    it("should honor onError and getExitCode overrides", async () => {
+      const stub = stubProcessExit();
+      let seenRaw: unknown;
+      let seenSlug: string | undefined;
+
+      try {
+        try {
+          await cliErrorBoundary(() => {
+            throw "raw string";
+          }, {
+            onError: (raw, vfError) => {
+              seenRaw = raw;
+              seenSlug = vfError.slug;
+            },
+            getExitCode: () => 2,
+          });
+        } catch (error) {
+          assertEquals(
+            (error as Error).message,
+            "EXIT_STUB",
+            "boundary must reach the process exit call",
+          );
+        }
+      } finally {
+        stub.restore();
+      }
+
+      assertEquals(stub.codes, [2], "getExitCode return value must be used verbatim");
+      assertEquals(seenRaw, "raw string", "onError receives the original throwable");
+      assertEquals(seenSlug, "unknown-error", "onError receives the converted VeryfrontError");
+      assertEquals(stub.logs, 0, "onError replaces the default console output");
+    });
+
+    it("should exit with code 1 from the synchronous boundary", () => {
+      const stub = stubProcessExit();
+
+      try {
+        try {
+          cliErrorBoundarySync(() => {
+            throw CONFIG_NOT_FOUND.create();
+          });
+        } catch (error) {
+          assertEquals(
+            (error as Error).message,
+            "EXIT_STUB",
+            "sync boundary must reach the process exit call",
+          );
+        }
+      } finally {
+        stub.restore();
+      }
+
+      assertEquals(stub.codes, [1], "sync boundary must exit 1");
+      assertEquals(stub.logs, 1, "sync boundary must print the formatted error");
     });
   });
 });

@@ -104,6 +104,11 @@ Research the question and cite every claim.
 - `skills: [..]` / `tools: [..]` - each entry resolves as the agent's own
   short name first, then as a global id. A colocated short name that shadows a
   global id is reported at discovery so the reference stays unambiguous.
+- Use `denied-tools: [..]` in Markdown agent frontmatter to preserve explicit
+  tool denials. `deniedTools` is also accepted for serialized definitions. Do
+  not combine either form with `tools: true`: the serialized runtime cannot
+  represent "all except", so it fails closed and disables every project tool.
+  List the allowed tools explicitly when you also need denials.
 - Duplicate agent ids (flat file + directory) and agent ids whose sanitized
   namespaces collide are reported as discovery errors.
   The same catalog metadata is used by local and hosted runtime paths. Hosted

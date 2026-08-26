@@ -1,7 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { endRequest, isEnabled, startRequest, startTimer, timeAsync } from "./perf-timer.ts";
+import {
+  __resetPerfTimerForTests,
+  __trackedRequestIdsForTests,
+  endRequest,
+  isEnabled,
+  startRequest,
+  startTimer,
+  timeAsync,
+} from "./perf-timer.ts";
 
 describe("perf-timer", () => {
   describe("isEnabled", () => {
@@ -23,6 +31,45 @@ describe("perf-timer", () => {
 
     it("should not throw for unknown request ID", () => {
       endRequest("nonexistent-request");
+    });
+  });
+
+  describe("endRequest (enabled mode)", () => {
+    it("releases a request whose timers never ran", () => {
+      __resetPerfTimerForTests(true);
+      try {
+        startRequest("shed-request");
+        assertEquals(__trackedRequestIdsForTests(), ["shed-request"]);
+
+        endRequest("shed-request");
+
+        assertEquals(
+          __trackedRequestIdsForTests(),
+          [],
+          "an empty timing entry must not outlive its request",
+        );
+      } finally {
+        __resetPerfTimerForTests(undefined);
+      }
+    });
+
+    it("releases a completed request with recorded timers", () => {
+      __resetPerfTimerForTests(true);
+      try {
+        startRequest("timed-request");
+        const stop = startTimer("total");
+        stop();
+
+        endRequest("timed-request");
+
+        assertEquals(
+          __trackedRequestIdsForTests(),
+          [],
+          "a reported timing entry must be removed once the request ends",
+        );
+      } finally {
+        __resetPerfTimerForTests(undefined);
+      }
     });
   });
 

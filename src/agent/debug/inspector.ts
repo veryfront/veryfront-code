@@ -58,7 +58,11 @@ export async function inspectAgent(
   const executionTime = Date.now() - startTime;
 
   const memoryStatsAfter = await agent.getMemoryStats();
-  const availableTools = Object.keys(agent.config.tools ?? {});
+  // Entries explicitly switched off with `false` are preserved in the config
+  // as denials; they are not callable and must not be reported as available.
+  const availableTools = Object.entries(agent.config.tools ?? {})
+    .filter(([, entry]) => entry !== false)
+    .map(([toolName]) => toolName);
 
   return {
     agent: {

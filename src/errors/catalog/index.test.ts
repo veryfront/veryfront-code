@@ -114,32 +114,44 @@ describe("errors/catalog/index", () => {
     });
 
     it("should find errors by title", () => {
-      const entries = Object.values(ERROR_CATALOG);
-      assertEquals(entries.length > 0, true);
+      const results = searchErrors("Static site generation");
 
-      const first = entries[0];
-      assertExists(first);
-
-      const word = first.title.split(" ")[0];
-      assertExists(word);
-
-      const results = searchErrors(word);
-      assertEquals(results.length > 0, true);
+      assertEquals(
+        results.map((error) => error.slug),
+        ["ssg-generation-error"],
+        "title-only query must match the ssg entry by its title",
+      );
     });
 
     it("should be case insensitive", () => {
-      const entries = Object.values(ERROR_CATALOG);
-      assertEquals(entries.length > 0, true);
+      const lower = searchErrors("static site generation");
+      const upper = searchErrors("STATIC SITE GENERATION");
 
-      const first = entries[0];
-      assertExists(first);
+      assertEquals(
+        lower.map((error) => error.slug),
+        ["ssg-generation-error"],
+        "lowercase title query must match the ssg entry",
+      );
+      assertEquals(
+        upper.map((error) => error.slug),
+        lower.map((error) => error.slug),
+        "uppercase title query must match the same entries as lowercase",
+      );
+    });
 
-      const word = first.title.split(" ")[0];
-      assertExists(word);
+    it("should find an error by a phrase that appears only in its message", () => {
+      const results = searchErrors("supported configuration file");
 
-      const lower = searchErrors(word.toLowerCase());
-      const upper = searchErrors(word.toUpperCase());
-      assertEquals(lower.length, upper.length);
+      assertEquals(
+        results.some((error) => error.slug === "config-not-found"),
+        true,
+        "message-body text must be searchable",
+      );
+      assertEquals(
+        results.length,
+        1,
+        "the phrase appears only in the config-not-found message",
+      );
     });
 
     it("should search in steps", () => {

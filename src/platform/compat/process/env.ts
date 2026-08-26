@@ -1,9 +1,12 @@
 import { getDenoRuntime, isDeno as IS_DENO } from "../runtime.ts";
 import { hostProcessEnv, runtimeProcess } from "./runtime-process.ts";
 import {
+  createProjectScopedDenoEnvView,
+  deleteProjectScopedEnv,
   installProjectScopedProcessEnv,
   projectScopedEnvRecord,
   readProjectScopedEnv,
+  writeProjectScopedEnv,
 } from "./scoped-process-env.ts";
 import type { ProjectEnvSnapshot } from "./project-env-contract.ts";
 
@@ -11,6 +14,8 @@ type EnvOverlayValue = string | null;
 type EnvOverlayStore = Map<string, EnvOverlayValue>;
 
 const apply = Reflect.apply;
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const denoRuntime = IS_DENO ? getDenoRuntime() : undefined;
 const denoEnv = denoRuntime?.env;
 const denoEnvGet = denoEnv?.get;
@@ -124,6 +129,70 @@ export function getHostEnv(key: string): string | undefined {
 }
 
 let _trustedProjectEnvSnapshot: (() => ProjectEnvSnapshot | undefined) | null = null;
+let denoEnvViewInstalled = false;
+let denoCommandViewInstalled = false;
+
+function installProjectScopedDenoCommand(
+  getSnapshot: () => ProjectEnvSnapshot | undefined,
+): void {
+  if (denoCommandViewInstalled || !denoRuntime) return;
+
+  const HostCommand = denoRuntime.Command;
+  const hostOutput = HostCommand.prototype.output;
+  const hostOutputSync = HostCommand.prototype.outputSync;
+  const hostSpawn = HostCommand.prototype.spawn;
+
+  class ProjectScopedCommand {
+    readonly #command: Deno.Command;
+
+    constructor(command: string | URL, options: Deno.CommandOptions = {}) {
+      const snapshot = getSnapshot();
+      const scopedOptions = snapshot === undefined ? options : {
+        ...options,
+        clearEnv: true,
+        env: { ...projectScopedEnvRecord(snapshot), ...options.env },
+      };
+      this.#command = new HostCommand(command, scopedOptions);
+    }
+
+    output(): Promise<Deno.CommandOutput> {
+      return apply(hostOutput, this.#command, []);
+    }
+
+    outputSync(): Deno.CommandOutput {
+      return apply(hostOutputSync, this.#command, []);
+    }
+
+    spawn(): Deno.ChildProcess {
+      return apply(hostSpawn, this.#command, []);
+    }
+  }
+
+  ObjectDefineProperty(denoRuntime, "Command", {
+    value: ProjectScopedCommand,
+    writable: false,
+    enumerable: true,
+    configurable: false,
+  });
+  denoCommandViewInstalled = true;
+}
+
+function installProjectScopedDenoEnv(
+  getSnapshot: () => ProjectEnvSnapshot | undefined,
+): void {
+  if (denoEnvViewInstalled || !denoRuntime || !denoEnv) return;
+
+  const descriptor = ObjectGetOwnPropertyDescriptor(denoRuntime, "env");
+  const getOverlay = allowHostEnvTestOverlay ? getEnvOverlayStore : undefined;
+  const view = createProjectScopedDenoEnvView(denoEnv, getSnapshot, getOverlay);
+  ObjectDefineProperty(denoRuntime, "env", {
+    value: view,
+    writable: false,
+    enumerable: descriptor?.enumerable ?? true,
+    configurable: false,
+  });
+  denoEnvViewInstalled = true;
+}
 
 /**
  * Register the server-owned project environment snapshot bridge.
@@ -142,8 +211,13 @@ export function registerTrustedProjectEnvSnapshot(
   if (_trustedProjectEnvSnapshot && _trustedProjectEnvSnapshot !== getter) {
     throw new Error("Project environment snapshot bridge is already registered");
   }
+  installProjectScopedDenoEnv(getter);
+  installProjectScopedDenoCommand(getter);
   _trustedProjectEnvSnapshot = getter;
-  installProjectScopedProcessEnv(getTrustedProjectEnvSnapshot);
+  installProjectScopedProcessEnv(
+    getTrustedProjectEnvSnapshot,
+    allowHostEnvTestOverlay ? getEnvOverlayStore : undefined,
+  );
 }
 
 /** Return the active server-owned project env snapshot, if registered. */
@@ -233,6 +307,15 @@ export function getEnvBoolean(
 
 /** Sets env. */
 export function setEnv(key: string, value: string): void {
+  const projectEnv = getTrustedProjectEnvSnapshot();
+  if (projectEnv !== undefined) {
+    // Same rule as getEnv() and the process.env view: while a project scope is
+    // active its snapshot is the whole environment, so a write stays contained
+    // to that scope instead of mutating the shared host process environment.
+    writeProjectScopedEnv(projectEnv, key, value);
+    return;
+  }
+
   const overlay = getEnvOverlayStore();
   if (overlay) {
     overlay.set(key, value);
@@ -253,6 +336,13 @@ export function setEnv(key: string, value: string): void {
 
 /** Delete a process environment variable. */
 export function deleteEnv(key: string): void {
+  const projectEnv = getTrustedProjectEnvSnapshot();
+  if (projectEnv !== undefined) {
+    // Contained to the active project scope for the same reason as setEnv().
+    deleteProjectScopedEnv(projectEnv, key);
+    return;
+  }
+
   const overlay = getEnvOverlayStore();
   if (overlay) {
     overlay.set(key, null);

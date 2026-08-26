@@ -59,6 +59,8 @@ import {
   readOwnDataProperty,
 } from "#veryfront/security/project-locality.ts";
 import { isInfrastructureOnlyRequestHeader } from "#veryfront/security/http/application-request.ts";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
+import { snapshotApplicationIdentity } from "#veryfront/security/application-auth/identity.ts";
 
 const apply = Reflect.apply;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -408,6 +410,7 @@ interface ExecuteRouteOptionsSnapshot {
   readonly projectDir?: string;
   readonly isLocalProject: boolean;
   readonly allowHostProjectCodeExecution: boolean;
+  readonly applicationIdentity: ApplicationIdentity | null;
   readonly preparedModule?: PreparedWorkerModule;
   readonly executionScopeId?: string;
 }
@@ -434,6 +437,7 @@ function snapshotExecuteRouteOptions(
 ): ExecuteRouteOptionsSnapshot {
   const rawModulePath = readOwnDataProperty(options, "modulePath");
   const rawProjectDir = readOwnDataProperty(options, "projectDir");
+  const rawApplicationIdentity = readOwnDataProperty(options, "applicationIdentity");
   const rawPreparedModule = readOwnDataProperty(options, "preparedModule");
   const rawExecutionScopeId = readOwnDataProperty(options, "executionScopeId");
   const isLocalProject = isExplicitlyLocalProject(options);
@@ -460,6 +464,11 @@ function snapshotExecuteRouteOptions(
   );
   defineExecuteRouteOption(
     snapshot,
+    "applicationIdentity",
+    snapshotExecuteRouteApplicationIdentity(rawApplicationIdentity),
+  );
+  defineExecuteRouteOption(
+    snapshot,
     "preparedModule",
     typeof rawPreparedModule === "object" && rawPreparedModule !== null
       ? rawPreparedModule
@@ -474,6 +483,13 @@ function snapshotExecuteRouteOptions(
   );
 
   return apply(objectFreeze, undefined, [snapshot]) as ExecuteRouteOptionsSnapshot;
+}
+
+function snapshotExecuteRouteApplicationIdentity(
+  value: unknown,
+): ApplicationIdentity | null {
+  if (value === undefined || value === null) return null;
+  return snapshotApplicationIdentity(value);
 }
 
 function createProjectScopedFs(fs: FileSystemAdapter, projectDir: string): FileSystemAdapter {
@@ -1002,6 +1018,7 @@ function executeAppRouteIsolated(
   pathname: string,
   projectDir: string,
   isLocalProject: boolean,
+  applicationIdentity: ApplicationIdentity | null,
 ): Promise<Response> {
   const method = uppercaseMethod(getRequestMethod(request));
 
@@ -1012,6 +1029,9 @@ function executeAppRouteIsolated(
         const pool = getWorkerPool();
         const serialized = await serializeRequest(request);
         const semanticContext = await snapshotWorkerSemanticContext();
+        const workerApplicationIdentity = applicationIdentity === null
+          ? null
+          : snapshotApplicationIdentity(applicationIdentity);
 
         const workerResponse = await pool.execute(
           await resolveApiWorkerId(executionScopeId, semanticContext.generation),
@@ -1027,6 +1047,7 @@ function executeAppRouteIsolated(
             projectDir,
             sourceIntegrationPolicy: semanticContext.sourceIntegrationPolicy,
             projectEnv: semanticContext.projectEnv,
+            applicationIdentity: workerApplicationIdentity,
           },
         );
 
@@ -1058,6 +1079,7 @@ function executePagesRouteIsolated(
   pathname: string,
   projectDir: string,
   isLocalProject: boolean,
+  applicationIdentity: ApplicationIdentity | null,
 ): Promise<Response> {
   const method = uppercaseMethod(getRequestMethod(request));
 
@@ -1068,6 +1090,9 @@ function executePagesRouteIsolated(
         const pool = getWorkerPool();
         const serialized = await serializeRequest(request);
         const semanticContext = await snapshotWorkerSemanticContext();
+        const workerApplicationIdentity = applicationIdentity === null
+          ? null
+          : snapshotApplicationIdentity(applicationIdentity);
 
         const workerResponse = await pool.execute(
           await resolveApiWorkerId(executionScopeId, semanticContext.generation),
@@ -1091,6 +1116,7 @@ function executePagesRouteIsolated(
             projectDir,
             sourceIntegrationPolicy: semanticContext.sourceIntegrationPolicy,
             projectEnv: semanticContext.projectEnv,
+            applicationIdentity: workerApplicationIdentity,
           },
         );
 
@@ -1134,6 +1160,8 @@ export interface ExecuteRouteOptions {
   preparedModule?: PreparedWorkerModule;
   /** Opaque tenant/version/handler-lifetime worker isolation key. */
   executionScopeId?: string;
+  /** Verified application identity admitted by the host-owned auth boundary. */
+  applicationIdentity?: ApplicationIdentity | null;
 }
 
 export interface PreparedRouteExecutionOptions {
@@ -1142,6 +1170,7 @@ export interface PreparedRouteExecutionOptions {
   readonly modulePath: string;
   readonly projectDir: string;
   readonly isLocalProject: boolean;
+  readonly applicationIdentity?: ApplicationIdentity | null;
 }
 
 export function executePreparedAppRoute(
@@ -1159,6 +1188,7 @@ export function executePreparedAppRoute(
     pathname,
     options.projectDir,
     options.isLocalProject,
+    options.applicationIdentity ?? null,
   );
 }
 
@@ -1177,6 +1207,7 @@ export function executePreparedPagesRoute(
     pathname,
     options.projectDir,
     options.isLocalProject,
+    options.applicationIdentity ?? null,
   );
 }
 
@@ -1248,6 +1279,7 @@ export function executeAppRoute(
         pathname,
         routeOptions.projectDir,
         isLocalProject,
+        routeOptions.applicationIdentity,
       );
     }
     return resolvePromise(
@@ -1277,6 +1309,7 @@ export function executeAppRoute(
 
         const appContext: AppRouteContext = {
           params: normalizeParams(match.params),
+          identity: routeOptions.applicationIdentity,
           env: snapshotProjectEnvForWorker() ?? EMPTY_PROJECT_ENV,
         };
         const pendingResult = resolvedFn(request, appContext);
@@ -1326,6 +1359,7 @@ export function executePagesRoute(
         pathname,
         isolatedProjectDir,
         isLocalProject,
+        routeOptions.applicationIdentity,
       );
     }
     return resolvePromise(
@@ -1361,6 +1395,7 @@ export function executePagesRoute(
           match,
           fs,
           snapshotProjectEnvForWorker() ?? EMPTY_PROJECT_ENV,
+          routeOptions.applicationIdentity,
         );
         const pendingResult = (methodHandler as PagesRouteHandler)(ctx);
         const result = isTrustedRouteResponsePromise(pendingResult)

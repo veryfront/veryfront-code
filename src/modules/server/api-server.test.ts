@@ -99,16 +99,17 @@ describe("modules/server/api-server", () => {
       assertEquals(body.headings, headings);
     });
 
-    it("should return 404 on render error", async () => {
+    it("should return a generic 500 on render error", async () => {
       const server = new APIServer({
-        renderer: createMockRenderer({}, new Error("Page not found")),
+        renderer: createMockRenderer({}, new Error("private render detail")),
       });
 
       const response = await server.handleRequest("/_veryfront/data/missing.json");
-      assertEquals(response?.status, 404);
+      assertEquals(response?.status, 500);
+      assertEquals(response?.headers.get("cache-control"), "no-store");
 
       const body = await response?.json();
-      assertEquals(body.error, "Page not found");
+      assertEquals(body.error, "Failed to render page data");
     });
 
     it("should handle non-Error throws", async () => {
@@ -120,10 +121,10 @@ describe("modules/server/api-server", () => {
       const server = new APIServer({ renderer });
 
       const response = await server.handleRequest("/_veryfront/data/bad.json");
-      assertEquals(response?.status, 404);
+      assertEquals(response?.status, 500);
 
       const body = await response?.json();
-      assertEquals(body.error, "string error");
+      assertEquals(body.error, "Failed to render page data");
     });
 
     it("should set no-cache header on success", async () => {

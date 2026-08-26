@@ -98,6 +98,16 @@ describe("logging", () => {
         const output = consoleErrorOutput.join("\n");
         assertStringIncludes(output, "[ERROR] render-error (RUNTIME)");
         assertStringIncludes(output, "Component render failed");
+        assertEquals(
+          output.includes("Detail:"),
+          false,
+          "omits the Detail line when the error carries no detail",
+        );
+        assertStringIncludes(
+          output,
+          "Suggestion: Check component for runtime errors",
+          "the dev dump must print the registry suggestion",
+        );
       });
 
       it("redacts credential-like context keys in the dev dump (#1989)", () => {

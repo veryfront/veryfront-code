@@ -20,12 +20,19 @@ import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-loca
 import {
   createErrorResponseFromDefinition,
   PROJECT_EXECUTION_UNAVAILABLE,
+  SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE,
 } from "#veryfront/errors";
+import { markdownPreviewOwnsDocumentPathname } from "../request/ssr/document-ownership.ts";
+import {
+  ensurePreviewDocumentSourceSnapshot,
+  finishPreviewDocumentSourceSnapshot,
+} from "../request/source-snapshot-freshness.ts";
 
 const logger = serverLogger.component("markdown-preview-handler");
 
 // Priority 900: between MEDIUM (600) and LOW/SSR (1000)
 const PRIORITY_MARKDOWN_PREVIEW = 900 as HandlerPriority;
+const MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS = 3;
 
 export class MarkdownPreviewHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -39,12 +46,8 @@ export class MarkdownPreviewHandler extends BaseHandler {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
-    if (!pathname.endsWith(".md")) {
-      logger.debug("Skipping - no .md extension", { pathname });
-      return this.continue();
-    }
-
-    if (pathname.includes("/pages/") || pathname.includes("/app/") || pathname.startsWith("/_")) {
+    if (!markdownPreviewOwnsDocumentPathname(pathname)) {
+      logger.debug("Skipping - not a standalone Markdown document", { pathname });
       return this.continue();
     }
 
@@ -85,9 +88,44 @@ export class MarkdownPreviewHandler extends BaseHandler {
 
     return await this.withProxyContext(
       ctx,
-      () => this.renderMarkdown(req, ctx, filePath, url),
+      () => this.renderCurrentMarkdown(req, ctx, filePath, url),
       { requireToken: true },
     );
+  }
+
+  private async renderCurrentMarkdown(
+    req: Request,
+    ctx: HandlerContext,
+    filePath: string,
+    url: URL,
+  ): Promise<HandlerResult> {
+    for (
+      let attempts = 0;
+      attempts <= MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS;
+      attempts++
+    ) {
+      let reclassify = await ensurePreviewDocumentSourceSnapshot(ctx);
+      if (reclassify === undefined) {
+        const rendered = await this.renderMarkdown(req, ctx, filePath, url);
+        // Rendering can cross an edit after the pre-render freshness check.
+        // Validate the retained generation outside renderMarkdown's error-to-
+        // continue catch so a mixed-generation document fails closed.
+        reclassify = await finishPreviewDocumentSourceSnapshot(ctx);
+        if (reclassify === undefined) return rendered;
+      }
+      if (attempts === MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS) {
+        throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+          detail:
+            `The source snapshot for "${ctx.projectSlug}" changed during Markdown document ownership classification or rendering ${MAX_DOCUMENT_OWNERSHIP_RECLASSIFICATIONS} times, so this request cannot safely render it.`,
+        });
+      }
+      const reclassified = await reclassify();
+      if (reclassified.response || !reclassified.continue) return reclassified;
+    }
+
+    throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+      detail: `The source snapshot for "${ctx.projectSlug}" could not be stabilized.`,
+    });
   }
 
   private async renderMarkdown(

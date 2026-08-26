@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { AgUiRequestSchema } from "veryfront/agent";
 import { datasets, evalAgent, type EvalAgentAdapterResult, metrics, runEval } from "veryfront/eval";
@@ -23,6 +28,7 @@ import {
   runDurableRunCanaryCli,
   runLiveEvalCli,
 } from "veryfront/eval/agent-service";
+import { bindTrustedLocalEvalFetch } from "#veryfront/eval/agent-service/trusted-fetch.ts";
 
 function createSseResponse(
   events: Array<{ event: string; data: Record<string, unknown> }>,
@@ -241,7 +247,6 @@ describe("eval/agent-service", () => {
     const adapter = createAgentServiceEvalAdapter({
       endpoint: "http://127.0.0.1:4311/api/ag-ui",
       authToken: "token",
-      agentId: "veryfront",
       projectId: "project_123",
       projectSlug: "demo-project",
       contentSourceId: "preview-main",
@@ -352,7 +357,6 @@ describe("eval/agent-service", () => {
     );
     assertEquals(requests[0]?.body.forwardedProps, {
       veryfront: {
-        agentId: "veryfront",
         projectId: "project_123",
         branchId: "branch_123",
       },
@@ -413,6 +417,66 @@ describe("eval/agent-service", () => {
     });
     assertEquals(record.durationMs, 0);
     assertStringIncludes(JSON.stringify(record.trace.events), "RUN_FINISHED");
+  });
+
+  it("rejects remote eval agent overrides that public AG-UI cannot honor", () => {
+    assertThrows(
+      () =>
+        createAgentServiceEvalAdapter({
+          authToken: "token",
+          agentId: "researcher",
+        }),
+      TypeError,
+      "cannot select agent",
+    );
+    assertThrows(
+      () =>
+        createAgentServiceEvalAdapter({
+          authToken: "token",
+          agentId: "veryfront",
+        }),
+      TypeError,
+      "cannot select agent",
+    );
+    assertThrows(
+      () =>
+        createAgentServiceEvalAdapter({
+          authToken: "token",
+          agentId: "researcher",
+          fetch: async () => new Response(null, { status: 500 }),
+        }),
+      TypeError,
+      "cannot select agent",
+    );
+  });
+
+  it("allows agent targets when a trusted bound fetch performs agent selection", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const adapter = createAgentServiceEvalAdapter({
+      authToken: "token",
+      agentId: "researcher",
+      fetch: bindTrustedLocalEvalFetch(async (_input, init) => {
+        requestBody = JSON.parse(String(init?.body));
+        return createSseResponse([
+          { event: "RunStarted", data: { runId: "run_bound" } },
+          { event: "TextMessageContent", data: { delta: "Done" } },
+          { event: "RunFinished", data: {} },
+        ]);
+      }, "researcher"),
+    });
+
+    const definition = evalAgent({
+      id: "eval:bound",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "smoke", input: "List files" }]),
+    });
+    const report = await runEval(definition, {
+      adapters: { agent: adapter },
+      now: () => new Date("2026-06-20T10:00:00.000Z"),
+    });
+
+    assertEquals(report.records[0]?.completed, true);
+    assertEquals(requestBody?.forwardedProps, undefined);
   });
 
   it("marks a non-ok AG-UI response as an incomplete run", async () => {
@@ -714,6 +778,214 @@ describe("eval/agent-service", () => {
       output: { status: "unverified" },
     }]);
     assertEquals(record.metrics?.[0]?.pass, true);
+  });
+
+  it("normalizes hosted tool-call status events into eval traces", async () => {
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () =>
+        createSseResponse([
+          { event: "RunStarted", data: { runId: "run_123" } },
+          {
+            event: "Custom",
+            data: {
+              name: "tool-call-status",
+              value: {
+                toolCallId: "tool_1",
+                toolCallName: "veryfront_agent.github_get_implementation_frontier",
+                status: "in_progress",
+                arguments: {},
+              },
+            },
+          },
+          {
+            event: "Custom",
+            data: {
+              name: "tool-call-status",
+              value: {
+                toolCallId: "tool_1",
+                toolCallName: "veryfront_agent.github_get_implementation_frontier",
+                status: "completed",
+                arguments: {},
+                result: { nextAction: { kind: "agent-brief-repair" } },
+              },
+            },
+          },
+          { event: "TextMessageContent", data: { delta: '{"nextAction":{}}' } },
+          {
+            event: "Custom",
+            data: {
+              name: "codex.turn.completed",
+              value: {
+                usage: {
+                  input_tokens: 120,
+                  output_tokens: 30,
+                  cached_input_tokens: 80,
+                  reasoning_output_tokens: 10,
+                },
+              },
+            },
+          },
+          { event: "RunFinished", data: {} },
+        ]),
+    });
+    const definition = evalAgent({
+      id: "eval:hosted-tool-status",
+      target: "agent:veryfront",
+      dataset: datasets.inline([{ id: "frontier", input: "Inspect the frontier" }]),
+      metrics: [
+        metrics.agent.calledTool("veryfront_agent.github_get_implementation_frontier"),
+        metrics.agent.notCalledTool("veryfront_agent.github_update_issue"),
+      ],
+    });
+
+    const report = await runEval(definition, {
+      adapters: { agent: adapter },
+    });
+
+    const record = report.records[0]!;
+    assertEquals(record.completed, true);
+    assertEquals(record.trace.toolCalls, [{
+      id: "tool_1",
+      name: "veryfront_agent.github_get_implementation_frontier",
+      status: "ok",
+      input: {},
+      output: { nextAction: { kind: "agent-brief-repair" } },
+    }]);
+    assertEquals(record.metrics?.map((metric) => metric.pass), [true, true]);
+    assertEquals(record.usage, {
+      inputTokens: 120,
+      outputTokens: 30,
+      totalTokens: 150,
+      cachedInputTokens: 80,
+      reasoningTokens: 10,
+    });
+  });
+
+  it("preserves hosted tool-call failures in eval traces", async () => {
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () =>
+        createSseResponse([
+          { event: "RunStarted", data: { runId: "run_123" } },
+          {
+            event: "Custom",
+            data: {
+              name: "tool-call-status",
+              value: {
+                toolCallId: "tool_1",
+                toolCallName: "veryfront_agent.github_update_issue",
+                status: "failed",
+                arguments: { issue_number: 27 },
+                error: { message: "write denied" },
+              },
+            },
+          },
+          { event: "RunFinished", data: {} },
+        ]),
+    });
+    const definition = evalAgent({
+      id: "eval:hosted-tool-error",
+      target: "agent:veryfront",
+      dataset: datasets.inline([{ id: "mutation", input: "Update an issue" }]),
+      metrics: [metrics.agent.noFailedTools()],
+    });
+
+    const report = await runEval(definition, {
+      adapters: { agent: adapter },
+    });
+
+    const record = report.records[0]!;
+    assertEquals(record.trace.toolCalls, [{
+      id: "tool_1",
+      name: "veryfront_agent.github_update_issue",
+      status: "error",
+      input: { issue_number: 27 },
+      error: "write denied",
+    }]);
+    assertEquals(record.metrics?.[0]?.pass, false);
+  });
+
+  it("keeps standard AG-UI tool results authoritative in mixed hosted streams", async () => {
+    const adapter = createAgentServiceEvalAdapter({
+      endpoint: "http://127.0.0.1:4311/api/ag-ui",
+      authToken: "token",
+      fetch: async () =>
+        createSseResponse([
+          { event: "RunStarted", data: { runId: "run_123" } },
+          {
+            event: "Custom",
+            data: {
+              name: "tool-call-status",
+              value: {
+                toolCallId: "tool_1",
+                toolCallName: "search",
+                status: "failed",
+                result: { source: "custom" },
+                error: { message: "custom failure" },
+              },
+            },
+          },
+          {
+            event: "ToolCallResult",
+            data: {
+              toolCallId: "tool_1",
+              toolCallName: "search",
+              result: { source: "ag-ui" },
+            },
+          },
+          {
+            event: "ToolCallResult",
+            data: {
+              toolCallId: "tool_2",
+              toolCallName: "write",
+              isError: true,
+              result: { message: "canonical failure" },
+            },
+          },
+          {
+            event: "Custom",
+            data: {
+              name: "tool-call-status",
+              value: {
+                toolCallId: "tool_2",
+                toolCallName: "write",
+                status: "completed",
+                result: { source: "custom" },
+              },
+            },
+          },
+          { event: "RunFinished", data: {} },
+        ]),
+    });
+    const definition = evalAgent({
+      id: "eval:mixed-tool-events",
+      target: "agent:veryfront",
+      dataset: datasets.inline([{ id: "mixed", input: "Use tools" }]),
+    });
+
+    const result = await adapter({
+      definition,
+      example: { id: "mixed", input: "Use tools" },
+      repetition: 1,
+    }) as EvalAgentAdapterResult;
+
+    assertEquals(result.trace?.toolCalls, [
+      {
+        id: "tool_1",
+        name: "search",
+        status: "ok",
+        output: { source: "ag-ui" },
+      },
+      {
+        id: "tool_2",
+        name: "write",
+        status: "error",
+        error: "canonical failure",
+      },
+    ]);
   });
 
   it("merges AG-UI tool argument placeholders before parsing eval traces", async () => {

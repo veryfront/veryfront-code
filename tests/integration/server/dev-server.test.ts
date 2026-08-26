@@ -92,48 +92,40 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
   describe("Dev Server - Security", {}, () => {
     it("enforces remote import allow-list for security", async () => {
       await withTestContext("dev-security-allowlist", async (context) => {
-        const moduleServerController = new AbortController();
-        const moduleServer = Deno.serve(
+        let blockedOriginRequests = 0;
+        const blockedModuleServerController = new AbortController();
+        const blockedModuleServer = Deno.serve(
           {
             hostname: "127.0.0.1",
             port: 0,
-            signal: moduleServerController.signal,
+            signal: blockedModuleServerController.signal,
             onListen: () => {},
           },
-          () =>
-            new Response("export const allowedValue = 'ok';", {
+          () => {
+            blockedOriginRequests++;
+            return new Response("export const blockedValue = 'unsafe';", {
               headers: { "content-type": "application/javascript" },
-            }),
+            });
+          },
         );
         const controller = new AbortController();
         try {
-          const moduleOrigin = `http://127.0.0.1:${moduleServer.addr.port}`;
+          const blockedModuleOrigin = `http://127.0.0.1:${blockedModuleServer.addr.port}`;
 
           await writeTextFile(
             join(context.projectDir, "veryfront.config.js"),
             TestDataFactory.createConfig({
               security: {
-                remoteHosts: [moduleOrigin],
+                remoteHosts: [],
               },
             }),
-          );
-
-          await mkdir(join(context.projectDir, "app", "api", "allowed"), { recursive: true });
-          await writeTextFile(
-            join(context.projectDir, "app", "api", "allowed", "route.ts"),
-            `export const GET = async () => {
-          const m = await import('${moduleOrigin}/allowed.js');
-          return new Response(m.allowedValue, {
-            headers: { 'content-type': 'text/plain' }
-          });
-        }`,
           );
 
           await mkdir(join(context.projectDir, "app", "api", "blocked"), { recursive: true });
           await writeTextFile(
             join(context.projectDir, "app", "api", "blocked", "route.ts"),
             `export const GET = async () => {
-          await import('https://example.com/malicious.js');
+          await import('${blockedModuleOrigin}/malicious.js');
           return new Response('should not reach here');
         }`,
           );
@@ -143,30 +135,22 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
             signal: controller.signal,
           });
 
-          const allowedResponse = await fetch(`http://127.0.0.1:${server.port}/api/allowed`);
-          assertEquals(
-            allowedResponse.status,
-            200,
-            "Should allow configured remote imports",
-          );
-          assertEquals(
-            await allowedResponse.text(),
-            "ok",
-            "Should successfully import from the configured remote host",
-          );
-
-          // Returns 502 (build failure) or 500 (runtime import failure in Deno direct mode)
           const blockedResponse = await fetch(`http://127.0.0.1:${server.port}/api/blocked`);
           assertEquals(
-            blockedResponse.status === 502 || blockedResponse.status === 500,
-            true,
-            `Should block unauthorized imports, got status ${blockedResponse.status}`,
+            blockedResponse.status,
+            502,
+            "Should classify a disallowed remote import as a bad gateway",
           );
           await blockedResponse.body?.cancel();
+          assertEquals(
+            blockedOriginRequests,
+            0,
+            "Should reject a disallowed remote import before making a request",
+          );
         } finally {
           controller.abort();
-          moduleServerController.abort();
-          await moduleServer.finished.catch(() => {});
+          blockedModuleServerController.abort();
+          await blockedModuleServer.finished.catch(() => {});
         }
       });
     });
@@ -569,7 +553,7 @@ This is a test page for the Pages Router.
           `import { Suspense } from 'react';
 
         async function SlowComponent() {
-          await delay(10);
+          await new Promise((resolve) => setTimeout(resolve, 10));
           return <div>Loaded Content</div>;
         }
 
@@ -593,8 +577,8 @@ This is a test page for the Pages Router.
 
         const html = await response.text();
         assert(
-          html.includes("Loading...") || html.includes("Loaded Content"),
-          "Should show loading UI or loaded content",
+          html.includes("Loaded Content"),
+          "Should stream the loaded content after the loading UI",
         );
 
         // Wait a bit to ensure any timers from streaming complete

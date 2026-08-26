@@ -6,7 +6,6 @@
   "cli/commands/test/handler.test.ts",
   "cli/commands/worker/handler.test.ts",
   "cli/mcp/jsonrpc.test.ts",
-  "cli/mcp/standalone.test.ts",
   "cli/mcp/tools/dev-tools.test.ts",
   "cli/mcp/tools/project-tools.test.ts",
   "cli/mcp/tools/run-lint-tool.test.ts",

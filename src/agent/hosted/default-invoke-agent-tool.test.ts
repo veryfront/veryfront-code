@@ -167,6 +167,71 @@ it("fixed hosted delegates inherit project-agent settings without overriding exp
   });
 });
 
+it("fixed hosted delegates cannot re-enable denied tools through explicit input", () => {
+  const configured = defaultHostedInvokeAgentToolInternals.applyChildAgentExecutionConfig(
+    {
+      description: "extract application",
+      prompt: "Extract the application.",
+      context: {},
+      agent_id: "extraction-agent",
+      tools: ["get_file", "load_skill", "web_search"],
+    },
+    {
+      system: "Follow the extraction policy.",
+      toolNames: ["get_file"],
+      deniedToolNames: ["load_skill", "web_search"],
+      mcpServers: [],
+    },
+  );
+
+  assertEquals(
+    configured.tools,
+    ["get_file"],
+    "explicit tool requests must be capped by the child's denial ceiling",
+  );
+});
+
+it("fixed hosted delegates cannot override an empty fail-closed tool ceiling", () => {
+  const configured = defaultHostedInvokeAgentToolInternals.applyChildAgentExecutionConfig(
+    {
+      description: "extract application",
+      prompt: "Extract the application.",
+      context: {},
+      agent_id: "extraction-agent",
+      tools: ["get_file", "create_file"],
+    },
+    {
+      system: "Follow the extraction policy.",
+      toolNames: [],
+      deniedToolNames: ["update_file"],
+      mcpServers: [],
+    },
+  );
+
+  assertEquals(configured.tools, []);
+});
+
+it("fixed hosted delegates drop denied tools from assembled fork tool sources", () => {
+  const echoTool = {
+    description: "Echo",
+    execute: () => ({ ok: true }),
+  };
+  const filtered = defaultHostedInvokeAgentToolInternals.withoutDeniedForkTools(
+    {
+      ok: true,
+      forkTools: {
+        get_file: echoTool,
+        load_skill: echoTool,
+        "researcher--fetch-paper": { ...echoTool, shortName: "fetch-paper" },
+      },
+    },
+    ["load_skill", "fetch-paper"],
+  );
+
+  assert(filtered.ok);
+  assertEquals(Object.keys(filtered.forkTools), ["get_file"]);
+});
+
 it("fixed hosted delegates keep every explicit input over project-agent settings", () => {
   const configured = defaultHostedInvokeAgentToolInternals.applyChildAgentExecutionConfig(
     {
@@ -251,17 +316,24 @@ it("default hosted invoke resolves and runs configured child against the target 
             model: "configured-model",
             temperature: 0.35,
             maxSteps: 12,
-            toolNames: ["lookup_job"],
+            toolNames: ["create_file"],
+            deniedToolNames: ["update_file"],
             availableSkillIds: ["extraction"],
           });
         },
         buildGlobalTools: (context, childAgentId, childConfig) => {
           assertEquals(context.projectId, "target-project-id");
           assertEquals(childAgentId, "extraction-agent");
-          assertEquals(childConfig?.toolNames, ["lookup_job"]);
+          assertEquals(childConfig?.toolNames, ["create_file"]);
+          assertEquals(childConfig?.deniedToolNames, ["update_file"]);
           return {
-            lookup_job: {
-              description: "Lookup a job posting",
+            create_file: {
+              description: "Create a file",
+              inputSchema: {},
+              execute: () => ({ ok: true }),
+            },
+            update_file: {
+              description: "Update a file",
               inputSchema: {},
               execute: () => ({ ok: true }),
             },
@@ -324,7 +396,7 @@ it("default hosted invoke resolves and runs configured child against the target 
   assertEquals(captured.model, "resolved-configured-model");
   assertEquals(captured.temperature, 0.35);
   assertEquals(captured.maxSteps, 12);
-  assertEquals(captured.forkToolNames, ["lookup_job"]);
+  assertEquals(captured.forkToolNames, ["create_file"]);
   assert(Array.isArray(captured.system));
   assertEquals(captured.system[0], {
     role: "system",

@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { expect } from "#std/expect.ts";
 import { defineConfig, defineConfigWithEnv, mergeConfigs } from "./define-config.ts";
 import {
@@ -17,7 +18,13 @@ import {
   type VeryfrontConfig,
   type VeryfrontConfigInput,
 } from "./schemas/index.ts";
-import { createTestEnvironmentConfig } from "./environment-config.ts";
+import {
+  _resetEnvironmentConfig,
+  _setEnvironmentConfigForTesting,
+  createTestEnvironmentConfig,
+  getEnvironmentConfig,
+  isEnvironmentConfigInitialized,
+} from "./environment-config.ts";
 
 describe("define-config", () => {
   describe("defineConfig", () => {
@@ -133,10 +140,31 @@ describe("define-config", () => {
   });
 
   describe("defineConfigWithEnv", () => {
-    it("should use development as default environment", () => {
+    it("should use the supplied development environment", () => {
       const testEnv = createTestEnvironmentConfig({ nodeEnv: "development" });
       const result = defineConfigWithEnv((env) => ({ title: `App-${env}` }), testEnv);
       expect(result.title).toBe("App-development");
+    });
+
+    it("reads the ambient environment when no env config is passed", () => {
+      // Every standard lane pins NODE_ENV to "production", so comparing against
+      // the ambient snapshot would also pass for a hardcoded "production"
+      // default. Scope a non-production ambient environment and assert the
+      // concrete value instead.
+      const hadAmbient = isEnvironmentConfigInitialized();
+      const priorAmbient = hadAmbient ? getEnvironmentConfig() : null;
+      try {
+        _setEnvironmentConfigForTesting({ nodeEnv: "staging" });
+        const result = defineConfigWithEnv((env) => ({ title: env }));
+        assertEquals(
+          result.title,
+          "staging",
+          "omitting the env argument must read the ambient environment, not a fixed default",
+        );
+      } finally {
+        if (priorAmbient) _setEnvironmentConfigForTesting(priorAmbient);
+        else _resetEnvironmentConfig();
+      }
     });
 
     it("should use NODE_ENV if set", () => {

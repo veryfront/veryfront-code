@@ -1,4 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { markApplicationAuthAdmittedRequest } from "#veryfront/security/application-auth/oidc-runtime.ts";
+import { markTrustedProxyApplicationAuthAdmittedRequest } from "#veryfront/security/application-auth/trusted-proxy.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import type { HandlerContext, SecurityConfig } from "#veryfront/types";
@@ -481,6 +483,92 @@ describe("AuthHandler realm sanitization", () => {
       expect(body).not.toContain("secret");
       expect(body).not.toContain("private-token");
     }
+  });
+
+  it("ignores explicit undefined sibling auth modes while resolving the defined mode", async () => {
+    const handler = createHandler();
+
+    const basic = await handler.handle(
+      new Request("http://localhost/test", {
+        headers: { authorization: `Basic ${btoa("admin:secret")}` },
+      }),
+      {
+        projectDir: "/tmp/auth-test",
+        securityConfig: {
+          auth: {
+            basic: { username: "admin", password: "secret" },
+            bearer: undefined,
+            oidc: undefined,
+            trustedProxy: undefined,
+          },
+        } as unknown as SecurityConfig,
+        adapter: {
+          env: { get: () => undefined },
+        } as unknown as HandlerContext["adapter"],
+        isLocalProject: false,
+      },
+    );
+    expect(basic.continue).toBe(true);
+
+    const bearer = await handler.handle(
+      new Request("http://localhost/test", {
+        headers: { authorization: "Bearer project-token" },
+      }),
+      {
+        projectDir: "/tmp/auth-test",
+        securityConfig: {
+          auth: {
+            basic: undefined,
+            bearer: { token: "project-token" },
+            oidc: undefined,
+            trustedProxy: undefined,
+          },
+        } as unknown as SecurityConfig,
+        adapter: {
+          env: { get: () => undefined },
+        } as unknown as HandlerContext["adapter"],
+        isLocalProject: false,
+      },
+    );
+    expect(bearer.continue).toBe(true);
+
+    const oidcRequest = new Request("http://localhost/test");
+    markApplicationAuthAdmittedRequest(oidcRequest);
+    const oidc = await handler.handle(oidcRequest, {
+      projectDir: "/tmp/auth-test",
+      securityConfig: {
+        auth: {
+          basic: undefined,
+          bearer: undefined,
+          oidc: {},
+          trustedProxy: undefined,
+        },
+      } as unknown as SecurityConfig,
+      adapter: {
+        env: { get: () => undefined },
+      } as unknown as HandlerContext["adapter"],
+      isLocalProject: false,
+    });
+    expect(oidc.continue).toBe(true);
+
+    const trustedProxyRequest = new Request("http://localhost/test");
+    markTrustedProxyApplicationAuthAdmittedRequest(trustedProxyRequest);
+    const trustedProxy = await handler.handle(trustedProxyRequest, {
+      projectDir: "/tmp/auth-test",
+      securityConfig: {
+        auth: {
+          basic: undefined,
+          bearer: undefined,
+          oidc: undefined,
+          trustedProxy: {},
+        },
+      } as unknown as SecurityConfig,
+      adapter: {
+        env: { get: () => undefined },
+      } as unknown as HandlerContext["adapter"],
+      isLocalProject: false,
+    });
+    expect(trustedProxy.continue).toBe(true);
   });
 });
 

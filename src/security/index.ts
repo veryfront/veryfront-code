@@ -1,6 +1,7 @@
 /**
- * Security layer — input validation with size limits, CORS configuration,
- * CSP and security headers, path traversal prevention, and secure filesystem access.
+ * Security layer for input validation with size limits, application authentication,
+ * CORS configuration, CSP and security headers, path traversal prevention, and secure
+ * filesystem access.
  *
  * @module security
  *
@@ -31,6 +32,14 @@ export {
   validateRequestLimits,
 } from "./input-validation/index.ts";
 export type {
+  ApplicationIdentity,
+  AuthClaimPrimitive,
+  AuthClaimValue,
+  SerializedApplicationIdentity,
+  SerializedAuthClaims,
+} from "./application-auth/types.ts";
+
+export type {
   ParseFormOptions,
   ParseJsonOptions,
   ParseQueryOptions,
@@ -43,7 +52,16 @@ export type {
 export { AuthHandler } from "./http/auth.ts";
 export { isValidSecurityConfig, loadSecurityConfig, SecurityConfigLoader } from "./http/config.ts";
 export { setCors } from "./http/middleware/index.ts";
-export type { CORSConfig, CSPDirectives, SecurityConfig } from "./http/middleware/index.ts";
+export type {
+  AuthConfig,
+  BasicAuthConfig,
+  BearerAuthConfig,
+  CORSConfig,
+  CSPDirectives,
+  OidcAuthConfig,
+  SecurityConfig,
+  TrustedProxyAuthConfig,
+} from "./http/middleware/index.ts";
 
 export { CsrfHandler } from "./http/csrf/index.ts";
 export { applyCsrfCookie, generateCsrfToken, validateCsrf } from "./csrf/index.ts";

@@ -90,6 +90,7 @@ function makeRequest(
     projectDir: "/tmp",
     sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
     projectEnv,
+    applicationIdentity: null,
   };
 }
 
@@ -617,6 +618,7 @@ testSuite("WorkerPool", () => {
           params: {},
           projectDir: "/allowed/path",
           sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+          applicationIdentity: null,
         }),
       VeryfrontError,
       "outside the allowed project boundary",
@@ -1627,7 +1629,7 @@ describe("Feature flag caching", () => {
   });
 
   describe("when the runtime cannot prepare an isolated API module", () => {
-    it("keeps WORKER_ISOLATION_API set under a broad host-execution grant", async () => {
+    it("keeps WORKER_ISOLATION_API set with the deprecated override configured", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
       Deno.env.set(HOST_PROJECT_EXECUTION_OVERRIDE_ENV, "1");

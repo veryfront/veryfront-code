@@ -76,7 +76,15 @@ export async function handleAppRouter(
     const [fn, headShim] = resolveHandlerFunction(mod, method);
     if (!fn) return methodNotAllowed(getAllowedMethods(mod));
 
-    const res = await fn(createApplicationRequest(req), { params: match.params });
+    const res = await fn(
+      createApplicationRequest(req, {
+        denyHeaders: ctx.applicationIdentityHeaderNames,
+      }),
+      {
+        params: match.params,
+        identity: ctx.applicationIdentity ?? null,
+      },
+    );
     const headers = new Headers(res.headers);
 
     await applyCORSHeaders({

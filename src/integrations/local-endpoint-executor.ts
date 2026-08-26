@@ -345,6 +345,8 @@ function appendQueryValue(
   const append = (item: string): void => {
     const formatted = field.queryValueFormat === "microsoft-graph-search"
       ? `"${replaceAll(item, '"', '\\"')}"`
+      : field.queryValueFormat === "microsoft-graph-conversation-id"
+      ? `conversationId eq '${replaceAll(item, "'", "''")}'`
       : item;
     apply(urlSearchParamsAppend, searchParams, [field.queryName ?? name, formatted]);
   };
@@ -400,6 +402,21 @@ export function snapshotLocalIntegrationEndpointArguments(
   body: string | undefined;
   endpointOrigin: string | undefined;
 } {
+  const snapshot = snapshotLocalIntegrationEndpointInput(endpoint, args);
+  return {
+    ...snapshot,
+    endpointOrigin: resolveLocalIntegrationEndpointOrigin(endpoint, snapshot.args),
+  };
+}
+
+/** @internal Validate and serialize endpoint input without resolving its URL authority. */
+export function snapshotLocalIntegrationEndpointInput(
+  endpoint: IntegrationEndpoint,
+  args: Record<string, unknown>,
+): {
+  args: Record<string, unknown>;
+  body: string | undefined;
+} {
   const snapshot = snapshotAndValidateArguments(endpoint, args);
   // Assembled rather than checked field by field: an omitted field still
   // contributes its catalog default, so fields that each fit can still add up
@@ -411,14 +428,21 @@ export function snapshotLocalIntegrationEndpointArguments(
   // the ordinary nested objects a snapshot contains, so a second assembly can
   // produce a body that was never bounded -- or throw outright.
   const body = assembleBody(endpoint, snapshot);
-  const endpointOrigin = callStringBoolean(
+  return { args: snapshot, body };
+}
+
+/** @internal Resolve the admitted origin after host templates have been pinned. */
+export function resolveLocalIntegrationEndpointOrigin(
+  endpoint: IntegrationEndpoint,
+  args: Record<string, unknown>,
+): string | undefined {
+  return callStringBoolean(
       stringIncludes,
       endpoint.url,
       "{{oauth.raw.instance_url}}",
     )
     ? undefined
-    : urlValue(urlOrigin, resolveEndpointUrl(endpoint, snapshot));
-  return { args: snapshot, body, endpointOrigin };
+    : urlValue(urlOrigin, resolveEndpointUrl(endpoint, args));
 }
 
 /**
