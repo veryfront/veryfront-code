@@ -3,18 +3,10 @@ import type { HandlerContext } from "#veryfront/types";
 import { type CacheKeyContext, CacheKeyContextSchema } from "./schemas/index.ts";
 import { buildContentHashCacheKey } from "./keys.ts";
 import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
+import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
 
-type MultiProjectRequestContextType = {
-  projectSlug: string;
-  projectId?: string;
-  token: string;
-  productionMode: boolean;
-  releaseId?: string | null;
-  branch?: string | null;
-  environmentName?: string | null;
-};
-
-let _getCurrentRequestContext: (() => MultiProjectRequestContextType | null) | null | undefined;
+type MultiProjectRequestContextType = NonNullable<ReturnType<typeof currentRequestContext>>;
+const trustedRequestContextAccessor = currentRequestContext;
 const registryScopeOwners = new WeakMap<object, object>();
 
 export type { CacheKeyContext };
@@ -167,26 +159,6 @@ export function getCurrentCacheKeyContext(): CacheKeyContext {
   });
 }
 
-function getRequestContextFn(): (() => MultiProjectRequestContextType | null) | null {
-  // Memoize only once the adapter is actually resolved. A miss must NOT be cached
-  // permanently: the multi-project adapter can be installed on globalThis after
-  // the first call, and caching null here would disable distributed caching for
-  // the whole process lifetime even after the adapter is later wired.
-  if (_getCurrentRequestContext) return _getCurrentRequestContext;
-
-  try {
-    const mod = (globalThis as Record<string, unknown>).__vf_multi_project_adapter as
-      | { getCurrentRequestContext?: () => MultiProjectRequestContextType | null }
-      | undefined;
-    const fn = mod?.getCurrentRequestContext ?? null;
-    if (fn) _getCurrentRequestContext = fn;
-    return fn;
-  } catch (_) {
-    // expected: multi-project adapter may not be available yet — re-check next call
-    return null;
-  }
-}
-
 function extractCacheKeyContextFromMultiProjectContext(
   reqCtx: MultiProjectRequestContextType,
 ): CacheKeyContext | null {
@@ -216,7 +188,7 @@ export function tryGetCacheKeyContext(): CacheKeyContext | null {
   const explicitCtx = getCacheKeyContextStore();
   if (explicitCtx) return explicitCtx;
 
-  const reqCtx = getRequestContextFn()?.();
+  const reqCtx = trustedRequestContextAccessor();
   if (!reqCtx) return null;
 
   return extractCacheKeyContextFromMultiProjectContext(reqCtx);
@@ -252,7 +224,7 @@ export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
     };
   }
 
-  const reqCtx = getRequestContextFn()?.();
+  const reqCtx = trustedRequestContextAccessor();
   if (reqCtx) {
     const projectId = reqCtx.projectId || reqCtx.projectSlug;
     if (!projectId) return null;
@@ -304,7 +276,7 @@ export function tryGetRegistryScopeId(): string | null {
  * while the request is still running.
  */
 export function tryGetRegistryScopeOwner(): object | null {
-  const requestContext = getRequestContextFn()?.();
+  const requestContext = trustedRequestContextAccessor();
   if (!requestContext) return null;
 
   const existing = registryScopeOwners.get(requestContext);

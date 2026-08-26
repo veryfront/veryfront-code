@@ -35,6 +35,8 @@ const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicPerformance = performance;
 const PerformanceNow = IntrinsicPerformance.now;
 const NumberPrototypeToFixed = Number.prototype.toFixed;
+const IntrinsicObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const IntrinsicObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectPrototypeIsPrototypeOf = Object.prototype.isPrototypeOf;
 const ProxyFSAdapterManagerPrototype = ProxyFSAdapterManager.prototype;
 const ProxyFSAdapterManagerGetAdapter = ProxyFSAdapterManagerPrototype.getAdapter;
@@ -52,6 +54,7 @@ const VeryfrontFSAdapterGetSourceSnapshotFingerprint =
   VeryfrontFSAdapterPrototype.getSourceSnapshotFingerprint;
 const VeryfrontFSAdapterGetSourceSnapshotIdentity =
   VeryfrontFSAdapterPrototype.getSourceSnapshotIdentity;
+type CapturedAdapterMethod = (...args: never[]) => unknown;
 
 function performanceNow(): number {
   return IntrinsicReflectApply(PerformanceNow, IntrinsicPerformance, []) as number;
@@ -67,6 +70,51 @@ function isConcreteVeryfrontFSAdapter(adapter: VeryfrontFSAdapter): boolean {
     VeryfrontFSAdapterPrototype,
     [adapter],
   ) as boolean;
+}
+
+function captureEffectiveAdapterMethod(
+  adapter: VeryfrontFSAdapter,
+  key:
+    | "readFile"
+    | "readTextFile"
+    | "refreshSourceSnapshot"
+    | "ensureSourceSnapshotFresh"
+    | "getSourceSnapshotVersion"
+    | "getSourceSnapshotFingerprint"
+    | "getSourceSnapshotIdentity",
+  concreteMethod: CapturedAdapterMethod,
+): CapturedAdapterMethod {
+  const ownDescriptor = IntrinsicReflectApply(
+    IntrinsicObjectGetOwnPropertyDescriptor,
+    Object,
+    [adapter, key],
+  ) as PropertyDescriptor | undefined;
+  if (ownDescriptor !== undefined) {
+    if (!("value" in ownDescriptor) || typeof ownDescriptor.value !== "function") {
+      throw new TypeError(`Veryfront filesystem adapter ${key} must be a data-property method`);
+    }
+    return ownDescriptor.value as CapturedAdapterMethod;
+  }
+
+  let owner = IntrinsicReflectApply(IntrinsicObjectGetPrototypeOf, Object, [adapter]) as
+    | object
+    | null;
+  for (let depth = 0; owner !== null && depth < 64; depth++) {
+    if (owner === VeryfrontFSAdapterPrototype) return concreteMethod;
+    const descriptor = IntrinsicReflectApply(
+      IntrinsicObjectGetOwnPropertyDescriptor,
+      Object,
+      [owner, key],
+    ) as PropertyDescriptor | undefined;
+    if (descriptor !== undefined) {
+      if (!("value" in descriptor) || typeof descriptor.value !== "function") {
+        throw new TypeError(`Veryfront filesystem adapter ${key} must be a data-property method`);
+      }
+      return descriptor.value as CapturedAdapterMethod;
+    }
+    owner = IntrinsicReflectApply(IntrinsicObjectGetPrototypeOf, Object, [owner]) as object | null;
+  }
+  throw new TypeError(`Veryfront filesystem adapter ${key} must inherit a function`);
 }
 
 function isConcreteProxyFSAdapterManager(manager: unknown): boolean {
@@ -250,9 +298,13 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
   async readFile(path: string): Promise<string> {
     const adapter = await this.#getAdapter();
-    return isConcreteVeryfrontFSAdapter(adapter)
-      ? await IntrinsicReflectApply(VeryfrontFSAdapterReadFile, adapter, [path]) as string
-      : await adapter.readFile(path);
+    if (!isConcreteVeryfrontFSAdapter(adapter)) return await adapter.readFile(path);
+    const readFile = captureEffectiveAdapterMethod(
+      adapter,
+      "readFile",
+      VeryfrontFSAdapterReadFile,
+    );
+    return await IntrinsicReflectApply(readFile, adapter, [path]) as string;
   }
 
   async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
@@ -273,9 +325,13 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
   async readTextFile(path: string): Promise<string> {
     const adapter = await this.#getAdapter();
-    return isConcreteVeryfrontFSAdapter(adapter)
-      ? await IntrinsicReflectApply(VeryfrontFSAdapterReadTextFile, adapter, [path]) as string
-      : await adapter.readTextFile(path);
+    if (!isConcreteVeryfrontFSAdapter(adapter)) return await adapter.readTextFile(path);
+    const readTextFile = captureEffectiveAdapterMethod(
+      adapter,
+      "readTextFile",
+      VeryfrontFSAdapterReadTextFile,
+    );
+    return await IntrinsicReflectApply(readTextFile, adapter, [path]) as string;
   }
 
   async readOptionalTextFile(path: string): Promise<string> {
@@ -320,7 +376,12 @@ export class MultiProjectFSAdapter implements FSAdapter {
   async refreshSourceSnapshot(reason?: string): Promise<void> {
     const adapter = await this.#getAdapter();
     if (isConcreteVeryfrontFSAdapter(adapter)) {
-      await IntrinsicReflectApply(VeryfrontFSAdapterRefreshSourceSnapshot, adapter, [reason]);
+      const refreshSourceSnapshot = captureEffectiveAdapterMethod(
+        adapter,
+        "refreshSourceSnapshot",
+        VeryfrontFSAdapterRefreshSourceSnapshot,
+      );
+      await IntrinsicReflectApply(refreshSourceSnapshot, adapter, [reason]);
     } else {
       await adapter.refreshSourceSnapshot(reason);
     }
@@ -344,18 +405,28 @@ export class MultiProjectFSAdapter implements FSAdapter {
     let previousVersion: number | undefined;
     let currentVersion: number | undefined;
     if (isConcreteVeryfrontFSAdapter(adapter)) {
-      previousVersion = IntrinsicReflectApply(
+      const getSourceSnapshotVersion = captureEffectiveAdapterMethod(
+        adapter,
+        "getSourceSnapshotVersion",
         VeryfrontFSAdapterGetSourceSnapshotVersion,
+      );
+      const ensureSourceSnapshotFresh = captureEffectiveAdapterMethod(
+        adapter,
+        "ensureSourceSnapshotFresh",
+        VeryfrontFSAdapterEnsureSourceSnapshotFresh,
+      );
+      previousVersion = IntrinsicReflectApply(
+        getSourceSnapshotVersion,
         adapter,
         [],
       ) as number;
-      await IntrinsicReflectApply(VeryfrontFSAdapterEnsureSourceSnapshotFresh, adapter, [
+      await IntrinsicReflectApply(ensureSourceSnapshotFresh, adapter, [
         reason,
         options,
         initializedByManager,
       ]);
       currentVersion = IntrinsicReflectApply(
-        VeryfrontFSAdapterGetSourceSnapshotVersion,
+        getSourceSnapshotVersion,
         adapter,
         [],
       ) as number;
@@ -389,8 +460,13 @@ export class MultiProjectFSAdapter implements FSAdapter {
   async getSourceSnapshotVersion(): Promise<number | undefined> {
     const adapter = await this.#getAdapter();
     if (isConcreteVeryfrontFSAdapter(adapter)) {
-      return IntrinsicReflectApply(
+      const getSourceSnapshotVersion = captureEffectiveAdapterMethod(
+        adapter,
+        "getSourceSnapshotVersion",
         VeryfrontFSAdapterGetSourceSnapshotVersion,
+      );
+      return IntrinsicReflectApply(
+        getSourceSnapshotVersion,
         adapter,
         [],
       ) as number;
@@ -407,8 +483,13 @@ export class MultiProjectFSAdapter implements FSAdapter {
         ? await adapter.getSourceSnapshotFingerprint()
         : undefined;
     }
-    return await IntrinsicReflectApply(
+    const getSourceSnapshotFingerprint = captureEffectiveAdapterMethod(
+      adapter,
+      "getSourceSnapshotFingerprint",
       VeryfrontFSAdapterGetSourceSnapshotFingerprint,
+    );
+    return await IntrinsicReflectApply(
+      getSourceSnapshotFingerprint,
       adapter,
       [],
     );
@@ -417,9 +498,15 @@ export class MultiProjectFSAdapter implements FSAdapter {
   async getSourceSnapshotIdentity(): Promise<string | undefined> {
     const adapter = await this.#getAdapter();
     const sourceIdentity = isConcreteVeryfrontFSAdapter(adapter)
-      ? IntrinsicReflectApply(VeryfrontFSAdapterGetSourceSnapshotIdentity, adapter, []) as
-        | string
-        | undefined
+      ? IntrinsicReflectApply(
+        captureEffectiveAdapterMethod(
+          adapter,
+          "getSourceSnapshotIdentity",
+          VeryfrontFSAdapterGetSourceSnapshotIdentity,
+        ),
+        adapter,
+        [],
+      ) as string | undefined
       : typeof adapter.getSourceSnapshotIdentity === "function"
       ? await adapter.getSourceSnapshotIdentity()
       : undefined;

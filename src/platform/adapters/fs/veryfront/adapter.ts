@@ -65,6 +65,9 @@ const SOURCE_SNAPSHOT_YIELD_RECORDS = 256;
 const SOURCE_SNAPSHOT_DIGEST_BYTES = 32;
 const DateNow = Date.now;
 const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicPerformance = performance;
+const PerformanceNow = IntrinsicPerformance.now;
+const NumberPrototypeToFixed = Number.prototype.toFixed;
 const IntrinsicObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const IntrinsicObjectGetPrototypeOf = Object.getPrototypeOf;
 const IntrinsicMap = Map;
@@ -88,6 +91,14 @@ let sourceSnapshotGeneration = 0;
 
 function currentTime(): number {
   return IntrinsicReflectApply(DateNow, Date, []) as number;
+}
+
+function performanceNow(): number {
+  return IntrinsicReflectApply(PerformanceNow, IntrinsicPerformance, []) as number;
+}
+
+function formatDuration(durationMs: number): string {
+  return `${IntrinsicReflectApply(NumberPrototypeToFixed, durationMs, [2]) as string}ms`;
 }
 
 function nextSourceSnapshotGeneration(): number {
@@ -286,14 +297,25 @@ function addSourceSnapshotDigest(
   }
 }
 
-async function computeSourceSnapshotFingerprint(files: SourceSnapshotFile[]): Promise<string> {
+async function computeSourceSnapshotFingerprint(
+  files: SourceSnapshotFile[],
+): Promise<string | undefined> {
   // A modular sum of cryptographic per-record digests is independent of list
   // order and keeps working memory constant. The final hash also binds the
   // record count, so duplicate files remain significant.
   const accumulator = new IntrinsicUint8Array(SOURCE_SNAPSHOT_DIGEST_BYTES);
   const budget: SourceSnapshotHashBudget = { codeUnits: 0 };
+  const seenPaths = new IntrinsicMap<string, true>();
   for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
     const record = captureSourceSnapshotRecord(files[fileIndex]!);
+    const path = record[0];
+    if (
+      typeof path !== "string" ||
+      IntrinsicReflectApply(MapPrototypeGet, seenPaths, [path]) === true
+    ) {
+      return undefined;
+    }
+    IntrinsicReflectApply(MapPrototypeSet, seenPaths, [path, true]);
     const recordHash = createHash("sha256");
     updateSourceSnapshotHashString(recordHash, "r");
     for (let valueIndex = 0; valueIndex < 7; valueIndex++) {
@@ -411,7 +433,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     | { version: number; value: Promise<string | undefined> }
     | undefined;
   private sourceSnapshotRefreshPromise: Promise<void> | null = null;
-  private sourceSnapshotMutationTail: Promise<void> = Promise.resolve();
+  private sourceSnapshotMutationTail: Promise<void> = IntrinsicPromise.resolve();
 
   private projectData?: Project;
   private apiBaseUrl: string;
@@ -728,7 +750,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   private async performInitialization(): Promise<void> {
-    const initStartTime = performance.now();
+    const initStartTime = performanceNow();
     const projectSlug = this.client.getProjectSlug();
 
     logger.debug("initialize START", {
@@ -742,22 +764,22 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return;
     }
 
-    const fileListReadyPromise = new Promise<void>((resolve) => {
+    const fileListReadyPromise = new IntrinsicPromise<void>((resolve) => {
       this.fileListReadyResolve = resolve;
     });
     this.readOps.setFileListReadyPromise(fileListReadyPromise);
 
     logger.debug("Step 1: client.initialize START", { projectSlug });
-    const step1Start = performance.now();
+    const step1Start = performanceNow();
     await this.client.initialize();
     logger.debug("Step 1: client.initialize DONE", {
       projectSlug,
-      duration: `${(performance.now() - step1Start).toFixed(2)}ms`,
+      duration: formatDuration(performanceNow() - step1Start),
     });
 
     const projectId = this.client.getProjectId();
     logger.debug("Step 2: getProject START", { projectSlug, projectId });
-    const step2Start = performance.now();
+    const step2Start = performanceNow();
 
     const cachedProject = this.client.getCachedProject();
     this.projectData = cachedProject ?? (await this.client.getProject(projectId));
@@ -768,13 +790,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
         projectSlug,
         provider: this.projectData.provider,
         layout: this.projectData.layout,
-        duration: `${(performance.now() - step2Start).toFixed(2)}ms`,
+        duration: formatDuration(performanceNow() - step2Start),
       },
     );
 
     if (!this.contentContext) {
       logger.debug("Step 3: resolveContentSource START", { projectSlug });
-      const step3Start = performance.now();
+      const step3Start = performanceNow();
       const resolvedContext = await resolveContentContext(
         this.client,
         this.contentSource,
@@ -784,7 +806,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       logger.debug("Step 3: resolveContentSource DONE", {
         projectSlug,
         sourceType: resolvedContext.sourceType,
-        duration: `${(performance.now() - step3Start).toFixed(2)}ms`,
+        duration: formatDuration(performanceNow() - step3Start),
       });
     } else {
       logger.debug("Step 3: Content context already set", {
@@ -874,7 +896,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       logger.debug("initialize COMPLETE", {
         projectSlug,
         fileCount: initialSnapshotApplied ? files.length : 0,
-        totalDuration: `${(performance.now() - initStartTime).toFixed(2)}ms`,
+        totalDuration: formatDuration(performanceNow() - initStartTime),
       });
 
       const initializedContext = this.contentContext;
@@ -1485,7 +1507,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   getSourceSnapshotFingerprint(): Promise<string | undefined> {
     const files = this.sourceSnapshotFiles;
-    if (!files) return Promise.resolve(undefined);
+    if (!files) return IntrinsicPromise.resolve(undefined);
 
     const version = this.sourceSnapshotVersion;
     if (this.sourceSnapshotFingerprint?.version === version) {

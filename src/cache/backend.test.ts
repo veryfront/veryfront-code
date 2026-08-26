@@ -26,6 +26,7 @@ import {
 } from "#veryfront/server/handlers/request/internal-agent-run.test-helpers.ts";
 import { runWithVerifiedCacheApiCredential } from "./verified-api-credential-context.ts";
 import { buildQueryAwareCacheKey, isValidCacheKey } from "./keys.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 
 const API_CACHE_KEY_MAX_LENGTH = 512;
 const API_CACHE_KEY_PATTERN = /^[a-zA-Z0-9_:.\-/]+$/;
@@ -36,7 +37,55 @@ type RecordedSpan = {
 };
 
 async function importBackend(): Promise<typeof import("./backend.ts")> {
-  return await import("./backend.ts");
+  const backend = await import("./backend.ts");
+  class ModeledApiCacheBackend extends backend.ApiCacheBackend {
+    constructor(...args: ConstructorParameters<typeof backend.ApiCacheBackend>) {
+      super(...args);
+      return new Proxy(this, {
+        get(target, property) {
+          const value = Reflect.get(target, property, target) as unknown;
+          if (typeof value !== "function") return value;
+          return (...methodArgs: unknown[]) => {
+            const adapter = (globalThis as Record<string, unknown>).__vf_multi_project_adapter;
+            const getContext = typeof adapter === "object" && adapter !== null &&
+                "getCurrentRequestContext" in adapter &&
+                typeof adapter.getCurrentRequestContext === "function"
+              ? adapter.getCurrentRequestContext
+              : undefined;
+            const context = getContext?.();
+            if (typeof context !== "object" || context === null) {
+              return Reflect.apply(value, target, methodArgs);
+            }
+            const requestContext = context as Record<string, unknown>;
+            return runWithRequestContext(
+              {
+                projectSlug: typeof requestContext.projectSlug === "string"
+                  ? requestContext.projectSlug
+                  : "",
+                projectId: typeof requestContext.projectId === "string"
+                  ? requestContext.projectId
+                  : undefined,
+                token: typeof requestContext.token === "string" ? requestContext.token : "",
+                productionMode: requestContext.productionMode === true,
+                releaseId: typeof requestContext.releaseId === "string"
+                  ? requestContext.releaseId
+                  : null,
+                branch: typeof requestContext.branch === "string" ? requestContext.branch : null,
+                environmentName: typeof requestContext.environmentName === "string"
+                  ? requestContext.environmentName
+                  : null,
+              },
+              () => Reflect.apply(value, target, methodArgs) as Promise<unknown>,
+            );
+          };
+        },
+      });
+    }
+  }
+  return {
+    ...backend,
+    ApiCacheBackend: ModeledApiCacheBackend,
+  } as typeof backend;
 }
 
 async function createVerifiedCacheClaims(options: {

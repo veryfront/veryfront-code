@@ -420,7 +420,7 @@ export class ProxyFSAdapterManager {
         totalDuration: formatDuration(performanceNow() - getAdapterStartTime),
       });
 
-      onResolved?.(true);
+      onResolved?.(false);
       return projectAdapter.adapter;
     }
 

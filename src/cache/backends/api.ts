@@ -25,6 +25,7 @@ import {
   readResponseJsonStringWithinLimit,
   readResponseTextPrefix,
 } from "#veryfront/utils/response-body.ts";
+import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
 
 const logger = baseLogger.component("api-cache-backend");
 
@@ -47,35 +48,14 @@ type CacheRequestOptions = {
   boundedJsonString?: { fieldName: string; maximumBytes: number };
 };
 
-let warnedMissingAdapterContract = false;
+const trustedRequestContextAccessor = currentRequestContext;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
 function getCurrentRequestContext(): CacheRequestContext | null {
-  const adapter = (globalThis as Record<string, unknown>).__vf_multi_project_adapter;
-
-  // The adapter is installed dynamically, so validate its shape instead of an
-  // unchecked cast. If it exists but no longer exposes getCurrentRequestContext
-  // (e.g., renamed/moved), the API cache would otherwise silently fail to
-  // authenticate forever with only a debug log — so warn once, loudly.
-  if (
-    adapter !== undefined &&
-    !(isRecord(adapter) && typeof adapter.getCurrentRequestContext === "function")
-  ) {
-    if (!warnedMissingAdapterContract) {
-      warnedMissingAdapterContract = true;
-      logger.warn("Multi-project adapter present but missing getCurrentRequestContext()");
-    }
-    return null;
-  }
-
-  if (!isRecord(adapter) || typeof adapter.getCurrentRequestContext !== "function") {
-    return null;
-  }
-
-  const ctx = (adapter.getCurrentRequestContext as () => unknown)();
+  const ctx = trustedRequestContextAccessor();
   return isRecord(ctx) ? (ctx as CacheRequestContext) : null;
 }
 

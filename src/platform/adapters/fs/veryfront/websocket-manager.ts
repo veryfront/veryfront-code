@@ -36,10 +36,47 @@ import {
 const logger = getBaseLogger("SERVER", { injectTraceContext: false }).component(
   "web-socket-manager",
 );
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicWebSocket = WebSocket;
+const IntrinsicCrypto = crypto;
+const CryptoRandomUUID = IntrinsicCrypto.randomUUID;
 const DateNow = Date.now;
+const StringPrototypeReplace = String.prototype.replace;
+const StringPrototypeSlice = String.prototype.slice;
+
+type WebSocketFactory = (
+  url: string,
+  protocols?: string | string[],
+) => WebSocket;
+
+function createIntrinsicWebSocket(
+  url: string,
+  protocols?: string | string[],
+): WebSocket {
+  return new IntrinsicWebSocket(url, protocols);
+}
 
 function currentTime(): number {
-  return DateNow();
+  return IntrinsicReflectApply(DateNow, Date, []) as number;
+}
+
+function replaceString(
+  value: string,
+  searchValue: string | RegExp,
+  replaceValue: string,
+): string {
+  return IntrinsicReflectApply(StringPrototypeReplace, value, [
+    searchValue,
+    replaceValue,
+  ]) as string;
+}
+
+function randomUUID(): string {
+  return IntrinsicReflectApply(CryptoRandomUUID, IntrinsicCrypto, []) as string;
+}
+
+function sliceString(value: string, start: number, end: number): string {
+  return IntrinsicReflectApply(StringPrototypeSlice, value, [start, end]) as string;
 }
 
 function sanitizeWebSocketLogUrl(url: string | undefined): string | undefined {
@@ -74,6 +111,7 @@ interface WebSocketDeps {
   pregenerateStyles?: (
     files: ProjectFile[],
   ) => Promise<PreviewStyleArtifactInfo | undefined>;
+  createWebSocket?: WebSocketFactory;
 }
 
 export class WebSocketManager {
@@ -98,9 +136,11 @@ export class WebSocketManager {
   };
 
   private apiToken: string;
+  #createWebSocket: WebSocketFactory;
 
   constructor(private readonly deps: WebSocketDeps) {
     this.apiToken = deps.apiToken;
+    this.#createWebSocket = deps.createWebSocket ?? createIntrinsicWebSocket;
   }
 
   setApiToken(token: string): void {
@@ -170,10 +210,15 @@ export class WebSocketManager {
       this.wsConsecutiveFailures = 0;
     }
 
-    const wsUrl = this.deps.apiBaseUrl
-      .replace(/^http:/, "ws:")
-      .replace(/^https:/, "wss:")
-      .replace(/\/api$/, "");
+    const wsUrl = replaceString(
+      replaceString(
+        replaceString(this.deps.apiBaseUrl, /^http:/, "ws:"),
+        /^https:/,
+        "wss:",
+      ),
+      /\/api$/,
+      "",
+    );
 
     // The WebSocket protocol (ws vs wss) is derived from the configured
     // apiBaseUrl (http→ws, https→wss). No forced upgrade is needed because
@@ -193,8 +238,11 @@ export class WebSocketManager {
       // Send the API token via a WebSocket subprotocol header instead of
       // a query-string parameter. Query strings can leak into server
       // access logs, proxy logs, and the browser's Referer header.
-      this.ws = new WebSocket(url, [`bearer-${this.apiToken}`]);
-      this.wsConnectionId = crypto.randomUUID().slice(0, 8);
+      this.ws = IntrinsicReflectApply(this.#createWebSocket, undefined, [
+        url,
+        [`bearer-${this.apiToken}`],
+      ]) as WebSocket;
+      this.wsConnectionId = sliceString(randomUUID(), 0, 8);
       this.wsErrorLogged = false;
 
       this.ws.onopen = () => {

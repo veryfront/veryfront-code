@@ -31,6 +31,8 @@ import {
   runWithCacheKeyContext,
   tryGetCacheKeyContext,
 } from "#veryfront/cache/cache-key-builder.ts";
+import { ApiCacheBackend } from "#veryfront/cache/backends/api.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 const baseConfig = {
   veryfront: {
@@ -143,6 +145,50 @@ describe("FSAdapterWrapper optional-method capture under prototype pollution", (
       }
     }
     assertEquals(poisonedCalls, 0);
+  });
+
+  it("keeps API cache credentials independent of the mutable global context bridge", async () => {
+    const originalBridge = globalThis.__vf_multi_project_adapter;
+    if (originalBridge === undefined) {
+      throw new Error("The Veryfront request context bridge must be installed");
+    }
+    const originalAccessor = originalBridge.getCurrentRequestContext;
+    let poisonedCalls = 0;
+    let authorization = "";
+    globalThis.__vf_multi_project_adapter = {
+      ...originalBridge,
+      getCurrentRequestContext: () => {
+        poisonedCalls += 1;
+        return originalAccessor();
+      },
+    };
+    installMockFetch(
+      ((_input: RequestInfo | URL, init?: RequestInit) => {
+        authorization = new Headers(init?.headers).get("authorization") ?? "";
+        return Promise.resolve(Response.json({ deleted: 1 }));
+      }) as typeof fetch,
+    );
+
+    try {
+      const cache = new ApiCacheBackend({
+        circuitBreakerName: "api-cache-trusted-context-accessor-integration-test",
+      });
+      const deleted = await runWithRequestContext(
+        {
+          projectSlug: "trusted-project",
+          projectId: "trusted-project-id",
+          token: "signed-user-token",
+        },
+        () => cache.delByPattern("agent:*"),
+      );
+
+      assertEquals(deleted, 1);
+      assertEquals(authorization, "Bearer signed-user-token");
+      assertEquals(poisonedCalls, 0);
+    } finally {
+      globalThis.__vf_multi_project_adapter = originalBridge;
+      restoreMockFetch();
+    }
   });
 
   it("delegates fingerprints through the captured Reflect.apply intrinsic", async () => {

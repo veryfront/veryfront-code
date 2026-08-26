@@ -916,6 +916,58 @@ describe("ProxyFSAdapterManager", () => {
       }
     });
 
+    it("does not treat a pending-adapter follower as initialized by its own request", async () => {
+      const initializationStarted = Promise.withResolvers<void>();
+      const releaseInitialization = Promise.withResolvers<void>();
+      const manager = createManager({
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = async () => {
+            initializationStarted.resolve();
+            await releaseInitialization.promise;
+          };
+          return adapter;
+        },
+      });
+      let leaderInitialized: boolean | undefined;
+      let followerInitialized: boolean | undefined;
+      try {
+        const leader = manager.getAdapter(
+          "project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+          (initialized) => {
+            leaderInitialized = initialized;
+          },
+        );
+        await initializationStarted.promise;
+        const follower = manager.getAdapter(
+          "project",
+          "test-token",
+          undefined,
+          false,
+          null,
+          null,
+          "main",
+          (initialized) => {
+            followerInitialized = initialized;
+          },
+        );
+        releaseInitialization.resolve();
+        await Promise.all([leader, follower]);
+
+        assertEquals(leaderInitialized, true);
+        assertEquals(followerInitialized, false);
+      } finally {
+        releaseInitialization.resolve();
+        manager.dispose();
+      }
+    });
+
     it("should remove all adapters on dispose", async () => {
       const disposedSlugs: string[] = [];
       const manager = createManager({

@@ -169,6 +169,54 @@ describe("VeryfrontFSAdapter", () => {
 
       assertEquals(observedToken, undefined);
     });
+
+    it("keeps initialization independent of a project-mutated performance clock", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          projectId: "test-project-id",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      const internals = adapter as unknown as {
+        client: {
+          initialize(): Promise<void>;
+          getProjectSlug(): string;
+          getProjectId(): string;
+          getCachedProject(): { provider: string; layout: string };
+          listAllFiles(): Promise<Array<{ path: string; content: string }>>;
+        };
+        wsManager: { connect(projectId: string): void };
+      };
+      internals.client.initialize = () => Promise.resolve();
+      internals.client.getProjectSlug = () => "test-project";
+      internals.client.getProjectId = () => "test-project-id";
+      internals.client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+      internals.client.listAllFiles = () => Promise.resolve([]);
+      internals.wsManager.connect = () => {};
+
+      const originalNow = Object.getOwnPropertyDescriptor(performance, "now");
+      let poisonedCalls = 0;
+      Object.defineProperty(performance, "now", {
+        configurable: true,
+        value: () => {
+          poisonedCalls += 1;
+          throw new Error("project performance hook must not run");
+        },
+      });
+      try {
+        await adapter.initialize();
+      } finally {
+        if (originalNow === undefined) Reflect.deleteProperty(performance, "now");
+        else Object.defineProperty(performance, "now", originalNow);
+        adapter.dispose();
+      }
+
+      assertEquals(poisonedCalls, 0);
+    });
   });
 
   describe("bounded byte reads", () => {
@@ -989,7 +1037,7 @@ describe("VeryfrontFSAdapter", () => {
       };
       internals.sourceSnapshotFiles = [file];
 
-      assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
+      assertEquals(await adapter.getSourceSnapshotFingerprint(), undefined);
       assertEquals(inheritedGetterCalls, 0);
     });
 
@@ -1020,9 +1068,9 @@ describe("VeryfrontFSAdapter", () => {
       const internals = adapter as unknown as {
         sourceSnapshotFiles: Array<{ path: string; content?: string }>;
       };
-      internals.sourceSnapshotFiles = new Array(10_001).fill({
-        path: "pages/repeated.tsx",
-      });
+      internals.sourceSnapshotFiles = Array.from({ length: 10_001 }, (_, index) => ({
+        path: `pages/generated-${index}.tsx`,
+      }));
 
       let timerRan = false;
       const timer = setTimeout(() => {
@@ -2152,13 +2200,14 @@ describe("VeryfrontFSAdapter", () => {
       await adapter.initialize();
       const initialVersion = adapter.getSourceSnapshotVersion();
       const initialFingerprint = await adapter.getSourceSnapshotFingerprint();
+      assertEquals(typeof initialFingerprint, "string");
       (adapter as unknown as { sourceSnapshotCheckedAt: number }).sourceSnapshotCheckedAt = 0;
 
       await adapter.ensureSourceSnapshotFresh("duplicate-path-refresh");
 
       assertEquals(listAllFilesCalls, 2);
       assertNotEquals(adapter.getSourceSnapshotVersion(), initialVersion);
-      assertNotEquals(await adapter.getSourceSnapshotFingerprint(), initialFingerprint);
+      assertEquals(await adapter.getSourceSnapshotFingerprint(), undefined);
     });
 
     it("detects changed branch snapshots when Array.prototype.every is replaced", async () => {

@@ -128,6 +128,86 @@ describe("MultiProjectFSAdapter", () => {
       withAdapter((adapter) => assertMethod(adapter, "readTextFile"));
     });
 
+    it("preserves effective read and snapshot methods from adapter subclasses", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const calls: string[] = [];
+        class SubclassAdapter extends VeryfrontFSAdapter {
+          override readFile(path: string): Promise<string> {
+            calls.push(`readFile:${path}`);
+            return Promise.resolve("subclass-file");
+          }
+
+          override readTextFile(path: string): Promise<string> {
+            calls.push(`readTextFile:${path}`);
+            return Promise.resolve("subclass-text");
+          }
+
+          override refreshSourceSnapshot(reason?: string): Promise<void> {
+            calls.push(`refresh:${reason}`);
+            return Promise.resolve();
+          }
+
+          override ensureSourceSnapshotFresh(
+            reason?: string,
+            options?: { maxAgeMs?: number },
+            initializedByManager?: boolean,
+          ): Promise<void> {
+            calls.push(
+              `ensure:${reason}:${options?.maxAgeMs}:${initializedByManager ?? false}`,
+            );
+            return Promise.resolve();
+          }
+
+          override getSourceSnapshotVersion(): number {
+            calls.push("version");
+            return 41;
+          }
+
+          override getSourceSnapshotFingerprint(): Promise<string> {
+            calls.push("fingerprint");
+            return Promise.resolve("subclass-fingerprint");
+          }
+
+          override getSourceSnapshotIdentity(): string {
+            calls.push("identity");
+            return "subclass-identity";
+          }
+        }
+
+        const selectedAdapter = new SubclassAdapter({
+          veryfront: {
+            apiBaseUrl: "https://api.example.com",
+            apiToken: "test-token",
+            projectSlug: "test-project",
+            cache: { enabled: false },
+          },
+        });
+        adapter.setDefaultAdapter(selectedAdapter);
+
+        assertEquals(await adapter.readFile("pages/file.tsx"), "subclass-file");
+        assertEquals(await adapter.readTextFile("pages/text.tsx"), "subclass-text");
+        await adapter.refreshSourceSnapshot("manual");
+        await adapter.ensureSourceSnapshotFresh("routing", { maxAgeMs: 0 });
+        assertEquals(await adapter.getSourceSnapshotVersion(), 41);
+        assertEquals(await adapter.getSourceSnapshotFingerprint(), "subclass-fingerprint");
+        assertStringIncludes(
+          await adapter.getSourceSnapshotIdentity() ?? "",
+          "subclass-identity",
+        );
+        assertEquals(calls, [
+          "readFile:pages/file.tsx",
+          "readTextFile:pages/text.tsx",
+          "refresh:manual",
+          "version",
+          "ensure:routing:0:false",
+          "version",
+          "version",
+          "fingerprint",
+          "identity",
+        ]);
+      });
+    });
+
     it("should have exact bounded byte read method", () => {
       withAdapter((adapter) => assertMethod(adapter, "readFileBytesWithinLimit"));
     });
