@@ -43,12 +43,39 @@ const hasOwnProperty = Object.prototype.hasOwnProperty;
 const NativePromise = Promise;
 const promiseAll = NativePromise.all;
 const reflectApply = Reflect.apply;
+const symbolIterator: typeof Symbol.iterator = Symbol.iterator;
 
-function awaitPair<First, Second>(
+interface AwaitedPair<First, Second> {
+  first: First;
+  second: Second;
+}
+
+async function awaitPair<First, Second>(
   first: Promise<First>,
   second: Promise<Second>,
-): Promise<[First, Second]> {
-  return reflectApply(promiseAll, NativePromise, [[first, second]]) as Promise<[First, Second]>;
+): Promise<AwaitedPair<First, Second>> {
+  const iterable: Iterable<Promise<First> | Promise<Second>> = {
+    [symbolIterator]() {
+      let index = 0;
+      return {
+        next(): IteratorResult<Promise<First> | Promise<Second>> {
+          if (index === 0) {
+            index = 1;
+            return { done: false, value: first };
+          }
+          if (index === 1) {
+            index = 2;
+            return { done: false, value: second };
+          }
+          return { done: true, value: undefined };
+        },
+      };
+    },
+  };
+  const values = await (reflectApply(promiseAll, NativePromise, [iterable]) as Promise<
+    [First, Second]
+  >);
+  return { first: values[0], second: values[1] };
 }
 
 interface NodeFileSnapshotStat {
@@ -299,10 +326,12 @@ export async function readNodeFileSnapshotWithinLimit(
       let canonicalTarget: string;
       let pathnameOpened: NodeFileSnapshotStat;
       try {
-        [canonicalTarget, pathnameOpened] = await awaitPair(
+        const pair = await awaitPair(
           operations.realpath(candidate),
           operations.lstat(candidate),
         );
+        canonicalTarget = pair.first;
+        pathnameOpened = pair.second;
       } catch (cause) {
         throwSnapshotChangeForPathRace(
           "File target became uncertain while opening the snapshot",
@@ -361,10 +390,12 @@ export async function readNodeFileSnapshotWithinLimit(
         );
       }
       try {
-        [pathnameAfter, canonicalTargetAfter] = await awaitPair(
+        const pair = await awaitPair(
           operations.lstat(candidate),
           operations.realpath(candidate),
         );
+        pathnameAfter = pair.first;
+        canonicalTargetAfter = pair.second;
       } catch (cause) {
         throwSnapshotChangeForPathRace(
           "File identity became uncertain after reading the snapshot",

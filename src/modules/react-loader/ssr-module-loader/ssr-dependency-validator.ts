@@ -16,6 +16,7 @@ import { parseLocalImports } from "#veryfront/transforms/esm/import-parser.ts";
 import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 import { registerCSSImport } from "../css-import-collector.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { isAbsolute } from "#veryfront/platform/compat/path/index.ts";
 import { BUILD_FAILED, createError, toError, VeryfrontError } from "#veryfront/errors";
 import { rendererLogger, throwIfAborted } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -501,13 +502,10 @@ export class SSRDependencyValidator {
   ): Promise<string> {
     const path = imported.absolutePath;
     if (imported.projectContained) return this.readProjectImportSource(path);
-    if (!startsWithString(path, "/")) {
-      return this.adapter.fs.readFile(path);
-    }
-
     if (this.isProjectAbsolutePath(path)) {
       return this.readProjectImportSource(path);
     }
+    if (!isAbsolute(path)) return this.adapter.fs.readFile(path);
 
     return localFs.readTextFile(path);
   }

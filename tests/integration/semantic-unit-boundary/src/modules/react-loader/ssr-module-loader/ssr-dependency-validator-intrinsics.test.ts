@@ -245,3 +245,47 @@ it("records contained rewrite keys through captured Map.set", async () => {
     Map.prototype.set = originalSet;
   }
 });
+
+it("routes portable Windows project paths through bound snapshot reads", async () => {
+  const directReads: string[] = [];
+  const snapshotReads: string[] = [];
+  const transformedSources: Array<string | undefined> = [];
+  const adapter = {
+    fs: {
+      symlinkSemantics: "native",
+      readFile: (path: string) => {
+        directReads.push(path);
+        return Promise.resolve("export default 'direct';");
+      },
+      readFileSnapshotWithinLimit: (path: string) => {
+        snapshotReads.push(path);
+        return Promise.resolve(new TextEncoder().encode("export default 'snapshot';"));
+      },
+    },
+  } as unknown as RuntimeAdapter;
+  const validator = new SSRDependencyValidator(
+    (_path, source) => {
+      transformedSources.push(source);
+      return Promise.resolve({ tempPath: "C:/cache/child.js", contentHash: "hash" });
+    },
+    () => Promise.resolve(""),
+    adapter,
+    "C:/project",
+  );
+
+  await validator.processLocalImports(
+    [{
+      absolutePath: "C:/project/child.ts",
+      requestedPath: "C:/project/child.ts",
+      specifier: "./child.ts",
+    }],
+    "C:/project/page.ts",
+    0,
+    createFileSystem(),
+    createDependencyHashCache(),
+  );
+
+  assertEquals(snapshotReads, ["C:/project/child.ts"]);
+  assertEquals(directReads, []);
+  assertEquals(transformedSources, ["export default 'snapshot';"]);
+});
