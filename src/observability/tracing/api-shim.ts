@@ -24,6 +24,9 @@ import { runSyncWithContextFallback } from "./context-callback.ts";
 
 const IntrinsicObjectFreeze = Object.freeze;
 const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicWeakMap = WeakMap;
+const WeakMapPrototypeGet = WeakMap.prototype.get;
+const WeakMapPrototypeSet = WeakMap.prototype.set;
 
 // ---------------------------------------------------------------------------
 // Tracing types
@@ -634,6 +637,73 @@ export const trace = {
   },
 };
 
+const publicSpanFacades = new IntrinsicWeakMap<object, Span>();
+const publicSpanTargets = new IntrinsicWeakMap<object, Span>();
+
+function weakMapGet<K extends object, V>(map: WeakMap<K, V>, key: K): V | undefined {
+  return IntrinsicReflectApply(WeakMapPrototypeGet, map, [key]) as V | undefined;
+}
+
+function weakMapSet<K extends object, V>(map: WeakMap<K, V>, key: K, value: V): void {
+  IntrinsicReflectApply(WeakMapPrototypeSet, map, [key, value]);
+}
+
+function createPublicSpan(providerSpan: Span): Span {
+  const existing = weakMapGet(publicSpanFacades, providerSpan);
+  if (existing) return existing;
+
+  const setAttribute = providerSpan.setAttribute;
+  const setAttributes = providerSpan.setAttributes;
+  const setStatus = providerSpan.setStatus;
+  const recordException = providerSpan.recordException;
+  const addEvent = providerSpan.addEvent;
+  const end = providerSpan.end;
+  const spanContext = providerSpan.spanContext;
+  const updateName = providerSpan.updateName;
+  const facade: Span = IntrinsicObjectFreeze({
+    setAttribute(key: string, value: AttributeValue): Span {
+      IntrinsicReflectApply(setAttribute, providerSpan, [key, value]);
+      return facade;
+    },
+    setAttributes(attrs: Record<string, AttributeValue>): Span {
+      IntrinsicReflectApply(setAttributes, providerSpan, [attrs]);
+      return facade;
+    },
+    setStatus(status: { code: number; message?: string }): Span {
+      IntrinsicReflectApply(setStatus, providerSpan, [status]);
+      return facade;
+    },
+    recordException(err: unknown): void {
+      IntrinsicReflectApply(recordException, providerSpan, [err]);
+    },
+    addEvent(name: string, attrs?: Record<string, AttributeValue>): Span {
+      IntrinsicReflectApply(addEvent, providerSpan, [name, attrs]);
+      return facade;
+    },
+    end(endTime?: number): void {
+      IntrinsicReflectApply(end, providerSpan, [endTime]);
+    },
+    spanContext(): SpanContext {
+      const context = IntrinsicReflectApply(spanContext, providerSpan, []) as SpanContext;
+      return IntrinsicObjectFreeze({
+        traceId: context.traceId,
+        spanId: context.spanId,
+        traceFlags: context.traceFlags,
+      });
+    },
+    updateName(name: string): void {
+      IntrinsicReflectApply(updateName, providerSpan, [name]);
+    },
+  });
+  weakMapSet(publicSpanFacades, providerSpan, facade);
+  weakMapSet(publicSpanTargets, facade, providerSpan);
+  return facade;
+}
+
+function unwrapPublicSpan(span: Span): Span {
+  return weakMapGet(publicSpanTargets, span) ?? span;
+}
+
 /**
  * Read-only tracing facade for the public `veryfront/observability` surface.
  *
@@ -654,40 +724,53 @@ export const publicTrace: Readonly<
       fourth?: unknown,
     ): unknown => {
       if (fourth !== undefined) {
+        const callback = fourth as (span: Span) => unknown;
         return IntrinsicReflectApply(providerTracer.startActiveSpan, providerTracer, [
           spanName,
           second,
           third,
-          fourth,
+          (span: Span) => callback(createPublicSpan(span)),
         ]);
       }
       if (third !== undefined) {
+        const callback = third as (span: Span) => unknown;
         return IntrinsicReflectApply(providerTracer.startActiveSpan, providerTracer, [
           spanName,
           second,
-          third,
+          (span: Span) => callback(createPublicSpan(span)),
         ]);
       }
+      const callback = second as (span: Span) => unknown;
       return IntrinsicReflectApply(providerTracer.startActiveSpan, providerTracer, [
         spanName,
-        second,
+        (span: Span) => callback(createPublicSpan(span)),
       ]);
     }) as Tracer["startActiveSpan"];
 
     return IntrinsicObjectFreeze({
       startSpan(spanName: string, options?: SpanStartOptions, activeContext?: Context): Span {
-        return IntrinsicReflectApply(providerTracer.startSpan, providerTracer, [
-          spanName,
-          options,
-          activeContext,
-        ]);
+        return createPublicSpan(
+          IntrinsicReflectApply(providerTracer.startSpan, providerTracer, [
+            spanName,
+            options,
+            activeContext,
+          ]) as Span,
+        );
       },
       startActiveSpan,
     });
   },
-  setSpan: trace.setSpan,
-  getSpan: trace.getSpan,
-  getActiveSpan: trace.getActiveSpan,
+  setSpan(ctx: Context, span: Span): Context {
+    return trace.setSpan(ctx, unwrapPublicSpan(span));
+  },
+  getSpan(ctx: Context): Span | undefined {
+    const span = trace.getSpan(ctx);
+    return span ? createPublicSpan(span) : undefined;
+  },
+  getActiveSpan(): Span | undefined {
+    const span = trace.getActiveSpan();
+    return span ? createPublicSpan(span) : undefined;
+  },
 });
 
 // ---------------------------------------------------------------------------

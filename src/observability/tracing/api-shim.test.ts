@@ -106,30 +106,125 @@ describe("observability/tracing/api-shim", () => {
       assertEquals(calls, [["svc", "2.0"], ["svc2", undefined]]);
     });
 
-    it("wraps provider-owned tracers returned by the public facade", () => {
-      const span = {} as Span;
+    it("wraps provider-owned tracers and spans returned by the public facade", () => {
+      const spanPrototype = {};
+      const calls: string[] = [];
+      const span = Object.assign(Object.create(spanPrototype), {
+        setAttribute(this: unknown) {
+          assertStrictEquals(this, span);
+          calls.push("setAttribute");
+          return span;
+        },
+        setAttributes(this: unknown) {
+          assertStrictEquals(this, span);
+          calls.push("setAttributes");
+          return span;
+        },
+        setStatus(this: unknown) {
+          assertStrictEquals(this, span);
+          calls.push("setStatus");
+          return span;
+        },
+        recordException(this: unknown) {
+          assertStrictEquals(this, span);
+          calls.push("recordException");
+        },
+        addEvent(this: unknown) {
+          assertStrictEquals(this, span);
+          calls.push("addEvent");
+          return span;
+        },
+        end(this: unknown) {
+          assertStrictEquals(this, span);
+          calls.push("end");
+        },
+        spanContext(this: unknown) {
+          assertStrictEquals(this, span);
+          calls.push("spanContext");
+          return { traceId: "trace", spanId: "span", traceFlags: 1 };
+        },
+        updateName(this: unknown) {
+          assertStrictEquals(this, span);
+          calls.push("updateName");
+        },
+      }) as Span;
       const providerTracer = {
         startSpan(this: unknown) {
           assertStrictEquals(this, providerTracer);
           return span;
         },
-        startActiveSpan(this: unknown, _name: string, callback: (span: Span) => unknown) {
+        startActiveSpan(this: unknown, _name: string, ...args: unknown[]) {
           assertStrictEquals(this, providerTracer);
+          const callback = args[args.length - 1] as (span: Span) => unknown;
           return callback(span);
         },
       } as Tracer;
       setGlobalTracerProvider({ getTracer: () => providerTracer });
 
       const publicTracer = publicTrace.getTracer("veryfront-http");
+      const publicSpan = publicTracer.startSpan("request");
 
       assertNotStrictEquals(publicTracer, providerTracer);
       assertEquals(Object.isFrozen(publicTracer), true);
       assertEquals(Reflect.set(publicTracer, "startSpan", () => span), false);
-      assertStrictEquals(publicTracer.startSpan("request"), span);
+      assertNotStrictEquals(publicSpan, span);
+      assertNotStrictEquals(Object.getPrototypeOf(publicSpan), spanPrototype);
+      assertEquals(Object.isFrozen(publicSpan), true);
+      assertEquals(Reflect.set(publicSpan, "end", () => {}), false);
+      assertStrictEquals(publicSpan.setAttribute("key", "value"), publicSpan);
+      assertStrictEquals(publicSpan.setAttributes({ key: "value" }), publicSpan);
+      assertStrictEquals(publicSpan.setStatus({ code: SpanStatusCode.OK }), publicSpan);
+      publicSpan.recordException(new Error("test"));
+      assertStrictEquals(publicSpan.addEvent("event"), publicSpan);
+      publicSpan.updateName("renamed");
+      const publicSpanContext = publicSpan.spanContext();
+      assertEquals(publicSpanContext, { traceId: "trace", spanId: "span", traceFlags: 1 });
+      assertEquals(Object.isFrozen(publicSpanContext), true);
+      publicSpan.end();
       assertStrictEquals(
         publicTracer.startActiveSpan("request", (activeSpan) => activeSpan),
-        span,
+        publicSpan,
       );
+      assertStrictEquals(
+        publicTracer.startActiveSpan(
+          "request",
+          { kind: SpanKind.SERVER },
+          (activeSpan) => activeSpan,
+        ),
+        publicSpan,
+      );
+      assertStrictEquals(
+        publicTracer.startActiveSpan(
+          "request",
+          { kind: SpanKind.SERVER },
+          context.active(),
+          (activeSpan) => activeSpan,
+        ),
+        publicSpan,
+      );
+      setGlobalActiveSpanAccessor({
+        getActiveSpan: () => span,
+        getSpan: () => span,
+        setSpan(ctx, activeSpan) {
+          assertStrictEquals(activeSpan, span);
+          return ctx;
+        },
+      });
+      const activeContext = context.active();
+      assertStrictEquals(publicTrace.getActiveSpan(), publicSpan);
+      assertStrictEquals(publicTrace.getSpan(activeContext), publicSpan);
+      assertStrictEquals(publicTrace.setSpan(activeContext, publicSpan), activeContext);
+      assertEquals(calls, [
+        "setAttribute",
+        "setAttributes",
+        "setStatus",
+        "recordException",
+        "addEvent",
+        "updateName",
+        "spanContext",
+        "end",
+        "spanContext",
+      ]);
     });
 
     it("_resetShimForTests restores the no-op provider", () => {
