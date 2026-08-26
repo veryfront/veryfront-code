@@ -98,6 +98,21 @@ describe("runCommand", () => {
     }
   });
 
+  it("keeps inherited environment variables when adding an explicit value", async () => {
+    const explicitKey = "VERYFRONT_RUN_COMMAND_EXPLICIT_MERGE";
+    const inheritedPath = getEnv("PATH");
+    assertEquals(typeof inheritedPath, "string");
+
+    const result = await runCommand("env", {
+      capture: true,
+      env: { [explicitKey]: "available" },
+    });
+
+    assertEquals(result.success, true);
+    assertEquals(result.stdout?.includes(`PATH=${inheritedPath}`), true);
+    assertEquals(result.stdout?.includes(`${explicitKey}=available`), true);
+  });
+
   it("honors shell execution across runtimes", async () => {
     const result = await runCommand("echo shell-ok", {
       capture: true,

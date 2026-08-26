@@ -180,6 +180,12 @@ Then use `vf_get_conventions` before adding files, `vf_scaffold` for new files,
 verification. Use https://veryfront.com/docs when local files, MCP tools, and
 CLI schema do not answer a Veryfront API or convention question.
 
+For existing apps that need login, ask the agent to scaffold `type: "auth"` and
+name the provider, for example Authelia or generic OIDC. The auth scaffold
+writes config and environment placeholders only; it does not rewrite
+application routes. Review the diff against
+[Application authentication](./application-auth.md).
+
 ## Verify it worked
 
 Start the dev server:
