@@ -1596,7 +1596,9 @@ export default config as const;
         assertEquals(question.message.includes("registry.internal"), false);
         assertStringIncludes(question.message, "Failed (see [url])? Retry");
 
-        for (const punctuation of ["…", "。", "¿", "»", "🙂"] as const) {
+        for (
+          const punctuation of ["…", "。", "¿", "»", "🙂", "❤️", "⚠️", "👩‍💻"] as const
+        ) {
           const unicode = await loadFailure(
             "vf-config-paren-unicode-punctuation-",
             `throw new Error(${

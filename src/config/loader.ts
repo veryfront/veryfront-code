@@ -1771,9 +1771,10 @@ const CSI_GLUED_URL =
 // punctuation behind it. Worse, `?` can never go in such a list -- it legitimately
 // opens a query string, so excluding it would strand `https://host/a)?t=SECRET`
 // with its token in the caller-visible detail.
-// Unicode's `Punctuation` and `Symbol` properties supply the structural
-// categories, covering sentence marks such as `…`, `。`, `¿`, and `»` as well
-// as emoji suffixes without another allowlist.
+// Unicode's `Punctuation`, `Symbol`, `Mark`, and `Format` properties supply the
+// structural categories, covering sentence marks and complete emoji sequences.
+// The latter need marks such as variation selectors and format characters such
+// as zero-width joiners in addition to their symbol code points.
 //
 // Asking the structural question settles both at once. A `)` whose remaining
 // token is only punctuation before a boundary is prose, so it stays outside the
@@ -1791,7 +1792,7 @@ const CSI_GLUED_URL =
 // redactors from drifting, the extraction keeps each complete expression below
 // the static-analysis complexity threshold.
 const URL_TOKEN_TAIL_SOURCE = String
-  .raw`(?:[^\s"'()]|\([^\s"']{0,512}\)|\((?=[^\s"'])|\)(?![\p{P}\p{S}]{0,16}(?:[\s"']|$)))+`;
+  .raw`(?:[^\s"'()]|\([^\s"']{0,512}\)|\((?=[^\s"'])|\)(?![\p{P}\p{S}\p{M}\p{Cf}]{0,16}(?:[\s"']|$)))+`;
 const SCHEME_URL = new RegExp(
   String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
   "gu",
