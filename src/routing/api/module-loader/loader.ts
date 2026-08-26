@@ -75,6 +75,8 @@ const logger = serverLogger.component("api");
 const REMOTE_URL_SPECIFIER = /^https?:\/\//i;
 const INLINE_MODULE_URL_SPECIFIER = /^(?:data|blob):/i;
 const MAX_TYPESCRIPT_CONFIG_BYTES = 1024 * 1024;
+const ROUTE_RUNTIME_SHIM_SPECIFIER = "veryfront:route-runtime-shim";
+const ROUTE_RUNTIME_SHIM_NAMESPACE = "veryfront-route-runtime-shim";
 
 export { toCjsDestructureBindings } from "./loader-helpers.ts";
 
@@ -1319,6 +1321,22 @@ function createNamespaceOnLoadHandler(options: {
   });
 }
 
+function createRouteRuntimeShimPlugin(contents: string): Plugin {
+  return {
+    name: "vf-route-runtime-shim",
+    setup(build) {
+      build.onResolve({ filter: /^veryfront:route-runtime-shim$/ }, () => ({
+        path: ROUTE_RUNTIME_SHIM_SPECIFIER,
+        namespace: ROUTE_RUNTIME_SHIM_NAMESPACE,
+      }));
+      build.onLoad(
+        { filter: /.*/, namespace: ROUTE_RUNTIME_SHIM_NAMESPACE },
+        () => ({ contents, loader: "js" }),
+      );
+    },
+  };
+}
+
 async function validateBundledLocalWorkerEntries(options: {
   sourceSnapshot: ProjectSourceSnapshot;
   projectDir: string;
@@ -1776,11 +1794,16 @@ function buildTranspiledModuleSource(
       const routeSourceUrl = JSON.stringify(pathHelper.toFileUrl(resolvedPath).href);
       const workerShim = [
         `const __vf_routeSourceUrl = ${routeSourceUrl};`,
-        `var Worker = typeof globalThis.Worker === "function" ? class extends globalThis.Worker {`,
+        `const Worker = typeof globalThis.Worker === "function" ? class extends globalThis.Worker {`,
         `  constructor(specifier, options) {`,
         `    super(typeof specifier === "string" && (specifier.startsWith("./") || specifier.startsWith("../")) ? new URL(specifier, __vf_routeSourceUrl) : specifier, options);`,
         `  }`,
         `} : globalThis.Worker;`,
+      ].join("\n");
+      const routeRuntimeShim = [
+        requireShim,
+        workerShim,
+        "export { require, Worker };",
       ].join("\n");
 
       const result: BuildResult = await build({
@@ -1792,7 +1815,10 @@ function buildTranspiledModuleSource(
         jsx: "automatic",
         jsxImportSource: "react",
         resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
-        banner: { js: `${requireShim}\n${workerShim}` },
+        // Injection binds only free identifiers and lets esbuild rename either
+        // side of a collision. A raw banner would redeclare a route import such
+        // as `import { Worker } from "worker-package"` and emit invalid ESM.
+        inject: [ROUTE_RUNTIME_SHIM_SPECIFIER],
         define: {
           "import.meta.url": routeSourceUrl,
         },
@@ -1812,6 +1838,7 @@ function buildTranspiledModuleSource(
           sourcefile: resolvedPath,
         },
         plugins: [
+          createRouteRuntimeShimPlugin(routeRuntimeShim),
           createImportMapPlugin(
             projectDir,
             sourceSnapshot,

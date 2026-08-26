@@ -586,6 +586,15 @@ describe("routing/api/module-loader/http-validator", () => {
       );
     });
 
+    it("should allow computed member writes nested in destructuring assignments", async () => {
+      await validateHTTPImports(
+        `const handler = () => new Response("ok"); const metadata = getMetadata();` +
+          ` ({ value: handler[metadata] } = getResult());` +
+          ` export const GET = handler;`,
+        [],
+      );
+    });
+
     it("should ignore inert generator names and locally bound identifiers", async () => {
       const cases = [
         `type Handler = Function; export const GET: Handler = () => new Response("ok");`,
@@ -958,6 +967,32 @@ describe("routing/api/module-loader/http-validator", () => {
           ` export const GET = () => new Response(items[0]);`,
         [],
       );
+      await validateHTTPImports(
+        `const items = ["safe"]; const iterator = Symbol.iterator;` +
+          ` const first = items[iterator]().next().value;` +
+          ` export const GET = () => new Response(first);`,
+        [],
+      );
+      for (
+        const source of [
+          `const Symbol = { iterator: "constructor" }; const fn = () => {};` +
+          ` fn[Symbol.iterator]('return import("https://blocked.example/mod.js")')();`,
+          `const SymbolAlias = chooseGlobal ? Symbol : { iterator: "constructor" };` +
+          ` const fn = () => {};` +
+          ` fn[SymbolAlias.iterator]('return import("https://blocked.example/mod.js")')();`,
+          `let iterator = Symbol.iterator; iterator = "constructor"; const fn = () => {};` +
+          ` fn[iterator]('return import("https://blocked.example/mod.js")')();`,
+          `let iterator = "constructor"; const fn = () => {};` +
+          ` fn[iterator ||= Symbol.iterator]('return import("https://blocked.example/mod.js")')();`,
+        ]
+      ) {
+        await assertRejects(
+          async () => await validateHTTPImports(source, []),
+          Error,
+          "dynamic code generation",
+          "a shadowed or reassigned Symbol alias must not exempt a computed constructor read",
+        );
+      }
     });
 
     it("should track prototype mutations through aliases of Object and Reflect", async () => {

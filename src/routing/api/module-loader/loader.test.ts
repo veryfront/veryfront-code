@@ -1310,6 +1310,40 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(typeof route?.GET, "function");
   });
 
+  it("does not collide with a Worker binding imported by a bundled route", async () => {
+    const tmpDir = await makeTempDir();
+    await fs.writeTextFile(
+      join(tmpDir, "package.json"),
+      JSON.stringify({ dependencies: { "worker-package": "1.0.0" } }),
+    );
+    const modulePath = join(tmpDir, "handler.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { Worker } from "worker-package";`,
+        `const marker = /force-bundle/;`,
+        `export const GET = () => new Response(Worker.name + marker.source);`,
+      ].join("\n"),
+    );
+
+    const prepared = await prepareHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+
+    const importedWorker = prepared.source.match(
+      /import \{ Worker as (Worker\d+) \} from "(?:npm:worker-package@1\.0\.0|worker-package)"/,
+    );
+    assertNotEquals(importedWorker, null, "the external Worker import must remain in the bundle");
+    assertEquals(
+      prepared.source.includes(`${importedWorker?.[1]}.name`),
+      true,
+      "the route must retain the collision-free import binding chosen by the bundler",
+    );
+  });
+
   it("loads handler that imports veryfront/embedding", async () => {
     const tmpDir = await makeTempDir();
     const modulePath = join(tmpDir, "handler.ts");
