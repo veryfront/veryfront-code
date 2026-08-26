@@ -389,6 +389,8 @@ function isSingleModuleMapping(mapping: string): boolean {
   if (isEsmShUrl(classifiedMapping)) {
     const parsed = parseEsmShSpecifier(classifiedMapping);
     if (parsed) {
+      // Match esm.sh route classification without rewriting the mapping bytes.
+      const classifiedPackageName = decodedCoordinateSegments([parsed.packageName]).join("/");
       // A reserved name cannot carry a subpath on esm.sh. Appending one to
       // `https://esm.sh/stable` yields `https://esm.sh/stable/sub`, which this
       // module reads back as the package `sub` on the stable channel, so the
@@ -402,7 +404,8 @@ function isSingleModuleMapping(mapping: string): boolean {
       // `v8` while a bare `stable/sub` reads back as the package `sub`.
       const hasBuildChannel = ESM_SH_BUILD_PREFIX.test(classifiedMapping);
       if (
-        isReservedCoordinateName(parsed.packageName) && parsed.version === null && !hasBuildChannel
+        isReservedCoordinateName(classifiedPackageName) && parsed.version === null &&
+        !hasBuildChannel
       ) {
         return true;
       }

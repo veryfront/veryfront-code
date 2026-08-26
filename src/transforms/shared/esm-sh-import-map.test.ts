@@ -164,8 +164,20 @@ describe("transforms/shared/esm-sh-import-map", () => {
       "https://esm.sh/stable",
     );
     assertEquals(
+      resolve("https://esm.sh/@scope/pkg@1/sub", {
+        "@scope/pkg": "https://esm.sh/%73table",
+      }),
+      "https://esm.sh/%73table",
+      "an encoded reserved name must be classified the way esm.sh decodes it",
+    );
+    assertEquals(
       resolve("https://esm.sh/pkg@1/sub", { pkg: "https://esm.sh/stable@1" }),
       "https://esm.sh/stable@1/sub",
+    );
+    assertEquals(
+      resolve("https://esm.sh/pkg@1/sub", { pkg: "https://esm.sh/%73table@1" }),
+      "https://esm.sh/%73table@1/sub",
+      "a version still disambiguates an encoded reserved package name",
     );
   });
 
