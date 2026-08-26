@@ -843,8 +843,9 @@ describe("provider-http", () => {
 
     it("caps total header wait across replays so it stays under the fork idle watchdog", async () => {
       // An immediate retryable response proves replay independently of timer
-      // scheduling. The remaining unclamped 200ms attempts would exceed the
-      // 250ms budget, which must stop them below the enclosing watchdog.
+      // scheduling. The remaining unclamped 500ms attempts would take about
+      // 1,000ms, while the 550ms total budget must stop them below 800ms even
+      // with parallel-suite scheduling overhead.
       let attempts = 0;
       const startedAt = performance.now();
       await assertRejects(
@@ -867,8 +868,8 @@ describe("provider-http", () => {
             init: { method: "POST" },
             providerLabel: "veryfront-cloud",
             providerKind: "openai",
-            headersTimeoutMs: 200,
-            totalHeadersBudgetMs: 250,
+            headersTimeoutMs: 500,
+            totalHeadersBudgetMs: 550,
           }),
         ProviderRequestError,
         "request timed out",
@@ -877,7 +878,7 @@ describe("provider-http", () => {
 
       assertEquals(attempts > 1, true, "the immediate failure must still be replayed");
       assertEquals(
-        elapsedMs < 500,
+        elapsedMs < 800,
         true,
         `total header wait must stay inside the budget, spent ${elapsedMs}ms`,
       );
