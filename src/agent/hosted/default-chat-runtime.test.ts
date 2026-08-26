@@ -9,7 +9,12 @@ import {
 import { it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { clearModelProviders, type ModelRuntime, registerModelProvider } from "#veryfront/provider";
+import {
+  clearModelProviders,
+  getCurrentVeryfrontCloudContext,
+  type ModelRuntime,
+  registerModelProvider,
+} from "#veryfront/provider";
 import type {
   RemoteMCPToolSourceConfig,
   RemoteToolSource,
@@ -18,7 +23,10 @@ import type {
 import { toolRegistry } from "#veryfront/tool";
 import { registerSkill, skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { runWithRequestContext as runWithProjectRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import {
+  getCurrentRequestContext as getCurrentProjectRequestContext,
+  runWithRequestContext as runWithProjectRequestContext,
+} from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { defineSchema } from "../../schemas/define.ts";
 import {
   createDefaultHostedChatRuntime,
@@ -459,6 +467,102 @@ Deno.test("createDefaultHostedChatRuntime forwards project identity to tool exec
       }
     },
   );
+});
+
+Deno.test("createDefaultHostedChatRuntime keeps hosted credentials out of project tools", async () => {
+  clearModelProviders();
+  let modelCallCount = 0;
+  let providerFactoryToken: string | undefined;
+  let toolCloudToken: string | undefined;
+  let toolFilesystemToken: string | undefined;
+
+  registerModelProvider("test", () => {
+    providerFactoryToken = getCurrentVeryfrontCloudContext()?.apiToken;
+    return {
+      provider: "test",
+      modelId: "test/hosted-credential-boundary",
+      doGenerate: () => Promise.reject(new Error("unused")),
+      doStream() {
+        modelCallCount += 1;
+        return Promise.resolve({
+          stream: new ReadableStream<unknown>({
+            start(controller) {
+              if (modelCallCount === 1) {
+                controller.enqueue({
+                  type: "tool-call",
+                  toolCallId: "inspect-credentials-1",
+                  toolName: "inspect_credentials",
+                  input: {},
+                });
+                controller.enqueue({
+                  type: "finish",
+                  finishReason: "tool-calls",
+                  usage: { inputTokens: 1, outputTokens: 1 },
+                });
+              } else {
+                controller.enqueue({ type: "text-delta", text: "done" });
+                controller.enqueue({
+                  type: "finish",
+                  finishReason: "stop",
+                  usage: { inputTokens: 1, outputTokens: 1 },
+                });
+              }
+              controller.close();
+            },
+          }),
+        });
+      },
+    };
+  });
+
+  try {
+    const runtime = await createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+      options: {
+        projectId: "project-1",
+        projectSlug: "project-slug-1",
+        authToken: "visitor-token",
+        instructions: "Inspect the runtime credentials.",
+        model: "test/hosted-credential-boundary",
+        allowedTools: ["inspect_credentials"],
+      },
+      config: {
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+      },
+      buildLocalTools: () => ({
+        inspect_credentials: {
+          ...localTool("Inspect ambient credentials"),
+          execute: () => {
+            toolCloudToken = getCurrentVeryfrontCloudContext()?.apiToken;
+            toolFilesystemToken = getCurrentProjectRequestContext()?.token;
+            return { ok: true };
+          },
+        },
+      }),
+      createRemoteToolSource: emptyRemoteSource,
+      preloadLatestConversationUserText: false,
+    });
+
+    await withMockFetch(
+      () => Promise.resolve(Response.json({ tools: [] })),
+      async () => {
+        const result = await runtime.agent.stream({
+          messages: [],
+          abortSignal: new AbortController().signal,
+        });
+        for await (const _chunk of result.toUIMessageStream()) {
+          // Consume the complete tool-call round trip.
+        }
+      },
+    );
+
+    assertEquals(providerFactoryToken, "visitor-token");
+    assertEquals(toolCloudToken, undefined);
+    assertEquals(toolFilesystemToken, "");
+  } finally {
+    clearModelProviders();
+  }
 });
 
 Deno.test("hosted first provider call filters skill tools for every tool selector", async () => {

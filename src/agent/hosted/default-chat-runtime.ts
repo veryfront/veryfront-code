@@ -2,9 +2,13 @@ import {
   type HostToolSet,
   type RemoteMCPToolSourceConfig,
   type RemoteToolSource,
+  type ToolExecutionContext,
 } from "#veryfront/tool";
 import { runWithRequestContextAsync, serverLogger } from "#veryfront/utils";
-import { runWithRequestContext as runWithProjectRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import {
+  runWithoutRequestContext as runWithoutProjectRequestContext,
+  runWithRequestContext as runWithProjectRequestContext,
+} from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import {
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,
@@ -192,9 +196,11 @@ function incrementSteeringRevision(context: DefaultHostedChatRuntimeTaskContext)
 async function buildToolAssembly(
   input: CreateDefaultHostedChatRuntimeOptions & {
     taskContext: DefaultHostedChatRuntimeTaskContext;
+    cloudContext: VeryfrontCloudContext;
   },
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
   const liveProjectSteering = input.options.liveProjectSteering;
+  const localTools = await input.buildLocalTools(input.taskContext);
   return prepareHostedChatRuntimeToolAssembly({
     taskContext: input.taskContext,
     instructions: input.options.instructions,
@@ -210,7 +216,11 @@ async function buildToolAssembly(
           availableToolNames: modelVisibleToolNames,
         }),
     }),
-    localTools: await input.buildLocalTools(input.taskContext),
+    localTools: scopeHostedLocalTools({
+      tools: localTools,
+      taskContext: input.taskContext,
+      cloudContext: input.cloudContext,
+    }),
     hostToolPolicy: input.hostToolPolicy,
     apiUrl: input.config.apiUrl,
     apiMcpUrl: input.config.apiMcpUrl,
@@ -348,6 +358,61 @@ function createCloudContext(input: {
   };
 }
 
+function withoutHostedCredentials<TResult>(input: {
+  taskContext: DefaultHostedChatRuntimeTaskContext;
+  cloudContext: VeryfrontCloudContext;
+  operation: () => Promise<TResult>;
+}): Promise<TResult> {
+  const publicCloudContext: VeryfrontCloudContext = {
+    apiBaseUrl: input.cloudContext.apiBaseUrl,
+    projectSlug: input.cloudContext.projectSlug,
+    serviceLayer: input.cloudContext.serviceLayer,
+    billingGroupId: input.cloudContext.billingGroupId,
+    billingGroupUsed: input.cloudContext.billingGroupUsed,
+  };
+  const runWithPublicCloudContext = () =>
+    runWithVeryfrontCloudContextAsync(publicCloudContext, input.operation);
+  if (!input.taskContext.projectSlug) {
+    return runWithoutProjectRequestContext(runWithPublicCloudContext);
+  }
+  return runWithProjectRequestContext(
+    {
+      projectSlug: input.taskContext.projectSlug,
+      projectId: input.taskContext.projectId || undefined,
+      token: "",
+      productionMode: false,
+    },
+    runWithPublicCloudContext,
+  );
+}
+
+function scopeHostedLocalTools(input: {
+  tools: HostToolSet;
+  taskContext: DefaultHostedChatRuntimeTaskContext;
+  cloudContext: VeryfrontCloudContext;
+}): HostToolSet {
+  return Object.fromEntries(
+    Object.entries(input.tools).map(([toolName, tool]) => {
+      const execute = tool.execute;
+      if (typeof execute !== "function") {
+        return [toolName, tool];
+      }
+      return [
+        toolName,
+        {
+          ...tool,
+          execute: (toolInput: unknown, context?: ToolExecutionContext) =>
+            withoutHostedCredentials({
+              taskContext: input.taskContext,
+              cloudContext: input.cloudContext,
+              operation: async () => await execute(toolInput, context),
+            }),
+        },
+      ];
+    }),
+  );
+}
+
 function runWithDefaultHostedRequestContext<TResult>(
   input: {
     taskContext: DefaultHostedChatRuntimeTaskContext;
@@ -367,7 +432,6 @@ function runWithDefaultHostedRequestContext<TResult>(
     userId: input.taskContext.userId,
     conversationId: input.taskContext.conversationId,
   };
-
   return runWithRequestContextAsync(
     requestContext,
     () => {
@@ -410,7 +474,7 @@ export async function createDefaultHostedChatRuntime(
       try {
         const toolAssembly = await runWithHostedRunEventWriterCapability(
           effectiveRunEventWriterCapability,
-          () => buildToolAssembly({ ...input, taskContext }),
+          () => buildToolAssembly({ ...input, taskContext, cloudContext }),
         );
         const runtimeAgentConfig = createRuntimeAgentConfig({
           options: input.options,
