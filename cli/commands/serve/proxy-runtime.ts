@@ -1,4 +1,6 @@
-import { getEnv, setEnv } from "veryfront/platform/env";
+// Env mutation is CLI-owned: the public veryfront/platform/env surface is
+// read-only, so the process-wide setter comes from the internal alias.
+import { getEnv, setEnv } from "#cli/process-env";
 import { cliLogger } from "veryfront/utils/logger";
 import denoConfig from "../../../deno.json" with { type: "json" };
 import { ensureCliSchemaValidator } from "../../shared/default-contracts.ts";

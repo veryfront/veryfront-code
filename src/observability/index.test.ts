@@ -116,4 +116,15 @@ describe("veryfront/observability public export surface", () => {
     assertEquals("initializeApplicationErrorReporter" in observability, false);
     assertEquals("setApplicationErrorReporter" in observability, false);
   });
+
+  it("exposes a read-only tracing facade without global provider access", () => {
+    assertStrictEquals(observability.trace, localObservability.trace);
+    assertEquals("setGlobalTracerProvider" in observability.trace, false);
+    assertEquals("getGlobalTracerProvider" in observability.trace, false);
+    assertEquals(Object.isFrozen(observability.trace), true);
+    assertEquals(typeof observability.trace.getTracer, "function");
+    assertEquals(typeof observability.trace.getSpan, "function");
+    assertEquals(typeof observability.trace.setSpan, "function");
+    assertEquals(typeof observability.trace.getActiveSpan, "function");
+  });
 });

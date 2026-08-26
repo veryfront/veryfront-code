@@ -389,6 +389,7 @@
     "#veryfront/": "./src/",
     "#cli/auth/callback-server": "./cli/auth/callback-server.ts",
     "#cli/production-error-reporting": "./src/server/production-error-reporting.ts",
+    "#cli/process-env": "./src/platform/compat/process/env.ts",
     "#cli/commands/files/command": "./cli/commands/files/command.ts",
     "#cli/commands/knowledge/command": "./cli/commands/knowledge/command.ts",
     "#cli/commands/knowledge/result": "./cli/commands/knowledge/result.ts",

@@ -76,8 +76,14 @@ export {
   setActiveSpanAttributes,
 } from "./tracing/otlp-setup.ts";
 
-// OpenTelemetry API shim (spans, metrics, context primitives)
-export { getGlobalMetricsAPI, SpanKind, SpanStatusCode, trace } from "./tracing/api-shim.ts";
+// OpenTelemetry API shim (spans, metrics, context primitives). `trace` is the
+// read-only facade: the process-wide tracer-provider setter stays internal.
+export {
+  getGlobalMetricsAPI,
+  publicTrace as trace,
+  SpanKind,
+  SpanStatusCode,
+} from "./tracing/api-shim.ts";
 export type {
   AttributeValue,
   Context,

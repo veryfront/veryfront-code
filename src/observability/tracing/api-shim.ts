@@ -629,6 +629,23 @@ export const trace = {
   },
 };
 
+/**
+ * Read-only tracing facade for the public `veryfront/observability` surface.
+ *
+ * Omits the process-wide provider accessors (`setGlobalTracerProvider`,
+ * `getGlobalTracerProvider`) so project code cannot install or reach the
+ * global tracer provider. Framework bootstrap wires providers through the
+ * internal `trace` object and `setGlobalTracerProvider` instead.
+ */
+export const publicTrace: Readonly<
+  Pick<typeof trace, "getActiveSpan" | "getSpan" | "getTracer" | "setSpan">
+> = Object.freeze({
+  getTracer: trace.getTracer,
+  setSpan: trace.setSpan,
+  getSpan: trace.getSpan,
+  getActiveSpan: trace.getActiveSpan,
+});
+
 // ---------------------------------------------------------------------------
 // Propagation API
 // ---------------------------------------------------------------------------
