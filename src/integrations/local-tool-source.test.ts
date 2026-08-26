@@ -608,6 +608,43 @@ describe("createLocalIntegrationToolSource", () => {
     }
   });
 
+  it("sanitizes endpoint host credential-provider failures", async () => {
+    const providerDetail = `${TEST_CREDENTIAL} from sensitive provider detail`;
+
+    for (const operation of ["list", "execute"] as const) {
+      let transportCalls = 0;
+      const source = _createLocalIntegrationToolSourceForTesting(
+        {
+          tools: ["databricks__list_clusters"],
+          credentialProvider: (name) => {
+            if (name === "DATABRICKS_HOST") throw new Error(providerDetail);
+            return TEST_CREDENTIAL;
+          },
+        },
+        () => {
+          transportCalls += 1;
+          return Promise.resolve(Response.json({}));
+        },
+      );
+
+      const error = await assertRejects(
+        () => operation === "list" ? source.listTools() : source.executeTool(
+          "databricks__list_clusters",
+          {},
+        ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "local-integration-credential-unavailable");
+      assert(error.message.includes("DATABRICKS_HOST"), error.message);
+      assertEquals(error.message.includes(providerDetail), false);
+      assertEquals(error.message.includes(TEST_CREDENTIAL), false);
+      assertEquals(error.cause, undefined);
+      assertEquals(transportCalls, 0);
+    }
+  });
+
   it("mints client credentials before executing a fixed-origin provider tool", async () => {
     const requests: string[] = [];
     const transport: LocalIntegrationEndpointTransport = (request) => {

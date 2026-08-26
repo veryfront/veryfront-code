@@ -19,6 +19,7 @@ import {
   snapshotLocalIntegrationEndpointArguments,
 } from "#veryfront/integrations/local-endpoint-executor.ts";
 import {
+  LOCAL_INTEGRATION_CREDENTIAL_UNAVAILABLE,
   localIntegrationConfigurationError,
   safeLocalIntegrationIdentifier,
 } from "#veryfront/integrations/local-integration-errors.ts";
@@ -437,7 +438,15 @@ async function resolveAdmittedEndpoint(
     return { endpoint: tool.endpoint, origin: tool.endpointOrigin };
   }
 
-  const configured = await credentialProvider(environmentVariable);
+  let configured: unknown;
+  try {
+    configured = await apply(credentialProvider, undefined, [environmentVariable]);
+  } catch {
+    throw LOCAL_INTEGRATION_CREDENTIAL_UNAVAILABLE.create({
+      detail:
+        `The credential provider could not read ${environmentVariable} for ${tool.connector.name}`,
+    });
+  }
   const fallback = endpointEnvironmentFallback(tool.connector, environmentVariable);
   const authority = configured === undefined || configured === "" ? fallback : configured;
   if (
