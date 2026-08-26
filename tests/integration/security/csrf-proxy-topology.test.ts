@@ -13,7 +13,7 @@
 
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { withEnv } from "#veryfront/testing";
 import { applyCsrfCookie } from "#veryfront/security/csrf/helpers.ts";
 
@@ -57,6 +57,31 @@ describe("security/csrf/helpers applyCsrfCookie proxy topology", () => {
         true,
         "the normalized public HTTPS origin must secure both browser-facing cookies",
       );
+      return Promise.resolve();
+    });
+  });
+
+  it("rejects malformed trusted forwarding instead of advertising the internal origin", async () => {
+    const invalidForwardedHeaders: Record<string, string>[] = [
+      { "x-forwarded-proto": "ftp" },
+      { "x-forwarded-host": "bad host" },
+    ];
+
+    await withEnv({ VERYFRONT_TRUST_FORWARDED_HEADERS: "1" }, () => {
+      for (const headers of invalidForwardedHeaders) {
+        assertThrows(
+          () =>
+            applyCsrfCookie(
+              new Request("http://csrf-internal.service/page", {
+                headers: { accept: "text/html", ...headers },
+              }),
+              new Headers(),
+              { cookieName: "vf_csrf", headerName: "x-vf-csrf" },
+            ),
+          TypeError,
+          "origin",
+        );
+      }
       return Promise.resolve();
     });
   });

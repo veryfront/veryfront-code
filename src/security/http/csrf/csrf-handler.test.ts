@@ -7,6 +7,12 @@ import { deriveSecurityContext } from "../config.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { CSP_REPORT_PATH } from "#veryfront/security/http/csp-report-endpoint.ts";
+import {
+  csrfHttpsTokenCookieName,
+  csrfHttpTokenCookieName,
+  csrfNamesCookieName,
+  encodeCsrfNamesAdvertisement,
+} from "#veryfront/security/csrf/names.ts";
 
 function createCtx(csrf?: boolean | Record<string, unknown>): HandlerContext {
   return {
@@ -31,8 +37,12 @@ function localCtx(): HandlerContext {
 }
 
 /** A mutating request with the transport-authenticated loopback peer recorded. */
-function loopbackRequest(path: string, headers: HeadersInit = {}): Request {
-  const url = new URL(`http://localhost:8000${path}`);
+function loopbackRequest(
+  path: string,
+  headers: HeadersInit = {},
+  origin = "http://localhost:8000",
+): Request {
+  const url = new URL(path, origin);
   const finalHeaders = new Headers(headers);
   finalHeaders.set("host", url.host);
   const request = new Request(url, { method: "POST", headers: finalHeaders });
@@ -477,7 +487,7 @@ describe("security/http/csrf/csrf-handler", () => {
       assertEquals(body.includes("security.csrf"), false);
     });
 
-    it("names the configured cookie, header and helper in the local 403 body", async () => {
+    it("names the issued HTTP cookie, configured header and helper in the local 403 body", async () => {
       const ctx = createCtx();
       ctx.securityConfig = deriveSecurityContext(
         { security: { csrf: { cookieName: "my_csrf", headerName: "x-my-csrf" } } },
@@ -488,7 +498,8 @@ describe("security/http/csrf/csrf-handler", () => {
       const result = await handler.handle(loopbackRequest("/api/cases"), ctx);
       const body = await result.response!.text();
 
-      assertStringIncludes(body, "my_csrf", "the local body must name the cookie in effect");
+      const tokenCookieName = csrfHttpTokenCookieName("my_csrf", "http://localhost:8000");
+      assertStringIncludes(body, tokenCookieName, "the local body must name the cookie in effect");
       assertStringIncludes(body, "x-my-csrf", "the local body must name the header in effect");
       assertStringIncludes(body, "csrfMutationHeaders");
       assertStringIncludes(body, "veryfront/index.client");
@@ -498,6 +509,59 @@ describe("security/http/csrf/csrf-handler", () => {
         false,
         "a project with configured names must not be told to use the default cookie",
       );
+    });
+
+    it("names a retained configured HTTP cookie when the request carries it", async () => {
+      const ctx = createCtx();
+      ctx.securityConfig = deriveSecurityContext(
+        { security: { csrf: { cookieName: "my_csrf", headerName: "x-my-csrf" } } },
+        { productionDefaults: false },
+      ).securityConfig;
+      ctx.isLocalProject = true;
+
+      const result = await handler.handle(
+        loopbackRequest("/api/cases", { cookie: "my_csrf=legacy-token" }),
+        ctx,
+      );
+      const body = await result.response!.text();
+
+      assertStringIncludes(body, "my_csrf", "the diagnostic must match retained legacy issuance");
+      assertEquals(body.includes("vf_csrf_http_"), false);
+    });
+
+    it("names the isolated HTTPS cookie selected by migration state", async () => {
+      const ctx = createCtx();
+      ctx.securityConfig = deriveSecurityContext(
+        { security: { csrf: { cookieName: "my_csrf", headerName: "x-my-csrf" } } },
+        { productionDefaults: false },
+      ).securityConfig;
+      ctx.isLocalProject = true;
+
+      const origin = "https://localhost:8000";
+      const isolatedCookieName = csrfHttpsTokenCookieName("my_csrf", origin);
+      const advertisement = encodeCsrfNamesAdvertisement(
+        isolatedCookieName,
+        "x-my-csrf",
+        origin,
+      );
+      const cookieHeaders = [
+        `${isolatedCookieName}=isolated-token`,
+        `${csrfNamesCookieName(origin)}=${advertisement}`,
+      ];
+
+      for (const cookie of cookieHeaders) {
+        const result = await handler.handle(
+          loopbackRequest("/api/cases", { cookie }, origin),
+          ctx,
+        );
+        const body = await result.response!.text();
+
+        assertStringIncludes(
+          body,
+          isolatedCookieName,
+          "the diagnostic must match the physical cookie used by HTTPS migration",
+        );
+      }
     });
 
     it("names the default cookie and header when the project configures neither", async () => {

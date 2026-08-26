@@ -2,13 +2,20 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
   assertEquals,
+  assertInstanceOf,
   assertRejects,
   assertStrictEquals,
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { waitFor } from "#veryfront/testing/deno-compat.ts";
+import { writeTextFile } from "#veryfront/platform/compat/fs.ts";
+import { waitFor, withTempDir } from "#veryfront/testing/deno-compat.ts";
+
+/** Repeated across the config-load classification tests below. */
+const CONFIG_FILE_NAME = "veryfront.config.js";
+const DEPENDENCY_MISSING_SLUG = "dependency-missing";
+const CONFIG_PARSE_ERROR_SLUG = "config-parse-error";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import {
   __getHostedConfigFlightStateForTests,
@@ -24,6 +31,7 @@ import {
   getHostedConfig,
   mergeConfigs,
   rewriteBareVeryfrontConfigImports,
+  rewriteProjectConfigImports,
   transpileConfigSourceForImport,
 } from "./loader.ts";
 import { createMockAdapter } from "../platform/adapters/mock.ts";
@@ -305,6 +313,30 @@ export default config as const;
       };
 
       assertEquals(module.default.title, "scoped-value");
+    });
+
+    it("rewrites staged imports through the original project resolver", async () => {
+      const resolved: string[] = [];
+      const rewritten = await rewriteProjectConfigImports(
+        'import dependency from "config-stage-dependency";\n' +
+          'import local from "./local.js";\n' +
+          'import { defineConfig } from "veryfront";\n' +
+          "export default defineConfig({ dependency, local });\n",
+        (specifier) => {
+          resolved.push(specifier);
+          return specifier === "config-stage-dependency"
+            ? "file:///project/node_modules/config-stage-dependency/index.js"
+            : "file:///project/local.js";
+        },
+      );
+
+      assertEquals(resolved, ["./local.js", "config-stage-dependency"]);
+      assertStringIncludes(
+        rewritten,
+        'from "file:///project/node_modules/config-stage-dependency/index.js"',
+      );
+      assertStringIncludes(rewritten, 'from "file:///project/local.js"');
+      assertEquals(rewritten.includes('from "veryfront"'), false);
     });
   });
 
@@ -736,10 +768,737 @@ export default config as const;
             error.message.includes("not-an-export"),
             `error must name the subpath that failed to resolve, got: ${error.message}`,
           );
+          assertEquals(error.message.includes(projectDir), false);
         } finally {
           await Deno.remove(projectDir, { recursive: true });
         }
       });
+
+      // veryfront-issue-inbox#787. A config whose imports do not resolve was
+      // reported as `config-parse-error` with "Ensure your configuration file
+      // contains valid JavaScript or TypeScript", for a file whose syntax was
+      // fine -- the fix was `npm install`. The classification, suggestion, and
+      // docs link all pointed at file validity.
+      //
+      // What separates the two is the shape of the specifier the resolver
+      // names, not the error code: every runtime reports a missing relative
+      // *file* through the same phrasing and the same ERR_MODULE_NOT_FOUND.
+      // Each case below is one runtime's real wording, so a phrasing change in
+      // any of them fails here rather than silently reverting the reader to the
+      // syntax advice.
+      /**
+       * The `VeryfrontError` a config source fails to load with.
+       *
+       * The source is written to a real temp dir *and* seeded into the mock
+       * adapter, so the failure comes from the runtime's own module resolver
+       * rather than from a stubbed message -- which is what makes each row's
+       * wording a real regression test.
+       */
+      async function loadFailure(prefix: string, source: string): Promise<VeryfrontError> {
+        const adapter = setup();
+        return await withTempDir(async (projectDir) => {
+          const configPath = `${projectDir}/${CONFIG_FILE_NAME}`;
+          await writeTextFile(configPath, source);
+          adapter.fs.files.set(configPath, source);
+          return await assertRejects(
+            () => getConfig(projectDir, adapter),
+            VeryfrontError,
+          ) as VeryfrontError;
+        }, { prefix });
+      }
+
+      it("names the uninstalled package and drops the syntax advice", async () => {
+        // Not the field report's own `@veryfront/ext-observability-opentelemetry`:
+        // an uninstalled first-party extension is resolved through the contract
+        // registry, which raises its own `missing-extension` error before the
+        // import is attempted. An ordinary third-party package is what reaches
+        // the module resolver, which is the path under test.
+        const error = await loadFailure(
+          "vf-config-missing-dep-",
+          'import "some-uninstalled-telemetry-sdk";\nexport default {};\n',
+        );
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assert(
+          error.message.includes("some-uninstalled-telemetry-sdk"),
+          `error must name the unresolved package, got: ${error.message}`,
+        );
+        assert(
+          error.message.includes(CONFIG_FILE_NAME),
+          `error must still name the config file, got: ${error.message}`,
+        );
+        assert(
+          !/valid JavaScript or TypeScript/i.test(
+            `${error.message} ${error.suggestion ?? ""}`,
+          ),
+          "a missing dependency must not advise checking the file's syntax",
+        );
+      });
+
+      it("does not claim a package is absent when only its subpath failed", async () => {
+        // Node reports `require("installed-pkg/missing")` for an *installed*
+        // package identically to one that is genuinely absent. Naming the
+        // package root would tell the reader to install what they already have,
+        // and the subpath -- the real fault -- is not installable at all. The
+        // runtime's own message, which names the whole specifier, is the honest
+        // answer here.
+        const error = await loadFailure(
+          "vf-config-subpath-",
+          `throw new Error("Cannot find module 'installed-pkg/missing'\nRequire stack:\n- /app/veryfront.config.js");\n`,
+        );
+
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+      });
+
+      it("classifies even when the config replaces a built-in it walks with", async () => {
+        // A trusted config shares the host realm and can swap `globalThis.Set`
+        // before throwing. The cause-chain cycle guard must not construct the
+        // project's replacement, or the classification would be lost to that
+        // constructor's exception.
+        const originalSet = globalThis.Set;
+        let error: VeryfrontError;
+        try {
+          error = await loadFailure(
+            "vf-config-poisoned-set-",
+            'globalThis.Set = function () { throw new Error("poisoned Set"); };\n' +
+              `throw new Error("Cannot find package 'left-pad' imported from /app/veryfront.config.ts");\n`,
+          );
+        } finally {
+          globalThis.Set = originalSet;
+        }
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assert(
+          error.message.includes("left-pad"),
+          `error must still name the package, got: ${error.message}`,
+        );
+      });
+
+      it("classifies an original error after the config replaces globalThis.Error", async () => {
+        const originalError = globalThis.Error;
+        let caught: unknown;
+        try {
+          const adapter = setup();
+          await withTempDir(async (projectDir) => {
+            const configPath = `${projectDir}/${CONFIG_FILE_NAME}`;
+            const source =
+              "const failure = new Error(\"Cannot find package 'left-pad' imported from /app/veryfront.config.ts\");\n" +
+              "globalThis.Error = class ProjectError {};\n" +
+              "throw failure;\n";
+            await writeTextFile(configPath, source);
+            adapter.fs.files.set(configPath, source);
+            try {
+              await getConfig(projectDir, adapter);
+            } catch (error) {
+              caught = error;
+            }
+          }, { prefix: "vf-config-poisoned-error-" });
+        } finally {
+          globalThis.Error = originalError;
+        }
+
+        assertInstanceOf(caught, VeryfrontError);
+        const error = caught as VeryfrontError;
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assertStringIncludes(error.message, "left-pad");
+      });
+
+      it("contains a parse failure after the config replaces globalThis.Error", async () => {
+        const originalError = globalThis.Error;
+        let caught: unknown;
+        try {
+          const adapter = setup();
+          await withTempDir(async (projectDir) => {
+            const configPath = `${projectDir}/${CONFIG_FILE_NAME}`;
+            const source = 'const failure = new Error("ordinary config failure");\n' +
+              "globalThis.Error = {};\n" +
+              "throw failure;\n";
+            await writeTextFile(configPath, source);
+            adapter.fs.files.set(configPath, source);
+            try {
+              await getConfig(projectDir, adapter);
+            } catch (error) {
+              caught = error;
+            }
+          }, { prefix: "vf-config-poisoned-error-fallback-" });
+        } finally {
+          globalThis.Error = originalError;
+        }
+
+        assertInstanceOf(caught, VeryfrontError);
+        const error = caught as VeryfrontError;
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+        assertStringIncludes(error.message, "ordinary config failure");
+      });
+
+      it("contains a config that poisons RegExp Symbol.replace", async () => {
+        const originalReplace = RegExp.prototype[Symbol.replace];
+        for (
+          const [message, expectedSlug] of [
+            [
+              "Cannot find package 'left-pad' imported from /app/veryfront.config.ts",
+              DEPENDENCY_MISSING_SLUG,
+            ],
+            ["ordinary project failure", CONFIG_PARSE_ERROR_SLUG],
+          ] as const
+        ) {
+          let error: VeryfrontError;
+          try {
+            error = await loadFailure(
+              "vf-config-poisoned-regexp-replace-",
+              `const failure = new Error(${JSON.stringify(message)});\n` +
+                'RegExp.prototype[Symbol.replace] = function () { throw new Error("poisoned replace"); };\n' +
+                "throw failure;\n",
+            );
+          } finally {
+            RegExp.prototype[Symbol.replace] = originalReplace;
+          }
+
+          assertEquals(error.slug, expectedSlug);
+        }
+      });
+
+      it("redacts machine paths while retaining the actionable package subpath", async () => {
+        const error = await loadFailure(
+          "vf-config-path-redaction-",
+          `throw new Error("Package subpath './config' is not defined by exports in /home/example/project/node_modules/pkg/package.json imported from C:\\\\Users\\\\example\\\\project\\\\veryfront.config.ts");\n`,
+        );
+
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+        assertStringIncludes(error.message, "./config");
+        assertStringIncludes(error.message, "[path]");
+        assertEquals(error.message.includes("/home/example"), false);
+        assertEquals(error.message.includes("C:\\Users\\example"), false);
+      });
+
+      it("classifies Bun resolver objects that do not inherit from Error", async () => {
+        const error = await loadFailure(
+          "vf-config-bun-resolve-object-",
+          "const inherited = Object.create(null, {\n" +
+            "  code: { get() { throw new Error('inherited code getter'); } },\n" +
+            "  message: { get() { throw new Error('inherited message getter'); } },\n" +
+            "});\n" +
+            "const failure = Object.create(inherited, {\n" +
+            "  code: { value: 'ERR_MODULE_NOT_FOUND' },\n" +
+            "  message: { value: \"Cannot find package 'left-pad' from '/app/veryfront.config.mjs'\" },\n" +
+            "});\n" +
+            "throw failure;\n",
+        );
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assertStringIncludes(error.message, "left-pad");
+      });
+
+      it("classifies Bun ResolveMessage prototype accessors", async () => {
+        const error = await loadFailure(
+          "vf-config-bun-resolve-prototype-",
+          "const resolveMessagePrototype = Object.create(Object.prototype);\n" +
+            "Object.defineProperties(resolveMessagePrototype, {\n" +
+            "  code: { get() { return 'ERR_MODULE_NOT_FOUND'; }, enumerable: true, configurable: false },\n" +
+            "  message: {\n" +
+            "    get() { return \"Cannot find package 'left-pad' from '/app/veryfront.config.mjs'\"; },\n" +
+            "    set(_) {}, enumerable: true, configurable: false,\n" +
+            "  },\n" +
+            "  name: { value: 'ResolveMessage', enumerable: true, configurable: true },\n" +
+            "});\n" +
+            "throw Object.create(resolveMessagePrototype);\n",
+        );
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assertStringIncludes(error.message, "left-pad");
+      });
+
+      it("classifies Bun ResolveMessage objects with the live native prototype surface", async () => {
+        const error = await loadFailure(
+          "vf-config-bun-resolve-native-prototype-",
+          "const resolveMessagePrototype = Object.create(Object.prototype);\n" +
+            "Object.defineProperties(resolveMessagePrototype, {\n" +
+            "  code: { get() { return 'ERR_MODULE_NOT_FOUND'; }, enumerable: true, configurable: false },\n" +
+            "  column: { get() { return 1; }, enumerable: true, configurable: false },\n" +
+            "  importKind: { get() { return 'import-statement'; }, enumerable: true, configurable: false },\n" +
+            "  level: { get() { return 'error'; }, enumerable: true, configurable: false },\n" +
+            "  line: { get() { return 1; }, enumerable: true, configurable: false },\n" +
+            "  message: {\n" +
+            "    get() { return \"Cannot find package 'left-pad' from '/app/veryfront.config.mjs'\"; },\n" +
+            "    set(_) {}, enumerable: true, configurable: false,\n" +
+            "  },\n" +
+            "  position: { get() { return 0; }, enumerable: true, configurable: false },\n" +
+            "  referrer: { get() { return '/app/veryfront.config.mjs'; }, enumerable: true, configurable: false },\n" +
+            "  specifier: { get() { return 'left-pad'; }, enumerable: true, configurable: false },\n" +
+            "  toJSON: { value: function toJSON() { return {}; }, writable: true, enumerable: true, configurable: false },\n" +
+            "  toString: { value: function toString() { return this.message; }, writable: true, enumerable: true, configurable: false },\n" +
+            "  name: { value: 'ResolveMessage', writable: false, enumerable: true, configurable: true },\n" +
+            "  constructor: { value: function ResolveMessage() {}, writable: true, enumerable: false, configurable: true },\n" +
+            "  [Symbol.toPrimitive]: { value: function toPrimitive() { return this.message; }, writable: false, enumerable: false, configurable: true },\n" +
+            "  [Symbol.toStringTag]: { value: 'ResolveMessage', writable: false, enumerable: false, configurable: true },\n" +
+            "});\n" +
+            "throw Object.create(resolveMessagePrototype);\n",
+        );
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assertStringIncludes(error.message, "left-pad");
+      });
+
+      it("does not leak Bun-shaped prototype accessor failures", async () => {
+        const codeError = await loadFailure(
+          "vf-config-bun-resolve-throwing-prototype-",
+          "const resolveMessagePrototype = Object.create(Object.prototype);\n" +
+            "Object.defineProperties(resolveMessagePrototype, {\n" +
+            "  code: { get() { throw new Error('hostile code getter'); }, enumerable: true, configurable: false },\n" +
+            "  message: {\n" +
+            "    get() { throw new Error('hostile message getter'); },\n" +
+            "    set(_) {}, enumerable: true, configurable: false,\n" +
+            "  },\n" +
+            "  name: { value: 'ResolveMessage', enumerable: true, configurable: true },\n" +
+            "});\n" +
+            "throw Object.create(resolveMessagePrototype);\n",
+        );
+        const messageError = await loadFailure(
+          "vf-config-bun-resolve-throwing-message-",
+          "const resolveMessagePrototype = Object.create(Object.prototype);\n" +
+            "Object.defineProperties(resolveMessagePrototype, {\n" +
+            "  code: { get() { return 'ERR_MODULE_NOT_FOUND'; }, enumerable: true, configurable: false },\n" +
+            "  message: {\n" +
+            "    get() { throw new Error('hostile message getter'); },\n" +
+            "    set(_) {}, enumerable: true, configurable: false,\n" +
+            "  },\n" +
+            "  name: { value: 'ResolveMessage', enumerable: true, configurable: true },\n" +
+            "});\n" +
+            "throw Object.create(resolveMessagePrototype);\n",
+        );
+
+        assertEquals(codeError.slug, CONFIG_PARSE_ERROR_SLUG);
+        assertStringIncludes(codeError.message, "Failed to load veryfront.config.js");
+        assertEquals(messageError.slug, CONFIG_PARSE_ERROR_SLUG);
+        assertStringIncludes(messageError.message, "Failed to load veryfront.config.js");
+      });
+
+      it("does not accept Bun ResolveMessage lookalikes with extra prototype keys", async () => {
+        const counterKey = "__veryfrontConfigBunLookalikeReads";
+        try {
+          const error = await loadFailure(
+            "vf-config-bun-resolve-extra-prototype-",
+            `globalThis.${counterKey} = 0;\n` +
+              "const resolveMessagePrototype = Object.create(Object.prototype);\n" +
+              "Object.defineProperties(resolveMessagePrototype, {\n" +
+              "  code: { get() { globalThis.__veryfrontConfigBunLookalikeReads += 1; return 'ERR_MODULE_NOT_FOUND'; }, enumerable: true, configurable: false },\n" +
+              "  message: {\n" +
+              "    get() { globalThis.__veryfrontConfigBunLookalikeReads += 1; return \"Cannot find package 'left-pad' from '/app/veryfront.config.mjs'\"; },\n" +
+              "    set(_) {}, enumerable: true, configurable: false,\n" +
+              "  },\n" +
+              "  name: { value: 'ResolveMessage', enumerable: true, configurable: true },\n" +
+              "  veryfrontProjectControlledKey: { value: true, enumerable: true, configurable: false },\n" +
+              "});\n" +
+              "throw Object.create(resolveMessagePrototype);\n",
+          );
+
+          assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+          assertEquals(
+            (globalThis as Record<string, unknown>)[counterKey],
+            0,
+          );
+        } finally {
+          delete (globalThis as Record<string, unknown>)[counterKey];
+        }
+      });
+
+      it("does not invoke unbranded inherited resolver accessors", async () => {
+        const counterKey = "__veryfrontConfigHostileResolverAccessorReads";
+        try {
+          const error = await loadFailure(
+            "vf-config-unbranded-resolve-prototype-",
+            `globalThis.${counterKey} = 0;\n` +
+              "class ProjectResolveMessage {}\n" +
+              "Object.defineProperties(ProjectResolveMessage.prototype, {\n" +
+              "  code: { get() { globalThis.__veryfrontConfigHostileResolverAccessorReads += 1; return 'ERR_MODULE_NOT_FOUND'; } },\n" +
+              "  message: { get() { globalThis.__veryfrontConfigHostileResolverAccessorReads += 1; return \"Cannot find package 'left-pad' from '/app/veryfront.config.mjs'\"; } },\n" +
+              "});\n" +
+              "throw new ProjectResolveMessage();\n",
+          );
+
+          assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+          assertEquals(
+            (globalThis as Record<string, unknown>)[counterKey],
+            0,
+          );
+        } finally {
+          delete (globalThis as Record<string, unknown>)[counterKey];
+        }
+      });
+
+      it("contains a cause getter that throws", async () => {
+        // A trusted config runs in the shared host realm and can define `cause`
+        // as a throwing accessor. Walking the chain must not let that escape in
+        // place of the classification, as the sibling errorChain already avoids.
+        const error = await loadFailure(
+          "vf-config-hostile-cause-",
+          'const e = new Error("boom");\n' +
+            'Object.defineProperty(e, "cause", { get() { throw new Error("hostile"); } });\n' +
+            "throw e;\n",
+        );
+
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+        assert(
+          error.message.includes("boom"),
+          `error must still report the config's own message, got: ${error.message}`,
+        );
+      });
+
+      it("contains a nested message getter that throws", async () => {
+        const error = await loadFailure(
+          "vf-config-hostile-message-",
+          "const cause = new Error();\n" +
+            'Object.defineProperty(cause, "message", {' +
+            ' get() { throw new Error("hostile"); } });\n' +
+            'throw new Error("wrapper", { cause });\n',
+        );
+
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+        assert(
+          error.message.includes("wrapper"),
+          `error must still report the safe outer message, got: ${error.message}`,
+        );
+      });
+
+      it("classifies dependencies without project-controlled string methods", async () => {
+        const receiverValue = String.prototype.valueOf;
+        const restores: Array<() => void> = [];
+        /**
+         * Make one `String.prototype` method throw for the config's specifier.
+         *
+         * A config file can install these before the loader runs, so the
+         * classifier must reach its answer through captured intrinsics.
+         */
+        const poisonForSpecifier = (
+          method: "startsWith" | "slice" | "includes" | "replace" | "trim",
+        ) => {
+          const original = String.prototype[method] as (...args: unknown[]) => unknown;
+          restores.push(replacePropertyForTest(String.prototype, method, {
+            value: function (this: string, ...args: unknown[]): unknown {
+              const receiver = TestReflectApply(receiverValue, this, []) as string;
+              if (receiver === "npm:left-pad" || receiver === "left-pad") {
+                throw new Error(`poisoned ${String(method)}`);
+              }
+              return TestReflectApply(original, this, args);
+            },
+          }));
+        };
+
+        try {
+          for (const method of ["startsWith", "slice", "includes", "replace", "trim"] as const) {
+            poisonForSpecifier(method);
+          }
+          const error = await loadFailure(
+            "vf-config-hostile-string-",
+            "throw new Error('Module not found \"npm:left-pad\".');\n",
+          );
+
+          assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+          assertStringIncludes(error.message, "left-pad");
+        } finally {
+          for (let index = restores.length - 1; index >= 0; index -= 1) restores[index]!();
+        }
+      });
+
+      it("classifies dependencies without project-controlled array helpers", async () => {
+        const originalPush = Array.prototype.push;
+        const originalIterator = Array.prototype[Symbol.iterator];
+        const message = 'Module not found "npm:left-pad".\n' +
+          "  hint: If you want to use the npm package, try running `deno add npm:left-pad`\n" +
+          "    at file:///app/veryfront.config.ts:1:8";
+        let error: VeryfrontError;
+
+        try {
+          Array.prototype.push = function (...values: unknown[]): number {
+            if (values[0] === 'Module not found "npm:left-pad".') {
+              throw new Error("poisoned push");
+            }
+            return TestReflectApply(originalPush, this, values) as number;
+          };
+          Array.prototype[Symbol.iterator] = function (): ArrayIterator<unknown> {
+            if (this[0] === message) throw new Error("poisoned iterator");
+            return TestReflectApply(originalIterator, this, []) as ArrayIterator<unknown>;
+          };
+
+          error = await loadFailure(
+            "vf-config-hostile-array-",
+            `throw new Error(${JSON.stringify(message)});\n`,
+          );
+        } finally {
+          Array.prototype.push = originalPush;
+          Array.prototype[Symbol.iterator] = originalIterator;
+        }
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assertStringIncludes(error.message, "left-pad");
+      });
+
+      it("classifies an installable legacy uppercase npm package", async () => {
+        const error = await loadFailure(
+          "vf-config-uppercase-package-",
+          `throw new Error("Cannot find package 'JSONStream' imported from /app/veryfront.config.ts");\n`,
+        );
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assertStringIncludes(error.message, "JSONStream");
+      });
+
+      it("classifies an installable scoped npm package whose name starts with underscore", async () => {
+        const error = await loadFailure(
+          "vf-config-scoped-underscore-package-",
+          `throw new Error("Cannot find package '@scope/_plugin' imported from /app/veryfront.config.ts");\n`,
+        );
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assertStringIncludes(error.message, "@scope/_plugin");
+      });
+
+      for (const packageName of ["@scope/-plugin", "@_scope/plugin"]) {
+        it(`classifies npm-valid punctuation in ${packageName}`, async () => {
+          const error = await loadFailure(
+            "vf-config-scoped-punctuation-package-",
+            `throw new Error("Cannot find package '${packageName}' imported from /app/veryfront.config.ts");\n`,
+          );
+
+          assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+          assertStringIncludes(error.message, packageName);
+        });
+      }
+
+      it("preserves the full accepted package name in diagnostics", async () => {
+        const packageName = "a".repeat(214);
+        const error = await loadFailure(
+          "vf-config-long-package-",
+          `throw new Error("Cannot find package '${packageName}' imported from /app/veryfront.config.ts");\n`,
+        );
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assertStringIncludes(error.message, packageName);
+        assertEquals(
+          Object.getOwnPropertyDescriptor(error.context ?? {}, "packageName")?.value,
+          packageName,
+        );
+      });
+
+      it("keeps a secret in a subpath out of any package claim", async () => {
+        // Falling through to the parse error routes the text through
+        // summarizeConfigLoadCause, which redacts and bounds it; the
+        // dependency branch must not quietly reintroduce it.
+        const error = await loadFailure(
+          "vf-config-subpath-secret-",
+          `throw new Error("Cannot find module 'pkg/token=SUPERSECRET123'");\n`,
+        );
+
+        assert(
+          !error.message.includes("SUPERSECRET123"),
+          `error must not repeat the secret, got: ${error.message}`,
+        );
+      });
+
+      it("bounds an oversized specifier before it reaches the message", async () => {
+        const error = await loadFailure(
+          "vf-config-oversized-",
+          `throw new Error("Cannot find module '${"a".repeat(400)}'");\n`,
+        );
+
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+        assert(
+          error.message.length < 320,
+          `error must bound the specifier, got ${error.message.length} characters`,
+        );
+      });
+
+      // One failure, four spellings. Node names the importer with "imported
+      // from", Bun with "from '<path>'" and sometimes a `ResolveMessage:`
+      // prefix, and Deno has two forms of its own.
+      const missingPackageWordings: ReadonlyArray<[string, string, string]> = [
+        [
+          "Deno's npm-referrer form",
+          "vf-config-referrer-",
+          `Could not find package 'left-pad' from referrer 'file:///app/veryfront.config.ts'.`,
+        ],
+        [
+          "Bun's from-importer form",
+          "vf-config-bun-",
+          `Cannot find package 'left-pad' from '/app/veryfront.config.mjs'`,
+        ],
+        [
+          "Bun's ResolveMessage prefix",
+          "vf-config-bun-resolve-",
+          `ResolveMessage: Cannot find package 'left-pad' from '/app/veryfront.config.mjs'`,
+        ],
+        [
+          "Node's imported-from form",
+          "vf-config-node-",
+          `Cannot find package 'left-pad' imported from /app/veryfront.config.ts`,
+        ],
+        [
+          // A version is legitimate here, unlike on a plain specifier.
+          "an npm: specifier carrying a version",
+          "vf-config-npm-version-",
+          `Module not found "npm:left-pad@1.3.0".`,
+        ],
+        [
+          "Deno's hint and location trailer form",
+          "vf-config-deno-trailer-",
+          'Module not found "npm:left-pad".\n' +
+          "  hint: If you want to use the npm package, try running `deno add npm:left-pad`\n" +
+          "    at file:///app/veryfront.config.ts:1:8",
+        ],
+        [
+          // Node CommonJS, which is what a `.js` config without `"type":
+          // "module"` gets. Legitimately multi-line, so it must be matched
+          // whole -- the first-line retry deliberately rejects this trailer.
+          "Node's CommonJS require-stack form",
+          "vf-config-cjs-",
+          `Cannot find module 'left-pad'\nRequire stack:\n- /app/veryfront.config.js`,
+        ],
+      ];
+
+      for (const [label, prefix, message] of missingPackageWordings) {
+        it(`classifies ${label} as a missing dependency`, async () => {
+          const error = await loadFailure(
+            prefix,
+            `throw new Error(${JSON.stringify(message)});\n`,
+          );
+
+          assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+          assert(
+            error.message.includes("left-pad"),
+            `error must name the unresolved package, got: ${error.message}`,
+          );
+        });
+      }
+
+      it("classifies npm: packages whose names match Node built-ins as missing", async () => {
+        const error = await loadFailure(
+          "vf-config-npm-builtin-name-",
+          `throw new Error('Module not found "npm:fs".');\n`,
+        );
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assertStringIncludes(error.message, "fs");
+      });
+
+      it("classifies an npm-valid leading-hyphen package as missing", async () => {
+        const error = await loadFailure(
+          "vf-config-leading-hyphen-",
+          'import "-foo";\nexport default {};\n',
+        );
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assertStringIncludes(error.message, "-foo");
+      });
+
+      // Each of these reaches the classifier through a matched resolver
+      // phrasing and must still come out as a parse error, because installing
+      // a package would not help any of these readers.
+      const notInstallable: ReadonlyArray<[string, string, string]> = [
+        [
+          "a missing relative import",
+          "vf-config-missing-file-",
+          'import "./not-written-yet.js";\nexport default {};\n',
+        ],
+        [
+          "a missing relative file under Bun's from-importer form",
+          "vf-config-bun-relative-",
+          `throw new Error("Cannot find module './missing.js' from '/app/veryfront.config.mjs'");\n`,
+        ],
+        [
+          "a Windows UNC path",
+          "vf-config-windows-",
+          `throw new Error("Cannot find module '\\\\\\\\server\\\\share\\\\missing.js'");\n`,
+        ],
+        [
+          "the project-module alias",
+          "vf-config-alias-",
+          'import "@/lib/config";\nexport default {};\n',
+        ],
+        [
+          "a single-line application module error without a runtime suffix",
+          "vf-config-plain-module-error-",
+          `throw new Error("Cannot find module 'db'");\n`,
+        ],
+        [
+          "a single-line application package error with an arbitrary from suffix",
+          "vf-config-plain-from-error-",
+          `throw new Error("Cannot find package 'db' from initialization");\n`,
+        ],
+        [
+          "an ordinary error that merely quotes a resolver phrase",
+          "vf-config-quoted-",
+          `throw new Error('Setup failed: Module not found "db"');\n`,
+        ],
+        [
+          // The first-line retry exists for Deno's `hint:`/`at` trailer. Without
+          // a guard it would defeat the end anchor for *any* multi-line message,
+          // and an application error's own second line would be discarded.
+          "an application error whose second line is not a runtime trailer",
+          "vf-config-multiline-",
+          `throw new Error("Cannot find module 'db'\\ninitialization failed");\n`,
+        ],
+        [
+          "an application error whose second line only starts with at",
+          "vf-config-at-application-line-",
+          `throw new Error("Cannot find module 'db'\\nat initialization");\n`,
+        ],
+        [
+          "an application error whose second line only starts with hint",
+          "vf-config-generic-hint-line-",
+          `throw new Error("Cannot find module 'db'\\nhint: inspect setup");\n`,
+        ],
+        [
+          // Only npm:/jsr: specifiers carry a version; Node and Bun cannot
+          // resolve a plain `left-pad@1.3.0` at all, so this is invalid import
+          // syntax rather than an absent package.
+          "a version pinned onto a plain bare specifier",
+          "vf-config-versioned-",
+          `throw new Error("Cannot find module 'left-pad@1.3.0'");\n`,
+        ],
+        [
+          "a package name containing whitespace",
+          "vf-config-malformed-package-",
+          `throw new Error("Cannot find package 'foo bar' imported from /app/veryfront.config.ts");\n`,
+        ],
+        [
+          "an unscoped package name beginning with underscore",
+          "vf-config-leading-underscore-",
+          `throw new Error("Cannot find package '_foo' imported from /app/veryfront.config.ts");\n`,
+        ],
+        [
+          "an invalid Node built-in subpath",
+          "vf-config-node-builtin-subpath-",
+          `throw new Error("Cannot find package 'fs' imported from /app/veryfront.config.mjs");\n`,
+        ],
+        [
+          "the npm-reserved node_modules root",
+          "vf-config-reserved-node-modules-",
+          `throw new Error("Cannot find package 'node_modules' imported from /app/veryfront.config.ts");\n`,
+        ],
+        [
+          "the npm-reserved favicon.ico root",
+          "vf-config-reserved-favicon-",
+          `throw new Error("Cannot find package 'favicon.ico' imported from /app/veryfront.config.ts");\n`,
+        ],
+        [
+          "the mixed-case npm-reserved Node_Modules root",
+          "vf-config-reserved-node-modules-case-",
+          `throw new Error("Cannot find package 'Node_Modules' imported from /app/veryfront.config.ts");\n`,
+        ],
+        [
+          "the mixed-case npm-reserved FAVICON.ICO root",
+          "vf-config-reserved-favicon-case-",
+          `throw new Error("Cannot find package 'FAVICON.ICO' imported from /app/veryfront.config.ts");\n`,
+        ],
+      ];
+
+      for (const [label, prefix, source] of notInstallable) {
+        it(`does not blame ${label} on an uninstalled package`, async () => {
+          const error = await loadFailure(prefix, source);
+
+          assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+        });
+      }
 
       it("carries a thrown config's own message through to the reader", async () => {
         const adapter = setup();
