@@ -377,6 +377,24 @@ describe("transforms/shared/esm-sh-import-map", () => {
     }
   });
 
+  it("recognizes compound SemVer ranges before file extensions", () => {
+    for (
+      const encodedRange of [
+        "1.2.3%20-%202.0.0-alpha.beta",
+        "%3E%3D1.2.3%20%3C2.0.0-alpha.beta",
+        "%5E1.2.3%20%7C%7C%20~2.0.0-alpha.beta",
+        "%3E%3D1.0.0%20%3C2.0.0%20%7C%7C%20%3E%3D3.0.0%20%3C4.0.0-alpha.beta",
+      ] as const
+    ) {
+      const mapping = `https://cdn.example/pkg@${encodedRange}`;
+      assertEquals(
+        resolve("https://esm.sh/pkg@1/sub", { pkg: mapping }),
+        `${mapping}/sub`,
+        `${decodeURIComponent(encodedRange)} is a package range rather than a file extension`,
+      );
+    }
+  });
+
   it("recognizes wildcard SemVer ranges before file extensions", () => {
     for (
       const version of [

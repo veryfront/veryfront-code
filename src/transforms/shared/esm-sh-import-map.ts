@@ -251,6 +251,29 @@ const WILDCARD_SEMVER_RANGE = new RegExp(
 );
 const NPM_DIST_TAG = /^[A-Za-z][0-9A-Za-z._-]*$/;
 
+function isSingleSemverSelector(value: string): boolean {
+  return SEMVER_VERSION_OR_RANGE.test(value) || WILDCARD_SEMVER_RANGE.test(value);
+}
+
+function isCompoundSemverRange(value: string): boolean {
+  const hyphenRange = /^(\S+)\s+-\s+(\S+)$/.exec(value);
+  if (
+    hyphenRange && isSingleSemverSelector(hyphenRange[1]!) &&
+    isSingleSemverSelector(hyphenRange[2]!)
+  ) {
+    return true;
+  }
+
+  const sets = value.split(/\s*\|\|\s*/);
+  let isCompound = sets.length > 1;
+  for (const set of sets) {
+    const selectors = set.trim().split(/\s+/);
+    if (selectors.length > 1) isCompound = true;
+    if (selectors.some((selector) => !isSingleSemverSelector(selector))) return false;
+  }
+  return isCompound;
+}
+
 /**
  * How many leading path segments a recognised package coordinate occupies, or
  * -1 when the URL is not a shape this knows.
@@ -359,7 +382,7 @@ function addressesRemoteFile(mapping: string): boolean {
   if (
     version &&
     (SEMVER_VERSION_OR_RANGE.test(version) || WILDCARD_SEMVER_RANGE.test(version) ||
-      NPM_DIST_TAG.test(version))
+      isCompoundSemverRange(version) || NPM_DIST_TAG.test(version))
   ) {
     return false;
   }
