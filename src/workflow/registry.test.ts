@@ -944,11 +944,11 @@ describe("workflow graph metadata as a public surface", () => {
 
     const metadata = publicWorkflowRegistry.get("static-loop-metadata");
     assertExists(metadata);
-    assertEquals(metadata.nodes.map((n) => n.id), ["check", "review-loop"]);
+    assertEquals(metadata.nodes.map((n) => n.id), ["review-loop/check", "review-loop"]);
     const byId = new Map(metadata.nodes.map((n) => [n.id, n]));
-    assertEquals(byId.get("review-loop")!.children, ["check"]);
+    assertEquals(byId.get("review-loop")!.children, ["review-loop/check"]);
     assertEquals(byId.get("review-loop")!.description, "Loop over known review checks");
-    assertEquals(byId.get("check")!.description, "Check one review item");
+    assertEquals(byId.get("review-loop/check")!.description, "Check one review item");
   });
 
   it("marks dynamic loop children as unavailable in graph metadata", () => {

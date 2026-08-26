@@ -10,6 +10,7 @@ import type { NodeExecutionResult } from "./types.ts";
 import { sleep } from "#veryfront/utils";
 import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
 import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
+import { namespaceWorkflowNodes } from "../../dsl/validation.ts";
 import {
   applyContextPatch,
   applyRecordPatch,
@@ -157,7 +158,7 @@ export async function executeLoopNodeStrategy(
     }
 
     const steps = typeof config.steps === "function"
-      ? config.steps(context, loopContext)
+      ? namespaceWorkflowNodes(`${node.id}/`, config.steps(context, loopContext))
       : config.steps;
     runtime.abortSignal?.throwIfAborted();
 
@@ -186,7 +187,14 @@ export async function executeLoopNodeStrategy(
     });
     runtime.abortSignal?.throwIfAborted();
 
-    if (result.waiting) {
+    const stalledWaitingNodes = result.stalledWaitNodes ??
+      (result.stalledWaitNode === undefined
+        ? undefined
+        : [{ nodeId: result.stalledWaitNode, waitConfig: undefined }]);
+    const waitingNodes = result.waitingNodes ?? stalledWaitingNodes;
+    const waiting = result.waiting || waitingNodes !== undefined;
+
+    if (waiting) {
       // Diff the iteration against its own starting state, never against the
       // parent's map. `result.nodeStates` holds this iteration's children only,
       // so diffing the parent against it reports every completed sibling as
@@ -219,9 +227,9 @@ export async function executeLoopNodeStrategy(
           }),
         ),
         waiting: true,
-        waitingNode: result.waitingNode,
-        waitingConfig: result.waitingConfig,
-        waitingNodes: result.waitingNodes,
+        waitingNode: result.waitingNode ?? waitingNodes?.[0]?.nodeId,
+        waitingConfig: result.waitingConfig ?? waitingNodes?.[0]?.waitConfig,
+        waitingNodes,
       };
     }
 

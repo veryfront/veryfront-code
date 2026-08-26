@@ -1258,7 +1258,7 @@ describe("DAGExecutor", () => {
       assertEquals(second.nodeStates["after-wait"]!.status, "completed");
     });
 
-    it("fails a resumed iteration whose stale wait leaves its child graph stuck", async () => {
+    it("reports every parked wait from a resumed iteration whose record may need recovery", async () => {
       const order: string[] = [];
       const trackingExecutor = new MockStepExecutor(new Map(), (node) => {
         order.push(node.id);
@@ -1300,11 +1300,10 @@ describe("DAGExecutor", () => {
       );
 
       assertEquals(second.completed, false, "an unfinished child graph cannot report success");
+      assertEquals(second.waiting, true);
+      assertEquals(second.waitingNode, "inner-wait");
       assertEquals(order, [], "a dependent of the unresolved wait must not execute");
-      assertStringIncludes(second.error ?? "", 'Workflow run "test-run" stalled');
-      assertStringIncludes(second.error ?? "", 'child graph "the-loop_iter_0"');
-      assertStringIncludes(second.error ?? "", '"inner-wait" (running)');
-      assertStringIncludes(second.error ?? "", '"after-wait" (pending)');
+      assertEquals(second.error, undefined);
     });
 
     it("removes child node states from previous dynamic loop iterations", async () => {
@@ -1336,8 +1335,8 @@ describe("DAGExecutor", () => {
         nodes,
         createTestRun({
           nodeStates: {
-            "old-child": {
-              nodeId: "old-child",
+            "the-loop/old-child": {
+              nodeId: "the-loop/old-child",
               status: "completed",
               attempt: 1,
             },
@@ -1346,11 +1345,11 @@ describe("DAGExecutor", () => {
       );
 
       assertEquals(result.completed, true);
-      assertEquals(result.nodeStates["old-child"], undefined);
-      assertExists(result.nodeStates["current-child"]);
-      assertEquals(result.nodeStates["current-child"]!.status, "completed");
+      assertEquals(result.nodeStates["the-loop/old-child"], undefined);
+      assertExists(result.nodeStates["the-loop/current-child"]);
+      assertEquals(result.nodeStates["the-loop/current-child"]!.status, "completed");
       assertEquals(
-        persistedDeletes.some((deleted) => deleted.includes("old-child")),
+        persistedDeletes.some((deleted) => deleted.includes("the-loop/old-child")),
         true,
         "durable node-state patches must carry dynamic child deletions",
       );
@@ -1519,6 +1518,42 @@ describe("DAGExecutor", () => {
 
       assertEquals(result.waiting, true);
       assertEquals(result.waitingNode, "top-wait");
+    });
+
+    it("reports every stalled wait with its exact runtime config", async () => {
+      const firstConfig = {
+        type: "wait" as const,
+        waitType: "approval" as const,
+        message: "First review",
+        approvers: ["alice"],
+      };
+      const secondConfig = {
+        type: "wait" as const,
+        waitType: "event" as const,
+        eventName: "second.ready",
+        timeout: "1h",
+      };
+      const nodes: WorkflowNode[] = [
+        { id: "first", dependsOn: [], config: firstConfig },
+        { id: "second", dependsOn: [], config: secondConfig },
+      ];
+
+      const result = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            first: { nodeId: "first", status: "running", attempt: 1 },
+            second: { nodeId: "second", status: "running", attempt: 1 },
+          },
+        }),
+      );
+
+      assertEquals(result.stalledWaitNode, "first");
+      assertEquals(result.stalledWaitNodes, [
+        { nodeId: "first", waitConfig: firstConfig },
+        { nodeId: "second", waitConfig: secondConfig },
+      ]);
     });
 
     it("re-enters an enclosing composite after a nested wait is approved", async () => {

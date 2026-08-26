@@ -47,6 +47,8 @@ export interface WorkflowRunControlExecuteResult {
    * record, which only this layer can read.
    */
   stalledWaitNode?: string;
+  /** Every running wait in a graph that found nothing left to schedule. */
+  stalledWaitNodes?: ReadonlyArray<{ nodeId: string; waitConfig: WaitNodeConfig }>;
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
   error?: string;
@@ -864,11 +866,16 @@ export async function executeWorkflowRunControl(
     // event can still arrive. Failing here would let a resume that simply came
     // too early destroy a healthy run, which is the only nudge callers have.
     if (result.stalledWaitNode !== undefined) {
-      const stalledWaitNode = result.stalledWaitNode;
+      const stalledWaitNodes = result.stalledWaitNodes && result.stalledWaitNodes.length > 0
+        ? result.stalledWaitNodes
+        : [{ nodeId: result.stalledWaitNode, waitConfig: result.waitingConfig }];
+      const stalledWaitNode = stalledWaitNodes[0]!.nodeId;
       const stillParked: WorkflowRunControlExecuteResult = {
         ...result,
         waiting: true,
         waitingNode: stalledWaitNode,
+        waitingConfig: stalledWaitNodes[0]!.waitConfig,
+        waitingNodes: stalledWaitNodes,
         error: undefined,
       };
       // Park with a status-only patch. The durable node states were persisted
@@ -877,6 +884,7 @@ export async function executeWorkflowRunControl(
       // between the durable-record check below and this write, leaving the run
       // waiting on a node whose outcome was just destroyed.
       const paused = await pauseRun(input, executionController, stillParked, {
+        currentNodes: stalledWaitNodes.map((waiting) => waiting.nodeId),
         statusOnly: true,
       });
       if (!paused) return { status: "ownership-lost" };
@@ -897,41 +905,37 @@ export async function executeWorkflowRunControl(
         };
       }
 
-      if (await hasLiveNodeWait(backend, runId, stalledWaitNode)) {
-        // The wait was announced when the run first parked. Announcing it
-        // again would raise a duplicate approval or event wait for the same
-        // node, so this path deliberately does not call onWaiting.
-        return { status: "waiting", run: pausedRun };
-      }
-
-      if (pausedRun.nodeStates[stalledWaitNode]?.status === "completed") {
-        // A delivery can commit the node after the stale DAG snapshot but
-        // before this read. That delivery owns the resume; this execution must
-        // not fail the run or write its stale running node over the outcome.
-        return { status: "waiting", run: pausedRun };
-      }
-
       // No live record, but the node may not be stuck: a worker that died
       // between committing the parked status and persisting the record, or
       // between resolving a record and completing its node, leaves exactly
       // this shape. If its outcome already landed, the run moved on and there
-      // is nothing to do; otherwise re-announce the wait so a record is
-      // reconstructed from the registered definition and the run stays
-      // wakeable instead of being failed while merely parked.
-      if (pausedRun.nodeStates[stalledWaitNode]?.status === "running") {
-        await input.onWaiting?.(pausedRun, stalledWaitNode, undefined);
-        await input.onWaitingBatchComplete?.(pausedRun);
-        const latestRun = await backend.getRun(runId);
-        if (
-          latestRun && (
-            await hasLiveNodeWait(backend, runId, stalledWaitNode) ||
-            latestRun.nodeStates[stalledWaitNode]?.status !== "running" ||
-            latestRun.status !== "waiting"
-          )
-        ) {
-          return { status: "waiting", run: latestRun };
-        }
+      // is nothing to do; otherwise re-announce every missing wait from the
+      // exact runtime config retained by the DAG. A live first sibling must
+      // not hide a later sibling whose process died before persisting it.
+      let reconstructed = false;
+      for (const waiting of stalledWaitNodes) {
+        if (await hasLiveNodeWait(backend, runId, waiting.nodeId)) continue;
+        if (pausedRun.nodeStates[waiting.nodeId]?.status !== "running") continue;
+        await input.onWaiting?.(pausedRun, waiting.nodeId, waiting.waitConfig);
+        reconstructed = true;
       }
+      if (reconstructed) {
+        await input.onWaitingBatchComplete?.(pausedRun);
+      }
+
+      const latestRun = reconstructed ? await backend.getRun(runId) : pausedRun;
+      if (!latestRun) return { status: "skipped" };
+      if (latestRun.status !== "waiting") return { status: "waiting", run: latestRun };
+
+      let missingWaitRemains = false;
+      for (const waiting of stalledWaitNodes) {
+        const nodeStatus = latestRun.nodeStates[waiting.nodeId]?.status;
+        if (await hasLiveNodeWait(backend, runId, waiting.nodeId)) continue;
+        if (nodeStatus === "completed") continue;
+        missingWaitRemains = true;
+        break;
+      }
+      if (!missingWaitRemains) return { status: "waiting", run: latestRun };
 
       // Nothing durable could be re-established: the graph really is stuck.
       const stalledError = ORCHESTRATION_ERROR.create({

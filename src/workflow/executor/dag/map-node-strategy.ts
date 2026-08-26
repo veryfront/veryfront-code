@@ -118,11 +118,18 @@ export async function executeMapNodeStrategy(
 
   const outputs = childNodes.map((child) => result.nodeStates[child.id]?.output);
 
+  const stalledWaitingNodes = result.stalledWaitNodes ??
+    (result.stalledWaitNode === undefined
+      ? undefined
+      : [{ nodeId: result.stalledWaitNode, waitConfig: undefined }]);
+  const waitingNodes = result.waitingNodes ?? stalledWaitingNodes;
+  const waiting = result.waiting || waitingNodes !== undefined;
+
   const state: NodeState = {
     nodeId: node.id,
-    status: deriveNodeStatus(result.completed, result.waiting),
+    status: deriveNodeStatus(result.completed, waiting),
     output: outputs,
-    error: result.error,
+    error: waiting ? undefined : result.error,
     attempt: 1,
     startedAt: new Date(startTime),
     completedAt: result.completed ? new Date() : undefined,
@@ -133,9 +140,9 @@ export async function executeMapNodeStrategy(
   return {
     state,
     contextPatch: createSetContextPatch(result.completed ? { [node.id]: outputs } : {}),
-    waiting: result.waiting,
-    waitingNode: result.waitingNode,
-    waitingConfig: result.waitingConfig,
-    waitingNodes: result.waitingNodes,
+    waiting,
+    waitingNode: result.waitingNode ?? waitingNodes?.[0]?.nodeId,
+    waitingConfig: result.waitingConfig ?? waitingNodes?.[0]?.waitConfig,
+    waitingNodes,
   };
 }

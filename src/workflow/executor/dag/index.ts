@@ -520,19 +520,27 @@ export class DAGExecutor {
       // indistinguishable from a run legitimately parked on a decision that has
       // not arrived yet, so name the wait and let the caller check the durable
       // record before treating this as terminal.
-      const stalledWaitNode = unfinished.every(({ nodeId, status }) =>
-          status === "pending" ||
-          (status === "running" && nodeMap.get(nodeId)?.config.type === "wait")
-        )
-        ? unfinished.find(({ status }) => status === "running")?.nodeId
-        : undefined;
+      const onlyParkedWaitsAndDependents = unfinished.every(({ nodeId, status }) =>
+        status === "pending" ||
+        (status === "running" && nodeMap.get(nodeId)?.config.type === "wait")
+      );
+      const stalledWaitNodes: Array<{ nodeId: string; waitConfig: WaitNodeConfig }> = [];
+      if (onlyParkedWaitsAndDependents) {
+        for (const { nodeId, status } of unfinished) {
+          const config = nodeMap.get(nodeId)?.config;
+          if (status === "running" && config?.type === "wait") {
+            stalledWaitNodes.push({ nodeId, waitConfig: config });
+          }
+        }
+      }
+      const stalledWaitNode = stalledWaitNodes[0]?.nodeId;
       return {
         completed: false,
         waiting: false,
         context,
         nodeStates,
         contextPatch,
-        ...(stalledWaitNode === undefined ? {} : { stalledWaitNode }),
+        ...(stalledWaitNode === undefined ? {} : { stalledWaitNode, stalledWaitNodes }),
         error: `Workflow run ${JSON.stringify(scope.rootRunId)} stalled in ${graph}; ` +
           `unfinished nodes: ${details}${omitted > 0 ? `, and ${omitted} more` : ""}`,
       };
@@ -818,10 +826,14 @@ export class DAGExecutor {
     applyContextPatch(context, result.contextPatch);
     applyRecordPatch(nodeStates, createRecordPatch({}, result.nodeStates));
 
-    const waiting = result.waiting || result.stalledWaitNode !== undefined;
-    const waitingNode = result.waitingNode ?? result.stalledWaitNode;
-    const waitingNodes = result.waitingNodes ??
-      (waitingNode === undefined ? undefined : [{ nodeId: waitingNode }]);
+    const stalledWaitingNodes = result.stalledWaitNodes ??
+      (result.stalledWaitNode === undefined
+        ? undefined
+        : [{ nodeId: result.stalledWaitNode, waitConfig: undefined }]);
+    const waitingNodes = result.waitingNodes ?? stalledWaitingNodes;
+    const waiting = result.waiting || waitingNodes !== undefined;
+    const waitingNode = result.waitingNode ?? waitingNodes?.[0]?.nodeId;
+    const waitingConfig = result.waitingConfig ?? waitingNodes?.[0]?.waitConfig;
 
     const state: NodeState = {
       nodeId: node.id,
@@ -840,7 +852,7 @@ export class DAGExecutor {
       contextPatch: result.contextPatch,
       waiting,
       waitingNode,
-      waitingConfig: result.waitingConfig,
+      waitingConfig,
       waitingNodes,
     };
   }
@@ -898,10 +910,14 @@ export class DAGExecutor {
     applyContextPatch(context, result.contextPatch);
     applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
 
-    const waiting = result.waiting || result.stalledWaitNode !== undefined;
-    const waitingNode = result.waitingNode ?? result.stalledWaitNode;
-    const waitingNodes = result.waitingNodes ??
-      (waitingNode === undefined ? undefined : [{ nodeId: waitingNode }]);
+    const stalledWaitingNodes = result.stalledWaitNodes ??
+      (result.stalledWaitNode === undefined
+        ? undefined
+        : [{ nodeId: result.stalledWaitNode, waitConfig: undefined }]);
+    const waitingNodes = result.waitingNodes ?? stalledWaitingNodes;
+    const waiting = result.waiting || waitingNodes !== undefined;
+    const waitingNode = result.waitingNode ?? waitingNodes?.[0]?.nodeId;
+    const waitingConfig = result.waitingConfig ?? waitingNodes?.[0]?.waitConfig;
 
     const state: NodeState = {
       nodeId: node.id,
@@ -923,7 +939,7 @@ export class DAGExecutor {
       contextPatch: result.contextPatch,
       waiting,
       waitingNode,
-      waitingConfig: result.waitingConfig,
+      waitingConfig,
       waitingNodes,
     };
   }
@@ -1028,10 +1044,14 @@ export class DAGExecutor {
 
     applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
 
-    const waiting = result.waiting || result.stalledWaitNode !== undefined;
-    const waitingNode = result.waitingNode ?? result.stalledWaitNode;
-    const waitingNodes = result.waitingNodes ??
-      (waitingNode === undefined ? undefined : [{ nodeId: waitingNode }]);
+    const stalledWaitingNodes = result.stalledWaitNodes ??
+      (result.stalledWaitNode === undefined
+        ? undefined
+        : [{ nodeId: result.stalledWaitNode, waitConfig: undefined }]);
+    const waitingNodes = result.waitingNodes ?? stalledWaitingNodes;
+    const waiting = result.waiting || waitingNodes !== undefined;
+    const waitingNode = result.waitingNode ?? waitingNodes?.[0]?.nodeId;
+    const waitingConfig = result.waitingConfig ?? waitingNodes?.[0]?.waitConfig;
 
     let finalOutput: unknown = result.context;
     if (result.completed && config.output) {
@@ -1056,7 +1076,7 @@ export class DAGExecutor {
       contextPatch: createSetContextPatch(result.completed ? { [node.id]: finalOutput } : {}),
       waiting,
       waitingNode,
-      waitingConfig: result.waitingConfig,
+      waitingConfig,
       waitingNodes,
     };
   }

@@ -104,6 +104,8 @@ export interface DAGExecutionResult {
    * approval or event-wait record decides which it is.
    */
   stalledWaitNode?: string;
+  /** Every running wait in a graph that found nothing left to schedule. */
+  stalledWaitNodes?: ReadonlyArray<{ nodeId: string; waitConfig: WaitNodeConfig }>;
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
   error?: string;

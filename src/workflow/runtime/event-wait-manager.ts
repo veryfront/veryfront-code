@@ -374,8 +374,11 @@ export class EventWaitManager {
       if (run?.status === "failed") {
         const latestAfterAppend = await backend.getRun(runId);
         if (latestAfterAppend?.status === "failed") return "buffered";
+        if (!latestAfterAppend) {
+          await backend.removeRunEvent(runId, envelope.id);
+          return "run-terminal";
+        }
         if (
-          latestAfterAppend &&
           !MAILBOX_RETAINING_RUN_STATUSES.includes(latestAfterAppend.status)
         ) {
           await backend.removeRunEvent(runId, envelope.id);
@@ -390,7 +393,7 @@ export class EventWaitManager {
       // told "delivered" about an envelope that was not would retry and
       // duplicate the event.
       const deliveredBySharedDrain = this.consumeDeliveredEventReceipt(runId, envelope.id) ||
-        await backend.hasRunEventDeliveryReceipt(runId, envelope.id);
+        await this.hasCommittedEventDelivery(runId, envelope.id);
       if (outcome.deliveredEventIds.has(envelope.id) || deliveredBySharedDrain) {
         return "delivered";
       }
@@ -400,6 +403,10 @@ export class EventWaitManager {
       // still consume the restored envelope; completed and cancelled cannot.
       const latest = await backend.getRun(runId);
       if (latest?.status === "failed") return "buffered";
+      if (!latest && run) {
+        await backend.removeRunEvent(runId, envelope.id);
+        return "run-terminal";
+      }
       if (latest && !MAILBOX_RETAINING_RUN_STATUSES.includes(latest.status)) {
         await backend.removeRunEvent(runId, envelope.id);
         return "run-terminal";
@@ -437,7 +444,7 @@ export class EventWaitManager {
     try {
       const outcome = await this.drain(runId, true);
       const deliveredBySharedDrain = this.consumeDeliveredEventReceipt(runId, envelope.id) ||
-        await backend.hasRunEventDeliveryReceipt(runId, envelope.id);
+        await this.hasCommittedEventDelivery(runId, envelope.id);
       return outcome.deliveredEventIds.has(envelope.id) || deliveredBySharedDrain;
     } finally {
       this.clearEventPublicationActive(runId, envelope.id);
@@ -476,6 +483,25 @@ export class EventWaitManager {
     while (receipts.size > MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES) {
       receipts.delete(receipts.values().next().value!);
     }
+  }
+
+  /**
+   * Observe a delivery committed by another process before its receipt write.
+   *
+   * A finalization retry leaves the durable claim in place. Once that claim's
+   * wait node is completed, the publisher can report delivery without relying
+   * on process-local attribution or waiting for the receipt write to recover.
+   * Read the claim before the receipt so finalization racing this check is
+   * visible on at least one side of the transition.
+   */
+  private async hasCommittedEventDelivery(runId: string, eventId: string): Promise<boolean> {
+    const backend = this.config.backend;
+    if (!hasEventWaitSupport(backend)) return false;
+    const claim = (await backend.listRunEventDeliveryClaims(runId)).find(
+      (candidate) => candidate.event.id === eventId,
+    );
+    if (claim && await this.nodeOutcomeCommitted(claim.wait)) return true;
+    return await backend.hasRunEventDeliveryReceipt(runId, eventId);
   }
 
   private consumeDeliveredEventReceipt(runId: string, eventId: string): boolean {

@@ -3,7 +3,13 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { MemoryBackend } from "../backends/memory.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
-import type { ApprovalDecision, NodeState, WorkflowContext, WorkflowRun } from "../types.ts";
+import type {
+  ApprovalDecision,
+  NodeState,
+  WaitNodeConfig,
+  WorkflowContext,
+  WorkflowRun,
+} from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import type { RunExecutionConfig } from "../worker/executors/types.ts";
@@ -835,6 +841,73 @@ describe("workflow/runtime/workflow-run-control execute", () => {
       0,
       "the wait was announced when the run first parked; announcing it again would " +
         "raise a duplicate event wait for the same node",
+    );
+  });
+
+  it("reconstructs every missing wait after a live sibling in the stalled batch", async () => {
+    const backend = new MemoryBackend();
+    const run = {
+      ...createRun("stalled-wait-batch"),
+      status: "running" as const,
+      nodeStates: {
+        first: { nodeId: "first", status: "running" as const, attempt: 1 },
+        second: { nodeId: "second", status: "running" as const, attempt: 1 },
+      },
+      currentNodes: ["first", "second"],
+    };
+    await backend.createRun(run);
+    await backend.savePendingEventWait(run.id, {
+      id: "evw-first-live",
+      runId: run.id,
+      nodeId: "first",
+      eventName: "first.ready",
+      waitKind: "event",
+      requestedAt: new Date(),
+      status: "pending",
+    });
+    const secondConfig: WaitNodeConfig = {
+      type: "wait",
+      waitType: "event",
+      eventName: "second.ready",
+      timeout: "1h",
+    };
+    const announced: Array<{ nodeId: string; config?: WaitNodeConfig }> = [];
+    let completedBatches = 0;
+
+    const result = stalledWaitResult("first");
+    result.stalledWaitNodes = [
+      {
+        nodeId: "first",
+        waitConfig: { type: "wait", waitType: "event", eventName: "first.ready" },
+      },
+      { nodeId: "second", waitConfig: secondConfig },
+    ];
+    result.nodeStates = run.nodeStates;
+    const outcome = await execute(backend, run, () => result, {
+      onWaiting: async (_run, nodeId, config) => {
+        announced.push({ nodeId, config });
+        await backend.savePendingEventWait(run.id, {
+          id: `evw-${nodeId}-reconstructed`,
+          runId: run.id,
+          nodeId,
+          eventName: config?.eventName ?? "unknown",
+          waitKind: "event",
+          requestedAt: new Date(),
+          status: "pending",
+        });
+      },
+      onWaitingBatchComplete: () => {
+        completedBatches++;
+        return Promise.resolve();
+      },
+    });
+
+    assertEquals(outcome.status, "waiting");
+    assertEquals(announced, [{ nodeId: "second", config: secondConfig }]);
+    assertEquals(completedBatches, 1);
+    assertEquals(
+      (await backend.getPendingEventWaits(run.id)).map((wait) => wait.nodeId),
+      ["first", "second"],
     );
   });
 

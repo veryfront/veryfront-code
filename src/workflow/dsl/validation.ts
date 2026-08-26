@@ -89,6 +89,13 @@ function rebaseCompositeDescendants(
           config.else,
         ),
       };
+    case "loop":
+      return Array.isArray(config.steps)
+        ? {
+          ...config,
+          steps: rebaseWorkflowNodes(`${oldId}/`, `${newId}/`, config.steps),
+        }
+        : config;
     default:
       return config;
   }

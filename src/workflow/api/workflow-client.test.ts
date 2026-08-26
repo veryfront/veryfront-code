@@ -328,7 +328,7 @@ describe("WorkflowClient", () => {
         status: "waiting",
         input: {},
         nodeStates: {},
-        currentNodes: ["review"],
+        currentNodes: ["review-loop/review"],
         context: { input: {}, runId, workflowId: loopWorkflow.id },
         checkpoints: [],
         pendingApprovals: [],
@@ -337,7 +337,7 @@ describe("WorkflowClient", () => {
       });
       await backend.savePendingApproval(runId, {
         id: "apr-static-loop",
-        nodeId: "review",
+        nodeId: "review-loop/review",
         message: "Review loop item",
         payload: undefined,
         requestedAt: new Date(),
@@ -2113,6 +2113,19 @@ class TerminalDuringAppendBackend extends MemoryBackend {
   }
 }
 
+/** Deletes an observed run before accepting the publisher's envelope. */
+class DeleteDuringAppendBackend extends MemoryBackend {
+  deleteBeforeNextAppend = false;
+
+  override async appendRunEvent(runId: string, event: RunEventEnvelope): Promise<void> {
+    if (this.deleteBeforeNextAppend) {
+      this.deleteBeforeNextAppend = false;
+      await super.deleteRun(runId);
+    }
+    await super.appendRunEvent(runId, event);
+  }
+}
+
 class RetryDuringTerminalCleanupBackend extends MemoryBackend {
   private terminalReadCountdown = 0;
 
@@ -2397,10 +2410,22 @@ class CountingDeliveryClaimReadsBackend extends MemoryBackend {
 class DrainFromOtherManagerOnAppendBackend extends MemoryBackend {
   manager?: EventWaitManager;
   armed = false;
+  rejectFinalization = false;
 
   override async appendRunEvent(runId: string, event: RunEventEnvelope): Promise<void> {
     await super.appendRunEvent(runId, event);
     if (this.armed) await this.manager?.drainPendingEvents(runId);
+  }
+
+  override finalizeRunEventDelivery(
+    runId: string,
+    eventId: string,
+    delivered: boolean,
+  ): Promise<void> {
+    if (this.rejectFinalization) {
+      return Promise.reject(new Error("delivery finalization unavailable"));
+    }
+    return super.finalizeRunEventDelivery(runId, eventId, delivered);
   }
 }
 
@@ -2518,6 +2543,37 @@ describe("WorkflowClient durable event waits", () => {
         "the publisher must observe the exact envelope delivered by the other manager",
       );
       assertEquals((await parked.getRun(handle.runId))?.status, "completed");
+    } finally {
+      await parked.destroy();
+      await publisher.destroy();
+    }
+  });
+
+  it("observes another client's committed delivery while receipt finalization retries", async () => {
+    const shared = new DrainFromOtherManagerOnAppendBackend();
+    const parked = createWorkflowClient({ backend: sharedBackendView(shared) });
+    const publisher = createWorkflowClient({ backend: sharedBackendView(shared) });
+    try {
+      parked.register(workflow({
+        id: "cross-process-finalization-retry",
+        steps: [
+          waitForEvent("gate", { eventName: "gate.ready" }),
+          waitForApproval("keep-active", { message: "Keep the run active" }),
+        ],
+      }));
+      const handle = await parked.start("cross-process-finalization-retry", {});
+      await handle.settled();
+      shared.manager = parked.getEventWaitManager();
+      shared.armed = true;
+      shared.rejectFinalization = true;
+
+      assertEquals(
+        await publisher.publishEvent(handle.runId, "gate.ready", {}),
+        "delivered",
+        "the durable claim plus committed node must be observable before its receipt persists",
+      );
+      assertEquals((await shared.listRunEventDeliveryClaims(handle.runId)).length, 1);
+      assertEquals((await parked.getRun(handle.runId))?.nodeStates.gate?.status, "completed");
     } finally {
       await parked.destroy();
       await publisher.destroy();
@@ -4159,6 +4215,53 @@ describe("WorkflowClient durable event waits", () => {
     );
   });
 
+  it("keeps same-named waits in dependency-free loops distinct", async () => {
+    client.register(workflow({
+      id: "concurrent-loop-waits-workflow",
+      steps: [
+        {
+          ...loop("left", {
+            while: (_context, loopContext) => loopContext.isFirstIteration,
+            maxIterations: 1,
+            steps: [waitForEvent("gate", { eventName: "left.ready" })],
+          }),
+          dependsOn: [],
+        },
+        {
+          ...loop("right", {
+            while: (_context, loopContext) => loopContext.isFirstIteration,
+            maxIterations: 1,
+            steps: [waitForEvent("gate", { eventName: "right.ready" })],
+          }),
+          dependsOn: [],
+        },
+        dependsOn(
+          step("after-loops", { tool: createMockTool("after-loops-tool", { done: true }) }),
+          "left",
+          "right",
+        ),
+      ],
+    }));
+    const handle = await client.start("concurrent-loop-waits-workflow", {});
+    await handle.settled();
+
+    assertEquals(
+      (await client.getPendingEventWaits(handle.runId)).map((wait) => wait.nodeId).sort(),
+      ["left/gate", "right/gate"],
+    );
+
+    assertEquals(await client.publishEvent(handle.runId, "left.ready", {}), "delivered");
+    assertEquals((await client.getRun(handle.runId))?.status, "waiting");
+    assertEquals(
+      (await client.getPendingEventWaits(handle.runId)).map((wait) => wait.nodeId),
+      ["right/gate"],
+      "delivering one loop's child must not complete the sibling loop's same local ID",
+    );
+
+    assertEquals(await client.publishEvent(handle.runId, "right.ready", {}), "delivered");
+    await waitFor(async () => (await client.getRun(handle.runId))?.status === "completed");
+  });
+
   it("anchors the declared timeout to when the wait node started", async () => {
     const slowSibling: Tool = {
       id: "slow-sibling-tool",
@@ -4600,6 +4703,30 @@ describe("WorkflowClient durable event waits", () => {
     }
   });
 
+  it("reports run-terminal when an observed run is deleted before append", async () => {
+    const racing = new DeleteDuringAppendBackend();
+    const racingClient = createWorkflowClient({ backend: racing });
+    try {
+      racingClient.register(eventWorkflow);
+      const handle = await racingClient.start("event-workflow", {});
+      await handle.settled();
+      racing.deleteBeforeNextAppend = true;
+
+      assertEquals(
+        await racingClient.publishEvent(handle.runId, "audit.recorded", {}),
+        "run-terminal",
+        "an initially observed run cannot revert to the never-created mailbox case",
+      );
+      assertEquals(
+        await racing.takeRunEvent(handle.runId, "audit.recorded"),
+        null,
+        "deletion racing the append must not leave an orphan envelope",
+      );
+    } finally {
+      await racingClient.destroy();
+    }
+  });
+
   it("rechecks a failed run after append before deferring delivery", async () => {
     const racing = new ReactivateFailedDuringAppendBackend();
     const racingClient = createWorkflowClient({ backend: racing });
@@ -4698,6 +4825,34 @@ describe("WorkflowClient durable event waits", () => {
     );
   });
 
+  it("reconstructs a later missing wait when an earlier parked sibling is still live", async () => {
+    client.register(workflow({
+      id: "parked-wait-batch-recovery",
+      steps: [
+        { ...waitForEvent("first", { eventName: "first.ready" }), dependsOn: [] },
+        { ...waitForEvent("second", { eventName: "second.ready" }), dependsOn: [] },
+      ],
+    }));
+    const handle = await client.start("parked-wait-batch-recovery", {});
+    await handle.settled();
+    const waits = await client.getPendingEventWaits(handle.runId);
+    const first = waits.find((wait) => wait.nodeId === "first");
+    const second = waits.find((wait) => wait.nodeId === "second");
+    assertExists(first);
+    assertExists(second);
+    await backend.resolvePendingEventWait(handle.runId, second.id, "delivered");
+
+    await client.resume(handle.runId);
+
+    const restored = await client.getPendingEventWaits(handle.runId);
+    assertEquals(restored.map((wait) => wait.nodeId).sort(), ["first", "second"]);
+    assertEquals(restored.find((wait) => wait.nodeId === "first")?.id, first.id);
+    assert(
+      restored.find((wait) => wait.nodeId === "second")?.id !== second.id,
+      "the later missing member of the stalled batch must be reconstructed",
+    );
+  });
+
   it("reconstructs a dynamic event wait from its persisted node input", async () => {
     client.register(workflow({
       id: "dynamic-event-wait-recovery",
@@ -4720,6 +4875,57 @@ describe("WorkflowClient durable event waits", () => {
     assertExists(restored);
     assertEquals(restored.eventName, "dynamic.ready");
     assertExists(restored.expiresAt, "the persisted timeout must survive dynamic recovery");
+  });
+
+  it("preserves dynamic approval policy when reconstructing a missing wait", async () => {
+    client.register(workflow({
+      id: "dynamic-approval-wait-recovery",
+      steps: [
+        loop("review-loop", {
+          while: (_context, loopContext) => loopContext.isFirstIteration,
+          maxIterations: 1,
+          steps: () => [
+            waitForApproval("review", {
+              message: "Review the dynamic change",
+              timeout: "1h",
+              approvers: ["alice"],
+              responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
+            }),
+          ],
+        }),
+      ],
+    }));
+    const handle = await client.start("dynamic-approval-wait-recovery", {});
+    await handle.settled();
+    const [original] = await backend.getPendingApprovals(handle.runId);
+    assertExists(original);
+    assertEquals(original.nodeId, "review-loop/review");
+
+    // Simulate a process dying after the node parked but before its durable
+    // approval append became observable. The stale record is deliberately not
+    // a decision claim, so recovery must recreate it from the DAG descriptor.
+    await backend.updatePendingApproval(handle.runId, original.id, {
+      status: "rejected",
+      reconciliationPending: false,
+    });
+    await client.resume(handle.runId);
+
+    const [restored] = await backend.getPendingApprovals(handle.runId);
+    assertExists(restored);
+    assert(restored.id !== original.id);
+    assertEquals(restored.nodeId, "review-loop/review");
+    assertExists(restored.expiresAt, "the dynamic timeout must survive reconstruction");
+    await assertRejects(
+      () => client.approve(handle.runId, restored.id, "bob"),
+      VeryfrontError,
+      "Not authorized to approve this request",
+    );
+    await assertRejects(() =>
+      client.approve(handle.runId, restored.id, "alice", undefined, {
+        confirmed: "yes",
+      })
+    );
+    assertEquals((await backend.getPendingApprovals(handle.runId))[0]?.status, "pending");
   });
 
   it("completes a delay that went through definition capture", async () => {
