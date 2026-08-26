@@ -191,6 +191,26 @@ it("fixed hosted delegates cannot re-enable denied tools through explicit input"
   );
 });
 
+it("fixed hosted delegates cannot override an empty fail-closed tool ceiling", () => {
+  const configured = defaultHostedInvokeAgentToolInternals.applyChildAgentExecutionConfig(
+    {
+      description: "extract application",
+      prompt: "Extract the application.",
+      context: {},
+      agent_id: "extraction-agent",
+      tools: ["get_file", "create_file"],
+    },
+    {
+      system: "Follow the extraction policy.",
+      toolNames: [],
+      deniedToolNames: ["update_file"],
+      mcpServers: [],
+    },
+  );
+
+  assertEquals(configured.tools, []);
+});
+
 it("fixed hosted delegates drop denied tools from assembled fork tool sources", () => {
   const echoTool = {
     description: "Echo",

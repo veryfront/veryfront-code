@@ -54,7 +54,11 @@ export function createRuntimeAgentFromMarkdownDefinition(
     ...(definition.temperature === undefined ? {} : { temperature: definition.temperature }),
     ...(definition.maxSteps === undefined ? {} : { maxSteps: definition.maxSteps }),
     ...(providerTools ? { providerTools } : {}),
-    ...(definition.skills === undefined ? {} : { skills: definition.skills }),
+    ...(failClosedUnrestrictedSelector
+      ? { skills: false as const }
+      : definition.skills === undefined
+      ? {}
+      : { skills: definition.skills }),
     ...(delegates === undefined ? {} : { delegates }),
     ...(definition.mcpServers === undefined ? {} : { mcpServers: definition.mcpServers }),
     ...(selectedTools !== undefined &&

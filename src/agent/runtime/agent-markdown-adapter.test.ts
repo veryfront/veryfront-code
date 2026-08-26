@@ -69,6 +69,34 @@ it("createRuntimeAgentFromMarkdownDefinition keeps denials for unrestricted sele
   assertEquals(tools && tools !== true ? tools.web_search : undefined, false);
 });
 
+it("createRuntimeAgentFromMarkdownDefinition disables skills when unrestricted tools fail closed", () => {
+  toolRegistryInternal.clearAll();
+  skillRegistryInternal.clearAll();
+  registerSkill("project-skill", {
+    id: "project-skill",
+    metadata: { name: "project-skill", description: "Project skill" },
+    rootPath: "/project/skills/project-skill",
+  });
+
+  try {
+    const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
+      id: "unrestricted-skill-locked-md",
+      name: "Unrestricted Skill Locked",
+      description: "Fails closed across tools and skills",
+      instructions: "Do not use project capabilities.",
+      tools: true,
+      deniedTools: ["update_file"],
+      skills: true,
+    });
+
+    assertEquals(runtimeAgent.config.skills, false);
+    assertEquals(runtimeAgent.config.tools, { update_file: false });
+  } finally {
+    toolRegistryInternal.clearAll();
+    skillRegistryInternal.clearAll();
+  }
+});
+
 it("createRuntimeAgentFromMarkdownDefinition merges denials with positive tool selections", () => {
   toolRegistryInternal.clearAll();
 

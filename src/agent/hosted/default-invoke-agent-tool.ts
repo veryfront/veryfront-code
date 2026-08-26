@@ -605,13 +605,17 @@ function applyChildAgentExecutionConfig(
     return input;
   }
 
-  // Explicit denials are an authorization ceiling: a parent-supplied tool
-  // list in `invoke_agent` cannot re-enable a name the child's configuration
-  // switched off.
+  // The resolved child selector and explicit denials are authorization
+  // ceilings: a parent-supplied tool list in `invoke_agent` can only narrow
+  // the child's configured capabilities.
   const deniedToolNames = childConfig.deniedToolNames;
-  const requestedTools = input.tools !== undefined && deniedToolNames?.length
-    ? input.tools.filter((toolName) => !deniedToolNames.includes(toolName))
-    : input.tools;
+  const allowedToolNames = childConfig.toolNames === undefined
+    ? undefined
+    : new Set(childConfig.toolNames);
+  const requestedTools = input.tools?.filter((toolName) =>
+    deniedToolNames?.includes(toolName) !== true &&
+    (allowedToolNames === undefined || allowedToolNames.has(toolName))
+  );
 
   return {
     ...input,

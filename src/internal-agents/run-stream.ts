@@ -4,6 +4,7 @@ import {
   type AgentResponse,
   AgentRuntime,
   type AgentSystem,
+  getRuntimeAgentMarkdownDefinition,
 } from "#veryfront/agent";
 import { normalizeAgUiRuntimeMessages } from "#veryfront/agent/ag-ui/runtime-support.ts";
 import {
@@ -239,6 +240,9 @@ export function buildMergedTools(
 ) {
   const serverResolvedProjectToolNames = getServerResolvedProjectToolNames(input.forwardedProps);
   const explicitlyDeniedToolNames = getExplicitlyDeniedToolNames(agent);
+  const markdownDefinition = getRuntimeAgentMarkdownDefinition(agent);
+  const failClosedUnrestrictedSelector = markdownDefinition?.tools === true &&
+    Boolean(markdownDefinition.deniedTools?.length);
   // Concrete source definitions stay authoritative, and so do explicit `false`
   // denials: a request-injected tool must not resurrect a tool the agent
   // author switched off by name (mirroring the AG-UI merge path).
@@ -253,6 +257,7 @@ export function buildMergedTools(
   const injectedTools = Object.fromEntries(
     input.tools
       .filter((tool) =>
+        !failClosedUnrestrictedSelector &&
         !authoritativeSourceToolNames.has(tool.name) &&
         !isExplicitlyDeniedToolName(agent, explicitlyDeniedToolNames, tool.name) &&
         !serverResolvedProjectToolNames.has(tool.name) &&

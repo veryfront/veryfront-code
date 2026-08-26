@@ -12,6 +12,7 @@ import {
 } from "#veryfront/agent";
 import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-inventory.ts";
 import { resolveAgentSystem } from "#veryfront/agent/runtime/effective-agent-system.ts";
+import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
 import {
   _resetShimForTests,
   type AttributeValue,
@@ -359,6 +360,35 @@ describe("internal-agents/run-stream", () => {
     );
 
     assertEquals(Object.keys(mergedTools ?? {}), ["unrelated_tool"]);
+  });
+
+  it("rejects every request-injected tool when an unrestricted selector fails closed", () => {
+    const sessionManager = new AgentRunSessionManager();
+    const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
+      id: "fail-closed-injected",
+      name: "Fail Closed Injected",
+      description: "Does not accept injected project tools",
+      instructions: "Do not use project tools.",
+      tools: true,
+      deniedTools: ["update_file"],
+    });
+
+    const mergedTools = buildMergedTools(
+      runtimeAgent,
+      {
+        runId: "run_1",
+        threadId: crypto.randomUUID(),
+        messages: [],
+        tools: [
+          { name: "update_file", description: "Denied tool" },
+          { name: "unrelated_tool", description: "Another project tool" },
+        ],
+        context: [],
+      } as Parameters<typeof buildMergedTools>[1],
+      sessionManager,
+    );
+
+    assertEquals(mergedTools, undefined);
   });
 
   it("applies owned short-name denials to registered-name injected tools", () => {
