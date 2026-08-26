@@ -3,6 +3,7 @@ import {
   tryGetCacheKeyContext,
 } from "#veryfront/cache/cache-key-builder.ts";
 import { SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE } from "#veryfront/errors";
+import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { readOwnDataProperty } from "#veryfront/security/project-locality.ts";
 import type { HandlerContext, HandlerResult } from "../types.ts";
 
@@ -38,13 +39,47 @@ const DOCUMENT_FRESHNESS_REASONS: SourceSnapshotFreshnessReasons = Object.freeze
 
 export type PreviewDocumentSnapshotReclassifier = () => Promise<HandlerResult>;
 
+export interface PreviewSourceSnapshotMarker {
+  readonly identity: string;
+  readonly version?: number;
+}
+
 interface PreparedDocumentSnapshot {
   readonly identity?: string;
   readonly version?: number;
   readonly reclassify?: PreviewDocumentSnapshotReclassifier;
+  readonly configBound?: boolean;
 }
 
 const preparedDocumentSnapshots = new WeakMap<HandlerContext, PreparedDocumentSnapshot>();
+
+/** Capture a stable, reusable identity for the adapter snapshot. */
+export async function capturePreviewSourceSnapshotMarker(
+  fs: FileSystemAdapter,
+): Promise<PreviewSourceSnapshotMarker | undefined> {
+  const identity = await fs.getSourceSnapshotIdentity?.();
+  if (identity === undefined) return;
+  const version = await fs.getSourceSnapshotVersion?.();
+  // A reused contextual adapter can switch branches across either await. Only
+  // publish a marker when both observations name the same source context.
+  if (await fs.getSourceSnapshotIdentity?.() !== identity) return;
+  return { identity, version };
+}
+
+/** Bind already-derived request configuration to its strict source snapshot. */
+export function seedPreviewDocumentSourceSnapshot(
+  ctx: HandlerContext,
+  marker: PreviewSourceSnapshotMarker,
+): void {
+  preparedDocumentSnapshots.set(ctx, { ...marker, configBound: true });
+}
+
+function throwConfigSnapshotChanged(ctx: HandlerContext): never {
+  throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+    detail:
+      `The mutable source snapshot serving "${ctx.projectSlug}" changed after request configuration was derived, so this document request must be retried against one generation.`,
+  });
+}
 
 async function preparedDocumentSnapshotMatches(
   ctx: HandlerContext,
@@ -62,6 +97,15 @@ export async function preparePreviewDocumentSourceSnapshot(
   ctx: HandlerContext,
   reclassify?: PreviewDocumentSnapshotReclassifier,
 ): Promise<void> {
+  const configSnapshot = preparedDocumentSnapshots.get(ctx);
+  if (configSnapshot?.configBound === true) {
+    if (!(await preparedDocumentSnapshotMatches(ctx, configSnapshot))) {
+      throwConfigSnapshotChanged(ctx);
+    }
+    preparedDocumentSnapshots.set(ctx, { ...configSnapshot, reclassify });
+    return;
+  }
+
   await ensurePreviewSourceSnapshotFresh(ctx, DOCUMENT_FRESHNESS_REASONS);
   // The classifier runs before SSR enters its render context, and SSR may
   // still change a reused contextual adapter's context (setRequestBranch)
@@ -87,6 +131,7 @@ export async function reclassifyPreviewDocumentSourceSnapshotIfChanged(
   const prepared = preparedDocumentSnapshots.get(ctx);
   if (prepared?.reclassify === undefined) return;
   if (await preparedDocumentSnapshotMatches(ctx, prepared)) return;
+  if (prepared.configBound === true) throwConfigSnapshotChanged(ctx);
   preparedDocumentSnapshots.delete(ctx);
   return prepared.reclassify;
 }
@@ -106,6 +151,7 @@ export async function ensurePreviewDocumentSourceSnapshot(
     // branch switch on a reused contextual adapter between the two points
     // must re-establish, or the render serves the previous branch's snapshot.
     if (await preparedDocumentSnapshotMatches(ctx, prepared)) return;
+    if (prepared.configBound === true) throwConfigSnapshotChanged(ctx);
 
     // A same-branch source replacement preserves identity but increments the
     // generation. Refreshing here would make SSR read the new files while
@@ -129,7 +175,14 @@ export async function ensurePreviewSourceSnapshotFresh(
   reasons: SourceSnapshotFreshnessReasons = DEFAULT_FRESHNESS_REASONS,
 ): Promise<void> {
   if (!hasMutablePreviewSource(ctx)) return;
-  const fs = ctx.adapter.fs;
+  await ensureMutablePreviewSourceSnapshotFresh(ctx.adapter.fs, ctx.projectSlug!, reasons);
+}
+
+async function ensureMutablePreviewSourceSnapshotFresh(
+  fs: FileSystemAdapter,
+  projectSlug: string,
+  reasons: SourceSnapshotFreshnessReasons,
+): Promise<void> {
   const supportsFreshnessOptions = readOwnDataProperty(
     fs,
     "sourceSnapshotFreshnessOptionsVersion",
@@ -143,7 +196,7 @@ export async function ensurePreviewSourceSnapshotFresh(
     // silently ignore freshness options. A document render cannot reuse that
     // lease, so fall back to unconditional refresh when it is available.
     if (fs.refreshSourceSnapshot) {
-      await refreshPreviewSourceSnapshot(ctx, reasons.refreshFallback);
+      await fs.refreshSourceSnapshot(reasons.refreshFallback);
       return;
     }
     // An ensure-only adapter must explicitly advertise the options contract.
@@ -151,7 +204,7 @@ export async function ensurePreviewSourceSnapshotFresh(
     // and wrappers make it ambiguous, and guessing here can render stale HTML.
     throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
       detail:
-        `The filesystem adapter serving "${ctx.projectSlug}" implements ensureSourceSnapshotFresh() but does not advertise sourceSnapshotFreshnessOptionsVersion: 1, so this document render cannot prove zero-age source freshness.`,
+        `The filesystem adapter serving "${projectSlug}" implements ensureSourceSnapshotFresh() but does not advertise sourceSnapshotFreshnessOptionsVersion: 1, so this document render cannot prove zero-age source freshness.`,
     });
   }
 
@@ -166,7 +219,7 @@ export async function ensurePreviewSourceSnapshotFresh(
   // Backward compatibility for custom remote adapters that only implement the
   // original unconditional refresh contract.
   if (fs.refreshSourceSnapshot) {
-    await refreshPreviewSourceSnapshot(ctx, reasons.refreshFallback);
+    await fs.refreshSourceSnapshot(reasons.refreshFallback);
     return;
   }
 
@@ -181,8 +234,16 @@ export async function ensurePreviewSourceSnapshotFresh(
   // so fail the request instead.
   throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
     detail:
-      `The filesystem adapter serving "${ctx.projectSlug}" exposes a source snapshot version but implements neither ensureSourceSnapshotFresh() nor refreshSourceSnapshot(), so this request cannot confirm it is rendering the current source.`,
+      `The filesystem adapter serving "${projectSlug}" exposes a source snapshot version but implements neither ensureSourceSnapshotFresh() nor refreshSourceSnapshot(), so this request cannot confirm it is rendering the current source.`,
   });
+}
+
+/** Establish zero-age freshness before loading preview document configuration. */
+export async function ensurePreviewDocumentConfigSourceSnapshotFresh(
+  fs: FileSystemAdapter,
+  projectSlug: string,
+): Promise<void> {
+  await ensureMutablePreviewSourceSnapshotFresh(fs, projectSlug, DOCUMENT_FRESHNESS_REASONS);
 }
 
 export async function refreshPreviewSourceSnapshot(

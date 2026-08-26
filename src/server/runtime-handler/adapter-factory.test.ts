@@ -775,6 +775,7 @@ describe("adapter-factory", () => {
 
     it("refreshes mutable source before loading proxy config", async () => {
       let sourceFresh = false;
+      const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
       const base = createMockAdapter({
         "/veryfront.config.ts": { isDirectory: false, isFile: true },
       });
@@ -783,6 +784,7 @@ describe("adapter-factory", () => {
         isVeryfrontAdapter: () => true,
         getUnderlyingAdapter: () => ({}),
         isMultiProjectMode: () => false,
+        sourceSnapshotFreshnessOptionsVersion: 1 as const,
         runWithContext: (
           _slug: string,
           _token: string,
@@ -795,10 +797,13 @@ describe("adapter-factory", () => {
             environmentName?: string | null;
           },
         ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
-        ensureSourceSnapshotFresh: () => {
+        ensureSourceSnapshotFresh: (reason?: string, options?: { maxAgeMs?: number }) => {
+          freshnessCalls.push({ reason, maxAgeMs: options?.maxAgeMs });
           sourceFresh = true;
           return Promise.resolve();
         },
+        getSourceSnapshotIdentity: () => "branch:mutable-config-project:main",
+        getSourceSnapshotVersion: () => 1,
         readFile: (path: string) => {
           if (path !== "/veryfront.config.ts") {
             return Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
@@ -847,8 +852,13 @@ describe("adapter-factory", () => {
       });
 
       assertEquals(sourceFresh, true);
+      assertEquals(freshnessCalls, [{ reason: "preview-document-routing", maxAgeMs: 0 }]);
       assertEquals(result.config?.router, "pages");
       assertEquals(result.config?.title, "preview:tenant-value");
+      assertEquals(result.previewDocumentSourceSnapshot, {
+        identity: "branch:mutable-config-project:main",
+        version: 1,
+      });
     });
 
     it("re-throws config loading errors in proxy mode", async () => {
@@ -1236,6 +1246,7 @@ describe("adapter-factory", () => {
     // Only getHostedConfig's own 404 means "no config published". A 404 from the
     // snapshot refresh is a real failure and must not be read as absence.
     const adapter = createMockAdapter({});
+    (adapter.fs as unknown as Record<string, unknown>).sourceSnapshotFreshnessOptionsVersion = 1;
     (adapter.fs as unknown as Record<string, unknown>).ensureSourceSnapshotFresh = () =>
       Promise.reject(
         API_CLIENT_ERROR.create({ detail: "API request failed: 404 Not Found", status: 404 }),

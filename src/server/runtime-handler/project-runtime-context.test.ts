@@ -27,6 +27,7 @@ import {
   resolveProjectIdentity,
   resolveProjectRuntimeContext,
 } from "./project-runtime-context.ts";
+import { preparePreviewDocumentSourceSnapshot } from "../handlers/request/source-snapshot-freshness.ts";
 
 const defaultParsedDomain: ParsedDomain = {
   slug: null,
@@ -781,6 +782,59 @@ describe("resolveProjectIdentity", () => {
 });
 
 describe("resolveProjectRuntimeContext", () => {
+  it("derives preview document config from the strict routing snapshot", async () => {
+    let sourceFresh = false;
+    let sourceVersion = 0;
+    const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
+    const configPath = "/base/project/veryfront.config.ts";
+    const adapter = createHostedConfigAdapter("");
+    adapter.fs.readFile = (path: string) => {
+      if (path !== configPath) {
+        return Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
+      }
+      return Promise.resolve(
+        `export default { router: "${sourceFresh ? "pages" : "app"}" };`,
+      );
+    };
+    Object.assign(adapter.fs, {
+      sourceSnapshotFreshnessOptionsVersion: 1,
+      ensureSourceSnapshotFresh: (reason?: string, options?: { maxAgeMs?: number }) => {
+        freshnessCalls.push({ reason, maxAgeMs: options?.maxAgeMs });
+        sourceFresh = true;
+        sourceVersion++;
+        return Promise.resolve();
+      },
+      getSourceSnapshotIdentity: () => "branch:generation-config-project:main",
+      getSourceSnapshotVersion: () => sourceVersion,
+    });
+
+    const result = await resolveProjectRuntimeContext(makeRuntimeContextInput({
+      adapter,
+      config: undefined,
+      isProxyMode: true,
+      proxyTrust: { proxyTrusted: true },
+      projectIdentity: {
+        projectSlug: "generation-config-project",
+        projectId: "proj_generation_config",
+        releaseId: undefined,
+        environmentName: undefined,
+        proxyEnv: "preview",
+        parsedDomain: defaultParsedDomain,
+      },
+    }));
+
+    assertEquals(result.handlerContext?.config?.router, "pages");
+    assertEquals(freshnessCalls, [{ reason: "preview-document-routing", maxAgeMs: 0 }]);
+
+    assertExists(result.handlerContext);
+    await preparePreviewDocumentSourceSnapshot(result.handlerContext);
+    assertEquals(
+      freshnessCalls,
+      [{ reason: "preview-document-routing", maxAgeMs: 0 }],
+      "routing must reuse the generation that produced config instead of advancing past it",
+    );
+  });
+
   it("evaluates staging config and security with the matching trusted environment secrets", async () => {
     const adapter = createHostedConfigAdapter(`
       import { defineConfigWithEnv, getEnv } from "veryfront";

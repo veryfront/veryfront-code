@@ -27,6 +27,11 @@ import {
 } from "./local-project-discovery.ts";
 import type { ParsedDomain } from "../utils/domain-parser.ts";
 import { isProxyTrusted } from "../utils/proxy-trust.ts";
+import {
+  capturePreviewSourceSnapshotMarker,
+  ensurePreviewDocumentConfigSourceSnapshotFresh,
+  type PreviewSourceSnapshotMarker,
+} from "../handlers/request/source-snapshot-freshness.ts";
 
 const baseLogger = getBaseLogger("SERVER");
 
@@ -68,6 +73,8 @@ interface AdapterResolutionResult {
   configOutcome: ConfigResolutionOutcome;
   /** Whether this is a local project (filesystem-first) */
   isLocalProject: boolean;
+  /** Strict mutable-source generation that produced document configuration. */
+  previewDocumentSourceSnapshot?: PreviewSourceSnapshotMarker;
 }
 
 interface AdapterResolutionOptions {
@@ -161,6 +168,13 @@ function shouldDeferConfigLoad(opts: AdapterResolutionOptions): boolean {
     !opts.releaseId;
 }
 
+function requiresStrictPreviewDocumentConfig(opts: AdapterResolutionOptions): boolean {
+  if (!opts.isProxyMode || opts.proxyEnv === "production") return false;
+  if (opts.req.method !== "GET" && opts.req.method !== "HEAD") return false;
+  const pathname = opts.pathname ?? new URL(opts.req.url).pathname;
+  return pathname !== "/api" && !pathname.startsWith("/api/");
+}
+
 async function prepareProxyConfigLoad(
   opts: AdapterResolutionOptions,
   isLocalProject: boolean,
@@ -191,6 +205,7 @@ export async function resolveAdapter(
   let effectiveAdapter = opts.adapter;
   let effectiveConfig = opts.config;
   let configOutcome: ConfigResolutionOutcome = "inherited";
+  let previewDocumentSourceSnapshot: PreviewSourceSnapshotMarker | undefined;
 
   // Check if this is a local project.
   // In proxy mode, skip local discovery unless there's an explicit header path override —
@@ -304,14 +319,36 @@ export async function resolveAdapter(
         const loadCurrentConfig = async (): Promise<VeryfrontConfig> => {
           // Config controls route and primitive discovery, so it must be read
           // from the same current snapshot that those consumers will retain.
-          await effectiveAdapter.fs.ensureSourceSnapshotFresh?.("config-load");
-          return await getHostedConfig(effectiveProjectDir, effectiveAdapter, {
-            ...hosted,
-            signal: opts.req.signal,
-          }).catch((error: unknown) => {
+          const strictDocumentConfig = requiresStrictPreviewDocumentConfig(opts);
+          if (strictDocumentConfig) {
+            await ensurePreviewDocumentConfigSourceSnapshotFresh(
+              effectiveAdapter.fs,
+              opts.projectSlug!,
+            );
+          } else {
+            await effectiveAdapter.fs.ensureSourceSnapshotFresh?.("config-load");
+          }
+
+          try {
+            const config = await getHostedConfig(effectiveProjectDir, effectiveAdapter, {
+              ...hosted,
+              signal: opts.req.signal,
+            });
+            if (strictDocumentConfig) {
+              previewDocumentSourceSnapshot = await capturePreviewSourceSnapshotMarker(
+                effectiveAdapter.fs,
+              );
+            }
+            return config;
+          } catch (error: unknown) {
             if (hasNotFoundStatus(error)) hostedConfigAbsent = true;
+            if (strictDocumentConfig && hostedConfigAbsent) {
+              previewDocumentSourceSnapshot = await capturePreviewSourceSnapshotMarker(
+                effectiveAdapter.fs,
+              );
+            }
             throw error;
-          });
+          }
         };
 
         if (isExtendedFSAdapter(effectiveAdapter.fs) && effectiveAdapter.fs.runWithContext) {
@@ -390,5 +427,6 @@ export async function resolveAdapter(
     config: effectiveConfig,
     configOutcome,
     isLocalProject,
+    previewDocumentSourceSnapshot,
   };
 }

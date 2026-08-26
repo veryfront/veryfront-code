@@ -8,6 +8,7 @@ import {
   ensurePreviewDocumentSourceSnapshot,
   ensurePreviewSourceSnapshotFresh,
   preparePreviewDocumentSourceSnapshot,
+  seedPreviewDocumentSourceSnapshot,
 } from "./source-snapshot-freshness.ts";
 
 function makePreviewCtx(adapter: ReturnType<typeof createMockAdapter>): HandlerContext {
@@ -165,6 +166,24 @@ it("reuses a prepared document snapshot while its identity and generation are un
   await ensurePreviewDocumentSourceSnapshot(ctx);
 
   assertEquals(refreshes, 1, "an unchanged generation reuses the classifier's strict refresh");
+});
+
+it("fails closed when config and routing would observe different generations", async () => {
+  let version = 1;
+  const adapter = createMockAdapter();
+  adapter.fs.getSourceSnapshotIdentity = () => "branch:preview-project:main";
+  adapter.fs.getSourceSnapshotVersion = () => version;
+  const ctx = makePreviewCtx(adapter);
+  seedPreviewDocumentSourceSnapshot(ctx, {
+    identity: "branch:preview-project:main",
+    version,
+  });
+  version++;
+
+  const rejection = await assertRejects(() => preparePreviewDocumentSourceSnapshot(ctx));
+
+  assertInstanceOf(rejection, VeryfrontError);
+  assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
 });
 
 it("reclassifies when the source generation changes without changing identity", async () => {

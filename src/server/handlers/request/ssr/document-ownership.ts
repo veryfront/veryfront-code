@@ -4,8 +4,8 @@
  * The API/page classifier and `SSRHandler` must agree on which pathnames SSR
  * renders (or sheds): the classifier defers the memory-pressure response to
  * SSR only for requests that actually reach it. A pathname outside this
- * predicate — `/_`-prefixed infrastructure paths and extension paths such as
- * `GET /file.md` — belongs to another handler (for example
+ * predicate, including `/_`-prefixed infrastructure paths and extension paths
+ * such as `GET /file.md`, belongs to another handler (for example
  * `MarkdownPreviewHandler`), which serves it whether or not the renderer is
  * under pressure, so it must still get its source freshness up front.
  *

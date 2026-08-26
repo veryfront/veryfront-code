@@ -24,6 +24,7 @@ import { resolveEnvironment } from "./environment-resolution.ts";
 import { buildHandlerContext } from "./handler-context-builder.ts";
 import { extractRequestHeaders, resolveProject } from "./project-resolution.ts";
 import { shouldSkipEnrichedContext } from "./request-utils.ts";
+import { seedPreviewDocumentSourceSnapshot } from "../handlers/request/source-snapshot-freshness.ts";
 
 const logger = getBaseLogger("SERVER").component("project-runtime-context");
 
@@ -439,6 +440,13 @@ export async function resolveProjectRuntimeContext(
       }
       : {}),
   });
+
+  if (adapterRes.previewDocumentSourceSnapshot !== undefined) {
+    seedPreviewDocumentSourceSnapshot(
+      handlerContext,
+      adapterRes.previewDocumentSourceSnapshot,
+    );
+  }
 
   let rawEnvVars: Record<string, string> = hostedConfigLoadPromise
     ? (await hostedConfigLoadPromise).environment
