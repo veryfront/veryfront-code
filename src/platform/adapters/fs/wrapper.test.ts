@@ -230,12 +230,79 @@ describe("FSAdapterWrapper", () => {
   });
 
   describe("source snapshot freshness", () => {
-    it("should delegate freshness checks and snapshot versions", async () => {
+    it("rejects accessor freshness version markers without invoking them", () => {
+      let getterCalls = 0;
+      const fsAdapter = Object.defineProperty(
+        {
+          ...createMockFSAdapter(),
+          ensureSourceSnapshotFresh: () => Promise.resolve(),
+        },
+        "sourceSnapshotFreshnessOptionsVersion",
+        {
+          enumerable: true,
+          get() {
+            getterCalls++;
+            return 1;
+          },
+        },
+      );
+
+      assertThrows(
+        () => new FSAdapterWrapper(fsAdapter),
+        TypeError,
+        "sourceSnapshotFreshnessOptionsVersion must be an own data property",
+      );
+      assertEquals(getterCalls, 0, "the wrapper must not execute adapter accessors");
+    });
+
+    it("rejects inherited freshness version markers without invoking them", () => {
+      let getterCalls = 0;
+      class AccessorVersionAdapter {
+        get sourceSnapshotFreshnessOptionsVersion() {
+          getterCalls++;
+          return 1 as const;
+        }
+
+        ensureSourceSnapshotFresh() {
+          return Promise.resolve();
+        }
+
+        readFile() {
+          return Promise.resolve("");
+        }
+
+        exists() {
+          return Promise.resolve(true);
+        }
+
+        stat() {
+          return Promise.resolve({
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            size: 0,
+            mtime: null,
+          });
+        }
+      }
+
+      assertThrows(
+        () => new FSAdapterWrapper(new AccessorVersionAdapter()),
+        TypeError,
+        "sourceSnapshotFreshnessOptionsVersion must be an own data property",
+      );
+      assertEquals(getterCalls, 0, "the wrapper must not execute adapter accessors");
+    });
+
+    it("forwards freshness options and snapshot versions", async () => {
       let reason: string | undefined;
+      let maxAgeMs: number | undefined;
       const fsAdapter = {
         ...createMockFSAdapter(),
-        ensureSourceSnapshotFresh(value?: string) {
+        sourceSnapshotFreshnessOptionsVersion: 1 as const,
+        ensureSourceSnapshotFresh(value?: string, options?: { maxAgeMs?: number }) {
           reason = value;
+          maxAgeMs = options?.maxAgeMs;
           return Promise.resolve();
         },
         getSourceSnapshotVersion() {
@@ -244,17 +311,44 @@ describe("FSAdapterWrapper", () => {
       };
       const wrapper = new FSAdapterWrapper(fsAdapter);
 
-      await wrapper.ensureSourceSnapshotFresh?.("page-routing");
+      await wrapper.ensureSourceSnapshotFresh?.("page-routing", { maxAgeMs: 0 });
 
       assertEquals(reason, "page-routing");
+      // The strictness the caller asked for is the whole point of the second
+      // argument: a wrapper that dropped it would silently hand a document
+      // render the default lease it explicitly refused.
+      assertEquals(
+        maxAgeMs,
+        0,
+        "the wrapper must forward snapshot freshness options to the wrapped adapter",
+      );
+      assertEquals(wrapper.sourceSnapshotFreshnessOptionsVersion, 1);
       assertEquals(await wrapper.getSourceSnapshotVersion?.(), 11);
+    });
+
+    it("delegates getSourceSnapshotIdentity to the wrapped adapter", async () => {
+      const fsAdapter = {
+        ...createMockFSAdapter(),
+        getSourceSnapshotIdentity() {
+          return "branch:acme:main";
+        },
+      };
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+
+      assertEquals(
+        await wrapper.getSourceSnapshotIdentity?.(),
+        "branch:acme:main",
+        "the wrapper must expose the wrapped adapter's snapshot identity",
+      );
     });
 
     it("should omit freshness methods when the adapter does not support them", () => {
       const wrapper = new FSAdapterWrapper(createMockFSAdapter());
 
       assertEquals(wrapper.ensureSourceSnapshotFresh, undefined);
+      assertEquals(wrapper.sourceSnapshotFreshnessOptionsVersion, undefined);
       assertEquals(wrapper.getSourceSnapshotVersion, undefined);
+      assertEquals(wrapper.getSourceSnapshotIdentity, undefined);
     });
   });
 
@@ -354,7 +448,9 @@ describe("FSAdapterWrapper", () => {
           "createFileBytesExclusive",
           "refreshSourceSnapshot",
           "ensureSourceSnapshotFresh",
+          "sourceSnapshotFreshnessOptionsVersion",
           "getSourceSnapshotVersion",
+          "getSourceSnapshotIdentity",
         ] as const
       ) {
         const descriptor = Object.getOwnPropertyDescriptor(wrapper, key);
@@ -687,6 +783,15 @@ describe("FSAdapterWrapper", () => {
   });
 
   describe("contextual operations", () => {
+    it("publishes an explicit fixed project context on the wrapped adapter", () => {
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter({
+        projectContextSemantics: "fixed",
+      }));
+
+      assertEquals(wrapper.projectContextSemantics, "fixed");
+      assertEquals(wrapper.isFixedProjectMode(), true);
+    });
+
     it("isMultiProjectMode should return true when runWithContext available", () => {
       const fsAdapter = createMockContextualAdapter({
         runWithContext: <T>(_slug: string, _token: string, fn: () => Promise<T>) => fn(),

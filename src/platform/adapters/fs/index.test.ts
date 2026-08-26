@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createFSAdapter, type FSAdapter } from "./index.ts";
 
 async function assertExportedFunction(name: string): Promise<void> {
   const mod = await import("./index.ts");
@@ -32,5 +33,25 @@ describe("fs/index.ts exports", () => {
     await assertExportedValue("enhanceAdapterWithFS");
     await assertExportedValue("getFSAdapterType");
     await assertExportedValue("isFSAdapterConfigured");
+  });
+
+  it("accepts versioned freshness adapters through the public factory type", () => {
+    const versionedAdapter = {
+      sourceSnapshotFreshnessOptionsVersion: 1 as const,
+      readFile: () => Promise.resolve(""),
+      exists: () => Promise.resolve(true),
+      stat: () =>
+        Promise.resolve({
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+          size: 0,
+          mtime: null,
+        }),
+    } satisfies FSAdapter;
+
+    const adapter: Awaited<ReturnType<typeof createFSAdapter>> = versionedAdapter;
+
+    assertEquals(adapter.sourceSnapshotFreshnessOptionsVersion, 1);
   });
 });
