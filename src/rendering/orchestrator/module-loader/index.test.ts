@@ -34,11 +34,13 @@ import {
   transformModuleWithDeps,
 } from "./index.ts";
 import { delay, scaleMs } from "#veryfront/testing";
+import { FakeTime } from "#std/testing/time";
 import { VeryfrontError } from "#veryfront/errors";
 import { getTransformSemaphore } from "#veryfront/modules/react-loader/ssr-module-loader/cache/index.ts";
 import {
   getMaxConcurrentTransforms,
   resetCachedTransformLimits,
+  TRANSFORM_ACQUIRE_TIMEOUT_MS,
 } from "#veryfront/modules/react-loader/ssr-module-loader/constants.ts";
 import { withModuleTransformPermit } from "./transform-permit.ts";
 import { buildModuleTransformCacheVariant, getModuleCacheKey } from "./module-cache-lookup.ts";
@@ -1786,6 +1788,64 @@ describe("module-loader/transformModuleWithDeps", () => {
       }
       resetCachedTransformLimits();
     }
+  });
+
+  it("keeps owner-bounded project waiters alive past the fixed acquire timeout", async () => {
+    using time = new FakeTime();
+    const previousLimit = Deno.env.get("SSR_TRANSFORM_PER_PROJECT_LIMIT");
+    Deno.env.set("SSR_TRANSFORM_PER_PROJECT_LIMIT", "1");
+    resetCachedTransformLimits();
+
+    let markHolderStarted!: () => void;
+    const holderStarted = new Promise<void>((resolve) => {
+      markHolderStarted = resolve;
+    });
+    let releaseHolder!: () => void;
+    const holderGate = new Promise<void>((resolve) => {
+      releaseHolder = resolve;
+    });
+    const owner = new AbortController();
+    let waiterOutcome: "pending" | "ran" | "failed" = "pending";
+    const holder = withModuleTransformPermit(
+      { projectId: "owner-bounded-project", dev: false },
+      async () => {
+        markHolderStarted();
+        await holderGate;
+      },
+    );
+    await holderStarted;
+    const waiter = withModuleTransformPermit(
+      {
+        projectId: "owner-bounded-project",
+        dev: false,
+        ownerDeadlineSignal: owner.signal,
+      },
+      () => {
+        waiterOutcome = "ran";
+        return Promise.resolve();
+      },
+    ).catch(() => {
+      waiterOutcome = "failed";
+    });
+
+    try {
+      await time.tickAsync(TRANSFORM_ACQUIRE_TIMEOUT_MS + 1);
+      assertEquals(
+        waiterOutcome,
+        "pending",
+        "the module-loading owner deadline must remain the only project-slot clock",
+      );
+    } finally {
+      releaseHolder();
+      await Promise.all([holder, waiter]);
+      if (previousLimit === undefined) {
+        Deno.env.delete("SSR_TRANSFORM_PER_PROJECT_LIMIT");
+      } else {
+        Deno.env.set("SSR_TRANSFORM_PER_PROJECT_LIMIT", previousLimit);
+      }
+      resetCachedTransformLimits();
+    }
+    assertEquals(waiterOutcome, "ran");
   });
 
   it("keeps a permit waiter alive while a holder reports transform progress", async () => {

@@ -98,7 +98,7 @@ export async function withModuleTransformPermit<T>(
   const cancellationSignal = options.signal ?? options.ownerDeadlineSignal;
   const projectAcquired = await tryAcquireTransformSlot(
     options.projectId,
-    getTransformAcquireTimeoutMs(options.dev),
+    options.ownerDeadlineSignal ? Infinity : getTransformAcquireTimeoutMs(options.dev),
     bypassProjectLimit,
     cancellationSignal,
   );
