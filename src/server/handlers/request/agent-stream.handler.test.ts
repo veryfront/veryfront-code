@@ -61,6 +61,7 @@ import { flattenSystemInstructions } from "#veryfront/agent/runtime/tool-invento
 import { resolveAgentSystem } from "#veryfront/agent/runtime/effective-agent-system.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { __setHostedConfigEvaluatorForTests } from "#veryfront/config/loader.ts";
 
 // Literal public addresses exercise guarded egress deterministically without
 // depending on external DNS answers for production or reserved test hosts.
@@ -1101,17 +1102,28 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
     const signingKeyEnv = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
     const originalSigningKey = Deno.env.get(signingKeyEnv);
-    const originalObjectEntries = Object.entries;
     let observedValidationCredential:
       | ReturnType<typeof getVerifiedCacheApiCredential>
       | undefined;
+    let observedValidationRequestToken: string | undefined;
+    let validationProbeCalls = 0;
+    const integrationPolicy = new Proxy(
+      { allow: { gmail: { allowedTools: ["list_emails"] } } },
+      {
+        get(target, key, receiver) {
+          if (key === "allow") {
+            validationProbeCalls += 1;
+            observedValidationCredential = getVerifiedCacheApiCredential();
+            observedValidationRequestToken = getCurrentRequestContext()?.token;
+          }
+          return Reflect.get(target, key, receiver);
+        },
+      },
+    );
+    __setHostedConfigEvaluatorForTests(() =>
+      Promise.resolve({ integrations: integrationPolicy } as never)
+    );
     Deno.env.set(signingKeyEnv, publicKeyPem);
-    Object.entries = ((value: object) => {
-      if (Object.prototype.hasOwnProperty.call(value, "gmail")) {
-        observedValidationCredential = getVerifiedCacheApiCredential();
-      }
-      return originalObjectEntries(value);
-    }) as typeof Object.entries;
     let result;
     try {
       result = await withMockFetch(
@@ -1133,7 +1145,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
           ),
       );
     } finally {
-      Object.entries = originalObjectEntries;
+      __setHostedConfigEvaluatorForTests();
       if (originalSigningKey === undefined) Deno.env.delete(signingKeyEnv);
       else Deno.env.set(signingKeyEnv, originalSigningKey);
     }
@@ -1148,7 +1160,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
       allow: { gmail: { allowedTools: ["list_emails"] } },
     });
     assertEquals(observedNormalizationCredential, undefined);
+    assertEquals(validationProbeCalls > 0, true);
     assertEquals(observedValidationCredential, undefined);
+    assertEquals(observedValidationRequestToken, undefined);
     assertEquals(capturedSourcePolicy, {
       schemaVersion: 1,
       mode: "allowlist",
@@ -1616,6 +1630,103 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
       assertEquals(result.response?.status, 200);
       assertEquals(capturedAllowedRemoteTools, ["studio_todo_write"]);
+    } finally {
+      restoreMockFetch();
+      if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
+      else Deno.env.set("VERYFRONT_STUDIO_MCP_URL", originalStudioMcpUrl);
+    }
+  });
+
+  it("discovers tools from multiple explicit Studio servers concurrently", async () => {
+    const originalStudioMcpUrl = Deno.env.get("VERYFRONT_STUDIO_MCP_URL");
+    let capturedAllowedRemoteTools: string[] | undefined;
+    let requestCount = 0;
+    let resolveFirstRequest: (() => void) | undefined;
+    const toolResponse = (name: string, id: string) =>
+      new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id,
+          result: { tools: [{ name, description: name, inputSchema: {} }] },
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    Deno.env.set("VERYFRONT_STUDIO_MCP_URL", TEST_PUBLIC_STUDIO_MCP_URL);
+    installMockFetch((_url, init) => {
+      requestCount += 1;
+      const requestId = JSON.parse(String(observeFetchRequestInit(init).body)).id as string;
+      if (requestCount === 1) {
+        return new Promise<Response>((resolve) => {
+          resolveFirstRequest = () => resolve(toolResponse("studio_todo_write", requestId));
+        });
+      }
+      resolveFirstRequest?.();
+      return Promise.resolve(toolResponse("studio_panel_control", requestId));
+    });
+
+    try {
+      const handler = createTestAgentStreamHandler({
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+        getAgent: (id) =>
+          id === "assistant-1"
+            ? createAgentWithConfig("assistant-1", {
+              tools: true,
+              mcpServers: [
+                {
+                  kind: "veryfront-studio",
+                  id: "studio-first",
+                  toolPolicy: { allow: ["studio_todo_write"] },
+                },
+                {
+                  kind: "veryfront-studio",
+                  id: "studio-second",
+                  toolPolicy: { allow: ["studio_panel_control"] },
+                },
+              ],
+            })
+            : undefined,
+        getAllAgentIds: () => ["assistant-1"],
+        sessionManager: new AgentRunSessionManager(),
+        createRuntime: (runtimeAgent) => ({
+          stream: async (_messages, _context, callbacks) => {
+            capturedAllowedRemoteTools = (runtimeAgent.config as RuntimeRemoteToolConfig)
+              .__vfAllowedRemoteTools;
+            callbacks?.onFinish?.({
+              text: "ok",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+            });
+            return new ReadableStream<Uint8Array>({ start: (controller) => controller.close() });
+          },
+        }),
+      });
+      const body = createAgentStreamRequestBody({
+        credentials: { authToken: "request-scoped-user-token" },
+        forwardedProps: {
+          clientId: "veryfront-studio",
+          veryfront: { client: { id: "veryfront-studio", type: "web", platform: "browser" } },
+        },
+      });
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: "run_1",
+      });
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        { ...createCtx(publicKeyPem), proxyToken: "run-scoped-token" },
+      );
+
+      assertEquals(result.response?.status, 200);
+      assertEquals(requestCount, 2);
+      assertEquals(capturedAllowedRemoteTools, ["studio_panel_control", "studio_todo_write"]);
     } finally {
       restoreMockFetch();
       if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");

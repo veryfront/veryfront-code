@@ -927,6 +927,29 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
     });
 
+    it("does not read source snapshot fields through inherited accessors", async () => {
+      const adapter = createAdapter();
+      let inheritedGetterCalls = 0;
+      const inheritedFields = {
+        get path(): string {
+          inheritedGetterCalls += 1;
+          return "pages/inherited.tsx";
+        },
+        get content(): string {
+          inheritedGetterCalls += 1;
+          return "inherited source";
+        },
+      };
+      const file = Object.create(inheritedFields) as { path: string; content?: string };
+      const internals = adapter as unknown as {
+        sourceSnapshotFiles: Array<{ path: string; content?: string }>;
+      };
+      internals.sourceSnapshotFiles = [file];
+
+      assertEquals(typeof await adapter.getSourceSnapshotFingerprint(), "string");
+      assertEquals(inheritedGetterCalls, 0);
+    });
+
     it("makes the fingerprint unavailable when a POKE invalidates the source", async () => {
       const adapter = createAdapter();
       adapter.setContentContext({
@@ -1025,6 +1048,16 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(await adapter.readTextFile("pages/index.tsx"), "hello");
 
       const versionBeforeDispose = adapter.getSourceSnapshotVersion();
+      const internals = adapter as unknown as {
+        sourceSnapshotCheckedAt: number;
+        sourceSnapshotIdentity: string | undefined;
+        sourceSnapshotFiles: Array<{ path: string; content?: string }> | undefined;
+        sourceSnapshotFingerprint: { version: number; value: Promise<string> } | undefined;
+      };
+      internals.sourceSnapshotCheckedAt = Date.now();
+      internals.sourceSnapshotIdentity = "branch:test-project:main";
+      internals.sourceSnapshotFiles = [{ path: "pages/index.tsx", content: "hello" }];
+      await adapter.getSourceSnapshotFingerprint();
       assertEquals(
         adapter.getCacheStats().cache.size > 0,
         true,
@@ -1040,6 +1073,10 @@ describe("VeryfrontFSAdapter", () => {
         versionBeforeDispose,
         "dispose bumps the source snapshot generation",
       );
+      assertEquals(internals.sourceSnapshotCheckedAt, 0);
+      assertEquals(internals.sourceSnapshotIdentity, undefined);
+      assertEquals(internals.sourceSnapshotFiles, undefined);
+      assertEquals(internals.sourceSnapshotFingerprint, undefined);
 
       await adapter.initialize();
       assertEquals(

@@ -96,6 +96,7 @@ import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/sou
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { runWithoutRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 
 export interface AgentStreamHandlerDeps
   extends RuntimeAgentDiscoveryDeps, RuntimeAgentStreamExecutionDeps {
@@ -450,6 +451,8 @@ async function resolveAgentSourceConfig(
       environmentName: buildAgentSourceEnvironmentName(sourceContext),
       environment,
     }),
+    validationBoundary: (validate) =>
+      runWithoutRequestContext(withoutVerifiedCacheApiCredential(validate)),
   });
 }
 
@@ -577,7 +580,11 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
   const remoteTools = runtimeConfig.__vfRemoteToolSources ?? [];
   const studioRemoteToolSources: RemoteToolSource[] = [];
   const broadStudioToolNames = new Set<string>();
-  let hasResolvedStudioSource = false;
+  const resolvedStudioSources: Array<{
+    policy: ReturnType<typeof createMcpToolPolicyGate>;
+    remoteConfig: NonNullable<ReturnType<typeof createAgentServiceRemoteMcpConfig>>;
+    source: RemoteToolSource;
+  }> = [];
   for (const server of configuredServers) {
     const remoteConfig = createAgentServiceRemoteMcpConfig({
       server,
@@ -590,13 +597,18 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
       defaultSourceId: VERYFRONT_STUDIO_MCP_SOURCE_ID,
     });
     if (!remoteConfig) continue;
-    hasResolvedStudioSource = true;
-    const studioSource = createRemoteMCPToolSource(remoteConfig);
-    if (input.agent.config.tools === true) {
-      const policy = createMcpToolPolicyGate(server.toolPolicy);
-      let definitions: ToolDefinition[] = [];
+    resolvedStudioSources.push({
+      policy: createMcpToolPolicyGate(server.toolPolicy),
+      remoteConfig,
+      source: createRemoteMCPToolSource(remoteConfig),
+    });
+  }
+  if (resolvedStudioSources.length === 0) return input.agent;
+
+  if (input.agent.config.tools === true) {
+    const discoveries = resolvedStudioSources.map(async ({ source }) => {
       try {
-        definitions = await studioSource.listTools({
+        return await source.listTools({
           ...(input.projectId ? { projectId: input.projectId } : {}),
         });
       } catch (error) {
@@ -604,19 +616,27 @@ async function withExplicitVeryfrontStudioRemoteTools(input: {
           projectId: input.projectId ?? undefined,
           error: error instanceof Error ? error.message : String(error),
         });
+        return [];
       }
+    });
+    const definitionsBySource = await Promise.all(discoveries);
+    for (let index = 0; index < resolvedStudioSources.length; index++) {
+      const policy = resolvedStudioSources[index]!.policy;
+      const definitions = definitionsBySource[index]!;
       for (const definition of definitions) {
         if (policy.allows(definition.name)) broadStudioToolNames.add(definition.name);
       }
     }
+  }
+
+  for (const { remoteConfig, source } of resolvedStudioSources) {
     if (
       !remoteTools.some((source) => source.id === remoteConfig.id) &&
       !studioRemoteToolSources.some((source) => source.id === remoteConfig.id)
     ) {
-      studioRemoteToolSources.push(studioSource);
+      studioRemoteToolSources.push(source);
     }
   }
-  if (!hasResolvedStudioSource) return input.agent;
   if (input.agent.config.tools === true) {
     requestedStudioToolNames = [...broadStudioToolNames].sort(compareStrings);
   }

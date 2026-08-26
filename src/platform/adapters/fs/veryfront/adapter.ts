@@ -61,6 +61,7 @@ const BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS = 30_000;
 const ArrayPrototypeSort = Array.prototype.sort;
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicObjectDefineProperty = Object.defineProperty;
+const IntrinsicObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const IntrinsicMap = Map;
 const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeSet = Map.prototype.set;
@@ -86,6 +87,23 @@ interface SourceSnapshotFile {
   updated_at?: string;
 }
 
+type SourceSnapshotFileKey = keyof SourceSnapshotFile;
+
+function getOwnSourceSnapshotValue(
+  file: SourceSnapshotFile,
+  key: SourceSnapshotFileKey,
+): string | number | null {
+  const descriptor = IntrinsicReflectApply(
+    IntrinsicObjectGetOwnPropertyDescriptor,
+    Object,
+    [file, key],
+  ) as PropertyDescriptor | undefined;
+  if (!descriptor || !("value" in descriptor)) return null;
+  return typeof descriptor.value === "string" || typeof descriptor.value === "number"
+    ? descriptor.value
+    : null;
+}
+
 function sourceSnapshotsEqual(
   previous: SourceSnapshotFile[] | undefined,
   next: SourceSnapshotFile[],
@@ -95,21 +113,28 @@ function sourceSnapshotsEqual(
   const previousByPath = new IntrinsicMap<string, SourceSnapshotFile>();
   for (let index = 0; index < previous.length; index++) {
     const file = previous[index]!;
-    IntrinsicReflectApply(MapPrototypeSet, previousByPath, [file.path, file]);
+    const path = getOwnSourceSnapshotValue(file, "path");
+    if (typeof path !== "string") return false;
+    IntrinsicReflectApply(MapPrototypeSet, previousByPath, [path, file]);
   }
   for (let index = 0; index < next.length; index++) {
     const file = next[index]!;
-    const prior = IntrinsicReflectApply(MapPrototypeGet, previousByPath, [file.path]) as
+    const path = getOwnSourceSnapshotValue(file, "path");
+    if (typeof path !== "string") return false;
+    const prior = IntrinsicReflectApply(MapPrototypeGet, previousByPath, [path]) as
       | SourceSnapshotFile
       | undefined;
     if (
       prior === undefined ||
-      prior.id !== file.id ||
-      prior.version_id !== file.version_id ||
-      prior.content !== file.content ||
-      prior.type !== file.type ||
-      prior.size !== file.size ||
-      prior.updated_at !== file.updated_at
+      getOwnSourceSnapshotValue(prior, "id") !== getOwnSourceSnapshotValue(file, "id") ||
+      getOwnSourceSnapshotValue(prior, "version_id") !==
+        getOwnSourceSnapshotValue(file, "version_id") ||
+      getOwnSourceSnapshotValue(prior, "content") !==
+        getOwnSourceSnapshotValue(file, "content") ||
+      getOwnSourceSnapshotValue(prior, "type") !== getOwnSourceSnapshotValue(file, "type") ||
+      getOwnSourceSnapshotValue(prior, "size") !== getOwnSourceSnapshotValue(file, "size") ||
+      getOwnSourceSnapshotValue(prior, "updated_at") !==
+        getOwnSourceSnapshotValue(file, "updated_at")
     ) return false;
   }
   return true;
@@ -123,13 +148,13 @@ function frameSourceSnapshotValue(value: string | number | null): string {
 }
 
 function serializeSourceSnapshotFile(file: SourceSnapshotFile): string {
-  return frameSourceSnapshotValue(file.path) +
-    frameSourceSnapshotValue(file.id ?? null) +
-    frameSourceSnapshotValue(file.version_id ?? null) +
-    frameSourceSnapshotValue(file.content ?? null) +
-    frameSourceSnapshotValue(file.type ?? null) +
-    frameSourceSnapshotValue(file.size ?? null) +
-    frameSourceSnapshotValue(file.updated_at ?? null);
+  return frameSourceSnapshotValue(getOwnSourceSnapshotValue(file, "path")) +
+    frameSourceSnapshotValue(getOwnSourceSnapshotValue(file, "id")) +
+    frameSourceSnapshotValue(getOwnSourceSnapshotValue(file, "version_id")) +
+    frameSourceSnapshotValue(getOwnSourceSnapshotValue(file, "content")) +
+    frameSourceSnapshotValue(getOwnSourceSnapshotValue(file, "type")) +
+    frameSourceSnapshotValue(getOwnSourceSnapshotValue(file, "size")) +
+    frameSourceSnapshotValue(getOwnSourceSnapshotValue(file, "updated_at"));
 }
 
 function serializeSourceSnapshot(files: SourceSnapshotFile[]): string {
@@ -1413,6 +1438,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   dispose(): void {
     this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
+    this.sourceSnapshotCheckedAt = 0;
+    this.sourceSnapshotIdentity = undefined;
+    this.sourceSnapshotFiles = undefined;
+    this.sourceSnapshotFingerprint = undefined;
+    this.sourceSnapshotRefreshPromise = null;
     this.wsManager.dispose();
     this.manifestFetcherCleanup?.();
     this.manifestFetcherCleanup = null;

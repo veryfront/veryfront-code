@@ -19,6 +19,7 @@ import {
 } from "#veryfront/utils/logger/index.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
+import { getGetAdapterParamsSchema } from "./schemas/index.ts";
 
 const baseConfig = {
   veryfront: {
@@ -69,6 +70,31 @@ async function assertGetAdapterRejects(
 }
 
 describe("ProxyFSAdapterManager", () => {
+  it("uses the validation method captured before project code can replace it", async () => {
+    const schema = getGetAdapterParamsSchema();
+    const originalSafeParse = schema.safeParse;
+    let poisonedCalls = 0;
+    schema.safeParse = ((...args: Parameters<typeof originalSafeParse>) => {
+      poisonedCalls += 1;
+      return originalSafeParse.apply(schema, args);
+    }) as typeof schema.safeParse;
+    const manager = createManager({
+      adapterFactory: (config) => {
+        const adapter = new VeryfrontFSAdapter(config);
+        adapter.initialize = () => Promise.resolve();
+        return adapter;
+      },
+    });
+
+    try {
+      await manager.getAdapter("my-project", "request-token", undefined, false);
+      assertEquals(poisonedCalls, 0);
+    } finally {
+      schema.safeParse = originalSafeParse;
+      manager.dispose();
+    }
+  });
+
   describe("exact preview source", () => {
     it("propagates a missing push branch without loading main", async () => {
       const branch = "push-20260324t121046";

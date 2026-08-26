@@ -110,11 +110,15 @@ function isBoundedSourceIntegrationAllowlist(
   if (entries.length > MAX_SOURCE_INTEGRATION_POLICY_INTEGRATIONS) return false;
 
   let totalToolIds = 0;
-  for (const [integration, restriction] of entries) {
+  for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
+    const entry = entries[entryIndex]!;
+    const integration = entry[0];
+    const restriction = entry[1];
     const allowedTools = restriction.allowedTools;
     if (!allowedTools) continue;
     if (allowedTools.length > MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS) return false;
-    for (const toolId of allowedTools) {
+    for (let toolIndex = 0; toolIndex < allowedTools.length; toolIndex++) {
+      const toolId = allowedTools[toolIndex]!;
       if (
         ++totalToolIds > MAX_SOURCE_INTEGRATION_POLICY_TOOL_IDS ||
         integration.length + 2 + toolId.length > MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH

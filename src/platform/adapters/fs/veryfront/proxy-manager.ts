@@ -47,6 +47,11 @@ const NativeUint8Array = Uint8Array;
 const IntrinsicReflectApply = Reflect.apply;
 const NumberPrototypeToString = Number.prototype.toString;
 const StringPrototypePadStart = String.prototype.padStart;
+const GetAdapterParamsSchema = getGetAdapterParamsSchema();
+const GetAdapterParamsSchemaSafeParse = GetAdapterParamsSchema.safeParse;
+type GetAdapterParamsValidationResult = ReturnType<
+  typeof GetAdapterParamsSchemaSafeParse
+>;
 
 async function hashCredentialPrincipal(token: string): Promise<string> {
   const bytes = IntrinsicReflectApply(encodeText, textEncoder, [token]) as ReturnType<
@@ -159,15 +164,19 @@ export class ProxyFSAdapterManager {
       branch: effectiveBranch,
     });
 
-    const validationResult = getGetAdapterParamsSchema().safeParse({
-      projectSlug,
-      token,
-      projectId,
-      productionMode: effectiveProductionMode,
-      releaseId: effectiveReleaseId,
-      environmentName: effectiveEnvironmentName,
-      branch: effectiveBranch,
-    });
+    const validationResult = IntrinsicReflectApply(
+      GetAdapterParamsSchemaSafeParse,
+      GetAdapterParamsSchema,
+      [{
+        projectSlug,
+        token,
+        projectId,
+        productionMode: effectiveProductionMode,
+        releaseId: effectiveReleaseId,
+        environmentName: effectiveEnvironmentName,
+        branch: effectiveBranch,
+      }],
+    ) as GetAdapterParamsValidationResult;
 
     if (!validationResult.success) {
       logger.error("Validation failed", {
