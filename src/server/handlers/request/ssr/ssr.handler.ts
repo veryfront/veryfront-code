@@ -257,6 +257,7 @@ export class SSRHandler extends BaseHandler {
         const applicationUrl = new URL(url);
         const applicationHeaders = createApplicationRequestHeaders(
           stripSnapshotHeader(req.headers),
+          { denyHeaders: ctx.applicationIdentityHeaderNames },
         );
         const applicationRequest = new Request(applicationUrl, {
           method: req.method,
@@ -302,6 +303,7 @@ export class SSRHandler extends BaseHandler {
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
           dependencyPinningSource: dependencySource,
+          applicationIdentity: ctx.applicationIdentity ?? null,
         });
         const rendered: SSRRenderResult = {
           ...result,

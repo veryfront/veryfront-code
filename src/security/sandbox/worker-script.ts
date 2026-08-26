@@ -95,6 +95,8 @@ import {
 } from "#veryfront/routing/api/response-normalization.ts";
 import { createWorkerExitControls } from "./worker-exit-controls.ts";
 import { encodeSandboxBytesAsBase64, encodeSandboxBytesAsHex } from "./worker-byte-encoding.ts";
+import { snapshotApplicationIdentity } from "#veryfront/security/application-auth/identity.ts";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 
 type InitializeEgressMessage = {
   type: "initialize-egress";
@@ -950,6 +952,48 @@ function snapshotPreparedWorkerModule(value: unknown): PreparedWorkerModule {
   return { source, sha256 };
 }
 
+function snapshotWorkerApplicationIdentity(value: unknown): ApplicationIdentity | null {
+  if (value === null) return null;
+  try {
+    return snapshotApplicationIdentity(value);
+  } catch {
+    return invalidWorkerRequest("applicationIdentity");
+  }
+}
+
+function prevalidateWorkerRequestApplicationIdentity(value: unknown): void {
+  const envelope = requirePlainDataRecord(value, "payload", 16).record;
+  const type = requireString(
+    readDataProperty(envelope, "type"),
+    "type",
+    64,
+    false,
+  );
+
+  if (type === "execute-app-route") {
+    const applicationIdentity = readOptionalDataProperty(
+      envelope,
+      "applicationIdentity",
+    );
+    if (!applicationIdentity.present) {
+      return invalidWorkerRequest("applicationIdentity");
+    }
+    snapshotWorkerApplicationIdentity(applicationIdentity.value);
+    return;
+  }
+
+  if (type === "execute-pages-route") {
+    const applicationIdentity = readOptionalDataProperty(
+      envelope,
+      "applicationIdentity",
+    );
+    if (!applicationIdentity.present) {
+      return invalidWorkerRequest("applicationIdentity");
+    }
+    snapshotWorkerApplicationIdentity(applicationIdentity.value);
+  }
+}
+
 function snapshotStringArray(
   value: unknown,
   field: string,
@@ -1281,8 +1325,12 @@ function snapshotDataContext(value: unknown): SerializedDataContext {
   const record = requireRecordShape(
     value,
     ["params", "query", "request", "url"],
-    [],
+    ["applicationIdentity"],
     "context",
+  );
+  const applicationIdentity = readOptionalDataProperty(
+    record,
+    "applicationIdentity",
   );
   return {
     params: snapshotStringRecord(
@@ -1302,6 +1350,9 @@ function snapshotDataContext(value: unknown): SerializedDataContext {
       MAX_WORKER_URL_CHARS,
       false,
     ),
+    applicationIdentity: applicationIdentity.present
+      ? snapshotWorkerApplicationIdentity(applicationIdentity.value)
+      : null,
   };
 }
 
@@ -1722,6 +1773,8 @@ export function assertIsolatedSsrDependencySnapshotSupported(
  * @internal Exported for deterministic boundary regression tests.
  */
 export function snapshotWorkerRequest(value: unknown): WorkerRequest {
+  prevalidateWorkerRequestApplicationIdentity(value);
+
   let cloned: unknown;
   try {
     cloned = cloneStructuredValue(value);
@@ -1754,9 +1807,16 @@ export function snapshotWorkerRequest(value: unknown): WorkerRequest {
         "projectDir",
         "sourceIntegrationPolicy",
       ],
-      ["projectEnv"],
+      ["projectEnv", "applicationIdentity"],
       "payload",
     );
+    const applicationIdentity = readOptionalDataProperty(
+      request,
+      "applicationIdentity",
+    );
+    if (!applicationIdentity.present) {
+      return invalidWorkerRequest("applicationIdentity");
+    }
     return {
       type,
       id: requireString(
@@ -1800,6 +1860,9 @@ export function snapshotWorkerRequest(value: unknown): WorkerRequest {
           ? readDataProperty(request, "projectEnv")
           : undefined,
       ),
+      applicationIdentity: snapshotWorkerApplicationIdentity(
+        applicationIdentity.value,
+      ),
     };
   }
 
@@ -1819,9 +1882,16 @@ export function snapshotWorkerRequest(value: unknown): WorkerRequest {
         "projectDir",
         "sourceIntegrationPolicy",
       ],
-      ["projectEnv"],
+      ["projectEnv", "applicationIdentity"],
       "payload",
     );
+    const applicationIdentity = readOptionalDataProperty(
+      request,
+      "applicationIdentity",
+    );
+    if (!applicationIdentity.present) {
+      return invalidWorkerRequest("applicationIdentity");
+    }
     return {
       type,
       id: requireString(
@@ -1857,6 +1927,9 @@ export function snapshotWorkerRequest(value: unknown): WorkerRequest {
         readOptionalDataProperty(request, "projectEnv").present
           ? readDataProperty(request, "projectEnv")
           : undefined,
+      ),
+      applicationIdentity: snapshotWorkerApplicationIdentity(
+        applicationIdentity.value,
       ),
     };
   }
@@ -2585,6 +2658,8 @@ async function handleAppRoute(req: ExecuteAppRouteRequest): Promise<SerializedRe
           context: {
             params: Record<string, string>;
             env: Readonly<Record<string, string>>;
+            identity: ApplicationIdentity | null;
+            applicationIdentity: ApplicationIdentity | null;
           },
         ) => Promise<unknown> | unknown)
         | undefined;
@@ -2599,6 +2674,8 @@ async function handleAppRoute(req: ExecuteAppRouteRequest): Promise<SerializedRe
       const pendingResponse = handlerFn(deserializeRequest(req.request), {
         params: req.params ?? {},
         env,
+        identity: req.applicationIdentity,
+        applicationIdentity: req.applicationIdentity,
       });
       const response = isTrustedRouteResponsePromise(pendingResponse)
         ? await pendingResponse
@@ -2615,17 +2692,22 @@ function deserializeDataContext(
   query: URLSearchParams;
   request: Request;
   url: URL;
+  identity: ApplicationIdentity | null;
+  applicationIdentity: ApplicationIdentity | null;
 } {
   const request = new NativeRequest(s.request.url, {
     method: s.request.method,
     headers: s.request.headers,
     body: s.request.body as BodyInit | null,
   });
+  const applicationIdentity = s.applicationIdentity ?? null;
   return {
     params: s.params,
     query: new NativeURLSearchParams(s.query),
     request,
     url: new NativeURL(s.url),
+    identity: applicationIdentity,
+    applicationIdentity,
   };
 }
 
@@ -2747,6 +2829,8 @@ async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<Serializ
         text: createWorkerTextResponse,
         fs: workerFs,
         env,
+        identity: req.applicationIdentity,
+        applicationIdentity: req.applicationIdentity,
       };
 
       const pendingResponse = handlerFn(ctx);

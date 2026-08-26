@@ -146,6 +146,153 @@ export default defineConfig({
     );
   });
 
+  it("accepts declarative application auth config data", async () => {
+    const snapshot = await evaluateDeclarativeConfig({
+      source: `
+export default {
+  security: {
+    auth: {
+      oidc: {
+        issuerEnvVar: "OIDC_ISSUER",
+        clientIdEnvVar: "OIDC_CLIENT_ID",
+        clientSecretEnvVar: "OIDC_CLIENT_SECRET",
+        sessionSecretEnvVar: "VERYFRONT_AUTH_SESSION_SECRET",
+        scopes: ["openid", "profile", "email", "groups"],
+        claims: {
+          email: "email",
+          name: "name",
+          groups: "groups",
+          roles: "roles",
+        },
+      },
+    },
+  },
+};
+`,
+      environmentName: "production",
+      environment: {},
+    });
+
+    assertEquals(snapshot.security, {
+      auth: {
+        oidc: {
+          issuerEnvVar: "OIDC_ISSUER",
+          clientIdEnvVar: "OIDC_CLIENT_ID",
+          clientSecretEnvVar: "OIDC_CLIENT_SECRET",
+          sessionSecretEnvVar: "VERYFRONT_AUTH_SESSION_SECRET",
+          scopes: ["openid", "profile", "email", "groups"],
+          claims: {
+            email: "email",
+            name: "name",
+            groups: "groups",
+            roles: "roles",
+          },
+        },
+      },
+    });
+  });
+
+  it("keeps getEnv compatibility for Basic and Bearer auth values", async () => {
+    const snapshot = await evaluateDeclarativeConfig({
+      source: `
+import { getEnv } from "veryfront";
+
+export default {
+  security: {
+    auth: {
+      basic: {
+        username: getEnv("ADMIN_USERNAME"),
+        password: getEnv("ADMIN_PASSWORD"),
+      },
+    },
+  },
+  fallback: getEnv("API_TOKEN"),
+};
+`,
+      environmentName: "production",
+      environment: {
+        ADMIN_USERNAME: "admin",
+        ADMIN_PASSWORD: "password",
+        API_TOKEN: "token",
+      },
+    });
+
+    assertEquals(snapshot.security, {
+      auth: {
+        basic: {
+          username: "admin",
+          password: "password",
+        },
+      },
+    });
+    assertEquals(snapshot.fallback, "token");
+  });
+
+  it("rejects executable application auth provider factories", async () => {
+    await assertEvaluationError(
+      `
+export default {
+  security: {
+    auth: {
+      oidc: (() => ({}))(),
+    },
+  },
+};
+`,
+      "forbidden-capability",
+      "unsupported-call",
+    );
+  });
+
+  it("rejects trusted-proxy auth for hosted config evaluation", async () => {
+    await assertEvaluationError(
+      `
+export default {
+  security: {
+    auth: {
+      trustedProxy: {
+        trustedPeers: ["127.0.0.1"],
+        headers: { subject: "x-auth-subject" },
+      },
+    },
+  },
+};
+`,
+      "unsupported-hosted-feature",
+      "hosted-trusted-proxy-auth",
+    );
+  });
+
+  it("does not classify an undefined trusted-proxy mode as configured", async () => {
+    const error = await assertRejects(
+      () =>
+        evaluateDeclarativeConfig({
+          source: `
+import { getEnv } from "veryfront";
+
+export default {
+  security: {
+    auth: {
+      oidc: {
+        issuerEnvVar: "OIDC_ISSUER",
+        clientIdEnvVar: "OIDC_CLIENT_ID",
+        clientSecretEnvVar: "OIDC_CLIENT_SECRET",
+        sessionSecretEnvVar: "OIDC_SESSION_SECRET",
+      },
+      trustedProxy: getEnv("TRUSTED_PROXY"),
+    },
+  },
+};
+`,
+          ...DEFAULT_OPTIONS,
+        }),
+      DeclarativeConfigEvaluationError,
+    ) as DeclarativeConfigEvaluationError;
+
+    assertEquals(error.code, "invalid-result");
+    assertEquals(error.reason, "result-not-snapshot-safe");
+  });
+
   it("loads the parser-only evaluator graph in a permissionless Deno Worker", async () => {
     const evaluatorUrl = new URL(
       "./declarative-evaluator.ts",

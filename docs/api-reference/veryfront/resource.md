@@ -1,7 +1,7 @@
 ---
 title: "veryfront/resource"
 description: "Declare and register schema-backed URI resources exposable over MCP. URI templates support hierarchical, rootless, embedded, and query parameters; opaque identifiers remain literal. Captures are percent-decoded exactly once, malformed escapes do not match, and `mcp.enabled: false` hides list and read."
-order: 27
+order: 28
 ---
 
 ## Import

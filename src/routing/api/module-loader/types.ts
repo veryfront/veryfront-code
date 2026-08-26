@@ -1,9 +1,11 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { APIContext } from "../context-builder.ts";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 
 export interface AppRouteContext {
   params: Record<string, string>;
+  identity: ApplicationIdentity | null;
   /** Immutable environment snapshot for the current project request. */
   env: Readonly<Record<string, string>>;
 }
