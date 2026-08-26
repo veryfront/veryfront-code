@@ -40,7 +40,16 @@ const silentLogger: NodeFileSystemLogger = {
 };
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
+const NativePromise = Promise;
+const promiseAll = NativePromise.all;
 const reflectApply = Reflect.apply;
+
+function awaitPair<First, Second>(
+  first: Promise<First>,
+  second: Promise<Second>,
+): Promise<[First, Second]> {
+  return reflectApply(promiseAll, NativePromise, [[first, second]]) as Promise<[First, Second]>;
+}
 
 interface NodeFileSnapshotStat {
   readonly dev: bigint;
@@ -290,10 +299,10 @@ export async function readNodeFileSnapshotWithinLimit(
       let canonicalTarget: string;
       let pathnameOpened: NodeFileSnapshotStat;
       try {
-        [canonicalTarget, pathnameOpened] = await Promise.all([
+        [canonicalTarget, pathnameOpened] = await awaitPair(
           operations.realpath(candidate),
           operations.lstat(candidate),
-        ]);
+        );
       } catch (cause) {
         throwSnapshotChangeForPathRace(
           "File target became uncertain while opening the snapshot",
@@ -352,10 +361,10 @@ export async function readNodeFileSnapshotWithinLimit(
         );
       }
       try {
-        [pathnameAfter, canonicalTargetAfter] = await Promise.all([
+        [pathnameAfter, canonicalTargetAfter] = await awaitPair(
           operations.lstat(candidate),
           operations.realpath(candidate),
-        ]);
+        );
       } catch (cause) {
         throwSnapshotChangeForPathRace(
           "File identity became uncertain after reading the snapshot",
