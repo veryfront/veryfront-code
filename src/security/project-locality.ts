@@ -105,8 +105,15 @@ export function isExplicitlyLocalProject(value: unknown): boolean {
  * fails closed.
  */
 export function isHostProjectCodeExecutionAllowed(value: unknown): boolean {
+  return isHostProjectCodeExecutionAllowedForTopology(value, isSharedProjectRuntime(value));
+}
+
+function isHostProjectCodeExecutionAllowedForTopology(
+  value: unknown,
+  sharedRuntime: boolean,
+): boolean {
   return isExplicitlyLocalProject(value) ||
-    (!isSharedProjectRuntime(value) && isExplicitHostProjectCodeExecutionAllowed(value));
+    (!sharedRuntime && isExplicitHostProjectCodeExecutionAllowed(value));
 }
 
 /**
@@ -131,7 +138,8 @@ export function isExplicitHostProjectCodeExecutionAllowed(
  * cannot drift apart.
  */
 export function requiresIsolatedProjectRuntime(value: unknown): boolean {
-  return !isHostProjectCodeExecutionAllowed(value) && isSharedProjectRuntime(value);
+  const sharedRuntime = isSharedProjectRuntime(value);
+  return !isHostProjectCodeExecutionAllowedForTopology(value, sharedRuntime) && sharedRuntime;
 }
 
 /**

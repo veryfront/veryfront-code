@@ -164,6 +164,25 @@ describe("security/project-locality isolated runtime requirement", () => {
     );
   });
 
+  it("uses one topology snapshot for the host-execution decision", () => {
+    let calls = 0;
+    const runtime = {
+      allowHostProjectCodeExecution: true,
+      adapter: {
+        fs: {
+          isMultiProjectMode: () => calls++ === 0,
+        },
+      },
+    };
+
+    assertEquals(
+      requiresIsolatedProjectRuntime(runtime),
+      true,
+      "a shared topology snapshot must stay authoritative for the whole decision",
+    );
+    assertEquals(calls, 1, "the topology provider must be sampled once");
+  });
+
   it("rejects capabilities that are not own boolean data properties", () => {
     // Defined on the object itself: spreading an accessor would invoke the
     // getter and silently produce the data property this test must reject.
