@@ -13,9 +13,33 @@ import { createProjectEnvSnapshot, type ProjectEnvSnapshot } from "./snapshot.ts
 
 const projectEnvStorage = new AsyncLocalStorage<ProjectEnvSnapshot>();
 const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicObjectDefineProperty = Object.defineProperty;
 const AsyncLocalStoragePrototype = AsyncLocalStorage.prototype;
+const AsyncLocalStorageDisable = AsyncLocalStoragePrototype.disable;
+const AsyncLocalStorageEnterWith = AsyncLocalStoragePrototype.enterWith;
 const AsyncLocalStorageGetStore = AsyncLocalStoragePrototype.getStore;
 const AsyncLocalStorageRun = AsyncLocalStoragePrototype.run;
+
+IntrinsicObjectDefineProperty(projectEnvStorage, "disable", {
+  configurable: false,
+  value: AsyncLocalStorageDisable,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(projectEnvStorage, "enterWith", {
+  configurable: false,
+  value: AsyncLocalStorageEnterWith,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(projectEnvStorage, "getStore", {
+  configurable: false,
+  value: AsyncLocalStorageGetStore,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(projectEnvStorage, "run", {
+  configurable: false,
+  value: AsyncLocalStorageRun,
+  writable: false,
+});
 
 function getProjectEnvStore(): ProjectEnvSnapshot | undefined {
   return IntrinsicReflectApply(AsyncLocalStorageGetStore, projectEnvStorage, []) as
