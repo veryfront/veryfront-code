@@ -20,6 +20,7 @@ const logger = baseLogger.component("transform-cache");
 
 const DEFAULT_TTL_SECONDS = 300; // 5 minutes
 const FALLBACK_MAX_ENTRIES = 500;
+const FALLBACK_MAX_SIZE_BYTES = 50 * 1024 * 1024;
 export const TRANSFORM_FLIGHT_STALE_EVICTION_MS = 5 * 60_000;
 
 /**
@@ -153,10 +154,16 @@ interface LocalFallbackLike<K, V> {
   entries(): IterableIterator<[K, V]>;
 }
 
-class EntryBoundedFallback<K, V> implements LocalFallbackLike<K, V> {
+class BoundedFallback<K, V> implements LocalFallbackLike<K, V> {
   private readonly store = new Map<K, V>();
+  private readonly entrySizes = new Map<K, number>();
+  private currentSizeBytes = 0;
 
-  constructor(private readonly maxEntries: number) {}
+  constructor(
+    private readonly maxEntries: number,
+    private readonly maxSizeBytes: number,
+    private readonly estimateSizeOf: (key: K, value: V) => number,
+  ) {}
 
   get(key: K): V | undefined {
     const value = this.store.get(key);
@@ -167,18 +174,34 @@ class EntryBoundedFallback<K, V> implements LocalFallbackLike<K, V> {
   }
 
   set(key: K, value: V): void {
-    this.store.delete(key);
+    const entrySize = this.estimateSizeOf(key, value);
+    // Reject individually oversized entries up front: admitting one would make
+    // the eviction loop below flush every cached entry (including this one).
+    if (entrySize > this.maxSizeBytes) {
+      return;
+    }
+    this.delete(key);
     this.store.set(key, value);
+    this.entrySizes.set(key, entrySize);
+    this.currentSizeBytes += entrySize;
 
-    while (this.store.size > this.maxEntries) {
-      const oldestKey = this.store.keys().next();
-      if (oldestKey.done) break;
-      this.store.delete(oldestKey.value);
+    // The just-admitted entry fits within maxSizeBytes, so evicting oldest
+    // entries always terminates before the store can run empty.
+    while (
+      this.store.size > 0 &&
+      (this.store.size > this.maxEntries || this.currentSizeBytes > this.maxSizeBytes)
+    ) {
+      this.delete(this.store.keys().next().value as K);
     }
   }
 
   delete(key: K): boolean {
-    return this.store.delete(key);
+    const deleted = this.store.delete(key);
+    if (deleted) {
+      this.currentSizeBytes -= this.entrySizes.get(key) ?? 0;
+      this.entrySizes.delete(key);
+    }
+    return deleted;
   }
 
   has(key: K): boolean {
@@ -187,6 +210,8 @@ class EntryBoundedFallback<K, V> implements LocalFallbackLike<K, V> {
 
   clear(): void {
     this.store.clear();
+    this.entrySizes.clear();
+    this.currentSizeBytes = 0;
   }
 
   get size(): number {
@@ -198,8 +223,42 @@ class EntryBoundedFallback<K, V> implements LocalFallbackLike<K, V> {
   }
 }
 
-const defaultLocalFallback = new EntryBoundedFallback<string, TransformCacheEntry>(
+/** Rough per-entry object/bookkeeping overhead beyond the string payloads. */
+const FALLBACK_ENTRY_OVERHEAD_BYTES = 64;
+/** Rough per-observation object overhead beyond its string payloads. */
+const FALLBACK_OBSERVATION_OVERHEAD_BYTES = 32;
+
+function estimateUtf16Bytes(value: string): number {
+  return value.length * 2;
+}
+
+/**
+ * Estimate the retained size of one fallback cache entry, counting every
+ * field the cache keeps alive: the key string, the transformed code, the
+ * hash, the bundle manifest id, and the dependency-resolution observations.
+ * Leaving any retained field out of this estimate would reopen the memory
+ * exhaustion path the byte budget exists to close.
+ */
+function estimateFallbackEntrySize(key: string, entry: TransformCacheEntry): number {
+  let size = FALLBACK_ENTRY_OVERHEAD_BYTES +
+    estimateUtf16Bytes(key) +
+    estimateUtf16Bytes(entry.code) +
+    estimateUtf16Bytes(entry.hash);
+  if (entry.bundleManifestId !== undefined) {
+    size += estimateUtf16Bytes(entry.bundleManifestId);
+  }
+  for (const observation of entry.dependencyResolutionObservations ?? []) {
+    size += FALLBACK_OBSERVATION_OVERHEAD_BYTES +
+      estimateUtf16Bytes(observation.packageName) +
+      (observation.declaration === null ? 0 : estimateUtf16Bytes(observation.declaration));
+  }
+  return size;
+}
+
+const defaultLocalFallback = new BoundedFallback<string, TransformCacheEntry>(
   FALLBACK_MAX_ENTRIES,
+  FALLBACK_MAX_SIZE_BYTES,
+  estimateFallbackEntrySize,
 );
 
 /** Injected caches for testing */

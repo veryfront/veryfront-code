@@ -65,7 +65,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/channels.md",
     ],
     snippets: [
-      "startAgentService",
+      "startNodeVeryfrontCloudAgentService",
+      "loadAgentServiceEnvFiles",
       "VERYFRONT_AGENT_SERVICE_URL",
       "/api/runs",
       "managed dedicated servers",
@@ -891,6 +892,12 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "styleSrc",
       "fontSrc",
       "VERYFRONT_CSP",
+      "__Host-vf_csrf",
+      "x-csrf-token",
+      "csrfMutationHeaders",
+      "veryfront/index.client",
+      "excludePaths",
+      "csrf: false",
     ],
   },
   "guides/skills.md": {

@@ -156,6 +156,13 @@ function endpointTypeToJsonSchema(
   }
 }
 
+const CURATED_SOQL_RESTRICTIONS =
+  "Custom queries must keep the default query's selected fields and object, may only filter or " +
+  "sort by fields the default query already references, and must preserve the default query's " +
+  "WHERE predicates (additional conditions can only be AND-ed). Functions, subqueries, and " +
+  "side-effecting clauses are rejected. DataCategory filters are allowed only where the " +
+  "parameter description advertises them.";
+
 function buildToolInputSchema(endpoint: SalesforceEndpoint): Record<string, unknown> {
   const properties: Record<string, unknown> = {};
   const required: string[] = [];
@@ -167,9 +174,13 @@ function buildToolInputSchema(endpoint: SalesforceEndpoint): Record<string, unkn
     ) {
       continue;
     }
+    const curatedSoql = key === "q" && definition.in === "query" &&
+      typeof definition.default === "string";
     properties[key] = {
       ...endpointTypeToJsonSchema(definition.type),
-      description: definition.description,
+      description: curatedSoql
+        ? `${definition.description} ${CURATED_SOQL_RESTRICTIONS}`
+        : definition.description,
       ...(definition.exposeDefault === true && definition.default !== undefined
         ? { default: definition.default }
         : {}),
@@ -548,6 +559,358 @@ function validateEndpointInputType(
   }
 }
 
+function maskSoqlStrings(query: string): string {
+  let masked = "";
+  let inString = false;
+  for (let index = 0; index < query.length; index++) {
+    const character = query[index]!;
+    if (character === "\\" && inString && index + 1 < query.length) {
+      masked += "  ";
+      index++;
+      continue;
+    }
+    if (character === "'" && inString && query[index + 1] === "'") {
+      masked += "  ";
+      index++;
+      continue;
+    }
+    if (character === "'") {
+      inString = !inString;
+      masked += " ";
+      continue;
+    }
+    masked += inString ? " " : character;
+  }
+  if (inString) throw new TypeError("Salesforce SOQL query contains an unterminated string");
+  return masked;
+}
+
+function collapseSoqlWhitespace(value: string): string {
+  let result = "";
+  let pendingSpace = false;
+  for (const character of value.trim()) {
+    if (/\s/.test(character)) {
+      pendingSpace = result.length > 0;
+      continue;
+    }
+    if (pendingSpace) result += " ";
+    result += character;
+    pendingSpace = false;
+  }
+  return result;
+}
+
+function removeSoqlWhitespace(value: string): string {
+  let result = "";
+  for (const character of value) {
+    if (!/\s/.test(character)) result += character;
+  }
+  return result;
+}
+
+function countSoqlCommas(value: string): number {
+  let count = 0;
+  for (const character of value) {
+    if (character === ",") count++;
+  }
+  return count;
+}
+
+function hasExactSoqlShapeKeywords(value: string): boolean {
+  const keywords = /\b(?:select|from)\b/gi;
+  let count = 0;
+  while (keywords.exec(value)) {
+    count++;
+    if (count > 2) return false;
+  }
+  return count === 2;
+}
+
+function normalizeSoqlProjection(value: string): string[] {
+  return value.split(",").map((field) => collapseSoqlWhitespace(field).toLowerCase()).sort((a, b) =>
+    a.localeCompare(b)
+  );
+}
+
+function normalizeSoqlClause(value: string): string {
+  return collapseSoqlWhitespace(value)
+    .replace(/ ?(!=|<=|>=|<|>|=) ?/g, "$1")
+    .toLowerCase();
+}
+
+function hasBalancedSoqlParentheses(masked: string): boolean {
+  let depth = 0;
+  for (const character of masked) {
+    if (character === "(") depth++;
+    else if (character === ")" && --depth < 0) return false;
+  }
+  return depth === 0;
+}
+
+function hasSoqlConjunctBoundaryBefore(masked: string, start: number): boolean {
+  let cursor = start - 1;
+  while (/\s/.test(masked[cursor] ?? "")) cursor--;
+  while (masked[cursor] === "(") {
+    cursor--;
+    while (/\s/.test(masked[cursor] ?? "")) cursor--;
+  }
+  if (cursor < 0) return true;
+  const tokenStart = cursor - 2;
+  return tokenStart >= 0 && masked.slice(tokenStart, cursor + 1).toLowerCase() === "and" &&
+    !/[a-z0-9_]/i.test(masked[tokenStart - 1] ?? "");
+}
+
+function hasSoqlConjunctBoundaryAfter(masked: string, end: number): boolean {
+  let cursor = end;
+  while (/\s/.test(masked[cursor] ?? "")) cursor++;
+  while (masked[cursor] === ")") {
+    cursor++;
+    while (/\s/.test(masked[cursor] ?? "")) cursor++;
+  }
+  if (cursor >= masked.length) return true;
+  return masked.slice(cursor, cursor + 3).toLowerCase() === "and" &&
+    !/[a-z0-9_]/i.test(masked[cursor + 3] ?? "");
+}
+
+function isSoqlGroupIntroducedByNot(masked: string, groupStart: number): boolean {
+  let cursor = groupStart - 1;
+  while (/\s/.test(masked[cursor] ?? "")) cursor--;
+  const tokenEnd = cursor + 1;
+  while (/[a-z0-9_]/i.test(masked[cursor] ?? "")) cursor--;
+  return masked.slice(cursor + 1, tokenEnd).toLowerCase() === "not";
+}
+
+function hasRequiredSoqlConjunct(value: string, requiredPredicate: string): boolean {
+  const masked = maskSoqlStrings(value);
+  if (!hasBalancedSoqlParentheses(masked)) return false;
+  const negatedGroups: boolean[] = [];
+  let negatedGroupDepth = 0;
+  let scannedUntil = 0;
+
+  const scanNegationStateTo = (end: number): boolean => {
+    for (; scannedUntil < end; scannedUntil++) {
+      if (masked[scannedUntil] === "(") {
+        const isNegated = isSoqlGroupIntroducedByNot(masked, scannedUntil);
+        negatedGroups.push(isNegated);
+        if (isNegated) negatedGroupDepth++;
+      } else if (masked[scannedUntil] === ")") {
+        if (negatedGroups.pop()) negatedGroupDepth--;
+      }
+    }
+    return negatedGroupDepth > 0;
+  };
+
+  let searchStart = 0;
+  while (searchStart <= value.length - requiredPredicate.length) {
+    const predicateStart = value.indexOf(requiredPredicate, searchStart);
+    if (predicateStart === -1) return false;
+    const predicateEnd = predicateStart + requiredPredicate.length;
+    if (
+      !scanNegationStateTo(predicateStart) &&
+      hasSoqlConjunctBoundaryBefore(masked, predicateStart) &&
+      hasSoqlConjunctBoundaryAfter(masked, predicateEnd)
+    ) {
+      return true;
+    }
+    searchStart = predicateStart + 1;
+  }
+  return false;
+}
+
+/**
+ * Locate a clause by keyword token boundaries (so `)ORDER BY` is recognized as
+ * readily as ` ORDER BY `) and return the text between the start keyword and
+ * the next terminating keyword.
+ */
+function extractSoqlClause(
+  query: string,
+  startPattern: RegExp,
+  endPattern: RegExp,
+): string | undefined {
+  const start = startPattern.exec(query);
+  if (!start) return undefined;
+  const contentStart = start.index + start[0].length;
+  endPattern.lastIndex = contentStart;
+  const end = endPattern.exec(query);
+  return query.slice(contentStart, end ? end.index : query.length);
+}
+
+const SOQL_WHERE_START_PATTERN = /\bwhere\b/i;
+const SOQL_WHERE_END_PATTERN =
+  /\b(?:order\s+by|group\s+by|with\s+data\s+category|limit|offset)\b/gi;
+
+/**
+ * Extract the raw WHERE clause from a SOQL query. Clause boundaries are
+ * located in the string-masked query (masking is length-preserving), so
+ * keyword matching tolerates any whitespace and quoted literals can never
+ * open or close the clause; the clause text is then sliced from the original
+ * query at those offsets so string values are preserved.
+ */
+function extractSoqlWhereClause(query: string): string | undefined {
+  const masked = maskSoqlStrings(query);
+  const start = SOQL_WHERE_START_PATTERN.exec(masked);
+  if (!start) return undefined;
+  const contentStart = start.index + start[0].length;
+  SOQL_WHERE_END_PATTERN.lastIndex = contentStart;
+  const end = SOQL_WHERE_END_PATTERN.exec(masked);
+  return query.slice(contentStart, end ? end.index : query.length);
+}
+
+const SOQL_DATA_CATEGORY_IDENTIFIER = String.raw`[a-z][a-z0-9_]*`;
+const SOQL_DATA_CATEGORY_SELECTION =
+  `(?:${SOQL_DATA_CATEGORY_IDENTIFIER}|\\(\\s*${SOQL_DATA_CATEGORY_IDENTIFIER}` +
+  `(?:\\s*,\\s*${SOQL_DATA_CATEGORY_IDENTIFIER})*\\s*\\))`;
+const SOQL_DATA_CATEGORY_SPECIFICATION =
+  `${SOQL_DATA_CATEGORY_IDENTIFIER}\\s+(?:at|above|below|above_or_below)\\s+` +
+  SOQL_DATA_CATEGORY_SELECTION;
+const SOQL_DATA_CATEGORY_CLAUSE_PATTERN = new RegExp(
+  `^${SOQL_DATA_CATEGORY_SPECIFICATION}` +
+    `(?:\\s+and\\s+${SOQL_DATA_CATEGORY_SPECIFICATION}){0,2}$`,
+  "i",
+);
+
+function validateSoqlDataCategoryClause(tool: IntegrationToolMeta, query: string): void {
+  const clause = extractSoqlClause(
+    collapseSoqlWhitespace(maskSoqlStrings(query)),
+    /\bwith\s+data\s+category\b/i,
+    /\b(?:order\s+by|group\s+by|having|limit|offset|for|update)\b/gi,
+  );
+  if (clause === undefined) return;
+  if (getToolId(tool) !== "salesforce__search_knowledge_articles") {
+    throw new TypeError("Salesforce curated tool does not allow data category filters");
+  }
+  if (!SOQL_DATA_CATEGORY_CLAUSE_PATTERN.test(clause.trim())) {
+    throw new TypeError("Salesforce curated tool SOQL contains an invalid data category filter");
+  }
+}
+
+function omitSoqlDataCategoryClause(query: string): string {
+  return query.replace(
+    /\bwith\s+data\s+category\b.*?(?=\b(?:order\s+by|group\s+by|having|limit|offset|for|update)\b|$)/i,
+    "",
+  );
+}
+
+function* iterateSoqlClauseFields(query: string): Generator<string> {
+  const masked = collapseSoqlWhitespace(maskSoqlStrings(query));
+  for (const match of masked.matchAll(/[a-z][a-z0-9_.]*/gi)) {
+    let operatorStart = match.index + match[0].length;
+    while (operatorStart < masked.length && masked[operatorStart] === " ") operatorStart++;
+    const remainder = masked.slice(operatorStart, operatorStart + 10).toLowerCase();
+    if (
+      remainder.startsWith("=") || remainder.startsWith("!=") ||
+      remainder.startsWith("<") || remainder.startsWith(">") ||
+      /^(?:like|not in|in|includes|excludes)(?:$|[ (])/.test(remainder)
+    ) yield match[0].toLowerCase();
+  }
+  for (const startPattern of [/\border\s+by\b/i, /\bgroup\s+by\b/i]) {
+    const clause = extractSoqlClause(
+      masked,
+      startPattern,
+      /\b(?:order\s+by|group\s+by|limit|offset|having|with)\b/gi,
+    );
+    if (!clause) continue;
+    let entryStart = 0;
+    while (entryStart <= clause.length) {
+      const separator = clause.indexOf(",", entryStart);
+      const entry = clause.slice(entryStart, separator === -1 ? clause.length : separator);
+      const normalizedEntry = collapseSoqlWhitespace(entry);
+      const firstSpace = normalizedEntry.indexOf(" ");
+      const field = firstSpace === -1 ? normalizedEntry : normalizedEntry.slice(0, firstSpace);
+      if (field && /^[a-z][a-z0-9_.]*$/i.test(field)) yield field.toLowerCase();
+      if (separator === -1) break;
+      entryStart = separator + 1;
+    }
+  }
+}
+
+function parseSoqlShape(query: string): { projection: string; object: string } | undefined {
+  const trimmed = query.trim();
+  const lower = trimmed.toLowerCase();
+  if (!lower.startsWith("select ")) return undefined;
+  const fromIndex = lower.indexOf(" from ", "select ".length);
+  if (fromIndex === -1) return undefined;
+  const projection = trimmed.slice("select ".length, fromIndex);
+  const object = /^[a-z][a-z0-9_]*/i.exec(trimmed.slice(fromIndex + " from ".length))?.[0];
+  return projection && object ? { projection, object } : undefined;
+}
+
+function validateCuratedSoql(tool: IntegrationToolMeta, args: Record<string, unknown>): void {
+  if (getToolId(tool) === "salesforce__run_soql_query") return;
+  const queryDefinition = tool.endpoint?.params?.q;
+  if (
+    queryDefinition?.in !== "query" ||
+    typeof queryDefinition.default !== "string" ||
+    typeof args.q !== "string" ||
+    args.q.trim() === ""
+  ) {
+    return;
+  }
+
+  const expected = collapseSoqlWhitespace(maskSoqlStrings(queryDefinition.default));
+  const supplied = collapseSoqlWhitespace(maskSoqlStrings(args.q));
+  if (/\/\*|\*\/|--/.test(supplied)) {
+    throw new TypeError("Salesforce curated tool SOQL does not allow comments");
+  }
+  if (/\bfor\s+(?:view|reference|update)\b/i.test(supplied)) {
+    throw new TypeError("Salesforce curated tool SOQL does not allow side-effecting clauses");
+  }
+  if (/\bupdate\s+(?:tracking|viewstat)\b/i.test(supplied)) {
+    throw new TypeError("Salesforce curated tool SOQL does not allow side-effecting clauses");
+  }
+  validateSoqlDataCategoryClause(tool, args.q);
+  const suppliedWithoutDataCategory = omitSoqlDataCategoryClause(supplied);
+  for (const match of suppliedWithoutDataCategory.matchAll(/[a-z][a-z0-9_]*\s*\(/gi)) {
+    const token = match[0].replace("(", "").trim().toLowerCase();
+    if (!["where", "and", "or", "not", "in", "includes", "excludes"].includes(token)) {
+      throw new TypeError("Salesforce curated tool SOQL does not allow predicate functions");
+    }
+  }
+  const expectedMatch = parseSoqlShape(expected);
+  const suppliedMatch = parseSoqlShape(supplied);
+  if (
+    !expectedMatch ||
+    !suppliedMatch ||
+    !hasExactSoqlShapeKeywords(supplied) ||
+    // Compare comma counts first so an attacker-sized projection is rejected
+    // without materializing and sorting an unbounded field array.
+    countSoqlCommas(suppliedMatch.projection) !== countSoqlCommas(expectedMatch.projection) ||
+    normalizeSoqlProjection(suppliedMatch.projection).join(",") !==
+      normalizeSoqlProjection(expectedMatch.projection).join(",") ||
+    suppliedMatch.object.toLowerCase() !== expectedMatch.object.toLowerCase()
+  ) {
+    throw new TypeError(
+      "Salesforce curated tool SOQL must preserve its selected fields and object",
+    );
+  }
+
+  const allowedFields = new Set(
+    normalizeSoqlProjection(expectedMatch.projection).map(removeSoqlWhitespace),
+  );
+  for (const field of iterateSoqlClauseFields(queryDefinition.default)) allowedFields.add(field);
+  for (const field of iterateSoqlClauseFields(args.q)) {
+    if (!allowedFields.has(field)) {
+      throw new TypeError(
+        "Salesforce curated tool SOQL may only filter or sort by authorized root-object fields",
+      );
+    }
+  }
+
+  const expectedWhere = extractSoqlWhereClause(queryDefinition.default);
+  if (expectedWhere) {
+    const suppliedWhere = extractSoqlWhereClause(args.q);
+    const suppliedMaskedWhere = extractSoqlWhereClause(supplied);
+    const requiredPredicate = normalizeSoqlClause(expectedWhere);
+    const actualPredicate = suppliedWhere ? normalizeSoqlClause(suppliedWhere) : "";
+    if (
+      !hasRequiredSoqlConjunct(actualPredicate, requiredPredicate) ||
+      !suppliedMaskedWhere || /\bor\b/i.test(suppliedMaskedWhere)
+    ) {
+      throw new TypeError("Salesforce curated tool SOQL must preserve its policy predicates");
+    }
+  }
+}
+
 function buildSalesforceRequest(
   endpoint: SalesforceEndpoint,
   args: Record<string, unknown>,
@@ -735,6 +1098,7 @@ export function createSalesforceServiceAccountToolSourceWithTransport(
       }
       const args = snapshotArguments(rawArgs);
       validateEndpointInputs(tool.endpoint, args);
+      validateCuratedSoql(tool, args);
       const credentialResolution = resolveCredentials();
       if (credentialResolution.status !== "ok") return credentialResolution.result;
 

@@ -505,6 +505,8 @@ async function transpileDocumentExtractionWorker(
       const workerName of [
         "upload-extraction-worker",
         "native-progress-extraction-worker",
+        "native-extraction",
+        "native-extraction-process",
       ]
     ) {
       const workerSrc =

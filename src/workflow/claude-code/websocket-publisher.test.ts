@@ -866,6 +866,7 @@ describe("createWebSocketHandler", () => {
         getRunId: () => "run-1",
         registry,
         upgradeWebSocket,
+        retainRunOnClose: true,
         onConnection: (registration) => {
           connected.push(registration);
         },
@@ -972,6 +973,38 @@ describe("createWebSocketHandler", () => {
       replacementSocket.close();
       await settleCommands();
       assertEquals(closed, [connected[1]?.generation]);
+    } finally {
+      registry.close();
+    }
+  });
+
+  it("releases registry state when sockets with arbitrary run IDs close", async () => {
+    const firstSocket = new FakeWebSocket();
+    const secondSocket = new FakeWebSocket();
+    const sockets = [firstSocket, secondSocket];
+    let runId = "attacker-run-1";
+    const registry = new AgentControllerRegistry();
+    const handler = createWebSocketHandler({
+      getRunId: () => runId,
+      registry,
+      upgradeWebSocket: () => ({
+        socket: sockets.shift() as unknown as WebSocket,
+        response: new Response(),
+      }),
+      onConnection: () => {},
+    });
+
+    try {
+      for (const socket of [firstSocket, secondSocket]) {
+        handler(new Request("https://example.test/ws"));
+        socket.emit("open");
+        await settleCommands();
+        assertExists(registry.get(runId));
+        socket.close();
+        await settleCommands();
+        assertEquals(registry.get(runId), undefined);
+        runId = "attacker-run-2";
+      }
     } finally {
       registry.close();
     }

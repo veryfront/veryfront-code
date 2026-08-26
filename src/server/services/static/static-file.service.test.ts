@@ -378,9 +378,44 @@ describe("server/services/static/static-file.service", () => {
         "the stale manifest entry must not survive a manifest.json rebuild",
       );
     });
+
+    it("rejects manifest assets outside the configured build output", async () => {
+      const manifest = {
+        chunks: {
+          chunks: { main: { file: "../../../src/private.js" } },
+          shared: [],
+        },
+        routes: [],
+      };
+      const files = new Map<string, Uint8Array>([
+        [
+          "/project/dist/_veryfront/manifest.json",
+          new TextEncoder().encode(JSON.stringify(manifest)),
+        ],
+        ["/project/src/private.js", new TextEncoder().encode("private source")],
+      ]);
+      __injectDepsForTests({ manifestCache: new Map(), manifestLoading: new Map() });
+
+      const service = new StaticFileService(createMockFsRepo(files));
+      assertEquals(await service.resolveFile("/_veryfront/private.js", makeOptions()), null);
+    });
   });
 
   describe("resolveFile", () => {
+    it("serves public files locally without validating an unused embedded output", async () => {
+      const data = new TextEncoder().encode("public");
+      const service = new StaticFileService(
+        createMockFsRepo(new Map([["/project/public/hello.txt", data]])),
+      );
+
+      const result = await service.resolveFile(
+        "/hello.txt",
+        makeOptions({ isLocalProject: true, buildOutDir: "../host/dist" }),
+      );
+
+      assertEquals(result?.data, data);
+      assertEquals(result?.source, "public");
+    });
     it("serves project files through the scoped SecureFs boundary", async () => {
       __injectDepsForTests({
         manifestCache: new Map(),
@@ -552,32 +587,31 @@ describe("server/services/static/static-file.service", () => {
       assertEquals(result.cacheStrategy, "immutable");
     });
 
-    it("serves an absolute build output without widening project access", async () => {
+    it("does not serve files from a build output outside the project", async () => {
       __injectDepsForTests({
         manifestCache: new Map(),
         manifestLoading: new Map(),
       });
 
-      const runtimePath = "/_veryfront/hydration-runtime.2b3c4d5e.js";
-      const buildOutDir = "/srv/veryfront-output";
-      const outputPath = `${buildOutDir}${runtimePath}`;
-      const fileData = new TextEncoder().encode("export const release = true;");
+      const runtimePath = "/passwd";
+      const buildOutDir = "/etc";
       const files = new Map<string, Uint8Array>([
-        [outputPath, fileData],
-        ["/project/src/private.js", new TextEncoder().encode("private source")],
+        ["/etc/passwd", new TextEncoder().encode("host data")],
       ]);
       const adapter = createNativeFsAdapter(files);
       const service = new StaticFileService();
       const options = makeOptions({ adapter, buildOutDir });
 
-      const result = await service.resolveFile(runtimePath, options);
-
-      assertExists(result);
-      assertEquals(result.path, outputPath);
-      assertEquals(result.source, "dist");
-      assertEquals(result.data, fileData);
-      assertEquals(result.cacheStrategy, "immutable");
-      assertEquals(await service.resolveFile("/src/private.js", options), null);
+      await assertRejects(
+        () => service.resolveFile(runtimePath, options),
+        Error,
+        "inside the project",
+      );
+      await assertRejects(
+        () => service.resolveFile(runtimePath, makeOptions({ adapter, buildOutDir: "../etc" })),
+        Error,
+        "inside the project",
+      );
     });
 
     it("does not widen source access when build output contains the project", async () => {
@@ -587,11 +621,15 @@ describe("server/services/static/static-file.service", () => {
       const adapter = createNativeFsAdapter(files);
       const service = new StaticFileService();
 
-      const malformedRootResult = await service.resolveFile(
-        "/src/private.js",
-        makeOptions({ adapter, buildOutDir: "." }),
+      await assertRejects(
+        () =>
+          service.resolveFile(
+            "/src/private.js",
+            makeOptions({ adapter, buildOutDir: "." }),
+          ),
+        Error,
+        "inside the project",
       );
-      assertEquals(malformedRootResult, null);
     });
 
     it("serves built nested index pages through clean route URLs", async () => {

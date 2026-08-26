@@ -214,6 +214,40 @@ it("MemoryTokenStore conditionally replaces only the observed token revision", a
   assertEquals((await store.getTokens("svc", "alice"))?.accessToken, "replacement");
 });
 
+it("MemoryTokenStore conditionally clears only the observed token revision", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens("svc", "alice", tokens("original"));
+  const snapshot = await store.getTokenSnapshot("svc", "alice");
+  if (!snapshot) throw new Error("expected a token snapshot");
+
+  // A newer write (for example a reauthorization) supersedes the snapshot.
+  await store.setTokens("svc", "alice", tokens("reauthorized"));
+  assertEquals(
+    await store.compareAndClearTokens("svc", "alice", snapshot.revision),
+    false,
+  );
+  assertEquals((await store.getTokens("svc", "alice"))?.accessToken, "reauthorized");
+
+  const current = await store.getTokenSnapshot("svc", "alice");
+  if (!current) throw new Error("expected the current token snapshot");
+  assertEquals(await store.compareAndClearTokens("svc", "alice", current.revision), true);
+  assertEquals(await store.getTokens("svc", "alice"), null);
+  assertEquals(await store.compareAndClearTokens("svc", "alice", current.revision), false);
+});
+
+it("MemoryTokenStore bounds and canonicalizes conditional-clear revisions", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens("svc", "alice", tokens("original"));
+  for (const revision of ["", " revision", "rev\nision", "x".repeat(257)]) {
+    await assertRejects(
+      () => store.compareAndClearTokens("svc", "alice", revision),
+      TypeError,
+      "Expected OAuth token revision",
+    );
+  }
+  assertEquals((await store.getTokens("svc", "alice"))?.accessToken, "original");
+});
+
 it("MemoryTokenStore bounds and canonicalizes expected token revisions", async () => {
   const store = new MemoryTokenStore();
   await store.setTokens("svc", "alice", tokens("original"));

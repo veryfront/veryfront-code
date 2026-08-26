@@ -1697,6 +1697,328 @@ it("OAuthService.getAccessToken treats an epoch expiry as expired", async () => 
   assertEquals(await service.getAccessToken("alice"), null);
 });
 
+it("OAuthService.getAccessToken clears legacy full-Drive tokens before use", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens("drive", "alice", {
+    accessToken: "legacy-drive-token",
+    refreshToken: "legacy-drive-refresh",
+    scope: "https://www.googleapis.com/auth/drive",
+    expiresAt: Date.now() + 60_000,
+  });
+  const service = new OAuthService(
+    { ...TEST_CONFIG, serviceId: "drive", defaultScopes: ["drive.readonly", "drive.file"] },
+    store,
+    (key) => ENV[key],
+  );
+
+  assertEquals(await service.getAccessToken("alice"), null);
+  assertEquals(await store.getTokens("drive", "alice"), null);
+});
+
+it("OAuthService.getAccessToken clears legacy Outlook group grants before refresh", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens("outlook", "alice", {
+    accessToken: "legacy-outlook-token",
+    refreshToken: "legacy-outlook-refresh",
+    scope: "Mail.Read Group.Read.All Group-Conversation.Read.All offline_access",
+    expiresAt: Date.now() - 1,
+  });
+  const service = new OAuthService(
+    { ...TEST_CONFIG, serviceId: "outlook", defaultScopes: ["Mail.Read", "offline_access"] },
+    store,
+    (key) => ENV[key],
+  );
+  let fetchCalls = 0;
+  installMockFetch(
+    (() => {
+      fetchCalls++;
+      return Promise.resolve(Response.json({ access_token: "unexpected" }));
+    }) as typeof fetch,
+  );
+
+  try {
+    assertEquals(await service.getAccessToken("alice"), null);
+    assertEquals(fetchCalls, 0);
+    assertEquals(await store.getTokens("outlook", "alice"), null);
+  } finally {
+    restoreMockFetch();
+  }
+});
+
+it("OAuthService preserves an explicitly authorized full-Drive grant", async () => {
+  const store = new MemoryTokenStore();
+  const service = new OAuthService(
+    { ...TEST_CONFIG, serviceId: "drive", defaultScopes: ["drive.readonly", "drive.file"] },
+    store,
+    (key) => ENV[key],
+  );
+  const authorization = await service.createAuthorizationUrl({
+    redirectUri: "https://app.test/callback",
+    scopes: ["https://www.googleapis.com/auth/drive"],
+  });
+  assertEquals(authorization.state.scopeSource, "explicit");
+
+  await store.setTokens("drive", "alice", {
+    accessToken: "explicit-full-drive-token",
+    scope: "https://www.googleapis.com/auth/drive",
+    scopeSource: authorization.state.scopeSource,
+    requestedScope: authorization.state.scopes.join(" "),
+    expiresAt: Date.now() + 60_000_000,
+  });
+
+  assertEquals(await service.getAccessToken("alice"), "explicit-full-drive-token");
+});
+
+it("OAuthService does not reserve the Drive service ID for a custom broad config", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens("drive", "alice", {
+    accessToken: "custom-drive-token",
+    scope: "https://www.googleapis.com/auth/drive",
+    expiresAt: Date.now() + 60_000_000,
+  });
+  const service = new OAuthService(
+    {
+      ...TEST_CONFIG,
+      serviceId: "drive",
+      defaultScopes: ["https://www.googleapis.com/auth/drive"],
+    },
+    store,
+    (key) => ENV[key],
+  );
+
+  assertEquals(await service.getAccessToken("alice"), "custom-drive-token");
+});
+
+it("OAuthService does not classify a URL containing the Drive scope as that scope", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens("drive", "alice", {
+    accessToken: "non-drive-token",
+    scope: "https://attacker.example/https://www.googleapis.com/auth/drive",
+    expiresAt: Date.now() + 60_000_000,
+  });
+  const service = new OAuthService(
+    { ...TEST_CONFIG, serviceId: "drive", defaultScopes: ["drive.readonly", "drive.file"] },
+    store,
+    (key) => ENV[key],
+  );
+
+  assertEquals(await service.getAccessToken("alice"), "non-drive-token");
+});
+
+it("OAuthService.getAccessToken serves explicitly requested read-only Drive grants", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens("drive", "alice", {
+    accessToken: "read-only-drive-token",
+    scope: "https://www.googleapis.com/auth/drive.readonly",
+    expiresAt: Date.now() + 60_000_000,
+  });
+  const service = new OAuthService(
+    { ...TEST_CONFIG, serviceId: "drive" },
+    store,
+    (key) => ENV[key],
+  );
+
+  assertEquals(await service.getAccessToken("alice"), "read-only-drive-token");
+  assertNotEquals(await store.getTokens("drive", "alice"), null);
+});
+
+it("OAuthService.getAccessToken does not clear a reauthorized Drive grant over a stale legacy read", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens("drive", "alice", {
+    accessToken: "legacy-drive-token",
+    scope: "https://www.googleapis.com/auth/drive",
+    expiresAt: Date.now() + 60_000,
+  });
+  const staleSnapshot = await store.getTokenSnapshot("drive", "alice");
+  // The user completes reauthorization after the legacy row was read.
+  await store.setTokens("drive", "alice", {
+    accessToken: "fresh-drive-token",
+    scope:
+      "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file",
+    expiresAt: Date.now() + 60_000_000,
+  });
+
+  const racingStore: TokenStore = {
+    getTokens: (serviceId, userId) => store.getTokens(serviceId, userId),
+    getTokenSnapshot: () => Promise.resolve(staleSnapshot),
+    setTokens: (serviceId, userId, tokens) => store.setTokens(serviceId, userId, tokens),
+    compareAndClearTokens: (serviceId, userId, expectedRevision) =>
+      store.compareAndClearTokens(serviceId, userId, expectedRevision),
+    clearTokens: (serviceId, userId) => store.clearTokens(serviceId, userId),
+    setState: (state, meta) => store.setState(state, meta),
+    consumeState: (state) => store.consumeState(state),
+  };
+  const service = new OAuthService(
+    { ...TEST_CONFIG, serviceId: "drive" },
+    racingStore,
+    (key) => ENV[key],
+  );
+
+  assertEquals(await service.getAccessToken("alice"), null);
+  assertEquals((await store.getTokens("drive", "alice"))?.accessToken, "fresh-drive-token");
+});
+
+it("OAuthService.getAccessToken leaves a legacy Drive row alone without a revision-guarded delete", async () => {
+  let clearTokensCalls = 0;
+  const legacyTokens: OAuthTokens = {
+    accessToken: "legacy-drive-token",
+    scope: "https://www.googleapis.com/auth/drive",
+    expiresAt: Date.now() + 60_000_000,
+  };
+  const store: TokenStore = {
+    getTokens: () => Promise.resolve(legacyTokens),
+    setTokens: () => Promise.resolve(),
+    clearTokens: () => {
+      clearTokensCalls++;
+      return Promise.resolve();
+    },
+    setState: () => Promise.resolve(),
+    consumeState: () => Promise.resolve(null),
+  };
+  const service = new OAuthService(
+    { ...TEST_CONFIG, serviceId: "drive" },
+    store,
+    (key) => ENV[key],
+  );
+
+  assertEquals(await service.getAccessToken("alice"), null);
+  assertEquals(clearTokensCalls, 0);
+});
+
+it("OAuthService.getAccessToken rechecks superseded grants after acquiring the refresh lock", async () => {
+  const initial = {
+    revision: "revision-1",
+    tokens: {
+      accessToken: "expired-readonly",
+      refreshToken: "refresh-1",
+      scope:
+        "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file",
+      expiresAt: Date.now() - 1,
+    } satisfies OAuthTokens,
+  };
+  const superseded = {
+    revision: "revision-2",
+    tokens: {
+      accessToken: "legacy-drive-token",
+      refreshToken: "legacy-refresh",
+      scope: "https://www.googleapis.com/auth/drive",
+      expiresAt: Date.now() - 1,
+    } satisfies OAuthTokens,
+  };
+  let snapshotReads = 0;
+  let compareAndSetCalls = 0;
+  let compareAndClearCalls = 0;
+  const store: TokenStore = {
+    getTokens: () => Promise.resolve(superseded.tokens),
+    getTokenSnapshot: () => {
+      snapshotReads++;
+      return Promise.resolve(snapshotReads === 1 ? initial : superseded);
+    },
+    setTokens: () => Promise.resolve(),
+    compareAndSetTokens: () => {
+      compareAndSetCalls++;
+      return Promise.resolve(true);
+    },
+    compareAndClearTokens: () => {
+      compareAndClearCalls++;
+      return Promise.resolve(true);
+    },
+    withTokenRefreshLock: (_serviceId, _userId, operation) => operation(),
+    clearTokens: () => Promise.resolve(),
+    setState: () => Promise.resolve(),
+    consumeState: () => Promise.resolve(null),
+  };
+  const service = new OAuthService(
+    { ...TEST_CONFIG, serviceId: "drive" },
+    store,
+    (key) => ENV[key],
+  );
+  let fetchCalls = 0;
+  installMockFetch(
+    (() => {
+      fetchCalls++;
+      return Promise.resolve(Response.json({ access_token: "unexpected" }));
+    }) as typeof fetch,
+  );
+
+  try {
+    assertEquals(await service.getAccessToken("alice"), null);
+    assertEquals(fetchCalls, 0);
+    assertEquals(compareAndSetCalls, 0);
+    assertEquals(compareAndClearCalls, 1);
+  } finally {
+    restoreMockFetch();
+  }
+});
+
+it("OAuthService.getAccessToken does not return a superseded latest token after refresh failure", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens("drive", "alice", {
+    accessToken: "expired-readonly",
+    refreshToken: "refresh-1",
+    scope:
+      "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file",
+    expiresAt: Date.now() - 1,
+  });
+  const service = new OAuthService(
+    { ...TEST_CONFIG, serviceId: "drive" },
+    store,
+    (key) => ENV[key],
+  );
+  installMockFetch(
+    (async () => {
+      await store.setTokens("drive", "alice", {
+        accessToken: "legacy-drive-token",
+        refreshToken: "legacy-refresh",
+        scope: "https://www.googleapis.com/auth/drive",
+        expiresAt: Date.now() + 60_000,
+      });
+      return Response.json({ error: "temporarily_unavailable" }, { status: 503 });
+    }) as typeof fetch,
+  );
+
+  try {
+    assertEquals(await service.getAccessToken("alice"), null);
+    assertEquals(await store.getTokens("drive", "alice"), null);
+  } finally {
+    restoreMockFetch();
+  }
+});
+
+it("OAuthService.getAccessToken classifies refreshed scopes before storing them", async () => {
+  const store = new MemoryTokenStore();
+  await store.setTokens("drive", "alice", {
+    accessToken: "expired-unknown-scope",
+    refreshToken: "refresh-1",
+    expiresAt: Date.now() - 1,
+  });
+  const service = new OAuthService(
+    { ...TEST_CONFIG, serviceId: "drive", defaultScopes: ["drive.readonly", "drive.file"] },
+    store,
+    (key) => ENV[key],
+  );
+  let fetchCalls = 0;
+  installMockFetch(
+    (() => {
+      fetchCalls++;
+      return Promise.resolve(Response.json({
+        access_token: "refreshed-broad-drive",
+        refresh_token: "refresh-2",
+        scope: "https://www.googleapis.com/auth/drive",
+        expires_in: 3_600,
+      }));
+    }) as typeof fetch,
+  );
+
+  try {
+    assertEquals(await service.getAccessToken("alice"), null);
+    assertEquals(fetchCalls, 1);
+    assertEquals(await store.getTokens("drive", "alice"), null);
+  } finally {
+    restoreMockFetch();
+  }
+});
+
 it("OAuthService.getAccessToken uses a non-refreshable token until its real expiry", async () => {
   const store = makeAuthedTokenStore();
   store.getTokens = () =>
