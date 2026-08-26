@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { decodeAuthBase64Url, encodeAuthBase64Url } from "./base64url.ts";
 import { openAuthCookieEnvelope, sealAuthCookieEnvelope } from "./crypto.ts";
 import {
+  clearExcessTransactionCookies,
   clearSessionCookie,
   clearTransactionCookie,
   createSessionCookie,
@@ -357,6 +358,54 @@ describe("security/application-auth cookie serialization", () => {
         maxLifetimeSeconds: 600,
       }),
       { nonce: "nonce-b" },
+    );
+  });
+
+  it("bounds accumulated transaction cookies without invalidating the selected transaction", async () => {
+    const longReturnTo = `/${"a".repeat(2_047)}`;
+    const txA = await createTransactionCookie({
+      secret: SESSION_SECRET,
+      state: STATE_A,
+      payload: { nonce: "nonce-a", returnTo: longReturnTo },
+      maxAgeSeconds: 600,
+      now: NOW,
+      randomBytes: fixedRandom,
+    });
+    const txB = await createTransactionCookie({
+      secret: SESSION_SECRET,
+      state: STATE_B,
+      payload: { nonce: "nonce-b", returnTo: longReturnTo },
+      maxAgeSeconds: 600,
+      now: NOW,
+      randomBytes: fixedRandom,
+    });
+    const stateC = "C".repeat(43);
+    const txC = await createTransactionCookie({
+      secret: SESSION_SECRET,
+      state: stateC,
+      payload: { nonce: "nonce-c", returnTo: longReturnTo },
+      maxAgeSeconds: 600,
+      now: NOW,
+      randomBytes: fixedRandom,
+    });
+    const header = `${cookiePair(txA)}; ${cookiePair(txB)}; ${SESSION_COOKIE_NAME}=${
+      "s".repeat(2_000)
+    }`;
+
+    assertEquals(header.length > 8_192, false);
+    assertEquals(clearExcessTransactionCookies(header, txC), [clearTransactionCookie(STATE_A)]);
+
+    const accumulated = `${cookiePair(txA)}; ${cookiePair(txB)}; ${cookiePair(txC)}`;
+    assertEquals(accumulated.length > 8_192, true);
+    assertEquals(
+      await readTransactionCookie({
+        secret: SESSION_SECRET,
+        state: STATE_B,
+        cookieHeader: accumulated,
+        now: NOW,
+        maxLifetimeSeconds: 600,
+      }),
+      { nonce: "nonce-b", returnTo: longReturnTo },
     );
   });
 

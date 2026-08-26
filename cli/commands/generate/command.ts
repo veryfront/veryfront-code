@@ -82,7 +82,7 @@ async function warnIfOutsideProject(projectDir: string): Promise<void> {
   );
 }
 
-async function getPreferredRouter(
+export async function getPreferredRouter(
   projectDir: string,
 ): Promise<"pages-router" | "app-router"> {
   try {

@@ -1,6 +1,7 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 
 export interface ActionBody {
   id: string;
@@ -21,6 +22,7 @@ export interface ActionRequestParams {
   config?: VeryfrontConfig;
   mode?: "development" | "production";
   applicationIdentityHeaderNames?: readonly string[];
+  applicationIdentity?: ApplicationIdentity | null;
 }
 
 export interface RSCEndpointParams {
@@ -41,4 +43,5 @@ export interface RSCEndpointParams {
   mode?: "development" | "production";
   nonce?: string;
   applicationIdentityHeaderNames?: readonly string[];
+  applicationIdentity?: ApplicationIdentity | null;
 }

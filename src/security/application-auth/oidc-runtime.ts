@@ -15,6 +15,7 @@ import {
 import type { OidcAuthConfig } from "#veryfront/security/http/middleware/types.ts";
 import { encodeAuthBase64Url } from "./base64url.ts";
 import {
+  clearExcessTransactionCookies,
   clearSessionCookie,
   clearTransactionCookie,
   createSessionCookie,
@@ -243,17 +244,23 @@ export function createOidcApplicationAuthRuntime(
     authorizationUrl.searchParams.set("code_challenge_method", "S256");
 
     const response = redirectResponse(authorizationUrl.href, 302);
-    response.headers.append(
-      "Set-Cookie",
-      await createTransactionCookie({
-        secret: runtime.sessionSecret,
-        payload: { v: 1, nonce, verifier, returnTo, binding },
-        maxAgeSeconds: TRANSACTION_TTL_SECONDS,
-        now: now(),
-        state,
-        randomBytes,
-      }),
-    );
+    const transactionCookie = await createTransactionCookie({
+      secret: runtime.sessionSecret,
+      payload: { v: 1, nonce, verifier, returnTo, binding },
+      maxAgeSeconds: TRANSACTION_TTL_SECONDS,
+      now: now(),
+      state,
+      randomBytes,
+    });
+    for (
+      const clearCookie of clearExcessTransactionCookies(
+        request.headers.get("cookie"),
+        transactionCookie,
+      )
+    ) {
+      response.headers.append("Set-Cookie", clearCookie);
+    }
+    response.headers.append("Set-Cookie", transactionCookie);
     return response;
   }
 

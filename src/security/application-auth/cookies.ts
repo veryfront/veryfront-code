@@ -5,7 +5,8 @@ export const SESSION_COOKIE_NAME = "__Host-vf_session";
 
 const TRANSACTION_COOKIE_PREFIX = "__Host-vf_oidc_tx_";
 const STATE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
-const MAX_COOKIE_HEADER_CHARS = 8_192;
+const MAX_SET_COOKIE_HEADER_CHARS = 8_192;
+const MAX_COOKIE_HEADER_CHARS = 64 * 1_024;
 const COOKIE_ATTRIBUTES = "Path=/; HttpOnly; Secure; SameSite=Lax";
 
 interface CreateAuthCookieOptions {
@@ -87,6 +88,63 @@ export function getTransactionCookieName(state: string): string {
   return `${TRANSACTION_COOKIE_PREFIX}${state}`;
 }
 
+/** Clear older transaction cookies until the next request fits the cookie-header budget. */
+export function clearExcessTransactionCookies(
+  cookieHeader: string | null | undefined,
+  newTransactionCookie: string,
+): string[] {
+  if (typeof cookieHeader !== "string" || cookieHeader.length > MAX_COOKIE_HEADER_CHARS) return [];
+  const newPair = newTransactionCookie.split(";", 1)[0]?.trim() ?? "";
+  if (!transactionStateFromPair(newPair)) return [];
+
+  const transactions: Array<{ pair: string; state: string }> = [];
+  let retainedLength = newPair.length;
+  let retainedCount = 1;
+  for (const rawPart of cookieHeader.split(";")) {
+    const pair = rawPart.trim();
+    if (pair.length === 0) continue;
+    const state = transactionStateFromPair(pair);
+    if (state !== null) {
+      transactions.push({ pair, state });
+      continue;
+    }
+    retainedLength += (retainedCount === 0 ? 0 : 2) + pair.length;
+    retainedCount += 1;
+  }
+
+  const retainedStates = new Set<string>();
+  for (let index = transactions.length - 1; index >= 0; index -= 1) {
+    const transaction = transactions[index]!;
+    const nextLength = retainedLength + (retainedCount === 0 ? 0 : 2) + transaction.pair.length;
+    if (
+      nextLength <= MAX_SET_COOKIE_HEADER_CHARS &&
+      !retainedStates.has(transaction.state)
+    ) {
+      retainedStates.add(transaction.state);
+      retainedLength = nextLength;
+      retainedCount += 1;
+    }
+  }
+
+  const clearedStates = new Set<string>();
+  const clearCookies: string[] = [];
+  for (const transaction of transactions) {
+    if (retainedStates.has(transaction.state) || clearedStates.has(transaction.state)) continue;
+    clearedStates.add(transaction.state);
+    clearCookies.push(clearTransactionCookie(transaction.state));
+  }
+  return clearCookies;
+}
+
+function transactionStateFromPair(pair: string): string | null {
+  const separator = pair.indexOf("=");
+  if (separator < 0) return null;
+  const name = pair.slice(0, separator);
+  if (!name.startsWith(TRANSACTION_COOKIE_PREFIX)) return null;
+  const state = name.slice(TRANSACTION_COOKIE_PREFIX.length);
+  return STATE_PATTERN.test(state) ? state : null;
+}
+
 async function createCookie(
   options: CreateAuthCookieOptions & {
     readonly purpose: "session" | "transaction";
@@ -105,7 +163,7 @@ async function createCookie(
   });
   const setCookie =
     `${options.cookieName}=${value}; ${COOKIE_ATTRIBUTES}; Max-Age=${options.maxAgeSeconds}`;
-  if (setCookie.length > MAX_COOKIE_HEADER_CHARS) {
+  if (setCookie.length > MAX_SET_COOKIE_HEADER_CHARS) {
     throw new TypeError("Auth cookie Set-Cookie header exceeds the size limit");
   }
   return setCookie;

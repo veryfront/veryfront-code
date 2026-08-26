@@ -108,6 +108,7 @@ export async function handleRSCEndpoint(
     mode,
     nonce,
     applicationIdentityHeaderNames,
+    applicationIdentity,
   }: RSCEndpointParams,
 ): Promise<Response | null> {
   if (!pathname.startsWith("/_veryfront/rsc/")) {
@@ -269,6 +270,7 @@ export async function handleRSCEndpoint(
           config,
           mode,
           applicationIdentityHeaderNames,
+          applicationIdentity,
         });
       } catch (e) {
         metrics.recordRSC("error");

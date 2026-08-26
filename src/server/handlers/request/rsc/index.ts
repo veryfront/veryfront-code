@@ -76,6 +76,7 @@ export class RSCHandler extends BaseHandler {
             mode: isRSCProductionMode(ctx) ? "production" : "development",
             nonce,
             applicationIdentityHeaderNames: ctx.applicationIdentityHeaderNames,
+            applicationIdentity: ctx.applicationIdentity ?? null,
           });
         const fsAdapter = ctx.adapter.fs;
         const isMultiProject = dependencyPinningIdentity.projectSlug &&

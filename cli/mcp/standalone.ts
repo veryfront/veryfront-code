@@ -17,6 +17,7 @@ import {
   type ScaffoldHttpMethod,
   scaffoldProjectFile,
 } from "../scaffold/engine.ts";
+import { getPreferredRouter } from "../commands/generate/command.ts";
 import { DevServerClient } from "./dev-server-client.ts";
 import { startStdioJsonRpc } from "./stdio.ts";
 import {
@@ -460,6 +461,7 @@ export class StandaloneMCPServer {
             type: parsed.type,
             name: parsed.name,
             methods: parsed.methods,
+            router: await getPreferredRouter(projectDir),
             resultPathMode: "relative",
           });
         },

@@ -55,6 +55,8 @@ import {
   snapshotRscActionInvocationArgs,
 } from "./action-authorization-snapshot.ts";
 import { createApplicationRequestHeaders } from "#veryfront/security/http/application-request.ts";
+import { snapshotApplicationIdentity } from "#veryfront/security/application-auth/identity.ts";
+import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 
 const logger = serverLogger.component("rsc");
 const apply = Reflect.apply;
@@ -213,6 +215,7 @@ interface MutableActionAuthorizationRequest {
   method: string;
   headers: Readonly<RscActionAuthorizationHeaders>;
   signal: AbortSignal;
+  identity?: ApplicationIdentity;
 }
 
 export type ActionModuleLoader = typeof loadModuleFromSource;
@@ -283,6 +286,7 @@ async function handleActionRequestInner(
     config,
     mode,
     applicationIdentityHeaderNames,
+    applicationIdentity,
   }: ActionRequestParams,
   resolveAuthorization: ActionAuthorizationResolver,
   actionModuleLoader: ActionModuleLoader = loadModuleFromSource,
@@ -350,6 +354,7 @@ async function handleActionRequestInner(
       mode,
     },
     applicationIdentityHeaderNames,
+    applicationIdentity,
     authorizationTiming,
   );
   if (authorizationResponse) return authorizationResponse;
@@ -513,6 +518,7 @@ function createAuthorizationRequest(
   request: Request,
   signal: AbortSignal,
   applicationIdentityHeaderNames?: readonly string[],
+  applicationIdentity?: ApplicationIdentity | null,
 ): Readonly<RscActionAuthorizationRequest> {
   const headers = createObject(null) as Record<string, string>;
   const sourceHeaders = apply(requestHeadersGetter, request, []) as Headers;
@@ -539,6 +545,13 @@ function createAuthorizationRequest(
   );
   defineImmutableData(authorizationRequest, "headers", headers);
   defineImmutableData(authorizationRequest, "signal", signal);
+  if (applicationIdentity != null) {
+    defineImmutableData(
+      authorizationRequest,
+      "identity",
+      snapshotApplicationIdentity(applicationIdentity),
+    );
+  }
   return freeze(authorizationRequest);
 }
 
@@ -670,6 +683,7 @@ async function authorizeActionRequest(
   request: Request,
   context: ActionAuthorizationContextInput,
   applicationIdentityHeaderNames: readonly string[] | undefined,
+  applicationIdentity: ApplicationIdentity | null | undefined,
   timing: Readonly<ActionAuthorizationTiming>,
 ): Promise<Response | null> {
   let lease: ReturnType<typeof acquireContractLease> | undefined;
@@ -727,7 +741,12 @@ async function authorizeActionRequest(
     if (terminationStarted) throw terminationReason;
 
     const candidate = binding.provider.authorize(
-      createAuthorizationRequest(request, authorizationSignal, applicationIdentityHeaderNames),
+      createAuthorizationRequest(
+        request,
+        authorizationSignal,
+        applicationIdentityHeaderNames,
+        applicationIdentity,
+      ),
       snapshotAuthorizationContext(context),
     );
     if (typeof candidate === "boolean") {
