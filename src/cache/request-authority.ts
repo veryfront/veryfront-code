@@ -25,6 +25,7 @@ export type CacheRequestContext = {
   projectSlug?: string;
 };
 
+/** The credential and project reference a cache backend read is made under. */
 export interface ResolvedCacheAuthority {
   token: string | null;
   projectRef: string | null;

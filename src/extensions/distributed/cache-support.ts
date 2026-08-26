@@ -3,10 +3,15 @@
 export { MAX_CACHE_REVISION_LENGTH } from "#veryfront/cache/types.ts";
 export type {
   CacheBackend,
+  CacheReadOptions,
   CacheRevisionMutation,
   CacheRevisionSnapshot,
   RevisionedCacheBackend,
 } from "#veryfront/cache/types.ts";
+// `CacheBackend.cacheAuthority` and `CacheReadOptions.onAuthority` are typed
+// on this, so implementing or wrapping those members needs it importable from
+// the same public entrypoint as the contract itself.
+export type { ResolvedCacheAuthority } from "#veryfront/cache/request-authority.ts";
 export {
   assertCacheReadMaximumBytes,
   assertCacheValueWithinLimit,

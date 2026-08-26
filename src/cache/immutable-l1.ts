@@ -235,10 +235,14 @@ export function resolveImmutableL1Scope(
 
 interface ImmutableL1Entry {
   cacheKey: string;
+  /** Prefix bucket the entry is indexed under; see `bucketPrefixOf`. */
+  bucketPrefix: string;
   value: string;
   valueBytes: number;
-  readStartedAtMs: number;
-  expiresAtMs: number;
+  /** Read start on the store's monotonic clock; see `ImmutableL1ReadToken`. */
+  readStartedAtMonotonicMs: number;
+  /** Expiry on the store's monotonic clock. */
+  expiresAtMonotonicMs: number;
 }
 
 /**
@@ -252,11 +256,18 @@ interface ImmutableL1Entry {
  * can land while the read is still in flight, so the entry's lifetime is
  * measured from this moment rather than from when the response arrived. A read
  * slow enough to consume the whole TTL admits nothing.
+ *
+ * The moment is recorded on two clocks. `startedAtMs` is the wall clock, for
+ * callers that must compare the read start against timestamps another host
+ * wrote. `startedAtMonotonicMs` is the store's own monotonic clock, and it is
+ * the one every lifetime comparison uses: the TTL is a security bound, and a
+ * wall clock stepped backward by NTP or a manual adjustment must not widen it.
  */
 export interface ImmutableL1ReadToken {
   readonly key: number;
   readonly sweep: number;
   readonly startedAtMs: number;
+  readonly startedAtMonotonicMs: number;
 }
 
 export interface ImmutableFileCacheL1 {
@@ -270,9 +281,10 @@ export interface ImmutableFileCacheL1 {
    * `maxAgeMs` is the CALLER's entry lifetime. The store is process-global
    * while lifetimes are configured per `FileCache` instance, so an entry is
    * served only while it is younger than both the lifetime it was admitted
-   * with and the lifetime of the instance reading it, each measured from the
-   * backend read start the entry's token recorded. A non-finite `maxAgeMs`
-   * is ignored and the admission-time expiry alone governs.
+   * with and the lifetime of the instance reading it, each measured on the
+   * store's monotonic clock from the backend read start the entry's token
+   * recorded. A non-finite `maxAgeMs` is ignored and the admission-time
+   * expiry alone governs.
    */
   lookup(scope: string, cacheKey: string, maxAgeMs?: number): string | null;
   /**
@@ -287,7 +299,13 @@ export interface ImmutableFileCacheL1 {
     token: ImmutableL1ReadToken,
     ttlMs: number,
   ): void;
+  /** Drops the key under every scope holding it, touching only those entries. */
   dropKey(cacheKey: string): void;
+  /**
+   * Drops every entry whose cache key starts with `prefix`. Cost is bounded by
+   * the number of distinct prefix buckets plus the entries actually dropped,
+   * not by the size of the store.
+   */
   dropPrefix(prefix: string): void;
   /** Reclaims every expired entry now rather than when it is next touched. */
   evictExpired(): number;
@@ -385,6 +403,42 @@ export interface ImmutableFileCacheL1Options {
   maxEntries?: number;
   maxValueBytes?: number;
   maxTotalBytes?: number;
+  /**
+   * Monotonic millisecond clock the store measures entry lifetimes with.
+   * Defaults to `createMonotonicClock()`. A test seam, like the `readEnv`
+   * parameters above: production callers never pass it, and the default is
+   * what keeps a stepped wall clock from widening the TTL's security window.
+   */
+  monotonicNowMs?: () => number;
+}
+
+/**
+ * A millisecond clock that never moves backward.
+ *
+ * `performance.now()` is the base: it is monotonic, so a wall clock stepped
+ * backward by NTP, a VM correction, or a manual adjustment cannot extend a
+ * held entry by the size of the step, which a `Date.now()` expiry would allow.
+ *
+ * FORWARD wall-clock progress is honored too, by advancing on each reading by
+ * the larger of the two clocks' deltas. Expiring entries on a forward step
+ * fails closed (the tier refetches early, it never serves longer), and it
+ * keeps the clock meaningful where wall time is virtualized, such as fake
+ * timers in tests, which step `Date.now()` without `performance.now()` moving.
+ */
+function createMonotonicClock(): () => number {
+  let lastWallMs = Date.now();
+  let lastPerfMs = performance.now();
+  let elapsedMs = 0;
+  return (): number => {
+    const wallMs = Date.now();
+    const perfMs = performance.now();
+    const wallDeltaMs = wallMs - lastWallMs;
+    const perfDeltaMs = perfMs - lastPerfMs;
+    lastWallMs = wallMs;
+    lastPerfMs = perfMs;
+    elapsedMs += Math.max(perfDeltaMs, wallDeltaMs, 0);
+    return elapsedMs;
+  };
 }
 
 /**
@@ -417,9 +471,28 @@ export function createImmutableFileCacheL1(
     maxTotalBytes,
   );
 
+  // Every lifetime comparison in the store runs on this clock, never on bare
+  // `Date.now()`. The TTL is the credential-revocation and publish-visibility
+  // bound, and a wall clock stepped backward by NTP, a VM correction, or a
+  // manual adjustment would extend every held entry by the size of the step.
+  // A monotonic clock cannot step backward, so the bound holds whatever the
+  // host's wall clock does.
+  const monotonicNowMs = options.monotonicNowMs ?? createMonotonicClock();
+
   // Insertion order is the LRU order: a hit re-inserts, eviction takes the head.
   const entries = new Map<string, ImmutableL1Entry>();
   let retainedBytes = 0;
+  // Reverse indexes, kept in lockstep with `entries` by removeEntry and admit,
+  // so a drop touches only the entries it names instead of scanning the whole
+  // store. Every write path drops its key up to three times, so an O(store)
+  // scan per drop would make a burst of N writes O(N x maxEntries).
+  //
+  // `storeKeysByCacheKey`: the store keys holding a cache key, one per scope.
+  // `storeKeysByBucket`: store keys grouped by the key's prefix bucket, the
+  // release-qualified prefix invalidations are issued against. Index entries
+  // leave with their entries, so neither map outgrows the store.
+  const storeKeysByCacheKey = new Map<string, Set<string>>();
+  const storeKeysByBucket = new Map<string, Set<string>>();
   // Per-key mutation counters, plus one counter for whole-store invalidations.
   // The per-key map is bounded the same way the entries are, and overflowing it
   // bumps the sweep counter so nothing already in flight can slip past.
@@ -429,22 +502,62 @@ export function createImmutableFileCacheL1(
   const scopedKey = (scope: string, cacheKey: string): string =>
     `${scope}${SCOPE_SEPARATOR}${cacheKey}`;
 
+  /**
+   * The prefix bucket a cache key is indexed under: its first
+   * `IMMUTABLE_KEY_PREFIX_SEGMENTS` colon segments, which for an admissible
+   * key is `file:release:<projectSlug>:<releaseId>:`, the shape every prefix
+   * invalidation is anchored on. A key with fewer segments is its own bucket.
+   * The only property dropPrefix relies on is that the bucket is a prefix of
+   * every cache key filed under it.
+   */
+  const bucketPrefixOf = (cacheKey: string): string => {
+    let separatorIndex = -1;
+    for (let segment = 0; segment < IMMUTABLE_KEY_PREFIX_SEGMENTS; segment++) {
+      separatorIndex = cacheKey.indexOf(":", separatorIndex + 1);
+      if (separatorIndex === -1) return cacheKey;
+    }
+    return cacheKey.slice(0, separatorIndex + 1);
+  };
+
+  const indexInsert = (
+    index: Map<string, Set<string>>,
+    indexKey: string,
+    storeKey: string,
+  ): void => {
+    const held = index.get(indexKey);
+    if (held) held.add(storeKey);
+    else index.set(indexKey, new Set([storeKey]));
+  };
+
+  const indexRemove = (
+    index: Map<string, Set<string>>,
+    indexKey: string,
+    storeKey: string,
+  ): void => {
+    const held = index.get(indexKey);
+    if (!held) return;
+    held.delete(storeKey);
+    if (held.size === 0) index.delete(indexKey);
+  };
+
   /** The single place an entry leaves the store, so the byte total cannot drift. */
   const removeEntry = (storeKey: string): void => {
     const entry = entries.get(storeKey);
     if (!entry) return;
     retainedBytes -= entry.valueBytes;
     entries.delete(storeKey);
+    indexRemove(storeKeysByCacheKey, entry.cacheKey, storeKey);
+    indexRemove(storeKeysByBucket, entry.bucketPrefix, storeKey);
   };
 
   /** Removes every entry past its expiry; returns how many were reclaimed. */
   const sweepExpired = (): number => {
     if (entries.size === 0) return 0;
 
-    const now = Date.now();
+    const now = monotonicNowMs();
     let reclaimed = 0;
     for (const [storeKey, entry] of entries) {
-      if (now < entry.expiresAtMs) continue;
+      if (now < entry.expiresAtMonotonicMs) continue;
       removeEntry(storeKey);
       reclaimed += 1;
     }
@@ -470,15 +583,20 @@ export function createImmutableFileCacheL1(
       return retainedBytes;
     },
     beginRead(cacheKey: string): ImmutableL1ReadToken {
-      return { key: keyGenerations.get(cacheKey) ?? 0, sweep, startedAtMs: Date.now() };
+      return {
+        key: keyGenerations.get(cacheKey) ?? 0,
+        sweep,
+        startedAtMs: Date.now(),
+        startedAtMonotonicMs: monotonicNowMs(),
+      };
     },
     lookup(scope: string, cacheKey: string, maxAgeMs?: number): string | null {
       const storeKey = scopedKey(scope, cacheKey);
       const entry = entries.get(storeKey);
       if (!entry) return null;
 
-      const now = Date.now();
-      if (now >= entry.expiresAtMs) {
+      const now = monotonicNowMs();
+      if (now >= entry.expiresAtMonotonicMs) {
         removeEntry(storeKey);
         return null;
       }
@@ -491,7 +609,7 @@ export function createImmutableFileCacheL1(
       // measured from the backend read start, like the expiry above.
       if (
         maxAgeMs !== undefined && Number.isFinite(maxAgeMs) &&
-        now - entry.readStartedAtMs >= maxAgeMs
+        now - entry.readStartedAtMonotonicMs >= maxAgeMs
       ) {
         return null;
       }
@@ -529,10 +647,11 @@ export function createImmutableFileCacheL1(
       // while the read is still in flight: a read pending for the backend's
       // full timeout and then stamped with a fresh TTL would be servable for
       // timeout plus TTL after the revocation. A read that already consumed
-      // the whole TTL admits nothing.
-      const readStartedAtMs = token.startedAtMs;
-      const expiresAtMs = readStartedAtMs + ttlMs;
-      if (Date.now() >= expiresAtMs) return;
+      // the whole TTL admits nothing. All of it is measured on the store's
+      // monotonic clock, so a backward wall-clock step cannot stretch it.
+      const readStartedAtMonotonicMs = token.startedAtMonotonicMs;
+      const expiresAtMonotonicMs = readStartedAtMonotonicMs + ttlMs;
+      if (monotonicNowMs() >= expiresAtMonotonicMs) return;
 
       // Expired entries are reclaimed on every admission, so dead weight is
       // never charged against the ceilings while a live entry gets evicted,
@@ -542,14 +661,18 @@ export function createImmutableFileCacheL1(
 
       const storeKey = scopedKey(scope, cacheKey);
       removeEntry(storeKey);
+      const bucketPrefix = bucketPrefixOf(cacheKey);
       entries.set(storeKey, {
         cacheKey,
+        bucketPrefix,
         value,
         valueBytes,
-        readStartedAtMs,
-        expiresAtMs,
+        readStartedAtMonotonicMs,
+        expiresAtMonotonicMs,
       });
       retainedBytes += valueBytes;
+      indexInsert(storeKeysByCacheKey, cacheKey, storeKey);
+      indexInsert(storeKeysByBucket, bucketPrefix, storeKey);
 
       while (entries.size > maxEntries || retainedBytes > maxTotalBytes) {
         const oldest = entries.keys().next().value as string | undefined;
@@ -559,11 +682,11 @@ export function createImmutableFileCacheL1(
     },
     dropKey(cacheKey: string): void {
       bumpKeyGeneration(cacheKey);
-      if (entries.size === 0) return;
+      const held = storeKeysByCacheKey.get(cacheKey);
+      if (!held) return;
 
-      for (const [storeKey, entry] of entries) {
-        if (entry.cacheKey === cacheKey) removeEntry(storeKey);
-      }
+      // Copied first: removeEntry mutates the set being iterated.
+      for (const storeKey of [...held]) removeEntry(storeKey);
     },
     evictExpired(): number {
       return sweepExpired();
@@ -572,14 +695,34 @@ export function createImmutableFileCacheL1(
       sweep += 1;
       if (entries.size === 0) return;
 
-      for (const [storeKey, entry] of entries) {
-        if (entry.cacheKey.startsWith(prefix)) removeEntry(storeKey);
+      // A bucket can only hold matching keys when the dropped prefix and the
+      // bucket prefix are prefixes of one another: every key in a bucket
+      // starts with the bucket prefix, so a key that also starts with the
+      // dropped prefix makes both prefixes of that key, and one of any two
+      // prefixes of the same string is a prefix of the other. A bucket at or
+      // under the dropped prefix is dropped whole; a bucket the dropped
+      // prefix reaches INTO has its members checked one by one; every other
+      // bucket is skipped without touching its entries.
+      const doomed: string[] = [];
+      for (const [bucketPrefix, held] of storeKeysByBucket) {
+        if (bucketPrefix.startsWith(prefix)) {
+          doomed.push(...held);
+        } else if (prefix.startsWith(bucketPrefix)) {
+          for (const storeKey of held) {
+            if (entries.get(storeKey)?.cacheKey.startsWith(prefix)) {
+              doomed.push(storeKey);
+            }
+          }
+        }
       }
+      for (const storeKey of doomed) removeEntry(storeKey);
     },
     clear(): void {
       sweep += 1;
       keyGenerations.clear();
       entries.clear();
+      storeKeysByCacheKey.clear();
+      storeKeysByBucket.clear();
       retainedBytes = 0;
     },
   };

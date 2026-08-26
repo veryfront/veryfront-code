@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import {
   buildImmutableL1Scope,
   createImmutableFileCacheL1,
@@ -703,6 +704,172 @@ describe("createImmutableFileCacheL1", () => {
       "a live entry must not be evicted while an expired one still occupies the store",
     );
     assertEquals(store.lookup("scope-a", incoming), "incoming", "the new entry is held");
+  });
+
+  it("keeps enforcing the TTL when the wall clock steps backward", () => {
+    // The TTL is the credential-revocation and publish-visibility bound, so a
+    // wall clock stepped backward by NTP, a VM correction, or a manual
+    // adjustment must not extend a held entry by the size of the step. The
+    // store measures lifetimes on its monotonic clock; here that clock is
+    // driven directly while admission happens under a wall clock an hour
+    // ahead, whose restoration IS the backward step.
+    let monotonicMs = 0;
+    const store = createImmutableFileCacheL1({
+      maxEntries: 8,
+      monotonicNowMs: () => monotonicMs,
+    });
+    {
+      using _time = new FakeTime(Date.now() + HOUR_MS);
+      store.admit("scope-a", RELEASE_KEY, "held", store.beginRead(RELEASE_KEY), 5_000);
+    }
+
+    monotonicMs = 4_999;
+    assertEquals(
+      store.lookup("scope-a", RELEASE_KEY),
+      "held",
+      "a backward wall step must not stop the entry serving inside its TTL",
+    );
+
+    monotonicMs = 5_000;
+    assertEquals(
+      store.lookup("scope-a", RELEASE_KEY),
+      null,
+      "the entry must expire on its monotonic schedule although the wall clock stepped back an hour, or the step would widen the revocation window by its own size",
+    );
+  });
+
+  it("expires on real elapsed time across a backward step of the default clock", async () => {
+    // Same property through the default clock, with no seam: admission
+    // happens while the wall clock reads an hour ahead, and restoring the
+    // real clock IS the backward step. A wall-clock expiry would then hold
+    // the entry for an hour plus its TTL; the monotonic default must expire
+    // it after its TTL of real time.
+    const store = createImmutableFileCacheL1({ maxEntries: 8 });
+    {
+      using _time = new FakeTime(Date.now() + HOUR_MS);
+      store.admit("scope-a", RELEASE_KEY, "held", store.beginRead(RELEASE_KEY), 50);
+    }
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 75));
+    assertEquals(
+      store.lookup("scope-a", RELEASE_KEY),
+      null,
+      "the entry must expire after its TTL of real time although the wall clock stepped back an hour below its admission time",
+    );
+  });
+
+  it("enforces a caller's maximum age on the monotonic clock", () => {
+    let monotonicMs = 0;
+    const store = createImmutableFileCacheL1({
+      maxEntries: 8,
+      monotonicNowMs: () => monotonicMs,
+    });
+    {
+      using _time = new FakeTime(Date.now() + HOUR_MS);
+      store.admit("scope-a", RELEASE_KEY, "held", store.beginRead(RELEASE_KEY), HOUR_MS);
+    }
+
+    monotonicMs = 2_500;
+    assertEquals(
+      store.lookup("scope-a", RELEASE_KEY, 1_000),
+      null,
+      "a caller's own lifetime must be enforced on the monotonic clock, not on a wall clock now reading an hour before the admission",
+    );
+    assertEquals(
+      store.lookup("scope-a", RELEASE_KEY, 10_000),
+      "held",
+      "the entry itself stays for callers whose lifetime still allows it",
+    );
+  });
+
+  it("counts in-flight time on the monotonic clock at admission", () => {
+    let monotonicMs = 0;
+    const store = createImmutableFileCacheL1({
+      maxEntries: 8,
+      monotonicNowMs: () => monotonicMs,
+    });
+    // The wall clock stands still for the whole test; only the monotonic
+    // clock records the read's five in-flight seconds.
+    using _time = new FakeTime();
+    const token = store.beginRead(RELEASE_KEY);
+    monotonicMs = 5_000;
+    store.admit("scope-a", RELEASE_KEY, "held", token, 5_000);
+
+    assertEquals(
+      store.size,
+      0,
+      "a read whose in-flight time consumed the whole TTL must admit nothing, however still the wall clock stood",
+    );
+  });
+
+  it("drops only the branch a prefix reaches into, leaving sibling paths", () => {
+    const store = createImmutableFileCacheL1({ maxEntries: 8 });
+    const sibling = "file:release:acme:rel_123:/lib/util.ts";
+    const otherRelease = "file:release:acme:rel_2:/app/page.tsx";
+    store.admit("scope-a", RELEASE_KEY, "page", store.beginRead(RELEASE_KEY), HOUR_MS);
+    store.admit("scope-a", sibling, "util", store.beginRead(sibling), HOUR_MS);
+    store.admit("scope-a", otherRelease, "other", store.beginRead(otherRelease), HOUR_MS);
+
+    // Longer than the release-qualified bucket, so this reaches INTO one
+    // bucket and must check members instead of dropping the bucket whole.
+    store.dropPrefix("file:release:acme:rel_123:/app/");
+
+    assertEquals(
+      store.lookup("scope-a", RELEASE_KEY),
+      null,
+      "the entry under the dropped path prefix goes",
+    );
+    assertEquals(
+      store.lookup("scope-a", sibling),
+      "util",
+      "a sibling path in the same release survives a prefix reaching into it",
+    );
+    assertEquals(store.lookup("scope-a", otherRelease), "other", "another release is untouched");
+  });
+
+  it("drops every release under a prefix shorter than one release", () => {
+    const store = createImmutableFileCacheL1({ maxEntries: 8 });
+    const otherRelease = "file:release:acme:rel_2:/app/page.tsx";
+    const otherProject = "file:release:zenith:rel_9:/app/page.tsx";
+    store.admit("scope-a", RELEASE_KEY, "one", store.beginRead(RELEASE_KEY), HOUR_MS);
+    store.admit("scope-a", otherRelease, "two", store.beginRead(otherRelease), HOUR_MS);
+    store.admit("scope-a", otherProject, "three", store.beginRead(otherProject), HOUR_MS);
+
+    // Shorter than any release-qualified bucket, so whole buckets fall.
+    store.dropPrefix("file:release:acme:");
+
+    assertEquals(store.lookup("scope-a", RELEASE_KEY), null, "the first release is dropped");
+    assertEquals(
+      store.lookup("scope-a", otherRelease),
+      null,
+      "every release of the project under the prefix is dropped",
+    );
+    assertEquals(
+      store.lookup("scope-a", otherProject),
+      "three",
+      "another project's releases survive",
+    );
+    assertEquals(
+      store.retainedBytes,
+      "three".length * 2,
+      "the dropped releases must return their bytes",
+    );
+  });
+
+  it("drops a key too short to carry a release-qualified prefix", () => {
+    // The store never sees such a key from FileCache, but the drop path must
+    // not depend on the key shape admission happens to enforce today.
+    const store = createImmutableFileCacheL1({ maxEntries: 8 });
+    const short = "file:release";
+    store.admit("scope-a", short, "short", store.beginRead(short), HOUR_MS);
+
+    store.dropPrefix("file:");
+
+    assertEquals(
+      store.lookup("scope-a", short),
+      null,
+      "a key that is its own bucket must still fall under a shorter prefix",
+    );
   });
 
   it("refuses a value larger than the whole store could hold", () => {
