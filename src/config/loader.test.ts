@@ -1041,6 +1041,28 @@ export default config as const;
         assertEquals(error.message.includes("registry.internal"), false);
       });
 
+      it("redacts a zero-slash URL and a file URL whatever the scheme's case", async () => {
+        const upper = await loadFailure(
+          "vf-config-uppercase-zero-slash-",
+          `throw new Error("Fetch HTTPS:registry.internal/config.ts failed");\n`,
+        );
+
+        // A URL scheme is case-insensitive. The sibling patterns get that free
+        // from `[A-Za-z]`; a literal scheme list does not.
+        assertStringIncludes(upper.message, "[url]");
+        assertEquals(upper.message.includes("registry.internal"), false);
+
+        const fileUrl = await loadFailure(
+          "vf-config-uppercase-file-url-",
+          `throw new Error("Load FILE:///home/alice/veryfront.config.ts");\n`,
+        );
+
+        // Reported as a path, not a URL: an uppercase scheme previously fell
+        // past FILE_URL_ABSOLUTE_PATH to SCHEME_URL and came back as `[url]`.
+        assertStringIncludes(fileUrl.message, "[path]");
+        assertEquals(fileUrl.message.includes("alice"), false);
+      });
+
       it("does not treat a drive letter or ordinary prose as a zero-slash URL", async () => {
         const drive = await loadFailure(
           "vf-config-zero-slash-drive-",

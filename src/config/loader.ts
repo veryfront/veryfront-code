@@ -1703,11 +1703,20 @@ const MALFORMED_SCHEME_URL =
 // alphanumeric. Restricted to the special schemes rather than the generic
 // `[A-Za-z][A-Za-z0-9+.-]+:` shape, because that would claim ordinary prose
 // (`warning:something`) and, at one character, drive letters.
+//
+// The `i` flag is load-bearing rather than tidy. A URL scheme is
+// case-insensitive, and the two patterns above get that free from `[A-Za-z]`; a
+// literal list does not, so `HTTPS:registry.internal/x` matched nothing at all
+// and the hostname survived into the caller-visible detail.
 const ZERO_SLASH_SCHEME_URL =
-  /(?:https?|wss?|ftp):(?![\/\s])(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\))+/g;
+  /(?:https?|wss?|ftp):(?![\/\s])(?:[^\s"\/]{0,512}@)?(?:[^\s"'()]|\([^\s"']{0,512}\))+/gi;
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
-const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/(?:[^\s"'()]|\([^\s"']{0,512}\))+/g;
+// Case-insensitive for the same reason. `FILE:///home/alice` otherwise fell
+// past this pattern to SCHEME_URL and came back as `[url]`. Not a leak -- the
+// home directory was redacted either way -- but it reported a local path as a
+// remote URL, which is this PR's original misclassification running backwards.
+const FILE_URL_ABSOLUTE_PATH = /file:\/\/\/(?:[^\s"'()]|\([^\s"']{0,512}\))+/gi;
 // Unanchored on the left. A boundary here refuses a path glued to preceding
 // text (`Failed atC:\\Users\\alice\\...`), and neither URL pattern can claim a
 // backslash form, so the path would reach the caller intact. The scheme match in
