@@ -4,8 +4,9 @@
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import { isAbsolute, join } from "veryfront/platform/path";
-import { cwd, type HostRuntime, liveHostRuntime, setEnv } from "veryfront/platform";
+import { cwd, type HostRuntime, liveHostRuntime } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
+import { setEnv } from "#veryfront/compat/process.ts";
 import { cliLogger, DEFAULT_DEV_SERVER_PORT, logWarning, showHeader } from "#cli/utils";
 import { refreshLoggerConfig } from "veryfront/utils";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";

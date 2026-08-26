@@ -16,7 +16,6 @@ export {
   chdir,
   type CommandResult,
   cwd,
-  deleteEnv,
   env,
   exit,
   getArgs,
@@ -32,7 +31,6 @@ export {
   promptSync,
   readStdinByteSync,
   runCommand,
-  setEnv,
   writeStdout,
   writeStdoutAsync,
 } from "./compat/process.ts";
