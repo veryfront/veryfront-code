@@ -233,6 +233,18 @@ export function resolveImmutableL1Scope(
   return buildImmutableL1Scope(backendType, authority);
 }
 
+/** Resolve an optional tier scope without making its context a backend dependency. */
+export function resolveOptionalImmutableL1Scope(
+  backendType: string,
+  resolveAuthority: () => ResolvedCacheAuthority | undefined,
+): string | null {
+  try {
+    return resolveImmutableL1Scope(backendType, resolveAuthority());
+  } catch {
+    return null;
+  }
+}
+
 interface ImmutableL1Entry {
   cacheKey: string;
   /** Prefix bucket the entry is indexed under; see `bucketPrefixOf`. */

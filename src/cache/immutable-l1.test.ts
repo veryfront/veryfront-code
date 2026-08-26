@@ -19,6 +19,7 @@ import {
   resolveImmutableL1MaxTotalBytes,
   resolveImmutableL1MaxValueBytes,
   resolveImmutableL1Scope,
+  resolveOptionalImmutableL1Scope,
   resolveImmutableL1TtlMs,
 } from "./immutable-l1.ts";
 import type { ResolvedCacheAuthority } from "./request-authority.ts";
@@ -188,6 +189,18 @@ describe("resolveImmutableL1Scope", () => {
       scope,
       buildImmutableL1Scope("redis", authority(null, "proj-a")),
       "the resolved scope must match the one built from the same authority",
+    );
+  });
+});
+
+describe("resolveOptionalImmutableL1Scope", () => {
+  it("fails open when optional request authority resolution throws", () => {
+    assertEquals(
+      resolveOptionalImmutableL1Scope("redis", () => {
+        throw new Error("request context unavailable");
+      }),
+      null,
+      "an optional L1 scope failure must not suppress the backend read",
     );
   });
 });

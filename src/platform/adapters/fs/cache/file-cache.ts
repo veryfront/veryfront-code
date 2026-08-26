@@ -31,7 +31,7 @@ import {
   IMMUTABLE_L1_MAX_TTL_MS,
   type ImmutableFileCacheL1,
   isImmutableReleaseFileCacheKey,
-  resolveImmutableL1Scope,
+  resolveOptionalImmutableL1Scope,
   resolveImmutableL1TtlMs,
 } from "#veryfront/cache/immutable-l1.ts";
 import type { ResolvedCacheAuthority } from "#veryfront/cache/request-authority.ts";
@@ -310,15 +310,16 @@ export class FileCache {
           // used. Anything else, including every branch-scoped key, falls
           // through to the backend on every request.
           //
-          // Resolved inside this try block deliberately: `cacheAuthority()`
-          // reaches into the dynamically installed request-context adapter,
-          // which can throw. Before the tier existed that failure surfaced
-          // during the awaited backend read and the catch below turned it into
-          // a miss, so it must stay inside the same error boundary rather than
-          // reject an immutable-key read outright.
-          const l1Scope = l1 && immutableL1Ttl > 0 && isImmutableReleaseFileCacheKey(key)
-            ? resolveImmutableL1Scope(backend.type, backend.cacheAuthority?.())
-            : null;
+          // Scope resolution reaches into an optional dynamically installed
+          // request-context adapter. A failure there disables only this
+          // optional tier; Redis and disk reads remain backend-authoritative.
+          let l1Scope: string | null = null;
+          if (l1 && immutableL1Ttl > 0 && isImmutableReleaseFileCacheKey(key)) {
+            l1Scope = resolveOptionalImmutableL1Scope(
+              backend.type,
+              () => backend.cacheAuthority?.(),
+            );
+          }
           // A value already in the request-scoped cache may be this request's own
           // optimistic write rather than something the backend confirmed, so it
           // must neither be answered from nor promoted into the process-local tier.
@@ -335,7 +336,7 @@ export class FileCache {
             (requestCtx?.pending.has(key) ?? false);
           const useL1 = l1Scope !== null && !inRequestScope;
 
-          if (useL1 && l1) {
+          if (useL1 && l1 && l1Scope !== null) {
             // The instance's own lifetime is enforced at lookup as well as
             // stamped at admission, so a short-TTL instance is never served
             // an entry a longer-TTL instance admitted past its own bound.
