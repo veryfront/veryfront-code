@@ -1134,6 +1134,50 @@ describe("adapter-factory", () => {
       await probeConfiguredOutput("/base/project/custom-output");
     });
 
+    it("captures a marker before provisional configured-output reads", async () => {
+      let sourceVersion = 1;
+      let versionReads = 0;
+      const base = createMockAdapter({
+        "/veryfront.config.ts": { isDirectory: false, isFile: true },
+        "/base/project/custom-output/robots": { isDirectory: false, isFile: true },
+      });
+      const extendedFs = {
+        ...base.fs,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        sourceSnapshotFreshnessOptionsVersion: 1 as const,
+        runWithContext: (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+          projectId?: string,
+          opts?: { branch?: string | null },
+        ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
+        ensureSourceSnapshotFresh: () => Promise.resolve(),
+        getSourceSnapshotIdentity: () => "branch:mutable-config-project:main",
+        getSourceSnapshotVersion: () => {
+          if (++versionReads === 2) sourceVersion++;
+          return sourceVersion;
+        },
+        readFile: (path: string) => {
+          if (path !== "/veryfront.config.ts") {
+            return Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
+          }
+          sourceVersion++;
+          return Promise.resolve(
+            `export default { router: "pages", build: { outDir: "custom-output" } };`,
+          );
+        },
+      };
+      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+
+      const rejection = await assertRejects(() => resolveMutablePreviewAdapter(adapter, "/robots"));
+
+      assertInstanceOf(rejection, VeryfrontError);
+      assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+    });
+
     it("rejects a default build hit excluded by the configured output root", async () => {
       const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
       const base = createMockAdapter({

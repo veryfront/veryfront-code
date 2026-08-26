@@ -476,6 +476,12 @@ export async function resolveAdapter(
             previewConfigFreshness === "config-dependent" ||
             previewConfigFreshness === "normal-prepared"
           ) {
+            if (configSourceSnapshot === undefined) {
+              configSourceSnapshot = await captureRequiredPreviewSourceSnapshotMarker(
+                effectiveAdapter.fs,
+                opts.projectSlug!,
+              );
+            }
             let provisionalConfig: VeryfrontConfig | undefined;
             try {
               provisionalConfig = await readConfig();
@@ -507,12 +513,6 @@ export async function resolveAdapter(
                 provisionalConfig.build?.outDir,
               )
             ) {
-              if (configSourceSnapshot === undefined) {
-                configSourceSnapshot = await captureRequiredPreviewSourceSnapshotMarker(
-                  effectiveAdapter.fs,
-                  opts.projectSlug!,
-                );
-              }
               previewDocumentSourceSnapshot = await validatePreviewConfigSourceSnapshot(
                 effectiveAdapter,
                 opts.projectSlug!,
