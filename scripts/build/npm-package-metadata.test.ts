@@ -830,6 +830,11 @@ describe("npm supply-chain policy", () => {
     assertStringIncludes(source, "CodeParser was not registered");
     assertStringIncludes(source, "getDeferredExtensionState(resolved)");
     assertStringIncludes(source, "await deferred.load(logger)");
+    assertStringIncludes(source, "deno eval --node-modules-dir=auto");
+    assertStringIncludes(
+      source,
+      "Deno could not load the packed bundler extension",
+    );
     assertStringIncludes(source, "app/page.tsx");
     assertStringIncludes(source, "materializeScaffold");
     assertStringIncludes(source, "template: 'ai-agent'");

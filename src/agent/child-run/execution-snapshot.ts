@@ -75,6 +75,12 @@ export function getChildRunSnapshotUsage(
   return snapshot?.usage;
 }
 
+function optionalUsage(
+  usage: ChildRunExecutionUsage | undefined,
+): { usage?: ChildRunExecutionUsage } {
+  return usage === undefined ? {} : { usage };
+}
+
 /** Builds child run execution snapshot. */
 export function buildChildRunExecutionSnapshot(
   result: ChildRunExecutionResult,
@@ -87,7 +93,7 @@ export function buildChildRunExecutionSnapshot(
     steps: result.steps,
     toolCalls: result.toolCalls ?? [],
     toolResults: result.toolResults ?? [],
-    usage: result.usage,
+    ...optionalUsage(result.usage),
     durationMs: result.durationMs ?? 0,
   };
 }
@@ -109,7 +115,7 @@ export function buildChildRunSuccessResult(
     steps: common.steps,
     toolCalls: common.toolCalls,
     toolResults: common.toolResults,
-    usage: common.usage,
+    ...optionalUsage(common.usage),
     durationMs: common.durationMs,
   };
 }
@@ -126,7 +132,7 @@ export function buildChildRunFailureResult(
     steps: common.steps,
     toolCalls: common.toolCalls,
     toolResults: common.toolResults,
-    usage: common.usage,
+    ...optionalUsage(common.usage),
     durationMs: common.durationMs,
   };
 }
@@ -145,7 +151,7 @@ export function buildChildRunFailureSnapshot(
     steps: common.steps,
     toolCalls: common.toolCalls,
     toolResults: common.toolResults,
-    usage: common.usage,
+    ...optionalUsage(common.usage),
     durationMs: common.durationMs,
   };
 }
@@ -163,7 +169,7 @@ export function buildChildRunSuccessSnapshot(
     steps: common.steps,
     toolCalls: common.toolCalls,
     toolResults: common.toolResults,
-    usage: common.usage,
+    ...optionalUsage(common.usage),
     durationMs: common.durationMs,
   };
 }
