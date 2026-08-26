@@ -1,6 +1,7 @@
 import { agent } from "../factory.ts";
 import type { Agent } from "../types.ts";
 import type { RuntimeAgentMarkdownDefinition } from "./agent-definition.ts";
+import { AGENT_DELEGATE_TOOL_PREFIX } from "./agent-delegation-names.ts";
 
 const markdownDefinitionByAgent = new WeakMap<Agent, RuntimeAgentMarkdownDefinition>();
 
@@ -32,6 +33,13 @@ export function createRuntimeAgentFromMarkdownDefinition(
     : Object.keys(selectedToolMap).length > 0
     ? selectedToolMap
     : undefined;
+  const deniedToolNames = new Set(definition.deniedTools ?? []);
+  const providerTools = definition.providerTools?.filter(
+    (toolName) => !deniedToolNames.has(toolName),
+  );
+  const delegates = definition.delegates?.filter(
+    (delegateId) => !deniedToolNames.has(`${AGENT_DELEGATE_TOOL_PREFIX}${delegateId}`),
+  );
 
   const runtimeAgent = agent({
     id: definition.id,
@@ -42,9 +50,9 @@ export function createRuntimeAgentFromMarkdownDefinition(
     ...(definition.model ? { model: definition.model } : {}),
     ...(definition.temperature === undefined ? {} : { temperature: definition.temperature }),
     ...(definition.maxSteps === undefined ? {} : { maxSteps: definition.maxSteps }),
-    ...(definition.providerTools ? { providerTools: definition.providerTools } : {}),
+    ...(providerTools ? { providerTools } : {}),
     ...(definition.skills === undefined ? {} : { skills: definition.skills }),
-    ...(definition.delegates === undefined ? {} : { delegates: definition.delegates }),
+    ...(delegates === undefined ? {} : { delegates }),
     ...(definition.mcpServers === undefined ? {} : { mcpServers: definition.mcpServers }),
     ...(selectedTools !== undefined &&
         (selectedTools === true || Object.keys(selectedTools).length > 0)

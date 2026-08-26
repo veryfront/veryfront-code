@@ -51,7 +51,6 @@ import type {
 } from "../runtime/agent-definition.ts";
 import type { AgentConfig, AgentSystem } from "../types.ts";
 import type { RuntimeToolFilterConfig } from "../runtime/runtime-tool-config.ts";
-import { TOOL_SEARCH_TOOL_NAME } from "../runtime/tool-exposure.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { runWithEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 
@@ -296,14 +295,12 @@ function createRuntimeAgentConfig(input: {
     taskContext: input.taskContext,
     refreshSystem,
   });
-  const toolSearchDenied = input.options.deniedTools?.includes(TOOL_SEARCH_TOOL_NAME) === true;
-
   const runtimeConfig: RuntimeToolFilterConfig = {
     id: "veryfront-hosted-runtime",
     model: input.modelId,
     system: input.toolAssembly.systemMessages ?? input.toolAssembly.systemInstructions,
     tools: runtimeTools,
-    __vfToolLoadingMode: toolSearchDenied ? "eager" : input.toolAssembly.toolLoadingMode,
+    __vfToolLoadingMode: input.toolAssembly.toolLoadingMode,
     providerTools: input.toolAssembly.providerToolNames,
     __vfRemoteToolSources: input.toolAssembly.remoteToolSources,
     __vfAllowedRemoteTools: input.toolAssembly.compatibleRemoteToolNames,

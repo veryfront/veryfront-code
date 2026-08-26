@@ -465,7 +465,9 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
     input.sourceIntegrationPolicy,
   );
   const localToolNames = Object.keys(localHostTools);
-  const toolLoadingMode: RuntimeToolLoadingMode = normalizedAllowedToolNames === null
+  const toolSearchDenied = deniedProviderToolNames.has(TOOL_SEARCH_TOOL_NAME);
+  const toolLoadingMode: RuntimeToolLoadingMode = normalizedAllowedToolNames === null &&
+      !toolSearchDenied
     ? "deferred"
     : "eager";
   const authorizedToolNames = [
@@ -489,9 +491,7 @@ async function prepareHostedChatRuntimeToolAssemblyInternal<
   const modelVisibleToolNames = toolLoadingMode === "deferred"
     ? [
       ...bootstrapToolNames,
-      ...(hasDeferredTools && !deniedProviderToolNames.has(TOOL_SEARCH_TOOL_NAME)
-        ? [TOOL_SEARCH_TOOL_NAME]
-        : []),
+      ...(hasDeferredTools && !toolSearchDenied ? [TOOL_SEARCH_TOOL_NAME] : []),
     ].sort(compareStrings)
     : availableToolNames;
 

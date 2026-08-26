@@ -94,56 +94,37 @@ function restoreEnv(key: string, value: string | undefined): void {
   setEnv(key, value);
 }
 
-it("keeps tool_search denied in deferred hosted runtime planning", async () => {
-  clearModelProviders();
-  let capturedToolNames: string[] = [];
-  registerModelProvider("test", () => ({
-    provider: "test",
-    modelId: "test/denied-tool-search",
-    doGenerate: () => Promise.reject(new Error("unused")),
-    doStream(options: unknown) {
-      capturedToolNames = ((options as { tools?: Array<{ name: string }> }).tools ?? [])
-        .map((tool) => tool.name);
-      return Promise.resolve({ stream: createTextStream() });
+it("caps eager hosted tools when tool_search is denied", async () => {
+  let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
+  await createDefaultHostedChatRuntime({
+    sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+    options: {
+      projectId: "project-1",
+      authToken: "token-1",
+      instructions: "Use only authorized tools.",
+      model: "openai/gpt-5.4",
+      deniedTools: ["tool_search"],
     },
-  }));
+    config: {
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+    },
+    buildLocalTools: (taskContext) => {
+      capturedContext = taskContext;
+      return Object.fromEntries(
+        Array.from({ length: 129 }, (_, index) => [
+          `local_tool_${String(index).padStart(3, "0")}`,
+          localTool(`Local tool ${index}`),
+        ]),
+      );
+    },
+    createRemoteToolSource: emptyRemoteSource,
+    preloadLatestConversationUserText: false,
+  });
 
-  try {
-    const runtime = await createDefaultHostedChatRuntime({
-      sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
-      options: {
-        projectId: "project-1",
-        authToken: "token-1",
-        instructions: "Use only authorized tools.",
-        model: "test/denied-tool-search",
-        deniedTools: ["tool_search"],
-      },
-      config: {
-        apiUrl: "https://api.example.com",
-        apiMcpUrl: "https://api.example.com/mcp",
-      },
-      buildLocalTools: () => ({ sleep: localTool("Sleep") }),
-      createRemoteToolSource: emptyRemoteSource,
-      preloadLatestConversationUserText: false,
-    });
-
-    await withMockFetch(
-      () => Promise.resolve(Response.json({ tools: [] })),
-      async () => {
-        const result = await runtime.agent.stream({
-          messages: [],
-          abortSignal: new AbortController().signal,
-        });
-        for await (const _chunk of result.toUIMessageStream()) {
-          // Consume the first provider turn.
-        }
-      },
-    );
-
-    assertEquals(capturedToolNames, ["sleep"]);
-  } finally {
-    clearModelProviders();
-  }
+  assertExists(capturedContext);
+  assertEquals(capturedContext.availableToolNames?.length, 128);
+  assertEquals(capturedContext.availableToolNames?.includes("tool_search"), false);
 });
 
 it("preserves layered cache metadata through hosted provider dispatch", async () => {

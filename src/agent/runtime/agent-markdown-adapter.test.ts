@@ -20,6 +20,19 @@ it("createRuntimeAgentFromMarkdownDefinition preserves provider-native tools", (
   assertEquals(runtimeAgent.config.providerTools, ["web_search", "web_fetch"]);
 });
 
+it("createRuntimeAgentFromMarkdownDefinition removes denied provider-native tools", () => {
+  const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
+    id: "provider-locked",
+    name: "Provider Locked",
+    description: "Uses one provider tool",
+    instructions: "Use only allowed provider tools.",
+    providerTools: ["web_search", "web_fetch"],
+    deniedTools: ["web_search"],
+  });
+
+  assertEquals(runtimeAgent.config.providerTools, ["web_fetch"]);
+});
+
 it("createRuntimeAgentFromMarkdownDefinition restores explicit tool denials", () => {
   toolRegistryInternal.clearAll();
 
@@ -93,6 +106,24 @@ it("createRuntimeAgentFromMarkdownDefinition binds scoped delegate tools", () =>
   // attached to an agent that never declared any.
   assertEquals(Object.keys(tools ?? {}).sort(), ["agent_researcher", "agent_writer"]);
   assertEquals(runtimeAgent.config.delegates, ["writer", "researcher"]);
+});
+
+it("createRuntimeAgentFromMarkdownDefinition keeps denied delegates disabled", () => {
+  toolRegistryInternal.clearAll();
+
+  const runtimeAgent = createRuntimeAgentFromMarkdownDefinition({
+    id: "locked-delegation-test",
+    name: "Locked Delegation",
+    description: "Coordinates one specialist",
+    instructions: "Delegate only to authorized specialists.",
+    delegates: ["writer", "researcher"],
+    deniedTools: ["agent_writer"],
+  });
+
+  const tools = runtimeAgent.config.tools as Record<string, unknown> | undefined;
+  assertEquals(runtimeAgent.config.delegates, ["researcher"]);
+  assertEquals(tools?.agent_writer, false);
+  assertEquals(typeof tools?.agent_researcher, "object");
 });
 
 it("createRuntimeAgentFromMarkdownDefinition preserves delegates and MCP servers", () => {
