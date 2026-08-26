@@ -471,6 +471,25 @@ describe("Bun workspace resolution", () => {
     }, { prefix: "vf-config-bun-computed-package-" });
   });
 
+  it("keeps a hashbang first when observing computed imports", async () => {
+    clearConfigCache();
+    ensureBuiltinSchemaValidator();
+    const adapter = createMockAdapter();
+    await withTempDir(async (projectDir) => {
+      const configPath = `${projectDir}/veryfront.config.ts`;
+      const helperPath = `${projectDir}/hashbang-helper.ts`;
+      const source = "#!/usr/bin/env bun\n" +
+        'const dependency = "./hashbang-helper.ts";\n' +
+        "const { default: title } = await import(dependency);\n" +
+        "export default { title };\n";
+      await writeTextFile(configPath, source);
+      await writeTextFile(helperPath, 'export default "hashbang";\n');
+      adapter.fs.files.set(configPath, source);
+
+      assertEquals((await getConfig(projectDir, adapter)).title, "hashbang");
+    }, { prefix: "vf-config-bun-hashbang-computed-import-" });
+  });
+
   it("keeps computed dynamic imports usable in deferred config functions", async () => {
     clearConfigCache();
     ensureBuiltinSchemaValidator();

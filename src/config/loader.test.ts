@@ -669,7 +669,17 @@ export default config as const;
         );
         await writeTextFile(`${packageDir}/index.js`, 'export default "assets";\n');
 
-        for (const subpath of ["node_modules", "..", "%2E%2E", "inner//gap"]) {
+        for (const subpath of ["inner//gap", "inner/"]) {
+          const rewritten = await rewriteProjectConfigImportsFromProject(
+            `import value from ${
+              JSON.stringify(`config-capture-package/assets/${subpath}`)
+            };\nexport default value;\n`,
+            configPath,
+          );
+          assertStringIncludes(rewritten, "/config-capture-package/index.js");
+        }
+
+        for (const subpath of ["node_modules", "..", "%2E%2E"]) {
           await assertRejects(
             () =>
               rewriteProjectConfigImportsFromProject(
@@ -1162,6 +1172,32 @@ export default config as const;
         assertStringIncludes(rewritten, "/app/node_modules/config-nearest-pkg/index.js");
         assertEquals(rewritten.includes("/ancestor.js"), false);
       }, { prefix: "vf-config-nearest-install-" });
+    });
+
+    it("does not bypass an unusable nearest manifestless package", async () => {
+      await withTempDir(async (projectDir) => {
+        const configDirectory = `${projectDir}/app`;
+        const configPath = `${configDirectory}/veryfront.config.ts`;
+        const packageName = "config-nearest-unusable";
+        await mkdir(`${configDirectory}/node_modules/${packageName}`, { recursive: true });
+        const ancestorPackage = `${projectDir}/node_modules/${packageName}`;
+        await mkdir(ancestorPackage, { recursive: true });
+        await writeTextFile(
+          `${ancestorPackage}/package.json`,
+          JSON.stringify({ name: packageName, type: "module", exports: "./ancestor.js" }),
+        );
+        await writeTextFile(`${ancestorPackage}/ancestor.js`, 'export default "ancestor";\n');
+
+        await assertRejects(
+          () =>
+            rewriteProjectConfigImportsFromProject(
+              `import value from "${packageName}";\nexport default value;\n`,
+              configPath,
+            ),
+          Error,
+          packageName,
+        );
+      }, { prefix: "vf-config-nearest-unusable-" });
     });
 
     it("preserves non-not-found dynamic import resolution failures", async () => {

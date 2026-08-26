@@ -3267,7 +3267,7 @@ function isValidProjectPackageSpecifier(
 
 /**
  * Match native pattern-match validation: a wildcard capture whose decoded
- * segments are empty, dot, dot-dot, or `node_modules` makes the specifier
+ * segments are dot, dot-dot, or `node_modules` makes the specifier
  * invalid, so staging must refuse it instead of resolving a target native
  * package resolution would never load. A capture may span `/` -- each
  * segment is validated on its own.
@@ -3280,9 +3280,7 @@ function assertSafeProjectPackageWildcard(capture: string, specifier: string): v
   const segments = ReflectApply(StringPrototypeSplit, portableCapture, ["/"]) as string[];
   for (let index = 0; index < segments.length; index++) {
     const segment = segments[index];
-    if (segment === undefined || segment === "") {
-      throw new TypeError(`Package import "${specifier}" contains a forbidden path segment`);
-    }
+    if (segment === undefined || segment === "") continue;
     let decoded: string;
     try {
       decoded = ReflectApply(DecodeURIComponent, undefined, [segment]) as string;
@@ -3403,24 +3401,34 @@ async function projectPackageDirectoryExists(packageDirectory: string): Promise<
   }
 }
 
+type ProjectPackageLookup = Readonly<
+  | { kind: "manifest"; manifest: ProjectPackageManifest }
+  | { kind: "legacy"; directory: string }
+>;
+
 /** Find the nearest installed copy of a package from the original config location. */
-async function findProjectPackageManifest(
+async function findProjectPackage(
   packageName: string,
   configPath: string,
-): Promise<ProjectPackageManifest | undefined> {
+): Promise<ProjectPackageLookup | undefined> {
   const scope = await findNearestProjectPackageManifest(configPath);
   const scopeName = scope && ownDataValue(scope.value, "name");
-  if (scope && scopeName?.present && scopeName.value === packageName) return scope;
+  if (scope && scopeName?.present && scopeName.value === packageName) {
+    return { kind: "manifest", manifest: scope };
+  }
   let directory = dirname(configPath);
   while (true) {
     const packageDirectory = join(directory, "node_modules", packageName);
     const manifest = await readProjectPackageManifest(packageDirectory);
-    if (manifest) return manifest;
+    if (manifest) return { kind: "manifest", manifest };
     // The nearest installed directory wins even without a usable manifest:
     // project resolution stops there and uses its legacy entry point, so an
-    // ancestor's exports map must not shadow it. Leave the manifestless
-    // package to the native fallback resolver.
-    if (await projectPackageDirectoryExists(packageDirectory)) return undefined;
+    // ancestor's exports map must not shadow it. Return the exact directory so
+    // legacy resolution cannot skip an unusable nearest install and continue
+    // searching ancestors.
+    if (await projectPackageDirectoryExists(packageDirectory)) {
+      return { kind: "legacy", directory: packageDirectory };
+    }
 
     const parent = dirname(directory);
     if (parent === directory) return undefined;
@@ -3483,8 +3491,16 @@ async function resolveProjectPackageImport(
   if (!isValidProjectPackageSpecifier(parsed)) {
     throw new TypeError(`Package import "${specifier}" is not a valid package specifier`);
   }
-  const manifest = await findProjectPackageManifest(parsed.packageName, configPath);
-  if (!manifest) return undefined;
+  const packageLookup = await findProjectPackage(parsed.packageName, configPath);
+  if (!packageLookup) return undefined;
+  if (packageLookup.kind === "legacy") {
+    return {
+      kind: "legacy",
+      directory: packageLookup.directory,
+      subpath: parsed.subpath,
+    };
+  }
+  const manifest = packageLookup.manifest;
 
   const exportsProperty = ownDataValue(manifest.value, "exports");
   if (!exportsProperty.present) return undefined;
@@ -3499,6 +3515,7 @@ async function resolveProjectPackageImport(
 type ProjectPackageImportResolution = Readonly<
   | { kind: "resolved"; specifier: string }
   | { kind: "external"; specifier: string; scopeDirectory: string }
+  | { kind: "legacy"; directory: string; subpath: string | null }
 >;
 
 function asResolvedConfigSpecifier(resolved: string): string {
@@ -3540,6 +3557,14 @@ async function createProjectConfigImportResolver(
     }
     const esmResolution = await resolveProjectPackageImport(specifier, basePath);
     if (esmResolution?.kind === "resolved") return esmResolution.specifier;
+    if (esmResolution?.kind === "legacy") {
+      const legacyTarget = esmResolution.subpath === null
+        ? esmResolution.directory
+        : join(esmResolution.directory, stringSlice(esmResolution.subpath, 1));
+      const resolved = ReflectApply(baseRequire.resolve, baseRequire, [legacyTarget]);
+      if (typeof resolved !== "string") throw new TypeError("Config import resolution failed");
+      return asResolvedConfigSpecifier(resolved);
+    }
     if (esmResolution?.kind === "external") {
       if (ReflectApply(SetPrototypeHas, seenAliases, [specifier]) as boolean) {
         throw new TypeError(`Circular package import alias "${specifier}"`);
@@ -3726,9 +3751,14 @@ async function rewriteComputedDynamicProjectConfigImports(
   const bridgeUrl = `data:text/javascript,${ReflectApply(EncodeURIComponent, undefined, [
     bridgeSource,
   ]) as string}`;
-  return `import ${observerKey} from ${ReflectApply(JSONStringify, JSON, [
+  const bridgeImport = `import ${observerKey} from ${ReflectApply(JSONStringify, JSON, [
     bridgeUrl,
-  ]) as string};\n${rewritten}`;
+  ]) as string};\n`;
+  if (!stringStartsWith(rewritten, "#!")) return bridgeImport + rewritten;
+  const hashbangEnd = stringIndexOf(rewritten, "\n");
+  if (hashbangEnd < 0) return `${rewritten}\n${bridgeImport}`;
+  return stringSlice(rewritten, 0, hashbangEnd + 1) + bridgeImport +
+    stringSlice(rewritten, hashbangEnd + 1);
 }
 
 /** @internal */
