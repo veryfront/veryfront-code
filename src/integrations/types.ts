@@ -12,6 +12,7 @@ export interface IntegrationEndpointParam {
   default?: unknown;
   /** Expose this safe execution default in the model-facing tool input schema. */
   exposeDefault?: boolean;
+  pattern?: string;
   queryName?: string;
   queryValueFormat?: "microsoft-graph-search";
   headerName?: string;

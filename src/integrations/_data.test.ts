@@ -350,7 +350,7 @@ describe("integration endpoint specs", () => {
     assertEquals(paypal.auth.authorizationUrl, undefined);
   });
 
-  it("keeps Salesforce write tools curated instead of exposing generic record mutation", () => {
+  it("keeps Salesforce and ServiceNow write tools curated", () => {
     const salesforce = getConnector("salesforce");
     const toolIds = getLocalToolIds("salesforce", salesforce.tools);
 
@@ -393,16 +393,14 @@ describe("integration endpoint specs", () => {
       ],
     );
 
-    const servicenowQuery = getTool("servicenow", "query_table");
-    assertEquals(servicenowQuery.requiresWrite, false);
-    assertEquals(
-      servicenowQuery.endpoint?.url,
-      "https://{instanceHost}/api/now/v1/table/{tableName}",
-    );
-    assertEquals(
-      getTool("servicenow", "create_table_record").endpoint?.bodyMode,
-      "passthrough",
-    );
+    const servicenow = getConnector("servicenow");
+    const servicenowToolIds = getLocalToolIds("servicenow", servicenow.tools);
+
+    assertEquals(servicenowToolIds.includes("query_table"), false);
+    assertEquals(servicenowToolIds.includes("create_table_record"), false);
+    assertEquals(servicenowToolIds.includes("update_table_record"), false);
+    assertEquals(getTool("servicenow", "create_incident").requiresWrite, true);
+    assertEquals(getTool("servicenow", "update_incident").endpoint?.method, "PATCH");
   });
 
   it("declares the Salesforce baseline tools", () => {
@@ -779,7 +777,7 @@ describe("integration endpoint specs", () => {
       ["gitlab", 10],
       ["jira", 12],
       ["confluence", 7],
-      ["outlook", 63],
+      ["outlook", 60],
       ["teams", 7],
     ]);
 
@@ -1188,6 +1186,11 @@ describe("integration endpoint specs", () => {
 
   it("keeps newly added static endpoints executor-compatible", () => {
     const driveCreateFolder = getTool("drive", "create_folder");
+    const drive = getConnector("drive");
+    assertEquals(drive.auth.scopes, [
+      "https://www.googleapis.com/auth/drive.readonly",
+      "https://www.googleapis.com/auth/drive.file",
+    ]);
     assertEquals(
       driveCreateFolder.endpoint?.url,
       "https://www.googleapis.com/drive/v3/files",
@@ -1361,6 +1364,45 @@ describe("integration endpoint specs", () => {
           );
         }
       }
+    }
+  });
+
+  it("keeps QuickBooks OAuth requests on the official Intuit API origins", () => {
+    const quickbooks = getConnector("quickbooks");
+
+    for (const tool of quickbooks.tools) {
+      const endpoint = tool.endpoint;
+      if (!endpoint) continue;
+
+      assertEquals(
+        endpoint.url.startsWith("https://{host}/"),
+        true,
+        `${tool.id ?? tool.name} must route through the constrained host selector`,
+      );
+      const host = endpoint.params?.host;
+      assertExists(host, `${tool.id ?? tool.name} must declare the host selector`);
+      assertEquals(host.default, "quickbooks.api.intuit.com");
+      assertExists(host.pattern, `${tool.id ?? tool.name} must constrain host`);
+      const pattern = new RegExp(host.pattern);
+      assertEquals(pattern.test("quickbooks.api.intuit.com"), true);
+      assertEquals(pattern.test("sandbox-quickbooks.api.intuit.com"), true);
+      assertEquals(pattern.test("attacker.example"), false);
+      assertEquals(pattern.test("evil-quickbooks.api.intuit.com"), false);
+      assertEquals(pattern.test("quickbooks.api.intuit.com.attacker.example"), false);
+      assertEquals(pattern.test("quickbooks.api.intuit.com@attacker.example"), false);
+    }
+  });
+
+  it("restricts ServiceNow credential hosts to ServiceNow domains", () => {
+    const serviceNow = getConnector("servicenow");
+    for (const tool of serviceNow.tools) {
+      const host = tool.endpoint?.params?.instanceHost;
+      if (!host) continue;
+      assertExists(host.pattern, `${tool.id ?? tool.name} must constrain instanceHost`);
+      const pattern = new RegExp(host.pattern);
+      assertEquals(pattern.test("example.service-now.com"), true);
+      assertEquals(pattern.test("attacker.example"), false);
+      assertEquals(pattern.test("example.service-now.com@attacker.example"), false);
     }
   });
 
@@ -1815,8 +1857,6 @@ describe("integration endpoint specs", () => {
       "Mail.Read.Shared",
       "Calendars.Read",
       "Calendars.ReadWrite",
-      "Group.Read.All",
-      "Group-Conversation.Read.All",
       "offline_access",
     ]);
 
@@ -1862,9 +1902,6 @@ describe("integration endpoint specs", () => {
       "get_thread",
       "list_shared_mailbox_emails",
       "search_shared_mailbox_emails",
-      "find_group_by_mail",
-      "list_group_threads",
-      "list_group_thread_posts",
       "list_calendars",
       "get_calendar",
       "create_calendar",
@@ -1945,16 +1982,10 @@ describe("integration endpoint specs", () => {
       "microsoft-graph-search",
     );
     assertEquals(
-      getTool("outlook", "find_group_by_mail").endpoint?.url,
-      "https://graph.microsoft.com/v1.0/groups?$filter=mail eq '{mailAddress}'",
-    );
-    assertEquals(
-      getTool("outlook", "list_group_threads").endpoint?.url,
-      "https://graph.microsoft.com/v1.0/groups/{groupId}/threads",
-    );
-    assertEquals(
-      getTool("outlook", "list_group_thread_posts").endpoint?.url,
-      "https://graph.microsoft.com/v1.0/groups/{groupId}/threads/{threadId}/posts",
+      connectors.find((connector) => connector.name === "outlook")?.tools.some(
+        (tool) => tool.id === "outlook__find_group_by_mail",
+      ),
+      false,
     );
     assertEquals(getTool("outlook", "add_attachment_to_message").endpoint?.body, {
       "@odata.type": {

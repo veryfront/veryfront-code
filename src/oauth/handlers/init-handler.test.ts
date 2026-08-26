@@ -383,6 +383,34 @@ it("status handler: returns status for authenticated user", async () => {
   assertEquals(body.connected, false);
 });
 
+it("status handler reports a legacy full-Drive grant as disconnected", async () => {
+  const legacyTokens: OAuthTokens = {
+    accessToken: "legacy-drive-token",
+    scope: "https://www.googleapis.com/auth/drive",
+    expiresAt: Date.now() + 60_000_000,
+  };
+  const legacyStore: TokenStore = {
+    getTokens: () => Promise.resolve(legacyTokens),
+    setTokens: () => Promise.resolve(),
+    clearTokens: () => Promise.resolve(),
+    setState: () => Promise.resolve(),
+    consumeState: () => Promise.resolve(null),
+  };
+  const handler = createOAuthStatusHandler({
+    ...TEST_CONFIG,
+    serviceId: "drive",
+    defaultScopes: ["drive.readonly", "drive.file"],
+  }, {
+    tokenStore: legacyStore,
+    envReader: (key: string) => ENV[key],
+    getUserId: () => "alice",
+  });
+
+  const response = await handler(makeRequest());
+  assertEquals(response.status, 200);
+  assertEquals((await response.json()).connected, false);
+});
+
 it("status handler: returns 401 when isAuthenticated returns false", async () => {
   const store = new MemoryTokenStore();
   const handler = createOAuthStatusHandler(TEST_CONFIG, {

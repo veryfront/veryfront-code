@@ -113,6 +113,7 @@ export async function getValidToken(
     tokenStore,
     service,
     userId,
+    provider.scopes,
     (refreshToken) => refreshAccessToken(provider, refreshToken),
   );
 }
