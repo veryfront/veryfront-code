@@ -55,6 +55,7 @@ describe("error-context intrinsic hardening", () => {
   it("redacts canonical file paths after relevant live intrinsics are poisoned", async () => {
     const captured: { message: string; data: Record<string, unknown> }[] = [];
     const originalLogDebug = serverLogger.debug;
+    const originalDecodeURI = globalThis.decodeURI;
     const originalDecodeURIComponent = globalThis.decodeURIComponent;
     const originalCharCodeAt = String.prototype.charCodeAt;
     const originalSlice = String.prototype.slice;
@@ -72,9 +73,13 @@ describe("error-context intrinsic hardening", () => {
     const fileNormalizedPath = "file:///audit-root/private-source-marker";
     const windowsRequestedPath = "c:/audit-root/project/../private-windows-marker";
     const windowsNormalizedPath = "C:/audit-root/private-windows-marker";
+    const decodedRequestedPath = "/audit-root/definitely%2Dprivate-marker";
+    const decodedPath = "/audit-root/definitely-private-marker";
     let fileResult: string | null;
     let windowsResult: string | null;
+    let decodedResult: string | null;
     try {
+      globalThis.decodeURI = () => "not-private";
       globalThis.decodeURIComponent = () => "not-localhost";
       String.prototype.charCodeAt = () => 0;
       String.prototype.slice = () => "";
@@ -102,6 +107,15 @@ describe("error-context intrinsic hardening", () => {
         windowsRequestedPath,
         "read-file",
       );
+      decodedResult = await safeFileRead(
+        {
+          fs: {
+            readFile: () => Promise.reject(new Error(`read failed for ${decodedPath}`)),
+          },
+        },
+        decodedRequestedPath,
+        "read-file",
+      );
     } finally {
       Array.prototype.push = originalPush;
       Array.prototype.pop = originalPop;
@@ -112,16 +126,19 @@ describe("error-context intrinsic hardening", () => {
       String.prototype.slice = originalSlice;
       String.prototype.charCodeAt = originalCharCodeAt;
       globalThis.decodeURIComponent = originalDecodeURIComponent;
+      globalThis.decodeURI = originalDecodeURI;
       serverLogger.debug = originalLogDebug;
     }
 
     assertEquals(fileResult, null);
     assertEquals(windowsResult, null);
-    assertEquals(captured.length, 2);
+    assertEquals(decodedResult, null);
+    assertEquals(captured.length, 3);
     for (
       const [index, normalizedPath] of [
         [0, fileNormalizedPath],
         [1, windowsNormalizedPath],
+        [2, decodedPath],
       ] as const
     ) {
       const diagnostic = captured[index];

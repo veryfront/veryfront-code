@@ -46,6 +46,7 @@ const arrayJoin = Array.prototype.join;
 const arrayPop = Array.prototype.pop;
 const arrayPush = Array.prototype.push;
 const arraySplice = Array.prototype.splice;
+const nativeDecodeURI = decodeURI;
 const nativeDecodeURIComponent = decodeURIComponent;
 const nativeEncodeURIComponent = encodeURIComponent;
 const nativeEncodeURI = encodeURI;
@@ -647,6 +648,15 @@ function uriEncodedFilesystemPath(path: string): string | undefined {
   }
 }
 
+function uriDecodedFilesystemPath(path: string): string | undefined {
+  try {
+    const decoded = nativeDecodeURI(path);
+    return decoded === path ? undefined : decoded;
+  } catch {
+    return undefined;
+  }
+}
+
 function componentEncodedFilesystemPath(path: string): string | undefined {
   try {
     const encoded = nativeEncodeURIComponent(path);
@@ -741,19 +751,55 @@ function hasAsciiEllipsisAt(input: string, index: number): boolean {
     charCodeAtString(input, index + 2) === PERIOD_CODE_UNIT;
 }
 
-/** Detect an absolute path that an adapter introduced after receiving a relative request. */
+function isPercentEncodedPathSeparatorAt(input: string, index: number): boolean {
+  const encoded = lowercaseString(sliceString(input, index, index + 3));
+  return encoded === "%2f" || encoded === "%5c";
+}
+
+function isPercentEncodedColonAt(input: string, index: number): boolean {
+  return lowercaseString(sliceString(input, index, index + 3)) === "%3a";
+}
+
+/** Detect an absolute path that remains after trusted aliases are redacted. */
 function containsAbsoluteFilesystemPathForDiagnostic(input: string): boolean {
   for (let index = 0; index < input.length; index++) {
-    if (index > 0 && isPathContinuationCodeUnit(charCodeAtString(input, index - 1))) continue;
+    if (index > 0) {
+      const previousCodeUnit = charCodeAtString(input, index - 1);
+      if (previousCodeUnit !== COLON_CODE_UNIT && isPathContinuationCodeUnit(previousCodeUnit)) {
+        continue;
+      }
+    }
     const codeUnit = charCodeAtString(input, index);
-    if (isPathSeparatorCodeUnit(codeUnit)) return true;
+    if (isPathSeparatorCodeUnit(codeUnit) || isPercentEncodedPathSeparatorAt(input, index)) {
+      return true;
+    }
+    if (isAsciiLetterCodeUnit(codeUnit)) {
+      const literalDriveSeparatorIndex = index + 2;
+      if (
+        charCodeAtString(input, index + 1) === COLON_CODE_UNIT &&
+        (isPathSeparatorCodeUnit(charCodeAtString(input, literalDriveSeparatorIndex)) ||
+          isPercentEncodedPathSeparatorAt(input, literalDriveSeparatorIndex))
+      ) {
+        return true;
+      }
+      const encodedDriveSeparatorIndex = index + 4;
+      if (
+        isPercentEncodedColonAt(input, index + 1) &&
+        (isPathSeparatorCodeUnit(charCodeAtString(input, encodedDriveSeparatorIndex)) ||
+          isPercentEncodedPathSeparatorAt(input, encodedDriveSeparatorIndex))
+      ) {
+        return true;
+      }
+    }
+    const scheme = lowercaseString(sliceString(input, index, index + 7));
     if (
-      isAsciiLetterCodeUnit(codeUnit) && charCodeAtString(input, index + 1) === COLON_CODE_UNIT &&
-      isPathSeparatorCodeUnit(charCodeAtString(input, index + 2))
+      sliceString(scheme, 0, 5) === "file:" ||
+      (scheme === "file%3a" &&
+        (isPathSeparatorCodeUnit(charCodeAtString(input, index + 7)) ||
+          isPercentEncodedPathSeparatorAt(input, index + 7)))
     ) {
       return true;
     }
-    if (lowercaseString(sliceString(input, index, index + 5)) === "file:") return true;
   }
   return false;
 }
@@ -996,12 +1042,6 @@ export function snapshotThrowableDiagnosticRedactingPath(
   // adapter controls Error.message, so running every pass over the complete
   // untrusted value would multiply work during fallback handling.
   const diagnostic = sanitizeDiagnosticText(readThrowableDiagnostic(error));
-  if (
-    !isAbsoluteFilesystemPathForDiagnostic(path) &&
-    containsAbsoluteFilesystemPathForDiagnostic(diagnostic)
-  ) {
-    return `${FILESYSTEM_DIAGNOSTIC_FALLBACK} for ${replacement}`;
-  }
   const normalizationSource = fileUrlNormalizationSource(path);
   const normalizedPath = normalizeFilesystemPathForDiagnostic(normalizationSource);
   const posixDoubleSeparatorPath = normalizePosixDoubleSeparatorPathForDiagnostic(
@@ -1011,6 +1051,7 @@ export function snapshotThrowableDiagnosticRedactingPath(
   const nodeDoubleQuotedPath = nodeInspectedFilesystemPath(path, 34);
   const nodeBacktickQuotedPath = nodeInspectedFilesystemPath(path, 96);
   const nodeNullEscapedPath = nodeNullEscapedFilesystemPath(path);
+  const uriDecodedPath = uriDecodedFilesystemPath(path);
   const uriEncodedPath = uriEncodedFilesystemPath(path);
   const componentEncodedPath = componentEncodedFilesystemPath(path);
   const formEncodedPath = formEncodedFilesystemPath(path);
@@ -1119,6 +1160,9 @@ export function snapshotThrowableDiagnosticRedactingPath(
   if (nodeNullEscapedPath !== undefined && nodeNullEscapedPath !== nodeSingleQuotedPath) {
     redacted = redactPathFromText(redacted, nodeNullEscapedPath, replacement);
   }
+  if (uriDecodedPath !== undefined) {
+    redacted = redactPathFromText(redacted, uriDecodedPath, replacement);
+  }
   if (uriEncodedPath !== undefined) {
     redacted = redactPathFromText(redacted, uriEncodedPath, replacement);
   }
@@ -1166,6 +1210,7 @@ export function snapshotThrowableDiagnosticRedactingPath(
     redacted = redactPathFromText(redacted, normalizedUnicodePlatformPath, replacement);
   }
   if (
+    containsAbsoluteFilesystemPathForDiagnostic(redacted) ||
     containsTruncatedFilesystemPathPrefix(redacted, path) ||
     containsTruncatedFilesystemPathPrefix(redacted, jsonEscapedPath) ||
     (quoteIndependentEscapedPath !== path &&
@@ -1180,6 +1225,8 @@ export function snapshotThrowableDiagnosticRedactingPath(
       containsTruncatedFilesystemPathPrefix(redacted, nodeBacktickQuotedPath)) ||
     (nodeNullEscapedPath !== undefined && nodeNullEscapedPath !== nodeSingleQuotedPath &&
       containsTruncatedFilesystemPathPrefix(redacted, nodeNullEscapedPath)) ||
+    (uriDecodedPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, uriDecodedPath)) ||
     (uriEncodedPath !== undefined &&
       containsTruncatedFilesystemPathPrefix(redacted, uriEncodedPath)) ||
     (componentEncodedPath !== undefined &&

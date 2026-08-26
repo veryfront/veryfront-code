@@ -188,6 +188,38 @@ describe("safe-diagnostics", () => {
     }
   });
 
+  it("should redact the URI-decoded spelling of an absolute request", () => {
+    assertEquals(
+      snapshotThrowableDiagnosticRedactingPath(
+        new Error("ENOENT: /definitely-private-marker/secret"),
+        "/definitely%2Dprivate-marker/secret",
+        "<absolute-path>",
+      ),
+      "ENOENT: <absolute-path>",
+    );
+  });
+
+  it("should fail closed on unmatched absolute paths in adapter diagnostics", () => {
+    for (
+      const [requestedPath, diagnostic] of [
+        ["config.json", "ENOENT:/workspace/private-marker/config.json"],
+        ["config.json", "ENOENT:%2Fworkspace%2Fprivate-marker%2Fconfig.json"],
+        ["config.json", "ENOENT:%5C%5Cserver%5Cprivate-marker%5Cconfig.json"],
+        ["config.json", "ENOENT:C%3A%5Cprivate-marker%5Cconfig.json"],
+        ["/workspace/link/config.json", "ENOENT: /mnt/private-marker/config.json"],
+      ] as const
+    ) {
+      assertEquals(
+        snapshotThrowableDiagnosticRedactingPath(
+          new Error(diagnostic),
+          requestedPath,
+          "<absolute-path>",
+        ),
+        "Filesystem operation failed for <absolute-path>",
+      );
+    }
+  });
+
   it("should bound filesystem diagnostics before redacting path aliases", () => {
     const privatePath = "file:///audit-root/private-source-marker";
     const diagnostic = `${"x".repeat(ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS * 100)} ${privatePath}`;
