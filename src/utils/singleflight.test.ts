@@ -3,7 +3,11 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import { FakeTime } from "#std/testing/time";
-import { Singleflight, waitForSharedPromise } from "./singleflight.ts";
+import {
+  Singleflight,
+  SingleflightFollowerLimitError,
+  waitForSharedPromise,
+} from "./singleflight.ts";
 
 describe("Singleflight", () => {
   it("lets one waiter detach without cancelling shared work", async () => {
@@ -122,6 +126,98 @@ describe("Singleflight", () => {
     assertEquals(r2, 42);
     assertEquals(r3, 42);
     assertEquals(callCount, 1);
+  });
+
+  it("limits callers waiting on an existing operation", async () => {
+    const sf = new Singleflight<number>();
+    const operation = Promise.withResolvers<number>();
+    const leader = sf.do("key", () => operation.promise, { maxFollowers: 1 });
+    const follower = sf.do(
+      "key",
+      () => Promise.resolve(2),
+      { maxFollowers: 1 },
+    );
+
+    await assertRejects(
+      () => sf.do("key", () => Promise.resolve(3), { maxFollowers: 1 }),
+      SingleflightFollowerLimitError,
+      "Singleflight follower limit reached",
+    );
+
+    operation.resolve(42);
+    assertEquals(await leader, 42);
+    assertEquals(await follower, 42);
+  });
+
+  it("releases a follower slot when that caller detaches", async () => {
+    const sf = new Singleflight<number>();
+    const operation = Promise.withResolvers<number>();
+    const leader = sf.do("key", () => operation.promise, { maxFollowers: 1 });
+    const caller = new AbortController();
+    const detached = sf.do("key", () => Promise.resolve(2), {
+      maxFollowers: 1,
+      signal: caller.signal,
+    });
+
+    caller.abort(new DOMException("request closed", "AbortError"));
+    await assertRejects(() => detached, DOMException, "request closed");
+
+    const replacement = sf.do(
+      "key",
+      () => Promise.resolve(3),
+      { maxFollowers: 1 },
+    );
+    operation.resolve(42);
+
+    assertEquals(await leader, 42);
+    assertEquals(await replacement, 42);
+  });
+
+  it("fully removes detached followers so reused slots retain nothing", async () => {
+    const sf = new Singleflight<number>();
+    const operation = Promise.withResolvers<number>();
+    const leader = sf.do("key", () => operation.promise, { maxFollowers: 1 });
+
+    // Far more attach/detach cycles than the follower cap: every detach must
+    // release its slot AND drop the waiter's subscription on the shared work,
+    // so this loop neither hits the cap nor accumulates retained callbacks.
+    for (let i = 0; i < 50; i++) {
+      const caller = new AbortController();
+      const churned = sf.do("key", () => Promise.resolve(-1), {
+        maxFollowers: 1,
+        signal: caller.signal,
+      });
+      caller.abort(new DOMException("request closed", "AbortError"));
+      await assertRejects(() => churned, DOMException, "request closed");
+    }
+
+    let liveSettlements = 0;
+    const live = sf.do("key", () => Promise.resolve(-1), { maxFollowers: 1 })
+      .then((value) => {
+        liveSettlements++;
+        return value;
+      });
+
+    operation.resolve(42);
+    assertEquals(await leader, 42);
+    assertEquals(await live, 42);
+    await delay(0);
+    assertEquals(liveSettlements, 1, "settlement must reach a live waiter exactly once");
+  });
+
+  it("removes detached shared-promise waiters instead of retaining them", async () => {
+    const shared = Promise.withResolvers<number>();
+
+    for (let i = 0; i < 50; i++) {
+      const caller = new AbortController();
+      const churned = waitForSharedPromise(shared.promise, caller.signal);
+      caller.abort(new DOMException("request closed", "AbortError"));
+      await assertRejects(() => churned, DOMException, "request closed");
+    }
+
+    const live = waitForSharedPromise(shared.promise, new AbortController().signal);
+    shared.resolve(7);
+    assertEquals(await live, 7);
   });
 
   it("should allow different keys to run concurrently", async () => {
