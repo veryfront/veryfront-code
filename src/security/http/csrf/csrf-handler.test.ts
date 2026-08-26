@@ -17,7 +17,7 @@ function createCtx(csrf?: boolean | Record<string, unknown>): HandlerContext {
 }
 
 /** The deployed rejection body, pinned so it cannot drift with the local one. */
-const PRODUCTION_CSRF_FORBIDDEN_BODY = "Forbidden \u2013 invalid or missing CSRF token";
+const PRODUCTION_CSRF_FORBIDDEN_BODY = "Forbidden: invalid or missing CSRF token";
 
 /** A local-development context whose security config came through derivation. */
 function localCtx(): HandlerContext {

@@ -1,5 +1,5 @@
 /**
- * CSRF Handler — validates CSRF tokens on state-changing requests.
+ * CSRF Handler validates CSRF tokens on state-changing requests.
  *
  * Reads config from `ctx.securityConfig?.csrf`. Unless a project sets
  * `security.csrf: false`, every method except GET, HEAD, and OPTIONS must
@@ -76,7 +76,7 @@ const CSRF_SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
  * origin answers anyone who can reach it, and the cookie and header names are
  * the project's own policy detail.
  */
-const CSRF_FORBIDDEN_BODY = "Forbidden – invalid or missing CSRF token";
+const CSRF_FORBIDDEN_BODY = "Forbidden: invalid or missing CSRF token";
 
 function isExcludedCsrfPath(csrfConfig: CsrfSetting, pathname: string): boolean {
   if (typeof csrfConfig !== "object" || !csrfConfig.excludePaths?.length) return false;
