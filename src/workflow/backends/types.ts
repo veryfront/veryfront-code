@@ -132,6 +132,8 @@ export interface WorkflowRunObservation {
 
 /** Approval record persisted by workflow backends, including internal restart metadata. */
 export interface PersistedPendingApproval extends PendingApproval {
+  /** Internal identity of the wait-node execution that created this approval. */
+  waitInstanceId?: string;
   responseSchemaId?: string;
   /** The decision is durable, but its node outcome has not finished reconciling. */
   reconciliationPending?: true;
@@ -141,6 +143,8 @@ export interface PersistedPendingApproval extends PendingApproval {
 
 /** Event-wait record persisted by workflow backends, including worker ownership. */
 export interface PersistedPendingEventWait extends PendingEventWait {
+  /** Internal identity of the wait-node execution that created this record. */
+  waitInstanceId?: string;
   /** Worker that owned the run when the wait was appended. */
   workerId?: string;
   /** Time a delivered or expired claim left the pending set. */
@@ -149,6 +153,21 @@ export interface PersistedPendingEventWait extends PendingEventWait {
   claimedEventId?: string;
   /** Exact event whose delivery was durably finalized. */
   deliveredEventId?: string;
+}
+
+/**
+ * Whether two durable records belong to the same execution of a declared wait
+ * node. Records written before instance identities existed retain the legacy
+ * node-id-only behavior so they remain recoverable after an upgrade.
+ */
+export function isSameWaitNodeExecution(
+  candidate: { nodeId: string; waitInstanceId?: string },
+  expected: { nodeId: string; waitInstanceId?: string },
+): boolean {
+  if (candidate.nodeId !== expected.nodeId) return false;
+  return candidate.waitInstanceId === undefined ||
+    expected.waitInstanceId === undefined ||
+    candidate.waitInstanceId === expected.waitInstanceId;
 }
 
 /** One event durably buffered in a run's mailbox until a wait consumes it. */

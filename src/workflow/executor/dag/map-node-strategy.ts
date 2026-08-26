@@ -17,6 +17,8 @@ interface ExecuteMapNodeStrategyInput {
   config: MapNodeConfig;
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
+  /** Declared node ids in the graph that owns this map node. */
+  parentNodeIds: ReadonlySet<string>;
   runtime: NodeStrategyRuntime;
   abortSignal?: AbortSignal;
 }
@@ -68,7 +70,7 @@ function createMapChildNodes(
 export async function executeMapNodeStrategy(
   input: ExecuteMapNodeStrategyInput,
 ): Promise<NodeExecutionResult> {
-  const { node, config, context, nodeStates, runtime } = input;
+  const { node, config, context, nodeStates, parentNodeIds, runtime } = input;
   runtime.abortSignal?.throwIfAborted();
   const startTime = Date.now();
 
@@ -92,6 +94,13 @@ export async function executeMapNodeStrategy(
   }
 
   const childNodes = createMapChildNodes(node, config, items);
+  const collidingChild = childNodes.find((child) => parentNodeIds.has(child.id));
+  if (collidingChild) {
+    throw INVALID_ARGUMENT.create({
+      detail: `Map node "${node.id}" generated child id "${collidingChild.id}", ` +
+        "which collides with a declared node in the parent graph",
+    });
+  }
 
   const result = await runtime.executeChildGraph(
     childNodes,

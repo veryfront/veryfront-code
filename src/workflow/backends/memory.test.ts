@@ -3,7 +3,11 @@ import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/te
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryBackend } from "./memory.ts";
 import type { Checkpoint, PendingApproval, WorkflowQueueItem, WorkflowRun } from "../types.ts";
-import type { PersistedPendingEventWait, RunEventEnvelope } from "./types.ts";
+import type {
+  PersistedPendingApproval,
+  PersistedPendingEventWait,
+  RunEventEnvelope,
+} from "./types.ts";
 import {
   MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES,
   MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES,
@@ -521,6 +525,33 @@ describe("MemoryBackend", () => {
       assertEquals((await backend.getPendingApprovals(runId)).map(({ id }) => id), ["first"]);
     });
 
+    it("allows a new wait instance while the previous decision is reconciling", async () => {
+      const runId = "approval-repeated-wait-instance";
+      const approval = (id: string, waitInstanceId: string): PersistedPendingApproval => ({
+        id,
+        nodeId: "review",
+        waitInstanceId,
+        message: "Review",
+        requestedAt: new Date(),
+        status: "pending",
+      });
+
+      assertEquals(
+        await backend.savePendingApprovalIfAbsent(runId, approval("first", "wait-1")),
+        true,
+      );
+      await backend.updateApproval(runId, "first", { approved: true, approver: "reviewer" });
+      assertEquals(
+        await backend.savePendingApprovalIfAbsent(runId, approval("second", "wait-2")),
+        true,
+      );
+      assertEquals(
+        await backend.savePendingApprovalIfAbsent(runId, approval("duplicate", "wait-2")),
+        false,
+      );
+      assertEquals((await backend.getPendingApprovals(runId)).map(({ id }) => id), ["second"]);
+    });
+
     it("keeps one pending approval per node until the first is decided", async () => {
       const run = createTestRun("approval-node-uniqueness", {
         status: "waiting",
@@ -907,6 +938,29 @@ describe("MemoryBackend", () => {
         (await backend.getPendingEventWaits("run-events")).map(({ id }) => id),
         ["retry"],
       );
+    });
+
+    it("allows a new event-wait instance while the previous timeout claim is live", async () => {
+      await backend.savePendingEventWait(
+        "run-events",
+        createEventWait("first", { waitInstanceId: "wait-1" }),
+      );
+      await backend.resolvePendingEventWait("run-events", "first", "expired");
+
+      await backend.savePendingEventWait(
+        "run-events",
+        createEventWait("second", { waitInstanceId: "wait-2" }),
+      );
+      await backend.savePendingEventWait(
+        "run-events",
+        createEventWait("duplicate", { waitInstanceId: "wait-2" }),
+      );
+
+      assertEquals(
+        (await backend.getPendingEventWaits("run-events")).map(({ id }) => id),
+        ["second"],
+      );
+      assertEquals((await backend.listTimedEventWaitClaims("run-events"))[0]?.id, "first");
     });
 
     it("takes a buffered event only for the matching event name, oldest first", async () => {

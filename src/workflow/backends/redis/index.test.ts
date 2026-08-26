@@ -28,6 +28,7 @@ import {
 } from "../../limits.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { WorkflowRunManager } from "../../worker/run-manager.ts";
+import type { PersistedPendingApproval } from "../types.ts";
 import type {
   RunExecutionConfig,
   RunExecutionInfo,
@@ -322,7 +323,9 @@ class MockRedisAdapter implements RedisAdapter {
         list.some((raw) => {
           const candidate = JSON.parse(raw);
           return (candidate.status === "pending" || candidate.reconciliationPending === true) &&
-            candidate.nodeId === approval.nodeId;
+            candidate.nodeId === approval.nodeId &&
+            (candidate.waitInstanceId === undefined || approval.waitInstanceId === undefined ||
+              candidate.waitInstanceId === approval.waitInstanceId);
         })
       ) return Promise.resolve(3);
       if (!this.retainApprovals(list, Number(args[1]))) return Promise.resolve(2);
@@ -369,7 +372,9 @@ class MockRedisAdapter implements RedisAdapter {
         list.some((raw) => {
           const candidate = JSON.parse(raw);
           return (candidate.status === "pending" || candidate.reconciliationPending === true) &&
-            candidate.nodeId === approval.nodeId;
+            candidate.nodeId === approval.nodeId &&
+            (candidate.waitInstanceId === undefined || approval.waitInstanceId === undefined ||
+              candidate.waitInstanceId === approval.waitInstanceId);
         })
       ) return Promise.resolve(3);
       if (!this.retainApprovals(list, maxEntries)) return Promise.resolve(2);
@@ -2690,6 +2695,30 @@ describe("RedisBackend", () => {
       assertEquals(await backend.savePendingApprovalIfAbsent(runId, approval("first")), true);
       assertEquals(await backend.savePendingApprovalIfAbsent(runId, approval("second")), false);
       assertEquals((await backend.getPendingApprovals(runId)).map(({ id }) => id), ["first"]);
+    });
+
+    it("allows a new wait instance while the previous decision is reconciling", async () => {
+      const runId = "run-ap-repeated-wait-instance";
+      const approval = (id: string, waitInstanceId: string): PersistedPendingApproval => ({
+        ...makeApproval(id),
+        nodeId: "review",
+        waitInstanceId,
+      });
+
+      assertEquals(
+        await backend.savePendingApprovalIfAbsent(runId, approval("first", "wait-1")),
+        true,
+      );
+      await backend.updateApproval(runId, "first", { approved: true, approver: "reviewer" });
+      assertEquals(
+        await backend.savePendingApprovalIfAbsent(runId, approval("second", "wait-2")),
+        true,
+      );
+      assertEquals(
+        await backend.savePendingApprovalIfAbsent(runId, approval("duplicate", "wait-2")),
+        false,
+      );
+      assertEquals((await backend.getPendingApprovals(runId)).map(({ id }) => id), ["second"]);
     });
 
     it("atomically rejects an owned duplicate for the same pending node", async () => {

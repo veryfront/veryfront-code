@@ -72,6 +72,7 @@ export function toPersistedNodeStates(
       nodeId: state.nodeId,
       status: state.status,
       attempt: state.attempt,
+      ...(state._waitInstanceId !== undefined ? { _waitInstanceId: state._waitInstanceId } : {}),
       ...(state.input !== undefined ? { input: state.input } : {}),
       ...(state.output !== undefined ? { output: state.output } : {}),
       ...(state.error !== undefined ? { error: state.error } : {}),

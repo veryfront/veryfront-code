@@ -515,6 +515,39 @@ describe("WorkflowClient", () => {
       assertEquals(await backend.getPendingApprovals(handle.runId), []);
     });
 
+    it("creates a fresh approval when a loop reuses its wait node", async () => {
+      client.register(workflow({
+        id: "repeated-loop-approval-workflow",
+        steps: [
+          loop("review-loop", {
+            maxIterations: 2,
+            while: (_context, iteration) => iteration.iteration < 2,
+            steps: [waitForApproval("review", { message: "Review this iteration" })],
+          }),
+        ],
+      }));
+
+      const handle = await client.start("repeated-loop-approval-workflow", {});
+      await handle.settled();
+      const [first] = await backend.getPendingApprovals(handle.runId);
+      assertExists(first);
+      assertExists(first.waitInstanceId);
+
+      await client.approve(handle.runId, first.id, "reviewer");
+
+      const [second] = await backend.getPendingApprovals(handle.runId);
+      assertExists(second);
+      assertEquals(second.nodeId, first.nodeId);
+      assertEquals(second.id === first.id, false);
+      assertExists(second.waitInstanceId);
+      assertEquals(second.waitInstanceId === first.waitInstanceId, false);
+      assertEquals((await backend.getRun(handle.runId))?.status, "waiting");
+
+      await client.approve(handle.runId, second.id, "reviewer");
+      assertEquals((await backend.getRun(handle.runId))?.status, "completed");
+      assertEquals(await backend.getPendingApprovals(handle.runId), []);
+    });
+
     it("recovers a parent schema when a sub-workflow reuses its node id", async () => {
       await client.destroy();
       backend = new NormalizingApprovalBackend();
@@ -2359,6 +2392,17 @@ class ClaimDuringPersistBackend extends MemoryBackend {
   }
 }
 
+/** Claims an ownerless event wait before its save call returns to the creator. */
+class ResolveOwnerlessWaitDuringPersistBackend extends MemoryBackend {
+  override async savePendingEventWait(
+    runId: string,
+    wait: PersistedPendingEventWait,
+  ): Promise<void> {
+    await super.savePendingEventWait(runId, wait);
+    await super.resolvePendingEventWait(runId, wait.id, "expired");
+  }
+}
+
 /**
  * Distinguishes the atomic delivery rollback from the two-call sequence it
  * replaced: a standalone wait restore during a rollback is the crash window
@@ -2552,6 +2596,49 @@ describe("WorkflowClient durable event waits", () => {
 
     assertEquals(waits[0]?.id, waits[1]?.id);
     assertEquals((await backend.getPendingEventWaits(run.id)).length, 1);
+  });
+
+  it("accepts an ownerless wait claimed before persistence returns", async () => {
+    const racingBackend = new ResolveOwnerlessWaitDuringPersistBackend();
+    const racingClient = createWorkflowClient({ backend: racingBackend });
+    const run: WorkflowRun = {
+      id: "run_ownerless_claim_during_wait_persist",
+      workflowId: "ownerless-claim-during-wait-persist",
+      status: "waiting",
+      input: {},
+      nodeStates: {
+        gate: {
+          nodeId: "gate",
+          status: "running",
+          attempt: 1,
+          startedAt: new Date(),
+          _waitInstanceId: "wait-ownerless-race",
+        },
+      },
+      currentNodes: ["gate"],
+      context: { input: {} },
+      checkpoints: [],
+      pendingApprovals: [],
+      createdAt: new Date(),
+      sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+    };
+    await racingBackend.createRun(run);
+
+    try {
+      const wait = await racingClient.getEventWaitManager().createEventWait(run, "gate", {
+        type: "wait",
+        waitType: "event",
+        eventName: "gate.ready",
+      });
+
+      assertEquals(wait?.status, "expired");
+      assertEquals(await racingBackend.getPendingEventWaits(run.id), []);
+      const [claim] = await racingBackend.listTimedEventWaitClaims(run.id);
+      assertEquals(claim?.id, wait?.id);
+      assertEquals(claim?.waitInstanceId, "wait-ownerless-race");
+    } finally {
+      await racingClient.destroy();
+    }
   });
 
   it("attributes delivery when another client drains during publication", async () => {
@@ -4986,7 +5073,7 @@ describe("WorkflowClient durable event waits", () => {
     // a decision claim, so recovery must recreate it from the DAG descriptor.
     await backend.updatePendingApproval(handle.runId, original.id, {
       status: "rejected",
-      reconciliationPending: false,
+      reconciliationPending: undefined,
     });
     await client.resume(handle.runId);
 

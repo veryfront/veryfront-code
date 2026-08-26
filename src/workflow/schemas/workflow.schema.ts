@@ -102,6 +102,8 @@ export const getNodeStateSchema = defineSchema((v) =>
     attempt: v.number().int().nonnegative(),
     startedAt: v.date().optional(),
     completedAt: v.date().optional(),
+    /** Internal identity for one execution of a reusable wait node. */
+    _waitInstanceId: v.string().optional(),
   })
 );
 

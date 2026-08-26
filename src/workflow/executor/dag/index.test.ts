@@ -971,6 +971,22 @@ describe("DAGExecutor", () => {
       const result = await executor.execute(nodes, createTestRun());
       assertEquals(result.completed, true);
     });
+
+    it("rejects generated child ids that collide with declared parent nodes", async () => {
+      const nodes = [
+        map("batch", {
+          items: [{ id: 1 }],
+          processor: waitForApproval("review", { message: "Review mapped item" }),
+        }),
+        waitForApproval("batch_0", { message: "Independent parent review" }),
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, false);
+      assertStringIncludes(result.error ?? "", 'generated child id "batch_0"');
+      assertEquals(result.nodeStates["batch_0"], undefined);
+    });
   });
 
   describe("loop node", () => {

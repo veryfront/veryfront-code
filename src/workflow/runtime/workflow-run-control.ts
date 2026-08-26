@@ -6,6 +6,7 @@ import {
   hasLockSupport,
   hasRunPatchKeyMergeSupport,
   hasWorkerSupport,
+  isSameWaitNodeExecution,
   updateRunIfStatus,
   type WorkflowBackend,
   type WorkflowRunUpdate,
@@ -893,7 +894,14 @@ export async function executeWorkflowRunControl(
         // different wait in the same child graph was resolved. Its durable
         // record is still live, so announcing it again would create a second
         // approval or event wait for the same node.
-        if (await hasLiveNodeWait(backend, runId, waiting.nodeId)) continue;
+        if (
+          await hasLiveNodeWait(
+            backend,
+            runId,
+            waiting.nodeId,
+            pausedRun.nodeStates[waiting.nodeId]?._waitInstanceId,
+          )
+        ) continue;
         await input.onWaiting?.(pausedRun, waiting.nodeId, waiting.waitConfig);
       }
       await input.onWaitingBatchComplete?.(pausedRun);
@@ -953,7 +961,14 @@ export async function executeWorkflowRunControl(
       // not hide a later sibling whose process died before persisting it.
       let reconstructed = false;
       for (const waiting of stalledWaitNodes) {
-        if (await hasLiveNodeWait(backend, runId, waiting.nodeId)) continue;
+        if (
+          await hasLiveNodeWait(
+            backend,
+            runId,
+            waiting.nodeId,
+            pausedRun.nodeStates[waiting.nodeId]?._waitInstanceId,
+          )
+        ) continue;
         if (pausedRun.nodeStates[waiting.nodeId]?.status !== "running") continue;
         await input.onWaiting?.(pausedRun, waiting.nodeId, waiting.waitConfig);
         reconstructed = true;
@@ -969,7 +984,14 @@ export async function executeWorkflowRunControl(
       let missingWaitRemains = false;
       for (const waiting of stalledWaitNodes) {
         const nodeStatus = latestRun.nodeStates[waiting.nodeId]?.status;
-        if (await hasLiveNodeWait(backend, runId, waiting.nodeId)) continue;
+        if (
+          await hasLiveNodeWait(
+            backend,
+            runId,
+            waiting.nodeId,
+            latestRun.nodeStates[waiting.nodeId]?._waitInstanceId,
+          )
+        ) continue;
         if (nodeStatus === "completed") continue;
         missingWaitRemains = true;
         break;
@@ -1147,19 +1169,25 @@ async function hasLiveNodeWait(
   backend: WorkflowBackend,
   runId: string,
   nodeId: string,
+  waitInstanceId?: string,
 ): Promise<boolean> {
   try {
+    const expected = { nodeId, waitInstanceId };
     const approvals = await backend.getPendingApprovals(runId);
-    if (approvals.some((approval) => approval.nodeId === nodeId)) return true;
+    if (approvals.some((approval) => isSameWaitNodeExecution(approval, expected))) return true;
     const approvalClaims = await backend.listApprovalDecisionClaims?.(runId) ?? [];
-    if (approvalClaims.some(({ approval }) => approval.nodeId === nodeId)) return true;
+    if (
+      approvalClaims.some(({ approval }) => isSameWaitNodeExecution(approval, expected))
+    ) return true;
     if (!hasEventWaitSupport(backend)) return false;
     const waits = await backend.getPendingEventWaits(runId);
-    if (waits.some((wait) => wait.nodeId === nodeId)) return true;
+    if (waits.some((wait) => isSameWaitNodeExecution(wait, expected))) return true;
     const deliveryClaims = await backend.listRunEventDeliveryClaims(runId);
-    if (deliveryClaims.some((claim) => claim.wait.nodeId === nodeId)) return true;
+    if (
+      deliveryClaims.some((claim) => isSameWaitNodeExecution(claim.wait, expected))
+    ) return true;
     const timedClaims = await backend.listTimedEventWaitClaims(runId);
-    return timedClaims.some((wait) => wait.nodeId === nodeId);
+    return timedClaims.some((wait) => isSameWaitNodeExecution(wait, expected));
   } catch (error) {
     logger.warn(
       "Could not read durable wait records; re-announcing the wait",

@@ -16,6 +16,7 @@ import type {
 import {
   assertWorkflowRunUpdate,
   type BackendConfig,
+  isSameWaitNodeExecution,
   type PersistedPendingApproval,
   type PersistedPendingEventWait,
   type RunEventDeliveryClaim,
@@ -544,7 +545,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (
       approvals.some((candidate) =>
         (candidate.status === "pending" || candidate.reconciliationPending === true) &&
-        candidate.nodeId === approval.nodeId
+        isSameWaitNodeExecution(candidate, approval)
       )
     ) {
       return Promise.resolve(false);
@@ -580,7 +581,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (
       approvals.some((candidate) =>
         (candidate.status === "pending" || candidate.reconciliationPending === true) &&
-        candidate.nodeId === approval.nodeId
+        isSameWaitNodeExecution(candidate, approval)
       )
     ) {
       return Promise.resolve(false);
@@ -734,7 +735,7 @@ export class MemoryBackend implements WorkflowBackend {
         (candidate.status === "pending" || candidate.claimedEventId !== undefined ||
           (candidate.claimedAt !== undefined &&
             (candidate.waitKind === "delay" || candidate.status === "expired"))) &&
-        candidate.nodeId === wait.nodeId
+        isSameWaitNodeExecution(candidate, wait)
       )
     ) {
       return Promise.resolve();
@@ -767,7 +768,7 @@ export class MemoryBackend implements WorkflowBackend {
         (candidate.status === "pending" || candidate.claimedEventId !== undefined ||
           (candidate.claimedAt !== undefined &&
             (candidate.waitKind === "delay" || candidate.status === "expired"))) &&
-        candidate.nodeId === wait.nodeId
+        isSameWaitNodeExecution(candidate, wait)
       )
     ) {
       return Promise.resolve(false);

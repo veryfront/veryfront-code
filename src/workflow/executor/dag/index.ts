@@ -119,6 +119,7 @@ export class DAGExecutor {
     let contextPatch = createSetContextPatch();
 
     const { adjList, inDegree, nodeMap } = buildGraph(nodes);
+    const graphNodeIds = new Set(nodeMap.keys());
 
     updateInDegreesForCompletedNodes(nodeStates, adjList, inDegree);
 
@@ -323,6 +324,7 @@ export class DAGExecutor {
             contextSnapshots[i]!,
             nodeStateSnapshots[i]!,
             scope,
+            graphNodeIds,
             abortSignal,
           )
         ),
@@ -586,6 +588,7 @@ export class DAGExecutor {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
     scope: ExecutionScope,
+    graphNodeIds: ReadonlySet<string>,
     abortSignal?: AbortSignal,
   ): Promise<NodeExecutionResult> {
     abortSignal?.throwIfAborted();
@@ -605,6 +608,7 @@ export class DAGExecutor {
           context,
           nodeStates,
           scope,
+          graphNodeIds,
           abortSignal,
         );
         // A failing node returns a failed state rather than throwing, so the span's own
@@ -637,6 +641,7 @@ export class DAGExecutor {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
     scope: ExecutionScope,
+    graphNodeIds: ReadonlySet<string>,
     abortSignal?: AbortSignal,
   ): Promise<NodeExecutionResult> {
     const nodeId = node.id;
@@ -677,6 +682,7 @@ export class DAGExecutor {
               config,
               context,
               nodeStates,
+              parentNodeIds: graphNodeIds,
               runtime: {
                 executeChildGraph: (nodes, run, options) =>
                   this.executeChildGraph(nodes, run, scope, options, attemptSignal),
@@ -960,6 +966,7 @@ export class DAGExecutor {
     const state: NodeState = {
       nodeId: node.id,
       status: "running",
+      _waitInstanceId: generateId("wait"),
       // Absent optional fields are left out rather than written as `undefined`.
       // A suspended loop stores its child states in the context, where JSON
       // drops those keys, so writing them had the persistence check report the

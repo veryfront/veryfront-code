@@ -738,7 +738,9 @@ local existingApprovals = redis.call('lrange', KEYS[2], 0, -1)
 for i = 1, #existingApprovals do
   local candidate = cjson.decode(existingApprovals[i])
   if (candidate.status == 'pending' or candidate.reconciliationPending == true) and
-      candidate.nodeId == approval.nodeId then
+      candidate.nodeId == approval.nodeId and
+      (candidate.waitInstanceId == nil or approval.waitInstanceId == nil or
+        candidate.waitInstanceId == approval.waitInstanceId) then
     return 3
   end
 end
@@ -819,7 +821,9 @@ local existingApprovals = redis.call('lrange', KEYS[2], 0, -1)
 for i = 1, #existingApprovals do
   local candidate = cjson.decode(existingApprovals[i])
   if (candidate.status == 'pending' or candidate.reconciliationPending == true) and
-      candidate.nodeId == approval.nodeId then
+      candidate.nodeId == approval.nodeId and
+      (candidate.waitInstanceId == nil or approval.waitInstanceId == nil or
+        candidate.waitInstanceId == approval.waitInstanceId) then
     return 3
   end
 end

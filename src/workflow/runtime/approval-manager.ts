@@ -9,6 +9,7 @@ import type {
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { generateId, parseDuration } from "../types.ts";
 import {
+  isSameWaitNodeExecution,
   type PersistedPendingApproval,
   updateRunIfStatus,
   type WorkflowBackend,
@@ -265,6 +266,9 @@ export class ApprovalManager {
       requestedAt: new Date(),
       expiresAt,
       status: "pending",
+      ...(run.nodeStates[nodeId]?._waitInstanceId === undefined
+        ? {}
+        : { waitInstanceId: run.nodeStates[nodeId]._waitInstanceId }),
       ...(options.responseSchemaId === undefined
         ? {}
         : { responseSchemaId: options.responseSchemaId }),
@@ -300,7 +304,7 @@ export class ApprovalManager {
           : false;
         if (!saved) {
           const existing = (await this.config.backend.getPendingApprovals(runId)).find(
-            (candidate) => candidate.nodeId === nodeId,
+            (candidate) => isSameWaitNodeExecution(candidate, approval),
           );
           if (existing) {
             if (responseSchemaKey) this.responseSchemas.delete(responseSchemaKey);
@@ -320,7 +324,7 @@ export class ApprovalManager {
         const saved = await saveIfAbsent.call(this.config.backend, runId, approval);
         if (!saved) {
           const existing = (await this.config.backend.getPendingApprovals(runId)).find(
-            (candidate) => candidate.nodeId === nodeId,
+            (candidate) => isSameWaitNodeExecution(candidate, approval),
           );
           if (responseSchemaKey) this.responseSchemas.delete(responseSchemaKey);
           if (existing) return projectApprovalRequest(runId, existing);

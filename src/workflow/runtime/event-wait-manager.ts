@@ -4,6 +4,7 @@ import { generateId, parseDuration } from "../types.ts";
 import {
   hasEventWaitSupport,
   hasRunPatchKeyMergeSupport,
+  isSameWaitNodeExecution,
   type PersistedPendingEventWait,
   type RunEventEnvelope,
   updateRunIfStatus,
@@ -110,6 +111,7 @@ function projectEventWait(wait: PersistedPendingEventWait): PendingEventWait {
     claimedAt: _claimedAt,
     claimedEventId: _claimedEventId,
     deliveredEventId: _deliveredEventId,
+    waitInstanceId: _waitInstanceId,
     ...projected
   } = wait;
   return projected;
@@ -241,6 +243,9 @@ export class EventWaitManager {
       ...(timeoutMs === undefined ? {} : { expiresAt: new Date(timeoutBaseMs + timeoutMs) }),
       status: "pending",
       ...(run.workerId === undefined ? {} : { workerId: run.workerId }),
+      ...(run.nodeStates[nodeId]?._waitInstanceId === undefined
+        ? {}
+        : { waitInstanceId: run.nodeStates[nodeId]._waitInstanceId }),
     };
 
     // The deadline timer is armed BEFORE the record becomes claimable. A
@@ -258,9 +263,7 @@ export class EventWaitManager {
           ? await saveOwned.call(backend, run.id, ["waiting"], run.workerId, wait)
           : false;
         if (!saved) {
-          const existing = (await backend.getPendingEventWaits(run.id)).find(
-            (candidate) => candidate.nodeId === nodeId,
-          );
+          const existing = await this.findWaitExecutionRecord(run, wait);
           if (existing) {
             this.clearExpiry(wait.id);
             return projectEventWait(existing);
@@ -273,7 +276,7 @@ export class EventWaitManager {
         await backend.savePendingEventWait(run.id, wait);
         const pending = await backend.getPendingEventWaits(run.id);
         if (!pending.some((candidate) => candidate.id === wait.id)) {
-          const existing = pending.find((candidate) => candidate.nodeId === nodeId);
+          const existing = await this.findWaitExecutionRecord(run, wait, pending);
           this.clearExpiry(wait.id);
           if (existing) return projectEventWait(existing);
           throw ORCHESTRATION_ERROR.create({
@@ -302,6 +305,53 @@ export class EventWaitManager {
       this.scheduleExpiry(wait, MIN_EXPIRY_RETRY_DELAY_MS);
     }
     return projectEventWait(wait);
+  }
+
+  /**
+   * Find the durable handoff for a wait creation that did not remain pending.
+   * A delivery or timeout may claim and even finalize the record while the
+   * backend's save promise is still settling; that is successful persistence,
+   * not a lost append.
+   */
+  private async findWaitExecutionRecord(
+    originalRun: WorkflowRun,
+    expected: PersistedPendingEventWait,
+    knownPending?: PersistedPendingEventWait[],
+  ): Promise<PersistedPendingEventWait | null> {
+    const backend = this.config.backend;
+    const pending = knownPending ?? await backend.getPendingEventWaits?.(originalRun.id) ?? [];
+    const pendingMatch = pending.find((candidate) => isSameWaitNodeExecution(candidate, expected));
+    if (pendingMatch) return pendingMatch;
+
+    const deliveryClaims = await backend.listRunEventDeliveryClaims?.(originalRun.id) ?? [];
+    const deliveryMatch = deliveryClaims.find(({ wait }) =>
+      isSameWaitNodeExecution(wait, expected)
+    );
+    if (deliveryMatch) return deliveryMatch.wait;
+
+    const timedClaims = await backend.listTimedEventWaitClaims?.(originalRun.id) ?? [];
+    const timedMatch = timedClaims.find((candidate) =>
+      isSameWaitNodeExecution(candidate, expected)
+    );
+    if (timedMatch) return timedMatch;
+
+    // A fast claimant can finish and discard its claim before the save caller
+    // reads any of the durable wait collections. A committed node outcome, a
+    // newer execution of this reusable wait node, or a terminal run proves the
+    // append was handed off rather than lost.
+    const latestRun = await backend.getRun(originalRun.id);
+    const latestState = latestRun?.nodeStates[expected.nodeId];
+    const newerExecution = expected.waitInstanceId !== undefined &&
+      latestState?._waitInstanceId !== undefined &&
+      latestState._waitInstanceId !== expected.waitInstanceId;
+    if (
+      latestState?.status === "completed" || newerExecution || latestRun?.status === "completed"
+    ) {
+      return { ...expected, status: "delivered" };
+    }
+    if (latestRun?.status === "failed") return { ...expected, status: "expired" };
+    if (latestRun?.status === "cancelled") return { ...expected, status: "cancelled" };
+    return null;
   }
 
   /** Drain buffered events after a complete waiting batch has been persisted. */
