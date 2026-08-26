@@ -93,6 +93,7 @@ const StringPrototypeReplace = String.prototype.replace;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeSplit = String.prototype.split;
 const StringPrototypeStartsWith = String.prototype.startsWith;
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const StringPrototypeTrim = String.prototype.trim;
 const ReflectDeleteProperty = Reflect.deleteProperty;
 const ReflectOwnKeys = Reflect.ownKeys;
@@ -1713,7 +1714,12 @@ function missingPackageName(specifier: string): string | undefined {
   ) {
     return undefined;
   }
-  if (parsed.packageName === "node_modules" || parsed.packageName === "favicon.ico") {
+  const lowercasePackageName = ReflectApply(
+    StringPrototypeToLowerCase,
+    parsed.packageName,
+    [],
+  ) as string;
+  if (lowercasePackageName === "node_modules" || lowercasePackageName === "favicon.ico") {
     return undefined;
   }
 
@@ -1728,7 +1734,7 @@ function missingPackageName(specifier: string): string | undefined {
 }
 
 const LEGACY_NPM_PACKAGE_NAME_PATTERN =
-  /^(?:[A-Za-z0-9][A-Za-z0-9._-]*|@[A-Za-z0-9._-]+\/[A-Za-z0-9_-][A-Za-z0-9._-]*)$/;
+  /^(?:[A-Za-z0-9_-][A-Za-z0-9._-]*|@[A-Za-z0-9._-]+\/[A-Za-z0-9_-][A-Za-z0-9._-]*)$/;
 const MAX_LEGACY_NPM_PACKAGE_NAME_LENGTH = 214;
 
 /** Accept existing npm names without broadening server-external configuration. */

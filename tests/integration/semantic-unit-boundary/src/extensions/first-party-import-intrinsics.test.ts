@@ -4,6 +4,7 @@ import { isMissingFirstPartyExtensionModule } from "#veryfront/extensions/first-
 
 describe("first-party extension import intrinsic boundary", () => {
   it("uses captured intrinsics for the Deno first-line retry", () => {
+    const originalExec = RegExp.prototype.exec;
     const originalSplit = String.prototype.split;
     const denoMessage = [
       `Import "@veryfront/ext-auth-jwt" not a dependency`,
@@ -14,6 +15,9 @@ describe("first-party extension import intrinsic boundary", () => {
       String.prototype.split = function (): string[] {
         throw new Error("poisoned split");
       };
+      RegExp.prototype.exec = function (): RegExpExecArray | null {
+        throw new Error("poisoned exec");
+      };
       assertEquals(
         isMissingFirstPartyExtensionModule(new Error(denoMessage), [
           "@veryfront/ext-auth-jwt",
@@ -21,6 +25,7 @@ describe("first-party extension import intrinsic boundary", () => {
         true,
       );
     } finally {
+      RegExp.prototype.exec = originalExec;
       String.prototype.split = originalSplit;
     }
   });

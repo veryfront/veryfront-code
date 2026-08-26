@@ -1276,6 +1276,16 @@ export default config as const;
         });
       }
 
+      it("classifies an npm-valid leading-hyphen package as missing", async () => {
+        const error = await loadFailure(
+          "vf-config-leading-hyphen-",
+          'import "-foo";\nexport default {};\n',
+        );
+
+        assertEquals(error.slug, DEPENDENCY_MISSING_SLUG);
+        assertStringIncludes(error.message, "-foo");
+      });
+
       // Each of these reaches the classifier through a matched resolver
       // phrasing and must still come out as a parse error, because installing
       // a package would not help any of these readers.
@@ -1355,6 +1365,16 @@ export default config as const;
           "the npm-reserved favicon.ico root",
           "vf-config-reserved-favicon-",
           `throw new Error("Cannot find package 'favicon.ico' imported from /app/veryfront.config.ts");\n`,
+        ],
+        [
+          "the mixed-case npm-reserved Node_Modules root",
+          "vf-config-reserved-node-modules-case-",
+          `throw new Error("Cannot find package 'Node_Modules' imported from /app/veryfront.config.ts");\n`,
+        ],
+        [
+          "the mixed-case npm-reserved FAVICON.ICO root",
+          "vf-config-reserved-favicon-case-",
+          `throw new Error("Cannot find package 'FAVICON.ICO' imported from /app/veryfront.config.ts");\n`,
         ],
       ];
 
