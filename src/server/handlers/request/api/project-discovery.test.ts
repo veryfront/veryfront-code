@@ -155,7 +155,7 @@ describe(
       const ctx = createHandlerContext("/granted-project", "granted", "preview");
       ctx.isLocalProject = false;
       // Present marks a shared multi-project runtime, as veryfront-server is.
-      // Rejecting also asserts discovery never invokes it on the granted path.
+      // Rejecting also asserts discovery never invokes this tenant boundary.
       ctx.prepareHostedConfigContext = () => Promise.reject(new Error("must not be called"));
       ctx.allowHostProjectCodeExecution = true;
       await ctx.adapter.fs.writeFile(
