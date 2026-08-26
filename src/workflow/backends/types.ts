@@ -341,6 +341,8 @@ export interface WorkflowBackend {
    * mutations.
    */
   listTimedEventWaitClaims?(runId?: string): Promise<PersistedPendingEventWait[]>;
+  /** Release a timeout claim after its matching run transition commits. */
+  finalizeTimedEventWaitClaim?(runId: string, waitId: string): Promise<void>;
 
   /**
    * Buffer one event in a run's durable mailbox.
@@ -586,6 +588,7 @@ type WithEventWaitSupport =
       | "resolvePendingEventWait"
       | "restorePendingEventWait"
       | "listTimedEventWaitClaims"
+      | "finalizeTimedEventWaitClaim"
       | "appendRunEvent"
       | "removeRunEvent"
       | "peekRunEvent"
@@ -607,8 +610,9 @@ type WithEventWaitSupport =
  * `restoreRunEvent`, `restoreRunEventDelivery`, `finalizeRunEventDelivery`,
  * recoverable delivery claims, and recoverable timeout claims are part of the
  * group for the same reason: without them a delivery that fails halfway leaves
- * the run parked on a wait already marked delivered, re-orders its mailbox, or
- * loses the event outright when a crash lands between the two separate restores.
+ * the run parked on a wait already marked delivered, re-orders its mailbox,
+ * loses the event outright when a crash lands between the two separate
+ * restores, or scans an already-committed timeout claim forever.
  *
  * A backend that also supports worker execution ownership must implement
  * `savePendingEventWaitIfStatusAndWorker` as well. The executor assigns every
@@ -624,6 +628,7 @@ export function hasEventWaitSupport(backend: WorkflowBackend): backend is WithEv
     typeof backend.resolvePendingEventWait === "function" &&
     typeof backend.restorePendingEventWait === "function" &&
     typeof backend.listTimedEventWaitClaims === "function" &&
+    typeof backend.finalizeTimedEventWaitClaim === "function" &&
     typeof backend.appendRunEvent === "function" &&
     typeof backend.removeRunEvent === "function" &&
     typeof backend.peekRunEvent === "function" &&

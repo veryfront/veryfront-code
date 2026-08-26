@@ -1226,6 +1226,9 @@ describe("MemoryBackend", () => {
         (await backend.listTimedEventWaitClaims("run-events")).map((wait) => wait.id),
         ["evw-timeout"],
       );
+
+      await backend.finalizeTimedEventWaitClaim("run-events", "evw-timeout");
+      assertEquals(await backend.listTimedEventWaitClaims("run-events"), []);
     });
 
     it("does not yield between taking an event and claiming its wait", async () => {

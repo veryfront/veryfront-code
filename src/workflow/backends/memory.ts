@@ -757,14 +757,21 @@ export class MemoryBackend implements WorkflowBackend {
       if (runId !== undefined && claimRunId !== runId) continue;
       for (const wait of waits) {
         if (
-          (wait.waitKind === "delay" && wait.status === "delivered") ||
-          (wait.waitKind === "event" && wait.status === "expired")
+          wait.claimedAt !== undefined &&
+          ((wait.waitKind === "delay" && wait.status === "delivered") ||
+            (wait.waitKind === "event" && wait.status === "expired"))
         ) {
           claims.push(structuredClone(wait));
         }
       }
     }
     return Promise.resolve(claims);
+  }
+
+  finalizeTimedEventWaitClaim(runId: string, waitId: string): Promise<void> {
+    const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
+    if (wait) delete wait.claimedAt;
+    return Promise.resolve();
   }
 
   appendRunEvent(runId: string, event: RunEventEnvelope): Promise<void> {

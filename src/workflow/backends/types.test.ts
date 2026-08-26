@@ -38,6 +38,7 @@ describe("hasEventWaitSupport", () => {
         "resolvePendingEventWait",
         "restorePendingEventWait",
         "listTimedEventWaitClaims",
+        "finalizeTimedEventWaitClaim",
         "appendRunEvent",
         "removeRunEvent",
         "peekRunEvent",

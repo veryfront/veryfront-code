@@ -2070,6 +2070,29 @@ class RefusingRunFailureBackend extends MemoryBackend {
   }
 }
 
+class PausingRunFailureBackend extends MemoryBackend {
+  readonly failureUpdateStarted = Promise.withResolvers<void>();
+  readonly releaseFailureUpdate = Promise.withResolvers<void>();
+  pauseFailureUpdate = false;
+  failureUpdates = 0;
+
+  override async updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.status === "failed") {
+      this.failureUpdates++;
+      if (this.pauseFailureUpdate) {
+        this.pauseFailureUpdate = false;
+        this.failureUpdateStarted.resolve();
+        await this.releaseFailureUpdate.promise;
+      }
+    }
+    return await super.updateRunIfStatus(runId, expectedStatuses, patch);
+  }
+}
+
 /**
  * Turns the run terminal between publishEvent's status check and the append,
  * the window the post-drain reconciliation exists to cover.
@@ -2920,6 +2943,39 @@ describe("WorkflowClient durable event waits", () => {
     }
   });
 
+  it("recovers rolled-back buffered delivery after its parking process exits", async () => {
+    const sharedBackend = new FailFirstDeliveryRunReadBackend();
+    const parked = createWorkflowClient({
+      backend: sharedBackend,
+      eventWait: { expirationCheckInterval: 0 },
+    });
+    const recovering = createWorkflowClient({
+      backend: sharedBackend,
+      eventWait: { expirationCheckInterval: 0 },
+    });
+    const definition = workflow({
+      id: "restart-buffered-delivery-retry",
+      steps: [waitForEvent("gate", { eventName: "gate.ready" })],
+    });
+    parked.register(definition);
+    recovering.register(definition);
+    const runId = "run_restart_buffered_delivery_retry";
+    try {
+      assertEquals(await parked.publishEvent(runId, "gate.ready", {}), "buffered");
+      const handle = await parked.start(definition.id, {}, { runId });
+      await handle.settled();
+      assertEquals((await parked.getPendingEventWaits(runId)).length, 1);
+      parked.getEventWaitManager().stop();
+
+      await recovering.getEventWaitManager().checkExpiredEventWaits();
+
+      assertEquals((await recovering.getRun(runId))?.status, "completed");
+    } finally {
+      await parked.destroy();
+      await recovering.destroy();
+    }
+  });
+
   it("fails a run whose declared event timeout elapses", async () => {
     client.register(workflow({
       id: "timeout-event-workflow",
@@ -3125,6 +3181,35 @@ describe("WorkflowClient durable event waits", () => {
     } finally {
       await parked.destroy();
       await recovering.destroy();
+    }
+  });
+
+  it("does not recover its own timeout while the run failure is in flight", async () => {
+    const sharedBackend = new PausingRunFailureBackend();
+    const timedClient = createWorkflowClient({
+      backend: sharedBackend,
+      eventWait: { expirationCheckInterval: 0, deliveryClaimRecoveryDelay: 0 },
+    });
+    timedClient.register(workflow({
+      id: "active-timeout-claim",
+      steps: [waitForEvent("gate", { eventName: "gate.ready", timeout: 30 })],
+    }));
+    sharedBackend.pauseFailureUpdate = true;
+    try {
+      const handle = await timedClient.start("active-timeout-claim", {});
+      await handle.settled();
+      await sharedBackend.failureUpdateStarted.promise;
+
+      await timedClient.getEventWaitManager().drainPendingEvents(handle.runId);
+      sharedBackend.releaseFailureUpdate.resolve();
+
+      await waitFor(async () => (await timedClient.getRun(handle.runId))?.status === "failed");
+      assertEquals(sharedBackend.failureUpdates, 1);
+      assertEquals(await timedClient.getPendingEventWaits(handle.runId), []);
+      assertEquals(await sharedBackend.listTimedEventWaitClaims(handle.runId), []);
+    } finally {
+      sharedBackend.releaseFailureUpdate.resolve();
+      await timedClient.destroy();
     }
   });
 
