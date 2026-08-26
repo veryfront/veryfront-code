@@ -853,7 +853,10 @@ describe("adapter-factory", () => {
       });
 
       assertEquals(sourceFresh, true);
-      assertEquals(freshnessCalls, [{ reason: "preview-document-routing", maxAgeMs: 0 }]);
+      assertEquals(freshnessCalls, [
+        { reason: "config-load", maxAgeMs: undefined },
+        { reason: "preview-document-routing", maxAgeMs: 0 },
+      ]);
       assertEquals(result.config?.router, "pages");
       assertEquals(result.config?.title, "preview:tenant-value");
       assertEquals(result.previewDocumentSourceSnapshot, {
@@ -979,6 +982,89 @@ describe("adapter-factory", () => {
         results.map((result) => result.previewDocumentSourceSnapshot),
         [undefined, undefined, undefined],
       );
+    });
+
+    it("classifies public ownership after renewing the normal source lease", async () => {
+      let publicFileExists = true;
+      const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
+      const base = createMockAdapter({
+        "/veryfront.config.ts": { isDirectory: false, isFile: true },
+      });
+      const extendedFs = {
+        ...base.fs,
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => false,
+        sourceSnapshotFreshnessOptionsVersion: 1 as const,
+        runWithContext: (
+          _slug: string,
+          _token: string,
+          fn: () => Promise<unknown>,
+          projectId?: string,
+          opts?: {
+            productionMode?: boolean;
+            releaseId?: string | null;
+            branch?: string | null;
+            environmentName?: string | null;
+          },
+        ) => runWithRequestContext({ projectSlug: _slug, token: _token, projectId, ...opts }, fn),
+        ensureSourceSnapshotFresh: (reason?: string, options?: { maxAgeMs?: number }) => {
+          freshnessCalls.push({ reason, maxAgeMs: options?.maxAgeMs });
+          if (reason === "config-load") publicFileExists = false;
+          return Promise.resolve();
+        },
+        getSourceSnapshotIdentity: () => "branch:mutable-config-project:main",
+        getSourceSnapshotVersion: () => 2,
+        stat: (path: string) => {
+          if (path === "/base/project/public/robots") {
+            return publicFileExists
+              ? Promise.resolve({ isDirectory: false, isFile: true })
+              : Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
+          }
+          return base.fs.stat(path);
+        },
+        readFile: (path: string) => {
+          if (path !== "/veryfront.config.ts") {
+            return Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
+          }
+          return Promise.resolve(`export default { router: "pages" };`);
+        },
+      };
+      const adapter = { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+
+      const result = await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "mutable-config-project",
+        projectId: "proj_mutable_config",
+        proxyToken: "tok-123",
+        releaseId: undefined,
+        proxyEnv: "preview",
+        branch: "main",
+        environmentName: undefined,
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: await makeReq(),
+        pathname: "/robots",
+        isProxyMode: true,
+        prepareHostedConfigContext: preparePreviewHostedConfigContext,
+      });
+
+      assertEquals(freshnessCalls, [
+        { reason: "config-load", maxAgeMs: undefined },
+        { reason: "preview-document-routing", maxAgeMs: 0 },
+      ]);
+      assertEquals(result.previewDocumentSourceSnapshot, {
+        identity: "branch:mutable-config-project:main",
+        version: 2,
+      });
     });
 
     it("rejects preview document config when the source generation changes during the read", async () => {

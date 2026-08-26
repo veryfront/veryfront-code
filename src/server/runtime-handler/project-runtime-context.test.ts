@@ -829,13 +829,19 @@ describe("resolveProjectRuntimeContext", () => {
     }));
 
     assertEquals(result.handlerContext?.config?.router, "pages");
-    assertEquals(freshnessCalls, [{ reason: "preview-document-routing", maxAgeMs: 0 }]);
+    assertEquals(freshnessCalls, [
+      { reason: "config-load", maxAgeMs: undefined },
+      { reason: "preview-document-routing", maxAgeMs: 0 },
+    ]);
 
     assertExists(result.handlerContext);
     await preparePreviewDocumentSourceSnapshot(result.handlerContext);
     assertEquals(
       freshnessCalls,
-      [{ reason: "preview-document-routing", maxAgeMs: 0 }],
+      [
+        { reason: "config-load", maxAgeMs: undefined },
+        { reason: "preview-document-routing", maxAgeMs: 0 },
+      ],
       "routing must reuse the generation that produced config instead of advancing past it",
     );
   });

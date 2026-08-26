@@ -212,18 +212,20 @@ async function hasPublishedPublicFile(
   return false;
 }
 
-async function requiresStrictPreviewDocumentConfig(
+type PreviewConfigFreshness = "normal" | "normal-prepared" | "strict";
+
+async function resolvePreviewConfigFreshness(
   opts: AdapterResolutionOptions,
   projectDir: string,
   adapter: RuntimeAdapter,
-): Promise<boolean> {
-  if (!opts.isProxyMode || opts.proxyEnv === "production") return false;
+): Promise<PreviewConfigFreshness> {
+  if (!opts.isProxyMode || opts.proxyEnv === "production") return "normal";
   // The shared-runtime denial runs after request context construction. Avoid a
   // zero-age whole-source refresh for a document that no handler may execute.
-  if (opts.allowHostProjectCodeExecution === false) return false;
-  if (opts.req.method !== "GET" && opts.req.method !== "HEAD") return false;
+  if (opts.allowHostProjectCodeExecution === false) return "normal";
+  if (opts.req.method !== "GET" && opts.req.method !== "HEAD") return "normal";
   const pathname = opts.pathname ?? new URL(opts.req.url).pathname;
-  if (pathname === "/api" || pathname.startsWith("/api/")) return false;
+  if (pathname === "/api" || pathname.startsWith("/api/")) return "normal";
   // StaticHandler precedes API discovery and document rendering. Ordinary
   // extension paths are already excluded by the document predicates; probe
   // the public candidates for extensionless and Markdown paths that would
@@ -231,8 +233,13 @@ async function requiresStrictPreviewDocumentConfig(
   // files compatible with adapters that do not expose strict snapshot markers.
   const documentCandidate = ssrOwnsDocumentPathname(pathname) ||
     (opts.req.method === "GET" && markdownPreviewOwnsDocumentPathname(pathname));
-  return documentCandidate &&
-    !(await hasPublishedPublicFile(projectDir, adapter, pathname));
+  if (!documentCandidate) return "normal";
+
+  // Renew the normal lease before classifying static ownership. Refreshing the
+  // adapter after this probe could remove a public file and let the request
+  // fall through to document rendering without strict snapshot binding.
+  await adapter.fs.ensureSourceSnapshotFresh?.("config-load");
+  return await hasPublishedPublicFile(projectDir, adapter, pathname) ? "normal-prepared" : "strict";
 }
 
 async function prepareProxyConfigLoad(
@@ -379,11 +386,12 @@ export async function resolveAdapter(
         const loadCurrentConfig = async (): Promise<VeryfrontConfig> => {
           // Config controls route and primitive discovery, so it must be read
           // from the same current snapshot that those consumers will retain.
-          const strictDocumentConfig = await requiresStrictPreviewDocumentConfig(
+          const previewConfigFreshness = await resolvePreviewConfigFreshness(
             opts,
             effectiveProjectDir,
             effectiveAdapter,
           );
+          const strictDocumentConfig = previewConfigFreshness === "strict";
           let configSourceSnapshot: PreviewSourceSnapshotMarker | undefined;
           if (strictDocumentConfig) {
             await ensurePreviewDocumentConfigSourceSnapshotFresh(
@@ -394,7 +402,7 @@ export async function resolveAdapter(
               effectiveAdapter.fs,
               opts.projectSlug!,
             );
-          } else {
+          } else if (previewConfigFreshness === "normal") {
             await effectiveAdapter.fs.ensureSourceSnapshotFresh?.("config-load");
           }
 
