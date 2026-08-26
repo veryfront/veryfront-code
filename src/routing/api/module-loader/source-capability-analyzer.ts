@@ -1976,10 +1976,16 @@ function applyIdentifierCapability(
   parents: WeakMap<ASTNode, ParentLink>,
   analysis: MutableSourceCapabilityAnalysis,
 ): void {
+  if (node.type !== "Identifier" || typeof node.name !== "string") return;
+
   if (
-    node.type !== "Identifier" || typeof node.name !== "string" ||
-    !isIdentifierReference(node, parents)
-  ) return;
+    node.name === "Symbol" && resolveBinding(scope, node.name) === null &&
+    isMutationTarget(node, parents)
+  ) {
+    analysis.hasDynamicCodeGeneration = true;
+  }
+
+  if (!isIdentifierReference(node, parents)) return;
 
   if (
     (node.name === "eval" || node.name === "Function") &&
@@ -2018,13 +2024,17 @@ function applyMemberCapability(
   const object = patternChild(node.object);
   const objectIsProvablyPlain = object !== undefined &&
     isPlainObjectValue(object, scope, nodeScopes);
+  const objectIsGlobal = object !== undefined && isGlobalObject(object, scope, nodeScopes);
+  if (objectIsGlobal && property === "Symbol" && isMutationTarget(node, parents)) {
+    analysis.hasDynamicCodeGeneration = true;
+  }
   const computedKeyIsDefinitelySymbol = node.computed === true && isNode(node.property) &&
     isDefinitelySymbolValue(node.property, scope, nodeScopes);
   const mayReadConstructor = !isMemberWriteTarget(node, parents) &&
     (property === "constructor" ||
       node.computed === true && property === null && !computedKeyIsDefinitelySymbol);
   if (mayReadConstructor && !objectIsProvablyPlain) analysis.hasDynamicCodeGeneration = true;
-  if (object === undefined || !isGlobalObject(object, scope, nodeScopes)) return;
+  if (!objectIsGlobal) return;
   if (property === null || property === "eval" || property === "Function") {
     analysis.hasDynamicCodeGeneration = true;
   }
@@ -2047,6 +2057,29 @@ function isMemberWriteTarget(
     if (
       link.parent.type === "AssignmentExpression" && link.key === "left" &&
       link.parent.operator === "="
+    ) return true;
+    if (
+      (link.parent.type === "ForInStatement" || link.parent.type === "ForOfStatement") &&
+      link.key === "left"
+    ) return true;
+    if (!isNestedBindingPatternPosition(link.parent, link.key, parents)) return false;
+    current = link.parent;
+  }
+}
+
+function isMutationTarget(
+  node: ASTNode,
+  parents: WeakMap<ASTNode, ParentLink>,
+): boolean {
+  let current = node;
+  while (true) {
+    const link = parents.get(current);
+    if (!link) return false;
+    if (link.parent.type === "AssignmentExpression" && link.key === "left") return true;
+    if (link.parent.type === "UpdateExpression" && link.key === "argument") return true;
+    if (
+      link.parent.type === "UnaryExpression" && link.parent.operator === "delete" &&
+      link.key === "argument"
     ) return true;
     if (
       (link.parent.type === "ForInStatement" || link.parent.type === "ForOfStatement") &&
