@@ -863,6 +863,100 @@ describe("error-context", () => {
       }
     });
 
+    it("redacts inspected paths containing every quote delimiter", async () => {
+      const captured: { message: string; data: Record<string, unknown> }[] = [];
+      const originalLogDebug = serverLogger.debug;
+      serverLogger.debug = ((message: string, data: Record<string, unknown>) => {
+        captured.push({ message, data });
+      }) as typeof serverLogger.debug;
+
+      const cases = [
+        ["/private-read/'\"`/secret", "'/private-read/\\'\"`/secret'"],
+        ["/private-stat/'\"`/secret", "'/private-stat/\\'\"`/secret'"],
+        ["/private-directory/'\"`/secret", "'/private-directory/\\'\"`/secret'"],
+      ] as const;
+      try {
+        await safeFileRead(
+          { fs: { readFile: () => Promise.reject(new Error(`read failed ${cases[0][1]}`)) } },
+          cases[0][0],
+          "read-file",
+        );
+        await safeFileStat(
+          { fs: { stat: () => Promise.reject(new Error(`stat failed ${cases[1][1]}`)) } },
+          cases[1][0],
+          "stat-file",
+        );
+        await safeReadDir<string>(
+          {
+            fs: {
+              async *readDir(): AsyncIterable<string> {
+                yield await Promise.reject(new Error(`directory failed ${cases[2][1]}`));
+              },
+            },
+          },
+          cases[2][0],
+          "read-directory",
+        );
+      } finally {
+        serverLogger.debug = originalLogDebug;
+      }
+
+      assertEquals(captured.length, 3);
+      for (const diagnostic of captured) {
+        assertExists(diagnostic);
+        const errorMessage = String(diagnostic.data.errorMessage);
+        assertEquals(errorMessage.includes("private-"), false);
+        assertEquals(errorMessage.includes("<absolute-path>"), true);
+      }
+    });
+
+    it("redacts URI-encoded paths in every filesystem helper", async () => {
+      const captured: { message: string; data: Record<string, unknown> }[] = [];
+      const originalLogDebug = serverLogger.debug;
+      serverLogger.debug = ((message: string, data: Record<string, unknown>) => {
+        captured.push({ message, data });
+      }) as typeof serverLogger.debug;
+
+      const cases = [
+        ["/a b/private-read-marker", "/a%20b/private-read-marker"],
+        ["/c d/private-stat-marker", "/c%20d/private-stat-marker"],
+        ["/e f/private-directory-marker", "/e%20f/private-directory-marker"],
+      ] as const;
+      try {
+        await safeFileRead(
+          { fs: { readFile: () => Promise.reject(new Error(`read failed ${cases[0][1]}`)) } },
+          cases[0][0],
+          "read-file",
+        );
+        await safeFileStat(
+          { fs: { stat: () => Promise.reject(new Error(`stat failed ${cases[1][1]}`)) } },
+          cases[1][0],
+          "stat-file",
+        );
+        await safeReadDir<string>(
+          {
+            fs: {
+              async *readDir(): AsyncIterable<string> {
+                yield await Promise.reject(new Error(`directory failed ${cases[2][1]}`));
+              },
+            },
+          },
+          cases[2][0],
+          "read-directory",
+        );
+      } finally {
+        serverLogger.debug = originalLogDebug;
+      }
+
+      assertEquals(captured.length, 3);
+      for (const diagnostic of captured) {
+        assertExists(diagnostic);
+        const errorMessage = String(diagnostic.data.errorMessage);
+        assertEquals(errorMessage.includes("private-"), false);
+        assertEquals(errorMessage.includes("<absolute-path>"), true);
+      }
+    });
+
     it("redacts Node null-byte path aliases in every filesystem helper", async () => {
       const captured: { message: string; data: Record<string, unknown> }[] = [];
       const originalLogDebug = serverLogger.debug;

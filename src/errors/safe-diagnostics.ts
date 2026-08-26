@@ -1,4 +1,3 @@
-import { domainToUnicode as nativeDomainToUnicode } from "node:url";
 import {
   type ErrorCategory,
   isVeryfrontErrorInstance,
@@ -46,10 +45,13 @@ const freeze = Object.freeze;
 const arrayJoin = Array.prototype.join;
 const arrayPop = Array.prototype.pop;
 const arrayPush = Array.prototype.push;
+const arraySplice = Array.prototype.splice;
 const nativeDecodeURIComponent = decodeURIComponent;
+const nativeEncodeURI = encodeURI;
 const jsonStringify = JSON.stringify;
 const numberIsFinite = Number.isFinite;
 const numberIsInteger = Number.isInteger;
+const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
 const UNKNOWN_ERROR_SNAPSHOT: VeryfrontErrorSnapshot = freeze({
   slug: "unknown-error",
   category: "GENERAL",
@@ -67,9 +69,11 @@ const NativeString = String;
 const NativeUint32Array = Uint32Array;
 const NativeURL = URL;
 const stringCharCodeAt = String.prototype.charCodeAt;
+const stringFromCodePoint = String.fromCodePoint;
 const stringSlice = String.prototype.slice;
 const stringToLowerCase = String.prototype.toLowerCase;
 const stringToUpperCase = String.prototype.toUpperCase;
+const mathFloor = Math.floor;
 const URL_HOSTNAME_GETTER = getOwnPropertyDescriptor(NativeURL.prototype, "hostname")?.get;
 const URL_PATHNAME_GETTER = getOwnPropertyDescriptor(NativeURL.prototype, "pathname")?.get;
 const NATIVE_ERROR_STACK_GETTER = getOwnPropertyDescriptor(new NativeError(), "stack")?.get;
@@ -596,7 +600,10 @@ function normalizePosixDoubleSeparatorPathForDiagnostic(path: string): string | 
 }
 
 /** Derive the path spelling Node uses when inspecting backslashes and controls. */
-function nodeInspectedFilesystemPath(path: string): string | undefined {
+function nodeInspectedFilesystemPath(
+  path: string,
+  quoteDelimiterCodeUnit: number,
+): string | undefined {
   const parts: string[] = [];
   let segmentStart = 0;
   for (let index = 0; index < path.length; index++) {
@@ -604,6 +611,8 @@ function nodeInspectedFilesystemPath(path: string): string | undefined {
     let escape: string | undefined;
     if (codeUnit === BACKSLASH_CODE_UNIT) {
       escape = "\\\\";
+    } else if (codeUnit === quoteDelimiterCodeUnit) {
+      escape = `\\${sliceString(path, index, index + 1)}`;
     } else if (codeUnit === 8) {
       escape = "\\b";
     } else if (codeUnit === 9) {
@@ -626,6 +635,15 @@ function nodeInspectedFilesystemPath(path: string): string | undefined {
   if (segmentStart === 0) return undefined;
   apply(arrayPush, parts, [sliceString(path, segmentStart)]);
   return apply(arrayJoin, parts, [""]);
+}
+
+function uriEncodedFilesystemPath(path: string): string | undefined {
+  try {
+    const encoded = nativeEncodeURI(path);
+    return encoded === path ? undefined : encoded;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Derive the path spelling Node uses in unquoted invalid-NUL diagnostics. */
@@ -733,6 +751,100 @@ function containsTruncatedFilesystemPathPrefix(input: string, path: string): boo
   return false;
 }
 
+function punycodeDigit(codeUnit: number): number {
+  if (codeUnit >= 65 && codeUnit <= 90) return codeUnit - 65;
+  if (codeUnit >= 97 && codeUnit <= 122) return codeUnit - 97;
+  if (codeUnit >= 48 && codeUnit <= 57) return codeUnit - 22;
+  return 36;
+}
+
+function adaptPunycodeBias(delta: number, pointCount: number, first: boolean): number {
+  delta = first ? mathFloor(delta / 700) : mathFloor(delta / 2);
+  delta += mathFloor(delta / pointCount);
+  let adjustment = 0;
+  while (delta > 455) {
+    delta = mathFloor(delta / 35);
+    adjustment += 36;
+  }
+  return adjustment + mathFloor((36 * delta) / (delta + 38));
+}
+
+/** Decode one validated URL-host punycode label without a Node built-in. */
+function decodePunycodeLabel(label: string): string | undefined {
+  const output: number[] = [];
+  let delimiter = -1;
+  for (let index = 0; index < label.length; index++) {
+    if (charCodeAtString(label, index) === 45) delimiter = index;
+  }
+  let cursor = delimiter < 0 ? 0 : delimiter + 1;
+  if (delimiter >= 0) {
+    for (let index = 0; index < delimiter; index++) {
+      const codeUnit = charCodeAtString(label, index);
+      if (codeUnit >= 0x80) return undefined;
+      apply(arrayPush, output, [codeUnit]);
+    }
+  }
+
+  let codePoint = 128;
+  let bias = 72;
+  let insertion = 0;
+  while (cursor < label.length) {
+    const previousInsertion = insertion;
+    let weight = 1;
+    for (let thresholdBase = 36;; thresholdBase += 36) {
+      if (cursor >= label.length) return undefined;
+      const digit = punycodeDigit(charCodeAtString(label, cursor++));
+      if (digit >= 36 || digit > mathFloor((MAX_SAFE_INTEGER - insertion) / weight)) {
+        return undefined;
+      }
+      insertion += digit * weight;
+      const threshold = thresholdBase <= bias + 1
+        ? 1
+        : thresholdBase >= bias + 26
+        ? 26
+        : thresholdBase - bias;
+      if (digit < threshold) break;
+      const factor = 36 - threshold;
+      if (weight > mathFloor(MAX_SAFE_INTEGER / factor)) return undefined;
+      weight *= factor;
+    }
+
+    const pointCount = output.length + 1;
+    bias = adaptPunycodeBias(insertion - previousInsertion, pointCount, previousInsertion === 0);
+    const increment = mathFloor(insertion / pointCount);
+    if (increment > 0x10ffff - codePoint) return undefined;
+    codePoint += increment;
+    insertion %= pointCount;
+    if (codePoint >= 0xd800 && codePoint <= 0xdfff) return undefined;
+    apply(arraySplice, output, [insertion, 0, codePoint]);
+    insertion++;
+  }
+
+  const decoded: string[] = [];
+  for (let index = 0; index < output.length; index++) {
+    apply(arrayPush, decoded, [apply(stringFromCodePoint, NativeString, [output[index]!])]);
+  }
+  return apply(arrayJoin, decoded, [""]);
+}
+
+function domainToUnicode(authority: string): string {
+  const labels: string[] = [];
+  for (let start = 0; start <= authority.length;) {
+    let end = start;
+    while (end < authority.length && charCodeAtString(authority, end) !== PERIOD_CODE_UNIT) end++;
+    const label = sliceString(authority, start, end);
+    if (lowercaseString(sliceString(label, 0, 4)) === "xn--") {
+      const decoded = decodePunycodeLabel(sliceString(label, 4));
+      apply(arrayPush, labels, [decoded ?? label]);
+    } else {
+      apply(arrayPush, labels, [label]);
+    }
+    if (end === authority.length) break;
+    start = end + 1;
+  }
+  return apply(arrayJoin, labels, ["."]);
+}
+
 /**
  * Derive the native filesystem spelling of a normalized file URL.
  *
@@ -781,9 +893,7 @@ function platformPathFromNormalizedFileUrl(
 
   if (canonicalAuthority && lowercaseString(canonicalAuthority) !== "localhost") {
     if (preservePosixVerticalBar) return undefined;
-    const authority = decodeAuthority
-      ? nativeDomainToUnicode(canonicalAuthority)
-      : canonicalAuthority;
+    const authority = decodeAuthority ? domainToUnicode(canonicalAuthority) : canonicalAuthority;
     return authority ? `//${authority}/${decodedBody}` : undefined;
   }
   // The WHATWG file URL parser also accepts the legacy vertical-bar drive
@@ -826,8 +936,11 @@ export function snapshotThrowableDiagnosticRedactingPath(
   const posixDoubleSeparatorPath = normalizePosixDoubleSeparatorPathForDiagnostic(
     normalizationSource,
   );
-  const nodeInspectedPath = nodeInspectedFilesystemPath(path);
+  const nodeSingleQuotedPath = nodeInspectedFilesystemPath(path, 39);
+  const nodeDoubleQuotedPath = nodeInspectedFilesystemPath(path, 34);
+  const nodeBacktickQuotedPath = nodeInspectedFilesystemPath(path, 96);
   const nodeNullEscapedPath = nodeNullEscapedFilesystemPath(path);
+  const uriEncodedPath = uriEncodedFilesystemPath(path);
   const rawCanonicalPlatformPath = platformPathFromNormalizedFileUrl(normalizationSource);
   const rawNormalizedPlatformPath = normalizationSource === normalizedPath
     ? undefined
@@ -918,11 +1031,23 @@ export function snapshotThrowableDiagnosticRedactingPath(
   if (quoteIndependentEscapedPath !== path) {
     redacted = redactPathFromText(redacted, quoteIndependentEscapedPath, replacement);
   }
-  if (nodeInspectedPath !== undefined) {
-    redacted = redactPathFromText(redacted, nodeInspectedPath, replacement);
+  if (nodeSingleQuotedPath !== undefined) {
+    redacted = redactPathFromText(redacted, nodeSingleQuotedPath, replacement);
   }
-  if (nodeNullEscapedPath !== undefined && nodeNullEscapedPath !== nodeInspectedPath) {
+  if (nodeDoubleQuotedPath !== undefined && nodeDoubleQuotedPath !== nodeSingleQuotedPath) {
+    redacted = redactPathFromText(redacted, nodeDoubleQuotedPath, replacement);
+  }
+  if (
+    nodeBacktickQuotedPath !== undefined && nodeBacktickQuotedPath !== nodeSingleQuotedPath &&
+    nodeBacktickQuotedPath !== nodeDoubleQuotedPath
+  ) {
+    redacted = redactPathFromText(redacted, nodeBacktickQuotedPath, replacement);
+  }
+  if (nodeNullEscapedPath !== undefined && nodeNullEscapedPath !== nodeSingleQuotedPath) {
     redacted = redactPathFromText(redacted, nodeNullEscapedPath, replacement);
+  }
+  if (uriEncodedPath !== undefined) {
+    redacted = redactPathFromText(redacted, uriEncodedPath, replacement);
   }
   if (normalizationSource !== path) {
     redacted = redactPathFromText(redacted, normalizationSource, replacement);
@@ -966,10 +1091,18 @@ export function snapshotThrowableDiagnosticRedactingPath(
     containsTruncatedFilesystemPathPrefix(redacted, jsonEscapedPath) ||
     (quoteIndependentEscapedPath !== path &&
       containsTruncatedFilesystemPathPrefix(redacted, quoteIndependentEscapedPath)) ||
-    (nodeInspectedPath !== undefined &&
-      containsTruncatedFilesystemPathPrefix(redacted, nodeInspectedPath)) ||
-    (nodeNullEscapedPath !== undefined && nodeNullEscapedPath !== nodeInspectedPath &&
+    (nodeSingleQuotedPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, nodeSingleQuotedPath)) ||
+    (nodeDoubleQuotedPath !== undefined && nodeDoubleQuotedPath !== nodeSingleQuotedPath &&
+      containsTruncatedFilesystemPathPrefix(redacted, nodeDoubleQuotedPath)) ||
+    (nodeBacktickQuotedPath !== undefined &&
+      nodeBacktickQuotedPath !== nodeSingleQuotedPath &&
+      nodeBacktickQuotedPath !== nodeDoubleQuotedPath &&
+      containsTruncatedFilesystemPathPrefix(redacted, nodeBacktickQuotedPath)) ||
+    (nodeNullEscapedPath !== undefined && nodeNullEscapedPath !== nodeSingleQuotedPath &&
       containsTruncatedFilesystemPathPrefix(redacted, nodeNullEscapedPath)) ||
+    (uriEncodedPath !== undefined &&
+      containsTruncatedFilesystemPathPrefix(redacted, uriEncodedPath)) ||
     (normalizationSource !== path &&
       containsTruncatedFilesystemPathPrefix(redacted, normalizationSource)) ||
     (normalizedPath !== path && normalizedPath !== normalizationSource &&

@@ -9,7 +9,7 @@ import { SERVER_ERROR_CATALOG } from "./server-errors.ts";
 // with the supplied base.
 const RECOVERY_URL_PATTERN = /(?:[a-z][a-z0-9+.-]*:|\/\/|(?:\\\\){2})[^\s"]+/gi;
 const RECOVERY_HOSTNAME_PATTERN =
-  /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\b/gi;
+  /\b(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?|[a-z0-9]+(?:-[a-z0-9]+)+)\b/gi;
 const PUBLIC_RECOVERY_ORIGIN = "https://veryfront.com";
 const PUBLIC_RECOVERY_HOSTNAME = new URL(PUBLIC_RECOVERY_ORIGIN).hostname;
 
@@ -183,11 +183,11 @@ describe("errors/catalog/server-errors", () => {
     });
 
     it("should recognize bare hostname references in recovery copy", () => {
-      const text = "Contact private-control-plane.example for recovery";
+      const text = "Contact private-control-plane.example or private-control-plane for recovery";
 
       assertEquals(
         [...text.matchAll(RECOVERY_HOSTNAME_PATTERN)].map((match) => match[0]),
-        ["private-control-plane.example"],
+        ["private-control-plane.example", "private-control-plane"],
       );
     });
   });
