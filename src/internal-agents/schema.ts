@@ -18,6 +18,7 @@ import {
   getRuntimeAgentCredentialsSchema,
   getRuntimeAgentSourceContextSchema,
   getRuntimeAgentTargetKindSchema,
+  getRuntimeAgentTaskIdSchema,
   type RuntimeAgentSourceContext,
   validateRuntimeAgentSourceTargetBinding,
   validateRuntimeAgentTargetSelection,
@@ -70,6 +71,7 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
     agentId: getAgentIdSchema(),
     threadId: v.string().uuid(),
     runId: getRunIdSchema(),
+    taskId: getRuntimeAgentTaskIdSchema().optional(),
     parentRunId: getRunIdSchema().optional(),
     state: v.unknown().optional(),
     messages: v.array(

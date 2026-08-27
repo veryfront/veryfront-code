@@ -31,6 +31,34 @@ describe("internal-agents/schema", () => {
     assertEquals(parsed.context, []);
   });
 
+  it("preserves validated task identity on internal control-plane streams", () => {
+    const parsed = getInternalAgentStreamRequestSchema().parse({
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      taskId: "issue-27-veryfront-studio-agent-implementation",
+      ...MAIN_BRANCH_TARGET,
+      agentSource: { type: "branch", branch: "main" },
+      messages: [],
+    });
+
+    assertEquals(parsed.taskId, "issue-27-veryfront-studio-agent-implementation");
+    assertThrows(
+      () =>
+        getInternalAgentStreamRequestSchema().parse({
+          agentId: "agent_1",
+          threadId: "10000000-1000-4000-8000-100000000001",
+          runId: "run_1",
+          taskId: "issue 27",
+          ...MAIN_BRANCH_TARGET,
+          agentSource: { type: "branch", branch: "main" },
+          messages: [],
+        }),
+      Error,
+      "taskId",
+    );
+  });
+
   it("rejects oversized injected tool parameters", () => {
     assertThrows(
       () =>
