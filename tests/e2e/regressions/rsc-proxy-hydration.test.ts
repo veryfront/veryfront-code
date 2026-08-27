@@ -16,6 +16,8 @@ import { startProductionServer } from "../../../src/server/production-server.ts"
 import { bootstrapProd } from "../../../src/server/bootstrap.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { validateVeryfrontConfig } from "#veryfront/config/schemas/index.ts";
+import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import { withEnv } from "#veryfront/testing";
 
 const ROOT_LAYOUT_SOURCE =
   `export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -610,57 +612,59 @@ describe(
     });
 
     it("keeps a dedicated preview server page free of console errors", async () => {
-      const browser = await launchChromium();
-      if (!browser) return;
+      await withEnv({ [DEPENDENCY_PINNING_ENV_FLAG]: "1" }, async () => {
+        const browser = await launchChromium();
+        if (!browser) return;
 
-      try {
-        await withTestContext("rsc-dedicated-preview-server-page", async (context) => {
-          await writeServerFragmentApp(
-            context.projectDir,
-            LOCAL_RSC_CONFIG_SOURCE,
-          );
+        try {
+          await withTestContext("rsc-dedicated-preview-server-page", async (context) => {
+            await writeServerFragmentApp(
+              context.projectDir,
+              LOCAL_RSC_CONFIG_SOURCE,
+            );
 
-          await withHostedBrowserPage(
-            browser,
-            context,
-            "dedicated",
-            getHostedHeaders("preview"),
-            async (page, diagnostics, response) => {
-              assertEquals(response.status(), 200);
-              await page.waitForTimeout(1_000);
-              assertEquals((await page.textContent("#server-page"))?.trim(), "Server page");
+            await withHostedBrowserPage(
+              browser,
+              context,
+              "dedicated",
+              getHostedHeaders("preview"),
+              async (page, diagnostics, response) => {
+                assertEquals(response.status(), 200);
+                await page.waitForTimeout(1_000);
+                assertEquals((await page.textContent("#server-page"))?.trim(), "Server page");
 
-              const hydrationData = JSON.parse(
-                (await page.textContent("#veryfront-hydration-data")) ?? "{}",
-              ) as {
-                clientModuleStrategy?: string;
-                dependencyPinningCacheKey?: string;
-                isolatedClientPage?: boolean;
-                pagePath?: string;
-              };
-              assertEquals(hydrationData.clientModuleStrategy, "rsc-module");
-              assertEquals(hydrationData.dependencyPinningCacheKey?.startsWith("on:"), true);
-              assertEquals(hydrationData.isolatedClientPage, undefined);
-              assertEquals(hydrationData.pagePath, "app/page.tsx");
+                const hydrationData = JSON.parse(
+                  (await page.textContent("#veryfront-hydration-data")) ?? "{}",
+                ) as {
+                  clientModuleStrategy?: string;
+                  dependencyPinningCacheKey?: string;
+                  isolatedClientPage?: boolean;
+                  pagePath?: string;
+                };
+                assertEquals(hydrationData.clientModuleStrategy, "rsc-module");
+                assertEquals(hydrationData.dependencyPinningCacheKey?.startsWith("on:"), true);
+                assertEquals(hydrationData.isolatedClientPage, undefined);
+                assertEquals(hydrationData.pagePath, "app/page.tsx");
 
-              const resources = await page.evaluate(() =>
-                performance.getEntriesByType("resource").map((entry) => entry.name)
-              );
-              assertEquals(
-                resources.some((url) =>
-                  url.includes("/_veryfront/rsc/module?rel=app%2Fpage.tsx") ||
-                  url.includes("/pages/index.js")
-                ),
-                false,
-              );
-              assertEquals(diagnostics.consoleMessages, []);
-              assertEquals(diagnostics.pageErrors, []);
-            },
-          );
-        });
-      } finally {
-        await browser.close();
-      }
+                const resources = await page.evaluate(() =>
+                  performance.getEntriesByType("resource").map((entry) => entry.name)
+                );
+                assertEquals(
+                  resources.some((url) =>
+                    url.includes("/_veryfront/rsc/module?rel=app%2Fpage.tsx") ||
+                    url.includes("/pages/index.js")
+                  ),
+                  false,
+                );
+                assertEquals(diagnostics.consoleMessages, []);
+                assertEquals(diagnostics.pageErrors, []);
+              },
+            );
+          });
+        } finally {
+          await browser.close();
+        }
+      });
     });
 
     it("keeps dedicated preview chat pages styled after hydration", async () => {
