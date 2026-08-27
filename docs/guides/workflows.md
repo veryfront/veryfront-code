@@ -64,7 +64,9 @@ durable backends so local development and production read back the same values.
 
 Use plain JSON values in step output: strings, numbers, booleans, null, arrays,
 and plain objects. Values that JSON cannot encode, such as `BigInt` or circular
-references, fail persistence with the context path that produced them.
+references, fail persistence with a redacted context path. Veryfront keeps the
+fixed `input` and `step` structure and array indices, but replaces runtime
+object keys with `<redacted>` so payload identifiers do not enter logs.
 
 Some JavaScript values can be stored only after JSON rewrites them. By default,
 Veryfront logs a warning and persists the normalized JSON value:

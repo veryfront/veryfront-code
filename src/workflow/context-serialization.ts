@@ -44,7 +44,6 @@ const POSITIVE_INFINITY = Number.POSITIVE_INFINITY;
 const reflectApply = Reflect.apply;
 const reflectGet = Reflect.get;
 const reflectOwnKeys = Reflect.ownKeys;
-const regExpExec = RegExp.prototype.exec;
 const regExpSourceGet = objectGetOwnPropertyDescriptor(RegExp.prototype, "source")?.get;
 const SetConstructor = Set;
 const setSizeGet = objectGetOwnPropertyDescriptor(Set.prototype, "size")?.get;
@@ -93,7 +92,7 @@ const MAX_REPORTED_PATHS = 5;
 export const MAX_TRAVERSAL_DEPTH = 1000;
 
 /**
- * Property names safe to quote verbatim in a diagnostic.
+ * Redact runtime property names before placing them in a diagnostic.
  *
  * A path is built from the keys a step chose, and a step is free to key an
  * object by an email address, an account id, or any other payload value. The
@@ -102,14 +101,11 @@ export const MAX_TRAVERSAL_DEPTH = 1000;
  * unrecognised key would travel into logs and persisted error details as
  * ordinary message text.
  *
- * Field names written by a developer are plain identifiers, which is what this
- * admits. Anything else is replaced: the path still says how deep the value is
- * and what shape it sits in, without repeating the data.
+ * Only the fixed WorkflowContext root fields are structural. Every other
+ * object key may be payload data, even when it looks like an identifier.
  */
-const SAFE_PATH_SEGMENT = /^[A-Za-z_$][A-Za-z0-9_$]{0,39}$/;
-
-function redactPathSegment(key: string): string {
-  return reflectApply(regExpExec, SAFE_PATH_SEGMENT, [key]) !== null ? key : "<redacted>";
+function redactPathSegment(key: string, trustContextRoot = false): string {
+  return trustContextRoot && (key === "input" || key === "step") ? key : "<redacted>";
 }
 
 /** A value the durable codec cannot carry, named by where it sits. */
@@ -272,7 +268,7 @@ function isSerializedArrayIndexKey(key: string, length: number): boolean {
 }
 
 function hasToStringTagWithoutHooks(value: JsonTraversalReference): boolean {
-  if (!canIdentifyProxyWithoutHooks) return true;
+  if (!canIdentifyProxyWithoutHooks) return false;
   let current: object | null = value;
   for (let depth = 0; current !== null && depth < 100; depth++) {
     if (isProxyWithoutHooks(current)) return true;
@@ -423,26 +419,6 @@ function normalizeAndFindUnrepresentableValues(
     }
   };
 
-  const recordNamedArrayKeys = (
-    value: JsonTraversalReference,
-    path: string,
-    length: number,
-  ) => {
-    if (canIdentifyProxyWithoutHooks && isProxyWithoutHooks(value)) return;
-    try {
-      for (const childKey in value) {
-        if (
-          objectHasOwn(value, childKey) &&
-          !isSerializedArrayIndexKey(childKey, length)
-        ) {
-          recordLossy(`${path}.${redactPathSegment(childKey)}`, "array property");
-        }
-      }
-    } catch {
-      return;
-    }
-  };
-
   const recordArrayPrototype = (value: JsonTraversalReference, path: string) => {
     if (canIdentifyProxyWithoutHooks && isProxyWithoutHooks(value)) {
       recordLossy(path, "array proxy");
@@ -479,26 +455,29 @@ function normalizeAndFindUnrepresentableValues(
     }
     let serializedIndexCount = 0;
     for (const ownKey of ownKeys) {
-      const isSerializedIndex = typeof ownKey === "string" &&
-        isSerializedArrayIndexKey(ownKey, length);
       let descriptor: PropertyDescriptor | undefined;
       try {
         descriptor = objectGetOwnPropertyDescriptor(value, ownKey);
       } catch {
         continue;
       }
+      if (ownKey === "length") continue;
+      if (typeof ownKey === "symbol") {
+        if (descriptor !== undefined) recordLossy(path, "symbol-keyed property");
+        continue;
+      }
+      const isSerializedIndex = isSerializedArrayIndexKey(ownKey, length);
       if (isSerializedIndex) {
         if (descriptor === undefined) continue;
         serializedIndexCount++;
         recordAccessorProperty(descriptor, `${path}[${ownKey}]`);
         continue;
       }
-      if (descriptor?.enumerable !== true) continue;
-      if (typeof ownKey === "symbol") {
-        recordLossy(path, "symbol-keyed property");
-        continue;
-      }
-      recordLossy(`${path}.${redactPathSegment(ownKey)}`, "array property");
+      if (descriptor === undefined) continue;
+      recordLossy(
+        `${path}.${redactPathSegment(ownKey)}`,
+        descriptor.enumerable === true ? "array property" : "non-enumerable property",
+      );
     }
     if (serializedIndexCount < length) recordLossy(path, "array hole");
   };
@@ -508,19 +487,14 @@ function normalizeAndFindUnrepresentableValues(
     path: string,
     length: number,
   ) => {
-    if (!canIdentifyProxyWithoutHooks) {
-      recordArrayPropertiesFromOwnKeys(value, path, length);
-      recordArrayPrototype(value, path);
-      return;
-    }
-    recordNamedArrayKeys(value, path, length);
+    recordArrayPropertiesFromOwnKeys(value, path, length);
     recordArrayPrototype(value, path);
-    recordEnumerableSymbolKeys(value, path);
   };
 
   const getStrictObjectKeySnapshot = (
     value: JsonTraversalReference,
     path: string,
+    trustContextRoot: boolean,
   ): {
     childKeys: string[];
     childDescriptors: Array<PropertyDescriptor | undefined>;
@@ -536,7 +510,7 @@ function normalizeAndFindUnrepresentableValues(
       }
       if (descriptor !== undefined && descriptor.enumerable !== true) {
         recordLossy(
-          `${path}.${redactPathSegment(ownKey)}`,
+          `${path}.${redactPathSegment(ownKey, trustContextRoot)}`,
           "non-enumerable property",
         );
         continue;
@@ -640,20 +614,14 @@ function normalizeAndFindUnrepresentableValues(
       if (isArray) {
         const result: NormalizedJsonValue[] = [];
         const length = toJsonLength(reflectGet(nested, "length"));
+        if (options.strictContext === true) {
+          recordStrictArrayDiagnostics(nested, path, length);
+        }
         for (let index = 0; index < length; index++) {
           const indexKey = StringConstructor(index);
           let isHole = false;
           const canInspectIndex = canIdentifyProxyWithoutHooks &&
             !isProxyWithoutHooks(nested);
-          if (options.strictContext === true && canInspectIndex) {
-            try {
-              const descriptor = objectGetOwnPropertyDescriptor(nested, indexKey);
-              isHole = descriptor === undefined;
-              recordAccessorProperty(descriptor, `${path}[${index}]`);
-            } catch {
-              // Hole diagnostics are best-effort; the captured value still wins.
-            }
-          }
           const child = reflectGet(nested, indexKey);
           if (options.strictContext !== true && canInspectIndex) {
             try {
@@ -679,9 +647,7 @@ function normalizeAndFindUnrepresentableValues(
             result.length,
             normalized === OMIT_JSON_VALUE ? null : normalized,
           );
-        }
-        if (options.strictContext === true) {
-          recordStrictArrayDiagnostics(nested, path, length);
+          if (found.fatalCount > 0) break;
         }
         if (options.strictContext !== true) recordEnumerableSymbolKeys(nested, path);
         return result;
@@ -691,7 +657,7 @@ function normalizeAndFindUnrepresentableValues(
       const canInspectStrictOwnKeys = options.strictContext === true &&
         (!canIdentifyProxyWithoutHooks || !isProxyWithoutHooks(nested));
       const keySnapshot = canInspectStrictOwnKeys
-        ? getStrictObjectKeySnapshot(nested, path)
+        ? getStrictObjectKeySnapshot(nested, path, depth === 0)
         : { childKeys: objectKeys(nested), childDescriptors: undefined };
       const childKeys = keySnapshot.childKeys;
       for (let childIndex = 0; childIndex < childKeys.length; childIndex++) {
@@ -701,26 +667,33 @@ function normalizeAndFindUnrepresentableValues(
             objectGetOwnPropertyDescriptor(nested, childKey);
           recordAccessorProperty(
             descriptor,
-            `${path}.${redactPathSegment(childKey)}`,
+            `${path}.${redactPathSegment(childKey, depth === 0)}`,
           );
         }
+        const childPath = `${path}.${redactPathSegment(childKey, depth === 0)}`;
         const normalized = normalize(
           reflectGet(nested, childKey),
-          `${path}.${redactPathSegment(childKey)}`,
+          childPath,
           childKey,
           true,
           depth + 1,
         );
         if (normalized !== OMIT_JSON_VALUE) result[childKey] = normalized;
+        if (found.fatalCount > 0) break;
       }
-      if (!canInspectStrictOwnKeys) recordEnumerableSymbolKeys(nested, path);
+      if (found.fatalCount === 0 && !canInspectStrictOwnKeys) {
+        recordEnumerableSymbolKeys(nested, path);
+      }
       // Prototype diagnostics are best-effort and run after the snapshot is
       // complete, so hostile metadata traps cannot change persistence output.
       if (
-        (!canIdentifyProxyWithoutHooks &&
-          options.strictContext === true &&
-          isKnownNonPlainBuiltin(nested)) ||
-        !isPlainObject(nested, options.strictContext === true)
+        found.fatalCount === 0 &&
+        (
+          (!canIdentifyProxyWithoutHooks &&
+            options.strictContext === true &&
+            isKnownNonPlainBuiltin(nested)) ||
+          !isPlainObject(nested, options.strictContext === true)
+        )
       ) {
         recordLossy(path, describe(nested));
       }
@@ -761,9 +734,9 @@ function formatPaths(samples: readonly UnrepresentableValue[], total: number): s
  *
  * Checking here makes the mismatch legible at the moment it matters:
  *
- * - Values JSON cannot encode at all fail the run with the field and path that
- *   produced them, instead of `Do not know how to serialize a BigInt` raised
- *   from inside the backend with nothing pointing back at the step.
+ * - Values JSON cannot encode at all fail the run with the field and redacted
+ *   path that produced them, instead of `Do not know how to serialize a BigInt`
+ *   raised from inside the backend with nothing pointing back at the step.
  * - Values it encodes lossily are logged with the same detail, because the
  *   alternative is a step reading a `string` where its predecessor wrote a
  *   `Date`, decided by whether the run happened to pause.

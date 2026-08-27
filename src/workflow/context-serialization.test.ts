@@ -68,7 +68,7 @@ describe("serializeWorkflowContext", () => {
       const error = assertThrows(() => serializeWorkflowContext(contextWith({ total: 1n })));
 
       assertEquals(error instanceof Error, true);
-      assertEquals((error as Error).message.includes("context.step.total"), true);
+      assertEquals((error as Error).message.includes("context.step.<redacted>"), true);
       assertEquals((error as Error).message.includes("BigInt"), true);
     });
 
@@ -78,7 +78,7 @@ describe("serializeWorkflowContext", () => {
 
       const error = assertThrows(() => serializeWorkflowContext(contextWith(cyclic)));
 
-      assertEquals((error as Error).message.includes("context.step.self"), true);
+      assertEquals((error as Error).message.includes("context.step.<redacted>"), true);
       assertEquals((error as Error).message.includes("circular"), true);
     });
 
@@ -87,7 +87,10 @@ describe("serializeWorkflowContext", () => {
         serializeWorkflowContext(contextWith({ rows: [{ id: 9n }] }))
       );
 
-      assertEquals((error as Error).message.includes("context.step.rows[0].id"), true);
+      assertEquals(
+        (error as Error).message.includes("context.step.<redacted>[0].<redacted>"),
+        true,
+      );
     });
 
     it("inspects a fatal value returned by toJSON", () => {
@@ -105,8 +108,29 @@ describe("serializeWorkflowContext", () => {
         serializeWorkflowContext(contextWith({ toJSON: () => replacement }))
       );
 
-      assertEquals((error as Error).message.includes("context.step.self"), true);
+      assertEquals((error as Error).message.includes("context.step.<redacted>"), true);
       assertEquals((error as Error).message.includes("circular"), true);
+    });
+
+    it("stops before a later getter can replace a recorded fatal error", () => {
+      let laterReads = 0;
+      const step = Object.defineProperty({ first: 1n }, "second", {
+        enumerable: true,
+        get() {
+          laterReads++;
+          throw new Error("later getter must not replace the persistence error");
+        },
+      });
+
+      const error = assertThrows(
+        () => serializeWorkflowContext(contextWith(step)),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "context.step.<redacted>");
+      assertStringIncludes(error.message, "BigInt");
+      assertEquals(laterReads, 0);
     });
   });
 
@@ -122,7 +146,7 @@ describe("serializeWorkflowContext", () => {
 
       assertEquals(JSON.parse(serialized).step.when, "1970-01-01T00:00:00.000Z");
       assertEquals(
-        paths.includes("context.step.when (Date)"),
+        paths.includes("context.step.<redacted> (Date)"),
         true,
         "a Date silently persisted as a string must be named in the lossy warning",
       );
@@ -137,7 +161,7 @@ describe("serializeWorkflowContext", () => {
 
       assertEquals(JSON.parse(serialized).step.tags, {});
       assertEquals(
-        paths.includes("context.step.tags (object)"),
+        paths.includes("context.step.<redacted> (object)"),
         true,
         "a Map silently persisted as an empty object must be named in the lossy warning",
       );
@@ -173,10 +197,11 @@ describe("serializeWorkflowContext", () => {
 
       assertInstanceOf(error, VeryfrontError);
       assertStringIncludes(error.message, "strictContext");
-      assertStringIncludes(error.message, "context.step.when");
-      assertStringIncludes(error.message, "context.step.tags");
-      assertStringIncludes(error.message, "context.step.missing");
-      assertStringIncludes(error.message, "context.step.ratio");
+      assertStringIncludes(error.message, "context.step.<redacted>");
+      assertStringIncludes(error.message, "Date");
+      assertStringIncludes(error.message, "object");
+      assertStringIncludes(error.message, "undefined");
+      assertStringIncludes(error.message, "number (NaN)");
     });
 
     it("throws when strictContext would persist negative zero or symbol-keyed fields lossy", () => {
@@ -199,8 +224,8 @@ describe("serializeWorkflowContext", () => {
 
       assertInstanceOf(error, VeryfrontError);
       assertStringIncludes(error.message, "strictContext");
-      assertStringIncludes(error.message, "context.step.credit");
-      assertStringIncludes(error.message, "context.step.symbolKeyedOutput");
+      assertStringIncludes(error.message, "context.step.<redacted>");
+      assertStringIncludes(error.message, "number (-0)");
       assertStringIncludes(error.message, "symbol-keyed property");
     });
 
@@ -222,7 +247,7 @@ describe("serializeWorkflowContext", () => {
 
       assertInstanceOf(error, VeryfrontError);
       assertStringIncludes(error.message, "strictContext");
-      assertStringIncludes(error.message, "context.step.value");
+      assertStringIncludes(error.message, "context.step.<redacted>");
       assertStringIncludes(error.message, "symbol-keyed property");
     });
 
@@ -245,8 +270,30 @@ describe("serializeWorkflowContext", () => {
 
       assertInstanceOf(error, VeryfrontError);
       assertStringIncludes(error.message, "strictContext");
-      assertStringIncludes(error.message, "context.step.rows.meta");
+      assertStringIncludes(error.message, "context.step.<redacted>.<redacted>");
       assertStringIncludes(error.message, "array property");
+    });
+
+    it("throws when strictContext would drop hidden named array properties", () => {
+      const rows = [1, 2];
+      Object.defineProperty(rows, "metadata", {
+        value: "required",
+      });
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({ rows }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.<redacted>.<redacted>");
+      assertStringIncludes(error.message, "non-enumerable property");
     });
 
     it("throws when strictContext would persist a raw JSON wrapper as its parsed value", () => {
@@ -264,7 +311,7 @@ describe("serializeWorkflowContext", () => {
 
       assertInstanceOf(error, VeryfrontError);
       assertStringIncludes(error.message, "strictContext");
-      assertStringIncludes(error.message, "context.step.value");
+      assertStringIncludes(error.message, "context.step.<redacted>");
       assertStringIncludes(error.message, "raw JSON value");
     });
 
@@ -283,7 +330,7 @@ describe("serializeWorkflowContext", () => {
 
       assertInstanceOf(error, VeryfrontError);
       assertStringIncludes(error.message, "strictContext");
-      assertStringIncludes(error.message, "context.step.right");
+      assertStringIncludes(error.message, "context.step.<redacted>");
       assertStringIncludes(error.message, "shared reference");
     });
 
@@ -306,7 +353,7 @@ describe("serializeWorkflowContext", () => {
 
       assertInstanceOf(error, VeryfrontError);
       assertStringIncludes(error.message, "strictContext");
-      assertStringIncludes(error.message, "context.step.rows");
+      assertStringIncludes(error.message, "context.step.<redacted>");
       assertStringIncludes(error.message, "array prototype");
     });
 
@@ -333,7 +380,7 @@ describe("serializeWorkflowContext", () => {
 
       assertInstanceOf(error, VeryfrontError);
       assertStringIncludes(error.message, "strictContext");
-      assertStringIncludes(error.message, "context.step.count");
+      assertStringIncludes(error.message, "context.step.<redacted>");
       assertStringIncludes(error.message, "accessor property");
       assertEquals(getterReads, 1);
     });
@@ -356,7 +403,7 @@ describe("serializeWorkflowContext", () => {
 
       assertInstanceOf(error, VeryfrontError);
       assertStringIncludes(error.message, "strictContext");
-      assertStringIncludes(error.message, "context.step.required");
+      assertStringIncludes(error.message, "context.step.<redacted>");
       assertStringIncludes(error.message, "non-enumerable property");
     });
 
@@ -408,7 +455,7 @@ describe("serializeWorkflowContext", () => {
 
       assertInstanceOf(error, VeryfrontError);
       assertStringIncludes(error.message, "strictContext");
-      assertStringIncludes(error.message, "context.step.rows[0]");
+      assertStringIncludes(error.message, "context.step.<redacted>[0]");
       assertStringIncludes(error.message, "accessor property");
       assertEquals(getterReads, 1);
     });
@@ -425,7 +472,7 @@ describe("serializeWorkflowContext", () => {
 
     const error = assertThrows(() => serializeWorkflowContext(contextWith(new Receipt())));
 
-    assertEquals((error as Error).message.includes("context.step.total"), true);
+    assertEquals((error as Error).message.includes("context.step.<redacted>"), true);
     assertEquals((error as Error).message.includes("BigInt"), true);
   });
 
@@ -436,7 +483,7 @@ describe("serializeWorkflowContext", () => {
 
     const error = assertThrows(() => serializeWorkflowContext(contextWith(new Link())));
 
-    assertEquals((error as Error).message.includes("context.step.next"), true);
+    assertEquals((error as Error).message.includes("context.step.<redacted>"), true);
     assertEquals((error as Error).message.includes("circular"), true);
   });
 
@@ -448,7 +495,10 @@ describe("serializeWorkflowContext", () => {
       serializeWorkflowJson({ step: { output: { total: 1n } } }, "nodeStates")
     );
 
-    assertEquals((error as Error).message.includes("nodeStates.step.output.total"), true);
+    assertEquals(
+      (error as Error).message.includes("nodeStates.step.<redacted>.<redacted>"),
+      true,
+    );
   });
 
   describe("diagnostic content", () => {
@@ -458,13 +508,17 @@ describe("serializeWorkflowContext", () => {
       );
 
       assertEquals((error as Error).message.includes("user@example.com"), false);
-      assertEquals((error as Error).message.includes("<redacted>.total"), true);
+      assertEquals(
+        (error as Error).message.includes("context.step.<redacted>.<redacted>"),
+        true,
+      );
     });
 
-    it("keeps ordinary field names", () => {
-      const error = assertThrows(() => serializeWorkflowContext(contextWith({ orderTotal: 1n })));
+    it("redacts identifier-shaped runtime keys", () => {
+      const error = assertThrows(() => serializeWorkflowContext(contextWith({ acct_ABC123: 1n })));
 
-      assertEquals((error as Error).message.includes("context.step.orderTotal"), true);
+      assertEquals((error as Error).message.includes("acct_ABC123"), false);
+      assertEquals((error as Error).message.includes("context.step.<redacted>"), true);
     });
 
     it("does not trust a value-controlled type label", () => {
@@ -784,7 +838,7 @@ describe("serializeWorkflowContext", () => {
         serializeWorkflowContext(contextWith({ shallow: 1n, deep }))
       );
 
-      assertEquals((error as Error).message.includes("context.step.shallow"), true);
+      assertEquals((error as Error).message.includes("context.step.<redacted>"), true);
       assertEquals((error as Error).message.includes(".n.n"), false);
     });
 
@@ -830,7 +884,7 @@ describe("serializeWorkflowContext", () => {
       const retained = process.memoryUsage().heapUsed - before;
       const paths = String(warnings[0]?.context?.paths);
 
-      assertEquals(paths.includes("context.step.rows[0] (array hole)"), true);
+      assertEquals(paths.includes("context.step.<redacted>[0] (array hole)"), true);
       assertEquals(paths.includes("and 499995 more"), true);
       assertEquals(retained < 50_000_000, true);
     });
