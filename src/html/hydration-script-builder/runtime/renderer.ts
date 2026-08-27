@@ -136,7 +136,6 @@ function trimBoundarySlashes(value: string): string {
   return value.slice(start, end);
 }
 
-/** True when the browser runtime must preserve the server-rendered App Router document. */
 export function isServerOwnedAppRouterPage(
   data: Pick<
     PageDataPayload,
@@ -258,7 +257,6 @@ export function createHydrationRenderer(deps: HydrationRendererDeps): HydrationR
       const isRemoteAppRouterPage = data.clientModuleStrategy === "rsc-module" &&
         isAppRouterPath(normalizedPagePath, normalizedAppRouterRoot);
 
-      // Server pages are not browser modules, so preserve their SSR document.
       if (isServerOwnedAppRouterPage(data)) {
         log("Initial App Router page is server-owned; skipping client hydration");
         window.__veryfrontHydrationComplete?.();
