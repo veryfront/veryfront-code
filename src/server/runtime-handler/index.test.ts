@@ -447,6 +447,7 @@ describe("server/runtime-handler/index", () => {
    */
   async function runHostedAdmissionWithMovingSnapshot(
     advanceSource: (currentVersion: number) => number,
+    method: "GET" | "HEAD" = "GET",
   ): Promise<{ response: Response; sourceVersion: number; otelRequestCount: number }> {
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
     const originalTrustedProxy = Deno.env.get("VERYFRONT_TRUST_FORWARDED_HEADERS");
@@ -515,6 +516,7 @@ describe("server/runtime-handler/index", () => {
         () =>
           handler(
             new Request("https://snapshot-app.example.test/dashboard", {
+              method,
               headers: {
                 "x-project-slug": "snapshot-project",
                 "x-project-id": "project-snapshot",
@@ -562,6 +564,20 @@ describe("server/runtime-handler/index", () => {
       (await response.json()).type,
       "https://veryfront.com/docs/code/guides/errors#source-snapshot-freshness-unavailable",
     );
+  });
+
+  it("retries HEAD admission without adding a response body", async () => {
+    const { response, sourceVersion, otelRequestCount } =
+      await runHostedAdmissionWithMovingSnapshot(
+        (current) => current === 1 ? 2 : current,
+        "HEAD",
+      );
+
+    assertEquals(response.status, 401);
+    assertEquals(await response.text(), "");
+    assertEquals(sourceVersion, 2);
+    assertEquals(createSnapshot().requests, 1);
+    assertEquals(otelRequestCount, 1);
   });
 
   it("does not replay project middleware after a downstream snapshot failure", async () => {
