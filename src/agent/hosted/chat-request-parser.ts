@@ -90,7 +90,7 @@ export type ParsedHostedChatRequest = {
   upstreamParentRunId: string | undefined;
   spawnedFromToolCallId: string | undefined;
   /** Durable task identity supplied only by a signed runtime invocation. */
-  taskId?: Exclude<RuntimeAgentRunInvocation["taskId"], undefined>;
+  taskId?: string;
   model: string | undefined;
   allowDelegation: boolean | undefined;
   forwardedProps: HostedChatRequest["forwardedProps"];

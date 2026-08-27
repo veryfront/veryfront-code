@@ -429,7 +429,7 @@ export type RuntimeAgentControlPlaneStreamRequest = {
   agentId: RuntimeAgentRunContext["agentId"];
   threadId: RuntimeAgentRunContext["conversationId"];
   runId: RuntimeAgentRunContext["runId"];
-  taskId?: Exclude<RuntimeAgentRunInvocation["taskId"], undefined>;
+  taskId?: string;
   parentRunId?: Exclude<RuntimeAgentRunContext["parentRunId"], null | undefined>;
   messages: RuntimeAgentRunInvocation["messages"];
   tools: RuntimeAgentRunInvocation["tools"];
