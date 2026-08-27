@@ -2984,6 +2984,30 @@ export default config as const;
         assertEquals(iriFilePath.message.includes("秘密"), false);
         assertStringIncludes(iriFilePath.message, "Failed [path]");
 
+        const iriTerminalPath = await loadFailure(
+          "vf-config-iri-terminal-path-",
+          `throw new Error("Failed https://registry.internal/秘密");\n`,
+        );
+
+        assertEquals(iriTerminalPath.message.includes("秘密"), false);
+        assertStringIncludes(iriTerminalPath.message, "Failed [url]");
+
+        const iriQuery = await loadFailure(
+          "vf-config-iri-query-",
+          `throw new Error("Failed https://registry.internal/x?q=秘密");\n`,
+        );
+
+        assertEquals(iriQuery.message.includes("秘密"), false);
+        assertStringIncludes(iriQuery.message, "Failed [url]");
+
+        const iriTerminalFilePath = await loadFailure(
+          "vf-config-iri-terminal-file-path-",
+          `throw new Error("Failed file:///home/alice/秘密");\n`,
+        );
+
+        assertEquals(iriTerminalFilePath.message.includes("秘密"), false);
+        assertStringIncludes(iriTerminalFilePath.message, "Failed [path]");
+
         const zeroSlashIri = await loadFailure(
           "vf-config-zero-slash-iri-host-",
           `throw new Error("Failed https:例え.internal/config.ts");\n`,

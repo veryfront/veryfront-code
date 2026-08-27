@@ -2009,6 +2009,11 @@ const NON_ASCII_URL_PATH = new RegExp(
 // limit even though the fallback could not match.
 // deno-lint-ignore no-control-regex
 const NON_ASCII_CHARACTER = /[^\x00-\x7F]/u;
+// A sticky continuation used only when an ASCII URL match ends on a structural
+// component delimiter. In that position a following non-ASCII character is a
+// raw IRI path, query, or fragment rather than prose glued after a completed
+// path segment. The continuation consumes the rest of that token fail-closed.
+const RAW_IRI_REMAINDER = /\P{ASCII}[^\s"']*/uy;
 
 // Both the userinfo run and the parenthesised interior are length-bounded, and
 // the userinfo run also stops at `/`. Neither bound is cosmetic. An unbounded
@@ -2123,10 +2128,34 @@ const NON_ASCII_FILE_URL_PATH = new RegExp(
 const WINDOWS_ABSOLUTE_PATH = /(?:[A-Za-z]:[\\/]|\\\\)[^\s"'()]+/g;
 const POSIX_ABSOLUTE_PATH = /(?<![A-Za-z0-9:/.\\])\/[^\s"'()]+/g;
 
+function rawIriMatchEnd(value: string, matched: string, offset: number): number {
+  const lastCharacter = ReflectApply(StringPrototypeSlice, matched, [-1]) as string;
+  if (
+    lastCharacter !== "/" &&
+    lastCharacter !== "?" &&
+    lastCharacter !== "#" &&
+    lastCharacter !== "&" &&
+    lastCharacter !== "="
+  ) {
+    return offset;
+  }
+
+  RAW_IRI_REMAINDER.lastIndex = offset;
+  try {
+    const remainder = ReflectApply(RegExpPrototypeExec, RAW_IRI_REMAINDER, [value]) as
+      | RegExpExecArray
+      | null;
+    return remainder === null ? offset : RAW_IRI_REMAINDER.lastIndex;
+  } finally {
+    RAW_IRI_REMAINDER.lastIndex = 0;
+  }
+}
+
 function replaceMatchesWithCapturedExec(
   value: string,
   pattern: RegExp,
   replacement: string,
+  extendRawIri = false,
 ): string {
   pattern.lastIndex = 0;
   let output = "";
@@ -2139,6 +2168,7 @@ function replaceMatchesWithCapturedExec(
       if (match === null) break;
       const matched = match[0];
       if (matched.length === 0) throw new TypeError("Diagnostic pattern must make progress");
+      if (extendRawIri) pattern.lastIndex = rawIriMatchEnd(value, matched, pattern.lastIndex);
       output += ReflectApply(StringPrototypeSlice, value, [offset, match.index]) as string;
       output += replacement;
       offset = pattern.lastIndex;
@@ -2187,7 +2217,7 @@ function redactMachinePaths(value: string): string {
   if (containsNonAscii(redacted)) {
     redacted = replaceMatchesWithCapturedExec(redacted, NON_ASCII_FILE_URL_PATH, "[path]");
   }
-  redacted = replaceMatchesWithCapturedExec(redacted, FILE_URL_ABSOLUTE_PATH, "[path]");
+  redacted = replaceMatchesWithCapturedExec(redacted, FILE_URL_ABSOLUTE_PATH, "[path]", true);
   if (containsNonAscii(redacted)) {
     redacted = replaceMatchesWithCapturedExec(redacted, NON_ASCII_AUTHORITY_URL, "[url]");
     redacted = replaceMatchesWithCapturedExec(redacted, NON_ASCII_URL_PATH, "[url]");
@@ -2204,9 +2234,9 @@ function redactMachinePaths(value: string): string {
     );
     redacted = replaceMatchesWithCapturedExec(redacted, NON_ASCII_ZERO_SLASH_URL_PATH, "[url]");
   }
-  redacted = replaceMatchesWithCapturedExec(redacted, SCHEME_URL, "[url]");
-  redacted = replaceMatchesWithCapturedExec(redacted, MALFORMED_SCHEME_URL, "[url]");
-  redacted = replaceMatchesWithCapturedExec(redacted, ZERO_SLASH_SCHEME_URL, "[url]");
+  redacted = replaceMatchesWithCapturedExec(redacted, SCHEME_URL, "[url]", true);
+  redacted = replaceMatchesWithCapturedExec(redacted, MALFORMED_SCHEME_URL, "[url]", true);
+  redacted = replaceMatchesWithCapturedExec(redacted, ZERO_SLASH_SCHEME_URL, "[url]", true);
   redacted = replaceMatchesWithCapturedExec(redacted, WINDOWS_ABSOLUTE_PATH, "[path]");
   return replaceMatchesWithCapturedExec(redacted, POSIX_ABSOLUTE_PATH, "[path]");
 }
