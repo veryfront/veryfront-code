@@ -57,7 +57,7 @@ async function runArtifactGate(
 }
 
 describe("canonical npm artifact workflow", () => {
-  it("builds and uploads one SHA-addressed package artifact", async () => {
+  it("builds once and uploads SHA-addressed package and runtime artifacts", async () => {
     const jobs = await readJobs();
     const producer = asRecord(
       jobs["npm-compatibility-artifact"],
@@ -80,7 +80,11 @@ describe("canonical npm artifact workflow", () => {
       ),
       "The producer must create the package-version and SHA-256 manifest",
     );
-    const upload = steps.find((step) => String(step.uses).startsWith("actions/upload-artifact@"));
+    const upload = steps.find((step) =>
+      String(step.uses).startsWith("actions/upload-artifact@") &&
+      asRecord(step.with, "artifact upload inputs").name ===
+        "npm-compatibility-${{ github.sha }}"
+    );
     assert(upload, "The producer must upload the canonical package set");
     assertEquals(
       asRecord(upload.with, "artifact upload inputs").name,
@@ -100,9 +104,55 @@ describe("canonical npm artifact workflow", () => {
       30,
       "The tested npm artifact must remain available through production approval",
     );
+    const archive = namedStep(producer, "Archive npm runtime workspace");
+    assertEquals(archive.id, "runtime-workspace");
+    assertStringIncludes(
+      String(archive.run),
+      "tar -cf - npm | gzip -1 > dist/npm-runtime-workspace.tar.gz",
+    );
+    assertStringIncludes(
+      String(archive.run),
+      'echo "archive_bytes=$(wc -c < dist/npm-runtime-workspace.tar.gz | tr -d \' \')" >> "$GITHUB_OUTPUT"',
+    );
+    assertStringIncludes(
+      String(archive.run),
+      'echo "archive_duration_seconds=$(($(date +%s) - started_at))" >> "$GITHUB_OUTPUT"',
+    );
+    const runtimeUpload = steps.find((step) =>
+      String(step.uses).startsWith("actions/upload-artifact@") &&
+      asRecord(step.with, "runtime artifact upload inputs").name ===
+        "npm-runtime-workspace-${{ github.sha }}"
+    );
+    assert(runtimeUpload, "The producer must upload the built runtime workspace");
+    assertEquals(
+      asRecord(runtimeUpload.with, "runtime artifact upload inputs"),
+      {
+        name: "npm-runtime-workspace-${{ github.sha }}",
+        path: "dist/npm-runtime-workspace.tar.gz",
+        "retention-days": 1,
+        "compression-level": 0,
+        overwrite: true,
+      },
+    );
+    assert(
+      steps.indexOf(namedStep(producer, "Build and pack tested npm output")) <
+          steps.indexOf(archive) &&
+        steps.indexOf(archive) < steps.indexOf(runtimeUpload),
+      "The producer must archive and upload the already-built runtime workspace",
+    );
     assertEquals(
       asRecord(producer.outputs, "producer outputs").build_duration_seconds,
       "${{ steps.build.outputs.build_duration_seconds }}",
+    );
+    assertEquals(
+      asRecord(producer.outputs, "producer outputs")
+        .runtime_workspace_archive_bytes,
+      "${{ steps.runtime-workspace.outputs.archive_bytes }}",
+    );
+    assertEquals(
+      asRecord(producer.outputs, "producer outputs")
+        .runtime_workspace_archive_duration_seconds,
+      "${{ steps.runtime-workspace.outputs.archive_duration_seconds }}",
     );
     const buildStep = namedStep(producer, "Build and pack tested npm output");
     const buildScript = String(buildStep.run);
@@ -185,6 +235,94 @@ describe("canonical npm artifact workflow", () => {
         `${label} must not rebuild the canonical npm output`,
       );
     }
+  });
+
+  it("feeds the built runtime workspace to Node and Bun without rebuilding it", async () => {
+    const jobs = await readJobs();
+
+    for (
+      const [jobName, stepName, directCommand] of [
+        [
+          "tests-node",
+          "Run Node runtime shard",
+          "node ./tests/node/run-tests.mjs --suite=runtime:node",
+        ],
+        [
+          "tests-bun",
+          "Run Bun runtime suite",
+          "node --test tests/bun/runner-args.test.mjs tests/bun/workspace-packages.test.mjs && node ./tests/bun/run-tests.mjs --suite=runtime:bun",
+        ],
+      ] as const
+    ) {
+      const job = asRecord(jobs[jobName], `${jobName} job`);
+      assertEquals(job.needs, ["npm-compatibility-artifact"]);
+      const download = jobSteps(job, `${jobName} job`).find((step) =>
+        String(step.uses).startsWith("actions/download-artifact@")
+      );
+      assert(download, `${jobName} must download the built runtime workspace`);
+      assertEquals(
+        asRecord(download.with, `${jobName} artifact download`).name,
+        "npm-runtime-workspace-${{ github.sha }}",
+      );
+      assertEquals(
+        asRecord(download.with, `${jobName} artifact download`).path,
+        "dist/npm-runtime-workspace",
+      );
+      const steps = jobSteps(job, `${jobName} job`);
+      const restore = namedStep(job, "Restore npm runtime workspace");
+      const install = namedStep(job, "Materialize locked test dependencies");
+      const run = namedStep(job, stepName);
+      assertStringIncludes(
+        String(restore.run),
+        "tar -xzf dist/npm-runtime-workspace/npm-runtime-workspace.tar.gz",
+      );
+      assertEquals(install.run, "deno install --frozen");
+      assert(
+        steps.indexOf(download) < steps.indexOf(restore) &&
+          steps.indexOf(restore) < steps.indexOf(install) &&
+          steps.indexOf(install) < steps.indexOf(run),
+        `${jobName} must restore the runtime workspace and materialize cached dependencies before tests`,
+      );
+      assertEquals(run.run, directCommand);
+      assertEquals(
+        steps.filter((step) =>
+          String(step.run).includes("deno task build:npm") ||
+          String(step.run).includes("npm --prefix npm install")
+        ).length,
+        0,
+        `${jobName} must not rebuild or reinstall the runtime workspace`,
+      );
+    }
+  });
+
+  it("runs two required Node shards without duplicating test files", async () => {
+    const jobs = await readJobs();
+    const node = asRecord(jobs["tests-node"], "Node sharding job");
+    const strategy = asRecord(node.strategy, "Node sharding strategy");
+    const matrix = asRecord(strategy.matrix, "Node sharding matrix");
+
+    assertEquals(jobs["tests-node-sharded-shadow"], undefined);
+    assertEquals(node["continue-on-error"], undefined);
+    assertEquals(node.needs, ["npm-compatibility-artifact"]);
+    assertEquals(node.name, "tests (node shard ${{ matrix.shard }}/2)");
+    assertEquals(strategy["fail-fast"], false);
+    assertEquals(matrix.shard, [1, 2]);
+    assertStringIncludes(
+      String(namedStep(node, "Restore npm runtime workspace").run),
+      "tar -xzf dist/npm-runtime-workspace/npm-runtime-workspace.tar.gz",
+    );
+    const run = namedStep(node, "Run Node runtime shard");
+    assertEquals(
+      asRecord(run.env, "Node sharding environment").VF_TEST_SHARD,
+      "${{ matrix.shard }}/2",
+    );
+    assertEquals(
+      run.run,
+      "node ./tests/node/run-tests.mjs --suite=runtime:node",
+    );
+    const report = namedStep(node, "Report Node shard duration");
+    assertEquals(report.if, "${{ always() }}");
+    assertStringIncludes(String(report.run), "Node shard ${SHARD}: ${duration_seconds}s");
   });
 
   it("publishes the tested artifact for both prerelease and stable releases", async () => {
@@ -275,7 +413,7 @@ describe("canonical npm artifact workflow", () => {
     }
   });
 
-  it("reports a reproducible five-to-one estimated build runner-minute comparison", async () => {
+  it("reports the measured seven-to-one build reuse and incremental savings", async () => {
     const jobs = await readJobs();
     const runtime = asRecord(
       jobs["tests-runtime-critical-flow"],
@@ -291,8 +429,8 @@ describe("canonical npm artifact workflow", () => {
       2,
       "The npm install smoke must have two Node consumers",
     );
-    const estimatedConsumerCount = runtimes.length + NPM_SMOKE_NODE_VERSIONS.length;
-    assertEquals(estimatedConsumerCount, 5);
+    const legacyBuildSiteCount = runtimes.length + NPM_SMOKE_NODE_VERSIONS.length + 2;
+    assertEquals(legacyBuildSiteCount, 7);
     const gate = asRecord(jobs["quality-gate-artifact"], "artifact gate");
     const step = namedStep(gate, "Report npm build reuse");
     assertEquals(
@@ -305,7 +443,12 @@ describe("canonical npm artifact workflow", () => {
       {
         BUILD_DURATION_SECONDS:
           "${{ needs.npm-compatibility-artifact.outputs.build_duration_seconds }}",
-        LEGACY_BUILD_COUNT: String(estimatedConsumerCount),
+        RUNTIME_WORKSPACE_ARCHIVE_BYTES:
+          "${{ needs.npm-compatibility-artifact.outputs.runtime_workspace_archive_bytes }}",
+        RUNTIME_WORKSPACE_ARCHIVE_DURATION_SECONDS:
+          "${{ needs.npm-compatibility-artifact.outputs.runtime_workspace_archive_duration_seconds }}",
+        LEGACY_BUILD_COUNT: String(legacyBuildSiteCount),
+        PREVIOUS_BUILD_COUNT: "3",
         CANONICAL_BUILD_COUNT: "1",
       },
     );
@@ -316,7 +459,10 @@ describe("canonical npm artifact workflow", () => {
         env: {
           GITHUB_STEP_SUMMARY: summary,
           BUILD_DURATION_SECONDS: "120",
-          LEGACY_BUILD_COUNT: String(estimatedConsumerCount),
+          RUNTIME_WORKSPACE_ARCHIVE_BYTES: "26214400",
+          RUNTIME_WORKSPACE_ARCHIVE_DURATION_SECONDS: "1",
+          LEGACY_BUILD_COUNT: String(legacyBuildSiteCount),
+          PREVIOUS_BUILD_COUNT: "3",
           CANONICAL_BUILD_COUNT: "1",
         },
       }).output();
@@ -324,19 +470,27 @@ describe("canonical npm artifact workflow", () => {
       const report = await Deno.readTextFile(summary);
       assertStringIncludes(
         report,
-        "Estimate basis: five current npm build consumers (three runtime critical-flow jobs and two npm install-smoke jobs)",
+        "Estimate basis: seven legacy npm build sites (three runtime critical-flow jobs, two npm install-smoke jobs, Node tests, and Bun tests)",
       );
       assertStringIncludes(
         report,
-        "Estimated before: 10.00 npm build runner-minutes",
+        "Legacy independent builds: 14.00 npm build runner-minutes",
       );
       assertStringIncludes(
         report,
-        "Estimated after: 2.00 npm build runner-minutes",
+        "Previous partial reuse: 6.00 npm build runner-minutes",
       );
       assertStringIncludes(
         report,
-        "Estimated savings: 8.00 npm build runner-minutes",
+        "Canonical build: 2.00 npm build runner-minutes",
+      );
+      assertStringIncludes(
+        report,
+        "Incremental savings: 4.00 npm build runner-minutes",
+      );
+      assertStringIncludes(
+        report,
+        "Measured runtime workspace archive: 25.00 MiB in 1s",
       );
     } finally {
       await Deno.remove(summary);

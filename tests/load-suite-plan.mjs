@@ -14,11 +14,13 @@ const PLANNER_CONFIG_PATH = fileURLToPath(
  * Runtime adapters retain process ownership; this helper only crosses the
  * TypeScript/JavaScript module boundary with a versioned JSON value.
  */
+/** Loads the ordered test paths for a suite, including any external shard selection. */
 export function loadSuitePlan({
   suite,
   patterns = [],
   include = [],
   exclude = [],
+  shard,
   cwd = process.cwd(),
 }) {
   const args = [
@@ -31,6 +33,7 @@ export function loadSuitePlan({
     `--root=${cwd}`,
     ...include.map((pattern) => `--include=${pattern}`),
     ...exclude.map((pattern) => `--exclude=${pattern}`),
+    ...(shard ? [`--shard=${shard}`] : []),
     ...(patterns.length > 0 ? ["--", ...patterns] : []),
   ];
   const result = spawnSync("deno", args, {

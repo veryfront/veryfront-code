@@ -104,8 +104,8 @@ describe("npm smoke Node support contract", () => {
       const releaseJob = record(jobs[jobName], `${jobName} job`);
       assert(
         Array.isArray(releaseJob.needs) &&
-          releaseJob.needs.includes("tests-npm-install-smoke"),
-        `${jobName} must wait for every npm install smoke matrix leg`,
+          releaseJob.needs.includes("quality-gate-artifact"),
+        `${jobName} must wait for the npm artifact quality gate`,
       );
     }
 

@@ -5,6 +5,16 @@ import { fromFileUrl } from "#std/path";
 import { parse } from "#std/yaml/parse";
 
 type YamlRecord = Record<string, unknown>;
+const MERGE_CORRECTNESS_DEPENDENCIES = [
+  "ci",
+  "unit-tests",
+  "coverage",
+  "tests",
+  "tests-node",
+  "tests-bun",
+  "tests-binary-e2e",
+  "tests-e2e-rsc-browser",
+] as const;
 
 const WORKFLOW_PATH = new URL(
   "../../../.github/workflows/cicd.yml",
@@ -574,10 +584,15 @@ describe("registry release workflow", () => {
           job.needs.includes("quality-gate-artifact"),
         `${jobName} must require the canonical artifact quality gate`,
       );
-      if (jobName === "release") {
-        assert(
-          job.needs.includes("coverage"),
-          "stable release must retain the coverage dependency",
+      assert(
+        job.needs.includes("quality-gate-merge"),
+        `${jobName} must require the complete merge correctness gate`,
+      );
+      for (const dependency of MERGE_CORRECTNESS_DEPENDENCIES) {
+        assertEquals(
+          job.needs.includes(dependency),
+          false,
+          `${jobName} must inherit ${dependency} through quality-gate-merge`,
         );
       }
     });
@@ -848,21 +863,6 @@ describe("registry release workflow", () => {
         "Selected published version is empty",
       );
     }
-  });
-
-  it("documents the five-build estimate against the current npm build consumers", async () => {
-    const jobs = await readJobs();
-    const gate = asRecord(jobs["quality-gate-artifact"], "artifact gate");
-    const report = namedStep(gate, "Report npm build reuse");
-
-    assertEquals(
-      asRecord(report.env, "npm build reuse environment").LEGACY_BUILD_COUNT,
-      "5",
-    );
-    assertStringIncludes(
-      String(report.run),
-      "Estimate basis: five current npm build consumers (three runtime critical-flow jobs and two npm install-smoke jobs)",
-    );
   });
 
   it("keeps stable production approval and publishing in the release job", async () => {
