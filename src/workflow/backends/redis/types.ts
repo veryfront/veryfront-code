@@ -38,6 +38,11 @@ export interface RedisBackendConfig extends BackendConfig {
   runTtl?: number;
   /** Enable debug logging */
   debug?: boolean;
+  /**
+   * Reject context values that JSON would encode lossily instead of warning
+   * and storing their normalized JSON form.
+   */
+  strictContext?: boolean;
   /** Existing Redis client (optional) */
   client?: RedisAdapter;
 }
@@ -49,7 +54,7 @@ export type RedisBackendInternalConfig =
   & Required<
     Pick<
       RedisBackendConfig,
-      "prefix" | "streamKey" | "groupName" | "consumerName" | "debug"
+      "prefix" | "streamKey" | "groupName" | "consumerName" | "debug" | "strictContext"
     >
   >
   & RedisBackendConfig;

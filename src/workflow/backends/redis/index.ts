@@ -1034,6 +1034,7 @@ export class RedisBackend implements WorkflowBackend {
       groupName: "vf:workflow:workers",
       consumerName: `worker-${crypto.randomUUID().slice(0, 8)}`,
       debug: false,
+      strictContext: false,
       ...config,
     };
     this.config = {
@@ -1104,7 +1105,9 @@ export class RedisBackend implements WorkflowBackend {
     // Encoded before the fields below, on purpose. A step's return value reaches
     // `input`, `output`, and `nodeStates` as well, and those are encoded by
     // `JSON.stringify`, so whichever runs first decides the error a caller sees.
-    const context = serializeWorkflowContext(run.context, run.id);
+    const context = serializeWorkflowContext(run.context, run.id, {
+      strictContext: this.config.strictContext,
+    });
     return {
       id: run.id,
       workflowId: run.workflowId,
@@ -1137,7 +1140,9 @@ export class RedisBackend implements WorkflowBackend {
     // Patches are where warnings actually fire, because creation usually writes
     // only `input` while patches write the accumulated node outputs.
     const context = patch.context !== undefined
-      ? serializeWorkflowJson(patch.context, "context", runId)
+      ? serializeWorkflowJson(patch.context, "context", runId, {
+        strictContext: this.config.strictContext,
+      })
       : undefined;
     const fields: Record<string, string> = {};
     const setOwnedField = (patchKey: keyof WorkflowRunUpdate, fieldKey: string, value: string) => {
@@ -1172,6 +1177,7 @@ export class RedisBackend implements WorkflowBackend {
       checkpoint.context,
       "checkpoint.context",
       runId,
+      { strictContext: this.config.strictContext },
     );
     return JSON.stringify({
       ...checkpoint,

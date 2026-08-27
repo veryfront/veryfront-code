@@ -1943,6 +1943,24 @@ describe("RedisBackend", () => {
       // in the free-form context, so that is where it has to be asserted.
       assertEquals(warnings[0]?.run_id, runId);
     });
+
+    it("rejects lossy context values when strictContext is enabled", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict:",
+        strictContext: true,
+      });
+
+      await assertRejects(
+        () =>
+          strictBackend.createRun(createTestRun("run-strict-context", {
+            context: { input: {}, when: new Date(0) },
+          })),
+        Error,
+        "strictContext",
+      );
+      assertEquals(await strictBackend.getRun("run-strict-context"), null);
+    });
   });
 
   describe("updateRun", () => {
