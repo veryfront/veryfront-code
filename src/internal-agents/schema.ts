@@ -404,6 +404,7 @@ export function toRuntimeRunAgentInput(
   return {
     threadId: input.threadId,
     runId: input.runId,
+    ...(input.taskId ? { taskId: input.taskId } : {}),
     ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
     ...(input.state !== undefined ? { state: input.state } : {}),
     ...(input.allowDelegation !== undefined ? { allowDelegation: input.allowDelegation } : {}),
@@ -433,6 +434,7 @@ export type { RuntimeAgentSourceContext };
 export type RuntimeInjectedTool = InferSchema<ReturnType<typeof getRuntimeInjectedToolSchema>>;
 export type RuntimeContextItem = AgUiRuntimeContextItem;
 export type RuntimeRunAgentInput = AgUiRuntimeRequest & {
+  taskId?: string;
   allowDelegation?: boolean;
 };
 export type InternalAgentStreamRequest = InferSchema<
