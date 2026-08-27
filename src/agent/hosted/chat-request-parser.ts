@@ -13,7 +13,10 @@ import {
   type HostedChatRequest,
   hostedChatRequestSchema,
 } from "./chat-request.ts";
-import { RuntimeAgentRunInvocationSchema } from "../runtime/agent-invocation-contract.ts";
+import {
+  type RuntimeAgentRunInvocation,
+  RuntimeAgentRunInvocationSchema,
+} from "../runtime/agent-invocation-contract.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import {
   isRequestBodyTooLargeError,
@@ -84,6 +87,8 @@ export type ParsedHostedChatRequest = {
   upstreamParentConversationId: string | undefined;
   upstreamParentRunId: string | undefined;
   spawnedFromToolCallId: string | undefined;
+  /** Durable task identity supplied only by a signed runtime invocation. */
+  taskId?: RuntimeAgentRunInvocation["taskId"];
   model: string | undefined;
   allowDelegation: boolean | undefined;
   forwardedProps: HostedChatRequest["forwardedProps"];
@@ -644,6 +649,9 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
       { errorCode: "CONTROL_PLANE_AUTH_REQUIRED" },
       { status: 403 },
     );
+  }
+  if (invocation.data.taskId) {
+    verifiedRequest.taskId = invocation.data.taskId;
   }
   return verifiedRequest;
 }

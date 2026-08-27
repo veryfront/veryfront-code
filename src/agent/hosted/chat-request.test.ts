@@ -1559,6 +1559,30 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.messages[0]?.parts as unknown, expectedParts);
   });
 
+  it("carries signed durable task identity into the parsed service request", async () => {
+    const invocation = RuntimeAgentRunInvocationSchema.parse({
+      ...createRuntimeInvocation(),
+      taskId: "issue-27-veryfront-studio-agent-implementation",
+    });
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/control-plane/runs/run_root_1/stream", {
+        method: "POST",
+        body: JSON.stringify(invocation),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        runtimeSource,
+      },
+    );
+
+    if (parsed instanceof Response) {
+      throw new Error("Expected parsed runtime invocation");
+    }
+
+    assertEquals(parsed.taskId, "issue-27-veryfront-studio-agent-implementation");
+  });
+
   it("carries environment runtime target metadata from runtime invocations", () => {
     const baseInvocation = createRuntimeInvocation();
     const invocation = RuntimeAgentRunInvocationSchema.parse({

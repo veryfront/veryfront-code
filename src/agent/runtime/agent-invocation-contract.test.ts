@@ -87,6 +87,24 @@ describe("agent/runtime-agent-invocation-contract", () => {
     assertEquals(request.allowDelegation, false);
   });
 
+  it("preserves durable task identity across the control-plane transform", () => {
+    const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      taskId: "issue-27-veryfront-studio-agent-implementation",
+    }));
+    const request = buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed);
+
+    assertEquals(parsed.taskId, "issue-27-veryfront-studio-agent-implementation");
+    assertEquals(request.taskId, "issue-27-veryfront-studio-agent-implementation");
+  });
+
+  it("rejects malformed durable task identity at the runtime boundary", () => {
+    assertThrows(
+      () => RuntimeAgentRunInvocationSchema.parse(createInvocation({ taskId: "issue 27" })),
+      Error,
+      "taskId",
+    );
+  });
+
   it("accepts main branch runtime targets without branch or environment selectors", () => {
     const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
       run: {
