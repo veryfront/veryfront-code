@@ -128,6 +128,14 @@ export function isAppRouterPath(
     normalizedPath.startsWith(appRouterRoot + "/");
 }
 
+function trimBoundarySlashes(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value.charCodeAt(start) === 47) start += 1;
+  while (end > start && value.charCodeAt(end - 1) === 47) end -= 1;
+  return value.slice(start, end);
+}
+
 /** True when the browser runtime must preserve the server-rendered App Router document. */
 export function isServerOwnedAppRouterPage(
   data: Pick<
@@ -135,10 +143,10 @@ export function isServerOwnedAppRouterPage(
     "appRouterRoot" | "clientModuleStrategy" | "isClientPage" | "isolatedClientPage" | "pagePath"
   >,
 ): boolean {
-  const appRouterRoot = typeof data.appRouterRoot === "string" &&
-      data.appRouterRoot.replace(/^\/+|\/+$/g, "")
-    ? data.appRouterRoot.replace(/^\/+|\/+$/g, "")
-    : "app";
+  const normalizedAppRouterRoot = trimBoundarySlashes(
+    typeof data.appRouterRoot === "string" ? data.appRouterRoot : "",
+  );
+  const appRouterRoot = normalizedAppRouterRoot || "app";
 
   return data.clientModuleStrategy === "rsc-module" &&
     isAppRouterPath(data.pagePath, appRouterRoot) &&
@@ -240,10 +248,9 @@ export function createHydrationRenderer(deps: HydrationRendererDeps): HydrationR
       let pageModule: ModuleNamespace | undefined;
       const pagePath = typeof data.pagePath === "string" ? data.pagePath : "";
       const normalizedPagePath = pagePath.replace(/^\/+/, "");
-      const normalizedAppRouterRoot =
-        typeof data.appRouterRoot === "string" && data.appRouterRoot.replace(/^\/+|\/+$/g, "")
-          ? data.appRouterRoot.replace(/^\/+|\/+$/g, "")
-          : "app";
+      const normalizedAppRouterRoot = trimBoundarySlashes(
+        typeof data.appRouterRoot === "string" ? data.appRouterRoot : "",
+      ) || "app";
       const hasReleaseAssetModules = data.releaseAssetModules &&
         Object.keys(data.releaseAssetModules).length > 0;
 

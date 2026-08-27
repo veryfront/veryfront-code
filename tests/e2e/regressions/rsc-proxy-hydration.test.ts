@@ -256,6 +256,33 @@ async function withHostedBrowserPage(
     // shared topology explicitly trusted by the host-level proxy setting.
     const extraHTTPHeaders = topology === "shared" ? headers : undefined;
     const browserContext = await browser.newContext({ extraHTTPHeaders });
+    await browserContext.addInitScript(() => {
+      const testWindow = window as
+        & typeof window
+        & Record<string, unknown>
+        & { __veryfrontTestHydrationState?: "complete" | "failed" };
+      const observeSignal = (property: string, state: "complete" | "failed") => {
+        let callback: ((...args: unknown[]) => unknown) | undefined;
+        Object.defineProperty(testWindow, property, {
+          configurable: true,
+          get: () => callback,
+          set: (value: unknown) => {
+            if (typeof value !== "function") {
+              callback = undefined;
+              return;
+            }
+            const signal = value as (...args: unknown[]) => unknown;
+            callback = function (this: unknown, ...args: unknown[]) {
+              testWindow.__veryfrontTestHydrationState = state;
+              return signal.apply(this, args);
+            };
+          },
+        });
+      };
+
+      observeSignal("__veryfrontHydrationComplete", "complete");
+      observeSignal("__veryfrontHydrationFailed", "failed");
+    });
     await installEsmShCorsShim(browserContext);
 
     try {
@@ -630,7 +657,18 @@ describe(
               getHostedHeaders("preview"),
               async (page, diagnostics, response) => {
                 assertEquals(response.status(), 200);
-                await page.waitForTimeout(1_000);
+                await page.waitForFunction(() => {
+                  const state = (window as typeof window & {
+                    __veryfrontTestHydrationState?: string;
+                  }).__veryfrontTestHydrationState;
+                  return state === "complete" || state === "failed";
+                });
+                const hydrationState = await page.evaluate(() =>
+                  (window as typeof window & {
+                    __veryfrontTestHydrationState?: string;
+                  }).__veryfrontTestHydrationState
+                );
+                assertEquals(hydrationState, "complete");
                 assertEquals((await page.textContent("#server-page"))?.trim(), "Server page");
 
                 const hydrationData = JSON.parse(

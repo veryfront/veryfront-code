@@ -40,6 +40,14 @@ import { buildImportMap, buildRootAttributes, shouldDisableLayout } from "./util
 import { appendDependencyPinningPathKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
 
+function trimBoundarySlashes(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value.charCodeAt(start) === 47) start += 1;
+  while (end > start && value.charCodeAt(end - 1) === 47) end -= 1;
+  return value.slice(start, end);
+}
+
 function pathToModuleUrl(
   path: string,
   studioEmbed?: boolean,
@@ -120,10 +128,9 @@ function generateModulePreloadHints(
   const relativePagePath = options.pagePath
     ? getRelativePagePath(options.pagePath, projectDir)
     : "";
-  const appRouterRoot = getRelativePagePath(
-    String(options.config?.directories?.app ?? "app"),
-    projectDir,
-  ).replace(/^\/+|\/+$/g, "");
+  const appRouterRoot = trimBoundarySlashes(
+    getRelativePagePath(String(options.config?.directories?.app ?? "app"), projectDir),
+  );
   const clientModuleStrategy = determineClientModuleStrategy({
     isLocalProject: options.isLocalProject,
     environment: options.environment,
