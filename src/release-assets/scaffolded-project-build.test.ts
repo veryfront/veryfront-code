@@ -41,6 +41,7 @@ import {
 import { CSSOptimizationEngineName } from "#veryfront/extensions/css/index.ts";
 import { FIRST_PARTY_EXTENSION_POLICIES } from "#veryfront/extensions/first-party-defaults.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { hasUseClientDirective } from "#veryfront/rendering/rsc/page-island.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { readTextFile } from "#veryfront/testing/deno-compat.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
@@ -236,7 +237,9 @@ describe("release assets: scaffolded project build", () => {
         releaseVersionRef: "rel-uuid",
         adapter: fsAdapter,
         dependencyMode: "source",
-        loadConfig: () => Promise.resolve({} as VeryfrontConfig),
+        // Exercise App Router's server/client release boundary independently
+        // of the host process's experimental feature environment.
+        loadConfig: () => Promise.resolve({ experimental: { rsc: true } } as VeryfrontConfig),
         client: makeClient(sources, rec, `scaffold-${templateName}`),
         // The real browser transform the hosted runtime injects. A passthrough
         // stub would leave TSX unparseable and turn every module into an
@@ -269,11 +272,27 @@ describe("release assets: scaffolded project build", () => {
       // build succeeds either way: before the fix these scaffolds published
       // platform/compat/dynamic-import.ts as its own chunk and every test here
       // still passed.
-      const jsUploads = rec.uploads.filter((upload) => upload.contentType.includes("javascript"));
-      assert(
-        jsUploads.length > 0,
-        `${templateName} published no JS assets, so the new Function guard would pass vacuously`,
+      //
+      // Browser JS only exists where the scaffold crosses the client boundary.
+      // A fully server-rendered template (`minimal`) must publish zero JS
+      // assets now that App Router server modules stay out of release assets;
+      // publishing any would regress that confidentiality boundary.
+      const declaresClientBoundary = sources.some(({ path, content }) =>
+        hasUseClientDirective(content, path)
       );
+      const jsUploads = rec.uploads.filter((upload) => upload.contentType.includes("javascript"));
+      if (declaresClientBoundary) {
+        assert(
+          jsUploads.length > 0,
+          `${templateName} published no JS assets, so the new Function guard would pass vacuously`,
+        );
+      } else {
+        assertEquals(
+          jsUploads.map((upload) => upload.hash),
+          [],
+          `${templateName} is fully server-rendered and must not publish JS release assets`,
+        );
+      }
       const evalOffenders = jsUploads
         .filter((upload) => /\bnew Function\s*\(/.test(new TextDecoder().decode(upload.bytes)));
       assertEquals(
@@ -289,10 +308,18 @@ describe("release assets: scaffolded project build", () => {
 
       const manifest = parseReleaseAssetManifest(rec.manifest);
       assertExists(manifest);
-      assert(
-        Object.keys(manifest.modules).length > 0,
-        `${templateName} manifest must list browser modules`,
-      );
+      if (declaresClientBoundary) {
+        assert(
+          Object.keys(manifest.modules).length > 0,
+          `${templateName} manifest must list browser modules`,
+        );
+      } else {
+        assertEquals(
+          Object.keys(manifest.modules),
+          [],
+          `${templateName} has no client modules, so its manifest must list none`,
+        );
+      }
       assertEquals(
         manifest.css.length,
         1,

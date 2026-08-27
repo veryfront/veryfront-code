@@ -33,6 +33,8 @@ export const ESBUILD_SUPPORTED_FEATURES = {
 const EXTENSION_LOADERS: Record<string, Loader> = {
   ".tsx": "tsx",
   ".ts": "ts",
+  ".mts": "ts",
+  ".cts": "ts",
   ".jsx": "jsx",
   ".js": "js",
   ".mdx": "jsx",

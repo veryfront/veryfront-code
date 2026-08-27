@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
-import { dirname, join } from "#veryfront/compat/path/index.ts";
+import { dirname, join, relative } from "#veryfront/compat/path/index.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { register, unregister } from "#veryfront/extensions/contracts.ts";
@@ -129,6 +129,218 @@ describe("transforms/esm/import-parser", () => {
           result.imports.map(({ specifier }) => specifier).sort(),
           ["../package.json", "@/data/site.json"],
         );
+      },
+    );
+  });
+
+  it("resolves explicit .mts and .cts imports", async () => {
+    await withProject(
+      {
+        "app/page.ts": [
+          'import { esmValue } from "./helper.mts";',
+          'import { cjsValue } from "./helper.cts";',
+          "export default esmValue + cjsValue;",
+        ].join("\n"),
+        "app/helper.mts": "export const esmValue = 1;",
+        "app/helper.cts": "export const cjsValue = 2;",
+      },
+      async (projectDir) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.ts");
+        const result = await parseLocalImports(
+          await Deno.readTextFile(filePath),
+          filePath,
+          projectDir,
+          adapter,
+        );
+
+        assertEquals(result.missing, []);
+        assertEquals(
+          result.imports.map((entry) => entry.specifier),
+          ["./helper.mts", "./helper.cts"],
+        );
+      },
+    );
+  });
+
+  it("resolves explicit Markdown imports", async () => {
+    await withProject(
+      {
+        "app/page.ts": 'import content from "./content.md"; export default content;',
+        "app/content.md": "# Content",
+      },
+      async (projectDir) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.ts");
+        const result = await parseLocalImports(
+          await Deno.readTextFile(filePath),
+          filePath,
+          projectDir,
+          adapter,
+        );
+
+        assertEquals(result.missing, []);
+        assertEquals(
+          result.imports.map(({ absolutePath }) => relative(projectDir, absolutePath)),
+          ["app/content.md"],
+        );
+      },
+    );
+  });
+
+  it("accepts legacy static and dynamic JSON assertions", async () => {
+    await withProject(
+      {
+        "app/page.ts": [
+          'import staticData from "./static.json" assert { type: "json" };',
+          'const dynamicData = import("./dynamic.json", { assert: { type: "json" } });',
+          "export default [staticData, dynamicData];",
+        ].join("\n"),
+        "app/static.json": '{"kind":"static"}',
+        "app/dynamic.json": '{"kind":"dynamic"}',
+      },
+      async (projectDir) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.ts");
+        const result = await parseLocalImports(
+          await Deno.readTextFile(filePath),
+          filePath,
+          projectDir,
+          adapter,
+        );
+
+        assertEquals(result.missing, []);
+        assertEquals(
+          result.imports.map((entry) => entry.specifier),
+          ["./static.json", "./dynamic.json"],
+        );
+      },
+    );
+  });
+
+  it("surfaces specifiers outside its resolution shapes as unresolved", async () => {
+    await withProject(
+      {
+        "app/page.tsx": [
+          `import A from "app/client-a.tsx";`,
+          `import B from "/app/client-b.tsx";`,
+          `import C from "/_vf_modules/app/client-c.tsx";`,
+          `import { useState } from "react";`,
+          `import type { Model } from "app/models.ts";`,
+          `export default () => [A, B, C, useState, null as unknown as Model];`,
+        ].join("\n"),
+      },
+      async (projectDir) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.tsx");
+        const result = await parseLocalImports(
+          await Deno.readTextFile(filePath),
+          filePath,
+          projectDir,
+          adapter,
+        );
+
+        // Project-root forms and bare packages are surfaced for callers with
+        // their own resolution semantics; the type-only edge is erased by the
+        // TypeScript pass and must not appear at all.
+        assertEquals(result.imports.length, 0);
+        assertEquals(result.missing.length, 0);
+        assertEquals(
+          [...result.unresolvedSpecifiers].sort(),
+          [
+            "/_vf_modules/app/client-c.tsx",
+            "/app/client-b.tsx",
+            "app/client-a.tsx",
+            "react",
+          ],
+        );
+      },
+    );
+  });
+
+  it("defers JSON classification for unresolved import-map alias keys", async () => {
+    await withProject(
+      {
+        "app/page.ts": 'import config from "config.json"; export default config;',
+      },
+      async (projectDir) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.ts");
+        const result = await parseLocalImports(
+          await Deno.readTextFile(filePath),
+          filePath,
+          projectDir,
+          adapter,
+        );
+
+        assertEquals(result.missing, []);
+        assertEquals(result.unresolvedImports, [{
+          specifier: "config.json",
+          hasJsonTypeAttribute: false,
+        }]);
+      },
+    );
+  });
+
+  it("resolves relative and @/ imports carrying query or fragment suffixes", async () => {
+    await withProject(
+      {
+        "app/page.tsx": [
+          `import Raw from "./client.tsx?raw";`,
+          `import Variant from "@/components/card.tsx#variant";`,
+          `export default () => [Raw, Variant];`,
+        ].join("\n"),
+        "app/client.tsx": `export default () => null;`,
+        "components/card.tsx": `export default () => null;`,
+      },
+      async (projectDir) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.tsx");
+        const result = await parseLocalImports(
+          await Deno.readTextFile(filePath),
+          filePath,
+          projectDir,
+          adapter,
+        );
+
+        // The suffix is not part of the file path (the canonical resolvers
+        // split it before touching the filesystem), so both files resolve;
+        // the authored specifier keeps its suffix in the record.
+        assertEquals(result.missing.length, 0);
+        assertEquals(
+          result.imports.map(({ specifier }) => specifier).sort(),
+          ["./client.tsx?raw", "@/components/card.tsx#variant"],
+        );
+        assertEquals(
+          result.imports.some((imp) => imp.absolutePath.endsWith("app/client.tsx")),
+          true,
+          "the query-suffixed relative import must resolve to the file",
+        );
+        assertEquals(
+          result.imports.some((imp) => imp.absolutePath.endsWith("components/card.tsx")),
+          true,
+          "the fragment-suffixed alias import must resolve to the file",
+        );
+      },
+    );
+  });
+
+  it("reports non-literal dynamic imports", async () => {
+    await withProject(
+      {
+        "app/page.tsx": 'const target = "./client.tsx"; export const load = () => import(target);',
+      },
+      async (projectDir) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.tsx");
+        const result = await parseLocalImports(
+          await Deno.readTextFile(filePath),
+          filePath,
+          projectDir,
+          adapter,
+        );
+
+        assertEquals(result.nonLiteralDynamicImports, 1);
       },
     );
   });
@@ -459,6 +671,7 @@ describe("transforms/esm/import-parser", () => {
     });
 
     assertEquals(importParserInternals.isFileUrlSpecifier(shadowed), true);
+    assertEquals(importParserInternals.isFileUrlSpecifier("FILE:///project/Child.tsx"), true);
   });
 
   it("preserves backslashes in POSIX file URL paths", () => {
@@ -877,6 +1090,192 @@ describe("transforms/esm/import-parser", () => {
             true,
             "the index ladder must find the directory entry point",
           );
+        },
+      );
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it("resolves extensionless ESM and CommonJS server scripts", async () => {
+    await withProject(
+      {
+        "app/page.ts": [
+          `import "./helper";`,
+          `import "./legacy";`,
+          `import "./feature";`,
+        ].join("\n"),
+        "app/helper.mjs": `export const helper = true;`,
+        "app/legacy.cjs": `exports.legacy = true;`,
+        "app/feature/index.mjs": `export const feature = true;`,
+      },
+      async (projectDir) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.ts");
+        const result = await parseLocalImports(
+          await Deno.readTextFile(filePath),
+          filePath,
+          projectDir,
+          adapter,
+        );
+
+        assertEquals(result.missing, []);
+        assertEquals(
+          result.imports.map(({ absolutePath }) => relative(projectDir, absolutePath)),
+          ["app/helper.mjs", "app/legacy.cjs", "app/feature/index.mjs"],
+        );
+      },
+    );
+  });
+
+  it("uses runtime extension precedence for extensionless project imports", async () => {
+    await withProject(
+      {
+        "app/page.ts": `import "./helper";\nimport "@/lib/helper";`,
+        "app/helper.json": `{}`,
+        "app/helper.tsx": `export const helper = true;`,
+        "lib/helper.json": `{}`,
+        "lib/helper.tsx": `export const helper = true;`,
+      },
+      async (projectDir) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.ts");
+        const result = await parseLocalImports(
+          await Deno.readTextFile(filePath),
+          filePath,
+          projectDir,
+          adapter,
+        );
+
+        assertEquals(result.missing, []);
+        assertEquals(
+          result.imports.map(({ absolutePath, resolvedPath }) =>
+            relative(projectDir, resolvedPath ?? absolutePath)
+          ),
+          ["app/helper.tsx", "lib/helper.tsx"],
+        );
+      },
+    );
+  });
+
+  it("resolves JavaScript specifiers to TypeScript source files", async () => {
+    await withProject(
+      {
+        "app/page.ts": `import "./helper.js";\nimport "./view.js";`,
+        "app/helper.ts": `export const helper = true;`,
+        "app/view.tsx": `export const View = () => null;`,
+      },
+      async (projectDir) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.ts");
+        const result = await parseLocalImports(
+          await Deno.readTextFile(filePath),
+          filePath,
+          projectDir,
+          adapter,
+        );
+
+        assertEquals(result.missing, []);
+        assertEquals(
+          result.imports.map(({ absolutePath }) => relative(projectDir, absolutePath)),
+          ["app/helper.ts", "app/view.tsx"],
+        );
+      },
+    );
+  });
+
+  it("does not apply source fallback to an absent CommonJS specifier", async () => {
+    await withProject(
+      {
+        "app/page.ts": 'import "./helper.cjs";',
+        "app/helper.tsx": "export const helper = true;",
+      },
+      async (projectDir) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.ts");
+        const result = await parseLocalImports(
+          await Deno.readTextFile(filePath),
+          filePath,
+          projectDir,
+          adapter,
+        );
+
+        assertEquals(result.imports, []);
+        assertEquals(result.missing.map(({ specifier }) => specifier), ["./helper.cjs"]);
+      },
+    );
+  });
+
+  it("falls back across supported source suffixes", async () => {
+    await withProject(
+      {
+        "app/page.ts": 'import "./helper.jsx";',
+        "app/helper.tsx": "export const helper = true;",
+      },
+      async (projectDir) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.ts");
+        const result = await parseLocalImports(
+          await Deno.readTextFile(filePath),
+          filePath,
+          projectDir,
+          adapter,
+        );
+
+        assertEquals(result.missing, []);
+        assertEquals(result.imports.map(({ absolutePath }) => relative(projectDir, absolutePath)), [
+          "app/helper.tsx",
+        ]);
+      },
+    );
+  });
+
+  it("does not resolve JavaScript specifiers to JSON or MDX assets", async () => {
+    await withProject(
+      {
+        "app/page.ts": `import "./config.js";\nimport "@/content.js";`,
+        "app/config.json": `{ "enabled": true }`,
+        "content.mdx": `# Content`,
+      },
+      async (projectDir) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.ts");
+        const result = await parseLocalImports(
+          await Deno.readTextFile(filePath),
+          filePath,
+          projectDir,
+          adapter,
+        );
+
+        assertEquals(result.imports, []);
+        assertEquals(
+          result.missing.map(({ specifier }) => specifier),
+          ["./config.js", "@/content.js"],
+        );
+      },
+    );
+  });
+
+  it("does not resolve compiled MDX JavaScript specifiers to JSON assets", async () => {
+    const stub = withStubContentProcessor();
+    try {
+      await withProject(
+        {
+          "components/snippet.mdx": `import config from "./config.js";\n\n{config.enabled}`,
+          "components/config.json": `{ "enabled": true }`,
+        },
+        async (projectDir) => {
+          const adapter = await getLocalAdapter();
+          const filePath = join(projectDir, "components/snippet.mdx");
+          const result = await parseLocalImports(
+            await Deno.readTextFile(filePath),
+            filePath,
+            projectDir,
+            adapter,
+          );
+
+          assertEquals(result.imports, []);
+          assertEquals(result.missing.map(({ specifier }) => specifier), ["./config.js"]);
         },
       );
     } finally {

@@ -1,5 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../transforms/plugins/__tests__/code-parser-setup.ts";
+// Server MDX pages are compiled before their imports are collected, which
+// resolves the ContentProcessor contract provided by @veryfront/ext-content-mdx.
+import "../transforms/mdx/compiler/__tests__/content-processor-setup.ts";
 
 import type { VeryfrontConfig } from "#veryfront/config";
 import {
@@ -24,6 +27,7 @@ import {
 import {
   type ReleaseAssetBuildClient,
   type ReleaseAssetBuildInput,
+  releaseAssetBuildInternals,
   type ReleaseAssetBuildResult,
   type ReleaseAssetHttpDependencyVendor,
   type ReleaseAssetVendorResult,
@@ -39,6 +43,9 @@ import {
   type DependencyPinningSourceInput,
   resolveDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
+import type { CodeParser } from "#veryfront/extensions/parser/code-parser.ts";
+import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
 
 const STYLE_PROFILE_HASH = "d".repeat(64);
 const CSS_PIPELINE_IDENTITY = "test-css-pipeline@1";
@@ -107,7 +114,14 @@ function assertCoverageFailure(
 function releaseConfigLoader(
   config: Partial<VeryfrontConfig> = {},
 ): ReleaseAssetBuildInput["loadConfig"] {
-  return () => Promise.resolve(config as VeryfrontConfig);
+  return () =>
+    Promise.resolve({
+      ...config,
+      experimental: {
+        ...config.experimental,
+        rsc: config.experimental?.rsc ?? true,
+      },
+    } as VeryfrontConfig);
 }
 
 function baseInput(
@@ -273,9 +287,12 @@ describe("release asset build executor", () => {
   it("assembles App Router page routes from app/page modules", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
-      { path: "app/page.tsx", content: "export default () => null;" },
-      { path: "app/about/page.tsx", content: "export default () => null;" },
-      { path: "app/layout.tsx", content: "export default ({ children }) => children;" },
+      { path: "app/page.tsx", content: '"use client"; export default () => null;' },
+      { path: "app/about/page.tsx", content: '"use client"; export default () => null;' },
+      {
+        path: "app/layout.tsx",
+        content: '"use client"; export default ({ children }) => children;',
+      },
       { path: "app/api/ag-ui/route.ts", content: "export async function POST() {}" },
     ];
     const client = makeClient(files, rec);
@@ -293,6 +310,3015 @@ describe("release asset build executor", () => {
     assertEquals(manifest.routes["/"]?.modules, ["app/page.tsx", "app/layout.tsx"]);
     assertEquals(manifest.routes["/about"]?.modules, ["app/about/page.tsx", "app/layout.tsx"]);
     assertEquals(routeForPage("app/layout.tsx"), null);
+  });
+
+  it("publishes App Router pages when RSC is explicitly disabled", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "app/page.tsx", content: "export default function Page() { return null; }" },
+      {
+        path: "app/layout.tsx",
+        content: "export default function Layout({ children }) { return children; }",
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild({
+      ...baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      loadConfig: releaseConfigLoader({ experimental: { rsc: false } }),
+    }, await tmp());
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertExists(manifest.modules["app/page.tsx"]);
+    assertExists(manifest.modules["app/layout.tsx"]);
+    assertEquals(manifest.routes["/"]?.modules, ["app/page.tsx", "app/layout.tsx"]);
+  });
+
+  it("rejects function-local server actions in non-RSC App Router entries", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'export async function save() { "use server"; return "<SECRET>"; } ' +
+          "export default function Page() { return save; }",
+      },
+      {
+        path: "app/layout.tsx",
+        content: "export default function Layout({ children }) { return children; }",
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild({
+      ...baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      loadConfig: releaseConfigLoader({ experimental: { rsc: false } }),
+    }, await tmp());
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    assert(rec.uploads.every((upload) => !upload.text.includes("<SECRET>")));
+  });
+
+  it("rejects module-level use server in non-RSC App Router entries", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: '"use server"; export default function Page() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild({
+      ...baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      loadConfig: releaseConfigLoader({ experimental: { rsc: false } }),
+    }, await tmp());
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    assertEquals(manifest.modules["app/page.tsx"], undefined);
+  });
+
+  it("does not publish App Router server modules or their server-only imports", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content:
+          'import "./private.ts"; import Client from "./client.tsx"; export default () => <Client />;',
+      },
+      { path: "app/private.ts", content: 'export const value = "<REDACTED>";' },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+    const client = makeClient(files, rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.modules["app/page.tsx"], undefined);
+    assertEquals(manifest.modules["app/private.ts"], undefined);
+    assertExists(manifest.modules["app/client.tsx"]);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+  });
+
+  it("does not let a client component promote a directive-less App Router entry", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "./client.tsx"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; import OtherPage from "./other/page.tsx"; ' +
+          "export default () => <OtherPage />;",
+      },
+      {
+        path: "app/other/page.tsx",
+        content: 'export default () => "<REDACTED>";',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/other"]?.modules, []);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    assertEquals(manifest.modules["app/other/page.tsx"], undefined);
+    assert(rec.uploads.every((upload) => !upload.text.includes("<REDACTED>")));
+  });
+
+  it("does not let a client component promote a directive-less App Router layout", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "./client.tsx"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; import OtherLayout from "./other/layout.tsx"; ' +
+          "export default () => <OtherLayout />;",
+      },
+      {
+        path: "app/other/layout.tsx",
+        content: 'export default () => "<REDACTED>";',
+      },
+      { path: "app/other/page.tsx", content: "export default function Page() { return null; }" },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/other"]?.modules, []);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    assertEquals(manifest.modules["app/other/layout.tsx"], undefined);
+    assert(rec.uploads.every((upload) => !upload.text.includes("<REDACTED>")));
+  });
+
+  it("drops an App Router route whose entry has conflicting directives", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: '"use client"; "use server"; export default () => "<REDACTED>";',
+      },
+      { path: "pages/ok.tsx", content: "export default () => null;" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    assert(rec.uploads.every((upload) => !upload.text.includes("<REDACTED>")));
+  });
+
+  it("drops an App Router route whose outside dependency has conflicting directives", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import Conflict from "../shared/conflict.tsx"; ' +
+          "export default () => <Conflict />;",
+      },
+      {
+        path: "shared/conflict.tsx",
+        content: '"use client"; "use server"; export default () => "<REDACTED>";',
+      },
+      { path: "pages/ok.tsx", content: "export default () => null;" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    assert(rec.uploads.every((upload) => !upload.text.includes("<REDACTED>")));
+  });
+
+  it("allows supported JSON imports in App Router server modules", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import data from "./data.json" with { type: "json" }; ' +
+          'import Client from "./client.tsx"; export default () => <Client data={data} />;',
+      },
+      { path: "app/data.json", content: '{"label":"server only"}' },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+    assertEquals(manifest.modules["app/data.json"], undefined);
+  });
+
+  it("drops an App Router route whose JSON import omits its type attribute", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import data from "./data.json"; import Client from "./client.tsx"; ' +
+          "export default () => <Client data={data} />;",
+      },
+      { path: "app/data.json", content: '{"label":"server only"}' },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+  });
+
+  it("drops an App Router route whose direct remote JSON import omits its type attribute", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import data from "https://cdn.example/config.json"; ' +
+          'import Client from "./client.tsx"; export default () => <Client data={data} />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+  });
+
+  it("treats bare package aliases ending in .json as packages", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "deno.json", content: '{"imports":{"#config":"pkg.json"}}' },
+      {
+        path: "app/page.tsx",
+        content: 'import config from "#config"; import Client from "./client.tsx"; ' +
+          "export default () => <Client config={config} />;",
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+  });
+
+  it("drops an App Router route whose JSON alias omits its type attribute", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"#data":"/_vf_modules/app/data.json"}}',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import data from "#data"; import Client from "./client.tsx"; ' +
+          "export default () => <Client data={data} />;",
+      },
+      { path: "app/data.json", content: '{"label":"server only"}' },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+  });
+
+  it("allows a JSON alias with its type attribute in an App Router server module", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"#data":"/_vf_modules/app/data.json"}}',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import data from "#data" with { type: "json" }; ' +
+          'import Client from "./client.tsx"; export default () => <Client data={data} />;',
+      },
+      { path: "app/data.json", content: '{"label":"server only"}' },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+    assertEquals(manifest.modules["app/data.json"], undefined);
+  });
+
+  it("drops an App Router route whose JSON data URL omits its type attribute", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import data from "data:application/json,%7B%22label%22%3A%22inline%22%7D"; ' +
+          'import Client from "./client.tsx"; export default () => <Client data={data} />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+  });
+
+  it("drops an App Router route that directly imports a CSS data URL", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import "data:text/css,body%7Bcolor%3Ared%7D"; ' +
+          'import Client from "./client.tsx"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+  });
+
+  it("allows a JSON data URL with its type attribute in an App Router server module", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content:
+          'import data from "data:application/problem+json,%7B%22label%22%3A%22inline%22%7D" with { type: "json" }; ' +
+          'import Client from "./client.tsx"; export default () => <Client data={data} />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+  });
+
+  it("resolves project import-map aliases while traversing server modules", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"#client":"/_vf_modules/app/client.tsx"}}',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "#client"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+  });
+
+  it("keeps relative server imports ahead of import-map entries", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"./client.tsx":"https://cdn.example/client.js"}}',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "./client.tsx"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+  });
+
+  it("resolves project import-map aliases throughout the browser closure", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"#helper":"/_vf_modules/app/helper.ts"}}',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "./client.tsx"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; import { helper } from "#helper"; ' +
+          "export default function Client() { return helper; }",
+      },
+      { path: "app/helper.ts", content: "export const helper = null;" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx", "app/helper.ts"]);
+    const clientHash = manifest.modules["app/client.tsx"]?.contentHash;
+    const helperHash = manifest.modules["app/helper.ts"]?.contentHash;
+    assertExists(clientHash);
+    assertExists(helperHash);
+    const clientUpload = rec.uploads.find((upload) => upload.hash === clientHash);
+    assertExists(clientUpload);
+    assertStringIncludes(clientUpload.text, `"/_vf/assets/${helperHash}.js"`);
+  });
+
+  it("keeps relative browser imports ahead of import-map entries", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"./client.tsx":"https://cdn.example/client.js"}}',
+      },
+      {
+        path: "pages/index.tsx",
+        content: 'import Client from "./client.tsx"; export default () => <Client />;',
+      },
+      {
+        path: "pages/client.tsx",
+        content: "export default function Client() { return null; }",
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["pages/index.tsx", "pages/client.tsx"]);
+    const entryHash = manifest.modules["pages/index.tsx"]?.contentHash;
+    const clientHash = manifest.modules["pages/client.tsx"]?.contentHash;
+    assertExists(entryHash);
+    assertExists(clientHash);
+    const entryUpload = rec.uploads.find((upload) => upload.hash === entryHash);
+    assertExists(entryUpload);
+    assertStringIncludes(entryUpload.text, `"/_vf/assets/${clientHash}.js"`);
+    assert(!entryUpload.text.includes("https://cdn.example/client.js"));
+  });
+
+  it("canonicalizes bare package import-map targets in source dependency mode", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"#ui":"browser-ui-package"}}',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "./client.tsx"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; import ui from "#ui"; export default () => ui;',
+      },
+    ];
+    const input = baseInput(makeClient(files, rec), (source) => Promise.resolve(source));
+
+    const result = await runReleaseAssetBuild(
+      { ...input, dependencyMode: "source", vendorHttpImports: undefined },
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    const clientHash = manifest.modules["app/client.tsx"]?.contentHash;
+    assertExists(clientHash);
+    const clientUpload = rec.uploads.find((upload) => upload.hash === clientHash);
+    assertExists(clientUpload);
+    assertStringIncludes(clientUpload.text, "https://esm.sh/browser-ui-package?target=node");
+  });
+
+  it("uses the longest project import-map prefix during server traversal", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: JSON.stringify({
+          imports: {
+            "#/": "/_vf_modules/short/",
+            "#/nested/": "/_vf_modules/long/",
+          },
+        }),
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "#/nested/client.tsx"; export default () => <Client />;',
+      },
+      {
+        path: "short/nested/client.tsx",
+        content: '"use client"; export default function Short() { return null; }',
+      },
+      {
+        path: "long/client.tsx",
+        content: '"use client"; export default function Long() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["long/client.tsx"]);
+    assertEquals(manifest.modules["short/nested/client.tsx"], undefined);
+  });
+
+  it("applies package mappings to esm.sh server imports", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"widget":"/_vf_modules/app/client.tsx"}}',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "https://esm.sh/widget@1"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+  });
+
+  it("keeps esm.sh package mappings to remote targets external", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"widget":"https://esm.sh/widget@2"}}',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import "https://esm.sh/widget@1"; ' +
+          'import Client from "./client.tsx"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+  });
+
+  it("drops a server route whose alias maps to an external stylesheet", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"#theme":"https://cdn.example/theme.css?release"}}',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import "#theme"; export default function Page() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+  });
+
+  it("validates JSON data URLs after resolving server aliases", async () => {
+    for (
+      const [attribute, publishesRoute] of [
+        ["", false],
+        [' with { type: "json" }', true],
+      ] as const
+    ) {
+      const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+      const files = [
+        {
+          path: "deno.json",
+          content:
+            '{"imports":{"#data":"data:application/problem+json,%7B%22label%22%3A%22inline%22%7D"}}',
+        },
+        {
+          path: "app/page.tsx",
+          content: `import data from "#data"${attribute}; export default () => data;`,
+        },
+        { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+      ];
+
+      const result = await runReleaseAssetBuild(
+        baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+        await tmp(),
+      );
+
+      assertEquals(result.success, true, result.error);
+      const manifest = parseReleaseAssetManifest(rec.manifest);
+      assertExists(manifest);
+      assertEquals(manifest.routes["/"] !== undefined, publishesRoute);
+      assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    }
+  });
+
+  it("resolves chained project import-map aliases while traversing server modules", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: JSON.stringify({
+          imports: {
+            "#entry": "#client",
+            "#client": "/_vf_modules/app/client.tsx",
+          },
+        }),
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "#entry"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+  });
+
+  it("drops an App Router route whose project import-map aliases form a cycle", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: JSON.stringify({ imports: { "#first": "#second", "#second": "#first" } }),
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import "#first"; export default function Page() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+  });
+
+  it("treats native and bare import-map alias targets as external server imports", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: JSON.stringify({
+          imports: {
+            "#native": "node:fs",
+            "#package": "installed-server-package",
+          },
+        }),
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import "#native"; import "#package"; ' +
+          'import Client from "./client.tsx"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+  });
+
+  it("keeps protocol-relative server imports outside the project graph", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import "//cdn.example/sdk.js"; import Client from "./client.tsx"; ' +
+          "export default () => <Client />;",
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      {
+        path: "cdn.example/sdk.js",
+        content: '"use client"; export const sdk = "must stay external";',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+    assertEquals(manifest.modules["cdn.example/sdk.js"], undefined);
+  });
+
+  it("drops an App Router route that imports an existing file outside the release root", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const outerDir = await tmp();
+    const releaseDir = join(outerDir, "release");
+    await Deno.mkdir(releaseDir);
+    await Deno.writeTextFile(join(outerDir, "outside.ts"), "export const secret = true;");
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import { secret } from "../../outside.ts"; export default () => secret;',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      releaseDir,
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertExists(manifest.routes["/ok"]);
+  });
+
+  it("traverses mjs server helpers to find nested client boundaries", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import { renderClient } from "./server-helper.mjs"; ' +
+          "export default () => renderClient();",
+      },
+      {
+        path: "app/server-helper.mjs",
+        content: 'import Client from "./client.tsx"; ' +
+          "export const renderClient = () => Client();",
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.modules["app/server-helper.mjs"], undefined);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+  });
+
+  it("prefers an mjs server helper over an mdx fallback", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import { renderClient } from "app/helper"; export default () => renderClient();',
+      },
+      {
+        path: "app/helper.mjs",
+        content:
+          'import Client from "./mjs-client.tsx"; export const renderClient = () => Client();',
+      },
+      {
+        path: "app/helper.mdx",
+        content: 'import Client from "./mdx-client.tsx"\n\n<Client />',
+      },
+      {
+        path: "app/mjs-client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      {
+        path: "app/mdx-client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/mjs-client.tsx"]);
+    assertEquals(manifest.modules["app/mdx-client.tsx"], undefined);
+  });
+
+  it("uses hosted extension priority for relative server imports", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import { renderClient } from "./helper"; export default () => renderClient();',
+      },
+      {
+        path: "app/helper.mdx",
+        content: 'import Client from "./mdx-client.tsx"\n\n<Client />',
+      },
+      {
+        path: "app/helper.tsx",
+        content:
+          'import Client from "./tsx-client.tsx"; export const renderClient = () => Client();',
+      },
+      {
+        path: "app/mdx-client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      {
+        path: "app/tsx-client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/mdx-client.tsx"]);
+    assertEquals(manifest.modules["app/tsx-client.tsx"], undefined);
+  });
+
+  it("strips a Windows materialization root before hosted extension lookup", () => {
+    assertEquals(
+      releaseAssetBuildInternals.releaseLogicalPathFromMaterializedPath(
+        "C:\\release\\app\\helper",
+        "C:\\release",
+        "windows",
+      ),
+      "app/helper",
+    );
+  });
+
+  it("drops routes that import unsupported server script extensions", async () => {
+    for (const extension of [".cjs", ".mts", ".cts"]) {
+      const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+      const files = [
+        {
+          path: "app/page.tsx",
+          content: `import { renderClient } from "./helper${extension}"; ` +
+            "export default () => renderClient();",
+        },
+        {
+          path: `app/helper${extension}`,
+          content: 'import Client from "./client.tsx"; export const renderClient = () => Client();',
+        },
+        {
+          path: "app/client.tsx",
+          content: '"use client"; export default function Client() { return null; }',
+        },
+        { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+      ];
+
+      const result = await runReleaseAssetBuild(
+        baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+        await tmp(),
+      );
+
+      assertEquals(result.success, true, `${extension}: ${result.error}`);
+      const manifest = parseReleaseAssetManifest(rec.manifest);
+      assertExists(manifest);
+      assertEquals(manifest.routes["/"], undefined, extension);
+      assertExists(manifest.routes["/ok"]);
+    }
+  });
+
+  it("does not source-fallback an absent CommonJS server import", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import { renderClient } from "./helper.cjs"; ' +
+          "export default () => renderClient();",
+      },
+      {
+        path: "app/helper.tsx",
+        content: 'import Client from "./client.tsx"; export const renderClient = () => Client();',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertExists(manifest.routes["/ok"]);
+  });
+
+  it("drops a server route with an unresolved cross-project import", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const result = await runReleaseAssetBuild(
+      baseInput(
+        makeClient([
+          {
+            path: "app/page.tsx",
+            content: 'import "demo/@/components/Card"; export default () => null;',
+          },
+          { path: "pages/ok.tsx", content: "export default () => null;" },
+        ], rec),
+        (source) => Promise.resolve(source),
+      ),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertExists(manifest.routes["/ok"]);
+  });
+
+  it("resolves Markdown imports from App Router server modules", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import "./content.md"; import Client from "./client.tsx"; ' +
+          "export default () => <Client />;",
+      },
+      { path: "app/content.md", content: "# Content" },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+  });
+
+  it("classifies the complete server closure before generic browser seeds", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import { mid } from "../lib/mid.ts"; ' +
+          'import Client from "./client.tsx"; export default () => <Client value={mid} />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      {
+        path: "lib/mid.ts",
+        content: 'import { leaf } from "./a-leaf.ts"; export const mid = leaf;',
+      },
+      {
+        path: "lib/a-leaf.ts",
+        content: 'import { secret } from "./z-secret.ts"; export const leaf = secret;',
+      },
+      { path: "lib/z-secret.ts", content: 'export const secret = "<SECRET>";' },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+    for (const serverPath of ["lib/mid.ts", "lib/a-leaf.ts", "lib/z-secret.ts"]) {
+      assertEquals(manifest.modules[serverPath], undefined);
+    }
+    assert(rec.uploads.every((upload) => !upload.text.includes("<SECRET>")));
+  });
+
+  it("initializes the default parser before inspecting browser boundaries", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const previousParser = tryResolve<CodeParser>("CodeParser");
+    unregister("CodeParser");
+    try {
+      const result = await runReleaseAssetBuild(
+        baseInput(
+          makeClient([
+            {
+              path: "pages/index.tsx",
+              content: "export default function Page() { return null; }",
+            },
+          ], rec),
+          (source) => Promise.resolve(source),
+        ),
+        await tmp(),
+      );
+
+      assertEquals(result.success, true, result.error);
+      assertExists(parseReleaseAssetManifest(rec.manifest)?.routes["/"]);
+    } finally {
+      unregister("CodeParser");
+      if (previousParser) register("CodeParser", previousParser);
+    }
+  });
+
+  it("resolves extension-fallback import-map aliases while traversing server modules", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"#client":"/_vf_modules/app/client.tsx"}}',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "#client.js"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+  });
+
+  it("excludes JSON when JavaScript-suffixed server imports use source fallbacks", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"#alias":"/_vf_modules/app/alias-helper.js"}}',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Direct from "app/direct-helper.js"; ' +
+          'import Alias from "#alias"; export default () => <><Direct /><Alias /></>;',
+      },
+      { path: "app/direct-helper.json", content: "{}" },
+      {
+        path: "app/direct-helper.tsx",
+        content: '"use client"; export default function Direct() { return null; }',
+      },
+      { path: "app/alias-helper.json", content: "{}" },
+      {
+        path: "app/alias-helper.tsx",
+        content: '"use client"; export default function Alias() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, [
+      "app/direct-helper.tsx",
+      "app/alias-helper.tsx",
+    ]);
+  });
+
+  it("applies a configured @/ mapping before the default project-root alias", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"@/":"/_vf_modules/src/"}}',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "@/Client.tsx"; export default () => <Client />;',
+      },
+      {
+        path: "src/Client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["src/Client.tsx"]);
+  });
+
+  it("resolves import-map aliases targeting a relative _vf_modules path", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"#client":"_vf_modules/app/client.tsx"}}',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "#client"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+  });
+
+  it("resolves import-map aliases targeting the project @/ alias", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"#client":"@/components/Client.tsx"}}',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "#client"; export default () => <Client />;',
+      },
+      {
+        path: "components/Client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["components/Client.tsx"]);
+  });
+
+  it("preserves the local @/ module when its import-map target is external", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"@/Widget":"https://example.com/external-widget.js"}}',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Widget from "@/Widget"; export default () => <Widget />;',
+      },
+      {
+        path: "Widget.tsx",
+        content: '"use client"; export default function Widget() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["Widget.tsx"]);
+  });
+
+  it("filters project-relative aliases to match the runtime import map", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"#client":"./app/client.tsx"}}',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "#client"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertExists(manifest.routes["/ok"]);
+  });
+
+  it("ignores deno.jsonc import aliases like the runtime loader", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.jsonc",
+        content: '{"imports":{"#client":"/_vf_modules/app/client.tsx"}}',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "#client"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertExists(manifest.routes["/ok"]);
+  });
+
+  it("rejects JSONC syntax in deno.json like the runtime loader", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{\n// comment\n"imports":{"#client":"/_vf_modules/app/client.tsx"}\n}',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "#client"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertExists(manifest.routes["/ok"]);
+  });
+
+  it("ignores the complete Deno import map when an entry is invalid", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"#client":"/_vf_modules/app/client.tsx","#invalid":42}}',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "#client"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertExists(manifest.routes["/ok"]);
+  });
+
+  it("rejects noncanonical local import-map targets", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"#bare":"app/client.tsx","#root":"/app/client.tsx"}}',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Bare from "#bare"; import Root from "#root"; ' +
+          "export default () => <><Bare /><Root /></>;",
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertExists(manifest.routes["/ok"]);
+  });
+
+  it("does not publish an unvendored browser alias outside the script CSP", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"#sdk":"https://example.com/sdk.js"}}',
+      },
+      {
+        path: "pages/index.tsx",
+        content: 'import { sdk } from "#sdk"; export default function Page() { return sdk; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    assert(rec.uploads.every((upload) => !upload.text.includes("https://example.com/sdk.js")));
+  });
+
+  it("does not publish browser routes whose aliases target server-only packages", async () => {
+    for (
+      const [target, serverExternalPackages] of [
+        ["pg", undefined],
+        ["npm:redis@5", undefined],
+        ["knex", ["knex"]],
+      ] as const
+    ) {
+      const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+      const files = [
+        {
+          path: "deno.json",
+          content: JSON.stringify({ imports: { "#database": target } }),
+        },
+        {
+          path: "pages/index.tsx",
+          content:
+            'import database from "#database"; export default function Page() { return database; }',
+        },
+        { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+      ];
+      const input = baseInput(makeClient(files, rec), (source) => Promise.resolve(source));
+
+      const result = await runReleaseAssetBuild(
+        {
+          ...input,
+          loadConfig: releaseConfigLoader({
+            build: serverExternalPackages
+              ? { serverExternalPackages: [...serverExternalPackages] }
+              : {},
+          }),
+        },
+        await tmp(),
+      );
+
+      assertEquals(result.success, true, result.error);
+      const manifest = parseReleaseAssetManifest(rec.manifest);
+      assertExists(manifest);
+      assertEquals(manifest.routes["/"], undefined, `server-only alias was published: ${target}`);
+      assertExists(manifest.routes["/ok"]);
+    }
+  });
+
+  it("does not publish browser routes whose aliases target external stylesheets", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"#theme":"https://example.com/theme.css"}}',
+      },
+      {
+        path: "pages/index.tsx",
+        content: '"use client"; import "#theme"; export default function Page() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    assert(rec.uploads.every((upload) => !upload.text.includes("theme.css")));
+  });
+
+  it("vendors an external browser alias in immutable dependency mode", async () => {
+    enableDependencyImportMap();
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"#sdk":"https://example.com/sdk.js"}}',
+      },
+      {
+        path: "pages/index.tsx",
+        content: 'import { sdk } from "#sdk"; export default function Page() { return sdk; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    const hash = manifest.modules["pages/index.tsx"]?.contentHash;
+    assertExists(hash);
+    const upload = rec.uploads.find((candidate) => candidate.hash === hash);
+    assertExists(upload);
+    assert(!upload.text.includes("#sdk"));
+    assert(!upload.text.includes("https://example.com/sdk.js"));
+    assertStringIncludes(upload.text, "/_vf/assets/");
+  });
+
+  it("does not publish a protocol-relative browser alias outside the script CSP", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"#sdk":"//cdn.example.com/sdk.js"}}',
+      },
+      {
+        path: "pages/index.tsx",
+        content: 'import { sdk } from "#sdk"; export default function Page() { return sdk; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    assert(rec.uploads.every((upload) => !upload.text.includes("cdn.example.com/sdk.js")));
+  });
+
+  it("vendors a protocol-relative external browser alias in immutable dependency mode", async () => {
+    enableDependencyImportMap();
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"#sdk":"//cdn.example.com/sdk.js"}}',
+      },
+      {
+        path: "pages/index.tsx",
+        content: 'import { sdk } from "#sdk"; export default function Page() { return sdk; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    const hash = manifest.modules["pages/index.tsx"]?.contentHash;
+    assertExists(hash);
+    const upload = rec.uploads.find((candidate) => candidate.hash === hash);
+    assertExists(upload);
+    assert(!upload.text.includes("#sdk"));
+    assert(!upload.text.includes("cdn.example.com/sdk.js"));
+    assertStringIncludes(upload.text, "/_vf/assets/");
+  });
+
+  it("resolves veryfront.config import-map aliases while traversing server modules", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    // No deno.json at all: the alias exists only in veryfront.config.ts under
+    // resolve.importMap.imports, the second supported alias source.
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "#client"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild({
+      ...baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      loadConfig: releaseConfigLoader({
+        resolve: { importMap: { imports: { "#client": "/_vf_modules/app/client.tsx" } } },
+      }),
+    }, await tmp());
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+  });
+
+  it("ignores a malformed optional Deno map while retaining config aliases", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "deno.json", content: "not valid json{" },
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "#client"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild({
+      ...baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      loadConfig: releaseConfigLoader({
+        resolve: { importMap: { imports: { "#client": "/_vf_modules/app/client.tsx" } } },
+      }),
+    }, await tmp());
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+  });
+
+  it("ignores project overrides for framework-owned import-map aliases", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content: JSON.stringify({
+          imports: {
+            react: "./app/missing-react.ts",
+            "veryfront/router": "./app/missing-router.ts",
+          },
+        }),
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import React from "react"; import "veryfront/router"; ' +
+          'import Client from "./client.tsx"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+  });
+
+  it("lets a veryfront.config alias override the deno.json mapping", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    // Same key in both sources: the config mapping must win, mirroring
+    // loadImportMap's serve-time merge order (deno.json first, config last).
+    const files = [
+      {
+        path: "deno.json",
+        content: '{"imports":{"#client":"/_vf_modules/app/decoy.tsx"}}',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "#client"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      {
+        path: "app/decoy.tsx",
+        content: '"use client"; export default function Decoy() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild({
+      ...baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      loadConfig: releaseConfigLoader({
+        resolve: { importMap: { imports: { "#client": "/_vf_modules/app/client.tsx" } } },
+      }),
+    }, await tmp());
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+  });
+
+  it("resolves directory-index imports from App Router server modules", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "app/client"; export default () => <Client />;',
+      },
+      {
+        path: "app/client/index.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client/index.tsx"]);
+  });
+
+  it("resolves suffixed server imports instead of dropping the route", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    // A query or fragment on a supported specifier is not part of the file
+    // path; before suffix splitting both imports were reported missing and the
+    // only route was dropped, failing the release.
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "./client.tsx#island"; ' +
+          'import { copy } from "@/lib/copy.ts?raw"; ' +
+          "export default () => <Client label={copy} />;",
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      { path: "lib/copy.ts", content: 'export const copy = "text";' },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertExists(manifest.modules["app/client.tsx"]);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+  });
+
+  it("publishes app/ helpers that inherit the client boundary from their importer", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    // The server page reaches shared.ts first, parking it as a server module;
+    // the client component then imports the same helper, which must promote it
+    // back into the browser closure or Counter's import cannot be rewritten.
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import { shared } from "./shared.ts"; import Counter from "./counter.tsx"; ' +
+          "export default () => <Counter label={shared} />;",
+      },
+      { path: "app/shared.ts", content: 'export const shared = "label";' },
+      {
+        path: "app/counter.tsx",
+        content: '"use client"; import { shared } from "./shared.ts"; ' +
+          "export default function Counter() { return shared; }",
+      },
+    ];
+    const client = makeClient(files, rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.modules["app/page.tsx"], undefined);
+    assertExists(manifest.modules["app/counter.tsx"]);
+    assertExists(manifest.modules["app/shared.ts"]);
+    assertEquals(
+      [...(manifest.routes["/"]?.modules ?? [])].sort(),
+      ["app/counter.tsx", "app/shared.ts"],
+    );
+  });
+
+  it("preserves server reachability when a shared module fails client promotion", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import { value } from "../server/shared.ts"; export default () => value;',
+      },
+      {
+        path: "pages/broken.tsx",
+        content: 'import { value } from "../server/shared.ts"; export default () => value;',
+      },
+      {
+        path: "server/shared.ts",
+        content: 'export async function action() { "use server"; return "ok"; } ' +
+          'export const value = "ok";',
+      },
+      { path: "pages/ok.tsx", content: "export default () => null;" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, []);
+    assertEquals(manifest.routes["/broken"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    assertEquals(manifest.modules["server/shared.ts"], undefined);
+  });
+
+  it("preserves each server edge when a shared browser module fails finalization", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import { value } from "../server/shared.ts"; export default () => value;',
+      },
+      {
+        path: "pages/broken.tsx",
+        content: 'import { value } from "../server/shared.ts"; export default () => value;',
+      },
+      { path: "server/shared.ts", content: 'export const value = "ok";' },
+      { path: "pages/ok.tsx", content: "export default () => null;" },
+    ];
+    const transform = (source: string, filePath: string) =>
+      Promise.resolve(
+        filePath.endsWith("server/shared.ts")
+          ? 'import "./missing.ts"; export const value = "ok";'
+          : source,
+      );
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), transform),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, []);
+    assertEquals(manifest.routes["/broken"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    assertEquals(manifest.modules["server/shared.ts"], undefined);
+  });
+
+  it("drops a Pages Router entry with a module-level use server directive", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "pages/index.tsx",
+        content: '"use server"; export default function Page() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default () => null;" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    assertEquals(manifest.modules["pages/index.tsx"], undefined);
+  });
+
+  it("never grants client trust to a use server module imported by a client boundary", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "./client.tsx"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; import { act } from "./actions.ts"; ' +
+          "export default function Client() { return act; }",
+      },
+      { path: "app/actions.ts", content: '"use server"; export const act = "<SECRET>";' },
+      { path: "pages/ok.tsx", content: "export default () => null;" },
+    ];
+    const client = makeClient(files, rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    // The client boundary cannot resolve its server-action import in the
+    // browser, so its route fails closed instead of publishing the action.
+    assertEquals(result.success, true);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.modules["app/actions.ts"], undefined);
+    assertEquals(manifest.routes["/"], undefined, "route with a server-action import is dropped");
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    assert(
+      rec.uploads.every((upload) => !upload.text.includes("<SECRET>")),
+      "use server module content must never be uploaded",
+    );
+  });
+
+  it("never publishes a client module containing a function-local server action", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "./client.tsx"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; async function save() { "use server"; return "<SECRET>"; } ' +
+          "export default function Client() { return save; }",
+      },
+      { path: "pages/ok.tsx", content: "export default () => null;" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    assert(rec.uploads.every((upload) => !upload.text.includes("<SECRET>")));
+  });
+
+  it("never publishes an outside-app client module containing a server action", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "../components/Client.tsx"; ' +
+          "export default () => <Client />;",
+      },
+      {
+        path: "components/Client.tsx",
+        content: '"use client"; async function save() { "use server"; return "<SECRET>"; } ' +
+          "export default function Client() { return save; }",
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.modules["components/Client.tsx"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    assert(rec.uploads.every((upload) => !upload.text.includes("<SECRET>")));
+  });
+
+  it("inspects directive-less dependencies inherited by an outside-app client", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "./client.tsx"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; import { save } from "../components/actions.ts"; ' +
+          "export default function Client() { return save; }",
+      },
+      {
+        path: "components/actions.ts",
+        content: 'export async function save() { "use server"; return "<SECRET>"; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.modules["components/actions.ts"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    assert(rec.uploads.every((upload) => !upload.text.includes("<SECRET>")));
+  });
+
+  for (const protectedPath of ["app/api/users/route.ts", "tools/private.ts"] as const) {
+    it(`never publishes protected client dependency ${protectedPath}`, async () => {
+      const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+      const relativeImport = protectedPath.startsWith("app/")
+        ? `./${protectedPath.slice("app/".length)}`
+        : `../${protectedPath}`;
+      const files = [
+        {
+          path: "app/page.tsx",
+          content: 'import Client from "./client.tsx"; export default () => <Client />;',
+        },
+        {
+          path: "app/client.tsx",
+          content: `"use client"; import { secret } from ${JSON.stringify(relativeImport)}; ` +
+            "export default function Client() { return secret; }",
+        },
+        { path: protectedPath, content: 'export const secret = "<SECRET>";' },
+        { path: "pages/ok.tsx", content: "export default () => null;" },
+      ];
+
+      const result = await runReleaseAssetBuild(
+        baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+        await tmp(),
+      );
+
+      assertEquals(result.success, true, result.error);
+      const manifest = parseReleaseAssetManifest(rec.manifest);
+      assertExists(manifest);
+      assertEquals(manifest.routes["/"], undefined);
+      assertEquals(manifest.modules[protectedPath], undefined);
+      assert(rec.uploads.every((upload) => !upload.text.includes("<SECRET>")));
+    });
+  }
+
+  it("drops a server route that imports a protected explicit client boundary", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import { secret } from "./api/users/route.ts"; export default () => secret;',
+      },
+      {
+        path: "app/api/users/route.ts",
+        content: '"use client"; export const secret = "<SECRET>";',
+      },
+      { path: "pages/ok.tsx", content: "export default () => null;" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    assertEquals(manifest.modules["app/api/users/route.ts"], undefined);
+    assert(rec.uploads.every((upload) => !upload.text.includes("<SECRET>")));
+  });
+
+  it("queues client boundaries imported through project-root specifiers", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    // Server pages can import client boundaries with the same project-root
+    // specifier forms the browser collector supports; dropping any of them
+    // would publish the route without its hydration JavaScript.
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import A from "app/client-a.tsx"; ' +
+          'import B from "/app/client-b.tsx"; ' +
+          'import C from "/_vf_modules/app/client-c.tsx"; ' +
+          "export default () => <><A /><B /><C /></>;",
+      },
+      {
+        path: "app/client-a.tsx",
+        content: '"use client"; export default function A() { return null; }',
+      },
+      {
+        path: "app/client-b.tsx",
+        content: '"use client"; export default function B() { return null; }',
+      },
+      {
+        path: "app/client-c.tsx",
+        content: '"use client"; export default function C() { return null; }',
+      },
+    ];
+    const client = makeClient(files, rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, `root-form imports must resolve: ${result.error}`);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.modules["app/page.tsx"], undefined);
+    assertExists(manifest.modules["app/client-a.tsx"]);
+    assertExists(manifest.modules["app/client-b.tsx"]);
+    assertExists(manifest.modules["app/client-c.tsx"]);
+    assertEquals(
+      [...(manifest.routes["/"]?.modules ?? [])].sort(),
+      ["app/client-a.tsx", "app/client-b.tsx", "app/client-c.tsx"],
+    );
+  });
+
+  for (const extension of ["js", "ts"] as const) {
+    it(`queues client boundaries required through a .${extension} server helper`, async () => {
+      const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+      const files = [
+        {
+          path: "app/page.tsx",
+          content: `import helper from "./helper.${extension}"; export default () => helper;`,
+        },
+        {
+          path: `app/helper.${extension}`,
+          content: 'module.exports = require("./client.tsx");',
+        },
+        {
+          path: "app/client.tsx",
+          content: '"use client"; export default function Client() { return null; }',
+        },
+      ];
+
+      const result = await runReleaseAssetBuild(
+        baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+        await tmp(),
+      );
+
+      assertEquals(result.success, true, result.error);
+      const manifest = parseReleaseAssetManifest(rec.manifest);
+      assertExists(manifest);
+      assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+      assertEquals(manifest.modules[`app/helper.${extension}`], undefined);
+    });
+  }
+
+  for (
+    const missingSpecifier of [
+      "app/missing.tsx",
+      "/app/missing.tsx",
+      "/_vf_modules/app/missing.tsx",
+    ]
+  ) {
+    it(`drops a server route with missing project-root import ${missingSpecifier}`, async () => {
+      const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+      const client = makeClient([
+        {
+          path: "app/page.tsx",
+          content: `import Missing from ${JSON.stringify(missingSpecifier)}; ` +
+            "export default () => <Missing />;",
+        },
+        { path: "pages/ok.tsx", content: "export default () => null;" },
+      ], rec);
+
+      const result = await runReleaseAssetBuild(
+        baseInput(client, (source) => Promise.resolve(source)),
+        await tmp(),
+      );
+
+      assertEquals(result.success, true);
+      const manifest = parseReleaseAssetManifest(rec.manifest);
+      assertExists(manifest);
+      assertEquals(manifest.routes["/"], undefined);
+      assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    });
+  }
+
+  it("counts a missing ESM and CommonJS server specifier once", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import "app/missing.ts"; require("app/missing.ts"); ' +
+          "export default () => null;",
+      },
+      { path: "pages/ok.tsx", content: "export default () => null;" },
+    ];
+    const records: Array<{ message: string; context?: Record<string, unknown> }> = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+      if (entry.component === "release-asset-build") records.push(entry);
+    });
+    let result: ReleaseAssetBuildResult;
+    try {
+      result = await runReleaseAssetBuild(
+        baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+        await tmp(),
+      );
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(result.success, true, result.error);
+    const failure = records.find((entry) =>
+      entry.message === "Server module import parse failed during release asset build" &&
+      entry.context?.path === "app/page.tsx"
+    );
+    assertStringIncludes(String(failure?.context?.error), "1 unresolved project import(s)");
+  });
+
+  it("drops a server route with a computed dynamic import", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const client = makeClient([
+      {
+        path: "app/page.tsx",
+        content: 'const target = "./client.tsx"; ' +
+          "export default async function Page() { await import(target); return null; }",
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default () => null;" },
+    ], rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+  });
+
+  it("applies the server boundary to modules outside the app directory", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    // Modules reached through a server-module edge are server code wherever
+    // they live: an explicit "use server" action and a plain helper outside
+    // the app root must both stay off the release.
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import { act } from "../server/actions.ts"; ' +
+          'import { data } from "../server/data.ts"; ' +
+          'import Client from "./client.tsx"; ' +
+          "export default () => <Client act={act} data={data} />;",
+      },
+      { path: "server/actions.ts", content: '"use server"; export const act = "<SECRET>";' },
+      { path: "server/data.ts", content: 'export const data = "<REDACTED>";' },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+    const client = makeClient(files, rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, `server imports must stay server-side: ${result.error}`);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.modules["server/actions.ts"], undefined);
+    assertEquals(manifest.modules["server/data.ts"], undefined);
+    assertExists(manifest.modules["app/client.tsx"]);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+    assert(
+      rec.uploads.every(
+        (upload) => !upload.text.includes("<SECRET>") && !upload.text.includes("<REDACTED>"),
+      ),
+      "server module content must never be uploaded",
+    );
+  });
+
+  it("preserves the server boundary inside configured browser seed directories", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "src/server/data.ts", content: 'export const data = "<REDACTED>";' },
+      {
+        path: "src/app/page.tsx",
+        content: 'import { data } from "../server/data.ts"; ' +
+          'import Client from "./client.tsx"; ' +
+          "export default () => <Client data={data} />;",
+      },
+      {
+        path: "src/app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+    const client = makeClient(files, rec);
+
+    const result = await runReleaseAssetBuild({
+      ...baseInput(client, (source) => Promise.resolve(source)),
+      loadConfig: releaseConfigLoader({
+        directories: { app: "src/app", pages: "src/pages" },
+      }),
+    }, await tmp());
+
+    assertEquals(result.success, true);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.modules["src/server/data.ts"], undefined);
+    assertExists(manifest.modules["src/app/client.tsx"]);
+    assertEquals(manifest.routes["/"]?.modules, ["src/app/client.tsx"]);
+    assert(
+      rec.uploads.every((upload) => !upload.text.includes("<REDACTED>")),
+      "a server-only src dependency must never be uploaded",
+    );
+  });
+
+  it("never publishes an outside-app use server module imported by a client boundary", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "./client.tsx"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; import { act } from "../server/actions.ts"; ' +
+          "export default function Client() { return act; }",
+      },
+      { path: "server/actions.ts", content: '"use server"; export const act = "<SECRET>";' },
+      { path: "pages/ok.tsx", content: "export default () => null;" },
+    ];
+    const client = makeClient(files, rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    // Same fail-closed behavior as an in-app server action: the route that
+    // needs the action in the browser is dropped rather than published with
+    // server source.
+    assertEquals(result.success, true);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.modules["server/actions.ts"], undefined);
+    assertEquals(manifest.routes["/"], undefined, "route with a server-action import is dropped");
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    assert(
+      rec.uploads.every((upload) => !upload.text.includes("<SECRET>")),
+      "use server module content must never be uploaded",
+    );
+  });
+
+  it("does not publish targets of type-only imports from server pages", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import type { Model } from "../server/models.ts"; ' +
+          'import Client from "./client.tsx"; ' +
+          "export default () => <Client model={null as unknown as Model} />;",
+      },
+      { path: "server/models.ts", content: "export type Model = { secret: string };" },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+    const client = makeClient(files, rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertEquals(rec.uploads.length > 0, true);
+    assertExists(manifest);
+    assertEquals(manifest.modules["server/models.ts"], undefined);
+    assertExists(manifest.modules["app/client.tsx"]);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+  });
+
+  it("keeps CSS imports out of the server module closure", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "app/globals.css", content: "body { margin: 0; }" },
+      {
+        path: "app/layout.tsx",
+        content: 'import "./globals.css"; export default ({ children }) => children;',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "./client.tsx"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+    let seenStylesheet: string | undefined;
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet) => {
+        seenStylesheet = stylesheet;
+        return Promise.resolve(compiledCss("body{margin:0}"));
+      },
+    });
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    // The stylesheet edge must not become a closure gap for the route; it is
+    // merged into the release CSS instead.
+    assertEquals(result.success, true);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"]?.modules, ["app/client.tsx"]);
+    assertExists(seenStylesheet);
+    assert(seenStylesheet!.includes("margin: 0"), "layout CSS merged into release stylesheet");
+  });
+
+  it("merges CSS re-exported by a server module", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "app/globals.css", content: "body { margin: 0; }" },
+      { path: "app/Button.module.css", content: ".button { color: red; }" },
+      {
+        path: "app/layout.tsx",
+        content: 'export * from "./globals.css";\n' +
+          'export { default as styles } from "./Button.module.css";\n' +
+          "export default ({ children }) => children;",
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "./client.tsx"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+    ];
+    let seenStylesheet: string | undefined;
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet) => {
+        seenStylesheet = stylesheet;
+        return Promise.resolve(compiledCss("body{margin:0}"));
+      },
+    });
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    assertExists(seenStylesheet);
+    assertStringIncludes(seenStylesheet, "margin: 0");
+    assertStringIncludes(seenStylesheet, "color: red");
+  });
+
+  it("ignores CSS import and re-export text in comments and strings", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "globals.css", content: ":root { --brand: blue; }" },
+      { path: "app/legacy.css", content: ".legacy { color: red; }" },
+      { path: "app/quoted.css", content: ".quoted { color: purple; }" },
+      {
+        path: "app/layout.tsx",
+        content: '// import "./legacy.css";\n' +
+          '// export * from "./legacy.css";\n' +
+          "const imported = 'import \"./quoted.css\"';\n" +
+          "const exported = 'export * from \"./quoted.css\"';\n" +
+          "export default ({ children }) => <main>{children}</main>;",
+      },
+      { path: "pages/index.tsx", content: "export default () => null;" },
+    ];
+    let seenStylesheet: string | undefined;
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet) => {
+        seenStylesheet = stylesheet;
+        return Promise.resolve(compiledCss(":root{--brand:blue}"));
+      },
+    });
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    assertExists(seenStylesheet);
+    assertStringIncludes(seenStylesheet, "--brand: blue");
+    assertEquals(seenStylesheet.includes(".legacy"), false);
+    assertEquals(seenStylesheet.includes(".quoted"), false);
+  });
+
+  it("ignores CSS referenced only by type-only declarations", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "globals.css", content: ":root { --brand: blue; }" },
+      { path: "app/import-type.css", content: ".import-type { color: red; }" },
+      { path: "app/export-type.css", content: ".export-type { color: purple; }" },
+      { path: "app/inline-type.css", content: ".inline-type { color: orange; }" },
+      {
+        path: "app/layout.tsx",
+        content: 'import type Styles from "./import-type.css";\n' +
+          'export type { Classes } from "./export-type.css";\n' +
+          'import { type Tokens } from "./inline-type.css";\n' +
+          "export default ({ children }) => <main>{children}</main>;",
+      },
+      { path: "pages/index.tsx", content: "export default () => null;" },
+    ];
+    let seenStylesheet: string | undefined;
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet) => {
+        seenStylesheet = stylesheet;
+        return Promise.resolve(compiledCss(":root{--brand:blue}"));
+      },
+    });
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    assertExists(seenStylesheet);
+    assertStringIncludes(seenStylesheet, "--brand: blue");
+    assertEquals(seenStylesheet.includes(".import-type"), false);
+    assertEquals(seenStylesheet.includes(".export-type"), false);
+    assertEquals(seenStylesheet.includes(".inline-type"), false);
+  });
+
+  it("merges a CSS import whose default binding is named type", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "app/theme.css", content: ".theme { color: green; }" },
+      {
+        path: "app/layout.tsx",
+        content: 'import type from "./theme.css"; export default () => type;',
+      },
+      { path: "pages/index.tsx", content: "export default () => null;" },
+    ];
+    let seenStylesheet: string | undefined;
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet) => {
+        seenStylesheet = stylesheet;
+        return Promise.resolve(compiledCss(".theme{color:green}"));
+      },
+    });
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    assertExists(seenStylesheet);
+    assertStringIncludes(seenStylesheet, ".theme { color: green; }");
+  });
+
+  it("finds CSS after the static import match budget in generated source", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const ordinaryImports = Array.from(
+      // Match the build executor's release-file/scanner bound. Before the
+      // matcher became CSS-specific, these unrelated edges consumed it all.
+      { length: 50_000 },
+      () => 'import"pkg";',
+    ).join("");
+    const files = [
+      { path: "styles/late.css", content: ".late { color: blue; }" },
+      {
+        path: "tools/generated.ts",
+        content: `${ordinaryImports}import styles from "../styles/late.css";`,
+      },
+      { path: "pages/index.tsx", content: "export default () => null;" },
+    ];
+    let seenStylesheet: string | undefined;
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet) => {
+        seenStylesheet = stylesheet;
+        return Promise.resolve(compiledCss(".late{color:blue}"));
+      },
+    });
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    assertExists(seenStylesheet);
+    assertStringIncludes(seenStylesheet, ".late { color: blue; }");
+  });
+
+  it("merges a CSS alias but drops the server route that still executes it", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "deno.json",
+        content:
+          '{"imports":{"#theme":"/_vf_modules/styles/theme.css","theme":"/_vf_modules/styles/bare.css","theme/":"/_vf_modules/styles/"}}',
+      },
+      { path: "styles/theme.css", content: ":root { --theme-color: blue; }" },
+      { path: "styles/bare.css", content: ".bare { color: green; }" },
+      { path: "styles/prefix.css", content: ".prefix { color: purple; }" },
+      {
+        path: "app/layout.tsx",
+        content:
+          'import "#theme"; import "theme"; import "theme/prefix.css"; export default ({ children }) => children;',
+      },
+      {
+        path: "app/page.tsx",
+        content: 'import Client from "./client.tsx"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+    let seenStylesheet: string | undefined;
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet) => {
+        seenStylesheet = stylesheet;
+        return Promise.resolve(compiledCss(":root{--theme-color:blue}"));
+      },
+    });
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    assertExists(seenStylesheet);
+    assertStringIncludes(seenStylesheet, "--theme-color: blue");
+    assertStringIncludes(seenStylesheet, ".bare { color: green; }");
+    assertStringIncludes(seenStylesheet, ".prefix { color: purple; }");
+  });
+
+  it("merges CSS imported by an mjs server helper", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const extensions = ["mjs"];
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: extensions.map((ext) => `import "./helper.${ext}";`).join("\n") +
+          '\nimport Client from "./client.tsx"; export default () => <Client />;',
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      ...extensions.flatMap((ext) => [
+        {
+          path: `app/helper.${ext}`,
+          content: `import "./helper-${ext}.css"; export const value = "${ext}";`,
+        },
+        { path: `app/helper-${ext}.css`, content: `.${ext} { --format: ${ext}; }` },
+      ]),
+    ];
+    let seenStylesheet: string | undefined;
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet) => {
+        seenStylesheet = stylesheet;
+        return Promise.resolve(compiledCss("/* server formats */"));
+      },
+    });
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    assertExists(seenStylesheet);
+    for (const ext of extensions) {
+      assert(
+        seenStylesheet!.includes(`.${ext} { --format: ${ext}; }`),
+        `CSS imported by .${ext} must be merged`,
+      );
+    }
+  });
+
+  it("collects imports from server MDX pages by compiling the MDX first", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.mdx",
+        content: "import Widget from './widget.tsx'\n\n# Hello\n\n" +
+          "It's prose, not JavaScript, and the lexer must never see it raw.\n\n<Widget />\n",
+      },
+      {
+        path: "app/widget.tsx",
+        content: '"use client"; export default function Widget() { return null; }',
+      },
+    ];
+    const client = makeClient(files, rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.modules["app/page.mdx"], undefined);
+    assertExists(manifest.modules["app/widget.tsx"]);
+    assertEquals(manifest.routes["/"]?.modules, ["app/widget.tsx"]);
+  });
+
+  it("drops only the affected route when a server page cannot be analyzed", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      // Unclosed JSX makes the MDX compile throw, so this server page's
+      // imports cannot be discovered. That must cost this page its route, not
+      // the release.
+      { path: "app/broken/page.mdx", content: "# Broken\n\n<Unclosed\n" },
+      { path: "pages/ok.tsx", content: "export default () => null;" },
+    ];
+    const client = makeClient(files, rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, `healthy routes must publish: ${result.error}`);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/broken"], undefined, "unanalyzable route is dropped");
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+  });
+
+  it("drops a server route with an unresolved local import", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/broken/page.tsx",
+        content: 'import "./missing.ts"; export default function Page() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default () => null;" },
+    ];
+    const client = makeClient(files, rec);
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/broken"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+  });
+
+  it("drops a server route with a case-insensitive local file URL", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "app/page.tsx",
+        content: 'import "FILE:///tmp/secret.mjs"; export default function Page() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertExists(manifest.routes["/ok"]);
+  });
+
+  it("drops App Router routes that import static assets as modules", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "app/logo.png", content: "png-bytes" },
+      { path: "app/icon.svg", content: "<svg></svg>" },
+      { path: "app/fonts/brand.woff2", content: "font-bytes" },
+      {
+        path: "app/page.tsx",
+        content: 'import logo from "./logo.png";\n' +
+          'import "./icon.svg";\n' +
+          'import "./fonts/brand.woff2";\n' +
+          'import Client from "./client.tsx";\n' +
+          "export default () => <Client src={logo} />;",
+      },
+      {
+        path: "app/client.tsx",
+        content: '"use client"; export default function Client() { return null; }',
+      },
+      {
+        path: "app/commonjs/page.tsx",
+        content: 'require("../logo.png"); export default function Page() { return null; }',
+      },
+      { path: "pages/ok.tsx", content: "export default function Ok() { return null; }" },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(manifest.routes["/"], undefined);
+    assertEquals(manifest.routes["/commonjs"], undefined);
+    assertEquals(manifest.routes["/ok"]?.modules, ["pages/ok.tsx"]);
+    assertEquals(manifest.modules["app/logo.png"], undefined);
+    assertEquals(manifest.modules["app/icon.svg"], undefined);
+    assertEquals(manifest.modules["app/fonts/brand.woff2"], undefined);
   });
 
   it("rejects release file paths outside the materialization directory", async () => {
@@ -640,10 +3666,10 @@ describe("release asset build executor", () => {
     // module the admission boundary refuses.
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const client = makeClient([
-      { path: "app/page.tsx", content: "export default () => null;" },
+      { path: "app/page.tsx", content: '"use client"; export default () => null;' },
       {
         path: "app/layout.tsx",
-        content: "export default function Layout({ children }) { return children; }",
+        content: '"use client"; export default function Layout({ children }) { return children; }',
       },
       { path: "pages/ok.tsx", content: "export default () => null;" },
     ], rec);
@@ -2097,7 +5123,7 @@ export default { tailwind: { stylesheet: "src/styles/imported.css" } };`,
       },
       {
         path: "pages/index.tsx",
-        content: 'export default () => "<div class="p-4"/>";',
+        content: 'export default () => "<div class=\\"p-4\\"/>";',
       },
     ];
     let seenStylesheet: string | undefined;
@@ -2357,7 +5383,7 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [
       { path: "globals.css", content: ":root { --brand: blue; } /* fallback */" },
-      { path: "pages/index.tsx", content: 'export default () => "<div class="p-4"/>";' },
+      { path: "pages/index.tsx", content: 'export default () => "<div class=\\"p-4\\"/>";' },
     ];
     let seenStylesheet: string | undefined;
     const seenReactVersions: Array<string | undefined> = [];
@@ -2419,6 +5445,61 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
       seenStylesheet!.includes(".calc"),
       "CSS imported from app/layout.tsx must be merged into the stylesheet",
     );
+  });
+
+  it("rejects a CSS import scan that would omit a later live stylesheet", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const externalImports = Array.from(
+      { length: 50_000 },
+      () => 'import {} from "x.css";',
+    ).join("\n");
+    const files = [
+      { path: "app/live.css", content: ".live { color: green; }" },
+      {
+        path: "app/layout.tsx",
+        content:
+          `${externalImports}\nimport {} from "./live.css";\nexport default ({ children }) => children;`,
+      },
+    ];
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), () => Promise.resolve("export default null;")),
+      await tmp(),
+    );
+
+    assertEquals(result.success, false);
+    assertStringIncludes(
+      result.error ?? "",
+      "Release CSS import scan exceeds 50000 matches",
+    );
+  });
+
+  it("merges module CSS imported with a query or fragment suffix", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      { path: "app/styles.css", content: ".suffixed { color: rebeccapurple; }" },
+      {
+        path: "app/layout.tsx",
+        content: 'import "./styles.css#release"; export default ({ children }) => children;',
+      },
+      { path: "pages/index.tsx", content: "export default () => null;" },
+    ];
+    let seenStylesheet: string | undefined;
+    const client = makeClient(files, rec, {
+      compileProjectCss: (_candidates, stylesheet) => {
+        seenStylesheet = stylesheet;
+        return Promise.resolve(compiledCss(".suffixed{color:rebeccapurple}"));
+      },
+    });
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, true, result.error);
+    assertExists(seenStylesheet);
+    assertStringIncludes(seenStylesheet, ".suffixed { color: rebeccapurple; }");
   });
 
   it("merges module CSS from sources containing real JSX", async () => {
@@ -2722,11 +5803,11 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
       },
       {
         path: "src\\site\\layout.tsx",
-        content: "export default function Layout({ children }) { return children; }",
+        content: '"use client"; export default function Layout({ children }) { return children; }',
       },
       {
         path: "src\\site\\page.tsx",
-        content: "export default function Home() { return null; }",
+        content: '"use client"; export default function Home() { return null; }',
       },
       {
         path: "src\\pages\\about.tsx",

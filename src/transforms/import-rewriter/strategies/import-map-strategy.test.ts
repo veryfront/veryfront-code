@@ -90,6 +90,16 @@ describe("transforms/import-rewriter/strategies/import-map-strategy", () => {
       assertEquals(resolveImportWithMap("lodash/fp", map), "/_vf_modules/lodash/fp");
     });
 
+    it("uses the longest overlapping prefix regardless of insertion order", () => {
+      const map: ImportMapConfig = {
+        imports: {
+          "#/": "/short/",
+          "#/nested/": "/long/",
+        },
+      };
+      assertEquals(resolveImportWithMap("#/nested/client.ts", map), "/long/client.ts");
+    });
+
     it("resolves scoped exact match", () => {
       const map: ImportMapConfig = {
         imports: {},

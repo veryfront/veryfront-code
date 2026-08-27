@@ -17,6 +17,7 @@
 import type { TransformPlugin } from "../types.ts";
 import { TransformStage } from "../types.ts";
 import { parseImports, rewriteImports } from "../../esm/lexer.ts";
+import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 import { defineError } from "#veryfront/errors";
 import {
   getCssModuleScope,
@@ -33,11 +34,11 @@ const CSS_COMMENT_MASK_SENTINEL_EXHAUSTED = defineError({
 });
 
 function isCSSImport(specifier: string | undefined): boolean {
-  return specifier?.endsWith(".css") || false;
+  return specifier !== undefined && splitSpecifierSuffix(specifier).path.endsWith(".css");
 }
 
 function isCssModuleImport(specifier: string | undefined): boolean {
-  return specifier?.endsWith(".module.css") || false;
+  return specifier !== undefined && splitSpecifierSuffix(specifier).path.endsWith(".module.css");
 }
 
 /**

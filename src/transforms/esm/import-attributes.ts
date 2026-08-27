@@ -49,6 +49,12 @@ function declaresJsonTypeOnly(clause: string, isDynamic: boolean): boolean {
   return attributes !== undefined && JSON_TYPE_ATTRIBUTE.test(attributes);
 }
 
+/** Whether one lexer-bounded import declares exactly the required JSON type attribute. */
+export function hasJsonTypeImportAttribute(code: string, imp: ImportSpecifier): boolean {
+  const { start, end } = attributeRange(imp);
+  return start < end && declaresJsonTypeOnly(code.slice(start, end), imp.d > -1);
+}
+
 /** Position of the legacy `assert` keyword this import uses, or `null`. */
 function findAssertKeyword(masked: string, imp: ImportSpecifier): number | null {
   if (imp.d === -1) {

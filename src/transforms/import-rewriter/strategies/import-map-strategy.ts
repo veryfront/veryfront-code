@@ -44,13 +44,28 @@ export function resolveImportWithMap(
   const imports = importMap.imports;
   if (!imports) return null;
 
+  let prefixMatch: { key: string; value: string } | undefined;
   for (const [key, value] of Object.entries(imports)) {
-    if (key.endsWith("/") && specifier.startsWith(key)) {
-      return value + specifier.slice(key.length);
+    if (
+      key.endsWith("/") && specifier.startsWith(key) &&
+      (prefixMatch === undefined || key.length > prefixMatch.key.length)
+    ) {
+      prefixMatch = { key, value };
     }
+  }
+  if (prefixMatch !== undefined) {
+    return prefixMatch.value + specifier.slice(prefixMatch.key.length);
   }
 
   return null;
+}
+
+export function isRuntimeImportMapSpecifier(specifier: string): boolean {
+  const isBare = !specifier.startsWith("http") &&
+    !specifier.startsWith("/") &&
+    !specifier.startsWith(".");
+
+  return isBare || isEsmShUrl(specifier);
 }
 
 export class ImportMapStrategy implements ImportRewriteStrategy {
@@ -59,12 +74,7 @@ export class ImportMapStrategy implements ImportRewriteStrategy {
 
   matches(specifier: string, ctx: RewriteContext): boolean {
     if (ctx.target !== "ssr" || !ctx.importMap) return false;
-
-    const isBare = !specifier.startsWith("http") &&
-      !specifier.startsWith("/") &&
-      !specifier.startsWith(".");
-
-    return isBare || isEsmShUrl(specifier);
+    return isRuntimeImportMapSpecifier(specifier);
   }
 
   rewrite(info: ImportSpecifierInfo, ctx: RewriteContext): RewriteResult {

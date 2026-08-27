@@ -46,7 +46,8 @@ function hasOwn(descriptor: PropertyDescriptor, key: PropertyKey): boolean {
   return ReflectApply(ObjectPrototypeHasOwnProperty, descriptor, [key]) as boolean;
 }
 
-function isFrameworkOwnedSpecifier(specifier: string): boolean {
+/** @internal Whether a project mapping targets a framework-owned specifier. */
+export function isFrameworkOwnedImportMapSpecifier(specifier: string): boolean {
   return specifier === "react" || specifier === "react-dom" ||
     stringStartsWith(specifier, "react/") ||
     stringStartsWith(specifier, "react-dom/") ||
@@ -57,7 +58,7 @@ function removeFrameworkOwnedMappings(record: Record<string, string>): void {
   const keys = ReflectOwnKeys(record);
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index];
-    if (typeof key === "string" && isFrameworkOwnedSpecifier(key)) {
+    if (typeof key === "string" && isFrameworkOwnedImportMapSpecifier(key)) {
       delete record[key];
     }
   }
@@ -152,7 +153,8 @@ function normalizeImportValue(value: string): string {
   return query ? `${url}?${query}` : `${url}?target=es2022`;
 }
 
-function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConfig {
+/** @internal Apply the authoritative runtime import-map policy to a merged map. */
+export function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConfig {
   const exact = snapshotImportMap(importMap);
   const imports = copyFilteredRecord(exact.imports ?? ObjectCreate(null), true);
   const scopes = ObjectCreate(null) as Record<string, Record<string, string>>;

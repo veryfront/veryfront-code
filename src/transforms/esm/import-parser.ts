@@ -17,9 +17,11 @@ import {
   resolveRelativeFrameworkSourceImport,
 } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 import { isCrossProjectImport, parseCrossProjectImport } from "./path-resolver.ts";
-import { parseImports } from "./lexer.ts";
+import { parseMaskedImports } from "./lexer.ts";
 import { getLoaderFromPath } from "./transform-utils.ts";
+import { hasJsonTypeImportAttribute, upgradeImportAssertions } from "./import-attributes.ts";
 import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { isWindowsPlatform } from "#veryfront/platform/compat/process/runtime-process.ts";
@@ -55,10 +57,69 @@ interface ParseLocalImportsResult {
   cssImports: LocalImport[];
   crossProjectImports: CrossProjectImport[];
   missing: MissingImport[];
+  /**
+   * Specifiers outside this parser's resolution shapes: bare package names,
+   * framework specifiers, and project-root forms such as `app/x.tsx`,
+   * `/app/x.tsx`, or `/_vf_modules/app/x.tsx`. They are surfaced, not
+   * resolved, so a caller with its own project-specifier semantics (the
+   * release asset build) can resolve them against its file set after the
+   * MDX compile and TypeScript pass have already removed type-only edges.
+   */
+  unresolvedSpecifiers: string[];
+  /** Attribute state retained for callers that resolve bare aliases later. */
+  unresolvedImports: Array<{ specifier: string; hasJsonTypeAttribute: boolean }>;
+  /** Dynamic import expressions whose target is not a string literal. */
+  nonLiteralDynamicImports: number;
 }
 
-const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
-const HAS_EXTENSION_RE = /\.(tsx?|jsx?|mjs|cjs|mdx|css|json)$/;
+const EXTENSIONS = [
+  ".tsx",
+  ".ts",
+  ".mts",
+  ".cts",
+  ".jsx",
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".mdx",
+  ".md",
+];
+const JAVASCRIPT_SPECIFIER_FALLBACK_EXTENSIONS = [
+  ".tsx",
+  ".ts",
+  ".mts",
+  ".cts",
+  ".jsx",
+  ".js",
+  ".mjs",
+  ".cjs",
+] as const;
+const HAS_EXTENSION_RE = /\.(tsx?|jsx?|mjs|cjs|mts|cts|mdx?|css|json)$/;
+const JAVASCRIPT_SPECIFIER_EXTENSION_RE = /\.(?:mjs|js)$/;
+const SOURCE_SPECIFIER_EXTENSION_RE = /\.(?:tsx?|jsx?|mjs)$/;
+const JAVASCRIPT_SOURCE_EXTENSION_RE = /\.(?:tsx?|mts|cts|jsx?|mjs|cjs)$/;
+
+function fallbackExtensions(path: string): readonly string[] {
+  return regExpTest(JAVASCRIPT_SPECIFIER_EXTENSION_RE, path)
+    ? JAVASCRIPT_SPECIFIER_FALLBACK_EXTENSIONS
+    : EXTENSIONS;
+}
+
+function rejectJsonImportWithoutType(
+  candidatePath: string,
+  specifier: string,
+  fromFile: string,
+  hasJsonTypeAttribute: boolean,
+  missingImports: MissingImport[],
+): boolean {
+  if (!stringEndsWith(candidatePath, ".json") || hasJsonTypeAttribute) return false;
+  arrayPush(missingImports, {
+    specifier,
+    fromFile,
+    reason: 'JSON imports require with { type: "json" }',
+  });
+  return true;
+}
 
 // Tenant SSR code executes in this realm before later parses run, so the
 // containment decision must not dispatch through mutable prototype methods or
@@ -143,7 +204,7 @@ function joinProjectPath(root: string, path: string): string {
 }
 
 function isFileUrlSpecifier(value: string): boolean {
-  return stringStartsWith(value, "file://");
+  return regExpTest(/^file:\/\//i, value);
 }
 
 function indexedIterable<T>(values: readonly T[]): Iterable<T> {
@@ -215,7 +276,15 @@ export async function parseLocalImports(
     stringEndsWith(filePath, ".css") || stringEndsWith(filePath, ".json") ||
     regExpTest(/\.md$/i, filePath)
   ) {
-    return { imports: [], cssImports: [], crossProjectImports: [], missing: [] };
+    return {
+      imports: [],
+      cssImports: [],
+      crossProjectImports: [],
+      missing: [],
+      unresolvedSpecifiers: [],
+      unresolvedImports: [],
+      nonLiteralDynamicImports: 0,
+    };
   }
 
   // MDX is not JSX, so handing the raw source to esbuild under the `jsx` loader
@@ -227,6 +296,7 @@ export async function parseLocalImports(
   if (regExpTest(/\.mdx$/i, filePath)) {
     parseSource = await compileMdxForParsing(code, filePath, projectDir);
   }
+  parseSource = await upgradeImportAssertions(parseSource);
 
   const esbuild = await getEsbuild();
   const result = await esbuild.transform(parseSource, {
@@ -241,18 +311,25 @@ export async function parseLocalImports(
     keepNames: true,
   });
 
-  const imports = await parseImports(result.code);
+  const { masked, imports, unmask } = await parseMaskedImports(result.code);
   const localImports: LocalImport[] = [];
   const cssImports: LocalImport[] = [];
   const crossProjectImports: CrossProjectImport[] = [];
   const missingImports: MissingImport[] = [];
+  const unresolvedSpecifiers: string[] = [];
+  const unresolvedImports: Array<{ specifier: string; hasJsonTypeAttribute: boolean }> = [];
+  let nonLiteralDynamicImports = 0;
   const containment = createContainmentContext(projectDir, adapter);
 
   for (let importIndex = 0; importIndex < imports.length; importIndex++) {
     const imp = imports[importIndex]!;
-    const specifier = imp.n;
-    if (!specifier) continue;
+    const specifier = imp.n === undefined ? undefined : unmask(imp.n);
+    if (!specifier) {
+      if (imp.d >= 0) nonLiteralDynamicImports++;
+      continue;
+    }
 
+    const hasJsonTypeAttribute = hasJsonTypeImportAttribute(masked, imp);
     // The content compile above runs with the "server" target, which rewrites a
     // relative specifier to an absolute `file://` URL before the lexer ever
     // sees it. Without this branch those dependencies match none of the shapes
@@ -267,6 +344,17 @@ export async function parseLocalImports(
       const resolved = targetPath ? await resolveContainedFilePath(targetPath, containment) : null;
 
       if (resolved) {
+        if (
+          rejectJsonImportWithoutType(
+            resolved.requestedPath,
+            authoredSpecifier,
+            filePath,
+            hasJsonTypeAttribute,
+            missingImports,
+          )
+        ) {
+          continue;
+        }
         const entry = {
           specifier: authoredSpecifier,
           rewriteSpecifier: specifier,
@@ -286,14 +374,35 @@ export async function parseLocalImports(
       arrayPush(missingImports, {
         specifier: authoredSpecifier,
         fromFile: filePath,
-        reason: `File not found: tried extensions ${arrayJoin(EXTENSIONS, ", ")}`,
+        reason: `File not found: tried extensions ${
+          arrayJoin(fallbackExtensions(targetPath ?? authoredSpecifier), ", ")
+        }`,
       });
       continue;
     }
 
     if (stringStartsWith(specifier, "./") || stringStartsWith(specifier, "../")) {
-      const resolved = await resolveLocalImportPath(filePath, specifier, adapter);
+      // A query or fragment (`./Client.tsx?raw`, `./Icon.svg#glyph`) is not
+      // part of the file path. The canonical resolvers split it off before
+      // touching the filesystem (see splitSpecifierSuffix), so probing with it
+      // attached would report an existing file as missing.
+      const resolved = await resolveLocalImportPath(
+        filePath,
+        splitSpecifierSuffix(specifier).path,
+        adapter,
+      );
       if (resolved) {
+        if (
+          rejectJsonImportWithoutType(
+            resolved,
+            specifier,
+            filePath,
+            hasJsonTypeAttribute,
+            missingImports,
+          )
+        ) {
+          continue;
+        }
         if (stringEndsWith(resolved, ".css")) {
           arrayPush(cssImports, { specifier, absolutePath: resolved });
         } else {
@@ -305,15 +414,30 @@ export async function parseLocalImports(
       arrayPush(missingImports, {
         specifier,
         fromFile: filePath,
-        reason: `File not found: tried extensions ${arrayJoin(EXTENSIONS, ", ")}`,
+        reason: `File not found: tried extensions ${
+          arrayJoin(fallbackExtensions(splitSpecifierSuffix(specifier).path), ", ")
+        }`,
       });
       continue;
     }
 
     if (stringStartsWith(specifier, "@/")) {
-      const aliasPath = stringSlice(specifier, 2);
+      // Same suffix rule as the relative branch: resolve the path, keep the
+      // authored specifier (suffix included) in the reported records.
+      const aliasPath = splitSpecifierSuffix(stringSlice(specifier, 2)).path;
       const resolved = await resolveAliasImportPath(aliasPath, containment);
       if (resolved) {
+        if (
+          rejectJsonImportWithoutType(
+            resolved.requestedPath,
+            specifier,
+            filePath,
+            hasJsonTypeAttribute,
+            missingImports,
+          )
+        ) {
+          continue;
+        }
         const entry = {
           specifier,
           absolutePath: resolved.absolutePath,
@@ -334,20 +458,43 @@ export async function parseLocalImports(
       continue;
     }
 
-    if (!isCrossProjectImport(specifier)) continue;
+    if (isCrossProjectImport(specifier)) {
+      const parsed = parseCrossProjectImport(specifier);
+      if (!parsed) continue;
+      if (
+        rejectJsonImportWithoutType(
+          splitSpecifierSuffix(parsed.path).path,
+          specifier,
+          filePath,
+          hasJsonTypeAttribute,
+          missingImports,
+        )
+      ) {
+        continue;
+      }
 
-    const parsed = parseCrossProjectImport(specifier);
-    if (!parsed) continue;
+      arrayPush(crossProjectImports, {
+        specifier,
+        projectSlug: parsed.projectSlug,
+        version: parsed.version,
+        path: parsed.path,
+      });
+      continue;
+    }
 
-    arrayPush(crossProjectImports, {
-      specifier,
-      projectSlug: parsed.projectSlug,
-      version: parsed.version,
-      path: parsed.path,
-    });
+    arrayPush(unresolvedSpecifiers, specifier);
+    arrayPush(unresolvedImports, { specifier, hasJsonTypeAttribute });
   }
 
-  return { imports: localImports, cssImports, crossProjectImports, missing: missingImports };
+  return {
+    imports: localImports,
+    cssImports,
+    crossProjectImports,
+    missing: missingImports,
+    unresolvedSpecifiers,
+    unresolvedImports,
+    nonLiteralDynamicImports,
+  };
 }
 
 function isPathWithinProject(path: string, projectDir: string): boolean {
@@ -610,17 +757,25 @@ async function resolveExistingFilePath(
     }
   }
 
-  if (regExpTest(HAS_EXTENSION_RE, basePath)) {
-    return (await checkFileExists(basePath, adapter)) ? basePath : null;
-  }
+  const hasExtension = regExpTest(HAS_EXTENSION_RE, basePath);
+  if (hasExtension && await checkFileExists(basePath, adapter)) return basePath;
+  if (hasExtension && !regExpTest(SOURCE_SPECIFIER_EXTENSION_RE, basePath)) return null;
 
-  for (let extensionIndex = 0; extensionIndex < EXTENSIONS.length; extensionIndex++) {
-    const candidate = basePath + EXTENSIONS[extensionIndex]!;
+  const sourceSpecifier = regExpTest(SOURCE_SPECIFIER_EXTENSION_RE, basePath);
+  const probeBasePath = sourceSpecifier
+    ? stringReplace(basePath, SOURCE_SPECIFIER_EXTENSION_RE, "")
+    : basePath;
+  const extensions = sourceSpecifier
+    ? JAVASCRIPT_SPECIFIER_FALLBACK_EXTENSIONS
+    : fallbackExtensions(basePath);
+
+  for (let extensionIndex = 0; extensionIndex < extensions.length; extensionIndex++) {
+    const candidate = probeBasePath + extensions[extensionIndex]!;
     if (await checkFileExists(candidate, adapter)) return candidate;
   }
 
-  for (let extensionIndex = 0; extensionIndex < EXTENSIONS.length; extensionIndex++) {
-    const candidate = `${basePath}/index${EXTENSIONS[extensionIndex]!}`;
+  for (let extensionIndex = 0; extensionIndex < extensions.length; extensionIndex++) {
+    const candidate = `${probeBasePath}/index${extensions[extensionIndex]!}`;
     if (await checkFileExists(candidate, adapter)) return candidate;
   }
 
@@ -634,12 +789,16 @@ async function resolveAliasImportPath(
   const normalizedPath = stringReplace(basePath, /^\/+/, "");
   const lexicalPath = joinProjectPath(containment.projectDir, normalizedPath);
   if (!isPathWithinProject(lexicalPath, containment.projectDir)) return null;
+  const javascriptSpecifier = regExpTest(JAVASCRIPT_SPECIFIER_EXTENSION_RE, normalizedPath);
 
   const adapter = containment.adapter;
   if (adapter?.fs.resolveFile) {
     try {
       const resolved = await adapter.fs.resolveFile(normalizedPath);
-      if (resolved) {
+      if (
+        resolved &&
+        (!javascriptSpecifier || regExpTest(JAVASCRIPT_SOURCE_EXTENSION_RE, resolved))
+      ) {
         return await toContainedImportPath(
           resolved,
           containment,
@@ -652,23 +811,30 @@ async function resolveAliasImportPath(
     }
   }
 
-  if (regExpTest(HAS_EXTENSION_RE, normalizedPath)) {
-    return await resolveContainedFilePath(lexicalPath, containment);
+  const hasExtension = regExpTest(HAS_EXTENSION_RE, normalizedPath);
+  if (hasExtension) {
+    const exact = await resolveContainedFilePath(lexicalPath, containment);
+    if (exact !== null) return exact;
+    if (!javascriptSpecifier) return null;
   }
 
+  const probePath = javascriptSpecifier
+    ? stringReplace(normalizedPath, JAVASCRIPT_SPECIFIER_EXTENSION_RE, "")
+    : normalizedPath;
+  const extensions = fallbackExtensions(normalizedPath);
   const candidates: string[] = [];
-  for (let extensionIndex = 0; extensionIndex < EXTENSIONS.length; extensionIndex++) {
+  for (let extensionIndex = 0; extensionIndex < extensions.length; extensionIndex++) {
     arrayPush(
       candidates,
-      joinProjectPath(containment.projectDir, normalizedPath + EXTENSIONS[extensionIndex]!),
+      joinProjectPath(containment.projectDir, probePath + extensions[extensionIndex]!),
     );
   }
-  for (let extensionIndex = 0; extensionIndex < EXTENSIONS.length; extensionIndex++) {
+  for (let extensionIndex = 0; extensionIndex < extensions.length; extensionIndex++) {
     arrayPush(
       candidates,
       joinProjectPath(
-        joinProjectPath(containment.projectDir, normalizedPath),
-        "index" + EXTENSIONS[extensionIndex]!,
+        joinProjectPath(containment.projectDir, probePath),
+        "index" + extensions[extensionIndex]!,
       ),
     );
   }
