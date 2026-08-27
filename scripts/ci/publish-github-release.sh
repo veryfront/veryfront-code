@@ -102,6 +102,11 @@ fi
 run_with_retry() {
   local description="$1"
   shift
+  local fatal_status=""
+  if [[ "${1:-}" == "--fatal-status" ]]; then
+    fatal_status="$2"
+    shift 2
+  fi
   local attempt=1
   local status
 
@@ -111,7 +116,7 @@ run_with_retry() {
     else
       status="$?"
     fi
-    if [[ "$status" -eq "$retry_fatal_status" ]]; then
+    if [[ -n "$fatal_status" && "$status" -eq "$fatal_status" ]]; then
       return 1
     fi
     if [[ "$attempt" -ge "$retry_attempts" ]]; then
@@ -171,7 +176,10 @@ cleanup_failed_release() {
 }
 trap cleanup_failed_release EXIT
 
-run_with_retry "GitHub release draft creation" create_draft_release
+run_with_retry \
+  "GitHub release draft creation" \
+  --fatal-status "$retry_fatal_status" \
+  create_draft_release
 incomplete_draft_created=true
 
 for asset in "${assets[@]}"; do

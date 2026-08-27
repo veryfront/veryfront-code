@@ -112,6 +112,7 @@ async function runVersionValidation(version: string): Promise<Deno.CommandOutput
 
 type ReleaseState = "missing" | "draft" | "published";
 type CreateFailure = "none" | "after-creation";
+type UploadFailureStatus = 1 | 64;
 
 async function runReleaseScript({
   stateDir,
@@ -119,6 +120,7 @@ async function runReleaseScript({
   initialReleaseState = "missing",
   createFailure = "none",
   failedUploadAttempts = 0,
+  uploadFailureStatus = 1,
   failedPublishAttempts = 0,
 }: {
   stateDir: string;
@@ -126,6 +128,7 @@ async function runReleaseScript({
   initialReleaseState?: ReleaseState;
   createFailure?: CreateFailure;
   failedUploadAttempts?: number;
+  uploadFailureStatus?: UploadFailureStatus;
   failedPublishAttempts?: number;
 }): Promise<Deno.CommandOutput> {
   const ghLog = `${stateDir}/gh.log`;
@@ -168,7 +171,7 @@ async function runReleaseScript({
         "    count=$((count + 1))",
         '    printf "%s" "$count" > "$UPLOAD_COUNT"',
         '    if [ "$count" -le "$FAILED_UPLOAD_ATTEMPTS" ]; then',
-        "      return 1",
+        '      return "$UPLOAD_FAILURE_STATUS"',
         "    fi",
         "  fi",
         '  if [ "$1" = "release" ] && [ "$2" = "edit" ]; then',
@@ -206,6 +209,7 @@ async function runReleaseScript({
       RELEASE_STATE: releaseState,
       CREATE_FAILURE: createFailure,
       FAILED_UPLOAD_ATTEMPTS: String(failedUploadAttempts),
+      UPLOAD_FAILURE_STATUS: String(uploadFailureStatus),
       FAILED_PUBLISH_ATTEMPTS: String(failedPublishAttempts),
     },
     stdout: "piped",
@@ -269,6 +273,30 @@ describe("registry release workflow", () => {
       assert(
         ghCalls.at(-1)?.startsWith("release delete v1.2.3-rc.4 "),
         "the incomplete release must be deleted after the final failed upload",
+      );
+    });
+  });
+
+  it("retries upload failures that match the internal fatal status", async () => {
+    await withTempDir(async (stateDir) => {
+      const asset = `${stateDir}/veryfront-macos-arm64`;
+      await Deno.writeTextFile(asset, "binary");
+
+      const output = await runReleaseScript({
+        stateDir,
+        asset,
+        failedUploadAttempts: 1,
+        uploadFailureStatus: 64,
+      });
+      const ghCalls = (await Deno.readTextFile(`${stateDir}/gh.log`))
+        .trim()
+        .split("\n");
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release upload ")).length,
+        2,
+        "external upload statuses must not use the create-only fatal sentinel",
       );
     });
   });
