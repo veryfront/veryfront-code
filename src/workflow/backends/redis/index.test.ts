@@ -3301,6 +3301,43 @@ describe("RedisBackend", () => {
       assertEquals(stored.decidedBy, "first");
     });
 
+    it("returns false for invalid strict data after losing the approval race", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-race:",
+        strictContext: true,
+      });
+      await strictBackend.createRun(createTestRun("run-ap-strict-race"));
+      await strictBackend.savePendingApproval(
+        "run-ap-strict-race",
+        makeApproval("ap-strict-race"),
+      );
+
+      assertEquals(
+        await strictBackend.updateApproval("run-ap-strict-race", "ap-strict-race", {
+          approved: true,
+          approver: "first",
+          data: { confirmed: true },
+        }),
+        true,
+      );
+      assertEquals(
+        await strictBackend.updateApproval("run-ap-strict-race", "ap-strict-race", {
+          approved: false,
+          approver: "second",
+          data: { when: new Date(0) },
+        }),
+        false,
+      );
+
+      const stored = JSON.parse(
+        mockRedis.lists.get("strict-race:schema-v1:approvals:run-ap-strict-race")![0]!,
+      );
+      assertEquals(stored.status, "approved");
+      assertEquals(stored.decidedBy, "first");
+      assertEquals(stored.decisionData, { confirmed: true });
+    });
+
     it("scans approval decision claims without blocking the Redis keyspace", async () => {
       mockRedis.scanPageSize = 1;
       for (const runId of ["run-ap-claim-a", "run-ap-claim-b"]) {

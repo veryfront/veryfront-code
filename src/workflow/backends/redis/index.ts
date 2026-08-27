@@ -1789,16 +1789,26 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
     const hasComment = decision.comment !== undefined;
     const hasData = decision.data !== undefined;
-    const decisionData = hasData
-      ? JSON.parse(
-        serializeWorkflowJson(
-          decision.data,
-          "approval decision data",
-          runId,
-          { strictContext: this.config.strictContext },
-        ),
-      )
-      : undefined;
+    let decisionData: unknown;
+    if (hasData) {
+      try {
+        decisionData = JSON.parse(
+          serializeWorkflowJson(
+            decision.data,
+            "approval decision data",
+            runId,
+            { strictContext: this.config.strictContext },
+          ),
+        );
+      } catch (error) {
+        const approval = (await this.getApprovals(runId)).find(({ id }) => id === approvalId);
+        if (approval === undefined) {
+          throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
+        }
+        if (approval.status !== "pending") return false;
+        throw error;
+      }
+    }
     // Atomic find-by-id + pending-precondition + LSET (see UPDATE_APPROVAL_SCRIPT).
     // decidedAt is computed here so the stored value is deterministic and does
     // not depend on the Redis server clock.
