@@ -1990,11 +1990,8 @@ const SCHEME_URL = new RegExp(
 // Unicode after the first slash does not match this fallback. The normal rule
 // handles that shape and preserves the following prose, which is the no-space
 // boundary this fallback must not undo.
-const NON_ASCII_AUTHORITY_URL = new RegExp(
-  String
-    .raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?(?=[^\s"/]{0,512}[^\x00-\x7F])[^\s"']*`,
-  "gu",
-);
+const NON_ASCII_AUTHORITY_URL =
+  /[A-Za-z][A-Za-z0-9+.-]{1,31}:\/\/(?:[^\s"/]{0,512}@)?(?=[^\s"/]{0,512}[\u0080-\u{10FFFF}])[^\s"']*/gu;
 // Raw Unicode at the start of a slash-delimited path segment is part of an IRI,
 // rather than prose glued to the preceding ASCII segment. Match the complete
 // whitespace-delimited token in that unambiguous case. Requiring the segment
@@ -2007,8 +2004,7 @@ const NON_ASCII_URL_PATH = new RegExp(
 // Avoid a second generic scheme scan for ordinary ASCII diagnostics. Without
 // this gate, the long-alphabetic quadratic guard reached its unchanged 20x
 // limit even though the fallback could not match.
-// deno-lint-ignore no-control-regex
-const NON_ASCII_CHARACTER = /[^\x00-\x7F]/u;
+const NON_ASCII_CHARACTER = /[\u0080-\u{10FFFF}]/u;
 // A sticky continuation used only when an ASCII URL match ends on a structural
 // component delimiter. In that position a following non-ASCII character is a
 // raw IRI path, query, or fragment rather than prose glued after a completed

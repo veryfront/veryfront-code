@@ -2974,6 +2974,7 @@ export default config as const;
         );
 
         assertEquals(iriUrlPath.message.includes("秘密"), false);
+        assertEquals(iriUrlPath.message.includes("registry.internal"), false);
         assertStringIncludes(iriUrlPath.message, "Failed [url]");
 
         const iriFilePath = await loadFailure(
@@ -2982,6 +2983,7 @@ export default config as const;
         );
 
         assertEquals(iriFilePath.message.includes("秘密"), false);
+        assertEquals(iriFilePath.message.includes("/home/alice"), false);
         assertStringIncludes(iriFilePath.message, "Failed [path]");
 
         const iriTerminalPath = await loadFailure(
