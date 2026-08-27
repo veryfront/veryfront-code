@@ -3797,8 +3797,8 @@ describe("automated review workflow", () => {
       "the publisher must capture its status boundary immediately after acquiring the lock",
     );
     assert(
-      mergeGroupScript.includes("queueEntry.sourceHeadSha"),
-      "the merge-group job must remain compatible with the trusted pre-fix parser until this PR merges",
+      !mergeGroupScript.includes("queueEntry.sourceHeadSha"),
+      "the merge-group job must serialize the queue base from queueEntry.baseHeadSha only",
     );
     for (
       const required of [
