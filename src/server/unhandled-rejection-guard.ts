@@ -52,7 +52,7 @@ interface GuardLogger {
 }
 
 export interface UnhandledRejectionGuardOptions {
-  /** Defaults to the global process event target. */
+  /** Defaults to the global EventTarget, with a runtime process fallback. */
   target?: GuardTarget;
   /** Defaults to the server logger. */
   logger?: GuardLogger;
