@@ -4,10 +4,7 @@ import { recordNodeIncomingRequestPeer } from "#veryfront/platform/adapters/runt
 /** Convert a Web API request handler into a Node.js HTTP listener. */
 export function toNodeHandler(
   handler: (req: Request) => Promise<Response> | Response,
-): (
-  req: import("node:http").IncomingMessage,
-  res: import("node:http").ServerResponse,
-) => Promise<void> {
+): (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => void {
   return async (req, res) => {
     try {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);

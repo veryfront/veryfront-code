@@ -250,7 +250,7 @@ function CustomToolList() {
   },
 };
 
-export const ErrorState: Story = {
+const ErrorState: Story = {
   name: "Error",
   tags: ["!dev"],
   render: () => (
@@ -290,3 +290,8 @@ export const ErrorState: Story = {
     },
   },
 };
+
+// Exported as `Error` so the CSF story id stays `...--error`: the indexer derives
+// the id from the export name, and `name:` only sets the displayed label. The local
+// binding is `ErrorState` so it does not shadow the `Error` global (S2137).
+export { ErrorState as Error };

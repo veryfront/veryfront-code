@@ -1,7 +1,7 @@
 import "../_helpers/contract-init.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
-import { join } from "#veryfront/compat/path/index.ts";
+import { dirname, join } from "#veryfront/compat/path/index.ts";
 import {
   captureBrowserDiagnostics,
   findHydrationOrCspFailures,
@@ -75,7 +75,10 @@ export async function ensureBinaryCompiled(): Promise<void> {
   if (forceFresh) console.log("🗑️  Force fresh build (VERYFRONT_BINARY_FRESH=1)");
   if (binaryExists) await Deno.remove(BINARY_PATH);
 
-  await Deno.mkdir(E2E_BINARY_DIR, { recursive: true });
+  // The parent of the path actually being written, not E2E_BINARY_DIR: with
+  // VERYFRONT_BINARY pointing elsewhere the repo-local dir is unused, and creating
+  // it would fail on a read-only checkout.
+  await Deno.mkdir(dirname(BINARY_PATH), { recursive: true });
 
   // Run the same pre-build pipeline used by distribution builds
   console.log("📦 Preparing build artifacts...");

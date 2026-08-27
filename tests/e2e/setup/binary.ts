@@ -8,7 +8,7 @@
  */
 
 import { exists } from "#veryfront/platform/compat/fs.ts";
-import { fromFileUrl, join, relative } from "#veryfront/compat/path/index.ts";
+import { dirname, fromFileUrl, join, relative } from "#veryfront/compat/path/index.ts";
 
 // Resolved from this module's own URL, not Deno.cwd(): `src/testing/cwd.ts`
 // calls Deno.chdir on the shared test process, so a cwd-relative constant
@@ -167,7 +167,10 @@ export async function ensureBinaryCompiled(): Promise<void> {
   if (forceFresh) console.log("🗑️  Force fresh build (VERYFRONT_BINARY_FRESH=1)");
   if (binaryExists) await Deno.remove(BINARY_PATH);
 
-  await Deno.mkdir(E2E_BINARY_DIR, { recursive: true });
+  // The parent of the path actually being written, not E2E_BINARY_DIR: with
+  // VERYFRONT_BINARY pointing elsewhere the repo-local dir is unused, and creating
+  // it would fail on a read-only checkout.
+  await Deno.mkdir(dirname(BINARY_PATH), { recursive: true });
 
   console.log("📦 Preparing build artifacts...");
   const prepareResult = await new Deno.Command("deno", {
