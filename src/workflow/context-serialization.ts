@@ -689,12 +689,11 @@ function normalizeAndFindUnrepresentableValues(
       // Prototype diagnostics are best-effort and run after the snapshot is
       // complete, so hostile metadata traps cannot change persistence output.
       if (
-        !canIdentifyProxyWithoutHooks &&
-        options.strictContext === true &&
-        isKnownNonPlainBuiltin(nested)
+        (!canIdentifyProxyWithoutHooks &&
+          options.strictContext === true &&
+          isKnownNonPlainBuiltin(nested)) ||
+        !isPlainObject(nested, options.strictContext === true)
       ) {
-        recordLossy(path, describe(nested));
-      } else if (!isPlainObject(nested, options.strictContext === true)) {
         recordLossy(path, describe(nested));
       }
       return result;
