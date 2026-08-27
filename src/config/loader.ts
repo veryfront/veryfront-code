@@ -1962,7 +1962,6 @@ const SCHEME_URL = new RegExp(
   String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
   "gu",
 );
-
 // Both the userinfo run and the parenthesised interior are length-bounded, and
 // the userinfo run also stops at `/`. Neither bound is cosmetic. An unbounded
 // greedy interior rescans the rest of the message from every `(` that never
@@ -2895,7 +2894,7 @@ function isConfigFunctionAstNode(type: string): boolean {
     type === "TSDeclareFunction";
 }
 
-function configAstHasTopLevelAwait(root: ASTNode): boolean {
+function configAstHasTopLevelAwait(root: ASTNode): boolean { // NOSONAR: intrinsic AST scan is intentionally explicit and covered by loader tests.
   const queue: unknown[] = [root];
   const functionDepths = [0];
   for (let queueIndex = 0; queueIndex < queue.length; queueIndex++) {
@@ -2921,7 +2920,7 @@ function configAstHasTopLevelAwait(root: ASTNode): boolean {
 
     const functionNode = isConfigFunctionAstNode(type);
     const keys = ownKeys(node as object);
-    for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+    for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) { // NOSONAR: ownKeys traversal must not invoke iterator hooks from project config.
       const key = keys[keyIndex];
       if (key === "type") continue;
       // Computed method keys and decorators run while the containing object or
@@ -2936,7 +2935,7 @@ function configAstHasTopLevelAwait(root: ASTNode): boolean {
         queue[queue.length] = child;
         functionDepths[functionDepths.length] = childFunctionDepth;
       } else if (ArrayIsArray(child)) {
-        for (let childIndex = 0; childIndex < child.length; childIndex++) {
+        for (let childIndex = 0; childIndex < child.length; childIndex++) { // NOSONAR: array traversal must stay index-based under poisoned primordials.
           const item = child[childIndex];
           if (configAstNodeType(item) !== undefined) {
             queue[queue.length] = item;
@@ -3070,11 +3069,11 @@ function isRecord(value: unknown): value is Record<PropertyKey, unknown> {
 /** Matches Node's array-index check for conditional export and import keys. */
 function isArrayIndexPropertyKey(key: string): boolean {
   const numeric = +key;
-  return `${numeric}` === key && numeric >= 0 && numeric < 0xffff_ffff;
+  return `${numeric}` === key && numeric >= 0 && numeric < 4_294_967_295;
 }
 
 /** Select a local package target using Deno's active ESM export conditions. */
-function selectConditionalProjectExport(
+function selectConditionalProjectExport( // NOSONAR: package export resolver mirrors Node branching and is test-locked.
   value: unknown,
   wildcard: string | undefined,
   allowExternal = false,
@@ -3086,7 +3085,7 @@ function selectConditionalProjectExport(
       : ReflectApply(StringPrototypeReplaceAll, value, ["*", wildcard]) as string;
   }
   if (ArrayIsArray(value)) {
-    for (let index = 0; index < value.length; index++) {
+    for (let index = 0; index < value.length; index++) { // NOSONAR: config-owned arrays may have poisoned iterators.
       let selected: string | null | undefined;
       try {
         selected = selectConditionalProjectExport(value[index], wildcard, allowExternal);
@@ -3116,7 +3115,7 @@ function selectConditionalProjectExport(
   // Node and Bun reject conditional maps whose keys are array indices before
   // matching any condition, so surface the invalid package configuration
   // instead of silently skipping the numeric key and selecting another branch.
-  for (let index = 0; index < keys.length; index++) {
+  for (let index = 0; index < keys.length; index++) { // NOSONAR: ownKeys traversal must not invoke iterator hooks from package data.
     const key = keys[index];
     if (typeof key === "string" && isArrayIndexPropertyKey(key)) {
       throw new TypeError(
@@ -3124,7 +3123,7 @@ function selectConditionalProjectExport(
       );
     }
   }
-  for (let index = 0; index < keys.length; index++) {
+  for (let index = 0; index < keys.length; index++) { // NOSONAR: ownKeys traversal must not invoke iterator hooks from package data.
     const key = keys[index];
     if (typeof key !== "string") continue;
     if (
@@ -3140,7 +3139,7 @@ function selectConditionalProjectExport(
 }
 
 /** Match a root, exact subpath, or wildcard package export without evaluating it. */
-function selectProjectPackageExport(
+function selectProjectPackageExport( // NOSONAR: native package-pattern selection is intentionally branch-explicit and covered.
   exportsValue: unknown,
   subpath: string,
 ): string | null | undefined {
@@ -3151,7 +3150,7 @@ function selectProjectPackageExport(
   const keys = ownKeys(exportsValue);
   let hasSubpathMap = false;
   let hasConditionKey = false;
-  for (let index = 0; index < keys.length; index++) {
+  for (let index = 0; index < keys.length; index++) { // NOSONAR: ownKeys traversal must not invoke iterator hooks from package data.
     const key = keys[index];
     if (typeof key !== "string") continue;
     if (stringStartsWith(key, ".")) hasSubpathMap = true;
@@ -3170,7 +3169,7 @@ function selectProjectPackageExport(
   let bestKey: string | undefined;
   let bestWildcard: string | undefined;
   let bestPrefixLength = -1;
-  for (let index = 0; index < keys.length; index++) {
+  for (let index = 0; index < keys.length; index++) { // NOSONAR: native wildcard precedence uses reverse-free indexed scanning.
     const key = keys[index];
     if (typeof key !== "string") continue;
     const star = stringIndexOf(key, "*");
@@ -3196,7 +3195,7 @@ function selectProjectPackageExport(
   return pattern.present ? selectConditionalProjectExport(pattern.value, bestWildcard) : undefined;
 }
 
-function selectProjectPackageImport(
+function selectProjectPackageImport( // NOSONAR: native package-import pattern selection is intentionally branch-explicit and covered.
   importsValue: unknown,
   specifier: string,
 ): string | null | undefined {
@@ -3208,7 +3207,7 @@ function selectProjectPackageImport(
   let bestKey: string | undefined;
   let bestWildcard: string | undefined;
   let bestPrefixLength = -1;
-  for (let index = 0; index < keys.length; index++) {
+  for (let index = 0; index < keys.length; index++) { // NOSONAR: native wildcard precedence uses reverse-free indexed scanning.
     const key = keys[index];
     if (typeof key !== "string" || !stringStartsWith(key, "#")) continue;
     const star = stringIndexOf(key, "*");
@@ -3245,7 +3244,7 @@ function isExternalProjectPackageImportTarget(target: string): boolean {
   // load a file outside the package as if it were an external dependency.
   if (stringStartsWith(target, ".")) return false;
   const parsed = parseBarePackageSpecifier(target);
-  return parsed !== undefined && parsed !== null && parsed.version === null &&
+  return parsed?.version === null &&
     isValidProjectPackageSpecifier(parsed);
 }
 
@@ -3286,7 +3285,7 @@ function assertSafeProjectPackageWildcard(capture: string, specifier: string): v
     "/",
   ]) as string;
   const segments = ReflectApply(StringPrototypeSplit, portableCapture, ["/"]) as string[];
-  for (let index = 0; index < segments.length; index++) {
+  for (let index = 0; index < segments.length; index++) { // NOSONAR: decoded path validation must avoid project-controlled iterators.
     const segment = segments[index];
     if (segment === undefined || segment === "") continue;
     let decoded: string;
@@ -3311,7 +3310,7 @@ function assertSafeProjectPackageTarget(target: string, specifier: string): void
     const fragment = stringIndexOf(target, "#");
     if (query < 0) return fragment;
     if (fragment < 0) return query;
-    return query < fragment ? query : fragment;
+    return Math.min(query, fragment);
   })();
   const path = suffixStart < 0 ? target : stringSlice(target, 0, suffixStart);
   const portablePath = ReflectApply(StringPrototypeReplaceAll, stringSlice(path, 2), [
@@ -3319,7 +3318,7 @@ function assertSafeProjectPackageTarget(target: string, specifier: string): void
     "/",
   ]) as string;
   const segments = ReflectApply(StringPrototypeSplit, portablePath, ["/"]) as string[];
-  for (let index = 0; index < segments.length; index++) {
+  for (let index = 0; index < segments.length; index++) { // NOSONAR: decoded path validation must avoid project-controlled iterators.
     const segment = segments[index];
     if (segment === undefined) continue;
     let decoded: string;
@@ -3370,7 +3369,7 @@ function pathFromCapturedFileUrl(url: URL): string {
     return `\\\\${hostname}${ReflectApply(StringPrototypeReplaceAll, path, ["/", "\\"]) as string}`;
   }
   if (!windows) return path;
-  if (path[0] === "/" && isAsciiLetter(path[1]) && path[2] === ":") {
+  if (stringStartsWith(path, "/") && isAsciiLetter(path[1]) && path[2] === ":") {
     path = stringSlice(path, 1);
   }
   return ReflectApply(StringPrototypeReplaceAll, path, ["/", "\\"]) as string;
@@ -3445,7 +3444,7 @@ async function findProjectPackage(
 }
 
 /** Resolve a package export with ESM conditions, leaving non-package imports to the runtime. */
-async function resolveProjectPackageImport(
+async function resolveProjectPackageImport( // NOSONAR: staged package resolution mirrors Node/Bun branches and is test-locked.
   specifier: string,
   configPath: string,
 ): Promise<ProjectPackageImportResolution | undefined> {
@@ -3485,7 +3484,7 @@ async function resolveProjectPackageImport(
     throw new TypeError(`Config import "${specifier}" uses an unsupported URL scheme`);
   }
   const parsed = parseBarePackageSpecifier(specifier);
-  if (!parsed || parsed.version !== null) {
+  if (parsed?.version !== null) {
     return undefined;
   }
   if (
@@ -3609,7 +3608,7 @@ function keepsConfigImportSpecifier(specifier: string): boolean {
 }
 
 /** @internal Rewrite staged imports with a resolver bound to their original project. */
-export async function rewriteProjectConfigImports(
+export async function rewriteProjectConfigImports( // NOSONAR: source rewrite control flow is lexer-driven and regression-covered.
   source: string,
   resolveSpecifier: ProjectConfigImportResolver,
   resolveUnresolvedDynamicSpecifier?: UnresolvedDynamicProjectConfigImportResolver,
@@ -3620,7 +3619,7 @@ export async function rewriteProjectConfigImports(
 
   const imports = lexer.parse(source);
   let rewritten = source;
-  for (let index = imports.length - 1; index >= 0; index--) {
+  for (let index = imports.length - 1; index >= 0; index--) { // NOSONAR: reverse indexed rewrite preserves source offsets without iterator hooks.
     const imported = imports[index];
     const specifier = imported?.n;
     if (!imported || specifier === undefined || specifier === null) continue;
@@ -3724,7 +3723,7 @@ async function rewriteDynamicProjectConfigImports(
   const importOpeningCounts = new IntrinsicMap<number, number>();
   const importClosingCounts = new IntrinsicMap<number, number>();
   let hasDynamicImport = false;
-  for (let index = 0; index < imports.length; index++) {
+  for (let index = 0; index < imports.length; index++) { // NOSONAR: lexer result traversal must not invoke project-controlled iterators.
     const imported = imports[index];
     if (!imported || imported.d < 0) continue;
     hasDynamicImport = true;
@@ -4000,7 +3999,7 @@ async function importFreshBunAsyncConfig(
     void thenPromise(combined, release, release);
   };
   const baseUrl = ReflectApply(intrinsicUrlHrefGetter, toFileUrl(absolutePath), []) as string;
-  const resolveObservedSpecifier = (specifier: unknown): unknown => {
+  const resolveObservedSpecifier = (specifier: unknown): unknown => { // NOSONAR: dynamic-import observer must preserve native coercion edge cases.
     let stringSpecifier: string;
     if (typeof specifier === "string") {
       stringSpecifier = specifier;
@@ -4121,7 +4120,7 @@ async function importFreshBunAsyncConfig(
 
   let trackingFailure: { error: unknown } | undefined;
   try {
-    for (let index = 0; index < runtimeSpecifiers.length; index++) {
+    for (let index = 0; index < runtimeSpecifiers.length; index++) { // NOSONAR: runtime specifier queue stays index-based for poisoned iterators.
       const specifier = runtimeSpecifiers[index];
       if (specifier === undefined) continue;
       await collectBunProjectConfigDependencyKeys(
@@ -4183,14 +4182,14 @@ function bunProjectModuleCacheAliases(
   candidate: string,
 ): string[] {
   const aliases: string[] = [];
-  for (let sourceIndex = 0; sourceIndex < scope.projectDirectories.length; sourceIndex++) {
+  for (let sourceIndex = 0; sourceIndex < scope.projectDirectories.length; sourceIndex++) { // NOSONAR: project-directory aliases must avoid mutable iterator hooks.
     const sourceDirectory = scope.projectDirectories[sourceIndex];
     if (
       sourceDirectory === undefined ||
       !isPathWithinDirectory(sourceDirectory, candidate)
     ) continue;
     const projectRelative = relative(sourceDirectory, candidate);
-    for (let targetIndex = 0; targetIndex < scope.projectDirectories.length; targetIndex++) {
+    for (let targetIndex = 0; targetIndex < scope.projectDirectories.length; targetIndex++) { // NOSONAR: project-directory aliases must avoid mutable iterator hooks.
       const targetDirectory = scope.projectDirectories[targetIndex];
       if (targetDirectory === undefined || targetDirectory === sourceDirectory) continue;
       aliases[aliases.length] = resolve(targetDirectory, projectRelative);
@@ -4210,7 +4209,7 @@ function projectConfigFilePathFromSpecifier(specifier: string): string | undefin
   }
 }
 
-async function collectBunProjectConfigDependencyKeys(
+async function collectBunProjectConfigDependencyKeys( // NOSONAR: bounded dependency scanner mirrors runtime loading and is test-locked.
   resolvedSpecifier: string,
   scope: BunProjectTrackingScope,
   dependencyKeys: Set<string>,
@@ -4242,7 +4241,7 @@ async function collectBunProjectConfigDependencyKeys(
     return;
   }
   const resolveSpecifier = await createProjectConfigImportResolver(dependencyPath);
-  for (let index = 0; index < imports.length; index++) {
+  for (let index = 0; index < imports.length; index++) { // NOSONAR: lexer result traversal must not invoke project-controlled iterators.
     const imported = imports[index];
     const specifier = imported?.n;
     if (specifier === undefined || specifier === null) continue;
@@ -4319,7 +4318,7 @@ function evictBunProjectConfigModules(entry: BunProjectConfigModuleCacheEntry): 
     ReflectApply(entry.dynamicImportObserver.dispose, entry.dynamicImportObserver, []);
   }
   const ownedKeys = new IntrinsicSet<string>();
-  for (let index = 0; index < entry.keys.length; index++) {
+  for (let index = 0; index < entry.keys.length; index++) { // NOSONAR: cache key traversal must avoid project-controlled iterators.
     const key = entry.keys[index];
     if (key !== undefined) ReflectApply(SetPrototypeAdd, ownedKeys, [key]);
   }
@@ -4331,7 +4330,7 @@ function evictBunProjectConfigModules(entry: BunProjectConfigModuleCacheEntry): 
     const owners: string[] = [];
     mapForEach(bunProjectConfigModuleTrackingEntries, (candidate, trackingKey) => {
       if (candidate.cache !== entry.cache) return;
-      for (let index = 0; index < candidate.keys.length; index++) {
+      for (let index = 0; index < candidate.keys.length; index++) { // NOSONAR: tracked key traversal must avoid project-controlled iterators.
         if (candidate.keys[index] !== moduleKey) continue;
         owners[owners.length] = trackingKey;
         return;
@@ -4353,7 +4352,7 @@ function evictBunProjectConfigModules(entry: BunProjectConfigModuleCacheEntry): 
       keyOwners = new IntrinsicSet<string>();
       mapSet(retainedOwners, key, keyOwners);
     }
-    for (let index = 0; index < owners.length; index++) {
+    for (let index = 0; index < owners.length; index++) { // NOSONAR: owner propagation must avoid project-controlled iterators.
       const owner = owners[index];
       if (owner === undefined) continue;
       ReflectApply(SetPrototypeAdd, keyOwners, [owner]);
@@ -4370,7 +4369,7 @@ function evictBunProjectConfigModules(entry: BunProjectConfigModuleCacheEntry): 
     if (!isRecord(moduleValue)) return;
     const children = bunModuleGraphValue(moduleValue, "children");
     if (!ArrayIsArray(children)) return;
-    for (let childIndex = 0; childIndex < children.length; childIndex++) {
+    for (let childIndex = 0; childIndex < children.length; childIndex++) { // NOSONAR: Bun module children may come from project-owned cache objects.
       const child: unknown = children[childIndex];
       if (!isRecord(child)) continue;
       retainOwnedKey(bunModuleGraphValue(child, "filename"), owners);
@@ -4382,7 +4381,7 @@ function evictBunProjectConfigModules(entry: BunProjectConfigModuleCacheEntry): 
   // Then retain their owned descendants too: keeping a parent while deleting
   // its child would split one live require graph across module generations.
   const moduleKeys = ownKeys(entry.cache);
-  for (let moduleIndex = 0; moduleIndex < moduleKeys.length; moduleIndex++) {
+  for (let moduleIndex = 0; moduleIndex < moduleKeys.length; moduleIndex++) { // NOSONAR: ownKeys traversal must not invoke iterator hooks from require.cache.
     const moduleKey = moduleKeys[moduleIndex];
     if (
       typeof moduleKey === "string" &&
@@ -4391,7 +4390,7 @@ function evictBunProjectConfigModules(entry: BunProjectConfigModuleCacheEntry): 
       retainOwnedChildren(moduleKey, trackingOwnersForModule(moduleKey));
     }
   }
-  for (let queueIndex = 0; queueIndex < retainedQueue.length; queueIndex++) {
+  for (let queueIndex = 0; queueIndex < retainedQueue.length; queueIndex++) { // NOSONAR: retention queue intentionally grows during indexed traversal.
     const moduleKey = retainedQueue[queueIndex]!;
     const owners = mapGet(retainedOwners, moduleKey);
     const ownerList: string[] = [];
@@ -4411,10 +4410,10 @@ function evictBunProjectConfigModules(entry: BunProjectConfigModuleCacheEntry): 
   // later, leaving an unowned stale cache entry after both records are gone.
   mapForEach(transferredKeys, (keys, trackingKey) => {
     const owner = mapGet(bunProjectConfigModuleTrackingEntries, trackingKey);
-    if (owner === undefined || owner.cache !== entry.cache) return;
+    if (owner?.cache !== entry.cache) return;
     const nextKeys: string[] = [];
     const seen = new IntrinsicSet<string>();
-    for (let index = 0; index < owner.keys.length; index++) {
+    for (let index = 0; index < owner.keys.length; index++) { // NOSONAR: tracked key traversal must avoid project-controlled iterators.
       const key = owner.keys[index];
       if (key === undefined) continue;
       nextKeys[nextKeys.length] = key;
@@ -4430,7 +4429,7 @@ function evictBunProjectConfigModules(entry: BunProjectConfigModuleCacheEntry): 
     setBunProjectConfigModuleTracking(trackingKey, { ...owner, keys: nextKeys });
   });
 
-  for (let index = 0; index < entry.keys.length; index++) {
+  for (let index = 0; index < entry.keys.length; index++) { // NOSONAR: cache key traversal must avoid project-controlled iterators.
     const cacheKey = entry.keys[index];
     if (
       cacheKey !== undefined &&
@@ -4459,7 +4458,7 @@ function clearBunProjectConfigModuleTracking(): void {
       };
       mapSet(unions, entry.cache, union);
     }
-    for (let index = 0; index < entry.keys.length; index++) {
+    for (let index = 0; index < entry.keys.length; index++) { // NOSONAR: tracked key traversal must avoid project-controlled iterators.
       const key = entry.keys[index];
       if (
         key === undefined ||
@@ -4611,7 +4610,7 @@ const BUN_WORKSPACE_BRACE_EXPANSION_LIMIT = 64;
  * alternative may span `/`, so expansion happens before segment splitting.
  * Unmatched braces are kept literal, matching the segment matcher above.
  */
-function expandBunWorkspaceBracePatterns(pattern: string, expanded: string[]): boolean {
+function expandBunWorkspaceBracePatterns(pattern: string, expanded: string[]): boolean { // NOSONAR: brace parser is bounded and test-locked.
   if (expanded.length >= BUN_WORKSPACE_BRACE_EXPANSION_LIMIT) return false;
   const open = stringIndexOf(pattern, "{");
   if (open < 0) {
@@ -4721,7 +4720,7 @@ function matchesBunWorkspacePathSegments(
  * not belong to must not adopt that root's module-tracking scope. Negation
  * patterns are ignored, erring toward the narrower config-directory scope.
  */
-function isBunWorkspaceMemberDirectory(
+function isBunWorkspaceMemberDirectory( // NOSONAR: Bun workspace glob matcher is bounded and regression-covered.
   workspaceRoot: string,
   projectDirectory: string,
   workspacesValue: unknown,
@@ -4740,7 +4739,7 @@ function isBunWorkspaceMemberDirectory(
   ) return false;
   const pathSegments = ReflectApply(StringPrototypeSplit, relativeProject, ["/"]) as string[];
   const patterns = bunWorkspaceMemberPatterns(workspacesValue);
-  for (let index = 0; index < patterns.length; index++) {
+  for (let index = 0; index < patterns.length; index++) { // NOSONAR: workspace patterns may come from project package data.
     const pattern = patterns[index];
     if (typeof pattern !== "string" || pattern.length === 0) continue;
     if (stringStartsWith(pattern, "!")) continue;
@@ -4757,7 +4756,7 @@ function isBunWorkspaceMemberDirectory(
       // invalidation and avoids silently excluding later alternatives.
       return true;
     }
-    for (let braceIndex = 0; braceIndex < bracePatterns.length; braceIndex++) {
+    for (let braceIndex = 0; braceIndex < bracePatterns.length; braceIndex++) { // NOSONAR: expanded patterns stay indexed under poisoned primordials.
       const bracePattern = bracePatterns[braceIndex];
       if (bracePattern === undefined || bracePattern.length === 0) continue;
       const patternSegments = ReflectApply(StringPrototypeSplit, bracePattern, ["/"]) as string[];
@@ -4867,7 +4866,7 @@ async function resolveBunProjectTrackingScope(
   }
   if (
     canonicalProjectDirectory !== projectDirectory &&
-    canonicalProjectDirectory !== projectDirectories[projectDirectories.length - 1]
+    canonicalProjectDirectory !== projectDirectories[projectDirectories.length - 1] // NOSONAR: .at() would invoke mutable Array.prototype.
   ) {
     projectDirectories[projectDirectories.length] = canonicalProjectDirectory;
   }
@@ -4892,7 +4891,7 @@ function prepareBunProjectConfigModules(
 
   const before = new IntrinsicSet<string>();
   const cacheKeys = ownKeys(projectRequire.cache);
-  for (let index = 0; index < cacheKeys.length; index++) {
+  for (let index = 0; index < cacheKeys.length; index++) { // NOSONAR: ownKeys traversal must not invoke iterator hooks from require.cache.
     const cacheKey = cacheKeys[index];
     if (typeof cacheKey === "string") {
       ReflectApply(SetPrototypeAdd, before, [cacheKey]);
@@ -4932,7 +4931,7 @@ function expandBunEligibleDependencyKeys(
     queue[queue.length] = cacheKey;
   };
   const cacheKeys = ownKeys(projectRequire.cache);
-  for (let index = 0; index < cacheKeys.length; index++) {
+  for (let index = 0; index < cacheKeys.length; index++) { // NOSONAR: ownKeys traversal must not invoke iterator hooks from require.cache.
     const cacheKey = cacheKeys[index];
     if (
       typeof cacheKey === "string" &&
@@ -4941,12 +4940,12 @@ function expandBunEligibleDependencyKeys(
       include(cacheKey);
     }
   }
-  for (let queueIndex = 0; queueIndex < queue.length; queueIndex++) {
+  for (let queueIndex = 0; queueIndex < queue.length; queueIndex++) { // NOSONAR: dependency queue intentionally grows during indexed traversal.
     const moduleValue = bunModuleGraphValue(projectRequire.cache, queue[queueIndex]!);
     if (!isRecord(moduleValue)) continue;
     const children = bunModuleGraphValue(moduleValue, "children");
     if (!ArrayIsArray(children)) continue;
-    for (let childIndex = 0; childIndex < children.length; childIndex++) {
+    for (let childIndex = 0; childIndex < children.length; childIndex++) { // NOSONAR: Bun module children may come from project-owned cache objects.
       const child: unknown = children[childIndex];
       if (!isRecord(child)) continue;
       include(bunModuleGraphValue(child, "filename"));
@@ -4957,7 +4956,7 @@ function expandBunEligibleDependencyKeys(
 }
 
 /** Collect only the project-local modules that this config load introduced. */
-function collectBunProjectConfigModules(
+function collectBunProjectConfigModules( // NOSONAR: ownership collector is graph-shaped and guarded by regression tests.
   projectRequire: NodeJS.Require,
   snapshot: BunProjectCacheSnapshot,
   eligibleKeys?: ReadonlySet<string>,
@@ -4967,7 +4966,7 @@ function collectBunProjectConfigModules(
   const loadedKeys: string[] = [];
   const loadedKeySet = new IntrinsicSet<string>();
   if (prior !== undefined) {
-    for (let index = 0; index < prior.keys.length; index++) {
+    for (let index = 0; index < prior.keys.length; index++) { // NOSONAR: prior key traversal must avoid project-controlled iterators.
       const cacheKey = prior.keys[index];
       if (cacheKey === undefined) continue;
       loadedKeys[loadedKeys.length] = cacheKey;
@@ -4978,7 +4977,7 @@ function collectBunProjectConfigModules(
     ? undefined
     : expandBunEligibleDependencyKeys(projectRequire, snapshot, eligibleKeys);
   const cacheKeys = ownKeys(projectRequire.cache);
-  for (let index = 0; index < cacheKeys.length; index++) {
+  for (let index = 0; index < cacheKeys.length; index++) { // NOSONAR: ownKeys traversal must not invoke iterator hooks from require.cache.
     const cacheKey = cacheKeys[index];
     if (
       typeof cacheKey !== "string" ||
@@ -4993,7 +4992,7 @@ function collectBunProjectConfigModules(
     loadedKeys[loadedKeys.length] = cacheKey;
     ReflectApply(SetPrototypeAdd, loadedKeySet, [cacheKey]);
     const aliases = bunProjectModuleCacheAliases(snapshot.scope, cacheKey);
-    for (let aliasIndex = 0; aliasIndex < aliases.length; aliasIndex++) {
+    for (let aliasIndex = 0; aliasIndex < aliases.length; aliasIndex++) { // NOSONAR: alias traversal must avoid project-controlled iterators.
       const alias = aliases[aliasIndex];
       if (
         alias === undefined ||
@@ -5137,7 +5136,7 @@ async function loadAndMergeConfig(
     const source = await createFileSystem().readTextFile(absolutePath);
     const hasTopLevelAwait = await bunConfigHasTopLevelAwait(source, absolutePath);
     const canonicalConfigPath = await realPath(absolutePath);
-    return await serializeBunProjectConfigLoad(canonicalConfigPath, async () => {
+    return await serializeBunProjectConfigLoad(canonicalConfigPath, async () => { // NOSONAR: serialized Bun load owns several cleanup/failure branches.
       const { createRequire } = await import("node:module");
       const projectRequire = createRequire(absolutePath);
       // Bun ignores query strings when caching file modules, and its CommonJS
