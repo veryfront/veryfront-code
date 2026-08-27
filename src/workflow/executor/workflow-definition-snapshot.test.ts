@@ -181,22 +181,41 @@ describe("workflow definition snapshot", () => {
     );
   });
 
-  it("marks raw events using the legacy delay transport name as explicit events", () => {
-    const captured = captureWorkflowDefinition(workflowWith({
-      id: "not-a-delay",
-      config: {
-        type: "wait",
-        waitType: "event",
-        eventName: "__delay__",
-        timeout: 5,
-        checkpoint: true,
-      },
-    }));
-    assert(Array.isArray(captured.steps));
-    const config = captured.steps[0]?.config as WaitNodeConfig & { _waitKind?: string };
+  it("rejects an unmarked raw wait on the reserved delay name", () => {
+    assertThrows(
+      () =>
+        captureWorkflowDefinition(workflowWith({
+          id: "unmarked-reserved-wait",
+          config: {
+            type: "wait",
+            waitType: "event",
+            eventName: "__delay__",
+            timeout: 5,
+            checkpoint: true,
+          },
+        })),
+      Error,
+      "reserved delay event name requires the delay marker",
+    );
+  });
 
-    assertEquals(config.eventName, "__delay__");
-    assertEquals(config._waitKind, "event");
+  it("rejects an explicit event marker on the reserved delay name", () => {
+    assertThrows(
+      () =>
+        captureWorkflowDefinition(workflowWith({
+          id: "explicit-event-on-reserved-name",
+          config: {
+            type: "wait",
+            waitType: "event",
+            eventName: "__delay__",
+            _waitKind: "event",
+            timeout: 5,
+            checkpoint: true,
+          } as unknown as WaitNodeConfig,
+        })),
+      Error,
+      "reserved delay event name requires the delay marker",
+    );
   });
 
   it("refuses a forged delay marker on a wait that is not the reserved delay event", () => {

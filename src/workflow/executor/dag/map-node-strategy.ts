@@ -11,12 +11,19 @@ import { deriveNodeStatus } from "./utils.ts";
 import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
 import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
 import { applyRecordPatch, createRecordPatch, createSetContextPatch } from "./context-patch.ts";
+import {
+  collectWorkflowNodeIds,
+  namespaceWorkflowDefinition,
+  rebaseCompositeDescendants,
+} from "../../dsl/validation.ts";
 
 interface ExecuteMapNodeStrategyInput {
   node: WorkflowNode;
   config: MapNodeConfig;
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
+  /** Declared node ids in the graph that owns this map node. */
+  parentNodeIds: ReadonlySet<string>;
   runtime: NodeStrategyRuntime;
   abortSignal?: AbortSignal;
 }
@@ -29,16 +36,31 @@ function createMapChildNodes(
   node: WorkflowNode,
   config: MapNodeConfig,
   items: unknown[],
+  parentNodeIds: ReadonlySet<string>,
 ): WorkflowNode[] {
   return items.map((item, i) => {
     const childId = `${node.id}_${i}`;
 
     if (isWorkflowDefinition(config.processor)) {
+      const workflow = namespaceWorkflowDefinition(`${childId}/`, config.processor);
+      const workflowSteps = workflow.steps;
       return {
         id: childId,
         config: {
           type: "subWorkflow",
-          workflow: config.processor,
+          workflow: typeof workflowSteps === "function"
+            ? {
+              ...workflow,
+              steps: (context) => {
+                const steps = workflowSteps(context);
+                const collidingChildId = findParentIdCollision(steps, parentNodeIds);
+                if (collidingChildId) {
+                  throwMapChildIdCollision(node.id, collidingChildId);
+                }
+                return steps;
+              },
+            }
+            : workflow,
           input: item,
           retry: config.retry,
           checkpoint: false,
@@ -46,7 +68,12 @@ function createMapChildNodes(
       };
     }
 
-    const processorConfig = (config.processor as WorkflowNode).config;
+    const processor = config.processor as WorkflowNode;
+    const processorConfig = rebaseCompositeDescendants(
+      processor.config,
+      processor.id,
+      childId,
+    );
 
     if (processorConfig.type === "step") {
       return {
@@ -65,10 +92,24 @@ function createMapChildNodes(
   });
 }
 
+function findParentIdCollision(
+  nodes: WorkflowNode[],
+  parentNodeIds: ReadonlySet<string>,
+): string | undefined {
+  return [...collectWorkflowNodeIds(nodes)].find((childId) => parentNodeIds.has(childId));
+}
+
+function throwMapChildIdCollision(mapNodeId: string, collidingChildId: string): never {
+  throw INVALID_ARGUMENT.create({
+    detail: `Map node "${mapNodeId}" generated child id "${collidingChildId}", ` +
+      "which collides with a declared node in the parent graph",
+  });
+}
+
 export async function executeMapNodeStrategy(
   input: ExecuteMapNodeStrategyInput,
 ): Promise<NodeExecutionResult> {
-  const { node, config, context, nodeStates, runtime } = input;
+  const { node, config, context, nodeStates, parentNodeIds, runtime } = input;
   runtime.abortSignal?.throwIfAborted();
   const startTime = Date.now();
 
@@ -91,7 +132,11 @@ export async function executeMapNodeStrategy(
     return { state, contextPatch: createSetContextPatch({ [node.id]: [] }), waiting: false };
   }
 
-  const childNodes = createMapChildNodes(node, config, items);
+  const childNodes = createMapChildNodes(node, config, items, parentNodeIds);
+  const collidingChildId = findParentIdCollision(childNodes, parentNodeIds);
+  if (collidingChildId) {
+    throwMapChildIdCollision(node.id, collidingChildId);
+  }
 
   const result = await runtime.executeChildGraph(
     childNodes,
@@ -118,11 +163,18 @@ export async function executeMapNodeStrategy(
 
   const outputs = childNodes.map((child) => result.nodeStates[child.id]?.output);
 
+  const stalledWaitingNodes = result.stalledWaitNodes ??
+    (result.stalledWaitNode === undefined
+      ? undefined
+      : [{ nodeId: result.stalledWaitNode, waitConfig: undefined }]);
+  const waitingNodes = result.waitingNodes ?? stalledWaitingNodes;
+  const waiting = result.waiting || waitingNodes !== undefined;
+
   const state: NodeState = {
     nodeId: node.id,
-    status: deriveNodeStatus(result.completed, result.waiting),
+    status: deriveNodeStatus(result.completed, waiting),
     output: outputs,
-    error: result.error,
+    error: waiting ? undefined : result.error,
     attempt: 1,
     startedAt: new Date(startTime),
     completedAt: result.completed ? new Date() : undefined,
@@ -133,8 +185,9 @@ export async function executeMapNodeStrategy(
   return {
     state,
     contextPatch: createSetContextPatch(result.completed ? { [node.id]: outputs } : {}),
-    waiting: result.waiting,
-    waitingNode: result.waitingNode,
-    waitingConfig: result.waitingConfig,
+    waiting,
+    waitingNode: result.waitingNode ?? waitingNodes?.[0]?.nodeId,
+    waitingConfig: result.waitingConfig ?? waitingNodes?.[0]?.waitConfig,
+    waitingNodes,
   };
 }

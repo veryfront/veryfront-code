@@ -29,6 +29,7 @@ import type { CheckpointOwnership } from "../checkpoint-manager.ts";
 export type { DAGExecutionResult, DAGExecutorConfig, NodeExecutionResult } from "./types.ts";
 
 import type {
+  ContextPatch,
   DAGExecutionResult,
   DAGExecutorConfig,
   DAGExecutorInternalConfig,
@@ -95,6 +96,7 @@ export class DAGExecutor {
       // that carries it. Every child graph below runs against a synthetic run
       // whose status is always "running" and would otherwise read a crash.
       resumingWait: run.status === "waiting",
+      declaredNodeIds: new Set(),
       ownership,
     };
     const { contextPatch: _contextPatch, ...result } = await runWithWorkflowSourceIntegrationPolicy(
@@ -114,9 +116,15 @@ export class DAGExecutor {
     abortSignal?.throwIfAborted();
     const context = cloneExecutionState(run.context, "Workflow context");
     const nodeStates = cloneExecutionState(run.nodeStates, "Workflow node states");
+    let publishedNodeStates = cloneExecutionState(run.nodeStates, "Workflow node states");
     let contextPatch = createSetContextPatch();
 
     const { adjList, inDegree, nodeMap } = buildGraph(nodes);
+    const graphNodeIds = new Set(nodeMap.keys());
+    scope = {
+      ...scope,
+      declaredNodeIds: new Set([...scope.declaredNodeIds, ...graphNodeIds]),
+    };
 
     updateInDegreesForCompletedNodes(nodeStates, adjList, inDegree);
 
@@ -290,7 +298,14 @@ export class DAGExecutor {
             });
           }
         }
-        await this.publishNodeStates(scope, nodeStates, context, batch);
+        publishedNodeStates = await this.publishNodeStates(
+          scope,
+          nodeStates,
+          publishedNodeStates,
+          context,
+          contextPatch,
+          batch,
+        );
         abortSignal?.throwIfAborted();
       }
 
@@ -336,6 +351,11 @@ export class DAGExecutor {
           error?: string;
         }
         | undefined;
+      // Every node the settled batch parked, in index order. Dependency-free
+      // waits run in one batch and all suspend; reporting only the first
+      // would persist a durable record for it alone, leaving the others
+      // parked with nothing able to wake them.
+      const waitingNodes: Array<{ nodeId: string; waitConfig?: WaitNodeConfig }> = [];
       const checkpointNodes: string[] = [];
 
       for (let i = 0; i < batch.length; i++) {
@@ -390,11 +410,18 @@ export class DAGExecutor {
         if (nodeResult.waiting) {
           // A composite reports the child that actually suspended. Falling back
           // to this node covers a top-level wait, which is its own waiting node.
+          const nestedWaitingNodes = nodeResult.waitingNodes && nodeResult.waitingNodes.length > 0
+            ? nodeResult.waitingNodes
+            : [{
+              nodeId: nodeResult.waitingNode ?? nodeId,
+              waitConfig: nodeResult.waitingConfig,
+            }];
+          waitingNodes.push(...nestedWaitingNodes);
           if (!outcome) {
             outcome = {
               kind: "waiting",
-              nodeId: nodeResult.waitingNode ?? nodeId,
-              waitConfig: nodeResult.waitingConfig,
+              nodeId: nestedWaitingNodes[0]!.nodeId,
+              waitConfig: nestedWaitingNodes[0]!.waitConfig,
             };
           }
           continue;
@@ -433,7 +460,14 @@ export class DAGExecutor {
           const status = nodeStates[nodeId]?.status;
           return status === "running" || status === "failed";
         });
-        await this.publishNodeStates(scope, nodeStates, context, stillCurrent);
+        publishedNodeStates = await this.publishNodeStates(
+          scope,
+          nodeStates,
+          publishedNodeStates,
+          context,
+          contextPatch,
+          stillCurrent,
+        );
         abortSignal?.throwIfAborted();
       }
       for (const nodeId of checkpointNodes) {
@@ -446,6 +480,7 @@ export class DAGExecutor {
           waiting: true,
           waitingNode: outcome.nodeId,
           waitingConfig: outcome.waitConfig,
+          waitingNodes,
           context,
           nodeStates,
           contextPatch,
@@ -486,12 +521,32 @@ export class DAGExecutor {
         .map(({ nodeId, status }) => `${JSON.stringify(nodeId)} (${status})`)
         .join(", ");
       const omitted = unfinished.length - MAX_STALLED_GRAPH_NODE_DETAILS;
+      // Nothing was schedulable, and every unfinished node is either a wait
+      // recorded running or blocked behind one. From here that is
+      // indistinguishable from a run legitimately parked on a decision that has
+      // not arrived yet, so name the wait and let the caller check the durable
+      // record before treating this as terminal.
+      const onlyParkedWaitsAndDependents = unfinished.every(({ nodeId, status }) =>
+        status === "pending" ||
+        (status === "running" && nodeMap.get(nodeId)?.config.type === "wait")
+      );
+      const stalledWaitNodes: Array<{ nodeId: string; waitConfig: WaitNodeConfig }> = [];
+      if (onlyParkedWaitsAndDependents) {
+        for (const { nodeId, status } of unfinished) {
+          const config = nodeMap.get(nodeId)?.config;
+          if (status === "running" && config?.type === "wait") {
+            stalledWaitNodes.push({ nodeId, waitConfig: config });
+          }
+        }
+      }
+      const stalledWaitNode = stalledWaitNodes[0]?.nodeId;
       return {
         completed: false,
         waiting: false,
         context,
         nodeStates,
         contextPatch,
+        ...(stalledWaitNode === undefined ? {} : { stalledWaitNode, stalledWaitNodes }),
         error: `Workflow run ${JSON.stringify(scope.rootRunId)} stalled in ${graph}; ` +
           `unfinished nodes: ${details}${omitted > 0 ? `, and ${omitted} more` : ""}`,
       };
@@ -509,14 +564,19 @@ export class DAGExecutor {
   private async publishNodeStates(
     scope: ExecutionScope,
     nodeStates: Record<string, NodeState>,
+    previousNodeStates: Record<string, NodeState>,
     context: WorkflowContext,
+    contextPatch: ContextPatch,
     currentNodes: string[],
-  ): Promise<void> {
+  ): Promise<Record<string, NodeState>> {
+    const nodeStatePatch = createRecordPatch(previousNodeStates, nodeStates);
     const published = await this.config.onNodeStatesChanged?.({
       runId: scope.rootRunId,
       nodeStates: structuredClone(nodeStates),
+      nodeStatePatch: cloneExecutionState(nodeStatePatch, "Workflow node-state changes"),
       currentNodes: [...currentNodes],
       context: structuredClone(context),
+      contextPatch: cloneExecutionState(contextPatch, "Workflow context changes"),
       ownership: scope.ownership,
     });
     if (published === false) {
@@ -524,6 +584,7 @@ export class DAGExecutor {
         detail: "Workflow execution ownership changed before node-state persistence",
       });
     }
+    return cloneExecutionState(nodeStates, "Workflow node states");
   }
 
   private async executeNode(
@@ -622,6 +683,7 @@ export class DAGExecutor {
               config,
               context,
               nodeStates,
+              parentNodeIds: scope.declaredNodeIds,
               runtime: {
                 executeChildGraph: (nodes, run, options) =>
                   this.executeChildGraph(nodes, run, scope, options, attemptSignal),
@@ -679,6 +741,7 @@ export class DAGExecutor {
               config,
               context,
               nodeStates,
+              parentNodeIds: scope.declaredNodeIds,
               runtime: {
                 executeChildGraph: (nodes, run) =>
                   this.executeChildGraph(nodes, run, scope, undefined, attemptSignal),
@@ -771,11 +834,20 @@ export class DAGExecutor {
     applyContextPatch(context, result.contextPatch);
     applyRecordPatch(nodeStates, createRecordPatch({}, result.nodeStates));
 
+    const stalledWaitingNodes = result.stalledWaitNodes ??
+      (result.stalledWaitNode === undefined
+        ? undefined
+        : [{ nodeId: result.stalledWaitNode, waitConfig: undefined }]);
+    const waitingNodes = result.waitingNodes ?? stalledWaitingNodes;
+    const waiting = result.waiting || waitingNodes !== undefined;
+    const waitingNode = result.waitingNode ?? waitingNodes?.[0]?.nodeId;
+    const waitingConfig = result.waitingConfig ?? waitingNodes?.[0]?.waitConfig;
+
     const state: NodeState = {
       nodeId: node.id,
-      status: deriveNodeStatus(result.completed, result.waiting),
+      status: deriveNodeStatus(result.completed, waiting),
       output: result.context,
-      error: result.error,
+      error: waiting ? undefined : result.error,
       attempt: 1,
       startedAt: new Date(startTime),
       completedAt: result.completed ? new Date() : undefined,
@@ -786,9 +858,10 @@ export class DAGExecutor {
     return {
       state,
       contextPatch: result.contextPatch,
-      waiting: result.waiting,
-      waitingNode: result.waitingNode,
-      waitingConfig: result.waitingConfig,
+      waiting,
+      waitingNode,
+      waitingConfig,
+      waitingNodes,
     };
   }
 
@@ -845,14 +918,23 @@ export class DAGExecutor {
     applyContextPatch(context, result.contextPatch);
     applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
 
+    const stalledWaitingNodes = result.stalledWaitNodes ??
+      (result.stalledWaitNode === undefined
+        ? undefined
+        : [{ nodeId: result.stalledWaitNode, waitConfig: undefined }]);
+    const waitingNodes = result.waitingNodes ?? stalledWaitingNodes;
+    const waiting = result.waiting || waitingNodes !== undefined;
+    const waitingNode = result.waitingNode ?? waitingNodes?.[0]?.nodeId;
+    const waitingConfig = result.waitingConfig ?? waitingNodes?.[0]?.waitConfig;
+
     const state: NodeState = {
       nodeId: node.id,
-      status: deriveNodeStatus(result.completed, result.waiting),
+      status: deriveNodeStatus(result.completed, waiting),
       output: {
         branch: conditionResult ? "then" : "else",
         result: result.context,
       },
-      error: result.error,
+      error: waiting ? undefined : result.error,
       attempt: 1,
       startedAt: new Date(startTime),
       completedAt: result.completed ? new Date() : undefined,
@@ -863,9 +945,10 @@ export class DAGExecutor {
     return {
       state,
       contextPatch: result.contextPatch,
-      waiting: result.waiting,
-      waitingNode: result.waitingNode,
-      waitingConfig: result.waitingConfig,
+      waiting,
+      waitingNode,
+      waitingConfig,
+      waitingNodes,
     };
   }
 
@@ -885,12 +968,15 @@ export class DAGExecutor {
     const state: NodeState = {
       nodeId: node.id,
       status: "running",
+      _waitInstanceId: generateId("wait"),
       // Absent optional fields are left out rather than written as `undefined`.
       // A suspended loop stores its child states in the context, where JSON
       // drops those keys, so writing them had the persistence check report the
       // framework's own empty fields as user-authored lossy values.
       input: {
         type: config.waitType,
+        ...(config.eventName !== undefined ? { eventName: config.eventName } : {}),
+        ...(config.timeout !== undefined ? { timeout: config.timeout } : {}),
         ...(config.message !== undefined ? { message: config.message } : {}),
         ...(payload !== undefined ? { payload } : {}),
       },
@@ -967,6 +1053,15 @@ export class DAGExecutor {
 
     applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
 
+    const stalledWaitingNodes = result.stalledWaitNodes ??
+      (result.stalledWaitNode === undefined
+        ? undefined
+        : [{ nodeId: result.stalledWaitNode, waitConfig: undefined }]);
+    const waitingNodes = result.waitingNodes ?? stalledWaitingNodes;
+    const waiting = result.waiting || waitingNodes !== undefined;
+    const waitingNode = result.waitingNode ?? waitingNodes?.[0]?.nodeId;
+    const waitingConfig = result.waitingConfig ?? waitingNodes?.[0]?.waitConfig;
+
     let finalOutput: unknown = result.context;
     if (result.completed && config.output) {
       finalOutput = config.output(result.context);
@@ -975,9 +1070,9 @@ export class DAGExecutor {
 
     const state: NodeState = {
       nodeId: node.id,
-      status: deriveNodeStatus(result.completed, result.waiting),
+      status: deriveNodeStatus(result.completed, waiting),
       output: finalOutput,
-      error: result.error,
+      error: waiting ? undefined : result.error,
       attempt: 1,
       startedAt: new Date(startTime),
       completedAt: result.completed ? new Date() : undefined,
@@ -988,9 +1083,10 @@ export class DAGExecutor {
     return {
       state,
       contextPatch: createSetContextPatch(result.completed ? { [node.id]: finalOutput } : {}),
-      waiting: result.waiting,
-      waitingNode: result.waitingNode,
-      waitingConfig: result.waitingConfig,
+      waiting,
+      waitingNode,
+      waitingConfig,
+      waitingNodes,
     };
   }
 

@@ -3,7 +3,7 @@ import { MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES } from "../limits.ts";
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 
 function isDecided(approval: PersistedPendingApproval): boolean {
-  return approval.status !== "pending";
+  return approval.status !== "pending" && approval.reconciliationPending !== true;
 }
 
 /**
@@ -15,9 +15,10 @@ function isDecided(approval: PersistedPendingApproval): boolean {
  * evicted: a run waiting on an evicted ID could never be decided or expired
  * and would wait forever. At the bound, the oldest decided record is evicted
  * first. An expired record remains pending until expiration reconciliation
- * decides it, so it is retained too. When there are not enough decided records
- * to make room, the append is rejected without changing existing history
- * instead of silently dropping a decidable approval.
+ * decides it, and a decided record remains reserved until node reconciliation
+ * finalizes it, so both are retained. When there are not enough finalized
+ * records to make room, the append is rejected without changing existing
+ * history instead of silently dropping a decidable approval.
  */
 export function appendRetainedPendingApproval(
   approvals: PersistedPendingApproval[],

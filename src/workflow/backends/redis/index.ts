@@ -22,10 +22,15 @@ import {
   type WorkflowBackend,
   type WorkflowRunObservation,
   type WorkflowRunObservedState,
+  type WorkflowRunStateSnapshot,
   type WorkflowRunUpdate,
 } from "../types.ts";
 import { agentLogger, safeJsonParse } from "#veryfront/utils";
-import { prepareWorkflowJson, serializeWorkflowContext } from "../../context-serialization.ts";
+import {
+  prepareWorkflowJson,
+  serializeWorkflowContext,
+  serializeWorkflowJson,
+} from "../../context-serialization.ts";
 import { requeueRun } from "../shared/requeue-run.ts";
 import {
   INITIALIZATION_ERROR,
@@ -55,6 +60,164 @@ const RUN_OBSERVATION_APPROVAL_SCHEMA_VERSION = "approvals-v1";
 const RUN_OBSERVATION_REVISION_FIELD = "__runObservationRevision";
 const RUN_OBSERVATION_STREAM_MAX_LENGTH = 64;
 const RUN_OBSERVATION_POLL_INTERVAL_MS = 20;
+const APPROVAL_RECOVERY_SCAN_COUNT = 100;
+
+/**
+ * Merge top-level JSON objects without decoding their values through Redis's
+ * bundled cjson. Standard Redis 7 turns a decoded empty array into an empty
+ * Lua table and then encodes it as `{}`. The native cjson path handles normal
+ * objects; only documents containing an ambiguous empty-array token use the
+ * raw-slice fallback that preserves nested values byte-for-byte.
+ */
+const JSON_OBJECT_PATCH_LUA = String.raw`
+local function skipJsonWhitespace(value, position)
+  while position <= #value do
+    local byte = string.byte(value, position)
+    if byte == 32 or byte == 9 or byte == 10 or byte == 13 then
+      position = position + 1
+    else
+      break
+    end
+  end
+  return position
+end
+
+local function scanJsonString(value, position)
+  if string.sub(value, position, position) ~= '"' then
+    error('Expected a JSON object key')
+  end
+  position = position + 1
+  local escaped = false
+  while position <= #value do
+    local character = string.sub(value, position, position)
+    if escaped then
+      escaped = false
+    elseif character == '\\' then
+      escaped = true
+    elseif character == '"' then
+      return position + 1
+    end
+    position = position + 1
+  end
+  error('Unterminated JSON string')
+end
+
+local function scanJsonValue(value, position)
+  position = skipJsonWhitespace(value, position)
+  local first = string.sub(value, position, position)
+  if first == '"' then return scanJsonString(value, position) end
+
+  if first == '{' or first == '[' then
+    local depth = 0
+    local inString = false
+    local escaped = false
+    while position <= #value do
+      local character = string.sub(value, position, position)
+      if inString then
+        if escaped then
+          escaped = false
+        elseif character == '\\' then
+          escaped = true
+        elseif character == '"' then
+          inString = false
+        end
+      elseif character == '"' then
+        inString = true
+      elseif character == '{' or character == '[' then
+        depth = depth + 1
+      elseif character == '}' or character == ']' then
+        depth = depth - 1
+        if depth == 0 then return position + 1 end
+      end
+      position = position + 1
+    end
+    error('Unterminated JSON container')
+  end
+
+  local start = position
+  while position <= #value do
+    local character = string.sub(value, position, position)
+    local byte = string.byte(value, position)
+    if character == ',' or character == '}' or
+      byte == 32 or byte == 9 or byte == 10 or byte == 13 then
+      break
+    end
+    position = position + 1
+  end
+  if position == start then error('Expected a JSON value') end
+  return position
+end
+
+local function parseJsonObject(value)
+  local fields = {}
+  local position = skipJsonWhitespace(value, 1)
+  if string.sub(value, position, position) ~= '{' then
+    error('Run patch field must be a JSON object')
+  end
+  position = skipJsonWhitespace(value, position + 1)
+  if string.sub(value, position, position) == '}' then return fields end
+
+  while position <= #value do
+    local keyStart = position
+    position = scanJsonString(value, position)
+    local key = cjson.decode(string.sub(value, keyStart, position - 1))
+    position = skipJsonWhitespace(value, position)
+    if string.sub(value, position, position) ~= ':' then
+      error('Expected a colon after a JSON object key')
+    end
+    position = skipJsonWhitespace(value, position + 1)
+    local valueStart = position
+    position = scanJsonValue(value, position)
+    fields[key] = string.sub(value, valueStart, position - 1)
+    position = skipJsonWhitespace(value, position)
+
+    local delimiter = string.sub(value, position, position)
+    if delimiter == '}' then return fields end
+    if delimiter ~= ',' then error('Expected a comma between JSON object entries') end
+    position = skipJsonWhitespace(value, position + 1)
+  end
+  error('Unterminated JSON object')
+end
+
+local function encodeJsonObject(fields)
+  local entries = {}
+  for key, value in pairs(fields) do
+    table.insert(entries, cjson.encode(key) .. ':' .. value)
+  end
+  return '{' .. table.concat(entries, ',') .. '}'
+end
+
+local function containsAmbiguousEmptyArray(value)
+  return string.find(value, '%[%s*%]') ~= nil
+end
+
+local function mergeJsonObjects(currentJson, patchJson)
+  if containsAmbiguousEmptyArray(currentJson) or containsAmbiguousEmptyArray(patchJson) then
+    local current = parseJsonObject(currentJson)
+    local patch = parseJsonObject(patchJson)
+    for key, changed in pairs(patch) do current[key] = changed end
+    return encodeJsonObject(current)
+  end
+
+  local current = cjson.decode(currentJson)
+  local patch = cjson.decode(patchJson)
+  for key, changed in pairs(patch) do current[key] = changed end
+  return next(current) == nil and '{}' or cjson.encode(current)
+end
+
+local function deleteJsonObjectFields(currentJson, deletedJson)
+  local deleted = cjson.decode(deletedJson)
+  if containsAmbiguousEmptyArray(currentJson) then
+    local current = parseJsonObject(currentJson)
+    for _, key in ipairs(deleted) do current[key] = nil end
+    return encodeJsonObject(current)
+  end
+
+  local current = cjson.decode(currentJson)
+  for _, key in ipairs(deleted) do current[key] = nil end
+  return next(current) == nil and '{}' or cjson.encode(current)
+end
+`;
 
 function appendStorageSchemaVersion(base: string): string {
   return `${base.replace(/:+$/, "")}:${REDIS_STORAGE_SCHEMA_VERSION}`;
@@ -140,6 +303,21 @@ return 1`;
  */
 const UPDATE_RUN_SCRIPT = `-- observable-run-update
 if redis.call('exists', KEYS[1]) == 0 then return 0 end
+${JSON_OBJECT_PATCH_LUA}
+local function applyPatchField(field, value)
+  if field == 'nodeStateDeletes' then
+    local current = redis.call('hget', KEYS[1], 'nodeStates') or '{}'
+    redis.call('hset', KEYS[1], 'nodeStates', deleteJsonObjectFields(current, value))
+  elseif field == 'contextDeletes' then
+    local current = redis.call('hget', KEYS[1], 'context') or '{}'
+    redis.call('hset', KEYS[1], 'context', deleteJsonObjectFields(current, value))
+  elseif field == 'nodeStates' or field == 'context' then
+    local current = redis.call('hget', KEYS[1], field) or '{}'
+    redis.call('hset', KEYS[1], field, mergeJsonObjects(current, value))
+  else
+    redis.call('hset', KEYS[1], field, value)
+  end
+end
 local old = redis.call('hget', KEYS[1], 'status')
 local nextStatus = ARGV[2]
 if nextStatus ~= '' and old ~= nextStatus then
@@ -147,7 +325,7 @@ if nextStatus ~= '' and old ~= nextStatus then
   if old and old ~= '' then redis.call('srem', ARGV[3] .. old, ARGV[1]) end
   redis.call('sadd', ARGV[3] .. nextStatus, ARGV[1])
 end
-for i = 6, #ARGV, 2 do redis.call('hset', KEYS[1], ARGV[i], ARGV[i + 1]) end
+for i = 6, #ARGV, 2 do applyPatchField(ARGV[i], ARGV[i + 1]) end
 local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
 local status = redis.call('hget', KEYS[1], 'status')
 local rawNodes = redis.call('hget', KEYS[1], 'nodeStates') or '{}'
@@ -171,10 +349,31 @@ end
 redis.call('xadd', ARGV[4], 'MAXLEN', '~', ARGV[5], '*', unpack(fields))
 return revision`;
 
-/** Atomically verify the current status, update fields, and move the status index. */
+/**
+ * Atomically verify the current status, update fields, and move the status
+ * index. The replace-maps flag (ARGV[expectedCount + 8]) switches `context`
+ * and `nodeStates` from the per-key merge to wholesale replacement: checkpoint
+ * restore must drop keys written after the snapshot, which a merge cannot do.
+ */
 const UPDATE_RUN_IF_STATUS_SCRIPT = `-- conditional-run-update
 local old = redis.call('hget', KEYS[1], 'status')
 local expectedCount = tonumber(ARGV[1])
+local replaceMaps = ARGV[expectedCount + 8] == '1'
+${JSON_OBJECT_PATCH_LUA}
+local function applyPatchField(field, value)
+  if field == 'nodeStateDeletes' then
+    local current = redis.call('hget', KEYS[1], 'nodeStates') or '{}'
+    redis.call('hset', KEYS[1], 'nodeStates', deleteJsonObjectFields(current, value))
+  elseif field == 'contextDeletes' then
+    local current = redis.call('hget', KEYS[1], 'context') or '{}'
+    redis.call('hset', KEYS[1], 'context', deleteJsonObjectFields(current, value))
+  elseif not replaceMaps and (field == 'nodeStates' or field == 'context') then
+    local current = redis.call('hget', KEYS[1], field) or '{}'
+    redis.call('hset', KEYS[1], field, mergeJsonObjects(current, value))
+  else
+    redis.call('hset', KEYS[1], field, value)
+  end
+end
 local allowed = false
 for i = 2, expectedCount + 1 do
   if old == ARGV[i] then
@@ -197,8 +396,8 @@ if nextStatus ~= '' and old ~= nextStatus then
 end
 local streamKey = ARGV[expectedCount + 6]
 local maxLength = ARGV[expectedCount + 7]
-for i = expectedCount + 8, #ARGV, 2 do
-  redis.call('hset', KEYS[1], ARGV[i], ARGV[i + 1])
+for i = expectedCount + 9, #ARGV, 2 do
+  applyPatchField(ARGV[i], ARGV[i + 1])
 end
 local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
 local status = redis.call('hget', KEYS[1], 'status')
@@ -406,7 +605,7 @@ const RETAIN_APPROVALS_LUA = `local function retainApprovals(key, maxEntries)
     local raw = redis.call('lindex', key, i)
     if raw then
       local approval = cjson.decode(raw)
-      if approval.status ~= 'pending' then
+      if approval.status ~= 'pending' and approval.reconciliationPending ~= true then
         table.insert(decidedIndexes, i)
         if #decidedIndexes == evictionsRequired then break end
       end
@@ -524,15 +723,31 @@ function parseRunObservationRecords(
  * ARGV[2] = max approval entries
  * ARGV[3] = observation stream key
  * ARGV[4] = observation stream max length
+ * ARGV[5] = whether to reject a duplicate live node execution
  *
  * Returns 1 when the append was journaled, 0 when the run hash is absent (the
  * approval is still appended, preserving the unconditional-save contract),
- * and 2 when insufficient decided history can be evicted. Retention preflight,
- * append, revision increment, and journal write all happen atomically.
+ * 2 when insufficient decided history can be evicted, and 3 when a coalescing
+ * append finds a pending approval for the same wait execution. Duplicate
+ * preflight, retention, append, revision increment, and journal write all
+ * happen atomically.
  */
 const SAVE_PENDING_APPROVAL_SCRIPT = `-- observable-approval-append
 ${RETAIN_APPROVALS_LUA}
 ${JOURNAL_APPROVAL_PROJECTION_LUA}
+local approval = cjson.decode(ARGV[1])
+if ARGV[5] == '1' then
+  local existingApprovals = redis.call('lrange', KEYS[2], 0, -1)
+  for i = 1, #existingApprovals do
+    local candidate = cjson.decode(existingApprovals[i])
+    if (candidate.status == 'pending' or candidate.reconciliationPending == true) and
+        candidate.nodeId == approval.nodeId and
+        (candidate.waitInstanceId == nil or approval.waitInstanceId == nil or
+          candidate.waitInstanceId == approval.waitInstanceId) then
+      return 3
+    end
+  end
+end
 if not retainApprovals(KEYS[2], tonumber(ARGV[2])) then return 2 end
 redis.call('rpush', KEYS[2], ARGV[1])
 if redis.call('exists', KEYS[1]) == 0 then return 0 end
@@ -587,7 +802,8 @@ return 1`;
  * ARGV[n+6] = observation stream max length
  *
  * Returns 1 when appended and journaled, 0 when the ownership fence fails,
- * and 2 when insufficient decided history can be evicted.
+ * 2 when insufficient decided history can be evicted, and 3 when a pending
+ * approval already exists for the same node.
  */
 const SAVE_PENDING_APPROVAL_IF_OWNED_SCRIPT = `-- conditional-owned-approval-append
 ${RETAIN_APPROVALS_LUA}
@@ -604,6 +820,17 @@ end
 if not allowed then return 0 end
 local expectedWorkerId = ARGV[expectedCount + 2]
 if redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then return 0 end
+local approval = cjson.decode(ARGV[expectedCount + 3])
+local existingApprovals = redis.call('lrange', KEYS[2], 0, -1)
+for i = 1, #existingApprovals do
+  local candidate = cjson.decode(existingApprovals[i])
+  if (candidate.status == 'pending' or candidate.reconciliationPending == true) and
+      candidate.nodeId == approval.nodeId and
+      (candidate.waitInstanceId == nil or approval.waitInstanceId == nil or
+        candidate.waitInstanceId == approval.waitInstanceId) then
+    return 3
+  end
+end
 if not retainApprovals(KEYS[2], tonumber(ARGV[expectedCount + 4])) then
   return 2
 end
@@ -660,18 +887,16 @@ return 1`;
  *
  * Returns 1 when the approval was found and patched, 0 when the id is absent.
  */
-const UPDATE_PENDING_APPROVAL_SCRIPT = `-- conditional-approval-patch
+const UPDATE_PENDING_APPROVAL_SCRIPT = `${JSON_OBJECT_PATCH_LUA}
+-- conditional-approval-patch
 local approvalId = ARGV[1]
-local patch = cjson.decode(ARGV[2])
 local len = redis.call('llen', KEYS[1])
 for i = 0, len - 1 do
   local raw = redis.call('lindex', KEYS[1], i)
   if raw then
     local approval = cjson.decode(raw)
     if approval.id == approvalId then
-      for k, v in pairs(patch) do approval[k] = v end
-      approval.id = approvalId
-      redis.call('lset', KEYS[1], i, cjson.encode(approval))
+      redis.call('lset', KEYS[1], i, mergeJsonObjects(raw, ARGV[2]))
       return 1
     end
   end
@@ -686,16 +911,14 @@ return 0`;
  *
  * KEYS[1] = approvals list key
  * ARGV[1] = approval id
- * ARGV[2] = new status ("approved" | "rejected")
- * ARGV[3] = decidedBy
- * ARGV[4] = decidedAt (ISO string, computed by the caller for determinism)
- * ARGV[5] = "1" when a comment is provided, "0" otherwise
- * ARGV[6] = comment (ignored unless ARGV[5] == "1")
+ * ARGV[2] = decision fields as a JSON object
+ * ARGV[3] = absent optional field names as a JSON array
  *
  * Returns 1 when applied, 2 when the approval was found but no longer pending
  * (a lost race), 0 when the id is absent.
  */
-const UPDATE_APPROVAL_SCRIPT = `-- conditional-approval-decision
+const UPDATE_APPROVAL_SCRIPT = `${JSON_OBJECT_PATCH_LUA}
+-- conditional-approval-decision
 local approvalId = ARGV[1]
 local len = redis.call('llen', KEYS[1])
 for i = 0, len - 1 do
@@ -704,11 +927,81 @@ for i = 0, len - 1 do
     local approval = cjson.decode(raw)
     if approval.id == approvalId then
       if approval.status ~= 'pending' then return 2 end
-      approval.status = ARGV[2]
-      approval.decidedBy = ARGV[3]
-      approval.decidedAt = ARGV[4]
-      if ARGV[5] == '1' then approval.comment = ARGV[6] else approval.comment = nil end
-      redis.call('lset', KEYS[1], i, cjson.encode(approval))
+      local updated = mergeJsonObjects(raw, ARGV[2])
+      updated = deleteJsonObjectFields(updated, ARGV[3])
+      redis.call('lset', KEYS[1], i, updated)
+      return 1
+    end
+  end
+end
+return 0`;
+
+/** Lease one approval decision claim to one recovery process. */
+const RESERVE_APPROVAL_DECISION_SCRIPT = `${JSON_OBJECT_PATCH_LUA}
+-- reserve-approval-decision
+local approvalId = ARGV[1]
+local recoveryClaimId = ARGV[2]
+local staleBefore = ARGV[3]
+local patch = ARGV[4]
+local len = redis.call('llen', KEYS[1])
+for i = 0, len - 1 do
+  local raw = redis.call('lindex', KEYS[1], i)
+  if raw then
+    local approval = cjson.decode(raw)
+    if approval.id == approvalId then
+      if approval.reconciliationPending ~= true then return 0 end
+      if approval.recoveryClaimId ~= nil and
+          (approval.recoveryClaimedAt == nil or approval.recoveryClaimedAt > staleBefore) then
+        return 2
+      end
+      redis.call('lset', KEYS[1], i, mergeJsonObjects(raw, patch))
+      return 1
+    end
+  end
+end
+return 0`;
+
+/** Release one recovery lease without consuming the decision claim. */
+const RELEASE_APPROVAL_DECISION_CLAIM_SCRIPT = `${JSON_OBJECT_PATCH_LUA}
+-- release-approval-decision-claim
+local approvalId = ARGV[1]
+local recoveryClaimId = ARGV[2]
+local len = redis.call('llen', KEYS[1])
+for i = 0, len - 1 do
+  local raw = redis.call('lindex', KEYS[1], i)
+  if raw then
+    local approval = cjson.decode(raw)
+    if approval.id == approvalId then
+      if approval.recoveryClaimId ~= recoveryClaimId then return 2 end
+      redis.call('lset', KEYS[1], i,
+        deleteJsonObjectFields(raw, '["recoveryClaimId","recoveryClaimedAt"]'))
+      return 1
+    end
+  end
+end
+return 0`;
+
+/** Release one approval decision reservation after its node outcome commits. */
+const FINALIZE_APPROVAL_DECISION_SCRIPT = `${JSON_OBJECT_PATCH_LUA}
+-- finalize-approval-decision
+local approvalId = ARGV[1]
+local recoveryClaimId = ARGV[2]
+local len = redis.call('llen', KEYS[1])
+for i = 0, len - 1 do
+  local raw = redis.call('lindex', KEYS[1], i)
+  if raw then
+    local approval = cjson.decode(raw)
+    if approval.id == approvalId then
+      if recoveryClaimId == '' then
+        if approval.recoveryClaimId ~= nil then return 2 end
+      elseif approval.recoveryClaimId ~= recoveryClaimId then
+        return 2
+      end
+      redis.call('lset', KEYS[1], i,
+        deleteJsonObjectFields(
+          raw,
+          '["reconciliationPending","recoveryClaimId","recoveryClaimedAt"]'
+        ))
       return 1
     end
   end
@@ -717,6 +1010,8 @@ return 0`;
 
 /** Implement redis backend. */
 export class RedisBackend implements WorkflowBackend {
+  /** The run-update scripts merge context and node-state maps by key. */
+  readonly supportsRunPatchKeyMerge = true;
   private client: RedisAdapter | null = null;
   private connectionPromise: Promise<RedisAdapter> | null = null;
   private config: RedisBackendInternalConfig;
@@ -842,31 +1137,31 @@ export class RedisBackend implements WorkflowBackend {
     // Patches are where warnings actually fire, because creation usually writes
     // only `input` while patches write the accumulated node outputs.
     const context = patch.context !== undefined
-      ? serializeWorkflowContext(patch.context, runId)
+      ? serializeWorkflowJson(patch.context, "context", runId)
       : undefined;
     const fields: Record<string, string> = {};
-    if (Object.hasOwn(patch, "workerId")) fields.workerId = patch.workerId ?? "";
-    if (Object.hasOwn(patch, "output")) {
-      fields.output = patch.output !== undefined ? JSON.stringify(patch.output) : "";
-    }
+    const setOwnedField = (patchKey: keyof WorkflowRunUpdate, fieldKey: string, value: string) => {
+      if (Object.hasOwn(patch, patchKey)) fields[fieldKey] = value;
+    };
+    const setNonEmptyArrayField = (fieldKey: string, value: unknown[] | undefined) => {
+      if (value !== undefined && value.length > 0) fields[fieldKey] = JSON.stringify(value);
+    };
+    setOwnedField("workerId", "workerId", patch.workerId ?? "");
+    setOwnedField(
+      "output",
+      "output",
+      patch.output !== undefined ? JSON.stringify(patch.output) : "",
+    );
     if (patch.nodeStates !== undefined) fields.nodeStates = JSON.stringify(patch.nodeStates);
+    setNonEmptyArrayField("nodeStateDeletes", patch.nodeStateDeletes);
     if (patch.currentNodes !== undefined) fields.currentNodes = JSON.stringify(patch.currentNodes);
     if (context !== undefined) fields.context = context;
-    if (Object.hasOwn(patch, "error")) {
-      fields.error = patch.error ? JSON.stringify(patch.error) : "";
-    }
-    if (Object.hasOwn(patch, "startedAt")) {
-      fields.startedAt = patch.startedAt?.toISOString() ?? "";
-    }
-    if (Object.hasOwn(patch, "heartbeatAt")) {
-      fields.heartbeatAt = patch.heartbeatAt?.toISOString() ?? "";
-    }
-    if (Object.hasOwn(patch, "completedAt")) {
-      fields.completedAt = patch.completedAt?.toISOString() ?? "";
-    }
-    if (Object.hasOwn(patch, "_traceContext")) {
-      fields.traceContext = patch._traceContext ?? "";
-    }
+    setNonEmptyArrayField("contextDeletes", patch.contextDeletes);
+    setOwnedField("error", "error", patch.error ? JSON.stringify(patch.error) : "");
+    setOwnedField("startedAt", "startedAt", patch.startedAt?.toISOString() ?? "");
+    setOwnedField("heartbeatAt", "heartbeatAt", patch.heartbeatAt?.toISOString() ?? "");
+    setOwnedField("completedAt", "completedAt", patch.completedAt?.toISOString() ?? "");
+    setOwnedField("_traceContext", "traceContext", patch._traceContext ?? "");
     return fields;
   }
 
@@ -891,6 +1186,7 @@ export class RedisBackend implements WorkflowBackend {
       requestedAt: approval.requestedAt.toISOString(),
       expiresAt: approval.expiresAt?.toISOString(),
       decidedAt: approval.decidedAt?.toISOString(),
+      recoveryClaimedAt: approval.recoveryClaimedAt?.toISOString(),
     });
   }
 
@@ -1148,11 +1444,33 @@ export class RedisBackend implements WorkflowBackend {
     );
   }
 
+  /**
+   * Replace context and node-state maps with a snapshot, only while status
+   * and (optionally) worker ownership match. Same atomic script as the
+   * conditional patch, with the replace-maps flag set: checkpoint restore
+   * must drop keys written after the snapshot, which the merge retains.
+   */
+  async restoreRunStateIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowStatus[],
+    snapshot: WorkflowRunStateSnapshot,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    return await this.updateRunConditionally(
+      runId,
+      expectedStatuses,
+      snapshot,
+      expectedWorkerId,
+      true,
+    );
+  }
+
   private async updateRunConditionally(
     runId: string,
     expectedStatuses: WorkflowStatus[],
     patch: WorkflowRunUpdate,
     expectedWorkerId?: string,
+    replaceMapFields = false,
   ): Promise<boolean> {
     assertWorkflowRunUpdate(patch);
     const client = await this.ensureClient();
@@ -1170,6 +1488,7 @@ export class RedisBackend implements WorkflowBackend {
         expectedWorkerId ?? "",
         this.runObservationKey(runId),
         String(RUN_OBSERVATION_STREAM_MAX_LENGTH),
+        replaceMapFields ? "1" : "0",
         ...fieldArgs,
       ],
     );
@@ -1325,6 +1644,21 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   async savePendingApproval(runId: string, approval: PersistedPendingApproval): Promise<void> {
+    await this.savePendingApprovalRecord(runId, approval, false);
+  }
+
+  async savePendingApprovalIfAbsent(
+    runId: string,
+    approval: PersistedPendingApproval,
+  ): Promise<boolean> {
+    return await this.savePendingApprovalRecord(runId, approval, true);
+  }
+
+  private async savePendingApprovalRecord(
+    runId: string,
+    approval: PersistedPendingApproval,
+    rejectDuplicate: boolean,
+  ): Promise<boolean> {
     const client = await this.ensureClient();
 
     if (this.config.debug) logger.debug(`[RedisBackend] Saving approval: ${approval.id}`);
@@ -1345,11 +1679,13 @@ export class RedisBackend implements WorkflowBackend {
         String(MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES),
         this.runObservationKey(runId),
         String(RUN_OBSERVATION_STREAM_MAX_LENGTH),
+        rejectDuplicate ? "1" : "0",
       ],
     );
     if (Number(result) === 2) {
       throw this.approvalListFullError(approval.id);
     }
+    return Number(result) !== 3;
   }
 
   private approvalListFullError(approvalId: string): Error {
@@ -1397,6 +1733,7 @@ export class RedisBackend implements WorkflowBackend {
       requestedAt: new Date(data.requestedAt),
       expiresAt: data.expiresAt ? new Date(data.expiresAt) : undefined,
       decidedAt: data.decidedAt ? new Date(data.decidedAt) : undefined,
+      recoveryClaimedAt: data.recoveryClaimedAt ? new Date(data.recoveryClaimedAt) : undefined,
     };
   }
 
@@ -1431,7 +1768,7 @@ export class RedisBackend implements WorkflowBackend {
     const result = await client.eval(
       UPDATE_PENDING_APPROVAL_SCRIPT,
       [this.approvalsKey(runId)],
-      [approvalId, JSON.stringify(patch)],
+      [approvalId, JSON.stringify({ ...patch, id: approvalId })],
     );
     if (Number(result) !== 1) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
@@ -1445,6 +1782,10 @@ export class RedisBackend implements WorkflowBackend {
   ): Promise<boolean> {
     const client = await this.ensureClient();
     const hasComment = decision.comment !== undefined;
+    const hasData = decision.data !== undefined;
+    const decisionData = hasData
+      ? JSON.parse(serializeWorkflowJson(decision.data, "approval decision data", runId))
+      : undefined;
     // Atomic find-by-id + pending-precondition + LSET (see UPDATE_APPROVAL_SCRIPT).
     // decidedAt is computed here so the stored value is deterministic and does
     // not depend on the Redis server clock.
@@ -1453,11 +1794,18 @@ export class RedisBackend implements WorkflowBackend {
       [this.approvalsKey(runId)],
       [
         approvalId,
-        decision.approved ? "approved" : "rejected",
-        decision.approver,
-        new Date().toISOString(),
-        hasComment ? "1" : "0",
-        hasComment ? decision.comment! : "",
+        JSON.stringify({
+          status: decision.approved ? "approved" : "rejected",
+          decidedBy: decision.approver,
+          decidedAt: new Date().toISOString(),
+          reconciliationPending: true,
+          ...(hasComment ? { comment: decision.comment } : {}),
+          ...(hasData ? { decisionData } : {}),
+        }),
+        JSON.stringify([
+          ...(hasComment ? [] : ["comment"]),
+          ...(hasData ? [] : ["decisionData"]),
+        ]),
       ],
     );
     const code = Number(result);
@@ -1466,6 +1814,91 @@ export class RedisBackend implements WorkflowBackend {
     }
     // 1 = applied; 2 = found but already decided (lost race).
     return code === 1;
+  }
+
+  async listApprovalDecisionClaims(
+    runId?: string,
+  ): Promise<Array<{ runId: string; approval: PersistedPendingApproval }>> {
+    const client = await this.ensureClient();
+    const result: Array<{ runId: string; approval: PersistedPendingApproval }> = [];
+    if (runId !== undefined) {
+      for (const approval of await this.getApprovals(runId)) {
+        if (approval.reconciliationPending === true) result.push({ runId, approval });
+      }
+      return result;
+    }
+
+    const approvalsPrefix = `${this.storagePrefix()}approvals:`;
+    const approvalKeys = new Set<string>();
+    let cursor = 0;
+    do {
+      const page = await client.scan(cursor, {
+        MATCH: `${approvalsPrefix}*`,
+        COUNT: APPROVAL_RECOVERY_SCAN_COUNT,
+      });
+      cursor = page.cursor;
+      for (const key of page.keys) approvalKeys.add(key);
+    } while (cursor !== 0);
+
+    for (const key of approvalKeys) {
+      const claimRunId = key.replace(approvalsPrefix, "");
+      for (const approval of await this.getApprovals(claimRunId)) {
+        if (approval.reconciliationPending === true) {
+          result.push({ runId: claimRunId, approval });
+        }
+      }
+    }
+    return result;
+  }
+
+  async reserveApprovalDecisionClaim(
+    runId: string,
+    approvalId: string,
+    recoveryClaimId: string,
+    claimedAt: Date,
+    staleBefore: Date,
+  ): Promise<boolean> {
+    const client = await this.ensureClient();
+    const result = await client.eval(
+      RESERVE_APPROVAL_DECISION_SCRIPT,
+      [this.approvalsKey(runId)],
+      [
+        approvalId,
+        recoveryClaimId,
+        staleBefore.toISOString(),
+        JSON.stringify({
+          recoveryClaimId,
+          recoveryClaimedAt: claimedAt.toISOString(),
+        }),
+      ],
+    );
+    return Number(result) === 1;
+  }
+
+  async releaseApprovalDecisionClaim(
+    runId: string,
+    approvalId: string,
+    recoveryClaimId: string,
+  ): Promise<void> {
+    const client = await this.ensureClient();
+    await client.eval(
+      RELEASE_APPROVAL_DECISION_CLAIM_SCRIPT,
+      [this.approvalsKey(runId)],
+      [approvalId, recoveryClaimId],
+    );
+  }
+
+  async finalizeApprovalDecision(
+    runId: string,
+    approvalId: string,
+    recoveryClaimId?: string,
+  ): Promise<void> {
+    const client = await this.ensureClient();
+    await client.eval(
+      FINALIZE_APPROVAL_DECISION_SCRIPT,
+      [this.approvalsKey(runId)],
+      [approvalId, recoveryClaimId ?? ""],
+    );
   }
 
   async listPendingApprovals(filter?: {

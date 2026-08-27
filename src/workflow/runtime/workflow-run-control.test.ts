@@ -2,7 +2,14 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { MemoryBackend } from "../backends/memory.ts";
-import type { ApprovalDecision, NodeState, WorkflowContext, WorkflowRun } from "../types.ts";
+import type { WorkflowBackend } from "../backends/types.ts";
+import type {
+  ApprovalDecision,
+  NodeState,
+  WaitNodeConfig,
+  WorkflowContext,
+  WorkflowRun,
+} from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import type { RunExecutionConfig } from "../worker/executors/types.ts";
@@ -50,6 +57,29 @@ function waitingResult(
   },
 ): WorkflowRunControlExecuteResult {
   return { waiting: true, waitingNode: "review", context, nodeStates };
+}
+
+/**
+ * What the DAG returns when it found nothing to schedule and every unfinished
+ * node is a wait, or is blocked behind one. That is the shape run control has
+ * to tell apart from a genuine stall by consulting the durable record.
+ */
+function stalledWaitResult(
+  waitNodeId: string,
+  context: WorkflowContext = { input: {} },
+): WorkflowRunControlExecuteResult {
+  return {
+    completed: false,
+    waiting: false,
+    stalledWaitNode: waitNodeId,
+    context,
+    nodeStates: {
+      [waitNodeId]: { nodeId: waitNodeId, status: "running", attempt: 1 },
+      after: { nodeId: "after", status: "pending", attempt: 0 },
+    },
+    error: `Workflow run ${JSON.stringify("stalled-run")} stalled in the root graph; ` +
+      `unfinished nodes: ${JSON.stringify(waitNodeId)} (running), "after" (pending)`,
+  };
 }
 
 async function execute(
@@ -350,6 +380,53 @@ class ReconcileCancelOnPatchBackend extends MemoryBackend {
   }
 }
 
+class CompleteStalledWaitOnPauseBackend extends MemoryBackend {
+  override async updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    const updated = await super.updateRunIfStatus(runId, expectedStatuses, patch);
+    if (updated && patch.status === "waiting" && patch.nodeStates === undefined) {
+      await super.updateRun(runId, {
+        nodeStates: {
+          "await-payment": {
+            nodeId: "await-payment",
+            status: "completed",
+            output: { accepted: true },
+            attempt: 1,
+            completedAt: new Date(),
+          },
+        },
+      });
+    }
+    return updated;
+  }
+}
+
+class CompleteSiblingBeforeNormalPauseBackend extends MemoryBackend {
+  override async updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.status === "waiting") {
+      await super.updateRun(runId, {
+        nodeStates: {
+          sibling: {
+            nodeId: "sibling",
+            status: "completed",
+            output: { delivered: true },
+            attempt: 1,
+            completedAt: new Date(),
+          },
+        },
+      });
+    }
+    return await super.updateRunIfStatus(runId, expectedStatuses, patch);
+  }
+}
+
 class ReconcileOwnerChangesBackend extends MemoryBackend {
   readonly attemptedOwners: string[] = [];
   readonly replacementOwners: string[];
@@ -391,6 +468,57 @@ class ReconcileDeleteOnHydrateBackend extends MemoryBackend {
     if (patch.context?.env) await this.deleteRun(runId);
     return false;
   }
+}
+
+class ConcurrentNodeOutcomeBackend extends MemoryBackend {
+  private pendingOutcomeUpdates = 0;
+  private releaseOutcomeUpdates!: () => void;
+  private readonly outcomeUpdatesReady = new Promise<void>((resolve) => {
+    this.releaseOutcomeUpdates = resolve;
+  });
+
+  override async updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.nodeStates?.first || patch.nodeStates?.second) {
+      this.pendingOutcomeUpdates++;
+      if (this.pendingOutcomeUpdates === 2) this.releaseOutcomeUpdates();
+      await this.outcomeUpdatesReady;
+    }
+    return await super.updateRunIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      patch,
+    );
+  }
+}
+
+/**
+ * A minimal third-party backend with the historical replacement semantics:
+ * `updateRun` overwrites context and nodeStates wholesale, no conditional
+ * update methods exist, and nothing declares `supportsRunPatchKeyMerge`.
+ * Reconciliation must send such a backend complete maps, never one-entry
+ * merge patches.
+ */
+function createReplacementSemanticsBackend(initial: WorkflowRun): {
+  backend: WorkflowBackend;
+  read(): WorkflowRun;
+} {
+  let stored = structuredClone(initial);
+  const backend = {
+    getRun: () => Promise.resolve(structuredClone(stored)),
+    updateRun: (_runId: string, patch: Partial<WorkflowRun>) => {
+      stored = { ...stored, ...patch } as WorkflowRun;
+      return Promise.resolve();
+    },
+    getPendingApprovals: () => Promise.resolve([]),
+    destroy: () => Promise.resolve(),
+  } as unknown as WorkflowBackend;
+  return { backend, read: () => stored };
 }
 
 function withoutSourcePolicy(run: WorkflowRun): WorkflowRun {
@@ -505,7 +633,7 @@ describe("workflow/runtime/workflow-run-control execute", () => {
     assertEquals(persisted?.output, undefined);
   });
 
-  it("releases the waiting lock before callback reconciliation", async () => {
+  it("keeps the waiting lock through persistence and releases it before batch reconciliation", async () => {
     const backend = new WaitingReleaseBackend();
     const run = {
       ...createRun("waiting-release-before-callback"),
@@ -513,7 +641,9 @@ describe("workflow/runtime/workflow-run-control execute", () => {
       workerId: "run-execution:owner",
     };
     await backend.createRun(run);
-    let lockedDuringCallback: boolean | undefined;
+    let lockedDuringPersistence: boolean | undefined;
+    let lockedDuringNotification: boolean | undefined;
+    let lockedDuringBatchComplete: boolean | undefined;
 
     await execute(
       backend,
@@ -521,16 +651,50 @@ describe("workflow/runtime/workflow-run-control execute", () => {
       () => waitingResult(),
       {
         enableLocking: true,
-        onWaiting: async () => {
+        onWaitingPersist: async () => {
           backend.callbackStarted = true;
-          lockedDuringCallback = await backend.isLocked(run.id);
+          lockedDuringPersistence = await backend.isLocked(run.id);
+        },
+        onWaiting: async () => {
+          lockedDuringNotification = await backend.isLocked(run.id);
+        },
+        onWaitingBatchComplete: async () => {
+          lockedDuringBatchComplete = await backend.isLocked(run.id);
         },
       },
     );
 
-    assertEquals(backend.releaseBeforeCallback, true);
-    assertEquals(lockedDuringCallback, false);
+    assertEquals(backend.releaseBeforeCallback, false);
+    assertEquals(lockedDuringPersistence, true);
+    assertEquals(lockedDuringNotification, false);
+    assertEquals(lockedDuringBatchComplete, false);
     assertEquals((await backend.getRun(run.id))?.status, "waiting");
+  });
+
+  it("does not revert a sibling delivered before the normal waiting transition", async () => {
+    const backend = new CompleteSiblingBeforeNormalPauseBackend();
+    const staleNodeStates: Record<string, NodeState> = {
+      review: { nodeId: "review", status: "running", attempt: 1 },
+      sibling: { nodeId: "sibling", status: "running", attempt: 1 },
+    };
+    const run = {
+      ...createRun("normal-pause-preserves-sibling"),
+      status: "running" as const,
+      nodeStates: structuredClone(staleNodeStates),
+    };
+    await backend.createRun(run);
+
+    const outcome = await execute(
+      backend,
+      run,
+      () => waitingResult({ input: {} }, staleNodeStates),
+    );
+
+    assertEquals(outcome.status, "waiting");
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.nodeStates.review?.status, "running");
+    assertEquals(persisted?.nodeStates.sibling?.status, "completed");
+    assertEquals(persisted?.nodeStates.sibling?.output, { delivered: true });
   });
 
   it("keeps cancellation terminal over completion and failure", async () => {
@@ -642,6 +806,306 @@ describe("workflow/runtime/workflow-run-control execute", () => {
       env: { PUBLIC_VALUE: "kept" },
       finish: { ok: true },
     });
+  });
+
+  it("re-parks a stalled wait node that still holds a durable event-wait record", async () => {
+    const backend = new MemoryBackend();
+    const run = { ...createRun("stalled-live-event-wait"), status: "running" as const };
+    await backend.createRun(run);
+    await backend.savePendingEventWait(run.id, {
+      id: "evw-live",
+      runId: run.id,
+      nodeId: "await-payment",
+      eventName: "payment.confirmed",
+      waitKind: "event",
+      requestedAt: new Date(),
+      status: "pending",
+    });
+    let announced = 0;
+
+    const outcome = await execute(backend, run, () => stalledWaitResult("await-payment"), {
+      onWaiting: () => {
+        announced++;
+        return Promise.resolve();
+      },
+    });
+
+    assertEquals(
+      outcome.status,
+      "waiting",
+      "a graph parked behind a live event wait must go back to waiting, not fail",
+    );
+    const persisted = await backend.getRun(run.id);
+    assertEquals(
+      persisted?.status,
+      "waiting",
+      "the persisted run must be waiting while its event wait is still pending",
+    );
+    assertEquals(
+      persisted?.error,
+      undefined,
+      "re-parking must not leave a stalled-graph error on a healthy run",
+    );
+    assertEquals(
+      announced,
+      0,
+      "the wait was announced when the run first parked; announcing it again would " +
+        "raise a duplicate event wait for the same node",
+    );
+  });
+
+  it("reconstructs every missing wait after a live sibling in the stalled batch", async () => {
+    const backend = new MemoryBackend();
+    const run = {
+      ...createRun("stalled-wait-batch"),
+      status: "running" as const,
+      nodeStates: {
+        first: { nodeId: "first", status: "running" as const, attempt: 1 },
+        second: { nodeId: "second", status: "running" as const, attempt: 1 },
+      },
+      currentNodes: ["first", "second"],
+    };
+    await backend.createRun(run);
+    await backend.savePendingEventWait(run.id, {
+      id: "evw-first-live",
+      runId: run.id,
+      nodeId: "first",
+      eventName: "first.ready",
+      waitKind: "event",
+      requestedAt: new Date(),
+      status: "pending",
+    });
+    const secondConfig: WaitNodeConfig = {
+      type: "wait",
+      waitType: "event",
+      eventName: "second.ready",
+      timeout: "1h",
+    };
+    const announced: Array<{ nodeId: string; config?: WaitNodeConfig }> = [];
+    let completedBatches = 0;
+
+    const result = stalledWaitResult("first");
+    result.stalledWaitNodes = [
+      {
+        nodeId: "first",
+        waitConfig: { type: "wait", waitType: "event", eventName: "first.ready" },
+      },
+      { nodeId: "second", waitConfig: secondConfig },
+    ];
+    result.nodeStates = run.nodeStates;
+    const outcome = await execute(backend, run, () => result, {
+      onWaitingPersist: async (_run, nodeId, config) => {
+        announced.push({ nodeId, config });
+        await backend.savePendingEventWait(run.id, {
+          id: `evw-${nodeId}-reconstructed`,
+          runId: run.id,
+          nodeId,
+          eventName: config?.eventName ?? "unknown",
+          waitKind: "event",
+          requestedAt: new Date(),
+          status: "pending",
+        });
+      },
+      onWaitingBatchComplete: () => {
+        completedBatches++;
+        return Promise.resolve();
+      },
+    });
+
+    assertEquals(outcome.status, "waiting");
+    assertEquals(announced, [{ nodeId: "second", config: secondConfig }]);
+    assertEquals(completedBatches, 1);
+    assertEquals(
+      (await backend.getPendingEventWaits(run.id)).map((wait) => wait.nodeId),
+      ["first", "second"],
+    );
+  });
+
+  it("re-parks a stalled wait node that still holds a durable approval record", async () => {
+    const backend = new MemoryBackend();
+    const run = { ...createRun("stalled-live-approval"), status: "running" as const };
+    await backend.createRun(run);
+    await backend.savePendingApproval(run.id, {
+      id: "apr-live",
+      nodeId: "review",
+      message: "Please review",
+      requestedAt: new Date(),
+      status: "pending",
+    });
+
+    const outcome = await execute(backend, run, () => stalledWaitResult("review"));
+
+    assertEquals(
+      outcome.status,
+      "waiting",
+      "a graph parked behind a live approval must go back to waiting, not fail",
+    );
+    assertEquals((await backend.getRun(run.id))?.status, "waiting");
+  });
+
+  it("retains a stalled approval node while its decision is reconciling", async () => {
+    const backend = new MemoryBackend();
+    const run = { ...createRun("stalled-decided-approval"), status: "running" as const };
+    await backend.createRun(run);
+    await backend.savePendingApproval(run.id, {
+      id: "apr-decided",
+      nodeId: "review",
+      message: "Please review",
+      requestedAt: new Date(),
+      status: "pending",
+    });
+    await backend.updateApproval(run.id, "apr-decided", {
+      approved: true,
+      approver: "reviewer",
+    });
+
+    const outcome = await execute(backend, run, () => stalledWaitResult("review"));
+
+    assertEquals(
+      outcome.status,
+      "waiting",
+      "a decision claim reserves its node until reconciliation finishes",
+    );
+  });
+
+  it("retains a stalled wait node while its delivered event is reconciling", async () => {
+    const backend = new MemoryBackend();
+    const run = { ...createRun("stalled-resolved-event-wait"), status: "running" as const };
+    await backend.createRun(run);
+    await backend.savePendingEventWait(run.id, {
+      id: "evw-resolved",
+      runId: run.id,
+      nodeId: "await-payment",
+      eventName: "payment.confirmed",
+      waitKind: "event",
+      requestedAt: new Date(),
+      status: "pending",
+    });
+    await backend.appendRunEvent(run.id, {
+      id: "evt-reconciling",
+      eventName: "payment.confirmed",
+      payload: {},
+      publishedAt: new Date(),
+    });
+    assertExists(
+      await backend.claimRunEventForWait(
+        run.id,
+        "evw-resolved",
+        "payment.confirmed",
+      ),
+    );
+
+    const outcome = await execute(backend, run, () => stalledWaitResult("await-payment"));
+
+    assertEquals(
+      outcome.status,
+      "waiting",
+      "a delivery claim reserves its node until reconciliation finishes",
+    );
+  });
+
+  it("re-announces a wait after a transient durable-record read failure", async () => {
+    class RejectFirstWaitClaimReadBackend extends MemoryBackend {
+      rejected = false;
+
+      override listApprovalDecisionClaims(runId?: string) {
+        if (!this.rejected) {
+          this.rejected = true;
+          return Promise.reject(new Error("transient wait claim read failure"));
+        }
+        return super.listApprovalDecisionClaims(runId);
+      }
+    }
+
+    const backend = new RejectFirstWaitClaimReadBackend();
+    const run = {
+      ...createRun("stalled-read-failure"),
+      status: "running" as const,
+      nodeStates: {
+        "await-payment": {
+          nodeId: "await-payment",
+          status: "running" as const,
+          attempt: 1,
+        },
+      },
+      currentNodes: ["await-payment"],
+    };
+    await backend.createRun(run);
+    let announced = 0;
+
+    const outcome = await execute(backend, run, () => stalledWaitResult("await-payment"), {
+      onWaitingPersist: async () => {
+        announced++;
+        await backend.savePendingEventWait(run.id, {
+          id: "evw-reconstructed",
+          runId: run.id,
+          nodeId: "await-payment",
+          eventName: "payment.confirmed",
+          waitKind: "event",
+          requestedAt: new Date(),
+          status: "pending",
+        });
+      },
+    });
+
+    assertEquals(outcome.status, "waiting");
+    assertEquals(announced, 1);
+    assertEquals((await backend.getRun(run.id))?.status, "waiting");
+  });
+
+  it("preserves a stalled wait node completed concurrently after the status-only pause", async () => {
+    const backend = new CompleteStalledWaitOnPauseBackend();
+    const run = { ...createRun("stalled-concurrent-completion"), status: "running" as const };
+    await backend.createRun(run);
+
+    const outcome = await execute(backend, run, () => stalledWaitResult("await-payment"));
+
+    assertEquals(outcome.status, "waiting");
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.status, "waiting");
+    assertEquals(persisted?.nodeStates["await-payment"]?.status, "completed");
+    assertEquals(persisted?.error, undefined);
+  });
+
+  it("fails a stalled wait node that never had a durable record", async () => {
+    const backend = new MemoryBackend();
+    const run = { ...createRun("stalled-no-record"), status: "running" as const };
+    await backend.createRun(run);
+
+    const outcome = await execute(backend, run, () => stalledWaitResult("await-payment"));
+
+    assertEquals(
+      outcome.status,
+      "failed",
+      "nothing durable is parked on this node, so the run must fail rather than re-park",
+    );
+    assertEquals(
+      (await backend.getRun(run.id))?.error?.message.includes("stalled in the root graph"),
+      true,
+    );
+  });
+
+  it("fails a stalled wait node whose live record belongs to a different node", async () => {
+    const backend = new MemoryBackend();
+    const run = { ...createRun("stalled-other-node-record"), status: "running" as const };
+    await backend.createRun(run);
+    await backend.savePendingEventWait(run.id, {
+      id: "evw-other-node",
+      runId: run.id,
+      nodeId: "await-shipping",
+      eventName: "shipping.confirmed",
+      waitKind: "event",
+      requestedAt: new Date(),
+      status: "pending",
+    });
+
+    const outcome = await execute(backend, run, () => stalledWaitResult("await-payment"));
+
+    assertEquals(
+      outcome.status,
+      "failed",
+      "a wait live on another node says nothing about the node the graph stalled on",
+    );
   });
 });
 
@@ -924,6 +1388,244 @@ describe("workflow/runtime/workflow-run-control claim", () => {
 });
 
 describe("workflow/runtime/workflow-run-control reconcile", () => {
+  it("merges concurrent node outcomes without reverting a sibling", async () => {
+    const backend = new ConcurrentNodeOutcomeBackend();
+    const run: WorkflowRun = {
+      ...createRun("reconcile-concurrent-outcomes"),
+      status: "waiting",
+      workerId: "run-execution:owner",
+      nodeStates: {
+        first: { nodeId: "first", status: "running", attempt: 1 },
+        second: { nodeId: "second", status: "running", attempt: 1 },
+      },
+    };
+    await backend.createRun(run);
+
+    await Promise.all([
+      reconcileWorkflowRunControl({
+        backend,
+        operation: {
+          type: "event-delivery",
+          runId: run.id,
+          waitId: "wait-first",
+          nodeId: "first",
+          eventName: "first.completed",
+          waitKind: "event",
+          payload: { value: 1 },
+        },
+      }),
+      reconcileWorkflowRunControl({
+        backend,
+        operation: {
+          type: "event-delivery",
+          runId: run.id,
+          waitId: "wait-second",
+          nodeId: "second",
+          eventName: "second.completed",
+          waitKind: "event",
+          payload: { value: 2 },
+        },
+      }),
+    ]);
+
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.nodeStates.first?.status, "completed");
+    assertEquals(persisted?.nodeStates.second?.status, "completed");
+    assertEquals((persisted?.context.first as { payload?: unknown })?.payload, { value: 1 });
+    assertEquals((persisted?.context.second as { payload?: unknown })?.payload, { value: 2 });
+  });
+
+  it("clears a stale node error when event delivery completes it", async () => {
+    const backend = new MemoryBackend();
+    const run = {
+      ...createRun("reconcile-event-clears-error"),
+      status: "waiting" as const,
+      nodeStates: {
+        gate: {
+          nodeId: "gate",
+          status: "failed" as const,
+          error: "earlier attempt failed",
+          attempt: 2,
+        },
+      },
+    };
+    await backend.createRun(run);
+
+    await reconcileWorkflowRunControl({
+      backend,
+      operation: {
+        type: "event-delivery",
+        runId: run.id,
+        waitId: "wait-gate",
+        nodeId: "gate",
+        eventName: "gate.ready",
+        waitKind: "event",
+      },
+    });
+
+    const state = (await backend.getRun(run.id))?.nodeStates.gate;
+    assertEquals(state?.status, "completed");
+    assertEquals(state?.error, undefined);
+    assertEquals(state?.attempt, 2);
+  });
+
+  it("does not apply an event delivery from a discarded wait execution", async () => {
+    const backend = new MemoryBackend();
+    const run = {
+      ...createRun("reconcile-stale-event-wait"),
+      status: "waiting" as const,
+      nodeStates: {
+        gate: {
+          nodeId: "gate",
+          status: "running" as const,
+          attempt: 1,
+          _waitInstanceId: "wait-current",
+        },
+      },
+    };
+    await backend.createRun(run);
+
+    const outcome = await reconcileWorkflowRunControl({
+      backend,
+      operation: {
+        type: "event-delivery",
+        runId: run.id,
+        waitId: "wait-stale",
+        nodeId: "gate",
+        eventName: "gate.ready",
+        waitKind: "event",
+        waitInstanceId: "wait-stale",
+      },
+    });
+
+    assertEquals(outcome.status, "stale-wait");
+    assertEquals((await backend.getRun(run.id))?.nodeStates.gate?.status, "running");
+    assertEquals((await backend.getRun(run.id))?.context.gate, undefined);
+  });
+
+  it("sends complete maps to a backend without declared key-merge support", async () => {
+    // The historical third-party contract: updateRun overwrites context and
+    // nodeStates wholesale, and nothing declares supportsRunPatchKeyMerge.
+    // A single-entry patch would erase every other node's persisted outcome.
+    const { backend, read } = createReplacementSemanticsBackend({
+      ...createRun("reconcile-replacement-approval"),
+      status: "waiting",
+      context: { input: {}, earlier: { done: true } },
+      nodeStates: {
+        earlier: { nodeId: "earlier", status: "completed", attempt: 1 },
+        review: { nodeId: "review", status: "running", attempt: 1 },
+      },
+    });
+
+    const outcome = await reconcileWorkflowRunControl({
+      backend,
+      operation: {
+        type: "approval-decision",
+        runId: "reconcile-replacement-approval",
+        approvalId: "approval-replacement",
+        nodeId: "review",
+        decision: { approved: true, approver: "reviewer" },
+        decidedAt: new Date("2026-01-01T00:00:00.000Z"),
+      },
+    });
+
+    assertEquals(outcome.status, "reconciled");
+    assertEquals(read().nodeStates.review?.status, "completed");
+    assertEquals(
+      read().nodeStates.earlier,
+      { nodeId: "earlier", status: "completed", attempt: 1 },
+      "deciding one approval must not erase a sibling node's persisted state " +
+        "on a backend that replaces the map wholesale",
+    );
+    assertEquals(
+      read().context.earlier,
+      { done: true },
+      "deciding one approval must not erase prior workflow outputs on a " +
+        "replacement-semantics backend",
+    );
+  });
+
+  it("refuses concurrent approval outcomes on a replacement-semantics backend", async () => {
+    const { backend, read } = createReplacementSemanticsBackend({
+      ...createRun("reconcile-replacement-concurrent-approvals"),
+      status: "waiting",
+      context: { input: {} },
+      nodeStates: {
+        first: { nodeId: "first", status: "running", attempt: 1 },
+        second: { nodeId: "second", status: "running", attempt: 1 },
+      },
+    });
+    backend.getPendingApprovals = () =>
+      Promise.resolve([{
+        id: "approval-second",
+        nodeId: "second",
+        message: "Approve second",
+        requestedAt: new Date(),
+        status: "pending",
+      }]);
+
+    await assertRejects(
+      () =>
+        reconcileWorkflowRunControl({
+          backend,
+          operation: {
+            type: "approval-decision",
+            runId: "reconcile-replacement-concurrent-approvals",
+            approvalId: "approval-first",
+            nodeId: "first",
+            decision: { approved: true, approver: "reviewer" },
+          },
+        }),
+      Error,
+      "key-merge run patches",
+    );
+
+    assertEquals(read().nodeStates.first?.status, "running");
+    assertEquals(read().nodeStates.second?.status, "running");
+    assertEquals(read().context.first, undefined);
+  });
+
+  it("rejects event delivery on a backend without key-merge support", async () => {
+    const startedAt = new Date("2026-01-01T00:00:00.000Z");
+    const waitInput = { eventName: "payment.confirmed", timeout: 60_000 };
+    const { backend, read } = createReplacementSemanticsBackend({
+      ...createRun("reconcile-replacement-event"),
+      status: "waiting",
+      context: { input: {}, earlier: { done: true } },
+      nodeStates: {
+        earlier: { nodeId: "earlier", status: "completed", attempt: 1 },
+        "await-payment": {
+          nodeId: "await-payment",
+          status: "running",
+          input: waitInput,
+          attempt: 3,
+          startedAt,
+        },
+      },
+    });
+
+    await assertRejects(
+      () =>
+        reconcileWorkflowRunControl({
+          backend,
+          operation: {
+            type: "event-delivery",
+            runId: "reconcile-replacement-event",
+            waitId: "wait-replacement",
+            nodeId: "await-payment",
+            eventName: "payment.confirmed",
+            waitKind: "event",
+            payload: { amount: 42 },
+          },
+        }),
+      Error,
+      "key-merge",
+    );
+    assertEquals(read().nodeStates["await-payment"]?.status, "running");
+    assertEquals(read().nodeStates["await-payment"]?.input, waitInput);
+    assertEquals(read().nodeStates["await-payment"]?.startedAt, startedAt);
+  });
+
   it("omits an absent approval comment while preserving structured data", async () => {
     const backend = new MemoryBackend();
     const run = {

@@ -27,7 +27,13 @@ export function getRunExecutionWorkerId(): string | undefined {
   return executionId ? `run-execution:${executionId}` : undefined;
 }
 
-/** Create an isolated executor with durable approval handling and no background timer. */
+/**
+ * Create an isolated executor with durable wait handling and no background timer.
+ *
+ * This executor serves one run and exits, so neither sweep belongs to it: both
+ * exist to reclaim waits whose process is gone, which is the long-lived
+ * client's job.
+ */
 export function createIsolatedWorkflowExecutor(
   backend: WorkflowBackend,
   debug = false,
@@ -37,7 +43,8 @@ export function createIsolatedWorkflowExecutor(
     backend,
     debug,
     executor: stepExecutor ? { stepExecutor } : undefined,
-    approval: { expirationCheckInterval: 0 },
+    approval: { expirationCheckInterval: 0, decisionClaimCheckInterval: 0 },
+    eventWait: { expirationCheckInterval: 0, claimRecoveryCheckInterval: 0 },
   });
   return client.getExecutor();
 }

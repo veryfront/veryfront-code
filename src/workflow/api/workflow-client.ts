@@ -8,6 +8,7 @@ import { logger as baseLogger } from "#veryfront/utils";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type {
   PendingApproval,
+  PendingEventWait,
   RunFilter,
   WaitNodeConfig,
   WorkflowDefinition,
@@ -15,7 +16,11 @@ import type {
   WorkflowRun,
   WorkflowStatus,
 } from "../types.ts";
-import { hasRunObservationSupport, type WorkflowBackend } from "../backends/types.ts";
+import {
+  hasEventWaitSupport,
+  hasRunObservationSupport,
+  type WorkflowBackend,
+} from "../backends/types.ts";
 import { deriveWorkflowRunEventObservation, type WorkflowRunEventObservation } from "../events.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import {
@@ -24,17 +29,34 @@ import {
   type WorkflowHandle,
 } from "../executor/workflow-executor.ts";
 import { ApprovalManager, type ApprovalManagerConfig } from "../runtime/approval-manager.ts";
+import {
+  EventWaitManager,
+  type EventWaitManagerConfig,
+  type PublishEventOutcome,
+} from "../runtime/event-wait-manager.ts";
+import { captureWorkflowDefinition } from "../executor/workflow-definition-snapshot.ts";
+
+export type { PublishEventOutcome };
 import type { Workflow } from "../dsl/workflow.ts";
 import {
   getPendingApprovalResponseSchemaId,
   projectRunPendingApprovals,
 } from "../runtime/pending-approval-metadata.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 const logger = baseLogger.component("workflow-client");
 const waitResponseSchemaId = Symbol("veryfront.workflow.waitResponseSchemaId");
 
 type IndexedWaitNodeConfig = WaitNodeConfig & {
   readonly [waitResponseSchemaId]?: string;
+};
+
+type PersistedWaitInput = {
+  type?: string;
+  eventName?: string;
+  timeout?: string | number;
+  message?: string;
+  payload?: unknown;
 };
 
 function withWaitResponseSchemaId(
@@ -60,6 +82,8 @@ export interface WorkflowClientConfig {
   executor?: Partial<WorkflowExecutorConfig>;
   /** Approval manager configuration */
   approval?: Partial<ApprovalManagerConfig>;
+  /** Event wait manager configuration */
+  eventWait?: Partial<Omit<EventWaitManagerConfig, "backend" | "executor">>;
   /** Enable debug logging */
   debug?: boolean;
 }
@@ -74,6 +98,7 @@ export class WorkflowClient {
   private backend: WorkflowBackend;
   private executor: WorkflowExecutor;
   private approvalManager: ApprovalManager;
+  private eventWaitManager: EventWaitManager;
   private debug: boolean;
   /** Wait-node configs from registered definitions, keyed "<workflowId>::<nodeId>". */
   private waitNodeConfigs = new Map<string, WaitNodeConfig>();
@@ -83,8 +108,18 @@ export class WorkflowClient {
   constructor(config: WorkflowClientConfig = {}) {
     this.debug = config.debug ?? false;
     this.backend = config.backend ?? new MemoryBackend({ debug: this.debug });
+    if (config.executor?.enableLocking === false && hasEventWaitSupport(this.backend)) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          "WorkflowClient executor locking cannot be disabled when the backend supports durable event waits",
+      });
+    }
 
     const userOnWaiting = config.executor?.onWaiting;
+    const userOnWaitingPersist = config.executor?.onWaitingPersist;
+    const userOnLiveWaiting = config.executor?.onLiveWaiting;
+    const userOnWaitingBatchComplete = config.executor?.onWaitingBatchComplete;
+    const userOnEventWaitResolved = config.executor?.onEventWaitResolved;
     const userResponseSchemaResolver = config.approval?.responseSchemaResolver;
     const userInternalResponseSchemaResolver = config.approval?.internalResponseSchemaResolver;
 
@@ -92,60 +127,48 @@ export class WorkflowClient {
       backend: this.backend,
       debug: this.debug,
       ...config.executor,
-      onWaiting: async (run, nodeId, activeWaitConfig) => {
-        const input = run.nodeStates[nodeId]?.input as
-          | { type?: string; message?: string; payload?: unknown }
-          | undefined;
+      onWaitingPersist: async (run, nodeId, activeWaitConfig) => {
+        const input = run.nodeStates[nodeId]?.input as PersistedWaitInput | undefined;
 
         if (!input) {
           logger.debug("No wait config found for node", { nodeId });
-          await userOnWaiting?.(run, nodeId, activeWaitConfig);
+          await userOnWaitingPersist?.(run, nodeId, activeWaitConfig);
           return;
         }
 
-        if (input.type !== "approval") {
-          await userOnWaiting?.(run, nodeId, activeWaitConfig);
-          return;
+        if (input.type === "event") {
+          await this.createEventWaitFromPersistedInput(run, nodeId, input, activeWaitConfig);
+        } else if (input.type === "approval") {
+          await this.createApprovalFromPersistedInput(run, nodeId, input, activeWaitConfig);
         }
 
-        // Node state persists only the resolved message and payload. Carry the
-        // exact runtime config across the pause boundary so nested nodes that
-        // reuse an id and function-generated nodes retain their own policy.
-        // The registered definition remains a compatibility fallback for an
-        // execution result produced without the runtime config.
-        const registered = this.waitNodeConfigs.get(`${run.workflowId}::${nodeId}`);
-        const configured = activeWaitConfig ?? registered;
-        const waitConfig: WaitNodeConfig = {
-          type: "wait" as const,
-          waitType: "approval" as const,
-          message: input.message,
-          payload: input.payload,
-          ...(configured?.timeout !== undefined ? { timeout: configured.timeout } : {}),
-          ...(configured?.approvers !== undefined ? { approvers: configured.approvers } : {}),
-          ...(configured?.responseSchema !== undefined
-            ? { responseSchema: configured.responseSchema }
-            : {}),
-        };
-
-        try {
-          const responseSchemaId = configured?.responseSchema
-            ? getWaitResponseSchemaId(configured)
-            : undefined;
-          await this.approvalManager.createApproval(
-            run,
-            nodeId,
-            waitConfig,
-            run.context,
-            responseSchemaId === undefined ? undefined : { responseSchemaId },
-          );
-          logger.debug("Created approval for node", { nodeId });
-        } catch (error) {
-          logger.error("Failed to create approval", error);
-          throw error;
+        await userOnWaitingPersist?.(run, nodeId, activeWaitConfig);
+      },
+      onWaiting: async (run, nodeId, activeWaitConfig) => {
+        if ((run.nodeStates[nodeId]?.input as { type?: string } | undefined)?.type === "approval") {
+          await this.approvalManager.notifyPendingApproval(run, nodeId);
         }
-
         await userOnWaiting?.(run, nodeId, activeWaitConfig);
       },
+      onLiveWaiting: async (run, nodeId, activeWaitConfig) => {
+        await this.eventWaitManager.rearmLiveWaitExpiry(run, nodeId);
+        await userOnLiveWaiting?.(run, nodeId, activeWaitConfig);
+      },
+      onWaitingBatchComplete: async (run) => {
+        await this.eventWaitManager.drainPendingEvents(run.id);
+        await userOnWaitingBatchComplete?.(run);
+      },
+      onEventWaitResolved: async (runId, waitId) => {
+        this.eventWaitManager.clearWaitExpiry(waitId);
+        await userOnEventWaitResolved?.(runId, waitId);
+      },
+    });
+
+    this.eventWaitManager = new EventWaitManager({
+      backend: this.backend,
+      executor: this.executor,
+      debug: this.debug,
+      ...config.eventWait,
     });
 
     this.approvalManager = new ApprovalManager({
@@ -172,11 +195,82 @@ export class WorkflowClient {
     });
   }
 
+  private async createEventWaitFromPersistedInput(
+    run: WorkflowRun,
+    nodeId: string,
+    input: PersistedWaitInput,
+    activeWaitConfig: WaitNodeConfig | undefined,
+  ): Promise<void> {
+    // The node input is the durable identity this execution already promised to
+    // wait on. Runtime and registered definitions are fallbacks for snapshots
+    // that did not persist an event name.
+    const registeredEventConfig = this.waitNodeConfigs.get(`${run.workflowId}::${nodeId}`);
+    const persistedEventConfig: WaitNodeConfig | undefined = input.eventName === undefined
+      ? undefined
+      : {
+        type: "wait",
+        waitType: "event",
+        eventName: input.eventName,
+        ...(input.timeout === undefined ? {} : { timeout: input.timeout }),
+      };
+    const eventConfig = [persistedEventConfig, activeWaitConfig, registeredEventConfig]
+      .find((candidate) => candidate?.waitType === "event");
+    if (!eventConfig) {
+      logger.warn("No event wait config found for node", { runId: run.id, nodeId });
+      return;
+    }
+    try {
+      await this.eventWaitManager.createEventWait(run, nodeId, eventConfig);
+      logger.debug("Created event wait for node", { nodeId });
+    } catch (error) {
+      logger.error("Failed to create event wait", error);
+      throw error;
+    }
+  }
+
+  private async createApprovalFromPersistedInput(
+    run: WorkflowRun,
+    nodeId: string,
+    input: PersistedWaitInput,
+    activeWaitConfig: WaitNodeConfig | undefined,
+  ): Promise<void> {
+    const registered = this.waitNodeConfigs.get(`${run.workflowId}::${nodeId}`);
+    const configured = activeWaitConfig ?? registered;
+    const waitConfig: WaitNodeConfig = {
+      type: "wait" as const,
+      waitType: "approval" as const,
+      message: input.message,
+      payload: input.payload,
+      ...(configured?.timeout !== undefined ? { timeout: configured.timeout } : {}),
+      ...(configured?.approvers !== undefined ? { approvers: configured.approvers } : {}),
+      ...(configured?.responseSchema !== undefined
+        ? { responseSchema: configured.responseSchema }
+        : {}),
+    };
+    const responseSchemaId = configured?.responseSchema
+      ? getWaitResponseSchemaId(configured)
+      : undefined;
+    try {
+      await this.approvalManager.createApproval(
+        run,
+        nodeId,
+        waitConfig,
+        run.context,
+        responseSchemaId === undefined ? { notify: false } : { responseSchemaId, notify: false },
+      );
+      logger.debug("Created approval for node", { nodeId });
+    } catch (error) {
+      logger.error("Failed to create approval", error);
+      throw error;
+    }
+  }
+
   register(workflow: Workflow | WorkflowDefinition): void {
     const definition = "definition" in workflow ? workflow.definition : workflow;
-    const indexedDefinition = this.indexWaitNodeConfigs(definition);
+    const capturedDefinition = captureWorkflowDefinition(definition);
+    const indexedDefinition = this.indexWaitNodeConfigs(capturedDefinition);
     this.executor.register(indexedDefinition);
-    logger.debug("Registered workflow", { workflowId: definition.id });
+    logger.debug("Registered workflow", { workflowId: capturedDefinition.id });
   }
 
   /**
@@ -377,6 +471,44 @@ export class WorkflowClient {
     return await this.approvalManager.reject(runId, approvalId, approver, comment, data);
   }
 
+  /**
+   * Deliver an event to one run, releasing any `waitForEvent` node parked on
+   * that name.
+   *
+   * The event is buffered durably for the run first, so publishing before the
+   * node parks is safe: the wait consumes it as soon as it exists. The outcome
+   * says which of the four things happened, because "no wait was released"
+   * covers cases a caller has to react to differently: `"delivered"`,
+   * `"buffered"`, `"run-terminal"` (the run is over and the event was
+   * discarded), or `"delivery-failed"` (a wait matched, delivery failed, and
+   * both were rolled back so `retryEventDelivery` can retry the same envelope
+   * without appending a duplicate).
+   *
+   * Rejects when the run's mailbox is full of events no wait has claimed, in
+   * preference to dropping one of them.
+   */
+  publishEvent(
+    runId: string,
+    eventName: string,
+    payload?: unknown,
+  ): Promise<PublishEventOutcome> {
+    return this.eventWaitManager.publishEvent(runId, eventName, payload);
+  }
+
+  /**
+   * Retry the oldest buffered event with this name after `publishEvent`
+   * returned `"delivery-failed"`, without appending a second envelope.
+   * Resolves with whether that exact buffered envelope was delivered.
+   */
+  retryEventDelivery(runId: string, eventName: string): Promise<boolean> {
+    return this.eventWaitManager.retryEventDelivery(runId, eventName);
+  }
+
+  /** Read the event waits a run is currently parked on. */
+  getPendingEventWaits(runId: string): Promise<PendingEventWait[]> {
+    return this.eventWaitManager.getPendingEventWaits(runId);
+  }
+
   listAllPendingApprovals(filter?: {
     workflowId?: string;
     approver?: string;
@@ -414,8 +546,13 @@ export class WorkflowClient {
     return this.approvalManager;
   }
 
+  getEventWaitManager(): EventWaitManager {
+    return this.eventWaitManager;
+  }
+
   async destroy(): Promise<void> {
     this.approvalManager.stop();
+    this.eventWaitManager.stop();
     await this.backend.destroy();
     logger.debug("Destroyed");
   }

@@ -16,10 +16,15 @@ import type {
 import {
   assertWorkflowRunUpdate,
   type BackendConfig,
+  isSameWaitNodeExecution,
   type PersistedPendingApproval,
+  type PersistedPendingEventWait,
+  type RunEventDeliveryClaim,
+  type RunEventEnvelope,
   type WorkflowBackend,
   type WorkflowRunObservation,
   type WorkflowRunObservedState,
+  type WorkflowRunStateSnapshot,
   type WorkflowRunUpdate,
 } from "./types.ts";
 import { requeueRun } from "./shared/requeue-run.ts";
@@ -28,6 +33,13 @@ import {
   deleteOldestCheckpointOccurrences,
 } from "./checkpoint-retention.ts";
 import { appendRetainedPendingApproval } from "./approval-retention.ts";
+import {
+  appendRetainedPendingEventWait,
+  appendRetainedRunEvent,
+  restoreRetainedRunEvent,
+  takeRetainedRunEvent,
+} from "./event-wait-retention.ts";
+import { MAX_WORKFLOW_RUN_EVENT_MAILBOXES } from "../limits.ts";
 import { ORCHESTRATION_ERROR, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 import { requireWorkflowSourceIntegrationPolicy } from "../source-integration-policy.ts";
 
@@ -110,9 +122,15 @@ interface MemoryRunObserver {
 
 /** Implement memory backend. */
 export class MemoryBackend implements WorkflowBackend {
+  /** updateRun patches merge context and node-state maps by key. */
+  readonly supportsRunPatchKeyMerge = true;
   private runs = new Map<string, WorkflowRun>();
   private checkpoints = new Map<string, Checkpoint[]>();
   private approvals = new Map<string, PersistedPendingApproval[]>();
+  private eventWaits = new Map<string, PersistedPendingEventWait[]>();
+  private runEvents = new Map<string, RunEventEnvelope[]>();
+  private nextRunEventPublicationOrder = 0;
+  private runEventClaims = new Map<string, Map<string, RunEventDeliveryClaim>>();
   private queue: WorkflowQueueItem[] = [];
   private locks = new Map<string, { lockId: string; expiresAt: number }>();
   private stalledClaims = new Map<string, { workerId: string; expiresAt: number }>();
@@ -172,11 +190,16 @@ export class MemoryBackend implements WorkflowBackend {
 
     logger.debug(`Updating run: ${runId}`, patch);
 
+    const { contextDeletes = [], nodeStateDeletes = [], ...storedPatch } = patch;
+    const context = { ...run.context, ...patch.context };
+    for (const key of contextDeletes) delete context[key];
+    const nodeStates = { ...run.nodeStates, ...patch.nodeStates };
+    for (const key of nodeStateDeletes) delete nodeStates[key];
     const updated: WorkflowRun = {
       ...run,
-      ...patch,
-      nodeStates: { ...run.nodeStates, ...patch.nodeStates },
-      context: { ...run.context, ...patch.context },
+      ...storedPatch,
+      nodeStates,
+      context,
     };
 
     this.runs.set(runId, updated);
@@ -185,6 +208,14 @@ export class MemoryBackend implements WorkflowBackend {
     // Terminal states should drop any stalled claim lease.
     if (patch.status && patch.status !== "running") {
       this.stalledClaims.delete(runId);
+    }
+
+    // Completed and cancelled runs can never consume mail again. Failed runs
+    // are retryable, so their buffered events must survive for the retried DAG.
+    if (patch.status === "completed" || patch.status === "cancelled") {
+      if (patch.status === "completed") this.persistRunEventDeliveryReceipts(runId);
+      this.runEvents.delete(runId);
+      this.runEventClaims.delete(runId);
     }
 
     return Promise.resolve();
@@ -223,11 +254,55 @@ export class MemoryBackend implements WorkflowBackend {
     return this.updateRun(runId, patch).then(() => true);
   }
 
+  restoreRunStateIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    snapshot: WorkflowRunStateSnapshot,
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    const run = this.runs.get(runId);
+    if (!run) {
+      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
+    if (!expectedStatuses.includes(run.status)) return Promise.resolve(false);
+    if (expectedWorkerId !== undefined && run.workerId !== expectedWorkerId) {
+      return Promise.resolve(false);
+    }
+
+    try {
+      assertWorkflowRunUpdate(snapshot);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+
+    logger.debug(`Restoring run state snapshot: ${runId}`);
+
+    // Replacement, not the per-key merge updateRun applies: keys written after
+    // the snapshot must not survive a checkpoint restore, or nodes completed
+    // after the checkpoint stay completed and are skipped on replay.
+    const updated: WorkflowRun = { ...run, ...snapshot };
+    this.runs.set(runId, updated);
+    this.publishRunObservation(runId, updated);
+
+    if (snapshot.status && snapshot.status !== "running") {
+      this.stalledClaims.delete(runId);
+    }
+    if (snapshot.status === "completed" || snapshot.status === "cancelled") {
+      if (snapshot.status === "completed") this.persistRunEventDeliveryReceipts(runId);
+      this.runEvents.delete(runId);
+      this.runEventClaims.delete(runId);
+    }
+    return Promise.resolve(true);
+  }
+
   deleteRun(runId: string): Promise<void> {
     this.closeRunObservers(runId);
     this.runs.delete(runId);
     this.checkpoints.delete(runId);
     this.approvals.delete(runId);
+    this.eventWaits.delete(runId);
+    this.runEvents.delete(runId);
+    this.runEventClaims.delete(runId);
     this.stalledClaims.delete(runId);
     this.runRevisions.delete(runId);
     return Promise.resolve();
@@ -370,7 +445,7 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   countRuns(filter: RunFilter): Promise<number> {
-    // Count in place — no structuredClone per run (unlike listRuns).
+    // Count in place, with no structuredClone per run (unlike listRuns).
     const statuses = filter.status
       ? Array.isArray(filter.status) ? filter.status : [filter.status]
       : null;
@@ -467,12 +542,37 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.reject(error);
     }
     this.approvals.set(runId, approvals);
+    const run = this.runs.get(runId);
+    if (run) this.publishRunObservation(runId, run, { includeApprovals: true });
+    return Promise.resolve();
+  }
+
+  savePendingApprovalIfAbsent(
+    runId: string,
+    approval: PersistedPendingApproval,
+  ): Promise<boolean> {
+    logger.debug("Saving approval", { approvalId: approval.id, runId });
+    const approvals = this.approvals.get(runId) ?? [];
+    if (
+      approvals.some((candidate) =>
+        (candidate.status === "pending" || candidate.reconciliationPending === true) &&
+        isSameWaitNodeExecution(candidate, approval)
+      )
+    ) {
+      return Promise.resolve(false);
+    }
+    try {
+      appendRetainedPendingApproval(approvals, approval);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    this.approvals.set(runId, approvals);
     // An approval append is a persisted transition of its own. Without it a
     // subscriber only sees the run reach `waiting` and has to fetch approvals
     // separately, racing this very write.
     const run = this.runs.get(runId);
     if (run) this.publishRunObservation(runId, run, { includeApprovals: true });
-    return Promise.resolve();
+    return Promise.resolve(true);
   }
 
   savePendingApprovalIfStatusAndWorker(
@@ -489,6 +589,14 @@ export class MemoryBackend implements WorkflowBackend {
     }
 
     const approvals = this.approvals.get(runId) ?? [];
+    if (
+      approvals.some((candidate) =>
+        (candidate.status === "pending" || candidate.reconciliationPending === true) &&
+        isSameWaitNodeExecution(candidate, approval)
+      )
+    ) {
+      return Promise.resolve(false);
+    }
     try {
       appendRetainedPendingApproval(approvals, approval);
     } catch (error) {
@@ -558,12 +666,79 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.resolve(false);
     }
 
+    const decisionData = decision.data === undefined ? undefined : structuredClone(decision.data);
     logger.debug("Updating approval", { approvalId, decision });
     approval.status = decision.approved ? "approved" : "rejected";
     approval.decidedBy = decision.approver;
     approval.decidedAt = new Date();
     approval.comment = decision.comment;
+    if (decision.data === undefined) delete approval.decisionData;
+    else approval.decisionData = decisionData;
+    approval.reconciliationPending = true;
     return Promise.resolve(true);
+  }
+
+  listApprovalDecisionClaims(
+    runId?: string,
+  ): Promise<Array<{ runId: string; approval: PersistedPendingApproval }>> {
+    const claims: Array<{ runId: string; approval: PersistedPendingApproval }> = [];
+    for (const [claimRunId, approvals] of this.approvals) {
+      if (runId !== undefined && claimRunId !== runId) continue;
+      for (const approval of approvals) {
+        if (approval.reconciliationPending === true) {
+          claims.push({ runId: claimRunId, approval: structuredClone(approval) });
+        }
+      }
+    }
+    return Promise.resolve(claims);
+  }
+
+  reserveApprovalDecisionClaim(
+    runId: string,
+    approvalId: string,
+    recoveryClaimId: string,
+    claimedAt: Date,
+    staleBefore: Date,
+  ): Promise<boolean> {
+    const approval = this.approvals.get(runId)?.find((candidate) => candidate.id === approvalId);
+    if (approval?.reconciliationPending !== true) return Promise.resolve(false);
+    if (approval.recoveryClaimedAt && approval.recoveryClaimedAt > staleBefore) {
+      return Promise.resolve(false);
+    }
+    approval.recoveryClaimId = recoveryClaimId;
+    approval.recoveryClaimedAt = new Date(claimedAt);
+    return Promise.resolve(true);
+  }
+
+  releaseApprovalDecisionClaim(
+    runId: string,
+    approvalId: string,
+    recoveryClaimId: string,
+  ): Promise<void> {
+    const approval = this.approvals.get(runId)?.find((candidate) => candidate.id === approvalId);
+    if (approval?.recoveryClaimId === recoveryClaimId) {
+      delete approval.recoveryClaimId;
+      delete approval.recoveryClaimedAt;
+    }
+    return Promise.resolve();
+  }
+
+  finalizeApprovalDecision(
+    runId: string,
+    approvalId: string,
+    recoveryClaimId?: string,
+  ): Promise<void> {
+    const approval = this.approvals.get(runId)?.find((candidate) => candidate.id === approvalId);
+    if (!approval) return Promise.resolve();
+    if (
+      recoveryClaimId === undefined
+        ? approval.recoveryClaimId !== undefined
+        : approval.recoveryClaimId !== recoveryClaimId
+    ) return Promise.resolve();
+    delete approval.reconciliationPending;
+    delete approval.recoveryClaimId;
+    delete approval.recoveryClaimedAt;
+    return Promise.resolve();
   }
 
   listPendingApprovals(filter?: {
@@ -599,6 +774,389 @@ export class MemoryBackend implements WorkflowBackend {
     }
 
     return Promise.resolve(result);
+  }
+
+  // =========================================================================
+  // Durable event waits
+  // =========================================================================
+
+  savePendingEventWait(runId: string, wait: PersistedPendingEventWait): Promise<void> {
+    logger.debug("Saving event wait", { waitId: wait.id, runId });
+    const waits = this.eventWaits.get(runId) ?? [];
+    if (
+      waits.some((candidate) =>
+        (candidate.status === "pending" || candidate.claimedEventId !== undefined ||
+          (candidate.claimedAt !== undefined &&
+            (candidate.waitKind === "delay" || candidate.status === "expired"))) &&
+        isSameWaitNodeExecution(candidate, wait)
+      )
+    ) {
+      return Promise.resolve();
+    }
+    try {
+      appendRetainedPendingEventWait(waits, wait);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    this.eventWaits.set(runId, waits);
+    return Promise.resolve();
+  }
+
+  savePendingEventWaitIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    wait: PersistedPendingEventWait,
+  ): Promise<boolean> {
+    const run = this.runs.get(runId);
+    if (!run) {
+      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
+    if (!expectedStatuses.includes(run.status) || run.workerId !== expectedWorkerId) {
+      return Promise.resolve(false);
+    }
+    const waits = this.eventWaits.get(runId) ?? [];
+    if (
+      waits.some((candidate) =>
+        (candidate.status === "pending" || candidate.claimedEventId !== undefined ||
+          (candidate.claimedAt !== undefined &&
+            (candidate.waitKind === "delay" || candidate.status === "expired"))) &&
+        isSameWaitNodeExecution(candidate, wait)
+      )
+    ) {
+      return Promise.resolve(false);
+    }
+    try {
+      appendRetainedPendingEventWait(waits, wait);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    this.eventWaits.set(runId, waits);
+    return Promise.resolve(true);
+  }
+
+  getPendingEventWaits(runId: string): Promise<PersistedPendingEventWait[]> {
+    const waits = this.eventWaits.get(runId) ?? [];
+    return Promise.resolve(
+      waits.filter((wait) => wait.status === "pending").map((wait) => structuredClone(wait)),
+    );
+  }
+
+  listPendingEventWaits(): Promise<Array<{ runId: string; wait: PersistedPendingEventWait }>> {
+    const result: Array<{ runId: string; wait: PersistedPendingEventWait }> = [];
+    for (const [runId, waits] of this.eventWaits) {
+      if (!this.runs.has(runId)) continue;
+      for (const wait of waits) {
+        if (wait.status !== "pending") continue;
+        result.push({ runId, wait: structuredClone(wait) });
+      }
+    }
+    return Promise.resolve(result);
+  }
+
+  resolvePendingEventWait(
+    runId: string,
+    waitId: string,
+    status: "delivered" | "expired" | "cancelled",
+  ): Promise<boolean> {
+    const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
+    // Pending-precondition gate: delivery, expiry, and cancellation race for
+    // the same record, and only the winner may act on the run.
+    if (wait?.status !== "pending") return Promise.resolve(false);
+    wait.status = status;
+    if (status === "delivered" || status === "expired") wait.claimedAt = new Date();
+    return Promise.resolve(true);
+  }
+
+  restorePendingEventWait(runId: string, waitId: string): Promise<boolean> {
+    const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
+    // Only a claim is given back: a delivered claim whose node completion
+    // failed, or an expired claim whose run failure did not commit. A record
+    // still pending was never claimed by anyone, and a cancelled record
+    // belongs to a terminal run.
+    if (wait?.status !== "delivered" && wait?.status !== "expired") {
+      return Promise.resolve(false);
+    }
+    wait.status = "pending";
+    delete wait.claimedAt;
+    delete wait.recoveryClaimedAt;
+    delete wait.claimedEventId;
+    return Promise.resolve(true);
+  }
+
+  listTimedEventWaitClaims(runId?: string): Promise<PersistedPendingEventWait[]> {
+    const claims: PersistedPendingEventWait[] = [];
+    for (const [claimRunId, waits] of this.eventWaits) {
+      if (runId !== undefined && claimRunId !== runId) continue;
+      for (const wait of waits) {
+        if (
+          wait.claimedAt !== undefined &&
+          ((wait.waitKind === "delay" && wait.status === "delivered") ||
+            (wait.waitKind === "event" && wait.status === "expired"))
+        ) {
+          claims.push(structuredClone(wait));
+        }
+      }
+    }
+    return Promise.resolve(claims);
+  }
+
+  reserveTimedEventWaitClaim(
+    runId: string,
+    waitId: string,
+    claimedAt: Date,
+    staleBefore: Date,
+  ): Promise<boolean> {
+    const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
+    const isTimedClaim = wait?.claimedAt !== undefined &&
+      ((wait.waitKind === "delay" && wait.status === "delivered") ||
+        (wait.waitKind === "event" && wait.status === "expired"));
+    if (
+      !isTimedClaim ||
+      (wait.recoveryClaimedAt !== undefined && wait.recoveryClaimedAt > staleBefore)
+    ) return Promise.resolve(false);
+    wait.recoveryClaimedAt = new Date(claimedAt);
+    return Promise.resolve(true);
+  }
+
+  finalizeTimedEventWaitClaim(runId: string, waitId: string): Promise<void> {
+    const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
+    if (wait) {
+      delete wait.claimedAt;
+      delete wait.recoveryClaimedAt;
+    }
+    return Promise.resolve();
+  }
+
+  appendRunEvent(runId: string, event: RunEventEnvelope): Promise<void> {
+    const existingMailbox = this.runEvents.get(runId);
+    if (existingMailbox === undefined) {
+      this.evictOrphanRunEventMailboxes(1);
+      if (this.runEvents.size >= MAX_WORKFLOW_RUN_EVENT_MAILBOXES) {
+        return Promise.reject(ORCHESTRATION_ERROR.create({
+          detail: "Run event mailbox capacity reached",
+        }));
+      }
+    }
+    const mailbox = existingMailbox ?? [];
+    try {
+      appendRetainedRunEvent(mailbox, {
+        ...event,
+        _publicationOrder: this.nextRunEventPublicationOrder++,
+      } as RunEventEnvelope, this.runEventClaims.get(runId)?.size ?? 0);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    this.runEvents.set(runId, mailbox);
+    return Promise.resolve();
+  }
+
+  removeRunEvent(runId: string, eventId: string): Promise<boolean> {
+    const mailbox = this.runEvents.get(runId);
+    if (!mailbox) return Promise.resolve(false);
+    const index = mailbox.findIndex((event) => event.id === eventId);
+    if (index < 0) return Promise.resolve(false);
+    mailbox.splice(index, 1);
+    this.deleteEmptyRunEventMailbox(runId, mailbox);
+    return Promise.resolve(true);
+  }
+
+  /**
+   * Drop the oldest mailboxes that no wait can ever claim from again, once the
+   * mailbox count is over its bound. Publishing to a run id before the run
+   * exists is supported, so a caller publishing to ids that never become runs
+   * would otherwise accumulate mailboxes forever, and a run that reached a
+   * completed or cancelled will never park on anything again, so its buffered
+   * events are equally unclaimable. Failed runs remain retryable and retain
+   * their mail just like active runs.
+   */
+  private evictOrphanRunEventMailboxes(requiredSlots = 0): void {
+    let overflow = this.runEvents.size + requiredSlots - MAX_WORKFLOW_RUN_EVENT_MAILBOXES;
+    if (overflow <= 0) return;
+    const mailboxRetainingStatuses = new Set<WorkflowRun["status"]>([
+      "pending",
+      "running",
+      "waiting",
+      "failed",
+    ]);
+    for (const mailboxRunId of this.runEvents.keys()) {
+      if (overflow <= 0) return;
+      const run = this.runs.get(mailboxRunId);
+      if (run && mailboxRetainingStatuses.has(run.status)) continue;
+      if ((this.runEventClaims.get(mailboxRunId)?.size ?? 0) > 0) continue;
+      this.runEvents.delete(mailboxRunId);
+      overflow--;
+    }
+  }
+
+  takeRunEvent(runId: string, eventName: string): Promise<RunEventEnvelope | null> {
+    const mailbox = this.runEvents.get(runId);
+    if (!mailbox) return Promise.resolve(null);
+    // Taking mutates synchronously before returning, so removal and return are
+    // one atomic step for this in-memory backend.
+    const taken = takeRetainedRunEvent(mailbox, eventName);
+    this.deleteEmptyRunEventMailbox(runId, mailbox);
+    return Promise.resolve(taken);
+  }
+
+  peekRunEvent(runId: string, eventName: string): Promise<RunEventEnvelope | null> {
+    const event = this.runEvents.get(runId)?.find((candidate) => candidate.eventName === eventName);
+    return Promise.resolve(event ? structuredClone(event) : null);
+  }
+
+  /** Claim the oldest matching event and its pending wait as one synchronous mutation. */
+  claimRunEventForWait(
+    runId: string,
+    waitId: string,
+    eventName: string,
+    publishedBefore?: Date,
+  ): Promise<RunEventEnvelope | null> {
+    const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
+    if (wait?.status !== "pending") return Promise.resolve(null);
+    const mailbox = this.runEvents.get(runId);
+    if (!mailbox) return Promise.resolve(null);
+    const taken = takeRetainedRunEvent(mailbox, eventName, publishedBefore);
+    if (!taken) return Promise.resolve(null);
+    wait.status = "delivered";
+    wait.claimedAt = new Date();
+    wait.claimedEventId = taken.id;
+    const claims = this.runEventClaims.get(runId) ?? new Map<string, RunEventDeliveryClaim>();
+    claims.set(taken.id, {
+      wait: structuredClone(wait),
+      event: structuredClone(taken),
+      claimedAt: wait.claimedAt,
+    });
+    this.runEventClaims.set(runId, claims);
+    // Keep an empty mailbox as the claimed event's capacity reservation. The
+    // asynchronous delivery may still roll back, and another run must not take
+    // this slot before restoreRunEventDelivery puts the event back.
+    return Promise.resolve(taken);
+  }
+
+  listRunEventDeliveryClaims(runId?: string): Promise<RunEventDeliveryClaim[]> {
+    const claims: RunEventDeliveryClaim[] = [];
+    for (const [claimRunId, runClaims] of this.runEventClaims) {
+      if (runId !== undefined && claimRunId !== runId) continue;
+      for (const claim of runClaims.values()) claims.push(structuredClone(claim));
+    }
+    return Promise.resolve(claims);
+  }
+
+  reserveRunEventDeliveryClaim(
+    runId: string,
+    waitId: string,
+    eventId: string,
+    claimedAt: Date,
+    staleBefore: Date,
+  ): Promise<boolean> {
+    const claim = this.runEventClaims.get(runId)?.get(eventId);
+    if (
+      claim?.wait.id !== waitId ||
+      (claim.wait.recoveryClaimedAt !== undefined &&
+        claim.wait.recoveryClaimedAt > staleBefore)
+    ) {
+      return Promise.resolve(false);
+    }
+    claim.wait.recoveryClaimedAt = new Date(claimedAt);
+    const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
+    if (wait) wait.recoveryClaimedAt = new Date(claimedAt);
+    return Promise.resolve(true);
+  }
+
+  restoreRunEvent(runId: string, event: RunEventEnvelope): Promise<void> {
+    const mailbox = this.runEvents.get(runId) ?? [];
+    restoreRetainedRunEvent(mailbox, event);
+    this.runEvents.set(runId, mailbox);
+    this.releaseRunEventClaim(runId, event.id);
+    return Promise.resolve();
+  }
+
+  /**
+   * Undo a claimed-but-undelivered delivery: the wait returns to pending and
+   * the event to its publication-order mailbox position as one step.
+   *
+   * Every mutation is one synchronous in-memory state transition, so callers
+   * cannot observe the restored wait before its event returns to the mailbox.
+   * A durable backend must implement this as a single atomic operation (a
+   * transaction or script) instead.
+   */
+  restoreRunEventDelivery(
+    runId: string,
+    waitId: string,
+    event: RunEventEnvelope,
+  ): Promise<boolean> {
+    const claim = this.runEventClaims.get(runId)?.get(event.id);
+    if (claim?.wait.id !== waitId) return Promise.resolve(false);
+    const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
+    const restored = !!wait && (wait.status === "delivered" || wait.status === "expired");
+    if (restored) {
+      wait.status = "pending";
+      delete wait.claimedAt;
+      delete wait.recoveryClaimedAt;
+      delete wait.claimedEventId;
+    }
+    // The event goes back even when the wait belongs to another actor now: it
+    // held its mailbox place before the claim.
+    const mailbox = this.runEvents.get(runId) ?? [];
+    restoreRetainedRunEvent(mailbox, claim.event);
+    this.runEvents.set(runId, mailbox);
+    this.releaseRunEventClaim(runId, event.id);
+    return Promise.resolve(restored);
+  }
+
+  finalizeRunEventDelivery(
+    runId: string,
+    eventId: string,
+    delivered: boolean,
+  ): Promise<void> {
+    const claim = this.runEventClaims.get(runId)?.get(eventId);
+    if (claim) {
+      const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === claim.wait.id);
+      if (wait) {
+        delete wait.claimedAt;
+        delete wait.recoveryClaimedAt;
+        delete wait.claimedEventId;
+        if (delivered) wait.deliveredEventId = eventId;
+      }
+    }
+    this.releaseRunEventClaim(runId, eventId);
+    const mailbox = this.runEvents.get(runId);
+    if (mailbox) this.deleteEmptyRunEventMailbox(runId, mailbox);
+    return Promise.resolve();
+  }
+
+  hasRunEventDeliveryReceipt(runId: string, eventId: string): Promise<boolean> {
+    return Promise.resolve(
+      this.eventWaits.get(runId)?.some((wait) => wait.deliveredEventId === eventId) ?? false,
+    );
+  }
+
+  private persistRunEventDeliveryReceipts(runId: string): void {
+    const waits = this.eventWaits.get(runId);
+    const run = this.runs.get(runId);
+    if (!waits || !run) return;
+    for (const [eventId, claim] of this.runEventClaims.get(runId) ?? []) {
+      const wait = waits.find((candidate) => candidate.id === claim.wait.id);
+      if (!wait) continue;
+      delete wait.claimedAt;
+      delete wait.recoveryClaimedAt;
+      delete wait.claimedEventId;
+      if (run.nodeStates[claim.wait.nodeId]?.status === "completed") {
+        wait.deliveredEventId = eventId;
+      }
+    }
+  }
+
+  private releaseRunEventClaim(runId: string, eventId: string): void {
+    const claims = this.runEventClaims.get(runId);
+    if (!claims) return;
+    claims.delete(eventId);
+    if (claims.size === 0) this.runEventClaims.delete(runId);
+  }
+
+  private deleteEmptyRunEventMailbox(runId: string, mailbox: RunEventEnvelope[]): void {
+    if (mailbox.length > 0 || (this.runEventClaims.get(runId)?.size ?? 0) > 0) return;
+    this.runEvents.delete(runId);
   }
 
   // =========================================================================
@@ -792,6 +1350,9 @@ export class MemoryBackend implements WorkflowBackend {
     this.runs.clear();
     this.checkpoints.clear();
     this.approvals.clear();
+    this.eventWaits.clear();
+    this.runEvents.clear();
+    this.runEventClaims.clear();
     this.queue = [];
     this.locks.clear();
     this.stalledClaims.clear();

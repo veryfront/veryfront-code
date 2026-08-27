@@ -28,6 +28,7 @@ import {
 } from "../../limits.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { WorkflowRunManager } from "../../worker/run-manager.ts";
+import type { PersistedPendingApproval } from "../types.ts";
 import type {
   RunExecutionConfig,
   RunExecutionInfo,
@@ -50,6 +51,43 @@ class MockRedisAdapter implements RedisAdapter {
   lastArgs: string[] = [];
   groups = new Map<string, Set<string>>();
   nextStreamSequence = 1;
+  keysCallCount = 0;
+  scanPageSize?: number;
+  scanCalls: Array<{
+    cursor: number;
+    options?: { MATCH?: string; COUNT?: number };
+  }> = [];
+
+  private applyRunPatchField(
+    hash: Map<string, string>,
+    field: string,
+    value: string,
+    replaceMaps = false,
+  ): void {
+    if (field === "nodeStateDeletes") {
+      const nodeStates = JSON.parse(hash.get("nodeStates") ?? "{}") as Record<string, unknown>;
+      for (const key of JSON.parse(value) as string[]) delete nodeStates[key];
+      hash.set("nodeStates", JSON.stringify(nodeStates));
+      return;
+    }
+    if (field === "contextDeletes") {
+      const context = JSON.parse(hash.get("context") ?? "{}") as Record<string, unknown>;
+      for (const key of JSON.parse(value) as string[]) delete context[key];
+      hash.set("context", JSON.stringify(context));
+      return;
+    }
+    if (!replaceMaps && (field === "nodeStates" || field === "context")) {
+      hash.set(
+        field,
+        JSON.stringify({
+          ...JSON.parse(hash.get(field) ?? "{}"),
+          ...JSON.parse(value),
+        }),
+      );
+      return;
+    }
+    hash.set(field, value);
+  }
 
   hset(key: string, fields: Record<string, string>): Promise<number> {
     let map = this.hashes.get(key);
@@ -205,7 +243,9 @@ class MockRedisAdapter implements RedisAdapter {
         }
         nextSet.add(runId);
       }
-      for (let i = 5; i < args.length; i += 2) hash.set(args[i]!, args[i + 1]!);
+      for (let i = 5; i < args.length; i += 2) {
+        this.applyRunPatchField(hash, args[i]!, args[i + 1]!);
+      }
       this.appendRunObservation(hash, streamKey, maxLength);
       return Promise.resolve(1);
     }
@@ -278,6 +318,17 @@ class MockRedisAdapter implements RedisAdapter {
         list = [];
         this.lists.set(approvalsKey, list);
       }
+      const approval = JSON.parse(args[0]!);
+      if (
+        args[4] === "1" &&
+        list.some((raw) => {
+          const candidate = JSON.parse(raw);
+          return (candidate.status === "pending" || candidate.reconciliationPending === true) &&
+            candidate.nodeId === approval.nodeId &&
+            (candidate.waitInstanceId === undefined || approval.waitInstanceId === undefined ||
+              candidate.waitInstanceId === approval.waitInstanceId);
+        })
+      ) return Promise.resolve(3);
       if (!this.retainApprovals(list, Number(args[1]))) return Promise.resolve(2);
       list.push(args[0]!);
       const hash = this.hashes.get(key);
@@ -317,6 +368,16 @@ class MockRedisAdapter implements RedisAdapter {
         list = [];
         this.lists.set(approvalsKey, list);
       }
+      const approval = JSON.parse(value);
+      if (
+        list.some((raw) => {
+          const candidate = JSON.parse(raw);
+          return (candidate.status === "pending" || candidate.reconciliationPending === true) &&
+            candidate.nodeId === approval.nodeId &&
+            (candidate.waitInstanceId === undefined || approval.waitInstanceId === undefined ||
+              candidate.waitInstanceId === approval.waitInstanceId);
+        })
+      ) return Promise.resolve(3);
       if (!this.retainApprovals(list, maxEntries)) return Promise.resolve(2);
       list.push(value);
       const revision = this.appendRunObservation(
@@ -351,22 +412,82 @@ class MockRedisAdapter implements RedisAdapter {
 
     if (script.includes("conditional-approval-decision")) {
       const approvalId = args[0]!;
-      const newStatus = args[1]!;
-      const decidedBy = args[2]!;
-      const decidedAt = args[3]!;
-      const hasComment = args[4] === "1";
-      const comment = args[5];
+      const patch = JSON.parse(args[1]!);
+      const deletedFields = JSON.parse(args[2]!) as string[];
       const list = this.lists.get(key);
       if (list) {
         for (let i = 0; i < list.length; i++) {
           const approval = JSON.parse(list[i]!);
           if (approval.id === approvalId) {
             if (approval.status !== "pending") return Promise.resolve(2);
-            approval.status = newStatus;
-            approval.decidedBy = decidedBy;
-            approval.decidedAt = decidedAt;
-            if (hasComment) approval.comment = comment;
-            else delete approval.comment;
+            Object.assign(approval, patch);
+            for (const field of deletedFields) delete approval[field];
+            list[i] = JSON.stringify(approval);
+            return Promise.resolve(1);
+          }
+        }
+      }
+      return Promise.resolve(0);
+    }
+
+    if (script.includes("reserve-approval-decision")) {
+      const approvalId = args[0]!;
+      const recoveryClaimId = args[1]!;
+      const staleBefore = args[2]!;
+      const patch = JSON.parse(args[3]!);
+      const list = this.lists.get(key);
+      if (list) {
+        for (let i = 0; i < list.length; i++) {
+          const approval = JSON.parse(list[i]!);
+          if (approval.id !== approvalId) continue;
+          if (approval.reconciliationPending !== true) return Promise.resolve(0);
+          if (
+            approval.recoveryClaimId !== undefined &&
+            (approval.recoveryClaimedAt === undefined ||
+              approval.recoveryClaimedAt > staleBefore)
+          ) return Promise.resolve(2);
+          Object.assign(approval, patch, { recoveryClaimId });
+          list[i] = JSON.stringify(approval);
+          return Promise.resolve(1);
+        }
+      }
+      return Promise.resolve(0);
+    }
+
+    if (script.includes("release-approval-decision-claim")) {
+      const approvalId = args[0]!;
+      const recoveryClaimId = args[1]!;
+      const list = this.lists.get(key);
+      if (list) {
+        for (let i = 0; i < list.length; i++) {
+          const approval = JSON.parse(list[i]!);
+          if (approval.id !== approvalId) continue;
+          if (approval.recoveryClaimId !== recoveryClaimId) return Promise.resolve(2);
+          delete approval.recoveryClaimId;
+          delete approval.recoveryClaimedAt;
+          list[i] = JSON.stringify(approval);
+          return Promise.resolve(1);
+        }
+      }
+      return Promise.resolve(0);
+    }
+
+    if (script.includes("finalize-approval-decision")) {
+      const approvalId = args[0]!;
+      const recoveryClaimId = args[1]!;
+      const list = this.lists.get(key);
+      if (list) {
+        for (let i = 0; i < list.length; i++) {
+          const approval = JSON.parse(list[i]!);
+          if (approval.id === approvalId) {
+            if (
+              recoveryClaimId === ""
+                ? approval.recoveryClaimId !== undefined
+                : approval.recoveryClaimId !== recoveryClaimId
+            ) return Promise.resolve(2);
+            delete approval.reconciliationPending;
+            delete approval.recoveryClaimId;
+            delete approval.recoveryClaimedAt;
             list[i] = JSON.stringify(approval);
             return Promise.resolve(1);
           }
@@ -404,8 +525,9 @@ class MockRedisAdapter implements RedisAdapter {
 
       const streamKey = args[expectedCount + 5]!;
       const maxLength = Number(args[expectedCount + 6]);
-      for (let i = expectedCount + 7; i < args.length; i += 2) {
-        hash.set(args[i]!, args[i + 1]!);
+      const replaceMaps = args[expectedCount + 7] === "1";
+      for (let i = expectedCount + 8; i < args.length; i += 2) {
+        this.applyRunPatchField(hash, args[i]!, args[i + 1]!, replaceMaps);
       }
       this.appendRunObservation(hash, streamKey, maxLength);
       return Promise.resolve(1);
@@ -492,6 +614,11 @@ class MockRedisAdapter implements RedisAdapter {
   }
 
   keys(pattern: string): Promise<string[]> {
+    this.keysCallCount++;
+    return Promise.resolve(this.matchingKeys(pattern));
+  }
+
+  private matchingKeys(pattern: string): string[] {
     const prefix = pattern.replace("*", "");
     const all: string[] = [];
 
@@ -505,7 +632,7 @@ class MockRedisAdapter implements RedisAdapter {
       if (k.startsWith(prefix)) all.push(k);
     }
 
-    return Promise.resolve(all);
+    return all;
   }
 
   xadd(key: string, _id: string, fields: Record<string, string>): Promise<string> {
@@ -542,7 +669,7 @@ class MockRedisAdapter implements RedisAdapter {
     const decidedIndexes: number[] = [];
     for (let index = 0; index < list.length; index++) {
       const approval = JSON.parse(list[index]!);
-      if (approval.status !== "pending") {
+      if (approval.status !== "pending" && approval.reconciliationPending !== true) {
         decidedIndexes.push(index);
         if (decidedIndexes.length === evictionsRequired) break;
       }
@@ -665,10 +792,14 @@ class MockRedisAdapter implements RedisAdapter {
   }
 
   scan(
-    _cursor: number,
-    _options?: { MATCH?: string; COUNT?: number },
+    cursor: number,
+    options?: { MATCH?: string; COUNT?: number },
   ): Promise<{ cursor: number; keys: string[] }> {
-    return Promise.resolve({ cursor: 0, keys: [] });
+    this.scanCalls.push({ cursor, options });
+    const keys = this.matchingKeys(options?.MATCH ?? "*");
+    const pageSize = Math.max(1, this.scanPageSize ?? options?.COUNT ?? keys.length);
+    const nextCursor = cursor + pageSize < keys.length ? cursor + pageSize : 0;
+    return Promise.resolve({ cursor: nextCursor, keys: keys.slice(cursor, cursor + pageSize) });
   }
 
   quit(): Promise<void> {
@@ -1835,12 +1966,187 @@ describe("RedisBackend", () => {
     it("should update output and context", async () => {
       await backend.createRun(createTestRun("run-u2"));
       await backend.updateRun("run-u2", {
+        context: { input: { topic: "test" }, first: "keep" },
+      });
+      await backend.updateRun("run-u2", {
         output: { value: 42 },
         context: { input: {}, step1: "done" },
       });
 
       const updated = await backend.getRun("run-u2");
       assertEquals(updated?.output, { value: 42 });
+      assertEquals(updated?.context, { input: {}, first: "keep", step1: "done" });
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "local current = cjson.decode(currentJson)",
+        "ordinary patches must stay on Redis's native cjson path",
+      );
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "containsAmbiguousEmptyArray",
+        "only an ambiguous empty-array token should select the raw-slice fallback",
+      );
+      assertEquals(
+        mockRedis.lastScript.includes("cannot preserve empty arrays"),
+        false,
+        "standard Redis must accept user-bearing empty arrays",
+      );
+    });
+
+    it("preserves empty arrays in context and node-state merge patches", async () => {
+      await backend.createRun(createTestRun("run-empty-array-patches"));
+
+      await backend.updateRun("run-empty-array-patches", {
+        context: { input: { tags: [] }, result: [] },
+        nodeStates: {
+          step: {
+            nodeId: "step",
+            status: "completed",
+            attempt: 1,
+            output: [],
+          },
+        },
+      });
+
+      const updated = await backend.getRun("run-empty-array-patches");
+      assertEquals(updated?.context, { input: { tags: [] }, result: [] });
+      assertEquals(updated?.nodeStates.step?.output, []);
+      assertStringIncludes(mockRedis.lastScript, "parseJsonObject");
+      assertEquals(mockRedis.lastScript.includes("decode_array_with_array_mt"), false);
+    });
+
+    it("applies explicit context deletions without replacing concurrent keys", async () => {
+      await backend.createRun(createTestRun("run-context-delete"));
+      await backend.updateRun("run-context-delete", {
+        context: { input: { topic: "test" }, removed: "stale", concurrent: "preserve" },
+      });
+
+      await backend.updateRun(
+        "run-context-delete",
+        {
+          context: { input: { topic: "test" }, kept: "updated" },
+          contextDeletes: ["removed"],
+        } as Parameters<typeof backend.updateRun>[1],
+      );
+
+      assertEquals((await backend.getRun("run-context-delete"))?.context, {
+        input: { topic: "test" },
+        concurrent: "preserve",
+        kept: "updated",
+      });
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "field == 'contextDeletes'",
+        "the Lua patch must apply deletions atomically with context key merges",
+      );
+    });
+
+    it("applies explicit node-state deletions without replacing concurrent keys", async () => {
+      await backend.createRun(createTestRun("run-node-state-delete"));
+      await backend.updateRun("run-node-state-delete", {
+        nodeStates: {
+          removed: { nodeId: "removed", status: "completed", attempt: 1 },
+          concurrent: { nodeId: "concurrent", status: "completed", attempt: 1 },
+        },
+      });
+
+      await backend.updateRun("run-node-state-delete", {
+        nodeStates: {
+          kept: { nodeId: "kept", status: "completed", attempt: 1 },
+        },
+        nodeStateDeletes: ["removed"],
+      });
+
+      assertEquals((await backend.getRun("run-node-state-delete"))?.nodeStates, {
+        concurrent: { nodeId: "concurrent", status: "completed", attempt: 1 },
+        kept: { nodeId: "kept", status: "completed", attempt: 1 },
+      });
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "field == 'nodeStateDeletes'",
+        "the Lua patch must apply deletions atomically with node-state key merges",
+      );
+    });
+
+    it("omits empty deletion patches and decodes non-empty deletion lists on Redis 7", async () => {
+      await backend.createRun(createTestRun("run-empty-deletes"));
+
+      await backend.updateRun("run-empty-deletes", {
+        nodeStateDeletes: [],
+        contextDeletes: [],
+      });
+
+      assertEquals(mockRedis.lastArgs.includes("nodeStateDeletes"), false);
+      assertEquals(mockRedis.lastArgs.includes("contextDeletes"), false);
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "local deleted = cjson.decode(deletedJson)",
+        "known string-list deletion fields must not require Redis 8.4 array metadata",
+      );
+    });
+
+    it("replaces context and node states wholesale on a snapshot restore", async () => {
+      const runId = "run-snapshot-restore";
+      await backend.createRun(createTestRun(runId));
+      // State accumulated AFTER the checkpoint being restored: the merge path
+      // would retain these keys and let the completed later node be skipped.
+      await backend.updateRun(runId, {
+        status: "waiting",
+        context: { input: { topic: "test" }, early: "kept", late: "post-checkpoint" },
+        nodeStates: {
+          early: { nodeId: "early", status: "completed", attempt: 1 },
+          late: { nodeId: "late", status: "completed", attempt: 1 },
+        },
+      });
+
+      assertEquals(
+        await backend.restoreRunStateIfStatus(runId, ["waiting"], {
+          status: "running",
+          context: { input: { topic: "test" }, early: "kept" },
+          nodeStates: { early: { nodeId: "early", status: "completed", attempt: 1 } },
+        }),
+        true,
+      );
+
+      const restored = await backend.getRun(runId);
+      assertEquals(restored?.status, "running");
+      assertEquals(
+        restored?.context,
+        { input: { topic: "test" }, early: "kept" },
+        "a snapshot restore must drop context keys written after the checkpoint",
+      );
+      assertEquals(
+        restored?.nodeStates,
+        { early: { nodeId: "early", status: "completed", attempt: 1 } },
+        "a node completed after the checkpoint must not survive the restore, " +
+          "or replay skips it instead of re-running it",
+      );
+
+      // The replace flag must sit at the fixed ARGV slot the Lua reads, and
+      // the script must branch on it rather than always merging.
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "local replaceMaps = ARGV[expectedCount + 8] == '1'",
+        "the replacement flag must live in the Lua the backend executes, not only in the mock",
+      );
+      const restoreArgvCount = Number(mockRedis.lastArgs[0]);
+      assertEquals(
+        mockRedis.lastArgs[restoreArgvCount + 7],
+        "1",
+        "the snapshot restore must set the replace-maps flag at the ARGV index the Lua reads",
+      );
+
+      // The plain conditional patch keeps the merge flag off.
+      await backend.updateRunIfStatus(runId, ["running"], {
+        nodeStates: { late: { nodeId: "late", status: "running", attempt: 1 } },
+      });
+      const patchArgvCount = Number(mockRedis.lastArgs[0]);
+      assertEquals(mockRedis.lastArgs[patchArgvCount + 7], "0");
+      assertEquals(
+        (await backend.getRun(runId))?.nodeStates.early?.status,
+        "completed",
+        "a plain conditional patch must keep merging by key",
+      );
     });
 
     it("reports an invalid duplicated output through the workflow serializer", async () => {
@@ -2412,7 +2718,7 @@ describe("RedisBackend", () => {
     function makeApproval(id: string): PendingApproval {
       return {
         id,
-        nodeId: "wait-node",
+        nodeId: `wait-node-${id}`,
         status: "pending",
         message: "Approve this?",
         payload: { reason: "test" },
@@ -2430,6 +2736,137 @@ describe("RedisBackend", () => {
       assertEquals(pending[0]!.status, "pending");
     });
 
+    it("preserves the historical append semantics of savePendingApproval", async () => {
+      const approval = (id: string): PendingApproval => ({
+        ...makeApproval(id),
+        nodeId: "review",
+      });
+
+      await backend.savePendingApproval("run-ap-append", approval("first"));
+      await backend.savePendingApproval("run-ap-append", approval("second"));
+
+      assertEquals(
+        (await backend.getPendingApprovals("run-ap-append")).map(({ id }) => id),
+        ["first", "second"],
+      );
+    });
+
+    it("atomically elects one ownerless approval creator", async () => {
+      const runId = "run-ap-ownerless-uniqueness";
+      const approval = (id: string): PendingApproval => ({
+        ...makeApproval(id),
+        nodeId: "review",
+      });
+
+      assertEquals(await backend.savePendingApprovalIfAbsent(runId, approval("first")), true);
+      assertEquals(await backend.savePendingApprovalIfAbsent(runId, approval("second")), false);
+      assertEquals((await backend.getPendingApprovals(runId)).map(({ id }) => id), ["first"]);
+    });
+
+    it("preserves the historical append contract for unconditional approval saves", async () => {
+      const runId = "run-ap-unconditional-append";
+      const approval = (id: string): PendingApproval => ({
+        ...makeApproval(id),
+        nodeId: "review",
+      });
+
+      await backend.savePendingApproval(runId, approval("first"));
+      await backend.savePendingApproval(runId, approval("second"));
+
+      assertEquals(
+        (await backend.getPendingApprovals(runId)).map(({ id }) => id),
+        ["first", "second"],
+      );
+    });
+
+    it("allows a new wait instance while the previous decision is reconciling", async () => {
+      const runId = "run-ap-repeated-wait-instance";
+      const approval = (id: string, waitInstanceId: string): PersistedPendingApproval => ({
+        ...makeApproval(id),
+        nodeId: "review",
+        waitInstanceId,
+      });
+
+      assertEquals(
+        await backend.savePendingApprovalIfAbsent(runId, approval("first", "wait-1")),
+        true,
+      );
+      await backend.updateApproval(runId, "first", { approved: true, approver: "reviewer" });
+      assertEquals(
+        await backend.savePendingApprovalIfAbsent(runId, approval("second", "wait-2")),
+        true,
+      );
+      assertEquals(
+        await backend.savePendingApprovalIfAbsent(runId, approval("duplicate", "wait-2")),
+        false,
+      );
+      assertEquals((await backend.getPendingApprovals(runId)).map(({ id }) => id), ["second"]);
+    });
+
+    it("atomically rejects an owned duplicate for the same pending node", async () => {
+      const runId = "run-ap-node-uniqueness";
+      await backend.createRun(createTestRun(runId, {
+        status: "waiting",
+        workerId: "worker-a",
+      }));
+      const approval = (id: string): PendingApproval => ({
+        ...makeApproval(id),
+        nodeId: "review",
+      });
+
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          runId,
+          ["waiting"],
+          "worker-a",
+          approval("first"),
+        ),
+        true,
+      );
+      const runHash = mockRedis.hashes.get(`test:schema-v1:run:${runId}`)!;
+      const revisionAfterFirst = runHash.get("__runObservationRevision");
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          runId,
+          ["waiting"],
+          "worker-a",
+          approval("duplicate"),
+        ),
+        false,
+      );
+      assertEquals((await backend.getPendingApprovals(runId)).map(({ id }) => id), ["first"]);
+      assertEquals(
+        runHash.get("__runObservationRevision"),
+        revisionAfterFirst,
+        "a duplicate must not publish a phantom observation revision",
+      );
+
+      await backend.updateApproval(runId, "first", {
+        approved: true,
+        approver: "reviewer",
+      });
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          runId,
+          ["waiting"],
+          "worker-a",
+          approval("retry-before-finalize"),
+        ),
+        false,
+      );
+      await backend.finalizeApprovalDecision(runId, "first");
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          runId,
+          ["waiting"],
+          "worker-a",
+          approval("retry"),
+        ),
+        true,
+      );
+      assertEquals((await backend.getPendingApprovals(runId)).map(({ id }) => id), ["retry"]);
+    });
+
     it("bounds approval appends by evicting decided records before live ones", async () => {
       await backend.createRun(createTestRun("run-ap-bounded"));
       await backend.savePendingApproval("run-ap-bounded", makeApproval("ap-live-oldest"));
@@ -2438,6 +2875,7 @@ describe("RedisBackend", () => {
         approved: true,
         approver: "admin",
       });
+      await backend.finalizeApprovalDecision("run-ap-bounded", "ap-decided");
       for (let index = 2; index < MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES; index++) {
         await backend.savePendingApproval("run-ap-bounded", makeApproval(`ap-${index}`));
       }
@@ -2484,6 +2922,7 @@ describe("RedisBackend", () => {
         }),
         true,
       );
+      await backend.finalizeApprovalDecision("run-ap-expired", "ap-expired");
       await backend.savePendingApproval("run-ap-expired", makeApproval("ap-newest"));
       assertEquals(stored.some((raw) => JSON.parse(raw).id === "ap-expired"), false);
       assertEquals(JSON.parse(stored.at(-1)!).id, "ap-newest");
@@ -2560,6 +2999,7 @@ describe("RedisBackend", () => {
         approved: false,
         approver: "admin",
       });
+      await backend.finalizeApprovalDecision("run-ap-owned-bounded", "owned-decided");
       for (let index = 2; index < MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES; index++) {
         assertEquals(await saveOwned(makeApproval(`owned-${index}`)), true);
       }
@@ -2679,6 +3119,7 @@ describe("RedisBackend", () => {
           approved: true,
           approver: "admin",
           comment: "looks good",
+          data: { confirmed: true },
         }),
         true,
       );
@@ -2689,6 +3130,47 @@ describe("RedisBackend", () => {
       assertEquals(stored.status, "approved");
       assertEquals(stored.decidedBy, "admin");
       assertEquals(stored.comment, "looks good");
+      assertEquals(stored.decisionData, { confirmed: true });
+    });
+
+    it("preserves nested empty arrays in durable approval decision data", async () => {
+      await backend.createRun(createTestRun("run-ap-empty-arrays"));
+      await backend.savePendingApproval(
+        "run-ap-empty-arrays",
+        makeApproval("ap-empty-arrays"),
+      );
+
+      assertEquals(
+        await backend.updateApproval("run-ap-empty-arrays", "ap-empty-arrays", {
+          approved: true,
+          approver: "admin",
+          data: { answers: [], nested: { selections: [] } },
+        }),
+        true,
+      );
+
+      const [claim] = await backend.listApprovalDecisionClaims("run-ap-empty-arrays");
+      assertEquals(claim?.approval.decisionData, {
+        answers: [],
+        nested: { selections: [] },
+      });
+      assertEquals(mockRedis.lastScript.includes("mergeJsonObjects"), true);
+      assertEquals(
+        mockRedis.lastScript.includes("approval.decisionData = cjson.decode"),
+        false,
+      );
+
+      await backend.updatePendingApproval("run-ap-empty-arrays", "ap-empty-arrays", {
+        notificationError: "late notification failure",
+      });
+      await backend.finalizeApprovalDecision("run-ap-empty-arrays", "ap-empty-arrays");
+      const finalized = JSON.parse(
+        mockRedis.lists.get("test:schema-v1:approvals:run-ap-empty-arrays")![0]!,
+      );
+      assertEquals(finalized.decisionData, {
+        answers: [],
+        nested: { selections: [] },
+      });
     });
 
     it("updateApproval omits absent comments at the serialized boundary", async () => {
@@ -2738,6 +3220,82 @@ describe("RedisBackend", () => {
       );
       assertEquals(stored.status, "approved");
       assertEquals(stored.decidedBy, "first");
+    });
+
+    it("scans approval decision claims without blocking the Redis keyspace", async () => {
+      mockRedis.scanPageSize = 1;
+      for (const runId of ["run-ap-claim-a", "run-ap-claim-b"]) {
+        await backend.createRun(createTestRun(runId));
+        await backend.savePendingApproval(runId, makeApproval(`approval-${runId}`));
+        await backend.updateApproval(runId, `approval-${runId}`, {
+          approved: true,
+          approver: "admin",
+        });
+      }
+
+      const claims = await backend.listApprovalDecisionClaims();
+
+      assertEquals(
+        claims.map(({ runId }) => runId).sort(),
+        ["run-ap-claim-a", "run-ap-claim-b"],
+      );
+      assertEquals(mockRedis.keysCallCount, 0);
+      assertEquals(
+        mockRedis.scanCalls.map(({ cursor, options }) => [cursor, options?.MATCH]),
+        [
+          [0, "test:schema-v1:approvals:*"],
+          [1, "test:schema-v1:approvals:*"],
+        ],
+      );
+    });
+
+    it("leases approval decision recovery to one process at a time", async () => {
+      const runId = "run-ap-recovery-lease";
+      await backend.savePendingApproval(runId, makeApproval("approval-lease"));
+      await backend.updateApproval(runId, "approval-lease", {
+        approved: true,
+        approver: "admin",
+      });
+      const firstClaimedAt = new Date("2026-08-26T10:00:00.000Z");
+
+      assertEquals(
+        await backend.reserveApprovalDecisionClaim(
+          runId,
+          "approval-lease",
+          "recovery-first",
+          firstClaimedAt,
+          new Date("2026-08-26T09:59:00.000Z"),
+        ),
+        true,
+      );
+      assertEquals(
+        await backend.reserveApprovalDecisionClaim(
+          runId,
+          "approval-lease",
+          "recovery-second",
+          new Date("2026-08-26T10:00:01.000Z"),
+          new Date("2026-08-26T09:59:59.000Z"),
+        ),
+        false,
+      );
+
+      await backend.releaseApprovalDecisionClaim(
+        runId,
+        "approval-lease",
+        "recovery-first",
+      );
+      assertEquals(
+        await backend.reserveApprovalDecisionClaim(
+          runId,
+          "approval-lease",
+          "recovery-second",
+          new Date("2026-08-26T10:00:01.000Z"),
+          new Date("2026-08-26T09:59:59.000Z"),
+        ),
+        true,
+      );
+      await backend.finalizeApprovalDecision(runId, "approval-lease", "recovery-second");
+      assertEquals(await backend.listApprovalDecisionClaims(runId), []);
     });
   });
 

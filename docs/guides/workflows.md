@@ -346,22 +346,88 @@ and that server-derived identity is what the workflow context persists. See
 
 ### Wait for events
 
-Pause until an external event arrives:
+Pause until an external event arrives, and deliver the event through the
+workflow client. The run resumes as soon as an event with the matching name
+reaches its mailbox:
 
 ```ts
-import { waitForEvent } from "veryfront/workflow";
+import { tool } from "veryfront/tool";
+import { createWorkflowClient, dependsOn, step, waitForEvent, workflow } from "veryfront/workflow";
 
-waitForEvent("payment-confirmed", {
-  eventName: "payment.completed",
-  timeout: "1h",
+const fulfillment = tool<
+  { orderId: string },
+  { orderId: string; status: "fulfilled" }
+>({
+  id: "fulfillment",
+  description: "Fulfill a paid order",
+  inputSchema: {
+    type: "object",
+    properties: { orderId: { type: "string" } },
+    required: ["orderId"],
+    additionalProperties: false,
+  },
+  execute: async ({ orderId }) => ({ orderId, status: "fulfilled" }),
 });
+
+const workflows = createWorkflowClient();
+
+workflows.register(workflow({
+  id: "order-fulfillment",
+  steps: [
+    waitForEvent("payment-confirmed", {
+      eventName: "payment.completed",
+      timeout: "1h",
+    }),
+    dependsOn(
+      step("fulfill", { tool: fulfillment, input: { orderId: "ord_1" } }),
+      "payment-confirmed",
+    ),
+  ],
+}));
+
+const handle = await workflows.start("order-fulfillment", { orderId: "ord_1" });
+const runId = handle.runId;
+
+// Later - from a webhook handler or any process sharing the same backend:
+await workflows.publishEvent(runId, "payment.completed", { amount: 4200 });
 ```
 
-Event delivery is not wired into workflow execution yet. `waitForEvent` pauses
-the run, but nothing resumes it when the named event occurs. The workflow
-backend interface declares optional event delivery methods, but the built-in
-memory and Redis backends do not implement them, and the executor does not
-consume them from a backend that does.
+Events are buffered per run, so publishing before the node parks is safe: the
+wait consumes the buffered event as soon as it exists. `publishEvent` resolves
+to what it did with the event:
+
+| Outcome             | Meaning                                                                                                                                                                                                |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `"delivered"`       | A wait matched, its node completed, and the run moved on.                                                                                                                                              |
+| `"buffered"`        | No wait matched yet. The event is held until one does.                                                                                                                                                 |
+| `"run-terminal"`    | The run has already finished, so the event was discarded rather than buffered.                                                                                                                         |
+| `"delivery-failed"` | A wait matched but delivery failed. Both were rolled back, so the run is still parked; call `retryEventDelivery(runId, eventName)` to retry the same buffered envelope without publishing a duplicate. |
+
+A run's mailbox holds a bounded number of unconsumed events. Because an event
+is removed only when a wait takes it, none of them can be dropped safely, so a
+publish past the bound rejects rather than silently discarding an event some
+wait has not parked for yet. Reaching that bound means events are being
+published to a run that never consumes them.
+
+The payload lands in the workflow context under the wait node's id, so later
+steps read `ctx["payment-confirmed"]` as `{ eventName, payload, receivedAt }`.
+
+Read what a run is parked on with `getPendingEventWaits(runId)`, which returns
+the node id, the event name, and the deadline derived from `timeout`.
+
+A `timeout` is enforced. When it elapses before the event arrives, the run
+fails with an error naming the node and the event it waited for. The deadline
+is measured from when the wait node started. Omit `timeout` to wait
+indefinitely. `delay(id, duration)` uses the same machinery and completes its
+node once the duration elapses. Canceling a run resolves its pending event
+waits, so a canceled run no longer reports itself as parked.
+
+Durable event waits require a backend that implements them. The built-in
+`MemoryBackend` does; `RedisBackend` does not currently implement the durable
+event-wait method group. Use `hasEventWaitSupport(backend)` to check a custom
+backend before relying on `waitForEvent` or `delay`.
+
+`publishEvent` is run-scoped. There is no broadcast by workflow id.
 
 ## Workflow configuration
 

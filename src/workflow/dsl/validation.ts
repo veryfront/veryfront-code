@@ -1,5 +1,5 @@
 import { INVALID_ARGUMENT } from "#veryfront/errors";
-import type { WorkflowNode, WorkflowNodeConfig } from "../types.ts";
+import type { WorkflowDefinition, WorkflowNode, WorkflowNodeConfig } from "../types.ts";
 
 const numberIsSafeInteger = Number.isSafeInteger;
 const reflectApply = Reflect.apply;
@@ -36,13 +36,51 @@ export function namespaceWorkflowNodes(
   return rebaseWorkflowNodes("", prefix, nodes);
 }
 
+/** Restore child IDs from one known namespace for an in-flight legacy graph. */
+export function removeWorkflowNodeNamespace(
+  prefix: string,
+  nodes: WorkflowNode[],
+): WorkflowNode[] {
+  return rebaseWorkflowNodes(prefix, "", nodes);
+}
+
+/** Collect statically visible node IDs from a graph and its composite descendants. */
+export function collectWorkflowNodeIds(nodes: WorkflowNode[]): Set<string> {
+  const ids = new Set<string>();
+  const visit = (node: WorkflowNode): void => {
+    ids.add(node.id);
+    switch (node.config.type) {
+      case "parallel":
+        node.config.nodes.forEach(visit);
+        break;
+      case "branch":
+        node.config.then.forEach(visit);
+        node.config.else?.forEach(visit);
+        break;
+      case "loop":
+        if (Array.isArray(node.config.steps)) node.config.steps.forEach(visit);
+        break;
+      case "subWorkflow":
+        if (
+          typeof node.config.workflow !== "string" &&
+          Array.isArray(node.config.workflow.steps)
+        ) {
+          node.config.workflow.steps.forEach(visit);
+        }
+        break;
+    }
+  };
+  nodes.forEach(visit);
+  return ids;
+}
+
 function rebaseWorkflowNodes(
   oldPrefix: string,
   newPrefix: string,
   nodes: WorkflowNode[],
 ): WorkflowNode[] {
   const rebaseId = (id: string): string => {
-    if (id.startsWith(newPrefix)) return id;
+    if (newPrefix && id.startsWith(newPrefix)) return id;
     if (oldPrefix && id.startsWith(oldPrefix)) {
       return `${newPrefix}${id.slice(oldPrefix.length)}`;
     }
@@ -56,7 +94,7 @@ function rebaseWorkflowNodes(
     return {
       ...node,
       id: newId,
-      config: rebaseCompositeDescendants(node.config, oldId, newId),
+      config: rebaseCompositeDescendants(node.config, oldId, newId, oldPrefix, newPrefix),
       ...(node.dependsOn === undefined
         ? {}
         : { dependsOn: node.dependsOn.map((dependency) => rebaseId(dependency)) }),
@@ -64,10 +102,12 @@ function rebaseWorkflowNodes(
   });
 }
 
-function rebaseCompositeDescendants(
+export function rebaseCompositeDescendants(
   config: WorkflowNodeConfig,
   oldId: string,
   newId: string,
+  oldPrefix = `${oldId}/`,
+  newPrefix = `${newId}/`,
 ): WorkflowNodeConfig {
   switch (config.type) {
     case "parallel":
@@ -89,7 +129,40 @@ function rebaseCompositeDescendants(
           config.else,
         ),
       };
+    case "loop":
+      return Array.isArray(config.steps)
+        ? {
+          ...config,
+          steps: rebaseWorkflowNodes(`${oldId}/`, `${newId}/`, config.steps),
+        }
+        : config;
+    case "subWorkflow":
+      return typeof config.workflow === "string" ? config : {
+        ...config,
+        workflow: rebaseWorkflowDefinition(oldPrefix, newPrefix, config.workflow),
+      };
     default:
       return config;
   }
+}
+
+export function namespaceWorkflowDefinition(
+  prefix: string,
+  definition: WorkflowDefinition,
+): WorkflowDefinition {
+  return rebaseWorkflowDefinition("", prefix, definition);
+}
+
+function rebaseWorkflowDefinition(
+  oldPrefix: string,
+  newPrefix: string,
+  definition: WorkflowDefinition,
+): WorkflowDefinition {
+  const steps = definition.steps;
+  return {
+    ...definition,
+    steps: Array.isArray(steps)
+      ? rebaseWorkflowNodes(oldPrefix, newPrefix, steps)
+      : (context) => rebaseWorkflowNodes(oldPrefix, newPrefix, steps(context)),
+  };
 }

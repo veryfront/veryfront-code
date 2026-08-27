@@ -1,5 +1,5 @@
 import type { BaseNodeConfig, RetryConfig, WorkflowContext, WorkflowNode } from "../types.ts";
-import { isPositiveSafeInteger, validateNodeId } from "./validation.ts";
+import { isPositiveSafeInteger, namespaceWorkflowNodes, validateNodeId } from "./validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /** Default maximum number of loop iterations */
@@ -92,7 +92,9 @@ export function loop(id: string, options: LoopOptions): WorkflowNode {
       type: "loop",
       description: options.description,
       while: options.while,
-      steps: options.steps,
+      steps: Array.isArray(options.steps)
+        ? namespaceWorkflowNodes(`${id}/`, options.steps)
+        : options.steps,
       maxIterations,
       onMaxIterations: options.onMaxIterations,
       onComplete: options.onComplete,

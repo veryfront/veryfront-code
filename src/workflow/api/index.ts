@@ -5,4 +5,8 @@
  */
 
 export { createWorkflowClient, WorkflowClient } from "./workflow-client.ts";
-export type { WorkflowClientConfig, WorkflowRunEventsResult } from "./workflow-client.ts";
+export type {
+  PublishEventOutcome,
+  WorkflowClientConfig,
+  WorkflowRunEventsResult,
+} from "./workflow-client.ts";

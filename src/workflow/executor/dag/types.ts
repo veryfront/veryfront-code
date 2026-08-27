@@ -9,6 +9,7 @@
 import type { NodeState, WaitNodeConfig, WorkflowContext } from "../../types.ts";
 import type { CheckpointManager, CheckpointOwnership } from "../checkpoint-manager.ts";
 import type { StepExecutor } from "../step-executor.ts";
+import type { RecordPatch } from "./context-patch.ts";
 
 /** Internal set/delete operations emitted by one node execution. */
 export interface ContextPatch {
@@ -40,6 +41,8 @@ export interface ExecutionScope {
    * record can tell them apart.
    */
   resumingWait: boolean;
+  /** Declared node ids in this graph and every graph that contains it. */
+  declaredNodeIds: ReadonlySet<string>;
   ownership?: CheckpointOwnership;
 }
 
@@ -66,8 +69,10 @@ export interface DAGExecutorConfig {
   onNodeStatesChanged?: (input: {
     runId: string;
     nodeStates: Record<string, NodeState>;
+    nodeStatePatch: RecordPatch<NodeState>;
     currentNodes: string[];
     context: WorkflowContext;
+    contextPatch: ContextPatch;
     ownership?: CheckpointOwnership;
   }) => Promise<boolean | void> | boolean | void;
   /** Max milliseconds to wait for an aborted composite attempt to settle (default: 1000) */
@@ -85,6 +90,24 @@ export interface DAGExecutionResult {
   waitingNode?: string;
   /** Exact config of the node that suspended this execution. */
   waitingConfig?: WaitNodeConfig;
+  /**
+   * Every node the settled batch parked, in index order, when the graph is
+   * waiting. Dependency-free waits suspend together in one batch, and each
+   * needs its own durable record; `waitingNode` is always the first entry.
+   */
+  waitingNodes?: ReadonlyArray<{ nodeId: string; waitConfig?: WaitNodeConfig }>;
+  /**
+   * The wait node this graph found nothing to schedule behind, when every other
+   * unfinished node is merely blocked on it.
+   *
+   * Set alongside `error`, because the graph alone cannot tell a run parked on
+   * a decision that can still arrive from one whose decision was lost: both
+   * look like a wait recorded `running`. A caller that can read the durable
+   * approval or event-wait record decides which it is.
+   */
+  stalledWaitNode?: string;
+  /** Every running wait in a graph that found nothing left to schedule. */
+  stalledWaitNodes?: ReadonlyArray<{ nodeId: string; waitConfig: WaitNodeConfig }>;
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
   error?: string;
@@ -108,4 +131,6 @@ export interface NodeExecutionResult {
   waitingNode?: string;
   /** Exact config of the node that suspended this execution. */
   waitingConfig?: WaitNodeConfig;
+  /** Every nested wait parked by a composite child graph. */
+  waitingNodes?: ReadonlyArray<{ nodeId: string; waitConfig?: WaitNodeConfig }>;
 }

@@ -70,6 +70,10 @@ export interface NodeRedisClient {
   >;
   xAck(key: string, group: string, ids: string[]): Promise<number>;
   keys(pattern: string): Promise<string[]>;
+  scan(
+    cursor: number,
+    options?: { MATCH?: string; COUNT?: number },
+  ): Promise<{ cursor: number; keys: string[] }>;
   exists(keys: string[]): Promise<number>;
   expire(key: string, seconds: number): Promise<number>;
   set(
@@ -338,10 +342,31 @@ function captureNodeRedisClient(value: unknown): NodeRedisClient {
     NODE_REDIS_CLIENT_ASYNC_METHODS,
     "Redis module client",
   );
+  const scan = readDataMethod(value, "scan", "Redis module client scan", true);
+  const keys = methods.keys!;
   const destroy = readDataMethod(value, "destroy", "Redis module client destroy")!;
   const on = readDataMethod(value, "on", "Redis module client on")!;
   return Object.freeze({
     ...methods,
+    scan(
+      cursor: number,
+      options?: { MATCH?: string; COUNT?: number },
+    ): Promise<{ cursor: number; keys: string[] }> {
+      if (scan) {
+        return Promise.resolve(Reflect.apply(scan, value, [cursor, options])) as Promise<{
+          cursor: number;
+          keys: string[];
+        }>;
+      }
+      // Providers predating cursor scans still expose KEYS. Preserve their
+      // module contract with one terminal page; newer providers retain the
+      // non-blocking cursor path above.
+      if (cursor !== 0) return Promise.resolve({ cursor: 0, keys: [] });
+      return keys(options?.MATCH ?? "*").then((keys) => ({
+        cursor: 0,
+        keys: keys as string[],
+      }));
+    },
     destroy(): void {
       Reflect.apply(destroy, value, []);
     },

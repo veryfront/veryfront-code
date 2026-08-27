@@ -11,6 +11,7 @@ import type { ScheduleIntegrationRequirementConfig } from "#veryfront/schedule/t
 import type { BlobRef, BlobStorage } from "./blob/types.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import type { WorkflowProjectionState } from "./runtime-state.ts";
+import type { DurableTimedWaitKind } from "./timed-wait-state.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import {
@@ -233,6 +234,28 @@ export interface WaitNodeConfig extends BaseNodeConfig {
    * not serializable.
    */
   responseSchema?: Schema<unknown>;
+}
+
+/**
+ * Durable record of a run parked on a `waitForEvent` or `delay` node.
+ *
+ * A parked event wait is the event-side counterpart of a pending approval: it
+ * is what a later `publishEvent` is matched against, and what the timeout
+ * reconciler finds when the declared timeout elapses. Without a persisted
+ * record, a parked run is indistinguishable from a stalled one.
+ */
+export interface PendingEventWait {
+  id: string;
+  runId: string;
+  nodeId: string;
+  /** Event name that releases this wait. A delay carries the reserved internal name. */
+  eventName: string;
+  /** Whether the node was declared with `delay()` or `waitForEvent()`. */
+  waitKind: DurableTimedWaitKind;
+  requestedAt: Date;
+  /** Deadline derived from the node's declared `timeout`, when it declared one. */
+  expiresAt?: Date;
+  status: "pending" | "delivered" | "expired" | "cancelled";
 }
 
 /**

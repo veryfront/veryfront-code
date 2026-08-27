@@ -9,13 +9,19 @@ import type {
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { generateId, parseDuration } from "../types.ts";
 import {
+  isSameWaitNodeExecution,
   type PersistedPendingApproval,
   updateRunIfStatus,
   type WorkflowBackend,
 } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import { ApprovalDecisionSchema } from "../schemas/workflow.schema.ts";
-import { reconcileWorkflowRunControl } from "./workflow-run-control.ts";
+import { unrefTimer } from "#veryfront/compat/process.ts";
+import {
+  assertApprovalDecisionPatchIsolation,
+  reconcileWorkflowRunControl,
+  type WorkflowRunControlReconcileOutcome,
+} from "./workflow-run-control.ts";
 import { projectPendingApproval, projectRunPendingApprovals } from "./pending-approval-metadata.ts";
 import {
   INVALID_ARGUMENT,
@@ -28,7 +34,131 @@ const logger = baseLogger.component("approval-manager");
 
 /** Default interval for checking expired approvals */
 const DEFAULT_EXPIRATION_CHECK_INTERVAL_MS = 60_000;
+const DEFAULT_DECISION_CLAIM_RECOVERY_DELAY_MS = 30_000;
+const DEFAULT_DECISION_CLAIM_CHECK_INTERVAL_MS = 60_000;
+const MIN_DECISION_CLAIM_RECOVERY_LEASE_MS = 1_000;
 const MAX_DECISION_RECONCILIATION_ATTEMPTS = 8;
+const APPROVAL_CREATION_ALREADY_SETTLED = Symbol("approval-creation-already-settled");
+
+function shouldRetainDecisionClaim(
+  outcome: WorkflowRunControlReconcileOutcome,
+  decision: ApprovalDecision,
+  canResume: boolean,
+): boolean {
+  const failedRunMayStillRetry = outcome.status === "skipped-terminal" &&
+    outcome.run?.status === "failed";
+  return failedRunMayStillRetry ||
+    (decision.approved && outcome.run?.status === "waiting" && !canResume);
+}
+
+function reconstructApprovalDecision(
+  approval: PersistedPendingApproval,
+): ApprovalDecision {
+  if (approval.status !== "approved" && approval.status !== "rejected") {
+    throw ORCHESTRATION_ERROR.create({
+      detail: `Approval decision claim "${approval.id}" has undecided status "${approval.status}"`,
+    });
+  }
+  return ApprovalDecisionSchema.parse({
+    approved: approval.status === "approved",
+    approver: approval.decidedBy,
+    ...(approval.comment === undefined ? {} : { comment: approval.comment }),
+    ...(approval.decisionData === undefined ? {} : { data: approval.decisionData }),
+  });
+}
+
+type PreparedApprovalDecisionClaim = {
+  approval: PersistedPendingApproval;
+  decision: ApprovalDecision;
+};
+
+async function prepareApprovalDecisionClaims(
+  backend: WorkflowBackend,
+  runId: string,
+): Promise<PreparedApprovalDecisionClaim[]> {
+  const listClaims = backend.listApprovalDecisionClaims;
+  if (!listClaims) return [];
+  const claims = await listClaims.call(backend, runId);
+  const prepared: PreparedApprovalDecisionClaim[] = [];
+  for (const claim of claims) {
+    if (claim.runId !== runId) continue;
+    const { approval } = claim;
+    if (!approval.decidedAt || !Number.isFinite(approval.decidedAt.getTime())) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: `Approval decision claim "${approval.id}" has no valid decision time`,
+      });
+    }
+    prepared.push({ approval, decision: reconstructApprovalDecision(approval) });
+  }
+  return prepared;
+}
+
+async function finalizeReconciledApprovalDecisions(
+  backend: WorkflowBackend,
+  runId: string,
+  approvalIds: string[],
+): Promise<void> {
+  const finalizeDecision = backend.finalizeApprovalDecision;
+  if (!finalizeDecision) return;
+  for (const approvalId of approvalIds) {
+    try {
+      await finalizeDecision.call(backend, runId, approvalId);
+    } catch (error) {
+      logger.error(
+        "Failed to finalize a reconciled approval decision during retry",
+        { approvalId, runId },
+        error,
+      );
+    }
+  }
+}
+
+/** @internal Apply retained decisions after retry reactivates a failed run. */
+export async function reconcileApprovalDecisionClaimsBeforeRetry(
+  backend: WorkflowBackend,
+  runId: string,
+): Promise<void> {
+  const prepared = await prepareApprovalDecisionClaims(backend, runId);
+  const finalizedApprovalIds: string[] = [];
+  for (const { approval, decision } of prepared) {
+    const run = await backend.getRun(runId);
+    if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+
+    const currentState = run.nodeStates[approval.nodeId];
+    if (
+      !isSameWaitNodeExecution(approval, {
+        nodeId: approval.nodeId,
+        waitInstanceId: currentState?._waitInstanceId,
+      })
+    ) {
+      finalizedApprovalIds.push(approval.id);
+      continue;
+    }
+
+    if (currentState?.status !== "completed") {
+      const outcome = await reconcileWorkflowRunControl({
+        backend,
+        operation: {
+          type: "approval-decision",
+          runId,
+          approvalId: approval.id,
+          nodeId: approval.nodeId,
+          decision,
+          decidedAt: approval.decidedAt,
+          maxAttempts: MAX_DECISION_RECONCILIATION_ATTEMPTS,
+        },
+      });
+      if (outcome.status === "skipped-terminal") continue;
+    }
+    finalizedApprovalIds.push(approval.id);
+  }
+
+  // Every node outcome has committed before cleanup starts. A cleanup failure
+  // must not make retry restore the old failed snapshot: claims already cleaned
+  // up could no longer replay their now-reverted node outcome. Leave only the
+  // failed cleanup durable for the normal decision-claim recovery pass instead.
+  await finalizeReconciledApprovalDecisions(backend, runId, finalizedApprovalIds);
+}
 
 /** Receives detached approval and run snapshots. Mutating them does not change persisted state. */
 export type ApprovalNotifier = (
@@ -59,7 +189,7 @@ export interface ApprovalManagerConfig {
   backend: WorkflowBackend;
   /** Workflow executor for resuming after approval */
   executor?: WorkflowExecutor;
-  /** Notification callback. Owner-bound approvals are persisted before this callback runs. */
+  /** Notification callback. Approvals are persisted before this callback runs. */
   notifier?: ApprovalNotifier;
   /** Resolve a wait node response schema for persisted approvals. */
   responseSchemaResolver?: ApprovalResponseSchemaResolver;
@@ -67,6 +197,10 @@ export interface ApprovalManagerConfig {
   internalResponseSchemaResolver?: InternalApprovalResponseSchemaResolver;
   /** Check expired approvals interval (ms) */
   expirationCheckInterval?: number;
+  /** Age after which an unfinished decision claim is recoverable after a process exit (ms). */
+  decisionClaimRecoveryDelay?: number;
+  /** Interval for discovering decision claims abandoned by another process (ms). */
+  decisionClaimCheckInterval?: number;
   /** Enable debug logging */
   debug?: boolean;
 }
@@ -92,24 +226,89 @@ export interface ApprovalRequest {
   notificationError?: string;
 }
 
+function projectApprovalRequest(
+  runId: string,
+  approval: PersistedPendingApproval,
+): ApprovalRequest {
+  return {
+    approvalId: approval.id,
+    runId,
+    nodeId: approval.nodeId,
+    message: approval.message,
+    payload: approval.payload,
+    expiresAt: approval.expiresAt,
+    notificationError: approval.notificationError,
+  };
+}
+
 /** Manages pending approvals, processing decisions, and resuming workflows */
 export class ApprovalManager {
   private config: ApprovalManagerConfig;
   private expirationTimer?: ReturnType<typeof setInterval>;
   private destroyed = false;
   private responseSchemas = new Map<string, Schema<unknown>>();
+  private activeDecisionClaims = new Set<string>();
+  private decisionClaimReconciliation?: Promise<void>;
+  private decisionClaimRecoveryTimer?: ReturnType<typeof setTimeout>;
+  private decisionClaimRecoveryAt?: number;
+  private decisionClaimCheckTimer?: ReturnType<typeof setInterval>;
 
   constructor(config: ApprovalManagerConfig) {
     this.config = {
       expirationCheckInterval: DEFAULT_EXPIRATION_CHECK_INTERVAL_MS,
+      decisionClaimRecoveryDelay: DEFAULT_DECISION_CLAIM_RECOVERY_DELAY_MS,
+      decisionClaimCheckInterval: DEFAULT_DECISION_CLAIM_CHECK_INTERVAL_MS,
       debug: false,
       ...config,
     };
+
+    this.startDecisionClaimRecovery();
 
     const interval = this.config.expirationCheckInterval ?? 0;
     if (interval > 0) {
       this.startExpirationChecker();
     }
+  }
+
+  private async findApprovalCreationCollision(
+    runId: string,
+    approval: PersistedPendingApproval,
+  ): Promise<PersistedPendingApproval | typeof APPROVAL_CREATION_ALREADY_SETTLED | null> {
+    const pending = (await this.config.backend.getPendingApprovals(runId)).find((candidate) =>
+      isSameWaitNodeExecution(candidate, approval)
+    );
+    if (pending) return pending;
+
+    const claims = await this.config.backend.listApprovalDecisionClaims?.(runId) ?? [];
+    const claim = claims.find((candidate) =>
+      candidate.runId === runId && isSameWaitNodeExecution(candidate.approval, approval)
+    );
+    if (claim) return claim.approval;
+
+    const run = await this.config.backend.getRun(runId);
+    if (
+      !run || run.status === "completed" || run.status === "failed" || run.status === "cancelled"
+    ) {
+      return APPROVAL_CREATION_ALREADY_SETTLED;
+    }
+    const currentState = run.nodeStates[approval.nodeId];
+    if (
+      !isSameWaitNodeExecution(approval, {
+        nodeId: approval.nodeId,
+        waitInstanceId: currentState?._waitInstanceId,
+      }) || currentState?.status === "completed" || currentState?.status === "failed"
+    ) {
+      return APPROVAL_CREATION_ALREADY_SETTLED;
+    }
+    return null;
+  }
+
+  private startDecisionClaimRecovery(): void {
+    if ((this.config.decisionClaimCheckInterval ?? 0) <= 0) return;
+    void this.checkApprovalDecisionClaims().catch((error) => {
+      logger.error("Approval decision claim recovery failed", error);
+    });
+    this.startDecisionClaimChecker();
   }
 
   /** Create a pending approval request */
@@ -118,7 +317,7 @@ export class ApprovalManager {
     nodeId: string,
     waitConfig: WaitNodeConfig,
     context: WorkflowContext,
-    options: { responseSchemaId?: string } = {},
+    options: { responseSchemaId?: string; notify?: boolean } = {},
   ): Promise<ApprovalRequest> {
     const runId = run.id;
     const workerId = run.workerId;
@@ -127,7 +326,12 @@ export class ApprovalManager {
       ? await waitConfig.payload(context)
       : waitConfig.payload;
 
-    const expiresAt = timeoutMs ? new Date(Date.now() + timeoutMs) : undefined;
+    const nodeStartedAt = run.nodeStates[nodeId]?.startedAt;
+    const nodeStartedAtMs = nodeStartedAt === undefined
+      ? Number.NaN
+      : new Date(nodeStartedAt).getTime();
+    const timeoutBaseMs = Number.isFinite(nodeStartedAtMs) ? nodeStartedAtMs : Date.now();
+    const expiresAt = timeoutMs ? new Date(timeoutBaseMs + timeoutMs) : undefined;
 
     const approval: PersistedPendingApproval = {
       id: generateId("apr"),
@@ -138,6 +342,9 @@ export class ApprovalManager {
       requestedAt: new Date(),
       expiresAt,
       status: "pending",
+      ...(run.nodeStates[nodeId]?._waitInstanceId === undefined
+        ? {}
+        : { waitInstanceId: run.nodeStates[nodeId]._waitInstanceId }),
       ...(options.responseSchemaId === undefined
         ? {}
         : { responseSchemaId: options.responseSchemaId }),
@@ -155,15 +362,14 @@ export class ApprovalManager {
       this.responseSchemas.set(responseSchemaKey, waitConfig.responseSchema);
     }
 
-    // Worker-owned approvals are reserved atomically before notification. This
-    // prevents a delayed onWaiting callback from notifying or appending after a
-    // replacement worker has claimed the run.
+    // Persist before notifying for both owner-bound and ownerless callers. The
+    // backend atomically rejects a second live approval for this node, so only
+    // the winner is allowed to notify approvers.
     const ownerBound = workerId !== undefined;
-    if (ownerBound) {
-      const saveOwned = this.config.backend.savePendingApprovalIfStatusAndWorker;
-      let saved: boolean;
-      try {
-        saved = saveOwned
+    try {
+      if (ownerBound) {
+        const saveOwned = this.config.backend.savePendingApprovalIfStatusAndWorker;
+        const saved = saveOwned
           ? await saveOwned.call(
             this.config.backend,
             runId,
@@ -172,22 +378,73 @@ export class ApprovalManager {
             approval,
           )
           : false;
-      } catch (error) {
-        if (responseSchemaKey) {
-          this.responseSchemas.delete(responseSchemaKey);
+        if (!saved) {
+          const collision = await this.findApprovalCreationCollision(runId, approval);
+          if (collision) {
+            if (responseSchemaKey) this.responseSchemas.delete(responseSchemaKey);
+            return projectApprovalRequest(
+              runId,
+              collision === APPROVAL_CREATION_ALREADY_SETTLED ? approval : collision,
+            );
+          }
+          throw ORCHESTRATION_ERROR.create({
+            detail: "Workflow execution ownership changed before approval persistence",
+          });
         }
-        throw error;
-      }
-      if (!saved) {
-        if (responseSchemaKey) {
-          this.responseSchemas.delete(responseSchemaKey);
+      } else {
+        const saveIfAbsent = this.config.backend.savePendingApprovalIfAbsent;
+        if (!saveIfAbsent) {
+          throw ORCHESTRATION_ERROR.create({
+            detail: "Backend does not support atomic ownerless approval creation",
+          });
         }
-        throw ORCHESTRATION_ERROR.create({
-          detail: "Workflow execution ownership changed before approval persistence",
-        });
+        const saved = await saveIfAbsent.call(this.config.backend, runId, approval);
+        if (!saved) {
+          const collision = await this.findApprovalCreationCollision(runId, approval);
+          if (responseSchemaKey) this.responseSchemas.delete(responseSchemaKey);
+          if (collision) {
+            return projectApprovalRequest(
+              runId,
+              collision === APPROVAL_CREATION_ALREADY_SETTLED ? approval : collision,
+            );
+          }
+          throw ORCHESTRATION_ERROR.create({
+            detail: "Atomic approval creation lost without an existing approval",
+          });
+        }
       }
+    } catch (error) {
+      if (responseSchemaKey) this.responseSchemas.delete(responseSchemaKey);
+      throw error;
     }
 
+    if (approval.expiresAt && new Date() > approval.expiresAt) {
+      await this.expireApproval(runId, approval);
+      return projectApprovalRequest(runId, approval);
+    }
+
+    if (options.notify !== false) await this.notifyApproval(run, approval);
+
+    return projectApprovalRequest(runId, approval);
+  }
+
+  /** Notify after the execution lock has released for an already-persisted approval. */
+  async notifyPendingApproval(run: WorkflowRun, nodeId: string): Promise<void> {
+    if (!this.config.notifier) return;
+    const state = run.nodeStates[nodeId];
+    const approval = (await this.config.backend.getPendingApprovals(run.id)).find((candidate) =>
+      isSameWaitNodeExecution(candidate, {
+        nodeId,
+        waitInstanceId: state?._waitInstanceId,
+      })
+    );
+    if (approval) await this.notifyApproval(run, approval);
+  }
+
+  private async notifyApproval(
+    run: WorkflowRun,
+    approval: PersistedPendingApproval,
+  ): Promise<void> {
     try {
       await this.config.notifier?.(
         structuredClone(projectPendingApproval(approval)),
@@ -198,48 +455,35 @@ export class ApprovalManager {
       approval.notificationError = message;
       logger.error(
         "Failed to notify approvers; approval created but approvers were NOT informed",
-        { approvalId: approval.id, runId, error: message },
+        { approvalId: approval.id, runId: run.id, error: message },
       );
     }
 
-    if (ownerBound) {
-      if (approval.notificationError) {
+    if (approval.notificationError) {
+      const updatePendingApproval = this.config.backend.updatePendingApproval;
+      if (!updatePendingApproval) {
+        logger.warn(
+          "Backend cannot persist approval notification state; the failed notification is " +
+            "reported only to this caller",
+          { approvalId: approval.id, runId: run.id },
+        );
+      } else {
         try {
-          await this.config.backend.updatePendingApproval?.(
-            runId,
+          await updatePendingApproval.call(
+            this.config.backend,
+            run.id,
             approval.id,
             { notificationError: approval.notificationError },
           );
         } catch (error) {
           logger.error(
             "Failed to persist approval notification state",
-            { approvalId: approval.id, runId },
+            { approvalId: approval.id, runId: run.id },
             error,
           );
         }
       }
-    } else {
-      // Preserve direct/ownerless behavior: resolve notification first so its
-      // delivery error is included in the initial append.
-      try {
-        await this.config.backend.savePendingApproval(runId, approval);
-      } catch (error) {
-        if (responseSchemaKey) {
-          this.responseSchemas.delete(responseSchemaKey);
-        }
-        throw error;
-      }
     }
-
-    return {
-      approvalId: approval.id,
-      runId,
-      nodeId,
-      message: approval.message,
-      payload: approval.payload,
-      expiresAt: approval.expiresAt,
-      notificationError: approval.notificationError,
-    };
   }
 
   /** Get pending approval by ID */
@@ -312,6 +556,266 @@ export class ApprovalManager {
     }
   }
 
+  /** Reconcile durable decisions left behind by an interrupted process. */
+  checkApprovalDecisionClaims(): Promise<void> {
+    if (this.destroyed) return Promise.resolve();
+    if (this.decisionClaimReconciliation) return this.decisionClaimReconciliation;
+
+    const reconciliation = this.reconcileApprovalDecisionClaims();
+    this.decisionClaimReconciliation = reconciliation;
+    void reconciliation.then(
+      () => {
+        if (this.decisionClaimReconciliation === reconciliation) {
+          this.decisionClaimReconciliation = undefined;
+        }
+      },
+      () => {
+        if (this.decisionClaimReconciliation === reconciliation) {
+          this.decisionClaimReconciliation = undefined;
+        }
+      },
+    );
+    return reconciliation;
+  }
+
+  private async reconcileApprovalDecisionClaims(): Promise<void> {
+    const listClaims = this.config.backend.listApprovalDecisionClaims;
+    const reserveClaim = this.config.backend.reserveApprovalDecisionClaim;
+    if (!listClaims || !reserveClaim) return;
+    const recoveryDelay = this.config.decisionClaimRecoveryDelay ??
+      DEFAULT_DECISION_CLAIM_RECOVERY_DELAY_MS;
+    const recoveryLease = Math.max(recoveryDelay, MIN_DECISION_CLAIM_RECOVERY_LEASE_MS);
+    const claims = await listClaims.call(this.config.backend);
+
+    for (const { runId, approval } of claims) {
+      if (this.destroyed) return;
+      await this.reconcileApprovalDecisionClaim(
+        runId,
+        approval,
+        recoveryDelay,
+        recoveryLease,
+      );
+    }
+  }
+
+  private async reconcileApprovalDecisionClaim(
+    runId: string,
+    approval: PersistedPendingApproval,
+    recoveryDelay: number,
+    recoveryLease: number,
+  ): Promise<void> {
+    const claimKey = this.decisionClaimKey(runId, approval.id);
+    if (this.activeDecisionClaims.has(claimKey)) return;
+    if (!approval.decidedAt || !Number.isFinite(approval.decidedAt.getTime())) return;
+
+    const lastClaimedAt = approval.recoveryClaimedAt ?? approval.decidedAt;
+    const requiredAge = approval.recoveryClaimedAt ? recoveryLease : recoveryDelay;
+    const claimAge = Date.now() - lastClaimedAt.getTime();
+    if (claimAge < requiredAge) {
+      this.scheduleDecisionClaimRecovery(requiredAge - claimAge);
+      return;
+    }
+
+    const decision = this.tryReconstructApprovalDecision(runId, approval);
+    if (!decision) return;
+    const recoveryClaimId = await this.reserveApprovalDecisionRecovery(
+      runId,
+      approval.id,
+      recoveryLease,
+    );
+    if (!recoveryClaimId) return;
+    await this.reconcileReservedApprovalDecision(
+      runId,
+      approval,
+      decision,
+      claimKey,
+      recoveryClaimId,
+    );
+  }
+
+  private tryReconstructApprovalDecision(
+    runId: string,
+    approval: PersistedPendingApproval,
+  ): ApprovalDecision | null {
+    try {
+      return reconstructApprovalDecision(approval);
+    } catch (error) {
+      logger.error(
+        "Cannot reconstruct a durable approval decision claim",
+        { approvalId: approval.id, runId },
+        error,
+      );
+      return null;
+    }
+  }
+
+  private async reserveApprovalDecisionRecovery(
+    runId: string,
+    approvalId: string,
+    recoveryLease: number,
+  ): Promise<string | null> {
+    const reserveClaim = this.config.backend.reserveApprovalDecisionClaim;
+    if (!reserveClaim) return null;
+    const recoveryClaimId = generateId("apr-recovery");
+    const claimedAt = new Date();
+    const reserved = await reserveClaim.call(
+      this.config.backend,
+      runId,
+      approvalId,
+      recoveryClaimId,
+      claimedAt,
+      new Date(claimedAt.getTime() - recoveryLease),
+    );
+    return reserved ? recoveryClaimId : null;
+  }
+
+  private async reconcileReservedApprovalDecision(
+    runId: string,
+    approval: PersistedPendingApproval,
+    decision: ApprovalDecision,
+    claimKey: string,
+    recoveryClaimId: string,
+  ): Promise<void> {
+    this.activeDecisionClaims.add(claimKey);
+    let releaseReservation = false;
+    try {
+      releaseReservation = await this.applyReservedApprovalDecision(
+        runId,
+        approval,
+        decision,
+        recoveryClaimId,
+      );
+    } catch (error) {
+      logger.error(
+        "Failed to recover an approval decision claim",
+        { approvalId: approval.id, runId },
+        error,
+      );
+    } finally {
+      try {
+        if (releaseReservation) {
+          await this.config.backend.releaseApprovalDecisionClaim?.(
+            runId,
+            approval.id,
+            recoveryClaimId,
+          );
+        }
+      } finally {
+        this.activeDecisionClaims.delete(claimKey);
+      }
+    }
+  }
+
+  /** Return true when the durable decision remains live and its reservation should be released. */
+  private async applyReservedApprovalDecision(
+    runId: string,
+    approval: PersistedPendingApproval,
+    decision: ApprovalDecision,
+    recoveryClaimId: string,
+  ): Promise<boolean> {
+    const run = await this.config.backend.getRun(runId);
+    if (!run) {
+      await this.finalizeReservedApproval(runId, approval.id, recoveryClaimId);
+      return false;
+    }
+    const currentState = run.nodeStates[approval.nodeId];
+    if (
+      !isSameWaitNodeExecution(approval, {
+        nodeId: approval.nodeId,
+        waitInstanceId: currentState?._waitInstanceId,
+      })
+    ) {
+      // The old decision already resumed the run far enough to create a newer
+      // execution of this reusable wait. Reapplying it would approve the new
+      // iteration without its own human decision.
+      await this.finalizeReservedApproval(runId, approval.id, recoveryClaimId);
+      return false;
+    }
+    if (currentState?.status === "completed") {
+      return await this.finishCommittedApprovalDecision(
+        run,
+        approval,
+        decision,
+        recoveryClaimId,
+      );
+    }
+
+    const outcome = await reconcileWorkflowRunControl({
+      backend: this.config.backend,
+      operation: {
+        type: "approval-decision",
+        runId,
+        approvalId: approval.id,
+        nodeId: approval.nodeId,
+        decision,
+        decidedAt: approval.decidedAt!,
+        maxAttempts: MAX_DECISION_RECONCILIATION_ATTEMPTS,
+        resume: this.config.executor
+          ? (id, expectedWorkerId) => this.config.executor!.resume(id, undefined, expectedWorkerId)
+          : undefined,
+      },
+    });
+    if (shouldRetainDecisionClaim(outcome, decision, this.config.executor !== undefined)) {
+      return true;
+    }
+    await this.finalizeReservedApproval(runId, approval.id, recoveryClaimId);
+    return false;
+  }
+
+  private async finishCommittedApprovalDecision(
+    run: WorkflowRun,
+    approval: PersistedPendingApproval,
+    decision: ApprovalDecision,
+    recoveryClaimId: string,
+  ): Promise<boolean> {
+    if (decision.approved && run.status === "waiting") {
+      if (!this.config.executor) return true;
+      await this.config.executor.resume(run.id, undefined, run.workerId);
+    }
+    await this.finalizeReservedApproval(run.id, approval.id, recoveryClaimId);
+    return false;
+  }
+
+  private async finalizeReservedApproval(
+    runId: string,
+    approvalId: string,
+    recoveryClaimId: string,
+  ): Promise<void> {
+    await this.config.backend.finalizeApprovalDecision?.(
+      runId,
+      approvalId,
+      recoveryClaimId,
+    );
+  }
+
+  private decisionClaimKey(runId: string, approvalId: string): string {
+    return `${runId}\0${approvalId}`;
+  }
+
+  private scheduleDecisionClaimRecovery(delayMs: number): void {
+    if (this.destroyed) return;
+    const dueAt = Date.now() + Math.max(1, delayMs);
+    if (
+      this.decisionClaimRecoveryTimer !== undefined &&
+      this.decisionClaimRecoveryAt !== undefined &&
+      this.decisionClaimRecoveryAt <= dueAt
+    ) return;
+
+    if (this.decisionClaimRecoveryTimer !== undefined) {
+      clearTimeout(this.decisionClaimRecoveryTimer);
+    }
+    this.decisionClaimRecoveryAt = dueAt;
+    this.decisionClaimRecoveryTimer = setTimeout(() => {
+      this.decisionClaimRecoveryTimer = undefined;
+      this.decisionClaimRecoveryAt = undefined;
+      if (this.destroyed) return;
+      void this.checkApprovalDecisionClaims().catch((error) => {
+        logger.error("Approval decision claim recovery failed", error);
+      });
+    }, Math.max(1, dueAt - Date.now()));
+    unrefTimer(this.decisionClaimRecoveryTimer);
+  }
+
   /** Process an approval decision */
   async processDecision(
     runId: string,
@@ -333,21 +837,14 @@ export class ApprovalManager {
     if (!approval) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
     }
-
-    if (approval.status !== "pending") {
-      throw INVALID_ARGUMENT.create({ detail: `Approval already processed: ${approval.status}` });
-    }
-
-    if (approval.expiresAt && new Date() > approval.expiresAt) {
-      throw INVALID_ARGUMENT.create({ detail: "Approval has expired" });
-    }
-
-    const approvers = approval.approvers;
-    if (approvers?.length && !approvers.includes(decision.approver)) {
-      throw PERMISSION_DENIED.create({ detail: "Not authorized to approve this request" });
-    }
+    this.assertDecisionCanApply(approval, decision);
 
     await this.validateDecisionData(runId, approval, decision);
+
+    // Replacement-map backends cannot preserve two dependency-free approval
+    // outcomes that race from the same run snapshot. Fence before either
+    // decision leaves the pending set, while every sibling is still visible.
+    await assertApprovalDecisionPatchIsolation(this.config.backend, runId, approvalId);
 
     // Authoritative gate: the backend applies the decision only while the
     // approval is still pending and reports whether it won the race. If another
@@ -363,29 +860,68 @@ export class ApprovalManager {
     // worker owns the run now, retrying if ownership changes between the read,
     // conditional patch, and resume. Without this loop, a successful approval
     // update could be consumed while leaving the workflow permanently waiting.
+    const claimKey = this.decisionClaimKey(runId, approvalId);
+    this.activeDecisionClaims.add(claimKey);
     try {
-      await reconcileWorkflowRunControl({
-        backend: this.config.backend,
-        operation: {
-          type: "approval-decision",
-          runId,
-          approvalId,
-          nodeId: approval.nodeId,
-          decision,
-          decidedAt: new Date(),
-          maxAttempts: MAX_DECISION_RECONCILIATION_ATTEMPTS,
-          resume: this.config.executor
-            ? (id, expectedWorkerId) =>
-              this.config.executor!.resume(id, undefined, expectedWorkerId)
-            : undefined,
-        },
-      });
+      const outcome = await this.reconcileAppliedDecision(runId, approvalId, approval, decision);
+      if (!shouldRetainDecisionClaim(outcome, decision, this.config.executor !== undefined)) {
+        try {
+          await this.config.backend.finalizeApprovalDecision?.(runId, approvalId);
+        } catch (error) {
+          logger.error(
+            "Failed to finalize an approval decision claim",
+            { approvalId, runId },
+            error,
+          );
+        }
+      }
     } catch (error) {
       if (decision.approved && this.config.executor) {
         logger.error("Failed to resume workflow", error);
       }
       throw error;
+    } finally {
+      this.activeDecisionClaims.delete(claimKey);
     }
+  }
+
+  private assertDecisionCanApply(
+    approval: PersistedPendingApproval,
+    decision: ApprovalDecision,
+  ): void {
+    if (approval.status !== "pending") {
+      throw INVALID_ARGUMENT.create({ detail: `Approval already processed: ${approval.status}` });
+    }
+    if (approval.expiresAt && new Date() > approval.expiresAt) {
+      throw INVALID_ARGUMENT.create({ detail: "Approval has expired" });
+    }
+    const approvers = approval.approvers;
+    if (approvers?.length && !approvers.includes(decision.approver)) {
+      throw PERMISSION_DENIED.create({ detail: "Not authorized to approve this request" });
+    }
+  }
+
+  private async reconcileAppliedDecision(
+    runId: string,
+    approvalId: string,
+    approval: PersistedPendingApproval,
+    decision: ApprovalDecision,
+  ): Promise<WorkflowRunControlReconcileOutcome> {
+    return await reconcileWorkflowRunControl({
+      backend: this.config.backend,
+      operation: {
+        type: "approval-decision",
+        runId,
+        approvalId,
+        nodeId: approval.nodeId,
+        decision,
+        decidedAt: new Date(),
+        maxAttempts: MAX_DECISION_RECONCILIATION_ATTEMPTS,
+        resume: this.config.executor
+          ? (id, expectedWorkerId) => this.config.executor!.resume(id, undefined, expectedWorkerId)
+          : undefined,
+      },
+    });
   }
 
   private submitDecision(
@@ -470,41 +1006,94 @@ export class ApprovalManager {
         continue;
       }
 
-      logger.debug("Expiring approval", {
-        approvalId: approval.id,
-      });
+      await this.expireApproval(runId, approval);
+    }
+  }
 
-      const expired = await this.config.backend.updateApproval(runId, approval.id, {
-        approved: false,
-        approver: "system",
-        comment: "Approval expired",
-      });
-      // A concurrent decision may have resolved this approval between the list
-      // read and here; if so the atomic gate skipped it, so don't fail the run.
-      if (expired === false) {
-        continue;
-      }
-      this.responseSchemas.delete(this.responseSchemaKey(runId, approval.id));
+  private async expireApproval(
+    runId: string,
+    approval: PersistedPendingApproval,
+  ): Promise<void> {
+    logger.debug("Expiring approval", {
+      approvalId: approval.id,
+    });
 
-      await updateRunIfStatus(this.config.backend, runId, ["pending", "running", "waiting"], {
+    const expired = await this.config.backend.updateApproval(runId, approval.id, {
+      approved: false,
+      approver: "system",
+      comment: "Approval expired",
+    });
+    // A concurrent decision may have resolved this approval between the read
+    // and here; if so the atomic gate skipped it, so don't fail the run.
+    if (expired === false) {
+      return;
+    }
+    this.responseSchemas.delete(this.responseSchemaKey(runId, approval.id));
+
+    const failed = await updateRunIfStatus(
+      this.config.backend,
+      runId,
+      ["pending", "running", "waiting"],
+      {
         status: "failed",
         error: { message: `Approval "${approval.id}" expired` },
         completedAt: new Date(),
-      });
+      },
+    );
+    if (!failed) {
+      const latest = await this.config.backend.getRun(runId);
+      if (
+        latest && latest.status !== "completed" && latest.status !== "cancelled"
+      ) return;
+    }
+    try {
+      await this.config.backend.finalizeApprovalDecision?.(runId, approval.id);
+    } catch (error) {
+      logger.error(
+        "Failed to finalize an expired approval decision claim",
+        { approvalId: approval.id, runId },
+        error,
+      );
     }
   }
 
   private startExpirationChecker(): void {
     this.expirationTimer = setInterval(() => {
-      this.checkExpiredApprovals().catch((error) => {
-        logger.error("Expiration check failed", error);
-      });
+      void this.runMaintenance();
     }, this.config.expirationCheckInterval);
+  }
+
+  private startDecisionClaimChecker(): void {
+    this.decisionClaimCheckTimer = setInterval(() => {
+      void this.checkApprovalDecisionClaims().catch((error) => {
+        logger.error("Approval decision claim recovery failed", error);
+      });
+    }, this.config.decisionClaimCheckInterval);
+    unrefTimer(this.decisionClaimCheckTimer);
+  }
+
+  private async runMaintenance(): Promise<void> {
+    try {
+      await this.checkExpiredApprovals();
+    } catch (error) {
+      logger.error("Expiration check failed", error);
+    }
   }
 
   /** Stop the approval manager */
   stop(): void {
     this.destroyed = true;
+
+    if (this.decisionClaimRecoveryTimer !== undefined) {
+      clearTimeout(this.decisionClaimRecoveryTimer);
+      this.decisionClaimRecoveryTimer = undefined;
+      this.decisionClaimRecoveryAt = undefined;
+    }
+
+    if (this.decisionClaimCheckTimer !== undefined) {
+      clearInterval(this.decisionClaimCheckTimer);
+      this.decisionClaimCheckTimer = undefined;
+    }
 
     if (!this.expirationTimer) {
       return;

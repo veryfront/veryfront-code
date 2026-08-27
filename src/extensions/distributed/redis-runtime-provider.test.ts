@@ -53,6 +53,7 @@ const NODE_REDIS_CLIENT_METHODS = [
   "xReadGroup",
   "xAck",
   "keys",
+  "scan",
   "exists",
   "expire",
   "set",
@@ -126,6 +127,26 @@ describe("RedisRuntimeProvider", () => {
       "on must forward the event name and listener unchanged",
     );
     assertEquals(result, "registered", "on must return the underlying return value");
+  });
+
+  it("falls back to keys when an existing module client has no scan method", async () => {
+    const client = createModuleClient("scan");
+    const patterns: unknown[] = [];
+    client.keys = (pattern: unknown) => {
+      patterns.push(pattern);
+      return Promise.resolve(["veryfront:approvals:run-1"]);
+    };
+    const provider = createProvider();
+    provider.loadModule = () => Promise.resolve({ createClient: () => client } as never);
+
+    const module = await captureRedisRuntimeProvider(provider).loadModule();
+    const captured = module.createClient({});
+
+    assertEquals(
+      await captured.scan(0, { MATCH: "veryfront:approvals:*", COUNT: 100 }),
+      { cursor: 0, keys: ["veryfront:approvals:run-1"] },
+    );
+    assertEquals(patterns, ["veryfront:approvals:*"]);
   });
 
   it("captures provider methods without losing their receiver", async () => {

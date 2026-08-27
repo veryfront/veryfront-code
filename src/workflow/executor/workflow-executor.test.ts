@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import {
+  assert,
   assertEquals,
   assertExists,
   assertInstanceOf,
@@ -10,7 +11,7 @@ import { VeryfrontError } from "#veryfront/errors";
 import type { Tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { MemoryBackend } from "../backends/memory.ts";
-import { branch, dependsOn, step, waitForApproval, workflow } from "../dsl/index.ts";
+import { branch, dependsOn, step, waitForApproval, waitForEvent, workflow } from "../dsl/index.ts";
 import { ApprovalManager } from "../runtime/approval-manager.ts";
 import type { WorkflowRun } from "../types.ts";
 import { WorkflowExecutor } from "./workflow-executor.ts";
@@ -138,6 +139,45 @@ class FailingOwnerHeartbeatBackend extends MemoryBackend {
   }
 }
 
+class BoundaryPatchRecordingBackend extends MemoryBackend {
+  readonly boundaryContextKeys: string[][] = [];
+
+  override updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (
+      patch.status === undefined && patch.nodeStates !== undefined && patch.context !== undefined
+    ) {
+      this.boundaryContextKeys.push(Object.keys(patch.context).sort());
+    }
+    return super.updateRunIfStatusAndWorker(runId, expectedStatuses, expectedWorkerId, patch);
+  }
+}
+
+class ReplacementPatchRecordingBackend extends MemoryBackend {
+  readonly boundaryPatches: Array<Partial<WorkflowRun>> = [];
+
+  constructor() {
+    super();
+    Object.defineProperty(this, "supportsRunPatchKeyMerge", { value: false });
+  }
+
+  override updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.status === undefined && patch.nodeStates !== undefined) {
+      this.boundaryPatches.push(patch);
+    }
+    return super.updateRunIfStatusAndWorker(runId, expectedStatuses, expectedWorkerId, patch);
+  }
+}
+
 class RejectingNodeStateBoundaryBackend extends MemoryBackend {
   override updateRunIfStatusAndWorker(
     runId: string,
@@ -219,7 +259,128 @@ class CleanupTrackingBackend extends MemoryBackend {
   }
 }
 
+class RejectRetryFinalReadBackend extends MemoryBackend {
+  private rejectNextRead = false;
+
+  override async updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    const updated = await super.updateRunIfStatus(runId, expectedStatuses, patch);
+    if (updated && patch.status === "pending") this.rejectNextRead = true;
+    return updated;
+  }
+
+  override getRun(runId: string): Promise<WorkflowRun | null> {
+    if (this.rejectNextRead) {
+      this.rejectNextRead = false;
+      return Promise.reject(new Error("retry final run read unavailable"));
+    }
+    return super.getRun(runId);
+  }
+}
+
+class RejectSecondRetryDecisionBackend extends MemoryBackend {
+  override updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.nodeStates?.second?.status === "completed") {
+      return Promise.reject(new Error("second retained decision unavailable"));
+    }
+    return super.updateRunIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      patch,
+    );
+  }
+}
+
+class RejectSecondDecisionFinalizationBackend extends MemoryBackend {
+  secondFinalizationAttempts = 0;
+
+  override finalizeApprovalDecision(runId: string, approvalId: string): Promise<void> {
+    if (approvalId === "apr-second") {
+      this.secondFinalizationAttempts++;
+      if (this.secondFinalizationAttempts === 1) {
+        return Promise.reject(new Error("second decision finalization unavailable"));
+      }
+    }
+    return super.finalizeApprovalDecision(runId, approvalId);
+  }
+}
+
+class RejectFirstCancelledWaitReadBackend extends MemoryBackend {
+  private rejectNextWaitRead = true;
+  readonly cleanupCompleted = Promise.withResolvers<void>();
+
+  override getPendingEventWaits(
+    runId: string,
+  ): ReturnType<MemoryBackend["getPendingEventWaits"]> {
+    if (this.rejectNextWaitRead) {
+      this.rejectNextWaitRead = false;
+      return Promise.reject(new Error("cancelled wait read unavailable"));
+    }
+    return super.getPendingEventWaits(runId);
+  }
+
+  override async resolvePendingEventWait(
+    runId: string,
+    waitId: string,
+    status: "delivered" | "expired" | "cancelled",
+  ): Promise<boolean> {
+    const resolved = await super.resolvePendingEventWait(runId, waitId, status);
+    if (resolved && status === "cancelled") this.cleanupCompleted.resolve();
+    return resolved;
+  }
+}
+
 describe("workflow/executor/workflow-executor", () => {
+  it("sends only changed context keys to key-merge backends at DAG boundaries", async () => {
+    const backend = new BoundaryPatchRecordingBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register(
+      workflow({
+        id: "context-boundary-delta",
+        steps: [step("work", { tool: createTool("work", () => ({ done: true })) })],
+      }).definition,
+    );
+
+    const handle = await executor.start("context-boundary-delta", { retained: true });
+    await handle.settled();
+
+    assertEquals(backend.boundaryContextKeys.some((keys) => keys.includes("work")), true);
+    assertEquals(backend.boundaryContextKeys.some((keys) => keys.includes("input")), false);
+  });
+
+  it("omits merge-only deletes from replacement backend patches", async () => {
+    const backend = new ReplacementPatchRecordingBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register(
+      workflow({
+        id: "replacement-boundary-shape",
+        steps: [step("work", { tool: createTool("work", () => ({ done: true })) })],
+      }).definition,
+    );
+
+    const handle = await executor.start("replacement-boundary-shape", { retained: true });
+    await handle.settled();
+
+    assertEquals(backend.boundaryPatches.length > 0, true);
+    assertEquals(
+      backend.boundaryPatches.every((patch) => !("contextDeletes" in patch)),
+      true,
+    );
+    assertEquals(
+      backend.boundaryPatches.every((patch) => !("nodeStateDeletes" in patch)),
+      true,
+    );
+  });
+
   it("persists the exact source integration policy when a run starts", async () => {
     const backend = new MemoryBackend();
     const executor = new WorkflowExecutor({ backend, enableLocking: false });
@@ -452,6 +613,146 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(await backend.getLatestCheckpoint(run.id), null);
   });
 
+  it("re-runs nodes completed after the checkpoint a resume restores", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    let lastExecutions = 0;
+    executor.register(
+      workflow({
+        id: "checkpoint-replay",
+        steps: [
+          step("first", { tool: createTool("first", () => ({ ok: true })) }),
+          step("later", { tool: createTool("later", () => ({ ok: true })) }),
+          step("last", {
+            tool: createTool("last", () => {
+              lastExecutions++;
+              return { replayed: true };
+            }),
+          }),
+        ],
+      }).definition,
+    );
+    // The run progressed well past the checkpoint before the explicit restore.
+    const run = {
+      ...createRun("checkpoint-replay"),
+      status: "waiting" as const,
+      context: {
+        input: {},
+        first: { ok: true },
+        later: { ok: true },
+        last: { replayed: false },
+      },
+      nodeStates: {
+        first: { nodeId: "first", status: "completed" as const, attempt: 1 },
+        later: { nodeId: "later", status: "completed" as const, attempt: 1 },
+        last: { nodeId: "last", status: "completed" as const, attempt: 1 },
+      },
+    };
+    await backend.createRun(run);
+    await backend.saveCheckpoint(run.id, {
+      id: "cp-first",
+      nodeId: "first",
+      timestamp: new Date(),
+      context: { input: {}, first: { ok: true } },
+      nodeStates: { first: { nodeId: "first", status: "completed", attempt: 1 } },
+    });
+
+    await executor.resume(run.id, "cp-first");
+
+    const persisted = await backend.getRun(run.id);
+    assertEquals(persisted?.status, "completed");
+    assertEquals(
+      lastExecutions,
+      1,
+      "a node completed after the restored checkpoint must be re-run on replay: " +
+        "a merged restore leaves it marked completed and silently skips it",
+    );
+    assertEquals(
+      (persisted?.context.last as { replayed?: boolean })?.replayed,
+      true,
+      "stale post-checkpoint context must not survive the snapshot restore",
+    );
+  });
+
+  it("retires event waits excluded by an explicit checkpoint restore", async () => {
+    const backend = new MemoryBackend();
+    const resolved: Array<{ runId: string; waitId: string }> = [];
+    const executor = new WorkflowExecutor({
+      backend,
+      enableLocking: false,
+      onEventWaitResolved: (runId, waitId) => {
+        resolved.push({ runId, waitId });
+      },
+    });
+    let finishRuns = 0;
+    executor.register(
+      workflow({
+        id: "checkpoint-retire-event-wait",
+        steps: [
+          step("prepare", { tool: createTool("prepare", () => ({ ready: true })) }),
+          dependsOn(waitForEvent("gate", { eventName: "gate.ready" }), "prepare"),
+          dependsOn(
+            step("finish", {
+              tool: createTool("finish", () => {
+                finishRuns++;
+                return { done: true };
+              }),
+            }),
+            "gate",
+          ),
+        ],
+      }).definition,
+    );
+    const run = {
+      ...createRun("checkpoint-retire-event-wait"),
+      status: "waiting" as const,
+      context: { input: {}, prepare: { ready: true } },
+      nodeStates: {
+        prepare: { nodeId: "prepare", status: "completed" as const, attempt: 1 },
+        gate: {
+          nodeId: "gate",
+          status: "running" as const,
+          attempt: 1,
+          input: { type: "event", eventName: "gate.ready" },
+          _waitInstanceId: "wait-after-checkpoint",
+        },
+      },
+      currentNodes: ["gate"],
+    };
+    await backend.createRun(run);
+    await backend.saveCheckpoint(run.id, {
+      id: "cp-prepare",
+      nodeId: "prepare",
+      timestamp: new Date(),
+      context: { input: {}, prepare: { ready: true } },
+      nodeStates: { prepare: { nodeId: "prepare", status: "completed", attempt: 1 } },
+    });
+    await backend.savePendingEventWait(run.id, {
+      id: "evw-after-checkpoint",
+      runId: run.id,
+      nodeId: "gate",
+      eventName: "gate.ready",
+      waitKind: "event",
+      requestedAt: new Date(),
+      status: "pending",
+      waitInstanceId: "wait-after-checkpoint",
+    });
+
+    await executor.resume(run.id, "cp-prepare");
+
+    const pending = await backend.getPendingEventWaits(run.id);
+    assertEquals(pending.length, 0);
+    assertEquals(resolved, [{ runId: run.id, waitId: "evw-after-checkpoint" }]);
+    assertEquals(finishRuns, 0);
+    const restored = await backend.getRun(run.id);
+    assertEquals(restored?.status, "waiting");
+    assertEquals(restored?.nodeStates.gate?.status, "running");
+    assert(
+      restored?.nodeStates.gate?._waitInstanceId !== "wait-after-checkpoint",
+      "replayed wait must get a fresh instance identity instead of reusing the stale record",
+    );
+  });
+
   it("persists recovered running-node attempts before re-running side effects", async () => {
     const backend = new MemoryBackend();
     const executor = new WorkflowExecutor({ backend, enableLocking: false });
@@ -504,17 +805,21 @@ describe("workflow/executor/workflow-executor", () => {
     await execution;
   });
 
-  it("releases a waiting run lock before its async callback settles", async () => {
+  it("releases a waiting run lock after wait persistence and before batch completion", async () => {
     using time = new FakeTime();
     const backend = new MemoryBackend();
     const callbackStarted = Promise.withResolvers<void>();
     const releaseCallback = Promise.withResolvers<void>();
+    const batchStarted = Promise.withResolvers<void>();
     const executor = new WorkflowExecutor({
       backend,
       heartbeatInterval: 5,
-      onWaiting: async () => {
+      onWaitingPersist: async () => {
         callbackStarted.resolve();
         await releaseCallback.promise;
+      },
+      onWaitingBatchComplete: async () => {
+        batchStarted.resolve();
       },
     });
     executor.register(
@@ -540,19 +845,19 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(settled, false);
     const pausedRun = await backend.getRun(run.id);
     assertEquals(pausedRun?.status, "waiting");
-    assertEquals(await backend.isLocked(run.id), false);
+    assertEquals(await backend.isLocked(run.id), true);
 
     await time.tickAsync(5);
     const heartbeatRun = await backend.getRun(run.id);
-    assertEquals(
-      heartbeatRun?.heartbeatAt?.getTime(),
-      pausedRun?.heartbeatAt?.getTime(),
+    assert(
+      (heartbeatRun?.heartbeatAt?.getTime() ?? 0) >= (pausedRun?.heartbeatAt?.getTime() ?? 0),
     );
     assertEquals(heartbeatRun?.workerId, run.workerId);
     assertEquals(settled, false);
 
     releaseCallback.resolve();
-    await time.tickAsync(0);
+    await batchStarted.promise;
+    assertEquals(await backend.isLocked(run.id), false);
     await execution;
     assertEquals(settled, true);
   });
@@ -874,6 +1179,300 @@ describe("workflow/executor/workflow-executor", () => {
     } finally {
       approvals.stop();
     }
+  });
+
+  it("applies a retained approval decision before retry execution starts", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(
+      workflow({
+        id: "retry-retained-approval",
+        steps: [waitForApproval("review")],
+      }).definition,
+    );
+    const run = {
+      ...createRun("retry-retained-approval"),
+      status: "failed" as const,
+      currentNodes: ["sibling"],
+      nodeStates: {
+        review: {
+          nodeId: "review",
+          status: "running" as const,
+          attempt: 1,
+          input: { type: "approval", message: "approve me", payload: {} },
+        },
+        sibling: {
+          nodeId: "sibling",
+          status: "failed" as const,
+          attempt: 1,
+          error: "sibling failed",
+        },
+      },
+      error: { message: "sibling failed" },
+      completedAt: new Date(),
+    };
+    await backend.createRun(run);
+    await backend.savePendingApproval(run.id, {
+      id: "apr-retry-retained",
+      nodeId: "review",
+      message: "approve me",
+      payload: {},
+      requestedAt: new Date(),
+      status: "pending",
+    });
+    await backend.updateApproval(run.id, "apr-retry-retained", {
+      approved: true,
+      approver: "reviewer",
+    });
+
+    await executor.retry(run.id);
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const current = await backend.getRun(run.id);
+      if (current?.status === "completed" || current?.status === "failed") break;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+
+    const completed = await backend.getRun(run.id);
+    assertEquals(completed?.status, "completed");
+    assertEquals((completed?.context.review as { approved?: boolean })?.approved, true);
+    assertEquals(await backend.listApprovalDecisionClaims(run.id), []);
+  });
+
+  it("finalizes a timed claim from a superseded wait instance before retry", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(workflow({ id: "retry-superseded-timed-claim", steps: [] }).definition);
+    const run = {
+      ...createRun("retry-superseded-timed-claim"),
+      status: "failed" as const,
+      nodeStates: {
+        pause: {
+          nodeId: "pause",
+          status: "running" as const,
+          attempt: 1,
+          _waitInstanceId: "wait-2",
+        },
+      },
+      error: { message: "sibling failed" },
+      completedAt: new Date(),
+    };
+    await backend.createRun(run);
+    await backend.savePendingEventWait(run.id, {
+      id: "evw-old-delay-iteration",
+      runId: run.id,
+      nodeId: "pause",
+      eventName: "__delay__",
+      waitKind: "delay",
+      requestedAt: new Date(),
+      status: "pending",
+      waitInstanceId: "wait-1",
+    });
+    assertEquals(
+      await backend.resolvePendingEventWait(run.id, "evw-old-delay-iteration", "delivered"),
+      true,
+    );
+
+    await executor.retry(run.id);
+
+    assertEquals(await backend.listTimedEventWaitClaims(run.id), []);
+  });
+
+  it("restores the failed snapshot when the post-reactivation read fails", async () => {
+    const backend = new RejectRetryFinalReadBackend();
+    const executor = new WorkflowExecutor({ backend });
+    const run = {
+      ...createRun("retry-final-read-failure"),
+      status: "failed" as const,
+      currentNodes: ["failed-step"],
+      context: { input: {}, retained: { value: 1 } },
+      nodeStates: {
+        "failed-step": {
+          nodeId: "failed-step",
+          status: "failed" as const,
+          attempt: 1,
+          error: "original failure",
+        },
+      },
+      error: { message: "original failure" },
+      completedAt: new Date(),
+    };
+    await backend.createRun(run);
+
+    await assertRejects(
+      () => executor.retry(run.id),
+      Error,
+      "retry final run read unavailable",
+    );
+
+    const restored = await backend.getRun(run.id);
+    assertEquals(restored?.status, "failed");
+    assertEquals(restored?.context, run.context);
+    assertEquals(restored?.nodeStates, run.nodeStates);
+    assertEquals(restored?.currentNodes, run.currentNodes);
+    assertEquals(restored?.error, run.error);
+    assertEquals(restored?.completedAt, run.completedAt);
+  });
+
+  it("validates every retained decision before mutating retry state", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend });
+    const run = {
+      ...createRun("retry-decision-batch-validation"),
+      status: "failed" as const,
+      currentNodes: ["sibling"],
+      nodeStates: {
+        first: { nodeId: "first", status: "running" as const, attempt: 1 },
+        second: { nodeId: "second", status: "running" as const, attempt: 1 },
+        sibling: {
+          nodeId: "sibling",
+          status: "failed" as const,
+          attempt: 1,
+          error: "sibling failed",
+        },
+      },
+      error: { message: "sibling failed" },
+      completedAt: new Date(),
+    };
+    await backend.createRun(run);
+    for (const nodeId of ["first", "second"]) {
+      await backend.savePendingApproval(run.id, {
+        id: `apr-${nodeId}`,
+        nodeId,
+        message: `Approve ${nodeId}`,
+        requestedAt: new Date(),
+        status: "pending",
+      });
+      await backend.updateApproval(run.id, `apr-${nodeId}`, {
+        approved: true,
+        approver: "reviewer",
+      });
+    }
+    await backend.updatePendingApproval(run.id, "apr-second", {
+      decidedAt: new Date(Number.NaN),
+    });
+
+    await assertRejects(
+      () => executor.retry(run.id),
+      Error,
+      "has no valid decision time",
+    );
+
+    const restored = await backend.getRun(run.id);
+    assertEquals(restored?.status, "failed");
+    assertEquals(restored?.context, run.context);
+    assertEquals(restored?.nodeStates, run.nodeStates);
+    assertEquals((await backend.listApprovalDecisionClaims(run.id)).length, 2);
+  });
+
+  it("rolls back a partially reconciled decision batch without finalizing claims", async () => {
+    const backend = new RejectSecondRetryDecisionBackend();
+    const executor = new WorkflowExecutor({ backend });
+    const run = {
+      ...createRun("retry-decision-batch-rollback"),
+      status: "failed" as const,
+      currentNodes: ["sibling"],
+      context: { input: {}, original: true },
+      nodeStates: {
+        first: { nodeId: "first", status: "running" as const, attempt: 1 },
+        second: { nodeId: "second", status: "running" as const, attempt: 1 },
+        sibling: {
+          nodeId: "sibling",
+          status: "failed" as const,
+          attempt: 1,
+          error: "sibling failed",
+        },
+      },
+      error: { message: "sibling failed" },
+      completedAt: new Date(),
+    };
+    await backend.createRun(run);
+    for (const nodeId of ["first", "second"]) {
+      await backend.savePendingApproval(run.id, {
+        id: `apr-${nodeId}`,
+        nodeId,
+        message: `Approve ${nodeId}`,
+        requestedAt: new Date(),
+        status: "pending",
+      });
+      await backend.updateApproval(run.id, `apr-${nodeId}`, {
+        approved: true,
+        approver: "reviewer",
+      });
+    }
+
+    await assertRejects(
+      () => executor.retry(run.id),
+      Error,
+      "second retained decision unavailable",
+    );
+
+    const restored = await backend.getRun(run.id);
+    assertEquals(restored?.status, "failed");
+    assertEquals(restored?.context, run.context);
+    assertEquals(restored?.nodeStates, run.nodeStates);
+    assertEquals(restored?.currentNodes, run.currentNodes);
+    assertEquals(restored?.error, run.error);
+    assertEquals(restored?.completedAt, run.completedAt);
+    assertEquals((await backend.listApprovalDecisionClaims(run.id)).length, 2);
+  });
+
+  it("keeps reconciled retry state when later decision finalization fails", async () => {
+    const backend = new RejectSecondDecisionFinalizationBackend();
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(
+      workflow({
+        id: "retry-decision-finalization-failure",
+        steps: [waitForApproval("first"), waitForApproval("second")],
+      }).definition,
+    );
+    const run = {
+      ...createRun("retry-decision-finalization-failure"),
+      status: "failed" as const,
+      currentNodes: ["sibling"],
+      nodeStates: {
+        first: { nodeId: "first", status: "running" as const, attempt: 1 },
+        second: { nodeId: "second", status: "running" as const, attempt: 1 },
+        sibling: {
+          nodeId: "sibling",
+          status: "failed" as const,
+          attempt: 1,
+          error: "sibling failed",
+        },
+      },
+      error: { message: "sibling failed" },
+      completedAt: new Date(),
+    };
+    await backend.createRun(run);
+    for (const nodeId of ["first", "second"]) {
+      await backend.savePendingApproval(run.id, {
+        id: `apr-${nodeId}`,
+        nodeId,
+        message: `Approve ${nodeId}`,
+        requestedAt: new Date(),
+        status: "pending",
+      });
+      await backend.updateApproval(run.id, `apr-${nodeId}`, {
+        approved: true,
+        approver: "reviewer",
+      });
+    }
+
+    await executor.retry(run.id);
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if ((await backend.getRun(run.id))?.status === "completed") break;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+
+    const completed = await backend.getRun(run.id);
+    assertEquals(completed?.status, "completed");
+    assertEquals(completed?.nodeStates.first?.status, "completed");
+    assertEquals(completed?.nodeStates.second?.status, "completed");
+    assertEquals(
+      (await backend.listApprovalDecisionClaims(run.id)).map(({ approval }) => approval.id),
+      ["apr-second"],
+    );
+    await backend.finalizeApprovalDecision(run.id, "apr-second");
+    assertEquals(await backend.listApprovalDecisionClaims(run.id), []);
   });
 
   it("fences a started execution after stalled ownership is replaced", async () => {
@@ -1231,6 +1830,72 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(receivedSignal?.aborted, true);
     assertEquals(dependentExecutions, 0);
     assertEquals(cancelledRun.status, "cancelled");
+  });
+
+  it("notifies the wait manager when cancellation resolves a timed event wait", async () => {
+    const backend = new MemoryBackend();
+    const resolved: Array<{ runId: string; waitId: string }> = [];
+    const executor = new WorkflowExecutor({
+      backend,
+      onEventWaitResolved: (runId, waitId) => {
+        resolved.push({ runId, waitId });
+      },
+    });
+    const run = {
+      ...createRun("cancel-event-wait"),
+      status: "waiting" as const,
+      nodeStates: {
+        pause: { nodeId: "pause", status: "running" as const, attempt: 1 },
+      },
+      currentNodes: ["pause"],
+    };
+    await backend.createRun(run);
+    await backend.savePendingEventWait(run.id, {
+      id: "wait-cancelled",
+      runId: run.id,
+      nodeId: "pause",
+      eventName: "resume.ready",
+      waitKind: "event",
+      requestedAt: new Date(),
+      expiresAt: new Date(Date.now() + 86_400_000),
+      status: "pending",
+    });
+
+    await executor.cancel(run.id);
+
+    assertEquals(resolved, [{ runId: run.id, waitId: "wait-cancelled" }]);
+  });
+
+  it("retries cancelled-run wait cleanup after a transient read failure", async () => {
+    using time = new FakeTime();
+    const backend = new RejectFirstCancelledWaitReadBackend();
+    const executor = new WorkflowExecutor({ backend });
+    const run = {
+      ...createRun("cancel-event-wait-retry"),
+      status: "waiting" as const,
+      nodeStates: {
+        pause: { nodeId: "pause", status: "running" as const, attempt: 1 },
+      },
+      currentNodes: ["pause"],
+    };
+    await backend.createRun(run);
+    await backend.savePendingEventWait(run.id, {
+      id: "wait-cancelled-retry",
+      runId: run.id,
+      nodeId: "pause",
+      eventName: "resume.ready",
+      waitKind: "event",
+      requestedAt: new Date(),
+      status: "pending",
+    });
+
+    await executor.cancel(run.id);
+    assertEquals((await backend.getPendingEventWaits(run.id)).length, 1);
+
+    await time.tickAsync(1_000);
+    await backend.cleanupCompleted.promise;
+
+    assertEquals((await backend.getPendingEventWaits(run.id)).length, 0);
   });
 
   it("refuses to cancel a run that already completed", async () => {

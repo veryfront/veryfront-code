@@ -1011,6 +1011,12 @@ function captureNodeConfig(
         fail(`${label} ${INTERNAL_WAIT_KIND_FIELD} is invalid`);
       }
       if (
+        waitType === "event" && eventName === INTERNAL_DELAY_EVENT_NAME &&
+        configuredWaitKind !== "delay"
+      ) {
+        fail(`${label} reserved delay event name requires the delay marker`);
+      }
+      if (
         configuredWaitKind === "delay" &&
         (waitType !== "event" || eventName !== INTERNAL_DELAY_EVENT_NAME)
       ) {

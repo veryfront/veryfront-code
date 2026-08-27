@@ -14,6 +14,7 @@ import {
 } from "#veryfront/errors";
 import type {
   BlobResolver,
+  NodeState,
   StepBuilderContext,
   WaitNodeConfig,
   WorkflowContext,
@@ -23,9 +24,17 @@ import type {
   WorkflowStatus,
 } from "../types.ts";
 import { generateId, parseDuration } from "../types.ts";
-import { updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
+import {
+  hasEventWaitSupport,
+  hasExecutionOwnershipSupport,
+  hasRunPatchKeyMergeSupport,
+  isSameWaitNodeExecution,
+  restoreRunStateIfStatus,
+  updateRunIfStatus,
+  type WorkflowBackend,
+} from "../backends/types.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
-import { env as getProcessEnv } from "#veryfront/compat/process.ts";
+import { env as getProcessEnv, unrefTimer } from "#veryfront/compat/process.ts";
 import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
@@ -48,7 +57,9 @@ import {
   toPersistedWorkflowContext,
 } from "../runtime/workflow-run-control.ts";
 import { projectRunPendingApprovals } from "../runtime/pending-approval-metadata.ts";
+import { reconcileApprovalDecisionClaimsBeforeRetry } from "../runtime/approval-manager.ts";
 import { validateWorkflowPathSegment } from "../dsl/validation.ts";
+import { captureWorkflowNodes } from "./workflow-definition-snapshot.ts";
 
 const logger = baseLogger.component("workflow-executor");
 
@@ -60,12 +71,9 @@ const DEFAULT_RESULT_WAIT_TIMEOUT_MS = 5 * 60 * 1_000;
 
 /** Time allowed for an aborted graph to finish its cooperative cleanup. */
 const DEFAULT_CANCELLATION_GRACE_PERIOD_MS = 1_000;
-
-function supportsExecutionOwnership(backend: WorkflowBackend): boolean {
-  return typeof backend.updateRunIfStatusAndWorker === "function" &&
-    typeof backend.saveCheckpointIfStatusAndWorker === "function" &&
-    typeof backend.savePendingApprovalIfStatusAndWorker === "function";
-}
+const CANCELLED_WAIT_CLEANUP_RETRY_BASE_MS = 1_000;
+const CANCELLED_WAIT_CLEANUP_RETRY_MAX_MS = 60_000;
+const MAX_CANCELLED_WAIT_CLEANUP_ATTEMPTS = 8;
 
 /**
  * Workflow executor configuration
@@ -98,11 +106,27 @@ export interface WorkflowExecutorConfig {
   /** Callback when workflow fails */
   onError?: (run: WorkflowRun, error: Error) => void;
   /** Callback when workflow is waiting */
+  onWaitingPersist?: (
+    run: WorkflowRun,
+    nodeId: string,
+    waitConfig?: WaitNodeConfig,
+  ) => void | Promise<void>;
+  /** Callback when workflow is waiting */
   onWaiting?: (
     run: WorkflowRun,
     nodeId: string,
     waitConfig?: WaitNodeConfig,
   ) => void | Promise<void>;
+  /** Callback when resume observes an already-live wait record. */
+  onLiveWaiting?: (
+    run: WorkflowRun,
+    nodeId: string,
+    waitConfig?: WaitNodeConfig,
+  ) => void | Promise<void>;
+  /** Callback after every wait in one settled DAG batch has been persisted. */
+  onWaitingBatchComplete?: (run: WorkflowRun) => void | Promise<void>;
+  /** Notify the owning wait manager after cancellation resolves a durable wait. */
+  onEventWaitResolved?: (runId: string, waitId: string) => void | Promise<void>;
 }
 
 /** Controller for a running workflow. */
@@ -138,6 +162,8 @@ export class WorkflowExecutor {
   private blobResolver?: BlobResolver;
   private activeRunControllers = new Map<string, AbortController>();
   private cancellationUpdates = new Map<string, Promise<void>>();
+  private cancelledWaitCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private cancelledWaitCleanupAttempts = new Map<string, number>();
 
   /** Default lock duration: 30 seconds */
   private static readonly DEFAULT_LOCK_DURATION = 30_000;
@@ -179,14 +205,39 @@ export class WorkflowExecutor {
           { nodeStates },
           ownership?.workerId,
         ),
-      onNodeStatesChanged: ({ runId, nodeStates, currentNodes, context, ownership }) =>
-        updateRunIfStatus(
+      onNodeStatesChanged: ({
+        runId,
+        nodeStates,
+        nodeStatePatch,
+        currentNodes,
+        context,
+        contextPatch,
+        ownership,
+      }) => {
+        const keyMerge = hasRunPatchKeyMergeSupport(this.config.backend);
+        const { _tenant, ...publicContextPatch } = contextPatch.set;
+        const publicContextDeletes = contextPatch.delete.filter((key) => key !== "_tenant");
+        return updateRunIfStatus(
           this.config.backend,
           runId,
           ["running"],
-          { nodeStates, currentNodes, context: toPersistedWorkflowContext(context) },
+          {
+            currentNodes,
+            ...(keyMerge
+              ? {
+                nodeStates: nodeStatePatch.set,
+                nodeStateDeletes: nodeStatePatch.delete,
+                context: publicContextPatch,
+                contextDeletes: publicContextDeletes,
+              }
+              : {
+                nodeStates,
+                context: toPersistedWorkflowContext(context),
+              }),
+          },
           ownership?.workerId,
-        ),
+        );
+      },
     });
 
     const bs = this.config.blobStorage;
@@ -260,7 +311,7 @@ export class WorkflowExecutor {
       }
       : undefined;
     const injectedProjectEnv = mergeInjectedWorkflowEnv(undefined, getProcessEnv());
-    const executionWorkerId = supportsExecutionOwnership(this.config.backend)
+    const executionWorkerId = hasExecutionOwnershipSupport(this.config.backend)
       ? `run-execution:${generateId("exec")}`
       : undefined;
 
@@ -335,7 +386,9 @@ export class WorkflowExecutor {
       });
     }
 
-    const executionWorkerId = supportsExecutionOwnership(this.config.backend)
+    await this.finalizeTimedWaitClaimsBeforeRetry(run);
+
+    const executionWorkerId = hasExecutionOwnershipSupport(this.config.backend)
       ? `run-execution:${generateId("exec")}`
       : undefined;
     const reactivated = await updateRunIfStatus(
@@ -359,6 +412,37 @@ export class WorkflowExecutor {
       });
     }
 
+    let reconciledRun: WorkflowRun;
+    try {
+      await reconcileApprovalDecisionClaimsBeforeRetry(this.config.backend, runId);
+      const latest = await this.config.backend.getRun(runId);
+      if (!latest) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+      reconciledRun = latest;
+    } catch (error) {
+      await restoreRunStateIfStatus(
+        this.config.backend,
+        runId,
+        ["pending"],
+        {
+          status: "failed",
+          context: run.context,
+          nodeStates: run.nodeStates,
+          currentNodes: run.currentNodes,
+          workerId: run.workerId,
+          error: run.error,
+          output: run.output,
+          startedAt: run.startedAt,
+          heartbeatAt: run.heartbeatAt,
+          completedAt: run.completedAt,
+          _traceContext: run._traceContext,
+        },
+        executionWorkerId,
+      );
+      throw error;
+    }
+
+    if (reconciledRun.status !== "pending") return;
+
     const settled = runWithWorkflowSourceIntegrationPolicy(
       run,
       () => this.executeAsync(runId, undefined, executionWorkerId),
@@ -366,6 +450,31 @@ export class WorkflowExecutor {
     settled.catch((error) => {
       logger.error("Workflow retry failed", { runId }, error);
     });
+  }
+
+  private async finalizeTimedWaitClaimsBeforeRetry(run: WorkflowRun): Promise<void> {
+    if (!hasEventWaitSupport(this.config.backend)) return;
+    for (const wait of await this.config.backend.listTimedEventWaitClaims(run.id)) {
+      const currentState = run.nodeStates[wait.nodeId];
+      if (
+        !isSameWaitNodeExecution(wait, {
+          nodeId: wait.nodeId,
+          waitInstanceId: currentState?._waitInstanceId,
+        })
+      ) {
+        await this.config.backend.finalizeTimedEventWaitClaim(run.id, wait.id);
+        continue;
+      }
+      const committedStatus = wait.waitKind === "delay" ? "completed" : "failed";
+      if (currentState?.status !== committedStatus) {
+        throw ORCHESTRATION_ERROR.create({
+          status: 409,
+          detail: `Cannot retry workflow run "${run.id}": timed wait "${wait.id}" ` +
+            "has not finished reconciling.",
+        });
+      }
+      await this.config.backend.finalizeTimedEventWaitClaim(run.id, wait.id);
+    }
   }
 
   private async resumeRun(
@@ -409,7 +518,11 @@ export class WorkflowExecutor {
     }
 
     if (resumeInfo) {
-      const restored = await updateRunIfStatus(
+      // A checkpoint restore is a snapshot replacement, never a merge: keys
+      // written after the checkpoint must not survive it, or a node completed
+      // later stays marked completed and is skipped on replay while stale
+      // context values outlive the rollback.
+      const restored = await restoreRunStateIfStatus(
         this.config.backend,
         runId,
         [run.status],
@@ -425,9 +538,47 @@ export class WorkflowExecutor {
           detail: "Cannot resume workflow run because execution ownership or status changed",
         });
       }
+      await this.retireEventWaitsExcludedBySnapshot(runId, resumeInfo.nodeStates);
     }
 
     await this.executeAsync(runId, resumeInfo?.startFromNode, expectedWorkerId);
+  }
+
+  /**
+   * Retire durable event waits created after an explicitly restored snapshot.
+   *
+   * Delivery and timeout claims are first returned to their durable pending
+   * form so the same cancellation path can close them. Restoring a delivery
+   * claim also puts its event back in the mailbox for the replayed wait rather
+   * than consuming it on an execution the checkpoint discarded.
+   */
+  private async retireEventWaitsExcludedBySnapshot(
+    runId: string,
+    nodeStates: Record<string, NodeState>,
+  ): Promise<void> {
+    const backend = this.config.backend;
+    if (!hasEventWaitSupport(backend)) return;
+    const isExcluded = (wait: { nodeId: string; waitInstanceId?: string }): boolean => {
+      const state = nodeStates[wait.nodeId];
+      return state?.status !== "running" || !isSameWaitNodeExecution(wait, {
+        nodeId: wait.nodeId,
+        waitInstanceId: state._waitInstanceId,
+      });
+    };
+
+    for (const claim of await backend.listRunEventDeliveryClaims(runId)) {
+      if (!isExcluded(claim.wait)) continue;
+      await backend.restoreRunEventDelivery(runId, claim.wait.id, claim.event);
+    }
+    for (const wait of await backend.listTimedEventWaitClaims(runId)) {
+      if (!isExcluded(wait)) continue;
+      await backend.restorePendingEventWait(runId, wait.id);
+    }
+    for (const wait of await backend.getPendingEventWaits(runId)) {
+      if (!isExcluded(wait)) continue;
+      const resolved = await backend.resolvePendingEventWait(runId, wait.id, "cancelled");
+      if (resolved) await this.config.onEventWaitResolved?.(runId, wait.id);
+    }
   }
 
   /**
@@ -538,8 +689,13 @@ export class WorkflowExecutor {
           await workflow.onError?.(error, context);
           this.config.onError?.(errorRun, error);
         },
+        onWaitingPersist: (waitingRun, nodeId, waitConfig) =>
+          this.config.onWaitingPersist?.(waitingRun, nodeId, waitConfig),
         onWaiting: (waitingRun, nodeId, waitConfig) =>
           this.config.onWaiting?.(waitingRun, nodeId, waitConfig),
+        onLiveWaiting: (waitingRun, nodeId, waitConfig) =>
+          this.config.onLiveWaiting?.(waitingRun, nodeId, waitConfig),
+        onWaitingBatchComplete: (waitingRun) => this.config.onWaitingBatchComplete?.(waitingRun),
       });
     }, {
       "workflow.id": run.workflowId,
@@ -555,16 +711,29 @@ export class WorkflowExecutor {
    * Resolve workflow nodes from definition
    */
   private resolveNodes(workflow: WorkflowDefinition, context: WorkflowContext): WorkflowNode[] {
-    const nodes = Array.isArray(workflow.steps) ? workflow.steps : workflow.steps(
-      {
-        input: context.input,
-        context,
-        blobStorage: this.config.blobStorage,
-        blob: this.blobResolver,
-      } satisfies StepBuilderContext,
-    );
+    let nodes: WorkflowNode[];
+    let staticSteps: boolean;
+    if (Array.isArray(workflow.steps)) {
+      nodes = workflow.steps;
+      staticSteps = true;
+    } else {
+      nodes = workflow.steps(
+        {
+          input: context.input,
+          context,
+          blobStorage: this.config.blobStorage,
+          blob: this.blobResolver,
+        } satisfies StepBuilderContext,
+      );
+      staticSteps = false;
+    }
 
     this.validateNodes(nodes, workflow.id);
+    if (!staticSteps) {
+      nodes = captureWorkflowNodes(nodes, `Workflow "${workflow.id}"`, {
+        emptyElementName: "step",
+      });
+    }
     return nodes;
   }
 
@@ -772,7 +941,10 @@ export class WorkflowExecutor {
           completedAt: new Date(),
         },
       );
-      if (cancelled) return;
+      if (cancelled) {
+        await this.clearPendingEventWaits(runId);
+        return;
+      }
 
       const current = await this.config.backend.getRun(runId);
       if (!current) {
@@ -801,6 +973,59 @@ export class WorkflowExecutor {
 
   private async waitForCancellationUpdate(runId: string): Promise<void> {
     await this.cancellationUpdates.get(runId);
+  }
+
+  /**
+   * Resolve the event waits of a run that was just cancelled.
+   *
+   * A cancelled run will never consume an event, so a wait left pending,
+   * above all one without a deadline, would report the terminal run as
+   * parked forever and be enumerated by every expiration sweep. Cleanup is
+   * best-effort: the cancellation itself already committed. A bounded retry
+   * keeps cleanup live even when the optional expiration sweep is disabled.
+   */
+  private async clearPendingEventWaits(runId: string): Promise<void> {
+    const backend = this.config.backend;
+    if (!hasEventWaitSupport(backend)) return;
+    try {
+      for (const wait of await backend.getPendingEventWaits(runId)) {
+        const resolved = await backend.resolvePendingEventWait(runId, wait.id, "cancelled");
+        if (resolved) await this.config.onEventWaitResolved?.(runId, wait.id);
+      }
+    } catch (error) {
+      logger.warn(`Failed to clear pending event waits for cancelled run ${runId}:`, error);
+      this.scheduleCancelledWaitCleanup(runId);
+      return;
+    }
+    this.clearCancelledWaitCleanupRetry(runId);
+  }
+
+  private scheduleCancelledWaitCleanup(runId: string): void {
+    if (this.cancelledWaitCleanupTimers.has(runId)) return;
+    const attempt = (this.cancelledWaitCleanupAttempts.get(runId) ?? 0) + 1;
+    if (attempt > MAX_CANCELLED_WAIT_CLEANUP_ATTEMPTS) {
+      this.cancelledWaitCleanupAttempts.delete(runId);
+      logger.error("Cancelled-run event wait cleanup exhausted its retry budget", { runId });
+      return;
+    }
+    this.cancelledWaitCleanupAttempts.set(runId, attempt);
+    const delay = Math.min(
+      CANCELLED_WAIT_CLEANUP_RETRY_BASE_MS * 2 ** (attempt - 1),
+      CANCELLED_WAIT_CLEANUP_RETRY_MAX_MS,
+    );
+    const timer = setTimeout(() => {
+      this.cancelledWaitCleanupTimers.delete(runId);
+      void this.clearPendingEventWaits(runId);
+    }, delay);
+    unrefTimer(timer);
+    this.cancelledWaitCleanupTimers.set(runId, timer);
+  }
+
+  private clearCancelledWaitCleanupRetry(runId: string): void {
+    const timer = this.cancelledWaitCleanupTimers.get(runId);
+    if (timer !== undefined) clearTimeout(timer);
+    this.cancelledWaitCleanupTimers.delete(runId);
+    this.cancelledWaitCleanupAttempts.delete(runId);
   }
 
   /**

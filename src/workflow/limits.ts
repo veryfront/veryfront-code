@@ -44,3 +44,33 @@ export const MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES = 1_000;
  * on is never silently dropped.
  */
 export const MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES = 1_000;
+
+/**
+ * Maximum per-run event-wait records retained. The list is append-only for the
+ * same reason the approval list is: delivering or expiring a wait rewrites its
+ * record in place, so resolved waits stay in the list and dominate its growth.
+ * At the bound, built-in backends evict the oldest resolved records and reject
+ * the append when there are not enough to make room, so a wait a run is still
+ * parked on is never silently dropped.
+ */
+export const MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES = 1_000;
+
+/**
+ * Maximum events buffered in one run's durable mailbox. The mailbox exists so
+ * an event published before its wait parks is not lost, which means entries can
+ * accumulate for a run that never consumes them. Every entry is unconsumed by
+ * definition, since taking an event removes it, so none is safe to evict: at
+ * the bound the publish is refused rather than dropping an event a wait has not
+ * parked for yet.
+ */
+export const MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES = 1_000;
+
+/**
+ * Maximum run mailboxes an in-memory backend keeps at once. Publishing accepts
+ * a run id that has no run yet, so a caller can reserve an id, publish, and
+ * then start the run. That also means a caller publishing to ids that never
+ * become runs would accumulate mailboxes forever, so past this bound the
+ * backend drops the oldest mailboxes that belong to no run. A mailbox whose run
+ * exists is never dropped: its events may still be claimed by a parked wait.
+ */
+export const MAX_WORKFLOW_RUN_EVENT_MAILBOXES = 10_000;

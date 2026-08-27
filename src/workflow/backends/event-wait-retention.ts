@@ -1,0 +1,128 @@
+import type { PersistedPendingEventWait, RunEventEnvelope } from "./types.ts";
+import {
+  MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES,
+  MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES,
+} from "../limits.ts";
+import { ORCHESTRATION_ERROR } from "#veryfront/errors";
+
+interface RetainedRunEventEnvelope extends RunEventEnvelope {
+  /** In-memory backend sequence used when multiple publishes share one millisecond. */
+  _publicationOrder?: number;
+}
+
+function isResolved(wait: PersistedPendingEventWait): boolean {
+  return wait.status !== "pending" && wait.claimedAt === undefined;
+}
+
+/**
+ * Append a detached event-wait record and retain a bounded history.
+ *
+ * Retention is state-aware for the same reason approval retention is: a wait a
+ * run is still parked on must never be evicted, because nothing could then
+ * deliver its event or expire it and the run would wait forever. At the bound
+ * the oldest finalized record is evicted first. A resolved record with an
+ * unfinished claim remains reserved. When there are not enough finalized
+ * records to make room, the append is rejected without changing existing
+ * history.
+ */
+export function appendRetainedPendingEventWait(
+  waits: PersistedPendingEventWait[],
+  wait: PersistedPendingEventWait,
+): void {
+  const snapshot = structuredClone(wait);
+  const evictionsRequired = waits.length - MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES + 1;
+  if (evictionsRequired <= 0) {
+    waits.push(snapshot);
+    return;
+  }
+  const resolvedIndexes: number[] = [];
+  for (let index = 0; index < waits.length; index++) {
+    if (isResolved(waits[index]!)) resolvedIndexes.push(index);
+    if (resolvedIndexes.length === evictionsRequired) break;
+  }
+  if (resolvedIndexes.length < evictionsRequired) {
+    throw ORCHESTRATION_ERROR.create({
+      detail: `Event wait list full (max: ${MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES}) and ` +
+        `not enough resolved records can be evicted without dropping a pending wait. ` +
+        `Cannot append event wait: ${wait.id}`,
+    });
+  }
+  for (let index = resolvedIndexes.length - 1; index >= 0; index--) {
+    waits.splice(resolvedIndexes[index]!, 1);
+  }
+  waits.push(snapshot);
+}
+
+/**
+ * Append one event to a run's bounded mailbox, refusing the append at the bound.
+ *
+ * Every entry in a mailbox is unconsumed by definition: an event is removed the
+ * moment a wait takes it. So no entry is safe to evict. Dropping the oldest
+ * would silently discard an event published before its node parked, which is
+ * the case the mailbox exists to serve, and would leave the run parked forever
+ * on a wait whose event was accepted. Claimed envelopes still reserve their
+ * original slots because rollback must be able to reinsert them. The publish
+ * is refused instead, loudly, the way the event-wait list refuses rather than
+ * dropping a pending wait.
+ */
+export function appendRetainedRunEvent(
+  mailbox: RunEventEnvelope[],
+  event: RunEventEnvelope,
+  reservedEntries = 0,
+): void {
+  if (mailbox.length + reservedEntries >= MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES) {
+    throw ORCHESTRATION_ERROR.create({
+      detail: `Run event mailbox full (max: ${MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES}) and no ` +
+        `buffered event can be dropped without losing one a wait may still claim. ` +
+        `Cannot publish event: ${event.eventName}`,
+    });
+  }
+  mailbox.push(structuredClone(event));
+}
+
+/**
+ * Remove and return the oldest buffered event with this name.
+ *
+ * Callers must treat this as the point where the event is consumed: it is
+ * removed from the mailbox, so a caller that then fails to deliver it has to
+ * put it back.
+ */
+export function takeRetainedRunEvent(
+  mailbox: RunEventEnvelope[],
+  eventName: string,
+  publishedBefore?: Date,
+): RunEventEnvelope | null {
+  const index = mailbox.findIndex((event) =>
+    event.eventName === eventName &&
+    (publishedBefore === undefined || event.publishedAt.getTime() <= publishedBefore.getTime())
+  );
+  if (index === -1) return null;
+  return mailbox.splice(index, 1)[0] ?? null;
+}
+
+/**
+ * Return a claimed event to its publication-order position after delivery failed.
+ *
+ * Concurrent claims can roll back in either order. Unconditionally prepending
+ * each event would reverse two claims restored A-then-B into B,A, so insert by
+ * the backend publication sequence (falling back to the durable timestamp)
+ * instead. No bound is enforced here on purpose: the event already held a
+ * place in this mailbox when it was claimed, and refusing the restore would
+ * lose an event that was durably accepted.
+ */
+export function restoreRetainedRunEvent(
+  mailbox: RunEventEnvelope[],
+  event: RunEventEnvelope,
+): void {
+  const snapshot = structuredClone(event);
+  const snapshotOrder = (snapshot as RetainedRunEventEnvelope)._publicationOrder;
+  const insertionIndex = mailbox.findIndex((candidate) => {
+    const candidateOrder = (candidate as RetainedRunEventEnvelope)._publicationOrder;
+    if (snapshotOrder !== undefined && candidateOrder !== undefined) {
+      return candidateOrder > snapshotOrder;
+    }
+    return candidate.publishedAt.getTime() > snapshot.publishedAt.getTime();
+  });
+  if (insertionIndex === -1) mailbox.push(snapshot);
+  else mailbox.splice(insertionIndex, 0, snapshot);
+}

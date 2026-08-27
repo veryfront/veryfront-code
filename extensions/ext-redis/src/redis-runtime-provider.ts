@@ -38,6 +38,7 @@ const NODE_CLIENT_METHODS = [
   "xReadGroup",
   "xAck",
   "keys",
+  "scan",
   "exists",
   "expire",
   "set",

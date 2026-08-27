@@ -11,6 +11,12 @@ import { sleep } from "#veryfront/utils";
 import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
 import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
 import {
+  collectWorkflowNodeIds,
+  namespaceWorkflowNodes,
+  removeWorkflowNodeNamespace,
+} from "../../dsl/validation.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
+import {
   applyContextPatch,
   applyRecordPatch,
   createRecordPatch,
@@ -23,6 +29,8 @@ interface ExecuteLoopNodeStrategyInput {
   config: LoopNodeConfig;
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
+  /** Declared node ids in the graph that owns this loop node. */
+  parentNodeIds: ReadonlySet<string>;
   runtime: NodeStrategyRuntime;
   abortSignal?: AbortSignal;
 }
@@ -71,6 +79,7 @@ export function toPersistedNodeStates(
       nodeId: state.nodeId,
       status: state.status,
       attempt: state.attempt,
+      ...(state._waitInstanceId !== undefined ? { _waitInstanceId: state._waitInstanceId } : {}),
       ...(state.input !== undefined ? { input: state.input } : {}),
       ...(state.output !== undefined ? { output: state.output } : {}),
       ...(state.error !== undefined ? { error: state.error } : {}),
@@ -107,7 +116,7 @@ function fromPersistedNodeStates(
 export async function executeLoopNodeStrategy(
   input: ExecuteLoopNodeStrategyInput,
 ): Promise<NodeExecutionResult> {
-  const { node, config, context, nodeStates, runtime } = input;
+  const { node, config, context, nodeStates, parentNodeIds, runtime } = input;
   runtime.abortSignal?.throwIfAborted();
   const startTime = Date.now();
   const previousResults: unknown[] = [];
@@ -134,6 +143,25 @@ export async function executeLoopNodeStrategy(
     resumeIteration = existingLoopState.iteration;
   }
 
+  const currentStaticChildIds = Array.isArray(config.steps)
+    ? collectWorkflowNodeIds(config.steps)
+    : undefined;
+  const legacyStaticChildIds = Array.isArray(config.steps)
+    ? collectWorkflowNodeIds(removeWorkflowNodeNamespace(`${node.id}/`, config.steps))
+    : undefined;
+  // Runs suspended before loop children were namespaced persist both their
+  // private iteration snapshot and durable wait record under local IDs. Keep
+  // that one in-flight iteration on its old graph identity; new iterations use
+  // the namespaced definition and receive the collision fix.
+  const resumeLegacyStaticChildIds = currentStaticChildIds !== undefined &&
+    legacyStaticChildIds !== undefined &&
+    resumeIterationNodeStates !== undefined &&
+    hasLegacyDeclaredNodeState(
+      resumeIterationNodeStates,
+      currentStaticChildIds,
+      legacyStaticChildIds,
+    );
+
   let exposedIterationNodeStates: Record<string, NodeState> = resumeIterationNodeStates
     ? { ...resumeIterationNodeStates }
     : {};
@@ -156,17 +184,44 @@ export async function executeLoopNodeStrategy(
       break;
     }
 
-    const steps = typeof config.steps === "function"
-      ? config.steps(context, loopContext)
-      : config.steps;
+    const resumingIterationNodeStates = resumeIteration === iteration
+      ? resumeIterationNodeStates
+      : undefined;
+    let steps: WorkflowNode[];
+    if (typeof config.steps === "function") {
+      const generatedSteps = config.steps(context, loopContext);
+      const namespacedSteps = namespaceWorkflowNodes(`${node.id}/`, generatedSteps);
+      const namespacedIds = collectWorkflowNodeIds(namespacedSteps);
+      const resumeLegacyDynamicChildIds = resumingIterationNodeStates !== undefined &&
+        hasLegacyDeclaredNodeState(
+          resumingIterationNodeStates,
+          namespacedIds,
+          collectWorkflowNodeIds(generatedSteps),
+        );
+      steps = resumeLegacyDynamicChildIds ? generatedSteps : namespacedSteps;
+    } else {
+      steps = resumingIterationNodeStates && resumeLegacyStaticChildIds
+        ? removeWorkflowNodeNamespace(`${node.id}/`, config.steps)
+        : config.steps;
+    }
     runtime.abortSignal?.throwIfAborted();
+
+    const collidingChildId = [...collectWorkflowNodeIds(steps)].find((childId) =>
+      parentNodeIds.has(childId)
+    );
+    if (collidingChildId) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Loop node "${node.id}" generated child id "${collidingChildId}", ` +
+          "which collides with a declared node in the parent graph",
+      });
+    }
 
     // On resume, rehydrate the in-flight iteration's child node states so its
     // already-completed steps are skipped instead of re-executed (H9),
     // reconciled against the run's own map so the node that was just resolved
     // is not replayed as still pending.
-    const iterationNodeStates = resumeIteration === iteration && resumeIterationNodeStates
-      ? reconcileIterationNodeStates(resumeIterationNodeStates, nodeStates)
+    const iterationNodeStates = resumingIterationNodeStates
+      ? reconcileIterationNodeStates(resumingIterationNodeStates, nodeStates)
       : {};
     // Only rehydrate once; subsequent iterations start fresh.
     resumeIterationNodeStates = undefined;
@@ -186,7 +241,14 @@ export async function executeLoopNodeStrategy(
     });
     runtime.abortSignal?.throwIfAborted();
 
-    if (result.waiting) {
+    const stalledWaitingNodes = result.stalledWaitNodes ??
+      (result.stalledWaitNode === undefined
+        ? undefined
+        : [{ nodeId: result.stalledWaitNode, waitConfig: undefined }]);
+    const waitingNodes = result.waitingNodes ?? stalledWaitingNodes;
+    const waiting = result.waiting || waitingNodes !== undefined;
+
+    if (waiting) {
       // Diff the iteration against its own starting state, never against the
       // parent's map. `result.nodeStates` holds this iteration's children only,
       // so diffing the parent against it reports every completed sibling as
@@ -219,8 +281,9 @@ export async function executeLoopNodeStrategy(
           }),
         ),
         waiting: true,
-        waitingNode: result.waitingNode,
-        waitingConfig: result.waitingConfig,
+        waitingNode: result.waitingNode ?? waitingNodes?.[0]?.nodeId,
+        waitingConfig: result.waitingConfig ?? waitingNodes?.[0]?.waitConfig,
+        waitingNodes,
       };
     }
 
@@ -291,6 +354,15 @@ export async function executeLoopNodeStrategy(
     }),
     waiting: false,
   };
+}
+
+/** Detect an old snapshot from a declared local child, not a generated descendant. */
+function hasLegacyDeclaredNodeState(
+  states: Record<string, NodeState>,
+  currentIds: Set<string>,
+  legacyIds: Set<string>,
+): boolean {
+  return Object.keys(states).some((nodeId) => legacyIds.has(nodeId) && !currentIds.has(nodeId));
 }
 
 /**

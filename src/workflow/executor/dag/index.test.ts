@@ -25,6 +25,7 @@ import type {
   LoopExecutionContext,
   NodeState,
   WorkflowContext,
+  WorkflowDefinition,
   WorkflowNode,
   WorkflowRun,
 } from "../../types.ts";
@@ -35,6 +36,15 @@ import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source
 import { VeryfrontError } from "#veryfront/errors";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { serializeWorkflowContext } from "../../context-serialization.ts";
+import {
+  loop,
+  map,
+  parallel,
+  step,
+  subWorkflow,
+  waitForApproval,
+  waitForEvent,
+} from "../../dsl/index.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
@@ -477,11 +487,17 @@ describe("DAGExecutor", () => {
     });
 
     it("propagates top-level context deletions", async () => {
+      let persistedDeletes: string[] = [];
       const deletingExecutor = new MockStepExecutor(new Map(), (_node, context) => {
         delete context.removed;
         return { success: true, output: "deleted", executionTime: 1 };
       });
-      const exec = new DAGExecutor({ stepExecutor: deletingExecutor });
+      const exec = new DAGExecutor({
+        stepExecutor: deletingExecutor,
+        onNodeStatesChanged: ({ contextPatch }) => {
+          persistedDeletes = contextPatch.delete;
+        },
+      });
 
       const result = await exec.execute(
         [{ id: "delete", config: { type: "step" } as any }],
@@ -490,6 +506,7 @@ describe("DAGExecutor", () => {
 
       assertEquals(result.completed, true);
       assertEquals(Object.hasOwn(result.context, "removed"), false);
+      assertEquals(persistedDeletes, ["removed"]);
     });
 
     it("propagates context deletions out of a branch", async () => {
@@ -961,9 +978,281 @@ describe("DAGExecutor", () => {
       const result = await executor.execute(nodes, createTestRun());
       assertEquals(result.completed, true);
     });
+
+    it("namespaces composite descendants for every mapped item", async () => {
+      const nodes = [
+        map("batch", {
+          items: [{ id: 1 }, { id: 2 }],
+          processor: parallel("processor", [
+            waitForEvent("ready", { eventName: "item.ready" }),
+          ]),
+        }),
+      ];
+
+      const first = await executor.execute(nodes, createTestRun());
+
+      assertEquals(first.waiting, true);
+      assertEquals(first.waitingNode, "batch_0/ready");
+      assertEquals(first.nodeStates["batch_0/ready"]?.status, "running");
+      assertEquals(first.nodeStates["processor/ready"], undefined);
+
+      const resumed = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          context: first.context,
+          nodeStates: {
+            ...first.nodeStates,
+            "batch_0/ready": {
+              ...first.nodeStates["batch_0/ready"]!,
+              status: "completed",
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(resumed.waiting, true);
+      assertEquals(resumed.waitingNode, "batch_1/ready");
+      assertEquals(resumed.nodeStates["batch_1/ready"]?.status, "running");
+      assertEquals(resumed.nodeStates["processor/ready"], undefined);
+    });
+
+    it("namespaces workflow-definition descendants for every mapped item", async () => {
+      const processor: WorkflowDefinition = {
+        id: "processor",
+        steps: [
+          waitForEvent("ready", { eventName: "item.ready" }),
+        ],
+      };
+      const nodes = [
+        map("batch", {
+          items: [{ id: 1 }, { id: 2 }],
+          processor,
+        }),
+      ];
+
+      const first = await executor.execute(nodes, createTestRun());
+
+      assertEquals(first.waiting, true);
+      assertEquals(first.waitingNode, "batch_0/ready");
+      assertEquals(first.nodeStates["batch_0/ready"]?.status, "running");
+      assertEquals(first.nodeStates.ready, undefined);
+
+      const resumed = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          context: first.context,
+          nodeStates: {
+            ...first.nodeStates,
+            "batch_0/ready": {
+              ...first.nodeStates["batch_0/ready"]!,
+              status: "completed",
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(resumed.waiting, true);
+      assertEquals(resumed.waitingNode, "batch_1/ready");
+      assertEquals(resumed.nodeStates["batch_1/ready"]?.status, "running");
+      assertEquals(resumed.nodeStates.ready, undefined);
+    });
+
+    it("namespaces generated workflow-definition descendants for every mapped item", async () => {
+      const processor: WorkflowDefinition = {
+        id: "processor",
+        steps: () => [
+          waitForEvent("ready", { eventName: "item.ready" }),
+        ],
+      };
+      const nodes = [
+        map("batch", {
+          items: [{ id: 1 }, { id: 2 }],
+          processor,
+        }),
+      ];
+
+      const first = await executor.execute(nodes, createTestRun());
+
+      assertEquals(first.waiting, true);
+      assertEquals(first.waitingNode, "batch_0/ready");
+      assertEquals(first.nodeStates["batch_0/ready"]?.status, "running");
+      assertEquals(first.nodeStates.ready, undefined);
+
+      const resumed = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          context: first.context,
+          nodeStates: {
+            ...first.nodeStates,
+            "batch_0/ready": {
+              ...first.nodeStates["batch_0/ready"]!,
+              status: "completed",
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(resumed.waiting, true);
+      assertEquals(resumed.waitingNode, "batch_1/ready");
+      assertEquals(resumed.nodeStates["batch_1/ready"]?.status, "running");
+      assertEquals(resumed.nodeStates.ready, undefined);
+    });
+
+    it("rejects generated child ids that collide with declared parent nodes", async () => {
+      const nodes = [
+        map("batch", {
+          items: [{ id: 1 }],
+          processor: waitForApproval("review", { message: "Review mapped item" }),
+        }),
+        waitForApproval("batch_0", { message: "Independent parent review" }),
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, false);
+      assertStringIncludes(result.error ?? "", 'generated child id "batch_0"');
+      assertEquals(result.nodeStates["batch_0"], undefined);
+    });
+
+    it("rejects mapped descendant ids that collide with declared parent nodes", async () => {
+      const nodes = [
+        map("batch", {
+          items: [{ id: 1 }],
+          processor: parallel("processor", [
+            waitForEvent("ready", { eventName: "item.ready" }),
+          ]),
+        }),
+        waitForEvent("batch_0/ready", { eventName: "independent.ready" }),
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, false);
+      assertStringIncludes(result.error ?? "", 'generated child id "batch_0/ready"');
+      assertEquals(result.nodeStates["batch_0/ready"], undefined);
+    });
+
+    it("rejects generated workflow-definition descendants that collide with parent nodes", async () => {
+      const processor: WorkflowDefinition = {
+        id: "processor",
+        steps: () => [
+          waitForEvent("ready", { eventName: "item.ready" }),
+        ],
+      };
+      const nodes = [
+        map("batch", {
+          items: [{ id: 1 }],
+          processor,
+        }),
+        waitForEvent("batch_0/ready", { eventName: "independent.ready" }),
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, false);
+      assertStringIncludes(result.error ?? "", 'generated child id "batch_0/ready"');
+      assertEquals(result.nodeStates["batch_0/ready"], undefined);
+    });
+
+    it("namespaces nested sub-workflow waits inside workflow-definition processors", async () => {
+      const nodes = [
+        map("batch", {
+          items: [{ id: 1 }, { id: 2 }],
+          processor: {
+            id: "processor",
+            steps: [
+              subWorkflow("nested", {
+                workflow: {
+                  id: "nested-processor",
+                  steps: [waitForEvent("ready", { eventName: "item.ready" })],
+                },
+              }),
+            ],
+          },
+        }),
+      ];
+
+      const first = await executor.execute(nodes, createTestRun());
+
+      assertEquals(first.waiting, true);
+      assertEquals(first.waitingNode, "batch_0/ready");
+      assertEquals(first.nodeStates["batch_0/ready"]?.status, "running");
+      assertEquals(first.nodeStates.ready, undefined);
+
+      const resumed = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          context: first.context,
+          nodeStates: {
+            ...first.nodeStates,
+            "batch_0/ready": {
+              ...first.nodeStates["batch_0/ready"]!,
+              status: "completed",
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(resumed.waiting, true);
+      assertEquals(resumed.waitingNode, "batch_1/ready");
+      assertEquals(resumed.nodeStates["batch_1/ready"]?.status, "running");
+      assertEquals(resumed.nodeStates.ready, undefined);
+    });
   });
 
   describe("loop node", () => {
+    it("rejects namespaced child ids that collide with declared parent nodes", async () => {
+      const nodes = [
+        loop("poll", {
+          while: () => true,
+          maxIterations: 1,
+          steps: [waitForApproval("review", { message: "Review loop iteration" })],
+        }),
+        waitForApproval("poll/review", { message: "Independent parent review" }),
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, false);
+      assertStringIncludes(result.error ?? "", 'generated child id "poll/review"');
+      assertEquals(result.nodeStates["poll/review"], undefined);
+    });
+
+    it("rejects nested child ids that collide with ancestor graph nodes", async () => {
+      const nodes = [
+        {
+          ...waitForApproval("container/poll/review", { message: "Independent ancestor review" }),
+          dependsOn: [],
+        },
+        {
+          ...parallel("container", [
+            loop("poll", {
+              while: () => true,
+              maxIterations: 1,
+              steps: [waitForApproval("review", { message: "Nested loop review" })],
+            }),
+          ]),
+          dependsOn: [],
+        },
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, false);
+      assertStringIncludes(
+        result.nodeStates.container?.error ?? "",
+        'generated child id "container/poll/review"',
+      );
+    });
+
     it("should loop until condition is false", async () => {
       let iteration = 0;
       const nodes: WorkflowNode[] = [
@@ -1249,7 +1538,172 @@ describe("DAGExecutor", () => {
       assertEquals(second.nodeStates["after-wait"]!.status, "completed");
     });
 
-    it("fails a resumed iteration whose stale wait leaves its child graph stuck", async () => {
+    it("resumes a legacy static-loop decision under its persisted child IDs", async () => {
+      const order: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          order.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const nodes = [
+        loop("the-loop", {
+          maxIterations: 1,
+          while: (_context, iteration) => iteration.iteration < 1,
+          steps: [
+            waitForApproval("inner-wait", { message: "approve?" }),
+            { ...step("after-wait", { tool: "noop" }), dependsOn: ["inner-wait"] },
+          ],
+        }),
+      ];
+      const completedDecision: NodeState = {
+        nodeId: "inner-wait",
+        status: "completed",
+        output: { approved: true },
+        attempt: 1,
+        startedAt: new Date(),
+        completedAt: new Date(),
+      };
+      const run = createTestRun({
+        status: "waiting",
+        nodeStates: {
+          "the-loop": { nodeId: "the-loop", status: "running", attempt: 1 },
+          "inner-wait": completedDecision,
+        },
+        context: {
+          input: { topic: "test" },
+          "the-loop_loop_state": {
+            iteration: 0,
+            previousResults: [],
+            iterationNodeStates: {
+              "inner-wait": {
+                nodeId: "inner-wait",
+                status: "running",
+                attempt: 1,
+                startedAt: new Date().toISOString(),
+              },
+            },
+          },
+        },
+      });
+
+      const result = await exec.execute(nodes, run);
+
+      assertEquals(result.completed, true);
+      assertEquals(order, ["after-wait"]);
+      assertEquals(result.nodeStates["inner-wait"], completedDecision);
+      assertEquals(result.nodeStates["the-loop/inner-wait"], undefined);
+    });
+
+    it("does not treat generated map states in a current loop as legacy IDs", async () => {
+      const exec = new DAGExecutor({ stepExecutor: createMockStepExecutor() });
+      const nodes = [
+        loop("the-loop", {
+          maxIterations: 1,
+          while: (_context, iteration) => iteration.iteration < 1,
+          steps: [
+            map("mapped-review", {
+              items: [{ id: 1 }],
+              processor: waitForApproval("review-template", { message: "approve?" }),
+            }),
+          ],
+        }),
+      ];
+
+      const first = await exec.execute(nodes, createTestRun());
+      assertEquals(first.waiting, true);
+      assertEquals(first.waitingNode, "the-loop/mapped-review_0");
+
+      const completedDecision: NodeState = {
+        nodeId: "the-loop/mapped-review_0",
+        status: "completed",
+        output: { approved: true },
+        attempt: 1,
+        startedAt: new Date(),
+        completedAt: new Date(),
+      };
+      const second = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            ...first.nodeStates,
+            "the-loop/mapped-review_0": completedDecision,
+          },
+          context: first.context,
+        }),
+      );
+
+      assertEquals(second.completed, true);
+      assertEquals(second.waiting, false);
+      assertEquals(second.nodeStates["the-loop/mapped-review_0"], completedDecision);
+      assertEquals(second.nodeStates["mapped-review_0"], undefined);
+    });
+
+    it("resumes a legacy map-in-loop decision under generated local IDs", async () => {
+      const exec = new DAGExecutor({ stepExecutor: createMockStepExecutor() });
+      const nodes = [
+        loop("the-loop", {
+          maxIterations: 1,
+          while: (_context, iteration) => iteration.iteration < 1,
+          steps: [
+            map("mapped-review", {
+              items: [{ id: 1 }],
+              processor: waitForApproval("review-template", { message: "approve?" }),
+            }),
+          ],
+        }),
+      ];
+      const completedDecision: NodeState = {
+        nodeId: "mapped-review_0",
+        status: "completed",
+        output: { approved: true },
+        attempt: 1,
+        startedAt: new Date(),
+        completedAt: new Date(),
+      };
+      const result = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            "the-loop": { nodeId: "the-loop", status: "running", attempt: 1 },
+            "mapped-review": {
+              nodeId: "mapped-review",
+              status: "running",
+              attempt: 1,
+            },
+            "mapped-review_0": completedDecision,
+          },
+          context: {
+            input: { topic: "test" },
+            "the-loop_loop_state": {
+              iteration: 0,
+              previousResults: [],
+              iterationNodeStates: {
+                "mapped-review": {
+                  nodeId: "mapped-review",
+                  status: "running",
+                  attempt: 1,
+                },
+                "mapped-review_0": {
+                  nodeId: "mapped-review_0",
+                  status: "running",
+                  attempt: 1,
+                },
+              },
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(result.waiting, false);
+      assertEquals(result.nodeStates["mapped-review_0"], completedDecision);
+      assertEquals(result.nodeStates["the-loop/mapped-review_0"], undefined);
+    });
+
+    it("reports every parked wait from a resumed iteration whose record may need recovery", async () => {
       const order: string[] = [];
       const trackingExecutor = new MockStepExecutor(new Map(), (node) => {
         order.push(node.id);
@@ -1291,14 +1745,20 @@ describe("DAGExecutor", () => {
       );
 
       assertEquals(second.completed, false, "an unfinished child graph cannot report success");
+      assertEquals(second.waiting, true);
+      assertEquals(second.waitingNode, "inner-wait");
       assertEquals(order, [], "a dependent of the unresolved wait must not execute");
-      assertStringIncludes(second.error ?? "", 'Workflow run "test-run" stalled');
-      assertStringIncludes(second.error ?? "", 'child graph "the-loop_iter_0"');
-      assertStringIncludes(second.error ?? "", '"inner-wait" (running)');
-      assertStringIncludes(second.error ?? "", '"after-wait" (pending)');
+      assertEquals(second.error, undefined);
     });
 
     it("removes child node states from previous dynamic loop iterations", async () => {
+      const persistedDeletes: string[][] = [];
+      const deletingExecutor = new DAGExecutor({
+        stepExecutor,
+        onNodeStatesChanged: ({ nodeStatePatch }) => {
+          persistedDeletes.push(nodeStatePatch.delete);
+        },
+      });
       const nodes: WorkflowNode[] = [
         {
           id: "the-loop",
@@ -1316,12 +1776,28 @@ describe("DAGExecutor", () => {
         },
       ];
 
-      const result = await executor.execute(nodes, createTestRun());
+      const result = await deletingExecutor.execute(
+        nodes,
+        createTestRun({
+          nodeStates: {
+            "the-loop/old-child": {
+              nodeId: "the-loop/old-child",
+              status: "completed",
+              attempt: 1,
+            },
+          },
+        }),
+      );
 
       assertEquals(result.completed, true);
-      assertEquals(result.nodeStates["old-child"], undefined);
-      assertExists(result.nodeStates["current-child"]);
-      assertEquals(result.nodeStates["current-child"]!.status, "completed");
+      assertEquals(result.nodeStates["the-loop/old-child"], undefined);
+      assertExists(result.nodeStates["the-loop/current-child"]);
+      assertEquals(result.nodeStates["the-loop/current-child"]!.status, "completed");
+      assertEquals(
+        persistedDeletes.some((deleted) => deleted.includes("the-loop/old-child")),
+        true,
+        "durable node-state patches must carry dynamic child deletions",
+      );
     });
   });
 
@@ -1405,6 +1881,7 @@ describe("DAGExecutor", () => {
   describe("nested wait reporting", () => {
     const nestedWait = {
       id: "inner-wait",
+      dependsOn: [],
       config: { type: "wait", waitType: "approval", message: "approve?" } as any,
     };
 
@@ -1432,11 +1909,19 @@ describe("DAGExecutor", () => {
     });
 
     it("reports the inner node when a wait is nested in a parallel", async () => {
+      const secondWait: WorkflowNode = {
+        ...nestedWait,
+        id: "inner-wait-2",
+        config: {
+          ...nestedWait.config,
+          eventName: "second.ready",
+        } as any,
+      };
       const nodes: WorkflowNode[] = [
         {
           id: "group",
           dependsOn: [],
-          config: { type: "parallel", nodes: [nestedWait] } as any,
+          config: { type: "parallel", nodes: [nestedWait, secondWait] } as any,
         },
       ];
 
@@ -1444,6 +1929,10 @@ describe("DAGExecutor", () => {
 
       assertEquals(result.waiting, true);
       assertEquals(result.waitingNode, "inner-wait");
+      assertEquals(result.waitingNodes?.map((wait) => wait.nodeId), [
+        "inner-wait",
+        "inner-wait-2",
+      ]);
     });
 
     it("reports the inner node when a wait is nested in a sub-workflow", async () => {
@@ -1474,6 +1963,42 @@ describe("DAGExecutor", () => {
 
       assertEquals(result.waiting, true);
       assertEquals(result.waitingNode, "top-wait");
+    });
+
+    it("reports every stalled wait with its exact runtime config", async () => {
+      const firstConfig = {
+        type: "wait" as const,
+        waitType: "approval" as const,
+        message: "First review",
+        approvers: ["alice"],
+      };
+      const secondConfig = {
+        type: "wait" as const,
+        waitType: "event" as const,
+        eventName: "second.ready",
+        timeout: "1h",
+      };
+      const nodes: WorkflowNode[] = [
+        { id: "first", dependsOn: [], config: firstConfig },
+        { id: "second", dependsOn: [], config: secondConfig },
+      ];
+
+      const result = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            first: { nodeId: "first", status: "running", attempt: 1 },
+            second: { nodeId: "second", status: "running", attempt: 1 },
+          },
+        }),
+      );
+
+      assertEquals(result.stalledWaitNode, "first");
+      assertEquals(result.stalledWaitNodes, [
+        { nodeId: "first", waitConfig: firstConfig },
+        { nodeId: "second", waitConfig: secondConfig },
+      ]);
     });
 
     it("re-enters an enclosing composite after a nested wait is approved", async () => {

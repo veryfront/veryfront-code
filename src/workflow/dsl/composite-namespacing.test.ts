@@ -10,10 +10,17 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { branch } from "./branch.ts";
+import { loop } from "./loop.ts";
 import { parallel } from "./parallel.ts";
 import { step } from "./step.ts";
-import type { BranchNodeConfig, ParallelNodeConfig, WorkflowNode } from "../types.ts";
+import type {
+  BranchNodeConfig,
+  LoopNodeConfig,
+  ParallelNodeConfig,
+  WorkflowNode,
+} from "../types.ts";
 import { buildGraph } from "../executor/dag/graph.ts";
+import { removeWorkflowNodeNamespace } from "./validation.ts";
 
 function dependentStep(id: string, dependsOn: string[]): WorkflowNode {
   return { ...step(id, { tool: "noop" }), dependsOn };
@@ -25,6 +32,10 @@ function parallelConfig(node: WorkflowNode): ParallelNodeConfig {
 
 function branchConfig(node: WorkflowNode): BranchNodeConfig {
   return node.config as BranchNodeConfig;
+}
+
+function loopConfig(node: WorkflowNode): LoopNodeConfig {
+  return node.config as LoopNodeConfig;
 }
 
 describe("composite node namespacing", () => {
@@ -83,6 +94,58 @@ describe("composite node namespacing", () => {
     ]);
     assertEquals(nested.then[1]?.dependsOn, ["outer/inner/then/draft"]);
     buildGraph(nested.then);
+  });
+
+  it("namespaces static loop children and their dependencies", () => {
+    const node = loop("poll", {
+      while: () => true,
+      maxIterations: 1,
+      steps: [
+        step("fetch", { tool: "noop" }),
+        dependentStep("confirm", ["fetch"]),
+      ],
+    });
+
+    const config = loopConfig(node);
+    assertEquals(Array.isArray(config.steps), true);
+    const steps = config.steps as WorkflowNode[];
+    assertEquals(steps.map((child) => child.id), ["poll/fetch", "poll/confirm"]);
+    assertEquals(steps[1]?.dependsOn, ["poll/fetch"]);
+    buildGraph(steps);
+  });
+
+  it("restores a namespaced static graph for a suspended legacy iteration", () => {
+    const node = loop("poll", {
+      while: () => true,
+      maxIterations: 1,
+      steps: [
+        step("fetch", { tool: "noop" }),
+        dependentStep("confirm", ["fetch"]),
+      ],
+    });
+    const restored = removeWorkflowNodeNamespace(
+      "poll/",
+      loopConfig(node).steps as WorkflowNode[],
+    );
+
+    assertEquals(restored.map((child) => child.id), ["fetch", "confirm"]);
+    assertEquals(restored[1]?.dependsOn, ["fetch"]);
+    buildGraph(restored);
+  });
+
+  it("rebases static loop descendants into an outer composite namespace", () => {
+    const node = parallel("outer", [
+      loop("poll", {
+        while: () => true,
+        maxIterations: 1,
+        steps: [step("gate", { tool: "noop" })],
+      }),
+    ]);
+
+    const nested = loopConfig(parallelConfig(node).nodes[0]!);
+    assertEquals((nested.steps as WorkflowNode[]).map((child) => child.id), [
+      "outer/poll/gate",
+    ]);
   });
 
   it("leaves already-namespaced children and their references untouched", () => {
