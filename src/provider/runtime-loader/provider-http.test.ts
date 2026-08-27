@@ -416,6 +416,25 @@ describe("provider-http", () => {
       });
     });
 
+    it("does not preserve truncated structured Veryfront 402 problems", async () => {
+      const responseBody = JSON.stringify({
+        slug: "insufficient-credits",
+        error: "AI credit limit exceeded",
+        padding: "x".repeat(9_000),
+      });
+      const err = await buildProviderError(
+        "openai",
+        jsonResponse(402, responseBody),
+      );
+
+      assertEquals(err.responseBody, undefined);
+      assertEquals(Object.keys(err).includes("responseBody"), false);
+      assertEquals(parseProviderError(err), {
+        code: "EXTERNAL_SERVICE_ERROR",
+        message: "LLM provider service error",
+      });
+    });
+
     it("preserves a Google 400 that names itself INVALID_ARGUMENT", async () => {
       // Google's envelope carries no `type`, so keying preservation on
       // `invalid_request_error` alone dropped the body for every Google 400 --
