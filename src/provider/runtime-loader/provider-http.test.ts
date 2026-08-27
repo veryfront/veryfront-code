@@ -92,6 +92,15 @@ describe("provider-http", () => {
       assertEquals(err.status, 529);
     });
 
+    it("anthropic 529 honors Retry-After", async () => {
+      const err = await buildProviderError(
+        "anthropic",
+        jsonResponse(529, { error: "overloaded" }, { "retry-after": "4" }),
+      );
+      assertEquals(err instanceof ProviderOverloadedError, true);
+      assertEquals(err.retryAfterMs, 4_000);
+    });
+
     it("anthropic 429 -> retryable rate limit, honoring Retry-After", async () => {
       const err = await buildProviderError(
         "anthropic",
@@ -102,10 +111,29 @@ describe("provider-http", () => {
       assertEquals(err.retryAfterMs, 3000);
     });
 
+    it("anthropic 429 is retryable without Retry-After", async () => {
+      const err = await buildProviderError(
+        "anthropic",
+        jsonResponse(429, { error: "rate_limited" }),
+      );
+      assertEquals(err instanceof ProviderRateLimitError, true);
+      assertEquals(err.retryable, true);
+      assertEquals(err.retryAfterMs, undefined);
+    });
+
     it("openai 503 -> retryable overloaded", async () => {
       const err = await buildProviderError("openai", jsonResponse(503, "overloaded"));
       assertEquals(err instanceof ProviderOverloadedError, true);
       assertEquals(err.retryable, true);
+    });
+
+    it("openai 503 honors Retry-After", async () => {
+      const err = await buildProviderError(
+        "openai",
+        jsonResponse(503, "overloaded", { "retry-after": "6" }),
+      );
+      assertEquals(err instanceof ProviderOverloadedError, true);
+      assertEquals(err.retryAfterMs, 6_000);
     });
 
     it("openai 429 insufficient_quota -> non-retryable quota", async () => {
@@ -163,6 +191,19 @@ describe("provider-http", () => {
       );
       assertEquals(err instanceof ProviderRateLimitError, true);
       assertEquals(err.retryable, true);
+    });
+
+    it("openai 429 rate_limit_exceeded honors Retry-After", async () => {
+      const err = await buildProviderError(
+        "openai",
+        jsonResponse(
+          429,
+          { error: { code: "rate_limit_exceeded", message: "slow down" } },
+          { "retry-after": "8" },
+        ),
+      );
+      assertEquals(err instanceof ProviderRateLimitError, true);
+      assertEquals(err.retryAfterMs, 8_000);
     });
 
     it("mistral 429 insufficient_quota -> non-retryable quota", async () => {
