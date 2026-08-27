@@ -585,11 +585,11 @@ function normalizeAndFindUnrepresentableValues(
         if (options.strictContext === true) {
           recordStrictArrayDiagnostics(nested, path, length);
         }
+        const canInspectIndex = canIdentifyProxyWithoutHooks &&
+          !isProxyWithoutHooks(nested);
         for (let index = 0; index < length; index++) {
           const indexKey = StringConstructor(index);
           let isHole = false;
-          const canInspectIndex = canIdentifyProxyWithoutHooks &&
-            !isProxyWithoutHooks(nested);
           const child = reflectGet(nested, indexKey);
           if (options.strictContext !== true && canInspectIndex) {
             try {
