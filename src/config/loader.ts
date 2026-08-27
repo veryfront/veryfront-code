@@ -1988,14 +1988,14 @@ const SCHEME_URL = new RegExp(
 // the diagnostic. This runs after the file-URL pass, which keeps local file
 // URLs classified as paths.
 //
-// Unicode after the first slash does not match this fallback. The normal rule
-// handles that shape and preserves the following prose, which is the no-space
-// boundary this fallback must not undo.
+// Group the optional ASCII tail. Writing `${URL_TOKEN_TAIL_SOURCE}?` directly
+// would turn the tail's final `+` lazy, stop after one delimiter, and strand an
+// ASCII query prefix before a later raw-IRI remainder.
 const NON_ASCII_HOST_SOURCE = String
   .raw`[\p{L}\p{N}\p{M}.-]{0,512}[\u0080-\u{10FFFF}][\p{L}\p{N}\p{M}.-]{0,512}`;
 const NON_ASCII_AUTHORITY_URL = new RegExp(
   String
-    .raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}${URL_TOKEN_TAIL_SOURCE}?`,
+    .raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}(?:${URL_TOKEN_TAIL_SOURCE})?`,
   "gu",
 );
 // Raw Unicode at the start of a slash-delimited path segment is part of an IRI,
@@ -2093,7 +2093,7 @@ const ZERO_SLASH_SCHEME_URL = new RegExp(
 // remain linear-time.
 const NON_ASCII_MALFORMED_AUTHORITY_URL = new RegExp(
   String
-    .raw`${ASCII_SPECIAL_SCHEME_SOURCE}:/(?!/)(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}${URL_TOKEN_TAIL_SOURCE}?`,
+    .raw`${ASCII_SPECIAL_SCHEME_SOURCE}:/(?!/)(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}(?:${URL_TOKEN_TAIL_SOURCE})?`,
   "gu",
 );
 const NON_ASCII_MALFORMED_URL_PATH = new RegExp(
@@ -2103,7 +2103,7 @@ const NON_ASCII_MALFORMED_URL_PATH = new RegExp(
 );
 const NON_ASCII_ZERO_SLASH_AUTHORITY_URL = new RegExp(
   String
-    .raw`${ASCII_SPECIAL_SCHEME_SOURCE}:(?![/\s])(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}${URL_TOKEN_TAIL_SOURCE}?`,
+    .raw`${ASCII_SPECIAL_SCHEME_SOURCE}:(?![/\s])(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}(?:${URL_TOKEN_TAIL_SOURCE})?`,
   "gu",
 );
 const NON_ASCII_ZERO_SLASH_URL_PATH = new RegExp(
@@ -2248,18 +2248,25 @@ function redactMachinePaths(value: string): string {
   }
   redacted = replaceMatchesWithCapturedExec(redacted, FILE_URL_ABSOLUTE_PATH, "[path]", true);
   if (containsNonAscii(redacted)) {
-    redacted = replaceMatchesWithCapturedExec(redacted, NON_ASCII_AUTHORITY_URL, "[url]");
+    redacted = replaceMatchesWithCapturedExec(
+      redacted,
+      NON_ASCII_AUTHORITY_URL,
+      "[url]",
+      true,
+    );
     redacted = replaceMatchesWithCapturedExec(redacted, NON_ASCII_URL_PATH, "[url]");
     redacted = replaceMatchesWithCapturedExec(
       redacted,
       NON_ASCII_MALFORMED_AUTHORITY_URL,
       "[url]",
+      true,
     );
     redacted = replaceMatchesWithCapturedExec(redacted, NON_ASCII_MALFORMED_URL_PATH, "[url]");
     redacted = replaceMatchesWithCapturedExec(
       redacted,
       NON_ASCII_ZERO_SLASH_AUTHORITY_URL,
       "[url]",
+      true,
     );
     redacted = replaceMatchesWithCapturedExec(redacted, NON_ASCII_ZERO_SLASH_URL_PATH, "[url]");
   }

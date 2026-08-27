@@ -3164,6 +3164,28 @@ export default config as const;
         assertStringIncludes(singleSlashIriPath.message, "Failed [url]");
       });
 
+      it("redacts raw IRI remainders after Unicode authorities", async () => {
+        const cases = [
+          ["two-slash-path", "https://例え.internal/秘密"],
+          ["two-slash-query", "https://例え.internal?q=秘密"],
+          ["single-slash-path", "https:/例え.internal/秘密"],
+          ["single-slash-query", "https:/例え.internal?q=秘密"],
+          ["zero-slash-path", "https:例え.internal/秘密"],
+          ["zero-slash-query", "https:例え.internal?q=秘密"],
+        ] as const;
+
+        for (const [label, url] of cases) {
+          const error = await loadFailure(
+            `vf-config-iri-authority-${label}-`,
+            `throw new Error(${JSON.stringify(`Failed ${url}`)});\n`,
+          );
+
+          assertEquals(error.message.includes("例え.internal"), false, label);
+          assertEquals(error.message.includes("秘密"), false, label);
+          assertStringIncludes(error.message, "Failed [url]", label);
+        }
+      });
+
       it("redacts a URL tail that begins after a lone `)` and punctuation", async () => {
         // The other half of the structural rule, and the reason it is not a list
         // of characters prose may end with. Punctuation after a `)` does not make
