@@ -2907,36 +2907,283 @@ export default config as const;
         }
       });
 
-      it("cannot keep prose that follows a redacted URL without a space", async () => {
-        // The trailing-punctuation rule needs a boundary -- whitespace, a quote,
-        // or end of line. A script that does not put spaces between sentences
-        // gives it none, so the punctuation run never terminates, the `)` is
-        // taken as URL, and the rest of the line goes with it.
-        //
-        // Asserted rather than left implicit, because the Unicode class above
-        // makes this look handled. `Failed (see .../x)。 Retry` passes, and it is
-        // the space doing that work, not the class. Remove the space and the
-        // whole remainder is redacted.
+      it("keeps prose that follows a redacted URL without a space", async () => {
+        // Keep the space-separated control next to the glued case. Both must
+        // preserve the sentence mark and following prose; the no-space input
+        // proves the URL token ends at characters that cannot appear unencoded
+        // in an RFC 3986 URI, not only at whitespace.
+        const spaced = await loadFailure(
+          "vf-config-paren-cjk-spaced-",
+          `throw new Error("Failed (see https://registry.internal/x)。 Retry");\n`,
+        );
+
+        assertStringIncludes(spaced.message, "Failed (see [url])。 Retry");
+
         const glued = await loadFailure(
           "vf-config-paren-cjk-glued-",
           `throw new Error("Failed (see https://registry.internal/x)。次を試してください");\n`,
         );
 
-        assertStringIncludes(glued.message, "Failed (see [url]");
-        assertEquals(glued.message.includes("次を試してください"), false);
+        assertStringIncludes(glued.message, "Failed (see [url])。次を試してください");
+        assertEquals(glued.message.includes("registry.internal"), false);
 
-        // Pre-existing, and not something the parenthesis branches introduced:
-        // origin/main redacts this identically, because the ordinary tail branch
-        // already eats CJK glued to a URL. The whole tail assumes an ASCII token
-        // delimited by whitespace. Closing it means redefining the boundary
-        // across every pattern here, which is a separate change.
+        // Cover the ordinary tail independently of the parenthesis branches.
+        // It must stop before the first non-ASCII prose character while still
+        // redacting the complete host and ASCII path.
         const noParen = await loadFailure(
           "vf-config-cjk-glued-",
           `throw new Error("Failed https://registry.internal/x次を試してください");\n`,
         );
 
         assertEquals(noParen.message.includes("registry.internal"), false);
-        assertEquals(noParen.message.includes("次を試してください"), false);
+        assertStringIncludes(noParen.message, "Failed [url]次を試してください");
+
+        // Percent-encoding keeps the complete URI in ASCII, so an encoded path
+        // and query remain inside the redacted token.
+        const encoded = await loadFailure(
+          "vf-config-cjk-percent-encoded-",
+          `throw new Error("Failed https://registry.internal/x%E6%AC%A1?t=SUPERSECRET");\n`,
+        );
+
+        assertEquals(encoded.message.includes("registry.internal"), false);
+        assertEquals(encoded.message.includes("SUPERSECRET"), false);
+        assertStringIncludes(encoded.message, "Failed [url]");
+
+        // A non-ASCII authority has no completed ASCII host prefix to redact.
+        // Treat it as an IRI and fail closed on the whole token rather than
+        // exposing the hostname while trying to preserve following prose.
+        const iriHost = await loadFailure(
+          "vf-config-iri-host-",
+          `throw new Error("Failed https://例え.internal/config.ts");\n`,
+        );
+
+        assertEquals(iriHost.message.includes("例え.internal"), false);
+        assertStringIncludes(iriHost.message, "Failed [url]");
+
+        const mixedIriHost = await loadFailure(
+          "vf-config-mixed-iri-host-",
+          `throw new Error("Failed https://a例.internal/config.ts");\n`,
+        );
+
+        assertEquals(mixedIriHost.message.includes("例.internal"), false);
+        assertStringIncludes(mixedIriHost.message, "Failed [url]");
+
+        const iriUrlPath = await loadFailure(
+          "vf-config-iri-url-path-",
+          `throw new Error("Failed https://registry.internal/秘密/config.ts");\n`,
+        );
+
+        assertEquals(iriUrlPath.message.includes("秘密"), false);
+        assertEquals(iriUrlPath.message.includes("registry.internal"), false);
+        assertStringIncludes(iriUrlPath.message, "Failed [url]");
+
+        const iriFilePath = await loadFailure(
+          "vf-config-iri-file-path-",
+          `throw new Error("Failed file:///home/alice/秘密/config.ts");\n`,
+        );
+
+        assertEquals(iriFilePath.message.includes("秘密"), false);
+        assertEquals(iriFilePath.message.includes("/home/alice"), false);
+        assertStringIncludes(iriFilePath.message, "Failed [path]");
+
+        const iriTerminalPath = await loadFailure(
+          "vf-config-iri-terminal-path-",
+          `throw new Error("Failed https://registry.internal/秘密");\n`,
+        );
+
+        assertEquals(iriTerminalPath.message.includes("秘密"), false);
+        assertStringIncludes(iriTerminalPath.message, "Failed [url]");
+
+        const iriQuery = await loadFailure(
+          "vf-config-iri-query-",
+          `throw new Error("Failed https://registry.internal/x?q=秘密");\n`,
+        );
+
+        assertEquals(iriQuery.message.includes("秘密"), false);
+        assertStringIncludes(iriQuery.message, "Failed [url]");
+
+        const iriPrefixedQuery = await loadFailure(
+          "vf-config-iri-prefixed-query-",
+          `throw new Error("Failed https://registry.internal/x?q=abc秘密");\n`,
+        );
+
+        assertEquals(iriPrefixedQuery.message.includes("秘密"), false);
+        assertEquals(iriPrefixedQuery.message.includes("abc"), false);
+        assertStringIncludes(iriPrefixedQuery.message, "Failed [url]");
+
+        const iriParenthesizedPath = await loadFailure(
+          "vf-config-iri-parenthesized-path-",
+          `throw new Error("Failed https://registry.internal/x(秘密)/config.ts");\n`,
+        );
+
+        assertEquals(iriParenthesizedPath.message.includes("秘密"), false);
+        assertEquals(iriParenthesizedPath.message.includes("registry.internal"), false);
+        assertStringIncludes(iriParenthesizedPath.message, "Failed [url]");
+
+        const iriUnbalancedParenthesizedPath = await loadFailure(
+          "vf-config-iri-unbalanced-parenthesized-path-",
+          `throw new Error("Failed https://registry.internal/x(秘密/config.ts");\n`,
+        );
+
+        assertEquals(iriUnbalancedParenthesizedPath.message.includes("秘密"), false);
+        assertEquals(
+          iriUnbalancedParenthesizedPath.message.includes("registry.internal"),
+          false,
+        );
+        assertStringIncludes(iriUnbalancedParenthesizedPath.message, "Failed [url]");
+
+        const fileIriParenthesizedPath = await loadFailure(
+          "vf-config-file-iri-parenthesized-path-",
+          `throw new Error("Failed file:///home/alice/x(秘密)/config.ts");\n`,
+        );
+
+        assertEquals(fileIriParenthesizedPath.message.includes("秘密"), false);
+        assertEquals(fileIriParenthesizedPath.message.includes("/home/alice"), false);
+        assertStringIncludes(fileIriParenthesizedPath.message, "Failed [path]");
+
+        const acceptedRawPath = await loadFailure(
+          "vf-config-raw-accepted-url-path-",
+          `throw new Error("Failed https://registry.internal/{PRIVATE}/config.ts");\n`,
+        );
+
+        assertEquals(acceptedRawPath.message.includes("{PRIVATE}"), false);
+        assertEquals(acceptedRawPath.message.includes("registry.internal"), false);
+        assertStringIncludes(acceptedRawPath.message, "Failed [url]");
+
+        const acceptedRawTerminalPath = await loadFailure(
+          "vf-config-raw-accepted-terminal-path-",
+          `throw new Error("Failed https://registry.internal/account{PRIVATE}");\n`,
+        );
+
+        assertEquals(acceptedRawTerminalPath.message.includes("PRIVATE"), false);
+        assertEquals(acceptedRawTerminalPath.message.includes("registry.internal"), false);
+        assertStringIncludes(acceptedRawTerminalPath.message, "Failed [url]");
+
+        const backslashUrlPath = await loadFailure(
+          "vf-config-backslash-url-path-",
+          `throw new Error("Failed https://registry.internal\\\\PRIVATE\\\\config.ts");\n`,
+        );
+
+        assertEquals(backslashUrlPath.message.includes("PRIVATE"), false);
+        assertEquals(backslashUrlPath.message.includes("registry.internal"), false);
+        assertStringIncludes(backslashUrlPath.message, "Failed [url]");
+
+        for (const rawCharacter of ["<", ">", "`", "^", "|"]) {
+          const rawValue = `${rawCharacter}PRIVATE${rawCharacter}`;
+          const acceptedRawUrlPath = await loadFailure(
+            "vf-config-raw-accepted-url-path-",
+            `throw new Error("Failed https://registry.internal/${rawValue}/config.ts");\n`,
+          );
+
+          assertEquals(acceptedRawUrlPath.message.includes("PRIVATE"), false);
+          assertEquals(acceptedRawUrlPath.message.includes("registry.internal"), false);
+          assertStringIncludes(acceptedRawUrlPath.message, "Failed [url]");
+
+          const acceptedRawFilePath = await loadFailure(
+            "vf-config-raw-accepted-file-path-",
+            `throw new Error("Failed file:///home/alice/${rawValue}/config.ts");\n`,
+          );
+
+          assertEquals(acceptedRawFilePath.message.includes("PRIVATE"), false);
+          assertEquals(acceptedRawFilePath.message.includes("/home/alice"), false);
+          assertStringIncludes(acceptedRawFilePath.message, "Failed [path]");
+        }
+
+        const longIriPrefix = "a".repeat(2049);
+        const longIriPath = await loadFailure(
+          "vf-config-long-iri-prefix-",
+          `throw new Error("Failed https://registry.internal/${longIriPrefix}/秘密/config.ts");\n`,
+        );
+
+        assertEquals(longIriPath.message.includes("秘密"), false);
+        assertEquals(longIriPath.message.includes("registry.internal"), false);
+        assertStringIncludes(longIriPath.message, "Failed [url]");
+
+        const closingAngleProse = await loadFailure(
+          "vf-config-closing-angle-prose-",
+          `throw new Error("Failed (see https://registry.internal/x)> Retry");\n`,
+        );
+
+        assertEquals(closingAngleProse.message.includes("registry.internal"), false);
+        assertStringIncludes(closingAngleProse.message, "Failed (see [url])> Retry");
+
+        const bareAuthorityProse = await loadFailure(
+          "vf-config-iri-authority-prose-",
+          `throw new Error("Failed (see https://registry.internal)。次を試してください");\n`,
+        );
+
+        assertStringIncludes(bareAuthorityProse.message, "Failed (see [url])。次を試してください");
+        assertEquals(bareAuthorityProse.message.includes("registry.internal"), false);
+
+        const iriTerminalFilePath = await loadFailure(
+          "vf-config-iri-terminal-file-path-",
+          `throw new Error("Failed file:///home/alice/秘密");\n`,
+        );
+
+        assertEquals(iriTerminalFilePath.message.includes("秘密"), false);
+        assertStringIncludes(iriTerminalFilePath.message, "Failed [path]");
+
+        const zeroSlashIri = await loadFailure(
+          "vf-config-zero-slash-iri-host-",
+          `throw new Error("Failed https:例え.internal/config.ts");\n`,
+        );
+
+        assertEquals(zeroSlashIri.message.includes("例え.internal"), false);
+        assertStringIncludes(zeroSlashIri.message, "Failed [url]");
+
+        const zeroSlashSymbolIri = await loadFailure(
+          "vf-config-zero-slash-symbol-iri-host-",
+          `throw new Error("Failed https:🙂.internal/config.ts");\n`,
+        );
+
+        assertEquals(zeroSlashSymbolIri.message.includes("🙂.internal"), false);
+        assertStringIncludes(zeroSlashSymbolIri.message, "Failed [url]");
+
+        const zeroSlashIriPath = await loadFailure(
+          "vf-config-zero-slash-iri-path-",
+          `throw new Error("Failed https:registry.internal/秘密/config.ts");\n`,
+        );
+
+        assertEquals(zeroSlashIriPath.message.includes("秘密"), false);
+        assertStringIncludes(zeroSlashIriPath.message, "Failed [url]");
+
+        const singleSlashIri = await loadFailure(
+          "vf-config-single-slash-iri-host-",
+          `throw new Error("Failed https:/例え.internal/config.ts");\n`,
+        );
+
+        assertEquals(singleSlashIri.message.includes("例え.internal"), false);
+        assertStringIncludes(singleSlashIri.message, "Failed [url]");
+
+        const singleSlashIriPath = await loadFailure(
+          "vf-config-single-slash-iri-path-",
+          `throw new Error("Failed https:/registry.internal/秘密/config.ts");\n`,
+        );
+
+        assertEquals(singleSlashIriPath.message.includes("秘密"), false);
+        assertStringIncludes(singleSlashIriPath.message, "Failed [url]");
+      });
+
+      it("redacts raw IRI remainders after Unicode authorities", async () => {
+        const cases = [
+          ["two-slash-path", "https://例え.internal/秘密"],
+          ["two-slash-query", "https://例え.internal?q=秘密"],
+          ["single-slash-path", "https:/例え.internal/秘密"],
+          ["single-slash-query", "https:/例え.internal?q=秘密"],
+          ["zero-slash-path", "https:例え.internal/秘密"],
+          ["zero-slash-query", "https:例え.internal?q=秘密"],
+        ] as const;
+
+        for (const [label, url] of cases) {
+          const error = await loadFailure(
+            `vf-config-iri-authority-${label}-`,
+            `throw new Error(${JSON.stringify(`Failed ${url}`)});\n`,
+          );
+
+          assertEquals(error.message.includes("例え.internal"), false, label);
+          assertEquals(error.message.includes("秘密"), false, label);
+          assertStringIncludes(error.message, "Failed [url]", label);
+        }
       });
 
       it("redacts a URL tail that begins after a lone `)` and punctuation", async () => {

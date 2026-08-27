@@ -1962,12 +1962,68 @@ const CSI_GLUED_URL =
 // Keep this source shared by every URL shape. Apart from preventing the four
 // redactors from drifting, the extraction keeps each complete expression below
 // the static-analysis complexity threshold.
+//
+// An RFC 3986 URI is ASCII before percent-encoding. Defining the token from
+// that legal set makes any non-ASCII character after a completed ASCII prefix
+// a boundary, including scripts that do not put spaces between a URL and the
+// following sentence. A percent-encoded equivalent stays entirely inside the
+// token.
+//
+// Apostrophes are intentionally absent even though RFC 3986 lists them as a
+// sub-delimiter. The userinfo prefix handles them before `@`, while the tail
+// must leave the closing quote in `Cannot find module 'https://host/x'` intact.
+const URI_TOKEN_CHARACTER_SOURCE = String.raw`[A-Za-z0-9\-._~:/?#\[\]@!$&*+,;=%]`;
+const URI_PAREN_INTERIOR_SOURCE = String.raw`[A-Za-z0-9\-._~:/?#\[\]@!$&()*+,;=%]`;
+const URL_BALANCED_PAREN_SEGMENT_SOURCE = String.raw`\([^\s"']{0,512}\)`;
 const URL_TOKEN_TAIL_SOURCE = String
-  .raw`(?:[^\s"'()]|\([^\s"']{0,512}\)|\((?=[^\s"'])|\)(?![\p{P}\p{S}\p{M}\p{Cf}]{0,16}(?:[\s"']|$)))+`;
+  .raw`(?:${URI_TOKEN_CHARACTER_SOURCE}|${URL_BALANCED_PAREN_SEGMENT_SOURCE}|\((?=(?:${URI_PAREN_INTERIOR_SOURCE}|\P{ASCII}))|\)(?=${URI_PAREN_INTERIOR_SOURCE})(?![\p{P}\p{S}\p{M}\p{Cf}]{0,16}(?:[\s"']|$)))+`;
 const SCHEME_URL = new RegExp(
   String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
   "gu",
 );
+// The ASCII-tail rule above deliberately ends before raw IRI characters. If
+// the authority itself contains one, however, the completed ASCII prefix is
+// not the complete host. Fail closed on the whitespace-delimited token so an
+// internationalized hostname cannot fall through to the path passes and reach
+// the diagnostic. This runs after the file-URL pass, which keeps local file
+// URLs classified as paths.
+//
+// Group the optional ASCII tail. Writing `${URL_TOKEN_TAIL_SOURCE}?` directly
+// would turn the tail's final `+` lazy, stop after one delimiter, and strand an
+// ASCII query prefix before a later raw-IRI remainder.
+const NON_ASCII_HOST_SOURCE = String
+  .raw`[\p{L}\p{N}\p{M}.-]{0,512}[\u0080-\u{10FFFF}][\p{L}\p{N}\p{M}.-]{0,512}`;
+const NON_ASCII_AUTHORITY_URL = new RegExp(
+  String
+    .raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}(?:${URL_TOKEN_TAIL_SOURCE})?`,
+  "gu",
+);
+// Raw Unicode at the start of a slash-delimited path segment is part of an IRI,
+// rather than prose glued to the preceding ASCII segment. Match the complete
+// whitespace-delimited token in that unambiguous case. Requiring the segment
+// boundary preserves `https://host/x次を試す` as `[url]次を試す`.
+const NON_ASCII_URL_PATH = new RegExp(
+  String
+    .raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?[^\s"/]{1,512}(?:/${URI_TOKEN_CHARACTER_SOURCE}{0,2048})?/(?=[^\x00-\x7F])[^\s"']*`,
+  "gu",
+);
+// Avoid a second generic scheme scan for ordinary ASCII diagnostics. Without
+// this gate, the long-alphabetic quadratic guard reached its unchanged 20x
+// limit even though the fallback could not match.
+const NON_ASCII_CHARACTER = /[\u0080-\u{10FFFF}]/u;
+// A sticky continuation used only when an ASCII URL match ends on a structural
+// component delimiter. In that position a following non-ASCII character is a
+// raw IRI path, query, or fragment rather than prose glued after a completed
+// path segment. The continuation consumes the rest of that token fail-closed.
+const RAW_IRI_REMAINDER = /\P{ASCII}[^\s"']*/uy;
+// WHATWG URL parsing accepts these raw path characters and backslash separators,
+// percent-encoding or normalizing them. Extend from a component boundary,
+// through a later slash, or when the accepted delimiter introduces an actual
+// letter/number payload. A delimiter-only closing `>` in `<https://host/x>`
+// therefore stays visible while `{PRIVATE}` and `\\PRIVATE` remain redacted.
+const RAW_ACCEPTED_URL_REMAINDER = /[\\<>{}\x60^|][^\s"']*/uy;
+const RAW_ACCEPTED_URL_PAYLOAD = /[\p{L}\p{N}\p{M}]/u;
+
 // Both the userinfo run and the parenthesised interior are length-bounded, and
 // the userinfo run also stops at `/`. Neither bound is cosmetic. An unbounded
 // greedy interior rescans the rest of the message from every `(` that never
@@ -2030,6 +2086,31 @@ const ZERO_SLASH_SCHEME_URL = new RegExp(
   String.raw`${ASCII_SPECIAL_SCHEME_SOURCE}:(?![/\s])(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
   "gu",
 );
+// The IRI fallbacks mirror the malformed single-slash and zero-slash forms
+// above. Each authority matcher catches a raw Unicode hostname, while each path
+// matcher catches a raw Unicode segment after a complete ASCII authority. All
+// are bounded before the first non-ASCII character so hostile diagnostics
+// remain linear-time.
+const NON_ASCII_MALFORMED_AUTHORITY_URL = new RegExp(
+  String
+    .raw`${ASCII_SPECIAL_SCHEME_SOURCE}:/(?!/)(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}(?:${URL_TOKEN_TAIL_SOURCE})?`,
+  "gu",
+);
+const NON_ASCII_MALFORMED_URL_PATH = new RegExp(
+  String
+    .raw`${ASCII_SPECIAL_SCHEME_SOURCE}:/(?!/)(?:[^\s"/]{0,512}@)?[^\s"/]{1,512}(?:/${URI_TOKEN_CHARACTER_SOURCE}{0,2048})?/(?=[^\x00-\x7F])[^\s"']*`,
+  "gu",
+);
+const NON_ASCII_ZERO_SLASH_AUTHORITY_URL = new RegExp(
+  String
+    .raw`${ASCII_SPECIAL_SCHEME_SOURCE}:(?![/\s])(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}(?:${URL_TOKEN_TAIL_SOURCE})?`,
+  "gu",
+);
+const NON_ASCII_ZERO_SLASH_URL_PATH = new RegExp(
+  String
+    .raw`${ASCII_SPECIAL_SCHEME_SOURCE}:(?![/\s])(?:[^\s"/]{0,512}@)?[^\s"/]{1,512}(?:/${URI_TOKEN_CHARACTER_SOURCE}{0,2048})?/(?=[^\x00-\x7F])[^\s"']*`,
+  "gu",
+);
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
 // Case-insensitive for the same reason. `FILE:///home/alice` otherwise fell
@@ -2040,6 +2121,14 @@ const FILE_URL_ABSOLUTE_PATH = new RegExp(
   `file:///${URL_TOKEN_TAIL_SOURCE}`,
   "giu",
 );
+// Run before FILE_URL_ABSOLUTE_PATH. That ASCII matcher intentionally stops at
+// raw Unicode, but replacing only its prefix would expose a later IRI segment.
+// As with NON_ASCII_URL_PATH, the segment boundary distinguishes path data from
+// prose glued directly to an ASCII filename.
+const NON_ASCII_FILE_URL_PATH = new RegExp(
+  String.raw`file:///(?:${URI_TOKEN_CHARACTER_SOURCE}{0,2048}/)?(?=[^\x00-\x7F])[^\s"']*`,
+  "giu",
+);
 // Unanchored on the left. A boundary here refuses a path glued to preceding
 // text (`Failed atC:\\Users\\alice\\...`), and neither URL pattern can claim a
 // backslash form, so the path would reach the caller intact. The scheme match in
@@ -2048,10 +2137,54 @@ const FILE_URL_ABSOLUTE_PATH = new RegExp(
 const WINDOWS_ABSOLUTE_PATH = /(?:[A-Za-z]:[\\/]|\\\\)[^\s"'()]+/g;
 const POSIX_ABSOLUTE_PATH = /(?<![A-Za-z0-9:/.\\])\/[^\s"'()]+/g;
 
+function stickyMatchEnd(pattern: RegExp, value: string, offset: number): number {
+  pattern.lastIndex = offset;
+  try {
+    const remainder = ReflectApply(RegExpPrototypeExec, pattern, [value]) as
+      | RegExpExecArray
+      | null;
+    return remainder === null ? offset : pattern.lastIndex;
+  } finally {
+    pattern.lastIndex = 0;
+  }
+}
+
+function rawUrlMatchEnd(value: string, matched: string, offset: number): number {
+  const insideQueryOrFragment =
+    (ReflectApply(StringPrototypeIncludes, matched, ["?"]) as boolean) ||
+    (ReflectApply(StringPrototypeIncludes, matched, ["#"]) as boolean);
+  const lastCharacter = ReflectApply(StringPrototypeSlice, matched, [-1]) as string;
+  // A lone opening parenthesis admitted by URL_TOKEN_TAIL_SOURCE is a
+  // structural path delimiter. Treat it like `/` when raw IRI data follows so
+  // an accepted `x(秘密` path cannot strand the Unicode segment.
+  const atComponentBoundary = lastCharacter === "/" ||
+    lastCharacter === "?" ||
+    lastCharacter === "#" ||
+    lastCharacter === "&" ||
+    lastCharacter === "=" ||
+    lastCharacter === "(";
+  if (insideQueryOrFragment || atComponentBoundary) {
+    const iriEnd = stickyMatchEnd(RAW_IRI_REMAINDER, value, offset);
+    if (iriEnd !== offset) return iriEnd;
+  }
+
+  const acceptedEnd = stickyMatchEnd(RAW_ACCEPTED_URL_REMAINDER, value, offset);
+  if (acceptedEnd === offset) return offset;
+  const acceptedRemainder = ReflectApply(StringPrototypeSlice, value, [
+    offset,
+    acceptedEnd,
+  ]) as string;
+  const structurallyDelimited = atComponentBoundary || insideQueryOrFragment ||
+    (ReflectApply(StringPrototypeIncludes, acceptedRemainder, ["/"]) as boolean) ||
+    ReflectApply(RegExpPrototypeExec, RAW_ACCEPTED_URL_PAYLOAD, [acceptedRemainder]) !== null;
+  return structurallyDelimited ? acceptedEnd : offset;
+}
+
 function replaceMatchesWithCapturedExec(
   value: string,
   pattern: RegExp,
   replacement: string,
+  extendRawUrl = false,
 ): string {
   pattern.lastIndex = 0;
   let output = "";
@@ -2064,6 +2197,7 @@ function replaceMatchesWithCapturedExec(
       if (match === null) break;
       const matched = match[0];
       if (matched.length === 0) throw new TypeError("Diagnostic pattern must make progress");
+      if (extendRawUrl) pattern.lastIndex = rawUrlMatchEnd(value, matched, pattern.lastIndex);
       output += ReflectApply(StringPrototypeSlice, value, [offset, match.index]) as string;
       output += replacement;
       offset = pattern.lastIndex;
@@ -2075,6 +2209,10 @@ function replaceMatchesWithCapturedExec(
   }
 }
 
+function containsNonAscii(value: string): boolean {
+  return ReflectApply(RegExpPrototypeExec, NON_ASCII_CHARACTER, [value]) !== null;
+}
+
 /**
  * Replace machine-identifying locations in a diagnostic with stable markers.
  *
@@ -2083,11 +2221,12 @@ function replaceMatchesWithCapturedExec(
  * one away from text it would mis-read:
  *
  * 1. the quoted forms, whose surrounding quotes bound the match precisely;
- * 2. `file:///`, which is a path wearing a URL and is reported as `[path]`;
- * 3. `SCHEME_URL`, then `MALFORMED_SCHEME_URL`, each reported as `[url]` --
- *    together these are also what keep `https:/` away from step 4, whose
- *    drive-letter alternative would otherwise match the `s:/` inside it and
- *    emit `http[path]`;
+ * 2. `file:///`, including its unambiguous raw-IRI path form, which is a path
+ *    wearing a URL and is reported as `[path]`;
+ * 3. the non-ASCII authority and path fallbacks, then `SCHEME_URL` and
+ *    `MALFORMED_SCHEME_URL`, each reported as `[url]` -- together these are
+ *    also what keep `https:/` away from step 4, whose drive-letter alternative
+ *    would otherwise match the `s:/` inside it and emit `http[path]`;
  * 4. unquoted Windows drive and UNC paths;
  * 5. unquoted POSIX paths.
  *
@@ -2104,10 +2243,36 @@ function replaceMatchesWithCapturedExec(
 function redactMachinePaths(value: string): string {
   let redacted = replaceMatchesWithCapturedExec(value, QUOTED_WINDOWS_ABSOLUTE_PATH, "[path]");
   redacted = replaceMatchesWithCapturedExec(redacted, QUOTED_POSIX_ABSOLUTE_PATH, "[path]");
-  redacted = replaceMatchesWithCapturedExec(redacted, FILE_URL_ABSOLUTE_PATH, "[path]");
-  redacted = replaceMatchesWithCapturedExec(redacted, SCHEME_URL, "[url]");
-  redacted = replaceMatchesWithCapturedExec(redacted, MALFORMED_SCHEME_URL, "[url]");
-  redacted = replaceMatchesWithCapturedExec(redacted, ZERO_SLASH_SCHEME_URL, "[url]");
+  if (containsNonAscii(redacted)) {
+    redacted = replaceMatchesWithCapturedExec(redacted, NON_ASCII_FILE_URL_PATH, "[path]");
+  }
+  redacted = replaceMatchesWithCapturedExec(redacted, FILE_URL_ABSOLUTE_PATH, "[path]", true);
+  if (containsNonAscii(redacted)) {
+    redacted = replaceMatchesWithCapturedExec(
+      redacted,
+      NON_ASCII_AUTHORITY_URL,
+      "[url]",
+      true,
+    );
+    redacted = replaceMatchesWithCapturedExec(redacted, NON_ASCII_URL_PATH, "[url]");
+    redacted = replaceMatchesWithCapturedExec(
+      redacted,
+      NON_ASCII_MALFORMED_AUTHORITY_URL,
+      "[url]",
+      true,
+    );
+    redacted = replaceMatchesWithCapturedExec(redacted, NON_ASCII_MALFORMED_URL_PATH, "[url]");
+    redacted = replaceMatchesWithCapturedExec(
+      redacted,
+      NON_ASCII_ZERO_SLASH_AUTHORITY_URL,
+      "[url]",
+      true,
+    );
+    redacted = replaceMatchesWithCapturedExec(redacted, NON_ASCII_ZERO_SLASH_URL_PATH, "[url]");
+  }
+  redacted = replaceMatchesWithCapturedExec(redacted, SCHEME_URL, "[url]", true);
+  redacted = replaceMatchesWithCapturedExec(redacted, MALFORMED_SCHEME_URL, "[url]", true);
+  redacted = replaceMatchesWithCapturedExec(redacted, ZERO_SLASH_SCHEME_URL, "[url]", true);
   redacted = replaceMatchesWithCapturedExec(redacted, WINDOWS_ABSOLUTE_PATH, "[path]");
   return replaceMatchesWithCapturedExec(redacted, POSIX_ABSOLUTE_PATH, "[path]");
 }
