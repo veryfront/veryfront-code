@@ -3020,6 +3020,18 @@ export default config as const;
         assertEquals(iriParenthesizedPath.message.includes("registry.internal"), false);
         assertStringIncludes(iriParenthesizedPath.message, "Failed [url]");
 
+        const iriUnbalancedParenthesizedPath = await loadFailure(
+          "vf-config-iri-unbalanced-parenthesized-path-",
+          `throw new Error("Failed https://registry.internal/x(秘密/config.ts");\n`,
+        );
+
+        assertEquals(iriUnbalancedParenthesizedPath.message.includes("秘密"), false);
+        assertEquals(
+          iriUnbalancedParenthesizedPath.message.includes("registry.internal"),
+          false,
+        );
+        assertStringIncludes(iriUnbalancedParenthesizedPath.message, "Failed [url]");
+
         const fileIriParenthesizedPath = await loadFailure(
           "vf-config-file-iri-parenthesized-path-",
           `throw new Error("Failed file:///home/alice/x(秘密)/config.ts");\n`,
@@ -3037,6 +3049,24 @@ export default config as const;
         assertEquals(acceptedRawPath.message.includes("{PRIVATE}"), false);
         assertEquals(acceptedRawPath.message.includes("registry.internal"), false);
         assertStringIncludes(acceptedRawPath.message, "Failed [url]");
+
+        const acceptedRawTerminalPath = await loadFailure(
+          "vf-config-raw-accepted-terminal-path-",
+          `throw new Error("Failed https://registry.internal/account{PRIVATE}");\n`,
+        );
+
+        assertEquals(acceptedRawTerminalPath.message.includes("PRIVATE"), false);
+        assertEquals(acceptedRawTerminalPath.message.includes("registry.internal"), false);
+        assertStringIncludes(acceptedRawTerminalPath.message, "Failed [url]");
+
+        const backslashUrlPath = await loadFailure(
+          "vf-config-backslash-url-path-",
+          `throw new Error("Failed https://registry.internal\\\\PRIVATE\\\\config.ts");\n`,
+        );
+
+        assertEquals(backslashUrlPath.message.includes("PRIVATE"), false);
+        assertEquals(backslashUrlPath.message.includes("registry.internal"), false);
+        assertStringIncludes(backslashUrlPath.message, "Failed [url]");
 
         for (const rawCharacter of ["<", ">", "`", "^", "|"]) {
           const rawValue = `${rawCharacter}PRIVATE${rawCharacter}`;
@@ -3100,6 +3130,14 @@ export default config as const;
 
         assertEquals(zeroSlashIri.message.includes("例え.internal"), false);
         assertStringIncludes(zeroSlashIri.message, "Failed [url]");
+
+        const zeroSlashSymbolIri = await loadFailure(
+          "vf-config-zero-slash-symbol-iri-host-",
+          `throw new Error("Failed https:🙂.internal/config.ts");\n`,
+        );
+
+        assertEquals(zeroSlashSymbolIri.message.includes("🙂.internal"), false);
+        assertStringIncludes(zeroSlashSymbolIri.message, "Failed [url]");
 
         const zeroSlashIriPath = await loadFailure(
           "vf-config-zero-slash-iri-path-",

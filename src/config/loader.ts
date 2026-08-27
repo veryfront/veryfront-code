@@ -1976,7 +1976,7 @@ const URI_TOKEN_CHARACTER_SOURCE = String.raw`[A-Za-z0-9\-._~:/?#\[\]@!$&*+,;=%]
 const URI_PAREN_INTERIOR_SOURCE = String.raw`[A-Za-z0-9\-._~:/?#\[\]@!$&()*+,;=%]`;
 const URL_BALANCED_PAREN_SEGMENT_SOURCE = String.raw`\([^\s"']{0,512}\)`;
 const URL_TOKEN_TAIL_SOURCE = String
-  .raw`(?:${URI_TOKEN_CHARACTER_SOURCE}|${URL_BALANCED_PAREN_SEGMENT_SOURCE}|\((?=${URI_PAREN_INTERIOR_SOURCE})|\)(?=${URI_PAREN_INTERIOR_SOURCE})(?![\p{P}\p{S}\p{M}\p{Cf}]{0,16}(?:[\s"']|$)))+`;
+  .raw`(?:${URI_TOKEN_CHARACTER_SOURCE}|${URL_BALANCED_PAREN_SEGMENT_SOURCE}|\((?=(?:${URI_PAREN_INTERIOR_SOURCE}|\P{ASCII}))|\)(?=${URI_PAREN_INTERIOR_SOURCE})(?![\p{P}\p{S}\p{M}\p{Cf}]{0,16}(?:[\s"']|$)))+`;
 const SCHEME_URL = new RegExp(
   String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
   "gu",
@@ -2016,10 +2016,13 @@ const NON_ASCII_CHARACTER = /[\u0080-\u{10FFFF}]/u;
 // raw IRI path, query, or fragment rather than prose glued after a completed
 // path segment. The continuation consumes the rest of that token fail-closed.
 const RAW_IRI_REMAINDER = /\P{ASCII}[^\s"']*/uy;
-// WHATWG URL parsing accepts these raw path characters and percent-encodes
-// them. Extend only from a component boundary or through a later slash, so a
-// prose delimiter such as the closing `>` in `<https://host/x>` stays visible.
-const RAW_ACCEPTED_URL_REMAINDER = /[<>{}\x60^|][^\s"']*/uy;
+// WHATWG URL parsing accepts these raw path characters and backslash separators,
+// percent-encoding or normalizing them. Extend from a component boundary,
+// through a later slash, or when the accepted delimiter introduces an actual
+// letter/number payload. A delimiter-only closing `>` in `<https://host/x>`
+// therefore stays visible while `{PRIVATE}` and `\\PRIVATE` remain redacted.
+const RAW_ACCEPTED_URL_REMAINDER = /[\\<>{}\x60^|][^\s"']*/uy;
+const RAW_ACCEPTED_URL_PAYLOAD = /[\p{L}\p{N}\p{M}]/u;
 
 // Both the userinfo run and the parenthesised interior are length-bounded, and
 // the userinfo run also stops at `/`. Neither bound is cosmetic. An unbounded
@@ -2151,11 +2154,15 @@ function rawUrlMatchEnd(value: string, matched: string, offset: number): number 
     (ReflectApply(StringPrototypeIncludes, matched, ["?"]) as boolean) ||
     (ReflectApply(StringPrototypeIncludes, matched, ["#"]) as boolean);
   const lastCharacter = ReflectApply(StringPrototypeSlice, matched, [-1]) as string;
+  // A lone opening parenthesis admitted by URL_TOKEN_TAIL_SOURCE is a
+  // structural path delimiter. Treat it like `/` when raw IRI data follows so
+  // an accepted `x(秘密` path cannot strand the Unicode segment.
   const atComponentBoundary = lastCharacter === "/" ||
     lastCharacter === "?" ||
     lastCharacter === "#" ||
     lastCharacter === "&" ||
-    lastCharacter === "=";
+    lastCharacter === "=" ||
+    lastCharacter === "(";
   if (insideQueryOrFragment || atComponentBoundary) {
     const iriEnd = stickyMatchEnd(RAW_IRI_REMAINDER, value, offset);
     if (iriEnd !== offset) return iriEnd;
@@ -2168,7 +2175,8 @@ function rawUrlMatchEnd(value: string, matched: string, offset: number): number 
     acceptedEnd,
   ]) as string;
   const structurallyDelimited = atComponentBoundary || insideQueryOrFragment ||
-    (ReflectApply(StringPrototypeIncludes, acceptedRemainder, ["/"]) as boolean);
+    (ReflectApply(StringPrototypeIncludes, acceptedRemainder, ["/"]) as boolean) ||
+    ReflectApply(RegExpPrototypeExec, RAW_ACCEPTED_URL_PAYLOAD, [acceptedRemainder]) !== null;
   return structurallyDelimited ? acceptedEnd : offset;
 }
 
