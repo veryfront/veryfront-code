@@ -1,5 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
+import { fromFileUrl } from "#std/path";
 import { parse } from "#std/yaml/parse";
 
 type YamlRecord = Record<string, unknown>;
@@ -8,6 +10,10 @@ const WORKFLOW_PATH = new URL(
   "../../../.github/workflows/cicd.yml",
   import.meta.url,
 );
+const RELEASE_SCRIPT_PATH = fromFileUrl(
+  new URL("../../../scripts/ci/publish-github-release.sh", import.meta.url),
+);
+const decoder = new TextDecoder();
 
 function asRecord(value: unknown, context: string): YamlRecord {
   assert(
@@ -104,7 +110,328 @@ async function runVersionValidation(version: string): Promise<Deno.CommandOutput
   }).output();
 }
 
+type ReleaseState = "missing" | "draft" | "published";
+type CreateFailure = "none" | "after-creation";
+type UploadFailureStatus = 1 | 64;
+
+async function runReleaseScript({
+  stateDir,
+  asset,
+  initialReleaseState = "missing",
+  createFailure = "none",
+  failedUploadAttempts = 0,
+  uploadFailureStatus = 1,
+  failedPublishAttempts = 0,
+}: {
+  stateDir: string;
+  asset: string;
+  initialReleaseState?: ReleaseState;
+  createFailure?: CreateFailure;
+  failedUploadAttempts?: number;
+  uploadFailureStatus?: UploadFailureStatus;
+  failedPublishAttempts?: number;
+}): Promise<Deno.CommandOutput> {
+  const ghLog = `${stateDir}/gh.log`;
+  const uploadCount = `${stateDir}/upload-count`;
+  const publishCount = `${stateDir}/publish-count`;
+  const releaseState = `${stateDir}/release-state`;
+  await Deno.writeTextFile(ghLog, "");
+  await Deno.writeTextFile(uploadCount, "0");
+  await Deno.writeTextFile(publishCount, "0");
+  await Deno.writeTextFile(releaseState, initialReleaseState);
+
+  return await new Deno.Command("bash", {
+    args: [
+      "-c",
+      [
+        "set -euo pipefail",
+        'release_script="$1"',
+        'asset="$2"',
+        "gh() {",
+        '  printf "%s\\n" "$*" >> "$GH_LOG"',
+        '  if [ "$1" = "release" ] && [ "$2" = "view" ]; then',
+        '    case "$(cat "$RELEASE_STATE")" in',
+        "      missing) return 1 ;;",
+        '      draft) printf "true\\n" ;;',
+        '      published) printf "false\\n" ;;',
+        "    esac",
+        "    return 0",
+        "  fi",
+        '  if [ "$1" = "release" ] && [ "$2" = "create" ]; then',
+        '    if [ "$(cat "$RELEASE_STATE")" != "missing" ]; then',
+        "      return 1",
+        "    fi",
+        '    printf "draft" > "$RELEASE_STATE"',
+        '    if [ "$CREATE_FAILURE" = "after-creation" ]; then',
+        "      return 1",
+        "    fi",
+        "  fi",
+        '  if [ "$1" = "release" ] && [ "$2" = "upload" ]; then',
+        '    count="$(cat "$UPLOAD_COUNT")"',
+        "    count=$((count + 1))",
+        '    printf "%s" "$count" > "$UPLOAD_COUNT"',
+        '    if [ "$count" -le "$FAILED_UPLOAD_ATTEMPTS" ]; then',
+        '      return "$UPLOAD_FAILURE_STATUS"',
+        "    fi",
+        "  fi",
+        '  if [ "$1" = "release" ] && [ "$2" = "edit" ]; then',
+        '    count="$(cat "$PUBLISH_COUNT")"',
+        "    count=$((count + 1))",
+        '    printf "%s" "$count" > "$PUBLISH_COUNT"',
+        '    if [ "$count" -le "$FAILED_PUBLISH_ATTEMPTS" ]; then',
+        "      return 1",
+        "    fi",
+        '    printf "published" > "$RELEASE_STATE"',
+        "  fi",
+        '  if [ "$1" = "release" ] && [ "$2" = "delete" ]; then',
+        '    printf "missing" > "$RELEASE_STATE"',
+        "  fi",
+        "}",
+        "sleep() { :; }",
+        "export -f gh sleep",
+        'exec bash "$release_script" \\',
+        '  --repo "veryfront/veryfront" \\',
+        '  --tag "v1.2.3-rc.4" \\',
+        '  --title "v1.2.3-rc.4" \\',
+        '  --notes "Install notes" \\',
+        "  --prerelease \\",
+        "  -- \\",
+        '  "$asset"',
+      ].join("\n"),
+      "release-script-test",
+      RELEASE_SCRIPT_PATH,
+      asset,
+    ],
+    env: {
+      GH_LOG: ghLog,
+      UPLOAD_COUNT: uploadCount,
+      PUBLISH_COUNT: publishCount,
+      RELEASE_STATE: releaseState,
+      CREATE_FAILURE: createFailure,
+      FAILED_UPLOAD_ATTEMPTS: String(failedUploadAttempts),
+      UPLOAD_FAILURE_STATUS: String(uploadFailureStatus),
+      FAILED_PUBLISH_ATTEMPTS: String(failedPublishAttempts),
+    },
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+}
+
 describe("registry release workflow", () => {
+  it("publishes after retrying a transient release asset upload failure", async () => {
+    await withTempDir(async (stateDir) => {
+      const asset = `${stateDir}/veryfront-macos-arm64`;
+      await Deno.writeTextFile(asset, "binary");
+
+      const output = await runReleaseScript({
+        stateDir,
+        asset,
+        failedUploadAttempts: 1,
+      });
+      const ghCalls = (await Deno.readTextFile(`${stateDir}/gh.log`))
+        .trim()
+        .split("\n");
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release upload ")).length,
+        2,
+        "the failed asset must be retried",
+      );
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release edit ")).length,
+        1,
+        "the draft must be published once after every asset upload succeeds",
+      );
+    });
+  });
+
+  it("removes an incomplete release after upload retries are exhausted", async () => {
+    await withTempDir(async (stateDir) => {
+      const asset = `${stateDir}/veryfront-macos-arm64`;
+      await Deno.writeTextFile(asset, "binary");
+
+      const output = await runReleaseScript({
+        stateDir,
+        asset,
+        failedUploadAttempts: 3,
+      });
+      const ghCalls = (await Deno.readTextFile(`${stateDir}/gh.log`))
+        .trim()
+        .split("\n");
+
+      assertEquals(output.code, 1);
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release upload ")).length,
+        3,
+      );
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release edit ")).length,
+        0,
+        "an incomplete draft must never be published",
+      );
+      assert(
+        ghCalls.at(-1)?.startsWith("release delete v1.2.3-rc.4 "),
+        "the incomplete release must be deleted after the final failed upload",
+      );
+    });
+  });
+
+  it("retries upload failures that match the internal fatal status", async () => {
+    await withTempDir(async (stateDir) => {
+      const asset = `${stateDir}/veryfront-macos-arm64`;
+      await Deno.writeTextFile(asset, "binary");
+
+      const output = await runReleaseScript({
+        stateDir,
+        asset,
+        failedUploadAttempts: 1,
+        uploadFailureStatus: 64,
+      });
+      const ghCalls = (await Deno.readTextFile(`${stateDir}/gh.log`))
+        .trim()
+        .split("\n");
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release upload ")).length,
+        2,
+        "external upload statuses must not use the create-only fatal sentinel",
+      );
+    });
+  });
+
+  it("preserves an existing published release", async () => {
+    await withTempDir(async (stateDir) => {
+      const asset = `${stateDir}/veryfront-macos-arm64`;
+      await Deno.writeTextFile(asset, "binary");
+
+      const output = await runReleaseScript({
+        stateDir,
+        asset,
+        initialReleaseState: "published",
+      });
+      const ghCalls = (await Deno.readTextFile(`${stateDir}/gh.log`))
+        .trim()
+        .split("\n");
+
+      assertEquals(output.code, 1);
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release view ")).length,
+        1,
+        "a published-release conflict must fail without retries",
+      );
+      assertEquals(
+        decoder.decode(output.stderr).includes("Retrying"),
+        false,
+        "a published-release conflict must not report a transient retry",
+      );
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release create ")).length,
+        0,
+        "an existing published release must not be recreated",
+      );
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release upload ")).length,
+        0,
+        "an existing published release must not accept new assets",
+      );
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release delete ")).length,
+        0,
+        "draft creation failure must not delete a release that predates this run",
+      );
+    });
+  });
+
+  it("recovers when draft creation succeeds remotely but reports failure", async () => {
+    await withTempDir(async (stateDir) => {
+      const asset = `${stateDir}/veryfront-macos-arm64`;
+      await Deno.writeTextFile(asset, "binary");
+
+      const output = await runReleaseScript({
+        stateDir,
+        asset,
+        createFailure: "after-creation",
+      });
+      const ghCalls = (await Deno.readTextFile(`${stateDir}/gh.log`))
+        .trim()
+        .split("\n");
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release create ")).length,
+        1,
+        "the remotely created draft must be adopted instead of recreated",
+      );
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release upload ")).length,
+        1,
+      );
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release edit ")).length,
+        1,
+        "the adopted draft must be published after its assets upload",
+      );
+    });
+  });
+
+  it("preserves a fully uploaded draft when publication retries are exhausted", async () => {
+    await withTempDir(async (stateDir) => {
+      const asset = `${stateDir}/veryfront-macos-arm64`;
+      await Deno.writeTextFile(asset, "binary");
+
+      const output = await runReleaseScript({
+        stateDir,
+        asset,
+        failedPublishAttempts: 3,
+      });
+      const ghCalls = (await Deno.readTextFile(`${stateDir}/gh.log`))
+        .trim()
+        .split("\n");
+
+      assertEquals(output.code, 1);
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release upload ")).length,
+        1,
+      );
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release edit ")).length,
+        3,
+      );
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release delete ")).length,
+        0,
+        "publication failure must retain the uploaded draft for recovery",
+      );
+    });
+  });
+
+  it("routes public GitHub releases through the retrying asset publisher", async () => {
+    const jobs = await readJobs();
+    for (
+      const [jobName, stepName] of [
+        ["prerelease", "Create GitHub pre-release"],
+        ["release", "Create GitHub releases"],
+      ] as const
+    ) {
+      const job = asRecord(jobs[jobName], `${jobName} job`);
+      const releaseStep = namedStep(job, stepName);
+      const run = String(releaseStep.run);
+
+      assertStringIncludes(
+        run,
+        "bash scripts/ci/publish-github-release.sh",
+        `${jobName} must use the retrying release asset publisher`,
+      );
+      assertEquals(
+        run.includes("gh release create"),
+        false,
+        `${jobName} must not bypass per-asset retries`,
+      );
+    }
+  });
+
   it("validates the deno.json version before exposing release outputs", async () => {
     const jobs = await readJobs();
     const versionCheck = asRecord(jobs["version-check"], "version check job");

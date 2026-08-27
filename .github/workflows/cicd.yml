@@ -1212,31 +1212,29 @@ jobs:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
           # Collect available binaries dynamically (Windows build is optional)
-          BINARIES=""
+          BINARIES=()
           for f in binaries/veryfront-*/veryfront-*; do
-            [ -f "$f" ] && BINARIES="$BINARIES $f"
+            [ -f "$f" ] && BINARIES+=("$f")
           done
-          SBOMS=""
+          SBOMS=()
           for f in dist/sbom-${VERSION}/*.json; do
-            [ -f "$f" ] && SBOMS="$SBOMS $f"
+            [ -f "$f" ] && SBOMS+=("$f")
           done
-          echo "Available binaries: $BINARIES"
-          echo "Available SBOMs: $SBOMS"
+          echo "Available binaries: ${BINARIES[*]}"
+          echo "Available SBOMs: ${SBOMS[*]}"
 
-          # Delete previous rc release if it exists (from earlier merge)
-          gh release delete "v${VERSION}" --repo veryfront/veryfront --yes --cleanup-tag 2>/dev/null || true
-
-          # Public repo pre-release
-          gh release create "v${VERSION}" \
+          bash scripts/ci/publish-github-release.sh \
             --repo veryfront/veryfront \
+            --tag "v${VERSION}" \
             --title "v${VERSION}" \
-            --prerelease \
             --notes '```bash
           npx veryfront@rc
           ```' \
-            $BINARIES \
+            --prerelease \
+            -- \
+            "${BINARIES[@]}" \
             scripts/install.sh \
-            $SBOMS
+            "${SBOMS[@]}"
 
   # ============================================
   # CD: Stable Release (clean semver only)
@@ -1370,16 +1368,16 @@ jobs:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
           # Collect available binaries dynamically (Windows build is optional)
-          BINARIES=""
+          BINARIES=()
           for f in binaries/veryfront-*/veryfront-*; do
-            [ -f "$f" ] && BINARIES="$BINARIES $f"
+            [ -f "$f" ] && BINARIES+=("$f")
           done
-          SBOMS=""
+          SBOMS=()
           for f in dist/sbom-${VERSION}/*.json; do
-            [ -f "$f" ] && SBOMS="$SBOMS $f"
+            [ -f "$f" ] && SBOMS+=("$f")
           done
-          echo "Available binaries: $BINARIES"
-          echo "Available SBOMs: $SBOMS"
+          echo "Available binaries: ${BINARIES[*]}"
+          echo "Available SBOMs: ${SBOMS[*]}"
 
           # Publish a checksum manifest alongside the assets. install.sh verifies a
           # downloaded binary against this before moving it into place, so the
@@ -1387,7 +1385,7 @@ jobs:
           # not the artifact paths they were downloaded to.
           SUMS_FILE="SHA256SUMS"
           : > "$SUMS_FILE"
-          for f in $BINARIES scripts/install.sh scripts/install.ps1; do
+          for f in "${BINARIES[@]}" scripts/install.sh scripts/install.ps1; do
             [ -f "$f" ] || continue
             sha256sum "$f" | sed "s#  .*/#  #" >> "$SUMS_FILE"
           done
@@ -1399,9 +1397,9 @@ jobs:
             | grep "^v${VERSION}-rc\." \
             | xargs -I{} gh release delete {} --repo veryfront/veryfront --yes --cleanup-tag 2>/dev/null || true
 
-          # Public repo release with binaries and install scripts
-          gh release create "v${VERSION}" \
+          bash scripts/ci/publish-github-release.sh \
             --repo veryfront/veryfront \
+            --tag "v${VERSION}" \
             --title "v${VERSION}" \
             --notes '## Install
 
@@ -1412,11 +1410,13 @@ jobs:
           # npm
           npm install -g veryfront
           ```' \
-            $BINARIES \
+            --latest \
+            -- \
+            "${BINARIES[@]}" \
             "$SUMS_FILE" \
             scripts/install.sh \
             scripts/install.ps1 \
-            $SBOMS
+            "${SBOMS[@]}"
 
       - name: Create source repo release
         env:
