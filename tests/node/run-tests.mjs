@@ -59,6 +59,7 @@ const envExcludePatterns = (process.env.NODE_TEST_EXCLUDE || process.env.VF_TEST
   .filter(Boolean);
 const externalShard = process.env.NODE_TEST_SHARD || process.env.VF_TEST_SHARD || undefined;
 
+/** Returns the ordered files for this Node shard and rejects an empty selection. */
 function selectedTestFiles() {
   const files = loadSuitePlan({
     suite: suite ?? "runtime:node",

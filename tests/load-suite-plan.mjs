@@ -14,6 +14,7 @@ const PLANNER_CONFIG_PATH = fileURLToPath(
  * Runtime adapters retain process ownership; this helper only crosses the
  * TypeScript/JavaScript module boundary with a versioned JSON value.
  */
+/** Loads the ordered test paths for a suite, including any external shard selection. */
 export function loadSuitePlan({
   suite,
   patterns = [],

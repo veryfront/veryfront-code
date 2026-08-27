@@ -237,7 +237,7 @@ describe("canonical npm artifact workflow", () => {
     }
   });
 
-  it("feeds the built runtime workspace to Node and Bun without rebuilding or reinstalling", async () => {
+  it("feeds the built runtime workspace to Node and Bun without rebuilding it", async () => {
     const jobs = await readJobs();
 
     for (
@@ -270,16 +270,18 @@ describe("canonical npm artifact workflow", () => {
       );
       const steps = jobSteps(job, `${jobName} job`);
       const restore = namedStep(job, "Restore npm runtime workspace");
+      const install = namedStep(job, "Materialize locked test dependencies");
       const run = namedStep(job, stepName);
       assertStringIncludes(
         String(restore.run),
         "tar -xzf dist/npm-runtime-workspace/npm-runtime-workspace.tar.gz",
       );
-      assertStringIncludes(String(restore.run), "mkdir -p node_modules");
+      assertEquals(install.run, "deno install --frozen");
       assert(
         steps.indexOf(download) < steps.indexOf(restore) &&
-          steps.indexOf(restore) < steps.indexOf(run),
-        `${jobName} must restore the runtime workspace before tests`,
+          steps.indexOf(restore) < steps.indexOf(install) &&
+          steps.indexOf(install) < steps.indexOf(run),
+        `${jobName} must restore the runtime workspace and materialize cached dependencies before tests`,
       );
       assertEquals(run.run, directCommand);
       assertEquals(

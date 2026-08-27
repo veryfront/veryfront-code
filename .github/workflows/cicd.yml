@@ -156,9 +156,9 @@ jobs:
           name: npm-runtime-workspace-${{ github.sha }}
           path: dist/npm-runtime-workspace
       - name: Restore npm runtime workspace
-        run: |
-          tar -xzf dist/npm-runtime-workspace/npm-runtime-workspace.tar.gz
-          mkdir -p node_modules
+        run: tar -xzf dist/npm-runtime-workspace/npm-runtime-workspace.tar.gz
+      - name: Materialize locked test dependencies
+        run: deno install --frozen
       - name: Start Node shard timer
         id: timer
         run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
@@ -208,9 +208,9 @@ jobs:
           name: npm-runtime-workspace-${{ github.sha }}
           path: dist/npm-runtime-workspace
       - name: Restore npm runtime workspace
-        run: |
-          tar -xzf dist/npm-runtime-workspace/npm-runtime-workspace.tar.gz
-          mkdir -p node_modules
+        run: tar -xzf dist/npm-runtime-workspace/npm-runtime-workspace.tar.gz
+      - name: Materialize locked test dependencies
+        run: deno install --frozen
       - name: Run Bun runtime suite
         run: node --test tests/bun/runner-args.test.mjs tests/bun/workspace-packages.test.mjs && node ./tests/bun/run-tests.mjs --suite=runtime:bun
 
