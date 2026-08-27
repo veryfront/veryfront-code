@@ -19,12 +19,14 @@ const CONFIG_PARSE_ERROR_SLUG = "config-parse-error";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import {
   __bunConfigHasTopLevelAwaitForTests,
+  __collectBunProjectConfigModulesForTests,
   __evictBunProjectConfigModulesForTests,
   __getHostedConfigFlightStateForTests,
   __getHostedConfigSourceReadStateForTests,
   __getTrustedConfigFlightStateForTests,
   __isBunWorkspaceMemberDirectoryForTests,
   __observePromiseForTests,
+  __rewriteComputedDynamicProjectConfigImportsForTests,
   __setHostedConfigEvaluatorForTests,
   clearConfigCache,
   evaluateHostedConfigSource,
@@ -405,6 +407,22 @@ export default config as const;
       assertEquals(
         rewritten,
         'export default async () => import("file:///project/node_modules/installed-plugin/index.js");\n',
+      );
+    });
+
+    it("wraps literal dynamic imports so deferred execution refreshes tracking", async () => {
+      const rewritten = await __rewriteComputedDynamicProjectConfigImportsForTests(
+        'export const load = () => import("file:///project/config-child.cjs");\n',
+        "__observeConfigImport",
+      );
+
+      assertStringIncludes(
+        rewritten,
+        'import __observeConfigImport from "data:text/javascript,',
+      );
+      assertStringIncludes(
+        rewritten,
+        'import(__observeConfigImport("file:///project/config-child.cjs"))',
       );
     });
 
@@ -1363,6 +1381,27 @@ export default config as const;
       assert(TestObjectGetOwnPropertyDescriptor(cache, postLoadKey) !== undefined);
     });
 
+    it("does not claim unrelated concurrent Bun modules as config dependencies", () => {
+      const configEntryKey = "/project/config-entry.cjs";
+      const configChildKey = "/project/config-child.cjs";
+      const unrelatedKey = "/project/application-loaded-while-config-awaits.cjs";
+      const cache = TestObjectCreate(null) as Record<string, unknown>;
+      cache[configEntryKey] = {
+        children: [{ filename: configChildKey, id: configChildKey }],
+      };
+      cache[configChildKey] = { children: [] };
+      cache[unrelatedKey] = { children: [] };
+
+      const entry = __collectBunProjectConfigModulesForTests({
+        cache,
+        eligibleKeys: new Set([configEntryKey]),
+        projectDirectory: "/project",
+        includeAllNewModules: true,
+      });
+
+      assertEquals(Array.from(entry.keys).sort(), [configChildKey, configEntryKey].sort());
+    });
+
     it("retains config modules that post-load application modules reference", () => {
       const postLoadKey = "/project/consuming-post-load.js";
       const helperKey = "/project/config-helper.js";
@@ -1439,6 +1478,10 @@ export default config as const;
         __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/packages/app", [
           "packages/*",
         ]),
+        true,
+      );
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo/..member", ["*"]),
         true,
       );
       assertEquals(
@@ -1580,6 +1623,15 @@ export default config as const;
           `packages/{${alternatives}}`,
         ]),
         true,
+      );
+
+      const deepSegments = Array.from({ length: 32 }, (_, index) => `s${index}`).join("/");
+      const globstars = Array.from({ length: 32 }, () => "**").join("/");
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", `/repo/${deepSegments}`, [
+          `${globstars}/missing`,
+        ]),
+        false,
       );
     });
 

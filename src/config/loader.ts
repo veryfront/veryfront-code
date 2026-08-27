@@ -3706,7 +3706,7 @@ export async function rewriteProjectConfigImportsFromProject(
   );
 }
 
-async function rewriteComputedDynamicProjectConfigImports(
+async function rewriteDynamicProjectConfigImports(
   source: string,
   observerKey: string,
 ): Promise<string> {
@@ -3719,10 +3719,7 @@ async function rewriteComputedDynamicProjectConfigImports(
   let hasComputedImport = false;
   for (let index = 0; index < imports.length; index++) {
     const imported = imports[index];
-    if (
-      !imported || imported.d < 0 ||
-      (imported.n !== undefined && imported.n !== null)
-    ) continue;
+    if (!imported || imported.d < 0) continue;
     hasComputedImport = true;
     mapSet(openingCounts, imported.s, (mapGet(openingCounts, imported.s) ?? 0) + 1);
     mapSet(closingCounts, imported.e, (mapGet(closingCounts, imported.e) ?? 0) + 1);
@@ -4083,7 +4080,10 @@ async function importFreshBunAsyncConfig(
               dependencyCollectionState,
             ),
         );
-        const observed = await rewriteComputedDynamicProjectConfigImports(rewritten, observerKey);
+        const observed = await rewriteDynamicProjectConfigImports(
+          rewritten,
+          observerKey,
+        );
         hasComputedDynamicImport ||= observed !== rewritten;
         return observed;
       },
@@ -4124,6 +4124,14 @@ async function importFreshBunAsyncConfig(
     observer: { key: observerKey, dispose: disposeObserver },
     hasComputedDynamicImport,
   };
+}
+
+/** @internal Test-only dynamic import observer rewrite seam. */
+export function __rewriteComputedDynamicProjectConfigImportsForTests(
+  source: string,
+  observerKey: string,
+): Promise<string> {
+  return rewriteDynamicProjectConfigImports(source, observerKey);
 }
 
 function isPathWithinDirectory(directory: string, candidate: string): boolean {
@@ -4636,10 +4644,21 @@ function matchesBunWorkspacePathSegments(
   patternIndex: number,
   pathIndex: number,
   pathEnd: number,
+  memo: Map<string, boolean> = new IntrinsicMap<string, boolean>(),
 ): boolean {
-  if (patternIndex >= patternSegments.length) return pathIndex === pathEnd;
+  const key = `${patternIndex}\0${pathIndex}\0${pathEnd}`;
+  const cached = mapGet(memo, key);
+  if (cached !== undefined) return cached;
+  if (patternIndex >= patternSegments.length) {
+    const matched = pathIndex === pathEnd;
+    mapSet(memo, key, matched);
+    return matched;
+  }
   const pattern = patternSegments[patternIndex];
-  if (pattern === undefined) return false;
+  if (pattern === undefined) {
+    mapSet(memo, key, false);
+    return false;
+  }
   if (pattern === "**") {
     for (let skip = pathIndex; skip <= pathEnd; skip++) {
       if (
@@ -4649,23 +4668,35 @@ function matchesBunWorkspacePathSegments(
           patternIndex + 1,
           skip,
           pathEnd,
+          memo,
         )
       ) {
+        mapSet(memo, key, true);
         return true;
       }
     }
+    mapSet(memo, key, false);
     return false;
   }
   const segment = pathSegments[pathIndex];
-  if (pathIndex >= pathEnd || segment === undefined) return false;
-  if (!matchesBunWorkspaceSegment(pattern, segment)) return false;
-  return matchesBunWorkspacePathSegments(
+  if (pathIndex >= pathEnd || segment === undefined) {
+    mapSet(memo, key, false);
+    return false;
+  }
+  if (!matchesBunWorkspaceSegment(pattern, segment)) {
+    mapSet(memo, key, false);
+    return false;
+  }
+  const matched = matchesBunWorkspacePathSegments(
     patternSegments,
     pathSegments,
     patternIndex + 1,
     pathIndex + 1,
     pathEnd,
+    memo,
   );
+  mapSet(memo, key, matched);
+  return matched;
 }
 
 /**
@@ -4688,7 +4719,11 @@ function isBunWorkspaceMemberDirectory(
     ),
     ["\\", "/"],
   ) as string;
-  if (relativeProject.length === 0 || stringStartsWith(relativeProject, "..")) return false;
+  if (
+    relativeProject.length === 0 ||
+    relativeProject === ".." ||
+    stringStartsWith(relativeProject, "../")
+  ) return false;
   const pathSegments = ReflectApply(StringPrototypeSplit, relativeProject, ["/"]) as string[];
   const patterns = bunWorkspaceMemberPatterns(workspacesValue);
   for (let index = 0; index < patterns.length; index++) {
@@ -4716,7 +4751,15 @@ function isBunWorkspaceMemberDirectory(
       // ancestors below the workspace root: a config nested inside a member
       // still belongs to that member.
       for (let pathEnd = 1; pathEnd <= pathSegments.length; pathEnd++) {
-        if (matchesBunWorkspacePathSegments(patternSegments, pathSegments, 0, 0, pathEnd)) {
+        if (
+          matchesBunWorkspacePathSegments(
+            patternSegments,
+            pathSegments,
+            0,
+            0,
+            pathEnd,
+          )
+        ) {
           return true;
         }
       }
@@ -4905,7 +4948,7 @@ function collectBunProjectConfigModules(
   snapshot: BunProjectCacheSnapshot,
   eligibleKeys?: ReadonlySet<string>,
   prior?: BunProjectConfigModuleCacheEntry,
-  includeAllNewModules = false,
+  _includeAllNewModules = false,
 ): BunProjectConfigModuleCacheEntry {
   const loadedKeys: string[] = [];
   const loadedKeySet = new IntrinsicSet<string>();
@@ -4927,7 +4970,7 @@ function collectBunProjectConfigModules(
       typeof cacheKey !== "string" ||
       ReflectApply(SetPrototypeHas, snapshot.before, [cacheKey]) === true ||
       !isPathWithinBunProjectScope(snapshot.scope, cacheKey) ||
-      (!includeAllNewModules && expandedEligibleKeys !== undefined &&
+      (expandedEligibleKeys !== undefined &&
         ReflectApply(SetPrototypeHas, expandedEligibleKeys, [resolve(cacheKey)]) !== true) ||
       ReflectApply(SetPrototypeHas, loadedKeySet, [cacheKey]) === true
     ) {
@@ -4984,6 +5027,36 @@ function collectBunProjectConfigModules(
       ? {}
       : { dynamicImportObserver: prior.dynamicImportObserver }),
   };
+}
+
+/** @internal Test-only Bun project-module collection seam. */
+export function __collectBunProjectConfigModulesForTests(
+  input: Readonly<{
+    cache: Record<string, unknown>;
+    before?: ReadonlySet<string>;
+    eligibleKeys?: ReadonlySet<string>;
+    projectDirectory: string;
+    includeAllNewModules?: boolean;
+  }>,
+): BunProjectConfigModuleCacheEntry {
+  const projectRequire = {
+    cache: input.cache,
+  } as NodeJS.Require;
+  return collectBunProjectConfigModules(
+    projectRequire,
+    {
+      before: input.before ?? new IntrinsicSet<string>(),
+      scope: {
+        lexicalDirectory: input.projectDirectory,
+        canonicalDirectory: input.projectDirectory,
+        projectDirectories: [input.projectDirectory],
+      },
+      canonicalConfigPath: `${input.projectDirectory}/veryfront.config.ts`,
+    },
+    input.eligibleKeys,
+    undefined,
+    input.includeAllNewModules,
+  );
 }
 
 async function serializeBunProjectConfigLoad<T>(
@@ -5654,14 +5727,19 @@ function getConfigInternal(
               trustedVirtualContent,
             );
             const provenance = configFileProvenance(configFile);
+            let bunTrackingKey: string | undefined;
+            if (usePersistentCache && isBun && !isVirtualFS) {
+              bunTrackingKey = await realPath(resolve(configPath));
+              if (cacheRevision !== revisionAtStart) {
+                throw BUN_PROJECT_CONFIG_LOAD_INVALIDATED;
+              }
+            }
             if (usePersistentCache && cacheRevision === revisionAtStart) {
               setConfigCacheEntry(effectiveCacheKey, {
                 revision: revisionAtStart,
                 config: merged,
                 provenance,
-                bunTrackingKey: isBun && !isVirtualFS
-                  ? await realPath(resolve(configPath))
-                  : undefined,
+                bunTrackingKey,
               });
             }
             logger.debug("Successfully loaded config", {
