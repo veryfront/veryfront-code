@@ -118,7 +118,12 @@ describe("external agent worker client", () => {
           project_id: PROJECT_ID,
           agent_id: "veryfront-agent",
           status: "running",
-          request_snapshot: { messages: [], tools: [], context: [] },
+          request_snapshot: {
+            messages: [],
+            tools: [],
+            context: [],
+            taskId: "issue-27-veryfront-studio-agent-implementation",
+          },
           source_target_kind: "release",
           source_target_release_version: "2026.05.08",
           latest_event_id: 0,
@@ -159,6 +164,10 @@ describe("external agent worker client", () => {
     });
     assertEquals(run?.source_target_kind, "release");
     assertEquals(run?.source_target_release_version, "2026.05.08");
+    assertEquals(
+      run?.request_snapshot?.taskId,
+      "issue-27-veryfront-studio-agent-implementation",
+    );
     await client.recordSession({
       workerId: registeredWorker.id,
       runId: RUN_ID,

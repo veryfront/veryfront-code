@@ -19,6 +19,7 @@ export interface ExternalAgentWorker {
 
 /** Public API contract for external agent worker request snapshot. */
 export interface ExternalAgentWorkerRequestSnapshot {
+  taskId?: string;
   messages: Array<{
     id: string;
     role: string;
@@ -105,6 +106,7 @@ function externalAgentWorkerRequestSnapshot(
   v: SchemaValidator,
 ): Schema<ExternalAgentWorkerRequestSnapshot> {
   return v.object({
+    taskId: v.string().optional(),
     messages: v.array(externalAgentWorkerRequestMessage(v)),
     tools: v.array(v.unknown()).default([]),
     context: v.array(v.unknown()).default([]),
