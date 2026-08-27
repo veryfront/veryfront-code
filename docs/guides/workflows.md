@@ -56,6 +56,37 @@ Use `integrationRequirements` only for explicit access that scheduled workflow
 runs require. Veryfront does not infer integration requirements from workflow
 steps, nested workflows, agents, tools, or source text.
 
+## Workflow context persistence
+
+Workflow context must be JSON-representable. Veryfront stores suspended workflow
+runs as JSON, and the memory backend applies the same persistence contract as
+durable backends so local development and production read back the same values.
+
+Use plain JSON values in step output: strings, numbers, booleans, null, arrays,
+and plain objects. Values that JSON cannot encode, such as `BigInt` or circular
+references, fail persistence with the context path that produced them.
+
+Some JavaScript values can be stored only after JSON rewrites them. By default,
+Veryfront logs a warning and persists the normalized JSON value:
+
+| Value written to context | Value read back from context        |
+| ------------------------ | ----------------------------------- |
+| `new Date(0)`            | `"1970-01-01T00:00:00.000Z"`        |
+| `new Map([["a", 1]])`    | `{}`                                |
+| `{ missing: undefined }` | `{}`                                |
+| `Number.NaN`             | `null`                              |
+| Class instance           | Plain object with enumerable fields |
+
+Enable `strictContext` on a built-in backend to reject these lossy values
+instead of warning and normalizing:
+
+```ts
+import { MemoryBackend, RedisBackend } from "veryfront/workflow";
+
+const backend = new MemoryBackend({ strictContext: true });
+const durableBackend = new RedisBackend({ url: Deno.env.get("REDIS_URL")!, strictContext: true });
+```
+
 ## Start a workflow
 
 Define workflows in `workflows/`, then start them from the surface that owns the user or system event.
