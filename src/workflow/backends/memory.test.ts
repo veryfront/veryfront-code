@@ -406,7 +406,7 @@ describe("MemoryBackend", () => {
       await assertRejectsAsynchronously(
         () =>
           strictBackend.updateRun("run-strict-mutation", {
-            context: { when: new Date(0) },
+            context: { input: {}, when: new Date(0) },
           }),
         "strictContext",
       );
@@ -417,7 +417,11 @@ describe("MemoryBackend", () => {
           strictBackend.restoreRunStateIfStatus(
             "run-strict-mutation",
             ["running"],
-            { status: "waiting", context: { when: new Date(0) } },
+            {
+              status: "waiting",
+              context: { input: {}, when: new Date(0) },
+              nodeStates: {},
+            },
             "worker-1",
           ),
         "strictContext",
@@ -428,7 +432,7 @@ describe("MemoryBackend", () => {
         () =>
           strictBackend.saveCheckpoint("run-strict-mutation", {
             ...createCheckpoint("cp-strict", "step-1", new Date()),
-            context: { when: new Date(0) },
+            context: { input: {}, when: new Date(0) },
           }),
         "strictContext",
       );
@@ -443,7 +447,7 @@ describe("MemoryBackend", () => {
             "worker-1",
             {
               ...createCheckpoint("cp-strict-child", "step-1", new Date()),
-              context: { when: new Date(0) },
+              context: { input: {}, when: new Date(0) },
             },
           ),
         "strictContext",
