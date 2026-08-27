@@ -446,11 +446,18 @@ export async function buildProviderError(
   response: Response,
   abortSignal?: AbortSignal,
 ): Promise<ProviderError> {
-  const { text: rawBody, truncated } = await readResponseTextPrefix(
-    response,
-    MAX_ERROR_BODY_BYTES,
-    abortSignal,
-  );
+  let rawBody: string;
+  let truncated: boolean;
+  try {
+    ({ text: rawBody, truncated } = await readResponseTextPrefix(
+      response,
+      MAX_ERROR_BODY_BYTES,
+      abortSignal,
+    ));
+  } catch (error) {
+    if (abortSignal?.aborted === true) throw error;
+    return buildProviderErrorFromUnreadableBody(provider, response);
+  }
   return buildProviderErrorFromBody(provider, response, rawBody, truncated);
 }
 

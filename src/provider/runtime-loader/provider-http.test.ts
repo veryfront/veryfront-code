@@ -1179,6 +1179,36 @@ describe("provider-http", () => {
       );
     });
 
+    it("preserves terminal response status when the error body read fails", async () => {
+      const bodyReadFailure = new TypeError("provider body reset");
+      let attempts = 0;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(bodyReadFailure);
+        },
+      });
+
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve(new Response(body, { status: 400 }));
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "openai",
+          }),
+        ProviderRequestError,
+        "status 400",
+      ) as ProviderRequestError;
+
+      assertEquals(error.status, 400);
+      assertEquals(error.retryable, false);
+      assertEquals(attempts, 1, "a terminal status must not be retried after a body-read reset");
+    });
+
     it("does not retry a terminal response when its error body stalls past the header deadline", async () => {
       let attempts = 0;
       let bodyCancellations = 0;
