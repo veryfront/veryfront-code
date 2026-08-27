@@ -573,7 +573,14 @@ export async function resolveAdapter(
               productionMode: hosted.sourceContext.productionMode,
               releaseId: hosted.sourceContext.releaseId,
               branch: hosted.sourceContext.branch,
-              environmentName: hosted.sourceContext.environmentName,
+              // The proxy adapter cache key is environment-qualified in preview mode,
+              // so this must be the same value every later request phase passes through
+              // runInProjectFilesystemContext. The preview source context carries no
+              // environment name, and reading only it selected a second concrete adapter
+              // whose per-instance snapshot generation could never match the
+              // config-bound marker (veryfront-issue-inbox#861).
+              environmentName: hosted.sourceContext.environmentName ??
+                opts.environmentName ?? null,
             },
           );
         }

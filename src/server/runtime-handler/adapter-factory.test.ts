@@ -804,6 +804,59 @@ describe("adapter-factory", () => {
       ]);
     });
 
+    it("loads preview config under the request environment name", async () => {
+      // The proxy adapter cache key is environment-qualified in preview mode, and every
+      // later request phase re-enters through runInProjectFilesystemContext with
+      // ctx.environmentName. Loading config without it selects a SECOND concrete adapter
+      // whose per-instance snapshot generation can never match the config-bound marker,
+      // so every preview document request fails with
+      // "the mutable source snapshot ... changed after request configuration was derived"
+      // (veryfront-issue-inbox#861). The preview source context carries no environment
+      // name, so it must come from the resolution options.
+      const { adapter, calls } = createExtendedMockAdapter();
+      // A snapshot-capable adapter, so the strict preview config path runs to completion
+      // rather than stopping earlier on a missing marker.
+      const fs = (adapter as unknown as { fs: Record<string, unknown> }).fs;
+      fs.getSourceSnapshotIdentity = () => "branch:preview-slug:main";
+      fs.getSourceSnapshotVersion = () => 7;
+      fs.ensureSourceSnapshotFresh = () => Promise.resolve();
+      fs.refreshSourceSnapshot = () => Promise.resolve();
+      fs.sourceSnapshotFreshnessOptionsVersion = 1;
+
+      await resolveAdapter({
+        projectDir: "/base/project",
+        adapter,
+        config: undefined,
+        projectSlug: "preview-slug",
+        projectId: "proj_preview",
+        proxyToken: "tok-123",
+        releaseId: undefined,
+        proxyEnv: "preview",
+        branch: "main",
+        environmentName: "preview",
+        parsedDomain: {
+          slug: null,
+          branch: null,
+          environment: null,
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        req: await makeReq(),
+        isProxyMode: true,
+        prepareHostedConfigContext: preparePreviewHostedConfigContext,
+      });
+
+      const opts = (calls.runWithContext ?? [])[3] as
+        | { environmentName?: string | null }
+        | undefined;
+      assertEquals(
+        opts?.environmentName,
+        "preview",
+        "config must load under the same environment every later phase uses, or the request resolves two adapters",
+      );
+    });
+
     it("refreshes mutable source before config for document and HEAD Markdown routes", async () => {
       let sourceFresh = false;
       const freshnessCalls: Array<{ reason?: string; maxAgeMs?: number }> = [];
