@@ -154,6 +154,25 @@ function matchesPattern(path: string, patterns: string[]): boolean {
 }
 
 /**
+ * The current user id, or `undefined` when the runtime will not tell us.
+ *
+ * `Deno.uid()` needs `--allow-sys=uid`, and `WORKFLOW_RUN_PERMISSIONS` -- the
+ * profile `workflow/worker/executors/process.ts` spawns every workflow run
+ * with -- is exactly read/write/net/env. Calling it unguarded there throws
+ * `NotCapable` and takes down the whole sync, so an ownership check that cannot
+ * be performed is skipped rather than treated as a violation. The `0700`
+ * enforcement still applies, and a root owned by another user then fails at
+ * `chmod` or at the first write.
+ */
+function currentUid(): number | undefined {
+  try {
+    return Deno.uid() ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Workspace manager for Claude Code execution
  */
 export class WorkspaceSync {
@@ -210,14 +229,20 @@ export class WorkspaceSync {
     // would keep its old permissions. Narrow it unconditionally, and refuse a
     // root this user does not own rather than syncing files into it.
     await Deno.mkdir(this.workspaceDir, { recursive: true, mode: 0o700 });
+
+    // The symlink check is not unix-only: Windows has symlinks and junctions,
+    // and following one here writes the whole synced tree wherever it points.
+    const info = await Deno.lstat(this.workspaceDir);
+    if (info.isSymlink || !info.isDirectory) {
+      throw SECURITY_VIOLATION.create({
+        detail: `Workspace path is not a directory: ${this.workspaceDir}`,
+      });
+    }
+
+    // Ownership and mode are unix-only: Windows reports no uid and has no chmod.
     if (Deno.build.os !== "windows") {
-      const info = await Deno.lstat(this.workspaceDir);
-      if (info.isSymlink || !info.isDirectory) {
-        throw SECURITY_VIOLATION.create({
-          detail: `Workspace path is not a directory: ${this.workspaceDir}`,
-        });
-      }
-      if (info.uid !== null && info.uid !== Deno.uid()) {
+      const uid = currentUid();
+      if (uid !== undefined && info.uid !== null && info.uid !== uid) {
         throw SECURITY_VIOLATION.create({
           detail: `Workspace directory is owned by another user: ${this.workspaceDir}`,
         });

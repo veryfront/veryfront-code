@@ -500,6 +500,37 @@ describe("WorkspaceSync default baseDir", () => {
     },
   );
 
+  it("refuses a workspace root that is a symlink", async () => {
+    await withTempDir(async (baseDir) => {
+      const workspace = new WorkspaceSync({
+        baseDir,
+        runId: "symlinked",
+        tenant: stubTenant(),
+      });
+      const target = join(baseDir, "elsewhere");
+      await Deno.mkdir(target);
+      // mkdir(recursive) is a no-op on a symlink that already resolves to a
+      // directory, so without the lstat the sync follows it straight out of the
+      // workspace. Not gated on the platform: Windows has symlinks too.
+      await Deno.symlink(target, workspace.workspaceDir);
+
+      // Assert the *reason*. Without the check initialize() still rejects -- on
+      // the missing tenant context, one step later and after the root was
+      // accepted -- so a bare assertRejects(Error) would pass either way.
+      await assertRejects(
+        () => workspace.initialize(),
+        Error,
+        "Workspace path is not a directory",
+      );
+
+      assertEquals(
+        [...Deno.readDirSync(target)].length,
+        0,
+        "nothing may be written through the symlinked root",
+      );
+    }, { prefix: "vf-ws-sync-symlink-root-" });
+  });
+
   it(
     "narrows an existing workspace directory to owner-only",
     { ignore: Deno.build.os === "windows" },
