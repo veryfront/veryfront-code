@@ -654,7 +654,7 @@ export interface ConfigLoadResult {
 
 interface MergedConfigLoadResult {
   readonly config: VeryfrontConfig;
-  readonly bunTrackingKey?: string;
+  readonly bunTrackingPublication?: BunProjectConfigTrackingPublication;
 }
 
 interface ConfigCacheEntry {
@@ -674,6 +674,12 @@ interface BunProjectConfigModuleCacheEntry {
   readonly keys: readonly string[];
   readonly projectDirectory: string;
   readonly dynamicImportObserver?: BunProjectDynamicImportObserver;
+}
+
+interface BunProjectConfigTrackingPublication {
+  readonly key: string;
+  readonly publish: () => void;
+  readonly discard: () => void;
 }
 
 const bunProjectConfigTrackingOwnerCounts = new IntrinsicMap<string, number>();
@@ -3941,7 +3947,6 @@ function isBunAsyncModuleRequireError(error: unknown): boolean {
 interface BunAsyncConfigImportResult {
   readonly configModule: object;
   readonly observer: BunProjectDynamicImportObserver;
-  readonly hasDynamicImport: boolean;
 }
 
 async function importFreshBunAsyncConfig(
@@ -3999,6 +4004,15 @@ async function importFreshBunAsyncConfig(
     void thenPromise(combined, release, release);
   };
   const baseUrl = ReflectApply(intrinsicUrlHrefGetter, toFileUrl(absolutePath), []) as string;
+  const rejectDuringDynamicImport = (error: unknown): Record<PropertyKey, unknown> => {
+    const rejectedSpecifier = ObjectCreate(null) as Record<PropertyKey, unknown>;
+    ObjectDefineProperty(rejectedSpecifier, SymbolToPrimitive, {
+      value: () => {
+        throw error;
+      },
+    });
+    return rejectedSpecifier;
+  };
   const resolveObservedSpecifier = (specifier: unknown): unknown => { // NOSONAR: dynamic-import observer must preserve native coercion edge cases.
     let stringSpecifier: string;
     if (typeof specifier === "string") {
@@ -4016,13 +4030,7 @@ async function importFreshBunAsyncConfig(
         // native ToString failures reject the returned Promise. Hand Bun a
         // one-shot coercion object so it produces the same asynchronous
         // rejection without invoking authored coercion hooks twice.
-        const rejectedSpecifier = ObjectCreate(null) as Record<PropertyKey, unknown>;
-        ObjectDefineProperty(rejectedSpecifier, SymbolToPrimitive, {
-          value: () => {
-            throw error;
-          },
-        });
-        return rejectedSpecifier;
+        return rejectDuringDynamicImport(error);
       }
     }
     let resolvedSpecifier = stringSpecifier;
@@ -4030,17 +4038,24 @@ async function importFreshBunAsyncConfig(
       const resolvedUrl = new IntrinsicURL(stringSpecifier, baseUrl);
       resolvedSpecifier = ReflectApply(intrinsicUrlHrefGetter, resolvedUrl, []) as string;
     } else if (!keepsConfigImportSpecifier(stringSpecifier) && !isAbsolute(stringSpecifier)) {
-      if (!CapturedBunResolveSync || !CapturedBun) {
-        throw new TypeError("Bun project config resolver is unavailable");
+      try {
+        if (!CapturedBunResolveSync || !CapturedBun) {
+          throw new TypeError("Bun project config resolver is unavailable");
+        }
+        const resolved = ReflectApply(CapturedBunResolveSync, CapturedBun, [
+          stringSpecifier,
+          dirname(absolutePath),
+        ]);
+        if (typeof resolved !== "string") {
+          throw new TypeError("Bun project config import resolution failed");
+        }
+        resolvedSpecifier = asResolvedConfigSpecifier(resolved);
+      } catch (error) {
+        // Native import() reports resolution failures by rejecting its Promise.
+        // The observer executes while evaluating import()'s argument, so hand
+        // Bun a coercion object that rejects at the native asynchronous boundary.
+        return rejectDuringDynamicImport(error);
       }
-      const resolved = ReflectApply(CapturedBunResolveSync, CapturedBun, [
-        stringSpecifier,
-        dirname(absolutePath),
-      ]);
-      if (typeof resolved !== "string") {
-        throw new TypeError("Bun project config import resolution failed");
-      }
-      resolvedSpecifier = asResolvedConfigSpecifier(resolved);
     }
     if (
       ReflectApply(SetPrototypeHas, observedRuntimeSpecifiers, [resolvedSpecifier]) !== true
@@ -4088,7 +4103,6 @@ async function importFreshBunAsyncConfig(
     value: { resolve: resolveObservedSpecifier, settle: settleObservedImport },
   });
   let initialEvaluationComplete = false;
-  let hasDynamicImport = false;
   let configModule: object | undefined;
   let loadFailure: { error: unknown } | undefined;
   try {
@@ -4110,7 +4124,6 @@ async function importFreshBunAsyncConfig(
             ),
         );
         const observed = await rewriteDynamicProjectConfigImports(rewritten, observerKey);
-        hasDynamicImport ||= observed !== rewritten;
         return observed;
       },
     ) as object;
@@ -4144,7 +4157,6 @@ async function importFreshBunAsyncConfig(
   return {
     configModule: configModule!,
     observer: { key: observerKey, dispose: disposeObserver },
-    hasDynamicImport,
   };
 }
 
@@ -4244,6 +4256,11 @@ async function collectBunProjectConfigDependencyKeys( // NOSONAR: bounded depend
   for (let index = 0; index < imports.length; index++) { // NOSONAR: lexer result traversal must not invoke project-controlled iterators.
     const imported = imports[index];
     const specifier = imported?.n;
+    if (imported?.d !== undefined && imported.d >= 0 && specifier == null) {
+      throw new UnsupportedBunProjectConfigDependencyImportError(
+        "Computed dynamic imports inside project config dependencies cannot be reloaded safely in Bun",
+      );
+    }
     if (specifier === undefined || specifier === null) continue;
     if (specifier === "veryfront") continue;
 
@@ -4268,11 +4285,14 @@ async function collectBunProjectConfigDependencyKeys( // NOSONAR: bounded depend
         lexer,
         fs,
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof UnsupportedBunProjectConfigDependencyImportError) throw error;
       // Runtime loading remains authoritative for non-text and missing modules.
     }
   }
 }
+
+class UnsupportedBunProjectConfigDependencyImportError extends TypeError {}
 
 type BunProjectCacheSnapshot = Readonly<{
   before: ReadonlySet<string>;
@@ -5133,10 +5153,10 @@ async function loadAndMergeConfig(
   if (isBun) {
     logger.debug("Using project config import for Bun", { configPath });
     const absolutePath = resolve(configPath);
-    const source = await createFileSystem().readTextFile(absolutePath);
-    const hasTopLevelAwait = await bunConfigHasTopLevelAwait(source, absolutePath);
     const canonicalConfigPath = await realPath(absolutePath);
     return await serializeBunProjectConfigLoad(canonicalConfigPath, async () => { // NOSONAR: serialized Bun load owns several cleanup/failure branches.
+      const source = await createFileSystem().readTextFile(absolutePath);
+      const hasTopLevelAwait = await bunConfigHasTopLevelAwait(source, absolutePath);
       const { createRequire } = await import("node:module");
       const projectRequire = createRequire(absolutePath);
       // Bun ignores query strings when caching file modules, and its CommonJS
@@ -5155,8 +5175,26 @@ async function loadAndMergeConfig(
       let configModule: object | undefined;
       let trackingEntry: BunProjectConfigModuleCacheEntry | undefined;
       let dynamicImportObserver: BunProjectDynamicImportObserver | undefined;
-      let hasDynamicImport = false;
       let trackingPublished = false;
+      const discardTracking = (): void => {
+        if (dynamicImportObserver !== undefined) {
+          ReflectApply(dynamicImportObserver.dispose, dynamicImportObserver, []);
+          dynamicImportObserver = undefined;
+        }
+        if (trackingEntry !== undefined) {
+          evictBunProjectConfigModules(trackingEntry);
+          trackingEntry = undefined;
+        }
+      };
+      const publishTracking = (): void => {
+        if (trackingEntry === undefined || trackingPublished) return;
+        const ownedEntry: BunProjectConfigModuleCacheEntry = dynamicImportObserver === undefined
+          ? trackingEntry
+          : { ...trackingEntry, dynamicImportObserver };
+        setBunProjectConfigModuleTracking(cacheSnapshot.canonicalConfigPath, ownedEntry);
+        trackingEntry = ownedEntry;
+        trackingPublished = true;
+      };
       try {
         if (!hasTopLevelAwait) {
           try {
@@ -5213,35 +5251,22 @@ async function loadAndMergeConfig(
           );
           configModule = imported.configModule;
           dynamicImportObserver = imported.observer;
-          hasDynamicImport = imported.hasDynamicImport;
         }
         const merged = validateAndMergeConfig(selectConfigModuleValue(configModule));
         if (cacheRevision !== revisionAtStart) {
-          if (dynamicImportObserver !== undefined) {
-            ReflectApply(dynamicImportObserver.dispose, dynamicImportObserver, []);
-            dynamicImportObserver = undefined;
-          }
-          if (trackingEntry !== undefined) {
-            evictBunProjectConfigModules(trackingEntry);
-            trackingEntry = undefined;
-          }
-          if (hasDynamicImport) throw BUN_PROJECT_CONFIG_LOAD_INVALIDATED;
-          return { config: merged, bunTrackingKey: canonicalConfigPath };
+          discardTracking();
+          throw BUN_PROJECT_CONFIG_LOAD_INVALIDATED;
         }
-        if (trackingEntry !== undefined) {
-          const ownedEntry: BunProjectConfigModuleCacheEntry = dynamicImportObserver === undefined
-            ? trackingEntry
-            : { ...trackingEntry, dynamicImportObserver };
-          setBunProjectConfigModuleTracking(cacheSnapshot.canonicalConfigPath, ownedEntry);
-          trackingEntry = ownedEntry;
-          trackingPublished = true;
-        }
-        return { config: merged, bunTrackingKey: canonicalConfigPath };
+        return {
+          config: merged,
+          bunTrackingPublication: {
+            key: canonicalConfigPath,
+            publish: publishTracking,
+            discard: discardTracking,
+          },
+        };
       } catch (error) {
-        if (dynamicImportObserver !== undefined) {
-          ReflectApply(dynamicImportObserver.dispose, dynamicImportObserver, []);
-        }
-        if (trackingEntry !== undefined) evictBunProjectConfigModules(trackingEntry);
+        discardTracking();
         throw error;
       }
     });
@@ -5741,13 +5766,26 @@ function getConfigInternal(
             );
             const merged = loaded.config;
             const provenance = configFileProvenance(configFile);
+            if (
+              loaded.bunTrackingPublication !== undefined &&
+              cacheRevision !== revisionAtStart
+            ) {
+              loaded.bunTrackingPublication.discard();
+              return await getConfigInternal(projectDir, adapter, options);
+            }
             if (usePersistentCache && cacheRevision === revisionAtStart) {
               setConfigCacheEntry(effectiveCacheKey, {
                 revision: revisionAtStart,
                 config: merged,
                 provenance,
-                bunTrackingKey: loaded.bunTrackingKey,
+                bunTrackingKey: loaded.bunTrackingPublication?.key,
               });
+              // Publish only after the config LRU owns this graph. Otherwise
+              // more than one capacity of concurrently completing loads can
+              // evict a graph in the await gap before its cache entry exists.
+              loaded.bunTrackingPublication?.publish();
+            } else {
+              loaded.bunTrackingPublication?.discard();
             }
             logger.debug("Successfully loaded config", {
               configFile,

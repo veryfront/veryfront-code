@@ -471,6 +471,22 @@ describe("Bun workspace resolution", () => {
     }, { prefix: "vf-config-bun-computed-package-" });
   });
 
+  it("keeps missing computed bare imports catchable", async () => {
+    clearConfigCache();
+    ensureBuiltinSchemaValidator();
+    const adapter = createMockAdapter();
+    await withTempDir(async (projectDir) => {
+      const configPath = `${projectDir}/veryfront.config.ts`;
+      const source = 'const dependency = "missing-optional-config-package";\n' +
+        'const imported = await import(dependency).catch(() => ({ default: "optional" }));\n' +
+        "export default { title: imported.default };\n";
+      await writeTextFile(configPath, source);
+      adapter.fs.files.set(configPath, source);
+
+      assertEquals((await getConfig(projectDir, adapter)).title, "optional");
+    }, { prefix: "vf-config-bun-computed-missing-package-" });
+  });
+
   it("resolves coercible computed imports from the original project", async () => {
     clearConfigCache();
     ensureBuiltinSchemaValidator();
@@ -616,8 +632,7 @@ describe("Bun workspace resolution", () => {
         await writeTextFile(configPath, source);
         await writeTextFile(
           entryPath,
-          'const dependency = "./config-helper.cjs";\n' +
-            "const imported = await import(dependency);\n" +
+          'const imported = await import("./config-helper.cjs");\n' +
             "export default imported.default;\n",
         );
         await writeTextFile(helperPath, 'module.exports = "config";\n');
@@ -914,14 +929,13 @@ describe("Bun workspace resolution", () => {
     }, { prefix: "vf-config-bun-tla-cjs-descendant-reload-" });
   });
 
-  it("does not claim an unobservable computed import inside a config dependency", async () => {
+  it("rejects an unobservable computed import inside a config dependency", async () => {
     clearConfigCache();
     ensureBuiltinSchemaValidator();
     const adapter = createMockAdapter();
     await withTempDir(async (projectDir) => {
       const configPath = `${projectDir}/veryfront.config.ts`;
       const entryPath = `${projectDir}/config-entry.ts`;
-      const helperPath = `${projectDir}/config-helper.cjs`;
       const source = 'import title from "./config-entry.ts";\n' +
         "await Promise.resolve();\nexport default { title };\n";
       const entrySource = 'const helper = "./config-helper.cjs";\n' +
@@ -930,17 +944,11 @@ describe("Bun workspace resolution", () => {
       await writeTextFile(entryPath, entrySource);
       adapter.fs.files.set(configPath, source);
 
-      await writeTextFile(helperPath, 'module.exports = "before";\n');
-      assertEquals((await getConfig(projectDir, adapter)).title, "before");
-
-      await writeTextFile(helperPath, 'module.exports = "after";\n');
-      clearConfigCache();
-
-      // Bun exposes neither a loader callback nor a CommonJS parent edge for a
-      // computed import executed inside an ESM dependency. Keeping that helper
-      // cached is safer than claiming every concurrently loaded project module
-      // as config-owned and evicting unrelated application singletons.
-      assertEquals((await getConfig(projectDir, adapter)).title, "before");
+      await assertRejects(
+        () => getConfig(projectDir, adapter),
+        Error,
+        "Computed dynamic imports inside project config dependencies cannot be reloaded safely in Bun",
+      );
     }, { prefix: "vf-config-bun-transitive-computed-import-" });
   });
 
@@ -1170,7 +1178,7 @@ describe("Bun workspace resolution", () => {
 
         gate.resolve();
 
-        assertEquals((await firstConfig).title, "before");
+        assertEquals((await firstConfig).title, "after");
         assertEquals((await secondConfig).title, "after");
       }, { prefix: "vf-config-bun-overlapping-revisions-" });
     } finally {
