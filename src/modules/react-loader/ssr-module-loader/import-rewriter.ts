@@ -148,13 +148,17 @@ function buildAliasImportPatterns(specifier: string, fromRelativeDir: string): s
   const aliasPath = substringString(specifier, 2); // Remove @/
   const depth = splitNonEmpty(fromRelativeDir).length;
   const relativePrefix = depth === 0 ? "./" : reflectApply(stringRepeat, "../", [depth]) as string;
-
-  const patterns = [`${relativePrefix}${aliasPath}.js`];
-
-  if (reflectApply(regexpTest, /\.(tsx?|jsx|mdx)$/, [aliasPath]) as boolean) {
-    patterns[patterns.length] = `${relativePrefix}${toJsExtension(aliasPath)}`;
-  }
-
+  const compiledAliasPath = reflectApply(regexpTest, /\.(tsx?|jsx|mdx)$/, [aliasPath]) as boolean
+    ? toJsExtension(aliasPath)
+    : reflectApply(regexpTest, /\.(mjs|cjs|css)$/, [aliasPath]) as boolean
+    ? aliasPath
+    : `${aliasPath}.js`;
+  const patterns = [
+    specifier,
+    `${relativePrefix}${compiledAliasPath}`,
+    `/_vf_modules/${compiledAliasPath}`,
+    `_vf_modules/${compiledAliasPath}`,
+  ];
   return patterns;
 }
 

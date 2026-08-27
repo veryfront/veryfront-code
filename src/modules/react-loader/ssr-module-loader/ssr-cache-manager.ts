@@ -8,6 +8,7 @@
  */
 
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
+import { dirname } from "#veryfront/compat/path/index.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { buildSSRModuleCacheKey } from "#veryfront/cache/keys.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
@@ -28,6 +29,10 @@ import {
 import { buildTempModulePath, buildTmpDirPath, getTmpDirCacheKey } from "./tmp-paths.ts";
 import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
 import { ensureMdxModuleDependencies } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/dependency-recovery.ts";
+import {
+  ensureCachedVeryfrontEsmPackageScope,
+  ensurePlainCacheDirectory,
+} from "./esm-package-scope.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 
@@ -353,12 +358,25 @@ export class SSRCacheManager {
     const sourceKey = contentSourceId;
     const cacheKey = getTmpDirCacheKey(baseCacheDir, projectId, sourceKey, RUNTIME_VERSION);
 
-    const existingDir = globalTmpDirs.get(cacheKey);
-    if (existingDir) return existingDir;
-
     const tmpDir = buildTmpDirPath(baseCacheDir, projectId, sourceKey, RUNTIME_VERSION);
+    const projectCacheDir = dirname(tmpDir);
+    const versionCacheDir = dirname(projectCacheDir);
 
-    await this.fs.mkdir(tmpDir, { recursive: true });
+    // The configured cache location is a same-trust boundary and must not be
+    // writable by hostile concurrent actors. Reject pre-existing symlinked
+    // segments so generated modules cannot start outside that boundary.
+    await this.fs.mkdir(baseCacheDir, { recursive: true });
+    for (
+      const directory of [
+        baseCacheDir,
+        versionCacheDir,
+        projectCacheDir,
+        tmpDir,
+      ]
+    ) {
+      await ensurePlainCacheDirectory(this.fs, directory);
+    }
+    await ensureCachedVeryfrontEsmPackageScope(this.fs, tmpDir);
     globalTmpDirs.set(cacheKey, tmpDir);
     return tmpDir;
   }

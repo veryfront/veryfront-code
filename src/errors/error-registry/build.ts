@@ -16,6 +16,14 @@ export const BUNDLE_ERROR = defineError({
   suggestion: "Review bundler output for details",
 });
 
+export const ESM_CACHE_INIT_FAILED = defineError({
+  slug: "esm-cache-init-failed",
+  category: "BUILD",
+  status: 500,
+  title: "Generated ESM cache initialization failed",
+  suggestion: "Clear the Veryfront cache and retry",
+});
+
 export const TYPESCRIPT_ERROR = defineError({
   slug: "typescript-error",
   category: "BUILD",
@@ -76,6 +84,7 @@ export const COMPILATION_ERROR = defineError({
 export const BUILD_REGISTRY = {
   "build-failed": BUILD_FAILED,
   "bundle-error": BUNDLE_ERROR,
+  "esm-cache-init-failed": ESM_CACHE_INIT_FAILED,
   "typescript-error": TYPESCRIPT_ERROR,
   "mdx-compile-error": MDX_COMPILE_ERROR,
   "markdown-compile-error": MARKDOWN_COMPILE_ERROR,

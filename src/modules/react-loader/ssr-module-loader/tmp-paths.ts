@@ -47,6 +47,11 @@ export function buildTempModulePath(
   const hashSuffix = contentHash
     ? `.v${versionPrefix}.${contentHash.slice(0, 8)}`
     : `.v${versionPrefix}`;
-  const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)(?:\.src)?$/, `${hashSuffix}.js`);
-  return join(tmpDir, jsPath);
+  const modulePath = relativePath.endsWith(".json")
+    ? relativePath.replace(/\.json$/, `${hashSuffix}.json`)
+    : relativePath.replace(
+      /\.(?:[cm]?tsx?|[cm]?jsx?|mdx)(?:\.src)?$/,
+      `$&${hashSuffix}.mjs`,
+    );
+  return join(tmpDir, modulePath);
 }

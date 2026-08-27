@@ -135,6 +135,13 @@ Bundle generation failed.
 - **HTTP status:** 500
 - **What to do:** Review bundler output for details
 
+### esm-cache-init-failed
+
+Generated ESM cache initialization failed.
+
+- **HTTP status:** 500
+- **What to do:** Clear the Veryfront cache and retry
+
 ### typescript-error
 
 TypeScript compilation error.

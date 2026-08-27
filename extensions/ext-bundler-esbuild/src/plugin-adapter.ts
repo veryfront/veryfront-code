@@ -32,6 +32,11 @@ export function toEsbuildPlugin(
     // deno-lint-ignore no-explicit-any
     setup(build: any) {
       const bridged: BundlerPluginBuild = {
+        resolve(path, options) {
+          return runInContext(async () => {
+            return await build.resolve(path, options) as OnResolveResult;
+          });
+        },
         onResolve(options, callback) {
           // deno-lint-ignore no-explicit-any
           build.onResolve(options, (args: any) =>

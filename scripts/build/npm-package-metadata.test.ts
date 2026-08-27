@@ -835,6 +835,21 @@ describe("npm supply-chain policy", () => {
       source,
       "Deno could not load the packed bundler extension",
     );
+    assertStringIncludes(source, "--no-strip-types");
+    assertStringIncludes(source, "--no-experimental-strip-types");
+    assertStringIncludes(
+      source,
+      "TypeScript config module graph required Node native type stripping",
+    );
+    assertStringIncludes(source, "Config helper import.meta.url did not preserve");
+    assertStringIncludes(source, 'import.meta.resolve("vf-esm-config-condition-smoke")');
+    assertStringIncludes(source, "vf-nested-config-smoke");
+    assertStringIncludes(source, "file-url-values.ts");
+    assertStringIncludes(source, "vf-cjs-config-condition-smoke");
+    assertStringIncludes(
+      source,
+      "CommonJS config requires did not resolve from the original project",
+    );
     assertStringIncludes(source, "app/page.tsx");
     assertStringIncludes(source, "materializeScaffold");
     assertStringIncludes(source, "template: 'ai-agent'");

@@ -9,13 +9,22 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { mkdir, writeTextFile } from "#veryfront/platform/compat/fs.ts";
+import { mkdir, symlink, writeTextFile } from "#veryfront/platform/compat/fs.ts";
+import { dirname, toFileUrl } from "#veryfront/compat/path/index.ts";
 import { makeTempDir, waitFor, withTempDir } from "#veryfront/testing/deno-compat.ts";
 
 /** Repeated across the config-load classification tests below. */
 const CONFIG_FILE_NAME = "veryfront.config.js";
 const DEPENDENCY_MISSING_SLUG = "dependency-missing";
 const CONFIG_PARSE_ERROR_SLUG = "config-parse-error";
+
+function normalizeMacOsVarAlias(value: string): string {
+  const fileUrlPrefix = "file:///private";
+  if (value.startsWith(`${fileUrlPrefix}/var/`)) {
+    return `file://${value.slice(fileUrlPrefix.length)}`;
+  }
+  return value.startsWith("/private/var/") ? value.slice("/private".length) : value;
+}
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import {
   __bunConfigHasTopLevelAwaitForTests,
@@ -23,17 +32,23 @@ import {
   __evictBunProjectConfigModulesForTests,
   __getHostedConfigFlightStateForTests,
   __getHostedConfigSourceReadStateForTests,
+  __getNodeConfigBundleConditionsForTests,
+  __getNodeConfigPackageConditionsForTests,
   __getTrustedConfigFlightStateForTests,
   __isBunWorkspaceMemberDirectoryForTests,
   __observePromiseForTests,
+  __resolveNodeConfigPackageTargetForTests,
   __rewriteComputedDynamicProjectConfigImportsForTests,
+  __serializeConfigResolveErrorForTests,
   __setHostedConfigEvaluatorForTests,
+  bundleProjectConfigSourceForImport,
   clearConfigCache,
   evaluateHostedConfigSource,
   getCachedConfigSync,
   getConfig,
   getConfigWithProvenance,
   getHostedConfig,
+  loadConfigFromTempFile,
   mergeConfigs,
   rewriteBareVeryfrontConfigImports,
   rewriteProjectConfigImports,
@@ -59,6 +74,19 @@ import {
 } from "#veryfront/platform/compat/process.ts";
 import { ESBUILD_WASM_URL } from "#veryfront/platform/compat/esbuild-shared.ts";
 import { MAX_HOSTED_RENDER_CACHE_ENTRIES } from "./defaults.ts";
+import {
+  register as registerExtensionContract,
+  tryResolve as tryResolveExtensionContract,
+  unregister as unregisterExtensionContract,
+} from "#veryfront/extensions/contracts.ts";
+import type {
+  Bundler,
+  BundlerPluginBuild,
+  OnLoadArgs,
+  OnLoadResult,
+  OnResolveArgs,
+  OnResolveResult,
+} from "#veryfront/extensions/bundler/bundler.ts";
 
 const TestObjectDefineProperty = Object.defineProperty;
 const TestObjectCreate = Object.create;
@@ -227,6 +255,3181 @@ export default config as const;
       assertEquals(module.default.title, "Typed Project");
       assertEquals(module.default.description, "keep as const text");
     });
+
+    it("bundles local TypeScript imports for staged Node configs", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        const packageDir = `${projectDir}/node_modules/esm-config-dependency`;
+        await mkdir(packageDir, { recursive: true });
+        await writeTextFile(
+          `${packageDir}/package.json`,
+          JSON.stringify({
+            name: "esm-config-dependency",
+            type: "module",
+            exports: { import: "./import.js" },
+          }),
+        );
+        await writeTextFile(`${packageDir}/import.js`, 'export default "config";\n');
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            type: "module",
+            imports: { "#config-values": "./config-values.ts" },
+          }),
+        );
+        const source = [
+          'import { defineConfig } from "veryfront";',
+          'import { title } from "#config-values";',
+          "export default defineConfig({",
+          "  title,",
+          "  configUrl: import.meta.url,",
+          "  configFilename: import.meta.filename,",
+          "  configDirname: import.meta.dirname,",
+          "});",
+        ].join("\n");
+        await writeTextFile(
+          `${projectDir}/config-values.ts`,
+          'import suffix from "esm-config-dependency";\n' +
+            "export const title: string = `Node module graph ${suffix}`;\n",
+        );
+
+        const result = await rewriteBareVeryfrontConfigImports(
+          await bundleProjectConfigSourceForImport(source, configPath),
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: {
+            title: string;
+            configUrl: string;
+            configFilename: string;
+            configDirname: string;
+          };
+        };
+
+        assert(!result.includes("#config-values"));
+        assertStringIncludes(result, "var title");
+        assert(!result.includes('from "esm-config-dependency"'));
+        assertStringIncludes(result, "/esm-config-dependency/import.js");
+        assertEquals(module.default.title, "Node module graph config");
+        assertEquals(module.default.configUrl, toFileUrl(configPath).href);
+        assertEquals(module.default.configFilename, configPath);
+        assertEquals(module.default.configDirname, dirname(configPath));
+      }, { prefix: "vf-config-module-graph-" });
+    });
+
+    it("preserves import.meta.url for every bundled config module", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        const valuesPath = `${projectDir}/config-values.ts`;
+        const source = [
+          'import { dependencyUrl } from "./config-values.ts";',
+          "export default { entryUrl: import.meta.url, dependencyUrl };",
+        ].join("\n");
+        await writeTextFile(valuesPath, "export const dependencyUrl = import.meta.url;\n");
+
+        const result = await bundleProjectConfigSourceForImport(source, configPath);
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { entryUrl: string; dependencyUrl: string };
+        };
+
+        assertEquals(module.default.entryUrl, toFileUrl(configPath).href);
+        assertStringIncludes(module.default.dependencyUrl, "vf-config-import-meta-");
+        assertEquals(module.default.dependencyUrl.endsWith("/config-values.ts"), true);
+      }, { prefix: "vf-config-import-meta-" });
+    });
+
+    it("bundles TypeScript imported by a staged JavaScript config", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.js`;
+        await writeTextFile(
+          `${projectDir}/config-values.ts`,
+          'export const title: string = "Staged JavaScript config";\n',
+        );
+
+        const config = await loadConfigFromTempFile(
+          'import { title } from "./config-values.ts"; export default { title };',
+          configPath,
+          (tempFile) => toFileUrl(tempFile).href,
+          rewriteBareVeryfrontConfigImports,
+          true,
+        ) as { title: string };
+
+        assertEquals(config.title, "Staged JavaScript config");
+      }, { prefix: "vf-config-staged-js-" });
+    });
+
+    it("preserves CommonJS config exports when Node staging is requested", async () => {
+      await withTempDir(async (projectDir) => {
+        const config = await loadConfigFromTempFile(
+          'module.exports = { title: "Staged CommonJS config" };',
+          `${projectDir}/veryfront.config.cjs`,
+          (tempFile) => toFileUrl(tempFile).href,
+          rewriteBareVeryfrontConfigImports,
+          true,
+        ) as { title: string };
+
+        assertEquals(config.title, "Staged CommonJS config");
+      }, { prefix: "vf-config-staged-cjs-" });
+    });
+
+    it("does not collide with a config-owned require binding", async () => {
+      await withTempDir(async (projectDir) => {
+        const config = await loadConfigFromTempFile(
+          'const require = "project binding"; export default { require };',
+          `${projectDir}/veryfront.config.ts`,
+          (tempFile) => toFileUrl(tempFile).href,
+          rewriteBareVeryfrontConfigImports,
+          true,
+        ) as { require: string };
+
+        assertEquals(config.require, "project binding");
+      }, { prefix: "vf-config-staged-require-binding-" });
+    });
+
+    it("resolves CommonJS Veryfront requires before staging", async () => {
+      await withTempDir(async (projectDir) => {
+        const config = await loadConfigFromTempFile(
+          'const { defineConfig } = require("veryfront");\n' +
+            'module.exports = defineConfig({ title: "Staged CommonJS helper" });',
+          `${projectDir}/veryfront.config.cjs`,
+          (tempFile) => toFileUrl(tempFile).href,
+          rewriteBareVeryfrontConfigImports,
+          true,
+        ) as { title: string };
+
+        assertEquals(config.title, "Staged CommonJS helper");
+      }, { prefix: "vf-config-staged-cjs-helper-" });
+    });
+
+    it("preserves project-bound CommonJS requires while staging", async () => {
+      await withTempDir(async (projectDir) => {
+        const dependencyDir = `${projectDir}/node_modules/staged-cjs-dependency`;
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({
+            name: "staged-cjs-dependency",
+            type: "module",
+            exports: {
+              import: "./import.js",
+              require: "./require.cjs",
+            },
+          }),
+        );
+        await writeTextFile(
+          `${dependencyDir}/require.cjs`,
+          'module.exports = { value: "dependency" };\n',
+        );
+        await writeTextFile(
+          `${dependencyDir}/import.js`,
+          'export default { value: "wrong-condition" };\n',
+        );
+        await writeTextFile(`${projectDir}/package.json`, JSON.stringify({ type: "commonjs" }));
+
+        for (
+          const configFile of [
+            "veryfront.config.cjs",
+            "veryfront.config.js",
+            "veryfront.config.ts",
+          ]
+        ) {
+          const config = await loadConfigFromTempFile(
+            'const path = require("node:path");\n' +
+              'const dependency = require("staged-cjs-dependency");\n' +
+              "module.exports = { base: path.basename(__filename), value: dependency.value };",
+            `${projectDir}/${configFile}`,
+            (tempFile) => toFileUrl(tempFile).href,
+            rewriteBareVeryfrontConfigImports,
+            true,
+          ) as { base: string; value: string };
+
+          assertEquals(config.base, configFile);
+          assertEquals(config.value, "dependency");
+        }
+      }, { prefix: "vf-config-staged-cjs-require-" });
+    });
+
+    it("keeps ESM import conditions out of CommonJS require resolution", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageName = "staged-require-condition-dependency";
+        const dependencyDir = `${projectDir}/node_modules/${packageName}`;
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({
+            name: packageName,
+            type: "module",
+            exports: {
+              import: "./missing-import.js",
+              require: "./require.cjs",
+            },
+          }),
+        );
+        await writeTextFile(
+          `${dependencyDir}/require.cjs`,
+          'module.exports = { value: "require-condition" };\n',
+        );
+        await writeTextFile(`${projectDir}/package.json`, JSON.stringify({ type: "commonjs" }));
+
+        const config = await loadConfigFromTempFile(
+          `module.exports = require(${JSON.stringify(packageName)});`,
+          `${projectDir}/veryfront.config.cjs`,
+          (tempFile) => toFileUrl(tempFile).href,
+          rewriteBareVeryfrontConfigImports,
+          true,
+        ) as { value: string };
+
+        assertEquals(config.value, "require-condition");
+      }, { prefix: "vf-config-staged-cjs-require-condition-" });
+    });
+
+    it("provides project-bound dynamic require and require.resolve while staging", async () => {
+      await withTempDir(async (projectDir) => {
+        const dependencyDir = `${projectDir}/node_modules/staged-dynamic-cjs-dependency`;
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({
+            name: "staged-dynamic-cjs-dependency",
+            main: "index.cjs",
+          }),
+        );
+        await writeTextFile(`${dependencyDir}/index.cjs`, 'module.exports = "dynamic";\n');
+        await writeTextFile(`${projectDir}/config-helper.cjs`, 'module.exports = "helper";\n');
+        await writeTextFile(`${projectDir}/package.json`, JSON.stringify({ type: "commonjs" }));
+
+        for (const configFile of ["veryfront.config.cjs", "veryfront.config.ts"]) {
+          const config = await loadConfigFromTempFile(
+            'const dependencyName = "staged-dynamic-cjs-dependency";\n' +
+              'const helperName = "./config-helper.cjs";\n' +
+              "module.exports = {\n" +
+              "  value: require(dependencyName),\n" +
+              "  helperPath: require.resolve(helperName),\n" +
+              "  interpolated: `${require(dependencyName)}:${require(helperName)}`,\n" +
+              "};\n",
+            `${projectDir}/${configFile}`,
+            (tempFile) => toFileUrl(tempFile).href,
+            rewriteBareVeryfrontConfigImports,
+            true,
+          ) as { value: string; helperPath: string; interpolated: string };
+
+          assertEquals(config.value, "dynamic");
+          assertEquals(config.interpolated, "dynamic:helper");
+          assertEquals(
+            normalizeMacOsVarAlias(config.helperPath),
+            normalizeMacOsVarAlias(`${projectDir}/config-helper.cjs`),
+          );
+        }
+      }, { prefix: "vf-config-staged-dynamic-require-" });
+    });
+
+    it("exposes CommonJS require cache fields while staging", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(`${projectDir}/package.json`, JSON.stringify({ type: "commonjs" }));
+        await writeTextFile(`${projectDir}/config-helper.cjs`, 'module.exports = "helper";\n');
+
+        const config = await loadConfigFromTempFile(
+          'const helperPath = require.resolve("./config-helper.cjs");\n' +
+            "delete require.cache[helperPath];\n" +
+            "module.exports = {\n" +
+            '  helper: require("./config-helper.cjs"),\n' +
+            "  hasCache: typeof require.cache === 'object',\n" +
+            "  hasExtensions: typeof require.extensions === 'object',\n" +
+            "  hasMain: 'main' in require,\n" +
+            "};",
+          `${projectDir}/veryfront.config.cjs`,
+          (tempFile) => toFileUrl(tempFile).href,
+          rewriteBareVeryfrontConfigImports,
+          true,
+        ) as {
+          hasCache: boolean;
+          hasExtensions: boolean;
+          hasMain: boolean;
+          helper: string;
+        };
+
+        assertEquals(config, {
+          hasCache: true,
+          hasExtensions: true,
+          hasMain: true,
+          helper: "helper",
+        });
+      }, { prefix: "vf-config-staged-require-cache-" });
+    });
+
+    it("bundles nested CommonJS helper graphs for cross-runtime staging", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(`${projectDir}/package.json`, JSON.stringify({ type: "commonjs" }));
+        await writeTextFile(
+          `${projectDir}/value.js`,
+          "module.exports = { value: 'nested-commonjs' };\n",
+        );
+        await writeTextFile(
+          `${projectDir}/helper.cjs`,
+          "module.exports = require('./value.js');\n",
+        );
+
+        const config = await loadConfigFromTempFile(
+          "const load = require;\n" +
+            "void load;\n" +
+            "module.exports = require('./helper.cjs');",
+          `${projectDir}/veryfront.config.cjs`,
+          (tempFile) => toFileUrl(tempFile).href,
+          rewriteBareVeryfrontConfigImports,
+          true,
+        ) as { value: string };
+
+        assertEquals(config.value, "nested-commonjs");
+      }, { prefix: "vf-config-staged-nested-cjs-require-" });
+    });
+
+    it("bundles nested CommonJS helpers beside runtime-computed requires", async () => {
+      await withTempDir(async (projectDir) => {
+        const helperSpecifier = `__vfNestedConfigHelper_${
+          crypto.randomUUID().replaceAll("-", "_")
+        }`;
+        try {
+          (globalThis as Record<string, unknown>)[helperSpecifier] = "./dynamic.cjs";
+          await writeTextFile(`${projectDir}/package.json`, JSON.stringify({ type: "commonjs" }));
+          await writeTextFile(`${projectDir}/dynamic.cjs`, 'module.exports = "dynamic";\n');
+          await writeTextFile(
+            `${projectDir}/value.js`,
+            "module.exports = { value: 'nested-commonjs' };\n",
+          );
+          await writeTextFile(
+            `${projectDir}/helper.cjs`,
+            "module.exports = require('./value.js');\n",
+          );
+
+          const config = await loadConfigFromTempFile(
+            `const dynamic = require(globalThis[${JSON.stringify(helperSpecifier)}]);\n` +
+              "const nested = require('./helper.cjs');\n" +
+              "module.exports = { dynamic, nested };",
+            `${projectDir}/veryfront.config.cjs`,
+            (tempFile) => toFileUrl(tempFile).href,
+            rewriteBareVeryfrontConfigImports,
+            true,
+          ) as { dynamic: string; nested: { value: string } };
+
+          assertEquals(config.dynamic, "dynamic");
+          assertEquals(config.nested.value, "nested-commonjs");
+        } finally {
+          delete (globalThis as Record<string, unknown>)[helperSpecifier];
+        }
+      }, { prefix: "vf-config-staged-computed-nested-cjs-require-" });
+    });
+
+    it("shares one bundled CommonJS-scoped JavaScript module", async () => {
+      await withTempDir(async (projectDir) => {
+        const runtimeSpecifierKey = `__vfRuntimeConfigRequire_${
+          crypto.randomUUID().replaceAll("-", "_")
+        }`;
+        await writeTextFile(`${projectDir}/package.json`, JSON.stringify({ type: "commonjs" }));
+        await writeTextFile(
+          `${projectDir}/shared.js`,
+          "module.exports = { token: {} };\n",
+        );
+
+        (globalThis as Record<string, unknown>)[runtimeSpecifierKey] = "./shared.js";
+        let config: { sameInstance: boolean };
+        try {
+          config = await loadConfigFromTempFile(
+            `const dynamicValue = require(globalThis[${JSON.stringify(runtimeSpecifierKey)}]);\n` +
+              'const staticValue = require("./shared.js");\n' +
+              "module.exports = { sameInstance: staticValue === dynamicValue };",
+            `${projectDir}/veryfront.config.cjs`,
+            (tempFile) => toFileUrl(tempFile).href,
+            rewriteBareVeryfrontConfigImports,
+            true,
+          ) as { sameInstance: boolean };
+        } finally {
+          delete (globalThis as Record<string, unknown>)[runtimeSpecifierKey];
+        }
+
+        assertEquals(config.sameInstance, true);
+      }, { prefix: "vf-config-staged-cjs-scoped-js-require-" });
+    });
+
+    it("provides project-bound CommonJS require aliases while staging", async () => {
+      await withTempDir(async (projectDir) => {
+        const dependencyDir = `${projectDir}/node_modules/staged-aliased-cjs-dependency`;
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({
+            name: "staged-aliased-cjs-dependency",
+            main: "index.cjs",
+          }),
+        );
+        await writeTextFile(`${dependencyDir}/index.cjs`, 'module.exports = "aliased";\n');
+
+        const config = await loadConfigFromTempFile(
+          'const dependencyName = "staged-aliased-cjs-dependency";\n' +
+            "const load = require;\n" +
+            "const { resolve } = require;\n" +
+            "module.exports = { value: load(dependencyName), resolved: resolve(dependencyName) };",
+          `${projectDir}/veryfront.config.cjs`,
+          (tempFile) => toFileUrl(tempFile).href,
+          rewriteBareVeryfrontConfigImports,
+          true,
+        ) as { resolved: string; value: string };
+
+        assertStringIncludes(config.resolved, "/staged-aliased-cjs-dependency/index.cjs");
+        assertEquals(config.value, "aliased");
+      }, { prefix: "vf-config-staged-aliased-require-" });
+    });
+
+    it("preserves CommonJS export conditions for computed require calls", async () => {
+      await withTempDir(async (projectDir) => {
+        const dependencyDir = `${projectDir}/node_modules/staged-dynamic-cjs-dependency`;
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({
+            name: "staged-dynamic-cjs-dependency",
+            type: "module",
+            exports: {
+              require: "./require.cjs",
+              import: "./import.js",
+            },
+          }),
+        );
+        await writeTextFile(
+          `${dependencyDir}/require.cjs`,
+          'module.exports = { value: "dynamic-require" };\n',
+        );
+        await writeTextFile(
+          `${dependencyDir}/import.js`,
+          'export default { value: "wrong-condition" };\n',
+        );
+        await writeTextFile(`${projectDir}/package.json`, JSON.stringify({ type: "commonjs" }));
+
+        const config = await loadConfigFromTempFile(
+          'const dependencyName = "staged-dynamic-cjs-dependency";\n' +
+            "const dependency = require(dependencyName);\n" +
+            "module.exports = {\n" +
+            "  resolved: require.resolve(dependencyName),\n" +
+            "  value: dependency.value,\n" +
+            "};",
+          `${projectDir}/veryfront.config.ts`,
+          (tempFile) => toFileUrl(tempFile).href,
+          rewriteBareVeryfrontConfigImports,
+          true,
+        ) as { resolved: string; value: string };
+
+        assertStringIncludes(config.resolved, "/staged-dynamic-cjs-dependency/require.cjs");
+        assertEquals(config.value, "dynamic-require");
+      }, { prefix: "vf-config-staged-dynamic-cjs-require-" });
+    });
+
+    it("preserves CommonJS package import conditions for computed require calls", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            type: "commonjs",
+            imports: {
+              "#dynamic-dependency": {
+                require: "./require.cjs",
+                import: "./import.js",
+              },
+            },
+          }),
+        );
+        await writeTextFile(`${projectDir}/require.cjs`, 'module.exports = "dynamic-require";\n');
+        await writeTextFile(`${projectDir}/import.js`, 'export default "wrong-condition";\n');
+
+        const config = await loadConfigFromTempFile(
+          'const dependencyName = "#dynamic-dependency";\n' +
+            "const dependency = require(dependencyName);\n" +
+            "module.exports = { value: dependency };",
+          `${projectDir}/veryfront.config.ts`,
+          (tempFile) => toFileUrl(tempFile).href,
+          rewriteBareVeryfrontConfigImports,
+          true,
+        ) as { value: string };
+
+        assertEquals(config.value, "dynamic-require");
+      }, { prefix: "vf-config-staged-dynamic-cjs-imports-require-" });
+    });
+
+    it("shares one CommonJS module between static and computed requires", async () => {
+      await withTempDir(async (projectDir) => {
+        const loadMarker = `__vfMixedConfigRequire_${crypto.randomUUID().replaceAll("-", "_")}`;
+        try {
+          await writeTextFile(`${projectDir}/package.json`, JSON.stringify({ type: "commonjs" }));
+          await writeTextFile(
+            `${projectDir}/config-helper.cjs`,
+            `globalThis[${JSON.stringify(loadMarker)}] = ` +
+              `(globalThis[${JSON.stringify(loadMarker)}] ?? 0) + 1;\n` +
+              `module.exports = { loads: globalThis[${JSON.stringify(loadMarker)}] };\n`,
+          );
+
+          const config = await loadConfigFromTempFile(
+            'const helperName = "./config-helper.cjs";\n' +
+              'const staticallyLoaded = require("./config-helper.cjs");\n' +
+              "const dynamicallyLoaded = require(helperName);\n" +
+              "module.exports = { staticallyLoaded, dynamicallyLoaded };\n",
+            `${projectDir}/veryfront.config.cjs`,
+            (tempFile) => toFileUrl(tempFile).href,
+            rewriteBareVeryfrontConfigImports,
+            true,
+          ) as {
+            staticallyLoaded: { loads: number };
+            dynamicallyLoaded: { loads: number };
+          };
+
+          assertStrictEquals(config.staticallyLoaded, config.dynamicallyLoaded);
+          assertEquals(config.staticallyLoaded.loads, 1);
+          assertEquals((globalThis as Record<string, unknown>)[loadMarker], 1);
+        } finally {
+          delete (globalThis as Record<string, unknown>)[loadMarker];
+        }
+      }, { prefix: "vf-config-staged-mixed-cjs-require-" });
+    });
+
+    it("shares CommonJS .js modules between static and runtime-computed requires", async () => {
+      await withTempDir(async (projectDir) => {
+        const loadMarker = `__vfMixedJsConfigRequire_${crypto.randomUUID().replaceAll("-", "_")}`;
+        const previousHelper = getHostEnv("VF_CONFIG_HELPER");
+        try {
+          await writeTextFile(`${projectDir}/package.json`, JSON.stringify({ type: "commonjs" }));
+          await writeTextFile(
+            `${projectDir}/config-helper.js`,
+            `globalThis[${JSON.stringify(loadMarker)}] = ` +
+              `(globalThis[${JSON.stringify(loadMarker)}] ?? 0) + 1;\n` +
+              `module.exports = { loads: globalThis[${JSON.stringify(loadMarker)}] };\n`,
+          );
+          setEnv("VF_CONFIG_HELPER", "./config-helper.js");
+
+          const config = await loadConfigFromTempFile(
+            'const staticallyLoaded = require("./config-helper.js");\n' +
+              "const dynamicallyLoaded = require(process.env.VF_CONFIG_HELPER);\n" +
+              "module.exports = { staticallyLoaded, dynamicallyLoaded };\n",
+            `${projectDir}/veryfront.config.cjs`,
+            (tempFile) => toFileUrl(tempFile).href,
+            rewriteBareVeryfrontConfigImports,
+            true,
+          ) as {
+            staticallyLoaded: { loads: number };
+            dynamicallyLoaded: { loads: number };
+          };
+
+          assertStrictEquals(config.staticallyLoaded, config.dynamicallyLoaded);
+          assertEquals(config.staticallyLoaded.loads, 1);
+          assertEquals((globalThis as Record<string, unknown>)[loadMarker], 1);
+        } finally {
+          delete (globalThis as Record<string, unknown>)[loadMarker];
+          if (previousHelper === undefined) deleteEnv("VF_CONFIG_HELPER");
+          else setEnv("VF_CONFIG_HELPER", previousHelper);
+        }
+      }, { prefix: "vf-config-staged-mixed-cjs-js-require-" });
+    });
+
+    it("resolves computed CommonJS requires relative to their declaring helper", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(`${projectDir}/package.json`, JSON.stringify({ type: "module" }));
+        await mkdir(`${projectDir}/nested`, { recursive: true });
+        await writeTextFile(
+          `${projectDir}/nested/helper.ts`,
+          'const localName = "./value.cjs";\n' +
+            "const value = require(localName);\n" +
+            "module.exports = { resolved: require.resolve(localName), value };\n",
+        );
+        await writeTextFile(
+          `${projectDir}/nested/value.cjs`,
+          'module.exports = "nested-value";\n',
+        );
+
+        const config = await loadConfigFromTempFile(
+          'module.exports = require("./nested/helper.ts");',
+          `${projectDir}/veryfront.config.cjs`,
+          (tempFile) => toFileUrl(tempFile).href,
+          rewriteBareVeryfrontConfigImports,
+          true,
+        ) as { resolved: string; value: string };
+
+        assertStringIncludes(config.resolved, "/nested/value.cjs");
+        assertEquals(config.value, "nested-value");
+      }, { prefix: "vf-config-staged-nested-dynamic-cjs-require-" });
+    });
+
+    it("externalizes project-local native addon requires while staging", async () => {
+      await withTempDir(async (projectDir) => {
+        const addonPath = `${projectDir}/addon.node`;
+        await writeTextFile(addonPath, "not a native binary\n");
+        await writeTextFile(`${projectDir}/package.json`, JSON.stringify({ type: "commonjs" }));
+
+        const result = await bundleProjectConfigSourceForImport(
+          'module.exports = require("./addon.node");',
+          `${projectDir}/veryfront.config.cjs`,
+        );
+
+        assertStringIncludes(result, "createRequire");
+        assertStringIncludes(result, "./addon.node");
+      }, { prefix: "vf-config-staged-native-addon-" });
+    });
+
+    it("rejects native addon requires outside the project boundary", async () => {
+      await withTempDir(async (projectDir) => {
+        await withTempDir(async (outsideDir) => {
+          const outsideAddon = `${outsideDir}/addon.node`;
+          await writeTextFile(outsideAddon, "not a native binary\n");
+
+          await assertRejects(
+            () =>
+              bundleProjectConfigSourceForImport(
+                `module.exports = require(${JSON.stringify(outsideAddon)});`,
+                `${projectDir}/veryfront.config.cjs`,
+              ),
+            Error,
+            "outside the project directory",
+          );
+        }, { prefix: "vf-config-staged-native-addon-outside-" });
+      }, { prefix: "vf-config-staged-native-addon-project-" });
+    });
+
+    it("preserves CommonJS require fallback for JSX and TypeScript helpers", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({ type: "module" }),
+        );
+        for (const extension of ["jsx", "ts", "tsx"]) {
+          const helperName = `config-helper.${extension}`;
+          await writeTextFile(
+            `${projectDir}/${helperName}`,
+            'const path = require("node:path");\n' +
+              "module.exports = { base: path.basename(__filename) };\n",
+          );
+
+          const config = await loadConfigFromTempFile(
+            `const helper = require("./${helperName}");\n` +
+              "module.exports = { helperBase: helper.base };",
+            `${projectDir}/veryfront.config.cjs`,
+            (tempFile) => toFileUrl(tempFile).href,
+            rewriteBareVeryfrontConfigImports,
+            true,
+          ) as { helperBase: string };
+
+          assertEquals(config.helperBase, helperName);
+        }
+      }, { prefix: "vf-config-staged-cjs-jsx-helper-" });
+    });
+
+    it("does not inject CommonJS globals into explicit ESM helpers", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({ type: "commonjs" }),
+        );
+        await writeTextFile(
+          `${projectDir}/config-helper.mjs`,
+          'const path = require("node:path");\n' +
+            "export default { base: path.basename(__filename) };\n",
+        );
+
+        await assertRejects(
+          () =>
+            loadConfigFromTempFile(
+              'module.exports = require("./config-helper.mjs");',
+              `${projectDir}/veryfront.config.js`,
+              (tempFile) => toFileUrl(tempFile).href,
+              rewriteBareVeryfrontConfigImports,
+              true,
+            ),
+          Error,
+          "Dynamic require",
+        );
+      }, { prefix: "vf-config-staged-esm-helper-" });
+    });
+
+    it("preserves CommonJS config module paths while staging", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.cjs`;
+        const config = await loadConfigFromTempFile(
+          "module.exports = { configFilename: __filename, configDirname: __dirname };",
+          configPath,
+          (tempFile) => toFileUrl(tempFile).href,
+          rewriteBareVeryfrontConfigImports,
+          true,
+        ) as { configFilename: string; configDirname: string };
+
+        assertEquals(config.configFilename, configPath);
+        assertEquals(config.configDirname, projectDir);
+      }, { prefix: "vf-config-staged-cjs-paths-" });
+    });
+
+    it("preserves CommonJS module filename and path fields while staging", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.cjs`;
+        const config = await loadConfigFromTempFile(
+          "module.exports = { configFilename: module.filename, configPath: module.path };",
+          configPath,
+          (tempFile) => toFileUrl(tempFile).href,
+          rewriteBareVeryfrontConfigImports,
+          true,
+        ) as { configFilename: string; configPath: string };
+
+        assertEquals(config.configFilename, configPath);
+        assertEquals(config.configPath, projectDir);
+      }, { prefix: "vf-config-staged-cjs-module-paths-" });
+    });
+
+    it("preserves and applies CommonJS module search paths while staging", async () => {
+      await withTempDir(async (projectDir) => {
+        const customModules = `${projectDir}/custom_modules`;
+        const dependencyDir = `${customModules}/custom-config-dependency`;
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({ name: "custom-config-dependency", main: "index.cjs" }),
+        );
+        await writeTextFile(`${dependencyDir}/index.cjs`, 'module.exports = "custom";\n');
+
+        TestObjectDefineProperty(globalThis, "__veryfrontConfigModulePathName", {
+          configurable: true,
+          value: "custom-config-dependency",
+        });
+        try {
+          const config = await loadConfigFromTempFile(
+            `module.paths.unshift(${JSON.stringify(customModules)});\n` +
+              "module.exports = {\n" +
+              "  value: module.require(globalThis.__veryfrontConfigModulePathName),\n" +
+              "  paths: module.paths,\n" +
+              "};",
+            `${projectDir}/veryfront.config.cjs`,
+            (tempFile) => toFileUrl(tempFile).href,
+            rewriteBareVeryfrontConfigImports,
+            true,
+          ) as { value: string; paths: string[] };
+
+          assertEquals(config.value, "custom");
+          assertEquals(config.paths[0], customModules);
+        } finally {
+          TestReflectApply(TestReflectDeleteProperty, Reflect, [
+            globalThis,
+            "__veryfrontConfigModulePathName",
+          ]);
+        }
+      }, { prefix: "vf-config-staged-cjs-module-search-paths-" });
+    });
+
+    it("preserves CommonJS module.require while staging", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(`${projectDir}/package.json`, JSON.stringify({ type: "commonjs" }));
+        await writeTextFile(`${projectDir}/config-helper.cjs`, 'module.exports = "loaded";\n');
+
+        for (const configFile of ["veryfront.config.cjs", "veryfront.config.js"]) {
+          const config = await loadConfigFromTempFile(
+            'const helperName = "./config-helper.cjs";\n' +
+              "const load = module.require;\n" +
+              "module.exports = {\n" +
+              '  direct: module.require("./config-helper.cjs"),\n' +
+              "  detached: load(helperName),\n" +
+              "  dot: module.require(helperName),\n" +
+              '  bracket: module["require"](helperName),\n' +
+              "};",
+            `${projectDir}/${configFile}`,
+            (tempFile) => toFileUrl(tempFile).href,
+            rewriteBareVeryfrontConfigImports,
+            true,
+          ) as { direct: string; detached: string; dot: string; bracket: string };
+
+          assertEquals(config, {
+            direct: "loaded",
+            detached: "loaded",
+            dot: "loaded",
+            bracket: "loaded",
+          });
+        }
+      }, { prefix: "vf-config-staged-cjs-module-require-" });
+    });
+
+    it("preserves CommonJS package module paths for staged JavaScript configs", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({ type: "commonjs" }),
+        );
+        const configPath = `${projectDir}/veryfront.config.js`;
+        const config = await loadConfigFromTempFile(
+          "module.exports = { configFilename: __filename, configDirname: __dirname };",
+          configPath,
+          (tempFile) => toFileUrl(tempFile).href,
+          rewriteBareVeryfrontConfigImports,
+          true,
+        ) as { configFilename: string; configDirname: string };
+
+        assertEquals(config.configFilename, configPath);
+        assertEquals(config.configDirname, projectDir);
+      }, { prefix: "vf-config-staged-js-commonjs-paths-" });
+    });
+
+    it("preserves query and fragment identities in bundled config modules", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        const valuesPath = `${projectDir}/config-values.ts`;
+        await writeTextFile(valuesPath, "export const moduleUrl = import.meta.url;\n");
+
+        const result = await bundleProjectConfigSourceForImport(
+          'import { moduleUrl as preview } from "./config-values.ts?mode=preview";\n' +
+            'import { moduleUrl as production } from "./config-values.ts#production";\n' +
+            "export default { preview, production };",
+          configPath,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { preview: string; production: string };
+        };
+
+        const previewUrl = new URL(module.default.preview);
+        const productionUrl = new URL(module.default.production);
+        assertEquals(previewUrl.pathname.endsWith("/config-values.ts"), true);
+        assertEquals(previewUrl.search, "?mode=preview");
+        assertEquals(productionUrl.pathname.endsWith("/config-values.ts"), true);
+        assertEquals(productionUrl.hash, "#production");
+        assertEquals(module.default.preview === module.default.production, false);
+      }, { prefix: "vf-config-module-suffix-" });
+    });
+
+    it("ignores node_modules ancestors above the project root", async () => {
+      await withTempDir(async (workspaceDir) => {
+        const projectDir = `${workspaceDir}/node_modules/workspace-app`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        const valuesPath = `${projectDir}/config-values.ts`;
+        await mkdir(projectDir, { recursive: true });
+        await writeTextFile(valuesPath, 'export const title: string = "Workspace app";\n');
+
+        const result = await bundleProjectConfigSourceForImport(
+          'import { title } from "./config-values.ts"; export default { title };',
+          configPath,
+        );
+
+        assertEquals(result.includes(toFileUrl(valuesPath).href), false);
+        assertEquals(result.includes("Workspace app"), true);
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { title: string };
+        };
+        assertEquals(module.default.title, "Workspace app");
+      }, { prefix: "vf-config-node-modules-ancestor-" });
+    });
+
+    it("bundles package import aliases that resolve to local TypeScript", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        const valuesPath = `${projectDir}/config-values.ts`;
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({ type: "module", imports: { "#config-values": "./config-values.ts" } }),
+        );
+        await writeTextFile(valuesPath, 'export const title: string = "Aliased config";\n');
+
+        const result = await bundleProjectConfigSourceForImport(
+          'import { title } from "#config-values";\nexport default { title };',
+          configPath,
+        );
+
+        assertEquals(result.includes("#config-values"), false);
+        assertEquals(result.includes(toFileUrl(valuesPath).href), false);
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { title: string };
+        };
+        assertEquals(module.default.title, "Aliased config");
+      }, { prefix: "vf-config-import-alias-" });
+    });
+
+    it("allows package import aliases to hoisted dependencies", async () => {
+      await withTempDir(async (workspaceDir) => {
+        const projectDir = `${workspaceDir}/packages/app`;
+        const dependencyDir = `${workspaceDir}/node_modules/hoisted-config-helper`;
+        await mkdir(projectDir, { recursive: true });
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            type: "module",
+            imports: { "#config-helper": "hoisted-config-helper" },
+          }),
+        );
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({ name: "hoisted-config-helper", type: "module", exports: "./index.js" }),
+        );
+        await writeTextFile(`${dependencyDir}/index.js`, 'export default "hoisted";\n');
+
+        const result = await bundleProjectConfigSourceForImport(
+          'import value from "#config-helper"; export default { value };',
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { value: string };
+        };
+
+        assertEquals(module.default.value, "hoisted");
+        assertStringIncludes(result, "/node_modules/hoisted-config-helper/index.js");
+      }, { prefix: "vf-config-hoisted-import-alias-" });
+    });
+
+    it("rejects hoisted package import aliases that escape their package", async () => {
+      await withTempDir(async (workspaceDir) => {
+        const projectDir = `${workspaceDir}/packages/app`;
+        const dependencyDir = `${workspaceDir}/node_modules/hoisted-config-helper`;
+        const outsidePath = `${workspaceDir}/outside.js`;
+        await mkdir(projectDir, { recursive: true });
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            type: "module",
+            imports: { "#config-helper": "hoisted-config-helper" },
+          }),
+        );
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({ name: "hoisted-config-helper", type: "module", exports: "./index.js" }),
+        );
+        await writeTextFile(outsidePath, 'export default "outside";\n');
+        await symlink(outsidePath, `${dependencyDir}/index.js`);
+
+        await assertRejects(
+          () =>
+            bundleProjectConfigSourceForImport(
+              'import value from "#config-helper"; export default { value };',
+              `${projectDir}/veryfront.config.ts`,
+            ),
+          Error,
+          "escaped its package",
+        );
+      }, { prefix: "vf-config-hoisted-import-alias-escape-" });
+    });
+
+    it("accepts a BOM-prefixed package manifest while staging", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          `\uFEFF${
+            JSON.stringify({
+              type: "module",
+              imports: { "#config-values": "./config-values.ts" },
+            })
+          }`,
+        );
+        await writeTextFile(
+          `${projectDir}/config-values.ts`,
+          'export const title = "BOM package manifest";\n',
+        );
+
+        const result = await bundleProjectConfigSourceForImport(
+          'import { title } from "#config-values"; export default { title };',
+          configPath,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { title: string };
+        };
+
+        assertEquals(module.default.title, "BOM package manifest");
+      }, { prefix: "vf-config-package-manifest-bom-" });
+    });
+
+    it("bundles project-local TypeScript imports addressed by file URL", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        const valuesPath = `${projectDir}/file-url-values.ts`;
+        await writeTextFile(valuesPath, 'export const title: string = "File URL config";\n');
+
+        const result = await bundleProjectConfigSourceForImport(
+          `import { title } from ${JSON.stringify(toFileUrl(valuesPath).href)};\n` +
+            "export default { title };",
+          configPath,
+        );
+
+        assertEquals(result.includes(toFileUrl(valuesPath).href), false);
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { title: string };
+        };
+        assertEquals(module.default.title, "File URL config");
+      }, { prefix: "vf-config-file-url-" });
+    });
+
+    it("preserves query and fragment identities on project-local file URL imports", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        const valuesPath = `${projectDir}/file-url-suffix-values.ts`;
+        const valuesUrl = toFileUrl(valuesPath).href;
+        await writeTextFile(
+          valuesPath,
+          'export const moduleUrl = import.meta.url;\nexport const title: string = "File URL suffix";\n',
+        );
+
+        const result = await bundleProjectConfigSourceForImport(
+          `import { moduleUrl as preview, title } from ${
+            JSON.stringify(`${valuesUrl}?mode=preview`)
+          };\n` +
+            `import { moduleUrl as production } from ${
+              JSON.stringify(`${valuesUrl}#production`)
+            };\n` +
+            "export default { preview, production, title };",
+          configPath,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { preview: string; production: string; title: string };
+        };
+
+        assertEquals(new URL(module.default.preview).search, "?mode=preview");
+        assertEquals(new URL(module.default.production).hash, "#production");
+        assertEquals(module.default.preview === module.default.production, false);
+        assertEquals(module.default.title, "File URL suffix");
+      }, { prefix: "vf-config-file-url-suffix-" });
+    });
+
+    it("rejects absolute config imports outside the project", async () => {
+      await withTempDir(async (projectDir) => {
+        await withTempDir(async (outsideDir) => {
+          const outsidePath = `${outsideDir}/outside.ts`;
+          await writeTextFile(outsidePath, 'export const secret = "outside";\n');
+
+          await assertRejects(
+            () =>
+              bundleProjectConfigSourceForImport(
+                `import { secret } from ${JSON.stringify(outsidePath)}; export default { secret };`,
+                `${projectDir}/veryfront.config.ts`,
+              ),
+            Error,
+            "outside the project directory",
+          );
+        }, { prefix: "vf-config-absolute-outside-" });
+      }, { prefix: "vf-config-absolute-project-" });
+    });
+
+    it("rejects relative config imports that escape through a symlink", async () => {
+      await withTempDir(async (projectDir) => {
+        await withTempDir(async (outsideDir) => {
+          const outsidePath = `${outsideDir}/outside.ts`;
+          const linkedPath = `${projectDir}/linked.ts`;
+          await writeTextFile(outsidePath, 'export const secret = "outside";\n');
+          await symlink(outsidePath, linkedPath);
+
+          await assertRejects(
+            () =>
+              bundleProjectConfigSourceForImport(
+                'import { secret } from "./linked.ts"; export default { secret };',
+                `${projectDir}/veryfront.config.ts`,
+              ),
+            Error,
+            "outside the project directory",
+          );
+        }, { prefix: "vf-config-symlink-outside-" });
+      }, { prefix: "vf-config-symlink-project-" });
+    });
+
+    it("resolves staged config imports from the canonical symlink target", async () => {
+      await withTempDir(async (projectDir) => {
+        const configDir = `${projectDir}/configs`;
+        const source = 'import { value } from "./helper.js";\n' +
+          "export default { value, url: import.meta.url };\n";
+        await mkdir(configDir, { recursive: true });
+        await writeTextFile(`${configDir}/base.js`, source);
+        await writeTextFile(`${configDir}/helper.js`, 'export const value = "from-target";\n');
+        await symlink(`${configDir}/base.js`, `${projectDir}/veryfront.config.js`);
+
+        const result = await bundleProjectConfigSourceForImport(
+          source,
+          `${projectDir}/veryfront.config.js`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { value: string; url: string };
+        };
+
+        assertEquals(module.default.value, "from-target");
+        assertEquals(
+          normalizeMacOsVarAlias(module.default.url),
+          normalizeMacOsVarAlias(toFileUrl(`${configDir}/base.js`).href),
+        );
+      }, { prefix: "vf-config-canonical-entry-symlink-" });
+    });
+
+    it("rejects package import aliases that escape through a symlink", async () => {
+      await withTempDir(async (projectDir) => {
+        await withTempDir(async (outsideDir) => {
+          const outsidePath = `${outsideDir}/outside.ts`;
+          const linkedPath = `${projectDir}/linked.ts`;
+          await writeTextFile(outsidePath, 'export const secret = "outside";\n');
+          await symlink(outsidePath, linkedPath);
+          await writeTextFile(
+            `${projectDir}/package.json`,
+            JSON.stringify({ type: "module", imports: { "#outside": "./linked.ts" } }),
+          );
+
+          await assertRejects(
+            () =>
+              bundleProjectConfigSourceForImport(
+                'import { secret } from "#outside"; export default { secret };',
+                `${projectDir}/veryfront.config.ts`,
+              ),
+            Error,
+            "outside the project directory",
+          );
+        }, { prefix: "vf-config-alias-outside-" });
+      }, { prefix: "vf-config-alias-project-" });
+    });
+
+    it("rejects file URL config imports that escape through a symlink", async () => {
+      await withTempDir(async (projectDir) => {
+        await withTempDir(async (outsideDir) => {
+          const outsidePath = `${outsideDir}/outside.ts`;
+          const linkedPath = `${projectDir}/linked.ts`;
+          await writeTextFile(outsidePath, 'export const secret = "outside";\n');
+          await symlink(outsidePath, linkedPath);
+
+          await assertRejects(
+            () =>
+              bundleProjectConfigSourceForImport(
+                `import { secret } from ${JSON.stringify(toFileUrl(linkedPath).href)}; ` +
+                  "export default { secret };",
+                `${projectDir}/veryfront.config.ts`,
+              ),
+            Error,
+            "outside the project directory",
+          );
+        }, { prefix: "vf-config-file-url-outside-" });
+      }, { prefix: "vf-config-file-url-project-" });
+    });
+
+    it("preserves nested package resolution and import.meta.resolve semantics", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        const helperDir = `${projectDir}/packages/config-helper`;
+        const dependencyDir = `${helperDir}/node_modules/nested-config-dependency`;
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({
+            name: "nested-config-dependency",
+            type: "module",
+            exports: { import: "./import.js" },
+          }),
+        );
+        await writeTextFile(`${dependencyDir}/import.js`, 'export default "nested";\n');
+        await writeTextFile(
+          `${helperDir}/values.ts`,
+          'import value from "nested-config-dependency";\n' +
+            'export const resolved = import.meta.resolve("nested-config-dependency");\n' +
+            "export { value };\n",
+        );
+
+        const result = await bundleProjectConfigSourceForImport(
+          'import { resolved, value } from "./packages/config-helper/values.ts";\n' +
+            "export default { resolved, value };",
+          configPath,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { resolved: string; value: string };
+        };
+
+        assertEquals(module.default.value, "nested");
+        assertStringIncludes(
+          module.default.resolved,
+          "/packages/config-helper/node_modules/nested-config-dependency/import.js",
+        );
+        assertStringIncludes(
+          result,
+          "/packages/config-helper/node_modules/nested-config-dependency/import.js",
+          "installed packages must remain external instead of being folded into the config bundle",
+        );
+      }, { prefix: "vf-config-nested-package-" });
+    });
+
+    it("defers import.meta.resolve failures until guarded config code executes", async () => {
+      await withTempDir(async (projectDir) => {
+        const result = await bundleProjectConfigSourceForImport(
+          'let resolved = "skipped";\n' +
+            'if (false) resolved = import.meta.resolve("missing-optional-config-package");\n' +
+            "let failure;\n" +
+            "let zeroArgumentFailure;\n" +
+            'try { import.meta.resolve("another-missing-config-package"); } catch (error) {\n' +
+            '  resolved += ":caught";\n' +
+            "  failure = { name: error.name, message: error.message, code: error.code };\n" +
+            "}\n" +
+            "try { import.meta.resolve(); } catch (error) {\n" +
+            "  zeroArgumentFailure = { name: error.name, message: error.message, code: error.code };\n" +
+            "}\n" +
+            "export default { resolved, failure, zeroArgumentFailure };",
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: {
+            resolved: string;
+            failure: { name: string; message: string; code: string };
+            zeroArgumentFailure: { name: string; message: string; code: string };
+          };
+        };
+
+        assertEquals(module.default.resolved, "skipped:caught");
+        assertEquals(module.default.failure.name, "Error");
+        assertStringIncludes(module.default.failure.message, "another-missing-config-package");
+        assertEquals(module.default.failure.code, "ERR_MODULE_NOT_FOUND");
+        assertEquals(module.default.zeroArgumentFailure.name, "Error");
+        assertStringIncludes(module.default.zeroArgumentFailure.message, "undefined");
+        assertEquals(module.default.zeroArgumentFailure.code, "ERR_MODULE_NOT_FOUND");
+      }, { prefix: "vf-config-deferred-resolve-" });
+    });
+
+    it("serializes deferred import.meta.resolve failures without project-controlled sets", async () => {
+      const originalHas = Set.prototype.has;
+      const originalAdd = Set.prototype.add;
+      try {
+        Set.prototype.has = function () {
+          throw new Error("poisoned has");
+        };
+        Set.prototype.add = function () {
+          throw new Error("poisoned add");
+        };
+
+        const cause = new TypeError("set-poisoned-inner-package");
+        const error = new Error("set-poisoned-missing-package", { cause });
+        TestObjectDefineProperty(error, "code", {
+          configurable: true,
+          value: "ERR_MODULE_NOT_FOUND",
+        });
+
+        const serialized = __serializeConfigResolveErrorForTests(error);
+
+        assertEquals(serialized.constructorName, "Error");
+        assertStringIncludes(serialized.message, "set-poisoned-missing-package");
+        assertEquals(serialized.code, "ERR_MODULE_NOT_FOUND");
+        assertEquals(
+          typeof serialized.cause === "object" && serialized.cause !== null
+            ? serialized.cause.constructorName
+            : undefined,
+          "TypeError",
+        );
+      } finally {
+        Set.prototype.has = originalHas;
+        Set.prototype.add = originalAdd;
+      }
+    });
+
+    it("uses captured randomness when lazily creating the config resolver bridge", async () => {
+      await withTempDir(async (projectDir) => {
+        const cryptoPrototype = TestObjectGetPrototypeOf(crypto);
+        const restore = replacePropertyForTest(cryptoPrototype, "randomUUID", {
+          value: () => {
+            throw new Error("ambient crypto.randomUUID must not initialize the config bridge");
+          },
+        });
+        try {
+          const result = await bundleProjectConfigSourceForImport(
+            'const specifier = "./asset.txt";\n' +
+              "export default { resolved: import.meta.resolve(specifier) };",
+            `${projectDir}/veryfront.config.ts`,
+          );
+          const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+            default: { resolved: string };
+          };
+
+          assertEquals(module.default.resolved, toFileUrl(`${projectDir}/asset.txt`).href);
+        } finally {
+          restore();
+        }
+      }, { prefix: "vf-config-resolver-randomness-" });
+    });
+
+    it("preserves computed import.meta.resolve calls in bundled configs", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        const assetPath = `${projectDir}/asset.txt`;
+        await writeTextFile(assetPath, "asset\n");
+
+        const result = await bundleProjectConfigSourceForImport(
+          'const specifier = "./asset.txt";\n' +
+            'const moduleRelative = new URL("./asset.txt", import.meta.url).href;\n' +
+            "if (false) import.meta.resolve(globalThis.MISSING_CONFIG_SPECIFIER);\n" +
+            "export default {\n" +
+            "  resolved: import.meta.resolve(specifier),\n" +
+            "  nested: import.meta.resolve(moduleRelative),\n" +
+            "};",
+          configPath,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { resolved: string; nested: string };
+        };
+
+        assertEquals(module.default.resolved, toFileUrl(assetPath).href);
+        assertEquals(module.default.nested, toFileUrl(assetPath).href);
+      }, { prefix: "vf-config-computed-resolve-" });
+    });
+
+    it("preserves detached import.meta.resolve functions in bundled configs", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        const assetPath = `${projectDir}/asset.txt`;
+        await writeTextFile(assetPath, "asset\n");
+
+        const result = await bundleProjectConfigSourceForImport(
+          "const resolve = import.meta.resolve;\n" +
+            'export default { resolved: resolve("./asset.txt") };',
+          configPath,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { resolved: string };
+        };
+
+        assertEquals(module.default.resolved, toFileUrl(assetPath).href);
+      }, { prefix: "vf-config-detached-resolve-" });
+    });
+
+    it("binds aliased and destructured import.meta objects to their source module", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        const assetPath = `${projectDir}/asset.txt`;
+        await writeTextFile(assetPath, "asset\n");
+
+        const result = await bundleProjectConfigSourceForImport(
+          "const metadata = import.meta;\n" +
+            "const { url, dirname, filename, resolve } = metadata;\n" +
+            'export default { url, dirname, filename, resolved: resolve("./asset.txt") };',
+          configPath,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { dirname: string; filename: string; resolved: string; url: string };
+        };
+
+        assertEquals(module.default.url, toFileUrl(configPath).href);
+        assertEquals(module.default.dirname, projectDir);
+        assertEquals(module.default.filename, configPath);
+        assertEquals(module.default.resolved, toFileUrl(assetPath).href);
+      }, { prefix: "vf-config-whole-import-meta-" });
+    });
+
+    it("resolves exact dot segments as module-relative URLs", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/nested/veryfront.config.ts`;
+        await mkdir(dirname(configPath), { recursive: true });
+        const result = await bundleProjectConfigSourceForImport(
+          'export default { current: import.meta.resolve("."), parent: import.meta.resolve("..") };',
+          configPath,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { current: string; parent: string };
+        };
+
+        assertEquals(module.default.current, new URL(".", toFileUrl(configPath)).href);
+        assertEquals(module.default.parent, new URL("..", toFileUrl(configPath)).href);
+      }, { prefix: "vf-config-dot-resolve-" });
+    });
+
+    it("preserves suffixes on absolute import.meta.resolve paths", async () => {
+      await withTempDir(async (projectDir) => {
+        const assetPath = `${projectDir}/asset.js`;
+        const specifier = `${assetPath}?mode=preview#fragment`;
+        const escapedSpecifier = `${projectDir}/escaped%20asset.js`;
+        const result = await bundleProjectConfigSourceForImport(
+          "export default {\n" +
+            `  resolved: import.meta.resolve(${JSON.stringify(specifier)}),\n` +
+            `  escaped: import.meta.resolve(${JSON.stringify(escapedSpecifier)}),\n` +
+            "};",
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { escaped: string; resolved: string };
+        };
+
+        assertEquals(
+          module.default.resolved,
+          `${toFileUrl(assetPath).href}?mode=preview#fragment`,
+        );
+        assertEquals(
+          module.default.escaped,
+          `file://${escapedSpecifier}`,
+        );
+      }, { prefix: "vf-config-absolute-resolve-suffix-" });
+    });
+
+    it("preserves package suffixes in literal import.meta.resolve calls", async () => {
+      await withTempDir(async (projectDir) => {
+        const dependencyDir = `${projectDir}/node_modules/config-resolve-suffix`;
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({
+            name: "config-resolve-suffix",
+            type: "module",
+            exports: { "./*": "./*.js" },
+          }),
+        );
+        await writeTextFile(`${dependencyDir}/value.js`, "export default 'value';\n");
+
+        const result = await bundleProjectConfigSourceForImport(
+          'export default { resolved: import.meta.resolve("config-resolve-suffix/value?raw#part") };',
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { resolved: string };
+        };
+
+        assertEquals(
+          normalizeMacOsVarAlias(module.default.resolved),
+          `${toFileUrl(`${dependencyDir}/value`).href}?raw#part.js`,
+        );
+      }, { prefix: "vf-config-package-resolve-suffix-" });
+    });
+
+    it("resolves missing package export targets prospectively", async () => {
+      await withTempDir(async (projectDir) => {
+        const rootDependencyDir = `${projectDir}/node_modules/config-missing-root-export`;
+        const subpathDependencyDir = `${projectDir}/node_modules/config-missing-subpath-export`;
+        await mkdir(rootDependencyDir, { recursive: true });
+        await mkdir(subpathDependencyDir, { recursive: true });
+        await writeTextFile(
+          `${rootDependencyDir}/package.json`,
+          JSON.stringify({
+            name: "config-missing-root-export",
+            type: "module",
+            exports: "./missing.js",
+          }),
+        );
+        await writeTextFile(
+          `${subpathDependencyDir}/package.json`,
+          JSON.stringify({
+            name: "config-missing-subpath-export",
+            type: "module",
+            exports: { "./feature": "./missing-feature.js" },
+          }),
+        );
+
+        const result = await bundleProjectConfigSourceForImport(
+          "export default {\n" +
+            '  root: import.meta.resolve("config-missing-root-export"),\n' +
+            '  subpath: import.meta.resolve("config-missing-subpath-export/feature"),\n' +
+            "};",
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { root: string; subpath: string };
+        };
+
+        assertEquals(
+          normalizeMacOsVarAlias(module.default.root),
+          toFileUrl(`${rootDependencyDir}/missing.js`).href,
+        );
+        assertEquals(
+          normalizeMacOsVarAlias(module.default.subpath),
+          toFileUrl(`${subpathDependencyDir}/missing-feature.js`).href,
+        );
+      }, { prefix: "vf-config-package-missing-export-" });
+    });
+
+    it("fails closed for computed package import aliases in staged configs", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            type: "module",
+            imports: {
+              "#computed-config-value": {
+                require: "./require.cjs",
+                import: "./import.js",
+              },
+            },
+          }),
+        );
+        await writeTextFile(`${projectDir}/require.cjs`, 'module.exports = "require";\n');
+        await writeTextFile(`${projectDir}/import.js`, 'export default "import";\n');
+
+        const result = await bundleProjectConfigSourceForImport(
+          'const specifier = "#computed-config-value";\n' +
+            "export default { resolved: import.meta.resolve(specifier) };",
+          `${projectDir}/veryfront.config.ts`,
+        );
+
+        await assertRejects(
+          () => import(`data:application/javascript;base64,${btoa(result)}`),
+          TypeError,
+          "Computed package specifiers in import.meta.resolve() are unavailable",
+        );
+      }, { prefix: "vf-config-computed-import-alias-" });
+    });
+
+    it("fails closed for computed bare package import.meta.resolve calls", async () => {
+      await withTempDir(async (projectDir) => {
+        const dependencyDir = `${projectDir}/node_modules/computed-config-dependency`;
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({
+            name: "computed-config-dependency",
+            type: "module",
+            exports: { import: "./import.js" },
+          }),
+        );
+        await writeTextFile(`${dependencyDir}/import.js`, 'export default "import";\n');
+
+        const result = await bundleProjectConfigSourceForImport(
+          'const packageName = "computed-config-dependency";\n' +
+            "export default { resolved: import.meta.resolve(packageName) };",
+          `${projectDir}/veryfront.config.ts`,
+        );
+
+        await assertRejects(
+          () => import(`data:application/javascript;base64,${btoa(result)}`),
+          TypeError,
+          "Computed package specifiers in import.meta.resolve() are unavailable",
+        );
+      }, { prefix: "vf-config-computed-resolve-conditions-" });
+    });
+
+    it("matches Node built-in package import target semantics", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            type: "module",
+            imports: {
+              "#filesystem": "fs",
+              "#invalid-filesystem": "node:fs",
+            },
+          }),
+        );
+
+        const result = await bundleProjectConfigSourceForImport(
+          'const resolved = import.meta.resolve("#filesystem");\n' +
+            "let failureCode = 'not-thrown';\n" +
+            'try { import.meta.resolve("#invalid-filesystem"); }\n' +
+            "catch (error) { failureCode = error.code; }\n" +
+            "export default { resolved, failureCode };",
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { resolved: string; failureCode: string };
+        };
+
+        assertEquals(module.default.resolved, "node:fs");
+        assertEquals(module.default.failureCode, "ERR_INVALID_PACKAGE_TARGET");
+      }, { prefix: "vf-config-package-import-builtin-" });
+    });
+
+    it("activates module-sync on Node releases that support synchronous ESM", () => {
+      assertEquals(
+        __getNodeConfigPackageConditionsForTests([], undefined, "import", true),
+        ["node", "import", "module-sync", "node-addons"],
+      );
+      assertEquals(
+        __getNodeConfigBundleConditionsForTests([], undefined, true),
+        ["node", "module-sync", "node-addons"],
+      );
+      assertEquals(
+        __getNodeConfigPackageConditionsForTests([], undefined, "import", false),
+        ["node", "import", "node-addons"],
+      );
+    });
+
+    it("rejects invalid bare package import targets before redirecting", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            type: "module",
+            imports: {
+              "#self": ".",
+            },
+          }),
+        );
+
+        const result = await bundleProjectConfigSourceForImport(
+          "let failureCode = 'not-thrown';\n" +
+            'try { import.meta.resolve("#self"); } catch (error) { failureCode = error.code; }\n' +
+            "export default { failureCode };",
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { failureCode: string };
+        };
+
+        assertEquals(module.default.failureCode, "ERR_INVALID_MODULE_SPECIFIER");
+      }, { prefix: "vf-config-package-import-invalid-target-" });
+    });
+
+    it("rejects invalid package import names before consulting the imports map", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            type: "module",
+            imports: {
+              "#": "./root.js",
+              "#probe/": "./probe.js",
+            },
+          }),
+        );
+
+        const result = await bundleProjectConfigSourceForImport(
+          "const failures = {};\n" +
+            'try { import.meta.resolve("#"); } catch (error) { failures.root = error.code; }\n' +
+            'try { import.meta.resolve("#probe/"); } ' +
+            "catch (error) { failures.trailing = error.code; }\n" +
+            "export default failures;",
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: Record<string, string>;
+        };
+
+        assertEquals(module.default, {
+          root: "ERR_INVALID_MODULE_SPECIFIER",
+          trailing: "ERR_INVALID_MODULE_SPECIFIER",
+        });
+      }, { prefix: "vf-config-package-import-invalid-name-" });
+    });
+
+    it("resolves bare package import targets from their defining package scope", async () => {
+      await withTempDir(async (projectDir) => {
+        const helperDir = `${projectDir}/packages/helper`;
+        const rootDependencyDir = `${projectDir}/node_modules/scoped-config-dependency`;
+        const nestedDependencyDir = `${helperDir}/node_modules/scoped-config-dependency`;
+        await mkdir(rootDependencyDir, { recursive: true });
+        await mkdir(nestedDependencyDir, { recursive: true });
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            type: "module",
+            imports: { "#dependency": "scoped-config-dependency" },
+          }),
+        );
+        for (
+          const [directory, value] of [
+            [rootDependencyDir, "root"],
+            [nestedDependencyDir, "nested"],
+          ] as const
+        ) {
+          await writeTextFile(
+            `${directory}/package.json`,
+            JSON.stringify({
+              name: "scoped-config-dependency",
+              type: "module",
+              exports: "./index.js",
+            }),
+          );
+          await writeTextFile(
+            `${directory}/index.js`,
+            `export default ${JSON.stringify(value)};\n`,
+          );
+        }
+        await writeTextFile(
+          `${helperDir}/values.ts`,
+          'import value from "#dependency";\n' +
+            'export const resolved = import.meta.resolve("#dependency");\n' +
+            "export { value };\n",
+        );
+
+        const result = await bundleProjectConfigSourceForImport(
+          'import { resolved, value } from "./packages/helper/values.ts";\n' +
+            "export default { resolved, value };",
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { resolved: string; value: string };
+        };
+
+        assertEquals(module.default.value, "root");
+        assertStringIncludes(
+          module.default.resolved,
+          "/node_modules/scoped-config-dependency/index.js",
+        );
+        assertEquals(module.default.resolved.includes("/packages/helper/node_modules/"), false);
+      }, { prefix: "vf-config-package-import-defining-scope-" });
+    });
+
+    it("matches Node's default node-addons package condition", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            type: "module",
+            imports: {
+              "#native-condition": {
+                "node-addons": "./addon.js",
+                default: "./fallback.js",
+              },
+            },
+          }),
+        );
+        await writeTextFile(`${projectDir}/addon.js`, "export default 'addon';\n");
+        await writeTextFile(`${projectDir}/fallback.js`, "export default 'fallback';\n");
+
+        const result = await bundleProjectConfigSourceForImport(
+          'export default { resolved: import.meta.resolve("#native-condition") };',
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { resolved: string };
+        };
+
+        assertStringIncludes(module.default.resolved, "/addon.js");
+      }, { prefix: "vf-config-package-import-node-addons-" });
+    });
+
+    it("matches Node package import pattern specificity", async () => {
+      await withTempDir(async (projectDir) => {
+        await mkdir(`${projectDir}/broad`, { recursive: true });
+        await mkdir(`${projectDir}/specific`, { recursive: true });
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            type: "module",
+            imports: {
+              "#probe/*": "./broad/*.js",
+              "#probe/*.js": "./specific/*.js",
+            },
+          }),
+        );
+        await writeTextFile(`${projectDir}/broad/value.js.js`, "export default 'broad';\n");
+        await writeTextFile(`${projectDir}/specific/value.js`, "export default 'specific';\n");
+
+        const result = await bundleProjectConfigSourceForImport(
+          'export default { resolved: import.meta.resolve("#probe/value.js") };',
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { resolved: string };
+        };
+
+        assertStringIncludes(module.default.resolved, "/specific/value.js");
+      }, { prefix: "vf-config-package-import-pattern-specificity-" });
+    });
+
+    it("matches Node package import pattern boundaries", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            type: "module",
+            imports: {
+              "#empty*": "./empty.js",
+              "#multi*": "./valid.js",
+              "#multi**": "./invalid.js",
+            },
+          }),
+        );
+        await writeTextFile(`${projectDir}/empty.js`, "export default 'empty';\n");
+        await writeTextFile(`${projectDir}/valid.js`, "export default 'valid';\n");
+        await writeTextFile(`${projectDir}/invalid.js`, "export default 'invalid';\n");
+
+        const result = await bundleProjectConfigSourceForImport(
+          "let emptyFailureCode = 'not-thrown';\n" +
+            'try { import.meta.resolve("#empty"); }\n' +
+            "catch (error) { emptyFailureCode = error.code; }\n" +
+            "export default {\n" +
+            "  emptyFailureCode,\n" +
+            '  multi: import.meta.resolve("#multivalue*"),\n' +
+            "};",
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { emptyFailureCode: string; multi: string };
+        };
+
+        assertEquals(module.default.emptyFailureCode, "ERR_PACKAGE_IMPORT_NOT_DEFINED");
+        assertStringIncludes(module.default.multi, "/valid.js");
+      }, { prefix: "vf-config-package-import-pattern-boundaries-" });
+    });
+
+    it("uses Node's node-addons condition for package imports", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            type: "module",
+            imports: {
+              "#conditional": {
+                "node-addons": "./addons.js",
+                default: "./default.js",
+              },
+            },
+          }),
+        );
+        await writeTextFile(`${projectDir}/addons.js`, "export default 'addons';\n");
+        await writeTextFile(`${projectDir}/default.js`, "export default 'default';\n");
+
+        const result = await bundleProjectConfigSourceForImport(
+          'export default { resolved: import.meta.resolve("#conditional") };',
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { resolved: string };
+        };
+
+        assertStringIncludes(module.default.resolved, "/addons.js");
+      }, { prefix: "vf-config-package-import-node-addons-" });
+    });
+
+    it("uses active user conditions for package imports", () => {
+      const target = {
+        development: "./development.js",
+        default: "./default.js",
+      };
+
+      assertEquals(
+        __resolveNodeConfigPackageTargetForTests(target, ["node", "import", "development"]),
+        "./development.js",
+      );
+      assertEquals(
+        __resolveNodeConfigPackageTargetForTests(target, ["node", "import"]),
+        "./default.js",
+      );
+    });
+
+    it("rejects numeric package condition keys", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            type: "module",
+            imports: {
+              "#numeric-condition": {
+                "1": "./numeric.js",
+                default: "./fallback.js",
+              },
+            },
+          }),
+        );
+        await writeTextFile(`${projectDir}/numeric.js`, "export default 'numeric';\n");
+        await writeTextFile(`${projectDir}/fallback.js`, "export default 'fallback';\n");
+
+        const result = await bundleProjectConfigSourceForImport(
+          "let failureCode = 'not-thrown';\n" +
+            'try { import.meta.resolve("#numeric-condition"); }\n' +
+            "catch (error) { failureCode = error.code; }\n" +
+            "export default { failureCode };",
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { failureCode: string };
+        };
+
+        assertEquals(module.default.failureCode, "ERR_INVALID_PACKAGE_CONFIG");
+      }, { prefix: "vf-config-numeric-condition-" });
+
+      assertEquals(
+        __resolveNodeConfigPackageTargetForTests(
+          { "01": "./leading-zero.js", default: "./fallback.js" },
+          ["node", "import", "01"],
+        ),
+        "./leading-zero.js",
+      );
+    });
+
+    it("resolves missing package import targets without requiring the file", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({ type: "module", imports: { "#missing": "./missing.js" } }),
+        );
+
+        const result = await bundleProjectConfigSourceForImport(
+          'export default { resolved: import.meta.resolve("#missing") };',
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { resolved: string };
+        };
+
+        assertEquals(module.default.resolved, toFileUrl(`${projectDir}/missing.js`).href);
+      }, { prefix: "vf-config-package-import-missing-target-" });
+    });
+
+    it("rejects a missing package import target behind a symlink", async () => {
+      await withTempDir(async (projectDir) => {
+        await withTempDir(async (outsideDir) => {
+          await writeTextFile(
+            `${projectDir}/package.json`,
+            JSON.stringify({ type: "module", imports: { "#outside": "./linked.js" } }),
+          );
+          await symlink(`${outsideDir}/missing.js`, `${projectDir}/linked.js`);
+
+          const result = await bundleProjectConfigSourceForImport(
+            "let failureCode = 'not-thrown';\n" +
+              'try { import.meta.resolve("#outside"); }\n' +
+              "catch (error) { failureCode = error.code; }\n" +
+              "export default { failureCode };",
+            `${projectDir}/veryfront.config.ts`,
+          );
+          const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+            default: { failureCode: string };
+          };
+
+          assertEquals(module.default.failureCode, "ENOENT");
+        }, { prefix: "vf-config-package-import-missing-outside-" });
+      }, { prefix: "vf-config-package-import-broken-symlink-" });
+    });
+
+    it("rejects invalid package import target path segments", async () => {
+      await withTempDir(async (projectDir) => {
+        await mkdir(`${projectDir}/node_modules`, { recursive: true });
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            type: "module",
+            imports: { "#invalid-segment": "./node_modules/inner.js" },
+          }),
+        );
+        await writeTextFile(`${projectDir}/node_modules/inner.js`, "export default 'inner';\n");
+
+        const result = await bundleProjectConfigSourceForImport(
+          "let failureCode = 'not-thrown';\n" +
+            'try { import.meta.resolve("#invalid-segment"); }\n' +
+            "catch (error) { failureCode = error.code; }\n" +
+            "export default { failureCode };",
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { failureCode: string };
+        };
+
+        assertEquals(module.default.failureCode, "ERR_INVALID_PACKAGE_TARGET");
+      }, { prefix: "vf-config-package-import-invalid-segment-" });
+    });
+
+    it("rejects percent-encoded separators in package import targets", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            type: "module",
+            imports: {
+              "#forward": "./features/%2fsecret.js",
+              "#backward": "./features/%5Csecret.js",
+            },
+          }),
+        );
+
+        const result = await bundleProjectConfigSourceForImport(
+          "const failures = {};\n" +
+            'try { import.meta.resolve("#forward"); } ' +
+            "catch (error) { failures.forward = error.code; }\n" +
+            'try { import.meta.resolve("#backward"); } ' +
+            "catch (error) { failures.backward = error.code; }\n" +
+            "export default failures;",
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: Record<string, string>;
+        };
+
+        assertEquals(module.default, {
+          forward: "ERR_INVALID_PACKAGE_TARGET",
+          backward: "ERR_INVALID_PACKAGE_TARGET",
+        });
+      }, { prefix: "vf-config-package-import-encoded-separator-" });
+    });
+
+    it("rejects invalid package import segments introduced by pattern substitution", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            type: "module",
+            imports: { "#feature/*": "./features/*" },
+          }),
+        );
+
+        const result = await bundleProjectConfigSourceForImport(
+          "const failures = {};\n" +
+            'try { import.meta.resolve("#feature/../secret.js"); }\n' +
+            "catch (error) { failures.parent = error.code; }\n" +
+            'try { import.meta.resolve("#feature/%2e%2e/secret.js"); }\n' +
+            "catch (error) { failures.encoded = error.code; }\n" +
+            'try { import.meta.resolve("#feature/node_modules/secret.js"); }\n' +
+            "catch (error) { failures.nodeModules = error.code; }\n" +
+            "export default failures;",
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: Record<string, string>;
+        };
+
+        assertEquals(module.default, {
+          parent: "ERR_INVALID_PACKAGE_TARGET",
+          encoded: "ERR_INVALID_PACKAGE_TARGET",
+          nodeModules: "ERR_INVALID_PACKAGE_TARGET",
+        });
+      }, { prefix: "vf-config-package-import-pattern-invalid-segment-" });
+    });
+
+    it("continues through invalid package import array targets", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({
+            type: "module",
+            imports: {
+              "#invalid-fallback": ["../unsupported.js", "./fallback.js"],
+              "#null-fallback": [null, "./fallback.js"],
+              "#invalid": ["../unsupported.js", "node:fs"],
+            },
+          }),
+        );
+        await writeTextFile(`${projectDir}/fallback.js`, "export default 'fallback';\n");
+
+        const result = await bundleProjectConfigSourceForImport(
+          "let failureCode = 'not-thrown';\n" +
+            'try { import.meta.resolve("#invalid"); }\n' +
+            "catch (error) { failureCode = error.code; }\n" +
+            "export default {\n" +
+            '  invalid: import.meta.resolve("#invalid-fallback"),\n' +
+            '  nullTarget: import.meta.resolve("#null-fallback"),\n' +
+            "  failureCode,\n" +
+            "};",
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { invalid: string; nullTarget: string; failureCode: string };
+        };
+
+        assertStringIncludes(module.default.invalid, "/fallback.js");
+        assertStringIncludes(module.default.nullTarget, "/fallback.js");
+        assertEquals(module.default.failureCode, "ERR_INVALID_PACKAGE_TARGET");
+      }, { prefix: "vf-config-package-import-array-fallback-" });
+    });
+
+    it("uses an installed dependency when a same-named project has no exports", async () => {
+      await withTempDir(async (workspaceDir) => {
+        const projectDir = `${workspaceDir}/app`;
+        const packageName = "shadowed-config-dependency";
+        const dependencyDir = `${workspaceDir}/node_modules/${packageName}`;
+        await mkdir(projectDir, { recursive: true });
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({ name: packageName, type: "module" }),
+        );
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({ name: packageName, type: "module", exports: "./index.js" }),
+        );
+        await writeTextFile(`${dependencyDir}/index.js`, "export default 'dependency';\n");
+
+        const result = await bundleProjectConfigSourceForImport(
+          `export default { resolved: import.meta.resolve(${JSON.stringify(packageName)}) };`,
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { resolved: string };
+        };
+
+        assertStringIncludes(
+          module.default.resolved,
+          `/node_modules/${packageName}/index.js`,
+        );
+      }, { prefix: "vf-config-package-self-reference-without-exports-" });
+    });
+
+    it("uses an installed dependency when a same-named project has null exports", async () => {
+      await withTempDir(async (workspaceDir) => {
+        const projectDir = `${workspaceDir}/app`;
+        const packageName = "null-exports-config-dependency";
+        const dependencyDir = `${workspaceDir}/node_modules/${packageName}`;
+        await mkdir(projectDir, { recursive: true });
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({ name: packageName, type: "module", exports: null }),
+        );
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({ name: packageName, type: "module", exports: "./index.js" }),
+        );
+        await writeTextFile(`${dependencyDir}/index.js`, "export default 'dependency';\n");
+
+        const result = await bundleProjectConfigSourceForImport(
+          `export default { resolved: import.meta.resolve(${JSON.stringify(packageName)}) };`,
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { resolved: string };
+        };
+
+        assertStringIncludes(
+          module.default.resolved,
+          `/node_modules/${packageName}/index.js`,
+        );
+      }, { prefix: "vf-config-package-self-reference-null-exports-" });
+    });
+
+    it("uses a dependency legacy main when its exports field is null", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageName = "null-exports-legacy-main-dependency";
+        const dependencyDir = `${projectDir}/node_modules/${packageName}`;
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({
+            name: packageName,
+            type: "module",
+            exports: null,
+            main: "./legacy.js",
+          }),
+        );
+        await writeTextFile(`${dependencyDir}/legacy.js`, "export default 'legacy-main';\n");
+
+        const result = await bundleProjectConfigSourceForImport(
+          `export default { resolved: import.meta.resolve(${JSON.stringify(packageName)}) };`,
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { resolved: string };
+        };
+
+        assertStringIncludes(module.default.resolved, `/node_modules/${packageName}/legacy.js`);
+      }, { prefix: "vf-config-package-null-exports-legacy-main-" });
+    });
+
+    it("resolves missing legacy dependency subpaths when exports is null", async () => {
+      await withTempDir(async (projectDir) => {
+        const packageName = "null-exports-legacy-subpath-dependency";
+        const dependencyDir = `${projectDir}/node_modules/${packageName}`;
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({
+            name: packageName,
+            type: "module",
+            exports: null,
+          }),
+        );
+
+        const specifier = `${packageName}/generated.js?raw#part`;
+        const result = await bundleProjectConfigSourceForImport(
+          `export default { resolved: import.meta.resolve(${JSON.stringify(specifier)}) };`,
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { resolved: string };
+        };
+
+        assertEquals(
+          module.default.resolved,
+          `${toFileUrl(`${dependencyDir}/generated.js`).href}?raw#part`,
+        );
+      }, { prefix: "vf-config-package-null-exports-legacy-subpath-" });
+    });
+
+    it("rejects missing null-exports subpaths behind a symlink parent", async () => {
+      await withTempDir(async (projectDir) => {
+        await withTempDir(async (outsideDir) => {
+          const packageName = "null-exports-symlink-subpath-dependency";
+          const dependencyDir = `${projectDir}/node_modules/${packageName}`;
+          await mkdir(dependencyDir, { recursive: true });
+          await writeTextFile(
+            `${dependencyDir}/package.json`,
+            JSON.stringify({
+              name: packageName,
+              type: "module",
+              exports: null,
+            }),
+          );
+          await symlink(outsideDir, `${dependencyDir}/linked`);
+
+          const result = await bundleProjectConfigSourceForImport(
+            'let failureCode = "not-thrown";\n' +
+              `try { import.meta.resolve(${
+                JSON.stringify(`${packageName}/linked/missing.js`)
+              }); }\n` +
+              "catch (error) { failureCode = error.code; }\n" +
+              "export default { failureCode };",
+            `${projectDir}/veryfront.config.ts`,
+          );
+          const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+            default: { failureCode: string };
+          };
+
+          assertEquals(module.default.failureCode, "ERR_PACKAGE_PATH_NOT_EXPORTED");
+        }, { prefix: "vf-config-package-null-exports-symlink-outside-" });
+      }, { prefix: "vf-config-package-null-exports-symlink-project-" });
+    });
+
+    it("resolves missing package-import leaves without allowing symlink-parent escape", async () => {
+      await withTempDir(async (projectDir) => {
+        await withTempDir(async (outsideDir) => {
+          await writeTextFile(
+            `${projectDir}/package.json`,
+            JSON.stringify({
+              type: "module",
+              imports: {
+                "#generated": "./generated/output.js",
+                "#outside-missing": "./linked/missing.js",
+              },
+            }),
+          );
+          await mkdir(`${projectDir}/generated`, { recursive: true });
+          await symlink(outsideDir, `${projectDir}/linked`);
+
+          const result = await bundleProjectConfigSourceForImport(
+            'let failureCode = "not-thrown";\n' +
+              'try { import.meta.resolve("#outside-missing"); }\n' +
+              "catch (error) { failureCode = error.code; }\n" +
+              "export default {\n" +
+              '  generated: import.meta.resolve("#generated"),\n' +
+              "  failureCode,\n" +
+              "};",
+            `${projectDir}/veryfront.config.ts`,
+          );
+          const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+            default: { generated: string; failureCode: string };
+          };
+
+          assertStringIncludes(module.default.generated, "/generated/output.js");
+          assertEquals(module.default.failureCode, "ERR_PACKAGE_IMPORT_NOT_DEFINED");
+        }, { prefix: "vf-config-missing-package-target-outside-" });
+      }, { prefix: "vf-config-missing-package-target-project-" });
+    });
+
+    it("rejects literal package exports that escape through a symlink", async () => {
+      await withTempDir(async (projectDir) => {
+        await withTempDir(async (outsideDir) => {
+          const dependencyDir = `${projectDir}/node_modules/literal-symlink-config-dependency`;
+          await mkdir(dependencyDir, { recursive: true });
+          await writeTextFile(
+            `${dependencyDir}/package.json`,
+            JSON.stringify({
+              name: "literal-symlink-config-dependency",
+              type: "module",
+              exports: "./linked.js",
+            }),
+          );
+          await writeTextFile(`${outsideDir}/outside.js`, 'export default "outside";\n');
+          await symlink(`${outsideDir}/outside.js`, `${dependencyDir}/linked.js`);
+
+          const result = await bundleProjectConfigSourceForImport(
+            "let failureCode = 'not-thrown';\n" +
+              'try { import.meta.resolve("literal-symlink-config-dependency"); }\n' +
+              "catch (error) { failureCode = error.code; }\n" +
+              "export default { failureCode };",
+            `${projectDir}/veryfront.config.ts`,
+          );
+          const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+            default: { failureCode: string };
+          };
+
+          assertEquals(module.default.failureCode, "ERR_PACKAGE_PATH_NOT_EXPORTED");
+        }, { prefix: "vf-config-literal-symlink-outside-" });
+      }, { prefix: "vf-config-literal-symlink-project-" });
+    });
+
+    it("rejects missing package-export leaves behind a symlink parent", async () => {
+      await withTempDir(async (projectDir) => {
+        await withTempDir(async (outsideDir) => {
+          const cases = [
+            {
+              packageName: "missing-root-export-config-dependency",
+              exports: "./linked/missing.js",
+              specifier: "missing-root-export-config-dependency",
+            },
+            {
+              packageName: "missing-subpath-export-config-dependency",
+              exports: { "./outside": "./linked/missing.js" },
+              specifier: "missing-subpath-export-config-dependency/outside",
+            },
+          ] as const;
+          for (const testCase of cases) {
+            const dependencyDir = `${projectDir}/node_modules/${testCase.packageName}`;
+            await mkdir(dependencyDir, { recursive: true });
+            await writeTextFile(
+              `${dependencyDir}/package.json`,
+              JSON.stringify({
+                name: testCase.packageName,
+                type: "module",
+                exports: testCase.exports,
+              }),
+            );
+            await symlink(outsideDir, `${dependencyDir}/linked`);
+
+            const result = await bundleProjectConfigSourceForImport(
+              "let failureCode = 'not-thrown';\n" +
+                `try { import.meta.resolve(${JSON.stringify(testCase.specifier)}); }\n` +
+                "catch (error) { failureCode = error.code; }\n" +
+                "export default { failureCode };",
+              `${projectDir}/veryfront.config.ts`,
+            );
+            const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+              default: { failureCode: string };
+            };
+
+            assertEquals(module.default.failureCode, "ERR_PACKAGE_PATH_NOT_EXPORTED");
+          }
+        }, { prefix: "vf-config-missing-export-outside-" });
+      }, { prefix: "vf-config-missing-export-project-" });
+    });
+
+    it("rejects literal package imports that escape through a symlink", async () => {
+      await withTempDir(async (projectDir) => {
+        await withTempDir(async (outsideDir) => {
+          await writeTextFile(
+            `${projectDir}/package.json`,
+            JSON.stringify({
+              type: "module",
+              imports: { "#outside": "./linked.js" },
+            }),
+          );
+          await writeTextFile(`${outsideDir}/outside.js`, 'export default "outside";\n');
+          await symlink(`${outsideDir}/outside.js`, `${projectDir}/linked.js`);
+
+          const result = await bundleProjectConfigSourceForImport(
+            "let failureCode = 'not-thrown';\n" +
+              'try { import.meta.resolve("#outside"); }\n' +
+              "catch (error) { failureCode = error.code; }\n" +
+              "export default { failureCode };",
+            `${projectDir}/veryfront.config.ts`,
+          );
+          const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+            default: { failureCode: string };
+          };
+
+          assertEquals(module.default.failureCode, "ERR_PACKAGE_IMPORT_NOT_DEFINED");
+        }, { prefix: "vf-config-literal-import-symlink-outside-" });
+      }, { prefix: "vf-config-literal-import-symlink-project-" });
+    });
+
+    it("fails closed before interpreting null computed package conditions", async () => {
+      await withTempDir(async (projectDir) => {
+        const dependencyDir = `${projectDir}/node_modules/blocked-config-dependency`;
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({
+            name: "blocked-config-dependency",
+            type: "module",
+            exports: {
+              ".": {
+                import: null,
+                default: "./fallback.js",
+              },
+            },
+          }),
+        );
+        await writeTextFile(`${dependencyDir}/fallback.js`, 'export default "fallback";\n');
+
+        const result = await bundleProjectConfigSourceForImport(
+          'const packageName = "blocked-config-dependency";\n' +
+            "export default { resolved: import.meta.resolve(packageName) };",
+          `${projectDir}/veryfront.config.ts`,
+        );
+
+        await assertRejects(
+          () => import(`data:application/javascript;base64,${btoa(result)}`),
+          TypeError,
+          "Computed package specifiers in import.meta.resolve() are unavailable",
+        );
+      }, { prefix: "vf-config-computed-resolve-blocked-" });
+    });
+
+    it("uses ESM import conditions for import.meta.resolve in bundled configs", async () => {
+      await withTempDir(async (projectDir) => {
+        const dependencyDir = `${projectDir}/node_modules/runtime-resolve-config-dependency`;
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({
+            name: "runtime-resolve-config-dependency",
+            type: "module",
+            exports: {
+              ".": {
+                require: "./require.cjs",
+                import: "./import.js",
+              },
+            },
+          }),
+        );
+        await writeTextFile(`${dependencyDir}/require.cjs`, 'module.exports = "require";\n');
+        await writeTextFile(`${dependencyDir}/import.js`, 'export default "import";\n');
+
+        const result = await bundleProjectConfigSourceForImport(
+          'const resolved = import.meta.resolve("runtime-resolve-config-dependency");\n' +
+            "export default { resolved };",
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { resolved: string };
+        };
+
+        assertStringIncludes(
+          module.default.resolved,
+          "/runtime-resolve-config-dependency/import.js",
+        );
+      }, { prefix: "vf-config-runtime-resolve-conditions-" });
+    });
+
+    it("resolves bare legacy package main entries for runtime import.meta.resolve", async () => {
+      await withTempDir(async (projectDir) => {
+        const dependencyDir = `${projectDir}/node_modules/legacy-resolve-config-dependency`;
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({
+            name: "legacy-resolve-config-dependency",
+            type: "module",
+            main: "index.js",
+          }),
+        );
+        await writeTextFile(`${dependencyDir}/index.js`, 'export default "legacy";\n');
+
+        const result = await bundleProjectConfigSourceForImport(
+          'const resolved = import.meta.resolve("legacy-resolve-config-dependency");\n' +
+            "export default { resolved };",
+          `${projectDir}/veryfront.config.ts`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { resolved: string };
+        };
+
+        assertStringIncludes(
+          module.default.resolved,
+          "/legacy-resolve-config-dependency/index.js",
+        );
+      }, { prefix: "vf-config-runtime-resolve-legacy-main-" });
+    });
+
+    it("uses ESM conditions when a custom bundler cannot resolve plugin specifiers", async () => {
+      const previousBundler = tryResolveExtensionContract<Bundler>("Bundler");
+      if (!previousBundler) throw new Error("Expected the default bundler to be registered");
+      const resolverFailureMessage = "Invalid </script>\u2028resolver configuration";
+      const passthroughBundler: Bundler = {
+        async bundle(options) {
+          if (options.stdin?.contents.includes("invalid-config-resolver")) {
+            return {
+              outputFiles: [],
+              warnings: [],
+              errors: [{ text: resolverFailureMessage }],
+            };
+          }
+          if (options.stdin) return await previousBundler.bundle(options);
+          let loadEntry:
+            | ((
+              args: OnLoadArgs,
+            ) =>
+              | OnLoadResult
+              | null
+              | undefined
+              | void
+              | Promise<OnLoadResult | null | undefined | void>)
+            | undefined;
+          const pluginBuild: BundlerPluginBuild = {
+            onResolve() {},
+            onLoad(pluginOptions, callback) {
+              if (pluginOptions.namespace === "veryfront-config-entry") loadEntry = callback;
+            },
+            onDispose() {},
+          };
+          for (const plugin of options.plugins ?? []) await plugin.setup(pluginBuild);
+          if (!loadEntry) throw new Error("Config entry loader was not registered");
+          const loaded = await loadEntry({
+            path: Array.isArray(options.entryPoints)
+              ? options.entryPoints[0] ?? "veryfront:project-config-entry"
+              : "veryfront:project-config-entry",
+            namespace: "veryfront-config-entry",
+          });
+          if (!loaded || typeof loaded.contents !== "string") {
+            throw new Error("Config entry loader did not return source text");
+          }
+          return {
+            outputFiles: [{
+              path: "",
+              contents: new TextEncoder().encode(loaded.contents),
+              text: loaded.contents,
+            }],
+            warnings: [],
+            errors: [],
+          };
+        },
+        transform(options) {
+          return previousBundler.transform(options);
+        },
+      };
+
+      unregisterExtensionContract("Bundler");
+      registerExtensionContract("Bundler", passthroughBundler);
+      try {
+        await withTempDir(async (projectDir) => {
+          const dependencyDir = `${projectDir}/node_modules/import-only-config-dependency`;
+          await mkdir(dependencyDir, { recursive: true });
+          await writeTextFile(
+            `${dependencyDir}/package.json`,
+            JSON.stringify({
+              name: "import-only-config-dependency",
+              type: "module",
+              exports: { import: "./import.js" },
+            }),
+          );
+          await writeTextFile(`${dependencyDir}/import.js`, 'export default "import";\n');
+
+          const result = await bundleProjectConfigSourceForImport(
+            'export default { resolved: import.meta.resolve("import-only-config-dependency") };',
+            `${projectDir}/veryfront.config.ts`,
+          );
+          const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+            default: { resolved: string };
+          };
+
+          assertStringIncludes(
+            module.default.resolved,
+            "/import-only-config-dependency/import.js",
+          );
+
+          const failureResult = await bundleProjectConfigSourceForImport(
+            'let failure; try { import.meta.resolve("invalid-config-resolver"); } ' +
+              "catch (error) { failure = { message: error.message, code: error.code }; }\n" +
+              "export default { failure };",
+            `${projectDir}/veryfront.config.ts`,
+          );
+          const failureModule = await import(
+            `data:application/javascript;base64,${btoa(failureResult)}`
+          ) as { default: { failure: { message: string; code?: string } } };
+
+          assert(!failureResult.includes("</script>"));
+          assert(!failureResult.includes("\u2028"));
+          assertEquals(failureModule.default.failure, {
+            message: resolverFailureMessage,
+            code: undefined,
+          });
+
+          const restore = replacePropertyForTest(JSON, "stringify", {
+            value: () => {
+              throw new Error("poisoned JSON.stringify");
+            },
+          });
+          let primordialResult: string;
+          try {
+            primordialResult = await bundleProjectConfigSourceForImport(
+              'export default { resolved: import.meta.resolve("./asset.ts") };',
+              `${projectDir}/veryfront.config.ts`,
+            );
+          } finally {
+            restore();
+          }
+          const primordialModule = await import(
+            `data:application/javascript;base64,${btoa(primordialResult)}`
+          ) as { default: { resolved: string } };
+          assertEquals(
+            primordialModule.default.resolved,
+            toFileUrl(`${projectDir}/asset.ts`).href,
+          );
+        }, { prefix: "vf-config-custom-resolve-conditions-" });
+      } finally {
+        unregisterExtensionContract("Bundler");
+        registerExtensionContract("Bundler", previousBundler);
+      }
+    });
+
+    it("uses ESM import conditions for config import resolver fallbacks", async () => {
+      await withTempDir(async (projectDir) => {
+        const dependencyDir = `${projectDir}/node_modules/fallback-config-dependency`;
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({
+            name: "fallback-config-dependency",
+            type: "module",
+            exports: {
+              ".": {
+                require: "./require.cjs",
+                import: "./import.js",
+              },
+            },
+          }),
+        );
+        await writeTextFile(`${dependencyDir}/require.cjs`, 'module.exports = "require";\n');
+        await writeTextFile(`${dependencyDir}/import.js`, 'export default "import";\n');
+
+        const rewritten = await rewriteProjectConfigImportsFromProject(
+          'import value from "fallback-config-dependency";\nexport default { value };',
+          `${projectDir}/veryfront.config.ts`,
+        );
+
+        assertStringIncludes(
+          rewritten,
+          "/fallback-config-dependency/import.js",
+          "config fallback resolution must follow ESM import conditions",
+        );
+      }, { prefix: "vf-config-fallback-resolve-conditions-" });
+    });
+
+    it("resolves local modules for config import resolver fallbacks", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(`${projectDir}/local.js`, 'export default "local";\n');
+
+        const rewritten = await rewriteProjectConfigImportsFromProject(
+          'import value from "./local.js";\n' +
+            'import { readFile } from "fs/promises";\n' +
+            "export default { value, readFile };",
+          `${projectDir}/veryfront.config.ts`,
+        );
+
+        assertStringIncludes(
+          rewritten,
+          "/local.js",
+          "config fallback resolution must stay bound to the original project",
+        );
+        assertStringIncludes(
+          rewritten,
+          'from "node:fs/promises"',
+          "config fallback resolution must preserve Node built-in imports",
+        );
+      }, { prefix: "vf-config-fallback-resolve-local-" });
+    });
+
+    it("resolves package export patterns for config import resolver fallbacks", async () => {
+      await withTempDir(async (projectDir) => {
+        const dependencyDir = `${projectDir}/node_modules/fallback-pattern-config-dependency`;
+        await mkdir(`${dependencyDir}/src/features`, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({
+            name: "fallback-pattern-config-dependency",
+            type: "module",
+            exports: { "./features/*": "./src/features/*.js" },
+          }),
+        );
+        await writeTextFile(
+          `${dependencyDir}/src/features/value.js`,
+          'export default "pattern";\n',
+        );
+
+        const rewritten = await rewriteProjectConfigImportsFromProject(
+          'import value from "fallback-pattern-config-dependency/features/value";\n' +
+            "export default { value };",
+          `${projectDir}/veryfront.config.ts`,
+        );
+
+        assertStringIncludes(
+          rewritten,
+          "/fallback-pattern-config-dependency/src/features/value.js",
+          "config fallback resolution must support package export patterns",
+        );
+      }, { prefix: "vf-config-fallback-resolve-pattern-" });
+    });
+
+    it("rejects package export symlink escapes in resolver fallbacks", async () => {
+      await withTempDir(async (projectDir) => {
+        await withTempDir(async (outsideDir) => {
+          const dependencyDir = `${projectDir}/node_modules/fallback-symlink-config-dependency`;
+          await mkdir(dependencyDir, { recursive: true });
+          await writeTextFile(
+            `${dependencyDir}/package.json`,
+            JSON.stringify({
+              name: "fallback-symlink-config-dependency",
+              type: "module",
+              exports: "./linked.js",
+            }),
+          );
+          await writeTextFile(`${outsideDir}/outside.js`, 'export default "outside";\n');
+          await symlink(`${outsideDir}/outside.js`, `${dependencyDir}/linked.js`);
+
+          await assertRejects(
+            () =>
+              rewriteProjectConfigImportsFromProject(
+                'import value from "fallback-symlink-config-dependency";\n' +
+                  "export default { value };",
+                `${projectDir}/veryfront.config.ts`,
+              ),
+            Error,
+            "Config package resolution escaped its package",
+          );
+        }, { prefix: "vf-config-fallback-symlink-outside-" });
+      }, { prefix: "vf-config-fallback-symlink-project-" });
+    });
+
+    it("resolves config package entries without loading their dependency graph", async () => {
+      await withTempDir(async (projectDir) => {
+        const dependencyDir = `${projectDir}/node_modules/fallback-shallow-config-dependency`;
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({
+            name: "fallback-shallow-config-dependency",
+            type: "module",
+            exports: "./index.js",
+          }),
+        );
+        await writeTextFile(
+          `${dependencyDir}/index.js`,
+          'import "missing-transitive-dependency";\nexport default "entry";\n',
+        );
+
+        const rewritten = await rewriteProjectConfigImportsFromProject(
+          'import value from "fallback-shallow-config-dependency";\nexport default { value };',
+          `${projectDir}/veryfront.config.ts`,
+        );
+
+        assertStringIncludes(
+          rewritten,
+          "/fallback-shallow-config-dependency/index.js",
+          "config fallback resolution must stop after resolving the package entry",
+        );
+      }, { prefix: "vf-config-fallback-resolve-shallow-" });
+    });
+
+    it("resolves bare legacy package main entries for config import resolver fallbacks", async () => {
+      await withTempDir(async (projectDir) => {
+        const dependencyDir = `${projectDir}/node_modules/fallback-legacy-config-dependency`;
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({
+            name: "fallback-legacy-config-dependency",
+            type: "module",
+            main: "index.js",
+          }),
+        );
+        await writeTextFile(`${dependencyDir}/index.js`, 'export default "legacy";\n');
+
+        const rewritten = await rewriteProjectConfigImportsFromProject(
+          'import value from "fallback-legacy-config-dependency";\nexport default { value };',
+          `${projectDir}/veryfront.config.ts`,
+        );
+
+        assertStringIncludes(
+          rewritten,
+          "/fallback-legacy-config-dependency/index.js",
+          "config fallback resolution must accept bare legacy package main entries",
+        );
+      }, { prefix: "vf-config-fallback-resolve-legacy-main-" });
+    });
+
+    it("resolves legacy package main entries while bundling configs", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        const dependencyDir = `${projectDir}/node_modules/legacy-config-dependency`;
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({
+            name: "legacy-config-dependency",
+            type: "module",
+            main: "index.js",
+          }),
+        );
+        await writeTextFile(`${dependencyDir}/index.js`, 'export default "legacy main";\n');
+
+        const result = await bundleProjectConfigSourceForImport(
+          'import value from "legacy-config-dependency";\nexport default { value };',
+          configPath,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { value: string };
+        };
+
+        assertEquals(module.default.value, "legacy main");
+      }, { prefix: "vf-config-legacy-main-" });
+    });
+
+    it("preserves native Node ESM export conditions while resolving packages", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        const dependencyDir = `${projectDir}/node_modules/conditional-config-dependency`;
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({
+            name: "conditional-config-dependency",
+            type: "module",
+            exports: {
+              ".": {
+                module: "./bundler.js",
+                import: "./import.js",
+              },
+            },
+          }),
+        );
+        await writeTextFile(`${dependencyDir}/bundler.js`, 'export default "bundler";\n');
+        await writeTextFile(`${dependencyDir}/import.js`, 'export default "node import";\n');
+
+        const result = await bundleProjectConfigSourceForImport(
+          'import value from "conditional-config-dependency";\nexport default { value };',
+          configPath,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { value: string };
+        };
+
+        assertEquals(module.default.value, "node import");
+        assertStringIncludes(result, "/conditional-config-dependency/import.js");
+      }, { prefix: "vf-config-node-conditions-" });
+    });
+
+    it("declares native Node ESM package resolution to every config bundler", async () => {
+      const previousBundler = tryResolveExtensionContract<Bundler>("Bundler");
+      if (!previousBundler) throw new Error("Expected the default bundler to be registered");
+      let observedConditions: unknown;
+      let observedMainFields: unknown;
+      const observingBundler: Bundler = {
+        bundle(options) {
+          observedConditions = options.conditions;
+          observedMainFields = options.mainFields;
+          return previousBundler.bundle(options);
+        },
+        transform(options) {
+          return previousBundler.transform(options);
+        },
+      };
+
+      unregisterExtensionContract("Bundler");
+      registerExtensionContract("Bundler", observingBundler);
+      try {
+        await withTempDir(
+          (projectDir) =>
+            bundleProjectConfigSourceForImport(
+              "export default {};",
+              `${projectDir}/veryfront.config.ts`,
+            ),
+          { prefix: "vf-config-node-resolution-options-" },
+        );
+        assertEquals(observedConditions, ["node", "node-addons"]);
+        assertEquals(observedMainFields, ["main"]);
+      } finally {
+        unregisterExtensionContract("Bundler");
+        registerExtensionContract("Bundler", previousBundler);
+      }
+    });
+
+    it("adds user-supplied Node export conditions to config bundlers", () => {
+      assertEquals(
+        __getNodeConfigPackageConditionsForTests(
+          ["--conditions=development", "-C", "testing", "--conditions", "development"],
+          '--conditions="feature flag" -C=ignored -Cignored',
+        ),
+        ["node", "import", "node-addons", "feature flag", "development", "testing"],
+      );
+      assertEquals(
+        __getNodeConfigBundleConditionsForTests(
+          ["--conditions=import", "--conditions=development"],
+          undefined,
+        ),
+        ["node", "node-addons", "import", "development"],
+      );
+    });
+
+    it("matches Node option backslash parsing for export conditions", () => {
+      assertEquals(
+        __getNodeConfigPackageConditionsForTests(
+          [],
+          String.raw`--conditions=a\b --conditions='c\d' --conditions="e\f"`,
+        ),
+        ["node", "import", "node-addons", String.raw`a\b`, String.raw`c\d`, "ef"],
+      );
+    });
+
+    it("matches Node's option precedence for the node-addons condition", () => {
+      assertEquals(
+        __getNodeConfigPackageConditionsForTests(["--no-addons"], undefined),
+        ["node", "import"],
+      );
+      assertEquals(
+        __getNodeConfigPackageConditionsForTests(["--no-addons=true"], undefined),
+        ["node", "import"],
+      );
+      assertEquals(
+        __getNodeConfigPackageConditionsForTests(["--no-addons=false"], undefined),
+        ["node", "import"],
+      );
+      assertEquals(
+        __getNodeConfigPackageConditionsForTests(["--addons=false"], undefined),
+        ["node", "import", "node-addons"],
+      );
+      assertEquals(
+        __getNodeConfigPackageConditionsForTests(["--addons=true"], undefined),
+        ["node", "import", "node-addons"],
+      );
+      assertEquals(
+        __getNodeConfigPackageConditionsForTests([], "--trace-warnings --no-addons"),
+        ["node", "import"],
+      );
+      assertEquals(
+        __getNodeConfigPackageConditionsForTests([], '"--no-addons"'),
+        ["node", "import"],
+      );
+      assertEquals(
+        __getNodeConfigPackageConditionsForTests([], "--conditions=--no-addons"),
+        ["node", "import", "node-addons", "--no-addons"],
+      );
+      assertEquals(
+        __getNodeConfigPackageConditionsForTests(["--addons"], "--no-addons"),
+        ["node", "import", "node-addons"],
+      );
+      assertEquals(
+        __getNodeConfigPackageConditionsForTests(["--no-addons"], "--addons"),
+        ["node", "import"],
+      );
+      assertEquals(
+        __getNodeConfigPackageConditionsForTests(["--no-addons", "--addons"], undefined),
+        ["node", "import", "node-addons"],
+      );
+      assertEquals(
+        __getNodeConfigPackageConditionsForTests([], "--no-addons=false --addons=false"),
+        ["node", "import", "node-addons"],
+      );
+      assertEquals(
+        __getNodeConfigPackageConditionsForTests([], "--addons=false --no-addons=false"),
+        ["node", "import"],
+      );
+      assertEquals(
+        __getNodeConfigPackageConditionsForTests(
+          ["--addons=false"],
+          "--no-addons=false",
+        ),
+        ["node", "import", "node-addons"],
+      );
+      assertEquals(
+        __getNodeConfigPackageConditionsForTests(
+          ["--conditions=development"],
+          undefined,
+          "require",
+        ),
+        ["node", "require", "node-addons", "development"],
+      );
+    });
+
+    it("bundles TypeScript exported by a linked workspace package", async () => {
+      await withTempDir(async (workspaceDir) => {
+        const projectDir = `${workspaceDir}/app`;
+        const dependencyDir = `${workspaceDir}/packages/workspace-config-dependency`;
+        const linkedDependencyDir = `${projectDir}/node_modules/workspace-config-dependency`;
+        const dependencyPath = `${dependencyDir}/index.ts`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await mkdir(`${projectDir}/node_modules`, { recursive: true });
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({
+            name: "workspace-config-dependency",
+            type: "module",
+            exports: "./index.ts",
+          }),
+        );
+        await writeTextFile(
+          dependencyPath,
+          'export { value } from "./value.ts";\n',
+        );
+        await writeTextFile(
+          `${dependencyDir}/value.ts`,
+          'export const value: string = "workspace TypeScript";\n',
+        );
+        await symlink(dependencyDir, linkedDependencyDir);
+
+        const result = await bundleProjectConfigSourceForImport(
+          'import { value } from "workspace-config-dependency";\nexport default { value };',
+          configPath,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { value: string };
+        };
+
+        assertEquals(result.includes(toFileUrl(dependencyPath).href), false);
+        assertStringIncludes(result, "workspace TypeScript");
+        assertEquals(module.default.value, "workspace TypeScript");
+      }, { prefix: "vf-config-linked-workspace-" });
+    });
+
+    it("bundles TypeScript imported by a linked workspace JavaScript entry", async () => {
+      await withTempDir(async (workspaceDir) => {
+        const projectDir = `${workspaceDir}/app`;
+        const dependencyDir = `${workspaceDir}/packages/workspace-config-dependency`;
+        const linkedDependencyDir = `${projectDir}/node_modules/workspace-config-dependency`;
+        const dependencyPath = `${dependencyDir}/index.js`;
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        await mkdir(`${projectDir}/node_modules`, { recursive: true });
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({
+            name: "workspace-config-dependency",
+            type: "module",
+            exports: "./index.js",
+          }),
+        );
+        await writeTextFile(
+          dependencyPath,
+          'export { value } from "./value.ts";\n',
+        );
+        await writeTextFile(
+          `${dependencyDir}/value.ts`,
+          'export const value: string = "workspace JavaScript entry";\n',
+        );
+        await symlink(dependencyDir, linkedDependencyDir);
+
+        const result = await bundleProjectConfigSourceForImport(
+          'import { value } from "workspace-config-dependency";\nexport default { value };',
+          configPath,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { value: string };
+        };
+
+        assertEquals(result.includes(toFileUrl(dependencyPath).href), false);
+        assertStringIncludes(result, "workspace JavaScript entry");
+        assertEquals(module.default.value, "workspace JavaScript entry");
+      }, { prefix: "vf-config-linked-workspace-js-entry-" });
+    });
+
+    it("defers package resolution to custom bundlers without plugin resolve support", async () => {
+      const previousBundler = tryResolveExtensionContract<Bundler>("Bundler");
+      let packageResolution: OnResolveResult | null | undefined | void;
+      const customBundler: Bundler = {
+        async bundle(options) {
+          let onResolve:
+            | ((
+              args: OnResolveArgs,
+            ) =>
+              | OnResolveResult
+              | null
+              | undefined
+              | void
+              | Promise<OnResolveResult | null | undefined | void>)
+            | undefined;
+          const pluginBuild: BundlerPluginBuild = {
+            onResolve(_options, callback) {
+              onResolve = callback;
+            },
+            onLoad() {},
+            onDispose() {},
+          };
+          for (const plugin of options.plugins ?? []) await plugin.setup(pluginBuild);
+          if (!onResolve) throw new Error("Config resolver plugin was not registered");
+          packageResolution = await onResolve({
+            path: "custom-config-dependency",
+            importer: "/project/veryfront.config.ts",
+            namespace: "file",
+            resolveDir: "/project",
+            kind: "import-statement",
+          });
+          return {
+            outputFiles: [{ path: "", contents: new Uint8Array(), text: "export default {};" }],
+            warnings: [],
+            errors: [],
+          };
+        },
+        transform(options) {
+          return Promise.resolve({ code: options.code, warnings: [] });
+        },
+      };
+
+      unregisterExtensionContract("Bundler");
+      registerExtensionContract("Bundler", customBundler);
+      try {
+        await withTempDir(
+          (projectDir) =>
+            bundleProjectConfigSourceForImport(
+              "export default {};",
+              `${projectDir}/veryfront.config.ts`,
+            ),
+          { prefix: "vf-config-custom-bundler-" },
+        );
+        assertEquals(
+          packageResolution,
+          undefined,
+          "an optional resolver must not become mandatory for existing custom bundlers",
+        );
+      } finally {
+        unregisterExtensionContract("Bundler");
+        if (previousBundler) registerExtensionContract("Bundler", previousBundler);
+      }
+    });
+
+    it("uses captured Set membership while resolving built-in config imports", async () => {
+      const previousBundler = tryResolveExtensionContract<Bundler>("Bundler");
+      let builtInResolution: OnResolveResult | null | undefined | void;
+      const customBundler: Bundler = {
+        async bundle(options) {
+          let onResolve:
+            | ((args: OnResolveArgs) =>
+              | OnResolveResult
+              | null
+              | undefined
+              | void
+              | Promise<OnResolveResult | null | undefined | void>)
+            | undefined;
+          const pluginBuild: BundlerPluginBuild = {
+            onResolve(_options, callback) {
+              onResolve = callback;
+            },
+            onLoad() {},
+            onDispose() {},
+          };
+          for (const plugin of options.plugins ?? []) await plugin.setup(pluginBuild);
+          if (!onResolve) throw new Error("Config resolver plugin was not registered");
+          builtInResolution = await onResolve({
+            path: "path",
+            importer: "/project/veryfront.config.ts",
+            namespace: "file",
+            resolveDir: "/project",
+            kind: "import-statement",
+          });
+          return {
+            outputFiles: [{ path: "", contents: new Uint8Array(), text: "export default {};" }],
+            warnings: [],
+            errors: [],
+          };
+        },
+        transform(options) {
+          return Promise.resolve({ code: options.code, warnings: [] });
+        },
+      };
+
+      unregisterExtensionContract("Bundler");
+      registerExtensionContract("Bundler", customBundler);
+      const restore = replacePropertyForTest(Set.prototype, "has", {
+        value: () => {
+          throw new Error("project-controlled Set.prototype.has");
+        },
+      });
+      try {
+        await withTempDir(
+          (projectDir) =>
+            bundleProjectConfigSourceForImport(
+              "export default {};",
+              `${projectDir}/veryfront.config.ts`,
+            ),
+          { prefix: "vf-config-captured-set-has-" },
+        );
+        assertEquals(builtInResolution, { path: "node:path", external: true });
+      } finally {
+        restore();
+        unregisterExtensionContract("Bundler");
+        if (previousBundler) registerExtensionContract("Bundler", previousBundler);
+      }
+    });
+
+    it("preserves module-relative computed dynamic imports in JavaScript configs", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(
+          `${projectDir}/config-helper.mjs`,
+          'export const value = "computed JavaScript import";\n',
+        );
+        const result = await bundleProjectConfigSourceForImport(
+          'const selected = "./config-helper.mjs";\n' +
+            "const loaded = await import(selected);\n" +
+            "export default { value: loaded.value };",
+          `${projectDir}/veryfront.config.mjs`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { value: string };
+        };
+
+        assertEquals(module.default.value, "computed JavaScript import");
+      }, { prefix: "vf-config-computed-js-import-" });
+    });
+
+    it("rejects computed dynamic imports instead of rebasing them to the staging directory", async () => {
+      await withTempDir(async (projectDir) => {
+        await assertRejects(
+          () =>
+            bundleProjectConfigSourceForImport(
+              "const selected = globalThis.CONFIG_MODULE; export default await import(selected);",
+              `${projectDir}/veryfront.config.ts`,
+            ),
+          TypeError,
+          "must use a static specifier",
+        );
+      }, { prefix: "vf-config-computed-import-" });
+    });
   });
 
   describe("rewriteBareVeryfrontConfigImports", () => {
@@ -253,6 +3456,25 @@ export default config as const;
 
       assert(!rewritten.includes("'veryfront'"));
       assert(rewritten.includes("./local.ts"), "relative imports must stay untouched");
+    });
+
+    it("rewrites a dynamic bare veryfront import to the config shim", async () => {
+      const restore = replacePropertyForTest(JSON, "stringify", {
+        value: () => {
+          throw new Error("poisoned JSON.stringify");
+        },
+      });
+      let rewritten: string;
+      try {
+        rewritten = await rewriteBareVeryfrontConfigImports(
+          'const { defineConfig } = await import("veryfront");\nexport default defineConfig({});',
+        );
+      } finally {
+        restore();
+      }
+
+      assertEquals(rewritten.includes('import("veryfront")'), false);
+      assertStringIncludes(rewritten, 'import("data:text/javascript;base64,');
     });
 
     it("does not rewrite veryfront subpath or lookalike specifiers", async () => {

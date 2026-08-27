@@ -103,6 +103,36 @@ describe("transforms/esm/import-parser", () => {
     );
   });
 
+  it("tracks relative and aliased JSON imports as local dependencies", async () => {
+    await withProject(
+      {
+        "package.json": `{ "name": "adapter-project" }`,
+        "data/site.json": `{ "title": "Adapter data" }`,
+        "pages/index.tsx": [
+          `import manifest from "../package.json" with { type: "json" };`,
+          `import site from "@/data/site.json" with { type: "json" };`,
+          `export default () => manifest.name + site.title;`,
+        ].join("\n"),
+      },
+      async (projectDir) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "pages/index.tsx");
+        const result = await parseLocalImports(
+          await Deno.readTextFile(filePath),
+          filePath,
+          projectDir,
+          adapter,
+        );
+
+        assertEquals(result.missing, []);
+        assertEquals(
+          result.imports.map(({ specifier }) => specifier).sort(),
+          ["../package.json", "@/data/site.json"],
+        );
+      },
+    );
+  });
+
   it("parses imports out of an .mdx file instead of failing to lex it", async () => {
     const stub = withStubContentProcessor();
     try {
@@ -339,6 +369,34 @@ describe("transforms/esm/import-parser", () => {
       );
     } finally {
       stub.restore();
+      await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("returns the canonical path for an in-project symlinked JSON alias", async () => {
+    const rootDir = await makeTempDir({ prefix: "vf-import-parser-json-canonical-" });
+    try {
+      const projectDir = join(rootDir, "project");
+      const filePath = join(projectDir, "pages/index.tsx");
+      await Deno.mkdir(join(projectDir, "real"), { recursive: true });
+      await Deno.writeTextFile(join(projectDir, "real/data.json"), `{ "safe": true }`);
+      await Deno.symlink(join(projectDir, "real/data.json"), join(projectDir, "linked.json"));
+      const code = [
+        `import data from "@/linked.json" with { type: "json" };`,
+        `export default data;`,
+      ].join("\n");
+
+      const result = await parseLocalImports(code, filePath, projectDir, await getLocalAdapter());
+
+      assertEquals(result.missing.length, 0);
+      assertEquals(result.imports.length, 1);
+      assertEquals(
+        result.imports[0]?.absolutePath,
+        await Deno.realPath(join(projectDir, "real/data.json")),
+      );
+      assertEquals(result.imports[0]?.requestedPath, join(projectDir, "linked.json"));
+      assertEquals(result.imports[0]?.projectContained, true);
+    } finally {
       await Deno.remove(rootDir, { recursive: true }).catch(() => undefined);
     }
   });
@@ -1042,5 +1100,44 @@ describe("transforms/esm/import-parser", () => {
         assertEquals(result.missing.length, 0, "short-circuited files report no missing deps");
       }
     });
+  });
+
+  it("returns relative and alias JSON imports for cache materialization", async () => {
+    await withProject(
+      {
+        "pages/index.tsx": [
+          'import relativeData from "../data/relative.json" with { type: "json" };',
+          'import aliasData from "@/data/alias.json" with { type: "json" };',
+          "export default [relativeData, aliasData];",
+        ].join("\n"),
+        "data/relative.json": JSON.stringify({ source: "relative" }),
+        "data/alias.json": JSON.stringify({ source: "alias" }),
+      },
+      async (projectDir) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "pages/index.tsx");
+        const result = await parseLocalImports(
+          await Deno.readTextFile(filePath),
+          filePath,
+          projectDir,
+          adapter,
+        );
+
+        assertEquals(result.imports, [
+          {
+            specifier: "../data/relative.json",
+            absolutePath: join(projectDir, "data/relative.json"),
+          },
+          {
+            specifier: "@/data/alias.json",
+            absolutePath: await Deno.realPath(join(projectDir, "data/alias.json")),
+            requestedPath: join(projectDir, "data/alias.json"),
+            resolvedPath: join(projectDir, "data/alias.json"),
+            projectContained: true,
+          },
+        ]);
+        assertEquals(result.missing, []);
+      },
+    );
   });
 });

@@ -80,6 +80,10 @@ export interface BundleOptions {
   write?: boolean;
   /** Target platform influencing default externals and resolution. */
   platform?: "browser" | "node" | "neutral";
+  /** Package export conditions used during module resolution. */
+  conditions?: string[];
+  /** Legacy package manifest fields used when no exports map applies. */
+  mainFields?: string[];
   /** Packages/paths to exclude from the bundle. */
   external?: string[];
   /** Bundle an in-memory source string instead of reading from disk. */
@@ -203,12 +207,25 @@ export interface OnResolveArgs {
 export interface OnResolveResult {
   path?: string;
   namespace?: string;
+  /** Query or fragment suffix kept separate from the resolved filesystem path. */
+  suffix?: string;
   external?: boolean;
   errors?: BundlerMessage[];
   warnings?: BundlerMessage[];
   pluginData?: unknown;
   sideEffects?: boolean;
   watchFiles?: string[];
+}
+
+/** Options for resolving a module from inside a bundler plugin. */
+export interface ResolveOptions {
+  importer?: string;
+  namespace?: string;
+  resolveDir?: string;
+  kind?: string;
+  pluginData?: unknown;
+  /** Import attributes passed to native bundler resolvers. */
+  with?: Record<string, string>;
 }
 
 /** Arguments passed to an `onLoad` callback. */
@@ -232,6 +249,8 @@ export interface OnLoadResult {
 
 /** Build context exposed to bundler plugins. */
 export interface BundlerPluginBuild {
+  /** Run the bundler's resolver without leaving the active plugin lifecycle. */
+  resolve?(path: string, options?: ResolveOptions): Promise<OnResolveResult>;
   onResolve(
     options: { filter: RegExp; namespace?: string },
     callback: (

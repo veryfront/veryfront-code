@@ -58,7 +58,7 @@ interface ParseLocalImportsResult {
 }
 
 const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
-const HAS_EXTENSION_RE = /\.(tsx?|jsx?|mjs|cjs|mdx|css)$/;
+const HAS_EXTENSION_RE = /\.(tsx?|jsx?|mjs|cjs|mdx|css|json)$/;
 
 // Tenant SSR code executes in this realm before later parses run, so the
 // containment decision must not dispatch through mutable prototype methods or

@@ -2,6 +2,19 @@ import type { ASTNode } from "#veryfront/extensions/parser/index.ts";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
 import * as pathHelper from "#veryfront/compat/path";
 
+const IntrinsicJSON = JSON;
+const IntrinsicSet = Set;
+const ArrayPrototypeJoin = Array.prototype.join;
+const ArrayPrototypePush = Array.prototype.push;
+const JSONStringify = JSON.stringify;
+const ReflectApply = Reflect.apply;
+const SetPrototypeAdd = Set.prototype.add;
+const SetPrototypeHas = Set.prototype.has;
+const StringPrototypeIndexOf = String.prototype.indexOf;
+const StringPrototypeIncludes = String.prototype.includes;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeStartsWith = String.prototype.startsWith;
+
 interface ParentLink {
   parent: ASTNode;
   key: string;
@@ -191,7 +204,253 @@ async function parseSource(source: string): Promise<ASTNode | null> {
 export type ImportMetaSpecifierResolver = (
   specifier: string,
   moduleUrl: string,
-) => string | null;
+) => string | null | Promise<string | null>;
+
+export type ImportMetaResolveCallRewriter = (
+  specifier: string,
+  moduleUrl: string,
+) => string | Promise<string>;
+
+export type ImportMetaResolveArgumentRewriter = (
+  argumentSource: string,
+  moduleUrl: string,
+) => string | Promise<string>;
+
+export type ImportMetaResolveReferenceRewriter = (
+  moduleUrl: string,
+) => string | Promise<string>;
+
+/** Identify a real unbound CommonJS `module` reference without matching inert text. */
+export async function usesUnboundCommonJsModule(source: string): Promise<boolean | null> {
+  if (!(ReflectApply(StringPrototypeIncludes, source, ["module"]) as boolean)) return false;
+  const program = await parseSource(source);
+  if (program === null) return null;
+
+  const { nodeScopes, parents } = buildScopes(program);
+  let found = false;
+  const visit = (node: ASTNode): void => {
+    const scope = nodeScopes.get(node);
+    if (
+      scope && node.type === "Identifier" && node.name === "module" &&
+      resolveBinding(scope, "module") === null && isIdentifierReference(node, parents)
+    ) {
+      found = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  visit(program);
+  return found;
+}
+
+/**
+ * Rebind CommonJS require value references to a caller-provided module-local
+ * require. Static direct calls remain intact so the bundler can still
+ * traverse them.
+ */
+export async function rewriteUnboundCommonJsDynamicRequire(
+  source: string,
+  replacementIdentifier: string,
+  staticRequireRecorderIdentifier?: string,
+): Promise<string | null> {
+  if (!(ReflectApply(StringPrototypeIncludes, source, ["require"]) as boolean)) return source;
+  if (!/^[A-Za-z_$][A-Za-z\d_$]*$/.test(replacementIdentifier)) {
+    throw new TypeError("The CommonJS require replacement must be an identifier");
+  }
+  if (
+    staticRequireRecorderIdentifier !== undefined &&
+    !/^[A-Za-z_$][A-Za-z\d_$]*$/.test(staticRequireRecorderIdentifier)
+  ) {
+    throw new TypeError("The CommonJS require recorder must be an identifier");
+  }
+  const program = await parseSource(source);
+  if (program === null) return null;
+
+  const { nodeScopes, parents } = buildScopes(program);
+  collectAssignments(program, nodeScopes, parents);
+  const replacements: Array<{ start: number; end: number; value: string }> = [];
+  const staticCalls: Array<{
+    specifier: string;
+    replacement: { start: number; end: number; value: string };
+  }> = [];
+  let hasDynamicRequireReplacement = false;
+  const recordStaticCall = (
+    call: ASTNode & { start: number; end: number },
+    specifier: string,
+    expression: string,
+  ): void => {
+    const replacement = { start: call.start, end: call.end, value: expression };
+    staticCalls.push({ specifier, replacement });
+    replacements.push(replacement);
+  };
+  const replaceDynamicCallee = (callee: ASTNode & { start: number; end: number }): void => {
+    hasDynamicRequireReplacement = true;
+    replacements.push({
+      start: callee.start,
+      end: callee.end,
+      value: replacementIdentifier,
+    });
+  };
+  const staticRequireExpression = (specifier: string): string =>
+    `require(${safeStringLiteral(specifier)})`;
+  const staticModuleRequireExpression = (specifier: string): string =>
+    staticRequireExpression(specifier);
+  const visit = (node: ASTNode): void => {
+    const scope = nodeScopes.get(node);
+    if (
+      scope && node.type === "Identifier" && node.name === "require" &&
+      resolveBinding(scope, "require") === null &&
+      isIdentifierReference(node, parents) && hasSourceRange(node, source.length)
+    ) {
+      let directCall: ASTNode = node;
+      let link = parents.get(directCall);
+      while (
+        link && TS_EXPRESSION_WRAPPER_TYPES.has(link.parent.type) &&
+        link.key === "expression"
+      ) {
+        directCall = link.parent;
+        link = parents.get(directCall);
+      }
+      const call = link && isCallExpression(link.parent) && link.key === "callee"
+        ? link.parent
+        : undefined;
+      const args = call === undefined ? [] : callArguments(call);
+      let preserveRequire = args.length === 1 && staticString(args[0]) !== null;
+      const directSpecifier = args.length === 1 ? staticString(args[0]) : null;
+      if (call !== undefined && directSpecifier !== null && hasSourceRange(call, source.length)) {
+        recordStaticCall(call, directSpecifier, staticRequireExpression(directSpecifier));
+      } else if (
+        !preserveRequire && args.length === 1 && hasSourceRange(args[0]!, source.length)
+      ) {
+        const boundSpecifier = staticStringFromImmutableBinding(
+          args[0]!,
+          scope,
+          nodeScopes,
+          parents,
+        );
+        if (boundSpecifier !== null) {
+          if (call !== undefined && hasSourceRange(call, source.length)) {
+            recordStaticCall(call, boundSpecifier, staticRequireExpression(boundSpecifier));
+          } else {
+            replacements.push({
+              start: args[0]!.start,
+              end: args[0]!.end,
+              value: safeStringLiteral(boundSpecifier),
+            });
+          }
+          preserveRequire = true;
+        }
+      }
+      if (!preserveRequire) {
+        const parent = parents.get(node);
+        const shorthand = parent?.parent.type === "ObjectProperty" &&
+          parent.key === "value" && parent.parent.shorthand === true;
+        hasDynamicRequireReplacement = true;
+        replacements.push({
+          start: node.start,
+          end: node.end,
+          value: shorthand ? `require: ${replacementIdentifier}` : replacementIdentifier,
+        });
+      }
+    }
+    if (
+      scope && (node.type === "MemberExpression" || node.type === "OptionalMemberExpression") &&
+      memberPropertyName(node) === "require" && isNode(node.object) &&
+      node.object.type === "Identifier" && node.object.name === "module" &&
+      resolveBinding(scope, "module") === null && hasSourceRange(node, source.length)
+    ) {
+      let callee: ASTNode = node;
+      let link = parents.get(callee);
+      while (
+        link && TS_EXPRESSION_WRAPPER_TYPES.has(link.parent.type) &&
+        link.key === "expression"
+      ) {
+        callee = link.parent;
+        link = parents.get(callee);
+      }
+      const call = link && isCallExpression(link.parent) && link.key === "callee"
+        ? link.parent
+        : undefined;
+      const args = call === undefined ? [] : callArguments(call);
+      const directSpecifier = args.length === 1 ? staticString(args[0]) : null;
+      if (call !== undefined && directSpecifier !== null && hasSourceRange(call, source.length)) {
+        recordStaticCall(call, directSpecifier, staticModuleRequireExpression(directSpecifier));
+      } else if (call !== undefined && args.length === 1 && hasSourceRange(call, source.length)) {
+        const boundSpecifier = staticStringFromImmutableBinding(
+          args[0]!,
+          scope,
+          nodeScopes,
+          parents,
+        );
+        if (boundSpecifier !== null) {
+          recordStaticCall(call, boundSpecifier, staticModuleRequireExpression(boundSpecifier));
+        } else {
+          replaceDynamicCallee(node);
+        }
+      } else {
+        hasDynamicRequireReplacement = true;
+        replacements.push({
+          start: node.start,
+          end: node.end,
+          value: replacementIdentifier,
+        });
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(program);
+
+  if (hasDynamicRequireReplacement && staticRequireRecorderIdentifier !== undefined) {
+    for (const call of staticCalls) {
+      call.replacement.value = `${replacementIdentifier}(${safeStringLiteral(call.specifier)})`;
+    }
+  }
+  replacements.sort((left, right) => right.start - left.start);
+  const rewritten = replacements.reduce(
+    (rewritten, replacement) =>
+      rewritten.slice(0, replacement.start) + replacement.value +
+      rewritten.slice(replacement.end),
+    source,
+  );
+  if (
+    !hasDynamicRequireReplacement || staticRequireRecorderIdentifier === undefined ||
+    staticCalls.length === 0
+  ) {
+    return rewritten;
+  }
+  const registered = new IntrinsicSet<string>();
+  const registrations: string[] = [];
+  for (const call of staticCalls) {
+    if (ReflectApply(SetPrototypeHas, registered, [call.specifier]) as boolean) continue;
+    ReflectApply(SetPrototypeAdd, registered, [call.specifier]);
+    ReflectApply(ArrayPrototypePush, registrations, [
+      `${staticRequireRecorderIdentifier}(${safeStringLiteral(call.specifier)}, () => ${
+        staticRequireExpression(call.specifier)
+      });`,
+    ]);
+  }
+  const prefix = `${ReflectApply(ArrayPrototypeJoin, registrations, ["\n"]) as string}\n`;
+  if (!(ReflectApply(StringPrototypeStartsWith, rewritten, ["#!"]) as boolean)) {
+    return prefix + rewritten;
+  }
+  const lineEnd = ReflectApply(StringPrototypeIndexOf, rewritten, ["\n"]) as number;
+  return lineEnd < 0
+    ? `${rewritten}\n${prefix}`
+    : `${ReflectApply(StringPrototypeSlice, rewritten, [
+      0,
+      lineEnd + 1,
+    ]) as string}${prefix}${ReflectApply(StringPrototypeSlice, rewritten, [
+      lineEnd + 1,
+    ]) as string}`;
+}
+
+function safeStringLiteral(value: string): string {
+  const literal = ReflectApply(JSONStringify, IntrinsicJSON, [value]);
+  if (typeof literal !== "string") {
+    throw new TypeError("String literal serialization failed");
+  }
+  return literal;
+}
 
 /**
  * Bind location-sensitive import metadata to its declaring module before
@@ -201,14 +460,32 @@ export async function rewriteImportMetaLocations(
   source: string,
   moduleUrl: string,
   resolveSpecifier?: ImportMetaSpecifierResolver,
+  rewriteResolveCall?: ImportMetaResolveCallRewriter,
+  rewriteResolveArgument?: ImportMetaResolveArgumentRewriter,
+  rewriteResolveReference?: ImportMetaResolveReferenceRewriter,
 ): Promise<string | null> {
-  if (!source.includes(IMPORT_KEYWORD)) return source;
-  const importIndex = source.indexOf(IMPORT_KEYWORD);
-  if (!source.includes(META_KEYWORD, importIndex + IMPORT_KEYWORD.length)) return source;
+  if (!(ReflectApply(StringPrototypeIncludes, source, [IMPORT_KEYWORD]) as boolean)) return source;
+  const importIndex = ReflectApply(StringPrototypeIndexOf, source, [IMPORT_KEYWORD]) as number;
+  if (
+    !(ReflectApply(StringPrototypeIncludes, source, [
+      META_KEYWORD,
+      importIndex + IMPORT_KEYWORD.length,
+    ]) as boolean)
+  ) return source;
   const program = await parseSource(source);
   if (program === null) return null;
 
   const replacements: Array<{ start: number; end: number; value: string }> = [];
+  const pendingResolutions: Array<{
+    start: number;
+    end: number;
+    specifier: string;
+  }> = [];
+  const pendingResolveCallRewrites: Array<{
+    start: number;
+    end: number;
+    replacement: string | null | Promise<string | null>;
+  }> = [];
   let unsupportedResolve = false;
   const visit = (node: ASTNode): void => {
     if (
@@ -216,33 +493,89 @@ export async function rewriteImportMetaLocations(
       isImportMetaResolve(node.callee)
     ) {
       const args = callArguments(node);
-      const specifier = args.length === 1 ? staticString(args[0]) : null;
-      let resolved: string | null = null;
-      if (specifier !== null) {
-        resolved = resolveSpecifier
-          ? resolveSpecifier(specifier, moduleUrl)
-          : resolveImportMetaUrlSpecifier(specifier, moduleUrl);
-      }
-      if (resolved === null || !hasSourceRange(node, source.length)) {
+      const argument = args.length === 1 ? args[0] : undefined;
+      const specifier = argument === undefined ? null : staticString(argument);
+      if (!hasSourceRange(node, source.length)) {
         unsupportedResolve = true;
-      } else {
-        replacements.push({
+      } else if (argument === undefined && rewriteResolveCall) {
+        pendingResolveCallRewrites.push({
           start: node.start,
           end: node.end,
-          value: JSON.stringify(resolved),
+          replacement: rewriteResolveCall("undefined", moduleUrl),
         });
+      } else if (argument === undefined && rewriteResolveArgument) {
+        pendingResolveCallRewrites.push({
+          start: node.start,
+          end: node.end,
+          replacement: rewriteResolveArgument("undefined", moduleUrl),
+        });
+      } else if (argument === undefined) {
+        unsupportedResolve = true;
+      } else if (
+        specifier === null && rewriteResolveArgument && hasSourceRange(argument, source.length)
+      ) {
+        const argumentSource = source.slice(argument.start, argument.end);
+        pendingResolveCallRewrites.push({
+          start: node.start,
+          end: node.end,
+          replacement: (async () => {
+            const rewrittenArgument = await rewriteImportMetaLocations(
+              argumentSource,
+              moduleUrl,
+              resolveSpecifier,
+              rewriteResolveCall,
+              rewriteResolveArgument,
+              rewriteResolveReference,
+            );
+            if (rewrittenArgument === null) return null;
+            return await rewriteResolveArgument(rewrittenArgument, moduleUrl);
+          })(),
+        });
+      } else if (specifier === null) {
+        unsupportedResolve = true;
+      } else if (rewriteResolveCall) {
+        pendingResolveCallRewrites.push({
+          start: node.start,
+          end: node.end,
+          replacement: rewriteResolveCall(specifier, moduleUrl),
+        });
+      } else if (resolveSpecifier) {
+        pendingResolutions.push({
+          start: node.start,
+          end: node.end,
+          specifier,
+        });
+      } else {
+        const resolved = resolveImportMetaUrlSpecifier(specifier, moduleUrl);
+        if (resolved === null) {
+          unsupportedResolve = true;
+        } else {
+          replacements.push({
+            start: node.start,
+            end: node.end,
+            value: safeStringLiteral(resolved),
+          });
+        }
       }
       return;
     }
     if (isImportMetaResolve(node)) {
-      unsupportedResolve = true;
+      if (rewriteResolveReference && hasSourceRange(node, source.length)) {
+        pendingResolveCallRewrites.push({
+          start: node.start,
+          end: node.end,
+          replacement: rewriteResolveReference(moduleUrl),
+        });
+      } else {
+        unsupportedResolve = true;
+      }
       return;
     }
     if (isImportMetaUrl(node) && hasSourceRange(node, source.length)) {
       replacements.push({
         start: node.start,
         end: node.end,
-        value: JSON.stringify(moduleUrl),
+        value: safeStringLiteral(moduleUrl),
       });
       return;
     }
@@ -255,10 +588,59 @@ export async function rewriteImportMetaLocations(
       });
       return;
     }
+    if (isImportMeta(node) && hasSourceRange(node, source.length)) {
+      if (!rewriteResolveReference) {
+        unsupportedResolve = true;
+        return;
+      }
+      pendingResolveCallRewrites.push({
+        start: node.start,
+        end: node.end,
+        replacement: (async () => {
+          const resolve = await rewriteResolveReference(moduleUrl);
+          return `({ __proto__: null, url: ${safeStringLiteral(moduleUrl)}, dirname: ${
+            importMetaPathValue(moduleUrl, "dirname")
+          }, filename: ${importMetaPathValue(moduleUrl, "filename")}, resolve: ${resolve} })`;
+        })(),
+      });
+      return;
+    }
     forEachChild(node, visit);
   };
   visit(program);
   if (unsupportedResolve) return null;
+
+  if (rewriteResolveCall || rewriteResolveArgument || rewriteResolveReference) {
+    const rewrittenCalls = await Promise.all(
+      pendingResolveCallRewrites.map(({ replacement }) => replacement),
+    );
+    for (let index = 0; index < pendingResolveCallRewrites.length; index++) {
+      const request = pendingResolveCallRewrites[index];
+      const replacement = rewrittenCalls[index];
+      if (request === undefined || replacement === undefined || replacement === null) return null;
+      replacements.push({
+        start: request.start,
+        end: request.end,
+        value: replacement,
+      });
+    }
+  }
+
+  if (resolveSpecifier) {
+    const resolvedSpecifiers = await Promise.all(
+      pendingResolutions.map(({ specifier }) => resolveSpecifier(specifier, moduleUrl)),
+    );
+    for (let index = 0; index < pendingResolutions.length; index++) {
+      const resolved = resolvedSpecifiers[index];
+      const request = pendingResolutions[index];
+      if (resolved === null || resolved === undefined || request === undefined) return null;
+      replacements.push({
+        start: request.start,
+        end: request.end,
+        value: safeStringLiteral(resolved),
+      });
+    }
+  }
 
   replacements.sort((left, right) => right.start - left.start);
   return replacements.reduce(
@@ -274,7 +656,7 @@ function importMetaPathValue(moduleUrl: string, property: "dirname" | "filename"
     const url = new URL(moduleUrl);
     if (url.protocol !== "file:") return "undefined";
     const filename = pathHelper.fromFileUrl(url);
-    return JSON.stringify(property === "dirname" ? pathHelper.dirname(filename) : filename);
+    return safeStringLiteral(property === "dirname" ? pathHelper.dirname(filename) : filename);
   } catch {
     return "undefined";
   }
@@ -2506,6 +2888,77 @@ function staticString(node: ASTNode | undefined): string | null {
   return null;
 }
 
+function staticStringFromImmutableBinding(
+  node: ASTNode,
+  scope: Scope,
+  nodeScopes: WeakMap<ASTNode, Scope>,
+  parents: WeakMap<ASTNode, ParentLink>,
+  seen = new Set<Binding>(),
+): string | null {
+  const direct = staticString(node);
+  if (direct !== null) return direct;
+
+  const expression = unwrapExpression(node);
+  if (expression.type === "Identifier" && typeof expression.name === "string") {
+    const binding = resolveBinding(scope, expression.name);
+    if (
+      binding === null || binding.hasAliasAssignment || seen.has(binding) ||
+      binding.initializers.length !== 1 || !Number.isSafeInteger(expression.start)
+    ) return null;
+    const initializer = binding.initializers[0]!;
+    if (
+      !isDirectConstBindingInitializer(initializer, parents) ||
+      !Number.isSafeInteger(initializer.end) ||
+      (initializer.end as number) > (expression.start as number)
+    ) return null;
+    seen.add(binding);
+    return staticStringFromImmutableBinding(
+      initializer,
+      nodeScopes.get(initializer) ?? binding.scope,
+      nodeScopes,
+      parents,
+      seen,
+    );
+  }
+  if (
+    expression.type === "BinaryExpression" && expression.operator === "+" &&
+    isNode(expression.left) && isNode(expression.right)
+  ) {
+    const left = staticStringFromImmutableBinding(
+      expression.left,
+      nodeScopes.get(expression.left) ?? scope,
+      nodeScopes,
+      parents,
+      new Set(seen),
+    );
+    if (left === null) return null;
+    const right = staticStringFromImmutableBinding(
+      expression.right,
+      nodeScopes.get(expression.right) ?? scope,
+      nodeScopes,
+      parents,
+      new Set(seen),
+    );
+    return right === null ? null : left + right;
+  }
+  return null;
+}
+
+function isDirectConstBindingInitializer(
+  initializer: ASTNode,
+  parents: WeakMap<ASTNode, ParentLink>,
+): boolean {
+  const declaratorLink = parents.get(initializer);
+  if (
+    declaratorLink?.key !== "init" ||
+    declaratorLink.parent.type !== "VariableDeclarator" ||
+    !isNode(declaratorLink.parent.id) || declaratorLink.parent.id.type !== "Identifier"
+  ) return false;
+  const declarationLink = parents.get(declaratorLink.parent);
+  return declarationLink?.parent.type === "VariableDeclaration" &&
+    declarationLink.parent.kind === "const";
+}
+
 function memberPropertyName(node: ASTNode): string | null {
   if (node.type !== "MemberExpression" && node.type !== "OptionalMemberExpression") return null;
   const property = isNode(node.property) ? node.property : undefined;
@@ -2607,6 +3060,14 @@ function isImportMetaUrl(node: ASTNode | undefined): boolean {
   return isImportMetaMember(node, "url");
 }
 
+function isImportMeta(node: ASTNode | undefined): boolean {
+  if (!node) return false;
+  const expression = unwrapExpression(node);
+  return expression.type === "MetaProperty" && isNode(expression.meta) &&
+    expression.meta.name === "import" && isNode(expression.property) &&
+    expression.property.name === "meta";
+}
+
 function isImportMetaResolve(node: ASTNode | undefined): boolean {
   return isImportMetaMember(node, "resolve");
 }
@@ -2625,8 +3086,7 @@ function isImportMetaMember(node: ASTNode | undefined, propertyName: string): bo
     memberPropertyName(expression) !== propertyName || !isNode(expression.object)
   ) return false;
   const object = unwrapExpression(expression.object);
-  return object.type === "MetaProperty" && isNode(object.meta) && object.meta.name === "import" &&
-    isNode(object.property) && object.property.name === "meta";
+  return isImportMeta(object);
 }
 
 const TS_EXPRESSION_WRAPPER_TYPES = new Set([

@@ -219,6 +219,62 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     assertEquals(failedComponents.size, 0);
   });
 
+  it("preserves project package.json imports from transformed cache modules", async () => {
+    clearSSRModuleCache();
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-project-json-" });
+    try {
+      await mkdir(join(projectDir, "app"), { recursive: true });
+      await writeTextFile(
+        join(projectDir, "package.json"),
+        JSON.stringify({ name: "project-manifest" }),
+      );
+      const filePath = join(projectDir, "app", "page.tsx");
+      const source = 'import manifest from "../package.json" with { type: "json" };\n' +
+        "export const packageName = manifest.name;\n" +
+        "export default function Page() { return null; }";
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId: "project-json-import",
+        contentSourceId: "preview-json-import",
+        adapter: denoAdapter,
+        dev: true,
+      });
+
+      const mod = await loader.loadRawModule(filePath, source);
+
+      assertEquals(mod.packageName, "project-manifest");
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("materializes relative and alias JSON imports from proxy project adapters", async () => {
+    clearSSRModuleCache();
+    const projectDir = "/app";
+    const filePath = "/app/app/page.tsx";
+    const adapter = createProxyProjectAdapter({
+      "app/data.json": JSON.stringify({ source: "relative adapter" }),
+      "settings.json": JSON.stringify({ source: "alias adapter" }),
+    });
+    const source = [
+      'import relativeData from "./data.json" with { type: "json" };',
+      'import aliasData from "@/settings.json" with { type: "json" };',
+      "export const sources = [relativeData.source, aliasData.source];",
+      "export default function Page() { return null; }",
+    ].join("\n");
+    const loader = new SSRModuleLoader({
+      projectDir,
+      projectId: "project-proxy-adapter-json",
+      contentSourceId: "release-json",
+      adapter,
+      dev: true,
+    });
+
+    const mod = await loader.loadRawModule(filePath, source);
+
+    assertEquals(mod.sources, ["relative adapter", "alias adapter"]);
+  });
+
   it("isolates cache by projectId", async () => {
     clearSSRModuleCache();
 
@@ -1176,6 +1232,36 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     );
 
     assertEquals(component.name, "RootLayout");
+  });
+
+  it("loads relative and aliased JSON through the runtime adapter for proxy project paths", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = "/app";
+    const filePath = "/app/app/page.tsx";
+    const adapter = createProxyProjectAdapter({
+      "package.json": `{ "name": "adapter-project" }`,
+      "data/site.json": `{ "title": "Adapter data" }`,
+    });
+    const loader = new SSRModuleLoader({
+      projectDir,
+      projectId: "project-proxy-adapter-json",
+      contentSourceId: "release-1",
+      adapter,
+      dev: true,
+    });
+
+    const module = await loader.loadRawModule(
+      filePath,
+      [
+        `import manifest from "../package.json" with { type: "json" };`,
+        `import site from "@/data/site.json" with { type: "json" };`,
+        `export const summary = manifest.name + ":" + site.title;`,
+        `export default function Page() { return null; }`,
+      ].join("\n"),
+    );
+
+    assertEquals(module.summary, "adapter-project:Adapter data");
   });
 
   it("finishes an in-flight load when project invalidation revokes cache publication", async () => {

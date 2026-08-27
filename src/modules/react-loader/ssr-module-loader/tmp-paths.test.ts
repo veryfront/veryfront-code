@@ -58,49 +58,81 @@ describe("modules/react-loader/ssr-module-loader/tmp-paths", () => {
 
     assertEquals(
       tempPath,
-      `/cache/mdx/${projectHash}/${hashCodeHex("release-1")}/src/page.v0-1-7-rc-49.deadbeef.js`,
+      `/cache/mdx/${projectHash}/${
+        hashCodeHex("release-1")
+      }/src/page.tsx.v0-1-7-rc-49.deadbeef.mjs`,
     );
   });
 
   it("builds hashed temp module paths for every accepted source extension", () => {
     const tmpDir = `/cache/mdx/${hashCodeHex("my/project")}/${hashCodeHex("release-1")}`;
+    const extensions = [
+      "js",
+      "jsx",
+      "mjs",
+      "mjsx",
+      "cjs",
+      "cjsx",
+      "ts",
+      "tsx",
+      "mts",
+      "mtsx",
+      "cts",
+      "ctsx",
+      "mdx",
+    ];
+
+    for (const extension of extensions) {
+      assertEquals(
+        buildTempModulePath(
+          tmpDir,
+          `/repo/project/src/module.${extension}`,
+          "/repo/project",
+          "0.1.7",
+          "deadbeefcafebabe",
+        ),
+        `${tmpDir}/src/module.${extension}.v0-1-7.deadbeef.mjs`,
+        `${extension} sources must get a versioned, content-hashed .mjs temp path`,
+      );
+    }
+  });
+
+  it("keeps source extension identity for identical transformed content", () => {
+    const tmpDir = `/cache/mdx/${hashCodeHex("my/project")}/${hashCodeHex("release-1")}`;
+    const jsPath = buildTempModulePath(
+      tmpDir,
+      "/repo/project/src/module.js",
+      "/repo/project",
+      "0.1.7",
+      "deadbeefcafebabe",
+    );
+    const mjsPath = buildTempModulePath(
+      tmpDir,
+      "/repo/project/src/module.mjs",
+      "/repo/project",
+      "0.1.7",
+      "deadbeefcafebabe",
+    );
+
+    assert(jsPath !== mjsPath, "distinct source modules must not share one ESM cache path");
+  });
+
+  it("builds content-addressed temp paths for JSON dependencies", () => {
+    const tmpDir = `/cache/mdx/${hashCodeHex("my/project")}/${hashCodeHex("branch-main")}`;
 
     assertEquals(
       buildTempModulePath(
         tmpDir,
-        "/repo/project/src/Card.jsx",
+        "/repo/project/data/site.json",
         "/repo/project",
         "0.1.7",
         "deadbeefcafebabe",
       ),
-      `${tmpDir}/src/Card.v0-1-7.deadbeef.js`,
-      "jsx sources must get a versioned, content-hashed .js temp path",
-    );
-    assertEquals(
-      buildTempModulePath(
-        tmpDir,
-        "/repo/project/src/Post.mdx",
-        "/repo/project",
-        "0.1.7",
-        "deadbeefcafebabe",
-      ),
-      `${tmpDir}/src/Post.v0-1-7.deadbeef.js`,
-      "mdx sources must get a versioned, content-hashed .js temp path",
-    );
-    assertEquals(
-      buildTempModulePath(
-        tmpDir,
-        "/repo/project/src/util.ts",
-        "/repo/project",
-        "0.1.7",
-        "deadbeefcafebabe",
-      ),
-      `${tmpDir}/src/util.v0-1-7.deadbeef.js`,
-      "ts sources must get a versioned, content-hashed .js temp path",
+      `${tmpDir}/data/site.v0-1-7.deadbeef.json`,
     );
   });
 
-  it("builds hashed JavaScript paths for compiled framework .src files", () => {
+  it("builds hashed module paths for compiled framework .src files", () => {
     const tempPath = buildTempModulePath(
       "/cache/mdx/v0-1-1154/project/source",
       "/tmp/deno-compile-veryfront/dist/framework-src/react/runtime/core.ts.src",
@@ -111,7 +143,22 @@ describe("modules/react-loader/ssr-module-loader/tmp-paths", () => {
 
     assertEquals(
       tempPath,
-      "/cache/mdx/v0-1-1154/project/source/tmp/deno-compile-veryfront/dist/framework-src/react/runtime/core.v0-1-1154.deadbeef.js",
+      "/cache/mdx/v0-1-1154/project/source/tmp/deno-compile-veryfront/dist/framework-src/react/runtime/core.ts.src.v0-1-1154.deadbeef.mjs",
+    );
+  });
+
+  it("keeps JSON modules as JSON while adding their content identity", () => {
+    const tempPath = buildTempModulePath(
+      "/cache/mdx/v0-1-7/project/source",
+      "/repo/project/data/settings.json",
+      "/repo/project",
+      "0.1.7",
+      "deadbeefcafebabe",
+    );
+
+    assertEquals(
+      tempPath,
+      "/cache/mdx/v0-1-7/project/source/data/settings.v0-1-7.deadbeef.json",
     );
   });
 
@@ -126,7 +173,7 @@ describe("modules/react-loader/ssr-module-loader/tmp-paths", () => {
 
     assertEquals(
       tempPath,
-      `/cache/mdx/${projectHash}/${hashCodeHex("release-1")}/tmp/external.v0-1-7-rc-49.js`,
+      `/cache/mdx/${projectHash}/${hashCodeHex("release-1")}/tmp/external.tsx.v0-1-7-rc-49.mjs`,
     );
   });
 

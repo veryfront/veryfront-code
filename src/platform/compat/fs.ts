@@ -469,7 +469,10 @@ export function createFileSystem(): FileSystem {
         "Native filesystem adapter",
       );
       if (snapshotReader === undefined) {
-        throw new Error("Native filesystem adapter does not support snapshot reads");
+        throw new DOMException(
+          "Native filesystem adapter does not support snapshot reads",
+          "NotSupportedError",
+        );
       }
       return await snapshotReader.read(path, containmentRoot, byteLimit);
     },

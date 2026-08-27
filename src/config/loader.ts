@@ -1,8 +1,10 @@
 import type { VeryfrontConfig } from "./schemas/index.ts";
 import { validateVeryfrontConfig } from "./schemas/index.ts";
 import {
+  basename,
   dirname,
   extname,
+  fromFileUrl,
   isAbsolute,
   join,
   relative,
@@ -11,11 +13,12 @@ import {
 } from "#veryfront/compat/path/index.ts";
 import { runtimeUsesWindowsPaths } from "#veryfront/platform/compat/path/portable.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isPathContainedBy } from "#veryfront/platform/adapters/path-containment.ts";
 import {
   isExtendedFSAdapter,
   isVirtualFilesystem,
 } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { isBun, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
+import { isBun, isDenoCompiled, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { ESBUILD_WASM_URL } from "#veryfront/platform/compat/esbuild-shared.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
@@ -42,6 +45,7 @@ import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache/registry.ts";
 import { VERYFRONT_CONFIG_FILES } from "./config-files.ts";
 import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
+import type { BundleOptions, BundleResult } from "#veryfront/extensions/bundler/bundler.ts";
 import type { ModuleLexer } from "#veryfront/extensions/bundler/module-lexer.ts";
 import type { ASTNode } from "#veryfront/extensions/parser/index.ts";
 import { tryResolve as tryResolveContract } from "#veryfront/extensions/contracts.ts";
@@ -49,7 +53,7 @@ import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-par
 import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
 import { NODE_BUILTINS } from "#veryfront/transforms/import-rewriter/node-builtins.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
-import { VERYFRONT_CONFIG_SHIM_URL } from "./config-shim.ts";
+import { VERYFRONT_CONFIG_SHIM_SOURCE, VERYFRONT_CONFIG_SHIM_URL } from "./config-shim.ts";
 import {
   createPreparedDeclarativeConfigWorkerPayload,
   DeclarativeConfigEvaluationError,
@@ -64,6 +68,15 @@ import {
 } from "./declarative-evaluator-worker-runner.ts";
 import { createDeclarativeConfigWorkerInfrastructureError } from "./declarative-evaluator-worker-protocol.ts";
 import { describeHostedConfigRejection } from "./hosted-compatibility.ts";
+import {
+  type ImportMetaResolveArgumentRewriter,
+  type ImportMetaResolveCallRewriter,
+  type ImportMetaResolveReferenceRewriter,
+  type ImportMetaSpecifierResolver,
+  rewriteImportMetaLocations,
+  rewriteUnboundCommonJsDynamicRequire,
+  usesUnboundCommonJsModule,
+} from "#veryfront/routing/api/module-loader/source-capability-analyzer.ts";
 
 // Capture the collection and reflection intrinsics before trusted executable
 // project configuration can mutate the shared host realm. Hosted configuration
@@ -74,6 +87,8 @@ const IntrinsicSet = Set;
 const ArrayIsArray = Array.isArray;
 const IntrinsicPromise = Promise;
 const IntrinsicString = String;
+const IntrinsicTypeError = TypeError;
+const IntrinsicJSON = JSON;
 const IntrinsicTextDecoder = TextDecoder;
 const IntrinsicErrorPrototype = Error.prototype;
 const IntrinsicObjectPrototype = Object.prototype;
@@ -85,6 +100,8 @@ const EncodeURIComponent = encodeURIComponent;
 const JSONParse = JSON.parse;
 const JSONStringify = JSON.stringify;
 const DecodeURIComponent = decodeURIComponent;
+const IntrinsicCrypto = crypto;
+const CryptoRandomUUID = crypto.randomUUID;
 const AbortControllerPrototypeAbort = AbortController.prototype.abort;
 const EventTargetPrototypeAddEventListener = EventTarget.prototype.addEventListener;
 const EventTargetPrototypeRemoveEventListener = EventTarget.prototype.removeEventListener;
@@ -130,6 +147,49 @@ const WeakMapPrototypeGet = WeakMap.prototype.get;
 const WeakMapPrototypeSet = WeakMap.prototype.set;
 const WeakSetPrototypeAdd = WeakSet.prototype.add;
 const WeakSetPrototypeHas = WeakSet.prototype.has;
+const processDescriptor = isNode
+  ? ObjectGetOwnPropertyDescriptor(globalThis, "process")
+  : undefined;
+const processValue = processDescriptor && "value" in processDescriptor
+  ? processDescriptor.value
+  : processDescriptor && typeof processDescriptor.get === "function"
+  ? ReflectApply(processDescriptor.get, globalThis, [])
+  : undefined;
+const capturedProcess = typeof processValue === "object" && processValue !== null
+  ? processValue as Record<PropertyKey, unknown>
+  : undefined;
+const execArgvDescriptor = capturedProcess
+  ? ObjectGetOwnPropertyDescriptor(capturedProcess, "execArgv")
+  : undefined;
+const CapturedNodeExecArgv: readonly string[] = (() => {
+  const value = execArgvDescriptor && "value" in execArgvDescriptor
+    ? execArgvDescriptor.value
+    : undefined;
+  if (!ArrayIsArray(value)) return [];
+  const copy: string[] = [];
+  for (let index = 0; index < value.length; index++) {
+    const argument = value[index];
+    if (typeof argument === "string") copy[copy.length] = argument;
+  }
+  return ReflectApply(ObjectFreeze, Object, [copy]) as readonly string[];
+})();
+const featuresDescriptor = capturedProcess
+  ? ObjectGetOwnPropertyDescriptor(capturedProcess, "features")
+  : undefined;
+const featuresValue = featuresDescriptor && "value" in featuresDescriptor
+  ? featuresDescriptor.value
+  : featuresDescriptor && typeof featuresDescriptor.get === "function"
+  ? ReflectApply(featuresDescriptor.get, capturedProcess, [])
+  : undefined;
+const requireModuleDescriptor = typeof featuresValue === "object" && featuresValue !== null
+  ? ObjectGetOwnPropertyDescriptor(featuresValue, "require_module")
+  : undefined;
+const CapturedNodeRequireModule = requireModuleDescriptor && "value" in requireModuleDescriptor
+  ? requireModuleDescriptor.value === true
+  : requireModuleDescriptor && typeof requireModuleDescriptor.get === "function"
+  ? ReflectApply(requireModuleDescriptor.get, featuresValue, []) === true
+  : false;
+const CapturedNodeOptions = isNode ? getHostEnv("NODE_OPTIONS") : undefined;
 const bunDescriptor = ObjectGetOwnPropertyDescriptor(globalThis, "Bun");
 const CapturedBun = bunDescriptor && "value" in bunDescriptor ? bunDescriptor.value : undefined;
 const bunResolveSyncDescriptor = typeof CapturedBun === "object" && CapturedBun !== null
@@ -175,8 +235,17 @@ const HOSTED_CONFIG_TEXT_DECODER_OPTIONS = createHostedConfigTextDecoderOptions(
 const ABORT_LISTENER_OPTIONS = createAbortListenerOptions();
 const SAFE_PROMISE_SPECIES_HOLDER = createSafePromiseSpeciesHolder();
 const NODE_BUILTIN_PACKAGE_NAMES: ReadonlySet<string> = new IntrinsicSet(NODE_BUILTINS);
+const CONFIG_BUNDLE_RESOLVE_PLUGIN_DATA = ObjectFreeze({});
+const CONFIG_BUNDLE_ENTRY_NAMESPACE = "veryfront-config-entry";
+const CONFIG_BUNDLE_ENTRY_SPECIFIER = "veryfront:project-config-entry";
+const CONFIG_BUNDLE_SHIM_NAMESPACE = "veryfront-config-shim";
+const CONFIG_BUNDLE_REQUIRE_NAMESPACE = "veryfront-config-require";
 
 type RuntimeReflectionRecord = Record<PropertyKey, unknown>;
+
+function isNodeBuiltinPackageName(specifier: string): boolean {
+  return ReflectApply(SetPrototypeHas, NODE_BUILTIN_PACKAGE_NAMES, [specifier]) as boolean;
+}
 
 function freezeObject<T>(value: T): T {
   return ReflectApply(ObjectFreeze, Object, [value]) as T;
@@ -2417,7 +2486,7 @@ function missingPackageName(specifier: string): string | undefined {
   if (parsed.subpath !== null) return undefined;
   if (
     !hasRuntimePrefix &&
-    ReflectApply(SetPrototypeHas, NODE_BUILTIN_PACKAGE_NAMES, [parsed.packageName]) as boolean
+    isNodeBuiltinPackageName(parsed.packageName)
   ) {
     return undefined;
   }
@@ -2504,6 +2573,14 @@ function readDataDescriptorString(
 ): string | undefined {
   if (descriptor === undefined || !("value" in descriptor)) return undefined;
   return typeof descriptor.value === "string" ? descriptor.value : undefined;
+}
+
+function setAdd<T>(set: Set<T>, value: T): Set<T> {
+  return ReflectApply(SetPrototypeAdd, set, [value]) as Set<T>;
+}
+
+function setHas<T>(set: Set<T>, value: T): boolean {
+  return ReflectApply(SetPrototypeHas, set, [value]) as boolean;
 }
 
 function readAccessorString(
@@ -2967,22 +3044,31 @@ function configLoadFailure(configFile: string, error: unknown): VeryfrontError {
   });
 }
 
-async function loadConfigFromTempFile(
+/** @internal */
+export async function loadConfigFromTempFile(
   source: string,
   configPath: string,
   loadUrl: (tempFile: string) => string,
   rewriteSource: (source: string) => Promise<string> = rewriteBareVeryfrontConfigImports,
+  bundleProjectImports = false,
 ): Promise<unknown> {
   const fs = createFileSystem();
   const originalExt = extname(configPath) || ".mjs";
 
-  // In compiled Deno binaries, we can't import TypeScript directly.
-  // Convert .ts/.tsx to .mjs after running it through the bundler transform.
-  const needsTranspile = isDenoCompiled && (originalExt === ".ts" || originalExt === ".tsx");
-  const extension = needsTranspile ? ".mjs" : originalExt;
-  const processedSource = needsTranspile
-    ? await transpileConfigSourceForImport(source, configPath)
-    : source;
+  // Compiled Deno binaries and the documented Node.js 22.3 minimum can't
+  // import TypeScript directly. Convert .ts/.tsx to .mjs at this boundary
+  // instead of depending on a runtime's optional native type stripping.
+  // Compiled Deno also stages JavaScript away from its project, so bundle the
+  // requested project graph before any staged import, regardless of extension.
+  const needsTranspile = (isDenoCompiled || isNode) &&
+    (originalExt === ".ts" || originalExt === ".tsx");
+  const extension = needsTranspile || bundleProjectImports ? ".mjs" : originalExt;
+  let processedSource = source;
+  if (bundleProjectImports) {
+    processedSource = await bundleProjectConfigSourceForImport(source, configPath);
+  } else if (needsTranspile) {
+    processedSource = await transpileConfigSourceForImport(source, configPath);
+  }
 
   const tempDir = await fs.makeTempDir({ prefix: "vf-config-" });
   const tempFile = join(tempDir, `config${extension}`);
@@ -3150,8 +3236,8 @@ export function __bunConfigHasTopLevelAwaitForTests(
 
 /**
  * Rewrite bare `veryfront` import specifiers to the inline config shim so
- * temp-file config modules can load. Static imports only (`import ... from
- * "veryfront"` and side-effect `import "veryfront"`); subpaths like
+ * temp-file config modules can load. Static and literal dynamic imports are
+ * rewritten; subpaths like
  * `veryfront/head` are left untouched and will fail loudly, which is correct —
  * they have no meaning in a config file.
  *
@@ -3165,9 +3251,12 @@ export async function rewriteBareVeryfrontConfigImports(source: string): Promise
   let rewritten = source;
   for (let index = imports.length - 1; index >= 0; index--) {
     const specifier = imports[index];
-    if (!specifier || specifier.d !== -1 || specifier.n !== "veryfront") continue;
+    if (!specifier || specifier.n !== "veryfront") continue;
+    const replacement = specifier.d === -1
+      ? VERYFRONT_CONFIG_SHIM_URL
+      : ReflectApply(JSONStringify, IntrinsicJSON, [VERYFRONT_CONFIG_SHIM_URL]) as string;
     rewritten = rewritten.slice(0, specifier.s) +
-      VERYFRONT_CONFIG_SHIM_URL +
+      replacement +
       rewritten.slice(specifier.e);
   }
   return rewritten;
@@ -3180,12 +3269,13 @@ type UnresolvedDynamicProjectConfigImportResolver = (
 ) => string;
 type ResolvedProjectConfigImportObserver = (specifier: string) => void | Promise<void>;
 
-const PROJECT_ESM_EXPORT_CONDITIONS: ReadonlySet<string> = new IntrinsicSet([
-  "deno",
-  "node",
-  "import",
-  "module-sync",
-]);
+const PROJECT_ESM_EXPORT_CONDITIONS: ReadonlySet<string> = (() => {
+  const conditions = new IntrinsicSet(["deno", "node", "import"]);
+  if (!isNode || CapturedNodeRequireModule) {
+    ReflectApply(SetPrototypeAdd, conditions, ["module-sync"]);
+  }
+  return conditions;
+})();
 
 type ProjectPackageManifest = Readonly<{
   directory: string;
@@ -3647,6 +3737,7 @@ async function resolveProjectPackageImport( // NOSONAR: staged package resolutio
     return {
       kind: "resolved",
       specifier: resolveProjectPackageTarget(manifest, specifier, target),
+      directory: manifest.directory,
     };
   }
   if (
@@ -3687,11 +3778,12 @@ async function resolveProjectPackageImport( // NOSONAR: staged package resolutio
   return {
     kind: "resolved",
     specifier: resolveProjectPackageTarget(manifest, specifier, target),
+    directory: manifest.directory,
   };
 }
 
 type ProjectPackageImportResolution = Readonly<
-  | { kind: "resolved"; specifier: string }
+  | { kind: "resolved"; specifier: string; directory: string }
   | { kind: "external"; specifier: string; scopeDirectory: string }
   | { kind: "legacy"; directory: string; subpath: string | null }
 >;
@@ -3733,8 +3825,29 @@ async function createProjectConfigImportResolver(
       );
       return ReflectApply(intrinsicUrlHrefGetter, resolvedUrl, []) as string;
     }
+    if (
+      stringIncludes(specifier, "/") &&
+      ReflectApply(SetPrototypeHas, NODE_BUILTIN_PACKAGE_NAMES, [specifier]) as boolean
+    ) {
+      return `node:${specifier}`;
+    }
     const esmResolution = await resolveProjectPackageImport(specifier, basePath);
-    if (esmResolution?.kind === "resolved") return esmResolution.specifier;
+    if (esmResolution?.kind === "resolved") {
+      const resolvedUrl = new IntrinsicURL(esmResolution.specifier);
+      const resolvedPath = pathFromCapturedFileUrl(resolvedUrl);
+      const { lstatSync, realpathSync } = await import("node:fs");
+      const packageRoot = realpathSync(esmResolution.directory);
+      const boundary = configPackageTargetBoundary(realpathSync, lstatSync, resolvedPath);
+      if (!isPathContainedBy(boundary.path, packageRoot)) {
+        throw configPackageResolutionError(specifier, "ERR_PACKAGE_PATH_NOT_EXPORTED");
+      }
+      const containedPath = boundary.targetExists ? boundary.path : resolvedPath;
+      const query = stringIndexOf(esmResolution.specifier, "?");
+      const fragment = stringIndexOf(esmResolution.specifier, "#");
+      const suffixStart = query < 0 ? fragment : fragment < 0 ? query : Math.min(query, fragment);
+      const suffix = suffixStart < 0 ? "" : stringSlice(esmResolution.specifier, suffixStart);
+      return asResolvedConfigSpecifier(containedPath) + suffix;
+    }
     if (esmResolution?.kind === "legacy") {
       const legacyTarget = esmResolution.subpath === null
         ? esmResolution.directory
@@ -3815,7 +3928,7 @@ export async function rewriteProjectConfigImports( // NOSONAR: source rewrite co
     const before = ReflectApply(StringPrototypeSlice, rewritten, [0, imported.s]) as string;
     const after = ReflectApply(StringPrototypeSlice, rewritten, [imported.e]) as string;
     const serializedReplacement = imported.d >= 0
-      ? ReflectApply(JSONStringify, JSON, [replacement]) as string
+      ? ReflectApply(JSONStringify, IntrinsicJSON, [replacement]) as string
       : replacement;
     rewritten = before + serializedReplacement + after;
   }
@@ -3981,6 +4094,1825 @@ export async function transpileConfigSourceForImport(
     sourcemap: false,
   });
   return result.code;
+}
+
+function isLocalProjectConfigSpecifier(specifier: string): boolean {
+  return specifier === "." || specifier === ".." ||
+    ReflectApply(StringPrototypeStartsWith, specifier, ["./"]) as boolean ||
+    ReflectApply(StringPrototypeStartsWith, specifier, ["../"]) as boolean ||
+    isAbsolute(specifier);
+}
+
+function isProjectConfigGraphSpecifier(
+  specifier: string,
+  packageImportTarget: string | undefined,
+): boolean {
+  if (isLocalProjectConfigSpecifier(specifier)) return true;
+  return packageImportTarget !== undefined &&
+    ReflectApply(StringPrototypeStartsWith, packageImportTarget, ["./"]) as boolean;
+}
+
+async function rejectComputedConfigDynamicImports(source: string): Promise<void> {
+  const lexer = await getConfigModuleLexer();
+  await lexer.init?.();
+  const imports = lexer.parse(source);
+  for (let index = 0; index < imports.length; index++) {
+    const specifier = imports[index];
+    if (specifier && specifier.d >= 0 && specifier.n === undefined) {
+      throw new TypeError(
+        "Computed dynamic imports in TypeScript configuration must use a static specifier for Node.js 22.3 compatibility",
+      );
+    }
+  }
+}
+
+let stagedConfigDynamicImportBridgeKeyPromise: Promise<string> | undefined;
+
+function getStagedConfigDynamicImportBridgeKey(): Promise<string> {
+  stagedConfigDynamicImportBridgeKeyPromise ??= (async () => {
+    try {
+      const uuid = ReflectApply(CryptoRandomUUID, IntrinsicCrypto, []) as string;
+      const bridgeKey = `__veryfrontConfigDynamicImportV1:${uuid}`;
+      const resolvers = new IntrinsicMap<string, Promise<ProjectConfigImportResolver>>();
+      const resolverFor = (moduleUrl: string): Promise<ProjectConfigImportResolver> => {
+        const cached = mapGet(resolvers, moduleUrl);
+        if (cached) return cached;
+        const pending = createProjectConfigImportResolver(fromFileUrl(new IntrinsicURL(moduleUrl)));
+        mapSet(resolvers, moduleUrl, pending);
+        return pending;
+      };
+      const load = async (
+        specifier: unknown,
+        moduleUrl: string,
+        options?: ImportCallOptions,
+      ): Promise<unknown> => {
+        if (typeof specifier === "symbol") {
+          throw new IntrinsicTypeError("Cannot convert a Symbol value to a string");
+        }
+        const stringSpecifier = typeof specifier === "string"
+          ? specifier
+          : ReflectApply(IntrinsicString, undefined, [specifier]) as string;
+        const resolver = await resolverFor(moduleUrl);
+        const resolved = await resolver(stringSpecifier);
+        return options === undefined ? await import(resolved) : await import(resolved, options);
+      };
+      ObjectDefineProperty(globalThis, bridgeKey, {
+        configurable: false,
+        enumerable: false,
+        writable: false,
+        value: freezeObject({ load }),
+      });
+      return bridgeKey;
+    } catch (error) {
+      stagedConfigDynamicImportBridgeKeyPromise = undefined;
+      throw error;
+    }
+  })();
+  return stagedConfigDynamicImportBridgeKeyPromise;
+}
+
+async function rewriteComputedStagedConfigImports(
+  source: string,
+  moduleUrl: string,
+): Promise<string> {
+  const lexer = await getConfigModuleLexer();
+  await lexer.init?.();
+  const imports = lexer.parse(source);
+  const replacements: Array<{ start: number; end: number }> = [];
+  for (let index = 0; index < imports.length; index++) {
+    const imported = imports[index];
+    if (!imported || imported.d < 0 || imported.n !== undefined) continue;
+    replacements[replacements.length] = { start: imported.ss, end: imported.d };
+  }
+  if (replacements.length === 0) return source;
+
+  const bridgeIdentifier = uniqueConfigHelperName(source, "dynamic_import");
+  let rewritten = source;
+  for (let index = replacements.length - 1; index >= 0; index--) {
+    const replacement = replacements[index]!;
+    rewritten = stringSlice(rewritten, 0, replacement.start) + `${bridgeIdentifier}.load` +
+      stringSlice(rewritten, replacement.end);
+  }
+
+  const bridgeKey = await getStagedConfigDynamicImportBridgeKey();
+  const bridgeSource = `const bridge = globalThis[${configCodeLiteral(bridgeKey)}];\n` +
+    `export default { load(specifier, options) { return bridge.load(specifier, ${
+      configCodeLiteral(moduleUrl)
+    }, options); } };\n`;
+  const bridgeUrl = `data:text/javascript,${ReflectApply(EncodeURIComponent, undefined, [
+    bridgeSource,
+  ]) as string}`;
+  const bridgeImport = `import ${bridgeIdentifier} from ${configCodeLiteral(bridgeUrl)};\n`;
+  if (!stringStartsWith(rewritten, "#!")) return bridgeImport + rewritten;
+  const hashbangEnd = stringIndexOf(rewritten, "\n");
+  if (hashbangEnd < 0) return `${rewritten}\n${bridgeImport}`;
+  return stringSlice(rewritten, 0, hashbangEnd + 1) + bridgeImport +
+    stringSlice(rewritten, hashbangEnd + 1);
+}
+
+type ConfigCodeLiteral = string | number | boolean | null;
+
+function configCodeLiteral(value: ConfigCodeLiteral): string {
+  let serialized = ReflectApply(JSONStringify, IntrinsicJSON, [value]) as string;
+  serialized = ReflectApply(StringPrototypeReplaceAll, serialized, ["<", "\\u003c"]) as string;
+  serialized = ReflectApply(StringPrototypeReplaceAll, serialized, [">", "\\u003e"]) as string;
+  serialized = ReflectApply(StringPrototypeReplaceAll, serialized, ["/", "\\u002f"]) as string;
+  serialized = ReflectApply(StringPrototypeReplaceAll, serialized, ["\u2028", "\\u2028"]) as string;
+  return ReflectApply(StringPrototypeReplaceAll, serialized, ["\u2029", "\\u2029"]) as string;
+}
+
+async function rewriteProjectConfigModuleLocations(
+  source: string,
+  modulePath: string,
+  resolveSpecifier?: ImportMetaSpecifierResolver,
+  moduleSuffix = "",
+): Promise<string> {
+  const moduleUrl = `${toFileUrl(modulePath).href}${moduleSuffix}`;
+  const rewriteResolveCall: ImportMetaResolveCallRewriter | undefined = resolveSpecifier
+    ? async (specifier, moduleUrl) => {
+      try {
+        const resolved = await resolveSpecifier(specifier, moduleUrl);
+        if (resolved === null) throw new TypeError("Config import metadata could not be resolved");
+        return `(() => ${configCodeLiteral(resolved)})()`;
+      } catch (error) {
+        return deferredConfigResolveErrorExpression(error);
+      }
+    }
+    : undefined;
+  let usesRuntimeResolver = false;
+  const runtimeResolverName = uniqueConfigHelperName(source, "resolve");
+  const rewriteResolveArgument: ImportMetaResolveArgumentRewriter | undefined = resolveSpecifier
+    ? (argumentSource) => {
+      usesRuntimeResolver = true;
+      return `${runtimeResolverName}(${argumentSource})`;
+    }
+    : undefined;
+  const rewriteResolveReference: ImportMetaResolveReferenceRewriter | undefined = resolveSpecifier
+    ? () => {
+      usesRuntimeResolver = true;
+      return runtimeResolverName;
+    }
+    : undefined;
+  const rewritten = await rewriteImportMetaLocations(
+    source,
+    moduleUrl,
+    resolveSpecifier,
+    rewriteResolveCall,
+    rewriteResolveArgument,
+    rewriteResolveReference,
+  );
+  if (rewritten === null) {
+    throw new TypeError("Config import metadata could not be bound to its source module");
+  }
+  if (!usesRuntimeResolver) return rewritten;
+  return prependConfigRuntimeResolver(
+    rewritten,
+    source,
+    moduleUrl,
+    runtimeResolverName,
+    await getConfigRuntimeResolverBridgeKey(),
+  );
+}
+
+function uniqueConfigHelperName(source: string, role: string): string {
+  let candidate = `__veryfront_config_${role}`;
+  while (ReflectApply(StringPrototypeIncludes, source, [candidate]) as boolean) candidate += "_";
+  return candidate;
+}
+
+function unsupportedComputedConfigPackageResolve(): TypeError {
+  return new TypeError(
+    "Computed package specifiers in import.meta.resolve() are unavailable in staged configuration on Node.js 22.3; use a string literal",
+  );
+}
+
+function isInvalidConfigPackageBareTarget(target: string): boolean {
+  const parsed = parseBarePackageSpecifier(target);
+  return parsed === null || parsed.version !== null || parsed.packageName === ".";
+}
+
+let configRuntimeResolverBridgeKeyPromise: Promise<string> | undefined;
+
+function getConfigRuntimeResolverBridgeKey(): Promise<string> {
+  configRuntimeResolverBridgeKeyPromise ??= (async () => {
+    try {
+      const { isBuiltin } = await import("node:module");
+      const uuid = ReflectApply(CryptoRandomUUID, IntrinsicCrypto, []) as string;
+      const bridgeKey = `__veryfrontConfigRuntimeResolverV1:${uuid}`;
+      const resolver = (specifier: unknown, moduleUrl: string): string => {
+        const value = typeof specifier === "string" ? specifier : "" + specifier;
+        if (isBuiltin(value)) {
+          return ReflectApply(StringPrototypeStartsWith, value, ["node:"]) as boolean
+            ? value
+            : `node:${value}`;
+        }
+        const directUrl = resolveConfigImportMetaUrl(value, moduleUrl);
+        if (directUrl !== null) return directUrl;
+        throw unsupportedComputedConfigPackageResolve();
+      };
+      ObjectDefineProperty(globalThis, bridgeKey, {
+        configurable: false,
+        enumerable: false,
+        writable: false,
+        value: resolver,
+      });
+      return bridgeKey;
+    } catch (error) {
+      configRuntimeResolverBridgeKeyPromise = undefined;
+      throw error;
+    }
+  })();
+  return configRuntimeResolverBridgeKeyPromise;
+}
+
+function prependConfigRuntimeResolver(
+  rewritten: string,
+  originalSource: string,
+  moduleUrl: string,
+  resolverName: string,
+  bridgeKey: string,
+): string {
+  const bridgeName = uniqueConfigHelperName(originalSource, "resolver_bridge");
+  const specifierName = uniqueConfigHelperName(originalSource, "specifier");
+  const serializedModuleUrl = configCodeLiteral(moduleUrl);
+  const prelude = [
+    `const ${bridgeName} = globalThis[${configCodeLiteral(bridgeKey)}];`,
+    `if (typeof ${bridgeName} !== "function") throw new Error("Veryfront config resolver bridge is unavailable");`,
+    `const ${resolverName} = (${specifierName}) => ${bridgeName}(${specifierName}, ${serializedModuleUrl});`,
+    "",
+  ].join("\n");
+  if (!originalSource.startsWith("#!")) return prelude + rewritten;
+  const lineEnd = originalSource.indexOf("\n");
+  if (lineEnd < 0) return `${originalSource}\n${prelude}`;
+  return rewritten.slice(0, lineEnd + 1) + prelude + rewritten.slice(lineEnd + 1);
+}
+
+interface DeferredConfigResolveError {
+  readonly constructorName: "Error" | "TypeError" | "RangeError" | "SyntaxError";
+  readonly name: string;
+  readonly message: string;
+  readonly code?: string;
+  readonly cause?: DeferredConfigResolveError | string | number | boolean | null;
+}
+
+function ownStringProperty(value: unknown, key: string): string | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, Object, [value, key]) as
+    | PropertyDescriptor
+    | undefined;
+  return descriptor && "value" in descriptor && typeof descriptor.value === "string"
+    ? descriptor.value
+    : undefined;
+}
+
+function serializeConfigResolveError(
+  error: unknown,
+  seen = new IntrinsicSet<object>(),
+): DeferredConfigResolveError {
+  const errorObject = typeof error === "object" && error !== null ? error : undefined;
+  const constructorName = error instanceof TypeError
+    ? "TypeError"
+    : error instanceof RangeError
+    ? "RangeError"
+    : error instanceof SyntaxError
+    ? "SyntaxError"
+    : "Error";
+  const name = error instanceof Error && error.name
+    ? error.name
+    : errorObject
+    ? ownStringProperty(errorObject, "name") ?? constructorName
+    : constructorName;
+  const message = error instanceof Error
+    ? error.message
+    : errorObject
+    ? ownStringProperty(errorObject, "message") ??
+      "Config import.meta.resolve could not resolve the requested module"
+    : "Config import.meta.resolve could not resolve the requested module";
+  const code = errorObject ? ownStringProperty(errorObject, "code") : undefined;
+  let cause: DeferredConfigResolveError | string | number | boolean | null | undefined;
+
+  if (errorObject && !setHas(seen, errorObject)) {
+    setAdd(seen, errorObject);
+    const descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, Object, [
+      errorObject,
+      "cause",
+    ]) as PropertyDescriptor | undefined;
+    if (descriptor && "value" in descriptor) {
+      const value = descriptor.value;
+      if (typeof value === "object" && value !== null) {
+        cause = serializeConfigResolveError(value, seen);
+      } else if (
+        value === null || typeof value === "string" || typeof value === "number" ||
+        typeof value === "boolean"
+      ) {
+        cause = value;
+      }
+    }
+  }
+
+  return {
+    constructorName,
+    name,
+    message,
+    ...(code ? { code } : {}),
+    ...(cause !== undefined ? { cause } : {}),
+  };
+}
+
+/** @internal Test-only seam for deferred config resolver error serialization. */
+export function __serializeConfigResolveErrorForTests(error: unknown) {
+  return serializeConfigResolveError(error);
+}
+
+function deferredErrorConstructorExpression(error: DeferredConfigResolveError): string {
+  const cause = error.cause === undefined
+    ? ""
+    : `, { cause: ${
+      typeof error.cause === "object" && error.cause !== null && "constructorName" in error.cause
+        ? deferredErrorConstructorExpression(error.cause)
+        : configCodeLiteral(error.cause)
+    } }`;
+  const assignments = [
+    error.name !== error.constructorName ? `failure.name = ${configCodeLiteral(error.name)};` : "",
+    error.code ? `failure.code = ${configCodeLiteral(error.code)};` : "",
+  ].filter(Boolean).join(" ");
+  return `(() => { const failure = new ${error.constructorName}(${
+    configCodeLiteral(error.message)
+  }${cause}); ${assignments} return failure; })()`;
+}
+
+function deferredConfigResolveErrorExpression(error: unknown): string {
+  const serialized = serializeConfigResolveError(error);
+  return `(() => { throw ${deferredErrorConstructorExpression(serialized)}; })()`;
+}
+
+function configImportMetaResolveError(message: string): Error & { code?: string } {
+  const error = new Error(message) as Error & { code?: string };
+  if (ReflectApply(StringPrototypeIncludes, message, ["Could not resolve"]) as boolean) {
+    error.code = "ERR_MODULE_NOT_FOUND";
+  }
+  return error;
+}
+
+type ConfigBundlerBuild = (options: BundleOptions) => Promise<BundleResult>;
+
+const CONFIG_PACKAGE_TARGET_NO_MATCH = Symbol("config-package-target-no-match");
+const CONFIG_PACKAGE_TARGET_INVALID = Symbol("config-package-target-invalid");
+const CONFIG_PACKAGE_TARGET_INVALID_CONFIG = Symbol("config-package-target-invalid-config");
+const CONFIG_PACKAGE_TARGET_URL_SCHEME = /^[A-Za-z][A-Za-z\d+.-]*:/;
+const CONFIG_PACKAGE_INTEGER_INDEX_KEY = /^(?:0|[1-9]\d{0,9})$/;
+const CONFIG_PACKAGE_TARGET_ENCODED_SEPARATOR = /%2f|%5c/i;
+const CONFIG_PACKAGE_TARGET_INVALID_SEGMENT =
+  /(^|\\|\/)((\.|%2e)(\.|%2e)?|(n|%6e|%4e)(o|%6f|%4f)(d|%64|%44)(e|%65|%45)(_|%5f)(m|%6d|%4d)(o|%6f|%4f)(d|%64|%44)(u|%75|%55)(l|%6c|%4c)(e|%65|%45)(s|%73|%53))(\\|\/|$)/i;
+
+type ConfigPackageTarget =
+  | string
+  | null
+  | typeof CONFIG_PACKAGE_TARGET_NO_MATCH
+  | typeof CONFIG_PACKAGE_TARGET_INVALID
+  | typeof CONFIG_PACKAGE_TARGET_INVALID_CONFIG;
+
+function isConfigPackageIntegerIndexKey(key: string): boolean {
+  if (
+    ReflectApply(RegExpPrototypeExec, CONFIG_PACKAGE_INTEGER_INDEX_KEY, [key]) === null
+  ) return false;
+  return key.length < 10 || (key.length === 10 && key < "4294967295");
+}
+
+function isValidConfigPackageTargetString(target: string): boolean {
+  const queryIndex = ReflectApply(StringPrototypeIndexOf, target, ["?"]) as number;
+  const fragmentIndex = ReflectApply(StringPrototypeIndexOf, target, ["#"]) as number;
+  const suffixIndex = queryIndex < 0
+    ? fragmentIndex
+    : fragmentIndex < 0
+    ? queryIndex
+    : queryIndex < fragmentIndex
+    ? queryIndex
+    : fragmentIndex;
+  const targetPath = suffixIndex < 0
+    ? target
+    : ReflectApply(StringPrototypeSlice, target, [0, suffixIndex]) as string;
+  if (ReflectApply(RegExpPrototypeExec, CONFIG_PACKAGE_TARGET_ENCODED_SEPARATOR, [targetPath])) {
+    return false;
+  }
+  if (ReflectApply(StringPrototypeStartsWith, target, ["./"]) as boolean) {
+    return ReflectApply(RegExpPrototypeExec, CONFIG_PACKAGE_TARGET_INVALID_SEGMENT, [
+      ReflectApply(StringPrototypeSlice, target, [2]) as string,
+    ]) === null;
+  }
+  return !(ReflectApply(StringPrototypeStartsWith, target, ["../"]) as boolean) &&
+    !(ReflectApply(StringPrototypeStartsWith, target, ["/"]) as boolean) &&
+    ReflectApply(RegExpPrototypeExec, CONFIG_PACKAGE_TARGET_URL_SCHEME, [target]) === null;
+}
+
+function tokenizeNodeOptions(options: string | undefined): string[] {
+  if (options === undefined || options.length === 0) return [];
+  const tokens: string[] = [];
+  let token = "";
+  let quote = "";
+  let escaped = false;
+  for (let index = 0; index < options.length; index++) {
+    const character = options[index]!;
+    if (escaped) {
+      token += character;
+      escaped = false;
+      continue;
+    }
+    if (character === "\\" && quote === '"') {
+      escaped = true;
+      continue;
+    }
+    if (quote !== "") {
+      if (character === quote) quote = "";
+      else token += character;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (
+      character === " " || character === "\t" || character === "\r" || character === "\n"
+    ) {
+      if (token.length > 0) {
+        tokens[tokens.length] = token;
+        token = "";
+      }
+      continue;
+    }
+    token += character;
+  }
+  if (escaped) token += "\\";
+  if (token.length > 0) tokens[tokens.length] = token;
+  return tokens;
+}
+
+function matchesNodeBooleanOption(argument: string, option: string): boolean {
+  return argument === option ||
+    ReflectApply(StringPrototypeStartsWith, argument, [`${option}=`]) as boolean;
+}
+
+function nodeConfigPackageConditions(
+  execArgv: readonly string[],
+  nodeOptions: string | undefined,
+  moduleCondition: "import" | "require" | null = "import",
+  moduleSync = CapturedNodeRequireModule,
+): string[] {
+  const customConditions: string[] = [];
+  let addons = true;
+  const appendCustom = (condition: string): void => {
+    if (condition.length === 0) return;
+    for (let index = 0; index < customConditions.length; index++) {
+      if (customConditions[index] === condition) return;
+    }
+    customConditions[customConditions.length] = condition;
+  };
+  const collect = (arguments_: readonly string[]): void => {
+    for (let index = 0; index < arguments_.length; index++) {
+      const argument = arguments_[index];
+      if (argument === undefined) continue;
+      if (matchesNodeBooleanOption(argument, "--no-addons")) {
+        addons = false;
+        continue;
+      }
+      if (matchesNodeBooleanOption(argument, "--addons")) {
+        addons = true;
+        continue;
+      }
+      if (
+        argument === "-e" || argument === "--eval" || argument === "-p" ||
+        argument === "--print"
+      ) return;
+      if (argument === "--conditions" || argument === "-C") {
+        const condition = arguments_[index + 1];
+        if (condition !== undefined) appendCustom(condition);
+        index += 1;
+        continue;
+      }
+      if (ReflectApply(StringPrototypeStartsWith, argument, ["--conditions="]) as boolean) {
+        appendCustom(ReflectApply(StringPrototypeSlice, argument, [13]) as string);
+        continue;
+      }
+    }
+  };
+  collect(tokenizeNodeOptions(nodeOptions));
+  collect(execArgv);
+
+  const conditions = ["node"];
+  if (moduleCondition !== null) conditions[conditions.length] = moduleCondition;
+  if (moduleSync) conditions[conditions.length] = "module-sync";
+  if (addons) conditions[conditions.length] = "node-addons";
+  for (let index = 0; index < customConditions.length; index++) {
+    const condition = customConditions[index]!;
+    let present = false;
+    for (let conditionIndex = 0; conditionIndex < conditions.length; conditionIndex++) {
+      if (conditions[conditionIndex] === condition) present = true;
+    }
+    if (!present) conditions[conditions.length] = condition;
+  }
+  return conditions;
+}
+
+const CONFIG_NODE_IMPORT_CONDITIONS = freezeObject(
+  nodeConfigPackageConditions(CapturedNodeExecArgv, CapturedNodeOptions),
+);
+const CONFIG_NODE_REQUIRE_CONDITIONS = freezeObject(
+  nodeConfigPackageConditions(CapturedNodeExecArgv, CapturedNodeOptions, "require"),
+);
+const CONFIG_NODE_BUNDLE_CONDITIONS = freezeObject(
+  nodeConfigPackageConditions(CapturedNodeExecArgv, CapturedNodeOptions, null),
+);
+
+/** @internal */
+export function __getNodeConfigPackageConditionsForTests(
+  execArgv: readonly string[],
+  nodeOptions: string | undefined,
+  moduleCondition: "import" | "require" = "import",
+  moduleSync = false,
+): string[] {
+  return nodeConfigPackageConditions(execArgv, nodeOptions, moduleCondition, moduleSync);
+}
+
+/** @internal */
+export function __getNodeConfigBundleConditionsForTests(
+  execArgv: readonly string[],
+  nodeOptions: string | undefined,
+  moduleSync = false,
+): string[] {
+  return nodeConfigPackageConditions(execArgv, nodeOptions, null, moduleSync);
+}
+
+function isConfigPackageConditionActive(
+  condition: string,
+  conditions: readonly string[],
+): boolean {
+  if (condition === "default") return true;
+  for (let index = 0; index < conditions.length; index += 1) {
+    if (conditions[index] === condition) return true;
+  }
+  return false;
+}
+
+function configPackageTarget(
+  entry: unknown,
+  conditions: readonly string[] = CONFIG_NODE_IMPORT_CONDITIONS,
+): ConfigPackageTarget {
+  if (typeof entry === "string") {
+    return isValidConfigPackageTargetString(entry) ? entry : CONFIG_PACKAGE_TARGET_INVALID;
+  }
+  if (entry === null) return null;
+  if (ArrayIsArray(entry)) {
+    if (entry.length === 0) return null;
+    let fallback: ConfigPackageTarget = CONFIG_PACKAGE_TARGET_NO_MATCH;
+    for (let index = 0; index < entry.length; index += 1) {
+      const target = configPackageTarget(entry[index], conditions);
+      if (target === CONFIG_PACKAGE_TARGET_NO_MATCH) continue;
+      if (target === CONFIG_PACKAGE_TARGET_INVALID_CONFIG) return target;
+      if (target === CONFIG_PACKAGE_TARGET_INVALID || target === null) {
+        fallback = target;
+        continue;
+      }
+      return target;
+    }
+    return fallback;
+  }
+  if (typeof entry !== "object") return CONFIG_PACKAGE_TARGET_INVALID;
+  const keys = ReflectOwnKeys(entry);
+  for (const key of keys) {
+    if (typeof key === "string" && isConfigPackageIntegerIndexKey(key)) {
+      return CONFIG_PACKAGE_TARGET_INVALID_CONFIG;
+    }
+  }
+  for (const key of keys) {
+    if (typeof key !== "string" || !isConfigPackageConditionActive(key, conditions)) {
+      continue;
+    }
+    const descriptor = ObjectGetOwnPropertyDescriptor(entry, key);
+    if (!descriptor || !("value" in descriptor)) continue;
+    const target = configPackageTarget(descriptor.value, conditions);
+    if (target !== CONFIG_PACKAGE_TARGET_NO_MATCH) return target;
+  }
+  return CONFIG_PACKAGE_TARGET_NO_MATCH;
+}
+
+/** @internal */
+export function __resolveNodeConfigPackageTargetForTests(
+  entry: unknown,
+  conditions: readonly string[],
+): string | null {
+  const target = configPackageTarget(entry, conditions);
+  return typeof target === "string" ? target : null;
+}
+
+interface ConfigPackageScope {
+  readonly directory: string;
+  readonly manifest: RuntimeReflectionRecord;
+}
+
+type ConfigPackageReadFileSync = typeof import("node:fs").readFileSync;
+
+function configPackageOwnValue(record: RuntimeReflectionRecord, key: string): unknown {
+  const descriptor = ObjectGetOwnPropertyDescriptor(record, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+function stripConfigPackageManifestBom(source: string): string {
+  return source[0] === "\uFEFF"
+    ? ReflectApply(StringPrototypeSlice, source, [1]) as string
+    : source;
+}
+
+function findConfigPackageScope(
+  modulePath: string,
+  readFileSync: ConfigPackageReadFileSync,
+): ConfigPackageScope | null {
+  let current = dirname(modulePath);
+  while (true) {
+    try {
+      const manifest = JSONParse(
+        stripConfigPackageManifestBom(readFileSync(join(current, "package.json"), "utf8")),
+      );
+      if (typeof manifest !== "object" || manifest === null || ArrayIsArray(manifest)) {
+        throw new TypeError("Config package manifest must contain a JSON object");
+      }
+      return { directory: current, manifest };
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+    const parent = dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+function configPackageMapTarget(
+  map: unknown,
+  specifier: string,
+  conditions: readonly string[],
+): ConfigPackageTarget {
+  if (typeof map !== "object" || map === null || ArrayIsArray(map)) {
+    return CONFIG_PACKAGE_TARGET_NO_MATCH;
+  }
+  const exact = ObjectGetOwnPropertyDescriptor(map, specifier);
+  if (exact && "value" in exact) return configPackageTarget(exact.value, conditions);
+
+  let bestKey: string | undefined;
+  let bestPrefixLength = -1;
+  for (const key of ReflectOwnKeys(map)) {
+    if (typeof key !== "string") continue;
+    const star = ReflectApply(StringPrototypeIndexOf, key, ["*"]) as number;
+    if (star < 0) continue;
+    if ((ReflectApply(StringPrototypeIndexOf, key, ["*", star + 1]) as number) >= 0) continue;
+    const prefix = ReflectApply(StringPrototypeSlice, key, [0, star]) as string;
+    const suffix = ReflectApply(StringPrototypeSlice, key, [star + 1]) as string;
+    if (!(ReflectApply(StringPrototypeStartsWith, specifier, [prefix]) as boolean)) continue;
+    if (!(ReflectApply(StringPrototypeEndsWith, specifier, [suffix]) as boolean)) continue;
+    if (
+      specifier.length < key.length ||
+      prefix.length < bestPrefixLength ||
+      (prefix.length === bestPrefixLength && bestKey !== undefined && key.length <= bestKey.length)
+    ) {
+      continue;
+    }
+    bestKey = key;
+    bestPrefixLength = prefix.length;
+  }
+  if (bestKey === undefined) return CONFIG_PACKAGE_TARGET_NO_MATCH;
+
+  const star = ReflectApply(StringPrototypeIndexOf, bestKey, ["*"]) as number;
+  const suffixLength = bestKey.length - star - 1;
+  const captured = ReflectApply(StringPrototypeSlice, specifier, [
+    star,
+    suffixLength === 0 ? undefined : -suffixLength,
+  ]) as string;
+  const pattern = ObjectGetOwnPropertyDescriptor(map, bestKey);
+  if (!pattern || !("value" in pattern)) return CONFIG_PACKAGE_TARGET_NO_MATCH;
+  const target = configPackageTarget(pattern.value, conditions);
+  if (typeof target !== "string") return target;
+  const substituted = ReflectApply(StringPrototypeReplaceAll, target, ["*", captured]) as string;
+  return isValidConfigPackageTargetString(substituted)
+    ? substituted
+    : CONFIG_PACKAGE_TARGET_INVALID;
+}
+
+function configPackageExportsTarget(
+  exports: unknown,
+  subpath: string,
+  conditions: readonly string[],
+): ConfigPackageTarget {
+  if (exports !== null && typeof exports === "object" && !ArrayIsArray(exports)) {
+    let hasSubpathKey = false;
+    let hasConditionKey = false;
+    for (const key of ReflectOwnKeys(exports)) {
+      if (typeof key !== "string") continue;
+      if (ReflectApply(StringPrototypeStartsWith, key, ["."]) as boolean) {
+        hasSubpathKey = true;
+      } else {
+        hasConditionKey = true;
+      }
+    }
+    if (hasSubpathKey && hasConditionKey) return CONFIG_PACKAGE_TARGET_INVALID_CONFIG;
+    if (hasSubpathKey) return configPackageMapTarget(exports, subpath, conditions);
+  }
+  return subpath === "."
+    ? configPackageTarget(exports, conditions)
+    : CONFIG_PACKAGE_TARGET_NO_MATCH;
+}
+
+function configPackageResolutionError(
+  specifier: string,
+  code: "ERR_PACKAGE_IMPORT_NOT_DEFINED" | "ERR_PACKAGE_PATH_NOT_EXPORTED",
+): Error & { code: string } {
+  const error = new Error(`Config package resolution escaped its package for "${specifier}"`) as
+    & Error
+    & { code: string };
+  error.code = code;
+  return error;
+}
+
+function configPackageInvalidTarget(specifier: string): Error & { code: string } {
+  const error = new Error(`Invalid ESM package import target for "${specifier}"`) as Error & {
+    code: string;
+  };
+  error.code = "ERR_INVALID_PACKAGE_TARGET";
+  return error;
+}
+
+function configPackageInvalidConfig(specifier: string): Error & { code: string } {
+  const error = new Error(`Invalid ESM package configuration for "${specifier}"`) as Error & {
+    code: string;
+  };
+  error.code = "ERR_INVALID_PACKAGE_CONFIG";
+  return error;
+}
+
+function configPackageInvalidSpecifier(specifier: string): Error & { code: string } {
+  const error = new TypeError(`Invalid package import specifier "${specifier}"`) as TypeError & {
+    code: string;
+  };
+  error.code = "ERR_INVALID_MODULE_SPECIFIER";
+  return error;
+}
+
+function isInvalidConfigPackageImportSpecifier(specifier: string): boolean {
+  return specifier === "#" ||
+    (ReflectApply(StringPrototypeStartsWith, specifier, ["#/"]) as boolean) ||
+    (ReflectApply(StringPrototypeEndsWith, specifier, ["/"]) as boolean);
+}
+
+interface LiteralConfigPackageImportResolution {
+  readonly specifier: string;
+  readonly modulePath: string;
+}
+
+async function resolveLiteralConfigPackageImport(
+  specifier: string,
+  modulePath: string,
+  depth = 0,
+  containRelativeTarget = true,
+  conditions: readonly string[] = CONFIG_NODE_IMPORT_CONDITIONS,
+): Promise<LiteralConfigPackageImportResolution> {
+  if (!(ReflectApply(StringPrototypeStartsWith, specifier, ["#"]) as boolean)) {
+    return { specifier, modulePath };
+  }
+  if (isInvalidConfigPackageImportSpecifier(specifier)) {
+    throw configPackageInvalidSpecifier(specifier);
+  }
+  if (depth > 16) throw new TypeError("Config package resolution exceeded its redirect limit");
+  const { isBuiltin } = await import("node:module");
+  const { readFileSync } = await import("node:fs");
+  const moduleScope = findConfigPackageScope(modulePath, readFileSync);
+  const imports = moduleScope ? configPackageOwnValue(moduleScope.manifest, "imports") : undefined;
+  const target = configPackageMapTarget(
+    imports,
+    specifier,
+    conditions,
+  );
+  if (target === CONFIG_PACKAGE_TARGET_INVALID_CONFIG) {
+    throw configPackageInvalidConfig(specifier);
+  }
+  if (target === CONFIG_PACKAGE_TARGET_INVALID) throw configPackageInvalidTarget(specifier);
+  if (moduleScope === null || target === null || target === CONFIG_PACKAGE_TARGET_NO_MATCH) {
+    throw configPackageResolutionError(specifier, "ERR_PACKAGE_IMPORT_NOT_DEFINED");
+  }
+  if (ReflectApply(StringPrototypeStartsWith, target, ["./"]) as boolean) {
+    if (!containRelativeTarget) {
+      return {
+        specifier: target,
+        modulePath: join(moduleScope.directory, "package.json"),
+      };
+    }
+    const resolvedPath = await resolveContainedBundlerConfigPackagePath(
+      specifier,
+      modulePath,
+      resolve(moduleScope.directory, target),
+      conditions,
+    );
+    return {
+      specifier: toFileUrl(resolvedPath).href,
+      modulePath: join(moduleScope.directory, "package.json"),
+    };
+  }
+  if (
+    ReflectApply(StringPrototypeStartsWith, target, ["../"]) as boolean ||
+    ReflectApply(StringPrototypeStartsWith, target, ["/"]) as boolean ||
+    ReflectApply(StringPrototypeStartsWith, target, ["node:"]) as boolean
+  ) {
+    throw configPackageInvalidTarget(specifier);
+  }
+  if (isBuiltin(target)) {
+    return {
+      specifier: `node:${target}`,
+      modulePath: join(moduleScope.directory, "package.json"),
+    };
+  }
+  if (isInvalidConfigPackageBareTarget(target)) {
+    throw configPackageInvalidSpecifier(target);
+  }
+  return await resolveLiteralConfigPackageImport(
+    target,
+    join(moduleScope.directory, "package.json"),
+    depth + 1,
+    containRelativeTarget,
+    conditions,
+  );
+}
+
+async function configPackageResolutionRoot(
+  specifier: string,
+  modulePath: string,
+  depth = 0,
+  conditions: readonly string[] = CONFIG_NODE_IMPORT_CONDITIONS,
+): Promise<
+  {
+    directory: string;
+    errorCode: "ERR_PACKAGE_IMPORT_NOT_DEFINED" | "ERR_PACKAGE_PATH_NOT_EXPORTED";
+  } | null
+> {
+  if (depth > 16) throw new TypeError("Config package resolution exceeded its redirect limit");
+  const { createRequire, isBuiltin } = await import("node:module");
+  const { existsSync, readFileSync } = await import("node:fs");
+  if (isBuiltin(specifier)) return null;
+
+  const moduleScope = findConfigPackageScope(modulePath, readFileSync);
+  if (ReflectApply(StringPrototypeStartsWith, specifier, ["#"]) as boolean) {
+    if (isInvalidConfigPackageImportSpecifier(specifier)) {
+      throw configPackageInvalidSpecifier(specifier);
+    }
+    const imports = moduleScope
+      ? configPackageOwnValue(moduleScope.manifest, "imports")
+      : undefined;
+    const target = configPackageMapTarget(
+      imports,
+      specifier,
+      conditions,
+    );
+    if (target === CONFIG_PACKAGE_TARGET_INVALID_CONFIG) {
+      throw configPackageInvalidConfig(specifier);
+    }
+    if (target === CONFIG_PACKAGE_TARGET_INVALID) throw configPackageInvalidTarget(specifier);
+    if (moduleScope === null || target === null || target === CONFIG_PACKAGE_TARGET_NO_MATCH) {
+      throw configPackageResolutionError(specifier, "ERR_PACKAGE_IMPORT_NOT_DEFINED");
+    }
+    if (ReflectApply(StringPrototypeStartsWith, target, ["./"]) as boolean) {
+      return { directory: moduleScope.directory, errorCode: "ERR_PACKAGE_IMPORT_NOT_DEFINED" };
+    }
+    if (
+      ReflectApply(StringPrototypeStartsWith, target, ["../"]) as boolean ||
+      ReflectApply(StringPrototypeStartsWith, target, ["/"]) as boolean ||
+      ReflectApply(StringPrototypeStartsWith, target, ["node:"]) as boolean
+    ) {
+      throw configPackageResolutionError(specifier, "ERR_PACKAGE_IMPORT_NOT_DEFINED");
+    }
+    if (isInvalidConfigPackageBareTarget(target)) {
+      throw configPackageInvalidSpecifier(target);
+    }
+    return await configPackageResolutionRoot(
+      target,
+      join(moduleScope.directory, "package.json"),
+      depth + 1,
+      conditions,
+    );
+  }
+
+  const parsed = parseBarePackageSpecifier(specifier);
+  if (!parsed || parsed.version !== null) return null;
+  const packageExports = moduleScope
+    ? configPackageOwnValue(moduleScope.manifest, "exports")
+    : undefined;
+  if (
+    moduleScope && configPackageOwnValue(moduleScope.manifest, "name") === parsed.packageName &&
+    packageExports !== undefined && packageExports !== null
+  ) {
+    return { directory: moduleScope.directory, errorCode: "ERR_PACKAGE_PATH_NOT_EXPORTED" };
+  }
+
+  const projectRequire = createRequire(toFileUrl(modulePath).href);
+  const searchPaths = projectRequire.resolve.paths(parsed.packageName);
+  if (searchPaths) {
+    for (let index = 0; index < searchPaths.length; index += 1) {
+      const packageDir = join(searchPaths[index]!, parsed.packageName);
+      if (existsSync(join(packageDir, "package.json"))) {
+        return { directory: packageDir, errorCode: "ERR_PACKAGE_PATH_NOT_EXPORTED" };
+      }
+    }
+  }
+  return null;
+}
+
+async function resolveLiteralConfigPackageExport(
+  specifier: string,
+  modulePath: string,
+  conditions: readonly string[] = CONFIG_NODE_IMPORT_CONDITIONS,
+): Promise<string | null> {
+  const parsed = parseBarePackageSpecifier(specifier);
+  if (!parsed || parsed.version !== null) return null;
+
+  const root = await configPackageResolutionRoot(specifier, modulePath, 0, conditions);
+  if (root === null) return null;
+  const { readFileSync } = await import("node:fs");
+  const scope = findConfigPackageScope(join(root.directory, "package.json"), readFileSync);
+  if (scope === null || scope.directory !== root.directory) return null;
+  const exports = configPackageOwnValue(scope.manifest, "exports");
+  if (exports === undefined || exports === null) {
+    if (parsed.subpath === null) return null;
+    const targetUrl = new URL(
+      `.${parsed.subpath}`,
+      toFileUrl(join(root.directory, "package.json")).href,
+    );
+    const containedPath = await resolveContainedBundlerConfigPackagePath(
+      specifier,
+      modulePath,
+      fromFileUrl(targetUrl),
+      conditions,
+    );
+    return `${toFileUrl(containedPath).href}${targetUrl.search}${targetUrl.hash}`;
+  }
+
+  const target = configPackageExportsTarget(
+    exports,
+    parsed.subpath === null ? "." : `.${parsed.subpath}`,
+    conditions,
+  );
+  if (target === CONFIG_PACKAGE_TARGET_INVALID_CONFIG) {
+    throw configPackageInvalidConfig(specifier);
+  }
+  if (target === CONFIG_PACKAGE_TARGET_INVALID) throw configPackageInvalidTarget(specifier);
+  if (target === null || target === CONFIG_PACKAGE_TARGET_NO_MATCH) {
+    throw configPackageResolutionError(specifier, "ERR_PACKAGE_PATH_NOT_EXPORTED");
+  }
+  if (!(ReflectApply(StringPrototypeStartsWith, target, ["./"]) as boolean)) {
+    throw configPackageInvalidTarget(specifier);
+  }
+
+  const targetUrl = new URL(target, toFileUrl(join(root.directory, "package.json")).href);
+  const containedPath = await resolveContainedBundlerConfigPackagePath(
+    specifier,
+    modulePath,
+    fromFileUrl(targetUrl),
+    conditions,
+  );
+  return `${toFileUrl(containedPath).href}${targetUrl.search}${targetUrl.hash}`;
+}
+
+type ConfigPackageRealpathSync = typeof import("node:fs").realpathSync;
+type ConfigPackageLstatSync = typeof import("node:fs").lstatSync;
+
+function configPackageTargetBoundary(
+  realpathSync: ConfigPackageRealpathSync,
+  lstatSync: ConfigPackageLstatSync,
+  resolvedPath: string,
+): { path: string; targetExists: boolean } {
+  let current = resolvedPath;
+  while (true) {
+    try {
+      return { path: realpathSync(current), targetExists: current === resolvedPath };
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+      let candidateIsMissing = false;
+      try {
+        lstatSync(current);
+      } catch (lstatError) {
+        if (!isNotFoundError(lstatError)) throw lstatError;
+        candidateIsMissing = true;
+      }
+      if (!candidateIsMissing) throw error;
+    }
+    const parent = dirname(current);
+    if (parent === current) {
+      throw new TypeError("Config package target has no existing filesystem boundary");
+    }
+    current = parent;
+  }
+}
+
+async function resolveContainedBundlerConfigPackagePath(
+  specifier: string,
+  modulePath: string,
+  resolvedPath: string,
+  conditions: readonly string[] = CONFIG_NODE_IMPORT_CONDITIONS,
+): Promise<string> {
+  const root = await configPackageResolutionRoot(specifier, modulePath, 0, conditions);
+  if (root === null) return resolvedPath;
+  const { lstatSync, realpathSync } = await import("node:fs");
+  const packageRoot = realpathSync(root.directory);
+  const boundary = configPackageTargetBoundary(realpathSync, lstatSync, resolvedPath);
+  if (!isPathContainedBy(boundary.path, packageRoot)) {
+    throw configPackageResolutionError(specifier, root.errorCode);
+  }
+  return boundary.targetExists ? boundary.path : resolvedPath;
+}
+
+async function resolveBundlerConfigPackageImport(
+  specifier: string,
+  modulePath: string,
+  resolvedPath: string,
+  conditions: readonly string[] = CONFIG_NODE_IMPORT_CONDITIONS,
+): Promise<{ readonly target: string; readonly path: string }> {
+  try {
+    const target =
+      (await resolveLiteralConfigPackageImport(specifier, modulePath, 0, false, conditions))
+        .specifier;
+    const path = await resolveContainedBundlerConfigPackagePath(
+      specifier,
+      modulePath,
+      resolvedPath,
+      conditions,
+    );
+    return { target, path };
+  } catch (error) {
+    if (
+      typeof error === "object" && error !== null &&
+      ownStringProperty(error, "code") === "ERR_PACKAGE_IMPORT_NOT_DEFINED"
+    ) {
+      throw new TypeError("Config import resolves outside the project directory", {
+        cause: error,
+      });
+    }
+    throw error;
+  }
+}
+
+async function resolveConfigImportMetaWithBundler(
+  bundle: ConfigBundlerBuild,
+  specifier: string,
+  modulePath: string,
+): Promise<string | null> {
+  if (isNodeBuiltinPackageName(specifier)) return `node:${specifier}`;
+  const directUrl = resolveConfigImportMetaUrl(specifier, toFileUrl(modulePath).href);
+  if (directUrl !== null) return directUrl;
+
+  const resolution = await resolveLiteralConfigPackageImport(specifier, modulePath);
+  const resolutionSpecifier = resolution.specifier;
+  if (ReflectApply(StringPrototypeStartsWith, resolutionSpecifier, ["node:"]) as boolean) {
+    return resolutionSpecifier;
+  }
+  if (ReflectApply(StringPrototypeStartsWith, resolutionSpecifier, ["file:"]) as boolean) {
+    return resolutionSpecifier;
+  }
+  const packageExport = await resolveLiteralConfigPackageExport(
+    resolutionSpecifier,
+    resolution.modulePath,
+  );
+  if (packageExport !== null) return packageExport;
+
+  const resolveDir = dirname(resolution.modulePath);
+  const sourcefile = "veryfront-config-import-meta-resolve.mjs";
+  let resolvedPath: string | null = null;
+  const result = await bundle({
+    bundle: true,
+    write: false,
+    format: "esm",
+    platform: isNode ? "node" : "neutral",
+    conditions: CONFIG_NODE_BUNDLE_CONDITIONS,
+    mainFields: ["main"],
+    target: "es2022",
+    logLevel: "silent",
+    absWorkingDir: resolveDir,
+    plugins: [{
+      name: "veryfront-config-import-meta-resolve",
+      setup(build) {
+        build.onLoad({ filter: /.*/, namespace: "file" }, (args) => {
+          resolvedPath ??= args.path;
+          return { contents: "export {};", loader: "js" };
+        });
+      },
+    }],
+    stdin: {
+      contents: `import ${ReflectApply(JSONStringify, IntrinsicJSON, [resolutionSpecifier])};`,
+      resolveDir,
+      sourcefile,
+      loader: "js",
+    },
+  });
+  const firstError = result.errors[0]?.text;
+  if (firstError) throw configImportMetaResolveError(firstError);
+  if (resolvedPath === null) return null;
+  if (isNodeBuiltinPackageName(resolvedPath)) return `node:${resolvedPath}`;
+  const absoluteResolvedPath = isAbsolute(resolvedPath)
+    ? resolvedPath
+    : resolve(resolveDir, resolvedPath);
+  return toFileUrl(
+    await resolveContainedBundlerConfigPackagePath(specifier, modulePath, absoluteResolvedPath),
+  ).href;
+}
+
+function isConfigDependencyPath(modulePath: string, configDir: string): boolean {
+  let current = dirname(modulePath);
+  while (isPathContainedBy(current, configDir)) {
+    if (isPathContainedBy(configDir, current)) return false;
+    const name = ReflectApply(StringPrototypeToLowerCase, basename(current), []) as string;
+    if (name === "node_modules") return true;
+    const parent = dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+  return false;
+}
+
+type ConfigFileUrlResolution =
+  | { readonly kind: "not-file-url" }
+  | { readonly kind: "bundle"; readonly path: string; readonly suffix: string }
+  | { readonly kind: "external"; readonly specifier: string };
+
+async function resolveConfigFileUrl(
+  specifier: string,
+  configDir: string,
+  lexicalConfigDir: string,
+): Promise<ConfigFileUrlResolution> {
+  if (!(ReflectApply(StringPrototypeStartsWith, specifier, ["file:"]) as boolean)) {
+    return { kind: "not-file-url" };
+  }
+  try {
+    const url = new URL(specifier);
+    if (url.username || url.password) {
+      throw new TypeError("Config file URL imports cannot include credentials");
+    }
+    const suffix = `${url.search}${url.hash}`;
+    const lexicalPath = fromFileUrl(url);
+    const modulePath = await realPath(lexicalPath);
+    if (
+      isPathContainedBy(lexicalPath, lexicalConfigDir) &&
+      isConfigDependencyPath(lexicalPath, lexicalConfigDir)
+    ) {
+      return { kind: "external", specifier };
+    }
+    if (!isPathContainedBy(modulePath, configDir)) {
+      throw new TypeError("Config import resolves outside the project directory");
+    }
+    if (isConfigDependencyPath(modulePath, configDir)) {
+      return { kind: "external", specifier };
+    }
+    return { kind: "bundle", path: modulePath, suffix };
+  } catch (error) {
+    if (error instanceof TypeError) throw error;
+    throw new TypeError("Config file URL import could not be resolved", { cause: error });
+  }
+}
+
+function resolveConfigImportMetaUrl(specifier: string, moduleUrl: string): string | null {
+  const query = ReflectApply(StringPrototypeIndexOf, specifier, ["?"]) as number;
+  const fragment = ReflectApply(StringPrototypeIndexOf, specifier, ["#"]) as number;
+  const suffixStart = query < 0
+    ? fragment
+    : fragment < 0
+    ? query
+    : query < fragment
+    ? query
+    : fragment;
+  const path = suffixStart < 0
+    ? specifier
+    : ReflectApply(StringPrototypeSlice, specifier, [0, suffixStart]) as string;
+  if (isAbsolute(path)) {
+    const suffix = suffixStart < 0
+      ? ""
+      : ReflectApply(StringPrototypeSlice, specifier, [suffixStart]) as string;
+    const href = ReflectApply(StringPrototypeStartsWith, path, ["/"]) as boolean
+      ? new URL(path, "file://").href
+      : toFileUrl(path).href;
+    return `${href}${suffix}`;
+  }
+  if (
+    isLocalProjectConfigSpecifier(specifier) ||
+    /^[A-Za-z][A-Za-z\d+.-]*:/.test(specifier)
+  ) {
+    try {
+      return new URL(specifier, moduleUrl).href;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function configSourceLoader(path: string): "js" | "jsx" | "ts" | "tsx" {
+  switch (extname(path)) {
+    case ".tsx":
+      return "tsx";
+    case ".ts":
+    case ".mts":
+    case ".cts":
+      return "ts";
+    case ".jsx":
+      return "jsx";
+    default:
+      return "js";
+  }
+}
+
+function configRequireModulePath(specifier: string, modulePath: string): string {
+  return JSONStringify([specifier, toFileUrl(modulePath).href]);
+}
+
+function configRequireModuleSource(path: string): string {
+  const binding = JSONParse(path);
+  if (
+    !ArrayIsArray(binding) || binding.length !== 2 ||
+    typeof binding[0] !== "string" || typeof binding[1] !== "string"
+  ) {
+    throw new TypeError("Staged CommonJS require binding is invalid");
+  }
+  return [
+    'import { createRequire as __veryfrontCreateRequire } from "node:module";',
+    `module.exports = __veryfrontCreateRequire(${configCodeLiteral(binding[1])})(${
+      configCodeLiteral(binding[0])
+    });`,
+  ].join("\n");
+}
+
+async function isCommonJsConfigModule(
+  fs: ReturnType<typeof createFileSystem>,
+  modulePath: string,
+): Promise<boolean> {
+  const extension = extname(modulePath);
+  if (extension === ".cjs" || extension === ".cts") return true;
+  if (extension !== ".js" && extension !== ".ts") return false;
+
+  let current = dirname(modulePath);
+  while (true) {
+    try {
+      const manifest = JSONParse(
+        stripConfigPackageManifestBom(await fs.readTextFile(join(current, "package.json"))),
+      ) as {
+        type?: unknown;
+      };
+      return manifest.type !== "module";
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+    const parent = dirname(current);
+    if (parent === current) return true;
+    current = parent;
+  }
+}
+
+async function bindCommonJsConfigModuleLocations(
+  fs: ReturnType<typeof createFileSystem>,
+  source: string,
+  modulePath: string,
+  reachedFromCommonJs = false,
+): Promise<string> {
+  if (!reachedFromCommonJs && !(await isCommonJsConfigModule(fs, modulePath))) {
+    return source;
+  }
+
+  const requireName = uniqueConfigHelperName(source, "require");
+  const recordRequireName = uniqueConfigHelperName(
+    `${source}\n${requireName}`,
+    "record_require",
+  );
+  const rewrittenRequire = await rewriteUnboundCommonJsDynamicRequire(
+    source,
+    requireName,
+    recordRequireName,
+  );
+  if (rewrittenRequire === null) {
+    throw new TypeError("Computed CommonJS requires could not be bound to their source module");
+  }
+  const usesModule = await usesUnboundCommonJsModule(source);
+  if (usesModule === null) {
+    throw new TypeError("CommonJS module locations could not be bound to their source module");
+  }
+  const usesProjectRequire = ReflectApply(
+    StringPrototypeIncludes,
+    rewrittenRequire,
+    [requireName],
+  ) as boolean;
+  let prelude = "";
+  let modulePathsDeclaration = "";
+  if (usesProjectRequire || usesModule) {
+    const createRequireName = uniqueConfigHelperName(
+      `${source}\n${requireName}\n${recordRequireName}`,
+      "create_require",
+    );
+    const moduleConstructorName = uniqueConfigHelperName(
+      `${source}\n${requireName}\n${recordRequireName}\n${createRequireName}`,
+      "module_constructor",
+    );
+    const nativeRequireName = uniqueConfigHelperName(
+      `${source}\n${requireName}\n${recordRequireName}\n${createRequireName}\n${moduleConstructorName}`,
+      "native_require",
+    );
+    const nativeModuleName = uniqueConfigHelperName(
+      `${source}\n${requireName}\n${recordRequireName}\n${createRequireName}\n${moduleConstructorName}\n${nativeRequireName}`,
+      "native_module",
+    );
+    const requireCacheName = uniqueConfigHelperName(
+      `${source}\n${requireName}\n${recordRequireName}\n${createRequireName}\n${moduleConstructorName}\n${nativeRequireName}\n${nativeModuleName}`,
+      "require_cache",
+    );
+    const requireRegistryName = uniqueConfigHelperName(
+      `${source}\n${requireName}\n${recordRequireName}\n${createRequireName}\n${nativeRequireName}\n${requireCacheName}`,
+      "require_registry",
+    );
+    const resolveRequireName = uniqueConfigHelperName(
+      `${source}\n${requireName}\n${recordRequireName}\n${createRequireName}\n${nativeRequireName}\n${requireCacheName}\n${requireRegistryName}`,
+      "resolve_require",
+    );
+    prelude =
+      `import { createRequire as ${createRequireName}, Module as ${moduleConstructorName} } from "node:module";\n` +
+      `const ${nativeRequireName} = ${createRequireName}(${
+        configCodeLiteral(toFileUrl(modulePath).href)
+      });\n` +
+      `const ${nativeModuleName} = new ${moduleConstructorName}(${
+        configCodeLiteral(modulePath)
+      });\n` +
+      `${nativeModuleName}.filename = ${configCodeLiteral(modulePath)};\n` +
+      `${nativeModuleName}.paths = ${moduleConstructorName}._nodeModulePaths(${
+        configCodeLiteral(dirname(modulePath))
+      });\n`;
+    prelude += `let ${requireCacheName};\n` +
+      `let ${requireRegistryName};\n` +
+      `const ${resolveRequireName} = (specifier) => {\n` +
+      (usesModule ? `  ${nativeModuleName}.paths = module.paths;\n` : "") +
+      `  try { return ${moduleConstructorName}._resolveFilename(specifier, ${nativeModuleName}); } catch { return specifier; }\n` +
+      `};\n` +
+      `const ${requireName} = (specifier) => {\n` +
+      `  const resolved = ${resolveRequireName}(specifier);\n` +
+      `  let entry = ${requireCacheName};\n` +
+      `  while (entry !== undefined) {\n` +
+      `    if (entry.resolved === resolved) return entry.value;\n` +
+      `    entry = entry.next;\n` +
+      `  }\n` +
+      `  entry = ${requireRegistryName};\n` +
+      `  while (entry !== undefined) {\n` +
+      `    if (entry.resolved === resolved) {\n` +
+      `      const value = entry.load();\n` +
+      `      ${requireCacheName} = { resolved, value, next: ${requireCacheName} };\n` +
+      `      return value;\n` +
+      `    }\n` +
+      `    entry = entry.next;\n` +
+      `  }\n` +
+      (usesModule ? `  ${nativeModuleName}.paths = module.paths;\n` : "") +
+      `  const value = ${nativeModuleName}.require(specifier);\n` +
+      `  ${requireCacheName} = { resolved, value, next: ${requireCacheName} };\n` +
+      `  return value;\n` +
+      `};\n` +
+      `${requireName}.resolve = ${resolveRequireName};\n` +
+      `${requireName}.resolve.paths = ${nativeRequireName}.resolve.paths;\n` +
+      `${requireName}.cache = ${nativeRequireName}.cache;\n` +
+      `${requireName}.extensions = ${nativeRequireName}.extensions;\n` +
+      `${requireName}.main = ${nativeRequireName}.main;\n` +
+      `const ${recordRequireName} = (specifier, load) => {\n` +
+      `  const resolved = ${resolveRequireName}(specifier);\n` +
+      `  let entry = ${requireRegistryName};\n` +
+      `  while (entry !== undefined) {\n` +
+      `    if (entry.resolved === resolved) return;\n` +
+      `    entry = entry.next;\n` +
+      `  }\n` +
+      `  ${requireRegistryName} = { resolved, load, next: ${requireRegistryName} };\n` +
+      `};\n`;
+    if (usesModule) modulePathsDeclaration = `module.paths = ${nativeModuleName}.paths;\n`;
+  }
+
+  const usesFilename = ReflectApply(StringPrototypeIncludes, source, ["__filename"]) as boolean;
+  const usesDirname = ReflectApply(StringPrototypeIncludes, source, ["__dirname"]) as boolean;
+  if (!usesFilename && !usesDirname && !usesModule) {
+    if (!ReflectApply(StringPrototypeStartsWith, rewrittenRequire, ["#!"]) as boolean) {
+      return prelude + rewrittenRequire;
+    }
+    const lineEnd = ReflectApply(StringPrototypeIndexOf, rewrittenRequire, ["\n"]) as number;
+    return lineEnd < 0
+      ? `${rewrittenRequire}\n${prelude}`
+      : ReflectApply(StringPrototypeSlice, rewrittenRequire, [0, lineEnd + 1]) as string +
+        prelude +
+        (ReflectApply(StringPrototypeSlice, rewrittenRequire, [lineEnd + 1]) as string);
+  }
+
+  let declarations = usesModule
+    ? `module.filename = ${configCodeLiteral(modulePath)};\n` +
+      `module.path = ${configCodeLiteral(dirname(modulePath))};\n` +
+      modulePathsDeclaration +
+      `module.require = ${requireName};`
+    : "";
+  if (usesFilename) {
+    if (declarations.length > 0) declarations += "\n";
+    declarations += `var __filename = ${configCodeLiteral(modulePath)};`;
+  }
+  if (usesDirname) {
+    if (declarations.length > 0) declarations += "\n";
+    declarations += `var __dirname = ${configCodeLiteral(dirname(modulePath))};`;
+  }
+  if (!ReflectApply(StringPrototypeStartsWith, rewrittenRequire, ["#!"]) as boolean) {
+    return `${prelude}${declarations}\n${rewrittenRequire}`;
+  }
+  const lineEnd = ReflectApply(StringPrototypeIndexOf, rewrittenRequire, ["\n"]) as number;
+  if (lineEnd < 0) return `${rewrittenRequire}\n${prelude}${declarations}\n`;
+  const before = ReflectApply(StringPrototypeSlice, rewrittenRequire, [0, lineEnd + 1]) as string;
+  const after = ReflectApply(StringPrototypeSlice, rewrittenRequire, [lineEnd + 1]) as string;
+  return `${before}${prelude}${declarations}\n${after}`;
+}
+
+function isConfigSourceModule(path: string): boolean {
+  switch (extname(path)) {
+    case ".cjs":
+    case ".cts":
+    case ".js":
+    case ".jsx":
+    case ".mjs":
+    case ".mts":
+    case ".ts":
+    case ".tsx":
+      return true;
+    default:
+      return false;
+  }
+}
+
+async function linkedWorkspaceConfigRoot(
+  fs: ReturnType<typeof createFileSystem>,
+  specifier: string,
+  importer: string,
+  resolvedPath: string,
+): Promise<string | null> {
+  if (!isConfigSourceModule(resolvedPath)) return null;
+  const parsed = parseBarePackageSpecifier(specifier);
+  if (!parsed || parsed.version !== null) return null;
+  const lstat = fs.lstat?.bind(fs);
+  if (!lstat) throw new TypeError("Config package link inspection is unavailable");
+
+  let current = dirname(importer);
+  while (true) {
+    const packagePath = join(current, "node_modules", parsed.packageName);
+    try {
+      const stat = await lstat(packagePath);
+      if (stat.isSymlink) {
+        const packageTarget = await realPath(packagePath);
+        return isPathContainedBy(resolvedPath, packageTarget) ? packageTarget : null;
+      }
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+
+    const parent = dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+function containingConfigGraphRoot(
+  roots: Map<string, true>,
+  path: string,
+): string | null {
+  let containingRoot: string | null = null;
+  mapForEach(roots, (_present, root) => {
+    if (containingRoot === null && isPathContainedBy(path, root)) containingRoot = root;
+  });
+  return containingRoot;
+}
+
+function markCommonJsFallbackConfigModule(modules: Map<string, true>, path: string): void {
+  const extension = extname(path);
+  if (extension === ".jsx" || extension === ".ts" || extension === ".tsx") {
+    mapSet(modules, path, true);
+  }
+}
+
+/** @internal Bundle a trusted local TypeScript config module graph for staged import. */
+export async function bundleProjectConfigSourceForImport(
+  source: string,
+  configPath: string,
+): Promise<string> {
+  const { build: bundle } = await import("veryfront/extensions/bundler");
+  const fs = createFileSystem();
+  const lexicalConfigPath = resolve(configPath);
+  const lexicalConfigDir = dirname(lexicalConfigPath);
+  let canonicalConfigPath = lexicalConfigPath;
+  let configDir = await realPath(lexicalConfigDir);
+  try {
+    canonicalConfigPath = await realPath(lexicalConfigPath);
+    configDir = dirname(canonicalConfigPath);
+  } catch {
+    // Tests and virtual callers may stage trusted source before the config file
+    // exists on disk. Keep that existing path while still canonicalizing real
+    // symlinked entries.
+  }
+  const entryLoader = configSourceLoader(canonicalConfigPath);
+  if (entryLoader === "ts" || entryLoader === "tsx") {
+    await rejectComputedConfigDynamicImports(source);
+  }
+  const result = await bundle({
+    bundle: true,
+    write: false,
+    format: "esm",
+    platform: isNode ? "node" : "neutral",
+    conditions: CONFIG_NODE_BUNDLE_CONDITIONS,
+    mainFields: ["main"],
+    target: "es2022",
+    plugins: [{
+      name: "veryfront-project-config-externals",
+      setup(build) {
+        const linkedWorkspaceRoots = new IntrinsicMap<string, true>();
+        const commonJsConfigModules = new IntrinsicMap<string, true>();
+        const isCommonJsConfigGraphModule = async (modulePath: string) =>
+          mapGet(commonJsConfigModules, modulePath) === true ||
+          await isCommonJsConfigModule(fs, modulePath);
+        const bindExternalCommonJsRequire = (specifier: string, importer: string) => ({
+          path: configRequireModulePath(specifier, importer || canonicalConfigPath),
+          namespace: CONFIG_BUNDLE_REQUIRE_NAMESPACE,
+        });
+        const resolveImportMetaSpecifier: ImportMetaSpecifierResolver = async (
+          specifier,
+          moduleUrl,
+        ) => {
+          const directUrl = resolveConfigImportMetaUrl(specifier, moduleUrl);
+          if (directUrl !== null) return directUrl;
+          if (isNodeBuiltinPackageName(specifier)) return `node:${specifier}`;
+          const modulePath = fromFileUrl(moduleUrl);
+          if (!build.resolve) {
+            return await resolveConfigImportMetaWithBundler(bundle, specifier, modulePath);
+          }
+          const resolution = await resolveLiteralConfigPackageImport(
+            specifier,
+            modulePath,
+          );
+          const resolutionSpecifier = resolution.specifier;
+          if (
+            ReflectApply(StringPrototypeStartsWith, resolutionSpecifier, ["node:"]) as boolean ||
+            ReflectApply(StringPrototypeStartsWith, resolutionSpecifier, ["file:"]) as boolean
+          ) {
+            return resolutionSpecifier;
+          }
+          const packageExport = await resolveLiteralConfigPackageExport(
+            resolutionSpecifier,
+            resolution.modulePath,
+          );
+          if (packageExport !== null) return packageExport;
+          const resolved = await build.resolve(resolutionSpecifier, {
+            importer: resolution.modulePath,
+            kind: "import-statement",
+            namespace: "file",
+            resolveDir: dirname(resolution.modulePath),
+            pluginData: CONFIG_BUNDLE_RESOLVE_PLUGIN_DATA,
+          });
+          const firstError = resolved.errors?.[0]?.text;
+          if (firstError) throw configImportMetaResolveError(firstError);
+          if (!resolved.path) return null;
+          if (isNodeBuiltinPackageName(resolved.path)) return `node:${resolved.path}`;
+          const absoluteResolvedPath = isAbsolute(resolved.path)
+            ? resolved.path
+            : resolve(dirname(resolution.modulePath), resolved.path);
+          const containedPath = await resolveContainedBundlerConfigPackagePath(
+            specifier,
+            modulePath,
+            absoluteResolvedPath,
+          );
+          return `${asResolvedConfigSpecifier(containedPath)}${resolved.suffix ?? ""}`;
+        };
+
+        build.onResolve({ filter: /^veryfront:project-config-entry$/ }, (args) => {
+          if (args.path !== CONFIG_BUNDLE_ENTRY_SPECIFIER) return;
+          return { path: canonicalConfigPath, namespace: CONFIG_BUNDLE_ENTRY_NAMESPACE };
+        });
+        build.onLoad(
+          { filter: /.*/, namespace: CONFIG_BUNDLE_ENTRY_NAMESPACE },
+          async () => {
+            const boundSource = await bindCommonJsConfigModuleLocations(
+              fs,
+              source,
+              canonicalConfigPath,
+              false,
+            );
+            const locatedSource = await rewriteProjectConfigModuleLocations(
+              boundSource,
+              canonicalConfigPath,
+              resolveImportMetaSpecifier,
+            );
+            const loader = configSourceLoader(canonicalConfigPath);
+            if (loader === "ts" || loader === "tsx") {
+              await rejectComputedConfigDynamicImports(locatedSource);
+            }
+            return {
+              contents: loader === "ts" || loader === "tsx"
+                ? locatedSource
+                : await rewriteComputedStagedConfigImports(
+                  locatedSource,
+                  toFileUrl(canonicalConfigPath).href,
+                ),
+              loader,
+              resolveDir: configDir,
+            };
+          },
+        );
+        build.onLoad(
+          { filter: /.*/, namespace: CONFIG_BUNDLE_SHIM_NAMESPACE },
+          () => ({ contents: VERYFRONT_CONFIG_SHIM_SOURCE, loader: "js" }),
+        );
+        build.onLoad(
+          { filter: /.*/, namespace: CONFIG_BUNDLE_REQUIRE_NAMESPACE },
+          (args) => ({ contents: configRequireModuleSource(args.path), loader: "js" }),
+        );
+        build.onLoad({ filter: /\.[cm]?[jt]sx?$/, namespace: "file" }, async (args) => {
+          const moduleSource = await fs.readTextFile(args.path);
+          const reachedFromCommonJs = mapGet(commonJsConfigModules, args.path) === true;
+          const boundSource = await bindCommonJsConfigModuleLocations(
+            fs,
+            moduleSource,
+            args.path,
+            reachedFromCommonJs,
+          );
+          const contents = await rewriteProjectConfigModuleLocations(
+            boundSource,
+            args.path,
+            resolveImportMetaSpecifier,
+            args.suffix ?? "",
+          );
+          const loader = configSourceLoader(args.path);
+          if (loader === "ts" || loader === "tsx") {
+            await rejectComputedConfigDynamicImports(contents);
+          }
+          const preparedContents = loader === "ts" || loader === "tsx"
+            ? contents
+            : await rewriteComputedStagedConfigImports(
+              contents,
+              `${toFileUrl(args.path).href}${args.suffix ?? ""}`,
+            );
+          if (preparedContents === moduleSource) return;
+          return {
+            contents: preparedContents,
+            loader,
+            resolveDir: dirname(args.path),
+          };
+        });
+        build.onResolve({ filter: /.*/ }, async (args) => {
+          if (args.pluginData === CONFIG_BUNDLE_RESOLVE_PLUGIN_DATA) return;
+          if (args.path === CONFIG_BUNDLE_ENTRY_SPECIFIER) return;
+          if (args.path === "veryfront" && args.kind === "require-call") {
+            return { path: args.path, namespace: CONFIG_BUNDLE_SHIM_NAMESPACE };
+          }
+          const commonJsRequire = args.kind === "require-call" &&
+            await isCommonJsConfigGraphModule(args.importer || canonicalConfigPath);
+          const useNativeCommonJsRequire = async (modulePath: string): Promise<boolean> => {
+            const extension = extname(modulePath);
+            return commonJsRequire && extension === ".node";
+          };
+          const fileUrl = await resolveConfigFileUrl(args.path, configDir, lexicalConfigDir);
+          if (fileUrl.kind === "bundle") {
+            if (await useNativeCommonJsRequire(fileUrl.path)) {
+              return bindExternalCommonJsRequire(args.path, args.importer);
+            }
+            if (commonJsRequire) {
+              markCommonJsFallbackConfigModule(commonJsConfigModules, fileUrl.path);
+            }
+            return { path: fileUrl.path, namespace: "file", suffix: fileUrl.suffix };
+          }
+          if (fileUrl.kind === "external") {
+            return commonJsRequire
+              ? bindExternalCommonJsRequire(args.path, args.importer)
+              : { path: fileUrl.specifier, external: true };
+          }
+          if (args.path === "veryfront" || keepsConfigImportSpecifier(args.path)) {
+            return commonJsRequire
+              ? bindExternalCommonJsRequire(args.path, args.importer)
+              : { path: args.path, external: true };
+          }
+          if (isNodeBuiltinPackageName(args.path)) {
+            return commonJsRequire
+              ? bindExternalCommonJsRequire(args.path, args.importer)
+              : { path: `node:${args.path}`, external: true };
+          }
+
+          if (!build.resolve) return;
+          const resolved = await build.resolve(args.path, {
+            importer: args.importer,
+            kind: args.kind,
+            namespace: args.namespace === CONFIG_BUNDLE_ENTRY_NAMESPACE ? "file" : args.namespace,
+            resolveDir: args.resolveDir,
+            pluginData: CONFIG_BUNDLE_RESOLVE_PLUGIN_DATA,
+          });
+          const firstError = resolved.errors?.[0]?.text;
+          if (firstError) throw new TypeError(firstError);
+          if (!resolved.path) throw new TypeError("Config dependency resolution failed");
+          let resolvedPath = isAbsolute(resolved.path)
+            ? await realPath(resolved.path)
+            : resolved.path;
+          let packageImportTarget: string | undefined;
+          if (
+            isAbsolute(resolvedPath) &&
+            ReflectApply(StringPrototypeStartsWith, args.path, ["#"]) as boolean
+          ) {
+            const packageImport = await resolveBundlerConfigPackageImport(
+              args.path,
+              args.importer || configPath,
+              resolvedPath,
+              commonJsRequire ? CONFIG_NODE_REQUIRE_CONDITIONS : CONFIG_NODE_IMPORT_CONDITIONS,
+            );
+            packageImportTarget = packageImport.target;
+            resolvedPath = packageImport.path;
+          }
+          if (
+            isAbsolute(resolvedPath) &&
+            isPathContainedBy(resolvedPath, configDir) &&
+            !isConfigDependencyPath(resolvedPath, configDir)
+          ) {
+            if (await useNativeCommonJsRequire(resolvedPath)) {
+              return bindExternalCommonJsRequire(args.path, args.importer);
+            }
+            if (commonJsRequire && extname(resolvedPath) === ".node") {
+              return bindExternalCommonJsRequire(args.path, args.importer);
+            }
+            if (commonJsRequire) {
+              markCommonJsFallbackConfigModule(commonJsConfigModules, resolvedPath);
+            }
+            return {
+              path: resolvedPath,
+              namespace: resolved.namespace,
+              suffix: resolved.suffix,
+            };
+          }
+          if (isAbsolute(resolvedPath)) {
+            const graphRoot = containingConfigGraphRoot(linkedWorkspaceRoots, resolvedPath);
+            if (graphRoot !== null && !isConfigDependencyPath(resolvedPath, graphRoot)) {
+              if (await useNativeCommonJsRequire(resolvedPath)) {
+                return bindExternalCommonJsRequire(args.path, args.importer);
+              }
+              if (commonJsRequire && extname(resolvedPath) === ".node") {
+                return bindExternalCommonJsRequire(args.path, args.importer);
+              }
+              if (commonJsRequire) {
+                markCommonJsFallbackConfigModule(commonJsConfigModules, resolvedPath);
+              }
+              return {
+                path: resolvedPath,
+                namespace: resolved.namespace ?? "file",
+                suffix: resolved.suffix,
+              };
+            }
+          }
+          const linkedRoot = isAbsolute(resolvedPath)
+            ? await linkedWorkspaceConfigRoot(
+              fs,
+              args.path,
+              args.importer || configPath,
+              resolvedPath,
+            )
+            : null;
+          if (linkedRoot !== null) {
+            mapSet(linkedWorkspaceRoots, linkedRoot, true);
+            if (await useNativeCommonJsRequire(resolvedPath)) {
+              return bindExternalCommonJsRequire(args.path, args.importer);
+            }
+            if (commonJsRequire && extname(resolvedPath) === ".node") {
+              return bindExternalCommonJsRequire(args.path, args.importer);
+            }
+            if (commonJsRequire) {
+              markCommonJsFallbackConfigModule(commonJsConfigModules, resolvedPath);
+            }
+            return {
+              path: resolvedPath,
+              namespace: resolved.namespace ?? "file",
+              suffix: resolved.suffix,
+            };
+          }
+          if (
+            isAbsolute(resolvedPath) &&
+            isProjectConfigGraphSpecifier(args.path, packageImportTarget)
+          ) {
+            if (!isPathContainedBy(resolvedPath, configDir)) {
+              throw new TypeError("Config import resolves outside the project directory");
+            }
+          }
+          if (commonJsRequire) {
+            return bindExternalCommonJsRequire(args.path, args.importer);
+          }
+          return {
+            path: keepsConfigImportSpecifier(resolvedPath)
+              ? resolvedPath
+              : toFileUrl(resolvedPath).href,
+            suffix: resolved.suffix,
+            external: true,
+          };
+        });
+      },
+    }],
+    entryPoints: [CONFIG_BUNDLE_ENTRY_SPECIFIER],
+  });
+  const firstError = result.errors[0]?.text;
+  if (firstError) throw new TypeError(firstError);
+
+  const output = result.outputFiles[0];
+  if (!output) throw new TypeError("Config bundler did not produce JavaScript output");
+  return output.text;
 }
 
 /**
@@ -5437,12 +7369,17 @@ async function loadAndMergeConfig(
     });
   }
 
-  // Compiled Deno binaries can't dynamically import TypeScript files directly.
-  // Read the source, transpile when needed, and import it from a temp file.
-  if (isDenoCompiled) {
-    logger.debug("Using temp file import for compiled Deno", {
+  const needsStagedConfigImport = isDenoCompiled || isNode;
+
+  // Compiled Deno binaries can't import project files, and Node.js 22.3 can't
+  // import TypeScript anywhere in a JavaScript config's dependency graph. Read
+  // the source, transpile when needed, and stage one temporary module with
+  // imports resolved from the original project.
+  if (needsStagedConfigImport) {
+    logger.debug("Using staged config import", {
       configPath,
       isDenoCompiled,
+      isNode,
     });
     const fs = createFileSystem();
     const source = await fs.readTextFile(configPath);
@@ -5453,6 +7390,7 @@ async function loadAndMergeConfig(
       absolutePath,
       (tempFile) => ReflectApply(intrinsicUrlHrefGetter, toFileUrl(tempFile), []) as string,
       (processedSource) => rewriteProjectConfigImportsFromProject(processedSource, absolutePath),
+      true,
     );
     logger.debug("Successfully loaded config via temp file", {
       configPath,
@@ -5464,7 +7402,10 @@ async function loadAndMergeConfig(
 
   const absolutePath = resolve(configPath);
   const configUrl = toFileUrl(absolutePath);
-  configUrl.searchParams.set("t", `${Date.now()}-${crypto.randomUUID()}`);
+  configUrl.searchParams.set(
+    "t",
+    `${Date.now()}-${ReflectApply(CryptoRandomUUID, IntrinsicCrypto, []) as string}`,
+  );
   const configModule = await import(
     ReflectApply(intrinsicUrlHrefGetter, configUrl, []) as string
   );

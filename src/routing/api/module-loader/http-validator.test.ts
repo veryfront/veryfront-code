@@ -11,7 +11,172 @@ import {
 import {
   __setSourceCapabilityParserLoaderForTests,
   rewriteImportMetaLocations,
+  rewriteUnboundCommonJsDynamicRequire,
+  usesUnboundCommonJsModule,
 } from "./source-capability-analyzer.ts";
+
+describe("usesUnboundCommonJsModule", () => {
+  it("distinguishes runtime CommonJS module references from inert text and bindings", async () => {
+    assertEquals(await usesUnboundCommonJsModule("module.exports = module.filename;"), true);
+    assertEquals(await usesUnboundCommonJsModule('const text = "module.filename";'), false);
+    assertEquals(
+      await usesUnboundCommonJsModule(
+        "function read(module: { path: string }) { return module.path; }",
+      ),
+      false,
+    );
+  });
+});
+
+describe("rewriteUnboundCommonJsDynamicRequire", () => {
+  it("rewrites only runtime dynamic loads from the unbound CommonJS require", async () => {
+    const source = [
+      'const staticValue = require("./static.cjs");',
+      'const moduleName = "./dynamic.cjs";',
+      "const dynamicValue = require(moduleName);",
+      'let stableMutableName = "./stable-mutable.cjs";',
+      "const stableMutableValue = require(stableMutableName);",
+      'let mutableName = "./first.cjs";',
+      'mutableName = "./second.cjs";',
+      "const mutableValue = require(mutableName);",
+      "const forwardValue = require(forwardName);",
+      'const forwardName = "./forward.cjs";',
+      "const resolved = require.resolve(moduleName);",
+      "const load = require;",
+      "const { resolve } = require;",
+      "const preservedKey = { require };",
+      'const text = "require(moduleName)";',
+      "// require(moduleName)",
+      "function local(require: (name: string) => string) {",
+      "  return require(moduleName);",
+      "}",
+    ].join("\n");
+
+    assertEquals(
+      await rewriteUnboundCommonJsDynamicRequire(source, "__moduleRequire"),
+      [
+        'const staticValue = require("./static.cjs");',
+        'const moduleName = "./dynamic.cjs";',
+        'const dynamicValue = require("./dynamic.cjs");',
+        'let stableMutableName = "./stable-mutable.cjs";',
+        "const stableMutableValue = __moduleRequire(stableMutableName);",
+        'let mutableName = "./first.cjs";',
+        'mutableName = "./second.cjs";',
+        "const mutableValue = __moduleRequire(mutableName);",
+        "const forwardValue = __moduleRequire(forwardName);",
+        'const forwardName = "./forward.cjs";',
+        "const resolved = __moduleRequire.resolve(moduleName);",
+        "const load = __moduleRequire;",
+        "const { resolve } = __moduleRequire;",
+        "const preservedKey = { require: __moduleRequire };",
+        'const text = "require(moduleName)";',
+        "// require(moduleName)",
+        "function local(require: (name: string) => string) {",
+        "  return require(moduleName);",
+        "}",
+      ].join("\n"),
+    );
+  });
+
+  it("preserves CommonJS require value references shadowed by local bindings", async () => {
+    const source = [
+      'const moduleName = "./dynamic.cjs";',
+      "function local(require: { resolve(name: string): string }) {",
+      "  const load = require;",
+      "  const resolve = require.resolve;",
+      "  const bag = { require };",
+      "  return [load(moduleName), resolve(moduleName)];",
+      "}",
+    ].join("\n");
+
+    assertEquals(
+      await rewriteUnboundCommonJsDynamicRequire(source, "__moduleRequire"),
+      source,
+    );
+  });
+
+  it("wraps static require calls lazily when dynamic require uses the project helper", async () => {
+    const source = [
+      'const direct = require("./direct.cjs");',
+      'const moduleName = "./folded.cjs";',
+      "const folded = require(moduleName);",
+      'const repeated = require("./direct.cjs");',
+      "const dynamic = require(globalThis.dynamicName);",
+    ].join("\n");
+
+    assertEquals(
+      await rewriteUnboundCommonJsDynamicRequire(
+        source,
+        "__moduleRequire",
+        "__recordRequire",
+      ),
+      [
+        '__recordRequire("./direct.cjs", () => require("./direct.cjs"));',
+        '__recordRequire("./folded.cjs", () => require("./folded.cjs"));',
+        'const direct = __moduleRequire("./direct.cjs");',
+        'const moduleName = "./folded.cjs";',
+        'const folded = __moduleRequire("./folded.cjs");',
+        'const repeated = __moduleRequire("./direct.cjs");',
+        "const dynamic = __moduleRequire(globalThis.dynamicName);",
+      ].join("\n"),
+    );
+  });
+
+  it("rewrites unbound module.require calls without changing local module bindings", async () => {
+    const source = [
+      'const moduleName = "./folded.cjs";',
+      'const direct = module.require("./direct.cjs");',
+      "const folded = module['require'](moduleName);",
+      "const dynamic = module.require(globalThis.dynamicName);",
+      "const load = module.require;",
+      "const detached = load(moduleName);",
+      "function local(module: { require(name: string): string }) {",
+      "  return module.require(moduleName);",
+      "}",
+    ].join("\n");
+
+    assertEquals(
+      await rewriteUnboundCommonJsDynamicRequire(
+        source,
+        "__moduleRequire",
+        "__recordRequire",
+      ),
+      [
+        '__recordRequire("./direct.cjs", () => require("./direct.cjs"));',
+        '__recordRequire("./folded.cjs", () => require("./folded.cjs"));',
+        'const moduleName = "./folded.cjs";',
+        'const direct = __moduleRequire("./direct.cjs");',
+        'const folded = __moduleRequire("./folded.cjs");',
+        "const dynamic = __moduleRequire(globalThis.dynamicName);",
+        "const load = __moduleRequire;",
+        "const detached = load(moduleName);",
+        "function local(module: { require(name: string): string }) {",
+        "  return module.require(moduleName);",
+        "}",
+      ].join("\n"),
+    );
+  });
+
+  it("rejects a replacement that is not an identifier", async () => {
+    await assertRejects(
+      () => rewriteUnboundCommonJsDynamicRequire("require(name);", "not an id"),
+      TypeError,
+      "identifier",
+    );
+    await assertRejects(
+      () => rewriteUnboundCommonJsDynamicRequire("require(name);", "__moduleRequire", "not an id"),
+      TypeError,
+      "identifier",
+    );
+  });
+
+  it("fails closed when the source does not parse", async () => {
+    assertEquals(
+      await rewriteUnboundCommonJsDynamicRequire("require(", "__moduleRequire"),
+      null,
+    );
+  });
+});
 
 describe("rewriteImportMetaLocations", () => {
   it("rewrites syntax nodes without changing inert text", async () => {
@@ -106,6 +271,109 @@ describe("rewriteImportMetaLocations", () => {
         `${specifier} is not a dependency unless an import map resolves it`,
       );
     }
+  });
+
+  it("can preserve import.meta.resolve call timing with a custom expression", async () => {
+    const moduleUrl = "file:///project/lib/helper.ts";
+
+    assertEquals(
+      await rewriteImportMetaLocations(
+        'const resolved = import.meta.resolve("optional-package");',
+        moduleUrl,
+        undefined,
+        (specifier, declaringUrl) =>
+          `resolveLater(${JSON.stringify(specifier)}, ${JSON.stringify(declaringUrl)})`,
+      ),
+      `const resolved = resolveLater("optional-package", ${JSON.stringify(moduleUrl)});`,
+    );
+    assertEquals(
+      await rewriteImportMetaLocations(
+        "let failure; try { import.meta.resolve(); } catch (error) { failure = error; }",
+        moduleUrl,
+        undefined,
+        (specifier, declaringUrl) =>
+          `resolveLater(${JSON.stringify(specifier)}, ${JSON.stringify(declaringUrl)})`,
+      ),
+      `let failure; try { resolveLater("undefined", ${JSON.stringify(moduleUrl)}); } ` +
+        "catch (error) { failure = error; }",
+      "missing resolve arguments must stay as deferred call-site failures",
+    );
+  });
+
+  it("can preserve computed import.meta.resolve calls with a bound resolver", async () => {
+    const moduleUrl = "file:///project/lib/helper.ts";
+    const source =
+      'const specifier = "./asset.txt"; const resolved = import.meta.resolve(specifier);';
+
+    assertEquals(
+      await rewriteImportMetaLocations(
+        source,
+        moduleUrl,
+        undefined,
+        undefined,
+        (argument, declaringUrl) => `resolveLater(${argument}, ${JSON.stringify(declaringUrl)})`,
+      ),
+      `const specifier = "./asset.txt"; const resolved = resolveLater(specifier, ${
+        JSON.stringify(moduleUrl)
+      });`,
+    );
+  });
+
+  it("can preserve detached import.meta.resolve references with a bound resolver", async () => {
+    const moduleUrl = "file:///project/lib/helper.ts";
+    const source = "const resolve = import.meta.resolve; const result = resolve('./asset.txt');";
+
+    assertEquals(
+      await rewriteImportMetaLocations(
+        source,
+        moduleUrl,
+        undefined,
+        undefined,
+        undefined,
+        (declaringUrl) => `resolveFrom(${JSON.stringify(declaringUrl)})`,
+      ),
+      `const resolve = resolveFrom(${JSON.stringify(moduleUrl)}); ` +
+        "const result = resolve('./asset.txt');",
+    );
+  });
+
+  it("binds whole import.meta references to the declaring module", async () => {
+    const moduleUrl = "file:///project/lib/helper.ts";
+    const source = "const meta = import.meta; const { url, resolve } = meta;";
+
+    assertEquals(
+      await rewriteImportMetaLocations(
+        source,
+        moduleUrl,
+        undefined,
+        undefined,
+        undefined,
+        () => "resolveLater",
+      ),
+      'const meta = ({ __proto__: null, url: "file:///project/lib/helper.ts", dirname: "/project/lib", ' +
+        'filename: "/project/lib/helper.ts", resolve: resolveLater }); ' +
+        "const { url, resolve } = meta;",
+    );
+  });
+
+  it("rebinds nested import.meta locations in computed resolve arguments", async () => {
+    const moduleUrl = "file:///project/lib/helper.ts";
+    const source =
+      'const resolved = import.meta.resolve(new URL("./asset.txt", import.meta.url).href);';
+
+    assertEquals(
+      await rewriteImportMetaLocations(
+        source,
+        moduleUrl,
+        undefined,
+        undefined,
+        (argument, declaringUrl) => `resolveLater(${argument}, ${JSON.stringify(declaringUrl)})`,
+      ),
+      `const resolved = resolveLater(new URL("./asset.txt", ${JSON.stringify(moduleUrl)}).href, ${
+        JSON.stringify(moduleUrl)
+      });`,
+      "the nested module URL must not resolve from a temporary emitted module",
+    );
   });
 });
 

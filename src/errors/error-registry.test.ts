@@ -77,6 +77,7 @@ const PUBLISHED_ERROR_SLUGS: readonly string[] = Object.freeze([
   "environment-not-found",
   "environment-not-routable",
   "error-overlay-error",
+  "esm-cache-init-failed",
   "fallback-exhausted",
   "fast-refresh-error",
   "file-not-found",
