@@ -383,6 +383,11 @@ type ReconcileNodeOutcomeInput = {
   preserveCommittedOutcomeOnError?: boolean;
 };
 
+type ReconcileNodeOutcomeAttempt = {
+  outcome?: WorkflowRunControlReconcileOutcome;
+  outcomeCommitted: boolean;
+};
+
 async function reconcileNodeOutcome(
   backend: WorkflowBackend,
   input: ReconcileNodeOutcomeInput,
@@ -390,22 +395,9 @@ async function reconcileNodeOutcome(
   let outcomeCommitted = false;
   try {
     for (let attempt = 0; attempt < input.maxAttempts; attempt++) {
-      const run = await requireActiveReconcileRun(backend, input.runId);
-      if (!isActiveReconcileRun(run)) return { status: "skipped-terminal", run };
-      if (input.isApplicable?.(run) === false) return { status: "stale-wait", run };
-
-      const expectedWorkerId = run.workerId;
-      const updated = await patchNodeOutcome(backend, input, run, expectedWorkerId);
-      const skipped = updated
-        ? undefined
-        : await skippedTerminalReconcileOutcome(backend, input.runId);
-      if (skipped) return skipped;
-      if (!updated) continue;
-      outcomeCommitted = true;
-
-      const reconciledRun = await backend.getRun(input.runId);
-      if (!await resumeReconciledRun(backend, input, expectedWorkerId)) continue;
-      return { status: "reconciled", run: reconciledRun ?? undefined };
+      const attemptResult = await reconcileNodeOutcomeAttempt(backend, input);
+      outcomeCommitted ||= attemptResult.outcomeCommitted;
+      if (attemptResult.outcome) return attemptResult.outcome;
     }
   } catch (error) {
     if (outcomeCommitted && input.preserveCommittedOutcomeOnError) {
@@ -415,6 +407,35 @@ async function reconcileNodeOutcome(
   }
 
   throw ORCHESTRATION_ERROR.create({ detail: input.ownershipChurnDetail });
+}
+
+async function reconcileNodeOutcomeAttempt(
+  backend: WorkflowBackend,
+  input: ReconcileNodeOutcomeInput,
+): Promise<ReconcileNodeOutcomeAttempt> {
+  const run = await requireActiveReconcileRun(backend, input.runId);
+  if (!isActiveReconcileRun(run)) {
+    return { outcome: { status: "skipped-terminal", run }, outcomeCommitted: false };
+  }
+  if (input.isApplicable?.(run) === false) {
+    return { outcome: { status: "stale-wait", run }, outcomeCommitted: false };
+  }
+
+  const expectedWorkerId = run.workerId;
+  const updated = await patchNodeOutcome(backend, input, run, expectedWorkerId);
+  if (!updated) {
+    return {
+      outcome: await skippedTerminalReconcileOutcome(backend, input.runId),
+      outcomeCommitted: false,
+    };
+  }
+
+  const reconciledRun = await backend.getRun(input.runId);
+  const resumed = await resumeReconciledRun(backend, input, expectedWorkerId);
+  return {
+    outcome: resumed ? { status: "reconciled", run: reconciledRun ?? undefined } : undefined,
+    outcomeCommitted: true,
+  };
 }
 
 function isActiveReconcileRun(run: WorkflowRun | null): run is WorkflowRun {
