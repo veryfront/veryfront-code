@@ -577,6 +577,9 @@ export function createVeryfrontHandler(
 
         let requestMetricsIncremented = false;
         let projectMiddlewareStarted = false;
+        const markProjectMiddlewareStarted = () => {
+          projectMiddlewareStarted = true;
+        };
         const executeHandlerAttempt = async (request: Request): Promise<Response> => {
           // Fast rejection of vulnerability scanner probes before any async work
           if (SCANNER_PATH_PATTERN.test(url.pathname)) {
@@ -739,9 +742,7 @@ export function createVeryfrontHandler(
               handlerContext: ctx,
               isSharedProxy: isProxyMode,
               next: async () => (await registry.execute(request, ctx)) ?? undefined,
-              onMiddlewareStart: () => {
-                projectMiddlewareStarted = true;
-              },
+              onMiddlewareStart: markProjectMiddlewareStarted,
             });
           const executeRoute = () =>
             runWithExactSourceIntegrationPolicy(
