@@ -2999,6 +2999,22 @@ export default config as const;
 
         assertEquals(zeroSlashIriPath.message.includes("秘密"), false);
         assertStringIncludes(zeroSlashIriPath.message, "Failed [url]");
+
+        const singleSlashIri = await loadFailure(
+          "vf-config-single-slash-iri-host-",
+          `throw new Error("Failed https:/例え.internal/config.ts");\n`,
+        );
+
+        assertEquals(singleSlashIri.message.includes("例え.internal"), false);
+        assertStringIncludes(singleSlashIri.message, "Failed [url]");
+
+        const singleSlashIriPath = await loadFailure(
+          "vf-config-single-slash-iri-path-",
+          `throw new Error("Failed https:/registry.internal/秘密/config.ts");\n`,
+        );
+
+        assertEquals(singleSlashIriPath.message.includes("秘密"), false);
+        assertStringIncludes(singleSlashIriPath.message, "Failed [url]");
       });
 
       it("redacts a URL tail that begins after a lone `)` and punctuation", async () => {

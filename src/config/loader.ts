@@ -2072,10 +2072,21 @@ const ZERO_SLASH_SCHEME_URL = new RegExp(
   String.raw`${ASCII_SPECIAL_SCHEME_SOURCE}:(?![/\s])(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
   "gu",
 );
-// The IRI fallbacks mirror the two-slash forms above. The authority matcher
-// catches a raw Unicode hostname, while the path matcher catches a raw Unicode
-// segment after a complete ASCII authority. Both are bounded before the first
-// non-ASCII character so hostile diagnostics remain linear-time.
+// The IRI fallbacks mirror the malformed single-slash and zero-slash forms
+// above. Each authority matcher catches a raw Unicode hostname, while each path
+// matcher catches a raw Unicode segment after a complete ASCII authority. All
+// are bounded before the first non-ASCII character so hostile diagnostics
+// remain linear-time.
+const NON_ASCII_MALFORMED_AUTHORITY_URL = new RegExp(
+  String
+    .raw`${ASCII_SPECIAL_SCHEME_SOURCE}:/(?!/)(?:[^\s"/]{0,512}@)?(?=[^\s"/]{0,512}[^\x00-\x7F])[^\s"']*`,
+  "gu",
+);
+const NON_ASCII_MALFORMED_URL_PATH = new RegExp(
+  String
+    .raw`${ASCII_SPECIAL_SCHEME_SOURCE}:/(?!/)(?:[^\s"/]{0,512}@)?[^\s"/]{1,512}(?:/${URI_TOKEN_CHARACTER_SOURCE}{0,2048})?/(?=[^\x00-\x7F])[^\s"']*`,
+  "gu",
+);
 const NON_ASCII_ZERO_SLASH_AUTHORITY_URL = new RegExp(
   String
     .raw`${ASCII_SPECIAL_SCHEME_SOURCE}:(?![/\s])(?:[^\s"/]{0,512}@)?(?=[^\s"/]{0,512}[^\x00-\x7F])[^\s"']*`,
@@ -2180,6 +2191,12 @@ function redactMachinePaths(value: string): string {
   if (containsNonAscii(redacted)) {
     redacted = replaceMatchesWithCapturedExec(redacted, NON_ASCII_AUTHORITY_URL, "[url]");
     redacted = replaceMatchesWithCapturedExec(redacted, NON_ASCII_URL_PATH, "[url]");
+    redacted = replaceMatchesWithCapturedExec(
+      redacted,
+      NON_ASCII_MALFORMED_AUTHORITY_URL,
+      "[url]",
+    );
+    redacted = replaceMatchesWithCapturedExec(redacted, NON_ASCII_MALFORMED_URL_PATH, "[url]");
     redacted = replaceMatchesWithCapturedExec(
       redacted,
       NON_ASCII_ZERO_SLASH_AUTHORITY_URL,
