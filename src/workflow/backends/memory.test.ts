@@ -44,6 +44,21 @@ describe("MemoryBackend", () => {
     };
   }
 
+  async function assertRejectsAsynchronously<T>(
+    operation: () => Promise<T>,
+    message: string,
+  ): Promise<void> {
+    let promise: Promise<T>;
+    try {
+      promise = operation();
+    } catch (error) {
+      throw new Error("Expected operation to return a rejected Promise instead of throwing", {
+        cause: error,
+      });
+    }
+    await assertRejects(() => promise, Error, message);
+  }
+
   beforeEach((): void => {
     backend = new MemoryBackend();
   });
@@ -378,6 +393,62 @@ describe("MemoryBackend", () => {
         "strictContext",
       );
       assertEquals(await strictBackend.getRun("run-strict-context"), null);
+    });
+
+    it("rejects invalid context from Promise-returning mutation methods asynchronously", async () => {
+      const strictBackend = new MemoryBackend({ strictContext: true });
+
+      await strictBackend.createRun(createTestRun("run-strict-mutation", {
+        status: "running",
+        workerId: "worker-1",
+      }));
+
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.updateRun("run-strict-mutation", {
+            context: { when: new Date(0) },
+          }),
+        "strictContext",
+      );
+      assertEquals((await strictBackend.getRun("run-strict-mutation"))?.context.when, undefined);
+
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.restoreRunStateIfStatus(
+            "run-strict-mutation",
+            ["running"],
+            { status: "waiting", context: { when: new Date(0) } },
+            "worker-1",
+          ),
+        "strictContext",
+      );
+      assertEquals((await strictBackend.getRun("run-strict-mutation"))?.status, "running");
+
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.saveCheckpoint("run-strict-mutation", {
+            ...createCheckpoint("cp-strict", "step-1", new Date()),
+            context: { when: new Date(0) },
+          }),
+        "strictContext",
+      );
+      assertEquals(await strictBackend.getCheckpoints("run-strict-mutation"), []);
+
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.saveCheckpointIfStatusAndWorker(
+            "run-strict-child",
+            "run-strict-mutation",
+            ["running"],
+            "worker-1",
+            {
+              ...createCheckpoint("cp-strict-child", "step-1", new Date()),
+              context: { when: new Date(0) },
+            },
+          ),
+        "strictContext",
+      );
+      assertEquals(await strictBackend.getCheckpoints("run-strict-child"), []);
     });
 
     it("merges node-state sets while applying explicit deletions", async () => {

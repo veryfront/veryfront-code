@@ -231,9 +231,14 @@ export class MemoryBackend implements WorkflowBackend {
     logger.debug(`Updating run: ${runId}`, patch);
 
     const { contextDeletes = [], nodeStateDeletes = [], ...storedPatch } = patch;
-    const contextPatch = patch.context === undefined
-      ? undefined
-      : persistedWorkflowContextPatch(patch.context, runId, this.config);
+    let contextPatch: Partial<WorkflowContext> | undefined;
+    try {
+      contextPatch = patch.context === undefined
+        ? undefined
+        : persistedWorkflowContextPatch(patch.context, runId, this.config);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     const context = { ...run.context, ...contextPatch };
     for (const key of contextDeletes) delete context[key];
     const nodeStates = { ...run.nodeStates, ...patch.nodeStates };
@@ -320,21 +325,22 @@ export class MemoryBackend implements WorkflowBackend {
 
     logger.debug(`Restoring run state snapshot: ${runId}`);
 
+    let context: WorkflowContext | undefined;
+    try {
+      context = snapshot.context === undefined
+        ? undefined
+        : persistedWorkflowContext(snapshot.context, runId, this.config);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+
     // Replacement, not the per-key merge updateRun applies: keys written after
     // the snapshot must not survive a checkpoint restore, or nodes completed
     // after the checkpoint stay completed and are skipped on replay.
     const updated: WorkflowRun = {
       ...run,
       ...snapshot,
-      ...(snapshot.context !== undefined
-        ? {
-          context: persistedWorkflowContext(
-            snapshot.context,
-            runId,
-            this.config,
-          ),
-        }
-        : {}),
+      ...(context !== undefined ? { context } : {}),
     };
     this.runs.set(runId, updated);
     this.publishRunObservation(runId, updated);
@@ -524,10 +530,13 @@ export class MemoryBackend implements WorkflowBackend {
   saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void> {
     logger.debug("Saving checkpoint", { checkpointId: checkpoint.id, runId });
     const checkpoints = this.checkpoints.get(runId) ?? [];
-    appendRetainedCheckpoint(checkpoints, {
-      ...checkpoint,
-      context: persistedCheckpointContext(checkpoint.context, runId, this.config),
-    });
+    let context: WorkflowContext;
+    try {
+      context = persistedCheckpointContext(checkpoint.context, runId, this.config);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    appendRetainedCheckpoint(checkpoints, { ...checkpoint, context });
     this.checkpoints.set(runId, checkpoints);
     return Promise.resolve();
   }
@@ -547,10 +556,13 @@ export class MemoryBackend implements WorkflowBackend {
     }
 
     const checkpoints = this.checkpoints.get(storageRunId) ?? [];
-    appendRetainedCheckpoint(checkpoints, {
-      ...checkpoint,
-      context: persistedCheckpointContext(checkpoint.context, storageRunId, this.config),
-    });
+    let context: WorkflowContext;
+    try {
+      context = persistedCheckpointContext(checkpoint.context, storageRunId, this.config);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    appendRetainedCheckpoint(checkpoints, { ...checkpoint, context });
     this.checkpoints.set(storageRunId, checkpoints);
     return Promise.resolve(true);
   }
