@@ -1138,10 +1138,7 @@ jobs:
             const pullNumber = Number(process.env.PULL_NUMBER);
             const sourceHeadSha = process.env.SOURCE_HEAD_SHA;
             const baseSha = context.payload.merge_group.base_sha;
-            // The trusted default-branch helper returns sourceHeadSha until
-            // this compatibility fix itself has passed the merge queue.
-            const serializedBaseSha = queueEntry.baseHeadSha ??
-              queueEntry.sourceHeadSha;
+            const serializedBaseSha = queueEntry.baseHeadSha;
             if (
               !Number.isSafeInteger(pullNumber) ||
               pullNumber !== queueEntry.pullNumber ||
