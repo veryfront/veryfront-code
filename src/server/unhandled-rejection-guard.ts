@@ -53,7 +53,7 @@ interface GuardLogger {
 
 export interface UnhandledRejectionGuardOptions {
   /** Defaults to the global process event target. */
-  target?: GuardEventTarget;
+  target?: GuardTarget;
   /** Defaults to the server logger. */
   logger?: GuardLogger;
 }
