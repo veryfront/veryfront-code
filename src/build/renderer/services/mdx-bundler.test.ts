@@ -1251,6 +1251,40 @@ describe("build/renderer/services/mdx-bundler", () => {
       });
     });
 
+    it("wraps when an earlier return bypasses later provider wiring", async () => {
+      const active = resolveContract<ContentProcessor>("ContentProcessor");
+      const conditionalHookProcessor: ContentProcessor = {
+        compileMdx: async (options) => ({
+          ...await active.compileMdx(options),
+          compiledCode: 'import { useMDXComponents as authoredHook } from "veryfront/mdx";\n' +
+            "export default function MDXContent(props = {}) {\n" +
+            "  if (props.short) {\n" +
+            '    return React.createElement(props.components?.h1 ?? "h1", null, "Short branch");\n' +
+            "  }\n" +
+            "  const components = { ...authoredHook(), ...props.components };\n" +
+            '  return React.createElement(components.h1 ?? "h1", null, "Long branch");\n' +
+            "}",
+        }),
+        compileMarkdown: (options) => active.compileMarkdown(options),
+        getRemarkPlugins: () => active.getRemarkPlugins(),
+        getRehypePlugins: () => active.getRehypePlugins(),
+      };
+
+      await withContractOverride("ContentProcessor", conditionalHookProcessor, async () => {
+        const result = await bundleMDXWithOptions({
+          content: "# Conditional provider wiring",
+          filePath: "/tmp/conditional-provider-wiring.mdx",
+          projectDir: "/tmp",
+        });
+
+        const loaded = await importEmittedModule(result.code, { providerHeading: true });
+        assertEquals(
+          (renderEmittedComponent(loaded.default, { short: true }) as { type?: unknown }).type,
+          "provider-heading",
+        );
+      });
+    });
+
     it("does not mistake a loop-contained provider spread for provider wiring", async () => {
       const active = resolveContract<ContentProcessor>("ContentProcessor");
       const loopProcessor: ContentProcessor = {
@@ -1728,6 +1762,43 @@ describe("build/renderer/services/mdx-bundler", () => {
         assertEquals(Object.keys(loaded.default).includes("title"), true);
         assertEquals(loaded.default.title, "Updated");
         assertEquals(loaded.default.getLayout(), "layout");
+      });
+    });
+
+    it("freezes forwarded source-backed static state with the proxy", async () => {
+      const active = resolveContract<ContentProcessor>("ContentProcessor");
+      const sourceModule = moduleDataUrl(
+        'class Content { static title = "Initial"; ' +
+          'static updateTitle() { this.title = "Updated"; } } export default Content;',
+      );
+      const staticProcessor: ContentProcessor = {
+        compileMdx: async (options) => ({
+          ...await active.compileMdx(options),
+          compiledCode: `export { default } from ${JSON.stringify(sourceModule)};`,
+        }),
+        compileMarkdown: (options) => active.compileMarkdown(options),
+        getRemarkPlugins: () => active.getRemarkPlugins(),
+        getRehypePlugins: () => active.getRehypePlugins(),
+      };
+
+      await withContractOverride("ContentProcessor", staticProcessor, async () => {
+        const result = await bundleMDXWithOptions({
+          content: "# Source static freeze",
+          filePath: "/tmp/source-static-frozen-default.mdx",
+          projectDir: "/tmp",
+        });
+
+        const loaded = await importEmittedModule(result.code) as unknown as {
+          default: { title: string; updateTitle(): void };
+        };
+        Object.freeze(loaded.default);
+        try {
+          loaded.default.updateTitle();
+        } catch (error) {
+          assertEquals(error instanceof TypeError, true);
+        }
+        assertEquals(Object.isFrozen(loaded.default), true);
+        assertEquals(loaded.default.title, "Initial");
       });
     });
 

@@ -197,6 +197,16 @@ describe("build/renderer/utils/import-utils", () => {
       );
     });
 
+    it("carries multiline class expression context into brace classification", () => {
+      assertEquals(
+        extractImports(
+          '{(() => { const ratio = class\n{} / value; return import("./child.mdx"); })()}',
+          { markdownCode: true },
+        ),
+        ["./child.mdx"],
+      );
+    });
+
     it("keeps imports after statement-position regex literals", () => {
       for (
         const [statement, child] of [
@@ -226,6 +236,16 @@ describe("build/renderer/utils/import-utils", () => {
       ) {
         assertEquals(extractImports(code, { markdownCode: true }), ["./child.mdx"]);
       }
+    });
+
+    it("recognizes case-clause statement blocks in regex context", () => {
+      assertEquals(
+        extractImports(
+          '{(() => { switch (value) { case 1: {} /"/.test(value); break; } return import("./child.mdx"); })()}',
+          { markdownCode: true },
+        ),
+        ["./child.mdx"],
+      );
     });
 
     it("distinguishes function-expression bodies from statement blocks", () => {
@@ -560,6 +580,15 @@ describe("build/renderer/utils/import-utils", () => {
       );
     });
 
+    it("keeps imports after JSX closing tags inside MDX expressions", () => {
+      assertEquals(
+        extractImports('{true ? <span></span> : import("./child.mdx")}', {
+          markdownCode: true,
+        }),
+        ["./child.mdx"],
+      );
+    });
+
     it("keeps dynamic imports inside multiline MDX JSX attribute expressions", () => {
       assertEquals(
         extractImports(
@@ -726,6 +755,15 @@ describe("build/renderer/utils/import-utils", () => {
           { markdownCode: true },
         ),
         ["./actual.mdx"],
+      );
+    });
+
+    it("expands tabbed list continuation indentation after a blank line", () => {
+      assertEquals(
+        extractImports('- item\n\n\t{import("./child.mdx")}', {
+          markdownCode: true,
+        }),
+        ["./child.mdx"],
       );
     });
 

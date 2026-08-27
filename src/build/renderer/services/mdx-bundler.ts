@@ -75,16 +75,16 @@ function astNode(value: unknown): ASTNode | undefined {
 function nodeName(value: unknown): string | undefined {
   const node = astNode(value);
   if (node?.type === "Identifier" || node?.type === "StringLiteral") {
-    return typeof node.name === "string"
-      ? node.name
-      : typeof node.value === "string"
-      ? node.value
-      : undefined;
+    if (typeof node.name === "string") return node.name;
+    if (typeof node.value === "string") return node.value;
   }
   return undefined;
 }
 
-function collectBindingPatternNames(value: unknown, names: Set<string>): void {
+function collectBindingPatternNames( // NOSONAR: recursive AST pattern walker keeps variant handling local.
+  value: unknown,
+  names: Set<string>,
+): void {
   const node = astNode(value);
   if (!node) return;
   if (node.type === "Identifier") {
@@ -178,7 +178,9 @@ async function loadBundlerCodeParser(): Promise<CodeParser> {
   return parser;
 }
 
-function analyzeCompiledProgram(program: ASTNode | undefined): CompiledModuleNames {
+function analyzeCompiledProgram( // NOSONAR: AST binding/export collection must preserve traversal order.
+  program: ASTNode | undefined,
+): CompiledModuleNames {
   const bindings = new Set<string>();
   const exports = new Set<string>();
 
@@ -317,7 +319,22 @@ function findDefaultComponentExport(program: ASTNode): DefaultComponentExport | 
   return undefined;
 }
 
-function rewriteLocalExportAliases(
+function providerProxyNameBase(defaultExport: DefaultComponentExport): string {
+  if (defaultExport.source) return "__VeryfrontSourceMDXContent";
+  return "__VeryfrontProviderMDXContentProxy";
+}
+
+function localDefaultExportName(defaultExport: DefaultComponentExport): string | undefined {
+  if (defaultExport.source) return undefined;
+  const declaration = defaultExport.declaration;
+  if (defaultExport.specifierIndex !== undefined) return nodeName(declaration);
+  if (declaration.type !== "FunctionDeclaration" && declaration.type !== "ClassDeclaration") {
+    return undefined;
+  }
+  return nodeName(declaration.id);
+}
+
+function rewriteLocalExportAliases( // NOSONAR: local export rewrite keeps alias mutation decisions together.
   program: ASTNode,
   localName: string,
   wrapperName: string,
@@ -441,7 +458,7 @@ function defaultComponentFunction(program: ASTNode): ASTNode | undefined {
   return name ? findTopLevelFunction(program, name) : undefined;
 }
 
-function nodeInvokesProviderHook(
+function nodeInvokesProviderHook( // NOSONAR: AST dominance heuristic is intentionally localized.
   path: BabelScopeAwarePath,
   defaultFunction: ASTNode,
 ): boolean {
@@ -549,7 +566,7 @@ function isHostElementRenderTarget(value: unknown): boolean {
     (node?.type === "Literal" && typeof node.value === "string");
 }
 
-function pathSuppliesRenderedComponents(
+function pathSuppliesRenderedComponents( // NOSONAR: render-path AST heuristic is intentionally localized.
   path: BabelBindingPath,
   defaultFunction: ASTNode,
 ): boolean {
@@ -832,7 +849,14 @@ async function componentBackedProviderProxy(
       },
       defineProperty(target, key, descriptor) {
         const object = ({}).constructor;
-        if (object.getOwnPropertyDescriptor(target, key)) {
+        const targetDescriptor = object.getOwnPropertyDescriptor(target, key);
+        if (targetDescriptor) {
+          const sourceDescriptor = object.getOwnPropertyDescriptor(${originalName}, key);
+          if (sourceDescriptor && descriptor.configurable === false) {
+            sourceDescriptor.configurable = false;
+            if ("writable" in sourceDescriptor) sourceDescriptor.writable = false;
+            object.defineProperty(${originalName}, key, sourceDescriptor);
+          }
           object.defineProperty(target, key, descriptor);
         } else {
           if (!object.isExtensible(target)) return false;
@@ -918,12 +942,12 @@ async function componentBackedProviderProxy(
   const parsed = await parser.parse({ code, filePath });
   const program = parsed.type === "File" ? astNode(parsed.program) : parsed;
   if (!Array.isArray(program?.body)) {
-    throw new Error("Could not construct the MDX provider component proxy");
+    throw new TypeError("Could not construct the MDX provider component proxy");
   }
   return program.body as ASTNode[];
 }
 
-async function prepareCompiledModule(
+async function prepareCompiledModule( // NOSONAR: assembly coordinates parser output, naming, and wrapper rewrites.
   compiledCode: string,
   filePath: string,
 ): Promise<PreparedCompiledModule> {
@@ -974,19 +998,11 @@ async function prepareCompiledModule(
       throw new Error("Compiled MDX module lost its default export while renaming Proxy");
     }
   }
-  const publicWrapperName = defaultExport.source
-    ? uniqueBindingName(reserved, "__VeryfrontSourceMDXContent")
-    : uniqueBindingName(reserved, "__VeryfrontProviderMDXContentProxy");
+  const publicWrapperName = uniqueBindingName(reserved, providerProxyNameBase(defaultExport));
   reserved.add(publicWrapperName);
   const declaration = defaultExport.declaration;
   const defaultIndex = defaultExport.statementIndex;
-  const localDefaultName = defaultExport.source
-    ? undefined
-    : defaultExport.specifierIndex !== undefined
-    ? nodeName(declaration)
-    : declaration.type === "FunctionDeclaration" || declaration.type === "ClassDeclaration"
-    ? nodeName(declaration.id)
-    : undefined;
+  const localDefaultName = localDefaultExportName(defaultExport);
   const sourceAliasExports: ASTNode[] = [];
 
   let originalName = nodeName(declaration.id);

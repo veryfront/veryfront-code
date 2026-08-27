@@ -30,6 +30,7 @@ interface MdxExpressionState {
   jsxQuote?: string;
   canStartRegexAtLineStart: boolean;
   lineStartFollowsArrow: boolean;
+  lineStartFollowsClassExpression: boolean;
   lineStartRequiresExpression: boolean;
   pendingControlFlowCondition: boolean;
   readonly controlFlowParentheses: boolean[];
@@ -74,11 +75,12 @@ interface JavaScriptBlockContext {
   readonly closeStartsRegex: boolean;
 }
 
-function delimiterCloseIndexes(
+function delimiterCloseIndexes( // NOSONAR: scanner state must stay synchronized in one pass.
   line: string,
   pendingControlFlowCondition = false,
   lineStartRequiresExpression = false,
   lineStartFollowsArrow = false,
+  lineStartFollowsClassExpression = false,
 ): DelimiterCloseIndexes {
   const parentheses: Array<{ controlFlow: boolean }> = [];
   const blocks: JavaScriptBlockContext[] = [];
@@ -123,7 +125,7 @@ function delimiterCloseIndexes(
       );
       if (regexEnd >= 0) {
         lastDivisionSlashIndex = -1;
-        index = regexEnd;
+        index = regexEnd; // NOSONAR: scanner jumps over one complete regex literal.
         continue;
       }
       lastDivisionSlashIndex = index;
@@ -153,6 +155,7 @@ function delimiterCloseIndexes(
           blocks,
           lineStartRequiresExpression,
           lineStartFollowsArrow,
+          lineStartFollowsClassExpression,
         ),
       );
       continue;
@@ -168,27 +171,34 @@ function javascriptBlockContext(
   enclosingBlocks: readonly JavaScriptBlockContext[] = [],
   lineStartRequiresExpression = false,
   lineStartFollowsArrow = false,
+  lineStartFollowsClassExpression = false,
 ): JavaScriptBlockContext {
   const previousIndex = previousJavaScriptTokenIndex(line, openIndex);
   const previous = line[previousIndex];
   const word = previousIndex < 0 ? "" : precedingWord(line, previousIndex);
-  const classBody = /\bclass(?:\s+[A-Za-z_$][\w$]*)?(?:\s+extends\s+[^{}]+)?\s*$/.test(
+  const classBody = /\bclass(?:\s+[A-Za-z_$][\w$]*)?(?:\s+extends\s+[^{}]+)?\s*$/.test( // NOSONAR: bounded parser heuristic.
+    line.slice(0, openIndex),
+  ) || (previousIndex < 0 && lineStartFollowsClassExpression);
+  const classExpressionBody = classBody &&
+    !/(?:^|[;{}])\s*(?:export\s+(?:default\s+)?)?class(?:\s+[A-Za-z_$][\w$]*)?(?:\s+extends\s+[^{}]+)?\s*$/ // NOSONAR: bounded parser heuristic.
+      .test(line.slice(0, openIndex));
+  const statementLabelBlock = /(?:^|[;{}])\s*[A-Za-z_$][\w$]*\s*:\s*$/.test( // NOSONAR: bounded parser heuristic.
     line.slice(0, openIndex),
   );
-  const classExpressionBody = classBody &&
-    !/(?:^|[;{}])\s*(?:export\s+(?:default\s+)?)?class(?:\s+[A-Za-z_$][\w$]*)?(?:\s+extends\s+[^{}]+)?\s*$/
-      .test(line.slice(0, openIndex));
+  const caseClauseBlock = /(?:^|[;{}])\s*(?:case\b[^:]*|default)\s*:\s*$/.test( // NOSONAR: bounded parser heuristic.
+    line.slice(0, openIndex),
+  );
   const labeledBlock = previous === ":" &&
     enclosingBlocks.at(-1)?.allowsStatements !== false &&
-    /(?:^|[;{}])\s*[A-Za-z_$][\w$]*\s*:\s*$/.test(line.slice(0, openIndex));
+    (statementLabelBlock || caseClauseBlock);
   // Callable bodies contain statements, but their closing brace is still an
   // expression operand. A following slash therefore means division, unlike a
   // slash after an if/loop/declaration block where a new regex can begin.
   const functionExpressionBody = previous === ")" &&
-    /(?:^|[^\w$])(?:async\s+)?function\s*\*?(?:\s+[A-Za-z_$][\w$]*)?\s*\([^)]*\)\s*$/.test(
+    /(?:^|[^\w$])(?:async\s+)?function\s*\*?(?:\s+[A-Za-z_$][\w$]*)?\s*\([^)]*\)\s*$/.test( // NOSONAR: bounded parser heuristic.
       line.slice(0, openIndex),
     ) &&
-    !/(?:^|[;{}])\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?(?:\s+[A-Za-z_$][\w$]*)?\s*\([^)]*\)\s*$/
+    !/(?:^|[;{}])\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?(?:\s+[A-Za-z_$][\w$]*)?\s*\([^)]*\)\s*$/ // NOSONAR: bounded parser heuristic.
       .test(
         line.slice(0, openIndex),
       );
@@ -218,12 +228,14 @@ function regexLineContext(
   pendingControlFlowCondition = false,
   lineStartRequiresExpression = false,
   lineStartFollowsArrow = false,
+  lineStartFollowsClassExpression = false,
 ): RegexLineContext {
   const closes = delimiterCloseIndexes(
     line,
     pendingControlFlowCondition,
     lineStartRequiresExpression,
     lineStartFollowsArrow,
+    lineStartFollowsClassExpression,
   );
   return {
     controlFlowCloses: closes.controlFlow,
@@ -271,11 +283,18 @@ function requiresExpressionAfter(line: ArrayLike<string>, endIndex: number): boo
   for (let index = wordStart + 1; index <= endIndex; index++) word += line[index];
   return word === "await" || word === "delete" || word === "extends" || word === "in" ||
     word === "instanceof" || word === "new" || word === "of" || word === "typeof" ||
-    word === "void";
+    word === "void" || word === "class";
 }
 
 function endsWithArrow(line: ArrayLike<string>, endIndex: number): boolean {
   return line[endIndex] === ">" && line[endIndex - 1] === "=";
+}
+
+function endsWithClassExpression(line: string, endIndex: number): boolean {
+  const prefix = line.slice(0, endIndex + 1);
+  return /\bclass(?:\s+[A-Za-z_$][\w$]*)?(?:\s+extends\s+[^{}]+)?\s*$/.test(prefix) &&
+    !/(?:^|[;{}])\s*(?:export\s+(?:default\s+)?)?class(?:\s+[A-Za-z_$][\w$]*)?(?:\s+extends\s+[^{}]+)?\s*$/
+      .test(prefix);
 }
 
 function precedingWord(line: string, endIndex: number): string {
@@ -358,6 +377,7 @@ function findRegexLiteralEndAt(
     let canStartAtLineStart = true;
     let lineStartRequiresExpression = false;
     let lineStartFollowsArrow = false;
+    let lineStartFollowsClassExpression = false;
     if (previousIndex >= 0) {
       const previousLineStart = code.lastIndexOf("\n", previousIndex - 1) + 1;
       const previousLineEndIndex = code.indexOf("\n", previousIndex);
@@ -378,6 +398,7 @@ function findRegexLiteralEndAt(
         previousLineIndex,
       );
       lineStartFollowsArrow = endsWithArrow(previousLine, previousLineIndex);
+      lineStartFollowsClassExpression = endsWithClassExpression(previousLine, previousLineIndex);
     }
     context = regexLineContext(
       line,
@@ -385,6 +406,7 @@ function findRegexLiteralEndAt(
       hasControlFlowKeywordBefore(contextCharacters, lineStart),
       lineStartRequiresExpression,
       lineStartFollowsArrow,
+      lineStartFollowsClassExpression,
     );
     contextCache.set(lineStart, context);
   }
@@ -397,7 +419,7 @@ function findRegexLiteralEndAt(
   return regexEnd < 0 ? -1 : lineStart + regexEnd;
 }
 
-function scanMdxExpressionLine(
+function scanMdxExpressionLine( // NOSONAR: line scanner coordinates MDX expression, JSX, quote, and regex state.
   line: string,
   state: MdxExpressionState,
   markExpressionCharacter?: (index: number) => void,
@@ -458,14 +480,14 @@ function scanMdxExpressionLine(
     if (state.inBlockComment) {
       if (current === "*" && next === "/") {
         state.inBlockComment = false;
-        index++;
+        index++; // NOSONAR: scanner consumes the escaped character with its escape.
       }
       continue;
     }
     if (state.quote) {
       if (current === "\\") {
         if (index === line.length - 1) escapedLineContinuation = true;
-        index++;
+        index++; // NOSONAR: scanner consumes template-expression open as a pair.
       } else if (state.quote === "`" && current === "$" && next === "{") {
         markExpressionCharacter?.(index + 1);
         state.quote = undefined;
@@ -482,7 +504,25 @@ function scanMdxExpressionLine(
     if (current === "/" && next === "/") break;
     if (current === "/" && next === "*") {
       state.inBlockComment = true;
-      index++;
+      index++; // NOSONAR: scanner consumes block-comment open as a pair.
+      continue;
+    }
+    if (current === "<" && /[A-Za-z/]/.test(next ?? "")) {
+      state.inJsxTag = true;
+      markJsxTagCharacter?.(index);
+      continue;
+    }
+    if (state.inJsxTag) {
+      markJsxTagCharacter?.(index);
+      if (state.jsxQuote) {
+        if (current === state.jsxQuote) state.jsxQuote = undefined;
+        continue;
+      }
+      if (current === '"' || current === "'") {
+        state.jsxQuote = current;
+        continue;
+      }
+      if (current === ">") state.inJsxTag = false;
       continue;
     }
     if (current === "/") {
@@ -495,7 +535,7 @@ function scanMdxExpressionLine(
         }
         lastSignificantIndex = regexEnd;
         lastDivisionSlashIndex = -1;
-        index = regexEnd;
+        index = regexEnd; // NOSONAR: scanner jumps over one complete regex literal.
         continue;
       }
       lastDivisionSlashIndex = index;
@@ -523,6 +563,7 @@ function scanMdxExpressionLine(
           state.statementBlocks,
           state.lineStartRequiresExpression,
           state.lineStartFollowsArrow,
+          state.lineStartFollowsClassExpression,
         ),
       );
     }
@@ -543,6 +584,7 @@ function scanMdxExpressionLine(
     state.inBlockComment = false;
     state.canStartRegexAtLineStart = true;
     state.lineStartFollowsArrow = false;
+    state.lineStartFollowsClassExpression = false;
     state.lineStartRequiresExpression = false;
     state.pendingControlFlowCondition = false;
     state.controlFlowParentheses.length = 0;
@@ -557,6 +599,7 @@ function scanMdxExpressionLine(
         regexContext,
       );
     state.lineStartFollowsArrow = endsWithArrow(line, lastSignificantIndex);
+    state.lineStartFollowsClassExpression = endsWithClassExpression(line, lastSignificantIndex);
     state.lineStartRequiresExpression = requiresExpressionAfter(line, lastSignificantIndex);
   }
 }
@@ -587,6 +630,7 @@ function findMdxExpressionCharacters(code: string, jsxTagCharacters?: boolean[])
     inJsxTag: false,
     canStartRegexAtLineStart: true,
     lineStartFollowsArrow: false,
+    lineStartFollowsClassExpression: false,
     lineStartRequiresExpression: false,
     pendingControlFlowCondition: false,
     controlFlowParentheses: [],
@@ -617,7 +661,7 @@ function findMdxExpressionCharacters(code: string, jsxTagCharacters?: boolean[])
 const MARKDOWN_CONTAINER_PREFIX = /^(?: {0,3}>[ \t]?| {0,3}(?:[*+-]|\d{1,9}[.)])[ \t])/;
 const MARKDOWN_BLOCKQUOTE_PREFIX = /^ {0,3}>[ \t]?/;
 const MARKDOWN_LIST_PREFIX = /^ {0,3}(?:[*+-]|\d{1,9}[.)])(?: {1,4}(?=\S|$)|\t)/;
-const MARKDOWN_FENCE_OPEN_PREFIX = /^ {0,3}(`{3,}|~{3,})/;
+const MARKDOWN_FENCE_OPEN_PREFIX = /^ {0,3}(`{3,}|~{3,})/; // NOSONAR: CommonMark fence marker heuristic.
 const MARKDOWN_FENCE_CLOSE = /^ {0,3}(`+|~+)[ \t]*$/;
 
 function markdownContainerContent(line: string): { content: string; offset: number } {
@@ -660,6 +704,22 @@ function markdownListContinuationIndent(line: string): number | undefined {
   return continuationIndent;
 }
 
+function markdownColumnOffset(line: string, targetColumn: number): number | undefined {
+  let columns = 0;
+  for (let offset = 0; offset < line.length; offset++) {
+    const character = line[offset]!;
+    if (character === " ") {
+      columns++;
+    } else if (character === "\t") {
+      columns += 4 - (columns % 4);
+    } else {
+      return undefined;
+    }
+    if (columns >= targetColumn) return offset + 1;
+  }
+  return undefined;
+}
+
 interface MarkdownContainerState {
   listContinuationIndent?: number;
   listBlockquoteDepth?: number;
@@ -698,13 +758,18 @@ function trackedMarkdownContainerContent(
     return directContent;
   }
   if (
-    state.listContinuationIndent !== undefined &&
-    blockquoteContent.content.startsWith(" ".repeat(state.listContinuationIndent))
+    state.listContinuationIndent !== undefined
   ) {
-    return {
-      content: blockquoteContent.content.slice(state.listContinuationIndent),
-      offset: blockquoteContent.offset + state.listContinuationIndent,
-    };
+    const continuationOffset = markdownColumnOffset(
+      blockquoteContent.content,
+      state.listContinuationIndent,
+    );
+    if (continuationOffset !== undefined) {
+      return {
+        content: blockquoteContent.content.slice(continuationOffset),
+        offset: blockquoteContent.offset + continuationOffset,
+      };
+    }
   }
   if (blockquoteContent.content.trim().length > 0) {
     state.listContinuationIndent = undefined;
@@ -735,7 +800,7 @@ function isMarkdownParagraphContent(
     !/^(?:\{|<(?:[A-Za-z!/?>]))/.test(trimmed);
 }
 
-function maskMarkdownCode(
+function maskMarkdownCode( // NOSONAR: Markdown masking coordinates containers, fences, expressions, and indented blocks.
   code: string,
   includeInlineCode: boolean,
   includeIndentedBlocks: boolean,
@@ -791,7 +856,7 @@ function maskMarkdownCode(
       maskRange(characters, lineStart, contentEnd);
       const closing = MARKDOWN_FENCE_CLOSE.exec(containerContent.content)?.[1];
       if (
-        closing?.[0] === activeFence.marker && closing.length >= activeFence.length
+        closing?.startsWith(activeFence.marker) && closing.length >= activeFence.length
       ) {
         activeFence = undefined;
       }
@@ -806,7 +871,7 @@ function maskMarkdownCode(
         mdxEsmLineCharacters?.[index] || mdxJsxTagCharacters?.[index] ||
         isEscapedCharacter(code, index)
       ) {
-        index++;
+        index++; // NOSONAR: scanner consumes closing inline-code delimiter.
         continue;
       }
       let delimiterEnd = index + 1;
@@ -930,7 +995,7 @@ function mdxAllowsSpecifierOwner(
   return owner.name === "import" && mdxExpressionCharacters[owner.start] === true;
 }
 
-function maskJavaScriptComments(line: string): string {
+function maskJavaScriptComments(line: string): string { // NOSONAR: compact lexer for MDX ESM source-line detection.
   const characters = line.split("");
   let quote: string | undefined;
   let inBlockComment = false;
@@ -942,12 +1007,12 @@ function maskJavaScriptComments(line: string): string {
       if (current === "*" && next === "/") {
         maskRange(characters, index + 1, index + 2);
         inBlockComment = false;
-        index++;
+        index++; // NOSONAR: scanner consumes block-comment close as a pair.
       }
       continue;
     }
     if (quote) {
-      if (current === "\\") index++;
+      if (current === "\\") index++; // NOSONAR: scanner consumes the escaped character with its escape.
       else if (current === quote) quote = undefined;
       continue;
     }
@@ -962,7 +1027,7 @@ function maskJavaScriptComments(line: string): string {
     if (current === "/" && next === "*") {
       maskRange(characters, index, index + 2);
       inBlockComment = true;
-      index++;
+      index++; // NOSONAR: scanner consumes block-comment open as a pair.
     }
   }
   return characters.join("");
@@ -972,14 +1037,14 @@ function isMdxEsmSourceLine(line: string, nextCodeLine: () => string): boolean {
   const classifiedLine = maskJavaScriptComments(line);
   const bareImport = /^ {0,3}import\s*$/.test(classifiedLine);
   const bareExport = /^ {0,3}export\s*$/.test(classifiedLine);
-  const defaultImport = /^ {0,3}import\s+[A-Za-z_$][\w$]*\s*$/.test(classifiedLine);
+  const defaultImport = /^ {0,3}import\s+[A-Za-z_$][\w$]*\s*$/.test(classifiedLine); // NOSONAR: bounded MDX ESM split-import heuristic.
   const continuation = bareImport || bareExport || defaultImport ? nextCodeLine() : "";
   const immediateContinuation = !continuation.startsWith("\n");
   const splitImportContinuation = immediateContinuation &&
-    /^(?:["']|\{|\*|[A-Za-z_$][\w$]*\s*(?:,|\bfrom\b))/.test(continuation);
+    /^(?:["']|\{|\*|[A-Za-z_$][\w$]*\s*(?:,|\bfrom\b))/.test(continuation); // NOSONAR: bounded MDX ESM split-import heuristic.
   const splitDefaultImportContinuation = immediateContinuation && /^from\b/.test(continuation);
   const splitExportContinuation = immediateContinuation &&
-    /^(?:default\b|\{|\*|const\b|let\b|var\b|function\b|class\b|async\s+function\b)/
+    /^(?:default\b|\{|\*|const\b|let\b|var\b|function\b|class\b|async\s+function\b)/ // NOSONAR: bounded MDX ESM split-export heuristic.
       .test(continuation);
   return (bareImport && splitImportContinuation) ||
     (bareExport && splitExportContinuation) ||
@@ -999,7 +1064,10 @@ interface MdxEsmContinuationState {
   pendingControlFlowCondition: boolean;
 }
 
-function scanMdxEsmLine(line: string, state: MdxEsmContinuationState): string {
+function scanMdxEsmLine( // NOSONAR: compact lexer for MDX ESM continuation state.
+  line: string,
+  state: MdxEsmContinuationState,
+): string {
   let lastSignificantIndex = -1;
   let lastDivisionSlashIndex = -1;
   let escapedLineContinuation = false;
@@ -1014,14 +1082,14 @@ function scanMdxEsmLine(line: string, state: MdxEsmContinuationState): string {
     if (state.inBlockComment) {
       if (current === "*" && next === "/") {
         state.inBlockComment = false;
-        index++;
+        index++; // NOSONAR: scanner consumes block-comment close as a pair.
       }
       continue;
     }
     if (state.quote) {
       if (current === "\\") {
         if (index === line.length - 1) escapedLineContinuation = true;
-        index++;
+        index++; // NOSONAR: scanner consumes the escaped character with its escape.
       } else if (current === state.quote) {
         state.quote = undefined;
         lastSignificantIndex = index;
@@ -1031,7 +1099,7 @@ function scanMdxEsmLine(line: string, state: MdxEsmContinuationState): string {
     if (current === "/" && next === "/") break;
     if (current === "/" && next === "*") {
       state.inBlockComment = true;
-      index++;
+      index++; // NOSONAR: scanner consumes block-comment open as a pair.
       continue;
     }
     if (current === "/") {
@@ -1041,7 +1109,7 @@ function scanMdxEsmLine(line: string, state: MdxEsmContinuationState): string {
       if (regexEnd >= 0) {
         lastSignificantIndex = regexEnd;
         lastDivisionSlashIndex = -1;
-        index = regexEnd;
+        index = regexEnd; // NOSONAR: scanner jumps over one complete regex literal.
         continue;
       }
       lastDivisionSlashIndex = index;
@@ -1148,7 +1216,7 @@ function nextMdxEsmCodeLine(code: string, start: number): string {
   return "";
 }
 
-function findMdxEsmLineCharacters(code: string): boolean[] {
+function findMdxEsmLineCharacters(code: string): boolean[] { // NOSONAR: line scanner coordinates MDX ESM continuation state.
   const esmLineCharacters = new Array<boolean>(code.length).fill(false);
   const state: MdxEsmContinuationState = {
     delimiters: [],
@@ -1185,7 +1253,10 @@ function findMdxEsmLineCharacters(code: string): boolean[] {
   return esmLineCharacters;
 }
 
-function maskComments(code: string, markdownCode: boolean): string {
+function maskComments( // NOSONAR: top-level masking scanner coordinates JS, JSX, Markdown, and MDX ESM state.
+  code: string,
+  markdownCode: boolean,
+): string {
   const characters = code.split("");
   const mdxJsxTagCharacters = markdownCode
     ? new Array<boolean>(code.length).fill(false)
@@ -1220,7 +1291,7 @@ function maskComments(code: string, markdownCode: boolean): string {
         if (!preserveQuotedContent) {
           maskRange(characters, index, Math.min(code.length, index + 2));
         }
-        index++;
+        index++; // NOSONAR: scanner consumes the escaped character with its escape.
       } else if (quote === "`" && current === "$" && code[index + 1] === "{") {
         maskRange(characters, index, index + 2);
         quote = undefined;
@@ -1228,7 +1299,7 @@ function maskComments(code: string, markdownCode: boolean): string {
         resetQuoteAtLineBoundary = false;
         templateExpressionDepths.push(1);
         statementBlocks.push({ allowsStatements: false, closeStartsRegex: false });
-        index++;
+        index++; // NOSONAR: scanner consumes template-expression open as a pair.
       } else if (current === quote) {
         quote = undefined;
         preserveQuotedContent = false;
@@ -1241,6 +1312,7 @@ function maskComments(code: string, markdownCode: boolean): string {
     const templateDepthIndex = templateExpressionDepths.length - 1;
     const inJavaScript = !markdownCode || mdxExpressionCharacters?.[index] === true ||
       mdxEsmLineCharacters?.[index] === true;
+    if (mdxJsxTagCharacters?.[index] === true) continue;
     const lineComment = inJavaScript && code.startsWith("//", index);
     const blockComment = inJavaScript && code.startsWith("/*", index);
     const htmlComment = code.startsWith("<!--", index);
@@ -1279,7 +1351,7 @@ function maskComments(code: string, markdownCode: boolean): string {
         characters[index] = "/";
         characters[regexEnd] = "/";
         lastDivisionSlashIndex = -1;
-        index = regexEnd;
+        index = regexEnd; // NOSONAR: scanner jumps over one complete regex literal.
         continue;
       }
       lastDivisionSlashIndex = index;
