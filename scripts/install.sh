@@ -109,25 +109,37 @@ detect_platform() {
 # GNU wget refuses a redirect to http with --https-only; BusyBox wget does not
 # know the flag and would abort under `set -e`. Probe once and reuse the answer.
 WGET_HTTPS_ONLY=""
-if command -v wget >/dev/null 2>&1; then
-  if wget --help 2>&1 | grep -q -- "--https-only"; then
-    WGET_HTTPS_ONLY="--https-only"
-  fi
+if command -v wget >/dev/null 2>&1 && wget --help 2>&1 | grep -q -- "--https-only"; then
+  WGET_HTTPS_ONLY="--https-only"
 fi
 
-# Downloads go through curl when it exists. Only a curl-less host running a wget
-# without --https-only is unprotected, and it is told so rather than left to
-# assume the checksum gate covers it -- SHA256SUMS travels the same channel.
+# curl protocol allow-list, shared by every download below: https on the initial
+# request (--proto) and on every redirect (--proto-redir).
+CURL_HTTPS_PROTO='=https'
+
+# Downloads go through curl when it exists. A curl-less host whose wget has no
+# --https-only cannot refuse a redirect to plain http, and the checksum gate does
+# not cover that: SHA256SUMS is fetched by the same download() over the same
+# channel, so whoever can force the downgrade serves a matching pair. Fail closed.
 if ! command -v curl >/dev/null 2>&1 && [ -z "${WGET_HTTPS_ONLY}" ]; then
-  echo "Warning: this wget cannot enforce https (it has no --https-only), so a" >&2
-  echo "  redirect to plain http would be followed. Install curl for a protected" >&2
-  echo "  download." >&2
+  if [ "${VERYFRONT_ALLOW_INSECURE_DOWNLOAD:-}" = "1" ]; then
+    echo "Warning: proceeding without https enforcement (VERYFRONT_ALLOW_INSECURE_DOWNLOAD=1)." >&2
+  else
+    echo "Error: cannot download securely on this system." >&2
+    echo "  curl is not installed, and this wget has no --https-only, so a redirect" >&2
+    echo "  to plain http would be followed for both the binary and the SHA256SUMS" >&2
+    echo "  that authenticates it." >&2
+    echo "" >&2
+    echo "  Install curl and re-run, for example:  apk add curl" >&2
+    echo "  To proceed anyway:  VERYFRONT_ALLOW_INSECURE_DOWNLOAD=1" >&2
+    exit 1
+  fi
 fi
 
 # Get latest version from GitHub
 get_latest_version() {
   if command -v curl >/dev/null 2>&1; then
-    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -sL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/'
+    curl --proto "$CURL_HTTPS_PROTO" --proto-redir "$CURL_HTTPS_PROTO" --tlsv1.2 -sL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/'
   elif command -v wget >/dev/null 2>&1; then
     wget ${WGET_HTTPS_ONLY} -qO- "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/'
   else
@@ -201,7 +213,7 @@ download() {
   DEST="$2"
 
   if command -v curl >/dev/null 2>&1; then
-    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "$URL" -o "$DEST"
+    curl --proto "$CURL_HTTPS_PROTO" --proto-redir "$CURL_HTTPS_PROTO" --tlsv1.2 -fsSL "$URL" -o "$DEST"
   elif command -v wget >/dev/null 2>&1; then
     wget ${WGET_HTTPS_ONLY} -q "$URL" -O "$DEST"
   else

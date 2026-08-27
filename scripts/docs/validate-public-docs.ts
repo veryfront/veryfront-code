@@ -293,6 +293,13 @@ async function collectCoverageIssues(): Promise<PublicDocIssue[]> {
   return issues;
 }
 
+// Code-unit order, not locale order: the file list is reported verbatim.
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 async function main(): Promise<void> {
   const files = new Set<string>();
   for (const root of PUBLIC_DOC_ROOTS) {
@@ -302,9 +309,7 @@ async function main(): Promise<void> {
   }
 
   const issues: PublicDocIssue[] = [];
-  const sortedFiles = [...files].sort((left, right) =>
-    left < right ? -1 : left > right ? 1 : 0
-  );
+  const sortedFiles = [...files].sort(compareCodeUnits);
   for (const file of sortedFiles) {
     const content = await Deno.readTextFile(`${ROOT}/${file}`);
     issues.push(...collectIssues(file, content));

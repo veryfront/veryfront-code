@@ -123,9 +123,16 @@ async function collectSources(): Promise<
   return sources;
 }
 
+/** Explicit form of the comparator-less sort: UTF-16 code-unit order. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 async function generateStyles(): Promise<string> {
   const candidates = [...extractCandidatesFromFiles(await collectSources())]
-    .sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+    .sort(compareCodeUnits);
   const compiler = await new TailwindCSSProcessor().compile(STYLESHEET);
   const generated = compiler.build(candidates);
   let optimized = new LightningCSSOptimizationEngine({

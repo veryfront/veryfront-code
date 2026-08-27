@@ -499,4 +499,32 @@ describe("WorkspaceSync default baseDir", () => {
       }, { prefix: "vf-ws-sync-mode-" });
     },
   );
+
+  it(
+    "narrows an existing workspace directory to owner-only",
+    { ignore: Deno.build.os === "windows" },
+    async () => {
+      await withTempDir(async (baseDir) => {
+        const workspace = new WorkspaceSync({
+          baseDir,
+          runId: "pre-existing",
+          tenant: stubTenant(),
+        });
+
+        // A workspace left behind by an earlier run, or pre-created by another
+        // local account. Deno.mkdir's `mode` applies only to directories it
+        // actually creates, so this one would otherwise keep 0o755.
+        await Deno.mkdir(workspace.workspaceDir, { recursive: true, mode: 0o755 });
+        assertEquals((await Deno.stat(workspace.workspaceDir)).mode! & 0o777, 0o755);
+
+        await assertRejects(() => workspace.initialize(), Error);
+
+        assertEquals(
+          (await Deno.stat(workspace.workspaceDir)).mode! & 0o777,
+          0o700,
+          "an existing workspace root must be narrowed before files are synced into it",
+        );
+      }, { prefix: "vf-ws-sync-existing-" });
+    },
+  );
 });

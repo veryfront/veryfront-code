@@ -21,6 +21,13 @@ export interface ImportMapManifest {
   imports: Record<string, string>;
 }
 
+/** Sort strings by UTF-16 code unit so audit input stays byte-stable. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 export function collectNpmDependencies(
   manifests: ImportMapManifest[],
 ): Record<string, string> {
@@ -46,9 +53,7 @@ export function collectNpmDependencies(
   ) {
     // Code-unit order, not locale order: the first entry becomes the primary
     // dependency and the rest become audit aliases, so it must stay stable.
-    const sortedVersions = [...versions].sort((left, right) =>
-      left < right ? -1 : left > right ? 1 : 0
-    );
+    const sortedVersions = [...versions].sort(compareCodeUnits);
     const [primaryVersion, ...additionalVersions] = sortedVersions;
     npmDeps[name] = primaryVersion;
     for (const version of additionalVersions) {

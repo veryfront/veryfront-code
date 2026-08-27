@@ -371,6 +371,13 @@ export function keyOf(finding: Finding, kind: BaselineKind): string {
   }
 }
 
+/** Sort strings by UTF-16 code unit so baseline files stay byte-stable. */
+function compareCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 function sortedCounts(counts: Counts): Counts {
   return Object.fromEntries(
     Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)),
@@ -498,8 +505,7 @@ export function serializeBaseline(kind: BaselineKind, counts: Counts): string {
       }
       const sorted: Record<string, Counts> = {};
       // Code-unit order, matching the previous comparator-less sort exactly.
-      const groups = Object.keys(nested)
-        .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      const groups = Object.keys(nested).sort(compareCodeUnits);
       for (const group of groups) {
         sorted[group] = sortedCounts(nested[group] ?? {});
       }

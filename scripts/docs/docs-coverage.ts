@@ -8,7 +8,9 @@ const SYNTHETIC_PARENTS = new Set<string>();
 // Code-unit comparator. Coverage output is compared against generated file
 // names, so ordering must stay locale-independent.
 function byCodeUnit(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
 }
 
 export interface DocsCoverageReport {
@@ -330,7 +332,9 @@ export async function collectDocsCoverage(
     }
   }
 
-  const guidesWithCodeExamples = guideFilesWithCodeExamples.sort(byCodeUnit);
+  const guidesWithCodeExamples = guideFilesWithCodeExamples.toSorted(
+    byCodeUnit,
+  );
 
   return {
     publicExports: {

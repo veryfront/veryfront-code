@@ -428,12 +428,17 @@ export function mergeEsmShPins(
   }
 
   const sortedDeps = Object.create(null) as Record<string, string>;
-  for (
-    const pkg of Object.keys(updatedDeps).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
-  ) {
+  for (const pkg of Object.keys(updatedDeps).sort(compareCodeUnits)) {
     sortedDeps[pkg] = updatedDeps[pkg]!;
   }
   return { updatedDeps: sortedDeps, conflicts };
+}
+
+/** Code-unit ordering keeps output byte-stable across locales. */
+function compareCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -552,7 +557,7 @@ export function filterNeedsResolution(
   pins: Record<string, string>,
 ): string[] {
   return [...needsResolution].filter((pkg) => !Object.hasOwn(pins, pkg))
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    .sort(compareCodeUnits);
 }
 
 // ---------------------------------------------------------------------------
@@ -645,7 +650,7 @@ async function main(args: string[]): Promise<void> {
 
   const sourceFiles: string[] = [];
   await collectSourceFiles(projectDir, sourceFiles);
-  sourceFiles.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  sourceFiles.sort(compareCodeUnits);
 
   const report: EsmShReport = {
     filesChanged: 0,

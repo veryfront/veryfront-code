@@ -238,7 +238,9 @@ export function createDirectModelRuntime(
 
 /** Explicit form of the comparator-less sort: UTF-16 code-unit order. */
 function compareCodeUnits(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
 }
 
 function requestToolCatalog(options: unknown): string[] {

@@ -76,6 +76,16 @@ const agent: ChatAgentInfo = {
   description: "Answers product questions.",
 };
 
+/**
+ * Consumes a value the fixture reads only to prove its static type.
+ *
+ * The fixture never runs. Passing the read to a helper keeps `tsc` checking it
+ * without leaving a discarded expression statement behind.
+ */
+function expectString(_value: string): void {
+  // Type-level assertion only. There is nothing to do at runtime.
+}
+
 /** Batteries — the default explicit variant, zero-config. */
 export function BatteriesDemo(): React.ReactElement {
   const chat = useChat();
@@ -215,7 +225,7 @@ export function PolymorphicChatInputActionDemo(): React.ReactElement {
         asChild
         ref={anchorActionRef}
         onClick={(event, next) => {
-          void event.currentTarget.href;
+          expectString(event.currentTarget.href);
           next();
         }}
       >
@@ -225,7 +235,7 @@ export function PolymorphicChatInputActionDemo(): React.ReactElement {
         asChild
         ref={anchorActionRef}
         onClick={(event, next) => {
-          void event.currentTarget.href;
+          expectString(event.currentTarget.href);
           next();
         }}
       >
@@ -234,7 +244,7 @@ export function PolymorphicChatInputActionDemo(): React.ReactElement {
       <ChatInputVoice<HTMLAnchorElement>
         asChild
         onClick={(event, next) => {
-          void event.currentTarget.href;
+          expectString(event.currentTarget.href);
           next();
         }}
       >
@@ -244,7 +254,7 @@ export function PolymorphicChatInputActionDemo(): React.ReactElement {
         asChild
         ref={anchorActionRef}
         onClick={(event, next) => {
-          void event.currentTarget.href;
+          expectString(event.currentTarget.href);
           next();
         }}
       >

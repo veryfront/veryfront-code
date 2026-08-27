@@ -45,6 +45,13 @@ async function sha256Hex(input: Uint8Array): Promise<string> {
   return toHex(new Uint8Array(digest));
 }
 
+/** Explicit form of the comparator-less sort: UTF-16 code-unit order. */
+function compareCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 async function walkFiles(path: string): Promise<string[]> {
   const stat = await Deno.stat(path);
   if (stat.isFile) return [path];
@@ -62,7 +69,7 @@ async function walkFiles(path: string): Promise<string[]> {
 
   // Code-unit order, not locale order: this ordering feeds the binary cache hash,
   // which must not vary with the machine locale.
-  return files.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  return files.sort(compareCodeUnits);
 }
 
 async function computeWorkingTreeHash(cwd: string): Promise<string> {

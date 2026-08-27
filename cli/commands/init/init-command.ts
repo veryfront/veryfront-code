@@ -53,6 +53,12 @@ function structureRank(name: string): number {
   return index === -1 ? STRUCTURE_ORDER.length : index;
 }
 
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 function sortStructureEntries([nameA, nodeA]: [string, StructureNode], [nameB, nodeB]: [
   string,
   StructureNode,
@@ -61,14 +67,14 @@ function sortStructureEntries([nameA, nodeA]: [string, StructureNode], [nameB, n
   if (rankDiff !== 0) return rankDiff;
 
   if (nodeA.file !== nodeB.file) return nodeA.file ? 1 : -1;
-  return nameA.localeCompare(nameB);
+  return compareCodeUnits(nameA, nameB);
 }
 
 function renderProjectStructure(rootName: string, paths: string[], maxLines = 22): string[] {
   const root: StructureNode = { file: false, children: new Map() };
   const normalizedPaths = [...new Set(paths)]
     .filter((path) => path && !path.endsWith("/"))
-    .sort((left, right) => left.localeCompare(right));
+    .sort(compareCodeUnits);
 
   for (const path of normalizedPaths) {
     const parts = path.split("/").filter(Boolean);

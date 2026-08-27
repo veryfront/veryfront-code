@@ -102,7 +102,7 @@ function validateContractList(
       values.push(entry);
     }
   }
-  return { values: values.sort(compareDeterministically), issues };
+  return { values: values.toSorted(compareDeterministically), issues };
 }
 
 function describeContracts(

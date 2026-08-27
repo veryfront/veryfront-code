@@ -19,6 +19,13 @@ async function* walkJavaScriptFiles(directory: string): AsyncGenerator<string> {
   }
 }
 
+/** Code-unit ordering keeps output byte-stable across locales. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 export async function assertNpmRuntimeHelperContract(
   esmRoot: string,
   expectedHelpers: readonly string[],
@@ -93,7 +100,7 @@ export async function assertNpmRuntimeHelperContract(
     ),
     ...packageEscapes.map((entry) => `Import escapes ESM package: ${entry}`),
     ...[...new Set(missing)]
-      .sort((left, right) => left < right ? -1 : left > right ? 1 : 0)
+      .sort(compareCodeUnits)
       .map((helper) => `Missing imported helper: ${helper}`),
     ...stale.map((helper) =>
       `Expected helper is no longer imported: ${helper}`

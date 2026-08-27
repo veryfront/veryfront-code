@@ -198,7 +198,9 @@ function unwrapExpression(value: unknown): AstNode | undefined {
 }
 
 function compareDeterministically(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
 }
 
 function uniqueSorted(values: readonly string[]): string[] {
@@ -1953,7 +1955,7 @@ function parseLegacyProvides(
     }
     names.push(name);
   }
-  return { values: names.sort(compareDeterministically), issues: [] };
+  return { values: names.toSorted(compareDeterministically), issues: [] };
 }
 
 async function buildMetadata(

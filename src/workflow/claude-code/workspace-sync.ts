@@ -205,7 +205,25 @@ export class WorkspaceSync {
     }
 
     // Create workspace directory. Owner-only: it holds synced project files.
+    // `mode` applies only to directories mkdir actually creates, so a workspace
+    // left behind by an earlier run (or pre-created by another local account)
+    // would keep its old permissions. Narrow it unconditionally, and refuse a
+    // root this user does not own rather than syncing files into it.
     await Deno.mkdir(this.workspaceDir, { recursive: true, mode: 0o700 });
+    if (Deno.build.os !== "windows") {
+      const info = await Deno.lstat(this.workspaceDir);
+      if (info.isSymlink || !info.isDirectory) {
+        throw SECURITY_VIOLATION.create({
+          detail: `Workspace path is not a directory: ${this.workspaceDir}`,
+        });
+      }
+      if (info.uid !== null && info.uid !== Deno.uid()) {
+        throw SECURITY_VIOLATION.create({
+          detail: `Workspace directory is owned by another user: ${this.workspaceDir}`,
+        });
+      }
+      await Deno.chmod(this.workspaceDir, 0o700);
+    }
 
     // List all files from project
     const files = await api.files.listAll();

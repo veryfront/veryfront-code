@@ -212,22 +212,26 @@ describe("Example Integration Test - Custom Cleanup", () => {
       // the system temp dir lets any local user pre-place a symlink there.
       const marker = await Deno.makeTempFile({ prefix: "cleanup-test-" });
 
-      await withTestContext("custom-cleanup", async (context) => {
-        context.addCleanup(async () => {
-          cleanupCalled = true;
-          await Deno.writeTextFile(marker, "cleaned up");
+      try {
+        await withTestContext("custom-cleanup", async (context) => {
+          context.addCleanup(async () => {
+            cleanupCalled = true;
+            await Deno.writeTextFile(marker, "cleaned up");
+          });
+
+          const server = await context.startDevServer();
+          assertExists(server, "Server should start");
         });
 
-        const server = await context.startDevServer();
-        assertExists(server, "Server should start");
-      });
-
-      assertEquals(cleanupCalled, true, "Custom cleanup should be called");
-
-      try {
-        await Deno.remove(marker);
-      } catch {
-        // Ignore if already removed
+        assertEquals(cleanupCalled, true, "Custom cleanup should be called");
+      } finally {
+        // The marker exists from the moment it is created above, so removal has to
+        // run even when the block throws.
+        try {
+          await Deno.remove(marker);
+        } catch {
+          // Ignore if already removed
+        }
       }
     },
   );

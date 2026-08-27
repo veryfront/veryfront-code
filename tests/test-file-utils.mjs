@@ -408,11 +408,17 @@ export function listTestFiles(patterns, cwd = process.cwd()) {
   return Array.from(files);
 }
 
+/** Explicit form of the comparator-less sort: UTF-16 code-unit order. */
+function compareCodeUnits(a, b) {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 export function splitIntoShards(files, shardCount) {
   const total = Math.max(1, Math.min(shardCount, files.length || 1));
   const shards = Array.from({ length: total }, () => []);
-  // Explicit form of the comparator-less sort: UTF-16 code-unit order.
-  const sorted = [...files].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const sorted = [...files].sort(compareCodeUnits);
   sorted.forEach((file, index) => {
     shards[index % total].push(file);
   });

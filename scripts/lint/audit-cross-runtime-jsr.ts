@@ -173,7 +173,9 @@ export function isStdOrJsrSpecifier(specifier: string): boolean {
 
 /** Code-unit order, so emitted baselines and reports stay byte-stable. */
 function compareDeterministically(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
 }
 
 function stripLeadingDotSlash(path: string): string {
@@ -369,7 +371,7 @@ export function auditCrossRuntimeImports(
 
   return {
     directJsrImports: directJsrImports.slice().sort((a, b) =>
-      a.file.localeCompare(b.file) || a.line - b.line
+      compareDeterministically(a.file, b.file) || a.line - b.line
     ),
     unshimmedDependents,
   };

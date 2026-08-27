@@ -744,6 +744,13 @@ async function buildManagedRemoteSnapshot(
   return snapshot;
 }
 
+/** Explicit form of the comparator-less sort: UTF-16 code-unit order. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 function findRemoteSnapshotChanges(
   expected: Map<string, { digest: string; versionId?: string }>,
   actual: Map<string, { digest: string; versionId?: string }>,
@@ -762,7 +769,7 @@ function findRemoteSnapshotChanges(
       changed.push(path);
     }
   }
-  return changed.sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+  return changed.sort(compareCodeUnits);
 }
 
 function buildSyncFileDigestSnapshot(

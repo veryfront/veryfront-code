@@ -83,7 +83,9 @@ type ImportMap = Record<string, string>;
 
 /** Sort strings by UTF-16 code unit so baseline files stay byte-stable. */
 function compareOrdinal(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -427,7 +429,7 @@ export async function analyzeModules(): Promise<ModuleAnalysis> {
   return {
     broadBarrelImports,
     cycleEdges: findCyclicEdges(graph),
-    parseFailures: parseFailures.sort(compareOrdinal),
+    parseFailures: parseFailures.toSorted(compareOrdinal),
   };
 }
 

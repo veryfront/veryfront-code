@@ -67,6 +67,13 @@ const TEMPLATE_ROUTE_EXPECTATIONS: Partial<
   ],
 };
 
+/** Explicit form of the comparator-less sort: UTF-16 code-unit order. */
+function compareCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 export function getTemplateExtensionNames(
   templates: readonly TemplateName[],
 ): string[] {
@@ -76,7 +83,7 @@ export function getTemplateExtensionNames(
         getTemplateConfig(template)?.firstPartyExtensions ?? []
       ),
     ),
-  ].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  ].sort(compareCodeUnits);
 }
 
 function hasFlag(name: string): boolean {

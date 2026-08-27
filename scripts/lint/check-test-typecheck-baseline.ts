@@ -52,7 +52,9 @@ interface CommandOptions {
 
 /** Sort strings by UTF-16 code unit so baseline ordering stays byte-stable. */
 function compareOrdinal(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
 }
 
 function listTestFiles(root: string): string[] {

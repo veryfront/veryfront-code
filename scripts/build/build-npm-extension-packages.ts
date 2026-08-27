@@ -298,7 +298,14 @@ export function extensionPackageEntryPointPaths(
   addTarget(packageJson.module);
   addTarget(packageJson.types);
   addTarget(packageJson.exports);
-  return [...paths].toSorted((left, right) => left < right ? -1 : left > right ? 1 : 0);
+  return [...paths].toSorted(compareCodeUnits);
+}
+
+/** Code-unit ordering keeps output byte-stable across locales. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
 }
 
 export async function assertPackageEntryPointsExist(input: {
@@ -411,9 +418,7 @@ async function assertEmittedBareImportsAreDeclared(input: {
   const details = [...missing.entries()]
     .toSorted(([left], [right]) => left.localeCompare(right))
     .map(([packageName, files]) => {
-      const sortedFiles = [...files].toSorted((left, right) =>
-        left < right ? -1 : left > right ? 1 : 0
-      );
+      const sortedFiles = [...files].toSorted(compareCodeUnits);
       return `  ${packageName} (imported by ${sortedFiles.join(", ")})`;
     })
     .join("\n");
