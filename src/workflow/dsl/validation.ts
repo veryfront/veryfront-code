@@ -94,7 +94,7 @@ function rebaseWorkflowNodes(
     return {
       ...node,
       id: newId,
-      config: rebaseCompositeDescendants(node.config, oldId, newId),
+      config: rebaseCompositeDescendants(node.config, oldId, newId, oldPrefix, newPrefix),
       ...(node.dependsOn === undefined
         ? {}
         : { dependsOn: node.dependsOn.map((dependency) => rebaseId(dependency)) }),
@@ -106,6 +106,8 @@ export function rebaseCompositeDescendants(
   config: WorkflowNodeConfig,
   oldId: string,
   newId: string,
+  oldPrefix = `${oldId}/`,
+  newPrefix = `${newId}/`,
 ): WorkflowNodeConfig {
   switch (config.type) {
     case "parallel":
@@ -137,11 +139,7 @@ export function rebaseCompositeDescendants(
     case "subWorkflow":
       return typeof config.workflow === "string" ? config : {
         ...config,
-        workflow: rebaseWorkflowDefinition(
-          `${oldId}/`,
-          `${newId}/`,
-          config.workflow,
-        ),
+        workflow: rebaseWorkflowDefinition(oldPrefix, newPrefix, config.workflow),
       };
     default:
       return config;

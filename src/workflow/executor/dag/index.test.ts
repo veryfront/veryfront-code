@@ -36,7 +36,15 @@ import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source
 import { VeryfrontError } from "#veryfront/errors";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { serializeWorkflowContext } from "../../context-serialization.ts";
-import { loop, map, parallel, step, waitForApproval, waitForEvent } from "../../dsl/index.ts";
+import {
+  loop,
+  map,
+  parallel,
+  step,
+  subWorkflow,
+  waitForApproval,
+  waitForEvent,
+} from "../../dsl/index.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
@@ -1128,6 +1136,53 @@ describe("DAGExecutor", () => {
       assertEquals(result.completed, false);
       assertStringIncludes(result.error ?? "", 'generated child id "batch_0/ready"');
       assertEquals(result.nodeStates["batch_0/ready"], undefined);
+    });
+
+    it("namespaces nested sub-workflow waits inside workflow-definition processors", async () => {
+      const nodes = [
+        map("batch", {
+          items: [{ id: 1 }, { id: 2 }],
+          processor: {
+            id: "processor",
+            steps: [
+              subWorkflow("nested", {
+                workflow: {
+                  id: "nested-processor",
+                  steps: [waitForEvent("ready", { eventName: "item.ready" })],
+                },
+              }),
+            ],
+          },
+        }),
+      ];
+
+      const first = await executor.execute(nodes, createTestRun());
+
+      assertEquals(first.waiting, true);
+      assertEquals(first.waitingNode, "batch_0/ready");
+      assertEquals(first.nodeStates["batch_0/ready"]?.status, "running");
+      assertEquals(first.nodeStates.ready, undefined);
+
+      const resumed = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          context: first.context,
+          nodeStates: {
+            ...first.nodeStates,
+            "batch_0/ready": {
+              ...first.nodeStates["batch_0/ready"]!,
+              status: "completed",
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(resumed.waiting, true);
+      assertEquals(resumed.waitingNode, "batch_1/ready");
+      assertEquals(resumed.nodeStates["batch_1/ready"]?.status, "running");
+      assertEquals(resumed.nodeStates.ready, undefined);
     });
   });
 
