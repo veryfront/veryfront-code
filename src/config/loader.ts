@@ -1972,8 +1972,8 @@ const CSI_GLUED_URL =
 // Apostrophes are intentionally absent even though RFC 3986 lists them as a
 // sub-delimiter. The userinfo prefix handles them before `@`, while the tail
 // must leave the closing quote in `Cannot find module 'https://host/x'` intact.
-const URI_TOKEN_CHARACTER_SOURCE = String.raw`[A-Za-z0-9\-._~:/?#\[\]@!$&*+,;=%{}]`;
-const URI_PAREN_INTERIOR_SOURCE = String.raw`[A-Za-z0-9\-._~:/?#\[\]@!$&()*+,;=%{}]`;
+const URI_TOKEN_CHARACTER_SOURCE = String.raw`[A-Za-z0-9\-._~:/?#\[\]@!$&*+,;=%]`;
+const URI_PAREN_INTERIOR_SOURCE = String.raw`[A-Za-z0-9\-._~:/?#\[\]@!$&()*+,;=%]`;
 const URL_BALANCED_PAREN_SEGMENT_SOURCE = String.raw`\([^\s"']{0,512}\)`;
 const URL_TOKEN_TAIL_SOURCE = String
   .raw`(?:${URI_TOKEN_CHARACTER_SOURCE}|${URL_BALANCED_PAREN_SEGMENT_SOURCE}|\((?=${URI_PAREN_INTERIOR_SOURCE})|\)(?=${URI_PAREN_INTERIOR_SOURCE})(?![\p{P}\p{S}\p{M}\p{Cf}]{0,16}(?:[\s"']|$)))+`;
@@ -2016,6 +2016,10 @@ const NON_ASCII_CHARACTER = /[\u0080-\u{10FFFF}]/u;
 // raw IRI path, query, or fragment rather than prose glued after a completed
 // path segment. The continuation consumes the rest of that token fail-closed.
 const RAW_IRI_REMAINDER = /\P{ASCII}[^\s"']*/uy;
+// WHATWG URL parsing accepts these raw path characters and percent-encodes
+// them. Extend only from a component boundary or through a later slash, so a
+// prose delimiter such as the closing `>` in `<https://host/x>` stays visible.
+const RAW_ACCEPTED_URL_REMAINDER = /[<>{}\x60^|][^\s"']*/uy;
 
 // Both the userinfo run and the parenthesised interior are length-bounded, and
 // the userinfo run also stops at `/`. Neither bound is cosmetic. An unbounded
@@ -2130,38 +2134,49 @@ const NON_ASCII_FILE_URL_PATH = new RegExp(
 const WINDOWS_ABSOLUTE_PATH = /(?:[A-Za-z]:[\\/]|\\\\)[^\s"'()]+/g;
 const POSIX_ABSOLUTE_PATH = /(?<![A-Za-z0-9:/.\\])\/[^\s"'()]+/g;
 
-function rawIriMatchEnd(value: string, matched: string, offset: number): number {
-  const lastCharacter = ReflectApply(StringPrototypeSlice, matched, [-1]) as string;
+function stickyMatchEnd(pattern: RegExp, value: string, offset: number): number {
+  pattern.lastIndex = offset;
+  try {
+    const remainder = ReflectApply(RegExpPrototypeExec, pattern, [value]) as
+      | RegExpExecArray
+      | null;
+    return remainder === null ? offset : pattern.lastIndex;
+  } finally {
+    pattern.lastIndex = 0;
+  }
+}
+
+function rawUrlMatchEnd(value: string, matched: string, offset: number): number {
   const insideQueryOrFragment =
     (ReflectApply(StringPrototypeIncludes, matched, ["?"]) as boolean) ||
     (ReflectApply(StringPrototypeIncludes, matched, ["#"]) as boolean);
-  if (
-    !insideQueryOrFragment &&
-    lastCharacter !== "/" &&
-    lastCharacter !== "?" &&
-    lastCharacter !== "#" &&
-    lastCharacter !== "&" &&
-    lastCharacter !== "="
-  ) {
-    return offset;
+  const lastCharacter = ReflectApply(StringPrototypeSlice, matched, [-1]) as string;
+  const atComponentBoundary = lastCharacter === "/" ||
+    lastCharacter === "?" ||
+    lastCharacter === "#" ||
+    lastCharacter === "&" ||
+    lastCharacter === "=";
+  if (insideQueryOrFragment || atComponentBoundary) {
+    const iriEnd = stickyMatchEnd(RAW_IRI_REMAINDER, value, offset);
+    if (iriEnd !== offset) return iriEnd;
   }
 
-  RAW_IRI_REMAINDER.lastIndex = offset;
-  try {
-    const remainder = ReflectApply(RegExpPrototypeExec, RAW_IRI_REMAINDER, [value]) as
-      | RegExpExecArray
-      | null;
-    return remainder === null ? offset : RAW_IRI_REMAINDER.lastIndex;
-  } finally {
-    RAW_IRI_REMAINDER.lastIndex = 0;
-  }
+  const acceptedEnd = stickyMatchEnd(RAW_ACCEPTED_URL_REMAINDER, value, offset);
+  if (acceptedEnd === offset) return offset;
+  const acceptedRemainder = ReflectApply(StringPrototypeSlice, value, [
+    offset,
+    acceptedEnd,
+  ]) as string;
+  const structurallyDelimited = atComponentBoundary || insideQueryOrFragment ||
+    (ReflectApply(StringPrototypeIncludes, acceptedRemainder, ["/"]) as boolean);
+  return structurallyDelimited ? acceptedEnd : offset;
 }
 
 function replaceMatchesWithCapturedExec(
   value: string,
   pattern: RegExp,
   replacement: string,
-  extendRawIri = false,
+  extendRawUrl = false,
 ): string {
   pattern.lastIndex = 0;
   let output = "";
@@ -2174,7 +2189,7 @@ function replaceMatchesWithCapturedExec(
       if (match === null) break;
       const matched = match[0];
       if (matched.length === 0) throw new TypeError("Diagnostic pattern must make progress");
-      if (extendRawIri) pattern.lastIndex = rawIriMatchEnd(value, matched, pattern.lastIndex);
+      if (extendRawUrl) pattern.lastIndex = rawUrlMatchEnd(value, matched, pattern.lastIndex);
       output += ReflectApply(StringPrototypeSlice, value, [offset, match.index]) as string;
       output += replacement;
       offset = pattern.lastIndex;

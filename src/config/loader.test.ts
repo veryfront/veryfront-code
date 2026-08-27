@@ -3038,6 +3038,45 @@ export default config as const;
         assertEquals(acceptedRawPath.message.includes("registry.internal"), false);
         assertStringIncludes(acceptedRawPath.message, "Failed [url]");
 
+        for (const rawCharacter of ["<", ">", "`", "^", "|"]) {
+          const rawValue = `${rawCharacter}PRIVATE${rawCharacter}`;
+          const acceptedRawUrlPath = await loadFailure(
+            "vf-config-raw-accepted-url-path-",
+            `throw new Error("Failed https://registry.internal/${rawValue}/config.ts");\n`,
+          );
+
+          assertEquals(acceptedRawUrlPath.message.includes("PRIVATE"), false);
+          assertEquals(acceptedRawUrlPath.message.includes("registry.internal"), false);
+          assertStringIncludes(acceptedRawUrlPath.message, "Failed [url]");
+
+          const acceptedRawFilePath = await loadFailure(
+            "vf-config-raw-accepted-file-path-",
+            `throw new Error("Failed file:///home/alice/${rawValue}/config.ts");\n`,
+          );
+
+          assertEquals(acceptedRawFilePath.message.includes("PRIVATE"), false);
+          assertEquals(acceptedRawFilePath.message.includes("/home/alice"), false);
+          assertStringIncludes(acceptedRawFilePath.message, "Failed [path]");
+        }
+
+        const longIriPrefix = "a".repeat(2049);
+        const longIriPath = await loadFailure(
+          "vf-config-long-iri-prefix-",
+          `throw new Error("Failed https://registry.internal/${longIriPrefix}/秘密/config.ts");\n`,
+        );
+
+        assertEquals(longIriPath.message.includes("秘密"), false);
+        assertEquals(longIriPath.message.includes("registry.internal"), false);
+        assertStringIncludes(longIriPath.message, "Failed [url]");
+
+        const closingAngleProse = await loadFailure(
+          "vf-config-closing-angle-prose-",
+          `throw new Error("Failed (see https://registry.internal/x)> Retry");\n`,
+        );
+
+        assertEquals(closingAngleProse.message.includes("registry.internal"), false);
+        assertStringIncludes(closingAngleProse.message, "Failed (see [url])> Retry");
+
         const bareAuthorityProse = await loadFailure(
           "vf-config-iri-authority-prose-",
           `throw new Error("Failed (see https://registry.internal)。次を試してください");\n`,
