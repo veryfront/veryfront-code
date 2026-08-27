@@ -193,6 +193,15 @@ function toJsonLength(value: unknown): number {
   return mathMin(mathFloor(number), MAX_SAFE_INTEGER);
 }
 
+function isSerializedArrayIndexKey(key: string, length: number): boolean {
+  const index = +key;
+  return numberIsFinite(index) &&
+    index >= 0 &&
+    index < length &&
+    mathFloor(index) === index &&
+    StringConstructor(index) === key;
+}
+
 function hasToStringTagWithoutHooks(value: JsonTraversalReference): boolean {
   if (!canIdentifyProxyWithoutHooks) return true;
   let current: object | null = value;
@@ -297,6 +306,7 @@ function unboxAsJsonWould(
 function normalizeAndFindUnrepresentableValues(
   root: unknown,
   label: string,
+  options: WorkflowJsonSerializationOptions = {},
 ): {
   normalized: unknown;
   unrepresentable: UnrepresentableValues;
@@ -323,7 +333,7 @@ function normalizeAndFindUnrepresentableValues(
   };
 
   const recordEnumerableSymbolKeys = (value: JsonTraversalReference, path: string) => {
-    if (canIdentifyProxyWithoutHooks && isProxyWithoutHooks(value)) return;
+    if (!canIdentifyProxyWithoutHooks || isProxyWithoutHooks(value)) return;
     let symbolKeys: symbol[];
     try {
       symbolKeys = objectGetOwnPropertySymbols(value);
@@ -339,6 +349,25 @@ function normalizeAndFindUnrepresentableValues(
       }
       if (descriptor?.enumerable === true) {
         recordLossy(path, "symbol-keyed property");
+      }
+    }
+  };
+
+  const recordNamedArrayKeys = (
+    value: JsonTraversalReference,
+    path: string,
+    length: number,
+  ) => {
+    if (canIdentifyProxyWithoutHooks && isProxyWithoutHooks(value)) return;
+    let childKeys: string[];
+    try {
+      childKeys = objectKeys(value);
+    } catch {
+      return;
+    }
+    for (const childKey of childKeys) {
+      if (!isSerializedArrayIndexKey(childKey, length)) {
+        recordLossy(`${path}.${redactPathSegment(childKey)}`, "array property");
       }
     }
   };
@@ -415,8 +444,13 @@ function normalizeAndFindUnrepresentableValues(
     // left to `JSON.stringify`. Handing back the whole root instead would make
     // every getter and `toJSON` above this point run a second time, and a hook
     // that answers differently on its second call would then persist a value
-    // this check never saw. Nothing below here is reported, which is the price.
-    if (depth >= MAX_TRAVERSAL_DEPTH) return nested as NormalizedJsonValue;
+    // this check never saw. Non-strict mode keeps that compatibility tradeoff.
+    // Strict mode rejects the uninspected tail so it does not persist values
+    // whose JSON stability this walk did not verify.
+    if (depth >= MAX_TRAVERSAL_DEPTH) {
+      if (options.strictContext === true) recordLossy(path, "uninspected value");
+      return nested as NormalizedJsonValue;
+    }
     reflectApply(setAdd, active, [nested]);
     try {
       if (isArray) {
@@ -451,6 +485,7 @@ function normalizeAndFindUnrepresentableValues(
             normalized === OMIT_JSON_VALUE ? null : normalized,
           );
         }
+        recordNamedArrayKeys(nested, path, length);
         recordEnumerableSymbolKeys(nested, path);
         return result;
       }
@@ -535,7 +570,11 @@ export function prepareWorkflowJson(
   runId?: string,
   options: WorkflowJsonSerializationOptions = {},
 ): { normalized: unknown; serialized: string } {
-  const { normalized, unrepresentable } = normalizeAndFindUnrepresentableValues(value, label);
+  const { normalized, unrepresentable } = normalizeAndFindUnrepresentableValues(
+    value,
+    label,
+    options,
+  );
   const { fatal, fatalCount, lossy, lossyCount } = unrepresentable;
 
   if (fatalCount > 0) {
@@ -543,6 +582,17 @@ export function prepareWorkflowJson(
       detail: `Workflow run cannot be persisted: ${formatPaths(fatal, fatalCount)}. Workflow ` +
         `state must be JSON-representable, because a run that suspends is stored as JSON. ` +
         `Return a plain object from the step that produced this value.`,
+    });
+  }
+
+  if (options.strictContext === true && lossyCount > 0) {
+    throw ORCHESTRATION_ERROR.create({
+      detail:
+        `Workflow run cannot be persisted with strictContext enabled: ${
+          formatPaths(lossy, lossyCount)
+        }. ` +
+        `Workflow state must survive JSON persistence unchanged. Return only JSON values ` +
+        `from the step that produced this value.`,
     });
   }
 
@@ -560,13 +610,6 @@ export function prepareWorkflowJson(
 
   if (lossyCount > 0) {
     const paths = formatPaths(lossy, lossyCount);
-    if (options.strictContext === true) {
-      throw ORCHESTRATION_ERROR.create({
-        detail: `Workflow run cannot be persisted with strictContext enabled: ${paths}. ` +
-          `Workflow state must survive JSON persistence unchanged. Return only JSON values ` +
-          `from the step that produced this value.`,
-      });
-    }
     logger.warn(
       "Workflow state holds values that do not survive persistence unchanged",
       {

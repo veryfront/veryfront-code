@@ -3,6 +3,7 @@ import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/te
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryBackend } from "./memory.ts";
 import type { Checkpoint, PendingApproval, WorkflowQueueItem, WorkflowRun } from "../types.ts";
+import { MAX_TRAVERSAL_DEPTH } from "../context-serialization.ts";
 import type { PersistedPendingApproval, PersistedPendingEventWait } from "./types.ts";
 import {
   MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES,
@@ -383,16 +384,43 @@ describe("MemoryBackend", () => {
 
     it("rejects lossy context values when strictContext is enabled", async () => {
       const strictBackend = new MemoryBackend({ strictContext: true });
+      const rows: unknown[] = [{ id: 1 }];
+      Object.defineProperty(rows, "meta", {
+        value: "required",
+        enumerable: true,
+      });
+      let deep: unknown = { when: new Date(0) };
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH + 25; index++) deep = { n: deep };
 
-      await assertRejects(
-        () =>
-          strictBackend.createRun(createTestRun("run-strict-context", {
+      for (
+        const testCase of [
+          {
+            id: "run-strict-date-context",
             context: { input: {}, when: new Date(0) },
-          })),
-        Error,
-        "strictContext",
-      );
-      assertEquals(await strictBackend.getRun("run-strict-context"), null);
+            message: "strictContext",
+          },
+          {
+            id: "run-strict-array-context",
+            context: { input: {}, rows },
+            message: "array property",
+          },
+          {
+            id: "run-strict-deep-context",
+            context: { input: {}, deep },
+            message: "uninspected value",
+          },
+        ]
+      ) {
+        await assertRejects(
+          () =>
+            strictBackend.createRun(createTestRun(testCase.id, {
+              context: testCase.context,
+            })),
+          Error,
+          testCase.message,
+        );
+        assertEquals(await strictBackend.getRun(testCase.id), null);
+      }
     });
 
     it("rejects invalid context from Promise-returning mutation methods asynchronously", async () => {

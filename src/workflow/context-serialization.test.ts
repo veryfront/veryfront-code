@@ -203,6 +203,29 @@ describe("serializeWorkflowContext", () => {
       assertStringIncludes(error.message, "context.step.symbolKeyedOutput");
       assertStringIncludes(error.message, "symbol-keyed property");
     });
+
+    it("throws when strictContext would drop enumerable named array properties", () => {
+      const rows: unknown[] = [{ id: 1 }];
+      Object.defineProperty(rows, "meta", {
+        value: "required",
+        enumerable: true,
+      });
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({ rows }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.rows.meta");
+      assertStringIncludes(error.message, "array property");
+    });
   });
 
   it("keeps traversing a class instance's enumerable fields", () => {
@@ -492,6 +515,45 @@ describe("serializeWorkflowContext", () => {
 
       assertEquals(warnings, []);
       assertEquals(serialized, JSON.stringify({ input: {}, step: deep }));
+    });
+
+    it("throws in strictContext before persisting uninspected deep values", () => {
+      let deep: unknown = { when: new Date(0) };
+      for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith(deep),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step");
+      assertStringIncludes(error.message, "uninspected value");
+    });
+
+    it("throws the strictContext diagnostic before JSON sees a fatal value below the cutoff", () => {
+      let deep: unknown = { total: 1n };
+      for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith(deep),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "uninspected value");
     });
 
     it("still names a fatal value found above the depth it stops at", () => {
