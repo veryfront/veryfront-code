@@ -162,7 +162,8 @@ function describe(value: unknown): string {
 
 /** Whether a value is a plain `{}` object rather than a class instance. */
 function isPlainObject(value: JsonTraversalReference): boolean {
-  if (!canIdentifyProxyWithoutHooks || isProxyWithoutHooks(value)) return false;
+  if (!canIdentifyProxyWithoutHooks) return true;
+  if (isProxyWithoutHooks(value)) return false;
   try {
     const prototype = objectGetPrototypeOf(value);
     return prototype === objectPrototype || prototype === null;

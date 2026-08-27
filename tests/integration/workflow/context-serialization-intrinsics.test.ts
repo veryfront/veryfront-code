@@ -10,6 +10,47 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { serializeWorkflowContext } from "#veryfront/workflow/context-serialization.ts";
 
 describe("workflow context serialization with hostile ambient intrinsics", () => {
+  it("keeps strict serialization usable for plain objects when brand checks are unavailable", async () => {
+    const script = `
+      Object.defineProperty(globalThis, "caches", {
+        configurable: true,
+        value: {},
+      });
+      Object.defineProperty(globalThis, "WebSocketPair", {
+        configurable: true,
+        value: function WebSocketPair() {},
+      });
+
+      const { canIdentifyProxyWithoutHooks } = await import(
+        "./src/platform/compat/error-introspection.ts"
+      );
+      const { serializeWorkflowContext } = await import(
+        "./src/workflow/context-serialization.ts"
+      );
+      const serialized = serializeWorkflowContext(
+        { input: {}, step: { ok: true, nested: { value: 1 } } },
+        "run-edge-strict",
+        { strictContext: true },
+      );
+      console.log(JSON.stringify({ canIdentifyProxyWithoutHooks, serialized }));
+    `;
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["eval", "--config=deno.json", script],
+      cwd: new URL("../../../", import.meta.url),
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const stderr = new TextDecoder().decode(output.stderr);
+    assertEquals(output.code, 0, stderr);
+    assertEquals(
+      JSON.parse(new TextDecoder().decode(output.stdout)),
+      {
+        canIdentifyProxyWithoutHooks: false,
+        serialized: '{"input":{},"step":{"ok":true,"nested":{"value":1}}}',
+      },
+    );
+  });
+
   it("skips diagnostic-only Proxy metadata when brand checks are unavailable", async () => {
     const script = `
       Object.defineProperty(globalThis, "caches", {
