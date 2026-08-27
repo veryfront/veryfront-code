@@ -116,6 +116,7 @@ export class WorkflowClient {
     }
 
     const userOnWaiting = config.executor?.onWaiting;
+    const userOnWaitingPersist = config.executor?.onWaitingPersist;
     const userOnWaitingBatchComplete = config.executor?.onWaitingBatchComplete;
     const userOnEventWaitResolved = config.executor?.onEventWaitResolved;
     const userResponseSchemaResolver = config.approval?.responseSchemaResolver;
@@ -130,19 +131,17 @@ export class WorkflowClient {
 
         if (!input) {
           logger.debug("No wait config found for node", { nodeId });
+          await userOnWaitingPersist?.(run, nodeId, activeWaitConfig);
           return;
         }
 
         if (input.type === "event") {
           await this.createEventWaitFromPersistedInput(run, nodeId, input, activeWaitConfig);
-          return;
+        } else if (input.type === "approval") {
+          await this.createApprovalFromPersistedInput(run, nodeId, input, activeWaitConfig);
         }
 
-        if (input.type !== "approval") {
-          return;
-        }
-
-        await this.createApprovalFromPersistedInput(run, nodeId, input, activeWaitConfig);
+        await userOnWaitingPersist?.(run, nodeId, activeWaitConfig);
       },
       onWaiting: async (run, nodeId, activeWaitConfig) => {
         if ((run.nodeStates[nodeId]?.input as { type?: string } | undefined)?.type === "approval") {

@@ -1056,6 +1056,45 @@ describe("WorkflowClient", () => {
         await callbackClient.destroy();
       }
     });
+
+    it("composes the user wait-persistence callback with client wait persistence", async () => {
+      const callbackBackend = new MemoryBackend();
+      let observedNodeId: string | undefined;
+      let observedConfig: WaitNodeConfig | undefined;
+      const callbackClient = createWorkflowClient({
+        backend: callbackBackend,
+        executor: {
+          onWaitingPersist: (_run, nodeId, waitConfig) => {
+            observedNodeId = nodeId;
+            observedConfig = waitConfig;
+          },
+        },
+      });
+
+      try {
+        callbackClient.register(workflow({
+          id: "wait-persist-callback-workflow",
+          steps: [
+            waitForApproval("review", {
+              message: "Persist this review",
+              timeout: "1h",
+              approvers: ["alice"],
+            }),
+          ],
+        }));
+
+        const handle = await callbackClient.start("wait-persist-callback-workflow", {});
+        await handle.settled();
+
+        assertEquals(observedNodeId, "review");
+        assertEquals(observedConfig?.timeout, "1h");
+        const approvals = await callbackBackend.getPendingApprovals(handle.runId);
+        assertEquals(approvals.length, 1);
+        assertEquals(approvals[0]?.message, "Persist this review");
+      } finally {
+        await callbackClient.destroy();
+      }
+    });
   });
 
   describe("nested approval", () => {

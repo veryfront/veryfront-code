@@ -36,16 +36,31 @@ function createMapChildNodes(
   node: WorkflowNode,
   config: MapNodeConfig,
   items: unknown[],
+  parentNodeIds: ReadonlySet<string>,
 ): WorkflowNode[] {
   return items.map((item, i) => {
     const childId = `${node.id}_${i}`;
 
     if (isWorkflowDefinition(config.processor)) {
+      const workflow = namespaceWorkflowDefinition(`${childId}/`, config.processor);
+      const workflowSteps = workflow.steps;
       return {
         id: childId,
         config: {
           type: "subWorkflow",
-          workflow: namespaceWorkflowDefinition(`${childId}/`, config.processor),
+          workflow: typeof workflowSteps === "function"
+            ? {
+              ...workflow,
+              steps: (context) => {
+                const steps = workflowSteps(context);
+                const collidingChildId = findParentIdCollision(steps, parentNodeIds);
+                if (collidingChildId) {
+                  throwMapChildIdCollision(node.id, collidingChildId);
+                }
+                return steps;
+              },
+            }
+            : workflow,
           input: item,
           retry: config.retry,
           checkpoint: false,
@@ -77,6 +92,20 @@ function createMapChildNodes(
   });
 }
 
+function findParentIdCollision(
+  nodes: WorkflowNode[],
+  parentNodeIds: ReadonlySet<string>,
+): string | undefined {
+  return [...collectWorkflowNodeIds(nodes)].find((childId) => parentNodeIds.has(childId));
+}
+
+function throwMapChildIdCollision(mapNodeId: string, collidingChildId: string): never {
+  throw INVALID_ARGUMENT.create({
+    detail: `Map node "${mapNodeId}" generated child id "${collidingChildId}", ` +
+      "which collides with a declared node in the parent graph",
+  });
+}
+
 export async function executeMapNodeStrategy(
   input: ExecuteMapNodeStrategyInput,
 ): Promise<NodeExecutionResult> {
@@ -103,15 +132,10 @@ export async function executeMapNodeStrategy(
     return { state, contextPatch: createSetContextPatch({ [node.id]: [] }), waiting: false };
   }
 
-  const childNodes = createMapChildNodes(node, config, items);
-  const collidingChildId = [...collectWorkflowNodeIds(childNodes)].find((childId) =>
-    parentNodeIds.has(childId)
-  );
+  const childNodes = createMapChildNodes(node, config, items, parentNodeIds);
+  const collidingChildId = findParentIdCollision(childNodes, parentNodeIds);
   if (collidingChildId) {
-    throw INVALID_ARGUMENT.create({
-      detail: `Map node "${node.id}" generated child id "${collidingChildId}", ` +
-        "which collides with a declared node in the parent graph",
-    });
+    throwMapChildIdCollision(node.id, collidingChildId);
   }
 
   const result = await runtime.executeChildGraph(

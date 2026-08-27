@@ -759,6 +759,47 @@ describe("ApprovalManager", () => {
       assertEquals(request.expiresAt, new Date("2026-08-24T10:50:00.000Z"));
     });
 
+    it("expires an overdue approval before notifying approvers", async () => {
+      using _time = new FakeTime(new Date("2026-08-24T10:00:00.000Z"));
+      let notifications = 0;
+      manager = new ApprovalManager({
+        backend,
+        expirationCheckInterval: 0,
+        notifier: () => {
+          notifications++;
+          return Promise.resolve();
+        },
+      });
+      const runId = "run-overdue-approval-timeout";
+      const run = createTestRun(runId, {
+        status: "waiting",
+        nodeStates: {
+          review: {
+            nodeId: "review",
+            status: "running",
+            attempt: 1,
+            startedAt: new Date("2026-08-24T09:00:00.000Z"),
+          },
+        },
+      });
+      await backend.createRun(run);
+
+      const request = await manager.createApproval(
+        run,
+        "review",
+        { type: "wait", waitType: "approval", timeout: "30m" },
+        run.context,
+      );
+
+      assertEquals(request.expiresAt, new Date("2026-08-24T09:30:00.000Z"));
+      assertEquals(notifications, 0);
+      const persisted = await backend.getPendingApproval(runId, request.approvalId);
+      assertExists(persisted);
+      assertEquals(persisted.status, "rejected");
+      assertEquals(persisted.decidedBy, "system");
+      assertEquals((await backend.getRun(runId))?.status, "failed");
+    });
+
     it("omits expiresAt when no timeout is supplied", async () => {
       manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
 

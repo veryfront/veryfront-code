@@ -1138,6 +1138,28 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates["batch_0/ready"], undefined);
     });
 
+    it("rejects generated workflow-definition descendants that collide with parent nodes", async () => {
+      const processor: WorkflowDefinition = {
+        id: "processor",
+        steps: () => [
+          waitForEvent("ready", { eventName: "item.ready" }),
+        ],
+      };
+      const nodes = [
+        map("batch", {
+          items: [{ id: 1 }],
+          processor,
+        }),
+        waitForEvent("batch_0/ready", { eventName: "independent.ready" }),
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, false);
+      assertStringIncludes(result.error ?? "", 'generated child id "batch_0/ready"');
+      assertEquals(result.nodeStates["batch_0/ready"], undefined);
+    });
+
     it("namespaces nested sub-workflow waits inside workflow-definition processors", async () => {
       const nodes = [
         map("batch", {

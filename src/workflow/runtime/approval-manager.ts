@@ -416,6 +416,11 @@ export class ApprovalManager {
       throw error;
     }
 
+    if (approval.expiresAt && new Date() > approval.expiresAt) {
+      await this.expireApproval(runId, approval);
+      return projectApprovalRequest(runId, approval);
+    }
+
     if (options.notify !== false) await this.notifyApproval(run, approval);
 
     return projectApprovalRequest(runId, approval);
@@ -999,47 +1004,54 @@ export class ApprovalManager {
         continue;
       }
 
-      logger.debug("Expiring approval", {
-        approvalId: approval.id,
-      });
+      await this.expireApproval(runId, approval);
+    }
+  }
 
-      const expired = await this.config.backend.updateApproval(runId, approval.id, {
-        approved: false,
-        approver: "system",
-        comment: "Approval expired",
-      });
-      // A concurrent decision may have resolved this approval between the list
-      // read and here; if so the atomic gate skipped it, so don't fail the run.
-      if (expired === false) {
-        continue;
-      }
-      this.responseSchemas.delete(this.responseSchemaKey(runId, approval.id));
+  private async expireApproval(
+    runId: string,
+    approval: PersistedPendingApproval,
+  ): Promise<void> {
+    logger.debug("Expiring approval", {
+      approvalId: approval.id,
+    });
 
-      const failed = await updateRunIfStatus(
-        this.config.backend,
-        runId,
-        ["pending", "running", "waiting"],
-        {
-          status: "failed",
-          error: { message: `Approval "${approval.id}" expired` },
-          completedAt: new Date(),
-        },
+    const expired = await this.config.backend.updateApproval(runId, approval.id, {
+      approved: false,
+      approver: "system",
+      comment: "Approval expired",
+    });
+    // A concurrent decision may have resolved this approval between the read
+    // and here; if so the atomic gate skipped it, so don't fail the run.
+    if (expired === false) {
+      return;
+    }
+    this.responseSchemas.delete(this.responseSchemaKey(runId, approval.id));
+
+    const failed = await updateRunIfStatus(
+      this.config.backend,
+      runId,
+      ["pending", "running", "waiting"],
+      {
+        status: "failed",
+        error: { message: `Approval "${approval.id}" expired` },
+        completedAt: new Date(),
+      },
+    );
+    if (!failed) {
+      const latest = await this.config.backend.getRun(runId);
+      if (
+        latest && latest.status !== "completed" && latest.status !== "cancelled"
+      ) return;
+    }
+    try {
+      await this.config.backend.finalizeApprovalDecision?.(runId, approval.id);
+    } catch (error) {
+      logger.error(
+        "Failed to finalize an expired approval decision claim",
+        { approvalId: approval.id, runId },
+        error,
       );
-      if (!failed) {
-        const latest = await this.config.backend.getRun(runId);
-        if (
-          latest && latest.status !== "completed" && latest.status !== "cancelled"
-        ) continue;
-      }
-      try {
-        await this.config.backend.finalizeApprovalDecision?.(runId, approval.id);
-      } catch (error) {
-        logger.error(
-          "Failed to finalize an expired approval decision claim",
-          { approvalId: approval.id, runId },
-          error,
-        );
-      }
     }
   }
 
