@@ -110,15 +110,27 @@ async function runVersionValidation(version: string): Promise<Deno.CommandOutput
   }).output();
 }
 
-async function runReleaseScriptWithTransientUploadFailure(
-  stateDir: string,
-  asset: string,
-  failedUploadAttempts: number,
-): Promise<Deno.CommandOutput> {
+async function runReleaseScript({
+  stateDir,
+  asset,
+  failedCreateAttempts = 0,
+  failedUploadAttempts = 0,
+  failedPublishAttempts = 0,
+}: {
+  stateDir: string;
+  asset: string;
+  failedCreateAttempts?: number;
+  failedUploadAttempts?: number;
+  failedPublishAttempts?: number;
+}): Promise<Deno.CommandOutput> {
   const ghLog = `${stateDir}/gh.log`;
+  const createCount = `${stateDir}/create-count`;
   const uploadCount = `${stateDir}/upload-count`;
+  const publishCount = `${stateDir}/publish-count`;
   await Deno.writeTextFile(ghLog, "");
+  await Deno.writeTextFile(createCount, "0");
   await Deno.writeTextFile(uploadCount, "0");
+  await Deno.writeTextFile(publishCount, "0");
 
   return await new Deno.Command("bash", {
     args: [
@@ -127,16 +139,36 @@ async function runReleaseScriptWithTransientUploadFailure(
         "set -euo pipefail",
         'release_script="$1"',
         'export GH_LOG="$2"',
-        'export UPLOAD_COUNT="$3"',
-        'export FAILED_UPLOAD_ATTEMPTS="$4"',
-        'asset="$5"',
+        'export CREATE_COUNT="$3"',
+        'export UPLOAD_COUNT="$4"',
+        'export PUBLISH_COUNT="$5"',
+        'export FAILED_CREATE_ATTEMPTS="$6"',
+        'export FAILED_UPLOAD_ATTEMPTS="$7"',
+        'export FAILED_PUBLISH_ATTEMPTS="$8"',
+        'asset="$9"',
         "gh() {",
         '  printf "%s\\n" "$*" >> "$GH_LOG"',
+        '  if [ "$1" = "release" ] && [ "$2" = "create" ]; then',
+        '    count="$(cat "$CREATE_COUNT")"',
+        "    count=$((count + 1))",
+        '    printf "%s" "$count" > "$CREATE_COUNT"',
+        '    if [ "$count" -le "$FAILED_CREATE_ATTEMPTS" ]; then',
+        "      return 1",
+        "    fi",
+        "  fi",
         '  if [ "$1" = "release" ] && [ "$2" = "upload" ]; then',
         '    count="$(cat "$UPLOAD_COUNT")"',
         "    count=$((count + 1))",
         '    printf "%s" "$count" > "$UPLOAD_COUNT"',
         '    if [ "$count" -le "$FAILED_UPLOAD_ATTEMPTS" ]; then',
+        "      return 1",
+        "    fi",
+        "  fi",
+        '  if [ "$1" = "release" ] && [ "$2" = "edit" ]; then',
+        '    count="$(cat "$PUBLISH_COUNT")"',
+        "    count=$((count + 1))",
+        '    printf "%s" "$count" > "$PUBLISH_COUNT"',
+        '    if [ "$count" -le "$FAILED_PUBLISH_ATTEMPTS" ]; then',
         "      return 1",
         "    fi",
         "  fi",
@@ -155,8 +187,12 @@ async function runReleaseScriptWithTransientUploadFailure(
       "release-script-test",
       RELEASE_SCRIPT_PATH,
       ghLog,
+      createCount,
       uploadCount,
+      publishCount,
+      String(failedCreateAttempts),
       String(failedUploadAttempts),
+      String(failedPublishAttempts),
       asset,
     ],
     stdout: "piped",
@@ -170,11 +206,11 @@ describe("registry release workflow", () => {
       const asset = `${stateDir}/veryfront-macos-arm64`;
       await Deno.writeTextFile(asset, "binary");
 
-      const output = await runReleaseScriptWithTransientUploadFailure(
+      const output = await runReleaseScript({
         stateDir,
         asset,
-        1,
-      );
+        failedUploadAttempts: 1,
+      });
       const ghCalls = (await Deno.readTextFile(`${stateDir}/gh.log`))
         .trim()
         .split("\n");
@@ -198,11 +234,11 @@ describe("registry release workflow", () => {
       const asset = `${stateDir}/veryfront-macos-arm64`;
       await Deno.writeTextFile(asset, "binary");
 
-      const output = await runReleaseScriptWithTransientUploadFailure(
+      const output = await runReleaseScript({
         stateDir,
         asset,
-        3,
-      );
+        failedUploadAttempts: 3,
+      });
       const ghCalls = (await Deno.readTextFile(`${stateDir}/gh.log`))
         .trim()
         .split("\n");
@@ -220,6 +256,60 @@ describe("registry release workflow", () => {
       assert(
         ghCalls.at(-1)?.startsWith("release delete v1.2.3-rc.4 "),
         "the incomplete release must be deleted after the final failed upload",
+      );
+    });
+  });
+
+  it("preserves an existing release when draft creation fails", async () => {
+    await withTempDir(async (stateDir) => {
+      const asset = `${stateDir}/veryfront-macos-arm64`;
+      await Deno.writeTextFile(asset, "binary");
+
+      const output = await runReleaseScript({
+        stateDir,
+        asset,
+        failedCreateAttempts: 3,
+      });
+      const ghCalls = (await Deno.readTextFile(`${stateDir}/gh.log`))
+        .trim()
+        .split("\n");
+
+      assertEquals(output.code, 1);
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release delete ")).length,
+        0,
+        "draft creation failure must not delete a release that predates this run",
+      );
+    });
+  });
+
+  it("preserves a fully uploaded draft when publication retries are exhausted", async () => {
+    await withTempDir(async (stateDir) => {
+      const asset = `${stateDir}/veryfront-macos-arm64`;
+      await Deno.writeTextFile(asset, "binary");
+
+      const output = await runReleaseScript({
+        stateDir,
+        asset,
+        failedPublishAttempts: 3,
+      });
+      const ghCalls = (await Deno.readTextFile(`${stateDir}/gh.log`))
+        .trim()
+        .split("\n");
+
+      assertEquals(output.code, 1);
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release upload ")).length,
+        1,
+      );
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release edit ")).length,
+        3,
+      );
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release delete ")).length,
+        0,
+        "publication failure must retain the uploaded draft for recovery",
       );
     });
   });

@@ -136,15 +136,14 @@ create_draft_release() {
     create_args+=(--prerelease)
   fi
 
-  delete_release
   gh "${create_args[@]}"
 }
 
-draft_created=false
+incomplete_draft_created=false
 cleanup_failed_release() {
   local status="$?"
   trap - EXIT
-  if [ "$status" -ne 0 ] && [ "$draft_created" = true ]; then
+  if [ "$status" -ne 0 ] && [ "$incomplete_draft_created" = true ]; then
     echo "::warning::Removing incomplete GitHub release ${tag}." >&2
     delete_release
   fi
@@ -153,13 +152,14 @@ cleanup_failed_release() {
 trap cleanup_failed_release EXIT
 
 run_with_retry "GitHub release draft creation" create_draft_release
-draft_created=true
+incomplete_draft_created=true
 
 for asset in "${assets[@]}"; do
   run_with_retry \
     "GitHub release asset $(basename "$asset") upload" \
     gh release upload "$tag" "$asset" --repo "$repo" --clobber
 done
+incomplete_draft_created=false
 
 publish_args=(release edit "$tag" --repo "$repo" --draft=false)
 if [ "$prerelease" = true ]; then
@@ -169,5 +169,4 @@ elif [ "$latest" = true ]; then
 fi
 run_with_retry "GitHub release publication" gh "${publish_args[@]}"
 
-draft_created=false
 trap - EXIT
