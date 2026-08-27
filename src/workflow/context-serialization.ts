@@ -221,13 +221,16 @@ function isKnownNonPlainBuiltin(value: JsonTraversalReference): boolean {
 }
 
 /** Whether a value is a plain `{}` object rather than a class instance. */
-function isPlainObject(value: JsonTraversalReference): boolean {
-  // Edge-style hosts that cannot identify proxies without hooks also cannot
-  // distinguish arbitrary class instances from plain objects without reading
-  // prototype metadata. Captured native-slot probes cover known JSON-lossy
-  // built-ins before this fallback while keeping proxy metadata traps untouched.
-  if (!canIdentifyProxyWithoutHooks) return true;
-  if (isProxyWithoutHooks(value)) return false;
+function isPlainObject(
+  value: JsonTraversalReference,
+  inspectPrototype: boolean,
+): boolean {
+  // Default persistence keeps diagnostic-only prototype traps untouched on
+  // edge-style hosts. Strict persistence opts into the metadata read because
+  // accepting an ordinary class instance would violate its unchanged-value
+  // contract. A throwing trap fails the strict check closed below.
+  if (!canIdentifyProxyWithoutHooks && !inspectPrototype) return true;
+  if (canIdentifyProxyWithoutHooks && isProxyWithoutHooks(value)) return false;
   try {
     const prototype = objectGetPrototypeOf(value);
     return prototype === objectPrototype || prototype === null;
@@ -440,13 +443,16 @@ function normalizeAndFindUnrepresentableValues(
   };
 
   const recordArrayPrototype = (value: JsonTraversalReference, path: string) => {
-    if (!canIdentifyProxyWithoutHooks || isProxyWithoutHooks(value)) return;
+    if (canIdentifyProxyWithoutHooks && isProxyWithoutHooks(value)) {
+      recordLossy(path, "array proxy");
+      return;
+    }
     try {
       if (objectGetPrototypeOf(value) !== arrayPrototype) {
         recordLossy(path, "array prototype");
       }
     } catch {
-      return;
+      recordLossy(path, "uninspectable array prototype");
     }
   };
 
@@ -495,6 +501,7 @@ function normalizeAndFindUnrepresentableValues(
   ) => {
     if (!canIdentifyProxyWithoutHooks) {
       recordArrayPropertiesFromOwnKeys(value, path, length);
+      recordArrayPrototype(value, path);
       return;
     }
     recordNamedArrayKeys(value, path, length);
@@ -687,7 +694,7 @@ function normalizeAndFindUnrepresentableValues(
         isKnownNonPlainBuiltin(nested)
       ) {
         recordLossy(path, describe(nested));
-      } else if (!isPlainObject(nested)) {
+      } else if (!isPlainObject(nested, options.strictContext === true)) {
         recordLossy(path, describe(nested));
       }
       return result;

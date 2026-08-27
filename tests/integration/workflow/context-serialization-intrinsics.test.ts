@@ -51,6 +51,68 @@ describe("workflow context serialization with hostile ambient intrinsics", () =>
     );
   });
 
+  it("rejects class instances in strict mode when brand checks are unavailable", async () => {
+    const script = `
+      Object.defineProperty(globalThis, "caches", {
+        configurable: true,
+        value: {},
+      });
+      Object.defineProperty(globalThis, "WebSocketPair", {
+        configurable: true,
+        value: function WebSocketPair() {},
+      });
+
+      const { canIdentifyProxyWithoutHooks } = await import(
+        "./src/platform/compat/error-introspection.ts"
+      );
+      const { serializeWorkflowContext } = await import(
+        "./src/workflow/context-serialization.ts"
+      );
+
+      class Receipt {
+        total = 7;
+      }
+      class Rows extends Array {}
+
+      const failures = [];
+      for (const [name, value] of [
+        ["receipt", new Receipt()],
+        ["rows", new Rows(1, 2)],
+      ]) {
+        try {
+          serializeWorkflowContext(
+            { input: {}, step: { [name]: value } },
+            "run-edge-strict",
+            { strictContext: true },
+          );
+          failures.push({ name, message: "accepted" });
+        } catch (error) {
+          failures.push({ name, message: error instanceof Error ? error.message : String(error) });
+        }
+      }
+
+      console.log(JSON.stringify({ canIdentifyProxyWithoutHooks, failures }));
+    `;
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["eval", "--config=deno.json", script],
+      cwd: new URL("../../../", import.meta.url),
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const stderr = new TextDecoder().decode(output.stderr);
+    assertEquals(output.code, 0, stderr);
+    const result = JSON.parse(new TextDecoder().decode(output.stdout)) as {
+      canIdentifyProxyWithoutHooks: boolean;
+      failures: Array<{ name: string; message: string }>;
+    };
+
+    assertEquals(result.canIdentifyProxyWithoutHooks, false);
+    for (const failure of result.failures) {
+      assertStringIncludes(failure.message, "strictContext");
+      assertStringIncludes(failure.message, `context.step.${failure.name}`);
+    }
+  });
+
   it("rejects known non-plain built-ins in strict mode when brand checks are unavailable", async () => {
     const script = `
       Object.defineProperty(globalThis, "caches", {
