@@ -672,6 +672,86 @@ describe("workflow context serialization with hostile ambient intrinsics", () =>
     );
   });
 
+  it("stops strict edge-host descriptor inspection after a fatal value", async () => {
+    const script = `
+      Object.defineProperty(globalThis, "caches", {
+        configurable: true,
+        value: {},
+      });
+      Object.defineProperty(globalThis, "WebSocketPair", {
+        configurable: true,
+        value: function WebSocketPair() {},
+      });
+
+      const { canIdentifyProxyWithoutHooks } = await import(
+        "./src/platform/compat/error-introspection.ts"
+      );
+      const { serializeWorkflowContext } = await import(
+        "./src/workflow/context-serialization.ts"
+      );
+      const descriptorCalls = [];
+      let getterCalls = 0;
+      const target = Object.defineProperty({ first: 1n }, "later", {
+        enumerable: true,
+        get() {
+          getterCalls += 1;
+          return 1;
+        },
+      });
+      const step = new Proxy(target, {
+        get: Reflect.get,
+        ownKeys: Reflect.ownKeys,
+        getOwnPropertyDescriptor(target, key) {
+          descriptorCalls.push(String(key));
+          if (key === "later") throw new Error("TRAILING_DESCRIPTOR_TRAP");
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+
+      try {
+        serializeWorkflowContext(
+          { input: {}, step },
+          "run-edge-strict",
+          { strictContext: true },
+        );
+        console.log(JSON.stringify({
+          canIdentifyProxyWithoutHooks,
+          message: "accepted",
+          descriptorCalls,
+          getterCalls,
+        }));
+      } catch (error) {
+        console.log(JSON.stringify({
+          canIdentifyProxyWithoutHooks,
+          message: error instanceof Error ? error.message : String(error),
+          descriptorCalls,
+          getterCalls,
+        }));
+      }
+    `;
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["eval", "--config=deno.json", script],
+      cwd: new URL("../../../", import.meta.url),
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const stderr = new TextDecoder().decode(output.stderr);
+    assertEquals(output.code, 0, stderr);
+    const result = JSON.parse(new TextDecoder().decode(output.stdout)) as {
+      canIdentifyProxyWithoutHooks: boolean;
+      message: string;
+      descriptorCalls: string[];
+      getterCalls: number;
+    };
+
+    assertEquals(result.canIdentifyProxyWithoutHooks, false);
+    assertStringIncludes(result.message, "context.step.<redacted>");
+    assertStringIncludes(result.message, "BigInt");
+    assertEquals(result.message.includes("TRAILING_DESCRIPTOR_TRAP"), false);
+    assertEquals(result.descriptorCalls, ["first"]);
+    assertEquals(result.getterCalls, 0);
+  });
+
   it("uses admitted JSON, object, reflection, and array primitives", () => {
     const originalStringify = JSON.stringify;
     const originalKeys = Object.keys;

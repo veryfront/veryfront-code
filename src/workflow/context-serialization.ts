@@ -491,38 +491,6 @@ function normalizeAndFindUnrepresentableValues(
     recordArrayPrototype(value, path);
   };
 
-  const getStrictObjectKeySnapshot = (
-    value: JsonTraversalReference,
-    path: string,
-    trustContextRoot: boolean,
-  ): {
-    childKeys: string[];
-    childDescriptors: Array<PropertyDescriptor | undefined>;
-  } => {
-    const childKeys: string[] = [];
-    const childDescriptors: Array<PropertyDescriptor | undefined> = [];
-    const ownKeys = reflectOwnKeys(value);
-    for (const ownKey of ownKeys) {
-      const descriptor = objectGetOwnPropertyDescriptor(value, ownKey);
-      if (typeof ownKey === "symbol") {
-        if (descriptor !== undefined) recordLossy(path, "symbol-keyed property");
-        continue;
-      }
-      if (descriptor !== undefined && descriptor.enumerable !== true) {
-        recordLossy(
-          `${path}.${redactPathSegment(ownKey, trustContextRoot)}`,
-          "non-enumerable property",
-        );
-        continue;
-      }
-      if (descriptor?.enumerable === true) {
-        defineArrayElement(childKeys, childKeys.length, ownKey);
-        defineArrayElement(childDescriptors, childDescriptors.length, descriptor);
-      }
-    }
-    return { childKeys, childDescriptors };
-  };
-
   const normalize = (
     value: unknown,
     path: string,
@@ -654,21 +622,34 @@ function normalizeAndFindUnrepresentableValues(
       }
 
       const result: NormalizedJsonObject = objectCreate(null);
-      const canInspectStrictOwnKeys = options.strictContext === true &&
-        (!canIdentifyProxyWithoutHooks || !isProxyWithoutHooks(nested));
-      const keySnapshot = canInspectStrictOwnKeys
-        ? getStrictObjectKeySnapshot(nested, path, depth === 0)
-        : { childKeys: objectKeys(nested), childDescriptors: undefined };
-      const childKeys = keySnapshot.childKeys;
+      const childKeys = options.strictContext === true
+        ? reflectOwnKeys(nested)
+        : objectKeys(nested);
       for (let childIndex = 0; childIndex < childKeys.length; childIndex++) {
-        const childKey = childKeys[childIndex]!;
+        if (found.fatalCount > 0) break;
+        const ownKey = childKeys[childIndex]!;
+        let childKey: string;
         if (options.strictContext === true) {
-          const descriptor = keySnapshot.childDescriptors?.[childIndex] ??
-            objectGetOwnPropertyDescriptor(nested, childKey);
+          const descriptor = objectGetOwnPropertyDescriptor(nested, ownKey);
+          if (typeof ownKey === "symbol") {
+            if (descriptor !== undefined) recordLossy(path, "symbol-keyed property");
+            continue;
+          }
+          childKey = ownKey;
+          if (descriptor === undefined) continue;
+          if (descriptor.enumerable !== true) {
+            recordLossy(
+              `${path}.${redactPathSegment(childKey, depth === 0)}`,
+              "non-enumerable property",
+            );
+            continue;
+          }
           recordAccessorProperty(
             descriptor,
             `${path}.${redactPathSegment(childKey, depth === 0)}`,
           );
+        } else {
+          childKey = ownKey as string;
         }
         const childPath = `${path}.${redactPathSegment(childKey, depth === 0)}`;
         const normalized = normalize(
@@ -679,9 +660,8 @@ function normalizeAndFindUnrepresentableValues(
           depth + 1,
         );
         if (normalized !== OMIT_JSON_VALUE) result[childKey] = normalized;
-        if (found.fatalCount > 0) break;
       }
-      if (found.fatalCount === 0 && !canInspectStrictOwnKeys) {
+      if (found.fatalCount === 0 && options.strictContext !== true) {
         recordEnumerableSymbolKeys(nested, path);
       }
       // Prototype diagnostics are best-effort and run after the snapshot is
