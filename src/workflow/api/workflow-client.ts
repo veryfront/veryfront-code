@@ -117,6 +117,7 @@ export class WorkflowClient {
 
     const userOnWaiting = config.executor?.onWaiting;
     const userOnWaitingPersist = config.executor?.onWaitingPersist;
+    const userOnLiveWaiting = config.executor?.onLiveWaiting;
     const userOnWaitingBatchComplete = config.executor?.onWaitingBatchComplete;
     const userOnEventWaitResolved = config.executor?.onEventWaitResolved;
     const userResponseSchemaResolver = config.approval?.responseSchemaResolver;
@@ -149,7 +150,10 @@ export class WorkflowClient {
         }
         await userOnWaiting?.(run, nodeId, activeWaitConfig);
       },
-      onLiveWaiting: (run, nodeId) => this.eventWaitManager.rearmLiveWaitExpiry(run, nodeId),
+      onLiveWaiting: async (run, nodeId, activeWaitConfig) => {
+        await this.eventWaitManager.rearmLiveWaitExpiry(run, nodeId);
+        await userOnLiveWaiting?.(run, nodeId, activeWaitConfig);
+      },
       onWaitingBatchComplete: async (run) => {
         await this.eventWaitManager.drainPendingEvents(run.id);
         await userOnWaitingBatchComplete?.(run);

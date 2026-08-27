@@ -4864,6 +4864,7 @@ describe("WorkflowClient durable event waits", () => {
 
   it("re-arms a live timed wait when a replacement process resumes it without a sweep", async () => {
     const sharedBackend = new MemoryBackend();
+    let liveWaitCallbacks = 0;
     const definition = workflow({
       id: "resume-rearms-timed-wait",
       steps: [waitForEvent("gate", { eventName: "gate.ready", timeout: 250 })],
@@ -4881,10 +4882,18 @@ describe("WorkflowClient durable event waits", () => {
     const recovering = createWorkflowClient({
       backend: sharedBackend,
       eventWait: { expirationCheckInterval: 0 },
+      executor: {
+        onLiveWaiting: (_run, nodeId, waitConfig) => {
+          liveWaitCallbacks++;
+          assertEquals(nodeId, "gate");
+          assertEquals(waitConfig?.waitType, "event");
+        },
+      },
     });
     recovering.register(definition);
     try {
       await recovering.resume(handle.runId);
+      assertEquals(liveWaitCallbacks, 1);
       await waitFor(
         async () => (await recovering.getRun(handle.runId))?.status === "failed",
         {
