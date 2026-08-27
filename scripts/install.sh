@@ -115,6 +115,15 @@ if command -v wget >/dev/null 2>&1; then
   fi
 fi
 
+# Downloads go through curl when it exists. Only a curl-less host running a wget
+# without --https-only is unprotected, and it is told so rather than left to
+# assume the checksum gate covers it -- SHA256SUMS travels the same channel.
+if ! command -v curl >/dev/null 2>&1 && [ -z "${WGET_HTTPS_ONLY}" ]; then
+  echo "Warning: this wget cannot enforce https (it has no --https-only), so a" >&2
+  echo "  redirect to plain http would be followed. Install curl for a protected" >&2
+  echo "  download." >&2
+fi
+
 # Get latest version from GitHub
 get_latest_version() {
   if command -v curl >/dev/null 2>&1; then
@@ -249,8 +258,9 @@ main() {
     sleep 1
   done
 
-  wait $PID
-  if [ $? -ne 0 ]; then
+  # `wait $PID` is a simple command: under `set -e` a non-zero status exits the
+  # shell immediately, so the branch below is only reachable via `if !`.
+  if ! wait $PID; then
     printf "\r${ORANGE}Install failed${NC}                              \n"
     exit 1
   fi

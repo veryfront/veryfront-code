@@ -232,6 +232,10 @@ const spaceArmedImages = new WeakSet<Element>();
 export function handleImageActivationKeyDown(
   event: React.KeyboardEvent<HTMLImageElement>,
 ): void {
+  // An IME reports the composing keystroke on the element; committing a
+  // candidate with Enter or Space must not activate the image.
+  if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+
   if (event.key === "Enter") {
     event.preventDefault();
     event.currentTarget.click();

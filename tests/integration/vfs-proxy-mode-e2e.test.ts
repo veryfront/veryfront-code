@@ -16,13 +16,14 @@ import { exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { load as loadEnv } from "#veryfront/platform/compat/std/dotenv.ts";
 import { withoutHostBinaryInfraEnv, withProxyModeControlPlaneKey } from "../_helpers/proxy-mode.ts";
-import { computeSourceHash } from "../e2e/setup/binary.ts";
+import { computeSourceHash, E2E_BINARY_DIR } from "../e2e/setup/binary.ts";
 
 try {
   await loadEnv({ export: true, allowEmptyValues: true, examplePath: null });
 } catch { /* no .env */ }
 
-const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ?? `/tmp/veryfront-vfs-e2e-bin-${Deno.pid}`;
+const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ??
+  join(E2E_BINARY_DIR, `veryfront-vfs-e2e-bin-${Deno.pid}`);
 const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
 const VERYFRONT_API_TOKEN = Deno.env.get("VERYFRONT_API_TOKEN");
 
@@ -105,6 +106,8 @@ async function ensureBinaryCompiled(): Promise<void> {
   }
 
   if (binaryExists) await Deno.remove(BINARY_PATH);
+
+  await Deno.mkdir(E2E_BINARY_DIR, { recursive: true });
 
   const prep = await new Deno.Command(denoPath, {
     args: ["task", "build:prepare"],

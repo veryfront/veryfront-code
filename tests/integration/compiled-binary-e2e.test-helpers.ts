@@ -9,9 +9,10 @@ import {
   launchChromium,
 } from "../_helpers/playwright.ts";
 import { withoutHostBinaryInfraEnv, withProxyModeControlPlaneKey } from "../_helpers/proxy-mode.ts";
-import { computeSourceHash } from "../e2e/setup/binary.ts";
+import { computeSourceHash, E2E_BINARY_DIR } from "../e2e/setup/binary.ts";
 
-export const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ?? `/tmp/veryfront-e2e-bin-${Deno.pid}`;
+export const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ??
+  join(E2E_BINARY_DIR, `veryfront-e2e-bin-${Deno.pid}`);
 export const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
 
 let binaryTestCacheRoot: string | undefined;
@@ -73,6 +74,8 @@ export async function ensureBinaryCompiled(): Promise<void> {
 
   if (forceFresh) console.log("🗑️  Force fresh build (VERYFRONT_BINARY_FRESH=1)");
   if (binaryExists) await Deno.remove(BINARY_PATH);
+
+  await Deno.mkdir(E2E_BINARY_DIR, { recursive: true });
 
   // Run the same pre-build pipeline used by distribution builds
   console.log("📦 Preparing build artifacts...");
