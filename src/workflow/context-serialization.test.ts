@@ -424,6 +424,7 @@ describe("serializeWorkflowContext", () => {
           VeryfrontError,
         );
 
+        assertInstanceOf(error, VeryfrontError);
         assertStringIncludes(error.message, "property attributes");
       }
     });
@@ -442,6 +443,7 @@ describe("serializeWorkflowContext", () => {
         VeryfrontError,
       );
 
+      assertInstanceOf(error, VeryfrontError);
       assertStringIncludes(error.message, "array length property");
     });
 
@@ -459,6 +461,7 @@ describe("serializeWorkflowContext", () => {
         VeryfrontError,
       );
 
+      assertInstanceOf(error, VeryfrontError);
       assertStringIncludes(error.message, "strictContext");
       assertStringIncludes(error.message, "object");
     });
@@ -982,6 +985,7 @@ describe("serializeWorkflowContext", () => {
         VeryfrontError,
       );
 
+      assertInstanceOf(error, VeryfrontError);
       assertStringIncludes(error.message, "circular reference");
     });
 
