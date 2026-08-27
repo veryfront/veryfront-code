@@ -1,7 +1,9 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import {
+  rewriteImportMetaLocations,
   rewriteUnboundCommonJsDynamicRequire,
+  usesUnboundCommonJsModule,
 } from "#veryfront/routing/api/module-loader/source-capability-analyzer.ts";
 
 it("rewrites dynamic CommonJS loads without mutable string intrinsics", async () => {
@@ -22,6 +24,17 @@ it("rewrites dynamic CommonJS loads without mutable string intrinsics", async ()
         "__moduleRequire",
       ),
       expected,
+    );
+    assertEquals(
+      await usesUnboundCommonJsModule("module.exports = module.filename;"),
+      true,
+    );
+    assertEquals(
+      await rewriteImportMetaLocations(
+        "const url = import.meta.url;",
+        "file:///project/route.ts",
+      ),
+      'const url = "file:///project/route.ts";',
     );
   } finally {
     String.prototype.includes = originalIncludes;

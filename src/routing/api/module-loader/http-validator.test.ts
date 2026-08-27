@@ -337,6 +337,25 @@ describe("rewriteImportMetaLocations", () => {
     );
   });
 
+  it("binds whole import.meta references to the declaring module", async () => {
+    const moduleUrl = "file:///project/lib/helper.ts";
+    const source = "const meta = import.meta; const { url, resolve } = meta;";
+
+    assertEquals(
+      await rewriteImportMetaLocations(
+        source,
+        moduleUrl,
+        undefined,
+        undefined,
+        undefined,
+        () => "resolveLater",
+      ),
+      'const meta = ({ __proto__: null, url: "file:///project/lib/helper.ts", dirname: "/project/lib", ' +
+        'filename: "/project/lib/helper.ts", resolve: resolveLater }); ' +
+        "const { url, resolve } = meta;",
+    );
+  });
+
   it("rebinds nested import.meta locations in computed resolve arguments", async () => {
     const moduleUrl = "file:///project/lib/helper.ts";
     const source =

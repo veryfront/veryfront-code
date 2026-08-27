@@ -222,7 +222,7 @@ export type ImportMetaResolveReferenceRewriter = (
 
 /** Identify a real unbound CommonJS `module` reference without matching inert text. */
 export async function usesUnboundCommonJsModule(source: string): Promise<boolean | null> {
-  if (!source.includes("module")) return false;
+  if (!(ReflectApply(StringPrototypeIncludes, source, ["module"]) as boolean)) return false;
   const program = await parseSource(source);
   if (program === null) return null;
 
@@ -464,9 +464,14 @@ export async function rewriteImportMetaLocations(
   rewriteResolveArgument?: ImportMetaResolveArgumentRewriter,
   rewriteResolveReference?: ImportMetaResolveReferenceRewriter,
 ): Promise<string | null> {
-  if (!source.includes(IMPORT_KEYWORD)) return source;
-  const importIndex = source.indexOf(IMPORT_KEYWORD);
-  if (!source.includes(META_KEYWORD, importIndex + IMPORT_KEYWORD.length)) return source;
+  if (!(ReflectApply(StringPrototypeIncludes, source, [IMPORT_KEYWORD]) as boolean)) return source;
+  const importIndex = ReflectApply(StringPrototypeIndexOf, source, [IMPORT_KEYWORD]) as number;
+  if (
+    !(ReflectApply(StringPrototypeIncludes, source, [
+      META_KEYWORD,
+      importIndex + IMPORT_KEYWORD.length,
+    ]) as boolean)
+  ) return source;
   const program = await parseSource(source);
   if (program === null) return null;
 
@@ -580,6 +585,23 @@ export async function rewriteImportMetaLocations(
         start: node.start,
         end: node.end,
         value: importMetaPathValue(moduleUrl, importMetaPath),
+      });
+      return;
+    }
+    if (isImportMeta(node) && hasSourceRange(node, source.length)) {
+      if (!rewriteResolveReference) {
+        unsupportedResolve = true;
+        return;
+      }
+      pendingResolveCallRewrites.push({
+        start: node.start,
+        end: node.end,
+        replacement: (async () => {
+          const resolve = await rewriteResolveReference(moduleUrl);
+          return `({ __proto__: null, url: ${safeStringLiteral(moduleUrl)}, dirname: ${
+            importMetaPathValue(moduleUrl, "dirname")
+          }, filename: ${importMetaPathValue(moduleUrl, "filename")}, resolve: ${resolve} })`;
+        })(),
       });
       return;
     }
@@ -3038,6 +3060,14 @@ function isImportMetaUrl(node: ASTNode | undefined): boolean {
   return isImportMetaMember(node, "url");
 }
 
+function isImportMeta(node: ASTNode | undefined): boolean {
+  if (!node) return false;
+  const expression = unwrapExpression(node);
+  return expression.type === "MetaProperty" && isNode(expression.meta) &&
+    expression.meta.name === "import" && isNode(expression.property) &&
+    expression.property.name === "meta";
+}
+
 function isImportMetaResolve(node: ASTNode | undefined): boolean {
   return isImportMetaMember(node, "resolve");
 }
@@ -3056,8 +3086,7 @@ function isImportMetaMember(node: ASTNode | undefined, propertyName: string): bo
     memberPropertyName(expression) !== propertyName || !isNode(expression.object)
   ) return false;
   const object = unwrapExpression(expression.object);
-  return object.type === "MetaProperty" && isNode(object.meta) && object.meta.name === "import" &&
-    isNode(object.property) && object.property.name === "meta";
+  return isImportMeta(object);
 }
 
 const TS_EXPRESSION_WRAPPER_TYPES = new Set([

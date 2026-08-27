@@ -87,6 +87,7 @@ const IntrinsicSet = Set;
 const ArrayIsArray = Array.isArray;
 const IntrinsicPromise = Promise;
 const IntrinsicString = String;
+const IntrinsicTypeError = TypeError;
 const IntrinsicJSON = JSON;
 const IntrinsicTextDecoder = TextDecoder;
 const IntrinsicErrorPrototype = Error.prototype;
@@ -172,6 +173,22 @@ const CapturedNodeExecArgv: readonly string[] = (() => {
   }
   return ReflectApply(ObjectFreeze, Object, [copy]) as readonly string[];
 })();
+const featuresDescriptor = capturedProcess
+  ? ObjectGetOwnPropertyDescriptor(capturedProcess, "features")
+  : undefined;
+const featuresValue = featuresDescriptor && "value" in featuresDescriptor
+  ? featuresDescriptor.value
+  : featuresDescriptor && typeof featuresDescriptor.get === "function"
+  ? ReflectApply(featuresDescriptor.get, capturedProcess, [])
+  : undefined;
+const requireModuleDescriptor = typeof featuresValue === "object" && featuresValue !== null
+  ? ObjectGetOwnPropertyDescriptor(featuresValue, "require_module")
+  : undefined;
+const CapturedNodeRequireModule = requireModuleDescriptor && "value" in requireModuleDescriptor
+  ? requireModuleDescriptor.value === true
+  : requireModuleDescriptor && typeof requireModuleDescriptor.get === "function"
+  ? ReflectApply(requireModuleDescriptor.get, featuresValue, []) === true
+  : false;
 const CapturedNodeOptions = isNode ? getHostEnv("NODE_OPTIONS") : undefined;
 const bunDescriptor = ObjectGetOwnPropertyDescriptor(globalThis, "Bun");
 const CapturedBun = bunDescriptor && "value" in bunDescriptor ? bunDescriptor.value : undefined;
@@ -3087,12 +3104,13 @@ type UnresolvedDynamicProjectConfigImportResolver = (
 ) => string;
 type ResolvedProjectConfigImportObserver = (specifier: string) => void | Promise<void>;
 
-const PROJECT_ESM_EXPORT_CONDITIONS: ReadonlySet<string> = new IntrinsicSet([
-  "deno",
-  "node",
-  "import",
-  "module-sync",
-]);
+const PROJECT_ESM_EXPORT_CONDITIONS: ReadonlySet<string> = (() => {
+  const conditions = new IntrinsicSet(["deno", "node", "import"]);
+  if (!isNode || CapturedNodeRequireModule) {
+    ReflectApply(SetPrototypeAdd, conditions, ["module-sync"]);
+  }
+  return conditions;
+})();
 
 type ProjectPackageManifest = Readonly<{
   directory: string;
@@ -3914,7 +3932,8 @@ export async function transpileConfigSourceForImport(
 }
 
 function isLocalProjectConfigSpecifier(specifier: string): boolean {
-  return ReflectApply(StringPrototypeStartsWith, specifier, ["./"]) as boolean ||
+  return specifier === "." || specifier === ".." ||
+    ReflectApply(StringPrototypeStartsWith, specifier, ["./"]) as boolean ||
     ReflectApply(StringPrototypeStartsWith, specifier, ["../"]) as boolean ||
     isAbsolute(specifier);
 }
@@ -3940,6 +3959,90 @@ async function rejectComputedConfigDynamicImports(source: string): Promise<void>
       );
     }
   }
+}
+
+let stagedConfigDynamicImportBridgeKeyPromise: Promise<string> | undefined;
+
+function getStagedConfigDynamicImportBridgeKey(): Promise<string> {
+  stagedConfigDynamicImportBridgeKeyPromise ??= (async () => {
+    try {
+      const uuid = ReflectApply(CryptoRandomUUID, IntrinsicCrypto, []) as string;
+      const bridgeKey = `__veryfrontConfigDynamicImportV1:${uuid}`;
+      const resolvers = new IntrinsicMap<string, Promise<ProjectConfigImportResolver>>();
+      const resolverFor = (moduleUrl: string): Promise<ProjectConfigImportResolver> => {
+        const cached = mapGet(resolvers, moduleUrl);
+        if (cached) return cached;
+        const pending = createProjectConfigImportResolver(fromFileUrl(new IntrinsicURL(moduleUrl)));
+        mapSet(resolvers, moduleUrl, pending);
+        return pending;
+      };
+      const load = async (
+        specifier: unknown,
+        moduleUrl: string,
+        options?: ImportCallOptions,
+      ): Promise<unknown> => {
+        if (typeof specifier === "symbol") {
+          throw new IntrinsicTypeError("Cannot convert a Symbol value to a string");
+        }
+        const stringSpecifier = typeof specifier === "string"
+          ? specifier
+          : ReflectApply(IntrinsicString, undefined, [specifier]) as string;
+        const resolver = await resolverFor(moduleUrl);
+        const resolved = await resolver(stringSpecifier);
+        return options === undefined ? await import(resolved) : await import(resolved, options);
+      };
+      ObjectDefineProperty(globalThis, bridgeKey, {
+        configurable: false,
+        enumerable: false,
+        writable: false,
+        value: freezeObject({ load }),
+      });
+      return bridgeKey;
+    } catch (error) {
+      stagedConfigDynamicImportBridgeKeyPromise = undefined;
+      throw error;
+    }
+  })();
+  return stagedConfigDynamicImportBridgeKeyPromise;
+}
+
+async function rewriteComputedStagedConfigImports(
+  source: string,
+  moduleUrl: string,
+): Promise<string> {
+  const lexer = await getConfigModuleLexer();
+  await lexer.init?.();
+  const imports = lexer.parse(source);
+  const replacements: Array<{ start: number; end: number }> = [];
+  for (let index = 0; index < imports.length; index++) {
+    const imported = imports[index];
+    if (!imported || imported.d < 0 || imported.n !== undefined) continue;
+    replacements[replacements.length] = { start: imported.ss, end: imported.d };
+  }
+  if (replacements.length === 0) return source;
+
+  const bridgeIdentifier = uniqueConfigHelperName(source, "dynamic_import");
+  let rewritten = source;
+  for (let index = replacements.length - 1; index >= 0; index--) {
+    const replacement = replacements[index]!;
+    rewritten = stringSlice(rewritten, 0, replacement.start) + `${bridgeIdentifier}.load` +
+      stringSlice(rewritten, replacement.end);
+  }
+
+  const bridgeKey = await getStagedConfigDynamicImportBridgeKey();
+  const bridgeSource = `const bridge = globalThis[${configCodeLiteral(bridgeKey)}];\n` +
+    `export default { load(specifier, options) { return bridge.load(specifier, ${
+      configCodeLiteral(moduleUrl)
+    }, options); } };\n`;
+  const bridgeUrl = `data:text/javascript,${ReflectApply(EncodeURIComponent, undefined, [
+    bridgeSource,
+  ]) as string}`;
+  const bridgeImport = `import ${bridgeIdentifier} from ${configCodeLiteral(bridgeUrl)};\n`;
+  if (!stringStartsWith(rewritten, "#!")) return bridgeImport + rewritten;
+  const hashbangEnd = stringIndexOf(rewritten, "\n");
+  if (hashbangEnd < 0) return `${rewritten}\n${bridgeImport}`;
+  return stringSlice(rewritten, 0, hashbangEnd + 1) + bridgeImport +
+    stringSlice(rewritten, hashbangEnd + 1);
 }
 
 type ConfigCodeLiteral = string | number | boolean | null;
@@ -4288,6 +4391,7 @@ function nodeConfigPackageConditions(
   execArgv: readonly string[],
   nodeOptions: string | undefined,
   moduleCondition: "import" | "require" | null = "import",
+  moduleSync = CapturedNodeRequireModule,
 ): string[] {
   const customConditions: string[] = [];
   let addons = true;
@@ -4331,6 +4435,7 @@ function nodeConfigPackageConditions(
 
   const conditions = ["node"];
   if (moduleCondition !== null) conditions[conditions.length] = moduleCondition;
+  if (moduleSync) conditions[conditions.length] = "module-sync";
   if (addons) conditions[conditions.length] = "node-addons";
   for (let index = 0; index < customConditions.length; index++) {
     const condition = customConditions[index]!;
@@ -4358,16 +4463,18 @@ export function __getNodeConfigPackageConditionsForTests(
   execArgv: readonly string[],
   nodeOptions: string | undefined,
   moduleCondition: "import" | "require" = "import",
+  moduleSync = false,
 ): string[] {
-  return nodeConfigPackageConditions(execArgv, nodeOptions, moduleCondition);
+  return nodeConfigPackageConditions(execArgv, nodeOptions, moduleCondition, moduleSync);
 }
 
 /** @internal */
 export function __getNodeConfigBundleConditionsForTests(
   execArgv: readonly string[],
   nodeOptions: string | undefined,
+  moduleSync = false,
 ): string[] {
-  return nodeConfigPackageConditions(execArgv, nodeOptions, null);
+  return nodeConfigPackageConditions(execArgv, nodeOptions, null, moduleSync);
 }
 
 function isConfigPackageConditionActive(
@@ -5127,17 +5234,26 @@ async function bindCommonJsConfigModuleLocations(
     [requireName],
   ) as boolean;
   let prelude = "";
+  let modulePathsDeclaration = "";
   if (usesProjectRequire || usesModule) {
     const createRequireName = uniqueConfigHelperName(
       `${source}\n${requireName}\n${recordRequireName}`,
       "create_require",
     );
-    const nativeRequireName = uniqueConfigHelperName(
+    const moduleConstructorName = uniqueConfigHelperName(
       `${source}\n${requireName}\n${recordRequireName}\n${createRequireName}`,
+      "module_constructor",
+    );
+    const nativeRequireName = uniqueConfigHelperName(
+      `${source}\n${requireName}\n${recordRequireName}\n${createRequireName}\n${moduleConstructorName}`,
       "native_require",
     );
+    const nativeModuleName = uniqueConfigHelperName(
+      `${source}\n${requireName}\n${recordRequireName}\n${createRequireName}\n${moduleConstructorName}\n${nativeRequireName}`,
+      "native_module",
+    );
     const requireCacheName = uniqueConfigHelperName(
-      `${source}\n${requireName}\n${recordRequireName}\n${createRequireName}\n${nativeRequireName}`,
+      `${source}\n${requireName}\n${recordRequireName}\n${createRequireName}\n${moduleConstructorName}\n${nativeRequireName}\n${nativeModuleName}`,
       "require_cache",
     );
     const requireRegistryName = uniqueConfigHelperName(
@@ -5148,14 +5264,23 @@ async function bindCommonJsConfigModuleLocations(
       `${source}\n${requireName}\n${recordRequireName}\n${createRequireName}\n${nativeRequireName}\n${requireCacheName}\n${requireRegistryName}`,
       "resolve_require",
     );
-    prelude = `import { createRequire as ${createRequireName} } from "node:module";\n` +
+    prelude =
+      `import { createRequire as ${createRequireName}, Module as ${moduleConstructorName} } from "node:module";\n` +
       `const ${nativeRequireName} = ${createRequireName}(${
         configCodeLiteral(toFileUrl(modulePath).href)
+      });\n` +
+      `const ${nativeModuleName} = new ${moduleConstructorName}(${
+        configCodeLiteral(modulePath)
+      });\n` +
+      `${nativeModuleName}.filename = ${configCodeLiteral(modulePath)};\n` +
+      `${nativeModuleName}.paths = ${moduleConstructorName}._nodeModulePaths(${
+        configCodeLiteral(dirname(modulePath))
       });\n`;
     prelude += `let ${requireCacheName};\n` +
       `let ${requireRegistryName};\n` +
       `const ${resolveRequireName} = (specifier) => {\n` +
-      `  try { return ${nativeRequireName}.resolve(specifier); } catch { return specifier; }\n` +
+      (usesModule ? `  ${nativeModuleName}.paths = module.paths;\n` : "") +
+      `  try { return ${moduleConstructorName}._resolveFilename(specifier, ${nativeModuleName}); } catch { return specifier; }\n` +
       `};\n` +
       `const ${requireName} = (specifier) => {\n` +
       `  const resolved = ${resolveRequireName}(specifier);\n` +
@@ -5173,11 +5298,13 @@ async function bindCommonJsConfigModuleLocations(
       `    }\n` +
       `    entry = entry.next;\n` +
       `  }\n` +
-      `  const value = ${nativeRequireName}(specifier);\n` +
+      (usesModule ? `  ${nativeModuleName}.paths = module.paths;\n` : "") +
+      `  const value = ${nativeModuleName}.require(specifier);\n` +
       `  ${requireCacheName} = { resolved, value, next: ${requireCacheName} };\n` +
       `  return value;\n` +
       `};\n` +
-      `${requireName}.resolve = ${nativeRequireName}.resolve;\n` +
+      `${requireName}.resolve = ${resolveRequireName};\n` +
+      `${requireName}.resolve.paths = ${nativeRequireName}.resolve.paths;\n` +
       `${requireName}.cache = ${nativeRequireName}.cache;\n` +
       `${requireName}.extensions = ${nativeRequireName}.extensions;\n` +
       `${requireName}.main = ${nativeRequireName}.main;\n` +
@@ -5190,6 +5317,7 @@ async function bindCommonJsConfigModuleLocations(
       `  }\n` +
       `  ${requireRegistryName} = { resolved, load, next: ${requireRegistryName} };\n` +
       `};\n`;
+    if (usesModule) modulePathsDeclaration = `module.paths = ${nativeModuleName}.paths;\n`;
   }
 
   const usesFilename = ReflectApply(StringPrototypeIncludes, source, ["__filename"]) as boolean;
@@ -5209,6 +5337,7 @@ async function bindCommonJsConfigModuleLocations(
   let declarations = usesModule
     ? `module.filename = ${configCodeLiteral(modulePath)};\n` +
       `module.path = ${configCodeLiteral(dirname(modulePath))};\n` +
+      modulePathsDeclaration +
       `module.require = ${requireName};`
     : "";
   if (usesFilename) {
@@ -5313,6 +5442,10 @@ export async function bundleProjectConfigSourceForImport(
     // exists on disk. Keep that existing path while still canonicalizing real
     // symlinked entries.
   }
+  const entryLoader = configSourceLoader(canonicalConfigPath);
+  if (entryLoader === "ts" || entryLoader === "tsx") {
+    await rejectComputedConfigDynamicImports(source);
+  }
   const result = await bundle({
     bundle: true,
     write: false,
@@ -5395,13 +5528,23 @@ export async function bundleProjectConfigSourceForImport(
               canonicalConfigPath,
               false,
             );
+            const locatedSource = await rewriteProjectConfigModuleLocations(
+              boundSource,
+              canonicalConfigPath,
+              resolveImportMetaSpecifier,
+            );
+            const loader = configSourceLoader(canonicalConfigPath);
+            if (loader === "ts" || loader === "tsx") {
+              await rejectComputedConfigDynamicImports(locatedSource);
+            }
             return {
-              contents: await rewriteProjectConfigModuleLocations(
-                boundSource,
-                canonicalConfigPath,
-                resolveImportMetaSpecifier,
-              ),
-              loader: configSourceLoader(canonicalConfigPath),
+              contents: loader === "ts" || loader === "tsx"
+                ? locatedSource
+                : await rewriteComputedStagedConfigImports(
+                  locatedSource,
+                  toFileUrl(canonicalConfigPath).href,
+                ),
+              loader,
               resolveDir: configDir,
             };
           },
@@ -5429,10 +5572,20 @@ export async function bundleProjectConfigSourceForImport(
             resolveImportMetaSpecifier,
             args.suffix ?? "",
           );
-          if (contents === moduleSource) return;
+          const loader = configSourceLoader(args.path);
+          if (loader === "ts" || loader === "tsx") {
+            await rejectComputedConfigDynamicImports(contents);
+          }
+          const preparedContents = loader === "ts" || loader === "tsx"
+            ? contents
+            : await rewriteComputedStagedConfigImports(
+              contents,
+              `${toFileUrl(args.path).href}${args.suffix ?? ""}`,
+            );
+          if (preparedContents === moduleSource) return;
           return {
-            contents,
-            loader: configSourceLoader(args.path),
+            contents: preparedContents,
+            loader,
             resolveDir: dirname(args.path),
           };
         });
@@ -5594,7 +5747,6 @@ export async function bundleProjectConfigSourceForImport(
 
   const output = result.outputFiles[0];
   if (!output) throw new TypeError("Config bundler did not produce JavaScript output");
-  await rejectComputedConfigDynamicImports(output.text);
   return output.text;
 }
 

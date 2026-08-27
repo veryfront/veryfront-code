@@ -975,6 +975,45 @@ export default config as const;
       }, { prefix: "vf-config-staged-cjs-module-paths-" });
     });
 
+    it("preserves and applies CommonJS module search paths while staging", async () => {
+      await withTempDir(async (projectDir) => {
+        const customModules = `${projectDir}/custom_modules`;
+        const dependencyDir = `${customModules}/custom-config-dependency`;
+        await mkdir(dependencyDir, { recursive: true });
+        await writeTextFile(
+          `${dependencyDir}/package.json`,
+          JSON.stringify({ name: "custom-config-dependency", main: "index.cjs" }),
+        );
+        await writeTextFile(`${dependencyDir}/index.cjs`, 'module.exports = "custom";\n');
+
+        TestObjectDefineProperty(globalThis, "__veryfrontConfigModulePathName", {
+          configurable: true,
+          value: "custom-config-dependency",
+        });
+        try {
+          const config = await loadConfigFromTempFile(
+            `module.paths.unshift(${JSON.stringify(customModules)});\n` +
+              "module.exports = {\n" +
+              "  value: module.require(globalThis.__veryfrontConfigModulePathName),\n" +
+              "  paths: module.paths,\n" +
+              "};",
+            `${projectDir}/veryfront.config.cjs`,
+            (tempFile) => toFileUrl(tempFile).href,
+            rewriteBareVeryfrontConfigImports,
+            true,
+          ) as { value: string; paths: string[] };
+
+          assertEquals(config.value, "custom");
+          assertEquals(config.paths[0], customModules);
+        } finally {
+          TestReflectApply(TestReflectDeleteProperty, Reflect, [
+            globalThis,
+            "__veryfrontConfigModulePathName",
+          ]);
+        }
+      }, { prefix: "vf-config-staged-cjs-module-search-paths-" });
+    });
+
     it("preserves CommonJS module.require while staging", async () => {
       await withTempDir(async (projectDir) => {
         await writeTextFile(`${projectDir}/package.json`, JSON.stringify({ type: "commonjs" }));
@@ -1539,6 +1578,46 @@ export default config as const;
       }, { prefix: "vf-config-detached-resolve-" });
     });
 
+    it("binds aliased and destructured import.meta objects to their source module", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        const assetPath = `${projectDir}/asset.txt`;
+        await writeTextFile(assetPath, "asset\n");
+
+        const result = await bundleProjectConfigSourceForImport(
+          "const metadata = import.meta;\n" +
+            "const { url, dirname, filename, resolve } = metadata;\n" +
+            'export default { url, dirname, filename, resolved: resolve("./asset.txt") };',
+          configPath,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { dirname: string; filename: string; resolved: string; url: string };
+        };
+
+        assertEquals(module.default.url, toFileUrl(configPath).href);
+        assertEquals(module.default.dirname, projectDir);
+        assertEquals(module.default.filename, configPath);
+        assertEquals(module.default.resolved, toFileUrl(assetPath).href);
+      }, { prefix: "vf-config-whole-import-meta-" });
+    });
+
+    it("resolves exact dot segments as module-relative URLs", async () => {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/nested/veryfront.config.ts`;
+        await mkdir(dirname(configPath), { recursive: true });
+        const result = await bundleProjectConfigSourceForImport(
+          'export default { current: import.meta.resolve("."), parent: import.meta.resolve("..") };',
+          configPath,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { current: string; parent: string };
+        };
+
+        assertEquals(module.default.current, new URL(".", toFileUrl(configPath)).href);
+        assertEquals(module.default.parent, new URL("..", toFileUrl(configPath)).href);
+      }, { prefix: "vf-config-dot-resolve-" });
+    });
+
     it("preserves suffixes on absolute import.meta.resolve paths", async () => {
       await withTempDir(async (projectDir) => {
         const assetPath = `${projectDir}/asset.js`;
@@ -1727,6 +1806,21 @@ export default config as const;
         assertEquals(module.default.resolved, "node:fs");
         assertEquals(module.default.failureCode, "ERR_INVALID_PACKAGE_TARGET");
       }, { prefix: "vf-config-package-import-builtin-" });
+    });
+
+    it("activates module-sync on Node releases that support synchronous ESM", () => {
+      assertEquals(
+        __getNodeConfigPackageConditionsForTests([], undefined, "import", true),
+        ["node", "import", "module-sync", "node-addons"],
+      );
+      assertEquals(
+        __getNodeConfigBundleConditionsForTests([], undefined, true),
+        ["node", "module-sync", "node-addons"],
+      );
+      assertEquals(
+        __getNodeConfigPackageConditionsForTests([], undefined, "import", false),
+        ["node", "import", "node-addons"],
+      );
     });
 
     it("rejects invalid bare package import targets before redirecting", async () => {
@@ -3301,6 +3395,26 @@ export default config as const;
         unregisterExtensionContract("Bundler");
         if (previousBundler) registerExtensionContract("Bundler", previousBundler);
       }
+    });
+
+    it("preserves module-relative computed dynamic imports in JavaScript configs", async () => {
+      await withTempDir(async (projectDir) => {
+        await writeTextFile(
+          `${projectDir}/config-helper.mjs`,
+          'export const value = "computed JavaScript import";\n',
+        );
+        const result = await bundleProjectConfigSourceForImport(
+          'const selected = "./config-helper.mjs";\n' +
+            "const loaded = await import(selected);\n" +
+            "export default { value: loaded.value };",
+          `${projectDir}/veryfront.config.mjs`,
+        );
+        const module = await import(`data:application/javascript;base64,${btoa(result)}`) as {
+          default: { value: string };
+        };
+
+        assertEquals(module.default.value, "computed JavaScript import");
+      }, { prefix: "vf-config-computed-js-import-" });
     });
 
     it("rejects computed dynamic imports instead of rebasing them to the staging directory", async () => {
