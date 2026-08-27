@@ -74,6 +74,10 @@ describe("workflow context serialization with hostile ambient intrinsics", () =>
         ["map", new Map([["a", 1]])],
         ["set", new Set([1])],
         ["regexp", /abc/],
+        ["error", new Error("not persisted as an error")],
+        ["typedArray", new Uint8Array([1, 2])],
+        ["arrayBuffer", new ArrayBuffer(2)],
+        ["dataView", new DataView(new ArrayBuffer(2))],
       ]) {
         try {
           serializeWorkflowContext(
@@ -219,6 +223,75 @@ describe("workflow context serialization with hostile ambient intrinsics", () =>
     assertEquals(result.canIdentifyProxyWithoutHooks, false);
     assertStringIncludes(result.message, "strictContext");
     assertStringIncludes(result.message, "context.step.value");
+    assertStringIncludes(result.message, "symbol-keyed property");
+  });
+
+  it("rejects enumerable array symbol properties in strict mode when brand checks are unavailable", async () => {
+    const script = `
+      Object.defineProperty(globalThis, "caches", {
+        configurable: true,
+        value: {},
+      });
+      Object.defineProperty(globalThis, "WebSocketPair", {
+        configurable: true,
+        value: function WebSocketPair() {},
+      });
+
+      const { canIdentifyProxyWithoutHooks } = await import(
+        "./src/platform/compat/error-introspection.ts"
+      );
+      const { serializeWorkflowContext } = await import(
+        "./src/workflow/context-serialization.ts"
+      );
+
+      const target = [1, 2];
+      Object.defineProperty(target, Symbol("required"), {
+        value: 1,
+        enumerable: true,
+      });
+      let ownKeysCalls = 0;
+      const rows = new Proxy(target, {
+        get: Reflect.get,
+        getOwnPropertyDescriptor: Reflect.getOwnPropertyDescriptor,
+        ownKeys(target) {
+          ownKeysCalls += 1;
+          return Reflect.ownKeys(target);
+        },
+      });
+
+      try {
+        serializeWorkflowContext(
+          { input: {}, step: { rows } },
+          "run-edge-strict",
+          { strictContext: true },
+        );
+        console.log(JSON.stringify({ canIdentifyProxyWithoutHooks, message: "accepted", ownKeysCalls }));
+      } catch (error) {
+        console.log(JSON.stringify({
+          canIdentifyProxyWithoutHooks,
+          message: error instanceof Error ? error.message : String(error),
+          ownKeysCalls,
+        }));
+      }
+    `;
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["eval", "--config=deno.json", script],
+      cwd: new URL("../../../", import.meta.url),
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const stderr = new TextDecoder().decode(output.stderr);
+    assertEquals(output.code, 0, stderr);
+    const result = JSON.parse(new TextDecoder().decode(output.stdout)) as {
+      canIdentifyProxyWithoutHooks: boolean;
+      message: string;
+      ownKeysCalls: number;
+    };
+
+    assertEquals(result.canIdentifyProxyWithoutHooks, false);
+    assertEquals(result.ownKeysCalls, 1);
+    assertStringIncludes(result.message, "strictContext");
+    assertStringIncludes(result.message, "context.step.rows");
     assertStringIncludes(result.message, "symbol-keyed property");
   });
 

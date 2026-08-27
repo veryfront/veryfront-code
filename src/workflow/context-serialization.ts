@@ -12,6 +12,12 @@ const arrayPrototype = Array.prototype;
 const BigIntValueOf = BigInt.prototype.valueOf;
 const BooleanValueOf = Boolean.prototype.valueOf;
 const dateGetTime = Date.prototype.getTime;
+const ErrorConstructor = Error as typeof Error & {
+  isError?: (value: unknown) => boolean;
+};
+const errorIsError = typeof ErrorConstructor.isError === "function"
+  ? ErrorConstructor.isError
+  : undefined;
 const jsonIsRawJSON = typeof (JSON as JsonRawSupport).isRawJSON === "function"
   ? (JSON as JsonRawSupport).isRawJSON
   : undefined;
@@ -26,9 +32,9 @@ const ObjectConstructor = Object;
 const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-const mapSizeGet = objectGetOwnPropertyDescriptor(Map.prototype, "size")?.get;
 const objectGetOwnPropertySymbols = Object.getOwnPropertySymbols;
 const objectGetPrototypeOf = Object.getPrototypeOf;
+const mapSizeGet = objectGetOwnPropertyDescriptor(Map.prototype, "size")?.get;
 const objectHasOwn = Object.hasOwn;
 const objectIs = Object.is;
 const objectKeys = Object.keys;
@@ -48,6 +54,19 @@ const setHas = Set.prototype.has;
 const StringConstructor = String;
 const StringValueOf = String.prototype.valueOf;
 const symbolToStringTag = Symbol.toStringTag;
+const typedArrayPrototype = objectGetPrototypeOf(Uint8Array.prototype);
+const typedArrayByteLengthGet = objectGetOwnPropertyDescriptor(
+  typedArrayPrototype,
+  "byteLength",
+)?.get;
+const arrayBufferByteLengthGet = objectGetOwnPropertyDescriptor(
+  ArrayBuffer.prototype,
+  "byteLength",
+)?.get;
+const dataViewByteLengthGet = objectGetOwnPropertyDescriptor(
+  DataView.prototype,
+  "byteLength",
+)?.get;
 
 function defineArrayElement<T>(values: T[], index: number, value: T): void {
   objectDefineProperty(values, index, {
@@ -178,10 +197,27 @@ function hasNativeSlot(
   }
 }
 
+function hasNativeBrand(
+  value: JsonTraversalReference,
+  predicate: ((value: unknown) => boolean) | undefined,
+  receiver: unknown,
+): boolean {
+  if (predicate === undefined) return false;
+  try {
+    return reflectApply(predicate, receiver, [value]) === true;
+  } catch {
+    return false;
+  }
+}
+
 function isKnownNonPlainBuiltin(value: JsonTraversalReference): boolean {
-  return hasNativeSlot(value, mapSizeGet) ||
+  return hasNativeBrand(value, errorIsError, ErrorConstructor) ||
+    hasNativeSlot(value, mapSizeGet) ||
     hasNativeSlot(value, setSizeGet) ||
-    hasNativeSlot(value, regExpSourceGet);
+    hasNativeSlot(value, regExpSourceGet) ||
+    hasNativeSlot(value, typedArrayByteLengthGet) ||
+    hasNativeSlot(value, arrayBufferByteLengthGet) ||
+    hasNativeSlot(value, dataViewByteLengthGet);
 }
 
 /** Whether a value is a plain `{}` object rather than a class instance. */
@@ -423,6 +459,49 @@ function normalizeAndFindUnrepresentableValues(
     }
   };
 
+  const recordArrayPropertiesFromOwnKeys = (
+    value: JsonTraversalReference,
+    path: string,
+    length: number,
+  ) => {
+    let ownKeys: Array<string | symbol>;
+    try {
+      ownKeys = reflectOwnKeys(value);
+    } catch {
+      return;
+    }
+    for (const ownKey of ownKeys) {
+      let descriptor: PropertyDescriptor | undefined;
+      try {
+        descriptor = objectGetOwnPropertyDescriptor(value, ownKey);
+      } catch {
+        continue;
+      }
+      if (descriptor?.enumerable !== true) continue;
+      if (typeof ownKey === "symbol") {
+        recordLossy(path, "symbol-keyed property");
+        continue;
+      }
+      if (!isSerializedArrayIndexKey(ownKey, length)) {
+        recordLossy(`${path}.${redactPathSegment(ownKey)}`, "array property");
+      }
+    }
+  };
+
+  const recordStrictArrayDiagnostics = (
+    value: JsonTraversalReference,
+    path: string,
+    length: number,
+  ) => {
+    if (!canIdentifyProxyWithoutHooks) {
+      recordArrayPropertiesFromOwnKeys(value, path, length);
+      return;
+    }
+    recordNamedArrayKeys(value, path, length);
+    recordArrayPrototype(value, path);
+    recordEnumerableSymbolKeys(value, path);
+  };
+
   const getEnumerableOwnStringKeysAndRecordSymbols = (
     value: JsonTraversalReference,
     path: string,
@@ -568,10 +647,9 @@ function normalizeAndFindUnrepresentableValues(
           );
         }
         if (options.strictContext === true) {
-          recordNamedArrayKeys(nested, path, length);
-          recordArrayPrototype(nested, path);
+          recordStrictArrayDiagnostics(nested, path, length);
         }
-        recordEnumerableSymbolKeys(nested, path);
+        if (options.strictContext !== true) recordEnumerableSymbolKeys(nested, path);
         return result;
       }
 
