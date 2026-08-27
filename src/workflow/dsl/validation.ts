@@ -1,5 +1,5 @@
 import { INVALID_ARGUMENT } from "#veryfront/errors";
-import type { WorkflowNode, WorkflowNodeConfig } from "../types.ts";
+import type { WorkflowDefinition, WorkflowNode, WorkflowNodeConfig } from "../types.ts";
 
 const numberIsSafeInteger = Number.isSafeInteger;
 const reflectApply = Reflect.apply;
@@ -59,6 +59,14 @@ export function collectWorkflowNodeIds(nodes: WorkflowNode[]): Set<string> {
         break;
       case "loop":
         if (Array.isArray(node.config.steps)) node.config.steps.forEach(visit);
+        break;
+      case "subWorkflow":
+        if (
+          typeof node.config.workflow !== "string" &&
+          Array.isArray(node.config.workflow.steps)
+        ) {
+          node.config.workflow.steps.forEach(visit);
+        }
         break;
     }
   };
@@ -126,7 +134,33 @@ export function rebaseCompositeDescendants(
           steps: rebaseWorkflowNodes(`${oldId}/`, `${newId}/`, config.steps),
         }
         : config;
+    case "subWorkflow":
+      return typeof config.workflow === "string" ? config : {
+        ...config,
+        workflow: rebaseWorkflowDefinition(
+          `${oldId}/`,
+          `${newId}/`,
+          config.workflow,
+        ),
+      };
     default:
       return config;
   }
+}
+
+export function namespaceWorkflowDefinition(
+  prefix: string,
+  definition: WorkflowDefinition,
+): WorkflowDefinition {
+  return rebaseWorkflowDefinition("", prefix, definition);
+}
+
+function rebaseWorkflowDefinition(
+  oldPrefix: string,
+  newPrefix: string,
+  definition: WorkflowDefinition,
+): WorkflowDefinition {
+  return Array.isArray(definition.steps)
+    ? { ...definition, steps: rebaseWorkflowNodes(oldPrefix, newPrefix, definition.steps) }
+    : definition;
 }

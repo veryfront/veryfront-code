@@ -396,11 +396,11 @@ async function reconcileNodeOutcome(
 
       const expectedWorkerId = run.workerId;
       const updated = await patchNodeOutcome(backend, input, run, expectedWorkerId);
-      if (!updated) {
-        const skipped = await skippedTerminalReconcileOutcome(backend, input.runId);
-        if (skipped) return skipped;
-        continue;
-      }
+      const skipped = updated
+        ? undefined
+        : await skippedTerminalReconcileOutcome(backend, input.runId);
+      if (skipped) return skipped;
+      if (!updated) continue;
       outcomeCommitted = true;
 
       const reconciledRun = await backend.getRun(input.runId);

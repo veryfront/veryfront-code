@@ -11,7 +11,11 @@ import { deriveNodeStatus } from "./utils.ts";
 import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
 import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
 import { applyRecordPatch, createRecordPatch, createSetContextPatch } from "./context-patch.ts";
-import { collectWorkflowNodeIds, rebaseCompositeDescendants } from "../../dsl/validation.ts";
+import {
+  collectWorkflowNodeIds,
+  namespaceWorkflowDefinition,
+  rebaseCompositeDescendants,
+} from "../../dsl/validation.ts";
 
 interface ExecuteMapNodeStrategyInput {
   node: WorkflowNode;
@@ -41,7 +45,7 @@ function createMapChildNodes(
         id: childId,
         config: {
           type: "subWorkflow",
-          workflow: config.processor,
+          workflow: namespaceWorkflowDefinition(`${childId}/`, config.processor),
           input: item,
           retry: config.retry,
           checkpoint: false,
