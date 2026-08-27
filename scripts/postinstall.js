@@ -122,7 +122,22 @@ async function install() {
     // Clean up unverified binary so the JS fallback is used instead
     try { if (existsSync(binPath)) unlinkSync(binPath); } catch {}
     // Graceful fallback - bundled JS CLI will be used instead
-    console.warn("⚠️  Binary download failed:", error.message);
+    // error.message can quote remote text (an HTTP status message, a Location
+    // header, the first token of a malformed SHA256SUMS), so neutralize every
+    // control character and line separator before it reaches the log, collapse
+    // the resulting runs, and cap the length. The explicit codepoint ranges
+    // match the CONTROL_CHARACTERS idiom in src/config/loader.ts, and name CR
+    // and LF outright so a reader -- and a taint analyzer -- can see the line
+    // terminators being removed. Newlines are not spared: the one multi-line
+    // message that lands here is built from local literals with hashes already
+    // matched against /^[0-9a-f]{64}$/, so it loses nothing but its line breaks,
+    // while sparing \n is exactly what would leave log forging open.
+    const reason = String(error.message)
+      .replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]+/g, " ")
+      .replace(/\s{2,}/g, " ")
+      .trim()
+      .slice(0, 500);
+    console.warn("⚠️  Binary download failed:", reason);
     console.warn("   Falling back to bundled JavaScript CLI (slower startup)");
     console.warn(`   Binary URL: ${url}`);
     // Don't exit with error - let npm install succeed

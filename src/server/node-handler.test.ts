@@ -76,6 +76,37 @@ function createFakeReq(
   } as unknown as import("node:http").IncomingMessage;
 }
 
+/**
+ * Serve one request through the listener and wait for the response.
+ *
+ * toNodeHandler returns a synchronous listener that fires the request without
+ * awaiting it, mirroring Node, which ignores whatever a request listener
+ * returns. The response settling is what marks the work done.
+ */
+async function runRequest(
+  nodeHandler: ReturnType<typeof toNodeHandler>,
+  req: import("node:http").IncomingMessage,
+  res: FakeRes,
+): Promise<void> {
+  nodeHandler(req, res as unknown as import("node:http").ServerResponse);
+  // Poll for a terminal state rather than awaiting a promise the response never
+  // resolves: a regression that stops the response terminating then fails this
+  // one case by name, instead of hanging the suite and skipping every later
+  // step. Polling also leaves no promise pending when the run ends.
+  const deadline = Date.now() + 5_000;
+  while (!res.ended && !res.destroyed) {
+    if (Date.now() > deadline) {
+      throw new Error("response was never ended or destroyed within 5s");
+    }
+    await tick();
+  }
+}
+
+/** Yield a macrotask turn, for a request that settles no response at all. */
+function tick(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 function decodeBody(res: FakeRes): string {
   const total = res.chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
   const joined = new Uint8Array(total);
@@ -121,10 +152,7 @@ describe("toNodeHandler", () => {
 
     const nodeHandler = toNodeHandler(handler);
     const res = createFakeRes();
-    await nodeHandler(
-      createFakeReq({ url: "/" }),
-      res as unknown as import("node:http").ServerResponse,
-    );
+    await runRequest(nodeHandler, createFakeReq({ url: "/" }), res);
 
     const cookies = collectSetCookies(res);
     assertEquals(cookies.length, 2);
@@ -171,10 +199,7 @@ describe("toNodeHandler", () => {
 
     const nodeHandler = toNodeHandler(handler);
     const res = createFakeRes();
-    await nodeHandler(
-      createFakeReq({ url: "/" }),
-      res as unknown as import("node:http").ServerResponse,
-    );
+    await runRequest(nodeHandler, createFakeReq({ url: "/" }), res);
 
     // Must not have fallen into the catch block and emitted a 500.
     assertEquals(res.statusCode, 200);
@@ -196,9 +221,10 @@ describe("toNodeHandler", () => {
 
     const nodeHandler = toNodeHandler(handler);
     const res = createFakeRes();
-    await nodeHandler(
+    await runRequest(
+      nodeHandler,
       createFakeReq({ url: "/", headers: { "x-multi": ["one", "two"] } }),
-      res as unknown as import("node:http").ServerResponse,
+      res,
     );
 
     // A collapsed-to-first-element bug would yield only "one".
@@ -214,9 +240,10 @@ describe("toNodeHandler", () => {
 
     const nodeHandler = toNodeHandler(handler);
     const res = createFakeRes();
-    await nodeHandler(
+    await runRequest(
+      nodeHandler,
       createFakeReq({ url: "/_projects", remoteAddress: "127.0.0.1" }),
-      res as unknown as import("node:http").ServerResponse,
+      res,
     );
 
     assertEquals(sawLoopbackPeer, true);
@@ -248,7 +275,7 @@ describe("toNodeHandler", () => {
 
     const nodeHandler = toNodeHandler(handler);
     const res = createFakeRes();
-    await nodeHandler(req, res as unknown as import("node:http").ServerResponse);
+    await runRequest(nodeHandler, req, res);
 
     assertEquals(
       res.statusCode,
@@ -273,10 +300,7 @@ describe("toNodeHandler", () => {
 
     const nodeHandler = toNodeHandler(handler);
     const res = createFakeRes();
-    await nodeHandler(
-      createFakeReq({ method: "HEAD", url: "/" }),
-      res as unknown as import("node:http").ServerResponse,
-    );
+    await runRequest(nodeHandler, createFakeReq({ method: "HEAD", url: "/" }), res);
 
     assertEquals(sawMethod, "HEAD", "the request method must be forwarded unchanged");
     assertEquals(sawBody, null, "a HEAD request must reach the handler with a null body");
@@ -293,10 +317,13 @@ describe("toNodeHandler", () => {
 
     const nodeHandler = toNodeHandler(handler);
     const res = createFakeRes();
-    await nodeHandler(
+    // The handler returns without touching the response, so there is nothing
+    // to settle on: let the in-flight request finish, then assert it did nothing.
+    nodeHandler(
       createFakeReq({ url: "/ws" }),
       res as unknown as import("node:http").ServerResponse,
     );
+    await tick();
 
     assertEquals(
       res.headersSent,
@@ -314,10 +341,7 @@ describe("toNodeHandler", () => {
 
     const nodeHandler = toNodeHandler(handler);
     const res = createFakeRes();
-    await nodeHandler(
-      createFakeReq({ url: "/boom" }),
-      res as unknown as import("node:http").ServerResponse,
-    );
+    await runRequest(nodeHandler, createFakeReq({ url: "/boom" }), res);
 
     assertEquals(res.statusCode, 500, "a handler failure must be served as a 500");
     assertEquals(res.ended, true, "a failed request must still be ended");
@@ -350,10 +374,7 @@ describe("toNodeHandler", () => {
 
     const nodeHandler = toNodeHandler(handler);
     const res = createFakeRes();
-    await nodeHandler(
-      createFakeReq({ url: "/stream" }),
-      res as unknown as import("node:http").ServerResponse,
-    );
+    await runRequest(nodeHandler, createFakeReq({ url: "/stream" }), res);
 
     // The 200 head is already on the wire, so the failure cannot be reported
     // in the status line any more.
@@ -386,10 +407,7 @@ describe("toNodeHandler", () => {
 
     const nodeHandler = toNodeHandler(handler);
     const res = createFakeRes();
-    await nodeHandler(
-      createFakeReq({ url: "/stream" }),
-      res as unknown as import("node:http").ServerResponse,
-    );
+    await runRequest(nodeHandler, createFakeReq({ url: "/stream" }), res);
 
     assertEquals(res.destroyed, true);
     assertEquals(res.ended, false);
