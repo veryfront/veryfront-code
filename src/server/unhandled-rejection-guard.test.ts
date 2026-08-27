@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { runtimeProcess } from "#veryfront/platform/compat/process/runtime-process.ts";
+import { isNode } from "#veryfront/platform/compat/runtime.ts";
 import { installUnhandledRejectionGuard } from "#veryfront/server/unhandled-rejection-guard.ts";
 
 interface RecordedLog {
@@ -53,6 +55,44 @@ function rejectionEvent(reason: unknown) {
 }
 
 describe("server/unhandled-rejection-guard", () => {
+  it({
+    name: "installs one lease-shared listener on the real Node process",
+    skip: !isNode,
+  }, () => {
+    assertExists(runtimeProcess);
+    const logger = createFakeLogger();
+    const eventType = "unhandledRejection";
+    const originalListeners = runtimeProcess.listeners(eventType);
+    const originalListenerSet = new Set(originalListeners);
+    const first = installUnhandledRejectionGuard({ logger });
+    const second = installUnhandledRejectionGuard({ logger });
+
+    try {
+      assertEquals(first.installed, true);
+      assertEquals(second.installed, true);
+      assertEquals(runtimeProcess.listenerCount(eventType), originalListeners.length + 1);
+
+      const listener = runtimeProcess.listeners(eventType).find((candidate) =>
+        !originalListenerSet.has(candidate)
+      );
+      assertExists(listener);
+      listener(new Error("HTTP client disconnected"), Promise.resolve());
+
+      assertEquals(first.getRejectionCount(), 1);
+      assertEquals(second.getRejectionCount(), 1);
+      assertEquals(logger.errors.length, 1);
+      assertStringIncludes(String(logger.errors[0]?.context.error), "HTTP client disconnected");
+
+      first.dispose();
+      assertEquals(runtimeProcess.listenerCount(eventType), originalListeners.length + 1);
+      second.dispose();
+      assertEquals(runtimeProcess.listenerCount(eventType), originalListeners.length);
+    } finally {
+      first.dispose();
+      second.dispose();
+    }
+  });
+
   it("subscribes to unhandled rejections on the process", () => {
     const target = createFakeTarget();
     const guard = installUnhandledRejectionGuard({ target, logger: createFakeLogger() });
