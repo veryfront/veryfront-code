@@ -158,8 +158,10 @@ function shouldRetrySourceSnapshotFreshness(
   request: Request,
   error: unknown,
   retries: number,
+  projectMiddlewareStarted: boolean,
 ): boolean {
   return retries < SOURCE_SNAPSHOT_FRESHNESS_RETRY_LIMIT &&
+    !projectMiddlewareStarted &&
     (request.method === "GET" || request.method === "HEAD") &&
     isVeryfrontError(error) &&
     error.slug === SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.slug;
@@ -574,6 +576,7 @@ export function createVeryfrontHandler(
         let requestProfileRecord: ReturnType<typeof finalizeRequestProfiling> = null;
 
         let requestMetricsIncremented = false;
+        let projectMiddlewareStarted = false;
         const executeHandlerAttempt = async (request: Request): Promise<Response> => {
           // Fast rejection of vulnerability scanner probes before any async work
           if (SCANNER_PATH_PATTERN.test(url.pathname)) {
@@ -736,6 +739,9 @@ export function createVeryfrontHandler(
               handlerContext: ctx,
               isSharedProxy: isProxyMode,
               next: async () => (await registry.execute(request, ctx)) ?? undefined,
+              onMiddlewareStart: () => {
+                projectMiddlewareStarted = true;
+              },
             });
           const executeRoute = () =>
             runWithExactSourceIntegrationPolicy(
@@ -774,7 +780,14 @@ export function createVeryfrontHandler(
             try {
               return await executeHandlerAttempt(request);
             } catch (error) {
-              if (!shouldRetrySourceSnapshotFreshness(request, error, retries)) throw error;
+              if (
+                !shouldRetrySourceSnapshotFreshness(
+                  request,
+                  error,
+                  retries,
+                  projectMiddlewareStarted,
+                )
+              ) throw error;
               retries++;
               // Info, not debug: a retried request is indistinguishable from a
               // first-attempt success in the response, so this line is the only

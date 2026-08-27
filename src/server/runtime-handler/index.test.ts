@@ -5,6 +5,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter, RuntimeId } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE } from "#veryfront/errors";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import {
   __registerLogRecordEmitter,
@@ -21,6 +22,7 @@ import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/run
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createMockOidcProvider } from "#veryfront/security/application-auth/mock-oidc-provider.ts";
 import { createSessionCookie } from "#veryfront/security/application-auth/cookies.ts";
+import type { MiddlewareFunction } from "#veryfront/server/dev-server/middleware.ts";
 import {
   createSnapshot,
   resetMetrics,
@@ -560,6 +562,34 @@ describe("server/runtime-handler/index", () => {
       (await response.json()).type,
       "https://veryfront.com/docs/code/guides/errors#source-snapshot-freshness-unavailable",
     );
+  });
+
+  it("does not replay project middleware after a downstream snapshot failure", async () => {
+    const otelRequests = captureOtelHttpRequestCount();
+    let middlewareCalls = 0;
+    const middleware: MiddlewareFunction = async (_context, next) => {
+      middlewareCalls++;
+      await next();
+      throw SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({
+        detail: "The source changed after project middleware dispatched the route.",
+      });
+    };
+    const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
+      projectDir: "/tmp/test-project",
+      config: {
+        middleware: {
+          custom: [middleware],
+        },
+      } satisfies VeryfrontConfig,
+      allowHostProjectCodeExecution: true,
+    });
+
+    const response = await handler(new Request("http://localhost/dashboard"));
+
+    assertEquals(response.status, 503);
+    assertEquals(middlewareCalls, 1);
+    assertEquals(createSnapshot().requests, 1);
+    assertEquals(otelRequests.count(), 1);
   });
 
   it("keeps CORS preflight ahead of application auth admission", async () => {
