@@ -237,12 +237,28 @@ export async function buildProviderError(
   response: Response,
   abortSignal?: AbortSignal,
 ): Promise<ProviderError> {
-  const status = response.status;
   const { text: rawBody, truncated } = await readResponseTextPrefix(
     response,
     MAX_ERROR_BODY_BYTES,
     abortSignal,
   );
+  return buildProviderErrorFromBody(provider, response, rawBody, truncated);
+}
+
+function buildProviderErrorFromUnreadableBody(
+  provider: ProviderKind,
+  response: Response,
+): ProviderError {
+  return buildProviderErrorFromBody(provider, response, "", true);
+}
+
+function buildProviderErrorFromBody(
+  provider: ProviderKind,
+  response: Response,
+  rawBody: string,
+  truncated: boolean,
+): ProviderError {
+  const status = response.status;
   const message = `Provider request failed with status ${status}`;
   const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
 
@@ -889,6 +905,7 @@ export async function requestStream(options: {
     const deadline = createRequestDeadline(options.init, attemptTimeoutMs, "headersTimeoutMs");
     let streamOwnsDeadline = false;
     let bodyClaimAttempted = false;
+    let responseReceived = false;
 
     try {
       const response = await waitForAbortable(
@@ -896,12 +913,19 @@ export async function requestStream(options: {
         deadline.deadlineSignal,
         cancelLateResponse,
       );
+      responseReceived = true;
       if (!response.ok) {
-        const err = await buildProviderError(
-          options.providerKind,
-          response,
-          deadline.deadlineSignal,
-        );
+        let err: ProviderError;
+        try {
+          err = await buildProviderError(
+            options.providerKind,
+            response,
+            deadline.deadlineSignal,
+          );
+        } catch (error) {
+          if (!deadline.timedOut) throw error;
+          err = buildProviderErrorFromUnreadableBody(options.providerKind, response);
+        }
         err.message = `${options.providerLabel} request failed: ${err.message}`;
         throw err;
       }
@@ -940,7 +964,7 @@ export async function requestStream(options: {
         deadline.abort(error);
         throw error;
       }
-      const failure = deadline.timedOut
+      const failure = deadline.timedOut && !responseReceived
         ? providerTimeoutError(options, {
           waitingFor: "the stream response headers",
           // A replay runs on whatever the budget has left, so its deadline is

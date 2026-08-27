@@ -1110,6 +1110,47 @@ describe("provider-http", () => {
       );
     });
 
+    it("does not retry a terminal response when its error body stalls past the header deadline", async () => {
+      let attempts = 0;
+      let bodyCancellations = 0;
+      const createStalledBody = () =>
+        new ReadableStream<Uint8Array>({
+          pull() {
+            return new Promise<void>(() => {});
+          },
+          cancel() {
+            bodyCancellations++;
+          },
+        });
+
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve(new Response(createStalledBody(), { status: 400 }));
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "openai",
+            headersTimeoutMs: 5,
+          }),
+        ProviderRequestError,
+        "status 400",
+      ) as ProviderRequestError;
+
+      assertEquals(error.status, 400);
+      assertEquals(error.retryable, false);
+      assertEquals(
+        error.message.includes("timed out"),
+        false,
+        "a known terminal status must not be replaced by a synthetic timeout",
+      );
+      assertEquals(attempts, 1, "a known terminal response must not be replayed");
+      assertEquals(bodyCancellations, 1, "the stalled error body must be cancelled");
+    });
+
     it("does not retry a typed failure raised after the body is claimed", async () => {
       let attempts = 0;
       const claimFailure = new ProviderOverloadedError({
