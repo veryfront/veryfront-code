@@ -15,7 +15,6 @@ import {
 } from "./chat-request.ts";
 import {
   getRuntimeAgentRunInvocationSchema,
-  type RuntimeAgentRunInvocation,
   type RuntimeAgentSourceContext,
 } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
