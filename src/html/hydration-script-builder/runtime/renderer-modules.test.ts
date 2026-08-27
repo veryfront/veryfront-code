@@ -6,6 +6,7 @@ import {
   isAppRouterPath,
   isModuleNotFoundError,
   isRootAppLayoutPath,
+  isServerOwnedAppRouterPage,
   loadPageModuleWithIndexFallback,
 } from "./renderer.ts";
 
@@ -392,6 +393,56 @@ describe("hydration-script-builder/runtime/renderer", () => {
 
     it("treats a missing path as outside the App Router", () => {
       assertEquals(isAppRouterPath(undefined, "app"), false);
+    });
+  });
+
+  describe("isServerOwnedAppRouterPage", () => {
+    it("classifies only remote App Router pages without a client ownership marker", () => {
+      assertEquals(
+        isServerOwnedAppRouterPage({
+          clientModuleStrategy: "rsc-module",
+          pagePath: "app/page.tsx",
+        }),
+        true,
+      );
+      assertEquals(
+        isServerOwnedAppRouterPage({
+          clientModuleStrategy: "rsc-module",
+          isolatedClientPage: true,
+          pagePath: "app/page.tsx",
+        }),
+        false,
+      );
+      assertEquals(
+        isServerOwnedAppRouterPage({
+          clientModuleStrategy: "rsc-module",
+          isClientPage: true,
+          pagePath: "app/page.tsx",
+        }),
+        false,
+      );
+      assertEquals(
+        isServerOwnedAppRouterPage({
+          clientModuleStrategy: "fs",
+          pagePath: "app/page.tsx",
+        }),
+        false,
+      );
+      assertEquals(
+        isServerOwnedAppRouterPage({
+          clientModuleStrategy: "rsc-module",
+          pagePath: "pages/index.tsx",
+        }),
+        false,
+      );
+      assertEquals(
+        isServerOwnedAppRouterPage({
+          appRouterRoot: "/src/app/",
+          clientModuleStrategy: "rsc-module",
+          pagePath: "src/app/page.tsx",
+        }),
+        true,
+      );
     });
   });
 

@@ -38,6 +38,7 @@ import {
 import type { HTMLGenerationOptions } from "./types.ts";
 import { buildImportMap, buildRootAttributes, shouldDisableLayout } from "./utils.ts";
 import { appendDependencyPinningPathKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-module-strategy.ts";
 
 function pathToModuleUrl(
   path: string,
@@ -116,6 +117,20 @@ function generateModulePreloadHints(
       isReleaseAssetManifestEnabled()
     ? options.releaseId
     : undefined;
+  const relativePagePath = options.pagePath
+    ? getRelativePagePath(options.pagePath, projectDir)
+    : "";
+  const appRouterRoot = getRelativePagePath(
+    String(options.config?.directories?.app ?? "app"),
+    projectDir,
+  ).replace(/^\/+|\/+$/g, "");
+  const clientModuleStrategy = determineClientModuleStrategy({
+    isLocalProject: options.isLocalProject,
+    environment: options.environment,
+  });
+  const serverOwnsAppRouterPage = clientModuleStrategy === "rsc-module" &&
+    options.isolatedClientPage !== true &&
+    (relativePagePath === appRouterRoot || relativePagePath.startsWith(`${appRouterRoot}/`));
 
   function addHint(moduleUrl: string): void {
     if (!moduleUrl || addedUrls.has(moduleUrl)) return;
@@ -123,11 +138,10 @@ function generateModulePreloadHints(
     addedUrls.add(moduleUrl);
   }
 
-  if (options.pagePath) {
-    const relativePath = getRelativePagePath(options.pagePath, projectDir);
+  if (options.pagePath && !serverOwnsAppRouterPage) {
     addHint(
       pathToModuleUrl(
-        relativePath,
+        relativePagePath,
         studioEmbed,
         releaseManifest,
         fallbackReleaseId,
@@ -136,7 +150,7 @@ function generateModulePreloadHints(
     );
   }
 
-  for (const layout of options.nestedLayouts ?? []) {
+  for (const layout of serverOwnsAppRouterPage ? [] : options.nestedLayouts ?? []) {
     const layoutPath = layout.path ?? layout.componentPath ?? "";
     if (!layoutPath) continue;
 
@@ -159,9 +173,6 @@ function generateModulePreloadHints(
     return hints.join("\n  ");
   }
 
-  const relativePagePath = options.pagePath
-    ? getRelativePagePath(options.pagePath, projectDir)
-    : "";
   const releaseManifestRoute = relativePagePath ? routeForPage(relativePagePath) ?? "" : "";
 
   // Manifest-covered routes: preload the full closure from the manifest.

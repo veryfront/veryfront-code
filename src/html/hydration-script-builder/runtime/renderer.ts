@@ -128,6 +128,24 @@ export function isAppRouterPath(
     normalizedPath.startsWith(appRouterRoot + "/");
 }
 
+/** True when the browser runtime must preserve the server-rendered App Router document. */
+export function isServerOwnedAppRouterPage(
+  data: Pick<
+    PageDataPayload,
+    "appRouterRoot" | "clientModuleStrategy" | "isClientPage" | "isolatedClientPage" | "pagePath"
+  >,
+): boolean {
+  const appRouterRoot = typeof data.appRouterRoot === "string" &&
+      data.appRouterRoot.replace(/^\/+|\/+$/g, "")
+    ? data.appRouterRoot.replace(/^\/+|\/+$/g, "")
+    : "app";
+
+  return data.clientModuleStrategy === "rsc-module" &&
+    isAppRouterPath(data.pagePath, appRouterRoot) &&
+    data.isolatedClientPage !== true &&
+    data.isClientPage !== true;
+}
+
 /** True for the App Router's root layout, the one that renders the document. */
 export function isRootAppLayoutPath(
   path: string | undefined,
@@ -229,10 +247,24 @@ export function createHydrationRenderer(deps: HydrationRendererDeps): HydrationR
       const hasReleaseAssetModules = data.releaseAssetModules &&
         Object.keys(data.releaseAssetModules).length > 0;
 
-      const shouldRenderRscClientPage = data.clientModuleStrategy === "rsc-module" &&
-        !hasReleaseAssetModules &&
-        isAppRouterPath(normalizedPagePath, normalizedAppRouterRoot);
       const isolatedClientPage = data.isolatedClientPage === true;
+      const isRemoteAppRouterPage = data.clientModuleStrategy === "rsc-module" &&
+        isAppRouterPath(normalizedPagePath, normalizedAppRouterRoot);
+
+      // App Router server pages own the SSR document and are deliberately not
+      // exposed as browser modules. The shell runtime still boots for routing,
+      // Studio and HMR, but its initial render must leave that server DOM alone.
+      // Full-document client pages use the older isClientPage marker, while
+      // current client pages use an isolated page island.
+      if (isServerOwnedAppRouterPage(data)) {
+        log("Initial App Router page is server-owned; skipping client hydration");
+        window.__veryfrontHydrationComplete?.();
+        return;
+      }
+
+      const shouldRenderRscClientPage = isRemoteAppRouterPage &&
+        !hasReleaseAssetModules &&
+        (isolatedClientPage || data.isClientPage === true);
 
       const loadHydrationComponent = async (
         path: string | undefined,

@@ -17,6 +17,8 @@ export interface HydrationDataStructure {
   appRouterRoot?: string;
   /** The page and advertised client layouts mount inside a server-owned layout island. */
   isolatedClientPage?: boolean;
+  /** Legacy full-document payload marker for a page that explicitly owns browser rendering. */
+  isClientPage?: boolean;
   pagePath?: string;
   pageType?: "mdx" | "md" | "tsx" | "jsx" | "ts" | "js";
   clientModuleStrategy?: ClientModuleStrategy;
