@@ -162,6 +162,23 @@ describe("css-strip plugin", () => {
     }
   });
 
+  it("strips CSS imports carrying query and fragment suffixes", async () => {
+    const ctx = createContext(
+      'import "./theme.css?inline"; import styles from "./Button.module.css#release"; ' +
+        "export const cls = styles.container;",
+    );
+
+    const result = await cssStripPlugin.transform(ctx);
+    const namespace = await evaluateModule(result);
+
+    assertEquals(result.includes("import "), false);
+    assertEquals(namespace.cls, toScopedCssModuleClass(MODULE_KEY, "container"));
+    assertEquals(ctx.metadata.get("cssImports"), [
+      "./Button.module.css#release",
+      "./theme.css?inline",
+    ]);
+  });
+
   it("keeps a css re-export exporting the bindings it re-exported", async () => {
     const ctx = createContext(
       `export { default as styles, container as root } from "./Button.module.css";`,

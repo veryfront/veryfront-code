@@ -8,6 +8,8 @@ describe("transforms/esm/transform-utils", () => {
     const cases: Array<[string, string]> = [
       ["pages/index.tsx", "tsx"],
       ["utils/helper.ts", "ts"],
+      ["utils/helper.mts", "ts"],
+      ["utils/helper.cts", "ts"],
       ["schemas/lazy.ts.src", "ts"],
       ["components/Button.jsx", "jsx"],
       ["lib/main.js", "js"],

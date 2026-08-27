@@ -118,6 +118,16 @@ describe("modules/import-map/resolver", () => {
       assertEquals(resolveImport("@lib/utils.ts", map), "/src/lib/utils.ts");
     });
 
+    it("uses the longest matching prefix regardless of insertion order", () => {
+      const map = {
+        imports: {
+          "#/": "/short/",
+          "#/nested/": "/long/",
+        },
+      };
+      assertEquals(resolveImport("#/nested/client.ts", map), "/long/client.ts");
+    });
+
     it("should try stripping .js extension for fallback", () => {
       const map = { imports: { lodash: "https://esm.sh/lodash@4" } };
       assertEquals(resolveImport("lodash.js", map), "https://esm.sh/lodash@4");

@@ -18,6 +18,8 @@ export interface StaticImportSpan {
   path: string;
   start: number;
   end: number;
+  /** Whether TypeScript erases the complete static import or export edge. */
+  typeOnly?: boolean;
 }
 
 type SpecifierMatcher = (specifier: string) => string | null | undefined;
@@ -2340,6 +2342,54 @@ function canExportHaveFromClause(source: string, statementStart: number): boolea
   return source[cursor] === "*" || source[cursor] === "{";
 }
 
+function tokenAt(source: string, index: number, token: string): boolean {
+  return source.startsWith(token, index) &&
+    !isIdentifierPartAt(source, index - 1) &&
+    !isIdentifierPartAt(source, index + token.length);
+}
+
+/** Whether a static module clause contains no runtime binding or side effect. */
+function isTypeOnlyModuleClause(source: string, start: number, end: number): boolean {
+  let cursor = skipWhitespaceAndComments(source, start);
+  if (tokenAt(source, cursor, "type")) {
+    cursor = skipWhitespaceAndComments(source, cursor + "type".length);
+    return cursor < end && source[cursor] !== "," && !tokenAt(source, cursor, "as") &&
+      !tokenAt(source, cursor, "from");
+  }
+  if (source[cursor] !== "{") return false;
+  cursor++;
+
+  let foundTypeSpecifier = false;
+  while (cursor < end) {
+    cursor = skipWhitespaceAndComments(source, cursor);
+    if (source[cursor] === "}") return foundTypeSpecifier;
+    if (!tokenAt(source, cursor, "type")) return false;
+    cursor = skipWhitespaceAndComments(source, cursor + "type".length);
+    if (
+      cursor >= end || source[cursor] === "," || source[cursor] === "}" ||
+      tokenAt(source, cursor, "as")
+    ) {
+      return false;
+    }
+    foundTypeSpecifier = true;
+
+    while (cursor < end) {
+      const skipped = skipIgnored(source, cursor);
+      if (skipped !== cursor) {
+        cursor = skipped;
+        continue;
+      }
+      if (source[cursor] === ",") {
+        cursor++;
+        break;
+      }
+      if (source[cursor] === "}") return true;
+      cursor++;
+    }
+  }
+  return false;
+}
+
 /**
  * Validate the match bound every scanner requires.
  *
@@ -2532,7 +2582,10 @@ export function findStaticImportFromSpans(
 
     const span = findFromSpan(source, afterKeyword, matcher, isExport);
     if (span) {
-      spans.push(span);
+      spans.push({
+        ...span,
+        typeOnly: isTypeOnlyModuleClause(source, afterKeyword, span.start),
+      });
       if (spans.length >= maxMatches) return spans;
       atStatementStart = false;
       previousTokenIndex = span.end - 1;

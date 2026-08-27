@@ -24,13 +24,16 @@ import {
 } from "#veryfront/utils/css-artifact-identity.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import { createFileSystem, isNotFoundError, realPath } from "#veryfront/platform/compat/fs.ts";
+import { getOsType } from "#veryfront/platform/compat/process.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { STAT_OPERATION_EXTENSION_PRIORITY } from "#veryfront/platform/adapters/fs/veryfront/extension-priority.ts";
 import {
   dirname,
   fromFileUrl,
   isAbsolute,
   join,
   normalize,
+  relative,
   toFileUrl,
 } from "#veryfront/compat/path/index.ts";
 import {
@@ -41,9 +44,27 @@ import {
 } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { PUBLISHED_RUNTIME_HELPERS } from "#veryfront/platform/compat/published-runtime-helpers.ts";
 import { getFrameworkRoot } from "#veryfront/platform/compat/vfs-paths.ts";
-import { normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache-helpers.ts";
+import {
+  normalizeHttpUrl,
+  resolveBareSpecifier,
+} from "#veryfront/transforms/esm/http-cache-helpers.ts";
 import { extractSourceUrl } from "#veryfront/transforms/esm/source-url-embed.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
+import { parseLocalImports } from "#veryfront/transforms/esm/import-parser.ts";
+import {
+  findDynamicImportSpans,
+  findStaticImportFromSpans,
+  findStaticSideEffectImportSpans,
+} from "#veryfront/transforms/mdx/esm-module-loader/utils/source-spans.ts";
+import {
+  parseEsmShSpecifier,
+  resolveEsmShThroughImportMap,
+} from "#veryfront/transforms/shared/esm-sh-import-map.ts";
+import { isRuntimeImportMapSpecifier } from "#veryfront/transforms/import-rewriter/strategies/import-map-strategy.ts";
+import { isEsmShUrl } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import type { CodeParser } from "#veryfront/extensions/parser/code-parser.ts";
+import { ensureDefaultParserContracts } from "#veryfront/extensions/parser/defaults.ts";
 import {
   createDependencyPinningSource,
   type DependencyPinningSnapshot,
@@ -54,11 +75,14 @@ import {
 import { getReactUrls } from "#veryfront/transforms/esm/react-cdn.ts";
 import { PLATFORM_UTILITIES } from "#veryfront/html/utils.ts";
 import { extractCandidatesFromFiles } from "#veryfront/html/styles-builder/candidate-extractor.ts";
+import {
+  hasUseClientDirective,
+  hasUseServerDirective,
+} from "#veryfront/rendering/rsc/page-island.ts";
 import { FRAMEWORK_CANDIDATES } from "#veryfront/server/handlers/dev/framework-candidates.generated.ts";
 import { validateLexicalPath } from "#veryfront/security/path-validation.ts";
 import {
   CSS_IMPORTING_SOURCE_EXTENSIONS,
-  extractCssImportSpecifiers,
   resolveCssImportPath,
 } from "#veryfront/html/styles-builder/css-import-extraction.ts";
 import { rewriteCssModuleContent } from "#veryfront/transforms/css-modules/naming.ts";
@@ -92,11 +116,38 @@ import {
 import type { CompileProjectCssResult } from "./css-compile.ts";
 import { materializeReleaseDependencyGraph } from "./dependency-artifact-graph.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import { mergeImportMaps } from "#veryfront/modules/import-map/index.ts";
+import {
+  isFrameworkOwnedImportMapSpecifier,
+  normalizeImportMapForRuntime,
+} from "#veryfront/modules/import-map/loader.ts";
+import { classifyBrowserModuleSourcePath } from "#veryfront/modules/server/browser-module-admission.ts";
+import {
+  describeBrowserModuleBoundaryViolation,
+  inspectBrowserModuleBoundary,
+} from "#veryfront/server/shared/browser-module-boundary.ts";
+import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";
+import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
+import { snapshotImportMap } from "#veryfront/transforms/pipeline/cache-identity.ts";
+import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
+import { isServerOnlyPackage } from "#veryfront/transforms/shared/server-only-packages.ts";
+import { PLATFORM_SCRIPT_ORIGINS } from "#veryfront/security/http/platform-asset-origins.ts";
 
 const logger = serverLogger.component("release-asset-build");
 
 /** Browser module source extensions eligible for transform. */
 const BROWSER_MODULE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
+/** Runtime-loadable extensions eligible for server-only import traversal. */
+const SERVER_MODULE_EXTENSIONS = [
+  ".json",
+  ".tsx",
+  ".ts",
+  ".jsx",
+  ".js",
+  ".mjs",
+  ".mdx",
+  ".md",
+];
 /** Directories used as browser graph entry seeds. Imports may reach any project directory. */
 const BROWSER_MODULE_DIRS = ["components/", "layouts/", "lib/", "src/"];
 const PROJECT_IMPORT_ROOTS = ["app/", "pages/", ...BROWSER_MODULE_DIRS];
@@ -499,6 +550,12 @@ function isTransformableBrowserModule(path: string): boolean {
   return true;
 }
 
+/** True when authored source can be traversed without publishing it to the browser. */
+function isTraversableServerModule(path: string): boolean {
+  if (!SERVER_MODULE_EXTENSIONS.some((ext) => path.endsWith(ext))) return false;
+  return !/\.d\.(?:ts|mts|cts)$/.test(path);
+}
+
 /** True when a logical path should seed the browser module graph. */
 function isBrowserModule(path: string, directories: ReleaseRouterDirectories): boolean {
   if (!isTransformableBrowserModule(path)) return false;
@@ -515,6 +572,31 @@ function isConfiguredAppRouterLayout(path: string, directories: ReleaseRouterDir
   const fileName = segments.pop();
   if (!fileName || !/^layout\.(tsx|ts|jsx|mdx|js)$/.test(fileName)) return false;
   return !segments.some((segment) => segment.startsWith("@") || segment.startsWith("_"));
+}
+
+function isConfiguredAppRouterModule(
+  path: string,
+  directories: ReleaseRouterDirectories,
+): boolean {
+  return configuredRoutePath(path, directories, "app")?.startsWith("app/") ?? false;
+}
+
+function isConfiguredAppRouterBrowserEntry(
+  path: string,
+  directories: ReleaseRouterDirectories,
+): boolean {
+  return isConfiguredAppRouterLayout(path, directories) ||
+    (routeForConfiguredPage(path, directories) !== null &&
+      isConfiguredAppRouterModule(path, directories));
+}
+
+function isTrustedAppRouterBrowserModule(source: string, path: string): boolean {
+  return hasUseClientDirective(source, path) && !hasUseServerDirective(source);
+}
+
+async function inspectReleaseBrowserModuleBoundary(source: string, sourceFile: string) {
+  await ensureDefaultParserContracts();
+  return await inspectBrowserModuleBoundary(source, sourceFile);
 }
 
 function collectConfiguredAppRouterLayoutsForPage(
@@ -550,7 +632,11 @@ function releaseRouterDirectories(config: VeryfrontConfig): ReleaseRouterDirecto
   };
 }
 
-function resolveKnownModulePath(path: string, knownPaths: Set<string>): string | null {
+function resolveKnownModulePathWithExtensions(
+  path: string,
+  knownPaths: Set<string>,
+  extensions: readonly string[],
+): string | null {
   const normalized = normalizeLogicalPath(
     path
       .replace(/^\/?_vf_modules\//, "")
@@ -562,13 +648,42 @@ function resolveKnownModulePath(path: string, knownPaths: Set<string>): string |
   if (normalized.startsWith("_veryfront/")) return null;
   if (knownPaths.has(normalized)) return normalized;
 
-  const withoutExt = normalized.replace(/\.(tsx|ts|jsx|mdx|js)$/, "");
-  for (const ext of BROWSER_MODULE_EXTENSIONS) {
+  const existingExtension = extensions.find((ext) => normalized.endsWith(ext));
+  const withoutExt = existingExtension
+    ? normalized.slice(0, -existingExtension.length)
+    : normalized;
+  const fallbackExtensions = existingExtension !== undefined && existingExtension !== ".json"
+    ? extensions.filter((ext) => ext !== ".json")
+    : extensions;
+  for (const ext of fallbackExtensions) {
     const candidate = `${withoutExt}${ext}`;
+    if (knownPaths.has(candidate)) return candidate;
+  }
+  for (const ext of fallbackExtensions) {
+    const candidate = `${withoutExt}/index${ext}`;
     if (knownPaths.has(candidate)) return candidate;
   }
 
   return null;
+}
+
+function resolveKnownModulePath(path: string, knownPaths: Set<string>): string | null {
+  return resolveKnownModulePathWithExtensions(path, knownPaths, BROWSER_MODULE_EXTENSIONS);
+}
+
+function resolveKnownServerModulePath(path: string, knownPaths: Set<string>): string | null {
+  const resolved = resolveKnownModulePathWithExtensions(path, knownPaths, SERVER_MODULE_EXTENSIONS);
+  return resolved && isTraversableServerModule(resolved) ? resolved : null;
+}
+
+function resolveKnownStylesheetPath(path: string, knownPaths: Set<string>): string | null {
+  const resolved = resolveKnownModulePathWithExtensions(path, knownPaths, [".css"]);
+  return resolved?.endsWith(".css") ? resolved : null;
+}
+
+function resolveKnownServerDependencyPath(path: string, knownPaths: Set<string>): string | null {
+  return resolveKnownServerModulePath(path, knownPaths) ??
+    resolveKnownStylesheetPath(path, knownPaths);
 }
 
 function normalizeLogicalPath(path: string): string | null {
@@ -588,10 +703,8 @@ function normalizeLogicalPath(path: string): string | null {
 
 function normalizeProjectSpecifier(specifier: string, logicalPath: string): string | null {
   if (
-    specifier.startsWith("http://") ||
-    specifier.startsWith("https://") ||
-    specifier.startsWith("data:") ||
-    specifier.startsWith("blob:") ||
+    specifier.startsWith("//") ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:/.test(specifier) ||
     specifier.startsWith("#")
   ) {
     return null;
@@ -616,6 +729,61 @@ function normalizeProjectSpecifier(specifier: string, logicalPath: string): stri
   return null;
 }
 
+function isJsonDataUrlSpecifier(specifier: string): boolean {
+  if (!specifier.toLowerCase().startsWith("data:")) return false;
+  const metadataEnd = specifier.indexOf(",");
+  if (metadataEnd < 0) return false;
+  const mediaType = specifier.slice("data:".length, metadataEnd)
+    .split(";", 1)[0]
+    ?.trim()
+    .toLowerCase();
+  return mediaType === "application/json" || mediaType === "text/json" ||
+    mediaType?.endsWith("+json") === true;
+}
+
+function isExternalCssSpecifier(specifier: string): boolean {
+  const dataMetadataEnd = specifier.indexOf(",");
+  if (specifier.toLowerCase().startsWith("data:") && dataMetadataEnd >= 0) {
+    const mediaType = specifier.slice("data:".length, dataMetadataEnd)
+      .split(";", 1)[0]
+      ?.trim()
+      .toLowerCase();
+    if (mediaType === "text/css") return true;
+  }
+  return splitSpecifierSuffix(specifier).path.toLowerCase().endsWith(".css");
+}
+
+function mayResolveProjectStylesheetSpecifier(
+  specifier: string,
+  aliases: ReadonlyMap<string, string>,
+): boolean {
+  if (isEsmShUrl(specifier) || aliases.has(specifier)) return true;
+  if (
+    (specifier.endsWith(".js") || specifier.endsWith(".mjs") || specifier.endsWith(".cjs")) &&
+    aliases.has(specifier.replace(/\.(m|c)?js$/, ""))
+  ) return true;
+  for (
+    let separator = specifier.indexOf("/");
+    separator >= 0;
+    separator = specifier.indexOf("/", separator + 1)
+  ) {
+    if (aliases.has(specifier.slice(0, separator + 1))) return true;
+  }
+  return false;
+}
+
+function isExternalJsonSpecifier(specifier: string): boolean {
+  const bareCandidate = specifier.startsWith("npm:") ? specifier.slice(4) : specifier;
+  if (
+    !bareCandidate.startsWith(".") && !bareCandidate.startsWith("/") &&
+    !bareCandidate.startsWith("#") &&
+    !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(bareCandidate) &&
+    parseBarePackageSpecifier(bareCandidate) !== null
+  ) return false;
+  return isJsonDataUrlSpecifier(specifier) ||
+    splitSpecifierSuffix(specifier).path.toLowerCase().endsWith(".json");
+}
+
 function resolveProjectModuleSpecifier(
   specifier: string,
   logicalPath: string,
@@ -630,6 +798,7 @@ async function collectProjectModuleImports(
   code: string,
   logicalPath: string,
   knownPaths: Set<string>,
+  projectImportAliases: ReadonlyMap<string, string>,
 ): Promise<Map<string, string>> {
   const imports = new Map<string, string>();
 
@@ -637,6 +806,16 @@ async function collectProjectModuleImports(
     if (!imp.n) continue;
 
     const specifier = imp.n;
+    const aliasResolution = resolveProjectImportAlias(
+      specifier,
+      projectImportAliases,
+      knownPaths,
+      resolveKnownModulePath,
+    );
+    if (aliasResolution.matched) {
+      if (aliasResolution.path) imports.set(specifier, aliasResolution.path);
+      continue;
+    }
     const importedPath = resolveProjectModuleSpecifier(specifier, logicalPath, knownPaths);
     if (importedPath) imports.set(specifier, importedPath);
   }
@@ -644,14 +823,541 @@ async function collectProjectModuleImports(
   return imports;
 }
 
+async function importsExternalStylesheetAlias(
+  code: string,
+  projectImportAliases: ReadonlyMap<string, string>,
+  knownPaths: Set<string>,
+): Promise<boolean> {
+  for (const imp of await parseImports(code)) {
+    if (!imp.n) continue;
+    const resolution = resolveProjectImportAlias(
+      imp.n,
+      projectImportAliases,
+      knownPaths,
+      resolveKnownModulePath,
+    );
+    if (
+      resolution.external !== undefined && isExternalCssSpecifier(resolution.external)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function releaseLogicalPathFromMaterializedPath(
+  basePath: string,
+  tempDir: string,
+  hostOs = getOsType(),
+): string {
+  const normalizeHostPath = hostOs === "windows"
+    ? (path: string) => path.replaceAll("\\", "/")
+    : (path: string) => path;
+  const materializedRoot = normalizeHostPath(tempDir).replace(/^\/+|\/+$/g, "");
+  const normalizedPath = normalizeHostPath(basePath).replace(/^\/+/, "");
+  return normalizedPath.startsWith(`${materializedRoot}/`)
+    ? normalizedPath.slice(materializedRoot.length + 1)
+    : normalizedPath;
+}
+
+/** @internal Test seams for portable release materialization rules. */
+export const releaseAssetBuildInternals = Object.freeze({
+  releaseLogicalPathFromMaterializedPath,
+});
+
+/**
+ * Import edges of an App Router server module, read from its authored source.
+ *
+ * Server modules are never transformed for the browser, so their imports
+ * cannot be read from transformed output the way the rest of the closure is.
+ * Raw source needs the preprocessing the dev-time dependency parser applies
+ * (parseLocalImports): MDX is compiled to JavaScript first, because prose is
+ * not lexable ESM, and the TypeScript pass drops type-only edges so an
+ * `import type` target never gains browser reachability it would not have had
+ * after a real transform. CSS and other non-JavaScript resources are excluded
+ * as well -- they are not transformable modules, and route closures must only
+ * traverse module edges (stylesheets are merged by mergeModuleCssImports).
+ *
+ * parseLocalImports resolves relative and `@/` specifiers only, so the
+ * project-root forms the rest of this executor supports (`app/x.tsx`,
+ * `/app/x.tsx`, `/_vf_modules/app/x.tsx` -- see normalizeProjectSpecifier)
+ * come back in `unresolvedSpecifiers` and are resolved here with the same
+ * project-specifier semantics. Dropping them would silently leave a client
+ * boundary imported through a root form out of the closure, publishing the
+ * route without the JavaScript needed to hydrate it.
+ *
+ * CommonJS server helpers use the parser contract to add statically named
+ * require edges that the ESM lexer does not report.
+ */
+async function collectServerModuleImports(
+  source: string,
+  logicalPath: string,
+  tempDir: string,
+  knownPaths: Set<string>,
+  projectImportAliases: ReadonlyMap<string, string>,
+  adapter: RuntimeAdapter,
+): Promise<string[]> {
+  const materializedFs = createFileSystem();
+  const resolutionAdapter: RuntimeAdapter = {
+    ...adapter,
+    fs: {
+      ...adapter.fs,
+      // Release sources were just materialized as regular files beneath a
+      // fresh build-owned directory. The parser may therefore use its
+      // symlink-free containment path even when the transform adapter itself
+      // does not expose a host realPath capability.
+      symlinkSemantics: "none",
+      stat: (path: string) => materializedFs.stat(path),
+      resolveFile: (basePath: string) => {
+        const logicalPath = releaseLogicalPathFromMaterializedPath(basePath, tempDir);
+        const resolved = resolveKnownModulePathWithExtensions(
+          logicalPath,
+          knownPaths,
+          STAT_OPERATION_EXTENSION_PRIORITY,
+        );
+        return Promise.resolve(
+          resolved === null ? null : resolveMaterializedReleasePath(tempDir, resolved),
+        );
+      },
+    },
+  };
+  const parsed = await parseLocalImports(
+    source,
+    resolveMaterializedReleasePath(tempDir, logicalPath),
+    tempDir,
+    resolutionAdapter,
+  );
+  if (parsed.nonLiteralDynamicImports > 0) {
+    throw new Error(
+      `Server module has ${parsed.nonLiteralDynamicImports} non-literal dynamic import(s)`,
+    );
+  }
+  if (logicalPath.endsWith(".json") || logicalPath.endsWith(".md")) return [];
+
+  const imports = new Set<string>();
+  const addResolved = (importedPath: string | null, allowCss = true): boolean => {
+    if (importedPath?.endsWith(".css")) return allowCss;
+    if (importedPath && isTraversableServerModule(importedPath)) {
+      imports.add(importedPath);
+      return true;
+    }
+    return false;
+  };
+  const resolveRuntimeImportAlias = (specifier: string) =>
+    isRuntimeImportMapSpecifier(specifier)
+      ? resolveProjectImportAlias(
+        specifier,
+        projectImportAliases,
+        knownPaths,
+        resolveKnownServerDependencyPath,
+      )
+      : { matched: false };
+  let missingProjectImports = 0;
+  for (const { specifier, absolutePath } of parsed.imports) {
+    const aliasResolution = resolveRuntimeImportAlias(specifier);
+    if (aliasResolution.matched) {
+      if (aliasResolution.path === null) missingProjectImports++;
+      else if (
+        aliasResolution.path !== undefined && !addResolved(aliasResolution.path, false)
+      ) missingProjectImports++;
+      continue;
+    }
+    const relativePath = relative(tempDir, absolutePath).replaceAll("\\", "/");
+    if (!addResolved(resolveKnownServerModulePath(relativePath, knownPaths))) {
+      missingProjectImports++;
+    }
+  }
+  for (const { specifier } of parsed.missing) {
+    const aliasResolution = resolveRuntimeImportAlias(specifier);
+    if (!aliasResolution.matched || aliasResolution.path === null) {
+      missingProjectImports++;
+    } else if (aliasResolution.path !== undefined) {
+      if (!addResolved(aliasResolution.path, false)) missingProjectImports++;
+    }
+  }
+  // Cross-project imports are resolved by the runtime's project boundary, not
+  // by a single release asset. They cannot be represented in this closure, so
+  // fail the route closed instead of publishing an incomplete server module.
+  missingProjectImports += parsed.crossProjectImports.length;
+  const resolveUnresolvedImport = (
+    specifier: string,
+    hasJsonTypeAttribute?: boolean,
+    fromCommonJs = false,
+  ) => {
+    if (/^file:/i.test(specifier)) {
+      missingProjectImports++;
+      return;
+    }
+    if (/^data:/i.test(specifier) && isExternalCssSpecifier(specifier)) {
+      missingProjectImports++;
+      return;
+    }
+    if (isJsonDataUrlSpecifier(specifier) && hasJsonTypeAttribute !== true) {
+      missingProjectImports++;
+      return;
+    }
+    if (
+      (specifier.startsWith("//") || /^https?:/i.test(specifier)) &&
+      isExternalJsonSpecifier(specifier) && hasJsonTypeAttribute !== true
+    ) {
+      missingProjectImports++;
+      return;
+    }
+    const aliasResolution = resolveRuntimeImportAlias(specifier);
+    if (aliasResolution.matched) {
+      if (aliasResolution.path === null) {
+        missingProjectImports++;
+      } else if (aliasResolution.path !== undefined) {
+        if (aliasResolution.path.endsWith(".json") && hasJsonTypeAttribute === false) {
+          missingProjectImports++;
+        } else if (!addResolved(aliasResolution.path, false)) {
+          missingProjectImports++;
+        }
+      } else if (
+        aliasResolution.external !== undefined &&
+        (isExternalCssSpecifier(aliasResolution.external) ||
+          (isExternalJsonSpecifier(aliasResolution.external) && hasJsonTypeAttribute !== true))
+      ) {
+        missingProjectImports++;
+      }
+      return;
+    }
+    if (specifier.startsWith("#")) {
+      missingProjectImports++;
+      return;
+    }
+    const normalized = normalizeProjectSpecifier(specifier, logicalPath);
+    if (normalized === null) return;
+    const importedPath = resolveKnownServerModulePath(normalized, knownPaths);
+    if (importedPath === null) {
+      missingProjectImports++;
+      return;
+    }
+    if (importedPath.endsWith(".json") && hasJsonTypeAttribute === false) {
+      missingProjectImports++;
+      return;
+    }
+    if (!addResolved(importedPath, !fromCommonJs)) missingProjectImports++;
+  };
+
+  const unresolvedImports = new Map<string, boolean | undefined>();
+  for (const unresolved of parsed.unresolvedImports) {
+    const current = unresolvedImports.get(unresolved.specifier);
+    unresolvedImports.set(
+      unresolved.specifier,
+      current === false ? false : unresolved.hasJsonTypeAttribute,
+    );
+  }
+
+  const commonJsSpecifiers = new Set<string>();
+  // MDX is traversable only after parseLocalImports compiles it above. Its raw
+  // prose is not a JavaScript program and must not reach the CommonJS parser.
+  if (!logicalPath.endsWith(".mdx")) {
+    await ensureDefaultParserContracts();
+    const parser = tryResolve<CodeParser>("CodeParser");
+    if (typeof parser?.findStaticCommonJsImports !== "function") {
+      throw new Error('Missing CodeParser capability "findStaticCommonJsImports"');
+    }
+    for (
+      const specifier of await parser.findStaticCommonJsImports({
+        code: source,
+        filePath: resolveMaterializedReleasePath(tempDir, logicalPath),
+      })
+    ) {
+      commonJsSpecifiers.add(specifier);
+    }
+  }
+  for (const specifier of commonJsSpecifiers) {
+    if (!unresolvedImports.has(specifier)) unresolvedImports.set(specifier, undefined);
+  }
+  for (const [specifier, hasJsonTypeAttribute] of unresolvedImports) {
+    resolveUnresolvedImport(specifier, hasJsonTypeAttribute, commonJsSpecifiers.has(specifier));
+  }
+  if (missingProjectImports > 0) {
+    throw new Error(
+      `Server module has ${missingProjectImports} unresolved project import(s)`,
+    );
+  }
+  return [...imports];
+}
+
+interface ProjectImportAliasResolution {
+  readonly matched: boolean;
+  readonly path?: string | null;
+  readonly external?: string;
+}
+
+/**
+ * External alias targets reach browser finalization verbatim, and
+ * assertFinalModuleImports accepts only parseable absolute URLs. A
+ * protocol-relative target such as `//cdn.example/sdk.js` is valid at
+ * runtime because the canonical resolver upgrades it to an absolute URL
+ * (canonicalizeHttpSpecifier in src/transforms/esm/specifier-resolver.ts).
+ * A release asset has no plaintext dev module-server base to inherit a
+ * scheme from, so remote executable code always canonicalizes to https --
+ * the same scheme the runtime enforces for any host other than a local dev
+ * origin.
+ */
+function canonicalizeExternalProjectImportAliasTarget(mapped: string): string {
+  return mapped.startsWith("//") ? `https:${mapped}` : mapped;
+}
+
+function serverOnlyBrowserProjectImportAliasTarget(
+  mapped: string,
+  serverExternalPackages?: readonly string[],
+): string | null {
+  const canonical = canonicalizeExternalProjectImportAliasTarget(mapped);
+  const npmCandidate = canonical.startsWith("npm:") ? canonical.slice("npm:".length) : canonical;
+  const bare = parseBarePackageSpecifier(npmCandidate);
+  const esmSh = parseEsmShSpecifier(canonical);
+  const packageName = esmSh?.packageName ?? bare?.packageName;
+  if (!packageName || !isServerOnlyPackage(packageName, serverExternalPackages)) return null;
+  return esmSh ? `${esmSh.packageName}${esmSh.subpath}` : canonical;
+}
+
+function canonicalizeBrowserProjectImportAliasTarget(
+  mapped: string,
+  reactVersion: string,
+  serverExternalPackages?: readonly string[],
+  requireCspCompatible = false,
+): string {
+  const canonical = canonicalizeExternalProjectImportAliasTarget(mapped);
+  const serverOnly = serverOnlyBrowserProjectImportAliasTarget(
+    canonical,
+    serverExternalPackages,
+  );
+  if (serverOnly !== null) {
+    // Match BareStrategy: a server-only package must remain native so final
+    // browser-import validation rejects the route instead of publishing an
+    // esm.sh bundle containing unusable Node stubs.
+    return serverOnly;
+  }
+  const resolved = canonical.startsWith("npm:")
+    ? resolveBareSpecifier(canonical.slice(4), {}, reactVersion)
+    : /^[A-Za-z][A-Za-z0-9+.-]*:/.test(canonical)
+    ? canonical
+    : resolveBareSpecifier(canonical, {}, reactVersion);
+  if (requireCspCompatible && /^https?:/i.test(resolved)) {
+    const origin = new URL(resolved).origin;
+    if (!PLATFORM_SCRIPT_ORIGINS.some((allowed) => allowed === origin)) {
+      throw new Error("Browser import-map alias target is outside the enforced script CSP");
+    }
+  }
+  return resolved;
+}
+
+function isExternalProjectImportAliasTarget(mapped: string): boolean {
+  if (mapped.startsWith("//") || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(mapped)) return true;
+  if (
+    mapped.startsWith("./") || mapped.startsWith("../") ||
+    mapped.startsWith("/") || mapped.startsWith("@/") ||
+    PROJECT_IMPORT_ROOTS.some((directory) => mapped.startsWith(directory))
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function resolveProjectImportAlias(
+  specifier: string,
+  aliases: ReadonlyMap<string, string>,
+  knownPaths: Set<string>,
+  resolveKnownPath: (path: string, knownPaths: Set<string>) => string | null =
+    resolveKnownServerModulePath,
+  seenKeys: Set<string> = new Set(),
+): ProjectImportAliasResolution {
+  if (!isRuntimeImportMapSpecifier(specifier)) {
+    return { matched: false, path: null };
+  }
+  let key = aliases.has(specifier) ? specifier : undefined;
+  let suffix = "";
+  if (key === undefined && isEsmShUrl(specifier)) {
+    const esmShMapping = resolveEsmShThroughImportMap(
+      specifier,
+      undefined,
+      Object.fromEntries(aliases),
+    );
+    if (esmShMapping !== null) {
+      if (
+        !aliases.has(esmShMapping) && !esmShMapping.startsWith("#") &&
+        !/^file:/i.test(esmShMapping) &&
+        isExternalProjectImportAliasTarget(esmShMapping)
+      ) {
+        return {
+          matched: true,
+          external: canonicalizeExternalProjectImportAliasTarget(esmShMapping),
+        };
+      }
+      return resolveProjectImportAliasTarget(
+        specifier,
+        esmShMapping,
+        aliases,
+        knownPaths,
+        resolveKnownPath,
+        seenKeys,
+      );
+    }
+  }
+  if (
+    key === undefined &&
+    (specifier.endsWith(".js") || specifier.endsWith(".mjs") || specifier.endsWith(".cjs"))
+  ) {
+    const base = specifier.replace(/\.(m|c)?js$/, "");
+    if (aliases.has(base)) key = base;
+  }
+  if (key === undefined) {
+    for (
+      let separator = specifier.indexOf("/");
+      separator >= 0;
+      separator = specifier.indexOf("/", separator + 1)
+    ) {
+      const candidate = specifier.slice(0, separator + 1);
+      if (aliases.has(candidate)) key = candidate;
+    }
+    if (key !== undefined) suffix = specifier.slice(key.length);
+  }
+  if (key === undefined) return { matched: false, path: null };
+  if (seenKeys.has(key)) return { matched: true, path: null };
+  seenKeys.add(key);
+
+  const mapped = aliases.get(key)! + suffix;
+  return resolveProjectImportAliasTarget(
+    specifier,
+    mapped,
+    aliases,
+    knownPaths,
+    resolveKnownPath,
+    seenKeys,
+  );
+}
+
+function resolveProjectImportAliasTarget(
+  specifier: string,
+  mapped: string,
+  aliases: ReadonlyMap<string, string>,
+  knownPaths: Set<string>,
+  resolveKnownPath: (path: string, knownPaths: Set<string>) => string | null,
+  seenKeys: Set<string>,
+): ProjectImportAliasResolution {
+  const nested = resolveProjectImportAlias(
+    mapped,
+    aliases,
+    knownPaths,
+    resolveKnownPath,
+    seenKeys,
+  );
+  if (nested.matched) {
+    return specifier.startsWith("@/") && nested.external !== undefined
+      ? { matched: false, path: null }
+      : nested;
+  }
+  if (mapped.startsWith("#")) return { matched: true, path: null };
+  if (/^file:/i.test(mapped)) return { matched: true, path: null };
+  if (mapped.startsWith("/_vf_modules/") || mapped.startsWith("_vf_modules/")) {
+    return { matched: true, path: resolveKnownPath(mapped, knownPaths) };
+  }
+  if (mapped.startsWith("@/")) {
+    return { matched: true, path: resolveKnownPath(mapped.slice(2), knownPaths) };
+  }
+  if (isExternalProjectImportAliasTarget(mapped)) {
+    if (specifier.startsWith("@/")) return { matched: false, path: null };
+    return { matched: true, external: canonicalizeExternalProjectImportAliasTarget(mapped) };
+  }
+  return { matched: true, path: null };
+}
+
+function readReleaseProjectImportAliases(
+  sourceByPath: ReadonlyMap<string, string>,
+  config: VeryfrontConfig,
+): ReadonlyMap<string, string> {
+  const source = sourceByPath.get("deno.json");
+  const denoImports: Record<string, string> = {};
+  if (source !== undefined) {
+    try {
+      const parsed = JSON.parse(source) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const imports = (parsed as { imports?: unknown }).imports;
+        const scopes = (parsed as { scopes?: unknown }).scopes;
+        if (imports !== undefined || scopes !== undefined) {
+          const snapshot = snapshotImportMap({
+            imports: imports ?? {},
+            scopes: scopes ?? {},
+          });
+          Object.assign(denoImports, snapshot.imports ?? {});
+        }
+      }
+    } catch {
+      // Optional malformed Deno maps do not override validated config aliases.
+    }
+  }
+  // A project can also declare aliases in veryfront.config.ts under
+  // resolve.importMap.imports. loadImportMap merges deno.json first and the
+  // config map last at serve time, so the release traversal mirrors that
+  // order: a config mapping overrides the deno.json one for the same key.
+  const merged = mergeImportMaps(
+    { imports: denoImports },
+    config.resolve?.importMap ?? {},
+  );
+  const normalized = normalizeImportMapForRuntime(merged);
+  const aliases = new Map<string, string>();
+  for (const [key, value] of Object.entries(normalized.imports ?? {})) {
+    if (typeof value === "string" && !isFrameworkOwnedImportMapSpecifier(key)) {
+      aliases.set(key, value);
+    }
+  }
+  return aliases;
+}
+
+async function rewriteExternalProjectImportAliases(
+  code: string,
+  projectImportAliases: ReadonlyMap<string, string>,
+  knownPaths: Set<string>,
+  reactVersion: string,
+  serverExternalPackages?: readonly string[],
+): Promise<string> {
+  return await replaceSpecifiers(code, (specifier) => {
+    const resolution = resolveProjectImportAlias(
+      specifier,
+      projectImportAliases,
+      knownPaths,
+      resolveKnownModulePath,
+    );
+    return resolution.external === undefined ? null : canonicalizeBrowserProjectImportAliasTarget(
+      resolution.external,
+      reactVersion,
+      serverExternalPackages,
+    );
+  });
+}
+
 async function rewriteProjectModuleImports(
   code: string,
   logicalPath: string,
   moduleAssets: Map<string, PreparedAsset>,
   knownPaths: Set<string>,
+  projectImportAliases: ReadonlyMap<string, string>,
   dependencyUrls: Map<string, string>,
+  reactVersion: string,
+  serverExternalPackages?: readonly string[],
 ): Promise<string> {
   function rewriteSpecifier(specifier: string): string | null {
+    const aliasResolution = resolveProjectImportAlias(
+      specifier,
+      projectImportAliases,
+      knownPaths,
+      resolveKnownModulePath,
+    );
+    if (aliasResolution.external !== undefined) {
+      if (isExternalCssSpecifier(aliasResolution.external)) {
+        throw new Error("Browser import-map alias cannot target an external stylesheet");
+      }
+      const serverOnly = serverOnlyBrowserProjectImportAliasTarget(
+        aliasResolution.external,
+        serverExternalPackages,
+      );
+      if (serverOnly !== null) return serverOnly;
+    }
+
     const dependencyUrl = dependencyUrlForSpecifier(dependencyUrls, specifier);
     if (dependencyUrl) return dependencyUrl;
 
@@ -660,7 +1366,18 @@ async function rewriteProjectModuleImports(
       if (dependencyUrl) return dependencyUrl;
     }
 
-    const importedPath = resolveProjectModuleSpecifier(specifier, logicalPath, knownPaths);
+    if (aliasResolution.external !== undefined) {
+      return dependencyUrlForSpecifier(dependencyUrls, aliasResolution.external) ??
+        canonicalizeBrowserProjectImportAliasTarget(
+          aliasResolution.external,
+          reactVersion,
+          serverExternalPackages,
+          true,
+        );
+    }
+    const importedPath = aliasResolution.matched
+      ? aliasResolution.path ?? null
+      : resolveProjectModuleSpecifier(specifier, logicalPath, knownPaths);
     const asset = importedPath ? moduleAssets.get(importedPath) : undefined;
     return asset ? releaseAssetUrl(asset.contentHash, "js") : null;
   }
@@ -1727,16 +2444,24 @@ async function finalizeDependencyModules(
 async function finalizeProjectModules(
   transformedModules: Map<string, TransformedProjectModule>,
   knownPaths: Set<string>,
+  projectImportAliases: ReadonlyMap<string, string>,
   dependencyUrls: Map<string, string>,
   uploadQueue: PreparedAsset[],
   pendingBytes: PendingAssetStore,
   gaps: string[],
   allowHttp: boolean,
+  reactVersion: string,
+  serverExternalPackages?: readonly string[],
 ): Promise<{ modules: Record<string, PreparedAsset>; skippedModules: Set<string> }> {
   const finalized = new Map<string, PreparedAsset>();
   const unresolvedCycles = new Set<string>();
   const nonSizeFailures = new Set<string>();
-  const cyclicModules = await collectCyclicProjectModules(transformedModules, knownPaths, gaps);
+  const cyclicModules = await collectCyclicProjectModules(
+    transformedModules,
+    knownPaths,
+    projectImportAliases,
+    gaps,
+  );
   const skippedModules = new Set(cyclicModules);
 
   async function finalize(logicalPath: string, stack: string[]): Promise<PreparedAsset | null> {
@@ -1761,7 +2486,12 @@ async function finalizeProjectModules(
     const nextStack = [...stack, logicalPath];
     let imports: Map<string, string>;
     try {
-      imports = await collectProjectModuleImports(transformed.code, logicalPath, knownPaths);
+      imports = await collectProjectModuleImports(
+        transformed.code,
+        logicalPath,
+        knownPaths,
+        projectImportAliases,
+      );
     } catch (error) {
       pushGap(gaps, `module-import-parse-failed:${logicalPath}`);
       logger.warn("Module import parse failed during release asset finalization", {
@@ -1782,7 +2512,10 @@ async function finalizeProjectModules(
         logicalPath,
         finalized,
         knownPaths,
+        projectImportAliases,
         dependencyUrls,
+        reactVersion,
+        serverExternalPackages,
       );
       await assertFinalModuleImports(rewritten, { allowHttp });
     } catch (error) {
@@ -1824,6 +2557,7 @@ async function finalizeProjectModules(
 async function collectCyclicProjectModules(
   transformedModules: Map<string, TransformedProjectModule>,
   knownPaths: Set<string>,
+  projectImportAliases: ReadonlyMap<string, string>,
   gaps: string[],
 ): Promise<Set<string>> {
   const cyclic = new Set<string>();
@@ -1858,7 +2592,12 @@ async function collectCyclicProjectModules(
 
     let imports: Map<string, string>;
     try {
-      imports = await collectProjectModuleImports(transformed.code, logicalPath, knownPaths);
+      imports = await collectProjectModuleImports(
+        transformed.code,
+        logicalPath,
+        knownPaths,
+        projectImportAliases,
+      );
     } catch (error) {
       cyclic.add(logicalPath);
       pushGap(gaps, `module-import-parse-failed:${logicalPath}`);
@@ -2163,27 +2902,54 @@ function addFrameworkDependencyUrlAliases(
 async function collectRouteClosure(
   entrypoints: string[],
   transformedModules: Map<string, TransformedProjectModule>,
+  finalizedModules: ReadonlySet<string>,
   knownPaths: Set<string>,
+  projectImportAliases: ReadonlyMap<string, string>,
+  serverModuleImports: ReadonlyMap<string, readonly string[]> = new Map(),
 ): Promise<{ modules: string[]; gaps: string[] }> {
+  type ClosureMode = "browser" | "server";
   const visited = new Set<string>();
-  const queue = [...entrypoints];
+  const browserModules = new Set<string>();
+  const queue: Array<{ path: string; mode: ClosureMode }> = entrypoints.map((path) => ({
+    path,
+    mode: serverModuleImports.has(path) ? "server" as const : "browser" as const,
+  }));
   const gaps: string[] = [];
 
   for (let queueIndex = 0; queueIndex < queue.length; queueIndex++) {
-    const current = queue[queueIndex]!;
-    if (visited.has(current)) continue;
-    visited.add(current);
+    const { path: current, mode } = queue[queueIndex]!;
+    const visitKey = `${mode}:${current}`;
+    if (visited.has(visitKey)) continue;
+    visited.add(visitKey);
+
+    if (mode === "server") {
+      const serverImports = serverModuleImports.get(current);
+      if (serverImports) {
+        for (const importedPath of serverImports) {
+          queue.push({ path: importedPath, mode: "server" });
+        }
+        continue;
+      }
+      // A client boundary reached by a server edge has no server graph. Its
+      // finalized browser graph is the route's hydration dependency.
+    }
 
     const transformed = transformedModules.get(current);
-    if (!transformed) {
+    if (!transformed || !finalizedModules.has(current)) {
       // Module referenced but not transformable or not successfully transformed.
       pushGap(gaps, `closure-missing:${current}`);
       continue;
     }
+    browserModules.add(current);
 
     let imports: Map<string, string>;
     try {
-      imports = await collectProjectModuleImports(transformed.code, current, knownPaths);
+      imports = await collectProjectModuleImports(
+        transformed.code,
+        current,
+        knownPaths,
+        projectImportAliases,
+      );
     } catch (error) {
       pushGap(gaps, `closure-import-parse-failed:${current}`);
       logger.warn("Route closure import parse failed during release asset build", {
@@ -2193,11 +2959,11 @@ async function collectRouteClosure(
       continue;
     }
     for (const importedPath of imports.values()) {
-      if (!visited.has(importedPath)) queue.push(importedPath);
+      queue.push({ path: importedPath, mode: "browser" });
     }
   }
 
-  return { modules: [...visited], gaps };
+  return { modules: [...browserModules], gaps };
 }
 
 function validateReleaseAssetBuildInput(
@@ -2449,7 +3215,9 @@ async function runBuildInner(
   if (!releaseConfig || typeof releaseConfig !== "object" || Array.isArray(releaseConfig)) {
     throw new Error("Release asset config loader returned an invalid config");
   }
+  const projectImportAliases = readReleaseProjectImportAliases(sourceByPath, releaseConfig);
   const routeDirectories = releaseRouterDirectories(releaseConfig);
+  const releaseRscEnabled = isRSCEnabled(releaseConfig);
   const dependencyPinningSource = createDependencyPinningSource({
     projectDir: tempDir,
     projectId: input.projectId,
@@ -2471,14 +3239,134 @@ async function runBuildInner(
   async function transformProjectModule(
     logicalPath: string,
   ): Promise<string[]> {
-    if (transformedModules.has(logicalPath) || !isTransformableBrowserModule(logicalPath)) {
+    if (transformedModules.has(logicalPath)) {
+      return [];
+    }
+    const browserTransformable = isTransformableBrowserModule(logicalPath);
+    if (
+      !browserTransformable &&
+      !(serverReachedPaths.has(logicalPath) && isTraversableServerModule(logicalPath))
+    ) {
       return [];
     }
 
     const source = sourceByPath.get(logicalPath);
     if (typeof source !== "string") return [];
-
     const sourceFile = join(tempDir, logicalPath);
+    const sourcePolicy = classifyBrowserModuleSourcePath(logicalPath, {
+      config: releaseConfig,
+      rscEnabled: releaseRscEnabled,
+      isLocalProject: false,
+    });
+    const protectedSource = sourcePolicy.protectionReason !== null;
+    const hasClientDirective = hasUseClientDirective(source, logicalPath);
+    const hasServerDirective = hasUseServerDirective(source);
+    if (hasClientDirective && hasServerDirective) {
+      pushGap(moduleGaps, `module-boundary-failed:${logicalPath}`);
+      logger.warn("Browser module boundary rejected during release asset build", {
+        path: logicalPath,
+        error: "Module cannot contain both use client and use server directives",
+      });
+      return [];
+    }
+    if (protectedSource && hasClientDirective) {
+      pushGap(moduleGaps, `module-boundary-failed:${logicalPath}`);
+      logger.warn("Browser module boundary rejected during release asset build", {
+        path: logicalPath,
+        error: "Protected module cannot declare a client boundary",
+      });
+      return [];
+    }
+    if (
+      releaseRscEnabled &&
+      clientTrustedPaths.has(logicalPath) &&
+      isConfiguredAppRouterBrowserEntry(logicalPath, routeDirectories) &&
+      !hasClientDirective
+    ) {
+      pushGap(moduleGaps, `module-boundary-failed:${logicalPath}`);
+      logger.warn("Browser module boundary rejected during release asset build", {
+        path: logicalPath,
+        error: "App Router page or layout cannot inherit a client boundary",
+      });
+      return [];
+    }
+    const pagesRouterEntry = routeForConfiguredPage(logicalPath, routeDirectories) !== null &&
+      !isConfiguredAppRouterModule(logicalPath, routeDirectories);
+    const nonRscAppRouterEntry = !releaseRscEnabled &&
+      isConfiguredAppRouterBrowserEntry(logicalPath, routeDirectories);
+    if ((pagesRouterEntry || nonRscAppRouterEntry) && hasServerDirective) {
+      pushGap(moduleGaps, `module-boundary-failed:${logicalPath}`);
+      logger.warn("Browser module boundary rejected during release asset build", {
+        path: logicalPath,
+        error: "Browser route entry cannot contain a module-level use server directive",
+      });
+      return [];
+    }
+    const appRouterBrowserCandidate = (hasClientDirective && !hasServerDirective) ||
+      clientTrustedPaths.has(logicalPath) || nonRscAppRouterEntry;
+
+    // An App Router module is a server module unless it opts into the client
+    // boundary itself or inherits the boundary from a published browser module
+    // that imports it (a "use client" component's dependency closure is client
+    // code even when the helper files carry no directive of their own). An
+    // explicit "use server" module never inherits that trust: whoever imports
+    // it, wherever it lives, its source stays on the server. The same server
+    // boundary follows every module reached through a server-module edge, not
+    // only files beneath the app directory -- a server page importing
+    // ../server/actions.ts keeps that module server-side too.
+    if (
+      protectedSource ||
+      (!(hasClientDirective && !hasServerDirective) &&
+        (hasServerDirective ||
+          (((releaseRscEnabled && isConfiguredAppRouterModule(logicalPath, routeDirectories)) ||
+            serverReachedPaths.has(logicalPath)) &&
+            !clientTrustedPaths.has(logicalPath))))
+    ) {
+      try {
+        const imports = await collectServerModuleImports(
+          source,
+          logicalPath,
+          tempDir,
+          knownPaths,
+          projectImportAliases,
+          input.adapter,
+        );
+        serverModuleImports.set(logicalPath, imports);
+        // Everything a server module reaches is server code by default. A
+        // client entry or boundary that also imports the module reclassifies
+        // it below.
+        for (const importedPath of imports) {
+          serverReachedPaths.add(importedPath);
+        }
+        return imports;
+      } catch (error) {
+        // Route-local like every other per-module parse failure: the routes
+        // this module serves lose coverage and are dropped, and the failure
+        // only becomes fatal when it leaves the release with nothing to serve.
+        pushGap(moduleGaps, `module-import-parse-failed:${logicalPath}`);
+        logger.warn("Server module import parse failed during release asset build", {
+          path: logicalPath,
+          error: sanitizeError(error),
+        });
+        return [];
+      }
+    }
+
+    // Server-only script formats participate in route reachability but never
+    // enter the browser transform or release manifest.
+    if (!browserTransformable) return [];
+
+    const sourceBoundaryViolation = appRouterBrowserCandidate && !logicalPath.endsWith(".mdx")
+      ? await inspectReleaseBrowserModuleBoundary(source, sourceFile)
+      : null;
+    if (sourceBoundaryViolation) {
+      pushGap(moduleGaps, `module-boundary-failed:${logicalPath}`);
+      logger.warn("Browser module boundary rejected during release asset build", {
+        path: logicalPath,
+        error: describeBrowserModuleBoundaryViolation(sourceBoundaryViolation),
+      });
+      return [];
+    }
     let code: string;
     try {
       code = await transform(source, sourceFile, tempDir, input.adapter, {
@@ -2505,6 +3393,17 @@ async function runBuildInner(
       });
       return [];
     }
+    const transformedBoundaryViolation = appRouterBrowserCandidate && logicalPath.endsWith(".mdx")
+      ? await inspectReleaseBrowserModuleBoundary(code, sourceFile)
+      : null;
+    if (transformedBoundaryViolation) {
+      pushGap(moduleGaps, `module-boundary-failed:${logicalPath}`);
+      logger.warn("Browser module boundary rejected during release asset build", {
+        path: logicalPath,
+        error: describeBrowserModuleBoundaryViolation(transformedBoundaryViolation),
+      });
+      return [];
+    }
     const transformedSize = textEncoder.encode(code).byteLength;
     if (transformedSize > RELEASE_ASSET_MAX_SIZE_BYTES) {
       pushGap(moduleGaps, `oversized:${logicalPath}`);
@@ -2516,12 +3415,37 @@ async function runBuildInner(
       return [];
     }
 
+    try {
+      if (await importsExternalStylesheetAlias(code, projectImportAliases, knownPaths)) {
+        pushGap(moduleGaps, `module-boundary-failed:${logicalPath}`);
+        logger.warn("Browser module boundary rejected during release asset build", {
+          path: logicalPath,
+          error: "Browser import-map alias cannot target an external stylesheet",
+        });
+        return [];
+      }
+    } catch (error) {
+      pushGap(moduleGaps, `module-import-parse-failed:${logicalPath}`);
+      logger.warn("Module import parse failed during release asset build", {
+        path: logicalPath,
+        error: sanitizeError(error),
+      });
+      return [];
+    }
+
     const unvendoredCode = code;
     let imports: Map<string, string> | undefined;
     if (typeof vendorHttpImports === "function") {
       try {
+        const vendorSource = await rewriteExternalProjectImportAliases(
+          code,
+          projectImportAliases,
+          knownPaths,
+          releaseReactVersion,
+          releaseConfig.build?.serverExternalPackages,
+        );
         const vendored = validateVendorResult(
-          await vendorHttpImports(code, {
+          await vendorHttpImports(vendorSource, {
             tempDir,
             reactVersion: releaseReactVersion,
           }),
@@ -2531,6 +3455,7 @@ async function runBuildInner(
           vendored.code,
           logicalPath,
           knownPaths,
+          projectImportAliases,
         );
         commitDependencyModules(dependencyModules, stagedDependencies);
         code = vendored.code;
@@ -2553,7 +3478,12 @@ async function runBuildInner(
 
     if (!imports) {
       try {
-        imports = await collectProjectModuleImports(code, logicalPath, knownPaths);
+        imports = await collectProjectModuleImports(
+          code,
+          logicalPath,
+          knownPaths,
+          projectImportAliases,
+        );
       } catch (error) {
         const sanitized = sanitizeError(error);
         pushGap(moduleGaps, `module-import-parse-failed:${logicalPath}`);
@@ -2565,25 +3495,97 @@ async function runBuildInner(
       }
     }
 
+    // This module ships to the browser, so everything it imports is client
+    // code too. Propagate that trust before the imports are dequeued, and
+    // reclassify any import that an earlier server-module traversal parked as
+    // a server module: it must be transformed and published after all, or the
+    // importing module's finalize step has nothing to rewrite the edge to.
+    for (const importedPath of imports.values()) {
+      if (clientTrustedPaths.has(importedPath)) continue;
+      clientTrustedPaths.add(importedPath);
+      if (serverModuleImports.has(importedPath)) {
+        moduleQueue.push(importedPath);
+      } else if (transformedModules.delete(importedPath)) {
+        // A broad browser seed can be transformed before its client importer.
+        // Re-run it now that inherited client trust requires boundary checks.
+        moduleQueue.push(importedPath);
+      }
+    }
+
+    // Keep the server traversal for server edges even after browser promotion.
+    // Route assembly selects the graph per edge after finalization, so a failed
+    // browser publication cannot break an otherwise valid server-only path.
     transformedModules.set(logicalPath, { logicalPath, code, unvendoredCode });
     return [...imports.values()];
   }
 
+  const serverModuleImports = new Map<string, readonly string[]>();
+  // Logical paths outside the seeded browser locations that a server-module
+  // edge reached. They default to server modules wherever they live on disk,
+  // unless a client boundary also imports them.
+  const serverReachedPaths = new Set<string>();
+  // Logical paths that inherit the client boundary from an importing browser
+  // module, so App Router files without their own "use client" directive are
+  // still transformed when a client component pulls them in.
+  const clientTrustedPaths = new Set<string>();
   const moduleQueue: string[] = [];
   const queuedModules = new Set<string>();
-  for (const logicalPath of sourceByPath.keys()) {
-    if (!isBrowserModule(logicalPath, routeDirectories)) continue;
-    moduleQueue.push(logicalPath);
-    queuedModules.add(logicalPath);
-  }
-  for (let index = 0; index < moduleQueue.length; index++) {
-    const logicalPath = moduleQueue[index]!;
-    for (const importedPath of await transformProjectModule(logicalPath)) {
-      if (queuedModules.has(importedPath)) continue;
-      queuedModules.add(importedPath);
-      moduleQueue.push(importedPath);
+  const browserSeeds = [...sourceByPath.keys()].filter((logicalPath) =>
+    isBrowserModule(logicalPath, routeDirectories)
+  );
+  const seedRank = (logicalPath: string): number => {
+    const source = sourceByPath.get(logicalPath) ?? "";
+    const sourcePolicy = classifyBrowserModuleSourcePath(logicalPath, {
+      config: releaseConfig,
+      rscEnabled: releaseRscEnabled,
+      isLocalProject: false,
+    });
+    if (sourcePolicy.protectionReason !== null || hasUseServerDirective(source)) return 0;
+    if (isConfiguredAppRouterModule(logicalPath, routeDirectories)) {
+      return isTrustedAppRouterBrowserModule(source, logicalPath) ? 1 : 0;
+    }
+    return routeForConfiguredPage(logicalPath, routeDirectories) !== null ? 1 : 2;
+  };
+  browserSeeds.sort((left, right) => {
+    const rankDifference = seedRank(left) - seedRank(right);
+    if (rankDifference !== 0) return rankDifference;
+    return left < right ? -1 : left > right ? 1 : 0;
+  });
+  for (const logicalPath of browserSeeds) {
+    const pagesRouterEntry = routeForConfiguredPage(logicalPath, routeDirectories) !== null &&
+      !isConfiguredAppRouterModule(logicalPath, routeDirectories);
+    const nonRscAppRouterEntry = !releaseRscEnabled &&
+      isConfiguredAppRouterBrowserEntry(logicalPath, routeDirectories);
+    if (pagesRouterEntry || nonRscAppRouterEntry) {
+      clientTrustedPaths.add(logicalPath);
     }
   }
+
+  const enqueueModule = (logicalPath: string) => {
+    if (queuedModules.has(logicalPath)) return;
+    queuedModules.add(logicalPath);
+    moduleQueue.push(logicalPath);
+  };
+  let moduleQueueIndex = 0;
+  const drainModuleQueue = async () => {
+    while (moduleQueueIndex < moduleQueue.length) {
+      const logicalPath = moduleQueue[moduleQueueIndex++]!;
+      for (const importedPath of await transformProjectModule(logicalPath)) {
+        enqueueModule(importedPath);
+      }
+    }
+  };
+
+  // Build the complete server closure before broad directory seeds can be
+  // transformed. Otherwise a generic seed that sorts before its server
+  // importer can publish itself and propagate false client trust to its own
+  // dependencies before the server edge reaches it.
+  for (const logicalPath of browserSeeds) {
+    if (seedRank(logicalPath) === 0) enqueueModule(logicalPath);
+  }
+  await drainModuleQueue();
+  for (const logicalPath of browserSeeds) enqueueModule(logicalPath);
+  await drainModuleQueue();
 
   if (typeof vendorHttpImports === "function") {
     try {
@@ -2673,11 +3675,14 @@ async function runBuildInner(
   const { modules, skippedModules } = await finalizeProjectModules(
     transformedModules,
     knownPaths,
+    projectImportAliases,
     dependencyUrls,
     uploadQueue,
     pendingBytes,
     moduleGaps,
     !vendorDependencies,
+    releaseReactVersion,
+    releaseConfig.build?.serverExternalPackages,
   );
 
   for (const logicalPath of transformedModules.keys()) {
@@ -2706,7 +3711,11 @@ async function runBuildInner(
     pushGap(gaps, `stylesheet-missing:${stylesheetPath}`);
     assertCompleteReleaseAssetCoverage(gaps, moduleGaps);
   }
-  const stylesheet = await mergeModuleCssImports(sourceByPath, resolvedStylesheet);
+  const stylesheet = await mergeModuleCssImports(
+    sourceByPath,
+    resolvedStylesheet,
+    projectImportAliases,
+  );
   assertCompleteReleaseAssetCoverage(gaps, moduleGaps);
   const cssRequested = candidates.size > 0 || stylesheet !== undefined;
   if (cssRequested) {
@@ -2755,7 +3764,8 @@ async function runBuildInner(
   // Modules missing from transformedModules are recorded as closure gaps.
   const routes: Record<string, ReleaseAssetRouteEntry> = {};
   const droppedRoutes = new Map<string, string[]>();
-  const pageModules = Object.keys(modules).filter((p) =>
+  const finalizedModulePaths = new Set(Object.keys(modules));
+  const pageModules = [...sourceByPath.keys()].filter((p) =>
     routeForConfiguredPage(p, routeDirectories) !== null
   );
 
@@ -2774,7 +3784,10 @@ async function runBuildInner(
     const { modules: closureModules, gaps: closureGaps } = await collectRouteClosure(
       entryModules,
       transformedModules,
+      finalizedModulePaths,
       knownPaths,
+      projectImportAliases,
+      serverModuleImports,
     );
 
     // Include only modules we actually have in the manifest (transformed +
@@ -2959,22 +3972,79 @@ function resolveProjectStylesheet(
 async function mergeModuleCssImports(
   sourceByPath: Map<string, string>,
   stylesheet: { content: string; path: string } | undefined,
+  projectImportAliases: ReadonlyMap<string, string>,
 ): Promise<string | undefined> {
   const importedPaths = new Set<string>();
+  const knownPaths = new Set(sourceByPath.keys());
   for (const [path, content] of sourceByPath) {
     if (!CSS_IMPORTING_SOURCE_EXTENSIONS.some((ext) => path.endsWith(ext))) continue;
-    // Regex extraction, not the ESM lexer. This runs over project source --
-    // .tsx/.jsx/.mdx/.ts by definition, see CSS_IMPORTING_SOURCE_EXTENSIONS --
-    // and es-module-lexer parses none of those. Every file containing JSX threw
-    // here, each throw recorded a gap, and gaps are fatal since #3244, so no
-    // project with a JSX component could publish a release at all.
-    //
-    // This is the same extractor the dev CSS scanner has always used, so the
-    // two paths now agree. It also removes the failure mode rather than
-    // handling it: a scanner that cannot throw cannot fail a release for a
-    // reason that has nothing to do with the release.
-    for (const specifier of extractCssImportSpecifiers(content)) {
-      const cssPath = specifier.split(/[?#]/, 1)[0] ?? "";
+    // The source-span scanners understand comments, strings, JSX, and
+    // TypeScript without requiring the raw source to be valid plain
+    // JavaScript. That keeps the JSX-safe behavior this release path needs,
+    // while ensuring quoted or commented import/export examples cannot merge
+    // a real but unreachable stylesheet into production CSS.
+    // Matcher rejections do not count against the scanner bound. Restricting
+    // the scan here keeps a generated file's ordinary imports from exhausting
+    // the budget before a later live stylesheet edge.
+    const keepCssSpecifier = (specifier: string) => {
+      if (isExternalCssSpecifier(specifier)) return specifier;
+      if (
+        !mayResolveProjectStylesheetSpecifier(
+          specifier,
+          projectImportAliases,
+        )
+      ) return null;
+      const aliasResolution = resolveProjectImportAlias(
+        specifier,
+        projectImportAliases,
+        knownPaths,
+        resolveKnownStylesheetPath,
+      );
+      return aliasResolution.matched && aliasResolution.path ? specifier : null;
+    };
+    const specifiers = new Set<string>();
+    const findCompleteCssSpans = (
+      scan: (maxMatches: number) => ReturnType<typeof findStaticImportFromSpans>,
+    ) => {
+      const spans = scan(MAX_RELEASE_FILES + 1);
+      if (spans.length > MAX_RELEASE_FILES) {
+        throw new Error(
+          `Release CSS import scan exceeds ${MAX_RELEASE_FILES} matches in ${path}`,
+        );
+      }
+      return spans;
+    };
+    for (
+      const spans of [
+        findCompleteCssSpans((maxMatches) =>
+          findStaticImportFromSpans(content, keepCssSpecifier, maxMatches)
+        ),
+        findCompleteCssSpans((maxMatches) =>
+          findStaticSideEffectImportSpans(content, keepCssSpecifier, maxMatches)
+        ),
+        findCompleteCssSpans((maxMatches) =>
+          findDynamicImportSpans(content, keepCssSpecifier, maxMatches)
+        ),
+      ]
+    ) {
+      for (const span of spans) {
+        if (span.typeOnly !== true) specifiers.add(span.path);
+      }
+    }
+    for (const specifier of specifiers) {
+      const cssPath = specifier.startsWith("#") ? specifier : splitSpecifierSuffix(specifier).path;
+      const aliasResolution = resolveProjectImportAlias(
+        cssPath,
+        projectImportAliases,
+        knownPaths,
+        resolveKnownStylesheetPath,
+      );
+      if (aliasResolution.matched) {
+        if (aliasResolution.path !== undefined && aliasResolution.path !== null) {
+          importedPaths.add(aliasResolution.path);
+        }
+        continue;
+      }
       if (!cssPath.endsWith(".css")) continue;
       // Nothing this scan fails to resolve is fatal, because a regex match is
       // not knowledge that the build needs the file. extractCssImportSpecifiers
@@ -2989,11 +4059,7 @@ async function mergeModuleCssImports(
       // missing-CSS detection belongs on the resolved module graph
       // (collectProjectModuleImports, over transformed code where the lexer is
       // trustworthy), not on this text scan.
-      if (cssPath !== specifier) {
-        logger.debug("Skipping CSS import with an unsupported specifier", { path, specifier });
-        continue;
-      }
-      const importedPath = resolveCssImportPath(specifier, `/${path}`, "/");
+      const importedPath = resolveCssImportPath(cssPath, `/${path}`, "/");
       if (!importedPath) {
         logger.debug("Skipping CSS import that does not resolve", { path, specifier });
         continue;

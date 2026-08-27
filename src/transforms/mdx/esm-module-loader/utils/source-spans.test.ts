@@ -305,6 +305,33 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("classifies declarations that contain only type edges", () => {
+      const spans = findStaticImportFromSpans(
+        'import type Styles from "./import-type.css"; ' +
+          'export type { Classes } from "./export-type.css"; ' +
+          'import { type Tokens } from "./inline-type.css"; ' +
+          'import { type Tokens as Types, value } from "./mixed.css"; ' +
+          'import { type as value } from "./type-binding.css"; ' +
+          'import type, { value as other } from "./type-default.css"; ' +
+          'import type from "./type-named-default.css";',
+        matchRelative,
+        UNBOUNDED,
+      );
+
+      assertEquals(
+        spans.map(({ path, typeOnly }) => ({ path, typeOnly })),
+        [
+          { path: "./import-type.css", typeOnly: true },
+          { path: "./export-type.css", typeOnly: true },
+          { path: "./inline-type.css", typeOnly: true },
+          { path: "./mixed.css", typeOnly: false },
+          { path: "./type-binding.css", typeOnly: false },
+          { path: "./type-default.css", typeOnly: false },
+          { path: "./type-named-default.css", typeOnly: false },
+        ],
+      );
+    });
+
     it("finds static imports after top-level block declarations", () => {
       assertEquals(
         findStaticImportFromSpans(

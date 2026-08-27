@@ -34,10 +34,17 @@ export function resolveImport(
     if (mapped) return mapped;
   }
 
+  let prefixMatch: { key: string; value: string } | undefined;
   for (const [key, value] of Object.entries(importMap.imports ?? {})) {
-    if (key.endsWith("/") && specifier.startsWith(key)) {
-      return value + specifier.slice(key.length);
+    if (
+      key.endsWith("/") && specifier.startsWith(key) &&
+      (prefixMatch === undefined || key.length > prefixMatch.key.length)
+    ) {
+      prefixMatch = { key, value };
     }
+  }
+  if (prefixMatch !== undefined) {
+    return prefixMatch.value + specifier.slice(prefixMatch.key.length);
   }
 
   return specifier;

@@ -88,6 +88,15 @@ describe("html/styles-builder/css-import-extraction", () => {
       assertEquals(extractCssImportSpecifiers('import.meta.resolve("./a.css");'), []);
     });
 
+    it("retains query and fragment suffixes for filesystem normalization", () => {
+      assertEquals(
+        extractCssImportSpecifiers(
+          'import "./theme.css?inline"; import styles from "./card.module.css#release";',
+        ),
+        ["./theme.css?inline", "./card.module.css#release"],
+      );
+    });
+
     it("finds every real import in a mixed file", () => {
       const source = [
         '// import "./commented.css";',
@@ -137,6 +146,17 @@ describe("html/styles-builder/css-import-extraction", () => {
       assertEquals(
         resolveCssImportPath("@/theme/tokens.css", "/project/app/layout.tsx", "/project"),
         "/project/theme/tokens.css",
+      );
+    });
+
+    it("strips query and fragment suffixes before resolving", () => {
+      assertEquals(
+        resolveCssImportPath("./styles.css#release", "/project/app/layout.tsx", "/project"),
+        "/project/app/styles.css",
+      );
+      assertEquals(
+        resolveCssImportPath("@/theme.css?inline", "/project/app/layout.tsx", "/project"),
+        "/project/theme.css",
       );
     });
 

@@ -21,15 +21,27 @@
 
 import { isWithinDirectory, normalizePath } from "#veryfront/utils/path-utils.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 
 /** Module extensions whose sources can carry CSS imports. */
-export const CSS_IMPORTING_SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
+export const CSS_IMPORTING_SOURCE_EXTENSIONS = [
+  ".tsx",
+  ".jsx",
+  ".mdx",
+  ".ts",
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".mts",
+  ".cts",
+];
 
 /**
- * ESM imports whose specifier ends in `.css`:
+ * ESM imports whose specifier path ends in `.css`, with an optional suffix:
  *   import "./styles.css";
  *   import styles from "./button.module.css";
  *   import("./theme.css")
+ *   import "./theme.css#release";
  *
  * Dynamic imports are matched on purpose, despite this once being described as
  * static-only. `import("./theme.css")` loads that stylesheet at runtime, so
@@ -42,7 +54,7 @@ export const CSS_IMPORTING_SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", "
  * than it looks: release-asset builds turn a bogus specifier into a fatal
  * coverage gap, so a false positive fails the release.
  */
-const CSS_IMPORT_RE = /\bimport\b(?!\s*\.)[^'";]*['"]([^'"]+\.css)['"]/g;
+const CSS_IMPORT_RE = /\bimport\b(?!\s*\.)[^'";]*['"]([^'"]+\.css(?:[?#][^'"]*)?)['"]/g;
 
 /**
  * Extract the raw specifiers of all CSS imports in a source file.
@@ -94,16 +106,17 @@ export function resolveCssImportPath(
   importerPath: string,
   projectDir: string,
 ): string | null {
+  const specifierPath = splitSpecifierSuffix(specifier).path;
   const normalizedImporter = normalizePath(importerPath);
   const normalizedProjectDir = normalizePath(projectDir);
 
   let candidate: string;
-  if (specifier.startsWith("./") || specifier.startsWith("../")) {
+  if (specifierPath.startsWith("./") || specifierPath.startsWith("../")) {
     const dirEnd = normalizedImporter.lastIndexOf("/");
     if (dirEnd <= 0) return null;
-    candidate = `${normalizedImporter.slice(0, dirEnd)}/${specifier}`;
-  } else if (specifier.startsWith("@/")) {
-    candidate = `${normalizedProjectDir}/${specifier.slice(2)}`;
+    candidate = `${normalizedImporter.slice(0, dirEnd)}/${specifierPath}`;
+  } else if (specifierPath.startsWith("@/")) {
+    candidate = `${normalizedProjectDir}/${specifierPath.slice(2)}`;
   } else {
     return null;
   }
