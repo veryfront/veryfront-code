@@ -3,6 +3,48 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 describe("native brand checks", () => {
+  it("identifies native-slot objects without trusting their prototype", async () => {
+    const isolated = await import("./native-brand-checks.ts?non-plain-builtins");
+    const values = [
+      new WeakMap(),
+      new WeakSet(),
+      Promise.resolve(),
+      Object(Symbol("boxed")),
+    ];
+
+    for (const value of values) {
+      Object.setPrototypeOf(value, Object.prototype);
+      assertEquals(isolated.nativeBrandChecks?.isNonPlainBuiltin(value), true);
+    }
+    assertEquals(isolated.nativeBrandChecks?.isNonPlainBuiltin({}), false);
+  });
+
+  it("does not invoke proxy traps while checking non-plain builtins", async () => {
+    const isolated = await import("./native-brand-checks.ts?non-plain-proxy");
+    let trapCalls = 0;
+    const proxy = new Proxy({}, {
+      get() {
+        trapCalls++;
+        return undefined;
+      },
+      getOwnPropertyDescriptor() {
+        trapCalls++;
+        return undefined;
+      },
+      getPrototypeOf() {
+        trapCalls++;
+        return Object.prototype;
+      },
+      ownKeys() {
+        trapCalls++;
+        return [];
+      },
+    });
+
+    assertEquals(isolated.nativeBrandChecks?.isNonPlainBuiltin(proxy), false);
+    assertEquals(trapCalls, 0);
+  });
+
   it("does not invoke a replaced node:vm export during initialization", async () => {
     const hostProcess = (globalThis as typeof globalThis & {
       process?: { getBuiltinModule?: (specifier: string) => unknown };

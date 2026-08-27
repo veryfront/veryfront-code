@@ -502,6 +502,57 @@ describe("serializeWorkflowContext", () => {
       assertStringIncludes(error.message, "object");
     });
 
+    it("throws when host-recognized builtins hide behind Object.prototype", () => {
+      for (
+        const value of [
+          new WeakMap(),
+          new WeakSet(),
+          Promise.resolve(),
+          Object(Symbol("hidden")),
+        ]
+      ) {
+        Object.setPrototypeOf(value, Object.prototype);
+
+        const error = assertThrows(
+          () =>
+            serializeWorkflowContext(
+              contextWith({ value }),
+              "run-strict-context",
+              { strictContext: true },
+            ),
+          VeryfrontError,
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertStringIncludes(error.message, "strictContext");
+        assertStringIncludes(error.message, "object");
+      }
+    });
+
+    it("does not probe intrinsic slot getters for ordinary strict objects", async () => {
+      const originalGetTime = Date.prototype.getTime;
+      let probeCalls = 0;
+      Date.prototype.getTime = function (this: Date): number {
+        probeCalls++;
+        return Reflect.apply(originalGetTime, this, []);
+      };
+
+      try {
+        const isolated = await import(
+          "./context-serialization.ts?non-throwing-native-brand-checks"
+        );
+        isolated.serializeWorkflowContext(
+          contextWith({ value: { nested: true } }),
+          "run-strict-context",
+          { strictContext: true },
+        );
+      } finally {
+        Date.prototype.getTime = originalGetTime;
+      }
+
+      assertEquals(probeCalls, 0);
+    });
+
     it("throws when strictContext would drop a non-enumerable property", () => {
       const step = {};
       Object.defineProperty(step, "required", {

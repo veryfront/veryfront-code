@@ -63,6 +63,21 @@ const nativeUint8ArrayBrandCheck = nativeBrandChecks?.isUint8Array ?? unavailabl
  */
 export const canIdentifyProxyWithoutHooks = nativeBrandChecks !== undefined;
 
+/** Whether immutable host predicates can identify JSON-lossy built-ins. */
+export const canIdentifyNonPlainBuiltinsWithoutHooks = nativeBrandChecks !== undefined;
+
+/**
+ * Identify host-recognized built-in objects whose internal slots JSON cannot
+ * preserve.
+ *
+ * Server runtimes use immutable host predicates, which neither evaluate
+ * project hooks nor throw for ordinary objects. Edge hosts without those
+ * predicates return false so callers can use their portable fallback.
+ */
+export function isNonPlainBuiltinWithoutHooks(value: unknown): boolean {
+  return nativeBrandChecks?.isNonPlainBuiltin(value) ?? false;
+}
+
 function createDataDescriptor(value: unknown): PropertyDescriptor {
   const descriptor = createObject(null) as PropertyDescriptor;
   descriptor.configurable = true;

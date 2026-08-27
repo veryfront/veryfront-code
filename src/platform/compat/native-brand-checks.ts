@@ -2,10 +2,14 @@ import { isBun, isDeno, isNode } from "./runtime.ts";
 
 export interface NativeBrandChecks {
   isAsyncFunction(value: unknown): boolean;
+  isBoxedPrimitive(value: unknown): boolean;
+  isNonPlainBuiltin(value: unknown): boolean;
   isNativeError(value: unknown): boolean;
   isPromise(value: unknown): boolean;
   isProxy(value: unknown): boolean;
   isUint8Array(value: unknown): boolean;
+  isWeakMap(value: unknown): boolean;
+  isWeakSet(value: unknown): boolean;
 }
 
 interface HostProcess {
@@ -23,6 +27,34 @@ const defineProperty = Object.defineProperty;
 const freeze = Object.freeze;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectHasOwnProperty = Object.prototype.hasOwnProperty;
+
+const nonPlainBuiltinCheckNames = [
+  "isAnyArrayBuffer",
+  "isArgumentsObject",
+  "isArrayBufferView",
+  "isBoxedPrimitive",
+  "isCryptoKey",
+  "isDataView",
+  "isDate",
+  "isGeneratorObject",
+  "isKeyObject",
+  "isMap",
+  "isMapIterator",
+  "isModuleNamespaceObject",
+  "isNativeError",
+  "isPromise",
+  "isRegExp",
+  "isSet",
+  "isSetIterator",
+  "isTypedArray",
+  "isWeakMap",
+  "isWeakSet",
+] as const;
+
+// Keep this list to immutable host predicates. JavaScript exposes additional
+// native slots, such as WeakRef and FinalizationRegistry, only through methods
+// that throw on an ordinary object. Probing those methods here would put
+// exception allocation back on every strict JSON object this boundary serves.
 
 function hasOwn(object: PropertyDescriptor, key: PropertyKey): boolean {
   return apply(objectHasOwnProperty, object, [key]) as boolean;
@@ -46,10 +78,13 @@ function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefine
   for (
     const key of [
       "isAsyncFunction",
+      "isBoxedPrimitive",
       "isNativeError",
       "isPromise",
       "isProxy",
       "isUint8Array",
+      "isWeakMap",
+      "isWeakSet",
     ] as const
   ) {
     const check = readOwnDataFunction(value, key);
@@ -61,6 +96,39 @@ function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefine
       writable: false,
     });
   }
+  const nonPlainBuiltinChecks = createObject(null) as Record<
+    (typeof nonPlainBuiltinCheckNames)[number],
+    ((value: unknown) => boolean) | undefined
+  >;
+  for (const key of nonPlainBuiltinCheckNames) {
+    const check = readOwnDataFunction(value, key);
+    if (check) {
+      defineProperty(nonPlainBuiltinChecks, key, {
+        configurable: false,
+        enumerable: true,
+        value: check,
+        writable: false,
+      });
+    }
+  }
+  freeze(nonPlainBuiltinChecks);
+  const proxyCheck = snapshot.isProxy;
+  defineProperty(snapshot, "isNonPlainBuiltin", {
+    configurable: false,
+    enumerable: true,
+    value: (candidate: unknown): boolean => {
+      // Some optional node:util predicates consult internal symbol properties
+      // on proxies. Rejecting proxies belongs to the caller's dedicated proxy
+      // path, so keep this aggregate check hook-free by stopping here.
+      if (apply(proxyCheck, undefined, [candidate]) === true) return false;
+      for (const key of nonPlainBuiltinCheckNames) {
+        const check = nonPlainBuiltinChecks[key];
+        if (check && apply(check, undefined, [candidate]) === true) return true;
+      }
+      return false;
+    },
+    writable: false,
+  });
   return freeze(snapshot);
 }
 

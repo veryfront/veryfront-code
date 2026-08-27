@@ -1,6 +1,8 @@
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 import {
+  canIdentifyNonPlainBuiltinsWithoutHooks,
   canIdentifyProxyWithoutHooks,
+  isNonPlainBuiltinWithoutHooks,
   isProxyWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
 import { agentLogger } from "#veryfront/utils";
@@ -58,6 +60,7 @@ const setHas = Set.prototype.has;
 const StringConstructor = String;
 const stringSlice = String.prototype.slice;
 const StringValueOf = String.prototype.valueOf;
+const SymbolValueOf = Symbol.prototype.valueOf;
 const symbolToStringTag = Symbol.toStringTag;
 const typedArrayPrototype = objectGetPrototypeOf(Uint8Array.prototype);
 const typedArrayByteLengthGet = objectGetOwnPropertyDescriptor(
@@ -75,6 +78,8 @@ const dataViewByteLengthGet = objectGetOwnPropertyDescriptor(
 const WeakMapConstructor = WeakMap;
 const weakMapGet = WeakMap.prototype.get;
 const weakMapSet = WeakMap.prototype.set;
+const weakSetHas = WeakSet.prototype.has;
+const nativeBrandProbeKey = objectCreate(null);
 
 function defineArrayElement<T>(values: T[], index: number, value: T): void {
   objectDefineProperty(values, index, {
@@ -272,7 +277,22 @@ function hasNativeBrand(
   }
 }
 
+function hasWeakCollectionSlot(
+  value: JsonTraversalReference,
+  method: (key: object) => unknown,
+): boolean {
+  try {
+    reflectApply(method, value, [nativeBrandProbeKey]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isKnownNonPlainBuiltin(value: JsonTraversalReference): boolean {
+  if (canIdentifyNonPlainBuiltinsWithoutHooks) {
+    return isNonPlainBuiltinWithoutHooks(value);
+  }
   return hasNativeSlot(value, dateGetTime) ||
     hasNativeBrand(value, errorIsError, ErrorConstructor) ||
     hasNativeSlot(value, mapSizeGet) ||
@@ -280,7 +300,10 @@ function isKnownNonPlainBuiltin(value: JsonTraversalReference): boolean {
     hasNativeSlot(value, regExpSourceGet) ||
     hasNativeSlot(value, typedArrayByteLengthGet) ||
     hasNativeSlot(value, arrayBufferByteLengthGet) ||
-    hasNativeSlot(value, dataViewByteLengthGet);
+    hasNativeSlot(value, dataViewByteLengthGet) ||
+    hasNativeSlot(value, SymbolValueOf) ||
+    hasWeakCollectionSlot(value, weakMapGet) ||
+    hasWeakCollectionSlot(value, weakSetHas);
 }
 
 /** Whether a value is a plain `{}` object rather than a class instance. */
