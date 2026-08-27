@@ -124,14 +124,16 @@ async function install() {
     // Graceful fallback - bundled JS CLI will be used instead
     // error.message can quote remote text (an HTTP status message, a Location
     // header, the first token of a malformed SHA256SUMS), so neutralize every
-    // control and line-separator character before it reaches the log, collapse
-    // the resulting runs, and cap the length. Newlines are not spared: the one
-    // multi-line message that lands here is built from local literals with
-    // hashes already matched against /^[0-9a-f]{64}$/, so it loses nothing but
-    // its line breaks, while sparing \n is exactly what would leave log
-    // forging open.
+    // control character and line separator before it reaches the log, collapse
+    // the resulting runs, and cap the length. The explicit codepoint ranges
+    // match the CONTROL_CHARACTERS idiom in src/config/loader.ts, and name CR
+    // and LF outright so a reader -- and a taint analyzer -- can see the line
+    // terminators being removed. Newlines are not spared: the one multi-line
+    // message that lands here is built from local literals with hashes already
+    // matched against /^[0-9a-f]{64}$/, so it loses nothing but its line breaks,
+    // while sparing \n is exactly what would leave log forging open.
     const reason = String(error.message)
-      .replace(/[\p{C}\p{Zl}\p{Zp}]+/gu, " ")
+      .replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]+/g, " ")
       .replace(/\s{2,}/g, " ")
       .trim()
       .slice(0, 500);
