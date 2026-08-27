@@ -411,7 +411,8 @@ export function listTestFiles(patterns, cwd = process.cwd()) {
 export function splitIntoShards(files, shardCount) {
   const total = Math.max(1, Math.min(shardCount, files.length || 1));
   const shards = Array.from({ length: total }, () => []);
-  const sorted = [...files].sort();
+  // Explicit form of the comparator-less sort: UTF-16 code-unit order.
+  const sorted = [...files].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   sorted.forEach((file, index) => {
     shards[index % total].push(file);
   });

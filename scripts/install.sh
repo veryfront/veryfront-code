@@ -106,12 +106,21 @@ detect_platform() {
   esac
 }
 
+# GNU wget refuses a redirect to http with --https-only; BusyBox wget does not
+# know the flag and would abort under `set -e`. Probe once and reuse the answer.
+WGET_HTTPS_ONLY=""
+if command -v wget >/dev/null 2>&1; then
+  if wget --help 2>&1 | grep -q -- "--https-only"; then
+    WGET_HTTPS_ONLY="--https-only"
+  fi
+fi
+
 # Get latest version from GitHub
 get_latest_version() {
   if command -v curl >/dev/null 2>&1; then
-    curl -sL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/'
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -sL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/'
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO- "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/'
+    wget ${WGET_HTTPS_ONLY} -qO- "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/'
   else
     echo "Error: curl or wget is required" >&2
     exit 1
@@ -183,9 +192,9 @@ download() {
   DEST="$2"
 
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$URL" -o "$DEST"
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "$URL" -o "$DEST"
   elif command -v wget >/dev/null 2>&1; then
-    wget -q "$URL" -O "$DEST"
+    wget ${WGET_HTTPS_ONLY} -q "$URL" -O "$DEST"
   else
     echo "Error: curl or wget is required" >&2
     exit 1

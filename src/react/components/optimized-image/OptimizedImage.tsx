@@ -6,6 +6,9 @@ import {
   getImageExtension,
   getOptimizedImageFormatFallback,
   getOptimizedImageVariantWidths,
+  handleImageActivationBlur,
+  handleImageActivationKeyDown,
+  handleImageActivationKeyUp,
 } from "./helpers.ts";
 
 export type OptimizedImageFormat = "avif" | "webp" | "jpeg" | "png";
@@ -92,7 +95,12 @@ export function OptimizedImage({
         decoding="async"
         className={className}
         style={imgStyle}
+        role={onClick ? "button" : undefined}
+        tabIndex={onClick ? 0 : undefined}
         onClick={onClick}
+        onKeyDown={onClick ? handleImageActivationKeyDown : undefined}
+        onKeyUp={onClick ? handleImageActivationKeyUp : undefined}
+        onBlur={onClick ? handleImageActivationBlur : undefined}
         onLoad={onLoad}
         onError={onError}
       />

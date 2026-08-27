@@ -113,7 +113,9 @@ function resolveFetch(config: Pick<LiveEvalRunnerConfig, "fetch">) {
 function assertLiveEvalRunnerConfig(config: LiveEvalRunnerConfig): void {
   assertCanonicalEvalString(config.endpoint, "Live eval endpoint");
   assertCanonicalEvalString(config.apiUrl, "Live eval API URL");
-  new URL(config.apiUrl);
+  if (!URL.canParse(config.apiUrl)) {
+    throw new TypeError("Live eval API URL must be a valid absolute URL");
+  }
   assertCanonicalEvalString(config.authToken, "Live eval auth token");
   if (config.projectId !== null) {
     assertCanonicalEvalString(config.projectId, "Live eval project id");

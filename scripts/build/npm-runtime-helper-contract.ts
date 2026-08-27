@@ -92,9 +92,9 @@ export async function assertNpmRuntimeHelperContract(
       `Unsupported package-root import: ${entry}`
     ),
     ...packageEscapes.map((entry) => `Import escapes ESM package: ${entry}`),
-    ...[...new Set(missing)].sort().map((helper) =>
-      `Missing imported helper: ${helper}`
-    ),
+    ...[...new Set(missing)]
+      .sort((left, right) => left < right ? -1 : left > right ? 1 : 0)
+      .map((helper) => `Missing imported helper: ${helper}`),
     ...stale.map((helper) =>
       `Expected helper is no longer imported: ${helper}`
     ),

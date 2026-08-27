@@ -8,7 +8,7 @@ const FORBIDDEN_TRACKED_DOC_PREFIXES = [
 export function findForbiddenTrackedDocs(paths: Iterable<string>): string[] {
   return Array.from(paths, (path) => path.replaceAll("\\", "/"))
     .filter((path) => FORBIDDEN_TRACKED_DOC_PREFIXES.some((prefix) => path.startsWith(prefix)))
-    .sort();
+    .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
 }
 
 export async function validateTrackedDocs(

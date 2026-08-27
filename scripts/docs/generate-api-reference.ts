@@ -2799,7 +2799,9 @@ async function listReferenceFiles(dir: string): Promise<string[]> {
   } catch (err) {
     if (!(err instanceof Deno.errors.NotFound)) throw err;
   }
-  paths.sort();
+  // Code-unit order, not locale order: the same comparison must hold for the
+  // generated and committed listings that `--check` compares entry by entry.
+  paths.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   return paths;
 }
 

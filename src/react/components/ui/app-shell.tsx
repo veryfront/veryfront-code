@@ -393,6 +393,7 @@ function SidebarOverlay({
   return (
     <div className="fixed inset-0 z-50 sm:hidden">
       <div
+        aria-hidden="true"
         className="absolute inset-0 bg-[var(--overlay)] transition-opacity duration-200 motion-reduce:transition-none"
         style={{ opacity: entered ? 1 : 0 }}
         onClick={() => ctx.setOpen(side ?? "left", false)}

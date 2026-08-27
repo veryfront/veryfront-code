@@ -24,7 +24,7 @@ function componentNames(
   manifest: DependencyIndexManifest | undefined,
 ): string[] {
   return (manifest?.components ?? []).map((component) => component.name)
-    .toSorted();
+    .toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0));
 }
 
 function manifestBySourceLocation(

@@ -48,7 +48,7 @@ function AgentCardDocsPage() {
         title="Error"
         description={'A failed tool call renders inline with `status="error"` and the error message.'}
       >
-        <DocsExampleAuto of={Error} />
+        <DocsExampleAuto of={ErrorState} />
       </DocsSection>
 
       <DocsSection
@@ -250,7 +250,8 @@ function CustomToolList() {
   },
 };
 
-export const Error: Story = {
+export const ErrorState: Story = {
+  name: "Error",
   tags: ["!dev"],
   render: () => (
     <StoryFrame maxWidth="720px">

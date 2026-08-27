@@ -169,7 +169,7 @@ export async function discoverExtensionManifestPaths(
   }
 
   return {
-    manifestPaths: manifestPaths.sort(),
+    manifestPaths: manifestPaths.sort(compareDeterministically),
     issues: issues.sort((left, right) =>
       compareDeterministically(
         `${left.manifestPath}\u0000${left.detail}`,

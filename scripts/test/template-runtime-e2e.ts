@@ -76,7 +76,7 @@ export function getTemplateExtensionNames(
         getTemplateConfig(template)?.firstPartyExtensions ?? []
       ),
     ),
-  ].sort();
+  ].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 function hasFlag(name: string): boolean {

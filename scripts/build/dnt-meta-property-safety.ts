@@ -177,7 +177,9 @@ export function shippedSourceRoots(config: ShippedSourceConfig): string[] {
     }
   }
 
-  return [...roots].toSorted();
+  return [...roots].toSorted((left, right) =>
+    left < right ? -1 : left > right ? 1 : 0
+  );
 }
 
 const SOURCE_EXTENSIONS = [".ts", ".tsx"];

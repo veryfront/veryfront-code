@@ -282,11 +282,7 @@ function buildOrderedFallbackParsedPartsFromUiMessages(messages: unknown[]): Fal
 
         const explicitToolName = typeof part.toolName === "string" ? part.toolName : null;
         const derivedToolName = explicitToolName ??
-          (part.type.startsWith("tool-")
-            ? part.type.slice(5)
-            : part.type === "dynamic-tool"
-            ? null
-            : null);
+          (part.type.startsWith("tool-") ? part.type.slice(5) : null);
         if (!derivedToolName) {
           continue;
         }

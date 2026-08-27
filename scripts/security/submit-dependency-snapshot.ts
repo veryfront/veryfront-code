@@ -70,13 +70,18 @@ const DETECTOR = {
 
 type NpmEntries = NonNullable<ReturnType<typeof parseLock>["npm"]>;
 
+/** Code-unit ordering keeps the submitted snapshot byte-stable across locales. */
+function compareCodeUnits(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 export interface ManifestGenerationOptions {
   workspaceMembers?: string[];
 }
 
 function buildVersionsByName(npm: NpmEntries): Map<string, string[]> {
   const keysByName = new Map<string, string[]>();
-  for (const key of Object.keys(npm).sort()) {
+  for (const key of Object.keys(npm).sort(compareCodeUnits)) {
     const nv = parseNameVersion(key);
     if (!nv) continue;
     const keys = keysByName.get(nv.name) ?? [];
@@ -121,10 +126,10 @@ function resolveDepKeys(
   if (canonical) {
     return Object.keys(npm)
       .filter((key) => canonicalNpmKey(key) === canonical)
-      .sort();
+      .sort(compareCodeUnits);
   }
 
-  return [...(keysByName.get(depKey) ?? [])].sort();
+  return [...(keysByName.get(depKey) ?? [])].sort(compareCodeUnits);
 }
 
 function collectReachableNpmKeys(
@@ -133,14 +138,16 @@ function collectReachableNpmKeys(
   keysByName: Map<string, string[]>,
 ): string[] {
   const seen = new Set<string>();
-  const queue = [...directKeys].sort();
+  const queue = [...directKeys].sort(compareCodeUnits);
 
   for (let index = 0; index < queue.length; index++) {
     const key = queue[index];
     if (seen.has(key) || !npm[key]) continue;
     seen.add(key);
 
-    const dependencies = [...(npm[key].dependencies ?? [])].sort();
+    const dependencies = [...(npm[key].dependencies ?? [])].sort(
+      compareCodeUnits,
+    );
     for (const depKey of dependencies) {
       for (const resolvedKey of resolveDepKeys(depKey, npm, keysByName)) {
         if (!seen.has(resolvedKey)) queue.push(resolvedKey);
@@ -168,7 +175,7 @@ function dependencyEdges(
     }
   }
 
-  const sorted = [...dependencies].sort();
+  const sorted = [...dependencies].sort(compareCodeUnits);
   return sorted.length ? { dependencies: sorted } : {};
 }
 
@@ -327,7 +334,7 @@ function workspaceMembersFromDenoConfig(
     .filter((entry): entry is string => typeof entry === "string")
     .map(normalizeWorkspaceMemberPath)
     .filter((entry) => entry.length > 0)
-    .sort();
+    .sort(compareCodeUnits);
 }
 
 if (import.meta.main) {

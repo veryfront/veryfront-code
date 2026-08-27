@@ -16,6 +16,7 @@ import type { CapturedTenantContext } from "../types.ts";
 import { dirname, isAbsolute, join, relative, resolve } from "#veryfront/compat/path";
 import { INITIALIZATION_ERROR, INVALID_ARGUMENT, SECURITY_VIOLATION } from "#veryfront/errors";
 import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
+import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 
 const logger = baseLogger.component("workspace-sync");
 
@@ -26,7 +27,7 @@ const MAX_WORKSPACE_FILE_SIZE = 10 * 1024 * 1024;
  * Workspace configuration
  */
 export interface WorkspaceConfig {
-  /** Base directory for workspaces (default: /tmp/veryfront-workspaces) */
+  /** Base directory for workspaces (default: `<veryfront cache dir>/claude-code-workspaces`) */
   baseDir?: string;
 
   /** Run ID for unique workspace isolation */
@@ -172,10 +173,13 @@ export class WorkspaceSync {
     }
 
     this.config = {
-      baseDir: "/tmp/veryfront-workspaces",
       maxFileSize: MAX_WORKSPACE_FILE_SIZE,
       debug: false,
       ...config,
+      // Not a fixed path under the world-writable temp dir: that lets any other
+      // local user pre-create or symlink `<tmp>/veryfront-workspaces/<runId>` and
+      // capture the synced project files. The cache dir is owned by this user.
+      baseDir: config.baseDir ?? join(getCacheBaseDir(), "claude-code-workspaces"),
     };
   }
 
@@ -200,8 +204,8 @@ export class WorkspaceSync {
       logger.info("Initializing workspace", { workspaceDir: this.workspaceDir });
     }
 
-    // Create workspace directory
-    await Deno.mkdir(this.workspaceDir, { recursive: true });
+    // Create workspace directory. Owner-only: it holds synced project files.
+    await Deno.mkdir(this.workspaceDir, { recursive: true, mode: 0o700 });
 
     // List all files from project
     const files = await api.files.listAll();

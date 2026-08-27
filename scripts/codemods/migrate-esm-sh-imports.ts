@@ -428,7 +428,9 @@ export function mergeEsmShPins(
   }
 
   const sortedDeps = Object.create(null) as Record<string, string>;
-  for (const pkg of Object.keys(updatedDeps).sort()) {
+  for (
+    const pkg of Object.keys(updatedDeps).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+  ) {
     sortedDeps[pkg] = updatedDeps[pkg]!;
   }
   return { updatedDeps: sortedDeps, conflicts };
@@ -549,7 +551,8 @@ export function filterNeedsResolution(
   needsResolution: Iterable<string>,
   pins: Record<string, string>,
 ): string[] {
-  return [...needsResolution].filter((pkg) => !Object.hasOwn(pins, pkg)).sort();
+  return [...needsResolution].filter((pkg) => !Object.hasOwn(pins, pkg))
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 // ---------------------------------------------------------------------------
@@ -642,7 +645,7 @@ async function main(args: string[]): Promise<void> {
 
   const sourceFiles: string[] = [];
   await collectSourceFiles(projectDir, sourceFiles);
-  sourceFiles.sort();
+  sourceFiles.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
   const report: EsmShReport = {
     filesChanged: 0,

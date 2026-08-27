@@ -55,7 +55,7 @@ function ToolCallDocsPage() {
         title="Error"
         description="When a tool fails, the card surfaces the failure text in an error Alert."
       >
-        <DocsExampleAuto of={Error} />
+        <DocsExampleAuto of={ErrorState} />
       </DocsSection>
 
       <DocsSection
@@ -210,7 +210,8 @@ export const Composed: Story = {
   ),
 };
 
-export const Error: Story = {
+export const ErrorState: Story = {
+  name: "Error",
   tags: ["!dev"],
   parameters: {
     docs: {

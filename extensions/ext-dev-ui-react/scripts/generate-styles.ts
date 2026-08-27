@@ -125,7 +125,7 @@ async function collectSources(): Promise<
 
 async function generateStyles(): Promise<string> {
   const candidates = [...extractCandidatesFromFiles(await collectSources())]
-    .sort();
+    .sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
   const compiler = await new TailwindCSSProcessor().compile(STYLESHEET);
   const generated = compiler.build(candidates);
   let optimized = new LightningCSSOptimizationEngine({

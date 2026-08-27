@@ -52,14 +52,19 @@ interface ReactRoot {
   unmount(): void;
 }
 
-interface GlobalHydrationState {
-  __VF_CLIENT_MOD_CACHE?: Map<string, ClientModule>;
-  __VF_MANIFEST_HASH?: string;
-  __VF_TEST_MODE__?: boolean;
-  __VF_HYDRATE_CALLED?: boolean;
-}
+declare global {
+  interface Window {
+    __VF_CLIENT_MOD_CACHE?: Map<string, ClientModule>;
+    __VF_MANIFEST_HASH?: string;
+    __VF_TEST_MODE__?: boolean;
+    __VF_HYDRATE_CALLED?: boolean;
+  }
 
-declare const globalThis: typeof window & GlobalHydrationState;
+  var __VF_CLIENT_MOD_CACHE: Map<string, ClientModule> | undefined;
+  var __VF_MANIFEST_HASH: string | undefined;
+  var __VF_TEST_MODE__: boolean | undefined;
+  var __VF_HYDRATE_CALLED: boolean | undefined;
+}
 
 const MAX_CLIENT_MOD_CACHE_SIZE = 100;
 

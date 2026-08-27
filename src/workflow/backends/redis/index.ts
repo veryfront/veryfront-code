@@ -2343,7 +2343,14 @@ export class RedisBackend implements WorkflowBackend {
       },
     };
 
-    return { initial, changes, close: () => Promise.resolve(close()) };
+    return {
+      initial,
+      changes,
+      close: () => {
+        close();
+        return Promise.resolve();
+      },
+    };
   }
 
   async healthCheck(): Promise<boolean> {

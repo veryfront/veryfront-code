@@ -8,9 +8,19 @@
  */
 
 import { exists } from "#veryfront/platform/compat/fs.ts";
-import { join, relative } from "#veryfront/compat/path/index.ts";
+import { fromFileUrl } from "@std/path";
+import { dirname, join, relative } from "#veryfront/compat/path/index.ts";
 
-export const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ?? "/tmp/veryfront-e2e-bin";
+// Resolved from this module's own URL, not Deno.cwd(): `src/testing/cwd.ts`
+// calls Deno.chdir on the shared test process, so a cwd-relative constant
+// evaluated at import time would not survive.
+const REPO_ROOT = join(dirname(fromFileUrl(import.meta.url)), "..", "..", "..");
+
+// The compiled binary is cached across runs, so the path has to stay stable.
+// Keep it in the repo's gitignored .veryfront/ dir rather than the world-writable
+// temp dir, where another local user could pre-place the file that runs here.
+export const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ??
+  join(REPO_ROOT, ".veryfront", "e2e", "veryfront-e2e-bin");
 export const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
 const HASH_INPUTS = [
   "src",
@@ -46,7 +56,9 @@ async function walkFiles(path: string): Promise<string[]> {
     if (entry.isFile) files.push(childPath);
   }
 
-  return files.sort();
+  // Code-unit order, not locale order: this ordering feeds the binary cache hash,
+  // which must not vary with the machine locale.
+  return files.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 async function computeWorkingTreeHash(cwd: string): Promise<string> {
@@ -143,6 +155,8 @@ export async function ensureBinaryCompiled(): Promise<void> {
 
   if (forceFresh) console.log("🗑️  Force fresh build (VERYFRONT_BINARY_FRESH=1)");
   if (binaryExists) await Deno.remove(BINARY_PATH);
+
+  await Deno.mkdir(dirname(BINARY_PATH), { recursive: true });
 
   console.log("📦 Preparing build artifacts...");
   const prepareResult = await new Deno.Command("deno", {

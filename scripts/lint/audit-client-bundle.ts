@@ -174,7 +174,7 @@ async function main(): Promise<void> {
     for (const r of reports) {
       entrypoints[r.entry] = [...r.knownLeaks, ...r.newLeaks].filter((l) =>
         !isCritical(l)
-      ).toSorted();
+      ).toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0));
     }
     const baseline: Baseline = {
       note:

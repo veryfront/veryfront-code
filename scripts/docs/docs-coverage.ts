@@ -1,6 +1,15 @@
 #!/usr/bin/env -S deno run --allow-read
 
+// Reference slugs that need a page without a matching top-level export.
+// Intentionally empty today: the last entry ("channels") was dropped when the
+// public docs sync stopped accepting internal transport pages.
 const SYNTHETIC_PARENTS = new Set<string>();
+
+// Code-unit comparator. Coverage output is compared against generated file
+// names, so ordering must stay locale-independent.
+function byCodeUnit(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
 
 export interface DocsCoverageReport {
   publicExports: {
@@ -83,7 +92,7 @@ async function listMarkdownFiles(path: string): Promise<string[]> {
   } catch {
     return names;
   }
-  return names.sort();
+  return names.sort(byCodeUnit);
 }
 
 async function listGuideMarkdownFiles(path: string): Promise<string[]> {
@@ -110,7 +119,7 @@ async function listGuideMarkdownFiles(path: string): Promise<string[]> {
   } catch {
     return names;
   }
-  return names.sort();
+  return names.sort(byCodeUnit);
 }
 
 function extractStringArrayConst(source: string, name: string): string[] {
@@ -128,7 +137,7 @@ function extractStringArrayConst(source: string, name: string): string[] {
 function extractGuideContracts(source: string): string[] {
   return [...source.matchAll(/^\s+"([^"]+\.md)":\s+\{/gm)]
     .map((match) => match[1] ?? "")
-    .sort();
+    .sort(byCodeUnit);
 }
 
 function countDeclarationRows(pages: ReferencePage[]): {
@@ -212,13 +221,13 @@ export async function collectDocsCoverage(
     requiredSlugs.add(topLevelSlug(exportPath));
   }
   for (const slug of SYNTHETIC_PARENTS) requiredSlugs.add(slug);
-  const requiredSlugList = [...requiredSlugs].sort();
+  const requiredSlugList = [...requiredSlugs].sort(byCodeUnit);
 
   const referenceDir = fromRoot(root, "docs/api-reference/veryfront");
   const referenceFileNames = await listMarkdownFiles(referenceDir);
   const referenceSlugs = referenceFileNames.map((name) =>
     name.replace(/\.md$/, "")
-  ).sort();
+  ).sort(byCodeUnit);
   const referenceSlugSet = new Set(referenceSlugs);
   const requiredSlugSet = new Set(requiredSlugList);
   const missingReferencePages = requiredSlugList.filter((slug) =>
@@ -256,7 +265,7 @@ export async function collectDocsCoverage(
     }
   }
   const guideFiles = guidePages.map((page) => page.path.replace(/^docs\//, ""))
-    .sort();
+    .sort(byCodeUnit);
   const guideFilesRequiringReferenceBacklinks = guideFiles.filter(
     requiresReferenceBacklink,
   );
@@ -302,11 +311,11 @@ export async function collectDocsCoverage(
         codeExampleSource,
         "THIS_GUIDE_EXAMPLE_SUITE",
       ),
-    ].sort();
+    ].sort(byCodeUnit);
     codeExampleFiles = codeExampleNames.map((name) => {
       const page = guidePages.find((candidate) => candidate.file === name);
       return page?.path.replace(/^docs\//, "") ?? name;
-    }).sort();
+    }).sort(byCodeUnit);
   }
   const codeExampleFileSet = new Set(codeExampleFiles);
 
@@ -321,7 +330,7 @@ export async function collectDocsCoverage(
     }
   }
 
-  const guidesWithCodeExamples = guideFilesWithCodeExamples.sort();
+  const guidesWithCodeExamples = guideFilesWithCodeExamples.sort(byCodeUnit);
 
   return {
     publicExports: {

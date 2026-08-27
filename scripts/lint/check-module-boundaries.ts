@@ -81,6 +81,11 @@ export interface ModuleAnalysis {
 
 type ImportMap = Record<string, string>;
 
+/** Sort strings by UTF-16 code unit so baseline files stay byte-stable. */
+function compareOrdinal(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null
     ? value as Record<string, unknown>
@@ -316,11 +321,11 @@ export function findCyclicEdges(
   for (const targets of graph.values()) {
     for (const target of targets) nodes.add(target);
   }
-  for (const node of [...nodes].sort()) {
+  for (const node of [...nodes].sort(compareOrdinal)) {
     if (!indexes.has(node)) strongConnect(node);
   }
 
-  return [...cyclicEdges].sort();
+  return [...cyclicEdges].sort(compareOrdinal);
 }
 
 /** Return fingerprints present now but absent from the accepted baseline. */
@@ -329,7 +334,9 @@ export function findRegressions(
   baseline: readonly string[],
 ): string[] {
   const accepted = new Set(baseline);
-  return [...new Set(current)].filter((item) => !accepted.has(item)).sort();
+  return [...new Set(current)].filter((item) => !accepted.has(item)).sort(
+    compareOrdinal,
+  );
 }
 
 function shouldSkip(path: string): boolean {
@@ -381,7 +388,7 @@ async function readImportMap(): Promise<ImportMap> {
 export async function analyzeModules(): Promise<ModuleAnalysis> {
   const files: string[] = [];
   for (const root of SCAN_ROOTS) await walkSourceFiles(root, files);
-  files.sort();
+  files.sort(compareOrdinal);
 
   const fileSet = new Set(files);
   const imports = await readImportMap();
@@ -420,7 +427,7 @@ export async function analyzeModules(): Promise<ModuleAnalysis> {
   return {
     broadBarrelImports,
     cycleEdges: findCyclicEdges(graph),
-    parseFailures: parseFailures.sort(),
+    parseFailures: parseFailures.sort(compareOrdinal),
   };
 }
 
@@ -436,8 +443,8 @@ function parseBaseline(value: unknown): ModuleBoundaryBaseline {
     throw new Error(`Invalid module boundary baseline: ${BASELINE_PATH}`);
   }
   return {
-    broadBarrelImports: [...record.broadBarrelImports].sort(),
-    cycleEdges: [...record.cycleEdges].sort(),
+    broadBarrelImports: [...record.broadBarrelImports].sort(compareOrdinal),
+    cycleEdges: [...record.cycleEdges].sort(compareOrdinal),
   };
 }
 
@@ -445,7 +452,7 @@ function baselineFor(analysis: ModuleAnalysis): ModuleBoundaryBaseline {
   return {
     broadBarrelImports: [
       ...new Set(analysis.broadBarrelImports.map((item) => item.fingerprint)),
-    ].sort(),
+    ].sort(compareOrdinal),
     cycleEdges: analysis.cycleEdges,
   };
 }

@@ -214,7 +214,7 @@ function parsePolicy(value: unknown): DependencyArtifactPolicyDecision {
   if (
     typeof value.retry_after !== "string" ||
     Number.isNaN(Date.parse(value.retry_after)) ||
-    !/[zZ]|[+-]\d{2}:\d{2}$/.test(value.retry_after)
+    !/(?:[zZ]|[+-]\d{2}:\d{2})$/.test(value.retry_after)
   ) {
     return invalidTaskInput();
   }

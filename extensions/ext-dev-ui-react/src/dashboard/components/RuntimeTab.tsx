@@ -277,7 +277,7 @@ function MetricsSection({
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       {Object.entries(groups)
-        .sort()
+        .sort(([left], [right]) => left.localeCompare(right))
         .map(([group, items]) => (
           <Card key={group} title={group.toUpperCase()}>
             <table className="w-full text-sm">

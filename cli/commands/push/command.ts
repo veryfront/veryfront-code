@@ -762,7 +762,7 @@ function findRemoteSnapshotChanges(
       changed.push(path);
     }
   }
-  return changed.sort();
+  return changed.sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
 }
 
 function buildSyncFileDigestSnapshot(

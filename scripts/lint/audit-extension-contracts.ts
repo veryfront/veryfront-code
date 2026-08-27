@@ -39,7 +39,9 @@ export interface ExtensionContractAuditIssue {
 }
 
 function uniqueSorted(values: string[]): string[] {
-  return [...new Set(values)].filter((value) => value.length > 0).sort();
+  return [...new Set(values)].filter((value) => value.length > 0).sort(
+    compareDeterministically,
+  );
 }
 
 function compareDeterministically(left: string, right: string): number {
@@ -100,7 +102,7 @@ function validateContractList(
       values.push(entry);
     }
   }
-  return { values: values.sort(), issues };
+  return { values: values.sort(compareDeterministically), issues };
 }
 
 function describeContracts(

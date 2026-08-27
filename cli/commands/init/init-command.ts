@@ -68,7 +68,7 @@ function renderProjectStructure(rootName: string, paths: string[], maxLines = 22
   const root: StructureNode = { file: false, children: new Map() };
   const normalizedPaths = [...new Set(paths)]
     .filter((path) => path && !path.endsWith("/"))
-    .sort();
+    .sort((left, right) => left.localeCompare(right));
 
   for (const path of normalizedPaths) {
     const parts = path.split("/").filter(Boolean);

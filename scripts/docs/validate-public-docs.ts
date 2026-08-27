@@ -302,7 +302,10 @@ async function main(): Promise<void> {
   }
 
   const issues: PublicDocIssue[] = [];
-  for (const file of [...files].sort()) {
+  const sortedFiles = [...files].sort((left, right) =>
+    left < right ? -1 : left > right ? 1 : 0
+  );
+  for (const file of sortedFiles) {
     const content = await Deno.readTextFile(`${ROOT}/${file}`);
     issues.push(...collectIssues(file, content));
   }

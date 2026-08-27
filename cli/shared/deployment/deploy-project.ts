@@ -641,7 +641,7 @@ async function collectProjectPageRoutes(projectDir: string): Promise<string[]> {
     walk(pagesDir, pagesDir, "pages"),
   ]);
 
-  return [...routes].sort();
+  return [...routes].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
 }
 
 function assertReadyManifestCoversPageRoutes(

@@ -497,7 +497,10 @@ export function serializeBaseline(kind: BaselineKind, counts: Counts): string {
         (nested[group] ??= {})[file] = count;
       }
       const sorted: Record<string, Counts> = {};
-      for (const group of Object.keys(nested).sort()) {
+      // Code-unit order, matching the previous comparator-less sort exactly.
+      const groups = Object.keys(nested)
+        .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      for (const group of groups) {
         sorted[group] = sortedCounts(nested[group] ?? {});
       }
       return JSON.stringify(sorted, null, 2);

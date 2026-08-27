@@ -44,7 +44,11 @@ export function collectNpmDependencies(
       left.localeCompare(right)
     )
   ) {
-    const sortedVersions = [...versions].sort();
+    // Code-unit order, not locale order: the first entry becomes the primary
+    // dependency and the rest become audit aliases, so it must stay stable.
+    const sortedVersions = [...versions].sort((left, right) =>
+      left < right ? -1 : left > right ? 1 : 0
+    );
     const [primaryVersion, ...additionalVersions] = sortedVersions;
     npmDeps[name] = primaryVersion;
     for (const version of additionalVersions) {

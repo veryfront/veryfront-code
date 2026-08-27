@@ -177,7 +177,9 @@ for (const dir of FRAMEWORK_DIRS) {
   }
 }
 
-const sorted = [...frameworkCandidates].sort();
+const sorted = [...frameworkCandidates].sort((left, right) =>
+  left < right ? -1 : left > right ? 1 : 0
+);
 const candidatesOutput = `/**
  * Auto-extracted Tailwind CSS candidates from framework components.
  *

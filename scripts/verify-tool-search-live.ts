@@ -236,15 +236,20 @@ export function createDirectModelRuntime(
   return { ...parsed, runtime };
 }
 
+/** Explicit form of the comparator-less sort: UTF-16 code-unit order. */
+function compareCodeUnits(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 function requestToolCatalog(options: unknown): string[] {
   const tools = (options as { tools?: unknown }).tools;
   if (Array.isArray(tools)) {
     return tools.map((entry) =>
       String((entry as { name?: unknown }).name ?? "")
-    ).sort();
+    ).sort(compareCodeUnits);
   }
   return Object.keys((tools as Record<string, unknown> | undefined) ?? {})
-    .sort();
+    .sort(compareCodeUnits);
 }
 
 function observeGenerateCatalogs(
@@ -264,7 +269,7 @@ function hasExactKeys(
   value: Record<string, unknown>,
   expected: readonly string[],
 ): boolean {
-  const keys = Object.keys(value).sort();
+  const keys = Object.keys(value).sort(compareCodeUnits);
   return keys.length === expected.length &&
     keys.every((key, index) => key === expected[index]);
 }
@@ -453,7 +458,7 @@ function expectedHiMeasurementCatalog(): string[] {
       (_, index) =>
         `hi_measurement_catalog_${String(index + 1).padStart(2, "0")}`,
     ),
-  ].sort();
+  ].sort(compareCodeUnits);
 }
 
 export function extractHiMeasurement(input: ExtractHiMeasurementInput): HiMeasurement {
@@ -550,7 +555,7 @@ export function extractHiMeasurement(input: ExtractHiMeasurementInput): HiMeasur
     modelSteps: 1,
     toolCalls: 0,
     authorizedToolCount: input.authorizedToolCount,
-    initiallyExposedTools: [...initialCatalog].sort(),
+    initiallyExposedTools: [...initialCatalog].sort(compareCodeUnits),
     thresholds: {
       maximumEffectiveInputTokens: MAXIMUM_EFFECTIVE_INPUT_TOKENS,
       minimumReductionPercent: MINIMUM_REDUCTION_PERCENT,

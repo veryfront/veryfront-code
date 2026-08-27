@@ -215,7 +215,7 @@ export function PolymorphicChatInputActionDemo(): React.ReactElement {
         asChild
         ref={anchorActionRef}
         onClick={(event, next) => {
-          event.currentTarget.href;
+          void event.currentTarget.href;
           next();
         }}
       >
@@ -225,7 +225,7 @@ export function PolymorphicChatInputActionDemo(): React.ReactElement {
         asChild
         ref={anchorActionRef}
         onClick={(event, next) => {
-          event.currentTarget.href;
+          void event.currentTarget.href;
           next();
         }}
       >
@@ -234,7 +234,7 @@ export function PolymorphicChatInputActionDemo(): React.ReactElement {
       <ChatInputVoice<HTMLAnchorElement>
         asChild
         onClick={(event, next) => {
-          event.currentTarget.href;
+          void event.currentTarget.href;
           next();
         }}
       >
@@ -244,7 +244,7 @@ export function PolymorphicChatInputActionDemo(): React.ReactElement {
         asChild
         ref={anchorActionRef}
         onClick={(event, next) => {
-          event.currentTarget.href;
+          void event.currentTarget.href;
           next();
         }}
       >

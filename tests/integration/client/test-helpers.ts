@@ -639,12 +639,12 @@ export function setupDOMEnvironment(options: DOMEnvironmentOptions = {}): DOMEnv
   if (typeof globalThis.dispatchEvent !== "function") {
     (globalThis as any).dispatchEvent = (event: Event) => {
       const listeners = eventListeners.get(event.type);
-      if (!listeners) return true;
-
-      for (const listener of listeners) {
+      for (const listener of listeners ?? []) {
         if (typeof listener === "function") listener(event);
         else listener.handleEvent(event);
       }
+      // Matches `EventTarget.dispatchEvent`: false only for a cancelled
+      // cancelable event, which this stub never produces.
       return true;
     };
   }

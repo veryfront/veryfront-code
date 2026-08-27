@@ -304,6 +304,7 @@ export function ListItem({
         )}
       {action !== undefined && (
         <div
+          role="presentation"
           className={cn(
             "shrink-0 transition-opacity",
             active

@@ -124,7 +124,7 @@ export function ErrorsTab(): React.JSX.Element {
           </button>
 
           {Object.entries(categories)
-            .sort()
+            .sort(([left], [right]) => left.localeCompare(right))
             .map(([cat, catCount]) => {
               const isSelected = selectedCategory === cat;
 

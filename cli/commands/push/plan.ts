@@ -152,7 +152,7 @@ export async function planPushChanges(
   return {
     uploads,
     deletes,
-    conflicts: [...conflicts].sort(),
+    conflicts: [...conflicts].sort((left, right) => left < right ? -1 : left > right ? 1 : 0),
     nextFiles,
   };
 }

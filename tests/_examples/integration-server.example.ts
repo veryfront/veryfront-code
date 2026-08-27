@@ -208,11 +208,14 @@ describe("Example Integration Test - Custom Cleanup", () => {
     { timeout: TEST_TIMEOUTS.INTEGRATION },
     async () => {
       let cleanupCalled = false;
+      // A private temp file, not a fixed shared path: a predictable name under
+      // the system temp dir lets any local user pre-place a symlink there.
+      const marker = await Deno.makeTempFile({ prefix: "cleanup-test-" });
 
       await withTestContext("custom-cleanup", async (context) => {
         context.addCleanup(async () => {
           cleanupCalled = true;
-          await Deno.writeTextFile("/tmp/cleanup-test.txt", "cleaned up");
+          await Deno.writeTextFile(marker, "cleaned up");
         });
 
         const server = await context.startDevServer();
@@ -222,7 +225,7 @@ describe("Example Integration Test - Custom Cleanup", () => {
       assertEquals(cleanupCalled, true, "Custom cleanup should be called");
 
       try {
-        await Deno.remove("/tmp/cleanup-test.txt");
+        await Deno.remove(marker);
       } catch {
         // Ignore if already removed
       }

@@ -1049,7 +1049,7 @@ async function main(args: string[]): Promise<void> {
   const options = parseCliOptions(args);
   const files: string[] = [];
   for (const path of options.paths) await collectSourceFiles(path, files);
-  files.sort();
+  files.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
   let changedCount = 0;
   let warningCount = 0;

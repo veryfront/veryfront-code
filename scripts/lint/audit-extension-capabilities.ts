@@ -874,7 +874,7 @@ export function auditExtensionCapabilities(
       ...new Set(
         input.sourceResolutionIssues ?? [],
       ),
-    ].sort();
+    ].sort(compareDeterministically);
     for (const issue of sourceResolutionIssues) {
       issues.push({
         manifestPath: input.manifestPath,

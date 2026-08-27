@@ -481,10 +481,9 @@ function analyzeBindingPattern(value: unknown): BindingPatternAnalysis {
   // Preserve every identifier as a possible binding for the conservative
   // error decision, but never add it to bindingIds: its position is unknown.
   walk(value, (node) => {
-    if (node.type !== "Identifier") return true;
+    if (node.type !== "Identifier") return;
     const name = nodeName(node);
     if (name) analysis.possibleNames.push(name);
-    return true;
   });
   analysis.hazards.add("unknown-syntax");
   return analysis;

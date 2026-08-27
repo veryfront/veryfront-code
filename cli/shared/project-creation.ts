@@ -660,7 +660,7 @@ async function findUnwritablePaths(
     }
   }
 
-  return [...blocked].sort();
+  return [...blocked].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
 }
 
 export async function createProject(
@@ -804,7 +804,8 @@ export function resolveScaffoldTemplate(slug: string): InitTemplate | null {
 
 /** Every template slug a caller may ask for, canonical names and aliases. */
 export function listScaffoldTemplates(): string[] {
-  return [...STARTER_TEMPLATE_NAMES, ...Object.keys(SCAFFOLD_TEMPLATE_ALIASES)].sort();
+  return [...STARTER_TEMPLATE_NAMES, ...Object.keys(SCAFFOLD_TEMPLATE_ALIASES)]
+    .sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
 }
 
 /** What to build: which starter, under what name, for which runtime. */
