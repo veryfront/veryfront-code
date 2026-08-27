@@ -51,6 +51,7 @@ import { requireWorkflowSourceIntegrationPolicy } from "../source-integration-po
 
 const logger = baseLogger.component("memory-backend");
 const objectDefineProperty = Object.defineProperty;
+const jsonParse = JSON.parse;
 
 /**
  * Memory backend configuration
@@ -69,7 +70,7 @@ function persistedWorkflowContext(
   runId: string,
   options: WorkflowJsonSerializationOptions,
 ): WorkflowContext {
-  return JSON.parse(serializeWorkflowContext(context, runId, options));
+  return jsonParse(serializeWorkflowContext(context, runId, options));
 }
 
 function persistedWorkflowContextPatch(
@@ -77,7 +78,7 @@ function persistedWorkflowContextPatch(
   runId: string,
   options: WorkflowJsonSerializationOptions,
 ): Partial<WorkflowContext> {
-  return JSON.parse(serializeWorkflowJson(context, "context", runId, options));
+  return jsonParse(serializeWorkflowJson(context, "context", runId, options));
 }
 
 function persistedCheckpointContext(
@@ -85,7 +86,7 @@ function persistedCheckpointContext(
   runId: string,
   options: WorkflowJsonSerializationOptions,
 ): WorkflowContext {
-  return JSON.parse(serializeWorkflowJson(context, "checkpoint.context", runId, options));
+  return jsonParse(serializeWorkflowJson(context, "checkpoint.context", runId, options));
 }
 
 class ObservationFeed implements AsyncIterable<WorkflowRunObservedState> {
