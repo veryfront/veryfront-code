@@ -261,7 +261,6 @@ async function withHostedBrowserPage(
         & typeof window
         & Record<string, unknown>
         & { __veryfrontTestHydrationState?: "complete" | "failed" };
-      /** Records the runtime signal while preserving its original callback. */
       const observeSignal = (property: string, state: "complete" | "failed") => {
         let callback: ((...args: unknown[]) => unknown) | undefined;
         Object.defineProperty(testWindow, property, {

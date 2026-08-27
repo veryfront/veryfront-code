@@ -128,7 +128,6 @@ export function isAppRouterPath(
     normalizedPath.startsWith(appRouterRoot + "/");
 }
 
-/** Removes path-boundary slashes without a backtracking regular expression. */
 function trimBoundarySlashes(value: string): string {
   let start = 0;
   let end = value.length;
@@ -259,11 +258,7 @@ export function createHydrationRenderer(deps: HydrationRendererDeps): HydrationR
       const isRemoteAppRouterPage = data.clientModuleStrategy === "rsc-module" &&
         isAppRouterPath(normalizedPagePath, normalizedAppRouterRoot);
 
-      // App Router server pages own the SSR document and are deliberately not
-      // exposed as browser modules. The shell runtime still boots for routing,
-      // Studio and HMR, but its initial render must leave that server DOM alone.
-      // Full-document client pages use the older isClientPage marker, while
-      // current client pages use an isolated page island.
+      // Server pages are not browser modules, so preserve their SSR document.
       if (isServerOwnedAppRouterPage(data)) {
         log("Initial App Router page is server-owned; skipping client hydration");
         window.__veryfrontHydrationComplete?.();
