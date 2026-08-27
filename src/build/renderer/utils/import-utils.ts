@@ -967,9 +967,15 @@ function isModuleSpecifierQuote(code: ArrayLike<string>, quoteIndex: number): bo
 
 function moduleSpecifierOwner(code: ArrayLike<string>, quoteIndex: number): ModuleSpecifierOwner {
   let previousIndex = previousSignificantIndex(code, quoteIndex);
-  if (code[previousIndex] === "(") previousIndex = previousSignificantIndex(code, previousIndex);
+  const followsCallOpen = code[previousIndex] === "(";
+  if (followsCallOpen) previousIndex = previousSignificantIndex(code, previousIndex);
   const name = precedingIdentifier(code, previousIndex);
-  return { name, start: previousIndex - name.length + 1 };
+  const start = previousIndex - name.length + 1;
+  const precedingIndex = previousSignificantIndex(code, start);
+  if ((followsCallOpen && name !== "import") || code[precedingIndex] === ".") {
+    return { name: "", start };
+  }
+  return { name, start };
 }
 
 function findStringLiteralEnd(code: ArrayLike<string>, quoteIndex: number): number {
@@ -1169,6 +1175,10 @@ function startsMdxEsmContinuation(line: string, executableLine: string): boolean
   const trimmed = line.trimStart();
   const expressionDeclaration = /^(?:export\s+)?(?:const|let|var)\b.*=/.test(executableLine) ||
     /^export\s+default\b/.test(executableLine);
+  if (
+    !separatedByBlank && /^from\b/.test(trimmed) &&
+    /^(?:import|export)\b/.test(executableLine)
+  ) return true;
   // A leading list marker continues JavaScript only when the active ESM line
   // is an expression declaration. Complete imports still yield to CommonMark.
   if (/^[-+*](?:[ \t]|$)/.test(trimmed)) {

@@ -546,6 +546,10 @@ describe("build/renderer/services/mdx-bundler", () => {
             'import Child\nfrom "./missing.js"\n\n<Child />',
           ],
           [
+            "split-named-import",
+            'import { Child }\nfrom "./missing.js"\n\n<Child />',
+          ],
+          [
             "combined-named-import",
             'import Child, { meta } from "./missing.js"',
           ],
@@ -587,6 +591,19 @@ describe("build/renderer/services/mdx-bundler", () => {
         assertEquals(result.errors.length, 1, `${name} should validate its executable import`);
         assertStringIncludes(result.errors[0]!.message, "missing.js");
       }
+    });
+
+    it("does not validate method-call strings named from", async () => {
+      const source = {
+        path: "/tmp/test-project/pages/array-from.mdx",
+        content: 'export const values = Array.from("./missing.js")',
+      };
+      const result = createBundleResult();
+
+      await bundleMdx(source, createOptions(), result, async () => "");
+
+      assertEquals(result.errors, []);
+      assertExists(result.outputs.get("/tmp/test-project/pages/array-from.js"));
     });
 
     it("does not validate re-export syntax quoted in ordinary prose", async () => {
@@ -1003,6 +1020,44 @@ describe("build/renderer/services/mdx-bundler", () => {
         const loaded = await importEmittedModule(result.code, { providerHeading: true });
         assertEquals(
           (renderEmittedComponent(loaded.default, { short: true }) as { type?: unknown }).type,
+          "provider-heading",
+        );
+      });
+    });
+
+    it("wraps provider-aware output when a later return bypasses the provider map", async () => {
+      const active = resolveContract<ContentProcessor>("ContentProcessor");
+      const partialProviderProcessor: ContentProcessor = {
+        compileMdx: async (options) => ({
+          ...await active.compileMdx(options),
+          compiledCode: 'import React from "react";\n' +
+            'import { useMDXComponents as authoredHook } from "veryfront/mdx";\n' +
+            "function Heading(props = {}) {\n" +
+            '  return React.createElement(props.components?.h1 ?? "h1");\n' +
+            "}\n" +
+            "export default function MDXContent(props = {}) {\n" +
+            "  const components = { ...authoredHook() };\n" +
+            "  if (props.providerBranch) {\n" +
+            "    return React.createElement(Heading, { components });\n" +
+            "  }\n" +
+            '  return React.createElement(props.components?.h1 ?? "h1");\n' +
+            "}",
+        }),
+        compileMarkdown: (options) => active.compileMarkdown(options),
+        getRemarkPlugins: () => active.getRemarkPlugins(),
+        getRehypePlugins: () => active.getRehypePlugins(),
+      };
+
+      await withContractOverride("ContentProcessor", partialProviderProcessor, async () => {
+        const result = await bundleMDXWithOptions({
+          content: "# Partial provider coverage",
+          filePath: "/tmp/partial-provider-coverage.mdx",
+          projectDir: "/tmp",
+        });
+
+        const loaded = await importEmittedModule(result.code, { providerHeading: true });
+        assertEquals(
+          (renderEmittedComponent(loaded.default) as { type?: unknown }).type,
           "provider-heading",
         );
       });
@@ -1778,6 +1833,40 @@ describe("build/renderer/services/mdx-bundler", () => {
         assertEquals(delete loaded.default.layout, true);
         assertEquals(loaded.default.readLayout(), undefined);
         assertEquals("layout" in loaded.default, false);
+      });
+    });
+
+    it("keeps forwarded source-backed static state writable when sealed", async () => {
+      const active = resolveContract<ContentProcessor>("ContentProcessor");
+      const sourceModule = moduleDataUrl(
+        'class Content { static title = "Initial"; ' +
+          "static updateTitle(title) { this.title = title; } } export default Content;",
+      );
+      const staticProcessor: ContentProcessor = {
+        compileMdx: async (options) => ({
+          ...await active.compileMdx(options),
+          compiledCode: `export { default } from ${JSON.stringify(sourceModule)};`,
+        }),
+        compileMarkdown: (options) => active.compileMarkdown(options),
+        getRemarkPlugins: () => active.getRemarkPlugins(),
+        getRehypePlugins: () => active.getRehypePlugins(),
+      };
+
+      await withContractOverride("ContentProcessor", staticProcessor, async () => {
+        const result = await bundleMDXWithOptions({
+          content: "# Source static seal",
+          filePath: "/tmp/source-static-sealed-default.mdx",
+          projectDir: "/tmp",
+        });
+
+        const loaded = await importEmittedModule(result.code) as unknown as {
+          default: { title: string; updateTitle(title: string): void };
+        };
+        Object.seal(loaded.default);
+        loaded.default.title = "Assigned";
+        assertEquals(loaded.default.title, "Assigned");
+        loaded.default.updateTitle("Updated");
+        assertEquals(loaded.default.title, "Updated");
       });
     });
 

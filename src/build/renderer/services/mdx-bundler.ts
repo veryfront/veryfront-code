@@ -524,17 +524,28 @@ function nodeInvokesProviderHook( // NOSONAR: AST dominance heuristic is intenti
   for (let parent = bindingPath.parentPath; parent; parent = parent.parentPath) {
     if (parent.node.type === "ImportDeclaration") {
       return nodeName(parent.node.source) === MDX_PROVIDER_IMPORT_SOURCE &&
-        providerMapContributesToReturn(providerMapPath, path, defaultFunction);
+        providerMapContributesToEveryReturn(
+          providerMapPath,
+          path,
+          defaultFunction,
+          returnPaths,
+        );
     }
   }
   return false;
 }
 
-function providerMapContributesToReturn(
+function providerMapContributesToEveryReturn(
   providerMapPath: BabelBindingPath,
   callPath: BabelScopeAwarePath,
   defaultFunction: ASTNode,
+  returnPaths: readonly BabelBindingPath[],
 ): boolean {
+  const coveredReturns = new Set<ASTNode>();
+  const recordCoveredReturn = (path: BabelBindingPath) => {
+    const returnPath = renderedReturnForComponentsPath(path, defaultFunction);
+    if (returnPath) coveredReturns.add(returnPath.node);
+  };
   for (
     let current: BabelBindingPath | null | undefined = providerMapPath;
     current && current.node !== defaultFunction;
@@ -548,17 +559,16 @@ function providerMapContributesToReturn(
     collectBindingPatternNames(current.node.id, bindingNames);
     for (const bindingName of bindingNames) {
       const binding = callPath.scope?.getBinding(bindingName);
-      if (
-        binding?.referencePaths?.some((referencePath) =>
-          pathSuppliesRenderedComponents(referencePath, defaultFunction)
-        )
-      ) {
-        return true;
+      for (const referencePath of binding?.referencePaths ?? []) {
+        recordCoveredReturn(referencePath);
       }
     }
-    return false;
+    return returnPaths.length > 0 &&
+      returnPaths.every((returnPath) => coveredReturns.has(returnPath.node));
   }
-  return pathSuppliesRenderedComponents(providerMapPath, defaultFunction);
+  recordCoveredReturn(providerMapPath);
+  return returnPaths.length > 0 &&
+    returnPaths.every((returnPath) => coveredReturns.has(returnPath.node));
 }
 
 function importSource(path: BabelBindingPath | undefined): string | undefined {
@@ -598,10 +608,10 @@ function isHostElementRenderTarget(value: unknown): boolean {
     (node?.type === "Literal" && typeof node.value === "string");
 }
 
-function pathSuppliesRenderedComponents( // NOSONAR: render-path AST heuristic is intentionally localized.
+function renderedReturnForComponentsPath( // NOSONAR: render-path AST heuristic is intentionally localized.
   path: BabelBindingPath,
   defaultFunction: ASTNode,
-): boolean {
+): BabelBindingPath | undefined {
   let suppliesComponentsProperty = false;
   let reachesRender = false;
   for (
@@ -609,15 +619,15 @@ function pathSuppliesRenderedComponents( // NOSONAR: render-path AST heuristic i
     current && current.node !== defaultFunction;
     current = current.parentPath
   ) {
-    if (current.node.type === "ReturnStatement") return reachesRender;
-    if (isFunctionNode(current.node)) return false;
+    if (current.node.type === "ReturnStatement") return reachesRender ? current : undefined;
+    if (isFunctionNode(current.node)) return undefined;
     const parentPath = current.parentPath as BabelScopeAwarePath | null | undefined;
     const parent = parentPath?.node;
     if (
       (parent?.type === "LogicalExpression" && parent.left === current.node) ||
       (parent?.type === "ConditionalExpression" && parent.test === current.node)
     ) {
-      return false;
+      return undefined;
     }
     if (parent?.type === "ObjectProperty" && parent.value === current.node) {
       suppliesComponentsProperty = nodeName(parent.key) === "components";
@@ -638,7 +648,7 @@ function pathSuppliesRenderedComponents( // NOSONAR: render-path AST heuristic i
     }
     suppliesComponentsProperty = false;
   }
-  return false;
+  return undefined;
 }
 
 interface BabelBindingPath {
@@ -889,13 +899,24 @@ async function componentBackedProviderProxy(
       defineProperty(target, key, descriptor) {
         const object = ({}).constructor;
         const targetDescriptor = object.getOwnPropertyDescriptor(target, key);
-        if (targetDescriptor) {
-          const sourceDescriptor = object.getOwnPropertyDescriptor(${originalName}, key);
-          if (sourceDescriptor && descriptor.configurable === false) {
-            sourceDescriptor.configurable = false;
-            if ("writable" in sourceDescriptor) sourceDescriptor.writable = false;
-            object.defineProperty(${originalName}, key, sourceDescriptor);
+        const sourceDescriptor = object.getOwnPropertyDescriptor(${originalName}, key);
+        const forwardsSourceData = targetDescriptor?.configurable && targetDescriptor.get &&
+          sourceDescriptor && "value" in sourceDescriptor &&
+          typeof sourceDescriptor.value !== "function";
+        if (forwardsSourceData && descriptor.configurable === false) {
+          const sourceUpdate = { configurable: false };
+          if (descriptor.writable === false) sourceUpdate.writable = false;
+          object.defineProperty(${originalName}, key, sourceUpdate);
+          if (descriptor.writable === false) {
+            object.defineProperty(
+              target,
+              key,
+              object.getOwnPropertyDescriptor(${originalName}, key),
+            );
+          } else {
+            object.defineProperty(target, key, { configurable: false });
           }
+        } else if (targetDescriptor) {
           object.defineProperty(target, key, descriptor);
         } else {
           if (!object.isExtensible(target)) return false;
@@ -926,7 +947,17 @@ async function componentBackedProviderProxy(
       getOwnPropertyDescriptor(target, key) {
         const object = ({}).constructor;
         const targetDescriptor = object.getOwnPropertyDescriptor(target, key);
-        if (targetDescriptor) return targetDescriptor;
+        if (targetDescriptor) {
+          const sourceDescriptor = object.getOwnPropertyDescriptor(${originalName}, key);
+          if (
+            targetDescriptor.configurable && targetDescriptor.get && sourceDescriptor &&
+            "value" in sourceDescriptor && typeof sourceDescriptor.value !== "function"
+          ) {
+            sourceDescriptor.configurable = true;
+            return sourceDescriptor;
+          }
+          return targetDescriptor;
+        }
         if (!object.isExtensible(target)) return undefined;
         const sourceDescriptor = object.getOwnPropertyDescriptor(${originalName}, key);
         if (sourceDescriptor) {

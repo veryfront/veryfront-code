@@ -518,12 +518,24 @@ describe("build/renderer/utils/import-utils", () => {
       );
     });
 
-    it("finds default imports split before from", () => {
+    it("finds import and export clauses split before from", () => {
+      for (
+        const code of [
+          'import Child\nfrom "./child.mdx"',
+          'import { Child }\nfrom "./child.mdx"',
+          'export { Child }\nfrom "./child.mdx"',
+        ]
+      ) {
+        assertEquals(extractImports(code, { markdownCode: true }), ["./child.mdx"]);
+      }
+    });
+
+    it("does not treat method calls named from as module specifiers", () => {
       assertEquals(
-        extractImports('import Child\nfrom "./child.mdx"', {
+        extractImports('export const values = Array.from("./child.mdx")', {
           markdownCode: true,
         }),
-        ["./child.mdx"],
+        [],
       );
     });
 
@@ -1277,6 +1289,8 @@ describe("build/renderer/utils/import-utils", () => {
           'export const\nchild = import("./child.mdx")',
           'export async function\nload(value = import("./child.mdx")) {}',
           'import Child\nfrom "./child.mdx"',
+          'import { Child }\nfrom "./child.mdx"',
+          'export { Child }\nfrom "./child.mdx"',
           '{import("./child.mdx", { with: { type: "json" } })}',
           String.raw`<Widget label="value\" child={import("./child.mdx")} />`,
           String.raw`<Widget label='value\' child={import("./child.mdx")} />`,
@@ -1292,6 +1306,24 @@ describe("build/renderer/utils/import-utils", () => {
 
         assertEquals(result.includes('"/bundled/child.js"'), true);
       }
+    });
+
+    it("does not rewrite method-call string arguments named from", async () => {
+      const code = 'export const values = Array.from("./child.mdx")';
+      let processorCalled = false;
+      const result = await processImports(
+        code,
+        "/project/page.mdx",
+        "/project",
+        async () => {
+          processorCalled = true;
+          return "/bundled/child.js";
+        },
+        { markdownCode: true },
+      );
+
+      assertEquals(result, code);
+      assertEquals(processorCalled, false);
     });
 
     it("should handle multiple imports", async () => {
