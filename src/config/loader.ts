@@ -5,9 +5,11 @@ import {
   extname,
   isAbsolute,
   join,
+  relative,
   resolve,
   toFileUrl,
 } from "#veryfront/compat/path/index.ts";
+import { runtimeUsesWindowsPaths } from "#veryfront/platform/compat/path/portable.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   isExtendedFSAdapter,
@@ -23,7 +25,7 @@ import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils/const
 import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
 import { buildConfigCacheKey, type VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
 import { DEFAULT_PORT, DEFAULT_RENDER_CACHE_MAX_ENTRIES } from "./defaults.ts";
-import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, isNotFoundError, realPath } from "#veryfront/platform/compat/fs.ts";
 import {
   CACHE_INVARIANT_VIOLATION,
   CONFIG_PARSE_ERROR,
@@ -41,6 +43,7 @@ import { registerLRUCache } from "#veryfront/cache/registry.ts";
 import { VERYFRONT_CONFIG_FILES } from "./config-files.ts";
 import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
 import type { ModuleLexer } from "#veryfront/extensions/bundler/module-lexer.ts";
+import type { ASTNode } from "#veryfront/extensions/parser/index.ts";
 import { tryResolve as tryResolveContract } from "#veryfront/extensions/contracts.ts";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
 import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
@@ -68,13 +71,20 @@ import { describeHostedConfigRejection } from "./hosted-compatibility.ts";
 // singleflight state, and immutable result must not depend on ambient methods.
 const IntrinsicMap = Map;
 const IntrinsicSet = Set;
+const ArrayIsArray = Array.isArray;
 const IntrinsicPromise = Promise;
+const IntrinsicString = String;
 const IntrinsicTextDecoder = TextDecoder;
 const IntrinsicErrorPrototype = Error.prototype;
 const IntrinsicObjectPrototype = Object.prototype;
 const IntrinsicWeakMap = WeakMap;
 const IntrinsicWeakSet = WeakSet;
 const IntrinsicAbortController = AbortController;
+const IntrinsicURL = URL;
+const EncodeURIComponent = encodeURIComponent;
+const JSONParse = JSON.parse;
+const JSONStringify = JSON.stringify;
+const DecodeURIComponent = decodeURIComponent;
 const AbortControllerPrototypeAbort = AbortController.prototype.abort;
 const EventTargetPrototypeAddEventListener = EventTarget.prototype.addEventListener;
 const EventTargetPrototypeRemoveEventListener = EventTarget.prototype.removeEventListener;
@@ -97,13 +107,18 @@ const PromiseWithResolvers = Promise.withResolvers;
 const ReflectApply = Reflect.apply;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ReflectGet = Reflect.get;
+const ReflectSet = Reflect.set;
 const StringPrototypeIncludes = String.prototype.includes;
+const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeEndsWith = String.prototype.endsWith;
+const StringPrototypeReplaceAll = String.prototype.replaceAll;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeSplit = String.prototype.split;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const StringPrototypeTrim = String.prototype.trim;
+const SetPrototypeAdd = Set.prototype.add;
+const SetPrototypeForEach = Set.prototype.forEach;
 const SetPrototypeHas = Set.prototype.has;
 const ReflectDeleteProperty = Reflect.deleteProperty;
 const ReflectOwnKeys = Reflect.ownKeys;
@@ -133,17 +148,29 @@ const abortSignalAbortedGetter = ObjectGetOwnPropertyDescriptor(
   "aborted",
 )?.get;
 const mapSizeGetter = ObjectGetOwnPropertyDescriptor(Map.prototype, "size")?.get;
+const urlHrefGetter = ObjectGetOwnPropertyDescriptor(URL.prototype, "href")?.get;
+const urlHostnameGetter = ObjectGetOwnPropertyDescriptor(URL.prototype, "hostname")?.get;
+const urlPathnameGetter = ObjectGetOwnPropertyDescriptor(URL.prototype, "pathname")?.get;
+const urlProtocolGetter = ObjectGetOwnPropertyDescriptor(URL.prototype, "protocol")?.get;
 
 if (
   typeof abortControllerSignalGetter !== "function" ||
   typeof abortSignalAbortedGetter !== "function" ||
-  typeof mapSizeGetter !== "function"
+  typeof mapSizeGetter !== "function" ||
+  typeof urlHrefGetter !== "function" ||
+  typeof urlHostnameGetter !== "function" ||
+  typeof urlPathnameGetter !== "function" ||
+  typeof urlProtocolGetter !== "function"
 ) {
   throw new TypeError("Loader lifecycle intrinsics are unavailable");
 }
 const intrinsicAbortControllerSignalGetter = abortControllerSignalGetter as () => AbortSignal;
 const intrinsicAbortSignalAbortedGetter = abortSignalAbortedGetter as () => boolean;
 const intrinsicMapSizeGetter = mapSizeGetter as () => number;
+const intrinsicUrlHrefGetter = urlHrefGetter as () => string;
+const intrinsicUrlHostnameGetter = urlHostnameGetter as () => string;
+const intrinsicUrlPathnameGetter = urlPathnameGetter as () => string;
+const intrinsicUrlProtocolGetter = urlProtocolGetter as () => string;
 const HOSTED_CONFIG_TEXT_DECODER_OPTIONS = createHostedConfigTextDecoderOptions();
 const ABORT_LISTENER_OPTIONS = createAbortListenerOptions();
 const SAFE_PROMISE_SPECIES_HOLDER = createSafePromiseSpeciesHolder();
@@ -174,6 +201,26 @@ function isFrozen(value: object): boolean {
 
 function ownKeys(value: object): PropertyKey[] {
   return ReflectApply(ReflectOwnKeys, Reflect, [value]) as PropertyKey[];
+}
+
+function stringStartsWith(value: string, search: string): boolean {
+  return ReflectApply(StringPrototypeStartsWith, value, [search]) as boolean;
+}
+
+function stringIncludes(value: string, search: string): boolean {
+  return ReflectApply(StringPrototypeIncludes, value, [search]) as boolean;
+}
+
+function stringEndsWith(value: string, search: string): boolean {
+  return ReflectApply(StringPrototypeEndsWith, value, [search]) as boolean;
+}
+
+function stringIndexOf(value: string, search: string, position?: number): number {
+  return ReflectApply(StringPrototypeIndexOf, value, [search, position]) as number;
+}
+
+function stringSlice(value: string, start: number, end?: number): string {
+  return ReflectApply(StringPrototypeSlice, value, [start, end]) as string;
 }
 
 function reflectGet(value: RuntimeReflectionRecord, key: PropertyKey): unknown {
@@ -452,6 +499,11 @@ const DEFAULT_FS_MAX_DELAY_MS = 5_000;
 /** Maximum entries in the per-project config cache */
 const DEFAULT_CONFIG_CACHE_MAX_ENTRIES = 100;
 
+/** @internal Test-only tracking capacity. */
+export function __getBunProjectConfigModuleTrackingCapacityForTests(): number {
+  return DEFAULT_CONFIG_CACHE_MAX_ENTRIES;
+}
+
 export type { VeryfrontConfig } from "./schemas/index.ts";
 
 /**
@@ -600,15 +652,134 @@ export interface ConfigLoadResult {
   readonly provenance: ConfigLoadProvenance;
 }
 
+interface MergedConfigLoadResult {
+  readonly config: VeryfrontConfig;
+  readonly bunTrackingPublication?: BunProjectConfigTrackingPublication;
+}
+
 interface ConfigCacheEntry {
   readonly revision: number;
   readonly config: VeryfrontConfig;
   readonly provenance: ConfigLoadProvenance;
+  readonly bunTrackingKey?: string;
 }
+
+interface BunProjectDynamicImportObserver {
+  readonly key: string;
+  readonly dispose: () => void;
+}
+
+interface BunProjectConfigModuleCacheEntry {
+  readonly cache: Record<string, unknown>;
+  readonly keys: readonly string[];
+  readonly projectDirectory: string;
+  readonly dynamicImportObserver?: BunProjectDynamicImportObserver;
+}
+
+interface BunProjectConfigTrackingPublication {
+  readonly key: string;
+  readonly publish: () => void;
+  readonly discard: () => void;
+}
+
+const bunProjectConfigTrackingOwnerCounts = new IntrinsicMap<string, number>();
 
 const configCacheByProject = new LRUCache<string, ConfigCacheEntry>({
   maxEntries: DEFAULT_CONFIG_CACHE_MAX_ENTRIES,
+  onEvict: (_key, value) => {
+    const entry = value as ConfigCacheEntry;
+    releaseBunProjectConfigTrackingOwner(entry.bunTrackingKey);
+  },
 });
+const bunProjectConfigModuleTrackingEntries = new IntrinsicMap<
+  string,
+  BunProjectConfigModuleCacheEntry
+>();
+let clearingBunProjectConfigModuleTracking = false;
+const BUN_PROJECT_CONFIG_LOAD_INVALIDATED = Symbol("bun-project-config-load-invalidated");
+const bunProjectConfigModuleCacheKeys = new LRUCache<
+  string,
+  BunProjectConfigModuleCacheEntry
+>({
+  maxEntries: DEFAULT_CONFIG_CACHE_MAX_ENTRIES,
+  // require.cache contains live module namespace objects with getters and TDZ
+  // bindings, so the generic recursive estimator must never inspect it.
+  estimateSizeOf: () => 1,
+  onEvict: (key, value) => {
+    mapDelete(bunProjectConfigModuleTrackingEntries, key);
+    if (!clearingBunProjectConfigModuleTracking) {
+      evictBunProjectConfigModules(value as BunProjectConfigModuleCacheEntry);
+    }
+  },
+});
+/** Serialize Bun loads for one config path, including across cache revisions. */
+const bunProjectConfigLoadTurns = new IntrinsicMap<string, Promise<void>>();
+const bunProjectConfigPendingDependencyCollections = new IntrinsicMap<
+  string,
+  Promise<void>
+>();
+let bunProjectConfigDynamicImportObserverSequence = 0;
+
+function setBunProjectConfigModuleTracking(
+  key: string,
+  entry: BunProjectConfigModuleCacheEntry,
+): void {
+  mapSet(bunProjectConfigModuleTrackingEntries, key, entry);
+  bunProjectConfigModuleCacheKeys.set(key, entry);
+}
+
+function retainBunProjectConfigTrackingOwner(trackingKey: string | undefined): void {
+  if (trackingKey === undefined) return;
+  mapSet(
+    bunProjectConfigTrackingOwnerCounts,
+    trackingKey,
+    (mapGet(bunProjectConfigTrackingOwnerCounts, trackingKey) ?? 0) + 1,
+  );
+}
+
+function releaseBunProjectConfigTrackingOwner(trackingKey: string | undefined): void {
+  if (trackingKey === undefined) return;
+  const ownerCount = mapGet(bunProjectConfigTrackingOwnerCounts, trackingKey);
+  if (ownerCount !== undefined && ownerCount > 1) {
+    mapSet(bunProjectConfigTrackingOwnerCounts, trackingKey, ownerCount - 1);
+    return;
+  }
+  mapDelete(bunProjectConfigTrackingOwnerCounts, trackingKey);
+  bunProjectConfigModuleCacheKeys.delete(trackingKey);
+}
+
+function setConfigCacheEntry(cacheKey: string, entry: ConfigCacheEntry): void {
+  const previous = configCacheByProject.get(cacheKey);
+  if (previous?.bunTrackingKey === entry.bunTrackingKey) {
+    configCacheByProject.set(cacheKey, entry);
+    return;
+  }
+
+  // Retain the incoming owner before set() can evict another cache alias of
+  // the same canonical config path at capacity.
+  retainBunProjectConfigTrackingOwner(entry.bunTrackingKey);
+  configCacheByProject.set(cacheKey, entry);
+  releaseBunProjectConfigTrackingOwner(previous?.bunTrackingKey);
+}
+
+/**
+ * Keep Bun module-tracking recency coupled to the config cache. A config
+ * cache hit touches only `configCacheByProject`; without refreshing the
+ * tracking entry too, the independent tracking LRU can reach capacity and
+ * evict -- and thereby delete -- the module graph of a config that is still
+ * being served from cache, splitting later application imports into a second
+ * singleton generation.
+ */
+function touchBunProjectConfigModuleTracking(
+  projectDir: string,
+  provenance: ConfigLoadProvenance,
+  trackingKey?: string,
+): void {
+  if (!isBun || provenance.kind !== "file") return;
+  bunProjectConfigModuleCacheKeys.get(
+    trackingKey ?? resolve(join(projectDir, provenance.configFile)),
+  );
+}
 
 interface HostedConfigFailureCacheEntry {
   readonly revision: number;
@@ -1203,7 +1374,7 @@ function createHostedConfigFlight(
     const merged = validationBoundary ? validationBoundary(validate) : validate();
     throwIfHostedConfigAborted(controllerSignal);
     if (usePersistentCache && cacheRevision === revisionAtStart) {
-      configCacheByProject.set(hostedCacheKey, {
+      setConfigCacheEntry(hostedCacheKey, {
         revision: revisionAtStart,
         config: merged,
         provenance: configFileProvenance(payload.evaluationOptions.fileName),
@@ -1797,7 +1968,6 @@ const SCHEME_URL = new RegExp(
   String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
   "gu",
 );
-
 // Both the userinfo run and the parenthesised interior are length-bounded, and
 // the userinfo run also stops at `/`. Neither bound is cosmetic. An unbounded
 // greedy interior rescans the rest of the message from every `(` that never
@@ -2678,7 +2848,16 @@ type DefaultModuleLexerModule = {
   EsModuleLexer: new () => ModuleLexer;
 };
 
+interface ConfigParseOnlyParser {
+  parse(options: { code: string; filePath?: string }): Promise<ASTNode>;
+}
+
+type DefaultConfigParserModule = {
+  BabelParseOnlyParser: new () => ConfigParseOnlyParser;
+};
+
 let fallbackModuleLexerPromise: Promise<ModuleLexer> | undefined;
+let fallbackConfigParserPromise: Promise<ConfigParseOnlyParser> | undefined;
 
 async function getConfigModuleLexer(): Promise<ModuleLexer> {
   const registered = tryResolveContract<ModuleLexer>("ModuleLexer");
@@ -2692,6 +2871,116 @@ async function getConfigModuleLexer(): Promise<ModuleLexer> {
     ({ EsModuleLexer }) => new EsModuleLexer(),
   );
   return await fallbackModuleLexerPromise;
+}
+
+async function getConfigParseOnlyParser(): Promise<ConfigParseOnlyParser> {
+  fallbackConfigParserPromise ??= thenPromise(
+    importFirstPartyExtensionModule<DefaultConfigParserModule>(
+      "ext-parser-babel",
+      "@veryfront/ext-parser-babel",
+      { sourceEntry: "parser-only", packageSubpath: "parser-only" },
+    ),
+    ({ BabelParseOnlyParser }) => new BabelParseOnlyParser(),
+  );
+  return await fallbackConfigParserPromise;
+}
+
+function configAstNodeType(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const descriptor = getOwnPropertyDescriptor(value, "type");
+  return descriptor && "value" in descriptor && typeof descriptor.value === "string"
+    ? descriptor.value
+    : undefined;
+}
+
+function isConfigFunctionAstNode(type: string): boolean {
+  return type === "FunctionDeclaration" || type === "FunctionExpression" ||
+    type === "ArrowFunctionExpression" || type === "ObjectMethod" ||
+    type === "ClassMethod" || type === "ClassPrivateMethod" ||
+    type === "TSDeclareFunction";
+}
+
+function configAstHasTopLevelAwait(root: ASTNode): boolean { // NOSONAR: intrinsic AST scan is intentionally explicit and covered by loader tests.
+  const queue: unknown[] = [root];
+  const functionDepths = [0];
+  for (let queueIndex = 0; queueIndex < queue.length; queueIndex++) {
+    const node = queue[queueIndex];
+    const functionDepth = functionDepths[queueIndex] ?? 0;
+    const type = configAstNodeType(node);
+    if (type === undefined) continue;
+    if (type === "AwaitExpression" && functionDepth === 0) return true;
+    if (type === "ForOfStatement" && functionDepth === 0) {
+      const awaitDescriptor = getOwnPropertyDescriptor(node as object, "await");
+      if (awaitDescriptor && "value" in awaitDescriptor && awaitDescriptor.value === true) {
+        return true;
+      }
+    }
+    if (type === "VariableDeclaration" && functionDepth === 0) {
+      const kindDescriptor = getOwnPropertyDescriptor(node as object, "kind");
+      if (
+        kindDescriptor && "value" in kindDescriptor && kindDescriptor.value === "await using"
+      ) {
+        return true;
+      }
+    }
+
+    const functionNode = isConfigFunctionAstNode(type);
+    const keys = ownKeys(node as object);
+    for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) { // NOSONAR: ownKeys traversal must not invoke iterator hooks from project config.
+      const key = keys[keyIndex];
+      if (key === "type") continue;
+      // Computed method keys and decorators run while the containing object or
+      // class is initialized. Parameters and bodies run only when called.
+      const childFunctionDepth = functionNode && key !== "key" && key !== "decorators"
+        ? functionDepth + 1
+        : functionDepth;
+      const descriptor = getOwnPropertyDescriptor(node as object, key!);
+      if (!descriptor || !("value" in descriptor)) continue;
+      const child = descriptor.value;
+      if (configAstNodeType(child) !== undefined) {
+        queue[queue.length] = child;
+        functionDepths[functionDepths.length] = childFunctionDepth;
+      } else if (ArrayIsArray(child)) {
+        for (let childIndex = 0; childIndex < child.length; childIndex++) { // NOSONAR: array traversal must stay index-based under poisoned primordials.
+          const item = child[childIndex];
+          if (configAstNodeType(item) !== undefined) {
+            queue[queue.length] = item;
+            functionDepths[functionDepths.length] = childFunctionDepth;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+async function bunConfigHasTopLevelAwait(source: string, configPath: string): Promise<boolean> {
+  if (!stringIncludes(source, "await")) return false;
+  try {
+    const ast = await (await getConfigParseOnlyParser()).parse({
+      code: source,
+      filePath: configPath,
+    });
+    const programDescriptor = getOwnPropertyDescriptor(ast, "program");
+    const root = programDescriptor && "value" in programDescriptor &&
+        configAstNodeType(programDescriptor.value) === "Program"
+      ? programDescriptor.value as ASTNode
+      : ast;
+    return configAstHasTopLevelAwait(root);
+  } catch {
+    // If the pinned parser cannot classify an await-bearing config, avoid the
+    // destructive require-then-import probe. The fallback will evaluate it at
+    // most once and preserve the original syntax error if it is invalid.
+    return true;
+  }
+}
+
+/** @internal Test-only Bun async-module preflight seam. */
+export function __bunConfigHasTopLevelAwaitForTests(
+  source: string,
+  configPath = "veryfront.config.ts",
+): Promise<boolean> {
+  return bunConfigHasTopLevelAwait(source, configPath);
 }
 
 /**
@@ -2719,10 +3008,533 @@ export async function rewriteBareVeryfrontConfigImports(source: string): Promise
   return rewritten;
 }
 
-type ProjectConfigImportResolver = (specifier: string) => string;
+type ProjectConfigImportResolver = (specifier: string) => string | Promise<string>;
+type UnresolvedDynamicProjectConfigImportResolver = (
+  specifier: string,
+  error: unknown,
+) => string;
+type ResolvedProjectConfigImportObserver = (specifier: string) => void | Promise<void>;
+
+const PROJECT_ESM_EXPORT_CONDITIONS: ReadonlySet<string> = new IntrinsicSet([
+  "deno",
+  "node",
+  "import",
+  "module-sync",
+]);
+
+type ProjectPackageManifest = Readonly<{
+  directory: string;
+  value: Record<PropertyKey, unknown>;
+}>;
+
+class InvalidProjectPackageTargetError extends TypeError {}
+
+async function readProjectPackageManifest(
+  directory: string,
+): Promise<ProjectPackageManifest | undefined> {
+  try {
+    const parsed = ReflectApply(JSONParse, JSON, [
+      await createFileSystem().readTextFile(join(directory, "package.json")),
+    ]) as unknown;
+    if (!isRecord(parsed)) {
+      throw new TypeError("Package manifest must contain a JSON object");
+    }
+    return { directory, value: parsed };
+  } catch (error) {
+    if (isNotFoundError(error)) return undefined;
+    throw error;
+  }
+}
+
+async function findNearestProjectPackageManifest(
+  configPath: string,
+): Promise<ProjectPackageManifest | undefined> {
+  let directory = dirname(configPath);
+  while (true) {
+    const manifest = await readProjectPackageManifest(directory);
+    if (manifest) return manifest;
+    const parent = dirname(directory);
+    if (parent === directory) return undefined;
+    directory = parent;
+  }
+}
+
+function ownDataValue(
+  value: Record<PropertyKey, unknown>,
+  key: PropertyKey,
+): { present: boolean; value?: unknown } {
+  const descriptor = getOwnPropertyDescriptor(value, key);
+  if (!descriptor || !("value" in descriptor)) return { present: false };
+  return { present: true, value: descriptor.value };
+}
+
+function isRecord(value: unknown): value is Record<PropertyKey, unknown> {
+  return typeof value === "object" && value !== null && !ArrayIsArray(value);
+}
+
+/** Matches Node's array-index check for conditional export and import keys. */
+function isArrayIndexPropertyKey(key: string): boolean {
+  const numeric = +key;
+  return `${numeric}` === key && numeric >= 0 && numeric < 4_294_967_295;
+}
+
+/** Select a local package target using Deno's active ESM export conditions. */
+function selectConditionalProjectExport( // NOSONAR: package export resolver mirrors Node branching and is test-locked.
+  value: unknown,
+  wildcard: string | undefined,
+  allowExternal = false,
+): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value === "string") {
+    return wildcard === undefined
+      ? value
+      : ReflectApply(StringPrototypeReplaceAll, value, ["*", wildcard]) as string;
+  }
+  if (ArrayIsArray(value)) {
+    for (let index = 0; index < value.length; index++) { // NOSONAR: config-owned arrays may have poisoned iterators.
+      let selected: string | null | undefined;
+      try {
+        selected = selectConditionalProjectExport(value[index], wildcard, allowExternal);
+      } catch (error) {
+        if (error instanceof InvalidProjectPackageTargetError) continue;
+        throw error;
+      }
+      if (typeof selected !== "string") continue;
+      if (stringStartsWith(selected, "./")) {
+        try {
+          assertSafeProjectPackageTarget(selected, "array target");
+          return selected;
+        } catch (error) {
+          if (error instanceof InvalidProjectPackageTargetError) continue;
+          throw error;
+        }
+      }
+      if (allowExternal && isExternalProjectPackageImportTarget(selected)) return selected;
+    }
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new InvalidProjectPackageTargetError("Package export target is invalid");
+  }
+
+  const keys = ownKeys(value);
+  // Node and Bun reject conditional maps whose keys are array indices before
+  // matching any condition, so surface the invalid package configuration
+  // instead of silently skipping the numeric key and selecting another branch.
+  for (let index = 0; index < keys.length; index++) { // NOSONAR: ownKeys traversal must not invoke iterator hooks from package data.
+    const key = keys[index];
+    if (typeof key === "string" && isArrayIndexPropertyKey(key)) {
+      throw new TypeError(
+        "Package export conditions cannot contain numeric property keys",
+      );
+    }
+  }
+  for (let index = 0; index < keys.length; index++) { // NOSONAR: ownKeys traversal must not invoke iterator hooks from package data.
+    const key = keys[index];
+    if (typeof key !== "string") continue;
+    if (
+      key !== "default" &&
+      ReflectApply(SetPrototypeHas, PROJECT_ESM_EXPORT_CONDITIONS, [key]) !== true
+    ) continue;
+    const candidate = ownDataValue(value, key);
+    if (!candidate.present) continue;
+    const selected = selectConditionalProjectExport(candidate.value, wildcard, allowExternal);
+    if (selected !== undefined) return selected;
+  }
+  return undefined;
+}
+
+/** Match a root, exact subpath, or wildcard package export without evaluating it. */
+function selectProjectPackageExport( // NOSONAR: native package-pattern selection is intentionally branch-explicit and covered.
+  exportsValue: unknown,
+  subpath: string,
+): string | null | undefined {
+  if (!isRecord(exportsValue)) {
+    return subpath === "." ? selectConditionalProjectExport(exportsValue, undefined) : undefined;
+  }
+
+  const keys = ownKeys(exportsValue);
+  let hasSubpathMap = false;
+  let hasConditionKey = false;
+  for (let index = 0; index < keys.length; index++) { // NOSONAR: ownKeys traversal must not invoke iterator hooks from package data.
+    const key = keys[index];
+    if (typeof key !== "string") continue;
+    if (stringStartsWith(key, ".")) hasSubpathMap = true;
+    else hasConditionKey = true;
+  }
+  if (!hasSubpathMap) {
+    return subpath === "." ? selectConditionalProjectExport(exportsValue, undefined) : undefined;
+  }
+  if (hasConditionKey) {
+    throw new TypeError("Package exports cannot mix conditions and subpaths");
+  }
+
+  const exact = ownDataValue(exportsValue, subpath);
+  if (exact.present) return selectConditionalProjectExport(exact.value, undefined);
+
+  let bestKey: string | undefined;
+  let bestWildcard: string | undefined;
+  let bestPrefixLength = -1;
+  for (let index = 0; index < keys.length; index++) { // NOSONAR: native wildcard precedence uses reverse-free indexed scanning.
+    const key = keys[index];
+    if (typeof key !== "string") continue;
+    const star = stringIndexOf(key, "*");
+    if (star < 0 || stringIndexOf(key, "*", star + 1) >= 0) continue;
+    const prefix = stringSlice(key, 0, star);
+    const suffix = stringSlice(key, star + 1);
+    if (!stringStartsWith(subpath, prefix) || !stringEndsWith(subpath, suffix)) continue;
+    // Native pattern matching requires a nonempty capture: "./feature*" must
+    // not match "./feature" itself.
+    if (subpath.length <= prefix.length + suffix.length) continue;
+    if (
+      prefix.length > bestPrefixLength ||
+      (prefix.length === bestPrefixLength && key.length > (bestKey?.length ?? -1))
+    ) {
+      bestKey = key;
+      bestPrefixLength = prefix.length;
+      bestWildcard = stringSlice(subpath, prefix.length, subpath.length - suffix.length);
+    }
+  }
+  if (bestKey === undefined || bestWildcard === undefined) return undefined;
+  assertSafeProjectPackageWildcard(bestWildcard, subpath);
+  const pattern = ownDataValue(exportsValue, bestKey);
+  return pattern.present ? selectConditionalProjectExport(pattern.value, bestWildcard) : undefined;
+}
+
+function selectProjectPackageImport( // NOSONAR: native package-import pattern selection is intentionally branch-explicit and covered.
+  importsValue: unknown,
+  specifier: string,
+): string | null | undefined {
+  if (!isRecord(importsValue)) return undefined;
+  const exact = ownDataValue(importsValue, specifier);
+  if (exact.present) return selectConditionalProjectExport(exact.value, undefined, true);
+
+  const keys = ownKeys(importsValue);
+  let bestKey: string | undefined;
+  let bestWildcard: string | undefined;
+  let bestPrefixLength = -1;
+  for (let index = 0; index < keys.length; index++) { // NOSONAR: native wildcard precedence uses reverse-free indexed scanning.
+    const key = keys[index];
+    if (typeof key !== "string" || !stringStartsWith(key, "#")) continue;
+    const star = stringIndexOf(key, "*");
+    if (star < 0 || stringIndexOf(key, "*", star + 1) >= 0) continue;
+    const prefix = stringSlice(key, 0, star);
+    const suffix = stringSlice(key, star + 1);
+    if (!stringStartsWith(specifier, prefix) || !stringEndsWith(specifier, suffix)) continue;
+    // Native pattern matching requires a nonempty capture: "#feature*" must
+    // not match "#feature" itself.
+    if (specifier.length <= prefix.length + suffix.length) continue;
+    if (
+      prefix.length > bestPrefixLength ||
+      (prefix.length === bestPrefixLength && key.length > (bestKey?.length ?? -1))
+    ) {
+      bestKey = key;
+      bestPrefixLength = prefix.length;
+      bestWildcard = stringSlice(specifier, prefix.length, specifier.length - suffix.length);
+    }
+  }
+  if (bestKey === undefined || bestWildcard === undefined) return undefined;
+  assertSafeProjectPackageWildcard(bestWildcard, specifier);
+  const pattern = ownDataValue(importsValue, bestKey);
+  return pattern.present
+    ? selectConditionalProjectExport(pattern.value, bestWildcard, true)
+    : undefined;
+}
+
+function isExternalProjectPackageImportTarget(target: string): boolean {
+  if (stringStartsWith(target, "node:")) return true;
+  if (stringStartsWith(target, "#")) return false;
+  // Native package-imports resolution rejects a dot-relative target such as
+  // "../outside.js" as an invalid target; parseBarePackageSpecifier would
+  // otherwise classify it as package "..", and the fallback resolver would
+  // load a file outside the package as if it were an external dependency.
+  if (stringStartsWith(target, ".")) return false;
+  const parsed = parseBarePackageSpecifier(target);
+  return parsed?.version === null &&
+    isValidProjectPackageSpecifier(parsed);
+}
+
+const ENCODED_PACKAGE_PATH_SEPARATOR = /%2f|%5c/i;
+
+/**
+ * Match Node's package-name and subpath validation: a dot-prefixed name, a
+ * name containing "%" or "\\", and a subpath with an encoded separator are
+ * rejected before any manifest lookup, so staging never loads a
+ * `node_modules` entry the original project resolver would have refused.
+ */
+function isValidProjectPackageSpecifier(
+  parsed: Readonly<{ packageName: string; subpath: string | null }>,
+): boolean {
+  if (
+    stringStartsWith(parsed.packageName, ".") ||
+    stringIncludes(parsed.packageName, "%") ||
+    stringIncludes(parsed.packageName, "\\") ||
+    stringIncludes(parsed.packageName, "?") ||
+    stringIncludes(parsed.packageName, "#")
+  ) {
+    return false;
+  }
+  return parsed.subpath === null ||
+    ReflectApply(RegExpPrototypeExec, ENCODED_PACKAGE_PATH_SEPARATOR, [parsed.subpath]) === null;
+}
+
+/**
+ * Match native pattern-match validation: a wildcard capture whose decoded
+ * segments are dot, dot-dot, or `node_modules` makes the specifier
+ * invalid, so staging must refuse it instead of resolving a target native
+ * package resolution would never load. A capture may span `/` -- each
+ * segment is validated on its own.
+ */
+function assertSafeProjectPackageWildcard(capture: string, specifier: string): void {
+  const portableCapture = ReflectApply(StringPrototypeReplaceAll, capture, [
+    "\\",
+    "/",
+  ]) as string;
+  const segments = ReflectApply(StringPrototypeSplit, portableCapture, ["/"]) as string[];
+  for (let index = 0; index < segments.length; index++) { // NOSONAR: decoded path validation must avoid project-controlled iterators.
+    const segment = segments[index];
+    if (segment === undefined || segment === "") continue;
+    let decoded: string;
+    try {
+      decoded = ReflectApply(DecodeURIComponent, undefined, [segment]) as string;
+    } catch {
+      throw new TypeError(`Package import "${specifier}" contains an invalid path segment`);
+    }
+    const normalized = ReflectApply(StringPrototypeToLowerCase, decoded, []) as string;
+    if (
+      normalized === "." || normalized === ".." || normalized === "node_modules" ||
+      stringIncludes(decoded, "/") || stringIncludes(decoded, "\\")
+    ) {
+      throw new TypeError(`Package import "${specifier}" contains a forbidden path segment`);
+    }
+  }
+}
+
+function assertSafeProjectPackageTarget(target: string, specifier: string): void {
+  const suffixStart = (() => {
+    const query = stringIndexOf(target, "?");
+    const fragment = stringIndexOf(target, "#");
+    if (query < 0) return fragment;
+    if (fragment < 0) return query;
+    return Math.min(query, fragment);
+  })();
+  const path = suffixStart < 0 ? target : stringSlice(target, 0, suffixStart);
+  const portablePath = ReflectApply(StringPrototypeReplaceAll, stringSlice(path, 2), [
+    "\\",
+    "/",
+  ]) as string;
+  const segments = ReflectApply(StringPrototypeSplit, portablePath, ["/"]) as string[];
+  for (let index = 0; index < segments.length; index++) { // NOSONAR: decoded path validation must avoid project-controlled iterators.
+    const segment = segments[index];
+    if (segment === undefined) continue;
+    let decoded: string;
+    try {
+      decoded = ReflectApply(DecodeURIComponent, undefined, [segment]) as string;
+    } catch {
+      throw new InvalidProjectPackageTargetError(
+        `Package import "${specifier}" contains an invalid path segment`,
+      );
+    }
+    const normalized = ReflectApply(StringPrototypeToLowerCase, decoded, []) as string;
+    if (
+      normalized === "." || normalized === ".." || normalized === "node_modules" ||
+      stringIncludes(decoded, "/") || stringIncludes(decoded, "\\")
+    ) {
+      throw new InvalidProjectPackageTargetError(
+        `Package import "${specifier}" contains a forbidden path segment`,
+      );
+    }
+  }
+}
+
+function isAsciiLetter(value: string | undefined): boolean {
+  return value !== undefined &&
+    ((value >= "A" && value <= "Z") || (value >= "a" && value <= "z"));
+}
+
+/** Convert a captured native file URL without consulting mutable URL accessors. */
+function pathFromCapturedFileUrl(url: URL): string {
+  const protocol = ReflectApply(intrinsicUrlProtocolGetter, url, []) as string;
+  if (protocol !== "file:") throw new TypeError("Must be a file URL");
+
+  const windows = runtimeUsesWindowsPaths();
+  const hostname = ReflectApply(intrinsicUrlHostnameGetter, url, []) as string;
+  if (hostname && hostname !== "localhost" && !windows) {
+    throw new TypeError("File URL host must be empty or localhost on non-Windows runtimes");
+  }
+
+  const encodedPath = ReflectApply(intrinsicUrlPathnameGetter, url, []) as string;
+  if (
+    ReflectApply(RegExpPrototypeExec, /%2f/i, [encodedPath]) !== null ||
+    (windows && ReflectApply(RegExpPrototypeExec, /%5c/i, [encodedPath]) !== null)
+  ) {
+    throw new TypeError("File URL path must not include encoded path separators");
+  }
+  let path = ReflectApply(DecodeURIComponent, undefined, [encodedPath]) as string;
+  if (hostname && hostname !== "localhost") {
+    return `\\\\${hostname}${ReflectApply(StringPrototypeReplaceAll, path, ["/", "\\"]) as string}`;
+  }
+  if (!windows) return path;
+  if (stringStartsWith(path, "/") && isAsciiLetter(path[1]) && path[2] === ":") {
+    path = stringSlice(path, 1);
+  }
+  return ReflectApply(StringPrototypeReplaceAll, path, ["/", "\\"]) as string;
+}
+
+function resolveProjectPackageTarget(
+  manifest: ProjectPackageManifest,
+  specifier: string,
+  target: string | null | undefined,
+): string {
+  if (typeof target !== "string" || !stringStartsWith(target, "./")) {
+    throw new TypeError(`Package import "${specifier}" is not exported`);
+  }
+  assertSafeProjectPackageTarget(target, specifier);
+  const resolvedUrl = new IntrinsicURL(
+    target,
+    toFileUrl(join(manifest.directory, "package.json")),
+  );
+  const resolved = pathFromCapturedFileUrl(resolvedUrl);
+  const relativeTarget = relative(manifest.directory, resolved);
+  if (
+    relativeTarget === ".." || stringStartsWith(relativeTarget, "../") ||
+    stringStartsWith(relativeTarget, "..\\") || isAbsolute(relativeTarget)
+  ) {
+    throw new TypeError(`Package import "${specifier}" resolves outside its package`);
+  }
+  return ReflectApply(intrinsicUrlHrefGetter, resolvedUrl, []) as string;
+}
+
+async function projectPackageDirectoryExists(packageDirectory: string): Promise<boolean> {
+  try {
+    return (await createFileSystem().stat(packageDirectory)).isDirectory;
+  } catch (error) {
+    if (isNotFoundError(error)) return false;
+    throw error;
+  }
+}
+
+type ProjectPackageLookup = Readonly<
+  | { kind: "manifest"; manifest: ProjectPackageManifest }
+  | { kind: "legacy"; directory: string }
+>;
+
+/** Find the nearest installed copy of a package from the original config location. */
+async function findProjectPackage(
+  packageName: string,
+  configPath: string,
+): Promise<ProjectPackageLookup | undefined> {
+  const scope = await findNearestProjectPackageManifest(configPath);
+  const scopeName = scope && ownDataValue(scope.value, "name");
+  if (scope && scopeName?.present && scopeName.value === packageName) {
+    return { kind: "manifest", manifest: scope };
+  }
+  let directory = dirname(configPath);
+  while (true) {
+    const packageDirectory = join(directory, "node_modules", packageName);
+    const manifest = await readProjectPackageManifest(packageDirectory);
+    if (manifest) return { kind: "manifest", manifest };
+    // The nearest installed directory wins even without a usable manifest:
+    // project resolution stops there and uses its legacy entry point, so an
+    // ancestor's exports map must not shadow it. Return the exact directory so
+    // legacy resolution cannot skip an unusable nearest install and continue
+    // searching ancestors.
+    if (await projectPackageDirectoryExists(packageDirectory)) {
+      return { kind: "legacy", directory: packageDirectory };
+    }
+
+    const parent = dirname(directory);
+    if (parent === directory) return undefined;
+    directory = parent;
+  }
+}
+
+/** Resolve a package export with ESM conditions, leaving non-package imports to the runtime. */
+async function resolveProjectPackageImport( // NOSONAR: staged package resolution mirrors Node/Bun branches and is test-locked.
+  specifier: string,
+  configPath: string,
+): Promise<ProjectPackageImportResolution | undefined> {
+  if (stringStartsWith(specifier, "./") || stringStartsWith(specifier, "../")) {
+    return undefined;
+  }
+  if (stringStartsWith(specifier, "#")) {
+    if (specifier === "#" || stringStartsWith(specifier, "#/")) {
+      throw new TypeError(`Package import "${specifier}" is not a valid internal import name`);
+    }
+    const manifest = await findNearestProjectPackageManifest(configPath);
+    if (!manifest) return undefined;
+    const importsProperty = ownDataValue(manifest.value, "imports");
+    if (!importsProperty.present) return undefined;
+    const target = selectProjectPackageImport(importsProperty.value, specifier);
+    if (typeof target !== "string") {
+      throw new TypeError(`Package import "${specifier}" is not exported`);
+    }
+    if (!stringStartsWith(target, "./")) {
+      if (!isExternalProjectPackageImportTarget(target)) {
+        throw new TypeError(`Package import "${specifier}" is not exported`);
+      }
+      // Native package-imports resolution resolves an external target from
+      // the package scope that declares the `imports` map, not from the
+      // importing file, so a nested node_modules copy under the config
+      // directory must not shadow the declaring scope's installation.
+      return { kind: "external", specifier: target, scopeDirectory: manifest.directory };
+    }
+    return {
+      kind: "resolved",
+      specifier: resolveProjectPackageTarget(manifest, specifier, target),
+    };
+  }
+  if (
+    ReflectApply(RegExpPrototypeExec, /^[a-zA-Z][a-zA-Z0-9+.-]*:/, [specifier]) !== null
+  ) {
+    throw new TypeError(`Config import "${specifier}" uses an unsupported URL scheme`);
+  }
+  const parsed = parseBarePackageSpecifier(specifier);
+  if (parsed?.version !== null) {
+    return undefined;
+  }
+  if (
+    ReflectApply(SetPrototypeHas, NODE_BUILTIN_PACKAGE_NAMES, [parsed.packageName]) as boolean
+  ) {
+    return undefined;
+  }
+  // Reject before lookup rather than deferring to the fallback resolver:
+  // CommonJS resolution would load the literal `node_modules/p%2Fq` directory
+  // that native ESM package resolution refuses to consider.
+  if (!isValidProjectPackageSpecifier(parsed)) {
+    throw new TypeError(`Package import "${specifier}" is not a valid package specifier`);
+  }
+  const packageLookup = await findProjectPackage(parsed.packageName, configPath);
+  if (!packageLookup) return undefined;
+  if (packageLookup.kind === "legacy") {
+    return {
+      kind: "legacy",
+      directory: packageLookup.directory,
+      subpath: parsed.subpath,
+    };
+  }
+  const manifest = packageLookup.manifest;
+
+  const exportsProperty = ownDataValue(manifest.value, "exports");
+  if (!exportsProperty.present) return undefined;
+  const subpath = parsed.subpath === null ? "." : `.${parsed.subpath}`;
+  const target = selectProjectPackageExport(exportsProperty.value, subpath);
+  return {
+    kind: "resolved",
+    specifier: resolveProjectPackageTarget(manifest, specifier, target),
+  };
+}
+
+type ProjectPackageImportResolution = Readonly<
+  | { kind: "resolved"; specifier: string }
+  | { kind: "external"; specifier: string; scopeDirectory: string }
+  | { kind: "legacy"; directory: string; subpath: string | null }
+>;
 
 function asResolvedConfigSpecifier(resolved: string): string {
-  return isAbsolute(resolved) ? toFileUrl(resolved).href : resolved;
+  return isAbsolute(resolved)
+    ? ReflectApply(intrinsicUrlHrefGetter, toFileUrl(resolved), []) as string
+    : resolved;
 }
 
 async function createProjectConfigImportResolver(
@@ -2738,13 +3550,57 @@ async function createProjectConfigImportResolver(
   }
 
   const { createRequire } = await import("node:module");
-  const projectRequire = createRequire(toFileUrl(configPath));
-  const resolveSpecifier = projectRequire.resolve;
-  return (specifier) => {
-    const resolved = ReflectApply(resolveSpecifier, projectRequire, [specifier]);
+  const projectRequire = createRequire(configPath);
+  const resolveFromProject = async (
+    specifier: string,
+    seenAliases: Set<string>,
+    basePath: string,
+    baseRequire: NodeJS.Require,
+  ): Promise<string> => {
+    if (
+      (stringStartsWith(specifier, "./") || stringStartsWith(specifier, "../")) &&
+      (stringIncludes(specifier, "?") || stringIncludes(specifier, "#"))
+    ) {
+      const baseUrl = toFileUrl(basePath);
+      const resolvedUrl = new IntrinsicURL(
+        specifier,
+        ReflectApply(intrinsicUrlHrefGetter, baseUrl, []) as string,
+      );
+      return ReflectApply(intrinsicUrlHrefGetter, resolvedUrl, []) as string;
+    }
+    const esmResolution = await resolveProjectPackageImport(specifier, basePath);
+    if (esmResolution?.kind === "resolved") return esmResolution.specifier;
+    if (esmResolution?.kind === "legacy") {
+      const legacyTarget = esmResolution.subpath === null
+        ? esmResolution.directory
+        : join(esmResolution.directory, stringSlice(esmResolution.subpath, 1));
+      const resolved = ReflectApply(baseRequire.resolve, baseRequire, [legacyTarget]);
+      if (typeof resolved !== "string") throw new TypeError("Config import resolution failed");
+      return asResolvedConfigSpecifier(resolved);
+    }
+    if (esmResolution?.kind === "external") {
+      if (ReflectApply(SetPrototypeHas, seenAliases, [specifier]) as boolean) {
+        throw new TypeError(`Circular package import alias "${specifier}"`);
+      }
+      ReflectApply(SetPrototypeAdd, seenAliases, [specifier]);
+      // Resolve the external target from the scope that declared it, the way
+      // native package-imports resolution does, so the declaring package's
+      // own dependencies win over copies nested nearer the config file.
+      const scopePath = join(esmResolution.scopeDirectory, "package.json");
+      const scopeRequire = scopePath === basePath ? baseRequire : createRequire(scopePath);
+      return await resolveFromProject(
+        esmResolution.specifier,
+        seenAliases,
+        scopePath,
+        scopeRequire,
+      );
+    }
+    const resolved = ReflectApply(baseRequire.resolve, baseRequire, [specifier]);
     if (typeof resolved !== "string") throw new TypeError("Config import resolution failed");
     return asResolvedConfigSpecifier(resolved);
   };
+  return (specifier) =>
+    resolveFromProject(specifier, new IntrinsicSet<string>(), configPath, projectRequire);
 }
 
 function keepsConfigImportSpecifier(specifier: string): boolean {
@@ -2758,41 +3614,192 @@ function keepsConfigImportSpecifier(specifier: string): boolean {
 }
 
 /** @internal Rewrite staged imports with a resolver bound to their original project. */
-export async function rewriteProjectConfigImports(
+export async function rewriteProjectConfigImports( // NOSONAR: source rewrite control flow is lexer-driven and regression-covered.
   source: string,
   resolveSpecifier: ProjectConfigImportResolver,
+  resolveUnresolvedDynamicSpecifier?: UnresolvedDynamicProjectConfigImportResolver,
+  observeResolvedSpecifier?: ResolvedProjectConfigImportObserver,
 ): Promise<string> {
   const lexer = await getConfigModuleLexer();
   await lexer.init?.();
 
   const imports = lexer.parse(source);
   let rewritten = source;
-  for (let index = imports.length - 1; index >= 0; index--) {
+  for (let index = imports.length - 1; index >= 0; index--) { // NOSONAR: reverse indexed rewrite preserves source offsets without iterator hooks.
     const imported = imports[index];
     const specifier = imported?.n;
     if (!imported || specifier === undefined || specifier === null) continue;
-    const replacement = specifier === "veryfront"
-      ? VERYFRONT_CONFIG_SHIM_URL
-      : keepsConfigImportSpecifier(specifier)
-      ? specifier
-      : resolveSpecifier(specifier);
+    let replacement: string;
+    if (specifier === "veryfront") replacement = VERYFRONT_CONFIG_SHIM_URL;
+    else if (keepsConfigImportSpecifier(specifier)) replacement = specifier;
+    else {
+      try {
+        replacement = await resolveSpecifier(specifier);
+      } catch (error) {
+        if (imported.d >= 0 && resolveUnresolvedDynamicSpecifier !== undefined) {
+          replacement = resolveUnresolvedDynamicSpecifier(specifier, error);
+        } else if (imported.d >= 0) {
+          continue;
+        } else {
+          throw error;
+        }
+      }
+    }
+    await observeResolvedSpecifier?.(replacement);
     if (replacement === specifier) continue;
     const before = ReflectApply(StringPrototypeSlice, rewritten, [0, imported.s]) as string;
     const after = ReflectApply(StringPrototypeSlice, rewritten, [imported.e]) as string;
-    rewritten = before + replacement + after;
+    const serializedReplacement = imported.d >= 0
+      ? ReflectApply(JSONStringify, JSON, [replacement]) as string
+      : replacement;
+    rewritten = before + serializedReplacement + after;
   }
   return rewritten;
+}
+
+/** A resolution failure an install could fix, as opposed to a present package rejecting the import. */
+function isMissingProjectModuleResolutionError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const record = error as RuntimeReflectionRecord;
+  const code = readOwnDataString(record, "code");
+  if (
+    code === "MODULE_NOT_FOUND" || code === BUN_RESOLVE_MESSAGE_MODULE_NOT_FOUND_CODE
+  ) {
+    return true;
+  }
+  const message = readOwnDataString(record, "message");
+  return message !== undefined &&
+    (stringStartsWith(message, "Cannot find module") ||
+      stringStartsWith(message, "Cannot find package"));
+}
+
+function unresolvedProjectConfigImportModuleUrl(
+  specifier: string,
+  error: unknown,
+): string {
+  let message: string;
+  if (error === undefined || isMissingProjectModuleResolutionError(error)) {
+    const dependency = missingPackageName(specifier);
+    message = dependency === undefined
+      ? "Unable to resolve dynamic project config import"
+      : `Cannot find package "${dependency}" imported from file:///project/veryfront.config.ts`;
+  } else {
+    // A resolution failure that is not "module not found" -- an installed
+    // package whose exports reject the active ESM conditions, an invalid
+    // alias target -- must keep its precise reason. Fabricating a missing
+    // dependency here would tell the reader to install a package that is
+    // already present.
+    const caught = typeof error === "string"
+      ? error
+      : readOwnDataString(error as RuntimeReflectionRecord, "message");
+    message = caught === undefined || caught.length === 0
+      ? "Unable to resolve dynamic project config import"
+      : caught;
+  }
+  const moduleSource = `throw new Error(${ReflectApply(JSONStringify, JSON, [message])});\n`;
+  return `data:text/javascript,${ReflectApply(EncodeURIComponent, undefined, [
+    moduleSource,
+  ]) as string}`;
 }
 
 /** @internal Resolve staged config imports from the original project module root. */
 export async function rewriteProjectConfigImportsFromProject(
   source: string,
   configPath: string,
+  observeResolvedSpecifier?: ResolvedProjectConfigImportObserver,
 ): Promise<string> {
   return await rewriteProjectConfigImports(
     source,
     await createProjectConfigImportResolver(configPath),
+    unresolvedProjectConfigImportModuleUrl,
+    observeResolvedSpecifier,
   );
+}
+
+async function rewriteDynamicProjectConfigImports(
+  source: string,
+  observerKey: string,
+): Promise<string> {
+  const lexer = await getConfigModuleLexer();
+  await lexer.init?.();
+
+  const imports = lexer.parse(source);
+  const argumentOpeningCounts = new IntrinsicMap<number, number>();
+  const argumentClosingCounts = new IntrinsicMap<number, number>();
+  const importOpeningCounts = new IntrinsicMap<number, number>();
+  const importClosingCounts = new IntrinsicMap<number, number>();
+  let hasDynamicImport = false;
+  for (let index = 0; index < imports.length; index++) { // NOSONAR: lexer result traversal must not invoke project-controlled iterators.
+    const imported = imports[index];
+    if (!imported || imported.d < 0) continue;
+    hasDynamicImport = true;
+    mapSet(
+      argumentOpeningCounts,
+      imported.s,
+      (mapGet(argumentOpeningCounts, imported.s) ?? 0) + 1,
+    );
+    mapSet(
+      argumentClosingCounts,
+      imported.e,
+      (mapGet(argumentClosingCounts, imported.e) ?? 0) + 1,
+    );
+    mapSet(
+      importOpeningCounts,
+      imported.ss,
+      (mapGet(importOpeningCounts, imported.ss) ?? 0) + 1,
+    );
+    mapSet(
+      importClosingCounts,
+      imported.se,
+      (mapGet(importClosingCounts, imported.se) ?? 0) + 1,
+    );
+  }
+  if (!hasDynamicImport) return source;
+
+  // Insert wrappers against offsets in the original source. Dynamic imports
+  // can nest, so rewriting one expression first would invalidate the lexer's
+  // range for its containing import even when records are visited in reverse.
+  let rewritten = "";
+  let sourceOffset = 0;
+  for (let position = 0; position <= source.length; position++) {
+    const argumentOpeningCount = mapGet(argumentOpeningCounts, position) ?? 0;
+    const argumentClosingCount = mapGet(argumentClosingCounts, position) ?? 0;
+    const importOpeningCount = mapGet(importOpeningCounts, position) ?? 0;
+    const importClosingCount = mapGet(importClosingCounts, position) ?? 0;
+    if (
+      argumentOpeningCount === 0 && argumentClosingCount === 0 &&
+      importOpeningCount === 0 && importClosingCount === 0
+    ) continue;
+    rewritten += stringSlice(source, sourceOffset, position);
+    for (let index = 0; index < importClosingCount; index++) rewritten += ")";
+    for (let index = 0; index < argumentClosingCount; index++) rewritten += ")";
+    for (let index = 0; index < importOpeningCount; index++) {
+      rewritten += `${observerKey}.settle(`;
+    }
+    for (let index = 0; index < argumentOpeningCount; index++) {
+      rewritten += `${observerKey}.resolve(`;
+    }
+    sourceOffset = position;
+  }
+  rewritten += stringSlice(source, sourceOffset);
+
+  // The generated import binding is chosen absent from the authored source,
+  // and its data module reads the real host global in its own lexical scope.
+  // Authored declarations named `globalThis`, `Function`, or `eval` therefore
+  // cannot shadow the observer reference used by the rewritten config.
+  const serializedObserverKey = ReflectApply(JSONStringify, JSON, [observerKey]) as string;
+  const bridgeSource = `export default globalThis[${serializedObserverKey}];\n`;
+  const bridgeUrl = `data:text/javascript,${ReflectApply(EncodeURIComponent, undefined, [
+    bridgeSource,
+  ]) as string}`;
+  const bridgeImport = `import ${observerKey} from ${ReflectApply(JSONStringify, JSON, [
+    bridgeUrl,
+  ]) as string};\n`;
+  if (!stringStartsWith(rewritten, "#!")) return bridgeImport + rewritten;
+  const hashbangEnd = stringIndexOf(rewritten, "\n");
+  if (hashbangEnd < 0) return `${rewritten}\n${bridgeImport}`;
+  return stringSlice(rewritten, 0, hashbangEnd + 1) + bridgeImport +
+    stringSlice(rewritten, hashbangEnd + 1);
 }
 
 /** @internal */
@@ -2937,23 +3944,1191 @@ function isBunAsyncModuleRequireError(error: unknown): boolean {
     ) as boolean;
 }
 
-async function importFreshBunAsyncConfig(absolutePath: string): Promise<object> {
+interface BunAsyncConfigImportResult {
+  readonly configModule: object;
+  readonly observer: BunProjectDynamicImportObserver;
+}
+
+async function importFreshBunAsyncConfig(
+  absolutePath: string,
+  canonicalConfigPath: string,
+  source: string,
+  scope: BunProjectTrackingScope,
+  recordDependencies: (dependencyKeys: ReadonlySet<string>) => void,
+  discardDependencies: (dependencyKeys: ReadonlySet<string>) => void,
+): Promise<BunAsyncConfigImportResult> {
   const fs = createFileSystem();
-  const source = await fs.readTextFile(absolutePath);
-  return await loadConfigFromTempFile(
-    source,
-    absolutePath,
-    (tempFile) => toFileUrl(tempFile).href,
-    (processedSource) => rewriteProjectConfigImportsFromProject(processedSource, absolutePath),
-  ) as object;
+  const dependencyKeys = new IntrinsicSet<string>();
+  const observedRuntimeSpecifiers = new IntrinsicSet<string>();
+  const runtimeSpecifiers: string[] = [];
+  const lexer = await getConfigModuleLexer();
+  let observerKey: string;
+  do {
+    bunProjectConfigDynamicImportObserverSequence += 1;
+    observerKey =
+      `__veryfrontBunConfigImportObserver${bunProjectConfigDynamicImportObserverSequence}`;
+  } while (
+    getOwnPropertyDescriptor(globalThis, observerKey) !== undefined ||
+    stringIncludes(source, observerKey)
+  );
+  let observerActive = true;
+  const disposeObserver = (): void => {
+    if (!observerActive) return;
+    observerActive = false;
+    ReflectApply(ReflectDeleteProperty, Reflect, [globalThis, observerKey]);
+  };
+  const trackPendingCollection = (collection: Promise<void>): void => {
+    const finalize = (): void => {
+      if (observerActive) {
+        recordDependencies(dependencyKeys);
+      } else {
+        discardDependencies(dependencyKeys);
+      }
+    };
+    const settled = thenPromise(collection, finalize, finalize);
+    const previous = mapGet(
+      bunProjectConfigPendingDependencyCollections,
+      canonicalConfigPath,
+    );
+    const combined = previous === undefined
+      ? settled
+      : thenPromise(previous, () => settled, () => settled);
+    mapSet(bunProjectConfigPendingDependencyCollections, canonicalConfigPath, combined);
+    const release = (): void => {
+      if (
+        mapGet(bunProjectConfigPendingDependencyCollections, canonicalConfigPath) === combined
+      ) {
+        mapDelete(bunProjectConfigPendingDependencyCollections, canonicalConfigPath);
+      }
+    };
+    void thenPromise(combined, release, release);
+  };
+  const baseUrl = ReflectApply(intrinsicUrlHrefGetter, toFileUrl(absolutePath), []) as string;
+  const rejectDuringDynamicImport = (error: unknown): Record<PropertyKey, unknown> => {
+    const rejectedSpecifier = ObjectCreate(null) as Record<PropertyKey, unknown>;
+    ObjectDefineProperty(rejectedSpecifier, SymbolToPrimitive, {
+      value: () => {
+        throw error;
+      },
+    });
+    return rejectedSpecifier;
+  };
+  const resolveObservedSpecifier = (specifier: unknown): unknown => { // NOSONAR: dynamic-import observer must preserve native coercion edge cases.
+    let stringSpecifier: string;
+    if (typeof specifier === "string") {
+      stringSpecifier = specifier;
+    } else {
+      // Dynamic import applies ToString with the string hint. Resolve that
+      // coerced value from the authored config rather than allowing Bun to
+      // coerce it later relative to the temporary staged module. A Symbol
+      // remains native so import() preserves its rejected-Promise behavior.
+      if (typeof specifier === "symbol") return specifier;
+      try {
+        stringSpecifier = ReflectApply(IntrinsicString, undefined, [specifier]) as string;
+      } catch (error) {
+        // The wrapper runs while evaluating import()'s argument, whereas
+        // native ToString failures reject the returned Promise. Hand Bun a
+        // one-shot coercion object so it produces the same asynchronous
+        // rejection without invoking authored coercion hooks twice.
+        return rejectDuringDynamicImport(error);
+      }
+    }
+    let resolvedSpecifier = stringSpecifier;
+    if (stringStartsWith(stringSpecifier, "./") || stringStartsWith(stringSpecifier, "../")) {
+      const resolvedUrl = new IntrinsicURL(stringSpecifier, baseUrl);
+      resolvedSpecifier = ReflectApply(intrinsicUrlHrefGetter, resolvedUrl, []) as string;
+    } else if (!keepsConfigImportSpecifier(stringSpecifier) && !isAbsolute(stringSpecifier)) {
+      try {
+        if (!CapturedBunResolveSync || !CapturedBun) {
+          throw new TypeError("Bun project config resolver is unavailable");
+        }
+        const resolved = ReflectApply(CapturedBunResolveSync, CapturedBun, [
+          stringSpecifier,
+          dirname(absolutePath),
+        ]);
+        if (typeof resolved !== "string") {
+          throw new TypeError("Bun project config import resolution failed");
+        }
+        resolvedSpecifier = asResolvedConfigSpecifier(resolved);
+      } catch (error) {
+        // Native import() reports resolution failures by rejecting its Promise.
+        // The observer executes while evaluating import()'s argument, so hand
+        // Bun a coercion object that rejects at the native asynchronous boundary.
+        return rejectDuringDynamicImport(error);
+      }
+    }
+    if (
+      ReflectApply(SetPrototypeHas, observedRuntimeSpecifiers, [resolvedSpecifier]) !== true
+    ) {
+      ReflectApply(SetPrototypeAdd, observedRuntimeSpecifiers, [resolvedSpecifier]);
+      runtimeSpecifiers[runtimeSpecifiers.length] = resolvedSpecifier;
+      if (initialEvaluationComplete && observerActive) {
+        const collection = collectBunProjectConfigDependencyKeys(
+          resolvedSpecifier,
+          scope,
+          dependencyKeys,
+          lexer,
+          fs,
+        );
+        // The collector records the directly resolved path before its first
+        // await. Publish that key synchronously so an immediate cache clear
+        // after setup still owns the module; refresh again after transitive
+        // discovery completes.
+        if (observerActive) {
+          recordDependencies(dependencyKeys);
+        }
+        trackPendingCollection(collection);
+      }
+    }
+    return resolvedSpecifier;
+  };
+  const refreshObservedDependencies = (): void => {
+    if (observerActive) recordDependencies(dependencyKeys);
+    else discardDependencies(dependencyKeys);
+  };
+  const settleObservedImport = <T>(operation: Promise<T>): Promise<T> =>
+    thenPromise(
+      operation,
+      (value) => {
+        refreshObservedDependencies();
+        return value;
+      },
+      (error) => {
+        refreshObservedDependencies();
+        throw error;
+      },
+    );
+  ObjectDefineProperty(globalThis, observerKey, {
+    configurable: true,
+    value: { resolve: resolveObservedSpecifier, settle: settleObservedImport },
+  });
+  let initialEvaluationComplete = false;
+  let configModule: object | undefined;
+  let loadFailure: { error: unknown } | undefined;
+  try {
+    configModule = await loadConfigFromTempFile(
+      source,
+      absolutePath,
+      (tempFile) => ReflectApply(intrinsicUrlHrefGetter, toFileUrl(tempFile), []) as string,
+      async (processedSource) => {
+        const rewritten = await rewriteProjectConfigImportsFromProject(
+          processedSource,
+          absolutePath,
+          (specifier) =>
+            collectBunProjectConfigDependencyKeys(
+              specifier,
+              scope,
+              dependencyKeys,
+              lexer,
+              fs,
+            ),
+        );
+        const observed = await rewriteDynamicProjectConfigImports(rewritten, observerKey);
+        return observed;
+      },
+    ) as object;
+  } catch (error) {
+    loadFailure = { error };
+  }
+
+  let trackingFailure: { error: unknown } | undefined;
+  try {
+    for (let index = 0; index < runtimeSpecifiers.length; index++) { // NOSONAR: runtime specifier queue stays index-based for poisoned iterators.
+      const specifier = runtimeSpecifiers[index];
+      if (specifier === undefined) continue;
+      await collectBunProjectConfigDependencyKeys(
+        specifier,
+        scope,
+        dependencyKeys,
+        lexer,
+        fs,
+      );
+    }
+    recordDependencies(dependencyKeys);
+    initialEvaluationComplete = true;
+  } catch (error) {
+    trackingFailure = { error };
+  }
+
+  if (loadFailure !== undefined || trackingFailure !== undefined) {
+    disposeObserver();
+    throw trackingFailure?.error ?? loadFailure!.error;
+  }
+  return {
+    configModule: configModule!,
+    observer: { key: observerKey, dispose: disposeObserver },
+  };
+}
+
+/** @internal Test-only dynamic import observer rewrite seam. */
+export function __rewriteComputedDynamicProjectConfigImportsForTests(
+  source: string,
+  observerKey: string,
+): Promise<string> {
+  return rewriteDynamicProjectConfigImports(source, observerKey);
+}
+
+function isPathWithinDirectory(directory: string, candidate: string): boolean {
+  const relativeCandidate = relative(directory, candidate);
+  return relativeCandidate === "" ||
+    (relativeCandidate !== ".." && !stringStartsWith(relativeCandidate, "../") &&
+      !stringStartsWith(relativeCandidate, "..\\") && !isAbsolute(relativeCandidate));
+}
+
+type BunProjectTrackingScope = Readonly<{
+  lexicalDirectory: string;
+  canonicalDirectory: string;
+  projectDirectories: readonly string[];
+}>;
+
+function isPathWithinBunProjectScope(
+  scope: BunProjectTrackingScope,
+  candidate: string,
+): boolean {
+  return isPathWithinDirectory(scope.lexicalDirectory, candidate) ||
+    isPathWithinDirectory(scope.canonicalDirectory, candidate);
+}
+
+function bunProjectModuleCacheAliases(
+  scope: BunProjectTrackingScope,
+  candidate: string,
+): string[] {
+  const aliases: string[] = [];
+  for (let sourceIndex = 0; sourceIndex < scope.projectDirectories.length; sourceIndex++) { // NOSONAR: project-directory aliases must avoid mutable iterator hooks.
+    const sourceDirectory = scope.projectDirectories[sourceIndex];
+    if (
+      sourceDirectory === undefined ||
+      !isPathWithinDirectory(sourceDirectory, candidate)
+    ) continue;
+    const projectRelative = relative(sourceDirectory, candidate);
+    for (let targetIndex = 0; targetIndex < scope.projectDirectories.length; targetIndex++) { // NOSONAR: project-directory aliases must avoid mutable iterator hooks.
+      const targetDirectory = scope.projectDirectories[targetIndex];
+      if (targetDirectory === undefined || targetDirectory === sourceDirectory) continue;
+      aliases[aliases.length] = resolve(targetDirectory, projectRelative);
+    }
+    break;
+  }
+  return aliases;
+}
+
+function projectConfigFilePathFromSpecifier(specifier: string): string | undefined {
+  if (isAbsolute(specifier)) return resolve(specifier);
+  if (!stringStartsWith(specifier, "file:")) return undefined;
+  try {
+    return resolve(pathFromCapturedFileUrl(new IntrinsicURL(specifier)));
+  } catch {
+    return undefined;
+  }
+}
+
+async function collectBunProjectConfigDependencyKeys( // NOSONAR: bounded dependency scanner mirrors runtime loading and is test-locked.
+  resolvedSpecifier: string,
+  scope: BunProjectTrackingScope,
+  dependencyKeys: Set<string>,
+  lexer: ModuleLexer,
+  fs: ReturnType<typeof createFileSystem>,
+): Promise<void> {
+  const dependencyPath = projectConfigFilePathFromSpecifier(resolvedSpecifier);
+  if (
+    dependencyPath === undefined ||
+    !isPathWithinBunProjectScope(scope, dependencyPath) ||
+    ReflectApply(SetPrototypeHas, dependencyKeys, [dependencyPath]) === true
+  ) {
+    return;
+  }
+  ReflectApply(SetPrototypeAdd, dependencyKeys, [dependencyPath]);
+  try {
+    const canonicalDependencyPath = await realPath(dependencyPath);
+    ReflectApply(SetPrototypeAdd, dependencyKeys, [canonicalDependencyPath]);
+  } catch {
+    // Runtime loading remains authoritative for virtual and missing modules.
+  }
+
+  let source: string;
+  let imports: ReturnType<ModuleLexer["parse"]>;
+  try {
+    source = await fs.readTextFile(dependencyPath);
+    imports = lexer.parse(source);
+  } catch {
+    return;
+  }
+  const resolveSpecifier = await createProjectConfigImportResolver(dependencyPath);
+  for (let index = 0; index < imports.length; index++) { // NOSONAR: lexer result traversal must not invoke project-controlled iterators.
+    const imported = imports[index];
+    const specifier = imported?.n;
+    if (imported?.d !== undefined && imported.d >= 0 && specifier == null) {
+      throw new UnsupportedBunProjectConfigDependencyImportError(
+        "Computed dynamic imports inside project config dependencies cannot be reloaded safely in Bun",
+      );
+    }
+    if (specifier === undefined || specifier === null) continue;
+    if (specifier === "veryfront") continue;
+
+    let resolved: string;
+    if (stringStartsWith(specifier, "file:")) {
+      resolved = specifier;
+    } else if (keepsConfigImportSpecifier(specifier)) {
+      continue;
+    } else {
+      try {
+        resolved = await resolveSpecifier(specifier);
+      } catch {
+        continue;
+      }
+    }
+
+    try {
+      await collectBunProjectConfigDependencyKeys(
+        resolved,
+        scope,
+        dependencyKeys,
+        lexer,
+        fs,
+      );
+    } catch (error) {
+      if (error instanceof UnsupportedBunProjectConfigDependencyImportError) throw error;
+      // Runtime loading remains authoritative for non-text and missing modules.
+    }
+  }
+}
+
+class UnsupportedBunProjectConfigDependencyImportError extends TypeError {}
+
+type BunProjectCacheSnapshot = Readonly<{
+  before: ReadonlySet<string>;
+  scope: BunProjectTrackingScope;
+  canonicalConfigPath: string;
+}>;
+
+/**
+ * Delete this config load's tracked modules, keeping only the ones an
+ * observable consumer still references.
+ *
+ * Retention follows `Module.children` edges from every module outside the
+ * tracked graph -- application modules loaded before or after the config
+ * alike. Bun records those edges only for CommonJS requires of CommonJS
+ * modules; an ES module never appears in `children`, so a consumer whose only
+ * reference is an ES-module dependency briefly keeps the old namespace while
+ * the next load creates a fresh one; the alternative -- preserving the whole
+ * graph whenever any project-local module appeared after config evaluation --
+ * would make config-helper invalidation dead code on every normal startup,
+ * where application modules always load after the config.
+ */
+/**
+ * Read a module-graph property from Bun's require cache. Bun's CommonJS
+ * `Module` exposes `children`, `filename`, and `id` through prototype
+ * accessors rather than own data properties, and the cache object itself
+ * reports `undefined` own-descriptor values for entries it serves through
+ * gets, so own-data access alone would blind graph walks to every runtime
+ * edge; the accessor fallback stays guarded because the cache can also hold
+ * plain objects.
+ */
+function bunModuleGraphValue(moduleValue: Record<string, unknown>, key: PropertyKey): unknown {
+  const own = ownDataValue(moduleValue as RuntimeReflectionRecord, key);
+  if (own.present && own.value !== undefined) return own.value;
+  try {
+    return reflectGet(moduleValue as RuntimeReflectionRecord, key);
+  } catch {
+    return undefined;
+  }
+}
+
+function evictBunProjectConfigModules(entry: BunProjectConfigModuleCacheEntry): void {
+  if (entry.dynamicImportObserver !== undefined) {
+    ReflectApply(entry.dynamicImportObserver.dispose, entry.dynamicImportObserver, []);
+  }
+  const ownedKeys = new IntrinsicSet<string>();
+  for (let index = 0; index < entry.keys.length; index++) { // NOSONAR: cache key traversal must avoid project-controlled iterators.
+    const key = entry.keys[index];
+    if (key !== undefined) ReflectApply(SetPrototypeAdd, ownedKeys, [key]);
+  }
+  const retainedOwnedKeys = new IntrinsicSet<string>();
+  const retainedQueue: string[] = [];
+  const retainedOwners = new IntrinsicMap<string, Set<string>>();
+  const transferredKeys = new IntrinsicMap<string, Set<string>>();
+  const trackingOwnersForModule = (moduleKey: string): readonly string[] => {
+    const owners: string[] = [];
+    mapForEach(bunProjectConfigModuleTrackingEntries, (candidate, trackingKey) => {
+      if (candidate.cache !== entry.cache) return;
+      for (let index = 0; index < candidate.keys.length; index++) { // NOSONAR: tracked key traversal must avoid project-controlled iterators.
+        if (candidate.keys[index] !== moduleKey) continue;
+        owners[owners.length] = trackingKey;
+        return;
+      }
+    });
+    return owners;
+  };
+  const retainOwnedKey = (key: unknown, owners: readonly string[]): void => {
+    if (
+      typeof key !== "string" ||
+      ReflectApply(SetPrototypeHas, ownedKeys, [key]) !== true
+    ) return;
+    if (ReflectApply(SetPrototypeHas, retainedOwnedKeys, [key]) !== true) {
+      ReflectApply(SetPrototypeAdd, retainedOwnedKeys, [key]);
+      retainedQueue[retainedQueue.length] = key;
+    }
+    let keyOwners = mapGet(retainedOwners, key);
+    if (keyOwners === undefined) {
+      keyOwners = new IntrinsicSet<string>();
+      mapSet(retainedOwners, key, keyOwners);
+    }
+    for (let index = 0; index < owners.length; index++) { // NOSONAR: owner propagation must avoid project-controlled iterators.
+      const owner = owners[index];
+      if (owner === undefined) continue;
+      ReflectApply(SetPrototypeAdd, keyOwners, [owner]);
+      let keys = mapGet(transferredKeys, owner);
+      if (keys === undefined) {
+        keys = new IntrinsicSet<string>();
+        mapSet(transferredKeys, owner, keys);
+      }
+      ReflectApply(SetPrototypeAdd, keys, [key]);
+    }
+  };
+  const retainOwnedChildren = (moduleKey: string, owners: readonly string[]): void => {
+    const moduleValue = bunModuleGraphValue(entry.cache, moduleKey);
+    if (!isRecord(moduleValue)) return;
+    const children = bunModuleGraphValue(moduleValue, "children");
+    if (!ArrayIsArray(children)) return;
+    for (let childIndex = 0; childIndex < children.length; childIndex++) { // NOSONAR: Bun module children may come from project-owned cache objects.
+      const child: unknown = children[childIndex];
+      if (!isRecord(child)) continue;
+      retainOwnedKey(bunModuleGraphValue(child, "filename"), owners);
+      retainOwnedKey(bunModuleGraphValue(child, "id"), owners);
+    }
+  };
+
+  // Seed retention with owned modules referenced by any external consumer.
+  // Then retain their owned descendants too: keeping a parent while deleting
+  // its child would split one live require graph across module generations.
+  const moduleKeys = ownKeys(entry.cache);
+  for (let moduleIndex = 0; moduleIndex < moduleKeys.length; moduleIndex++) { // NOSONAR: ownKeys traversal must not invoke iterator hooks from require.cache.
+    const moduleKey = moduleKeys[moduleIndex];
+    if (
+      typeof moduleKey === "string" &&
+      ReflectApply(SetPrototypeHas, ownedKeys, [moduleKey]) !== true
+    ) {
+      retainOwnedChildren(moduleKey, trackingOwnersForModule(moduleKey));
+    }
+  }
+  for (let queueIndex = 0; queueIndex < retainedQueue.length; queueIndex++) { // NOSONAR: retention queue intentionally grows during indexed traversal.
+    const moduleKey = retainedQueue[queueIndex]!;
+    const owners = mapGet(retainedOwners, moduleKey);
+    const ownerList: string[] = [];
+    if (owners !== undefined) {
+      ReflectApply(SetPrototypeForEach, owners, [
+        (owner: string) => {
+          ownerList[ownerList.length] = owner;
+        },
+      ]);
+    }
+    retainOwnedChildren(moduleKey, ownerList);
+  }
+
+  // A tracked config that references another config's owned CommonJS module
+  // becomes that module's next owner. Without this transfer, the first entry
+  // retains the shared helper for the live peer but the peer cannot evict it
+  // later, leaving an unowned stale cache entry after both records are gone.
+  mapForEach(transferredKeys, (keys, trackingKey) => {
+    const owner = mapGet(bunProjectConfigModuleTrackingEntries, trackingKey);
+    if (owner?.cache !== entry.cache) return;
+    const nextKeys: string[] = [];
+    const seen = new IntrinsicSet<string>();
+    for (let index = 0; index < owner.keys.length; index++) { // NOSONAR: tracked key traversal must avoid project-controlled iterators.
+      const key = owner.keys[index];
+      if (key === undefined) continue;
+      nextKeys[nextKeys.length] = key;
+      ReflectApply(SetPrototypeAdd, seen, [key]);
+    }
+    ReflectApply(SetPrototypeForEach, keys, [
+      (key: string) => {
+        if (ReflectApply(SetPrototypeHas, seen, [key]) === true) return;
+        nextKeys[nextKeys.length] = key;
+        ReflectApply(SetPrototypeAdd, seen, [key]);
+      },
+    ]);
+    setBunProjectConfigModuleTracking(trackingKey, { ...owner, keys: nextKeys });
+  });
+
+  for (let index = 0; index < entry.keys.length; index++) { // NOSONAR: cache key traversal must avoid project-controlled iterators.
+    const cacheKey = entry.keys[index];
+    if (
+      cacheKey !== undefined &&
+      ReflectApply(SetPrototypeHas, retainedOwnedKeys, [cacheKey]) !== true
+    ) {
+      ReflectApply(ReflectDeleteProperty, Reflect, [entry.cache, cacheKey]);
+    }
+  }
+}
+
+function clearBunProjectConfigModuleTracking(): void {
+  const unions = new IntrinsicMap<
+    Record<string, unknown>,
+    { keys: string[]; seen: Set<string>; projectDirectory: string }
+  >();
+  mapForEach(bunProjectConfigModuleTrackingEntries, (entry) => {
+    if (entry.dynamicImportObserver !== undefined) {
+      ReflectApply(entry.dynamicImportObserver.dispose, entry.dynamicImportObserver, []);
+    }
+    let union = mapGet(unions, entry.cache);
+    if (union === undefined) {
+      union = {
+        keys: [],
+        seen: new IntrinsicSet<string>(),
+        projectDirectory: entry.projectDirectory,
+      };
+      mapSet(unions, entry.cache, union);
+    }
+    for (let index = 0; index < entry.keys.length; index++) { // NOSONAR: tracked key traversal must avoid project-controlled iterators.
+      const key = entry.keys[index];
+      if (
+        key === undefined ||
+        ReflectApply(SetPrototypeHas, union.seen, [key]) === true
+      ) continue;
+      union.keys[union.keys.length] = key;
+      ReflectApply(SetPrototypeAdd, union.seen, [key]);
+    }
+  });
+
+  // Remove every tracking record before graph eviction so tracked configs do
+  // not falsely pin one another. Each require-cache union still retains keys
+  // referenced by genuine application modules outside the tracked union.
+  clearingBunProjectConfigModuleTracking = true;
+  try {
+    bunProjectConfigModuleCacheKeys.clear();
+  } finally {
+    clearingBunProjectConfigModuleTracking = false;
+  }
+  mapForEach(unions, (union, cache) => {
+    evictBunProjectConfigModules({
+      cache,
+      keys: union.keys,
+      projectDirectory: union.projectDirectory,
+    });
+  });
+}
+
+/** @internal Test-only Bun project-module eviction seam. */
+export function __evictBunProjectConfigModulesForTests(
+  entry: Readonly<{
+    cache: Record<string, unknown>;
+    keys: readonly string[];
+    projectDirectory: string;
+  }>,
+): void {
+  evictBunProjectConfigModules(entry);
+}
+
+function declaresBunWorkspaceMembers(value: unknown): boolean {
+  if (ArrayIsArray(value)) return true;
+  if (!isRecord(value)) return false;
+  const packages = ownDataValue(value, "packages");
+  return packages.present && ArrayIsArray(packages.value);
+}
+
+function bunWorkspaceMemberPatterns(value: unknown): readonly unknown[] {
+  if (ArrayIsArray(value)) return value;
+  if (isRecord(value)) {
+    const packages = ownDataValue(value, "packages");
+    if (packages.present && ArrayIsArray(packages.value)) return packages.value;
+  }
+  return [];
+}
+
+/**
+ * End index (exclusive) of the single-character glob token starting at
+ * `index`: a character class runs through its closing bracket, while every
+ * other token -- including an unclosed `[`, kept literal -- is one character.
+ */
+function bunWorkspaceSegmentTokenEnd(pattern: string, index: number): number {
+  if (pattern[index] !== "[") return index + 1;
+  let cursor = index + 1;
+  if (pattern[cursor] === "!" || pattern[cursor] === "^") cursor += 1;
+  // A `]` immediately after the (possibly negated) opening bracket is a
+  // literal class member, not the terminator.
+  if (pattern[cursor] === "]") cursor += 1;
+  while (cursor < pattern.length && pattern[cursor] !== "]") cursor += 1;
+  return cursor < pattern.length ? cursor + 1 : index + 1;
+}
+
+/** Whether the glob token spanning `[start, end)` matches one character. */
+function bunWorkspaceSegmentTokenMatches(
+  pattern: string,
+  start: number,
+  end: number,
+  char: string,
+): boolean {
+  const first = pattern[start];
+  if (end === start + 1) return first === "?" || first === char;
+  let cursor = start + 1;
+  let negated = false;
+  if (pattern[cursor] === "!" || pattern[cursor] === "^") {
+    negated = true;
+    cursor += 1;
+  }
+  const membersEnd = end - 1;
+  let matched = false;
+  while (cursor < membersEnd) {
+    const from = pattern[cursor];
+    if (pattern[cursor + 1] === "-" && cursor + 2 < membersEnd) {
+      const to = pattern[cursor + 2];
+      if (from !== undefined && to !== undefined && from <= char && char <= to) {
+        matched = true;
+      }
+      cursor += 3;
+    } else {
+      if (from === char) matched = true;
+      cursor += 1;
+    }
+  }
+  return matched !== negated;
+}
+
+/**
+ * Glob match for one path segment: `*` spans any run of characters, `?`
+ * matches exactly one, and `[...]` matches one character from a class with
+ * `[!...]`/`[^...]` negation and `a-z` ranges. Braces are expanded before
+ * segment matching, so `{` and `}` are literal here.
+ */
+function matchesBunWorkspaceSegment(pattern: string, segment: string): boolean {
+  let patternIndex = 0;
+  let segmentIndex = 0;
+  let starIndex = -1;
+  let starSegmentIndex = 0;
+  while (segmentIndex < segment.length) {
+    const char = segment[segmentIndex];
+    if (patternIndex < pattern.length && pattern[patternIndex] === "*") {
+      starIndex = patternIndex;
+      patternIndex += 1;
+      starSegmentIndex = segmentIndex;
+      continue;
+    }
+    if (patternIndex < pattern.length && char !== undefined) {
+      const tokenEnd = bunWorkspaceSegmentTokenEnd(pattern, patternIndex);
+      if (bunWorkspaceSegmentTokenMatches(pattern, patternIndex, tokenEnd, char)) {
+        patternIndex = tokenEnd;
+        segmentIndex += 1;
+        continue;
+      }
+    }
+    if (starIndex < 0) return false;
+    patternIndex = starIndex + 1;
+    starSegmentIndex += 1;
+    segmentIndex = starSegmentIndex;
+  }
+  while (patternIndex < pattern.length && pattern[patternIndex] === "*") patternIndex += 1;
+  return patternIndex === pattern.length;
+}
+
+/**
+ * Cap on concrete patterns produced by brace expansion, guarding against
+ * adversarial alternation blowup in a workspace manifest.
+ */
+const BUN_WORKSPACE_BRACE_EXPANSION_LIMIT = 64;
+
+/**
+ * Expand `{a,b}` alternations into concrete patterns, Bun-glob style. An
+ * alternative may span `/`, so expansion happens before segment splitting.
+ * Unmatched braces are kept literal, matching the segment matcher above.
+ */
+function expandBunWorkspaceBracePatterns(pattern: string, expanded: string[]): boolean { // NOSONAR: brace parser is bounded and test-locked.
+  if (expanded.length >= BUN_WORKSPACE_BRACE_EXPANSION_LIMIT) return false;
+  const open = stringIndexOf(pattern, "{");
+  if (open < 0) {
+    expanded[expanded.length] = pattern;
+    return true;
+  }
+  let depth = 0;
+  let close = -1;
+  for (let index = open; index < pattern.length; index++) {
+    const char = pattern[index];
+    if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        close = index;
+        break;
+      }
+    }
+  }
+  if (close < 0) {
+    expanded[expanded.length] = pattern;
+    return true;
+  }
+  const prefix = stringSlice(pattern, 0, open);
+  const suffix = stringSlice(pattern, close + 1);
+  let alternativeStart = open + 1;
+  depth = 0;
+  for (let index = open + 1; index <= close; index++) {
+    const char = pattern[index];
+    if (char === "{") depth += 1;
+    else if (char === "}" && index < close) depth -= 1;
+    else if ((char === "," && depth === 0) || index === close) {
+      const alternative = stringSlice(pattern, alternativeStart, index);
+      if (!expandBunWorkspaceBracePatterns(prefix + alternative + suffix, expanded)) {
+        return false;
+      }
+      alternativeStart = index + 1;
+    }
+  }
+  return true;
+}
+
+function matchesBunWorkspacePathSegments(
+  patternSegments: readonly string[],
+  pathSegments: readonly string[],
+  patternIndex: number,
+  pathIndex: number,
+  pathEnd: number,
+  memo = new IntrinsicMap<number, boolean>(),
+): boolean {
+  const memoKey = patternIndex * (pathEnd + 1) + pathIndex;
+  const memoized = mapGet(memo, memoKey);
+  if (memoized !== undefined) return memoized;
+  if (patternIndex >= patternSegments.length) {
+    const matched = pathIndex === pathEnd;
+    mapSet(memo, memoKey, matched);
+    return matched;
+  }
+  const pattern = patternSegments[patternIndex];
+  if (pattern === undefined) {
+    mapSet(memo, memoKey, false);
+    return false;
+  }
+  if (pattern === "**") {
+    for (let skip = pathIndex; skip <= pathEnd; skip++) {
+      if (
+        matchesBunWorkspacePathSegments(
+          patternSegments,
+          pathSegments,
+          patternIndex + 1,
+          skip,
+          pathEnd,
+          memo,
+        )
+      ) {
+        mapSet(memo, memoKey, true);
+        return true;
+      }
+    }
+    mapSet(memo, memoKey, false);
+    return false;
+  }
+  const segment = pathSegments[pathIndex];
+  if (
+    pathIndex >= pathEnd || segment === undefined ||
+    !matchesBunWorkspaceSegment(pattern, segment)
+  ) {
+    mapSet(memo, memoKey, false);
+    return false;
+  }
+  const matched = matchesBunWorkspacePathSegments(
+    patternSegments,
+    pathSegments,
+    patternIndex + 1,
+    pathIndex + 1,
+    pathEnd,
+    memo,
+  );
+  mapSet(memo, memoKey, matched);
+  return matched;
+}
+
+/**
+ * Whether `projectDirectory` sits inside a declared workspace member of
+ * `workspaceRoot`. A declaring ancestor is not enough on its own: a project
+ * nested under an unrelated repository whose root declares workspaces it does
+ * not belong to must not adopt that root's module-tracking scope. Negation
+ * patterns are ignored, erring toward the narrower config-directory scope.
+ */
+function isBunWorkspaceMemberDirectory( // NOSONAR: Bun workspace glob matcher is bounded and regression-covered.
+  workspaceRoot: string,
+  projectDirectory: string,
+  workspacesValue: unknown,
+): boolean {
+  const relativeProject = ReflectApply(
+    StringPrototypeReplaceAll,
+    relative(
+      workspaceRoot,
+      projectDirectory,
+    ),
+    ["\\", "/"],
+  ) as string;
+  if (
+    relativeProject.length === 0 || relativeProject === ".." ||
+    stringStartsWith(relativeProject, "../") || isAbsolute(relativeProject)
+  ) return false;
+  const pathSegments = ReflectApply(StringPrototypeSplit, relativeProject, ["/"]) as string[];
+  const patterns = bunWorkspaceMemberPatterns(workspacesValue);
+  for (let index = 0; index < patterns.length; index++) { // NOSONAR: workspace patterns may come from project package data.
+    const pattern = patterns[index];
+    if (typeof pattern !== "string" || pattern.length === 0) continue;
+    if (stringStartsWith(pattern, "!")) continue;
+    let normalized = ReflectApply(StringPrototypeReplaceAll, pattern, ["\\", "/"]) as string;
+    if (stringStartsWith(normalized, "./")) normalized = stringSlice(normalized, 2);
+    if (stringEndsWith(normalized, "/")) {
+      normalized = stringSlice(normalized, 0, normalized.length - 1);
+    }
+    if (normalized.length === 0) continue;
+    const bracePatterns: string[] = [];
+    if (!expandBunWorkspaceBracePatterns(normalized, bracePatterns)) {
+      // The pattern is valid but exceeds the defensive expansion budget.
+      // Widening to the declaring workspace root is conservative for cache
+      // invalidation and avoids silently excluding later alternatives.
+      return true;
+    }
+    for (let braceIndex = 0; braceIndex < bracePatterns.length; braceIndex++) { // NOSONAR: expanded patterns stay indexed under poisoned primordials.
+      const bracePattern = bracePatterns[braceIndex];
+      if (bracePattern === undefined || bracePattern.length === 0) continue;
+      const patternSegments = ReflectApply(StringPrototypeSplit, bracePattern, ["/"]) as string[];
+      // The member directory may be the project directory itself or any of its
+      // ancestors below the workspace root: a config nested inside a member
+      // still belongs to that member.
+      for (let pathEnd = 1; pathEnd <= pathSegments.length; pathEnd++) {
+        if (
+          matchesBunWorkspacePathSegments(
+            patternSegments,
+            pathSegments,
+            0,
+            0,
+            pathEnd,
+          )
+        ) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+/** @internal Test-only Bun workspace-membership seam. */
+export function __isBunWorkspaceMemberDirectoryForTests(
+  workspaceRoot: string,
+  projectDirectory: string,
+  workspacesValue: unknown,
+): boolean {
+  return isBunWorkspaceMemberDirectory(workspaceRoot, projectDirectory, workspacesValue);
+}
+
+/**
+ * Widen module ownership to the Bun workspace root when the project belongs to
+ * one. Hoisted workspace dependencies resolve into an ancestor `node_modules`
+ * or a sibling package directory, so tracking only descendants of the config
+ * directory would leave them cached — and stale — across config reloads. The
+ * The lexical and canonical ancestor chains are both inspected. A project
+ * reached through an out-of-tree symlink has no lexical workspace ancestor,
+ * while Bun resolves its modules through the physical workspace and its
+ * hoisted dependencies. Within either chain, the nearest ancestor that
+ * declares workspaces settles that chain's membership.
+ */
+async function findBunProjectWorkspaceScopeDirectory(
+  ancestorDirectory: string,
+  projectDirectory: string,
+): Promise<string | undefined> {
+  let directory = ancestorDirectory;
+  while (true) {
+    const parent = dirname(directory);
+    if (parent === directory) return undefined;
+    directory = parent;
+    let manifest: ProjectPackageManifest | undefined;
+    try {
+      manifest = await readProjectPackageManifest(directory);
+    } catch {
+      continue;
+    }
+    if (!manifest) continue;
+    const workspaces = ownDataValue(manifest.value, "workspaces");
+    if (workspaces.present && declaresBunWorkspaceMembers(workspaces.value)) {
+      return isBunWorkspaceMemberDirectory(directory, projectDirectory, workspaces.value)
+        ? directory
+        : undefined;
+    }
+  }
+}
+
+async function resolveBunProjectScopeDirectory(projectDirectory: string): Promise<string> {
+  const lexicalScope = await findBunProjectWorkspaceScopeDirectory(
+    projectDirectory,
+    projectDirectory,
+  );
+  if (lexicalScope !== undefined) return lexicalScope;
+
+  let canonicalProjectDirectory: string;
+  try {
+    canonicalProjectDirectory = await realPath(projectDirectory);
+  } catch {
+    return projectDirectory;
+  }
+  if (canonicalProjectDirectory === projectDirectory) return projectDirectory;
+  return await findBunProjectWorkspaceScopeDirectory(
+    canonicalProjectDirectory,
+    canonicalProjectDirectory,
+  ) ?? projectDirectory;
+}
+
+async function resolveBunProjectTrackingScope(
+  projectDirectory: string,
+): Promise<BunProjectTrackingScope> {
+  const lexicalDirectory = await resolveBunProjectScopeDirectory(projectDirectory);
+  const canonicalProjectDirectory = await realPath(projectDirectory);
+  const canonicalDirectory = await resolveBunProjectScopeDirectory(canonicalProjectDirectory);
+  const projectDirectories = [projectDirectory];
+  const lexicalParentDirectory = dirname(projectDirectory);
+  const canonicalParentDirectory = await realPath(lexicalParentDirectory);
+  if (isPathWithinDirectory(canonicalParentDirectory, canonicalProjectDirectory)) {
+    const lexicalTargetDirectory = resolve(
+      lexicalParentDirectory,
+      relative(canonicalParentDirectory, canonicalProjectDirectory),
+    );
+    if (lexicalTargetDirectory !== projectDirectory) {
+      projectDirectories[projectDirectories.length] = lexicalTargetDirectory;
+    }
+  }
+  if (
+    canonicalProjectDirectory !== projectDirectory &&
+    canonicalProjectDirectory !== projectDirectories[projectDirectories.length - 1] // NOSONAR: .at() would invoke mutable Array.prototype.
+  ) {
+    projectDirectories[projectDirectories.length] = canonicalProjectDirectory;
+  }
+  return {
+    lexicalDirectory,
+    canonicalDirectory,
+    projectDirectories,
+  };
+}
+
+function prepareBunProjectConfigModules(
+  projectRequire: NodeJS.Require,
+  configPath: string,
+  canonicalConfigPath: string,
+  scope: BunProjectTrackingScope,
+): BunProjectCacheSnapshot {
+  const resolvedConfigPath = projectRequire.resolve(configPath);
+  // Deletion invokes the cache eviction hook, including when the tracking LRU
+  // discarded the entry earlier because it reached capacity.
+  bunProjectConfigModuleCacheKeys.delete(canonicalConfigPath);
+  ReflectApply(ReflectDeleteProperty, Reflect, [projectRequire.cache, resolvedConfigPath]);
+
+  const before = new IntrinsicSet<string>();
+  const cacheKeys = ownKeys(projectRequire.cache);
+  for (let index = 0; index < cacheKeys.length; index++) { // NOSONAR: ownKeys traversal must not invoke iterator hooks from require.cache.
+    const cacheKey = cacheKeys[index];
+    if (typeof cacheKey === "string") {
+      ReflectApply(SetPrototypeAdd, before, [cacheKey]);
+    }
+  }
+  return { before, scope, canonicalConfigPath };
+}
+
+/**
+ * Widen the lexer-derived eligible set with runtime `Module.children` edges.
+ * The module lexer only sees static ESM imports, so a CommonJS dependency of
+ * an async config whose `require()` loads further project helpers leaves
+ * those helpers out of the eligible set; Bun records the CommonJS require
+ * edges in `children`, so walking them from every eligible module claims the
+ * full graph this config load introduced. Only modules new to this load and
+ * inside the tracking scope are added, keeping concurrent application loads
+ * out of the tracked graph.
+ */
+function expandBunEligibleDependencyKeys(
+  projectRequire: NodeJS.Require,
+  snapshot: BunProjectCacheSnapshot,
+  eligibleKeys: ReadonlySet<string>,
+): ReadonlySet<string> {
+  const expanded = new IntrinsicSet<string>();
+  const queue: string[] = [];
+  const include = (cacheKey: unknown): void => {
+    if (typeof cacheKey !== "string") return;
+    const resolvedKey = resolve(cacheKey);
+    if (
+      ReflectApply(SetPrototypeHas, expanded, [resolvedKey]) === true ||
+      ReflectApply(SetPrototypeHas, snapshot.before, [cacheKey]) === true ||
+      !isPathWithinBunProjectScope(snapshot.scope, cacheKey)
+    ) {
+      return;
+    }
+    ReflectApply(SetPrototypeAdd, expanded, [resolvedKey]);
+    queue[queue.length] = cacheKey;
+  };
+  const cacheKeys = ownKeys(projectRequire.cache);
+  for (let index = 0; index < cacheKeys.length; index++) { // NOSONAR: ownKeys traversal must not invoke iterator hooks from require.cache.
+    const cacheKey = cacheKeys[index];
+    if (
+      typeof cacheKey === "string" &&
+      ReflectApply(SetPrototypeHas, eligibleKeys, [resolve(cacheKey)]) === true
+    ) {
+      include(cacheKey);
+    }
+  }
+  for (let queueIndex = 0; queueIndex < queue.length; queueIndex++) { // NOSONAR: dependency queue intentionally grows during indexed traversal.
+    const moduleValue = bunModuleGraphValue(projectRequire.cache, queue[queueIndex]!);
+    if (!isRecord(moduleValue)) continue;
+    const children = bunModuleGraphValue(moduleValue, "children");
+    if (!ArrayIsArray(children)) continue;
+    for (let childIndex = 0; childIndex < children.length; childIndex++) { // NOSONAR: Bun module children may come from project-owned cache objects.
+      const child: unknown = children[childIndex];
+      if (!isRecord(child)) continue;
+      include(bunModuleGraphValue(child, "filename"));
+      include(bunModuleGraphValue(child, "id"));
+    }
+  }
+  return expanded;
+}
+
+/** Collect only the project-local modules that this config load introduced. */
+function collectBunProjectConfigModules( // NOSONAR: ownership collector is graph-shaped and guarded by regression tests.
+  projectRequire: NodeJS.Require,
+  snapshot: BunProjectCacheSnapshot,
+  eligibleKeys?: ReadonlySet<string>,
+  prior?: BunProjectConfigModuleCacheEntry,
+  _includeAllNewModules = false,
+): BunProjectConfigModuleCacheEntry {
+  const loadedKeys: string[] = [];
+  const loadedKeySet = new IntrinsicSet<string>();
+  if (prior !== undefined) {
+    for (let index = 0; index < prior.keys.length; index++) { // NOSONAR: prior key traversal must avoid project-controlled iterators.
+      const cacheKey = prior.keys[index];
+      if (cacheKey === undefined) continue;
+      loadedKeys[loadedKeys.length] = cacheKey;
+      ReflectApply(SetPrototypeAdd, loadedKeySet, [cacheKey]);
+    }
+  }
+  const expandedEligibleKeys = eligibleKeys === undefined
+    ? undefined
+    : expandBunEligibleDependencyKeys(projectRequire, snapshot, eligibleKeys);
+  const cacheKeys = ownKeys(projectRequire.cache);
+  for (let index = 0; index < cacheKeys.length; index++) { // NOSONAR: ownKeys traversal must not invoke iterator hooks from require.cache.
+    const cacheKey = cacheKeys[index];
+    if (
+      typeof cacheKey !== "string" ||
+      ReflectApply(SetPrototypeHas, snapshot.before, [cacheKey]) === true ||
+      !isPathWithinBunProjectScope(snapshot.scope, cacheKey) ||
+      (expandedEligibleKeys !== undefined &&
+        ReflectApply(SetPrototypeHas, expandedEligibleKeys, [resolve(cacheKey)]) !== true) ||
+      ReflectApply(SetPrototypeHas, loadedKeySet, [cacheKey]) === true
+    ) {
+      continue;
+    }
+    loadedKeys[loadedKeys.length] = cacheKey;
+    ReflectApply(SetPrototypeAdd, loadedKeySet, [cacheKey]);
+    const aliases = bunProjectModuleCacheAliases(snapshot.scope, cacheKey);
+    for (let aliasIndex = 0; aliasIndex < aliases.length; aliasIndex++) { // NOSONAR: alias traversal must avoid project-controlled iterators.
+      const alias = aliases[aliasIndex];
+      if (
+        alias === undefined ||
+        ReflectApply(SetPrototypeHas, snapshot.before, [alias]) === true ||
+        ReflectApply(SetPrototypeHas, loadedKeySet, [alias]) === true
+      ) continue;
+      try {
+        const moduleValue = ReflectApply(ReflectGet, Reflect, [projectRequire.cache, cacheKey]);
+        const aliasValue = ReflectApply(ReflectGet, Reflect, [projectRequire.cache, alias]);
+        if (moduleValue !== undefined && aliasValue === undefined) {
+          ReflectApply(ReflectSet, Reflect, [projectRequire.cache, alias, moduleValue]);
+        }
+        if (
+          moduleValue !== undefined &&
+          ReflectApply(ReflectGet, Reflect, [projectRequire.cache, alias]) === moduleValue
+        ) {
+          loadedKeys[loadedKeys.length] = alias;
+          ReflectApply(SetPrototypeAdd, loadedKeySet, [alias]);
+        }
+      } catch {
+        // Bun's cache remains authoritative if it refuses an alias.
+      }
+    }
+  }
+  if (expandedEligibleKeys !== undefined) {
+    ReflectApply(SetPrototypeForEach, expandedEligibleKeys, [
+      (eligibleKey: string) => {
+        const resolvedKey = resolve(eligibleKey);
+        if (
+          isPathWithinBunProjectScope(snapshot.scope, resolvedKey) &&
+          ReflectApply(SetPrototypeHas, snapshot.before, [resolvedKey]) !== true &&
+          ReflectApply(SetPrototypeHas, loadedKeySet, [resolvedKey]) !== true
+        ) {
+          loadedKeys[loadedKeys.length] = resolvedKey;
+          ReflectApply(SetPrototypeAdd, loadedKeySet, [resolvedKey]);
+        }
+      },
+    ]);
+  }
+  return {
+    cache: projectRequire.cache,
+    keys: loadedKeys,
+    projectDirectory: snapshot.scope.lexicalDirectory,
+    ...(prior?.dynamicImportObserver === undefined
+      ? {}
+      : { dynamicImportObserver: prior.dynamicImportObserver }),
+  };
+}
+
+/** @internal Test-only Bun project-module collection seam. */
+export function __collectBunProjectConfigModulesForTests(
+  input: Readonly<{
+    cache: Record<string, unknown>;
+    before?: ReadonlySet<string>;
+    eligibleKeys?: ReadonlySet<string>;
+    projectDirectory: string;
+    includeAllNewModules?: boolean;
+  }>,
+): BunProjectConfigModuleCacheEntry {
+  const projectRequire = {
+    cache: input.cache,
+  } as NodeJS.Require;
+  return collectBunProjectConfigModules(
+    projectRequire,
+    {
+      before: input.before ?? new IntrinsicSet<string>(),
+      scope: {
+        lexicalDirectory: input.projectDirectory,
+        canonicalDirectory: input.projectDirectory,
+        projectDirectories: [input.projectDirectory],
+      },
+      canonicalConfigPath: `${input.projectDirectory}/veryfront.config.ts`,
+    },
+    input.eligibleKeys,
+    undefined,
+    input.includeAllNewModules,
+  );
+}
+
+async function serializeBunProjectConfigLoad<T>(
+  configPath: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = mapGet(bunProjectConfigLoadTurns, configPath);
+  const turn = promiseWithResolvers<void>();
+  mapSet(bunProjectConfigLoadTurns, configPath, turn.promise);
+  try {
+    if (previous) await previous;
+    // A deferred computed import can finish runtime evaluation before its
+    // source walk has found every transitive dependency. Cache clearing
+    // disposes its observer; wait for that old walk (and its eviction) before
+    // a new revision loads modules that the old walk would otherwise delete.
+    while (true) {
+      const pending = mapGet(bunProjectConfigPendingDependencyCollections, configPath);
+      if (pending === undefined) break;
+      await pending;
+      if (mapGet(bunProjectConfigPendingDependencyCollections, configPath) === pending) {
+        mapDelete(bunProjectConfigPendingDependencyCollections, configPath);
+      }
+    }
+    return await operation();
+  } finally {
+    turn.resolve();
+    if (mapGet(bunProjectConfigLoadTurns, configPath) === turn.promise) {
+      mapDelete(bunProjectConfigLoadTurns, configPath);
+    }
+  }
 }
 
 async function loadAndMergeConfig(
   configPath: string,
   cacheKey: string,
   adapter: RuntimeAdapter,
+  revisionAtStart: number,
   selectedVirtualContent?: string | Uint8Array,
-): Promise<VeryfrontConfig> {
+): Promise<MergedConfigLoadResult> {
   const isVirtualFS = isVirtualFilesystem(adapter.fs);
   logger.debug("loadAndMergeConfig called", {
     configPath,
@@ -2965,35 +5140,136 @@ async function loadAndMergeConfig(
 
   if (isVirtualFS) {
     logger.debug("Using trusted single-project virtual filesystem for config", { configPath });
-    return loadTrustedConfigFromVirtualFS(
-      configPath,
-      cacheKey,
-      adapter,
-      selectedVirtualContent,
-    );
+    return {
+      config: await loadTrustedConfigFromVirtualFS(
+        configPath,
+        cacheKey,
+        adapter,
+        selectedVirtualContent,
+      ),
+    };
   }
 
   if (isBun) {
     logger.debug("Using project config import for Bun", { configPath });
     const absolutePath = resolve(configPath);
-    const { createRequire } = await import("node:module");
-    const projectRequire = createRequire(toFileUrl(absolutePath));
-    // Bun ignores query strings when caching file modules. Its CommonJS bridge
-    // loads TypeScript and ESM config files with project-relative resolution,
-    // and deleting the exact cache entry gives edits and failed imports a real
-    // retry without copying into or writing beside the project.
-    ReflectApply(ReflectDeleteProperty, Reflect, [
-      projectRequire.cache,
-      projectRequire.resolve(absolutePath),
-    ]);
-    let configModule: object;
-    try {
-      configModule = projectRequire(absolutePath) as object;
-    } catch (error) {
-      if (!isBunAsyncModuleRequireError(error)) throw error;
-      configModule = await importFreshBunAsyncConfig(absolutePath);
-    }
-    return validateAndMergeConfig(selectConfigModuleValue(configModule));
+    const canonicalConfigPath = await realPath(absolutePath);
+    return await serializeBunProjectConfigLoad(canonicalConfigPath, async () => { // NOSONAR: serialized Bun load owns several cleanup/failure branches.
+      const source = await createFileSystem().readTextFile(absolutePath);
+      const hasTopLevelAwait = await bunConfigHasTopLevelAwait(source, absolutePath);
+      const { createRequire } = await import("node:module");
+      const projectRequire = createRequire(absolutePath);
+      // Bun ignores query strings when caching file modules, and its CommonJS
+      // cache entries expose no parent-to-child dependency graph. Track the
+      // project-local modules introduced by each config load so the next load
+      // can invalidate that graph without evicting unrelated application state.
+      // Ownership spans the Bun workspace root when the project is a workspace
+      // member, so hoisted workspace dependencies reload alongside the config.
+      const projectScope = await resolveBunProjectTrackingScope(dirname(absolutePath));
+      const cacheSnapshot = prepareBunProjectConfigModules(
+        projectRequire,
+        absolutePath,
+        canonicalConfigPath,
+        projectScope,
+      );
+      let configModule: object | undefined;
+      let trackingEntry: BunProjectConfigModuleCacheEntry | undefined;
+      let dynamicImportObserver: BunProjectDynamicImportObserver | undefined;
+      let trackingPublished = false;
+      const discardTracking = (): void => {
+        if (dynamicImportObserver !== undefined) {
+          ReflectApply(dynamicImportObserver.dispose, dynamicImportObserver, []);
+          dynamicImportObserver = undefined;
+        }
+        if (trackingEntry !== undefined) {
+          evictBunProjectConfigModules(trackingEntry);
+          trackingEntry = undefined;
+        }
+      };
+      const publishTracking = (): void => {
+        if (trackingEntry === undefined || trackingPublished) return;
+        const ownedEntry: BunProjectConfigModuleCacheEntry = dynamicImportObserver === undefined
+          ? trackingEntry
+          : { ...trackingEntry, dynamicImportObserver };
+        setBunProjectConfigModuleTracking(cacheSnapshot.canonicalConfigPath, ownedEntry);
+        trackingEntry = ownedEntry;
+        trackingPublished = true;
+      };
+      try {
+        if (!hasTopLevelAwait) {
+          try {
+            configModule = projectRequire(absolutePath) as object;
+          } catch (error) {
+            if (!isBunAsyncModuleRequireError(error)) throw error;
+          } finally {
+            // The synchronous require can only add modules from this config's
+            // graph. Stage those keys before awaiting the fallback so concurrent
+            // application loads cannot be mistaken for config dependencies.
+            trackingEntry = collectBunProjectConfigModules(
+              projectRequire,
+              cacheSnapshot,
+              undefined,
+              trackingEntry,
+            );
+          }
+        }
+        if (configModule === undefined) {
+          const imported = await importFreshBunAsyncConfig(
+            absolutePath,
+            canonicalConfigPath,
+            source,
+            projectScope,
+            (dependencyKeys) => {
+              trackingEntry = collectBunProjectConfigModules(
+                projectRequire,
+                cacheSnapshot,
+                dependencyKeys,
+                trackingEntry,
+              );
+              if (trackingPublished) {
+                const ownedEntry: BunProjectConfigModuleCacheEntry =
+                  dynamicImportObserver === undefined
+                    ? trackingEntry
+                    : { ...trackingEntry, dynamicImportObserver };
+                setBunProjectConfigModuleTracking(
+                  cacheSnapshot.canonicalConfigPath,
+                  ownedEntry,
+                );
+                trackingEntry = ownedEntry;
+              }
+            },
+            (dependencyKeys) => {
+              const discardedEntry = collectBunProjectConfigModules(
+                projectRequire,
+                cacheSnapshot,
+                dependencyKeys,
+                trackingEntry,
+              );
+              evictBunProjectConfigModules(discardedEntry);
+              trackingEntry = undefined;
+            },
+          );
+          configModule = imported.configModule;
+          dynamicImportObserver = imported.observer;
+        }
+        const merged = validateAndMergeConfig(selectConfigModuleValue(configModule));
+        if (cacheRevision !== revisionAtStart) {
+          discardTracking();
+          throw BUN_PROJECT_CONFIG_LOAD_INVALIDATED;
+        }
+        return {
+          config: merged,
+          bunTrackingPublication: {
+            key: canonicalConfigPath,
+            publish: publishTracking,
+            discard: discardTracking,
+          },
+        };
+      } catch (error) {
+        discardTracking();
+        throw error;
+      }
+    });
   }
 
   // Compiled Deno binaries can't dynamically import TypeScript files directly.
@@ -3010,7 +5286,7 @@ async function loadAndMergeConfig(
     const userConfig = await loadConfigFromTempFile(
       source,
       absolutePath,
-      (tempFile) => toFileUrl(tempFile).href,
+      (tempFile) => ReflectApply(intrinsicUrlHrefGetter, toFileUrl(tempFile), []) as string,
       (processedSource) => rewriteProjectConfigImportsFromProject(processedSource, absolutePath),
     );
     logger.debug("Successfully loaded config via temp file", {
@@ -3018,14 +5294,16 @@ async function loadAndMergeConfig(
       hasApp: !!(userConfig as Record<string, unknown>)?.app,
       hasRouter: !!(userConfig as Record<string, unknown>)?.router,
     });
-    return validateAndMergeConfig(userConfig);
+    return { config: validateAndMergeConfig(userConfig) };
   }
 
   const absolutePath = resolve(configPath);
   const configUrl = toFileUrl(absolutePath);
   configUrl.searchParams.set("t", `${Date.now()}-${crypto.randomUUID()}`);
-  const configModule = await import(configUrl.href);
-  return validateAndMergeConfig(selectConfigModuleValue(configModule));
+  const configModule = await import(
+    ReflectApply(intrinsicUrlHrefGetter, configUrl, []) as string
+  );
+  return { config: validateAndMergeConfig(selectConfigModuleValue(configModule)) };
 }
 
 /**
@@ -3351,6 +5629,13 @@ function getConfigInternal(
         ? configCacheByProject.get(effectiveCacheKey)
         : undefined;
       if (cached?.revision === revisionAtStart) {
+        if (!isVirtualFS) {
+          touchBunProjectConfigModuleTracking(
+            projectDir,
+            cached.provenance,
+            cached.bunTrackingKey,
+          );
+        }
         logger.debug("Cache HIT - using cached config", {
           cacheKey: effectiveCacheKey,
           isVirtualFS,
@@ -3472,19 +5757,35 @@ function getConfigInternal(
           }
 
           try {
-            const merged = await loadAndMergeConfig(
+            const loaded = await loadAndMergeConfig(
               configPath,
               effectiveCacheKey,
               adapter,
+              revisionAtStart,
               trustedVirtualContent,
             );
+            const merged = loaded.config;
             const provenance = configFileProvenance(configFile);
+            if (
+              loaded.bunTrackingPublication !== undefined &&
+              cacheRevision !== revisionAtStart
+            ) {
+              loaded.bunTrackingPublication.discard();
+              return await getConfigInternal(projectDir, adapter, options);
+            }
             if (usePersistentCache && cacheRevision === revisionAtStart) {
-              configCacheByProject.set(effectiveCacheKey, {
+              setConfigCacheEntry(effectiveCacheKey, {
                 revision: revisionAtStart,
                 config: merged,
                 provenance,
+                bunTrackingKey: loaded.bunTrackingPublication?.key,
               });
+              // Publish only after the config LRU owns this graph. Otherwise
+              // more than one capacity of concurrently completing loads can
+              // evict a graph in the await gap before its cache entry exists.
+              loaded.bunTrackingPublication?.publish();
+            } else {
+              loaded.bunTrackingPublication?.discard();
             }
             logger.debug("Successfully loaded config", {
               configFile,
@@ -3494,6 +5795,9 @@ function getConfigInternal(
             });
             return createConfigLoadResult(merged, provenance);
           } catch (error) {
+            if (error === BUN_PROJECT_CONFIG_LOAD_INVALIDATED) {
+              return await getConfigInternal(projectDir, adapter, options);
+            }
             if (isPreservedConfigLoadError(error)) throw error;
             logger.warn("Failed to load config file", { configFile });
             throw configLoadFailure(configFile, error);
@@ -3510,7 +5814,7 @@ function getConfigInternal(
         const config = createFreshDefaults() as VeryfrontConfig;
         const provenance = defaultConfigProvenance();
         if (usePersistentCache && cacheRevision === revisionAtStart) {
-          configCacheByProject.set(effectiveCacheKey, {
+          setConfigCacheEntry(effectiveCacheKey, {
             revision: revisionAtStart,
             config,
             provenance,
@@ -3701,7 +6005,9 @@ export function __getTrustedConfigFlightStateForTests(): Readonly<{
 
 export function clearConfigCache(): void {
   configCacheByProject.clear();
+  mapClear(bunProjectConfigTrackingOwnerCounts);
   hostedConfigFailureCacheByProject.clear();
+  clearBunProjectConfigModuleTracking();
   cacheRevision++;
 }
 
@@ -3716,5 +6022,6 @@ export function clearConfigCache(): void {
 export function getCachedConfigSync(projectDir: string): VeryfrontConfig | null {
   const cached = configCacheByProject.get(buildConfigCacheKey(projectDir, false));
   if (!cached || cached.revision !== cacheRevision) return null;
+  touchBunProjectConfigModuleTracking(projectDir, cached.provenance, cached.bunTrackingKey);
   return cached.config;
 }
