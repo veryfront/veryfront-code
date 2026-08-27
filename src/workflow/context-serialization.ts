@@ -25,8 +25,10 @@ const ObjectConstructor = Object;
 const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetOwnPropertySymbols = Object.getOwnPropertySymbols;
 const objectGetPrototypeOf = Object.getPrototypeOf;
 const objectHasOwn = Object.hasOwn;
+const objectIs = Object.is;
 const objectKeys = Object.keys;
 const objectPrototype = Object.prototype;
 const objectToString = Object.prototype.toString;
@@ -320,6 +322,28 @@ function normalizeAndFindUnrepresentableValues(
     });
   };
 
+  const recordEnumerableSymbolKeys = (value: JsonTraversalReference, path: string) => {
+    if (canIdentifyProxyWithoutHooks && isProxyWithoutHooks(value)) return;
+    let symbolKeys: symbol[];
+    try {
+      symbolKeys = objectGetOwnPropertySymbols(value);
+    } catch {
+      return;
+    }
+    for (let index = 0; index < symbolKeys.length; index++) {
+      const symbolKey = symbolKeys[index]!;
+      let descriptor: PropertyDescriptor | undefined;
+      try {
+        descriptor = objectGetOwnPropertyDescriptor(value, symbolKey);
+      } catch {
+        continue;
+      }
+      if (descriptor?.enumerable === true) {
+        recordLossy(path, "symbol-keyed property");
+      }
+    }
+  };
+
   const normalize = (
     value: unknown,
     path: string,
@@ -357,6 +381,10 @@ function normalizeAndFindUnrepresentableValues(
       if (!numberIsFinite(value)) {
         recordLossy(path, describe(value));
         return null;
+      }
+      if (objectIs(value, -0)) {
+        recordLossy(path, "number (-0)");
+        return 0;
       }
       return value as number;
     }
@@ -424,6 +452,7 @@ function normalizeAndFindUnrepresentableValues(
             normalized === OMIT_JSON_VALUE ? null : normalized,
           );
         }
+        recordEnumerableSymbolKeys(nested, path);
         return result;
       }
 
@@ -440,6 +469,7 @@ function normalizeAndFindUnrepresentableValues(
         );
         if (normalized !== OMIT_JSON_VALUE) result[childKey] = normalized;
       }
+      recordEnumerableSymbolKeys(nested, path);
       // Prototype diagnostics are best-effort and run after the snapshot is
       // complete, so hostile metadata traps cannot change persistence output.
       if (!isPlainObject(nested)) recordLossy(path, describe(nested));

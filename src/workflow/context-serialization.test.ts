@@ -178,6 +178,31 @@ describe("serializeWorkflowContext", () => {
       assertStringIncludes(error.message, "context.step.missing");
       assertStringIncludes(error.message, "context.step.ratio");
     });
+
+    it("throws when strictContext would persist negative zero or symbol-keyed fields lossy", () => {
+      const symbolKey = Symbol("not-persisted");
+      const symbolKeyedOutput: Record<PropertyKey, unknown> = {};
+      symbolKeyedOutput[symbolKey] = "lost";
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({
+              credit: -0,
+              symbolKeyedOutput,
+            }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.credit");
+      assertStringIncludes(error.message, "context.step.symbolKeyedOutput");
+      assertStringIncludes(error.message, "symbol-keyed property");
+    });
   });
 
   it("keeps traversing a class instance's enumerable fields", () => {
