@@ -607,6 +607,13 @@ async function isSymlinkPath(
   }
 }
 
+/** Explicit form of the comparator-less sort: UTF-16 code-unit order. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 /**
  * Paths the scaffold cannot write through, checked before anything is written.
  *
@@ -660,7 +667,7 @@ async function findUnwritablePaths(
     }
   }
 
-  return [...blocked].sort();
+  return [...blocked].sort(compareCodeUnits);
 }
 
 export async function createProject(
@@ -804,7 +811,8 @@ export function resolveScaffoldTemplate(slug: string): InitTemplate | null {
 
 /** Every template slug a caller may ask for, canonical names and aliases. */
 export function listScaffoldTemplates(): string[] {
-  return [...STARTER_TEMPLATE_NAMES, ...Object.keys(SCAFFOLD_TEMPLATE_ALIASES)].sort();
+  return [...STARTER_TEMPLATE_NAMES, ...Object.keys(SCAFFOLD_TEMPLATE_ALIASES)]
+    .sort(compareCodeUnits);
 }
 
 /** What to build: which starter, under what name, for which runtime. */

@@ -61,7 +61,7 @@ export function injectElementSelectors(
   const contentStart = contentStartMatch ? html.indexOf(contentStartMatch[0]) : 0;
 
   return html.replace(
-    /<(\/?)?([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[^>]*)?)\/?>/g,
+    /<(\/)?([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[^>]*)?)\/?>/g,
     (match, isClosing, tagName, attributes = "", offset) => {
       const tag = tagName.toLowerCase();
       const isVoid = VOID_ELEMENTS.has(tag);

@@ -2781,6 +2781,13 @@ function normalizeGeneratedMarkdown(markdown: string): string {
   return markdown.replace(/[\u2013\u2014]/g, "-");
 }
 
+/** Compare two strings by UTF-16 code unit, without locale rules. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 /** List generated reference files (relative paths) under a reference root. */
 async function listReferenceFiles(dir: string): Promise<string[]> {
   const paths: string[] = [];
@@ -2799,7 +2806,9 @@ async function listReferenceFiles(dir: string): Promise<string[]> {
   } catch (err) {
     if (!(err instanceof Deno.errors.NotFound)) throw err;
   }
-  paths.sort();
+  // Code-unit order, not locale order: the same comparison must hold for the
+  // generated and committed listings that `--check` compares entry by entry.
+  paths.sort(compareCodeUnits);
   return paths;
 }
 

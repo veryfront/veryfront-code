@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isRequestFromLoopbackPeer } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { toNodeHandler } from "./node-handler.ts";
@@ -11,10 +11,13 @@ type FakeRes = {
   chunks: Uint8Array[];
   ended: boolean;
   endBody?: string;
+  destroyed: boolean;
+  destroyError?: unknown;
   writeHead(status: number, headers?: Record<string, unknown>): void;
   setHeader(name: string, value: unknown): void;
   write(chunk: Uint8Array): void;
   end(body?: string): void;
+  destroy(error?: unknown): void;
   on(event: string, listener: () => void): void;
 };
 
@@ -24,6 +27,7 @@ function createFakeRes(): FakeRes {
     setHeaderCalls: [],
     chunks: [],
     ended: false,
+    destroyed: false,
     writeHead(status, headers) {
       // Mirror Node: the head can only be written once, and never after
       // headers have already been flushed.
@@ -43,6 +47,12 @@ function createFakeRes(): FakeRes {
     end(body) {
       this.ended = true;
       this.endBody = body;
+    },
+    destroy(error) {
+      // Mirror Node: the socket is torn down without a terminating chunk, so
+      // the peer sees an incomplete message rather than a complete response.
+      this.destroyed = true;
+      this.destroyError = error;
     },
     on(_event, _listener) {
       // no-op: close-handler registration is not exercised in unit tests
@@ -316,5 +326,75 @@ describe("toNodeHandler", () => {
       "Internal Server Error",
       "a handler failure must send the Internal Server Error payload",
     );
+    assertEquals(
+      res.destroyed,
+      false,
+      "a failure before the head is flushed must be reportable as a 500, not a torn-down socket",
+    );
+  });
+
+  it("destroys the response when the body stream fails after the head is sent", async () => {
+    const streamError = new Error("stream exploded");
+    const handler = () => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          // A partial body reaches the peer before the failure.
+          controller.enqueue(new TextEncoder().encode("partial"));
+        },
+        pull(controller) {
+          controller.error(streamError);
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-length": "20" } });
+    };
+
+    const nodeHandler = toNodeHandler(handler);
+    const res = createFakeRes();
+    await nodeHandler(
+      createFakeReq({ url: "/stream" }),
+      res as unknown as import("node:http").ServerResponse,
+    );
+
+    // The 200 head is already on the wire, so the failure cannot be reported
+    // in the status line any more.
+    assertEquals(res.statusCode, 200);
+    assertEquals(res.headersSent, true);
+    assertEquals(decodeBody(res), "partial", "only the pre-failure chunks were written");
+
+    assertEquals(
+      res.ended,
+      false,
+      "ending would emit the terminating chunk and the peer would read the truncated body as a complete 2xx",
+    );
+    assertEquals(
+      res.destroyed,
+      true,
+      "a mid-stream failure must tear the response down so the peer sees an incomplete message",
+    );
+    assertEquals(res.destroyError, streamError, "destroy must carry the original failure");
+  });
+
+  it("destroys with an Error when the mid-stream failure is not an Error", async () => {
+    const handler = () => {
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.error("plain string failure");
+        },
+      });
+      return new Response(body, { status: 200 });
+    };
+
+    const nodeHandler = toNodeHandler(handler);
+    const res = createFakeRes();
+    await nodeHandler(
+      createFakeReq({ url: "/stream" }),
+      res as unknown as import("node:http").ServerResponse,
+    );
+
+    assertEquals(res.destroyed, true);
+    assertEquals(res.ended, false);
+    // res.destroy() expects an Error; a raw string would be rejected by Node.
+    assertInstanceOf(res.destroyError, Error);
+    assertStringIncludes((res.destroyError as Error).message, "plain string failure");
   });
 });

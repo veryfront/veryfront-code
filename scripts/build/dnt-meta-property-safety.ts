@@ -177,7 +177,14 @@ export function shippedSourceRoots(config: ShippedSourceConfig): string[] {
     }
   }
 
-  return [...roots].toSorted();
+  return [...roots].toSorted(compareCodeUnits);
+}
+
+/** Code-unit ordering keeps output byte-stable across locales. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
 }
 
 const SOURCE_EXTENSIONS = [".ts", ".tsx"];

@@ -13,16 +13,17 @@ import "../_helpers/contract-init.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
-import { join } from "#veryfront/compat/path/index.ts";
+import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { load as loadEnv } from "#veryfront/platform/compat/std/dotenv.ts";
 import { withoutHostBinaryInfraEnv, withProxyModeControlPlaneKey } from "../_helpers/proxy-mode.ts";
-import { computeSourceHash } from "../e2e/setup/binary.ts";
+import { computeSourceHash, E2E_BINARY_DIR } from "../e2e/setup/binary.ts";
 
 try {
   await loadEnv({ export: true, allowEmptyValues: true, examplePath: null });
 } catch { /* no .env */ }
 
-const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ?? `/tmp/veryfront-vfs-e2e-bin-${Deno.pid}`;
+const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ??
+  join(E2E_BINARY_DIR, `veryfront-vfs-e2e-bin-${Deno.pid}`);
 const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
 const VERYFRONT_API_TOKEN = Deno.env.get("VERYFRONT_API_TOKEN");
 
@@ -105,6 +106,11 @@ async function ensureBinaryCompiled(): Promise<void> {
   }
 
   if (binaryExists) await Deno.remove(BINARY_PATH);
+
+  // The parent of the path actually being written, not E2E_BINARY_DIR: with
+  // VERYFRONT_BINARY pointing elsewhere the repo-local dir is unused, and creating
+  // it would fail on a read-only checkout.
+  await Deno.mkdir(dirname(BINARY_PATH), { recursive: true });
 
   const prep = await new Deno.Command(denoPath, {
     args: ["task", "build:prepare"],

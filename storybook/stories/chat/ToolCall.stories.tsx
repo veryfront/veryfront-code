@@ -55,7 +55,7 @@ function ToolCallDocsPage() {
         title="Error"
         description="When a tool fails, the card surfaces the failure text in an error Alert."
       >
-        <DocsExampleAuto of={Error} />
+        <DocsExampleAuto of={ErrorState} />
       </DocsSection>
 
       <DocsSection
@@ -210,7 +210,8 @@ export const Composed: Story = {
   ),
 };
 
-export const Error: Story = {
+const ErrorState: Story = {
+  name: "Error",
   tags: ["!dev"],
   parameters: {
     docs: {
@@ -291,3 +292,8 @@ export const SkillLoaded: Story = {
     </StoryFrame>
   ),
 };
+
+// Exported as `Error` so the CSF story id stays `...--error`: the indexer derives
+// the id from the export name, and `name:` only sets the displayed label. The local
+// binding is `ErrorState` so it does not shadow the `Error` global (S2137).
+export { ErrorState as Error };

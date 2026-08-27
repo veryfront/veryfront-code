@@ -297,7 +297,7 @@ function selectPackedExtensions(
   const extensions = new Map(
     packed.extensions.map((extension) => [extension.name, extension]),
   );
-  return [...new Set(names)].sort().map((name) => {
+  return [...new Set(names)].sort(compareNames).map((name) => {
     const extension = extensions.get(name);
     if (!extension) {
       throw new Error(`Packed extension is unavailable: ${name}`);

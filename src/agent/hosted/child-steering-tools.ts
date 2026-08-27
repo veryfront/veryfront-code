@@ -56,20 +56,18 @@ export function wrapHostedChildSteeringMutationTool(
     execute: async (toolInput: unknown, execOptions?: ToolExecutionContext) => {
       const normalizedToolInput = toChildRunToolInputRecord(toolInput);
       const result = await originalExecute(toolInput, execOptions);
-      if (!isSuccessfulProjectSteeringMutationResult(result)) {
-        return result;
-      }
+      if (isSuccessfulProjectSteeringMutationResult(result)) {
+        const mutation = getProjectSteeringMutation({
+          toolName: input.toolName,
+          toolInput: normalizedToolInput,
+          activeProjectId: input.activeProjectId,
+          activeBranchId: input.activeBranchId,
+          steeringPaths: input.steeringPaths,
+        });
 
-      const mutation = getProjectSteeringMutation({
-        toolName: input.toolName,
-        toolInput: normalizedToolInput,
-        activeProjectId: input.activeProjectId,
-        activeBranchId: input.activeBranchId,
-        steeringPaths: input.steeringPaths,
-      });
-
-      if (mutation.instructionsChanged || mutation.skillsChanged) {
-        await input.onMutation?.(mutation);
+        if (mutation.instructionsChanged || mutation.skillsChanged) {
+          await input.onMutation?.(mutation);
+        }
       }
 
       return result;

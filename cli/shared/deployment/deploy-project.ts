@@ -602,6 +602,13 @@ async function assertConfigIsDeployable(projectDir: string): Promise<void> {
   });
 }
 
+/** Explicit form of the comparator-less sort: UTF-16 code-unit order. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 async function collectProjectPageRoutes(projectDir: string): Promise<string[]> {
   const fs = createFileSystem();
   const directories = await getProjectRouteDirectories(projectDir);
@@ -641,7 +648,7 @@ async function collectProjectPageRoutes(projectDir: string): Promise<string[]> {
     walk(pagesDir, pagesDir, "pages"),
   ]);
 
-  return [...routes].sort();
+  return [...routes].sort(compareCodeUnits);
 }
 
 function assertReadyManifestCoversPageRoutes(

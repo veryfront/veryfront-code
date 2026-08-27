@@ -223,7 +223,7 @@ export async function walkRepo(options: WalkOptions): Promise<ScannedFile[]> {
     await collect(dir);
   }
 
-  return files.sort((a, b) => a.relative.localeCompare(b.relative));
+  return files.sort((a, b) => compareCodeUnits(a.relative, b.relative));
 }
 
 // ---------------------------------------------------------------------------
@@ -329,8 +329,8 @@ export function findLineMatches(
 
 export function sortFindings(findings: readonly Finding[]): Finding[] {
   return [...findings].sort((a, b) =>
-    a.file.localeCompare(b.file) || a.line - b.line ||
-    a.message.localeCompare(b.message)
+    compareCodeUnits(a.file, b.file) || a.line - b.line ||
+    compareCodeUnits(a.message, b.message)
   );
 }
 
@@ -371,9 +371,16 @@ export function keyOf(finding: Finding, kind: BaselineKind): string {
   }
 }
 
+/** Sort strings by UTF-16 code unit so baseline files stay byte-stable. */
+function compareCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 function sortedCounts(counts: Counts): Counts {
   return Object.fromEntries(
-    Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)),
+    Object.entries(counts).sort(([a], [b]) => compareCodeUnits(a, b)),
   );
 }
 
@@ -411,7 +418,7 @@ export function compareCounts(current: Counts, baseline: Counts): Comparison {
   const regressions: CountDelta[] = [];
   const improvements: CountDelta[] = [];
   const keys = [...new Set([...Object.keys(current), ...Object.keys(baseline)])]
-    .sort((a, b) => a.localeCompare(b));
+    .sort(compareCodeUnits);
   for (const key of keys) {
     const now = current[key] ?? 0;
     const then = baseline[key] ?? 0;
@@ -497,7 +504,9 @@ export function serializeBaseline(kind: BaselineKind, counts: Counts): string {
         (nested[group] ??= {})[file] = count;
       }
       const sorted: Record<string, Counts> = {};
-      for (const group of Object.keys(nested).sort()) {
+      // Code-unit order, matching the previous comparator-less sort exactly.
+      const groups = Object.keys(nested).sort(compareCodeUnits);
+      for (const group of groups) {
         sorted[group] = sortedCounts(nested[group] ?? {});
       }
       return JSON.stringify(sorted, null, 2);

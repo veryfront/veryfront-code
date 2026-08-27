@@ -125,7 +125,14 @@ export function firstPartyExtensionManifestPaths(
   return (rootConfig.workspace ?? [])
     .filter((entry) => entry.startsWith("./extensions/"))
     .map((entry) => `${entry.replace(/^\.\//, "")}/deno.json`)
-    .toSorted();
+    .toSorted(compareCodeUnits);
+}
+
+/** Code-unit ordering keeps output byte-stable across locales. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
 }
 
 export function extensionPackageDirectoryName(packageName: string): string {
@@ -662,7 +669,7 @@ export function bareImportPackageNames(source: string): string[] {
     }
   }
 
-  return [...packageNames].toSorted();
+  return [...packageNames].toSorted(compareCodeUnits);
 }
 
 function bareSpecifierPackageName(specifier: string): string | undefined {

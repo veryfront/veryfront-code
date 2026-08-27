@@ -16,6 +16,7 @@ import type { CapturedTenantContext } from "../types.ts";
 import { dirname, isAbsolute, join, relative, resolve } from "#veryfront/compat/path";
 import { INITIALIZATION_ERROR, INVALID_ARGUMENT, SECURITY_VIOLATION } from "#veryfront/errors";
 import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
+import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 
 const logger = baseLogger.component("workspace-sync");
 
@@ -26,7 +27,7 @@ const MAX_WORKSPACE_FILE_SIZE = 10 * 1024 * 1024;
  * Workspace configuration
  */
 export interface WorkspaceConfig {
-  /** Base directory for workspaces (default: /tmp/veryfront-workspaces) */
+  /** Base directory for workspaces (default: `<veryfront cache dir>/claude-code-workspaces`) */
   baseDir?: string;
 
   /** Run ID for unique workspace isolation */
@@ -153,6 +154,25 @@ function matchesPattern(path: string, patterns: string[]): boolean {
 }
 
 /**
+ * The current user id, or `undefined` when the runtime will not tell us.
+ *
+ * `Deno.uid()` needs `--allow-sys=uid`, and `WORKFLOW_RUN_PERMISSIONS` -- the
+ * profile `workflow/worker/executors/process.ts` spawns every workflow run
+ * with -- is exactly read/write/net/env. Calling it unguarded there throws
+ * `NotCapable` and takes down the whole sync, so an ownership check that cannot
+ * be performed is skipped rather than treated as a violation. The `0700`
+ * enforcement still applies, and a root owned by another user then fails at
+ * `chmod` or at the first write.
+ */
+function currentUid(): number | undefined {
+  try {
+    return Deno.uid() ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Workspace manager for Claude Code execution
  */
 export class WorkspaceSync {
@@ -172,10 +192,13 @@ export class WorkspaceSync {
     }
 
     this.config = {
-      baseDir: "/tmp/veryfront-workspaces",
       maxFileSize: MAX_WORKSPACE_FILE_SIZE,
       debug: false,
       ...config,
+      // Not a fixed path under the world-writable temp dir: that lets any other
+      // local user pre-create or symlink `<tmp>/veryfront-workspaces/<runId>` and
+      // capture the synced project files. The cache dir is owned by this user.
+      baseDir: config.baseDir ?? join(getCacheBaseDir(), "claude-code-workspaces"),
     };
   }
 
@@ -200,8 +223,32 @@ export class WorkspaceSync {
       logger.info("Initializing workspace", { workspaceDir: this.workspaceDir });
     }
 
-    // Create workspace directory
-    await Deno.mkdir(this.workspaceDir, { recursive: true });
+    // Create workspace directory. Owner-only: it holds synced project files.
+    // `mode` applies only to directories mkdir actually creates, so a workspace
+    // left behind by an earlier run (or pre-created by another local account)
+    // would keep its old permissions. Narrow it unconditionally, and refuse a
+    // root this user does not own rather than syncing files into it.
+    await Deno.mkdir(this.workspaceDir, { recursive: true, mode: 0o700 });
+
+    // The symlink check is not unix-only: Windows has symlinks and junctions,
+    // and following one here writes the whole synced tree wherever it points.
+    const info = await Deno.lstat(this.workspaceDir);
+    if (info.isSymlink || !info.isDirectory) {
+      throw SECURITY_VIOLATION.create({
+        detail: `Workspace path is not a directory: ${this.workspaceDir}`,
+      });
+    }
+
+    // Ownership and mode are unix-only: Windows reports no uid and has no chmod.
+    if (Deno.build.os !== "windows") {
+      const uid = currentUid();
+      if (uid !== undefined && info.uid !== null && info.uid !== uid) {
+        throw SECURITY_VIOLATION.create({
+          detail: `Workspace directory is owned by another user: ${this.workspaceDir}`,
+        });
+      }
+      await Deno.chmod(this.workspaceDir, 0o700);
+    }
 
     // List all files from project
     const files = await api.files.listAll();

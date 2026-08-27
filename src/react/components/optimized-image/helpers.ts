@@ -1,3 +1,4 @@
+import type * as React from "react";
 import { isDevelopment } from "#veryfront/platform/environment.ts";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import {
@@ -217,4 +218,60 @@ export function getOptimizedImageFormatFallback(
 export function getImageExtension(src: string): string {
   const extension = getExtensionName(sourcePath(src)) || "jpeg";
   return extension === "jpg" ? "jpeg" : extension;
+}
+
+// Elements holding a pending Space activation. Keyed weakly so an unmounted
+// image is never retained by this module.
+const spaceArmedImages = new WeakSet<Element>();
+
+/**
+ * Keyboard activation for a clickable image, matching how a native button and
+ * `ui/list.tsx` behave: Enter fires on keydown, Space is deferred to keyup so
+ * moving focus away cancels the pending activation.
+ */
+export function handleImageActivationKeyDown(
+  event: React.KeyboardEvent<HTMLImageElement>,
+): void {
+  // An IME reports the composing keystroke on the element; committing a
+  // candidate with Enter or Space must not activate the image.
+  if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+
+  if (event.key === "Enter") {
+    event.preventDefault();
+    event.currentTarget.click();
+    return;
+  }
+
+  if (event.key !== " ") return;
+  // Block page scrolling now; activate on keyup. Repeated keydowns from OS key
+  // repeat must not each fire onClick the way a plain keydown handler would.
+  event.preventDefault();
+  spaceArmedImages.add(event.currentTarget);
+}
+
+/** Companion to {@link handleImageActivationKeyDown}: fires the deferred Space. */
+export function handleImageActivationKeyUp(
+  event: React.KeyboardEvent<HTMLImageElement>,
+): void {
+  if (event.key !== " ") return;
+
+  const armed = spaceArmedImages.delete(event.currentTarget);
+  if (
+    !armed ||
+    event.target !== event.currentTarget ||
+    event.nativeEvent.isComposing ||
+    event.keyCode === 229
+  ) {
+    return;
+  }
+
+  event.preventDefault();
+  event.currentTarget.click();
+}
+
+/** Companion to {@link handleImageActivationKeyDown}: drops a pending Space. */
+export function handleImageActivationBlur(
+  event: React.FocusEvent<HTMLImageElement>,
+): void {
+  spaceArmedImages.delete(event.currentTarget);
 }

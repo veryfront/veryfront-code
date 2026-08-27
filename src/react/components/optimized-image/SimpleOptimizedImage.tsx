@@ -5,6 +5,9 @@ import {
   getImageDimensionAttribute,
   getOptimizedImageFallback,
   getOptimizedImageVariantWidths,
+  handleImageActivationBlur,
+  handleImageActivationKeyDown,
+  handleImageActivationKeyUp,
 } from "./helpers.ts";
 
 export function SimpleOptimizedImage({
@@ -46,7 +49,12 @@ export function SimpleOptimizedImage({
       decoding="async"
       className={className}
       style={style}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
       onClick={onClick}
+      onKeyDown={onClick ? handleImageActivationKeyDown : undefined}
+      onKeyUp={onClick ? handleImageActivationKeyUp : undefined}
+      onBlur={onClick ? handleImageActivationBlur : undefined}
       onLoad={onLoad}
       onError={onError}
     />

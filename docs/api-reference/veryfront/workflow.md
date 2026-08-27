@@ -297,9 +297,9 @@ import {
 | `createClaudeCodeTool`   | Create a customized Claude Code tool                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/tool.ts#L113)                |
 | `createEventPublisher`   | Create an event publisher based on environment              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/event-publisher.ts#L299)     |
 | `createWebSocketHandler` | Create a WebSocket handler for HTTP upgrade requests.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L697) |
-| `createWorkspaceSync`    | Create a workspace sync for a Claude Code run               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L638)      |
+| `createWorkspaceSync`    | Create a workspace sync for a Claude Code run               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L685)      |
 | `executeAgent`           | Execute a task using the Claude Agent SDK.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/agent.ts#L108)               |
-| `withWorkspace`          | Execute a function with a synchronized workspace            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L663)      |
+| `withWorkspace`          | Execute a function with a synchronized workspace            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L710)      |
 
 #### Classes
 
@@ -313,7 +313,7 @@ import {
 | `RedisEventPublisher`     | Redis-backed publisher whose implementation is supplied by the Redis extension.                                                                                                                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/event-publisher.ts#L90)       |
 | `SSEEventPublisher`       | Server-Sent Events publisher Writes events directly to a ReadableStream controller                                                                                                                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/event-publisher.ts#L157)      |
 | `WebSocketPublisher`      | WebSocket-based bidirectional publisher                                                                                                                                                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L191)  |
-| `WorkspaceSync`           | Workspace manager for Claude Code execution                                                                                                                                                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L158)       |
+| `WorkspaceSync`           | Workspace manager for Claude Code execution                                                                                                                                                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L178)       |
 
 #### Types
 
@@ -342,7 +342,7 @@ import {
 | `ClientCommandType`              | Client command types for WebSocket communication                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/types.ts#L282)                    |
 | `CompleteEvent`                  | Complete event (agent finished)                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/types.ts#L219)                    |
 | `ErrorEvent`                     | Error event                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/types.ts#L227)                    |
-| `FileChange`                     | File change tracking                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L54)            |
+| `FileChange`                     | File change tracking                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L55)            |
 | `InputCommand`                   | Send user input to the agent                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/types.ts#L332)                    |
 | `InputRequestEvent`              | Input request event (sent to client when agent needs user input)  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/types.ts#L411)                    |
 | `IterationCompleteEvent`         | Iteration complete event                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/types.ts#L186)                    |
@@ -360,11 +360,11 @@ import {
 | `ToolCallInputEvent`             | Tool call input delta (streaming input JSON)                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/types.ts#L156)                    |
 | `ToolCallStartEvent`             | Tool call start event                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/types.ts#L147)                    |
 | `ToolResultEvent`                | Tool result event                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/types.ts#L175)                    |
-| `UploadResult`                   | Upload result                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L91)            |
+| `UploadResult`                   | Upload result                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L92)            |
 | `WebSocketHandlerConfig`         | Configuration for a registry-owned WebSocket upgrade handler.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L652)      |
 | `WebSocketPublisherConfig`       | WebSocket publisher configuration                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L116)      |
-| `WorkspaceConfig`                | Workspace configuration                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L28)            |
-| `WorkspaceSyncResult`            | Workspace sync result                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L64)            |
+| `WorkspaceConfig`                | Workspace configuration                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L29)            |
+| `WorkspaceSyncResult`            | Workspace sync result                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L65)            |
 
 #### Constants
 

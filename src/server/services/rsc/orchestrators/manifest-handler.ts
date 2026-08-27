@@ -118,16 +118,16 @@ export class ManifestHandler {
     dependencyPinningCacheKey: string,
   ): Promise<ManifestData> {
     const data = await this.buildManifest(clientManifest, dependencyPinningCacheKey);
-    if (generation !== this.generation) return data;
+    if (generation === this.generation) {
+      await this.enqueueCacheMutation(async () => {
+        if (generation !== this.generation) return;
+        await this.setCachedData(data, dependencyPinningCacheKey);
+        if (generation === this.generation) return;
 
-    await this.enqueueCacheMutation(async () => {
-      if (generation !== this.generation) return;
-      await this.setCachedData(data, dependencyPinningCacheKey);
-      if (generation === this.generation) return;
-
-      this.cache = null;
-      await this.cacheRepo?.delete?.(this.scopedCacheKey(dependencyPinningCacheKey));
-    });
+        this.cache = null;
+        await this.cacheRepo?.delete?.(this.scopedCacheKey(dependencyPinningCacheKey));
+      });
+    }
     return data;
   }
 

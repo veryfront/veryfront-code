@@ -190,7 +190,9 @@ function encodePathSegment(value: string, label: string): string {
 
 function assertDurableRunCanaryApiConfig(config: DurableRunCanaryApiConfig): void {
   assertCanonicalEvalString(config.apiUrl, "Durable canary API URL");
-  new URL(config.apiUrl);
+  if (!URL.canParse(config.apiUrl)) {
+    throw new TypeError("Durable canary API URL must be a valid absolute URL");
+  }
   assertCanonicalEvalString(config.authToken, "Durable canary auth token");
   assertCanonicalEvalString(config.agentId, "Durable canary agent id");
   if (config.projectId !== null) {

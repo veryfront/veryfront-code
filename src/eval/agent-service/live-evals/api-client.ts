@@ -400,7 +400,9 @@ async function waitForProjectUploadFixture(
 /** Create live eval API client. */
 export function createLiveEvalApiClient(context: LiveEvalApiContext): LiveEvalApiClient {
   assertCanonicalEvalString(context.apiUrl, "Live eval API URL");
-  new URL(context.apiUrl);
+  if (!URL.canParse(context.apiUrl)) {
+    throw new TypeError("Live eval API URL must be a valid absolute URL");
+  }
   assertCanonicalEvalString(context.authToken, "Live eval API auth token");
   if (context.projectId !== null) {
     assertCanonicalEvalString(context.projectId, "Live eval project id");

@@ -34,7 +34,7 @@ for binary in veryfront-macos-arm64 veryfront-macos-x64 veryfront-linux-arm64 ve
   echo "Downloading ${binary}..."
   URL="https://github.com/${REPO}/releases/download/v${VERSION}/${binary}"
 
-  if curl -fsSL "$URL" -o "${TEMP_DIR}/${binary}"; then
+  if curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "$URL" -o "${TEMP_DIR}/${binary}"; then
     HASH=$(shasum -a 256 "${TEMP_DIR}/${binary}" | cut -d' ' -f1)
     HASHES[$binary]=$HASH
     echo "  SHA256: ${HASH}"

@@ -293,7 +293,14 @@ export function workspaceMembersFromDenoConfig(
     .filter((entry): entry is string => typeof entry === "string")
     .map(normalizeWorkspaceMemberPath)
     .filter((entry) => entry.length > 0)
-    .sort();
+    .sort(compareCodeUnits);
+}
+
+/** Code-unit ordering keeps output byte-stable across locales. */
+function compareCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
 }
 
 function outputFileNameForManifest(manifestPath: string): string {

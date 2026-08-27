@@ -20,6 +20,8 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { dirname, join } from "@std/path";
 import { type FileChange, WorkspaceSync } from "./workspace-sync.ts";
 import type { CapturedTenantContext } from "../types.ts";
+import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 
 function stubTenant(): CapturedTenantContext {
   return {
@@ -417,4 +419,143 @@ describe("WorkspaceSync uploadChanges", () => {
     assertEquals(result.uploaded, [], "a deletion must never be reported as uploaded");
     assertEquals(result.skipped, [], "a deletion must never be reported as skipped");
   });
+});
+
+describe("WorkspaceSync default baseDir", () => {
+  it("derives the same default workspaceDir from the same runId", () => {
+    // This is also what pins the constructor to doing no filesystem I/O. An
+    // earlier draft called Deno.makeTempDirSync() there, which performed I/O for
+    // an object that may never be initialized and gave each instance its own
+    // random directory -- the two paths below could not then be equal.
+    const runId = "stable-run-id";
+    const first = new WorkspaceSync({ runId, tenant: stubTenant() });
+    const second = new WorkspaceSync({ runId, tenant: stubTenant() });
+
+    assertEquals(
+      first.workspaceDir,
+      second.workspaceDir,
+      "the default workspace directory must be derivable from the runId alone",
+    );
+    assertEquals(
+      first.workspaceDir,
+      `${join(getCacheBaseDir(), "claude-code-workspaces")}/${runId}`,
+      "the default base directory must sit under the Veryfront cache directory",
+    );
+    assertEquals(
+      new WorkspaceSync({ runId: "other-run-id", tenant: stubTenant() }).workspaceDir ===
+        first.workspaceDir,
+      false,
+      "a different runId must still get its own workspace directory",
+    );
+  });
+
+  it("does not default to a shared temp directory", async () => {
+    const workspaceDir = new WorkspaceSync({
+      runId: "not-in-tmp",
+      tenant: stubTenant(),
+    }).workspaceDir;
+
+    assertEquals(
+      workspaceDir.startsWith("/tmp/veryfront-workspaces"),
+      false,
+      "the old fixed /tmp path let any local user pre-create the run directory",
+    );
+
+    // The shared temp root itself is world-writable, so nothing under it is a
+    // safe default either.
+    await withTempDir((probe) => {
+      const sharedTempRoot = dirname(probe);
+      assertEquals(
+        workspaceDir.startsWith(`${sharedTempRoot}/`),
+        false,
+        "the default workspace directory must not live under the shared temp root",
+      );
+      return Promise.resolve();
+    }, { prefix: "vf-ws-sync-tmp-probe-" });
+  });
+
+  it(
+    "creates the workspace directory owner-only",
+    { ignore: Deno.build.os === "windows" },
+    async () => {
+      await withTempDir(async (baseDir) => {
+        const workspace = new WorkspaceSync({
+          baseDir,
+          runId: "mode-check",
+          tenant: stubTenant(),
+        });
+
+        // initialize() creates the directory and then reaches for project files,
+        // which fails without a tenant context. The directory is already there.
+        await assertRejects(() => workspace.initialize(), Error);
+
+        const info = await Deno.stat(workspace.workspaceDir);
+        assertEquals(info.isDirectory, true);
+        assertEquals(
+          (info.mode ?? 0) & 0o777,
+          0o700,
+          "the workspace holds synced project files and must not be readable by other users",
+        );
+      }, { prefix: "vf-ws-sync-mode-" });
+    },
+  );
+
+  it("refuses a workspace root that is a symlink", async () => {
+    await withTempDir(async (baseDir) => {
+      const workspace = new WorkspaceSync({
+        baseDir,
+        runId: "symlinked",
+        tenant: stubTenant(),
+      });
+      const target = join(baseDir, "elsewhere");
+      await Deno.mkdir(target);
+      // mkdir(recursive) is a no-op on a symlink that already resolves to a
+      // directory, so without the lstat the sync follows it straight out of the
+      // workspace. Not gated on the platform: Windows has symlinks too.
+      await Deno.symlink(target, workspace.workspaceDir);
+
+      // Assert the *reason*. Without the check initialize() still rejects -- on
+      // the missing tenant context, one step later and after the root was
+      // accepted -- so a bare assertRejects(Error) would pass either way.
+      await assertRejects(
+        () => workspace.initialize(),
+        Error,
+        "Workspace path is not a directory",
+      );
+
+      assertEquals(
+        [...Deno.readDirSync(target)].length,
+        0,
+        "nothing may be written through the symlinked root",
+      );
+    }, { prefix: "vf-ws-sync-symlink-root-" });
+  });
+
+  it(
+    "narrows an existing workspace directory to owner-only",
+    { ignore: Deno.build.os === "windows" },
+    async () => {
+      await withTempDir(async (baseDir) => {
+        const workspace = new WorkspaceSync({
+          baseDir,
+          runId: "pre-existing",
+          tenant: stubTenant(),
+        });
+
+        // A workspace left behind by an earlier run, or pre-created by another
+        // local account. Deno.mkdir's `mode` applies only to directories it
+        // actually creates, so this one would otherwise keep 0o755.
+        await Deno.mkdir(workspace.workspaceDir, { recursive: true, mode: 0o755 });
+        assertEquals((await Deno.stat(workspace.workspaceDir)).mode! & 0o777, 0o755);
+
+        await assertRejects(() => workspace.initialize(), Error);
+
+        assertEquals(
+          (await Deno.stat(workspace.workspaceDir)).mode! & 0o777,
+          0o700,
+          "an existing workspace root must be narrowed before files are synced into it",
+        );
+      }, { prefix: "vf-ws-sync-existing-" });
+    },
+  );
 });

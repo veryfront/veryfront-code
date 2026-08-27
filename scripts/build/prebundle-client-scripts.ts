@@ -168,6 +168,13 @@ async function scanDir(dir: string, allCandidates: Set<string>): Promise<void> {
   }
 }
 
+/** Code-unit ordering keeps output byte-stable across locales. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 const frameworkCandidates = new Set<string>();
 for (const dir of FRAMEWORK_DIRS) {
   try {
@@ -177,7 +184,7 @@ for (const dir of FRAMEWORK_DIRS) {
   }
 }
 
-const sorted = [...frameworkCandidates].sort();
+const sorted = [...frameworkCandidates].sort(compareCodeUnits);
 const candidatesOutput = `/**
  * Auto-extracted Tailwind CSS candidates from framework components.
  *

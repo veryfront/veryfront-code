@@ -197,8 +197,14 @@ function unwrapExpression(value: unknown): AstNode | undefined {
   return current;
 }
 
+function compareDeterministically(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 function uniqueSorted(values: readonly string[]): string[] {
-  return [...new Set(values)].sort();
+  return [...new Set(values)].sort(compareDeterministically);
 }
 
 function staticPropertyName(property: AstNode): string | undefined {
@@ -1452,7 +1458,7 @@ class StaticContractResolver {
     if (Object.hasOwn(this.#imports, specifier)) {
       mappingKey = specifier;
     } else {
-      for (const key of Object.keys(this.#imports).sort()) {
+      for (const key of Object.keys(this.#imports).sort(compareDeterministically)) {
         if (
           key.endsWith("/") && specifier.startsWith(key) &&
           (mappingKey === undefined || key.length > mappingKey.length)
@@ -1949,7 +1955,7 @@ function parseLegacyProvides(
     }
     names.push(name);
   }
-  return { values: names.sort(), issues: [] };
+  return { values: names.toSorted(compareDeterministically), issues: [] };
 }
 
 async function buildMetadata(

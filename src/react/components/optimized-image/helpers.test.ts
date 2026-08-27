@@ -1,4 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
+import type * as React from "react";
+import { JSDOM } from "npm:jsdom@28.0.0";
+import { installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -9,6 +12,9 @@ import {
   getOptimizedImageFormatFallback,
   getOptimizedImageVariantWidths,
   getOptimizedPath,
+  handleImageActivationBlur,
+  handleImageActivationKeyDown,
+  handleImageActivationKeyUp,
 } from "./helpers.ts";
 
 const INVALID_IMAGE_DIMENSIONS_WARNING =
@@ -273,6 +279,194 @@ describe("optimized-image helpers", () => {
         ),
         "/.veryfront/optimized-images/images/photo-640w.webp",
       );
+    });
+  });
+
+  describe("keyboard activation", () => {
+    interface ActivationProbe {
+      image: HTMLImageElement;
+      clicks: number;
+      preventDefaults: number;
+    }
+
+    function withImage(run: (probe: ActivationProbe) => void): void {
+      const dom = new JSDOM(
+        '<!doctype html><html><body><img id="image" src="/images/photo.jpg" alt=""></body></html>',
+      );
+      const restoreDom = installComponentDom(dom);
+      try {
+        const image = document.getElementById("image") as unknown as HTMLImageElement;
+        const probe: ActivationProbe = { image, clicks: 0, preventDefaults: 0 };
+        image.addEventListener("click", () => {
+          probe.clicks += 1;
+        });
+        run(probe);
+      } finally {
+        restoreDom();
+        dom.window.close();
+      }
+    }
+
+    interface KeyOptions {
+      target?: EventTarget;
+      isComposing?: boolean;
+      keyCode?: number;
+    }
+
+    function keyEvent(
+      probe: ActivationProbe,
+      key: string,
+      options: KeyOptions = {},
+    ): React.KeyboardEvent<HTMLImageElement> {
+      return {
+        key,
+        keyCode: options.keyCode ?? 0,
+        target: options.target ?? probe.image,
+        currentTarget: probe.image,
+        nativeEvent: { isComposing: options.isComposing ?? false },
+        preventDefault: () => {
+          probe.preventDefaults += 1;
+        },
+      } as unknown as React.KeyboardEvent<HTMLImageElement>;
+    }
+
+    function blurEvent(probe: ActivationProbe): React.FocusEvent<HTMLImageElement> {
+      return {
+        target: probe.image,
+        currentTarget: probe.image,
+      } as unknown as React.FocusEvent<HTMLImageElement>;
+    }
+
+    it("activates on Enter keydown", () => {
+      withImage((probe) => {
+        handleImageActivationKeyDown(keyEvent(probe, "Enter"));
+        assertEquals(probe.clicks, 1);
+        assertEquals(probe.preventDefaults, 1);
+      });
+    });
+
+    it("does not activate again when Enter keyup follows", () => {
+      withImage((probe) => {
+        handleImageActivationKeyDown(keyEvent(probe, "Enter"));
+        handleImageActivationKeyUp(keyEvent(probe, "Enter"));
+        assertEquals(probe.clicks, 1);
+      });
+    });
+
+    it("blocks scrolling on Space keydown without activating", () => {
+      withImage((probe) => {
+        handleImageActivationKeyDown(keyEvent(probe, " "));
+        assertEquals(probe.clicks, 0);
+        assertEquals(probe.preventDefaults, 1);
+      });
+    });
+
+    it("activates once on Space keyup", () => {
+      withImage((probe) => {
+        handleImageActivationKeyDown(keyEvent(probe, " "));
+        handleImageActivationKeyUp(keyEvent(probe, " "));
+        assertEquals(probe.clicks, 1);
+        assertEquals(probe.preventDefaults, 2);
+      });
+    });
+
+    it("activates once when OS key repeat sends many Space keydowns", () => {
+      withImage((probe) => {
+        handleImageActivationKeyDown(keyEvent(probe, " "));
+        handleImageActivationKeyDown(keyEvent(probe, " "));
+        handleImageActivationKeyDown(keyEvent(probe, " "));
+        assertEquals(probe.clicks, 0);
+        handleImageActivationKeyUp(keyEvent(probe, " "));
+        assertEquals(probe.clicks, 1);
+      });
+    });
+
+    it("does not activate on a second Space keyup", () => {
+      withImage((probe) => {
+        handleImageActivationKeyDown(keyEvent(probe, " "));
+        handleImageActivationKeyUp(keyEvent(probe, " "));
+        handleImageActivationKeyUp(keyEvent(probe, " "));
+        assertEquals(probe.clicks, 1);
+      });
+    });
+
+    it("ignores a Space keyup with no preceding keydown", () => {
+      withImage((probe) => {
+        handleImageActivationKeyUp(keyEvent(probe, " "));
+        assertEquals(probe.clicks, 0);
+        assertEquals(probe.preventDefaults, 0);
+      });
+    });
+
+    it("cancels a pending Space when focus leaves between keydown and keyup", () => {
+      withImage((probe) => {
+        handleImageActivationKeyDown(keyEvent(probe, " "));
+        handleImageActivationBlur(blurEvent(probe));
+        handleImageActivationKeyUp(keyEvent(probe, " "));
+        assertEquals(probe.clicks, 0);
+      });
+    });
+
+    it("re-arms after a blur when Space is pressed again", () => {
+      withImage((probe) => {
+        handleImageActivationKeyDown(keyEvent(probe, " "));
+        handleImageActivationBlur(blurEvent(probe));
+        handleImageActivationKeyDown(keyEvent(probe, " "));
+        handleImageActivationKeyUp(keyEvent(probe, " "));
+        assertEquals(probe.clicks, 1);
+      });
+    });
+
+    it("keeps each image's pending Space independent", () => {
+      withImage((first) => {
+        withImage((second) => {
+          handleImageActivationKeyDown(keyEvent(first, " "));
+          handleImageActivationKeyUp(keyEvent(second, " "));
+          assertEquals(second.clicks, 0);
+          handleImageActivationKeyUp(keyEvent(first, " "));
+          assertEquals(first.clicks, 1);
+        });
+      });
+    });
+
+    it("ignores a Space keyup that did not originate on the image", () => {
+      withImage((probe) => {
+        const other = probe.image.ownerDocument.createElement("span") as unknown as EventTarget;
+        handleImageActivationKeyDown(keyEvent(probe, " "));
+        handleImageActivationKeyUp(keyEvent(probe, " ", { target: other }));
+        assertEquals(probe.clicks, 0);
+        assertEquals(probe.preventDefaults, 1);
+      });
+    });
+
+    it("does not activate while an IME composition is in progress", () => {
+      withImage((probe) => {
+        handleImageActivationKeyDown(keyEvent(probe, "Enter", { isComposing: true }));
+        handleImageActivationKeyDown(keyEvent(probe, "Enter", { keyCode: 229 }));
+        handleImageActivationKeyDown(keyEvent(probe, " ", { isComposing: true }));
+        handleImageActivationKeyUp(keyEvent(probe, " ", { isComposing: true }));
+        assertEquals(probe.clicks, 0);
+        assertEquals(probe.preventDefaults, 0);
+      });
+    });
+
+    it("does not activate a Space keyup reported with the IME key code", () => {
+      withImage((probe) => {
+        handleImageActivationKeyDown(keyEvent(probe, " "));
+        handleImageActivationKeyUp(keyEvent(probe, " ", { keyCode: 229 }));
+        assertEquals(probe.clicks, 0);
+      });
+    });
+
+    it("ignores keys other than Enter and Space", () => {
+      withImage((probe) => {
+        for (const key of ["a", "Tab", "Escape", "ArrowDown", "Spacebar"]) {
+          handleImageActivationKeyDown(keyEvent(probe, key));
+          handleImageActivationKeyUp(keyEvent(probe, key));
+        }
+        assertEquals(probe.clicks, 0);
+        assertEquals(probe.preventDefaults, 0);
+      });
     });
   });
 });

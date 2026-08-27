@@ -38,6 +38,13 @@ export interface PlanPushChangesOptions {
   remoteFilesAreBaseline?: boolean;
 }
 
+/** Explicit form of the comparator-less sort: UTF-16 code-unit order. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 function requiredVersionId(file: PushRemoteFile): string {
   if (file.version_id) return file.version_id;
   throw new Error(
@@ -152,7 +159,7 @@ export async function planPushChanges(
   return {
     uploads,
     deletes,
-    conflicts: [...conflicts].sort(),
+    conflicts: [...conflicts].sort(compareCodeUnits),
     nextFiles,
   };
 }

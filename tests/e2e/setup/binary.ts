@@ -8,9 +8,23 @@
  */
 
 import { exists } from "#veryfront/platform/compat/fs.ts";
-import { join, relative } from "#veryfront/compat/path/index.ts";
+import { dirname, fromFileUrl, join, relative } from "#veryfront/compat/path/index.ts";
 
-export const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ?? "/tmp/veryfront-e2e-bin";
+// Resolved from this module's own URL, not Deno.cwd(): `src/testing/cwd.ts`
+// calls Deno.chdir on the shared test process, so a cwd-relative constant
+// evaluated at import time would not survive.
+const REPO_ROOT = fromFileUrl(new URL("../../../", import.meta.url));
+
+/**
+ * Directory for compiled e2e binaries. The repo's gitignored `.veryfront/` rather
+ * than the world-writable temp dir, where another local user could pre-place the
+ * file these suites then execute. Shared by every compile-and-run e2e helper.
+ */
+export const E2E_BINARY_DIR = join(REPO_ROOT, ".veryfront", "e2e");
+
+// The compiled binary is cached across runs, so the path has to stay stable.
+export const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ??
+  join(E2E_BINARY_DIR, "veryfront-e2e-bin");
 export const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
 const HASH_INPUTS = [
   "src",
@@ -31,6 +45,13 @@ async function sha256Hex(input: Uint8Array): Promise<string> {
   return toHex(new Uint8Array(digest));
 }
 
+/** Explicit form of the comparator-less sort: UTF-16 code-unit order. */
+function compareCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 async function walkFiles(path: string): Promise<string[]> {
   const stat = await Deno.stat(path);
   if (stat.isFile) return [path];
@@ -46,7 +67,9 @@ async function walkFiles(path: string): Promise<string[]> {
     if (entry.isFile) files.push(childPath);
   }
 
-  return files.sort();
+  // Code-unit order, not locale order: this ordering feeds the binary cache hash,
+  // which must not vary with the machine locale.
+  return files.sort(compareCodeUnits);
 }
 
 async function computeWorkingTreeHash(cwd: string): Promise<string> {
@@ -143,6 +166,11 @@ export async function ensureBinaryCompiled(): Promise<void> {
 
   if (forceFresh) console.log("🗑️  Force fresh build (VERYFRONT_BINARY_FRESH=1)");
   if (binaryExists) await Deno.remove(BINARY_PATH);
+
+  // The parent of the path actually being written, not E2E_BINARY_DIR: with
+  // VERYFRONT_BINARY pointing elsewhere the repo-local dir is unused, and creating
+  // it would fail on a read-only checkout.
+  await Deno.mkdir(dirname(BINARY_PATH), { recursive: true });
 
   console.log("📦 Preparing build artifacts...");
   const prepareResult = await new Deno.Command("deno", {

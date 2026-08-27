@@ -11,6 +11,12 @@ function readErrorCode(error) {
   return "UNKNOWN";
 }
 
+function byCodeUnit(a, b) {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 async function resolveWithDeno(hostname) {
   const addresses = [];
   const errorCodes = new Set();
@@ -21,7 +27,7 @@ async function resolveWithDeno(hostname) {
       errorCodes.add(readErrorCode(error));
     }
   }
-  return { addresses, errorCode: [...errorCodes].sort().join(",") || undefined };
+  return { addresses, errorCode: [...errorCodes].sort(byCodeUnit).join(",") || undefined };
 }
 
 async function resolveWithNode(hostname) {
@@ -43,10 +49,10 @@ for (const hostname of HOSTNAMES) {
   const result = isDeno
     ? await resolveWithDeno(hostname)
     : await resolveWithNode(hostname);
-  const addresses = [...new Set(result.addresses)].sort();
+  const addresses = [...new Set(result.addresses)].sort(byCodeUnit);
   const addressFamilies = [...new Set(
     addresses.map((address) => address.includes(":") ? "IPv6" : "IPv4"),
-  )].sort();
+  )].sort(byCodeUnit);
   console.log(JSON.stringify({
     runtime,
     hostname,

@@ -5,10 +5,18 @@ const FORBIDDEN_TRACKED_DOC_PREFIXES = [
   "docs/superpowers/",
 ] as const;
 
+// Code-unit order, not locale order: the reported path list must stay stable
+// across platforms and locales.
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 export function findForbiddenTrackedDocs(paths: Iterable<string>): string[] {
   return Array.from(paths, (path) => path.replaceAll("\\", "/"))
     .filter((path) => FORBIDDEN_TRACKED_DOC_PREFIXES.some((prefix) => path.startsWith(prefix)))
-    .sort();
+    .sort(compareCodeUnits);
 }
 
 export async function validateTrackedDocs(

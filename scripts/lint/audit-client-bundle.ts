@@ -81,6 +81,13 @@ function isCritical(path: string): boolean {
   return CRITICAL_PATTERNS.some((pattern) => pattern.test("/" + path));
 }
 
+/** Sort strings by UTF-16 code unit so the baseline stays byte-stable. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 async function readBaseline(): Promise<Baseline> {
   try {
     return JSON.parse(await Deno.readTextFile(BASELINE_URL)) as Baseline;
@@ -174,7 +181,7 @@ async function main(): Promise<void> {
     for (const r of reports) {
       entrypoints[r.entry] = [...r.knownLeaks, ...r.newLeaks].filter((l) =>
         !isCritical(l)
-      ).toSorted();
+      ).toSorted(compareCodeUnits);
     }
     const baseline: Baseline = {
       note:

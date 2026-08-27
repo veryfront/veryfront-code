@@ -20,11 +20,18 @@ const REACT_BOUNDARY_COMPONENTS = new Set([
   "react-dom",
 ]);
 
+/** Sort strings by UTF-16 code unit so audit output stays byte-stable. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 function componentNames(
   manifest: DependencyIndexManifest | undefined,
 ): string[] {
   return (manifest?.components ?? []).map((component) => component.name)
-    .toSorted();
+    .toSorted(compareCodeUnits);
 }
 
 function manifestBySourceLocation(

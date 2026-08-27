@@ -48,7 +48,7 @@ function AgentCardDocsPage() {
         title="Error"
         description={'A failed tool call renders inline with `status="error"` and the error message.'}
       >
-        <DocsExampleAuto of={Error} />
+        <DocsExampleAuto of={ErrorState} />
       </DocsSection>
 
       <DocsSection
@@ -250,7 +250,8 @@ function CustomToolList() {
   },
 };
 
-export const Error: Story = {
+const ErrorState: Story = {
+  name: "Error",
   tags: ["!dev"],
   render: () => (
     <StoryFrame maxWidth="720px">
@@ -289,3 +290,8 @@ export const Error: Story = {
     },
   },
 };
+
+// Exported as `Error` so the CSF story id stays `...--error`: the indexer derives
+// the id from the export name, and `name:` only sets the displayed label. The local
+// binding is `ErrorState` so it does not shadow the `Error` global (S2137).
+export { ErrorState as Error };

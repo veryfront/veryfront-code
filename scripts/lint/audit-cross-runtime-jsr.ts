@@ -171,6 +171,13 @@ export function isStdOrJsrSpecifier(specifier: string): boolean {
     specifier.startsWith("std/");
 }
 
+/** Code-unit order, so emitted baselines and reports stay byte-stable. */
+function compareDeterministically(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 function stripLeadingDotSlash(path: string): string {
   return path.replace(/^\.\//, "");
 }
@@ -353,16 +360,18 @@ export function auditCrossRuntimeImports(
   }
 
   const unshimmedDependents = new Map<string, readonly string[]>();
-  for (const specifier of [...dependents.keys()].sort()) {
+  for (
+    const specifier of [...dependents.keys()].sort(compareDeterministically)
+  ) {
     unshimmedDependents.set(
       specifier,
-      [...dependents.get(specifier)!].sort(),
+      [...dependents.get(specifier)!].sort(compareDeterministically),
     );
   }
 
   return {
     directJsrImports: directJsrImports.slice().sort((a, b) =>
-      a.file.localeCompare(b.file) || a.line - b.line
+      compareDeterministically(a.file, b.file) || a.line - b.line
     ),
     unshimmedDependents,
   };
@@ -410,7 +419,9 @@ export function compareAgainstBaseline(
     }
   }
 
-  for (const specifier of Object.keys(baseline).sort()) {
+  for (
+    const specifier of Object.keys(baseline).sort(compareDeterministically)
+  ) {
     if (audit.unshimmedDependents.has(specifier)) continue;
     if (isShimmedEverywhere(specifier, context)) {
       staleShimmed.push(specifier);
@@ -497,7 +508,7 @@ async function collectImports(): Promise<{
   for (const root of CROSS_RUNTIME_ROOTS) {
     await collectCrossRuntimeFiles(root, files);
   }
-  files.sort();
+  files.sort(compareDeterministically);
 
   const imports: CrossRuntimeImport[] = [];
   const parseFailures: string[] = [];

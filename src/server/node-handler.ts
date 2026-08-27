@@ -76,8 +76,19 @@ export function toNodeHandler(
       res.end();
     } catch (error) {
       serverLogger.debug("toNodeHandler request failed", { error });
-      res.writeHead(500);
-      res.end("Internal Server Error");
+      // Node ignores whatever a request listener returns, so a throw from this
+      // handler surfaces as an unhandled rejection. Writing the head again
+      // after it was already flushed is exactly that case, so only send the
+      // error status while the head is still open.
+      if (!res.headersSent) {
+        res.writeHead(500);
+        res.end("Internal Server Error");
+      } else {
+        // The status line is already on the wire, so the failure can no longer be
+        // reported in it. Destroy rather than end(): ending would emit the final
+        // chunk and the peer would read a truncated body as a complete 2xx.
+        res.destroy(error instanceof Error ? error : new Error(String(error)));
+      }
     }
   };
 }

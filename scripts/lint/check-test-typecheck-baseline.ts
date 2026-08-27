@@ -50,6 +50,13 @@ interface CommandOptions {
   timeoutMs?: number;
 }
 
+/** Sort strings by UTF-16 code unit so baseline ordering stays byte-stable. */
+function compareOrdinal(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 function listTestFiles(root: string): string[] {
   const out: string[] = [];
   const walk = (dir: string) => {
@@ -311,9 +318,9 @@ export async function evaluateRatchet(
 
   return {
     failingBaselineCount: baselineResolution.failing.size,
-    fixed: [...fixed].sort(),
+    fixed: [...fixed].sort(compareOrdinal),
     inconclusiveBaselineResults: baselineResolution.inconclusive,
-    newRot: clean.failures.flatMap((result) => result.files).sort(),
+    newRot: clean.failures.flatMap((result) => result.files).sort(compareOrdinal),
     newRotResults: clean.failures,
     unattributedCleanResults: clean.unattributed,
   };
@@ -333,7 +340,7 @@ function printFailureResults(results: CheckResult[]): void {
 }
 
 async function main(): Promise<void> {
-  const testFiles = [...listTestFiles("src"), ...listTestFiles("cli"), ...listTestFiles("templates")].sort();
+  const testFiles = [...listTestFiles("src"), ...listTestFiles("cli"), ...listTestFiles("templates")].sort(compareOrdinal);
   const baseline = new Set<string>(
     JSON.parse(
       Deno.readTextFileSync("scripts/lint/test-typecheck-baseline.json"),

@@ -61,7 +61,7 @@ export async function makeTempFile(
 
   const prefix = options?.prefix ?? "tmp-";
   const suffix = options?.suffix ?? "";
-  const randomPart = Math.random().toString(36).substring(2, 10);
+  const randomPart = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
   const filename = `${prefix}${randomPart}${suffix}`;
   const tempPath = path.join(os.tmpdir(), filename);
 
@@ -87,7 +87,7 @@ export async function makeTempDirWithOptions(options?: {
 
   const baseDir = options?.dir ?? os.tmpdir();
   const prefix = options?.prefix ?? "tmp-";
-  const randomPart = Math.random().toString(36).substring(2, 10);
+  const randomPart = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
   const dirname = `${prefix}${randomPart}`;
   const tempPath = path.join(baseDir, dirname);
 

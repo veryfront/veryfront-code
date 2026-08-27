@@ -298,7 +298,14 @@ export function extensionPackageEntryPointPaths(
   addTarget(packageJson.module);
   addTarget(packageJson.types);
   addTarget(packageJson.exports);
-  return [...paths].toSorted();
+  return [...paths].toSorted(compareCodeUnits);
+}
+
+/** Code-unit ordering keeps output byte-stable across locales. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
 }
 
 export async function assertPackageEntryPointsExist(input: {
@@ -410,9 +417,10 @@ async function assertEmittedBareImportsAreDeclared(input: {
 
   const details = [...missing.entries()]
     .toSorted(([left], [right]) => left.localeCompare(right))
-    .map(([packageName, files]) =>
-      `  ${packageName} (imported by ${[...files].toSorted().join(", ")})`
-    )
+    .map(([packageName, files]) => {
+      const sortedFiles = [...files].toSorted(compareCodeUnits);
+      return `  ${packageName} (imported by ${sortedFiles.join(", ")})`;
+    })
     .join("\n");
   throw new Error(
     `${input.packageName} emits imports of npm packages that are not declared in its package.json dependencies, peerDependencies, or optionalDependencies:\n${details}\nDeclare them in the extension's deno.json imports so they are published as dependencies.`,
