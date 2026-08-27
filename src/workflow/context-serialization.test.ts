@@ -204,6 +204,28 @@ describe("serializeWorkflowContext", () => {
       assertStringIncludes(error.message, "symbol-keyed property");
     });
 
+    it("throws when strictContext would drop a non-enumerable symbol property", () => {
+      const value = {};
+      Object.defineProperty(value, Symbol("not-persisted"), {
+        value: "lost",
+      });
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({ value }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.value");
+      assertStringIncludes(error.message, "symbol-keyed property");
+    });
+
     it("throws when strictContext would drop enumerable named array properties", () => {
       const rows: unknown[] = [{ id: 1 }];
       Object.defineProperty(rows, "meta", {
@@ -314,6 +336,48 @@ describe("serializeWorkflowContext", () => {
       assertStringIncludes(error.message, "context.step.count");
       assertStringIncludes(error.message, "accessor property");
       assertEquals(getterReads, 1);
+    });
+
+    it("throws when strictContext would drop a non-enumerable property", () => {
+      const step = {};
+      Object.defineProperty(step, "required", {
+        value: 1,
+      });
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith(step),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.required");
+      assertStringIncludes(error.message, "non-enumerable property");
+    });
+
+    it("throws when strictContext would persist a null-prototype object as plain", () => {
+      const step = Object.create(null) as Record<string, unknown>;
+      step.value = 1;
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith(step),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step");
+      assertStringIncludes(error.message, "context.step (object)");
     });
 
     it("throws when strictContext would persist an array accessor as a data element", () => {

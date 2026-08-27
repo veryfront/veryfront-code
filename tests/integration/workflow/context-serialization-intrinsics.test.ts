@@ -113,6 +113,76 @@ describe("workflow context serialization with hostile ambient intrinsics", () =>
     }
   });
 
+  it("rejects strict object metadata losses when brand checks are unavailable", async () => {
+    const script = `
+      Object.defineProperty(globalThis, "caches", {
+        configurable: true,
+        value: {},
+      });
+      Object.defineProperty(globalThis, "WebSocketPair", {
+        configurable: true,
+        value: function WebSocketPair() {},
+      });
+
+      const { canIdentifyProxyWithoutHooks } = await import(
+        "./src/platform/compat/error-introspection.ts"
+      );
+      const { serializeWorkflowContext } = await import(
+        "./src/workflow/context-serialization.ts"
+      );
+
+      const hidden = {};
+      Object.defineProperty(hidden, "required", { value: 1 });
+      const hiddenSymbol = {};
+      Object.defineProperty(hiddenSymbol, Symbol("required"), { value: 1 });
+      const nullPrototype = Object.create(null);
+      nullPrototype.value = 1;
+
+      const failures = [];
+      for (const [name, value] of [
+        ["hidden", hidden],
+        ["hiddenSymbol", hiddenSymbol],
+        ["nullPrototype", nullPrototype],
+      ]) {
+        try {
+          serializeWorkflowContext(
+            { input: {}, step: { [name]: value } },
+            "run-edge-strict",
+            { strictContext: true },
+          );
+          failures.push({ name, message: "accepted" });
+        } catch (error) {
+          failures.push({ name, message: error instanceof Error ? error.message : String(error) });
+        }
+      }
+
+      console.log(JSON.stringify({ canIdentifyProxyWithoutHooks, failures }));
+    `;
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["eval", "--config=deno.json", script],
+      cwd: new URL("../../../", import.meta.url),
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const stderr = new TextDecoder().decode(output.stderr);
+    assertEquals(output.code, 0, stderr);
+    const result = JSON.parse(new TextDecoder().decode(output.stdout)) as {
+      canIdentifyProxyWithoutHooks: boolean;
+      failures: Array<{ name: string; message: string }>;
+    };
+
+    assertEquals(result.canIdentifyProxyWithoutHooks, false);
+    assertStringIncludes(result.failures[0]!.message, "strictContext");
+    assertStringIncludes(result.failures[0]!.message, "context.step.hidden.required");
+    assertStringIncludes(result.failures[0]!.message, "non-enumerable property");
+    assertStringIncludes(result.failures[1]!.message, "strictContext");
+    assertStringIncludes(result.failures[1]!.message, "context.step.hiddenSymbol");
+    assertStringIncludes(result.failures[1]!.message, "symbol-keyed property");
+    assertStringIncludes(result.failures[2]!.message, "strictContext");
+    assertStringIncludes(result.failures[2]!.message, "context.step.nullPrototype");
+    assertStringIncludes(result.failures[2]!.message, "object");
+  });
+
   it("rejects known non-plain built-ins in strict mode when brand checks are unavailable", async () => {
     const script = `
       Object.defineProperty(globalThis, "caches", {

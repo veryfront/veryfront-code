@@ -233,7 +233,8 @@ function isPlainObject(
   if (canIdentifyProxyWithoutHooks && isProxyWithoutHooks(value)) return false;
   try {
     const prototype = objectGetPrototypeOf(value);
-    return prototype === objectPrototype || prototype === null;
+    return prototype === objectPrototype ||
+      (!inspectPrototype && prototype === null);
   } catch {
     return false;
   }
@@ -517,7 +518,7 @@ function normalizeAndFindUnrepresentableValues(
     recordEnumerableSymbolKeys(value, path);
   };
 
-  const getEnumerableOwnStringKeysAndRecordSymbols = (
+  const getStrictObjectKeySnapshot = (
     value: JsonTraversalReference,
     path: string,
   ): {
@@ -530,7 +531,14 @@ function normalizeAndFindUnrepresentableValues(
     for (const ownKey of ownKeys) {
       const descriptor = objectGetOwnPropertyDescriptor(value, ownKey);
       if (typeof ownKey === "symbol") {
-        if (descriptor?.enumerable === true) recordLossy(path, "symbol-keyed property");
+        if (descriptor !== undefined) recordLossy(path, "symbol-keyed property");
+        continue;
+      }
+      if (descriptor !== undefined && descriptor.enumerable !== true) {
+        recordLossy(
+          `${path}.${redactPathSegment(ownKey)}`,
+          "non-enumerable property",
+        );
         continue;
       }
       if (descriptor?.enumerable === true) {
@@ -680,9 +688,10 @@ function normalizeAndFindUnrepresentableValues(
       }
 
       const result: NormalizedJsonObject = objectCreate(null);
-      const noBrandStrict = !canIdentifyProxyWithoutHooks && options.strictContext === true;
-      const keySnapshot = noBrandStrict
-        ? getEnumerableOwnStringKeysAndRecordSymbols(nested, path)
+      const canInspectStrictOwnKeys = options.strictContext === true &&
+        (!canIdentifyProxyWithoutHooks || !isProxyWithoutHooks(nested));
+      const keySnapshot = canInspectStrictOwnKeys
+        ? getStrictObjectKeySnapshot(nested, path)
         : { childKeys: objectKeys(nested), childDescriptors: undefined };
       const childKeys = keySnapshot.childKeys;
       for (let childIndex = 0; childIndex < childKeys.length; childIndex++) {
@@ -704,7 +713,7 @@ function normalizeAndFindUnrepresentableValues(
         );
         if (normalized !== OMIT_JSON_VALUE) result[childKey] = normalized;
       }
-      if (!noBrandStrict) recordEnumerableSymbolKeys(nested, path);
+      if (!canInspectStrictOwnKeys) recordEnumerableSymbolKeys(nested, path);
       // Prototype diagnostics are best-effort and run after the snapshot is
       // complete, so hostile metadata traps cannot change persistence output.
       if (
