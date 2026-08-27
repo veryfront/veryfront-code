@@ -251,6 +251,32 @@ describe("serializeWorkflowContext", () => {
       assertStringIncludes(error.message, "symbol-keyed property");
     });
 
+    it("throws when strictContext would restore a non-extensible value as extensible", () => {
+      for (
+        const value of [
+          Object.preventExtensions({}),
+          Object.seal({}),
+          Object.freeze({}),
+          Object.preventExtensions([]),
+        ]
+      ) {
+        const error = assertThrows(
+          () =>
+            serializeWorkflowContext(
+              contextWith({ value }),
+              "run-strict-context",
+              { strictContext: true },
+            ),
+          VeryfrontError,
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertStringIncludes(error.message, "strictContext");
+        assertStringIncludes(error.message, "context.step.<redacted>");
+        assertStringIncludes(error.message, "object extensibility");
+      }
+    });
+
     it("throws when strictContext would drop enumerable named array properties", () => {
       const rows: unknown[] = [{ id: 1 }];
       Object.defineProperty(rows, "meta", {

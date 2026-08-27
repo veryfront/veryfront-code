@@ -902,6 +902,54 @@ describe("MemoryBackend", () => {
       );
     });
 
+    it("uses the JSON persistence contract for non-strict approval decision data", async () => {
+      const approval: PendingApproval = {
+        id: "approval-json-decision",
+        nodeId: "review",
+        status: "pending",
+        message: "Review needed",
+        payload: {},
+        requestedAt: new Date(),
+      };
+      await backend.savePendingApproval("run-json-approval", approval);
+
+      assertEquals(
+        await backend.updateApproval("run-json-approval", approval.id, {
+          approved: true,
+          approver: "admin@example.com",
+          data: {
+            when: new Date("2026-01-01T00:00:00.000Z"),
+            missing: undefined,
+            ratio: Number.NaN,
+          },
+        }),
+        true,
+      );
+      assertEquals(
+        (await backend.getPendingApproval("run-json-approval", approval.id))?.decisionData,
+        { when: "2026-01-01T00:00:00.000Z", ratio: null },
+      );
+
+      const bigintApproval: PendingApproval = {
+        ...approval,
+        id: "approval-json-bigint",
+      };
+      await backend.savePendingApproval("run-json-bigint", bigintApproval);
+      await assertRejectsAsynchronously(
+        () =>
+          backend.updateApproval("run-json-bigint", bigintApproval.id, {
+            approved: true,
+            approver: "admin@example.com",
+            data: { value: 1n },
+          }),
+        "BigInt",
+      );
+      assertEquals(
+        (await backend.getPendingApproval("run-json-bigint", bigintApproval.id))?.status,
+        "pending",
+      );
+    });
+
     it("rejects strict approval decision data before mutating the approval", async () => {
       const strictBackend = new MemoryBackend({ strictContext: true });
       const approval: PendingApproval = {

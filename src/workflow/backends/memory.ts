@@ -751,9 +751,7 @@ export class MemoryBackend implements WorkflowBackend {
     let decisionData: unknown;
     if (decision.data !== undefined) {
       try {
-        decisionData = this.config.strictContext === true
-          ? persistedApprovalDecisionData(decision.data, runId, this.config)
-          : structuredClone(decision.data);
+        decisionData = persistedApprovalDecisionData(decision.data, runId, this.config);
       } catch (error) {
         return Promise.reject(error);
       }

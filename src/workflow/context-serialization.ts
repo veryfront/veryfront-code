@@ -41,6 +41,7 @@ const objectGetPrototypeOf = Object.getPrototypeOf;
 const mapSizeGet = objectGetOwnPropertyDescriptor(Map.prototype, "size")?.get;
 const objectHasOwn = Object.hasOwn;
 const objectIs = Object.is;
+const objectIsExtensible = Object.isExtensible;
 const objectKeys = Object.keys;
 const objectPrototype = Object.prototype;
 const objectToString = Object.prototype.toString;
@@ -492,6 +493,14 @@ function normalizeAndFindUnrepresentableValues(
     }
   };
 
+  const recordObjectExtensibility = (value: JsonTraversalReference, path: string) => {
+    try {
+      if (!objectIsExtensible(value)) recordLossy(path, "object extensibility");
+    } catch {
+      recordLossy(path, "uninspectable object extensibility");
+    }
+  };
+
   const recordArrayPropertiesFromOwnKeys = (
     value: JsonTraversalReference,
     path: string,
@@ -681,6 +690,9 @@ function normalizeAndFindUnrepresentableValues(
           );
           if (found.fatalCount > 0) break;
         }
+        if (options.strictContext === true && found.fatalCount === 0) {
+          recordObjectExtensibility(nested, path);
+        }
         if (options.strictContext !== true) recordEnumerableSymbolKeys(nested, path);
         return result;
       }
@@ -727,6 +739,9 @@ function normalizeAndFindUnrepresentableValues(
       }
       if (found.fatalCount === 0 && options.strictContext !== true) {
         recordEnumerableSymbolKeys(nested, path);
+      }
+      if (found.fatalCount === 0 && options.strictContext === true) {
+        recordObjectExtensibility(nested, path);
       }
       // Prototype diagnostics are best-effort and run after the snapshot is
       // complete, so hostile metadata traps cannot change persistence output.

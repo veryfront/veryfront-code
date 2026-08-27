@@ -2346,6 +2346,51 @@ describe("RedisBackend", () => {
       assertEquals((await backend.getRun("run-owner-cas"))?.status, "failed");
     });
 
+    it("checks stale conditional preconditions before surfacing strict serialization errors", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-cas:",
+        strictContext: true,
+      });
+      const runId = "run-strict-stale-cas";
+      await strictBackend.createRun(createTestRun(runId, {
+        status: "running",
+        workerId: "worker-new",
+      }));
+      const lossyPatch = {
+        context: { input: {}, step: { when: new Date(0) } },
+      };
+
+      assertEquals(
+        await strictBackend.updateRunIfStatus(runId, ["pending"], lossyPatch),
+        false,
+      );
+      assertEquals(
+        await strictBackend.updateRunIfStatusAndWorker(
+          runId,
+          ["running"],
+          "worker-old",
+          lossyPatch,
+        ),
+        false,
+      );
+      assertEquals(
+        await strictBackend.restoreRunStateIfStatus(
+          runId,
+          ["pending"],
+          { ...lossyPatch, nodeStates: {} },
+          "worker-new",
+        ),
+        false,
+      );
+      await assertRejects(
+        () => strictBackend.updateRunIfStatus(runId, ["running"], lossyPatch),
+        Error,
+        "strictContext",
+      );
+      assertEquals((await strictBackend.getRun(runId))?.context.step, undefined);
+    });
+
     it("rejects attempts to mutate immutable run identity and policy fields", async () => {
       const run = createTestRun("run-immutable-fields");
       await backend.createRun(run);
@@ -3210,6 +3255,29 @@ describe("RedisBackend", () => {
       assertEquals(stored.decidedAt, undefined);
       assertEquals(stored.decisionData, undefined);
       assertEquals(stored.reconciliationPending, undefined);
+    });
+
+    it("preserves strict serialization diagnostics when an approval is missing", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-missing-approval:",
+        strictContext: true,
+      });
+
+      let error: unknown;
+      try {
+        await strictBackend.updateApproval("run-missing-approval", "approval-missing", {
+          approved: true,
+          approver: "admin",
+          data: { when: new Date(0) },
+        });
+      } catch (caught) {
+        error = caught;
+      }
+      assertInstanceOf(error, Error);
+      assertStringIncludes(error.message, "Approval not found");
+      assertInstanceOf(error.cause, Error);
+      assertStringIncludes(error.cause.message, "strictContext");
     });
 
     it("preserves nested empty arrays in durable approval decision data", async () => {

@@ -1480,7 +1480,19 @@ export class RedisBackend implements WorkflowBackend {
   ): Promise<boolean> {
     assertWorkflowRunUpdate(patch);
     const client = await this.ensureClient();
-    const fields = this.serializeRunPatch(patch, runId);
+    let fields: Record<string, string>;
+    try {
+      fields = this.serializeRunPatch(patch, runId);
+    } catch (error) {
+      const current = await client.hgetall(this.runKey(runId));
+      if (
+        !expectedStatuses.includes(current.status as WorkflowStatus) ||
+        (expectedWorkerId !== undefined && current.workerId !== expectedWorkerId)
+      ) {
+        return false;
+      }
+      throw error;
+    }
     const fieldArgs = Object.entries(fields).flatMap(([field, value]) => [field, value]);
     const result = await client.eval(
       UPDATE_RUN_IF_STATUS_SCRIPT,
@@ -1803,7 +1815,10 @@ export class RedisBackend implements WorkflowBackend {
       } catch (error) {
         const approval = (await this.getApprovals(runId)).find(({ id }) => id === approvalId);
         if (approval === undefined) {
-          throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
+          throw RESOURCE_NOT_FOUND.create({
+            detail: `Approval not found: ${approvalId}`,
+            cause: error,
+          });
         }
         if (approval.status !== "pending") return false;
         throw error;
