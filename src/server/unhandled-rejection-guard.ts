@@ -26,6 +26,7 @@
  * @module server/unhandled-rejection-guard
  */
 
+import { runtimeProcess } from "#veryfront/platform/compat/process/runtime-process.ts";
 import { serverLogger } from "#veryfront/utils";
 
 /** Minimal view of the rejection event both Deno and browsers dispatch. */
@@ -38,6 +39,13 @@ interface GuardEventTarget {
   addEventListener(type: string, listener: (event: unknown) => void): void;
   removeEventListener(type: string, listener: (event: unknown) => void): void;
 }
+
+interface GuardProcessTarget {
+  on(type: "unhandledRejection", listener: (reason: unknown) => void): void;
+  off(type: "unhandledRejection", listener: (reason: unknown) => void): void;
+}
+
+type GuardTarget = GuardEventTarget | GuardProcessTarget;
 
 interface GuardLogger {
   error(message: string, context?: Record<string, unknown>): void;
@@ -68,7 +76,8 @@ export interface UnhandledRejectionGuardHandle {
   dispose(): void;
 }
 
-const EVENT_TYPE = "unhandledrejection";
+const EVENT_TARGET_TYPE = "unhandledrejection";
+const PROCESS_EVENT_TYPE = "unhandledRejection";
 
 /**
  * One listener per target, shared by every holder.
@@ -83,7 +92,7 @@ interface GuardLease {
   rejectionCount: number;
 }
 
-const guardedTargets = new WeakMap<GuardEventTarget, GuardLease>();
+const guardedTargets = new WeakMap<GuardTarget, GuardLease>();
 
 function describeReason(reason: unknown): { error: string; stack?: string } {
   if (reason instanceof Error) {
@@ -95,12 +104,40 @@ function describeReason(reason: unknown): { error: string; stack?: string } {
   return { error: String(reason) };
 }
 
-function resolveDefaultTarget(): GuardEventTarget | undefined {
-  const candidate = globalThis as Partial<GuardEventTarget>;
+function isEventTarget(target: GuardTarget): target is GuardEventTarget {
+  const candidate = target as Partial<GuardEventTarget>;
   return typeof candidate.addEventListener === "function" &&
-      typeof candidate.removeEventListener === "function"
-    ? candidate as GuardEventTarget
-    : undefined;
+    typeof candidate.removeEventListener === "function";
+}
+
+function resolveDefaultTarget(): GuardTarget | undefined {
+  const globalTarget = globalThis as Partial<GuardEventTarget>;
+  if (
+    typeof globalTarget.addEventListener === "function" &&
+    typeof globalTarget.removeEventListener === "function"
+  ) {
+    return globalTarget as GuardEventTarget;
+  }
+
+  // Node and Bun expose the fatal rejection hook through process events, not
+  // global EventTarget methods.
+  if (runtimeProcess) return runtimeProcess;
+}
+
+function subscribe(target: GuardTarget, listener: (event: unknown) => void): void {
+  if (isEventTarget(target)) {
+    target.addEventListener(EVENT_TARGET_TYPE, listener);
+    return;
+  }
+  target.on(PROCESS_EVENT_TYPE, listener);
+}
+
+function unsubscribe(target: GuardTarget, listener: (event: unknown) => void): void {
+  if (isEventTarget(target)) {
+    target.removeEventListener(EVENT_TARGET_TYPE, listener);
+    return;
+  }
+  target.off(PROCESS_EVENT_TYPE, listener);
 }
 
 const disposedHandle: UnhandledRejectionGuardHandle = Object.freeze({
@@ -118,7 +155,7 @@ const disposedHandle: UnhandledRejectionGuardHandle = Object.freeze({
 export function installUnhandledRejectionGuard(
   options: UnhandledRejectionGuardOptions = {},
 ): UnhandledRejectionGuardHandle {
-  const target = options.target ?? resolveDefaultTarget();
+  const target: GuardTarget | undefined = options.target ?? resolveDefaultTarget();
   if (!target) return disposedHandle;
 
   const logger = options.logger ?? guardLog;
@@ -131,7 +168,7 @@ export function installUnhandledRejectionGuard(
       holders: 1,
       rejectionCount: 0,
       listener: (event: unknown): void => {
-        const rejection = event as UnhandledRejectionEventLike;
+        const rejection = isEventTarget(target) ? event as UnhandledRejectionEventLike : undefined;
         // Suppress first. Deno terminates the process unless the default is
         // prevented, and a reason with a throwing toString, or a logger that
         // fails, must not be able to cost the process its containment.
@@ -144,7 +181,7 @@ export function installUnhandledRejectionGuard(
         created.rejectionCount++;
         try {
           logger.error("Contained an unhandled promise rejection", {
-            ...describeReason(rejection?.reason),
+            ...describeReason(rejection ? rejection.reason : event),
             rejectionCount: created.rejectionCount,
           });
         } catch {
@@ -153,7 +190,7 @@ export function installUnhandledRejectionGuard(
         }
       },
     };
-    target.addEventListener(EVENT_TYPE, created.listener);
+    subscribe(target, created.listener);
     guardedTargets.set(target, created);
     lease = created;
   }
@@ -169,7 +206,7 @@ export function installUnhandledRejectionGuard(
       released = true;
       held.holders--;
       if (held.holders > 0) return;
-      target.removeEventListener(EVENT_TYPE, held.listener);
+      unsubscribe(target, held.listener);
       if (guardedTargets.get(target) === held) guardedTargets.delete(target);
     },
   };
