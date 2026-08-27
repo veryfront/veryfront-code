@@ -2967,6 +2967,38 @@ export default config as const;
 
         assertEquals(mixedIriHost.message.includes("例.internal"), false);
         assertStringIncludes(mixedIriHost.message, "Failed [url]");
+
+        const iriUrlPath = await loadFailure(
+          "vf-config-iri-url-path-",
+          `throw new Error("Failed https://registry.internal/秘密/config.ts");\n`,
+        );
+
+        assertEquals(iriUrlPath.message.includes("秘密"), false);
+        assertStringIncludes(iriUrlPath.message, "Failed [url]");
+
+        const iriFilePath = await loadFailure(
+          "vf-config-iri-file-path-",
+          `throw new Error("Failed file:///home/alice/秘密/config.ts");\n`,
+        );
+
+        assertEquals(iriFilePath.message.includes("秘密"), false);
+        assertStringIncludes(iriFilePath.message, "Failed [path]");
+
+        const zeroSlashIri = await loadFailure(
+          "vf-config-zero-slash-iri-host-",
+          `throw new Error("Failed https:例え.internal/config.ts");\n`,
+        );
+
+        assertEquals(zeroSlashIri.message.includes("例え.internal"), false);
+        assertStringIncludes(zeroSlashIri.message, "Failed [url]");
+
+        const zeroSlashIriPath = await loadFailure(
+          "vf-config-zero-slash-iri-path-",
+          `throw new Error("Failed https:registry.internal/秘密/config.ts");\n`,
+        );
+
+        assertEquals(zeroSlashIriPath.message.includes("秘密"), false);
+        assertStringIncludes(zeroSlashIriPath.message, "Failed [url]");
       });
 
       it("redacts a URL tail that begins after a lone `)` and punctuation", async () => {
