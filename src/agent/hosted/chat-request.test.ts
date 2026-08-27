@@ -1559,6 +1559,57 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.messages[0]?.parts as unknown, expectedParts);
   });
 
+  it("carries signed durable task identity into the parsed service request", async () => {
+    const invocation = RuntimeAgentRunInvocationSchema.parse({
+      ...createRuntimeInvocation(),
+      taskId: "issue-27-veryfront-studio-agent-implementation",
+    });
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/control-plane/runs/run_root_1/stream", {
+        method: "POST",
+        headers: { "X-Veryfront-Run-Event-Token": "verified-event-token" },
+        body: JSON.stringify(invocation),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+        runtimeSource,
+      },
+    );
+
+    if (parsed instanceof Response) {
+      throw new Error("Expected parsed runtime invocation");
+    }
+
+    assertEquals(parsed.taskId, "issue-27-veryfront-studio-agent-implementation");
+  });
+
+  it("drops durable task identity without a verified server envelope", async () => {
+    const invocation = RuntimeAgentRunInvocationSchema.parse({
+      ...createRuntimeInvocation(),
+      taskId: "issue-27-veryfront-studio-agent-implementation",
+    });
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/control-plane/runs/run_root_1/stream", {
+        method: "POST",
+        body: JSON.stringify(invocation),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        runtimeSource,
+      },
+    );
+
+    if (parsed instanceof Response) {
+      throw new Error("Expected parsed runtime invocation");
+    }
+
+    assertEquals(parsed.serverEnvelopeVerified, undefined);
+    assertEquals(parsed.taskId, undefined);
+  });
+
   it("carries environment runtime target metadata from runtime invocations", () => {
     const baseInvocation = createRuntimeInvocation();
     const invocation = RuntimeAgentRunInvocationSchema.parse({
@@ -2381,5 +2432,34 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(await response.json(), {
       errorCode: "CONTROL_PLANE_AGENT_SOURCE_UNSUPPORTED",
     });
+  });
+
+  it("delegates source binding to an explicit dynamic service policy", async () => {
+    const requestedSources: unknown[] = [];
+    const branchSource = { type: "branch", branch: "main" } as const;
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        body: JSON.stringify({
+          ...createRuntimeInvocation(),
+          agentSource: branchSource,
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        runtimeSource: undefined,
+        verifyRuntimeSourceBinding: (requestedSource) => {
+          requestedSources.push(requestedSource);
+          return undefined;
+        },
+      },
+    );
+
+    if (parsed instanceof Response) {
+      throw new Error("Expected dynamically bound runtime invocation");
+    }
+    assertEquals(requestedSources, [branchSource]);
+    assertEquals(parsed.projectId, projectId);
   });
 });

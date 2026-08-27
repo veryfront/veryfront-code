@@ -13,7 +13,10 @@ import {
   type HostedChatRequest,
   hostedChatRequestSchema,
 } from "./chat-request.ts";
-import { RuntimeAgentRunInvocationSchema } from "../runtime/agent-invocation-contract.ts";
+import {
+  getRuntimeAgentRunInvocationSchema,
+  type RuntimeAgentSourceContext,
+} from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import {
   isRequestBodyTooLargeError,
@@ -21,6 +24,7 @@ import {
 } from "#veryfront/security/input-validation/limits.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import {
+  type HostedRuntimeSourceBindingError,
   type HostedRuntimeSourceIdentity,
   verifyHostedRuntimeSourceBinding,
 } from "./runtime-source-binding.ts";
@@ -84,6 +88,8 @@ export type ParsedHostedChatRequest = {
   upstreamParentConversationId: string | undefined;
   upstreamParentRunId: string | undefined;
   spawnedFromToolCallId: string | undefined;
+  /** Durable task identity supplied only by a signed runtime invocation. */
+  taskId?: string;
   model: string | undefined;
   allowDelegation: boolean | undefined;
   forwardedProps: HostedChatRequest["forwardedProps"];
@@ -112,6 +118,16 @@ export type ParseRuntimeAgentRunInvocationHostedChatRequestOptions =
   & ParseHostedChatRequestOptions
   & {
     runtimeSource: HostedRuntimeSourceIdentity | undefined;
+    /**
+     * Service-owned policy for adapters that resolve an immutable or branch
+     * source per invocation instead of serving one process-wide snapshot.
+     */
+    verifyRuntimeSourceBinding?: (
+      requestedSource: RuntimeAgentSourceContext,
+    ) =>
+      | HostedRuntimeSourceBindingError
+      | undefined
+      | Promise<HostedRuntimeSourceBindingError | undefined>;
   };
 
 async function parseRequestJson(request: Request): Promise<unknown | Response> {
@@ -583,7 +599,7 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
   const requestBody = await parseRequestJson(request);
   if (requestBody instanceof Response) return requestBody;
 
-  const invocation = RuntimeAgentRunInvocationSchema.safeParse(requestBody);
+  const invocation = getRuntimeAgentRunInvocationSchema().safeParse(requestBody);
   if (!invocation.success) {
     return createValidationErrorResponse({
       messagePrefix: "Invalid runtime agent invocation",
@@ -613,10 +629,9 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     return parsedRequest;
   }
 
-  const sourceBindingError = verifyHostedRuntimeSourceBinding(
-    options.runtimeSource,
-    invocation.data.agentSource,
-  );
+  const sourceBindingError = options.verifyRuntimeSourceBinding
+    ? await options.verifyRuntimeSourceBinding(invocation.data.agentSource)
+    : verifyHostedRuntimeSourceBinding(options.runtimeSource, invocation.data.agentSource);
   if (sourceBindingError) {
     return Response.json(
       { errorCode: sourceBindingError.errorCode },
@@ -644,6 +659,9 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
       { errorCode: "CONTROL_PLANE_AUTH_REQUIRED" },
       { status: 403 },
     );
+  }
+  if (verifiedRequest.serverEnvelopeVerified === true && invocation.data.taskId) {
+    verifiedRequest.taskId = invocation.data.taskId;
   }
   return verifiedRequest;
 }

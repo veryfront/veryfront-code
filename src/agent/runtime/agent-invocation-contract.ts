@@ -33,6 +33,11 @@ export const RuntimeAgentRunIdSchema = lazySchema(getRuntimeAgentRunIdSchema);
 
 export const getRuntimeAgentToolCallIdSchema = defineSchema((v) => v.string().min(1).max(128));
 
+/** Schema for durable runtime task identity. */
+export const getRuntimeAgentTaskIdSchema = defineSchema((v) =>
+  v.string().min(1).max(200).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/)
+);
+
 /** Schema for runtime agent tool call ID.
  * @deprecated Use getRuntimeAgentToolCallIdSchema()
  */
@@ -346,6 +351,7 @@ export const getRuntimeAgentCredentialsSchema = defineSchema((v) =>
 export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
   v.object({
     run: getRuntimeAgentRunContextSchema(),
+    taskId: getRuntimeAgentTaskIdSchema().optional(),
     messages: v.array(v.unknown()).default([]),
     tools: v.array(getRuntimeAgentToolSchema()).max(50).default([]),
     context: v.array(getRuntimeAgentContextItemSchema()).max(10).default([]).refine(
@@ -423,6 +429,7 @@ export type RuntimeAgentControlPlaneStreamRequest = {
   agentId: RuntimeAgentRunContext["agentId"];
   threadId: RuntimeAgentRunContext["conversationId"];
   runId: RuntimeAgentRunContext["runId"];
+  taskId?: string;
   parentRunId?: Exclude<RuntimeAgentRunContext["parentRunId"], null | undefined>;
   messages: RuntimeAgentRunInvocation["messages"];
   tools: RuntimeAgentRunInvocation["tools"];
@@ -445,6 +452,7 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
     agentId: input.run.agentId,
     threadId: input.run.conversationId,
     runId: input.run.runId,
+    ...(input.taskId ? { taskId: input.taskId } : {}),
     ...(input.run.parentRunId ? { parentRunId: input.run.parentRunId } : {}),
     messages: input.messages,
     tools: input.tools,

@@ -18,6 +18,7 @@ import {
   getRuntimeAgentCredentialsSchema,
   getRuntimeAgentSourceContextSchema,
   getRuntimeAgentTargetKindSchema,
+  getRuntimeAgentTaskIdSchema,
   type RuntimeAgentSourceContext,
   validateRuntimeAgentSourceTargetBinding,
   validateRuntimeAgentTargetSelection,
@@ -70,6 +71,7 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
     agentId: getAgentIdSchema(),
     threadId: v.string().uuid(),
     runId: getRunIdSchema(),
+    taskId: getRuntimeAgentTaskIdSchema().optional(),
     parentRunId: getRunIdSchema().optional(),
     state: v.unknown().optional(),
     messages: v.array(
@@ -402,6 +404,7 @@ export function toRuntimeRunAgentInput(
   return {
     threadId: input.threadId,
     runId: input.runId,
+    ...(input.taskId ? { taskId: input.taskId } : {}),
     ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
     ...(input.state !== undefined ? { state: input.state } : {}),
     ...(input.allowDelegation !== undefined ? { allowDelegation: input.allowDelegation } : {}),
@@ -431,6 +434,7 @@ export type { RuntimeAgentSourceContext };
 export type RuntimeInjectedTool = InferSchema<ReturnType<typeof getRuntimeInjectedToolSchema>>;
 export type RuntimeContextItem = AgUiRuntimeContextItem;
 export type RuntimeRunAgentInput = AgUiRuntimeRequest & {
+  taskId?: string;
   allowDelegation?: boolean;
 };
 export type InternalAgentStreamRequest = InferSchema<

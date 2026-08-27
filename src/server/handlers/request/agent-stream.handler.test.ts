@@ -656,7 +656,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(discoveryCalls, 0);
   });
 
-  it("accepts canonical runtime invocation payloads from the API executor", async () => {
+  it("accepts canonical runtime invocations with durable task identity", async () => {
     let streamContext: Record<string, unknown> | undefined;
     let streamMessages: Array<Record<string, unknown>> | undefined;
     let injectedToolSchema: unknown;
@@ -735,6 +735,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
           runtimeTargetBranchId: "50000000-5000-4000-8000-500000000001",
         },
       },
+      taskId: "issue-27-veryfront-studio-agent-implementation",
       agentSource: { type: "branch", branch: "main" },
       messages: [
         {
