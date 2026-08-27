@@ -1981,17 +1981,18 @@ const SCHEME_URL = new RegExp(
   "gu",
 );
 // The ASCII-tail rule above deliberately ends before raw IRI characters. If
-// the authority itself starts with one, however, there is no completed ASCII
-// host prefix for that rule to redact. Fail closed on the whitespace-delimited
-// token so an internationalized hostname cannot fall through to the path
-// passes and reach the diagnostic. This runs after the file-URL pass, which
-// keeps local file URLs classified as paths.
+// the authority itself contains one, however, the completed ASCII prefix is
+// not the complete host. Fail closed on the whitespace-delimited token so an
+// internationalized hostname cannot fall through to the path passes and reach
+// the diagnostic. This runs after the file-URL pass, which keeps local file
+// URLs classified as paths.
 //
-// An ASCII authority followed by Unicode does not match this fallback. The
-// normal rule handles that shape and preserves the following prose, which is
-// the no-space boundary this fallback must not undo.
+// Unicode after the first slash does not match this fallback. The normal rule
+// handles that shape and preserves the following prose, which is the no-space
+// boundary this fallback must not undo.
 const NON_ASCII_AUTHORITY_URL = new RegExp(
-  String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?[^\x00-\x7F][^\s"']*`,
+  String
+    .raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?(?=[^\s"/]{0,512}[^\x00-\x7F])[^\s"']*`,
   "gu",
 );
 // Avoid a second generic scheme scan for ordinary ASCII diagnostics. Without

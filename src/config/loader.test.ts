@@ -2959,6 +2959,14 @@ export default config as const;
 
         assertEquals(iriHost.message.includes("例え.internal"), false);
         assertStringIncludes(iriHost.message, "Failed [url]");
+
+        const mixedIriHost = await loadFailure(
+          "vf-config-mixed-iri-host-",
+          `throw new Error("Failed https://a例.internal/config.ts");\n`,
+        );
+
+        assertEquals(mixedIriHost.message.includes("例.internal"), false);
+        assertStringIncludes(mixedIriHost.message, "Failed [url]");
       });
 
       it("redacts a URL tail that begins after a lone `)` and punctuation", async () => {
