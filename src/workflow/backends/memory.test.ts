@@ -377,7 +377,7 @@ describe("MemoryBackend", () => {
             context: { input: {}, total: 1n },
           })),
         Error,
-        "context.total",
+        "context.<redacted>",
       );
       assertEquals(await backend.getRun("run-fatal-context"), null);
     });
@@ -900,6 +900,36 @@ describe("MemoryBackend", () => {
         "Looks good!",
         "a losing decision must not overwrite the recorded comment",
       );
+    });
+
+    it("rejects strict approval decision data before mutating the approval", async () => {
+      const strictBackend = new MemoryBackend({ strictContext: true });
+      const approval: PendingApproval = {
+        id: "approval-strict-decision",
+        nodeId: "review",
+        status: "pending",
+        message: "Review needed",
+        payload: {},
+        requestedAt: new Date(),
+      };
+      await strictBackend.savePendingApproval("run-strict-approval", approval);
+
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.updateApproval("run-strict-approval", approval.id, {
+            approved: true,
+            approver: "admin@example.com",
+            data: { when: new Date(0) },
+          }),
+        "strictContext",
+      );
+
+      const stored = await strictBackend.getPendingApproval("run-strict-approval", approval.id);
+      assertEquals(stored?.status, "pending");
+      assertEquals(stored?.decidedBy, undefined);
+      assertEquals(stored?.decidedAt, undefined);
+      assertEquals(stored?.decisionData, undefined);
+      assertEquals(stored?.reconciliationPending, undefined);
     });
 
     it("should condition approval appends on owner and patch notification metadata", async () => {

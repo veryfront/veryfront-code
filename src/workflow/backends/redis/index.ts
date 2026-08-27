@@ -1790,7 +1790,14 @@ export class RedisBackend implements WorkflowBackend {
     const hasComment = decision.comment !== undefined;
     const hasData = decision.data !== undefined;
     const decisionData = hasData
-      ? JSON.parse(serializeWorkflowJson(decision.data, "approval decision data", runId))
+      ? JSON.parse(
+        serializeWorkflowJson(
+          decision.data,
+          "approval decision data",
+          runId,
+          { strictContext: this.config.strictContext },
+        ),
+      )
       : undefined;
     // Atomic find-by-id + pending-precondition + LSET (see UPDATE_APPROVAL_SCRIPT).
     // decidedAt is computed here so the stored value is deterministic and does

@@ -1912,7 +1912,7 @@ describe("RedisBackend", () => {
       await assertRejects(
         () => backend.createRun(run),
         Error,
-        "context.input.total",
+        "context.input.<redacted>",
       );
       assertEquals(await backend.getRun(run.id), null);
     });
@@ -2207,7 +2207,7 @@ describe("RedisBackend", () => {
             context: { input: {}, step: output },
           }),
         Error,
-        "context.step.total",
+        "context.step.<redacted>",
       );
       const stored = await backend.getRun(runId);
       assertEquals(stored?.output, undefined);
@@ -2572,7 +2572,7 @@ describe("RedisBackend", () => {
             nodeStates: {},
           }),
         Error,
-        "checkpoint.context.step.total",
+        "checkpoint.context.step.<redacted>",
       );
       assertEquals(await backend.getCheckpoints(runId), []);
     });
@@ -2706,7 +2706,7 @@ describe("RedisBackend", () => {
       await assertRejects(
         () => operation,
         Error,
-        "checkpoint.context.step.total",
+        "checkpoint.context.step.<redacted>",
       );
       assertEquals(await backend.getCheckpoints(runId), []);
     });
@@ -3177,6 +3177,39 @@ describe("RedisBackend", () => {
       assertEquals(stored.decidedBy, "admin");
       assertEquals(stored.comment, "looks good");
       assertEquals(stored.decisionData, { confirmed: true });
+    });
+
+    it("rejects strict approval decision data before mutating the approval", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict:",
+        strictContext: true,
+      });
+      await strictBackend.createRun(createTestRun("run-ap-strict-decision"));
+      await strictBackend.savePendingApproval(
+        "run-ap-strict-decision",
+        makeApproval("ap-strict-decision"),
+      );
+
+      await assertRejects(
+        () =>
+          strictBackend.updateApproval("run-ap-strict-decision", "ap-strict-decision", {
+            approved: true,
+            approver: "admin",
+            data: { when: new Date(0) },
+          }),
+        Error,
+        "strictContext",
+      );
+
+      const stored = JSON.parse(
+        mockRedis.lists.get("strict:schema-v1:approvals:run-ap-strict-decision")![0]!,
+      );
+      assertEquals(stored.status, "pending");
+      assertEquals(stored.decidedBy, undefined);
+      assertEquals(stored.decidedAt, undefined);
+      assertEquals(stored.decisionData, undefined);
+      assertEquals(stored.reconciliationPending, undefined);
     });
 
     it("preserves nested empty arrays in durable approval decision data", async () => {

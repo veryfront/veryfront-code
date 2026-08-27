@@ -89,6 +89,14 @@ function persistedCheckpointContext(
   return jsonParse(serializeWorkflowJson(context, "checkpoint.context", runId, options));
 }
 
+function persistedApprovalDecisionData(
+  data: unknown,
+  runId: string,
+  options: WorkflowJsonSerializationOptions,
+): unknown {
+  return jsonParse(serializeWorkflowJson(data, "approval decision data", runId, options));
+}
+
 class ObservationFeed implements AsyncIterable<WorkflowRunObservedState> {
   readonly #values: WorkflowRunObservedState[] = [];
   readonly #waiters: Array<{
@@ -740,7 +748,16 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.resolve(false);
     }
 
-    const decisionData = decision.data === undefined ? undefined : structuredClone(decision.data);
+    let decisionData: unknown;
+    if (decision.data !== undefined) {
+      try {
+        decisionData = this.config.strictContext === true
+          ? persistedApprovalDecisionData(decision.data, runId, this.config)
+          : structuredClone(decision.data);
+      } catch (error) {
+        return Promise.reject(error);
+      }
+    }
     logger.debug("Updating approval", { approvalId, decision });
     approval.status = decision.approved ? "approved" : "rejected";
     approval.decidedBy = decision.approver;
