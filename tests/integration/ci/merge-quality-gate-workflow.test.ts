@@ -101,19 +101,43 @@ describe("merge quality gate workflow", () => {
     );
   });
 
+  it("shows merge-queue CI status without including release failures in the README badge", async () => {
+    const readme = await readRepoFile("README.md");
+
+    assertStringIncludes(
+      readme,
+      "actions/workflows/cicd.yml/badge.svg?event=merge_group",
+    );
+    assertEquals(
+      readme.includes("actions/workflows/cicd.yml/badge.svg?branch=main"),
+      false,
+    );
+  });
+
   it("always reads every required dependency result", async () => {
     const gate = await readMergeGate();
     const step = gateStep(gate);
 
     assertEquals(gate.needs, REQUIRED_DEPENDENCIES);
-    assertEquals(
-      gate.if,
-      "${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}",
-    );
+    assertEquals(gate.if, "${{ always() }}");
     assertEquals(
       asRecord(step.env, "merge quality gate result env"),
       RESULT_ENV,
     );
+  });
+
+  it("blocks every release path on the complete merge correctness gate", async () => {
+    const workflow = await readWorkflow();
+    const jobs = asRecord(workflow.jobs, "cicd workflow jobs");
+
+    for (const jobName of ["prerelease", "release"] as const) {
+      const job = asRecord(jobs[jobName], `${jobName} job`);
+      assert(Array.isArray(job.needs), `${jobName} needs must be an array`);
+      assert(
+        job.needs.includes("quality-gate-merge"),
+        `${jobName} must wait for the complete merge correctness gate`,
+      );
+    }
   });
 
   it("preserves all required coverage shards, the unit sentinel, and the floor", async () => {

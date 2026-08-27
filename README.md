@@ -1,6 +1,6 @@
 # Veryfront Code
 
-[![CI/CD](https://github.com/veryfront/veryfront-code/actions/workflows/cicd.yml/badge.svg?branch=main)](https://github.com/veryfront/veryfront-code/actions/workflows/cicd.yml)
+[![CI](https://github.com/veryfront/veryfront-code/actions/workflows/cicd.yml/badge.svg?event=merge_group)](https://github.com/veryfront/veryfront-code/actions/workflows/cicd.yml?query=event%3Amerge_group)
 [![npm version](https://badge.fury.io/js/veryfront.svg)](https://www.npmjs.com/package/veryfront)
 [![codecov](https://codecov.io/gh/veryfront/veryfront-code/branch/main/graph/badge.svg)](https://codecov.io/gh/veryfront/veryfront-code)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)

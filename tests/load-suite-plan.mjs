@@ -19,6 +19,7 @@ export function loadSuitePlan({
   patterns = [],
   include = [],
   exclude = [],
+  shard,
   cwd = process.cwd(),
 }) {
   const args = [
@@ -31,6 +32,7 @@ export function loadSuitePlan({
     `--root=${cwd}`,
     ...include.map((pattern) => `--include=${pattern}`),
     ...exclude.map((pattern) => `--exclude=${pattern}`),
+    ...(shard ? [`--shard=${shard}`] : []),
     ...(patterns.length > 0 ? ["--", ...patterns] : []),
   ];
   const result = spawnSync("deno", args, {

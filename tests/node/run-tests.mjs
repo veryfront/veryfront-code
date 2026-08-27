@@ -57,6 +57,7 @@ const envExcludePatterns = (process.env.NODE_TEST_EXCLUDE || process.env.VF_TEST
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
+const externalShard = process.env.NODE_TEST_SHARD || process.env.VF_TEST_SHARD || undefined;
 
 function selectedTestFiles() {
   const files = loadSuitePlan({
@@ -64,6 +65,7 @@ function selectedTestFiles() {
     patterns,
     include: includePatterns,
     exclude: envExcludePatterns,
+    shard: externalShard,
   });
   if (files.length === 0) {
     console.error(

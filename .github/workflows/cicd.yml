@@ -130,9 +130,14 @@ jobs:
 
   tests-node:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [npm-compatibility-artifact]
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    name: tests (node)
+    name: "tests (node shard ${{ matrix.shard }}/2)"
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -145,11 +150,40 @@ jobs:
         with:
           node-version: "24"
           package-manager-cache: false
-      - name: Run Node runtime suite
-        run: deno task test:node
+      - name: Download npm runtime workspace
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: npm-runtime-workspace-${{ github.sha }}
+          path: dist/npm-runtime-workspace
+      - name: Restore npm runtime workspace
+        run: |
+          tar -xzf dist/npm-runtime-workspace/npm-runtime-workspace.tar.gz
+          mkdir -p node_modules
+      - name: Start Node shard timer
+        id: timer
+        run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+      - name: Run Node runtime shard
+        env:
+          VF_TEST_SHARD: ${{ matrix.shard }}/2
+        run: node ./tests/node/run-tests.mjs --suite=runtime:node
+      - name: Report Node shard duration
+        if: ${{ always() }}
+        env:
+          SHARD: ${{ matrix.shard }}/2
+          STARTED_AT: ${{ steps.timer.outputs.started_at }}
+        run: |
+          case "$STARTED_AT" in
+            ''|*[!0-9]*)
+              echo "Node shard ${SHARD} did not start" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
+          duration_seconds=$(($(date +%s) - STARTED_AT))
+          echo "Node shard ${SHARD}: ${duration_seconds}s" >> "$GITHUB_STEP_SUMMARY"
 
   tests-bun:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [npm-compatibility-artifact]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     name: tests (bun)
@@ -168,8 +202,17 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: "1.3.6"
+      - name: Download npm runtime workspace
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: npm-runtime-workspace-${{ github.sha }}
+          path: dist/npm-runtime-workspace
+      - name: Restore npm runtime workspace
+        run: |
+          tar -xzf dist/npm-runtime-workspace/npm-runtime-workspace.tar.gz
+          mkdir -p node_modules
       - name: Run Bun runtime suite
-        run: deno task test:bun
+        run: node --test tests/bun/runner-args.test.mjs tests/bun/workspace-packages.test.mjs && node ./tests/bun/run-tests.mjs --suite=runtime:bun
 
   npm-compatibility-artifact:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -178,6 +221,8 @@ jobs:
     name: npm compatibility artifact
     outputs:
       build_duration_seconds: ${{ steps.build.outputs.build_duration_seconds }}
+      runtime_workspace_archive_bytes: ${{ steps.runtime-workspace.outputs.archive_bytes }}
+      runtime_workspace_archive_duration_seconds: ${{ steps.runtime-workspace.outputs.archive_duration_seconds }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -203,12 +248,27 @@ jobs:
           deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=npm,tar \
             scripts/ci/npm-compatibility-artifact.ts pack npm dist/npm-compatibility "${GITHUB_SHA}"
           echo "build_duration_seconds=$(($(date +%s) - started_at))" >> "$GITHUB_OUTPUT"
+      - name: Archive npm runtime workspace
+        id: runtime-workspace
+        run: |
+          started_at=$(date +%s)
+          tar -cf - npm | gzip -1 > dist/npm-runtime-workspace.tar.gz
+          echo "archive_bytes=$(wc -c < dist/npm-runtime-workspace.tar.gz | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          echo "archive_duration_seconds=$(($(date +%s) - started_at))" >> "$GITHUB_OUTPUT"
       - name: Upload tested npm compatibility artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: npm-compatibility-${{ github.sha }}
           path: dist/npm-compatibility
           retention-days: 30
+          overwrite: true
+      - name: Upload npm runtime workspace
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-runtime-workspace-${{ github.sha }}
+          path: dist/npm-runtime-workspace.tar.gz
+          retention-days: 1
+          compression-level: 0
           overwrite: true
 
   tests-runtime-critical-flow:
@@ -650,7 +710,7 @@ jobs:
       - tests-bun
       - tests-binary-e2e
       - tests-e2e-rsc-browser
-    if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
+    if: ${{ always() }}
     steps:
       - name: Require merge correctness dependencies
         env:
@@ -787,7 +847,10 @@ jobs:
         if: ${{ success() }}
         env:
           BUILD_DURATION_SECONDS: ${{ needs.npm-compatibility-artifact.outputs.build_duration_seconds }}
-          LEGACY_BUILD_COUNT: "5"
+          RUNTIME_WORKSPACE_ARCHIVE_BYTES: ${{ needs.npm-compatibility-artifact.outputs.runtime_workspace_archive_bytes }}
+          RUNTIME_WORKSPACE_ARCHIVE_DURATION_SECONDS: ${{ needs.npm-compatibility-artifact.outputs.runtime_workspace_archive_duration_seconds }}
+          LEGACY_BUILD_COUNT: "7"
+          PREVIOUS_BUILD_COUNT: "3"
           CANONICAL_BUILD_COUNT: "1"
         run: |
           case "$BUILD_DURATION_SECONDS" in
@@ -796,20 +859,34 @@ jobs:
               exit 1
               ;;
           esac
+          for metric_name in RUNTIME_WORKSPACE_ARCHIVE_BYTES RUNTIME_WORKSPACE_ARCHIVE_DURATION_SECONDS; do
+            case "${!metric_name}" in
+              ''|*[!0-9]*)
+                echo "::error::Missing numeric ${metric_name}"
+                exit 1
+                ;;
+            esac
+          done
           before=$(awk -v seconds="$BUILD_DURATION_SECONDS" -v count="$LEGACY_BUILD_COUNT" \
+            'BEGIN { printf "%.2f", seconds * count / 60 }')
+          previous=$(awk -v seconds="$BUILD_DURATION_SECONDS" -v count="$PREVIOUS_BUILD_COUNT" \
             'BEGIN { printf "%.2f", seconds * count / 60 }')
           after=$(awk -v seconds="$BUILD_DURATION_SECONDS" -v count="$CANONICAL_BUILD_COUNT" \
             'BEGIN { printf "%.2f", seconds * count / 60 }')
-          saved=$(awk -v before="$before" -v after="$after" \
-            'BEGIN { printf "%.2f", before - after }')
+          incremental_saved=$(awk -v previous="$previous" -v after="$after" \
+            'BEGIN { printf "%.2f", previous - after }')
+          runtime_workspace_mib=$(awk -v bytes="$RUNTIME_WORKSPACE_ARCHIVE_BYTES" \
+            'BEGIN { printf "%.2f", bytes / 1024 / 1024 }')
           {
             echo "### Canonical npm build reuse"
             echo
             echo "Measured producer duration: ${BUILD_DURATION_SECONDS}s"
-            echo "Estimate basis: five current npm build consumers (three runtime critical-flow jobs and two npm install-smoke jobs)"
-            echo "Estimated before: ${before} npm build runner-minutes"
-            echo "Estimated after: ${after} npm build runner-minutes"
-            echo "Estimated savings: ${saved} npm build runner-minutes"
+            echo "Estimate basis: seven legacy npm build sites (three runtime critical-flow jobs, two npm install-smoke jobs, Node tests, and Bun tests)"
+            echo "Legacy independent builds: ${before} npm build runner-minutes"
+            echo "Previous partial reuse: ${previous} npm build runner-minutes"
+            echo "Canonical build: ${after} npm build runner-minutes"
+            echo "Incremental savings: ${incremental_saved} npm build runner-minutes"
+            echo "Measured runtime workspace archive: ${runtime_workspace_mib} MiB in ${RUNTIME_WORKSPACE_ARCHIVE_DURATION_SECONDS}s"
           } >> "$GITHUB_STEP_SUMMARY"
 
   tests-sentry-runtime-packages:
@@ -1115,11 +1192,8 @@ jobs:
   prerelease:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'false' }}
     needs: [
-      ci,
-      tests,
+      quality-gate-merge,
       quality-gate-artifact,
-      tests-binary-e2e,
-      tests-npm-install-smoke,
       tests-sentry-runtime-packages,
       tests-windows-localhost,
       build-binaries,
@@ -1245,12 +1319,8 @@ jobs:
   release:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.outputs.is_stable == 'true' && needs.version-check.outputs.stable_release_requested == 'true' }}
     needs: [
-      ci,
-      tests,
-      coverage,
+      quality-gate-merge,
       quality-gate-artifact,
-      tests-binary-e2e,
-      tests-npm-install-smoke,
       tests-sentry-runtime-packages,
       tests-windows-localhost,
       build-binaries,

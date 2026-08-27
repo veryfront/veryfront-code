@@ -25,7 +25,7 @@ import {
   hasRuntimeGuardedDenoHeader,
   isDenoDependentTestSource,
 } from "./test-file-utils.mjs";
-import { validateSuitePlan } from "./load-suite-plan.mjs";
+import { loadSuitePlan, validateSuitePlan } from "./load-suite-plan.mjs";
 
 /** The files the shared list exists to exclude. */
 const DENO_ONLY_FILES = [
@@ -43,6 +43,23 @@ const ELIGIBLE_FILES = [
 ];
 
 describe("runtime test filters", () => {
+  it("keeps external runtime shards complete and disjoint", () => {
+    const full = loadSuitePlan({ suite: "runtime:node" });
+    const first = loadSuitePlan({
+      suite: "runtime:node",
+      shard: "1/2",
+    });
+    const second = loadSuitePlan({
+      suite: "runtime:node",
+      shard: "2/2",
+    });
+
+    assert(first.length > 0 && second.length > 0);
+    assertEquals(new Set([...first, ...second]).size, full.length);
+    assertEquals([...new Set([...first, ...second])].sort(), [...full].sort());
+    assertEquals(first.some((file) => second.includes(file)), false);
+  });
+
   it("fails loudly when Node filters select no files", async () => {
     const output = await new Deno.Command("node", {
       args: [
