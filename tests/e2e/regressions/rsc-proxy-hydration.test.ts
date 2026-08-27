@@ -7,7 +7,6 @@ import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import {
   captureBrowserDiagnostics,
-  findHydrationOrCspFailures,
   getBrowserDiagnosticMessages,
   launchChromium,
 } from "../../_helpers/playwright.ts";
@@ -30,6 +29,7 @@ const FRAGMENT_LAYOUT_SOURCE =
           }`;
 
 const LOCAL_RSC_CONFIG_SOURCE = `export default { experimental: { rsc: true } };`;
+const LOCAL_SSR_CONFIG_SOURCE = `export default { experimental: { rsc: false } };`;
 
 const PROXY_MODE_CONFIG_SOURCE = `export default {
             experimental: { rsc: true },
@@ -112,6 +112,53 @@ export default function Page() {
     >
       Count: {count}
     </button>
+  );
+}
+`,
+  );
+}
+
+async function writeSsrCounterApp(projectDir: string): Promise<void> {
+  await writeTextFile(
+    join(projectDir, "veryfront.config.js"),
+    LOCAL_SSR_CONFIG_SOURCE,
+  );
+
+  await remove(join(projectDir, "app"), { recursive: true });
+  await remove(join(projectDir, "pages"), { recursive: true });
+
+  await mkdir(join(projectDir, "pages"), { recursive: true });
+  await writeTextFile(
+    join(projectDir, "pages", "index.tsx"),
+    `import { useEffect, useState } from "react";
+
+interface PageProps {
+  serverMessage: string;
+}
+
+export function getServerData() {
+  return { props: { serverMessage: "SSR ready" } };
+}
+
+export default function Page({ serverMessage }: PageProps) {
+  const [count, setCount] = useState(0);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
+
+  return (
+    <main>
+      <p id="server-message">{serverMessage}</p>
+      <button
+        id="counter"
+        data-hydrated={hydrated ? "yes" : "no"}
+        onClick={() => setCount((value) => value + 1)}
+      >
+        Count: {count}
+      </button>
+    </main>
   );
 }
 `,
@@ -476,7 +523,7 @@ async function assertPreviewChatStyling(
 }
 
 describe(
-  "RSC Hydration Browser Tests",
+  "RSC and SSR Browser Rendering",
   { sanitizeOps: false, sanitizeResources: false },
   () => {
     afterAll(async () => {
@@ -529,10 +576,70 @@ describe(
               expectedModulePath: "/_veryfront/fs/",
             });
 
-            const hydrationErrors = findHydrationOrCspFailures(
-              getBrowserDiagnosticMessages(diagnostics),
+            assertEquals(getBrowserDiagnosticMessages(diagnostics), []);
+          } finally {
+            await browserContext.close();
+          }
+        });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    it("server-renders and hydrates an SSR client page without browser errors", async () => {
+      const browser = await launchChromium();
+      if (!browser) return;
+
+      try {
+        await withTestContext("ssr-local-browser-rendering", async (context) => {
+          await writeSsrCounterApp(context.projectDir);
+
+          const port = await context.allocatePort();
+          const controller = new AbortController();
+          const server = await startProductionServer({
+            projectDir: context.projectDir,
+            port,
+            bindAddress: "127.0.0.1",
+            signal: controller.signal,
+            defaultProjectSlug: context.projectId,
+            defaultProjectId: context.projectId,
+            localProjects: { [context.projectId]: context.projectDir },
+          });
+          context.trackResource(server);
+          await server.ready;
+          await registerTailwindExtension();
+          await waitForReady(port);
+
+          const url = `http://127.0.0.1:${port}/`;
+          const serverResponse = await fetch(url);
+          assertEquals(serverResponse.status, 200);
+          const serverHtml = await serverResponse.text();
+          assertEquals(serverHtml.includes("SSR ready"), true);
+          assertEquals(
+            serverHtml.includes('id="counter" data-hydrated="no"'),
+            true,
+          );
+          assertEquals(serverHtml.includes("Count:"), true);
+
+          const browserContext = await browser.newContext();
+          const page = await browserContext.newPage();
+          const diagnostics = captureBrowserDiagnostics(page);
+
+          try {
+            const response = await page.goto(url);
+            assertEquals(response?.status(), 200);
+            await page.waitForSelector('#counter[data-hydrated="yes"]', {
+              timeout: 60_000,
+            });
+            assertEquals((await page.textContent("#counter"))?.trim(), "Count: 0");
+
+            await page.click("#counter");
+            await page.waitForFunction(
+              () => document.querySelector("#counter")?.textContent?.trim() === "Count: 1",
             );
-            assertEquals(hydrationErrors.length, 0);
+            assertEquals((await page.textContent("#counter"))?.trim(), "Count: 1");
+
+            assertEquals(getBrowserDiagnosticMessages(diagnostics), []);
           } finally {
             await browserContext.close();
           }
@@ -591,10 +698,7 @@ describe(
                 expectedModulePath: "/_veryfront/rsc/module?",
               });
 
-              const hydrationErrors = findHydrationOrCspFailures(
-                getBrowserDiagnosticMessages(diagnostics),
-              );
-              assertEquals(hydrationErrors.length, 0);
+              assertEquals(getBrowserDiagnosticMessages(diagnostics), []);
             },
           );
         });
@@ -626,10 +730,7 @@ describe(
                 expectedModulePath: "/_veryfront/rsc/module?",
               });
 
-              const hydrationErrors = findHydrationOrCspFailures(
-                getBrowserDiagnosticMessages(diagnostics),
-              );
-              assertEquals(hydrationErrors.length, 0);
+              assertEquals(getBrowserDiagnosticMessages(diagnostics), []);
             },
           );
         });
@@ -725,10 +826,7 @@ describe(
               assertEquals(response.status(), 200);
               await assertPreviewChatStyling(page);
 
-              const hydrationErrors = findHydrationOrCspFailures(
-                getBrowserDiagnosticMessages(diagnostics),
-              );
-              assertEquals(hydrationErrors.length, 0);
+              assertEquals(getBrowserDiagnosticMessages(diagnostics), []);
             },
           );
         });
