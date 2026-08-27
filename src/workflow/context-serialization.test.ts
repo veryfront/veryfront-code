@@ -245,6 +245,76 @@ describe("serializeWorkflowContext", () => {
       assertStringIncludes(error.message, "context.step.value");
       assertStringIncludes(error.message, "raw JSON value");
     });
+
+    it("throws when strictContext would duplicate a shared object reference", () => {
+      const shared = { value: 1 };
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({ left: shared, right: shared }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.right");
+      assertStringIncludes(error.message, "shared reference");
+    });
+
+    it("throws when strictContext would persist an array subclass as a plain array", () => {
+      class Rows extends Array<number> {
+        total(): number {
+          return this.length;
+        }
+      }
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({ rows: new Rows(1, 2) }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.rows");
+      assertStringIncludes(error.message, "array prototype");
+    });
+
+    it("throws when strictContext would persist an accessor as a data property", () => {
+      let getterReads = 0;
+      const step: { readonly count?: number } = {};
+      Object.defineProperty(step, "count", {
+        enumerable: true,
+        get() {
+          getterReads++;
+          return 1;
+        },
+      });
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith(step),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.count");
+      assertStringIncludes(error.message, "accessor property");
+      assertEquals(getterReads, 1);
+    });
   });
 
   it("keeps traversing a class instance's enumerable fields", () => {

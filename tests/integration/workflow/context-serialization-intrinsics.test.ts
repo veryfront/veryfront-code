@@ -165,6 +165,63 @@ describe("workflow context serialization with hostile ambient intrinsics", () =>
     assertStringIncludes(result.message, "context.step.rows.meta");
   });
 
+  it("rejects enumerable symbol properties in strict mode when brand checks are unavailable", async () => {
+    const script = `
+      Object.defineProperty(globalThis, "caches", {
+        configurable: true,
+        value: {},
+      });
+      Object.defineProperty(globalThis, "WebSocketPair", {
+        configurable: true,
+        value: function WebSocketPair() {},
+      });
+
+      const { canIdentifyProxyWithoutHooks } = await import(
+        "./src/platform/compat/error-introspection.ts"
+      );
+      const { serializeWorkflowContext } = await import(
+        "./src/workflow/context-serialization.ts"
+      );
+
+      const value = {};
+      Object.defineProperty(value, Symbol("required"), {
+        value: 1,
+        enumerable: true,
+      });
+
+      try {
+        serializeWorkflowContext(
+          { input: {}, step: { value } },
+          "run-edge-strict",
+          { strictContext: true },
+        );
+        console.log(JSON.stringify({ canIdentifyProxyWithoutHooks, message: "accepted" }));
+      } catch (error) {
+        console.log(JSON.stringify({
+          canIdentifyProxyWithoutHooks,
+          message: error instanceof Error ? error.message : String(error),
+        }));
+      }
+    `;
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["eval", "--config=deno.json", script],
+      cwd: new URL("../../../", import.meta.url),
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const stderr = new TextDecoder().decode(output.stderr);
+    assertEquals(output.code, 0, stderr);
+    const result = JSON.parse(new TextDecoder().decode(output.stdout)) as {
+      canIdentifyProxyWithoutHooks: boolean;
+      message: string;
+    };
+
+    assertEquals(result.canIdentifyProxyWithoutHooks, false);
+    assertStringIncludes(result.message, "strictContext");
+    assertStringIncludes(result.message, "context.step.value");
+    assertStringIncludes(result.message, "symbol-keyed property");
+  });
+
   it("skips diagnostic-only Proxy metadata when brand checks are unavailable", async () => {
     const script = `
       Object.defineProperty(globalThis, "caches", {

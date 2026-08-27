@@ -8,6 +8,7 @@ import type { WorkflowContext } from "./types.ts";
 
 const logger = agentLogger.component("workflow-context");
 const arrayIsArray = Array.isArray;
+const arrayPrototype = Array.prototype;
 const BigIntValueOf = BigInt.prototype.valueOf;
 const BooleanValueOf = Boolean.prototype.valueOf;
 const dateGetTime = Date.prototype.getTime;
@@ -36,6 +37,7 @@ const objectToString = Object.prototype.toString;
 const POSITIVE_INFINITY = Number.POSITIVE_INFINITY;
 const reflectApply = Reflect.apply;
 const reflectGet = Reflect.get;
+const reflectOwnKeys = Reflect.ownKeys;
 const regExpExec = RegExp.prototype.exec;
 const regExpSourceGet = objectGetOwnPropertyDescriptor(RegExp.prototype, "source")?.get;
 const SetConstructor = Set;
@@ -340,6 +342,7 @@ function normalizeAndFindUnrepresentableValues(
 } {
   const found: UnrepresentableValues = { fatal: [], lossy: [], fatalCount: 0, lossyCount: 0 };
   const active = new SetConstructor<JsonTraversalReference>();
+  const completed = new SetConstructor<JsonTraversalReference>();
 
   const recordFatal = (path: string, kind: string) => {
     found.fatalCount++;
@@ -398,6 +401,50 @@ function normalizeAndFindUnrepresentableValues(
     } catch {
       return;
     }
+  };
+
+  const recordArrayPrototype = (value: JsonTraversalReference, path: string) => {
+    if (!canIdentifyProxyWithoutHooks || isProxyWithoutHooks(value)) return;
+    try {
+      if (objectGetPrototypeOf(value) !== arrayPrototype) {
+        recordLossy(path, "array prototype");
+      }
+    } catch {
+      return;
+    }
+  };
+
+  const recordAccessorProperty = (
+    descriptor: PropertyDescriptor | undefined,
+    path: string,
+  ) => {
+    if (descriptor?.get !== undefined || descriptor?.set !== undefined) {
+      recordLossy(path, "accessor property");
+    }
+  };
+
+  const getEnumerableOwnStringKeysAndRecordSymbols = (
+    value: JsonTraversalReference,
+    path: string,
+  ): {
+    childKeys: string[];
+    childDescriptors: Array<PropertyDescriptor | undefined>;
+  } => {
+    const childKeys: string[] = [];
+    const childDescriptors: Array<PropertyDescriptor | undefined> = [];
+    const ownKeys = reflectOwnKeys(value);
+    for (const ownKey of ownKeys) {
+      const descriptor = objectGetOwnPropertyDescriptor(value, ownKey);
+      if (typeof ownKey === "symbol") {
+        if (descriptor?.enumerable === true) recordLossy(path, "symbol-keyed property");
+        continue;
+      }
+      if (descriptor?.enumerable === true) {
+        defineArrayElement(childKeys, childKeys.length, ownKey);
+        defineArrayElement(childDescriptors, childDescriptors.length, descriptor);
+      }
+    }
+    return { childKeys, childDescriptors };
   };
 
   const normalize = (
@@ -459,6 +506,12 @@ function normalizeAndFindUnrepresentableValues(
       recordFatal(path, "circular reference");
       return null;
     }
+    if (
+      options.strictContext === true &&
+      reflectApply(setHas, completed, [nested])
+    ) {
+      recordLossy(path, "shared reference");
+    }
 
     const isArray = arrayIsArray(nested);
     if (!isArray) {
@@ -514,15 +567,30 @@ function normalizeAndFindUnrepresentableValues(
             normalized === OMIT_JSON_VALUE ? null : normalized,
           );
         }
-        if (options.strictContext === true) recordNamedArrayKeys(nested, path, length);
+        if (options.strictContext === true) {
+          recordNamedArrayKeys(nested, path, length);
+          recordArrayPrototype(nested, path);
+        }
         recordEnumerableSymbolKeys(nested, path);
         return result;
       }
 
       const result: NormalizedJsonObject = objectCreate(null);
-      const childKeys = objectKeys(nested);
+      const noBrandStrict = !canIdentifyProxyWithoutHooks && options.strictContext === true;
+      const keySnapshot = noBrandStrict
+        ? getEnumerableOwnStringKeysAndRecordSymbols(nested, path)
+        : { childKeys: objectKeys(nested), childDescriptors: undefined };
+      const childKeys = keySnapshot.childKeys;
       for (let childIndex = 0; childIndex < childKeys.length; childIndex++) {
         const childKey = childKeys[childIndex]!;
+        if (options.strictContext === true) {
+          const descriptor = keySnapshot.childDescriptors?.[childIndex] ??
+            objectGetOwnPropertyDescriptor(nested, childKey);
+          recordAccessorProperty(
+            descriptor,
+            `${path}.${redactPathSegment(childKey)}`,
+          );
+        }
         const normalized = normalize(
           reflectGet(nested, childKey),
           `${path}.${redactPathSegment(childKey)}`,
@@ -532,7 +600,7 @@ function normalizeAndFindUnrepresentableValues(
         );
         if (normalized !== OMIT_JSON_VALUE) result[childKey] = normalized;
       }
-      recordEnumerableSymbolKeys(nested, path);
+      if (!noBrandStrict) recordEnumerableSymbolKeys(nested, path);
       // Prototype diagnostics are best-effort and run after the snapshot is
       // complete, so hostile metadata traps cannot change persistence output.
       if (
@@ -547,6 +615,7 @@ function normalizeAndFindUnrepresentableValues(
       return result;
     } finally {
       reflectApply(setDelete, active, [nested]);
+      if (options.strictContext === true) reflectApply(setAdd, completed, [nested]);
     }
   };
 
