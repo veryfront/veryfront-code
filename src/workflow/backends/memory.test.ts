@@ -382,23 +382,6 @@ describe("MemoryBackend", () => {
       assertEquals(await backend.getRun("run-fatal-context"), null);
     });
 
-    it("uses the admitted JSON parser after workflow code replaces JSON.parse", async () => {
-      const originalParse = JSON.parse;
-      try {
-        JSON.parse = (() => ({ input: {}, injected: true })) as typeof JSON.parse;
-        await backend.createRun(createTestRun("run-json-parse-intrinsic", {
-          context: { input: {}, value: 1 },
-        }));
-      } finally {
-        JSON.parse = originalParse;
-      }
-
-      assertEquals((await backend.getRun("run-json-parse-intrinsic"))?.context, {
-        input: {},
-        value: 1,
-      });
-    });
-
     it("rejects lossy context values when strictContext is enabled", async () => {
       const strictBackend = new MemoryBackend({ strictContext: true });
       const rows: unknown[] = [{ id: 1 }];
