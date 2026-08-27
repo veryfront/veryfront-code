@@ -44,14 +44,17 @@ const ELIGIBLE_FILES = [
 
 describe("runtime test filters", () => {
   it("keeps external runtime shards complete and disjoint", () => {
-    const full = loadSuitePlan({ suite: "runtime:node" });
+    const cwd = fromFileUrl(new URL("../", import.meta.url));
+    const full = loadSuitePlan({ suite: "runtime:node", cwd });
     const first = loadSuitePlan({
       suite: "runtime:node",
       shard: "1/2",
+      cwd,
     });
     const second = loadSuitePlan({
       suite: "runtime:node",
       shard: "2/2",
+      cwd,
     });
 
     assert(first.length > 0 && second.length > 0);
