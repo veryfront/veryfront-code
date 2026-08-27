@@ -16,6 +16,7 @@ import {
 import {
   getRuntimeAgentRunInvocationSchema,
   type RuntimeAgentRunInvocation,
+  type RuntimeAgentSourceContext,
 } from "../runtime/agent-invocation-contract.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import {
@@ -24,6 +25,7 @@ import {
 } from "#veryfront/security/input-validation/limits.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import {
+  type HostedRuntimeSourceBindingError,
   type HostedRuntimeSourceIdentity,
   verifyHostedRuntimeSourceBinding,
 } from "./runtime-source-binding.ts";
@@ -117,6 +119,16 @@ export type ParseRuntimeAgentRunInvocationHostedChatRequestOptions =
   & ParseHostedChatRequestOptions
   & {
     runtimeSource: HostedRuntimeSourceIdentity | undefined;
+    /**
+     * Service-owned policy for adapters that resolve an immutable or branch
+     * source per invocation instead of serving one process-wide snapshot.
+     */
+    verifyRuntimeSourceBinding?: (
+      requestedSource: RuntimeAgentSourceContext,
+    ) =>
+      | HostedRuntimeSourceBindingError
+      | undefined
+      | Promise<HostedRuntimeSourceBindingError | undefined>;
   };
 
 async function parseRequestJson(request: Request): Promise<unknown | Response> {
@@ -618,10 +630,9 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     return parsedRequest;
   }
 
-  const sourceBindingError = verifyHostedRuntimeSourceBinding(
-    options.runtimeSource,
-    invocation.data.agentSource,
-  );
+  const sourceBindingError = options.verifyRuntimeSourceBinding
+    ? await options.verifyRuntimeSourceBinding(invocation.data.agentSource)
+    : verifyHostedRuntimeSourceBinding(options.runtimeSource, invocation.data.agentSource);
   if (sourceBindingError) {
     return Response.json(
       { errorCode: sourceBindingError.errorCode },

@@ -2433,4 +2433,33 @@ describe("agent/hosted-chat-request", () => {
       errorCode: "CONTROL_PLANE_AGENT_SOURCE_UNSUPPORTED",
     });
   });
+
+  it("delegates source binding to an explicit dynamic service policy", async () => {
+    const requestedSources: unknown[] = [];
+    const branchSource = { type: "branch", branch: "main" } as const;
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        body: JSON.stringify({
+          ...createRuntimeInvocation(),
+          agentSource: branchSource,
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        runtimeSource: undefined,
+        verifyRuntimeSourceBinding: (requestedSource) => {
+          requestedSources.push(requestedSource);
+          return undefined;
+        },
+      },
+    );
+
+    if (parsed instanceof Response) {
+      throw new Error("Expected dynamically bound runtime invocation");
+    }
+    assertEquals(requestedSources, [branchSource]);
+    assertEquals(parsed.projectId, projectId);
+  });
 });
