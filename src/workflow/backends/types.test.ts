@@ -109,8 +109,6 @@ describe("hasEventWaitSupport", () => {
         "enqueue",
         "dequeue",
         "acknowledge",
-        "acquireLock",
-        "releaseLock",
         "findStalledRuns",
         "claimStalledRun",
       ]

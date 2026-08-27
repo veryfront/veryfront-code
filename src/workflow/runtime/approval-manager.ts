@@ -55,7 +55,9 @@ function reconstructApprovalDecision(
   approval: PersistedPendingApproval,
 ): ApprovalDecision {
   if (approval.status !== "approved" && approval.status !== "rejected") {
-    throw new Error("Approval decision claim has no decided status");
+    throw ORCHESTRATION_ERROR.create({
+      detail: `Approval decision claim "${approval.id}" has undecided status "${approval.status}"`,
+    });
   }
   return ApprovalDecisionSchema.parse({
     approved: approval.status === "approved",

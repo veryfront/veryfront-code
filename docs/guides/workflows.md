@@ -419,8 +419,8 @@ A `timeout` is enforced. When it elapses before the event arrives, the run
 fails with an error naming the node and the event it waited for. The deadline
 is measured from when the wait node started. Omit `timeout` to wait
 indefinitely. `delay(id, duration)` uses the same machinery and completes its
-node once the duration elapses. Cancelling a run resolves its pending event
-waits, so a cancelled run no longer reports itself as parked.
+node once the duration elapses. Canceling a run resolves its pending event
+waits, so a canceled run no longer reports itself as parked.
 
 Durable event waits require a backend that implements them. The built-in
 `MemoryBackend` does; `RedisBackend` does not currently implement the durable
