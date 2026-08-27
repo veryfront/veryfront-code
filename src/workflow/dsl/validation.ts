@@ -160,7 +160,11 @@ function rebaseWorkflowDefinition(
   newPrefix: string,
   definition: WorkflowDefinition,
 ): WorkflowDefinition {
-  return Array.isArray(definition.steps)
-    ? { ...definition, steps: rebaseWorkflowNodes(oldPrefix, newPrefix, definition.steps) }
-    : definition;
+  const steps = definition.steps;
+  return {
+    ...definition,
+    steps: Array.isArray(steps)
+      ? rebaseWorkflowNodes(oldPrefix, newPrefix, steps)
+      : (context) => rebaseWorkflowNodes(oldPrefix, newPrefix, steps(context)),
+  };
 }

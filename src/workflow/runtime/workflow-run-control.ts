@@ -430,12 +430,21 @@ async function reconcileNodeOutcomeAttempt(
     };
   }
 
-  const reconciledRun = await backend.getRun(input.runId);
-  const resumed = await resumeReconciledRun(backend, input, expectedWorkerId);
-  return {
-    outcome: resumed ? { status: "reconciled", run: reconciledRun ?? undefined } : undefined,
-    outcomeCommitted: true,
-  };
+  try {
+    const reconciledRun = await backend.getRun(input.runId);
+    const resumed = await resumeReconciledRun(backend, input, expectedWorkerId);
+    return {
+      outcome: resumed ? { status: "reconciled", run: reconciledRun ?? undefined } : undefined,
+      outcomeCommitted: true,
+    };
+  } catch (error) {
+    // The node patch is already durable. Preserve that uncertainty even when
+    // the extracted attempt helper throws before it can report the commit to
+    // the outer retry loop.
+    throw input.preserveCommittedOutcomeOnError
+      ? markWorkflowRunControlOutcomeMayBeCommitted(error)
+      : error;
+  }
 }
 
 function isActiveReconcileRun(run: WorkflowRun | null): run is WorkflowRun {

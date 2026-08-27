@@ -1053,6 +1053,49 @@ describe("DAGExecutor", () => {
       assertEquals(resumed.nodeStates.ready, undefined);
     });
 
+    it("namespaces generated workflow-definition descendants for every mapped item", async () => {
+      const processor: WorkflowDefinition = {
+        id: "processor",
+        steps: () => [
+          waitForEvent("ready", { eventName: "item.ready" }),
+        ],
+      };
+      const nodes = [
+        map("batch", {
+          items: [{ id: 1 }, { id: 2 }],
+          processor,
+        }),
+      ];
+
+      const first = await executor.execute(nodes, createTestRun());
+
+      assertEquals(first.waiting, true);
+      assertEquals(first.waitingNode, "batch_0/ready");
+      assertEquals(first.nodeStates["batch_0/ready"]?.status, "running");
+      assertEquals(first.nodeStates.ready, undefined);
+
+      const resumed = await executor.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          context: first.context,
+          nodeStates: {
+            ...first.nodeStates,
+            "batch_0/ready": {
+              ...first.nodeStates["batch_0/ready"]!,
+              status: "completed",
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(resumed.waiting, true);
+      assertEquals(resumed.waitingNode, "batch_1/ready");
+      assertEquals(resumed.nodeStates["batch_1/ready"]?.status, "running");
+      assertEquals(resumed.nodeStates.ready, undefined);
+    });
+
     it("rejects generated child ids that collide with declared parent nodes", async () => {
       const nodes = [
         map("batch", {
