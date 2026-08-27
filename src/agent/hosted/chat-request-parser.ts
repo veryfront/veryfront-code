@@ -17,7 +17,7 @@ import {
   getRuntimeAgentRunInvocationSchema,
   type RuntimeAgentRunInvocation,
   type RuntimeAgentSourceContext,
-} from "../runtime/agent-invocation-contract.ts";
+} from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import {
   isRequestBodyTooLargeError,
