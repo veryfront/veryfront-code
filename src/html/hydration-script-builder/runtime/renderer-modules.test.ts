@@ -1,8 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { ModuleNamespace } from "./env.ts";
+import type {
+  ClientRouter,
+  HydrationRuntimeEnv,
+  ModuleNamespace,
+  RuntimeDocument,
+  RuntimeWindow,
+} from "./env.ts";
+import type { ComponentLoader } from "./component-loader.ts";
+import type { SnapshotModuleImporter } from "./snapshot-modules.ts";
+import type { RuntimeLogging } from "./shared.ts";
 import {
+  createHydrationRenderer,
   isAppRouterPath,
   isModuleNotFoundError,
   isRootAppLayoutPath,
@@ -443,6 +453,69 @@ describe("hydration-script-builder/runtime/renderer", () => {
         }),
         true,
       );
+    });
+  });
+
+  describe("createHydrationRenderer", () => {
+    it("preserves the server document without importing a server-owned App Router page", async () => {
+      const hydrationElement = {
+        id: "veryfront-hydration-data",
+        tagName: "SCRIPT",
+        textContent: JSON.stringify({
+          appRouterRoot: "/src/app/",
+          clientModuleStrategy: "rsc-module",
+          pagePath: "src/app/page.tsx",
+        }),
+        getAttribute: (name: string) => name === "type" ? "application/json" : null,
+      };
+      const body = { firstElementChild: hydrationElement };
+      let hydrationCompletions = 0;
+      const window = {
+        location: {
+          origin: "https://veryfront.test",
+          pathname: "/",
+          search: "",
+          href: "https://veryfront.test/",
+        },
+        __veryfrontHydrationComplete: () => {
+          hydrationCompletions += 1;
+        },
+      } as unknown as RuntimeWindow;
+      const document = {
+        body,
+        querySelectorAll: () => [hydrationElement],
+      } as unknown as RuntimeDocument;
+      const importedModules: string[] = [];
+      const errors: unknown[][] = [];
+      const renderer = createHydrationRenderer({
+        env: { window, document } as unknown as HydrationRuntimeEnv,
+        logging: {
+          DEBUG: false,
+          log: () => {},
+          logError: (...args: unknown[]) => errors.push(args),
+          logBackgroundFetchFailure: () => {},
+          perfStart: () => {},
+          perfEnd: () => 0,
+        } satisfies RuntimeLogging,
+        componentLoader: {
+          loadComponent: () => Promise.reject(new Error("unexpected component load")),
+          pathToModuleUrl: (path: string) => `/_vf_modules/${path}`,
+        } as unknown as ComponentLoader,
+        snapshotModules: {
+          importSnapshotBoundModule: (moduleUrl: string) => {
+            importedModules.push(moduleUrl);
+            return Promise.reject(new Error("unexpected module import"));
+          },
+        } as SnapshotModuleImporter,
+        moduleServerUrl: "https://veryfront.test/_vf_modules",
+        router: {} as ClientRouter,
+      });
+
+      await renderer.renderPage("/");
+
+      assertEquals(hydrationCompletions, 1);
+      assertEquals(importedModules, []);
+      assertEquals(errors, []);
     });
   });
 
