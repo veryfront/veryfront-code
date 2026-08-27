@@ -154,6 +154,30 @@ describe("serializeWorkflowContext", () => {
 
       assertEquals(JSON.parse(serialized).step.ratio, null);
     });
+
+    it("throws on lossy values when strictContext is enabled", () => {
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({
+              when: new Date(0),
+              tags: new Map([["a", 1]]),
+              missing: undefined,
+              ratio: Number.NaN,
+            }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.when");
+      assertStringIncludes(error.message, "context.step.tags");
+      assertStringIncludes(error.message, "context.step.missing");
+      assertStringIncludes(error.message, "context.step.ratio");
+    });
   });
 
   it("keeps traversing a class instance's enumerable fields", () => {

@@ -120,6 +120,14 @@ interface NormalizedJsonObject {
   [key: string]: NormalizedJsonValue;
 }
 
+export interface WorkflowJsonSerializationOptions {
+  /**
+   * Promote JSON-lossy values such as Date, Map, undefined, and NaN from
+   * warnings to persistence errors.
+   */
+  strictContext?: boolean;
+}
+
 interface RawJsonValue {
   readonly rawJSON: string;
 }
@@ -496,6 +504,7 @@ export function prepareWorkflowJson(
   value: unknown,
   label: string,
   runId?: string,
+  options: WorkflowJsonSerializationOptions = {},
 ): { normalized: unknown; serialized: string } {
   const { normalized, unrepresentable } = normalizeAndFindUnrepresentableValues(value, label);
   const { fatal, fatalCount, lossy, lossyCount } = unrepresentable;
@@ -521,11 +530,19 @@ export function prepareWorkflowJson(
   }
 
   if (lossyCount > 0) {
+    const paths = formatPaths(lossy, lossyCount);
+    if (options.strictContext === true) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: `Workflow run cannot be persisted with strictContext enabled: ${paths}. ` +
+          `Workflow state must survive JSON persistence unchanged. Return only JSON values ` +
+          `from the step that produced this value.`,
+      });
+    }
     logger.warn(
       "Workflow state holds values that do not survive persistence unchanged",
       {
         ...(runId ? { runId } : {}),
-        paths: formatPaths(lossy, lossyCount),
+        paths,
       },
     );
   }
@@ -535,11 +552,20 @@ export function prepareWorkflowJson(
   return { normalized, serialized };
 }
 
-export function serializeWorkflowJson(value: unknown, label: string, runId?: string): string {
-  return prepareWorkflowJson(value, label, runId).serialized;
+export function serializeWorkflowJson(
+  value: unknown,
+  label: string,
+  runId?: string,
+  options?: WorkflowJsonSerializationOptions,
+): string {
+  return prepareWorkflowJson(value, label, runId, options).serialized;
 }
 
 /** Serialize a workflow context for durable storage. */
-export function serializeWorkflowContext(context: WorkflowContext, runId?: string): string {
-  return serializeWorkflowJson(context, "context", runId);
+export function serializeWorkflowContext(
+  context: WorkflowContext,
+  runId?: string,
+  options?: WorkflowJsonSerializationOptions,
+): string {
+  return serializeWorkflowJson(context, "context", runId, options);
 }
