@@ -434,7 +434,18 @@ describe("server/runtime-handler/index", () => {
     assertEquals(denied.headers.get("Access-Control-Allow-Credentials"), null);
   });
 
-  it("retries hosted admission when the config snapshot changes", async () => {
+  /**
+   * Drive a hosted preview document request whose source generation advances
+   * while the request derives its configuration.
+   *
+   * `advanceSource` decides how the mutable source behaves. A project that was
+   * just created settles once its writes land, while one being rewritten
+   * continuously never does -- and the handler owes those two cases opposite
+   * answers.
+   */
+  async function runHostedAdmissionWithMovingSnapshot(
+    advanceSource: (currentVersion: number) => number,
+  ): Promise<{ response: Response; sourceVersion: number; otelRequestCount: number }> {
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
     const originalTrustedProxy = Deno.env.get("VERYFRONT_TRUST_FORWARDED_HEADERS");
     Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.example.test/api");
@@ -471,7 +482,7 @@ describe("server/runtime-handler/index", () => {
       env: {
         ...baseAdapter.env,
         get(key: string) {
-          if (key === "OIDC_ISSUER" && sourceVersion === 1) sourceVersion++;
+          if (key === "OIDC_ISSUER") sourceVersion = advanceSource(sourceVersion);
           return baseAdapter.env.get(key);
         },
       },
@@ -513,12 +524,7 @@ describe("server/runtime-handler/index", () => {
             }),
           ),
       );
-
-      assertEquals(response.status, 401);
-      assertEquals(await response.text(), "Unauthorized");
-      assertEquals(sourceVersion, 2);
-      assertEquals(createSnapshot().requests, 1);
-      assertEquals(otelRequests.count(), 1);
+      return { response, sourceVersion, otelRequestCount: otelRequests.count() };
     } finally {
       if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
       else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
@@ -528,6 +534,32 @@ describe("server/runtime-handler/index", () => {
         Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", originalTrustedProxy);
       }
     }
+  }
+
+  it("retries hosted admission when the config snapshot changes", async () => {
+    const { response, sourceVersion, otelRequestCount } =
+      await runHostedAdmissionWithMovingSnapshot((current) => current === 1 ? 2 : current);
+
+    assertEquals(response.status, 401);
+    assertEquals(await response.text(), "Unauthorized");
+    assertEquals(sourceVersion, 2);
+    // One client request counts once, however many generations it straddles.
+    assertEquals(createSnapshot().requests, 1);
+    assertEquals(otelRequestCount, 1);
+  });
+
+  it("rejects terminal hosted auth when the config snapshot never settles", async () => {
+    // The retry exists for a source that settles. One that advances on every
+    // re-derivation is being rewritten continuously, and rendering it would
+    // serve configuration from a generation the markup does not come from --
+    // so the guard must still fail the request closed rather than loop.
+    const { response } = await runHostedAdmissionWithMovingSnapshot((current) => current + 1);
+
+    assertEquals(response.status, 503);
+    assertEquals(
+      (await response.json()).type,
+      "https://veryfront.com/docs/code/guides/errors#source-snapshot-freshness-unavailable",
+    );
   });
 
   it("keeps CORS preflight ahead of application auth admission", async () => {

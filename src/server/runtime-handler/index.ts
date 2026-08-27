@@ -776,14 +776,14 @@ export function createVeryfrontHandler(
             } catch (error) {
               if (!shouldRetrySourceSnapshotFreshness(request, error, retries)) throw error;
               retries++;
-              logDebug(
-                "[runtime-handler] Retrying request after source snapshot freshness failure",
-                {
-                  path: url.pathname,
-                  method: request.method,
-                  retry: retries,
-                },
-              );
+              // Info, not debug: a retried request is indistinguishable from a
+              // first-attempt success in the response, so this line is the only
+              // way to confirm in staging that the retry is carrying the load.
+              logger.info("Retrying request after source snapshot freshness failure", {
+                pathname: url.pathname,
+                method: request.method,
+                retry: retries,
+              });
             }
           }
         };
