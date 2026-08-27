@@ -458,9 +458,40 @@ function defaultComponentFunction(program: ASTNode): ASTNode | undefined {
   return name ? findTopLevelFunction(program, name) : undefined;
 }
 
+function pathIsWithinFunction(path: BabelBindingPath, functionNode: ASTNode): boolean {
+  for (let current = path.parentPath; current; current = current.parentPath) {
+    if (current.node === functionNode) return true;
+    if (isFunctionNode(current.node)) return false;
+  }
+  return false;
+}
+
+function pathIsAncestor(ancestor: BabelBindingPath, path: BabelBindingPath): boolean {
+  for (
+    let current: BabelBindingPath | null | undefined = path;
+    current;
+    current = current.parentPath
+  ) {
+    if (current.node === ancestor.node) return true;
+  }
+  return false;
+}
+
+function hasEarlierReturn(
+  returnPaths: readonly BabelBindingPath[],
+  hookPath: BabelBindingPath,
+): boolean {
+  return returnPaths.some((returnPath) => {
+    if (pathIsAncestor(returnPath, hookPath)) return false;
+    return returnPath.node.start === undefined || hookPath.node.start === undefined ||
+      returnPath.node.start < hookPath.node.start;
+  });
+}
+
 function nodeInvokesProviderHook( // NOSONAR: AST dominance heuristic is intentionally localized.
   path: BabelScopeAwarePath,
   defaultFunction: ASTNode,
+  returnPaths: readonly BabelBindingPath[],
 ): boolean {
   const callee = astNode(path.node.callee);
   const name = callee?.type === "Identifier" ? nodeName(callee) : undefined;
@@ -485,6 +516,7 @@ function nodeInvokesProviderHook( // NOSONAR: AST dominance heuristic is intenti
     current = current.parentPath;
   }
   if (current?.node !== defaultFunction) return false;
+  if (hasEarlierReturn(returnPaths, path)) return false;
 
   const bindingPath = path.scope?.getBinding(name)?.path;
   if (bindingPath?.node.type !== "ImportSpecifier") return false;
@@ -655,11 +687,18 @@ function defaultComponentInvokesProviderHook(
   if (!Array.isArray(program?.body)) return false;
   const defaultFunction = defaultComponentFunction(program);
   if (!defaultFunction) return false;
+  const returnPaths: BabelBindingPath[] = [];
+  parser.traverse(parsed, {
+    ReturnStatement: (genericPath) => {
+      const path = genericPath as BabelBindingPath;
+      if (pathIsWithinFunction(path, defaultFunction)) returnPaths.push(path);
+    },
+  });
   let found = false;
   parser.traverse(parsed, {
     CallExpression: (genericPath) => {
       if (!found) {
-        found = nodeInvokesProviderHook(genericPath, defaultFunction);
+        found = nodeInvokesProviderHook(genericPath, defaultFunction, returnPaths);
       }
     },
   });

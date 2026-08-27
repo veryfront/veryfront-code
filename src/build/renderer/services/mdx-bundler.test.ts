@@ -470,6 +470,10 @@ describe("build/renderer/services/mdx-bundler", () => {
             '- item\n\n    {import("./missing.js")}',
           ],
           [
+            "tabbed-list-continuation",
+            '- item\n\n\t{import("./missing.js")}',
+          ],
+          [
             "list-padding-continuation",
             '-   item\n\n      {import("./missing.js")}',
           ],
@@ -482,12 +486,24 @@ describe("build/renderer/services/mdx-bundler", () => {
             '{(() => { label: {} /"/.test(value); return import("./missing.js"); })()}',
           ],
           [
+            "case-block",
+            '{(() => { switch (x) { case 1: {} /"/.test(value); break; } return import("./missing.js"); })()}',
+          ],
+          [
             "function-expression-body",
             '{(() => { const ratio = function() {} / value; return import("./missing.js"); })()}',
           ],
           [
             "class-expression-body",
             '{(() => { const ratio = class {} / value; return import("./missing.js"); })()}',
+          ],
+          [
+            "multiline-class-expression-body",
+            '{(() => { const ratio = class\n{} / value; return import("./missing.js"); })()}',
+          ],
+          [
+            "jsx-closing-tag",
+            '{true ? <span></span> : import("./missing.js")}',
           ],
           [
             "postfix-update-division",
@@ -949,6 +965,44 @@ describe("build/renderer/services/mdx-bundler", () => {
         });
         assertEquals(
           (renderEmittedComponent(loaded.default) as { type?: unknown }).type,
+          "provider-heading",
+        );
+      });
+    });
+
+    it("wraps provider-aware output whose earlier return bypasses the provider hook", async () => {
+      const active = resolveContract<ContentProcessor>("ContentProcessor");
+      const earlyReturnProcessor: ContentProcessor = {
+        compileMdx: async (options) => ({
+          ...await active.compileMdx(options),
+          compiledCode: 'import React from "react";\n' +
+            'import { useMDXComponents as authoredHook } from "veryfront/mdx";\n' +
+            "function Heading(props = {}) {\n" +
+            '  return React.createElement(props.components?.h1 ?? "h1");\n' +
+            "}\n" +
+            "export default function MDXContent(props = {}) {\n" +
+            "  if (props.short) {\n" +
+            '    return React.createElement(props.components?.h1 ?? "h1");\n' +
+            "  }\n" +
+            "  const components = { ...authoredHook() };\n" +
+            "  return React.createElement(Heading, { components });\n" +
+            "}",
+        }),
+        compileMarkdown: (options) => active.compileMarkdown(options),
+        getRemarkPlugins: () => active.getRemarkPlugins(),
+        getRehypePlugins: () => active.getRehypePlugins(),
+      };
+
+      await withContractOverride("ContentProcessor", earlyReturnProcessor, async () => {
+        const result = await bundleMDXWithOptions({
+          content: "# Early return",
+          filePath: "/tmp/early-return-provider-hook.mdx",
+          projectDir: "/tmp",
+        });
+
+        const loaded = await importEmittedModule(result.code, { providerHeading: true });
+        assertEquals(
+          (renderEmittedComponent(loaded.default, { short: true }) as { type?: unknown }).type,
           "provider-heading",
         );
       });
