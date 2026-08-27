@@ -110,27 +110,32 @@ async function runVersionValidation(version: string): Promise<Deno.CommandOutput
   }).output();
 }
 
+type ReleaseState = "missing" | "draft" | "published";
+type CreateFailure = "none" | "after-creation";
+
 async function runReleaseScript({
   stateDir,
   asset,
-  failedCreateAttempts = 0,
+  initialReleaseState = "missing",
+  createFailure = "none",
   failedUploadAttempts = 0,
   failedPublishAttempts = 0,
 }: {
   stateDir: string;
   asset: string;
-  failedCreateAttempts?: number;
+  initialReleaseState?: ReleaseState;
+  createFailure?: CreateFailure;
   failedUploadAttempts?: number;
   failedPublishAttempts?: number;
 }): Promise<Deno.CommandOutput> {
   const ghLog = `${stateDir}/gh.log`;
-  const createCount = `${stateDir}/create-count`;
   const uploadCount = `${stateDir}/upload-count`;
   const publishCount = `${stateDir}/publish-count`;
+  const releaseState = `${stateDir}/release-state`;
   await Deno.writeTextFile(ghLog, "");
-  await Deno.writeTextFile(createCount, "0");
   await Deno.writeTextFile(uploadCount, "0");
   await Deno.writeTextFile(publishCount, "0");
+  await Deno.writeTextFile(releaseState, initialReleaseState);
 
   return await new Deno.Command("bash", {
     args: [
@@ -138,21 +143,23 @@ async function runReleaseScript({
       [
         "set -euo pipefail",
         'release_script="$1"',
-        'export GH_LOG="$2"',
-        'export CREATE_COUNT="$3"',
-        'export UPLOAD_COUNT="$4"',
-        'export PUBLISH_COUNT="$5"',
-        'export FAILED_CREATE_ATTEMPTS="$6"',
-        'export FAILED_UPLOAD_ATTEMPTS="$7"',
-        'export FAILED_PUBLISH_ATTEMPTS="$8"',
-        'asset="$9"',
+        'asset="$2"',
         "gh() {",
         '  printf "%s\\n" "$*" >> "$GH_LOG"',
+        '  if [ "$1" = "release" ] && [ "$2" = "view" ]; then',
+        '    case "$(cat "$RELEASE_STATE")" in',
+        "      missing) return 1 ;;",
+        '      draft) printf "true\\n" ;;',
+        '      published) printf "false\\n" ;;',
+        "    esac",
+        "    return 0",
+        "  fi",
         '  if [ "$1" = "release" ] && [ "$2" = "create" ]; then',
-        '    count="$(cat "$CREATE_COUNT")"',
-        "    count=$((count + 1))",
-        '    printf "%s" "$count" > "$CREATE_COUNT"',
-        '    if [ "$count" -le "$FAILED_CREATE_ATTEMPTS" ]; then',
+        '    if [ "$(cat "$RELEASE_STATE")" != "missing" ]; then',
+        "      return 1",
+        "    fi",
+        '    printf "draft" > "$RELEASE_STATE"',
+        '    if [ "$CREATE_FAILURE" = "after-creation" ]; then',
         "      return 1",
         "    fi",
         "  fi",
@@ -171,6 +178,10 @@ async function runReleaseScript({
         '    if [ "$count" -le "$FAILED_PUBLISH_ATTEMPTS" ]; then',
         "      return 1",
         "    fi",
+        '    printf "published" > "$RELEASE_STATE"',
+        "  fi",
+        '  if [ "$1" = "release" ] && [ "$2" = "delete" ]; then',
+        '    printf "missing" > "$RELEASE_STATE"',
         "  fi",
         "}",
         "sleep() { :; }",
@@ -186,15 +197,17 @@ async function runReleaseScript({
       ].join("\n"),
       "release-script-test",
       RELEASE_SCRIPT_PATH,
-      ghLog,
-      createCount,
-      uploadCount,
-      publishCount,
-      String(failedCreateAttempts),
-      String(failedUploadAttempts),
-      String(failedPublishAttempts),
       asset,
     ],
+    env: {
+      GH_LOG: ghLog,
+      UPLOAD_COUNT: uploadCount,
+      PUBLISH_COUNT: publishCount,
+      RELEASE_STATE: releaseState,
+      CREATE_FAILURE: createFailure,
+      FAILED_UPLOAD_ATTEMPTS: String(failedUploadAttempts),
+      FAILED_PUBLISH_ATTEMPTS: String(failedPublishAttempts),
+    },
     stdout: "piped",
     stderr: "piped",
   }).output();
@@ -260,7 +273,7 @@ describe("registry release workflow", () => {
     });
   });
 
-  it("preserves an existing release when draft creation fails", async () => {
+  it("preserves an existing published release", async () => {
     await withTempDir(async (stateDir) => {
       const asset = `${stateDir}/veryfront-macos-arm64`;
       await Deno.writeTextFile(asset, "binary");
@@ -268,7 +281,7 @@ describe("registry release workflow", () => {
       const output = await runReleaseScript({
         stateDir,
         asset,
-        failedCreateAttempts: 3,
+        initialReleaseState: "published",
       });
       const ghCalls = (await Deno.readTextFile(`${stateDir}/gh.log`))
         .trim()
@@ -276,9 +289,51 @@ describe("registry release workflow", () => {
 
       assertEquals(output.code, 1);
       assertEquals(
+        ghCalls.filter((call) => call.startsWith("release create ")).length,
+        0,
+        "an existing published release must not be recreated",
+      );
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release upload ")).length,
+        0,
+        "an existing published release must not accept new assets",
+      );
+      assertEquals(
         ghCalls.filter((call) => call.startsWith("release delete ")).length,
         0,
         "draft creation failure must not delete a release that predates this run",
+      );
+    });
+  });
+
+  it("recovers when draft creation succeeds remotely but reports failure", async () => {
+    await withTempDir(async (stateDir) => {
+      const asset = `${stateDir}/veryfront-macos-arm64`;
+      await Deno.writeTextFile(asset, "binary");
+
+      const output = await runReleaseScript({
+        stateDir,
+        asset,
+        createFailure: "after-creation",
+      });
+      const ghCalls = (await Deno.readTextFile(`${stateDir}/gh.log`))
+        .trim()
+        .split("\n");
+
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release create ")).length,
+        1,
+        "the remotely created draft must be adopted instead of recreated",
+      );
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release upload ")).length,
+        1,
+      );
+      assertEquals(
+        ghCalls.filter((call) => call.startsWith("release edit ")).length,
+        1,
+        "the adopted draft must be published after its assets upload",
       );
     });
   });

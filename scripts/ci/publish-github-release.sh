@@ -125,6 +125,19 @@ delete_release() {
 }
 
 create_draft_release() {
+  local existing_is_draft
+  if existing_is_draft="$(
+    gh release view "$tag" --repo "$repo" --json isDraft --jq '.isDraft' 2>/dev/null
+  )"; then
+    if [ "$existing_is_draft" = true ]; then
+      echo "::warning::Reusing existing GitHub release draft ${tag}." >&2
+      return 0
+    fi
+
+    echo "::error::GitHub release ${tag} already exists and is not a draft." >&2
+    return 1
+  fi
+
   local create_args=(
     release create "$tag"
     --repo "$repo"
