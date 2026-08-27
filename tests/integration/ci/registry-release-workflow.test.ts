@@ -289,6 +289,16 @@ describe("registry release workflow", () => {
 
       assertEquals(output.code, 1);
       assertEquals(
+        ghCalls.filter((call) => call.startsWith("release view ")).length,
+        1,
+        "a published-release conflict must fail without retries",
+      );
+      assertEquals(
+        decoder.decode(output.stderr).includes("Retrying"),
+        false,
+        "a published-release conflict must not report a transient retry",
+      );
+      assertEquals(
         ghCalls.filter((call) => call.startsWith("release create ")).length,
         0,
         "an existing published release must not be recreated",
