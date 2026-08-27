@@ -434,11 +434,12 @@ describe("server/runtime-handler/index", () => {
     assertEquals(denied.headers.get("Access-Control-Allow-Credentials"), null);
   });
 
-  it("rejects terminal hosted auth when the config snapshot changes during admission", async () => {
+  it("retries hosted admission when the config snapshot changes", async () => {
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
     const originalTrustedProxy = Deno.env.get("VERYFRONT_TRUST_FORWARDED_HEADERS");
     Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.example.test/api");
     Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+    const otelRequests = captureOtelHttpRequestCount();
     let sourceVersion = 1;
     const baseAdapter = createHostedOidcAdapter();
     Object.assign(baseAdapter.fs, {
@@ -513,12 +514,11 @@ describe("server/runtime-handler/index", () => {
           ),
       );
 
-      assertEquals(response.status, 503);
+      assertEquals(response.status, 401);
+      assertEquals(await response.text(), "Unauthorized");
       assertEquals(sourceVersion, 2);
-      assertEquals(
-        (await response.json()).type,
-        "https://veryfront.com/docs/code/guides/errors#source-snapshot-freshness-unavailable",
-      );
+      assertEquals(createSnapshot().requests, 1);
+      assertEquals(otelRequests.count(), 1);
     } finally {
       if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
       else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
