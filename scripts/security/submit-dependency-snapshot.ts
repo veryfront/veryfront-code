@@ -160,7 +160,7 @@ function collectReachableNpmKeys(
   return [...seen].sort((a, b) => {
     const left = canonicalNpmKey(a) ?? a;
     const right = canonicalNpmKey(b) ?? b;
-    return left.localeCompare(right) || a.localeCompare(b);
+    return compareCodeUnits(left, right) || compareCodeUnits(a, b);
   });
 }
 
@@ -240,7 +240,7 @@ export function manifestsFromLock(
     const [memberPath, member] of [...memberDependencies].sort((
       [left],
       [right],
-    ) => left.localeCompare(right))
+    ) => compareCodeUnits(left, right))
   ) {
     addManifest(`${memberPath}/deno.json`, member.dependencies ?? []);
   }

@@ -223,7 +223,7 @@ export async function walkRepo(options: WalkOptions): Promise<ScannedFile[]> {
     await collect(dir);
   }
 
-  return files.sort((a, b) => a.relative.localeCompare(b.relative));
+  return files.sort((a, b) => compareCodeUnits(a.relative, b.relative));
 }
 
 // ---------------------------------------------------------------------------
@@ -329,8 +329,8 @@ export function findLineMatches(
 
 export function sortFindings(findings: readonly Finding[]): Finding[] {
   return [...findings].sort((a, b) =>
-    a.file.localeCompare(b.file) || a.line - b.line ||
-    a.message.localeCompare(b.message)
+    compareCodeUnits(a.file, b.file) || a.line - b.line ||
+    compareCodeUnits(a.message, b.message)
   );
 }
 
@@ -380,7 +380,7 @@ function compareCodeUnits(a: string, b: string): number {
 
 function sortedCounts(counts: Counts): Counts {
   return Object.fromEntries(
-    Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)),
+    Object.entries(counts).sort(([a], [b]) => compareCodeUnits(a, b)),
   );
 }
 
@@ -418,7 +418,7 @@ export function compareCounts(current: Counts, baseline: Counts): Comparison {
   const regressions: CountDelta[] = [];
   const improvements: CountDelta[] = [];
   const keys = [...new Set([...Object.keys(current), ...Object.keys(baseline)])]
-    .sort((a, b) => a.localeCompare(b));
+    .sort(compareCodeUnits);
   for (const key of keys) {
     const now = current[key] ?? 0;
     const then = baseline[key] ?? 0;
