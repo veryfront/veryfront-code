@@ -25,6 +25,7 @@ const ObjectConstructor = Object;
 const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const mapSizeGet = objectGetOwnPropertyDescriptor(Map.prototype, "size")?.get;
 const objectGetOwnPropertySymbols = Object.getOwnPropertySymbols;
 const objectGetPrototypeOf = Object.getPrototypeOf;
 const objectHasOwn = Object.hasOwn;
@@ -36,7 +37,9 @@ const POSITIVE_INFINITY = Number.POSITIVE_INFINITY;
 const reflectApply = Reflect.apply;
 const reflectGet = Reflect.get;
 const regExpExec = RegExp.prototype.exec;
+const regExpSourceGet = objectGetOwnPropertyDescriptor(RegExp.prototype, "source")?.get;
 const SetConstructor = Set;
+const setSizeGet = objectGetOwnPropertyDescriptor(Set.prototype, "size")?.get;
 const setAdd = Set.prototype.add;
 const setDelete = Set.prototype.delete;
 const setHas = Set.prototype.has;
@@ -160,8 +163,31 @@ function describe(value: unknown): string {
   return "object";
 }
 
+function hasNativeSlot(
+  value: JsonTraversalReference,
+  getter: ((this: unknown) => unknown) | undefined,
+): boolean {
+  if (getter === undefined) return false;
+  try {
+    reflectApply(getter, value, []);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isKnownNonPlainBuiltin(value: JsonTraversalReference): boolean {
+  return hasNativeSlot(value, mapSizeGet) ||
+    hasNativeSlot(value, setSizeGet) ||
+    hasNativeSlot(value, regExpSourceGet);
+}
+
 /** Whether a value is a plain `{}` object rather than a class instance. */
 function isPlainObject(value: JsonTraversalReference): boolean {
+  // Edge-style hosts that cannot identify proxies without hooks also cannot
+  // distinguish arbitrary class instances from plain objects without reading
+  // prototype metadata. Captured native-slot probes cover known JSON-lossy
+  // built-ins before this fallback while keeping proxy metadata traps untouched.
   if (!canIdentifyProxyWithoutHooks) return true;
   if (isProxyWithoutHooks(value)) return false;
   try {
@@ -360,16 +386,17 @@ function normalizeAndFindUnrepresentableValues(
     length: number,
   ) => {
     if (canIdentifyProxyWithoutHooks && isProxyWithoutHooks(value)) return;
-    let childKeys: string[];
     try {
-      childKeys = objectKeys(value);
+      for (const childKey in value) {
+        if (
+          objectHasOwn(value, childKey) &&
+          !isSerializedArrayIndexKey(childKey, length)
+        ) {
+          recordLossy(`${path}.${redactPathSegment(childKey)}`, "array property");
+        }
+      }
     } catch {
       return;
-    }
-    for (const childKey of childKeys) {
-      if (!isSerializedArrayIndexKey(childKey, length)) {
-        recordLossy(`${path}.${redactPathSegment(childKey)}`, "array property");
-      }
     }
   };
 
@@ -388,6 +415,7 @@ function normalizeAndFindUnrepresentableValues(
       jsonIsRawJSON !== undefined &&
       reflectApply(jsonIsRawJSON, jsonRawSupport, [value])
     ) {
+      recordLossy(path, "raw JSON value");
       return value as RawJsonValue;
     }
     if (
@@ -486,7 +514,7 @@ function normalizeAndFindUnrepresentableValues(
             normalized === OMIT_JSON_VALUE ? null : normalized,
           );
         }
-        recordNamedArrayKeys(nested, path, length);
+        if (options.strictContext === true) recordNamedArrayKeys(nested, path, length);
         recordEnumerableSymbolKeys(nested, path);
         return result;
       }
@@ -507,7 +535,15 @@ function normalizeAndFindUnrepresentableValues(
       recordEnumerableSymbolKeys(nested, path);
       // Prototype diagnostics are best-effort and run after the snapshot is
       // complete, so hostile metadata traps cannot change persistence output.
-      if (!isPlainObject(nested)) recordLossy(path, describe(nested));
+      if (
+        !canIdentifyProxyWithoutHooks &&
+        options.strictContext === true &&
+        isKnownNonPlainBuiltin(nested)
+      ) {
+        recordLossy(path, describe(nested));
+      } else if (!isPlainObject(nested)) {
+        recordLossy(path, describe(nested));
+      }
       return result;
     } finally {
       reflectApply(setDelete, active, [nested]);

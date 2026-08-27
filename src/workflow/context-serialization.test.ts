@@ -226,6 +226,25 @@ describe("serializeWorkflowContext", () => {
       assertStringIncludes(error.message, "context.step.rows.meta");
       assertStringIncludes(error.message, "array property");
     });
+
+    it("throws when strictContext would persist a raw JSON wrapper as its parsed value", () => {
+      if (typeof jsonRawSupport.rawJSON !== "function") return;
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({ value: jsonRawSupport.rawJSON("123") }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.value");
+      assertStringIncludes(error.message, "raw JSON value");
+    });
   });
 
   it("keeps traversing a class instance's enumerable fields", () => {
@@ -460,6 +479,37 @@ describe("serializeWorkflowContext", () => {
     const serialized = serializeWorkflowContext(contextWith(values));
 
     assertEquals(JSON.parse(serialized).step, [1]);
+  });
+
+  it("does not enumerate dense array keys during default persistence diagnostics", () => {
+    let ownKeysCalls = 0;
+    const values = new Proxy([1, 2, 3], {
+      ownKeys(target) {
+        ownKeysCalls++;
+        return Reflect.ownKeys(target);
+      },
+    });
+
+    const serialized = serializeWorkflowContext(contextWith({ values }));
+
+    assertEquals(JSON.parse(serialized).step.values, [1, 2, 3]);
+    assertEquals(ownKeysCalls, 0);
+  });
+
+  it("does not run named-array diagnostics during default persistence", () => {
+    const values = [1, 2, 3];
+    Object.defineProperty(values, "meta", {
+      value: "diagnostic-only",
+      enumerable: true,
+    });
+
+    let serialized = "";
+    const warnings = captureWorkflowWarnings(() => {
+      serialized = serializeWorkflowContext(contextWith({ values }));
+    });
+
+    assertEquals(JSON.parse(serialized).step.values, [1, 2, 3]);
+    assertEquals(warnings, []);
   });
 
   it("rejects a BigInt array length like native JSON", () => {
