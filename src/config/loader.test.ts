@@ -422,7 +422,7 @@ export default config as const;
       );
       assertStringIncludes(
         rewritten,
-        'import(__observeConfigImport("file:///project/config-child.cjs"))',
+        '__observeConfigImport.settle(import(__observeConfigImport.resolve("file:///project/config-child.cjs")))',
       );
     });
 
@@ -1522,6 +1522,10 @@ export default config as const;
       );
       assertEquals(
         __isBunWorkspaceMemberDirectoryForTests("/repo", "/repo", ["packages/*"]),
+        false,
+      );
+      assertEquals(
+        __isBunWorkspaceMemberDirectoryForTests("/repo", "/outside", ["**"]),
         false,
       );
       // Negation patterns are ignored rather than trusted for widening.

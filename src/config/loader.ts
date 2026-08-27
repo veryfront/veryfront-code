@@ -652,6 +652,11 @@ export interface ConfigLoadResult {
   readonly provenance: ConfigLoadProvenance;
 }
 
+interface MergedConfigLoadResult {
+  readonly config: VeryfrontConfig;
+  readonly bunTrackingKey?: string;
+}
+
 interface ConfigCacheEntry {
   readonly revision: number;
   readonly config: VeryfrontConfig;
@@ -3714,30 +3719,61 @@ async function rewriteDynamicProjectConfigImports(
   await lexer.init?.();
 
   const imports = lexer.parse(source);
-  const openingCounts = new IntrinsicMap<number, number>();
-  const closingCounts = new IntrinsicMap<number, number>();
-  let hasComputedImport = false;
+  const argumentOpeningCounts = new IntrinsicMap<number, number>();
+  const argumentClosingCounts = new IntrinsicMap<number, number>();
+  const importOpeningCounts = new IntrinsicMap<number, number>();
+  const importClosingCounts = new IntrinsicMap<number, number>();
+  let hasDynamicImport = false;
   for (let index = 0; index < imports.length; index++) {
     const imported = imports[index];
     if (!imported || imported.d < 0) continue;
-    hasComputedImport = true;
-    mapSet(openingCounts, imported.s, (mapGet(openingCounts, imported.s) ?? 0) + 1);
-    mapSet(closingCounts, imported.e, (mapGet(closingCounts, imported.e) ?? 0) + 1);
+    hasDynamicImport = true;
+    mapSet(
+      argumentOpeningCounts,
+      imported.s,
+      (mapGet(argumentOpeningCounts, imported.s) ?? 0) + 1,
+    );
+    mapSet(
+      argumentClosingCounts,
+      imported.e,
+      (mapGet(argumentClosingCounts, imported.e) ?? 0) + 1,
+    );
+    mapSet(
+      importOpeningCounts,
+      imported.ss,
+      (mapGet(importOpeningCounts, imported.ss) ?? 0) + 1,
+    );
+    mapSet(
+      importClosingCounts,
+      imported.se,
+      (mapGet(importClosingCounts, imported.se) ?? 0) + 1,
+    );
   }
-  if (!hasComputedImport) return source;
+  if (!hasDynamicImport) return source;
 
-  // Insert wrappers against offsets in the original source. Computed imports
+  // Insert wrappers against offsets in the original source. Dynamic imports
   // can nest, so rewriting one expression first would invalidate the lexer's
   // range for its containing import even when records are visited in reverse.
   let rewritten = "";
   let sourceOffset = 0;
   for (let position = 0; position <= source.length; position++) {
-    const openingCount = mapGet(openingCounts, position) ?? 0;
-    const closingCount = mapGet(closingCounts, position) ?? 0;
-    if (openingCount === 0 && closingCount === 0) continue;
+    const argumentOpeningCount = mapGet(argumentOpeningCounts, position) ?? 0;
+    const argumentClosingCount = mapGet(argumentClosingCounts, position) ?? 0;
+    const importOpeningCount = mapGet(importOpeningCounts, position) ?? 0;
+    const importClosingCount = mapGet(importClosingCounts, position) ?? 0;
+    if (
+      argumentOpeningCount === 0 && argumentClosingCount === 0 &&
+      importOpeningCount === 0 && importClosingCount === 0
+    ) continue;
     rewritten += stringSlice(source, sourceOffset, position);
-    for (let index = 0; index < closingCount; index++) rewritten += ")";
-    for (let index = 0; index < openingCount; index++) rewritten += `${observerKey}(`;
+    for (let index = 0; index < importClosingCount; index++) rewritten += ")";
+    for (let index = 0; index < argumentClosingCount; index++) rewritten += ")";
+    for (let index = 0; index < importOpeningCount; index++) {
+      rewritten += `${observerKey}.settle(`;
+    }
+    for (let index = 0; index < argumentOpeningCount; index++) {
+      rewritten += `${observerKey}.resolve(`;
+    }
     sourceOffset = position;
   }
   rewritten += stringSlice(source, sourceOffset);
@@ -3906,7 +3942,7 @@ function isBunAsyncModuleRequireError(error: unknown): boolean {
 interface BunAsyncConfigImportResult {
   readonly configModule: object;
   readonly observer: BunProjectDynamicImportObserver;
-  readonly hasComputedDynamicImport: boolean;
+  readonly hasDynamicImport: boolean;
 }
 
 async function importFreshBunAsyncConfig(
@@ -3914,25 +3950,13 @@ async function importFreshBunAsyncConfig(
   canonicalConfigPath: string,
   source: string,
   scope: BunProjectTrackingScope,
-  recordDependencies: (
-    dependencyKeys: ReadonlySet<string>,
-    includeAllNewModules: boolean,
-  ) => void,
-  discardDependencies: (
-    dependencyKeys: ReadonlySet<string>,
-    includeAllNewModules: boolean,
-  ) => void,
+  recordDependencies: (dependencyKeys: ReadonlySet<string>) => void,
+  discardDependencies: (dependencyKeys: ReadonlySet<string>) => void,
 ): Promise<BunAsyncConfigImportResult> {
   const fs = createFileSystem();
   const dependencyKeys = new IntrinsicSet<string>();
   const observedRuntimeSpecifiers = new IntrinsicSet<string>();
   const runtimeSpecifiers: string[] = [];
-  // Bun exposes no loader callback for a computed import executed inside an
-  // already-imported dependency. If the dependency lexer reports one, every
-  // new in-scope module from this serialized evaluation is a possible child.
-  // The eviction graph still preserves modules owned by outside CommonJS
-  // consumers.
-  const dependencyCollectionState = { hasUnobservedComputedImport: false };
   const lexer = await getConfigModuleLexer();
   let observerKey: string;
   do {
@@ -3952,15 +3976,9 @@ async function importFreshBunAsyncConfig(
   const trackPendingCollection = (collection: Promise<void>): void => {
     const finalize = (): void => {
       if (observerActive) {
-        recordDependencies(
-          dependencyKeys,
-          dependencyCollectionState.hasUnobservedComputedImport,
-        );
+        recordDependencies(dependencyKeys);
       } else {
-        discardDependencies(
-          dependencyKeys,
-          dependencyCollectionState.hasUnobservedComputedImport,
-        );
+        discardDependencies(dependencyKeys);
       }
     };
     const settled = thenPromise(collection, finalize, finalize);
@@ -3982,83 +4000,96 @@ async function importFreshBunAsyncConfig(
     void thenPromise(combined, release, release);
   };
   const baseUrl = ReflectApply(intrinsicUrlHrefGetter, toFileUrl(absolutePath), []) as string;
+  const resolveObservedSpecifier = (specifier: unknown): unknown => {
+    let stringSpecifier: string;
+    if (typeof specifier === "string") {
+      stringSpecifier = specifier;
+    } else {
+      // Dynamic import applies ToString with the string hint. Resolve that
+      // coerced value from the authored config rather than allowing Bun to
+      // coerce it later relative to the temporary staged module. A Symbol
+      // remains native so import() preserves its rejected-Promise behavior.
+      if (typeof specifier === "symbol") return specifier;
+      try {
+        stringSpecifier = ReflectApply(IntrinsicString, undefined, [specifier]) as string;
+      } catch (error) {
+        // The wrapper runs while evaluating import()'s argument, whereas
+        // native ToString failures reject the returned Promise. Hand Bun a
+        // one-shot coercion object so it produces the same asynchronous
+        // rejection without invoking authored coercion hooks twice.
+        const rejectedSpecifier = ObjectCreate(null) as Record<PropertyKey, unknown>;
+        ObjectDefineProperty(rejectedSpecifier, SymbolToPrimitive, {
+          value: () => {
+            throw error;
+          },
+        });
+        return rejectedSpecifier;
+      }
+    }
+    let resolvedSpecifier = stringSpecifier;
+    if (stringStartsWith(stringSpecifier, "./") || stringStartsWith(stringSpecifier, "../")) {
+      const resolvedUrl = new IntrinsicURL(stringSpecifier, baseUrl);
+      resolvedSpecifier = ReflectApply(intrinsicUrlHrefGetter, resolvedUrl, []) as string;
+    } else if (!keepsConfigImportSpecifier(stringSpecifier) && !isAbsolute(stringSpecifier)) {
+      if (!CapturedBunResolveSync || !CapturedBun) {
+        throw new TypeError("Bun project config resolver is unavailable");
+      }
+      const resolved = ReflectApply(CapturedBunResolveSync, CapturedBun, [
+        stringSpecifier,
+        dirname(absolutePath),
+      ]);
+      if (typeof resolved !== "string") {
+        throw new TypeError("Bun project config import resolution failed");
+      }
+      resolvedSpecifier = asResolvedConfigSpecifier(resolved);
+    }
+    if (
+      ReflectApply(SetPrototypeHas, observedRuntimeSpecifiers, [resolvedSpecifier]) !== true
+    ) {
+      ReflectApply(SetPrototypeAdd, observedRuntimeSpecifiers, [resolvedSpecifier]);
+      runtimeSpecifiers[runtimeSpecifiers.length] = resolvedSpecifier;
+      if (initialEvaluationComplete && observerActive) {
+        const collection = collectBunProjectConfigDependencyKeys(
+          resolvedSpecifier,
+          scope,
+          dependencyKeys,
+          lexer,
+          fs,
+        );
+        // The collector records the directly resolved path before its first
+        // await. Publish that key synchronously so an immediate cache clear
+        // after setup still owns the module; refresh again after transitive
+        // discovery completes.
+        if (observerActive) {
+          recordDependencies(dependencyKeys);
+        }
+        trackPendingCollection(collection);
+      }
+    }
+    return resolvedSpecifier;
+  };
+  const refreshObservedDependencies = (): void => {
+    if (observerActive) recordDependencies(dependencyKeys);
+    else discardDependencies(dependencyKeys);
+  };
+  const settleObservedImport = <T>(operation: Promise<T>): Promise<T> =>
+    thenPromise(
+      operation,
+      (value) => {
+        refreshObservedDependencies();
+        return value;
+      },
+      (error) => {
+        refreshObservedDependencies();
+        throw error;
+      },
+    );
   ObjectDefineProperty(globalThis, observerKey, {
     configurable: true,
-    value: (specifier: unknown): unknown => {
-      let stringSpecifier: string;
-      if (typeof specifier === "string") {
-        stringSpecifier = specifier;
-      } else {
-        // Dynamic import applies ToString with the string hint. Resolve that
-        // coerced value from the authored config rather than allowing Bun to
-        // coerce it later relative to the temporary staged module. A Symbol
-        // remains native so import() preserves its rejected-Promise behavior.
-        if (typeof specifier === "symbol") return specifier;
-        try {
-          stringSpecifier = ReflectApply(IntrinsicString, undefined, [specifier]) as string;
-        } catch (error) {
-          // The wrapper runs while evaluating import()'s argument, whereas
-          // native ToString failures reject the returned Promise. Hand Bun a
-          // one-shot coercion object so it produces the same asynchronous
-          // rejection without invoking authored coercion hooks twice.
-          const rejectedSpecifier = ObjectCreate(null) as Record<PropertyKey, unknown>;
-          ObjectDefineProperty(rejectedSpecifier, SymbolToPrimitive, {
-            value: () => {
-              throw error;
-            },
-          });
-          return rejectedSpecifier;
-        }
-      }
-      let resolvedSpecifier = stringSpecifier;
-      if (stringStartsWith(stringSpecifier, "./") || stringStartsWith(stringSpecifier, "../")) {
-        const resolvedUrl = new IntrinsicURL(stringSpecifier, baseUrl);
-        resolvedSpecifier = ReflectApply(intrinsicUrlHrefGetter, resolvedUrl, []) as string;
-      } else if (!keepsConfigImportSpecifier(stringSpecifier) && !isAbsolute(stringSpecifier)) {
-        if (!CapturedBunResolveSync || !CapturedBun) {
-          throw new TypeError("Bun project config resolver is unavailable");
-        }
-        const resolved = ReflectApply(CapturedBunResolveSync, CapturedBun, [
-          stringSpecifier,
-          dirname(absolutePath),
-        ]);
-        if (typeof resolved !== "string") {
-          throw new TypeError("Bun project config import resolution failed");
-        }
-        resolvedSpecifier = asResolvedConfigSpecifier(resolved);
-      }
-      if (
-        ReflectApply(SetPrototypeHas, observedRuntimeSpecifiers, [resolvedSpecifier]) !== true
-      ) {
-        ReflectApply(SetPrototypeAdd, observedRuntimeSpecifiers, [resolvedSpecifier]);
-        runtimeSpecifiers[runtimeSpecifiers.length] = resolvedSpecifier;
-        if (initialEvaluationComplete && observerActive) {
-          const collection = collectBunProjectConfigDependencyKeys(
-            resolvedSpecifier,
-            scope,
-            dependencyKeys,
-            lexer,
-            fs,
-            dependencyCollectionState,
-          );
-          // The collector records the directly resolved path before its first
-          // await. Publish that key synchronously so an immediate cache clear
-          // after setup still owns the module; refresh again after transitive
-          // discovery completes.
-          if (observerActive) {
-            recordDependencies(
-              dependencyKeys,
-              dependencyCollectionState.hasUnobservedComputedImport,
-            );
-          }
-          trackPendingCollection(collection);
-        }
-      }
-      return resolvedSpecifier;
-    },
+    value: { resolve: resolveObservedSpecifier, settle: settleObservedImport },
   });
   let initialEvaluationComplete = false;
-  let hasComputedDynamicImport = false;
+  let hasDynamicImport = false;
   let configModule: object | undefined;
   let loadFailure: { error: unknown } | undefined;
   try {
@@ -4077,14 +4108,10 @@ async function importFreshBunAsyncConfig(
               dependencyKeys,
               lexer,
               fs,
-              dependencyCollectionState,
             ),
         );
-        const observed = await rewriteDynamicProjectConfigImports(
-          rewritten,
-          observerKey,
-        );
-        hasComputedDynamicImport ||= observed !== rewritten;
+        const observed = await rewriteDynamicProjectConfigImports(rewritten, observerKey);
+        hasDynamicImport ||= observed !== rewritten;
         return observed;
       },
     ) as object;
@@ -4103,13 +4130,9 @@ async function importFreshBunAsyncConfig(
         dependencyKeys,
         lexer,
         fs,
-        dependencyCollectionState,
       );
     }
-    recordDependencies(
-      dependencyKeys,
-      dependencyCollectionState.hasUnobservedComputedImport,
-    );
+    recordDependencies(dependencyKeys);
     initialEvaluationComplete = true;
   } catch (error) {
     trackingFailure = { error };
@@ -4122,7 +4145,7 @@ async function importFreshBunAsyncConfig(
   return {
     configModule: configModule!,
     observer: { key: observerKey, dispose: disposeObserver },
-    hasComputedDynamicImport,
+    hasDynamicImport,
   };
 }
 
@@ -4193,7 +4216,6 @@ async function collectBunProjectConfigDependencyKeys(
   dependencyKeys: Set<string>,
   lexer: ModuleLexer,
   fs: ReturnType<typeof createFileSystem>,
-  state: { hasUnobservedComputedImport: boolean },
 ): Promise<void> {
   const dependencyPath = projectConfigFilePathFromSpecifier(resolvedSpecifier);
   if (
@@ -4223,12 +4245,7 @@ async function collectBunProjectConfigDependencyKeys(
   for (let index = 0; index < imports.length; index++) {
     const imported = imports[index];
     const specifier = imported?.n;
-    if (specifier === undefined || specifier === null) {
-      if (imported !== undefined && imported.d >= 0) {
-        state.hasUnobservedComputedImport = true;
-      }
-      continue;
-    }
+    if (specifier === undefined || specifier === null) continue;
     if (specifier === "veryfront") continue;
 
     let resolved: string;
@@ -4251,7 +4268,6 @@ async function collectBunProjectConfigDependencyKeys(
         dependencyKeys,
         lexer,
         fs,
-        state,
       );
     } catch {
       // Runtime loading remains authoritative for non-text and missing modules.
@@ -4644,19 +4660,19 @@ function matchesBunWorkspacePathSegments(
   patternIndex: number,
   pathIndex: number,
   pathEnd: number,
-  memo: Map<string, boolean> = new IntrinsicMap<string, boolean>(),
+  memo = new IntrinsicMap<number, boolean>(),
 ): boolean {
-  const key = `${patternIndex}\0${pathIndex}\0${pathEnd}`;
-  const cached = mapGet(memo, key);
-  if (cached !== undefined) return cached;
+  const memoKey = patternIndex * (pathEnd + 1) + pathIndex;
+  const memoized = mapGet(memo, memoKey);
+  if (memoized !== undefined) return memoized;
   if (patternIndex >= patternSegments.length) {
     const matched = pathIndex === pathEnd;
-    mapSet(memo, key, matched);
+    mapSet(memo, memoKey, matched);
     return matched;
   }
   const pattern = patternSegments[patternIndex];
   if (pattern === undefined) {
-    mapSet(memo, key, false);
+    mapSet(memo, memoKey, false);
     return false;
   }
   if (pattern === "**") {
@@ -4671,20 +4687,19 @@ function matchesBunWorkspacePathSegments(
           memo,
         )
       ) {
-        mapSet(memo, key, true);
+        mapSet(memo, memoKey, true);
         return true;
       }
     }
-    mapSet(memo, key, false);
+    mapSet(memo, memoKey, false);
     return false;
   }
   const segment = pathSegments[pathIndex];
-  if (pathIndex >= pathEnd || segment === undefined) {
-    mapSet(memo, key, false);
-    return false;
-  }
-  if (!matchesBunWorkspaceSegment(pattern, segment)) {
-    mapSet(memo, key, false);
+  if (
+    pathIndex >= pathEnd || segment === undefined ||
+    !matchesBunWorkspaceSegment(pattern, segment)
+  ) {
+    mapSet(memo, memoKey, false);
     return false;
   }
   const matched = matchesBunWorkspacePathSegments(
@@ -4695,7 +4710,7 @@ function matchesBunWorkspacePathSegments(
     pathEnd,
     memo,
   );
-  mapSet(memo, key, matched);
+  mapSet(memo, memoKey, matched);
   return matched;
 }
 
@@ -4720,9 +4735,8 @@ function isBunWorkspaceMemberDirectory(
     ["\\", "/"],
   ) as string;
   if (
-    relativeProject.length === 0 ||
-    relativeProject === ".." ||
-    stringStartsWith(relativeProject, "../")
+    relativeProject.length === 0 || relativeProject === ".." ||
+    stringStartsWith(relativeProject, "../") || isAbsolute(relativeProject)
   ) return false;
   const pathSegments = ReflectApply(StringPrototypeSplit, relativeProject, ["/"]) as string[];
   const patterns = bunWorkspaceMemberPatterns(workspacesValue);
@@ -5095,7 +5109,7 @@ async function loadAndMergeConfig(
   adapter: RuntimeAdapter,
   revisionAtStart: number,
   selectedVirtualContent?: string | Uint8Array,
-): Promise<VeryfrontConfig> {
+): Promise<MergedConfigLoadResult> {
   const isVirtualFS = isVirtualFilesystem(adapter.fs);
   logger.debug("loadAndMergeConfig called", {
     configPath,
@@ -5107,12 +5121,14 @@ async function loadAndMergeConfig(
 
   if (isVirtualFS) {
     logger.debug("Using trusted single-project virtual filesystem for config", { configPath });
-    return loadTrustedConfigFromVirtualFS(
-      configPath,
-      cacheKey,
-      adapter,
-      selectedVirtualContent,
-    );
+    return {
+      config: await loadTrustedConfigFromVirtualFS(
+        configPath,
+        cacheKey,
+        adapter,
+        selectedVirtualContent,
+      ),
+    };
   }
 
   if (isBun) {
@@ -5140,7 +5156,7 @@ async function loadAndMergeConfig(
       let configModule: object | undefined;
       let trackingEntry: BunProjectConfigModuleCacheEntry | undefined;
       let dynamicImportObserver: BunProjectDynamicImportObserver | undefined;
-      let hasComputedDynamicImport = false;
+      let hasDynamicImport = false;
       let trackingPublished = false;
       try {
         if (!hasTopLevelAwait) {
@@ -5166,13 +5182,12 @@ async function loadAndMergeConfig(
             canonicalConfigPath,
             source,
             projectScope,
-            (dependencyKeys, includeAllNewModules) => {
+            (dependencyKeys) => {
               trackingEntry = collectBunProjectConfigModules(
                 projectRequire,
                 cacheSnapshot,
                 dependencyKeys,
                 trackingEntry,
-                includeAllNewModules,
               );
               if (trackingPublished) {
                 const ownedEntry: BunProjectConfigModuleCacheEntry =
@@ -5186,13 +5201,12 @@ async function loadAndMergeConfig(
                 trackingEntry = ownedEntry;
               }
             },
-            (dependencyKeys, includeAllNewModules) => {
+            (dependencyKeys) => {
               const discardedEntry = collectBunProjectConfigModules(
                 projectRequire,
                 cacheSnapshot,
                 dependencyKeys,
                 trackingEntry,
-                includeAllNewModules,
               );
               evictBunProjectConfigModules(discardedEntry);
               trackingEntry = undefined;
@@ -5200,7 +5214,7 @@ async function loadAndMergeConfig(
           );
           configModule = imported.configModule;
           dynamicImportObserver = imported.observer;
-          hasComputedDynamicImport = imported.hasComputedDynamicImport;
+          hasDynamicImport = imported.hasDynamicImport;
         }
         const merged = validateAndMergeConfig(selectConfigModuleValue(configModule));
         if (cacheRevision !== revisionAtStart) {
@@ -5212,8 +5226,8 @@ async function loadAndMergeConfig(
             evictBunProjectConfigModules(trackingEntry);
             trackingEntry = undefined;
           }
-          if (hasComputedDynamicImport) throw BUN_PROJECT_CONFIG_LOAD_INVALIDATED;
-          return merged;
+          if (hasDynamicImport) throw BUN_PROJECT_CONFIG_LOAD_INVALIDATED;
+          return { config: merged, bunTrackingKey: canonicalConfigPath };
         }
         if (trackingEntry !== undefined) {
           const ownedEntry: BunProjectConfigModuleCacheEntry = dynamicImportObserver === undefined
@@ -5223,7 +5237,7 @@ async function loadAndMergeConfig(
           trackingEntry = ownedEntry;
           trackingPublished = true;
         }
-        return merged;
+        return { config: merged, bunTrackingKey: canonicalConfigPath };
       } catch (error) {
         if (dynamicImportObserver !== undefined) {
           ReflectApply(dynamicImportObserver.dispose, dynamicImportObserver, []);
@@ -5256,7 +5270,7 @@ async function loadAndMergeConfig(
       hasApp: !!(userConfig as Record<string, unknown>)?.app,
       hasRouter: !!(userConfig as Record<string, unknown>)?.router,
     });
-    return validateAndMergeConfig(userConfig);
+    return { config: validateAndMergeConfig(userConfig) };
   }
 
   const absolutePath = resolve(configPath);
@@ -5265,7 +5279,7 @@ async function loadAndMergeConfig(
   const configModule = await import(
     ReflectApply(intrinsicUrlHrefGetter, configUrl, []) as string
   );
-  return validateAndMergeConfig(selectConfigModuleValue(configModule));
+  return { config: validateAndMergeConfig(selectConfigModuleValue(configModule)) };
 }
 
 /**
@@ -5719,27 +5733,21 @@ function getConfigInternal(
           }
 
           try {
-            const merged = await loadAndMergeConfig(
+            const loaded = await loadAndMergeConfig(
               configPath,
               effectiveCacheKey,
               adapter,
               revisionAtStart,
               trustedVirtualContent,
             );
+            const merged = loaded.config;
             const provenance = configFileProvenance(configFile);
-            let bunTrackingKey: string | undefined;
-            if (usePersistentCache && isBun && !isVirtualFS) {
-              bunTrackingKey = await realPath(resolve(configPath));
-              if (cacheRevision !== revisionAtStart) {
-                throw BUN_PROJECT_CONFIG_LOAD_INVALIDATED;
-              }
-            }
             if (usePersistentCache && cacheRevision === revisionAtStart) {
               setConfigCacheEntry(effectiveCacheKey, {
                 revision: revisionAtStart,
                 config: merged,
                 provenance,
-                bunTrackingKey,
+                bunTrackingKey: loaded.bunTrackingKey,
               });
             }
             logger.debug("Successfully loaded config", {

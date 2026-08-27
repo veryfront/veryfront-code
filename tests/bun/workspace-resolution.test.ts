@@ -552,6 +552,103 @@ describe("Bun workspace resolution", () => {
     }
   });
 
+  it("reloads runtime CommonJS children of deferred literal imports", async () => {
+    clearConfigCache();
+    ensureBuiltinSchemaValidator();
+    const adapter = createMockAdapter();
+    const resultMarker = `__vfBunDeferredLiteralImport_${crypto.randomUUID().replaceAll("-", "_")}`;
+    try {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        const entryPath = `${projectDir}/deferred-entry.cjs`;
+        const helperPath = `${projectDir}/deferred-helper.cjs`;
+        const source = "await Promise.resolve();\n" +
+          "export default { extensions: [{\n" +
+          '  name: "deferred-literal-import", version: "1", capabilities: [],\n' +
+          "  async setup() {\n" +
+          '    const { default: value } = await import("./deferred-entry.cjs");\n' +
+          `    globalThis[${JSON.stringify(resultMarker)}] = value;\n` +
+          "  },\n" +
+          "}] };\n";
+        await writeTextFile(configPath, source);
+        await writeTextFile(entryPath, 'module.exports = require("./deferred-helper.cjs");\n');
+        await writeTextFile(helperPath, 'module.exports = "before";\n');
+        adapter.fs.files.set(configPath, source);
+
+        const first = await getConfig(projectDir, adapter);
+        await (first.extensions?.[0] as { setup?: () => Promise<void> }).setup?.();
+        assertEquals((globalThis as Record<string, unknown>)[resultMarker], "before");
+
+        await writeTextFile(helperPath, 'module.exports = "after";\n');
+        clearConfigCache();
+        const second = await getConfig(projectDir, adapter);
+        await (second.extensions?.[0] as { setup?: () => Promise<void> }).setup?.();
+        assertEquals((globalThis as Record<string, unknown>)[resultMarker], "after");
+      }, { prefix: "vf-config-bun-deferred-literal-import-" });
+    } finally {
+      clearConfigCache();
+      delete (globalThis as Record<string, unknown>)[resultMarker];
+    }
+  });
+
+  it("does not claim unrelated modules loaded while an async config is suspended", async () => {
+    clearConfigCache();
+    ensureBuiltinSchemaValidator();
+    const adapter = createMockAdapter();
+    const startedMarker = `__vfBunConfigStarted_${crypto.randomUUID().replaceAll("-", "_")}`;
+    const resumeMarker = `__vfBunConfigResume_${crypto.randomUUID().replaceAll("-", "_")}`;
+    const unrelatedMarker = `__vfBunUnrelatedLoad_${crypto.randomUUID().replaceAll("-", "_")}`;
+    const started = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<void>();
+    const globals = globalThis as Record<string, unknown>;
+    globals[startedMarker] = () => started.resolve();
+    globals[resumeMarker] = () => resume.promise;
+    try {
+      await withTempDir(async (projectDir) => {
+        const configPath = `${projectDir}/veryfront.config.ts`;
+        const entryPath = `${projectDir}/config-entry.ts`;
+        const helperPath = `${projectDir}/config-helper.cjs`;
+        const unrelatedPath = `${projectDir}/unrelated.cjs`;
+        const source = 'import title from "./config-entry.ts";\n' +
+          `globalThis[${JSON.stringify(startedMarker)}]();\n` +
+          `await globalThis[${JSON.stringify(resumeMarker)}]();\n` +
+          "export default { title };\n";
+        await writeTextFile(configPath, source);
+        await writeTextFile(
+          entryPath,
+          'const dependency = "./config-helper.cjs";\n' +
+            "const imported = await import(dependency);\n" +
+            "export default imported.default;\n",
+        );
+        await writeTextFile(helperPath, 'module.exports = "config";\n');
+        await writeTextFile(
+          unrelatedPath,
+          `globalThis[${JSON.stringify(unrelatedMarker)}] = ` +
+            `(globalThis[${JSON.stringify(unrelatedMarker)}] ?? 0) + 1;\n` +
+            `module.exports = globalThis[${JSON.stringify(unrelatedMarker)}];\n`,
+        );
+        adapter.fs.files.set(configPath, source);
+
+        const configLoad = getConfig(projectDir, adapter);
+        await started.promise;
+        const projectRequire = createRequire(configPath);
+        assertEquals(projectRequire(unrelatedPath), 1);
+        resume.resolve();
+        assertEquals((await configLoad).title, "config");
+
+        clearConfigCache();
+        assertEquals(projectRequire(unrelatedPath), 1);
+        assertEquals(globals[unrelatedMarker], 1);
+      }, { prefix: "vf-config-bun-concurrent-unrelated-module-" });
+    } finally {
+      resume.resolve();
+      clearConfigCache();
+      delete globals[startedMarker];
+      delete globals[resumeMarker];
+      delete globals[unrelatedMarker];
+    }
+  });
+
   it("evicts transitive deferred imports discovered after cache clearing", async () => {
     clearConfigCache();
     ensureBuiltinSchemaValidator();
@@ -817,7 +914,7 @@ describe("Bun workspace resolution", () => {
     }, { prefix: "vf-config-bun-tla-cjs-descendant-reload-" });
   });
 
-  it("reloads a computed import inside a top-level-await config dependency", async () => {
+  it("does not claim an unobservable computed import inside a config dependency", async () => {
     clearConfigCache();
     ensureBuiltinSchemaValidator();
     const adapter = createMockAdapter();
@@ -839,7 +936,11 @@ describe("Bun workspace resolution", () => {
       await writeTextFile(helperPath, 'module.exports = "after";\n');
       clearConfigCache();
 
-      assertEquals((await getConfig(projectDir, adapter)).title, "after");
+      // Bun exposes neither a loader callback nor a CommonJS parent edge for a
+      // computed import executed inside an ESM dependency. Keeping that helper
+      // cached is safer than claiming every concurrently loaded project module
+      // as config-owned and evicting unrelated application singletons.
+      assertEquals((await getConfig(projectDir, adapter)).title, "before");
     }, { prefix: "vf-config-bun-transitive-computed-import-" });
   });
 
