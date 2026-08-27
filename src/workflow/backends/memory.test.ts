@@ -312,6 +312,74 @@ describe("MemoryBackend", () => {
       });
     });
 
+    it("persists context through the same JSON contract as Redis", async () => {
+      class Receipt {
+        constructor(readonly id: string) {}
+      }
+
+      const initialContext = {
+        input: {},
+        when: new Date(0),
+        tags: new Map([["a", 1]]),
+        receipt: new Receipt("r-1"),
+        missing: undefined,
+        ratio: Number.NaN,
+      };
+      const patchContext = {
+        later: new Date("2025-06-15T12:00:00Z"),
+        skipped: undefined,
+        invalidRatio: Number.NaN,
+      };
+
+      await backend.createRun(createTestRun("run-json-context", {
+        context: initialContext,
+      }));
+      assertEquals((await backend.getRun("run-json-context"))?.context, {
+        input: {},
+        when: "1970-01-01T00:00:00.000Z",
+        tags: {},
+        receipt: { id: "r-1" },
+        ratio: null,
+      });
+
+      await backend.updateRun("run-json-context", { context: patchContext });
+      assertEquals((await backend.getRun("run-json-context"))?.context, {
+        input: {},
+        when: "1970-01-01T00:00:00.000Z",
+        tags: {},
+        receipt: { id: "r-1" },
+        ratio: null,
+        later: "2025-06-15T12:00:00.000Z",
+        invalidRatio: null,
+      });
+    });
+
+    it("rejects context values the durable JSON contract cannot encode", async () => {
+      await assertRejects(
+        () =>
+          backend.createRun(createTestRun("run-fatal-context", {
+            context: { input: {}, total: 1n },
+          })),
+        Error,
+        "context.total",
+      );
+      assertEquals(await backend.getRun("run-fatal-context"), null);
+    });
+
+    it("rejects lossy context values when strictContext is enabled", async () => {
+      const strictBackend = new MemoryBackend({ strictContext: true });
+
+      await assertRejects(
+        () =>
+          strictBackend.createRun(createTestRun("run-strict-context", {
+            context: { input: {}, when: new Date(0) },
+          })),
+        Error,
+        "strictContext",
+      );
+      assertEquals(await strictBackend.getRun("run-strict-context"), null);
+    });
+
     it("merges node-state sets while applying explicit deletions", async () => {
       await backend.createRun(createTestRun("run-node-state-delete", {
         nodeStates: {

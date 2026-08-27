@@ -10,9 +10,15 @@ import type {
   ApprovalDecision,
   Checkpoint,
   RunFilter,
+  WorkflowContext,
   WorkflowQueueItem,
   WorkflowRun,
 } from "../types.ts";
+import {
+  serializeWorkflowContext,
+  serializeWorkflowJson,
+  type WorkflowJsonSerializationOptions,
+} from "../context-serialization.ts";
 import {
   assertWorkflowRunUpdate,
   type BackendConfig,
@@ -49,7 +55,7 @@ const objectDefineProperty = Object.defineProperty;
 /**
  * Memory backend configuration
  */
-interface MemoryBackendConfig extends BackendConfig {
+interface MemoryBackendConfig extends BackendConfig, WorkflowJsonSerializationOptions {
   /** Maximum queue size (default: 10000) */
   maxQueueSize?: number;
 }
@@ -57,6 +63,30 @@ interface MemoryBackendConfig extends BackendConfig {
 /** Default max queue size */
 const DEFAULT_MAX_QUEUE_SIZE = 10_000;
 const RUN_OBSERVATION_QUEUE_SIZE = 64;
+
+function persistedWorkflowContext(
+  context: WorkflowContext,
+  runId: string,
+  options: WorkflowJsonSerializationOptions,
+): WorkflowContext {
+  return JSON.parse(serializeWorkflowContext(context, runId, options));
+}
+
+function persistedWorkflowContextPatch(
+  context: Partial<WorkflowContext>,
+  runId: string,
+  options: WorkflowJsonSerializationOptions,
+): Partial<WorkflowContext> {
+  return JSON.parse(serializeWorkflowJson(context, "context", runId, options));
+}
+
+function persistedCheckpointContext(
+  context: WorkflowContext,
+  runId: string,
+  options: WorkflowJsonSerializationOptions,
+): WorkflowContext {
+  return JSON.parse(serializeWorkflowJson(context, "checkpoint.context", runId, options));
+}
 
 class ObservationFeed implements AsyncIterable<WorkflowRunObservedState> {
   readonly #values: WorkflowRunObservedState[] = [];
@@ -143,6 +173,7 @@ export class MemoryBackend implements WorkflowBackend {
       prefix: "wf:",
       debug: false,
       maxQueueSize: DEFAULT_MAX_QUEUE_SIZE,
+      strictContext: false,
       ...config,
     };
   }
@@ -154,12 +185,21 @@ export class MemoryBackend implements WorkflowBackend {
   createRun(run: WorkflowRun): Promise<void> {
     logger.debug(`Creating run: ${run.id}`);
     let sourceIntegrationPolicy;
+    let context: WorkflowContext;
     try {
       sourceIntegrationPolicy = requireWorkflowSourceIntegrationPolicy(run);
+      context = persistedWorkflowContext(run.context, run.id, this.config);
     } catch (error) {
       return Promise.reject(error);
     }
-    this.runs.set(run.id, structuredClone({ ...run, sourceIntegrationPolicy }));
+    this.runs.set(
+      run.id,
+      structuredClone({
+        ...run,
+        context,
+        sourceIntegrationPolicy,
+      }),
+    );
     this.runRevisions.set(run.id, 0);
     return Promise.resolve();
   }
@@ -191,7 +231,10 @@ export class MemoryBackend implements WorkflowBackend {
     logger.debug(`Updating run: ${runId}`, patch);
 
     const { contextDeletes = [], nodeStateDeletes = [], ...storedPatch } = patch;
-    const context = { ...run.context, ...patch.context };
+    const contextPatch = patch.context === undefined
+      ? undefined
+      : persistedWorkflowContextPatch(patch.context, runId, this.config);
+    const context = { ...run.context, ...contextPatch };
     for (const key of contextDeletes) delete context[key];
     const nodeStates = { ...run.nodeStates, ...patch.nodeStates };
     for (const key of nodeStateDeletes) delete nodeStates[key];
@@ -280,7 +323,19 @@ export class MemoryBackend implements WorkflowBackend {
     // Replacement, not the per-key merge updateRun applies: keys written after
     // the snapshot must not survive a checkpoint restore, or nodes completed
     // after the checkpoint stay completed and are skipped on replay.
-    const updated: WorkflowRun = { ...run, ...snapshot };
+    const updated: WorkflowRun = {
+      ...run,
+      ...snapshot,
+      ...(snapshot.context !== undefined
+        ? {
+          context: persistedWorkflowContext(
+            snapshot.context,
+            runId,
+            this.config,
+          ),
+        }
+        : {}),
+    };
     this.runs.set(runId, updated);
     this.publishRunObservation(runId, updated);
 
@@ -469,7 +524,10 @@ export class MemoryBackend implements WorkflowBackend {
   saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void> {
     logger.debug("Saving checkpoint", { checkpointId: checkpoint.id, runId });
     const checkpoints = this.checkpoints.get(runId) ?? [];
-    appendRetainedCheckpoint(checkpoints, checkpoint);
+    appendRetainedCheckpoint(checkpoints, {
+      ...checkpoint,
+      context: persistedCheckpointContext(checkpoint.context, runId, this.config),
+    });
     this.checkpoints.set(runId, checkpoints);
     return Promise.resolve();
   }
@@ -489,7 +547,10 @@ export class MemoryBackend implements WorkflowBackend {
     }
 
     const checkpoints = this.checkpoints.get(storageRunId) ?? [];
-    appendRetainedCheckpoint(checkpoints, checkpoint);
+    appendRetainedCheckpoint(checkpoints, {
+      ...checkpoint,
+      context: persistedCheckpointContext(checkpoint.context, storageRunId, this.config),
+    });
     this.checkpoints.set(storageRunId, checkpoints);
     return Promise.resolve(true);
   }
