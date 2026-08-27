@@ -476,11 +476,20 @@ function normalizeAndFindUnrepresentableValues(
     } catch {
       return;
     }
+    let serializedIndexCount = 0;
     for (const ownKey of ownKeys) {
+      const isSerializedIndex = typeof ownKey === "string" &&
+        isSerializedArrayIndexKey(ownKey, length);
       let descriptor: PropertyDescriptor | undefined;
       try {
         descriptor = objectGetOwnPropertyDescriptor(value, ownKey);
       } catch {
+        continue;
+      }
+      if (isSerializedIndex) {
+        if (descriptor === undefined) continue;
+        serializedIndexCount++;
+        recordAccessorProperty(descriptor, `${path}[${ownKey}]`);
         continue;
       }
       if (descriptor?.enumerable !== true) continue;
@@ -488,10 +497,9 @@ function normalizeAndFindUnrepresentableValues(
         recordLossy(path, "symbol-keyed property");
         continue;
       }
-      if (!isSerializedArrayIndexKey(ownKey, length)) {
-        recordLossy(`${path}.${redactPathSegment(ownKey)}`, "array property");
-      }
+      recordLossy(`${path}.${redactPathSegment(ownKey)}`, "array property");
     }
+    if (serializedIndexCount < length) recordLossy(path, "array hole");
   };
 
   const recordStrictArrayDiagnostics = (
@@ -626,9 +634,20 @@ function normalizeAndFindUnrepresentableValues(
         const length = toJsonLength(reflectGet(nested, "length"));
         for (let index = 0; index < length; index++) {
           const indexKey = StringConstructor(index);
-          const child = reflectGet(nested, indexKey);
           let isHole = false;
-          if (canIdentifyProxyWithoutHooks && !isProxyWithoutHooks(nested)) {
+          const canInspectIndex = canIdentifyProxyWithoutHooks &&
+            !isProxyWithoutHooks(nested);
+          if (options.strictContext === true && canInspectIndex) {
+            try {
+              const descriptor = objectGetOwnPropertyDescriptor(nested, indexKey);
+              isHole = descriptor === undefined;
+              recordAccessorProperty(descriptor, `${path}[${index}]`);
+            } catch {
+              // Hole diagnostics are best-effort; the captured value still wins.
+            }
+          }
+          const child = reflectGet(nested, indexKey);
+          if (options.strictContext !== true && canInspectIndex) {
             try {
               isHole = !objectHasOwn(nested, indexKey);
             } catch {

@@ -315,6 +315,39 @@ describe("serializeWorkflowContext", () => {
       assertStringIncludes(error.message, "accessor property");
       assertEquals(getterReads, 1);
     });
+
+    it("throws when strictContext would persist an array accessor as a data element", () => {
+      let getterReads = 0;
+      const rows: number[] = [];
+      Object.defineProperty(rows, "0", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          getterReads++;
+          Object.defineProperty(rows, "0", {
+            enumerable: true,
+            value: 1,
+          });
+          return 1;
+        },
+      });
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({ rows }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.rows[0]");
+      assertStringIncludes(error.message, "accessor property");
+      assertEquals(getterReads, 1);
+    });
   });
 
   it("keeps traversing a class instance's enumerable fields", () => {

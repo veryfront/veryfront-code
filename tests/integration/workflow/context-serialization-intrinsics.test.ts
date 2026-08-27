@@ -231,6 +231,115 @@ describe("workflow context serialization with hostile ambient intrinsics", () =>
     assertStringIncludes(result.message, "context.step.rows.meta");
   });
 
+  it("rejects inherited array holes and numeric accessors in strict mode when brand checks are unavailable", async () => {
+    const script = `
+      Object.defineProperty(globalThis, "caches", {
+        configurable: true,
+        value: {},
+      });
+      Object.defineProperty(globalThis, "WebSocketPair", {
+        configurable: true,
+        value: function WebSocketPair() {},
+      });
+
+      const { canIdentifyProxyWithoutHooks } = await import(
+        "./src/platform/compat/error-introspection.ts"
+      );
+      const { serializeWorkflowContext } = await import(
+        "./src/workflow/context-serialization.ts"
+      );
+
+      const failures = [];
+      let accessorReads = 0;
+      let proxyOwnKeys = 0;
+      const priorArrayZeroDescriptor = Object.getOwnPropertyDescriptor(
+        Array.prototype,
+        "0",
+      );
+      Object.defineProperty(Array.prototype, "0", {
+        configurable: true,
+        value: null,
+        writable: true,
+      });
+      try {
+        const sparse = [];
+        sparse.length = 1;
+        const reportedHoleTarget = [];
+        reportedHoleTarget.length = 1;
+        const reportedHole = new Proxy(reportedHoleTarget, {
+          ownKeys() {
+            proxyOwnKeys += 1;
+            return ["0", "length"];
+          },
+          getOwnPropertyDescriptor(target, key) {
+            if (key === "0") return undefined;
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          },
+        });
+        const accessor = [];
+        Object.defineProperty(accessor, "0", {
+          enumerable: true,
+          get() {
+            accessorReads += 1;
+            return 1;
+          },
+        });
+
+        for (const [name, value] of [
+          ["sparse", sparse],
+          ["reportedHole", reportedHole],
+          ["accessor", accessor],
+        ]) {
+          try {
+            serializeWorkflowContext(
+              { input: {}, step: { [name]: value } },
+              "run-edge-strict",
+              { strictContext: true },
+            );
+            failures.push({ name, message: "accepted" });
+          } catch (error) {
+            failures.push({ name, message: error instanceof Error ? error.message : String(error) });
+          }
+        }
+      } finally {
+        if (priorArrayZeroDescriptor === undefined) {
+          delete Array.prototype[0];
+        } else {
+          Object.defineProperty(Array.prototype, "0", priorArrayZeroDescriptor);
+        }
+      }
+
+      console.log(JSON.stringify({ canIdentifyProxyWithoutHooks, failures, accessorReads, proxyOwnKeys }));
+    `;
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["eval", "--config=deno.json", script],
+      cwd: new URL("../../../", import.meta.url),
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const stderr = new TextDecoder().decode(output.stderr);
+    assertEquals(output.code, 0, stderr);
+    const result = JSON.parse(new TextDecoder().decode(output.stdout)) as {
+      canIdentifyProxyWithoutHooks: boolean;
+      failures: Array<{ name: string; message: string }>;
+      accessorReads: number;
+      proxyOwnKeys: number;
+    };
+
+    assertEquals(result.canIdentifyProxyWithoutHooks, false);
+    assertStringIncludes(result.failures[0]!.message, "strictContext");
+    assertStringIncludes(result.failures[0]!.message, "context.step.sparse");
+    assertStringIncludes(result.failures[0]!.message, "array hole");
+    assertStringIncludes(result.failures[1]!.message, "strictContext");
+    assertStringIncludes(result.failures[1]!.message, "context.step.reportedHole");
+    assertStringIncludes(result.failures[1]!.message, "array hole");
+    assertStringIncludes(result.failures[2]!.message, "strictContext");
+    assertStringIncludes(result.failures[2]!.message, "context.step.accessor[0]");
+    assertStringIncludes(result.failures[2]!.message, "accessor property");
+    assertEquals(result.accessorReads, 1);
+    assertEquals(result.proxyOwnKeys, 1);
+  });
+
   it("rejects enumerable symbol properties in strict mode when brand checks are unavailable", async () => {
     const script = `
       Object.defineProperty(globalThis, "caches", {
