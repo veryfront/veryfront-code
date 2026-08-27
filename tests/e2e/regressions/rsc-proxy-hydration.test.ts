@@ -16,10 +16,17 @@ import { startProductionServer } from "../../../src/server/production-server.ts"
 import { bootstrapProd } from "../../../src/server/bootstrap.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { validateVeryfrontConfig } from "#veryfront/config/schemas/index.ts";
+import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import { withEnv } from "#veryfront/testing";
 
 const ROOT_LAYOUT_SOURCE =
   `export default function RootLayout({ children }: { children: React.ReactNode }) {
             return <html><body>{children}</body></html>;
+          }`;
+
+const FRAGMENT_LAYOUT_SOURCE =
+  `export default function RootLayout({ children }: { children: React.ReactNode }) {
+            return <main>{children}</main>;
           }`;
 
 const LOCAL_RSC_CONFIG_SOURCE = `export default { experimental: { rsc: true } };`;
@@ -109,6 +116,21 @@ export default function Page() {
 }
 `,
   );
+}
+
+async function writeServerFragmentApp(
+  projectDir: string,
+  configSource: string,
+): Promise<void> {
+  await writeClientApp(
+    projectDir,
+    configSource,
+    `export default function Page() {
+  return <h1 id="server-page">Server page</h1>;
+}
+`,
+  );
+  await writeTextFile(join(projectDir, "app", "layout.tsx"), FRAGMENT_LAYOUT_SOURCE);
 }
 
 async function writePreviewChatApp(
@@ -234,6 +256,33 @@ async function withHostedBrowserPage(
     // shared topology explicitly trusted by the host-level proxy setting.
     const extraHTTPHeaders = topology === "shared" ? headers : undefined;
     const browserContext = await browser.newContext({ extraHTTPHeaders });
+    await browserContext.addInitScript(() => {
+      const testWindow = window as
+        & typeof window
+        & Record<string, unknown>
+        & { __veryfrontTestHydrationState?: "complete" | "failed" };
+      const observeSignal = (property: string, state: "complete" | "failed") => {
+        let callback: ((...args: unknown[]) => unknown) | undefined;
+        Object.defineProperty(testWindow, property, {
+          configurable: true,
+          get: () => callback,
+          set: (value: unknown) => {
+            if (typeof value !== "function") {
+              callback = undefined;
+              return;
+            }
+            const signal = value as (...args: unknown[]) => unknown;
+            callback = function (this: unknown, ...args: unknown[]) {
+              testWindow.__veryfrontTestHydrationState = state;
+              return signal.apply(this, args);
+            };
+          },
+        });
+      };
+
+      observeSignal("__veryfrontHydrationComplete", "complete");
+      observeSignal("__veryfrontHydrationFailed", "failed");
+    });
     await installEsmShCorsShim(browserContext);
 
     try {
@@ -587,6 +636,73 @@ describe(
       } finally {
         await browser.close();
       }
+    });
+
+    it("keeps a dedicated preview server page free of console errors", async () => {
+      await withEnv({ [DEPENDENCY_PINNING_ENV_FLAG]: "1" }, async () => {
+        const browser = await launchChromium();
+        if (!browser) return;
+
+        try {
+          await withTestContext("rsc-dedicated-preview-server-page", async (context) => {
+            await writeServerFragmentApp(
+              context.projectDir,
+              LOCAL_RSC_CONFIG_SOURCE,
+            );
+
+            await withHostedBrowserPage(
+              browser,
+              context,
+              "dedicated",
+              getHostedHeaders("preview"),
+              async (page, diagnostics, response) => {
+                assertEquals(response.status(), 200);
+                await page.waitForFunction(() => {
+                  const state = (window as typeof window & {
+                    __veryfrontTestHydrationState?: string;
+                  }).__veryfrontTestHydrationState;
+                  return state === "complete" || state === "failed";
+                });
+                const hydrationState = await page.evaluate(() =>
+                  (window as typeof window & {
+                    __veryfrontTestHydrationState?: string;
+                  }).__veryfrontTestHydrationState
+                );
+                assertEquals(hydrationState, "complete");
+                assertEquals((await page.textContent("#server-page"))?.trim(), "Server page");
+
+                const hydrationData = JSON.parse(
+                  (await page.textContent("#veryfront-hydration-data")) ?? "{}",
+                ) as {
+                  clientModuleStrategy?: string;
+                  dependencyPinningCacheKey?: string;
+                  isolatedClientPage?: boolean;
+                  pagePath?: string;
+                };
+                assertEquals(hydrationData.clientModuleStrategy, "rsc-module");
+                assertEquals(hydrationData.dependencyPinningCacheKey?.startsWith("on:"), true);
+                assertEquals(hydrationData.isolatedClientPage, undefined);
+                assertEquals(hydrationData.pagePath, "app/page.tsx");
+
+                const resources = await page.evaluate(() =>
+                  performance.getEntriesByType("resource").map((entry) => entry.name)
+                );
+                assertEquals(
+                  resources.some((url) =>
+                    url.includes("/_veryfront/rsc/module?rel=app%2Fpage.tsx") ||
+                    url.includes("/pages/index.js")
+                  ),
+                  false,
+                );
+                assertEquals(diagnostics.consoleMessages, []);
+                assertEquals(diagnostics.pageErrors, []);
+              },
+            );
+          });
+        } finally {
+          await browser.close();
+        }
+      });
     });
 
     it("keeps dedicated preview chat pages styled after hydration", async () => {

@@ -1,11 +1,22 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { ModuleNamespace } from "./env.ts";
+import type {
+  ClientRouter,
+  HydrationRuntimeEnv,
+  ModuleNamespace,
+  RuntimeDocument,
+  RuntimeWindow,
+} from "./env.ts";
+import type { ComponentLoader } from "./component-loader.ts";
+import type { SnapshotModuleImporter } from "./snapshot-modules.ts";
+import type { RuntimeLogging } from "./shared.ts";
 import {
+  createHydrationRenderer,
   isAppRouterPath,
   isModuleNotFoundError,
   isRootAppLayoutPath,
+  isServerOwnedAppRouterPage,
   loadPageModuleWithIndexFallback,
 } from "./renderer.ts";
 
@@ -392,6 +403,119 @@ describe("hydration-script-builder/runtime/renderer", () => {
 
     it("treats a missing path as outside the App Router", () => {
       assertEquals(isAppRouterPath(undefined, "app"), false);
+    });
+  });
+
+  describe("isServerOwnedAppRouterPage", () => {
+    it("classifies only remote App Router pages without a client ownership marker", () => {
+      assertEquals(
+        isServerOwnedAppRouterPage({
+          clientModuleStrategy: "rsc-module",
+          pagePath: "app/page.tsx",
+        }),
+        true,
+      );
+      assertEquals(
+        isServerOwnedAppRouterPage({
+          clientModuleStrategy: "rsc-module",
+          isolatedClientPage: true,
+          pagePath: "app/page.tsx",
+        }),
+        false,
+      );
+      assertEquals(
+        isServerOwnedAppRouterPage({
+          clientModuleStrategy: "rsc-module",
+          isClientPage: true,
+          pagePath: "app/page.tsx",
+        }),
+        false,
+      );
+      assertEquals(
+        isServerOwnedAppRouterPage({
+          clientModuleStrategy: "fs",
+          pagePath: "app/page.tsx",
+        }),
+        false,
+      );
+      assertEquals(
+        isServerOwnedAppRouterPage({
+          clientModuleStrategy: "rsc-module",
+          pagePath: "pages/index.tsx",
+        }),
+        false,
+      );
+      assertEquals(
+        isServerOwnedAppRouterPage({
+          appRouterRoot: "/src/app/",
+          clientModuleStrategy: "rsc-module",
+          pagePath: "src/app/page.tsx",
+        }),
+        true,
+      );
+    });
+  });
+
+  describe("createHydrationRenderer", () => {
+    it("preserves the server document without importing a server-owned App Router page", async () => {
+      const hydrationElement = {
+        id: "veryfront-hydration-data",
+        tagName: "SCRIPT",
+        textContent: JSON.stringify({
+          appRouterRoot: "/src/app/",
+          clientModuleStrategy: "rsc-module",
+          pagePath: "src/app/page.tsx",
+        }),
+        getAttribute: (name: string) => name === "type" ? "application/json" : null,
+      };
+      const body = { firstElementChild: hydrationElement };
+      let hydrationCompletions = 0;
+      const window = {
+        location: {
+          origin: "https://veryfront.test",
+          pathname: "/",
+          search: "",
+          href: "https://veryfront.test/",
+        },
+        __veryfrontHydrationComplete: () => {
+          hydrationCompletions += 1;
+        },
+      } as unknown as RuntimeWindow;
+      const document = {
+        body,
+        querySelectorAll: () => [hydrationElement],
+      } as unknown as RuntimeDocument;
+      const importedModules: string[] = [];
+      const errors: unknown[][] = [];
+      const renderer = createHydrationRenderer({
+        env: { window, document } as unknown as HydrationRuntimeEnv,
+        logging: {
+          DEBUG: false,
+          log: () => {},
+          logError: (...args: unknown[]) => errors.push(args),
+          logBackgroundFetchFailure: () => {},
+          perfStart: () => {},
+          perfEnd: () => 0,
+        } satisfies RuntimeLogging,
+        componentLoader: {
+          loadComponent: () => Promise.reject(new Error("unexpected component load")),
+          pathToModuleUrl: (path: string) => `/_vf_modules/${path}`,
+        } as unknown as ComponentLoader,
+        snapshotModules: {
+          importSnapshotBoundModule: (moduleUrl: string) => {
+            importedModules.push(moduleUrl);
+            return Promise.reject(new Error("unexpected module import"));
+          },
+        } as SnapshotModuleImporter,
+        moduleServerUrl: "https://veryfront.test/_vf_modules",
+        router: {} as ClientRouter,
+      });
+
+      await renderer.renderPage("/");
+
+      assertEquals(hydrationCompletions, 1);
+      assertEquals(importedModules, []);
+      assertEquals(errors, []);
     });
   });
 

@@ -128,6 +128,31 @@ export function isAppRouterPath(
     normalizedPath.startsWith(appRouterRoot + "/");
 }
 
+function trimBoundarySlashes(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value[start] === "/") start += 1;
+  while (end > start && value[end - 1] === "/") end -= 1;
+  return value.slice(start, end);
+}
+
+export function isServerOwnedAppRouterPage(
+  data: Pick<
+    PageDataPayload,
+    "appRouterRoot" | "clientModuleStrategy" | "isClientPage" | "isolatedClientPage" | "pagePath"
+  >,
+): boolean {
+  const normalizedAppRouterRoot = trimBoundarySlashes(
+    typeof data.appRouterRoot === "string" ? data.appRouterRoot : "",
+  );
+  const appRouterRoot = normalizedAppRouterRoot || "app";
+
+  return data.clientModuleStrategy === "rsc-module" &&
+    isAppRouterPath(data.pagePath, appRouterRoot) &&
+    data.isolatedClientPage !== true &&
+    data.isClientPage !== true;
+}
+
 /** True for the App Router's root layout, the one that renders the document. */
 export function isRootAppLayoutPath(
   path: string | undefined,
@@ -222,17 +247,25 @@ export function createHydrationRenderer(deps: HydrationRendererDeps): HydrationR
       let pageModule: ModuleNamespace | undefined;
       const pagePath = typeof data.pagePath === "string" ? data.pagePath : "";
       const normalizedPagePath = pagePath.replace(/^\/+/, "");
-      const normalizedAppRouterRoot =
-        typeof data.appRouterRoot === "string" && data.appRouterRoot.replace(/^\/+|\/+$/g, "")
-          ? data.appRouterRoot.replace(/^\/+|\/+$/g, "")
-          : "app";
+      const normalizedAppRouterRoot = trimBoundarySlashes(
+        typeof data.appRouterRoot === "string" ? data.appRouterRoot : "",
+      ) || "app";
       const hasReleaseAssetModules = data.releaseAssetModules &&
         Object.keys(data.releaseAssetModules).length > 0;
 
-      const shouldRenderRscClientPage = data.clientModuleStrategy === "rsc-module" &&
-        !hasReleaseAssetModules &&
-        isAppRouterPath(normalizedPagePath, normalizedAppRouterRoot);
       const isolatedClientPage = data.isolatedClientPage === true;
+      const isRemoteAppRouterPage = data.clientModuleStrategy === "rsc-module" &&
+        isAppRouterPath(normalizedPagePath, normalizedAppRouterRoot);
+
+      if (isServerOwnedAppRouterPage(data)) {
+        log("Initial App Router page is server-owned; skipping client hydration");
+        window.__veryfrontHydrationComplete?.();
+        return;
+      }
+
+      const shouldRenderRscClientPage = isRemoteAppRouterPage &&
+        !hasReleaseAssetModules &&
+        (isolatedClientPage || data.isClientPage === true);
 
       const loadHydrationComponent = async (
         path: string | undefined,

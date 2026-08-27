@@ -351,6 +351,45 @@ describe("html-generation/html-shell-generator", () => {
       );
     });
 
+    it("does not preload server-owned App Router modules in remote previews", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions({
+          projectDir: "/project",
+          pagePath: "/project/app/page.tsx",
+          nestedLayouts: [
+            { kind: "tsx", path: "/project/app/layout.tsx" },
+          ],
+          environment: "preview",
+          isLocalProject: false,
+        }),
+      );
+
+      assertEquals(result.includes("/_vf_modules/app/page.js"), false);
+      assertEquals(result.includes("/_vf_modules/app/layout.js"), false);
+    });
+
+    it("does not preload server-owned modules from an absolute custom App Router directory", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions({
+          config: { directories: { app: "/project/src/app" } },
+          projectDir: "/project",
+          pagePath: "/project/src/app/page.tsx",
+          nestedLayouts: [
+            { kind: "tsx", path: "/project/src/app/layout.tsx" },
+          ],
+          environment: "preview",
+          isLocalProject: false,
+        }),
+      );
+
+      assertEquals(result.includes("/_vf_modules/src/app/page.js"), false);
+      assertEquals(result.includes("/_vf_modules/src/app/layout.js"), false);
+    });
+
     it("binds page and layout fallback preloads to historical snapshot A after B", async () => {
       const common = createOptions({
         projectDir: "/project",
