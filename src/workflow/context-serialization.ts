@@ -330,8 +330,7 @@ function normalizeAndFindUnrepresentableValues(
     } catch {
       return;
     }
-    for (let index = 0; index < symbolKeys.length; index++) {
-      const symbolKey = symbolKeys[index]!;
+    for (const symbolKey of symbolKeys) {
       let descriptor: PropertyDescriptor | undefined;
       try {
         descriptor = objectGetOwnPropertyDescriptor(value, symbolKey);
