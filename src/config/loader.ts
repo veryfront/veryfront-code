@@ -1972,10 +1972,11 @@ const CSI_GLUED_URL =
 // Apostrophes are intentionally absent even though RFC 3986 lists them as a
 // sub-delimiter. The userinfo prefix handles them before `@`, while the tail
 // must leave the closing quote in `Cannot find module 'https://host/x'` intact.
-const URI_TOKEN_CHARACTER_SOURCE = String.raw`[A-Za-z0-9\-._~:/?#\[\]@!$&*+,;=%]`;
-const URI_PAREN_INTERIOR_SOURCE = String.raw`[A-Za-z0-9\-._~:/?#\[\]@!$&()*+,;=%]`;
+const URI_TOKEN_CHARACTER_SOURCE = String.raw`[A-Za-z0-9\-._~:/?#\[\]@!$&*+,;=%{}]`;
+const URI_PAREN_INTERIOR_SOURCE = String.raw`[A-Za-z0-9\-._~:/?#\[\]@!$&()*+,;=%{}]`;
+const URL_BALANCED_PAREN_SEGMENT_SOURCE = String.raw`\([^\s"']{0,512}\)`;
 const URL_TOKEN_TAIL_SOURCE = String
-  .raw`(?:${URI_TOKEN_CHARACTER_SOURCE}|\(${URI_PAREN_INTERIOR_SOURCE}{0,512}\)|\((?=${URI_PAREN_INTERIOR_SOURCE})|\)(?=${URI_PAREN_INTERIOR_SOURCE})(?![\p{P}\p{S}\p{M}\p{Cf}]{0,16}(?:[\s"']|$)))+`;
+  .raw`(?:${URI_TOKEN_CHARACTER_SOURCE}|${URL_BALANCED_PAREN_SEGMENT_SOURCE}|\((?=${URI_PAREN_INTERIOR_SOURCE})|\)(?=${URI_PAREN_INTERIOR_SOURCE})(?![\p{P}\p{S}\p{M}\p{Cf}]{0,16}(?:[\s"']|$)))+`;
 const SCHEME_URL = new RegExp(
   String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
   "gu",
@@ -1990,8 +1991,13 @@ const SCHEME_URL = new RegExp(
 // Unicode after the first slash does not match this fallback. The normal rule
 // handles that shape and preserves the following prose, which is the no-space
 // boundary this fallback must not undo.
-const NON_ASCII_AUTHORITY_URL =
-  /[A-Za-z][A-Za-z0-9+.-]{1,31}:\/\/(?:[^\s"/]{0,512}@)?(?=[^\s"/]{0,512}[\u0080-\u{10FFFF}])[^\s"']*/gu;
+const NON_ASCII_HOST_SOURCE = String
+  .raw`[\p{L}\p{N}\p{M}.-]{0,512}[\u0080-\u{10FFFF}][\p{L}\p{N}\p{M}.-]{0,512}`;
+const NON_ASCII_AUTHORITY_URL = new RegExp(
+  String
+    .raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}${URL_TOKEN_TAIL_SOURCE}?`,
+  "gu",
+);
 // Raw Unicode at the start of a slash-delimited path segment is part of an IRI,
 // rather than prose glued to the preceding ASCII segment. Match the complete
 // whitespace-delimited token in that unambiguous case. Requiring the segment
@@ -2080,7 +2086,7 @@ const ZERO_SLASH_SCHEME_URL = new RegExp(
 // remain linear-time.
 const NON_ASCII_MALFORMED_AUTHORITY_URL = new RegExp(
   String
-    .raw`${ASCII_SPECIAL_SCHEME_SOURCE}:/(?!/)(?:[^\s"/]{0,512}@)?(?=[^\s"/]{0,512}[^\x00-\x7F])[^\s"']*`,
+    .raw`${ASCII_SPECIAL_SCHEME_SOURCE}:/(?!/)(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}${URL_TOKEN_TAIL_SOURCE}?`,
   "gu",
 );
 const NON_ASCII_MALFORMED_URL_PATH = new RegExp(
@@ -2090,7 +2096,7 @@ const NON_ASCII_MALFORMED_URL_PATH = new RegExp(
 );
 const NON_ASCII_ZERO_SLASH_AUTHORITY_URL = new RegExp(
   String
-    .raw`${ASCII_SPECIAL_SCHEME_SOURCE}:(?![/\s])(?:[^\s"/]{0,512}@)?(?=[^\s"/]{0,512}[^\x00-\x7F])[^\s"']*`,
+    .raw`${ASCII_SPECIAL_SCHEME_SOURCE}:(?![/\s])(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}${URL_TOKEN_TAIL_SOURCE}?`,
   "gu",
 );
 const NON_ASCII_ZERO_SLASH_URL_PATH = new RegExp(
@@ -2126,7 +2132,11 @@ const POSIX_ABSOLUTE_PATH = /(?<![A-Za-z0-9:/.\\])\/[^\s"'()]+/g;
 
 function rawIriMatchEnd(value: string, matched: string, offset: number): number {
   const lastCharacter = ReflectApply(StringPrototypeSlice, matched, [-1]) as string;
+  const insideQueryOrFragment =
+    (ReflectApply(StringPrototypeIncludes, matched, ["?"]) as boolean) ||
+    (ReflectApply(StringPrototypeIncludes, matched, ["#"]) as boolean);
   if (
+    !insideQueryOrFragment &&
     lastCharacter !== "/" &&
     lastCharacter !== "?" &&
     lastCharacter !== "#" &&

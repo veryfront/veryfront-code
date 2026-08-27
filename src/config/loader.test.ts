@@ -3002,6 +3002,50 @@ export default config as const;
         assertEquals(iriQuery.message.includes("秘密"), false);
         assertStringIncludes(iriQuery.message, "Failed [url]");
 
+        const iriPrefixedQuery = await loadFailure(
+          "vf-config-iri-prefixed-query-",
+          `throw new Error("Failed https://registry.internal/x?q=abc秘密");\n`,
+        );
+
+        assertEquals(iriPrefixedQuery.message.includes("秘密"), false);
+        assertEquals(iriPrefixedQuery.message.includes("abc"), false);
+        assertStringIncludes(iriPrefixedQuery.message, "Failed [url]");
+
+        const iriParenthesizedPath = await loadFailure(
+          "vf-config-iri-parenthesized-path-",
+          `throw new Error("Failed https://registry.internal/x(秘密)/config.ts");\n`,
+        );
+
+        assertEquals(iriParenthesizedPath.message.includes("秘密"), false);
+        assertEquals(iriParenthesizedPath.message.includes("registry.internal"), false);
+        assertStringIncludes(iriParenthesizedPath.message, "Failed [url]");
+
+        const fileIriParenthesizedPath = await loadFailure(
+          "vf-config-file-iri-parenthesized-path-",
+          `throw new Error("Failed file:///home/alice/x(秘密)/config.ts");\n`,
+        );
+
+        assertEquals(fileIriParenthesizedPath.message.includes("秘密"), false);
+        assertEquals(fileIriParenthesizedPath.message.includes("/home/alice"), false);
+        assertStringIncludes(fileIriParenthesizedPath.message, "Failed [path]");
+
+        const acceptedRawPath = await loadFailure(
+          "vf-config-raw-accepted-url-path-",
+          `throw new Error("Failed https://registry.internal/{PRIVATE}/config.ts");\n`,
+        );
+
+        assertEquals(acceptedRawPath.message.includes("{PRIVATE}"), false);
+        assertEquals(acceptedRawPath.message.includes("registry.internal"), false);
+        assertStringIncludes(acceptedRawPath.message, "Failed [url]");
+
+        const bareAuthorityProse = await loadFailure(
+          "vf-config-iri-authority-prose-",
+          `throw new Error("Failed (see https://registry.internal)。次を試してください");\n`,
+        );
+
+        assertStringIncludes(bareAuthorityProse.message, "Failed (see [url])。次を試してください");
+        assertEquals(bareAuthorityProse.message.includes("registry.internal"), false);
+
         const iriTerminalFilePath = await loadFailure(
           "vf-config-iri-terminal-file-path-",
           `throw new Error("Failed file:///home/alice/秘密");\n`,
