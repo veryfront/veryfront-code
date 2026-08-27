@@ -3,6 +3,7 @@ import { VeryfrontError } from "#veryfront/errors";
 import {
   assertEquals,
   assertInstanceOf,
+  assertStrictEquals,
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
@@ -438,8 +439,17 @@ describe("serializeWorkflowContext", () => {
         configurable: false,
         writable: true,
       });
+      const hiddenIndex = [1];
+      Object.defineProperty(hiddenIndex, "0", {
+        value: 1,
+        enumerable: false,
+        configurable: true,
+        writable: true,
+      });
 
-      for (const value of [readonlyObject, fixedObject, readonlyIndex, fixedIndex]) {
+      for (
+        const value of [readonlyObject, fixedObject, readonlyIndex, fixedIndex, hiddenIndex]
+      ) {
         const error = assertThrows(
           () =>
             serializeWorkflowContext(
@@ -935,6 +945,66 @@ describe("serializeWorkflowContext", () => {
       assertInstanceOf(error, VeryfrontError);
       assertStringIncludes(error.message, "strictContext");
       assertStringIncludes(error.message, "uninspected value");
+    });
+
+    it("translates fatal JSON errors below the cutoff to redacted persistence errors", () => {
+      const sensitiveKey = "user@example.com";
+      const cyclic: Record<string, unknown> = {};
+      cyclic[sensitiveKey] = cyclic;
+
+      for (const tail of [{ [sensitiveKey]: 1n }, cyclic]) {
+        let deep: unknown = tail;
+        for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+
+        const error = assertThrows(
+          () => serializeWorkflowContext(contextWith(deep)),
+          VeryfrontError,
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertStringIncludes(error.message, "cannot be persisted");
+        assertStringIncludes(error.message, "context.step");
+        assertEquals(error.message.includes(sensitiveKey), false);
+      }
+    });
+
+    it("preserves user TypeErrors thrown below the cutoff", () => {
+      const toJsonError = new TypeError("user toJSON failure");
+      const getterError = new TypeError("user getter failure");
+      const getterTail = Object.defineProperty({}, "value", {
+        enumerable: true,
+        get() {
+          throw getterError;
+        },
+      });
+
+      for (
+        const [tail, expected] of [
+          [{
+            toJSON: () => {
+              throw toJsonError;
+            },
+          }, toJsonError],
+          [getterTail, getterError],
+        ] as const
+      ) {
+        let deep: unknown = tail;
+        for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+
+        const error = assertThrows(() => serializeWorkflowContext(contextWith(deep)));
+
+        assertStrictEquals(error, expected);
+      }
+    });
+
+    it("keeps shared references below the cutoff distinct from cycles", () => {
+      const shared = { value: 1 };
+      let deep: unknown = { left: shared, right: shared };
+      for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+
+      const context = contextWith(deep);
+
+      assertEquals(serializeWorkflowContext(context), JSON.stringify(context));
     });
 
     it("still names a fatal value found above the depth it stops at", () => {

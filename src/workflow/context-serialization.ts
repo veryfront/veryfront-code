@@ -72,6 +72,9 @@ const dataViewByteLengthGet = objectGetOwnPropertyDescriptor(
   DataView.prototype,
   "byteLength",
 )?.get;
+const WeakMapConstructor = WeakMap;
+const weakMapGet = WeakMap.prototype.get;
+const weakMapSet = WeakMap.prototype.set;
 
 function defineArrayElement<T>(values: T[], index: number, value: T): void {
   objectDefineProperty(values, index, {
@@ -178,6 +181,7 @@ type NormalizedJsonValue =
 
 const OMIT_JSON_VALUE = Symbol("omit-json-value");
 const ACTIVE_JSON_TAIL_REFERENCE = new Error("active JSON tail reference");
+const BIGINT_JSON_TAIL_VALUE = new Error("BigInt JSON tail value");
 
 /** Encode an uninspected tail now, preserving native hook order and output. */
 function normalizeJsonTail(
@@ -192,13 +196,30 @@ function normalizeJsonTail(
     configurable: true,
     writable: true,
   });
-  const serializedHolder = jsonStringify(holder, (_key, nested) => {
-    if (
-      nested !== null &&
-      typeof nested === "object" &&
-      reflectApply(setHas, active, [nested])
-    ) {
-      throw ACTIVE_JSON_TAIL_REFERENCE;
+  const parents = new WeakMapConstructor<JsonTraversalReference, JsonTraversalReference>();
+  const hasAncestor = (
+    holder: JsonTraversalReference,
+    candidate: JsonTraversalReference,
+  ): boolean => {
+    let ancestor: JsonTraversalReference | undefined = holder;
+    while (ancestor !== undefined) {
+      if (ancestor === candidate) return true;
+      ancestor = reflectApply(weakMapGet, parents, [ancestor]) as
+        | JsonTraversalReference
+        | undefined;
+    }
+    return false;
+  };
+  const serializedHolder = jsonStringify(holder, function (
+    this: JsonTraversalReference,
+    _key,
+    nested,
+  ) {
+    if (typeof nested === "bigint") throw BIGINT_JSON_TAIL_VALUE;
+    if (nested !== null && typeof nested === "object") {
+      if (reflectApply(setHas, active, [nested])) throw ACTIVE_JSON_TAIL_REFERENCE;
+      if (hasAncestor(this, nested)) throw ACTIVE_JSON_TAIL_REFERENCE;
+      reflectApply(weakMapSet, parents, [nested, this]);
     }
     return nested;
   });
@@ -488,7 +509,11 @@ function normalizeAndFindUnrepresentableValues(
       recordLossy(path, "accessor property");
       return;
     }
-    if (descriptor.writable !== true || descriptor.configurable !== true) {
+    if (
+      descriptor.enumerable !== true ||
+      descriptor.writable !== true ||
+      descriptor.configurable !== true
+    ) {
       recordLossy(path, "property attributes");
     }
   };
@@ -644,9 +669,15 @@ function normalizeAndFindUnrepresentableValues(
       try {
         return normalizeJsonTail(nested, key, active);
       } catch (error) {
-        if (error !== ACTIVE_JSON_TAIL_REFERENCE) throw error;
-        recordFatal(path, "circular reference");
-        return null;
+        if (error === ACTIVE_JSON_TAIL_REFERENCE) {
+          recordFatal(path, "circular reference");
+          return null;
+        }
+        if (error === BIGINT_JSON_TAIL_VALUE) {
+          recordFatal(path, "BigInt");
+          return null;
+        }
+        throw error;
       }
     }
 
