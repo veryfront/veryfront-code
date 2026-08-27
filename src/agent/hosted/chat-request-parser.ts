@@ -14,8 +14,8 @@ import {
   hostedChatRequestSchema,
 } from "./chat-request.ts";
 import {
+  getRuntimeAgentRunInvocationSchema,
   type RuntimeAgentRunInvocation,
-  RuntimeAgentRunInvocationSchema,
 } from "../runtime/agent-invocation-contract.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import {
@@ -88,7 +88,7 @@ export type ParsedHostedChatRequest = {
   upstreamParentRunId: string | undefined;
   spawnedFromToolCallId: string | undefined;
   /** Durable task identity supplied only by a signed runtime invocation. */
-  taskId?: RuntimeAgentRunInvocation["taskId"];
+  taskId?: Exclude<RuntimeAgentRunInvocation["taskId"], undefined>;
   model: string | undefined;
   allowDelegation: boolean | undefined;
   forwardedProps: HostedChatRequest["forwardedProps"];
@@ -588,7 +588,7 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
   const requestBody = await parseRequestJson(request);
   if (requestBody instanceof Response) return requestBody;
 
-  const invocation = RuntimeAgentRunInvocationSchema.safeParse(requestBody);
+  const invocation = getRuntimeAgentRunInvocationSchema().safeParse(requestBody);
   if (!invocation.success) {
     return createValidationErrorResponse({
       messagePrefix: "Invalid runtime agent invocation",
@@ -650,7 +650,7 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
       { status: 403 },
     );
   }
-  if (invocation.data.taskId) {
+  if (verifiedRequest.serverEnvelopeVerified === true && invocation.data.taskId) {
     verifiedRequest.taskId = invocation.data.taskId;
   }
   return verifiedRequest;
