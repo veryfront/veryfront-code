@@ -385,6 +385,84 @@ describe("serializeWorkflowContext", () => {
       assertEquals(getterReads, 1);
     });
 
+    it("throws when strictContext would relax data property attributes", () => {
+      const readonlyObject = {};
+      Object.defineProperty(readonlyObject, "required", {
+        value: 1,
+        enumerable: true,
+        configurable: true,
+      });
+      const fixedObject = {};
+      Object.defineProperty(fixedObject, "required", {
+        value: 1,
+        enumerable: true,
+        writable: true,
+      });
+      const readonlyIndex = [1];
+      Object.defineProperty(readonlyIndex, "0", {
+        value: 1,
+        enumerable: true,
+        configurable: true,
+        writable: false,
+      });
+      const fixedIndex = [1];
+      Object.defineProperty(fixedIndex, "0", {
+        value: 1,
+        enumerable: true,
+        configurable: false,
+        writable: true,
+      });
+
+      for (const value of [readonlyObject, fixedObject, readonlyIndex, fixedIndex]) {
+        const error = assertThrows(
+          () =>
+            serializeWorkflowContext(
+              contextWith({ value }),
+              "run-strict-context",
+              { strictContext: true },
+            ),
+          VeryfrontError,
+        );
+
+        assertStringIncludes(error.message, "property attributes");
+      }
+    });
+
+    it("throws when strictContext would restore a writable array length", () => {
+      const rows = [1, 2];
+      Object.defineProperty(rows, "length", { writable: false });
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({ rows }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertStringIncludes(error.message, "array length property");
+    });
+
+    it("throws when a built-in hides behind Object.prototype in strictContext", () => {
+      const disguisedDate = new Date(0);
+      Object.setPrototypeOf(disguisedDate, Object.prototype);
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({ disguisedDate }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "object");
+    });
+
     it("throws when strictContext would drop a non-enumerable property", () => {
       const step = {};
       Object.defineProperty(step, "required", {
@@ -776,7 +854,10 @@ describe("serializeWorkflowContext", () => {
       // the stack overflow itself would test the host, since how deep the walk
       // and `JSON.stringify` each reach depends on the engine and the stack a
       // test runner leaves them.
-      let deep: unknown = { when: new Date(0) };
+      let deep: unknown = {
+        when: new Date(0),
+        exactNumber: jsonRawSupport.rawJSON("1e+2"),
+      };
       for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
 
       let serialized = "";
@@ -846,7 +927,7 @@ describe("serializeWorkflowContext", () => {
       // Handing the whole root back to `JSON.stringify` would re-run every
       // getter and `toJSON` the walk had already run on the way down, and a
       // hook that answers differently the second time would then persist a
-      // value this check never saw. Only the subtree below the cutoff is left
+      // value this check never saw. Only the subtree at the cutoff is handed
       // to JSON, so nothing above it is read twice.
       let reads = 0;
       let deep: unknown = { leaf: 1 };
@@ -868,6 +949,40 @@ describe("serializeWorkflowContext", () => {
 
       assertEquals(reads, 1);
       assertEquals(JSON.parse(serialized).step.counted, 1);
+    });
+
+    it("runs hooks below the cutoff before reading later siblings", () => {
+      const makeContext = (): WorkflowContext => {
+        const later = { observed: 0 };
+        let deep: unknown = {
+          toJSON() {
+            later.observed = 1;
+            return { leaf: true };
+          },
+        };
+        for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+        return contextWith({ deep, later });
+      };
+
+      const serialized = serializeWorkflowContext(makeContext());
+      const native = JSON.stringify(makeContext());
+
+      assertEquals(serialized, native);
+      assertEquals(JSON.parse(serialized).step.later.observed, 1);
+    });
+
+    it("names a cycle that returns to an active ancestor at the cutoff", () => {
+      const output: Record<string, unknown> = {};
+      let deep: unknown = output;
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH; index++) deep = { n: deep };
+      output.deep = deep;
+
+      const error = assertThrows(
+        () => serializeWorkflowContext(contextWith(output)),
+        VeryfrontError,
+      );
+
+      assertStringIncludes(error.message, "circular reference");
     });
 
     it("counts every hole in a sparse array without keeping one entry each", () => {

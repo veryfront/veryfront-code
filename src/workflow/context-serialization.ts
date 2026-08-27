@@ -21,6 +21,10 @@ const errorIsError = typeof ErrorConstructor.isError === "function"
 const jsonIsRawJSON = typeof (JSON as JsonRawSupport).isRawJSON === "function"
   ? (JSON as JsonRawSupport).isRawJSON
   : undefined;
+const jsonParse = JSON.parse;
+const jsonRawJSON = typeof (JSON as JsonRawSupport).rawJSON === "function"
+  ? (JSON as JsonRawSupport).rawJSON
+  : undefined;
 const jsonStringify = JSON.stringify;
 const mathFloor = Math.floor;
 const mathMin = Math.min;
@@ -51,6 +55,7 @@ const setAdd = Set.prototype.add;
 const setDelete = Set.prototype.delete;
 const setHas = Set.prototype.has;
 const StringConstructor = String;
+const stringSlice = String.prototype.slice;
 const StringValueOf = String.prototype.valueOf;
 const symbolToStringTag = Symbol.toStringTag;
 const typedArrayPrototype = objectGetPrototypeOf(Uint8Array.prototype);
@@ -156,6 +161,7 @@ interface RawJsonValue {
 
 interface JsonRawSupport {
   isRawJSON?(value: unknown): value is RawJsonValue;
+  rawJSON?(source: string): RawJsonValue;
 }
 
 const jsonRawSupport = JSON as typeof JSON & JsonRawSupport;
@@ -170,6 +176,44 @@ type NormalizedJsonValue =
   | RawJsonValue;
 
 const OMIT_JSON_VALUE = Symbol("omit-json-value");
+const ACTIVE_JSON_TAIL_REFERENCE = new Error("active JSON tail reference");
+
+/** Encode an uninspected tail now, preserving native hook order and output. */
+function normalizeJsonTail(
+  value: JsonTraversalReference,
+  key: string,
+  active: Set<JsonTraversalReference>,
+): NormalizedJsonValue | typeof OMIT_JSON_VALUE {
+  const holder = objectCreate(null);
+  objectDefineProperty(holder, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+  const serializedHolder = jsonStringify(holder, (_key, nested) => {
+    if (
+      nested !== null &&
+      typeof nested === "object" &&
+      reflectApply(setHas, active, [nested])
+    ) {
+      throw ACTIVE_JSON_TAIL_REFERENCE;
+    }
+    return nested;
+  });
+  if (serializedHolder === "{}") return OMIT_JSON_VALUE;
+
+  const encodedKey = jsonStringify(key)!;
+  const prefixLength = encodedKey.length + 2;
+  const serializedValue = reflectApply(stringSlice, serializedHolder!, [prefixLength, -1]);
+  return jsonParse(
+    serializedValue,
+    (_key, parsed, context?: { source?: string }) => {
+      if (context?.source === undefined || jsonRawJSON === undefined) return parsed;
+      return reflectApply(jsonRawJSON, jsonRawSupport, [context.source]);
+    },
+  ) as NormalizedJsonValue;
+}
 
 function describe(value: unknown): string {
   if (value === undefined) return "undefined";
@@ -207,7 +251,8 @@ function hasNativeBrand(
 }
 
 function isKnownNonPlainBuiltin(value: JsonTraversalReference): boolean {
-  return hasNativeBrand(value, errorIsError, ErrorConstructor) ||
+  return hasNativeSlot(value, dateGetTime) ||
+    hasNativeBrand(value, errorIsError, ErrorConstructor) ||
     hasNativeSlot(value, mapSizeGet) ||
     hasNativeSlot(value, setSizeGet) ||
     hasNativeSlot(value, regExpSourceGet) ||
@@ -433,12 +478,17 @@ function normalizeAndFindUnrepresentableValues(
     }
   };
 
-  const recordAccessorProperty = (
+  const recordPropertyDescriptor = (
     descriptor: PropertyDescriptor | undefined,
     path: string,
   ) => {
-    if (descriptor?.get !== undefined || descriptor?.set !== undefined) {
+    if (descriptor === undefined) return;
+    if (!objectHasOwn(descriptor, "value")) {
       recordLossy(path, "accessor property");
+      return;
+    }
+    if (descriptor.writable !== true || descriptor.configurable !== true) {
+      recordLossy(path, "property attributes");
     }
   };
 
@@ -461,7 +511,12 @@ function normalizeAndFindUnrepresentableValues(
       } catch {
         continue;
       }
-      if (ownKey === "length") continue;
+      if (ownKey === "length") {
+        if (descriptor !== undefined && descriptor.writable !== true) {
+          recordLossy(path, "array length property");
+        }
+        continue;
+      }
       if (typeof ownKey === "symbol") {
         if (descriptor !== undefined) recordLossy(path, "symbol-keyed property");
         continue;
@@ -470,7 +525,7 @@ function normalizeAndFindUnrepresentableValues(
       if (isSerializedIndex) {
         if (descriptor === undefined) continue;
         serializedIndexCount++;
-        recordAccessorProperty(descriptor, `${path}[${ownKey}]`);
+        recordPropertyDescriptor(descriptor, `${path}[${ownKey}]`);
         continue;
       }
       if (descriptor === undefined) continue;
@@ -566,17 +621,26 @@ function normalizeAndFindUnrepresentableValues(
       }
     }
 
-    // Past the depth this walk follows, the subtree is spliced in as it is and
-    // left to `JSON.stringify`. Handing back the whole root instead would make
-    // every getter and `toJSON` above this point run a second time, and a hook
-    // that answers differently on its second call would then persist a value
-    // this check never saw. Non-strict mode keeps that compatibility tradeoff.
-    // Strict mode rejects the uninspected tail so it does not persist values
-    // whose JSON stability this walk did not verify.
+    // Native encoding must run at the cutoff, not after later siblings have
+    // already been read. The active-reference and `toJSON` checks above still
+    // run first, matching JSON's cycle and replacement semantics. A
+    // one-property holder gives a deeper hook the same key it would receive in
+    // the containing object. Raw primitive wrappers preserve exact encoded
+    // tokens when the host supports them; older hosts parse them.
     if (depth >= MAX_TRAVERSAL_DEPTH) {
-      if (options.strictContext === true) recordLossy(path, "uninspected value");
-      return nested as NormalizedJsonValue;
+      if (options.strictContext === true) {
+        recordLossy(path, "uninspected value");
+        return nested as NormalizedJsonValue;
+      }
+      try {
+        return normalizeJsonTail(nested, key, active);
+      } catch (error) {
+        if (error !== ACTIVE_JSON_TAIL_REFERENCE) throw error;
+        recordFatal(path, "circular reference");
+        return null;
+      }
     }
+
     reflectApply(setAdd, active, [nested]);
     try {
       if (isArray) {
@@ -644,7 +708,7 @@ function normalizeAndFindUnrepresentableValues(
             );
             continue;
           }
-          recordAccessorProperty(
+          recordPropertyDescriptor(
             descriptor,
             `${path}.${redactPathSegment(childKey, depth === 0)}`,
           );
@@ -669,9 +733,7 @@ function normalizeAndFindUnrepresentableValues(
       if (
         found.fatalCount === 0 &&
         (
-          (!canIdentifyProxyWithoutHooks &&
-            options.strictContext === true &&
-            isKnownNonPlainBuiltin(nested)) ||
+          (options.strictContext === true && isKnownNonPlainBuiltin(nested)) ||
           !isPlainObject(nested, options.strictContext === true)
         )
       ) {

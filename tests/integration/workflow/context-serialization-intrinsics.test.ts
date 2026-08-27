@@ -206,7 +206,10 @@ describe("workflow context serialization with hostile ambient intrinsics", () =>
       );
 
       const failures = [];
+      const disguisedDate = new Date(0);
+      Object.setPrototypeOf(disguisedDate, Object.prototype);
       for (const [name, value] of [
+        ["disguisedDate", disguisedDate],
         ["map", new Map([["a", 1]])],
         ["set", new Set([1])],
         ["regexp", /abc/],
