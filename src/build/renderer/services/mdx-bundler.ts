@@ -904,18 +904,24 @@ async function componentBackedProviderProxy(
           sourceDescriptor && "value" in sourceDescriptor &&
           typeof sourceDescriptor.value !== "function";
         if (forwardsSourceData && descriptor.configurable === false) {
-          const sourceUpdate = { configurable: false };
-          if (descriptor.writable === false) sourceUpdate.writable = false;
-          object.defineProperty(${originalName}, key, sourceUpdate);
-          if (descriptor.writable === false) {
-            object.defineProperty(
-              target,
-              key,
-              object.getOwnPropertyDescriptor(${originalName}, key),
-            );
+          const descriptorTarget = {};
+          object.defineProperty(descriptorTarget, key, sourceDescriptor);
+          object.defineProperty(descriptorTarget, key, descriptor);
+          const finalDescriptor = object.getOwnPropertyDescriptor(descriptorTarget, key);
+          if ("value" in finalDescriptor) {
+            const sourceForwarder = {
+              configurable: finalDescriptor.configurable,
+              enumerable: finalDescriptor.enumerable,
+              get: () => target[key],
+            };
+            if (finalDescriptor.writable) {
+              sourceForwarder.set = (value) => target[key] = value;
+            }
+            object.defineProperty(${originalName}, key, sourceForwarder);
           } else {
-            object.defineProperty(target, key, { configurable: false });
+            object.defineProperty(${originalName}, key, finalDescriptor);
           }
+          object.defineProperty(target, key, finalDescriptor);
         } else if (targetDescriptor) {
           object.defineProperty(target, key, descriptor);
         } else {

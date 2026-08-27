@@ -1870,6 +1870,48 @@ describe("build/renderer/services/mdx-bundler", () => {
       });
     });
 
+    it("applies source-backed static descriptors before sealing the proxy entry", async () => {
+      const active = resolveContract<ContentProcessor>("ContentProcessor");
+      const sourceModule = moduleDataUrl(
+        'class Content { static title = "Initial"; ' +
+          "static readTitle() { return this.title; } } export default Content;",
+      );
+      const staticProcessor: ContentProcessor = {
+        compileMdx: async (options) => ({
+          ...await active.compileMdx(options),
+          compiledCode: `export { default } from ${JSON.stringify(sourceModule)};`,
+        }),
+        compileMarkdown: (options) => active.compileMarkdown(options),
+        getRemarkPlugins: () => active.getRemarkPlugins(),
+        getRehypePlugins: () => active.getRehypePlugins(),
+      };
+
+      await withContractOverride("ContentProcessor", staticProcessor, async () => {
+        const result = await bundleMDXWithOptions({
+          content: "# Source static descriptor",
+          filePath: "/tmp/source-static-descriptor-default.mdx",
+          projectDir: "/tmp",
+        });
+
+        const loaded = await importEmittedModule(result.code) as unknown as {
+          default: { title: string; readTitle(): string };
+        };
+        Object.preventExtensions(loaded.default);
+        Object.defineProperty(loaded.default, "title", {
+          value: "Replacement",
+          configurable: false,
+          enumerable: false,
+          writable: true,
+        });
+        assertEquals(loaded.default.title, "Replacement");
+        assertEquals(loaded.default.readTitle(), "Replacement");
+        assertEquals(
+          Object.getOwnPropertyDescriptor(loaded.default, "title")?.enumerable,
+          false,
+        );
+      });
+    });
+
     it("preserves source-backed statics when the proxy becomes non-extensible", async () => {
       const active = resolveContract<ContentProcessor>("ContentProcessor");
       const sourceModule = moduleDataUrl(
