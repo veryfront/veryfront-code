@@ -525,6 +525,15 @@ describe("provider-http", () => {
       });
     });
 
+    it("treats a JSON null error body as an unstructured request error", async () => {
+      const err = await buildProviderError("openai", jsonResponse(400, "null"));
+
+      assertEquals(err instanceof ProviderRequestError, true);
+      assertEquals(err.status, 400);
+      assertEquals(err.retryable, false);
+      assertEquals(err.responseBody, undefined);
+    });
+
     it("does not preserve arbitrary provider api error messages", async () => {
       const err = await buildProviderError(
         "anthropic",

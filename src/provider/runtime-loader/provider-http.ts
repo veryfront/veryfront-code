@@ -257,7 +257,7 @@ function parseGoogleRetryInfoMs(
 function parseProviderErrorBody(rawBody: string): ParsedProviderErrorBody {
   const parsedBody = (() => {
     try {
-      return JSON.parse(rawBody) as Record<string, unknown>;
+      return readRecord(JSON.parse(rawBody));
     } catch {
       return undefined;
     }
