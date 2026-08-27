@@ -227,6 +227,7 @@ function wrapPlugin(
     name: plugin.name,
     setup(build) {
       const wrappedBuild: BundlerPluginBuild = {
+        ...(build.resolve ? { resolve: build.resolve.bind(build) } : {}),
         onResolve: build.onResolve.bind(build),
         onDispose: build.onDispose.bind(build),
         onLoad(loadOptions, callback) {

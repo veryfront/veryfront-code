@@ -31,7 +31,7 @@ function steps(
 }
 
 describe("npm smoke Node support contract", () => {
-  it("runs the packed npm smoke on the oldest supported and current release lines", async () => {
+  it("runs the packed npm smoke on the exact minimum and current release line", async () => {
     const workflow = record(
       parse(await Deno.readTextFile(WORKFLOW_PATH)),
       "CI workflow",
@@ -111,7 +111,7 @@ describe("npm smoke Node support contract", () => {
 
     assertEquals(
       NPM_SMOKE_NODE_VERSIONS,
-      [MINIMUM_NODE_RELEASE_LINE, CURRENT_NPM_SMOKE_NODE_RELEASE_LINE],
+      [MINIMUM_NODE_VERSION, CURRENT_NPM_SMOKE_NODE_RELEASE_LINE],
     );
     assertEquals(MINIMUM_NODE_RELEASE_LINE, "22");
     assertEquals(MINIMUM_NODE_VERSION, "22.3.0");

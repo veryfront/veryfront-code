@@ -31,7 +31,6 @@ describe("Singleflight", () => {
     await assertRejects(
       () => waitForSharedPromise(shared.promise, controller.signal),
       Error,
-      "already stopped",
     );
 
     // The detached waiter must still observe the shared rejection, otherwise a

@@ -775,6 +775,44 @@ describe("EsbuildBundler.stop", () => {
 });
 
 describe("EsbuildBundler.bundle", () => {
+  it("exposes native resolution to plugins", async () => {
+    const bundler = new EsbuildBundler();
+    let resolvedPath: string | undefined;
+    try {
+      const result = await bundler.bundle({
+        stdin: {
+          contents: 'import "resolve-contract:entry";',
+          resolveDir: "/",
+          sourcefile: "entry.ts",
+          loader: "ts",
+        },
+        bundle: true,
+        format: "esm",
+        platform: "node",
+        write: false,
+        plugins: [{
+          name: "resolve-contract",
+          setup(build) {
+            build.onResolve({ filter: /^resolve-contract:/ }, async () => {
+              assertExists(build.resolve);
+              const resolved = await build.resolve("node:fs", {
+                resolveDir: "/",
+                kind: "import-statement",
+              });
+              resolvedPath = resolved.path;
+              return { path: resolved.path, external: true };
+            });
+          },
+        }],
+      });
+
+      assertEquals(resolvedPath, "node:fs");
+      assertEquals(result.errors, []);
+    } finally {
+      await bundler.stop();
+    }
+  });
+
   it("awaits asynchronous plugin setup before starting the build", async () => {
     const bundler = new EsbuildBundler();
     try {

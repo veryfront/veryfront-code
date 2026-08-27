@@ -13,9 +13,11 @@
 #   6. `veryfront/scaffold` resolves by its published subpath and materializes
 #      a project, so a hosted "create project" flow never has to walk into the
 #      package's build output to reach the starter templates
-#   7. the packed ai-agent starter starts under Node, renders a page, and loads
+#   7. TypeScript config graphs and CommonJS requires build at the Node 22.3
+#      minimum without native type stripping or staging-directory resolution
+#   8. the packed ai-agent starter starts under Node, renders a page, and loads
 #      an API route without unresolved or runtime-specific generated helpers
-#   8. a packed agent workflow reaches a non-responsive provider, respects its
+#   9. a packed agent workflow reaches a non-responsive provider, respects its
 #      configured deadline, persists failure, and leaves the server healthy
 #
 # Requires: `deno task build:npm` output in ./npm, node + npm + curl on PATH.
@@ -289,7 +291,155 @@ for (const file of files) {
 }
 " || fail "veryfront/scaffold did not resolve from an installed package"
 
-echo "== 7. published ai-agent starter: page and API route render over HTTP"
+echo "== 7. TypeScript config loads without native Node type stripping"
+NODE_CONFIG_SMOKE="$WORKDIR/node-config-smoke"
+ESM_CONFIG_DEPENDENCY="$WORKDIR/node_modules/vf-esm-config-condition-smoke"
+NESTED_CONFIG_HELPER="$NODE_CONFIG_SMOKE/config-helper"
+NESTED_CONFIG_DEPENDENCY="$NESTED_CONFIG_HELPER/node_modules/vf-nested-config-smoke"
+mkdir -p \
+  "$NODE_CONFIG_SMOKE/app" \
+  "$ESM_CONFIG_DEPENDENCY" \
+  "$NESTED_CONFIG_DEPENDENCY"
+cat >"$NODE_CONFIG_SMOKE/package.json" <<'EOF'
+{
+  "type": "module",
+  "imports": {
+    "#config-values": "./config-values.ts"
+  }
+}
+EOF
+cat >"$ESM_CONFIG_DEPENDENCY/package.json" <<'EOF'
+{
+  "name": "vf-esm-config-condition-smoke",
+  "type": "module",
+  "exports": {
+    "node": {
+      "import": "./import.js"
+    }
+  }
+}
+EOF
+cat >"$ESM_CONFIG_DEPENDENCY/import.js" <<'EOF'
+export const suffix = "config smoke";
+EOF
+cat >"$NODE_CONFIG_SMOKE/config-values.ts" <<'EOF'
+import { suffix } from "vf-esm-config-condition-smoke";
+
+if (!import.meta.url.endsWith("/config-values.ts")) {
+  throw new Error("Config helper import.meta.url did not preserve the source location");
+}
+if (!import.meta.resolve("vf-esm-config-condition-smoke").endsWith("/import.js")) {
+  throw new Error("Config helper import.meta.resolve did not use ESM package conditions");
+}
+
+export const title: string = `Node minimum ${suffix}`;
+EOF
+cat >"$NESTED_CONFIG_DEPENDENCY/package.json" <<'EOF'
+{
+  "name": "vf-nested-config-smoke",
+  "type": "module",
+  "exports": {
+    "import": "./import.js"
+  }
+}
+EOF
+cat >"$NESTED_CONFIG_DEPENDENCY/import.js" <<'EOF'
+export default "nested config smoke";
+EOF
+cat >"$NESTED_CONFIG_HELPER/values.ts" <<'EOF'
+import nested from "vf-nested-config-smoke";
+
+if (
+  !import.meta.resolve("vf-nested-config-smoke").endsWith(
+    "/config-helper/node_modules/vf-nested-config-smoke/import.js"
+  )
+) {
+  throw new Error("Nested config dependency did not resolve from its declaring module");
+}
+
+export const nestedTitle: string = nested;
+EOF
+cat >"$NODE_CONFIG_SMOKE/file-url-values.ts" <<'EOF'
+export const fileUrlTitle: string = "file URL config smoke";
+EOF
+NODE_CONFIG_FILE_URL="$(node -e 'console.log(require("node:url").pathToFileURL(process.argv[1]).href)' "$NODE_CONFIG_SMOKE/file-url-values.ts")"
+cat >"$NODE_CONFIG_SMOKE/veryfront.config.ts" <<EOF
+const { defineConfig } = await import("veryfront");
+import { title } from "#config-values";
+import { nestedTitle } from "./config-helper/values.ts";
+import { fileUrlTitle } from "$NODE_CONFIG_FILE_URL";
+
+if (!import.meta.url.endsWith("/veryfront.config.ts")) {
+  throw new Error("Config import.meta.url did not preserve the source location");
+}
+
+export default defineConfig({ title: title + " " + nestedTitle + " " + fileUrlTitle });
+EOF
+cat >"$NODE_CONFIG_SMOKE/app/page.tsx" <<'EOF'
+export default function Page(): React.ReactNode {
+  return <main>Node minimum config smoke</main>;
+}
+EOF
+(
+  cd "$NODE_CONFIG_SMOKE"
+  set --
+  NODE_CONFIG_HELP="$(node --help)"
+  if grep -q -- "--no-strip-types" <<<"$NODE_CONFIG_HELP"; then
+    set -- --no-strip-types
+  elif grep -q -- "--no-experimental-strip-types" <<<"$NODE_CONFIG_HELP"; then
+    set -- --no-experimental-strip-types
+  fi
+  VERYFRONT_NO_UPDATE_CHECK=1 \
+    node "$@" ../node_modules/veryfront/bin/veryfront.js build \
+    >/dev/null
+) || fail "TypeScript config module graph required Node native type stripping"
+
+CJS_CONFIG_SMOKE="$WORKDIR/node-cjs-config-smoke"
+CJS_CONFIG_DEPENDENCY="$WORKDIR/node_modules/vf-cjs-config-condition-smoke"
+mkdir -p "$CJS_CONFIG_SMOKE/app" "$CJS_CONFIG_DEPENDENCY"
+cat >"$CJS_CONFIG_SMOKE/package.json" <<'EOF'
+{ "type": "commonjs" }
+EOF
+cat >"$CJS_CONFIG_DEPENDENCY/package.json" <<'EOF'
+{
+  "name": "vf-cjs-config-condition-smoke",
+  "type": "module",
+  "exports": {
+    "require": "./require.cjs",
+    "import": "./import.js"
+  }
+}
+EOF
+cat >"$CJS_CONFIG_DEPENDENCY/require.cjs" <<'EOF'
+module.exports = "require-condition";
+EOF
+cat >"$CJS_CONFIG_DEPENDENCY/import.js" <<'EOF'
+export default "wrong import condition";
+EOF
+cat >"$CJS_CONFIG_SMOKE/veryfront.config.ts" <<'EOF'
+const path = require("node:path");
+const title: string = require("vf-cjs-config-condition-smoke");
+const filename = path.basename(__filename);
+module.exports = {
+  title: `${title} ${filename}`,
+  build: { outDir: `dist-${title}-${filename}` },
+};
+EOF
+cat >"$CJS_CONFIG_SMOKE/app/page.tsx" <<'EOF'
+export default function Page(): React.ReactNode {
+  return <main>CommonJS config smoke</main>;
+}
+EOF
+(
+  cd "$CJS_CONFIG_SMOKE"
+  VERYFRONT_NO_UPDATE_CHECK=1 \
+    node ../node_modules/veryfront/bin/veryfront.js build \
+    >/dev/null
+) || fail "CommonJS config requires did not resolve from the original project"
+[ -d "$CJS_CONFIG_SMOKE/dist-require-condition-veryfront.config.ts" ] ||
+  fail "CommonJS config require condition or original filename canary was not applied"
+
+echo "== 8. published ai-agent starter: page and API route render over HTTP"
 mkdir -p "$WORKDIR/app/api/npm-smoke"
 cat >"$WORKDIR/app/api/npm-smoke/route.ts" <<'EOF'
 export function GET(): Response {
@@ -471,7 +621,7 @@ if [ -z "$VF_CSRF_TOKEN" ]; then
   fail "packed ai-agent starter served no __Host-vf_csrf cookie on its HTML document"
 fi
 
-echo "== 8. packed workflow: provider hang reaches a durable timeout"
+echo "== 9. packed workflow: provider hang reaches a durable timeout"
 VF_CSRF_TOKEN="$VF_CSRF_TOKEN" node --input-type=module - "$DEV_URL" <<'EOF' || {
 const rootUrl = process.argv[2];
 const csrfToken = process.env.VF_CSRF_TOKEN;

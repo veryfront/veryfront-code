@@ -79,6 +79,7 @@ export {
   // Registry
   ERROR_REGISTRY,
   type ErrorSlug,
+  ESM_CACHE_INIT_FAILED,
   FALLBACK_EXHAUSTED,
   FAST_REFRESH_ERROR,
   FILE_NOT_FOUND,

@@ -66,6 +66,57 @@ describe("rewriteLocalImports", () => {
     assertEquals(result, code);
   });
 
+  it("rewrites relative JSON imports to their materialized cache files", async () => {
+    const code = `import manifest from "../package.json" with { type: "json" };`;
+    const result = await rewriteLocalImports(
+      code,
+      new Map([["../package.json", "/cache/package.v1.json"]]),
+      "/project/pages/index.tsx",
+      projectDir,
+    );
+
+    assertEquals(
+      result,
+      `import manifest from "file:///cache/package.v1.json" with { type: "json" };`,
+    );
+  });
+
+  it("does not turn unvalidated JSON traversal into a host file URL", async () => {
+    const code = `import data from "../../../outside.json" with { type: "json" };`;
+    const result = await rewriteLocalImports(
+      code,
+      new Map(),
+      "/project/pages/index.tsx",
+      projectDir,
+    );
+
+    assertEquals(result, code);
+  });
+
+  it("rewrites relative and aliased JSON imports to cached dependencies", async () => {
+    const code = [
+      `import manifest from "../package.json" with { type: "json" };`,
+      `import data from "/_vf_modules/data/site.json.js" with { type: "json" };`,
+    ].join("\n");
+    const result = await rewriteLocalImports(
+      code,
+      new Map([
+        ["../package.json", "/tmp/package.cached.json"],
+        ["@/data/site.json", "/tmp/site.cached.json"],
+      ]),
+      "/project/pages/index.tsx",
+      projectDir,
+    );
+
+    assertEquals(
+      result,
+      [
+        `import manifest from "file:///tmp/package.cached.json" with { type: "json" };`,
+        `import data from "file:///tmp/site.cached.json" with { type: "json" };`,
+      ].join("\n"),
+    );
+  });
+
   it("rewrites @/ alias import from depth-1 directory", async () => {
     const map = new Map([["@/components/Button", "/tmp/Button.js"]]);
     const code = `import { Button } from "../components/Button.js";`;

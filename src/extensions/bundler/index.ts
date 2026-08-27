@@ -23,6 +23,7 @@ export type {
   OnLoadResult,
   OnResolveArgs,
   OnResolveResult,
+  ResolveOptions,
   StdinOptions,
   TransformOptions,
   TransformResult,

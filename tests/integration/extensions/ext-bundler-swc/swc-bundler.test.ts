@@ -6,7 +6,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { makeTempDir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { makeTempDir, realPath, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { cwd } from "#veryfront/compat/process.ts";
 import type { BundlerPlugin } from "veryfront/extensions/bundler";
 import { SwcBundler } from "@veryfront/ext-bundler-swc";
@@ -359,6 +359,59 @@ describe("SwcBundler decorator metadata", () => {
       assertEquals(result.errors, []);
       assertStringIncludes(result.outputFiles[0]!.text, "<section");
       assertStringIncludes(result.outputFiles[0]!.text, "<article");
+    } finally {
+      await bundler.stop();
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("keeps wrapped plugin resolve calls bound to the delegate build context", async () => {
+    const projectDir = await makeTempDir();
+    const resolvedPaths: string[] = [];
+    const plugin: BundlerPlugin = {
+      name: "resolve-context",
+      setup(build) {
+        build.onResolve({ filter: /^virtual-target$/ }, async (args) => {
+          const resolved = await build.resolve?.("./resolved.ts", {
+            importer: args.importer,
+            resolveDir: args.resolveDir,
+            kind: args.kind,
+            with: { type: "veryfront-test" },
+          });
+          if (!resolved?.path) return undefined;
+          resolvedPaths.push(resolved.path);
+          return resolved;
+        });
+      },
+    };
+    const bundler = new SwcBundler();
+
+    try {
+      await writeTextFile(
+        `${projectDir}/resolved.ts`,
+        `export const resolved = "through-build-resolve";`,
+      );
+      const result = await bundler.bundle({
+        bundle: true,
+        write: false,
+        format: "esm",
+        platform: "neutral",
+        plugins: [plugin],
+        stdin: {
+          contents: `export { resolved } from "virtual-target";`,
+          loader: "ts",
+          resolveDir: projectDir,
+          sourcefile: "entry.ts",
+        },
+        typescriptDecoratorOptions: {
+          experimentalDecorators: true,
+          emitDecoratorMetadata: false,
+        },
+      });
+
+      assertEquals(result.errors, []);
+      assertEquals(resolvedPaths, [await realPath(`${projectDir}/resolved.ts`)]);
+      assertStringIncludes(result.outputFiles[0]!.text, "through-build-resolve");
     } finally {
       await bundler.stop();
       await remove(projectDir, { recursive: true });
