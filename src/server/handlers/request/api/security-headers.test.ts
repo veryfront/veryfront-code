@@ -77,14 +77,14 @@ describe("server/handlers/request/api/security-headers", () => {
       );
     });
 
-    it("should allow the Studio frame-ancestors allowlist for embeddable domains", () => {
+    it("should enforce the Studio frame-ancestors allowlist for embeddable domains", () => {
       const ctx = makeCtx({ parsedDomain: { allowIframeEmbed: true } } as never);
       const headers = new Headers();
       applySecurityHeaders(headers, ctx);
       assertStringIncludes(
-        headers.get("content-security-policy-report-only") ?? "",
+        headers.get("content-security-policy") ?? "",
         "frame-ancestors 'self' https://veryfront.com",
-        "a veryfront-managed domain must get the Studio allowlist",
+        "a veryfront-managed domain must enforce the Studio allowlist",
       );
     });
 

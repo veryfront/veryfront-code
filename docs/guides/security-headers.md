@@ -41,7 +41,7 @@ Three directives are worth understanding:
 
 ## What is enforced
 
-The policy above is served as `Content-Security-Policy-Report-Only`: browsers report what it would have blocked, and block nothing.
+Most of the policy above is served as `Content-Security-Policy-Report-Only`: browsers report what it would have blocked, and block nothing.
 
 Two directives are served enforced by default, in a second `Content-Security-Policy` header:
 
@@ -49,6 +49,8 @@ Two directives are served enforced by default, in a second `Content-Security-Pol
 - `base-uri 'self'` blocks a `<base>` element pointing at another origin.
 
 Both close injection routes, and neither can be widened: they are required directives, so `security.csp` cannot add sources to them or drop them.
+
+On hosted `*.veryfront.com` and `*.veryfront.org` addresses, that enforced header also contains `frame-ancestors 'self' https://veryfront.com https://veryfront.org`. This explicit allowlist lets Studio embed the project while `X-Frame-Options: DENY` remains the fallback for older browsers. Custom domains do not receive this exception.
 
 The exception is `VERYFRONT_CSP`. Setting that environment variable replaces the policy wholesale and serves it enforced on its own, so neither the reported floor nor this pair is added alongside it. Writing a whole policy by hand is an explicit act, and Veryfront does not second-guess it.
 
