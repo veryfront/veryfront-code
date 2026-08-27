@@ -73,6 +73,15 @@ describe("Import Utils", () => {
       assertEquals(imports[0], "./dynamic-module");
     });
 
+    it("extracts re-export specifiers", () => {
+      const imports = extractImports(`
+        export { Button } from './Button'
+        export * as icons from "./icons"
+      `);
+
+      assertEquals(imports, ["./Button", "./icons"]);
+    });
+
     it("extracts both static and dynamic imports", () => {
       const imports = extractImports(`
         import React from 'react'
@@ -136,6 +145,34 @@ describe("Import Utils", () => {
       `);
 
       assertEquals(imports.length, 0);
+    });
+
+    it("ignores import-looking text in strings and comments", () => {
+      const imports = extractImports(`
+        // import ignored from './comment'
+        const example = "import ignored from './string'";
+        const pattern = /import ignored from '.\\/regex'/g;
+        import live from './live'
+      `);
+
+      assertEquals(imports, ["./live"]);
+    });
+
+    it("extracts MDX ESM and expression imports while ignoring markdown examples", () => {
+      const imports = extractImports(
+        [
+          "```ts",
+          "import ignored from './example.mdx'",
+          "```",
+          "`import ignored from './inline.mdx'`",
+          "import page from './page.mdx'",
+          "",
+          "{condition ? import('./lazy.mdx') : null}",
+        ].join("\n"),
+        { markdownCode: true },
+      );
+
+      assertEquals(imports, ["./page.mdx", "./lazy.mdx"]);
     });
   });
 
@@ -338,6 +375,27 @@ describe("Import Utils", () => {
       );
 
       assertEquals(processed, code);
+    });
+
+    it("replaces the matched specifier instead of earlier equal comment text", async () => {
+      const code = [
+        `// import { Button } from './Button'`,
+        `import { Button } from './Button'`,
+      ].join("\n");
+
+      const processed = await processImports(
+        code,
+        "/src/pages/index.tsx",
+        "/project",
+        // deno-lint-ignore require-await
+        async (path) => (path === "/src/pages/Button" ? "/dist/Button.js" : null),
+      );
+
+      assertEquals(
+        processed,
+        [`// import { Button } from './Button'`, `import { Button } from '/dist/Button.js'`]
+          .join("\n"),
+      );
     });
 
     it("handles imports with both single and double quotes", async () => {

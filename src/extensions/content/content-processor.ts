@@ -61,6 +61,8 @@ export interface ContentCompileOptions {
   studioEmbed?: boolean;
   /** MDX output shape. Defaults to "program". */
   outputFormat?: "program" | "function-body";
+  /** Module that provides useMDXComponents for compiled MDX. */
+  providerImportSource?: string;
   /** Additional remark plugins supplied by legacy build helpers. */
   remarkPlugins?: ContentPlugin[];
   /** Additional rehype plugins supplied by legacy build helpers. */

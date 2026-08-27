@@ -62,7 +62,11 @@ This is a simple MDX document.
         assertExists(output);
 
         assertEquals(output.type, "js");
-        assertEquals(output.content.includes("React"), true);
+        assertEquals(
+          output.content.includes("react/jsx-runtime"),
+          true,
+          "the emitted module imports the jsx runtime it compiles against",
+        );
         assertEquals(output.content.includes("export default function"), true);
         assertEquals(output.content.includes("export const meta"), true);
       });
@@ -174,6 +178,235 @@ import Imported from "./imported.mdx"
       });
     });
 
+    it("processes dynamic MDX imports in multiline JSX attribute expressions", async () => {
+      await withTestContext("mdx-multiline-jsx-import", async (context) => {
+        const childPath = join(context.projectDir, "child.mdx");
+        await writeTextFile(childPath, "# Child");
+        const source = {
+          path: join(context.projectDir, "page.mdx"),
+          content: '<Widget\n  prop={\n\n    import("./child.mdx")\n}>\n</Widget>',
+        };
+        const result = createResult();
+        let compiledImportSource: string | undefined;
+
+        await bundleMdx(
+          source,
+          createOptions(context.projectDir),
+          result,
+          (importSource) => {
+            compiledImportSource = importSource;
+            return Promise.resolve("export default function Child() {}");
+          },
+        );
+
+        assertEquals(result.errors, []);
+        assertEquals(compiledImportSource, "# Child");
+        const childOutputPath = join(context.projectDir, "child.js");
+        assertExists(result.outputs.get(childOutputPath));
+        const pageOutput = result.outputs.get(join(context.projectDir, "page.js"));
+        assertExists(pageOutput);
+        assertEquals(pageOutput.content.includes(childOutputPath), true);
+      });
+    });
+
+    it("processes dynamic MDX imports after regex braces in template expressions", async () => {
+      await withTestContext("mdx-template-regex-import", async (context) => {
+        const childPath = join(context.projectDir, "child.mdx");
+        await writeTextFile(childPath, "# Child");
+        const source = {
+          path: join(context.projectDir, "page.mdx"),
+          content: '{`${/}/.test(value) && import("./child.mdx")}`}',
+        };
+        const result = createResult();
+        let compiledImportSource: string | undefined;
+
+        await bundleMdx(
+          source,
+          createOptions(context.projectDir),
+          result,
+          (importSource) => {
+            compiledImportSource = importSource;
+            return Promise.resolve("export default function Child() {}");
+          },
+        );
+
+        assertEquals(result.errors, []);
+        assertEquals(compiledImportSource, "# Child");
+        const childOutputPath = join(context.projectDir, "child.js");
+        assertExists(result.outputs.get(childOutputPath));
+        const pageOutput = result.outputs.get(join(context.projectDir, "page.js"));
+        assertExists(pageOutput);
+        assertEquals(pageOutput.content.includes(childOutputPath), true);
+      });
+    });
+
+    it("processes dynamic MDX imports after nested templates with literal braces", async () => {
+      await withTestContext("mdx-nested-template-import", async (context) => {
+        const childPath = join(context.projectDir, "child.mdx");
+        await writeTextFile(childPath, "# Child");
+        const source = {
+          path: join(context.projectDir, "page.mdx"),
+          content: '{`${`}`}${import("./child.mdx")}`}',
+        };
+        const result = createResult();
+        let compiledImportSource: string | undefined;
+
+        await bundleMdx(
+          source,
+          createOptions(context.projectDir),
+          result,
+          (importSource) => {
+            compiledImportSource = importSource;
+            return Promise.resolve("export default function Child() {}");
+          },
+        );
+
+        assertEquals(result.errors, []);
+        assertEquals(compiledImportSource, "# Child");
+        const childOutputPath = join(context.projectDir, "child.js");
+        assertExists(result.outputs.get(childOutputPath));
+        const pageOutput = result.outputs.get(join(context.projectDir, "page.js"));
+        assertExists(pageOutput);
+        assertEquals(pageOutput.content.includes(childOutputPath), true);
+      });
+    });
+
+    it("processes MDX imports after escaped backticks and split import keywords", async () => {
+      await withTestContext("mdx-escaped-backtick-and-split-import", async (context) => {
+        await writeTextFile(join(context.projectDir, "dynamic-child.mdx"), "# Dynamic child");
+        await writeTextFile(join(context.projectDir, "static-child.mdx"), "# Static child");
+        const source = {
+          path: join(context.projectDir, "page.mdx"),
+          content: 'import\nStaticChild from "./static-child.mdx"\n\n' +
+            '\\` {import("./dynamic-child.mdx")} `later`',
+        };
+        const result = createResult();
+        const compiledSources: string[] = [];
+
+        await bundleMdx(
+          source,
+          createOptions(context.projectDir),
+          result,
+          (importSource) => {
+            compiledSources.push(importSource);
+            return Promise.resolve("export default function Child() {}");
+          },
+        );
+
+        assertEquals(result.errors, []);
+        assertEquals(compiledSources.sort(), ["# Dynamic child", "# Static child"]);
+        for (const child of ["dynamic-child.js", "static-child.js"]) {
+          const childOutputPath = join(context.projectDir, child);
+          assertExists(result.outputs.get(childOutputPath));
+          const pageOutput = result.outputs.get(join(context.projectDir, "page.js"));
+          assertExists(pageOutput);
+          assertEquals(pageOutput.content.includes(childOutputPath), true);
+        }
+      });
+    });
+
+    it("processes MDX imports after regex quotes and in ESM declarations", async () => {
+      await withTestContext("mdx-regex-and-esm-imports", async (context) => {
+        await writeTextFile(join(context.projectDir, "regex-child.mdx"), "# Regex child");
+        await writeTextFile(join(context.projectDir, "esm-child.mdx"), "# ESM child");
+        await writeTextFile(join(context.projectDir, "division-child.mdx"), "# Division child");
+        const source = {
+          path: join(context.projectDir, "page.mdx"),
+          content: 'export const child = import("./esm-child.mdx")\n\n' +
+            'export const ratio = numerator\n  / (await import("./division-child.mdx")).value\n\n' +
+            '{/"/.test(value) && import("./regex-child.mdx")}',
+        };
+        const result = createResult();
+        const compiledSources: string[] = [];
+
+        await bundleMdx(
+          source,
+          createOptions(context.projectDir),
+          result,
+          (importSource) => {
+            compiledSources.push(importSource);
+            return Promise.resolve("export default function Child() {}");
+          },
+        );
+
+        assertEquals(result.errors, []);
+        assertEquals(compiledSources.sort(), [
+          "# Division child",
+          "# ESM child",
+          "# Regex child",
+        ]);
+        const pageOutput = result.outputs.get(join(context.projectDir, "page.js"));
+        assertExists(pageOutput);
+        assertEquals(
+          pageOutput.content.includes(join(context.projectDir, "division-child.js")),
+          true,
+        );
+        assertEquals(pageOutput.content.includes(join(context.projectDir, "esm-child.js")), true);
+        assertEquals(pageOutput.content.includes(join(context.projectDir, "regex-child.js")), true);
+      });
+    });
+
+    it("processes dependencies across expression, comment, fence, and export boundaries", async () => {
+      const scenarios = [
+        {
+          name: "expression-fence",
+          children: ["expression"],
+          content: "```js `invalid`\n" +
+            '{numerator\n  / /}/.test(value) && import("./expression-child.mdx")}',
+        },
+        {
+          name: "comment",
+          children: ["comment"],
+          content: "export const commentChild = (() => {\n" +
+            '  if (ok) // note\n    /"/.test(value)\n' +
+            '  return import("./comment-child.mdx")\n})()',
+        },
+        {
+          name: "split-export",
+          children: ["split-dynamic", "split-static"],
+          content: 'export\nconst splitChild = import("./split-dynamic-child.mdx")\n\n' +
+            'export\n* from "./split-static-child.mdx"',
+        },
+      ] as const;
+
+      for (const scenario of scenarios) {
+        await withTestContext(`mdx-${scenario.name}-boundary`, async (context) => {
+          for (const child of scenario.children) {
+            await writeTextFile(
+              join(context.projectDir, `${child}-child.mdx`),
+              `# ${child} child`,
+            );
+          }
+          const result = createResult();
+          const compiledSources: string[] = [];
+
+          await bundleMdx(
+            { path: join(context.projectDir, "page.mdx"), content: scenario.content },
+            createOptions(context.projectDir),
+            result,
+            (importSource) => {
+              compiledSources.push(importSource);
+              return Promise.resolve("export default function Child() {}");
+            },
+          );
+
+          assertEquals(result.errors, []);
+          assertEquals(
+            compiledSources.sort(),
+            scenario.children.map((child) => `# ${child} child`).sort(),
+          );
+          const pageOutput = result.outputs.get(join(context.projectDir, "page.js"));
+          assertExists(pageOutput);
+          for (const child of scenario.children) {
+            assertEquals(
+              pageOutput.content.includes(join(context.projectDir, `${child}-child.js`)),
+              true,
+            );
+          }
+        });
+      }
+    });
+
     it("validates local imports", async () => {
       await withTestContext("mdx-validate-imports", async (context) => {
         const content = `---
@@ -224,7 +457,11 @@ import Component from "./component.tsx"
 
         const deps = result.dependencies.get(source.path);
         assertExists(deps);
-        assertEquals(deps.includes("react"), true);
+        assertEquals(
+          deps.includes("react/jsx-runtime"),
+          true,
+          "the compiled module depends on the jsx runtime, not the react namespace",
+        );
       });
     });
 
@@ -288,7 +525,11 @@ Using custom bundler.`;
         });
 
         assertExists(result.code);
-        assertEquals(result.code.includes("React"), true);
+        assertEquals(
+          result.code.includes("react/jsx-runtime"),
+          true,
+          "the emitted module imports the jsx runtime it compiles against",
+        );
         assertEquals(result.code.includes("export default"), true);
 
         assertExists(result.frontmatter);
