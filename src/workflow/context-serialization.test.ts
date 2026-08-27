@@ -959,6 +959,14 @@ describe("serializeWorkflowContext", () => {
       assertEquals(serialized, JSON.stringify({ input: {}, step: deep }));
     });
 
+    it("parses a deep JSON tail without a recursive reviver when no raw token exists", () => {
+      let value: unknown = 0;
+      for (let index = 0; index < 4000; index++) value = { nested: value };
+      const expected = JSON.stringify(value);
+
+      assertEquals(serializeWorkflowJson(value, "output"), expected);
+    });
+
     it("throws in strictContext before persisting uninspected deep values", () => {
       let deep: unknown = { when: new Date(0) };
       for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };

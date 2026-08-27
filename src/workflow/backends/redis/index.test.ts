@@ -2702,18 +2702,6 @@ describe("RedisBackend", () => {
         false,
       );
 
-      assertStringIncludes(
-        mockRedis.lastScript,
-        "if redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then return 0 end",
-        "the checkpoint owner fence must live in the Lua the backend executes",
-      );
-      const checkpointFenceArgvCount = Number(mockRedis.lastArgs[0]);
-      assertEquals(
-        mockRedis.lastArgs[checkpointFenceArgvCount + 1],
-        "worker-old",
-        "the expected workerId must sit at the ARGV index the Lua fence reads",
-      );
-
       assertEquals(
         await backend.saveCheckpointIfStatusAndWorker(
           "synthetic-child-run",
@@ -2724,7 +2712,49 @@ describe("RedisBackend", () => {
         ),
         true,
       );
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "if redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then return 0 end",
+        "the final checkpoint owner fence must live in the Lua the backend executes",
+      );
+      const checkpointFenceArgvCount = Number(mockRedis.lastArgs[0]);
+      assertEquals(
+        mockRedis.lastArgs[checkpointFenceArgvCount + 1],
+        "worker-new",
+        "the expected workerId must sit at the ARGV index the Lua fence reads",
+      );
       assertEquals((await backend.getCheckpoints("synthetic-child-run"))[0]?.id, "cp-owned");
+    });
+
+    it("checks a stale checkpoint owner before strict context validation", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict:",
+        strictContext: true,
+      });
+      const runId = "run-cp-strict-stale-owner";
+      await strictBackend.createRun(createTestRun(runId, {
+        status: "running",
+        workerId: "worker-current",
+      }));
+
+      assertEquals(
+        await strictBackend.saveCheckpointIfStatusAndWorker(
+          runId,
+          runId,
+          ["running"],
+          "worker-stale",
+          {
+            id: "cp-strict-stale-owner",
+            nodeId: "step",
+            timestamp: new Date(),
+            context: { input: {}, step: { when: new Date(0) } },
+            nodeStates: {},
+          },
+        ),
+        false,
+      );
+      assertEquals(await strictBackend.getCheckpoints(runId), []);
     });
 
     it("reports an invalid context before saving an owner-fenced checkpoint", async () => {

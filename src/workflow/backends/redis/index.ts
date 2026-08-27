@@ -1632,12 +1632,27 @@ export class RedisBackend implements WorkflowBackend {
     expectedWorkerId: string,
     checkpoint: Checkpoint,
   ): Promise<boolean> {
+    const client = await this.ensureClient();
+    const ownershipMatches = async (): Promise<boolean> => {
+      const current = await client.hgetall(this.runKey(ownershipRunId));
+      return expectedStatuses.includes(current.status as WorkflowStatus) &&
+        current.workerId === expectedWorkerId;
+    };
+    if (!await ownershipMatches()) return false;
+
+    let serializedCheckpoint: string;
+    try {
+      serializedCheckpoint = this.serializeCheckpoint(storageRunId, checkpoint);
+    } catch (error) {
+      if (!await ownershipMatches()) return false;
+      throw error;
+    }
     return await this.appendIfStatusAndWorker(
       ownershipRunId,
       expectedStatuses,
       expectedWorkerId,
       this.checkpointsKey(storageRunId),
-      this.serializeCheckpoint(storageRunId, checkpoint),
+      serializedCheckpoint,
       MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES,
     );
   }

@@ -215,6 +215,7 @@ function normalizeJsonTail(
     }
     return false;
   };
+  let containsRawJson = false;
   const serializedHolder = jsonStringify(holder, function (
     this: JsonTraversalReference,
     _key,
@@ -222,6 +223,12 @@ function normalizeJsonTail(
   ) {
     if (typeof nested === "bigint") throw BIGINT_JSON_TAIL_VALUE;
     if (nested !== null && typeof nested === "object") {
+      if (
+        jsonIsRawJSON !== undefined &&
+        reflectApply(jsonIsRawJSON, jsonRawSupport, [nested])
+      ) {
+        containsRawJson = true;
+      }
       if (reflectApply(setHas, active, [nested])) throw ACTIVE_JSON_TAIL_REFERENCE;
       if (hasAncestor(this, nested)) throw ACTIVE_JSON_TAIL_REFERENCE;
       reflectApply(weakMapSet, parents, [nested, this]);
@@ -233,6 +240,9 @@ function normalizeJsonTail(
   const encodedKey = jsonStringify(key)!;
   const prefixLength = encodedKey.length + 2;
   const serializedValue = reflectApply(stringSlice, serializedHolder!, [prefixLength, -1]);
+  if (!containsRawJson || jsonRawJSON === undefined) {
+    return jsonParse(serializedValue) as NormalizedJsonValue;
+  }
   return jsonParse(
     serializedValue,
     (_key, parsed, context?: { source?: string }) => {
@@ -381,6 +391,10 @@ function hasToStringTagWithoutHooks(value: JsonTraversalReference): boolean {
  * that has one is sent to the probes instead of being judged here.
  */
 function couldHoldPrimitiveSlot(value: JsonTraversalReference): boolean {
+  // Object.prototype.toString reads Symbol.toStringTag. Server runtimes can
+  // prove that the lookup cannot cross a proxy or accessor before using it;
+  // edge hosts cannot, so they fall back to the hook-free slot probes.
+  if (!canIdentifyProxyWithoutHooks) return true;
   try {
     if (hasToStringTagWithoutHooks(value)) return true;
     const tag = reflectApply(objectToString, value, []);
