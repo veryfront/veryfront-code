@@ -12,7 +12,13 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { inheritRequestPeerProvenance } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig } from "#veryfront/config/loader.ts";
-import { errorToRFC9457Response, getErrorMessage, UNKNOWN_ERROR } from "#veryfront/errors";
+import {
+  errorToRFC9457Response,
+  getErrorMessage,
+  isVeryfrontError,
+  SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE,
+  UNKNOWN_ERROR,
+} from "#veryfront/errors";
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import type { Handler } from "#veryfront/types";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
@@ -145,6 +151,21 @@ export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environmen
 const baseLogger = getBaseLogger("SERVER");
 
 const logger = baseLogger.component("runtime-handler");
+
+const SOURCE_SNAPSHOT_FRESHNESS_RETRY_LIMIT = 1;
+
+function shouldRetrySourceSnapshotFreshness(
+  request: Request,
+  error: unknown,
+  retries: number,
+  projectMiddlewareStarted: boolean,
+): boolean {
+  return retries < SOURCE_SNAPSHOT_FRESHNESS_RETRY_LIMIT &&
+    !projectMiddlewareStarted &&
+    (request.method === "GET" || request.method === "HEAD") &&
+    isVeryfrontError(error) &&
+    error.slug === SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.slug;
+}
 
 function skipsApplicationAuth(request: Request, pathname: string): boolean {
   return request.method === "OPTIONS" ||
@@ -554,7 +575,12 @@ export function createVeryfrontHandler(
           : "html";
         let requestProfileRecord: ReturnType<typeof finalizeRequestProfiling> = null;
 
-        const executeHandler = async (request: Request): Promise<Response> => {
+        let requestMetricsIncremented = false;
+        let projectMiddlewareStarted = false;
+        const markProjectMiddlewareStarted = () => {
+          projectMiddlewareStarted = true;
+        };
+        const executeHandlerAttempt = async (request: Request): Promise<Response> => {
           // Fast rejection of vulnerability scanner probes before any async work
           if (SCANNER_PATH_PATTERN.test(url.pathname)) {
             return new Response("Not Found", { status: 404 });
@@ -668,7 +694,10 @@ export function createVeryfrontHandler(
               ? operation()
               : runWithProjectEnv(isolatedEnvForRequest, operation);
 
-          await incrementRequestMetrics();
+          if (!requestMetricsIncremented) {
+            await incrementRequestMetrics();
+            requestMetricsIncremented = true;
+          }
 
           if (!skipsApplicationAuth(request, url.pathname)) {
             const runInFilesystemContext = <T>(operation: () => Promise<T>) =>
@@ -713,6 +742,7 @@ export function createVeryfrontHandler(
               handlerContext: ctx,
               isSharedProxy: isProxyMode,
               next: async () => (await registry.execute(request, ctx)) ?? undefined,
+              onMiddlewareStart: markProjectMiddlewareStarted,
             });
           const executeRoute = () =>
             runWithExactSourceIntegrationPolicy(
@@ -743,6 +773,33 @@ export function createVeryfrontHandler(
             instance: url.pathname,
           });
           return errorToRFC9457Response(noHandlerError, ctx, request);
+        };
+
+        const executeHandler = async (request: Request): Promise<Response> => {
+          let retries = 0;
+          while (true) {
+            try {
+              return await executeHandlerAttempt(request);
+            } catch (error) {
+              if (
+                !shouldRetrySourceSnapshotFreshness(
+                  request,
+                  error,
+                  retries,
+                  projectMiddlewareStarted,
+                )
+              ) throw error;
+              retries++;
+              // Info, not debug: a retried request is indistinguishable from a
+              // first-attempt success in the response, so this line is the only
+              // way to confirm in staging that the retry is carrying the load.
+              logger.info("Retrying request after source snapshot freshness failure", {
+                pathname: url.pathname,
+                method: request.method,
+                retry: retries,
+              });
+            }
+          }
         };
 
         const { response, error, settled } = await withRequestTimeout(

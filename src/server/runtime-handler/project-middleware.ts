@@ -46,6 +46,8 @@ export interface ProjectMiddlewareRuntimeContext {
   handlerContext: HandlerContext;
   isSharedProxy: boolean;
   next: () => Promise<Response | undefined>;
+  /** Signals before project middleware can perform request-scoped side effects. */
+  onMiddlewareStart?: () => void;
 }
 
 function cacheSegment(value: string): string {
@@ -131,7 +133,7 @@ export class ProjectMiddlewareRuntime {
   }
 
   async execute(input: ProjectMiddlewareRuntimeContext): Promise<Response | undefined> {
-    const { handlerContext: ctx, isSharedProxy, next, request } = input;
+    const { handlerContext: ctx, isSharedProxy, next, onMiddlewareStart, request } = input;
     const pathname = new URL(request.url).pathname;
 
     if (isWebSocketPath(pathname)) {
@@ -232,6 +234,7 @@ export class ProjectMiddlewareRuntime {
         });
       }
       if (middleware.length === 0) return next();
+      onMiddlewareStart?.();
 
       const pipeline = new MiddlewarePipeline();
       for (const handler of middleware) pipeline.use(handler);
