@@ -694,10 +694,10 @@ describe("security/http/response/security-handler", () => {
       assertEquals(headers.get("X-Frame-Options"), "DENY");
     });
 
-    it("should set CSP frame-ancestors with veryfront origins when isVeryfrontDomain is true (SEC-007)", () => {
+    it("should enforce CSP frame-ancestors with veryfront origins when isVeryfrontDomain is true (SEC-007)", () => {
       const headers = applyHeaders({ isVeryfrontDomain: true });
-      const csp = getCsp(headers);
-      assert(csp !== null, "CSP header should be present");
+      const csp = headers.get("Content-Security-Policy");
+      assert(csp !== null, "Enforced CSP header should be present");
       const frameAncestors = parseDirectiveSources(csp, "frame-ancestors");
       assertEquals(
         frameAncestors,
@@ -708,6 +708,12 @@ describe("security/http/response/security-handler", () => {
         ],
         "frame-ancestors must be the explicit Studio allowlist (no wildcards, no tenant subdomains)",
       );
+    });
+
+    it("should not add Studio origins to the enforced CSP for non-veryfront domains", () => {
+      const headers = applyHeaders({ isVeryfrontDomain: false });
+      const csp = headers.get("Content-Security-Policy") ?? "";
+      assertEquals(parseDirectiveSources(csp, "frame-ancestors"), []);
     });
 
     it("should set CSP frame-ancestors 'none' for non-veryfront domains (SEC-007)", () => {

@@ -375,13 +375,14 @@ function withFallbackDependents(names: Iterable<string>): Set<string> {
 /**
  * The enforced companion to the reported floor.
  *
- * Carries the always-enforced directives plus every directive the project
- * declared, and then whatever those would otherwise absorb through CSP's
- * fallback chain. Declaring a directive is taken as meaning it -- a project
- * that lists its image origins wants `img-src` to hold -- while directives it
- * never mentioned keep reporting rather than binding. That is the difference
- * between honouring a project's configuration and inferring, from one image
- * origin, that it also wants `script-src` bound across the site.
+ * Carries the always-enforced directives, the hosted Studio embedding policy,
+ * every directive the project declared, and then whatever those would
+ * otherwise absorb through CSP's fallback chain. Declaring a directive is
+ * taken as meaning it -- a project that lists its image origins wants `img-src`
+ * to hold -- while directives it never mentioned keep reporting rather than
+ * binding. That is the difference between honouring a project's configuration
+ * and inferring, from one image origin, that it also wants `script-src` bound
+ * across the site.
  *
  * Values come from the same merged policy the reported header carries, so a
  * directive pulled in by fallback is enforced exactly as it was reported.
@@ -404,7 +405,11 @@ export function buildEnforcedCSP(
     .filter(([, value]) => value !== undefined)
     .map(([key]) => toCspDirectiveName(key));
 
-  const binding = withFallbackDependents([...ALWAYS_ENFORCED_DIRECTIVES, ...declared]);
+  const binding = withFallbackDependents([
+    ...ALWAYS_ENFORCED_DIRECTIVES,
+    ...(isVeryfrontDomain ? ["frame-ancestors"] : []),
+    ...declared,
+  ]);
 
   const full = mergeCspDirectives(
     requiredDirectives(nonce, isVeryfrontDomain ?? false),
@@ -468,7 +473,7 @@ export function applySecurityHeaders(
   // honor `frame-ancestors` from CSP (set below) instead, so this is mainly
   // a fallback for older browsers. Always emit DENY in production — when
   // Studio embedding is required, the CSP `frame-ancestors` allowlist
-  // (set in buildDefaultCSP for isVeryfrontDomain) takes precedence in
+  // (set in requiredDirectives for isVeryfrontDomain) takes precedence in
   // modern browsers and grants the necessary exception. Legacy browsers
   // would block Studio embedding, which is acceptable since they don't
   // support modern Studio features.
