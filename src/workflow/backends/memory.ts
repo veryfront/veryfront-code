@@ -61,6 +61,16 @@ const objectKeys = Object.keys;
 const objectPrototype = Object.prototype;
 const jsonParse = JSON.parse;
 const structuredCloneValue = structuredClone;
+const conditionalRunUpdateControl = Symbol("conditional-run-update-control");
+
+interface ConditionalRunUpdateControl {
+  applied: boolean;
+  readonly precondition: (run: WorkflowRun) => boolean;
+}
+
+type ConditionalWorkflowRunUpdate = WorkflowRunUpdate & {
+  readonly [conditionalRunUpdateControl]?: ConditionalRunUpdateControl;
+};
 
 /**
  * Memory backend configuration
@@ -330,12 +340,16 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void> {
-    return this.applyRunUpdate(runId, patch).then(() => undefined);
+    const conditionalPatch = patch as ConditionalWorkflowRunUpdate;
+    const control = conditionalPatch[conditionalRunUpdateControl];
+    return this.applyRunUpdate(runId, conditionalPatch, control?.precondition).then((applied) => {
+      if (control !== undefined) control.applied = applied;
+    });
   }
 
   private applyRunUpdate(
     runId: string,
-    patch: WorkflowRunUpdate,
+    patch: ConditionalWorkflowRunUpdate,
     precondition?: (run: WorkflowRun) => boolean,
   ): Promise<boolean> {
     const run = this.runs.get(runId);
@@ -355,6 +369,7 @@ export class MemoryBackend implements WorkflowBackend {
     logger.debug(`Updating run: ${runId}`, patch);
 
     const {
+      [conditionalRunUpdateControl]: _conditionalUpdateControl,
       context: patchContext,
       contextDeletes = [],
       nodeStateDeletes = [],
@@ -414,7 +429,7 @@ export class MemoryBackend implements WorkflowBackend {
     expectedStatuses: WorkflowRun["status"][],
     patch: Partial<WorkflowRun>,
   ): Promise<boolean> {
-    return this.applyRunUpdate(
+    return this.applyConditionalRunUpdate(
       runId,
       patch,
       (run) => expectedStatuses.includes(run.status),
@@ -427,11 +442,24 @@ export class MemoryBackend implements WorkflowBackend {
     expectedWorkerId: string,
     patch: Partial<WorkflowRun>,
   ): Promise<boolean> {
-    return this.applyRunUpdate(
+    return this.applyConditionalRunUpdate(
       runId,
       patch,
       (run) => expectedStatuses.includes(run.status) && run.workerId === expectedWorkerId,
     );
+  }
+
+  private applyConditionalRunUpdate(
+    runId: string,
+    patch: WorkflowRunUpdate,
+    precondition: (run: WorkflowRun) => boolean,
+  ): Promise<boolean> {
+    const control: ConditionalRunUpdateControl = { applied: false, precondition };
+    const conditionalPatch: ConditionalWorkflowRunUpdate = {
+      ...patch,
+      [conditionalRunUpdateControl]: control,
+    };
+    return this.updateRun(runId, conditionalPatch).then(() => control.applied);
   }
 
   restoreRunStateIfStatus(

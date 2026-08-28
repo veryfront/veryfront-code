@@ -495,6 +495,27 @@ describe("MemoryBackend", () => {
       assertEquals(workerRun?.context.workerHook, undefined);
     });
 
+    it("routes conditional run updates through updateRun overrides", async () => {
+      class TrackingMemoryBackend extends MemoryBackend {
+        updates = 0;
+
+        override updateRun(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
+          this.updates++;
+          return super.updateRun(runId, patch);
+        }
+      }
+
+      const trackingBackend = new TrackingMemoryBackend();
+      const runId = "run-conditional-update-override";
+      await trackingBackend.createRun(createTestRun(runId, { status: "running" }));
+
+      assertEquals(
+        await trackingBackend.updateRunIfStatus(runId, ["running"], { status: "waiting" }),
+        true,
+      );
+      assertEquals(trackingBackend.updates, 1);
+    });
+
     it("deletes context keys omitted by JSON through conditional updates", async () => {
       await backend.createRun(createTestRun("run-context-conditional-omitted", {
         status: "running",
