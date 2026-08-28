@@ -61,6 +61,7 @@ const objectKeys = Object.keys;
 const objectPrototype = Object.prototype;
 const jsonParse = JSON.parse;
 const mathFloor = Math.floor;
+const numberIsNaN = Number.isNaN;
 const NUMBER_MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
 const reflectApply = Reflect.apply;
 const SetConstructor = Set;
@@ -108,7 +109,7 @@ const RUN_OBSERVATION_QUEUE_SIZE = 64;
 
 function toArrayLength(value: number): number {
   const numericLength = +value;
-  if (!(numericLength > 0)) return 0;
+  if (numericLength <= 0 || numberIsNaN(numericLength)) return 0;
   if (numericLength >= NUMBER_MAX_SAFE_INTEGER) return NUMBER_MAX_SAFE_INTEGER;
   return mathFloor(numericLength);
 }
