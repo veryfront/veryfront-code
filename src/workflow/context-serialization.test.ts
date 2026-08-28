@@ -1033,13 +1033,18 @@ describe("serializeWorkflowContext", () => {
     });
 
     it("parses a deep JSON tail without a recursive reviver when no raw token exists", () => {
+      const depth = 4000;
       let value: unknown = 0;
-      for (let index = 0; index < 4000; index++) value = { nested: value };
-      const expected = JSON.stringify(value);
+      for (let index = 0; index < depth; index++) value = { nested: value };
+      const expected = `${'{"nested":'.repeat(depth)}0${"}".repeat(depth)}`;
       const prepared = prepareWorkflowJson(value, "output");
 
       assertEquals(prepared.serialized, expected);
-      assertEquals(JSON.stringify(prepared.normalized), expected);
+      let restored = prepared.normalized;
+      for (let index = 0; index < depth; index++) {
+        restored = (restored as { nested: unknown }).nested;
+      }
+      assertEquals(restored, 0);
     });
 
     it("keeps control strings and JSON edge primitives in an encoded tail", () => {

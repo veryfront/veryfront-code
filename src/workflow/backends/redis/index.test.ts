@@ -20,7 +20,7 @@ import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { RedisBackend } from "./index.ts";
 import { deriveWorkflowRunEventObservation } from "../../events.ts";
-import { MAX_TRAVERSAL_DEPTH } from "../../context-serialization.ts";
+import { MAX_TRAVERSAL_DEPTH, serializeWorkflowJson } from "../../context-serialization.ts";
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 import type { CheckpointResumeEnvelope, PendingApproval, WorkflowRun } from "../../types.ts";
 import {
@@ -417,7 +417,10 @@ class MockRedisAdapter implements RedisAdapter {
         for (let i = 0; i < list.length; i++) {
           const approval = JSON.parse(list[i]!);
           if (approval.id === approvalId) {
-            list[i] = JSON.stringify({ ...approval, ...patch, id: approvalId });
+            list[i] = serializeWorkflowJson(
+              { ...approval, ...patch, id: approvalId },
+              "approval",
+            );
             return Promise.resolve(1);
           }
         }
@@ -437,7 +440,7 @@ class MockRedisAdapter implements RedisAdapter {
             if (approval.status !== "pending") return Promise.resolve(2);
             Object.assign(approval, patch);
             for (const field of deletedFields) delete approval[field];
-            list[i] = JSON.stringify(approval);
+            list[i] = serializeWorkflowJson(approval, "approval");
             return Promise.resolve(1);
           }
         }
@@ -462,7 +465,7 @@ class MockRedisAdapter implements RedisAdapter {
               approval.recoveryClaimedAt > staleBefore)
           ) return Promise.resolve(2);
           Object.assign(approval, patch, { recoveryClaimId });
-          list[i] = JSON.stringify(approval);
+          list[i] = serializeWorkflowJson(approval, "approval");
           return Promise.resolve(1);
         }
       }
@@ -480,7 +483,7 @@ class MockRedisAdapter implements RedisAdapter {
           if (approval.recoveryClaimId !== recoveryClaimId) return Promise.resolve(2);
           delete approval.recoveryClaimId;
           delete approval.recoveryClaimedAt;
-          list[i] = JSON.stringify(approval);
+          list[i] = serializeWorkflowJson(approval, "approval");
           return Promise.resolve(1);
         }
       }
@@ -503,7 +506,7 @@ class MockRedisAdapter implements RedisAdapter {
             delete approval.reconciliationPending;
             delete approval.recoveryClaimId;
             delete approval.recoveryClaimedAt;
-            list[i] = JSON.stringify(approval);
+            list[i] = serializeWorkflowJson(approval, "approval");
             return Promise.resolve(1);
           }
         }
