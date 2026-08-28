@@ -484,6 +484,7 @@ describe("public docs validation", () => {
           '<a data-ok={value instanceof /}>/} href="../architecture/instanceof-regex.md">ok</a>\n' +
           '<a data-ok={`x ${"`"} >`} href="../architecture/template.md">ok</a>\n' +
           '<a data-ok={value / count > 1} href="../architecture/division.md">ok</a>\n' +
+          '<a data-ok={this.#instanceof / ({ marker: "}>/" }).length} href="../architecture/private-member.md">ok</a>\n' +
           '<div title="[old](../architecture/title-link.md)"></div>\n' +
           '<div title={"[old](../architecture/expression.md)"}></div>\n' +
           "<Code value={'Configure href=\"../architecture/string.md\"'} />\n" +
@@ -507,6 +508,7 @@ describe("public docs validation", () => {
         "../architecture/instanceof-regex.md",
         "../architecture/template.md",
         "../architecture/division.md",
+        "../architecture/private-member.md",
         "../architecture/real.md",
       ],
     );

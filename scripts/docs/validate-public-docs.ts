@@ -1050,7 +1050,7 @@ function javaScriptRegexEnd(line: string, start: number): number | undefined {
 function javaScriptRegexMayStart(line: string, start: number): boolean {
   const prefix = line.slice(0, start).trimEnd();
   return prefix === "" ||
-    /(?:[=(:,!\[{;?&|+*%^~<>-]|=>|(?:^|[^A-Za-z0-9_$.])(?:return|case|throw|default|typeof|void|delete|in|instanceof))$/
+    /(?:[=(:,!\[{;?&|+*%^~<>-]|=>|(?:^|[^A-Za-z0-9_$.#])(?:return|case|throw|default|typeof|void|delete|in|instanceof))$/
       .test(
         prefix,
       );
