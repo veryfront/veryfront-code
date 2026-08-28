@@ -425,9 +425,13 @@ function markdownCodeRanges(text: string): Range[] {
     let length = 1;
     while (text[cursor + length] === "`") length++;
     const paragraphBreak = text.slice(cursor + length).search(/\n[ \t]*\n/);
-    const limit = paragraphBreak === -1
+    const paragraphLimit = paragraphBreak === -1
       ? text.length
       : cursor + length + paragraphBreak;
+    const limit = Math.min(
+      paragraphLimit,
+      blockRanges[blockIndex]?.start ?? text.length,
+    );
     let search = cursor + length;
     let closing: number | undefined;
     let searchBlockIndex = blockIndex;
@@ -562,6 +566,7 @@ function htmlTagRanges(
     if (start === -1) break;
     if (
       isInsideRange(ignoredRanges, start) ||
+      isBackslashEscaped(text, start) ||
       !/[A-Za-z]/.test(text[start + 1] ?? "")
     ) {
       start++;
@@ -590,6 +595,26 @@ function htmlTagRanges(
     } else break;
   }
   return ranges;
+}
+
+function topLevelTagOffsets(tag: string): ReadonlySet<number> {
+  const offsets = new Set<number>();
+  let quote: '"' | "'" | "`" | undefined;
+  let expressionDepth = 0;
+  for (let cursor = 0; cursor < tag.length; cursor++) {
+    const character = tag[cursor]!;
+    if (quote !== undefined) {
+      if (character === "\\") cursor++;
+      else if (character === quote) quote = undefined;
+      continue;
+    }
+    if (expressionDepth === 0) offsets.add(cursor);
+    if (character === '"' || character === "'" || character === "`") {
+      quote = character;
+    } else if (character === "{") expressionDepth++;
+    else if (character === "}" && expressionDepth > 0) expressionDepth--;
+  }
+  return offsets;
 }
 
 /**
@@ -644,6 +669,31 @@ function normalizeReferenceLabel(label: string): string {
   ).trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+function afterInlineLink(text: string, start: number): number | undefined {
+  if (text[start] !== "(") return undefined;
+  let depth = 0;
+  let quote: '"' | "'" | undefined;
+  for (let cursor = start + 1; cursor < text.length; cursor++) {
+    const character = text[cursor]!;
+    if (character === "\\") {
+      cursor++;
+      continue;
+    }
+    if (quote !== undefined) {
+      if (character === quote) quote = undefined;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === "(") depth++;
+    else if (character === ")") {
+      if (depth === 0) return cursor + 1;
+      depth--;
+    }
+  }
+  return undefined;
+}
+
 function usedReferenceLabels(
   text: string,
   ignoredRanges: readonly Range[],
@@ -657,7 +707,11 @@ function usedReferenceLabels(
       text[start + 1] === "^"
     ) continue;
     const afterText = afterMarkdownLabel(text, start);
-    if (afterText === undefined || text[afterText] === "(") continue;
+    if (afterText === undefined) continue;
+    if (text[afterText] === "(") {
+      start = (afterInlineLink(text, afterText) ?? afterText) - 1;
+      continue;
+    }
 
     const textLabel = text.slice(start + 1, afterText - 1);
     let label = textLabel;
@@ -760,12 +814,14 @@ export function scanDestinations(text: string): Destination[] {
 
   for (const tagRange of htmlTagRanges(text, ignoredRanges)) {
     const tag = text.slice(tagRange.start, tagRange.end);
+    const topLevelOffsets = topLevelTagOffsets(tag);
     const htmlDestination = new RegExp(
       HTML_DESTINATION_ATTRIBUTE_SOURCE,
       "gi",
     );
     let htmlMatch: RegExpExecArray | null;
     while ((htmlMatch = htmlDestination.exec(tag))) {
+      if (!topLevelOffsets.has(htmlMatch.index)) continue;
       const rawHref = htmlMatch[1] ?? htmlMatch[2] ?? htmlMatch[3] ??
         htmlMatch[4] ?? htmlMatch[5];
       if (rawHref === undefined) continue;

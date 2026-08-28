@@ -61,9 +61,14 @@ describe("public docs validation", () => {
       destinations(
         '<img src="../architecture/image.png"> ' +
           '<div data-href="../architecture/data.md"></div>\n' +
-          'Configure href="../architecture/prose.md" for the sample.',
+          'Configure href="../architecture/prose.md" for the sample.\n' +
+          "<a title=\"sample href='../architecture/title.md' text\">safe</a>\n" +
+          "<Code value={'Configure href=\"../architecture/string.md\"'} />\n" +
+          String.raw`\<a href="../architecture/escaped.md">literal</a>` +
+          "\n" +
+          String.raw`\\<a href="../architecture/real.md">real</a>`,
       ),
-      ["../architecture/image.png"],
+      ["../architecture/image.png", "../architecture/real.md"],
     );
   });
 
@@ -339,6 +344,20 @@ describe("public docs validation", () => {
       destinations("[old]: ../architecture/private.md"),
       [],
     );
+    assertEquals(
+      destinations(
+        "[nested [old]](./public.md)\n" +
+          "[old]: ../architecture/private.md",
+      ),
+      ["./public.md"],
+    );
+    assertEquals(
+      destinations(
+        '[inline](./public.md "[old]")\n' +
+          "[old]: ../architecture/private.md",
+      ),
+      ["./public.md"],
+    );
   });
 
   it("ignores Markdown destinations inside code", () => {
@@ -358,6 +377,14 @@ describe("public docs validation", () => {
       destinations(
         "`[example](\n../architecture/private.md)`\n" +
           "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        "`unmatched\n" +
+          "```md\n[fenced](../architecture/fenced.md)\n```\n" +
+          "[real](../architecture/real.md)\n`",
       ),
       ["../architecture/real.md"],
     );
