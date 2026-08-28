@@ -212,6 +212,71 @@ function hasJsonTailHook(
       typeof objectDescriptor.value === "function");
 }
 
+function isJsonTailPrimitive(value: unknown): boolean {
+  const type = typeof value;
+  return type === "undefined" ||
+    type === "boolean" ||
+    type === "number" ||
+    type === "string" ||
+    type === "symbol";
+}
+
+function isUnsafeJsonTailReference(
+  value: JsonTraversalReference,
+  active: Set<JsonTraversalReference>,
+  seen: Set<JsonTraversalReference>,
+): boolean {
+  return isProxyWithoutHooks(value) ||
+    isNonPlainBuiltinWithoutHooks(value) ||
+    reflectApply(setHas, active, [value]) ||
+    reflectApply(setHas, seen, [value]) ||
+    (jsonIsRawJSON !== undefined &&
+      reflectApply(jsonIsRawJSON, jsonRawSupport, [value]));
+}
+
+function hasSafeJsonTailPrototype(
+  value: JsonTraversalReference,
+  isArray: boolean,
+): boolean {
+  try {
+    const prototype = objectGetPrototypeOf(value);
+    return (isArray
+      ? prototype === arrayPrototype
+      : prototype === objectPrototype || prototype === null) &&
+      !hasJsonTailHook(value, prototype);
+  } catch {
+    return false;
+  }
+}
+
+function appendJsonTailOwnDataValues(
+  value: JsonTraversalReference,
+  isArray: boolean,
+  pending: unknown[],
+): boolean {
+  if (isArray) {
+    const length = toJsonLength(reflectGet(value, "length"));
+    let index = 0;
+    while (index < length) {
+      const descriptor = objectGetOwnPropertyDescriptor(value, StringConstructor(index));
+      if (descriptor === undefined || !objectHasOwn(descriptor, "value")) return false;
+      defineArrayElement(pending, pending.length, descriptor.value);
+      index++;
+    }
+    return true;
+  }
+
+  const keys = objectKeys(value);
+  let index = 0;
+  while (index < keys.length) {
+    const descriptor = objectGetOwnPropertyDescriptor(value, keys[index]!);
+    if (descriptor === undefined || !objectHasOwn(descriptor, "value")) return false;
+    defineArrayElement(pending, pending.length, descriptor.value);
+    index++;
+  }
+  return true;
+}
+
 /** Whether native JSON can snapshot this tail without a diagnostic replacer. */
 function canSnapshotJsonTailWithoutReplacer(
   root: JsonTraversalReference,
@@ -221,66 +286,20 @@ function canSnapshotJsonTailWithoutReplacer(
 
   const pending: unknown[] = [root];
   const seen = new SetConstructor<JsonTraversalReference>();
-  for (let cursor = 0; cursor < pending.length; cursor++) {
-    const candidate = pending[cursor];
+  let cursor = 0;
+  while (cursor < pending.length) {
+    const candidate = pending[cursor++];
     if (candidate === null) continue;
-
-    const type = typeof candidate;
-    if (
-      type === "undefined" ||
-      type === "boolean" ||
-      type === "number" ||
-      type === "string" ||
-      type === "symbol"
-    ) {
-      continue;
-    }
-    if (type !== "object") return false;
+    if (isJsonTailPrimitive(candidate)) continue;
+    if (typeof candidate !== "object") return false;
 
     const reference = candidate as JsonTraversalReference;
-    if (
-      isProxyWithoutHooks(reference) ||
-      isNonPlainBuiltinWithoutHooks(reference) ||
-      reflectApply(setHas, active, [reference]) ||
-      reflectApply(setHas, seen, [reference]) ||
-      (jsonIsRawJSON !== undefined &&
-        reflectApply(jsonIsRawJSON, jsonRawSupport, [reference]))
-    ) {
-      return false;
-    }
+    if (isUnsafeJsonTailReference(reference, active, seen)) return false;
     reflectApply(setAdd, seen, [reference]);
 
     const isArray = arrayIsArray(reference);
-    let prototype: object | null;
-    try {
-      prototype = objectGetPrototypeOf(reference);
-    } catch {
-      return false;
-    }
-    if (
-      (isArray && prototype !== arrayPrototype) ||
-      (!isArray && prototype !== objectPrototype && prototype !== null) ||
-      hasJsonTailHook(reference, prototype)
-    ) {
-      return false;
-    }
-
-    if (isArray) {
-      const length = toJsonLength(reflectGet(reference, "length"));
-      for (let index = 0; index < length; index++) {
-        const descriptor = objectGetOwnPropertyDescriptor(reference, StringConstructor(index));
-        if (descriptor === undefined || !objectHasOwn(descriptor, "value")) return false;
-        defineArrayElement(pending, pending.length, descriptor.value);
-      }
-      continue;
-    }
-
-    const keys = objectKeys(reference);
-    for (let index = 0; index < keys.length; index++) {
-      const descriptor = objectGetOwnPropertyDescriptor(reference, keys[index]!);
-      if (descriptor === undefined || !objectHasOwn(descriptor, "value")) return false;
-      defineArrayElement(pending, pending.length, descriptor.value);
-    }
+    if (!hasSafeJsonTailPrototype(reference, isArray)) return false;
+    if (!appendJsonTailOwnDataValues(reference, isArray, pending)) return false;
   }
   return true;
 }
@@ -666,6 +685,32 @@ function normalizeAndFindUnrepresentableValues(
     }
   };
 
+  const recordArrayOwnProperty = (
+    ownKey: string | symbol,
+    descriptor: PropertyDescriptor | undefined,
+    path: string,
+    length: number,
+  ): 0 | 1 => {
+    if (descriptor === undefined) return 0;
+    if (ownKey === "length") {
+      if (descriptor.writable !== true) recordLossy(path, "array length property");
+      return 0;
+    }
+    if (typeof ownKey === "symbol") {
+      recordLossy(path, "symbol-keyed property");
+      return 0;
+    }
+    if (isSerializedArrayIndexKey(ownKey, length)) {
+      recordPropertyDescriptor(descriptor, `${path}[${ownKey}]`);
+      return 1;
+    }
+    recordLossy(
+      `${path}.${redactPathSegment(ownKey)}`,
+      descriptor.enumerable === true ? "array property" : "non-enumerable property",
+    );
+    return 0;
+  };
+
   const recordArrayPropertiesFromOwnKeys = (
     value: JsonTraversalReference,
     path: string,
@@ -685,28 +730,7 @@ function normalizeAndFindUnrepresentableValues(
       } catch {
         continue;
       }
-      if (ownKey === "length") {
-        if (descriptor !== undefined && descriptor.writable !== true) {
-          recordLossy(path, "array length property");
-        }
-        continue;
-      }
-      if (typeof ownKey === "symbol") {
-        if (descriptor !== undefined) recordLossy(path, "symbol-keyed property");
-        continue;
-      }
-      const isSerializedIndex = isSerializedArrayIndexKey(ownKey, length);
-      if (isSerializedIndex) {
-        if (descriptor === undefined) continue;
-        serializedIndexCount++;
-        recordPropertyDescriptor(descriptor, `${path}[${ownKey}]`);
-        continue;
-      }
-      if (descriptor === undefined) continue;
-      recordLossy(
-        `${path}.${redactPathSegment(ownKey)}`,
-        descriptor.enumerable === true ? "array property" : "non-enumerable property",
-      );
+      serializedIndexCount += recordArrayOwnProperty(ownKey, descriptor, path, length);
     }
     if (serializedIndexCount < length) recordLossy(path, "array hole");
   };

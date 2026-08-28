@@ -131,8 +131,8 @@ function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefine
   freeze(nonPlainBuiltinChecks);
   const proxyCheck = snapshot.isProxy;
   const boxedPrimitiveCheck = snapshot.isBoxedPrimitive;
-  const disguisedBigInt = setPrototypeOf(box(0n), objectPrototype);
-  const disguisedSymbol = setPrototypeOf(box(Symbol()), objectPrototype);
+  const disguisedBigInt = setPrototypeOf(new box(0n), objectPrototype);
+  const disguisedSymbol = setPrototypeOf(new box(Symbol()), objectPrototype);
   const needsBigIntSlotFallback = !apply(boxedPrimitiveCheck, undefined, [disguisedBigInt]);
   const needsSymbolSlotFallback = !apply(boxedPrimitiveCheck, undefined, [disguisedSymbol]);
   defineProperty(snapshot, "isNonPlainBuiltin", {
