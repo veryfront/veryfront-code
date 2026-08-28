@@ -22,6 +22,28 @@ function publishedFiles(...paths: string[]) {
 }
 
 describe("public docs validation", () => {
+  it("handles raw HTML blocks and browser-valid destination boundaries", () => {
+    for (const source of [
+      "<?pi\n[x](docs/architecture/private.md)\n?>",
+      "<!DOCTYPE html\n[x](docs/architecture/private.md)\n>",
+      "<![CDATA[\n[x](docs/architecture/private.md)\n]]>",
+    ]) {
+      assertEquals(collectUnpublishedLinkIssues("README.md", source), []);
+    }
+    assertEquals(
+      destinations("`sample\r\r[x](../architecture/private.md)`"),
+      ["../architecture/private.md"],
+    );
+    assertEquals(destinations("[x](<../architecture/<private.md>)"), []);
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "README.md",
+        '<a data-ok={`x ${"`"} >`} href="docs/architecture/private.md">x</a>',
+      ).map((issue) => issue.line),
+      [1],
+    );
+  });
+
   it("parses balanced and escaped inline link labels", () => {
     assertEquals(
       destinations(

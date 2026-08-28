@@ -58,6 +58,9 @@ const MARKDOWN_UNQUOTED_DESTINATION_ATTRIBUTE_SOURCE =
 const RAW_HTML_BLOCK_TAG_SOURCE =
   /^<(pre|script|style|textarea)(?=[\t\n\f\r />]|$)/i;
 const RAW_HTML_BLOCK_END_SOURCE = /<\/(?:pre|script|style|textarea)>/i;
+const PROCESSING_INSTRUCTION_HTML_BLOCK_SOURCE = /^<\?/;
+const DECLARATION_HTML_BLOCK_SOURCE = /^<![A-Z]/;
+const CDATA_HTML_BLOCK_SOURCE = /^<!\[CDATA\[/;
 const BLANK_LINE_TERMINATED_HTML_BLOCK_TAG_SOURCE =
   /^<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?=[\t\n\f\r />]|$)/i;
 const HTML_BLOCK_TAG_NAME_SOURCE = "[A-Za-z][A-Za-z0-9-]*";
@@ -308,7 +311,7 @@ function markdownCodeSpanEndAt(
   let length = 1;
   while (text[start + length] === "`") length++;
   const paragraphBreak = text.slice(start + length).search(
-    /\r?\n[ \t]*\r?\n/,
+    /(?:\r\n?|\n)[ \t]*(?:\r\n?|\n)/,
   );
   const limit = paragraphBreak === -1
     ? text.length
@@ -659,7 +662,7 @@ function markdownCodeRanges(text: string): Range[] {
     let length = 1;
     while (text[cursor + length] === "`") length++;
     const paragraphBreak = text.slice(cursor + length).search(
-      /\r?\n[ \t]*\r?\n/,
+      /(?:\r\n?|\n)[ \t]*(?:\r\n?|\n)/,
     );
     const paragraphLimit = paragraphBreak === -1
       ? text.length
@@ -744,9 +747,45 @@ function quotedRangeEnd(
   start: number,
   quote: '"' | "'" | "`",
 ): number | undefined {
+  if (quote === "`") return templateLiteralEnd(text, start);
   for (let cursor = start + 1; cursor < text.length; cursor++) {
     if (text[cursor] === "\\") cursor++;
     else if (text[cursor] === quote) return cursor + 1;
+  }
+  return undefined;
+}
+
+function templateLiteralEnd(text: string, start: number): number | undefined {
+  for (let cursor = start + 1; cursor < text.length; cursor++) {
+    if (text[cursor] === "\\") {
+      cursor++;
+      continue;
+    }
+    if (text[cursor] === "`") return cursor + 1;
+    if (!text.startsWith("${", cursor)) continue;
+
+    let depth = 1;
+    for (cursor += 2; cursor < text.length && depth > 0; cursor++) {
+      const character = text[cursor]!;
+      if (character === "\\") {
+        cursor++;
+        continue;
+      }
+      const commentEnd = javaScriptCommentEnd(text, cursor);
+      if (commentEnd !== undefined) {
+        cursor = commentEnd - 1;
+        continue;
+      }
+      if (character === '"' || character === "'" || character === "`") {
+        const end = quotedRangeEnd(text, cursor, character);
+        if (end === undefined) return undefined;
+        cursor = end - 1;
+        continue;
+      }
+      if (character === "{") depth++;
+      else if (character === "}") depth--;
+    }
+    if (depth !== 0) return undefined;
   }
   return undefined;
 }
@@ -1236,8 +1275,10 @@ function htmlTagRanges(
     for (; cursor < text.length; cursor++) {
       const character = text[cursor]!;
       if (quote !== undefined) {
-        if (character === "\\") cursor++;
-        else if (character === quote) quote = undefined;
+        const end = quotedRangeEnd(text, cursor - 1, quote);
+        if (end === undefined) break;
+        cursor = end - 1;
+        quote = undefined;
         continue;
       }
       const commentEnd = expressionDepth > 0
@@ -1304,16 +1345,29 @@ function rawHtmlBlockBodyRanges(
     const rawTextOpening = ignored
       ? null
       : blockLine.match(RAW_HTML_BLOCK_TAG_SOURCE);
+    const specialOpening = ignored
+      ? null
+      : PROCESSING_INSTRUCTION_HTML_BLOCK_SOURCE.test(blockLine)
+      ? "processing-instruction"
+      : DECLARATION_HTML_BLOCK_SOURCE.test(blockLine)
+      ? "declaration"
+      : CDATA_HTML_BLOCK_SOURCE.test(blockLine)
+      ? "cdata"
+      : null;
     const typeSixOpening = !ignored &&
       BLANK_LINE_TERMINATED_HTML_BLOCK_TAG_SOURCE.test(blockLine);
     const typeSevenMayStart = followsCompletedHtmlBlock(lineStart, blocks) ||
       referenceDefinitionMayStart(text, lineStart, undefined);
     const blankLineTerminated = rawTextOpening === null &&
+      specialOpening === null &&
       !insideHtmlBlock &&
       (typeSixOpening ||
         !ignored && typeSevenMayStart &&
           COMPLETE_HTML_BLOCK_TAG_LINE_SOURCE.test(blockLine));
-    if (rawTextOpening === null && !blankLineTerminated) {
+    if (
+      rawTextOpening === null && specialOpening === null &&
+      !blankLineTerminated
+    ) {
       if (newline === -1) break;
       lineStart = newline + 1;
       continue;
@@ -1336,7 +1390,7 @@ function rawHtmlBlockBodyRanges(
         break;
       }
       const currentLine = text.slice(currentLineStart, currentLineEnd);
-      if (rawTextOpening === null) {
+      if (rawTextOpening === null && specialOpening === null) {
         if (
           currentLineStart !== lineStart &&
           text.slice(currentContentStart, currentLineEnd).trim() === ""
@@ -1344,8 +1398,18 @@ function rawHtmlBlockBodyRanges(
           end = currentLineStart;
           break;
         }
-      } else {
+      } else if (rawTextOpening !== null) {
         if (RAW_HTML_BLOCK_END_SOURCE.test(currentLine)) {
+          end = currentNewline === -1 ? text.length : currentNewline + 1;
+          break;
+        }
+      } else {
+        const endMarker = specialOpening === "processing-instruction"
+          ? "?>"
+          : specialOpening === "declaration"
+          ? ">"
+          : "]]" + ">";
+        if (currentLine.includes(endMarker)) {
           end = currentNewline === -1 ? text.length : currentNewline + 1;
           break;
         }
@@ -1381,8 +1445,10 @@ function topLevelTagOffsets(tag: string): ReadonlySet<number> {
   for (let cursor = 0; cursor < tag.length; cursor++) {
     const character = tag[cursor]!;
     if (quote !== undefined) {
-      if (character === "\\") cursor++;
-      else if (character === quote) quote = undefined;
+        const end = quotedRangeEnd(tag, cursor - 1, quote);
+      if (end === undefined) break;
+      cursor = end - 1;
+      quote = undefined;
       continue;
     }
     const commentEnd = expressionDepth > 0
@@ -1896,7 +1962,7 @@ function markdownInlineDestinationAt(
         cursor += 2;
         continue;
       }
-      if (text[cursor] === ">") break;
+      if (text[cursor] === ">" || text[cursor] === "<") break;
       cursor++;
     }
     if (
