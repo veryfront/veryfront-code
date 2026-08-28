@@ -54,6 +54,14 @@ describe("public docs validation", () => {
       destinations("[ẞ]\n\n[ss]: ../architecture/capital-sharp.md"),
       ["../architecture/capital-sharp.md"],
     );
+    assertEquals(
+      destinations(
+        "[first] [second]\r\n\r\n" +
+          "[first]: ../architecture/first.md\r\n" +
+          "[second]: ../architecture/second.md",
+      ),
+      ["../architecture/first.md", "../architecture/second.md"],
+    );
   });
 
   it("parses quoted HTML anchors and angle-bracket destinations", () => {
@@ -226,6 +234,62 @@ describe("public docs validation", () => {
     );
   });
 
+  it("does not let reference definitions interrupt paragraphs", () => {
+    assertEquals(
+      destinations(
+        "[old]\nIntro paragraph.\n" +
+          "[old]: ../architecture/private.md",
+      ),
+      [],
+    );
+    assertEquals(
+      destinations("[old]\n\n[old]: ../architecture/real.md"),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations("> Intro\n[old]: ../architecture/lazy-quote.md\n\n[old]"),
+      [],
+    );
+    assertEquals(
+      destinations("- Intro\n  [old]: ../architecture/lazy-list.md\n\n[old]"),
+      [],
+    );
+    assertEquals(
+      destinations("Intro\n2. [old]: ../architecture/ordered.md\n\n[old]"),
+      [],
+    );
+    assertEquals(
+      destinations(
+        "- Intro\n  2. [old]: ../architecture/nested-ordered.md\n\n" +
+          "     [old]",
+      ),
+      [],
+    );
+    assertEquals(
+      destinations("Intro\n1. [old]: ../architecture/ordered.md\n\n[old]"),
+      ["../architecture/ordered.md"],
+    );
+    assertEquals(
+      destinations(
+        "1. Intro\n2. [old]: ../architecture/ordered-sibling.md\n\n[old]",
+      ),
+      ["../architecture/ordered-sibling.md"],
+    );
+    assertEquals(
+      destinations(
+        "9. Intro\n10. [old]: ../architecture/wide-ordered-sibling.md\n\n" +
+          "[old]",
+      ),
+      ["../architecture/wide-ordered-sibling.md"],
+    );
+    assertEquals(
+      destinations(
+        "    code\n[after-code]: ../architecture/after-code.md\n\n[after-code]",
+      ),
+      ["../architecture/after-code.md"],
+    );
+  });
+
   it("finds a reference definition below the first line", () => {
     const issues = collectUnpublishedLinkIssues(
       "docs/guides/example.md",
@@ -297,6 +361,27 @@ describe("public docs validation", () => {
         publishedFiles("docs/guides/deploying.md"),
       ).length,
       1,
+    );
+  });
+
+  it("preserves character references in JSX expression strings", () => {
+    const published = publishedFiles("docs/guides/deploying.md");
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.md",
+        '<a href={"./deploying.md&#35;section"}>deploy</a>',
+        published,
+      ).length,
+      1,
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.md",
+        '<a href="./deploying.md&#35;section">deploy</a>\n' +
+          "[deploy](./deploying.md&#35;section)",
+        published,
+      ),
+      [],
     );
   });
 
@@ -529,6 +614,7 @@ describe("public docs validation", () => {
     assertEquals(
       destinations(
         "> ```md\n" +
+          "> [quoted](../architecture/quoted.md)\n" +
           "[root](../architecture/root.md)\n" +
           "> ```",
       ),
@@ -537,19 +623,29 @@ describe("public docs validation", () => {
     assertEquals(
       destinations(
         "- ```md\n" +
-          "[root](../architecture/list-root.md)\n" +
+          "  [listed](../architecture/listed.md)\n" +
+          "[root](../architecture/root.md)\n" +
           "  ```",
       ),
-      ["../architecture/list-root.md"],
+      ["../architecture/root.md"],
     );
     assertEquals(
       destinations(
         "```md\r\n" +
-          "[ignored](../architecture/ignored.md)\r\n" +
+          "[hidden](../architecture/hidden.md)\r\n" +
           "```\r\n" +
           "[rendered](../architecture/crlf.md)",
       ),
       ["../architecture/crlf.md"],
+    );
+    assertEquals(
+      destinations(
+        "   ```md\n" +
+          "[hidden](../architecture/hidden.md)\n" +
+          "```\n" +
+          "[rendered](../architecture/root-indented-fence.md)",
+      ),
+      ["../architecture/root-indented-fence.md"],
     );
   });
 
@@ -675,6 +771,98 @@ describe("public docs validation", () => {
         publishedFiles("docs/guides/deploying.md"),
       ),
       [],
+    );
+    assertEquals(
+      destinations(
+        "https://veryfront.com/docs/code/architecture/bare.\n" +
+          "https://veryfront.com/docs/code/guides/balanced_(path)\n" +
+          "https://veryfront.com/docs/code/guides/emphasis*\n" +
+          "https://veryfront.com/docs/code/guides/strong_\n" +
+          "https://veryfront.com/docs/code/guides/strike~\n" +
+          "`https://veryfront.com/docs/code/architecture/code`\n" +
+          '{"https://veryfront.com/docs/code/architecture/expression"}',
+      ),
+      [
+        "https://veryfront.com/docs/code/architecture/bare",
+        "https://veryfront.com/docs/code/guides/balanced_(path)",
+        "https://veryfront.com/docs/code/guides/emphasis",
+        "https://veryfront.com/docs/code/guides/strong",
+        "https://veryfront.com/docs/code/guides/strike",
+      ],
+    );
+    assertEquals(
+      destinations(
+        "https://veryfront.com/docs/code/guides/a[b]\n" +
+          "https://veryfront.com/docs/code/guides/a[b]c\n" +
+          "https://veryfront.com/docs/code/guides/a{b}}\n" +
+          "https://veryfront.com/docs/code/guides/a(b))",
+      ),
+      [
+        "https://veryfront.com/docs/code/guides/a[b",
+        "https://veryfront.com/docs/code/guides/a[b]c",
+        "https://veryfront.com/docs/code/guides/a{b}}",
+        "https://veryfront.com/docs/code/guides/a(b)",
+      ],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.md",
+        "https://veryfront.com/docs/code/guides/a&#35;anchor\n" +
+          "<https://veryfront.com/docs/code/guides/a&#35;anchor>\n" +
+          String.raw`https://veryfront.com/docs/code/guides/deploying\.md` +
+          "\n" +
+          String.raw`<https://veryfront.com/docs/code/guides/deploying\.md>`,
+        publishedFiles("docs/guides/a.md", "docs/guides/deploying.md"),
+      ).length,
+      4,
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.md",
+        String
+          .raw`[deploy](https://veryfront.com/docs/code/guides/deploying\.md)`,
+        publishedFiles("docs/guides/deploying.md"),
+      ),
+      [],
+    );
+    assertEquals(
+      destinations(
+        "[inline](https://veryfront.com/docs/code/guides/inline)\n" +
+          '[public](./deploying.md "https://veryfront.com/docs/code/architecture/title")\n' +
+          "<https://veryfront.com/docs/code/guides/angle>\n\n" +
+          "[unused]: https://veryfront.com/docs/code/architecture/unused",
+      ),
+      [
+        "https://veryfront.com/docs/code/guides/inline",
+        "./deploying.md",
+        "https://veryfront.com/docs/code/guides/angle",
+      ],
+    );
+    assertEquals(
+      destinations(
+        "[https://veryfront.com/docs/code/architecture/label](./public.md)\n" +
+          "[https://veryfront.com/docs/code/architecture/reference][public]\n\n" +
+          "[public]: ./reference.md",
+      ),
+      ["./public.md", "./reference.md"],
+    );
+    assertEquals(
+      destinations(
+        "[https://veryfront.com/docs/code/architecture/definition]: ./public.md\n" +
+          '[unused]: ./reference.md "https://veryfront.com/docs/code/architecture/title"',
+      ),
+      [],
+    );
+    assertEquals(
+      destinations(
+        "prefixhttps://veryfront.com/docs/code/architecture/not-an-autolink\n" +
+          "_https://veryfront.com/docs/code/guides/underscore-boundary\n" +
+          String.raw`\https://veryfront.com/docs/code/architecture/backslash`,
+      ),
+      [
+        "https://veryfront.com/docs/code/guides/underscore-boundary",
+        "https://veryfront.com/docs/code/architecture/backslash",
+      ],
     );
   });
 

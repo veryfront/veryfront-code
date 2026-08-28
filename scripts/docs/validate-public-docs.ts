@@ -52,7 +52,12 @@ const UNSYNCED_README_PATHS = SYNCED_DOC_DIRS.map((dir) => `${dir}/README.md`);
 const HTML_DESTINATION_ATTRIBUTE_SOURCE =
   /(?:^|\s)(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*((?:\(\s*)*)"((?:\\[\s\S]|[^"\\])*)"((?:\s*\))*)\s*\}|\{\s*((?:\(\s*)*)'((?:\\[\s\S]|[^'\\])*)'((?:\s*\))*)\s*\}|\{\s*((?:\(\s*)*)`((?:\\[\s\S]|\$(?!\{)|[^`\\$])*)`((?:\s*\))*)\s*\})/;
 const URI_AUTOLINK_SOURCE = /<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*)>/g;
-const GFM_AUTOLINK_SOURCE = /\bhttps?:\/\/[^\s<>"'`]+/gi;
+const BARE_AUTOLINK_SOURCE = /https?:\/\/[^\s<>"']+/gi;
+type DestinationSyntax =
+  | "markdown"
+  | "autolink"
+  | "html-attribute"
+  | "javascript-string";
 /** Any origin works: only the resolved path is read back out. */
 const RESOLUTION_ORIGIN = "https://docs.invalid";
 const VERYFRONT_DOCS_HOSTNAME = "veryfront.com";
@@ -232,13 +237,15 @@ function normalizeRepositoryPath(pathname: string): string {
 function resolveDocumentationTarget(
   fromPath: string,
   rawHref: string,
-  markdownSyntax = true,
+  syntax: DestinationSyntax,
 ): string | undefined {
-  const href = markdownSyntax
-    ? decodeMarkdownBackslashEscapes(
-      decodeMarkdownCharacterReferences(rawHref),
-    )
+  const withCharacterReferences = syntax === "markdown" ||
+      syntax === "html-attribute"
+    ? decodeMarkdownCharacterReferences(rawHref)
     : rawHref;
+  const href = syntax === "markdown"
+    ? decodeMarkdownBackslashEscapes(withCharacterReferences)
+    : withCharacterReferences;
   if (/^(?:#|["'])/.test(href)) return undefined;
   let resolved: URL;
   try {
@@ -313,7 +320,14 @@ function isBackslashEscaped(text: string, offset: number): boolean {
 
 type BlockContainerToken =
   | { type: "quote" }
-  | { type: "list"; indentation: number };
+  | {
+    type: "list";
+    indentation: number;
+    leadingIndentation: number;
+    marker: "ordered" | "unordered";
+    delimiter: "." | ")" | "-" | "+" | "*";
+    start?: number;
+  };
 
 function columnWidth(text: string): number {
   let column = 0;
@@ -357,10 +371,14 @@ function blockContent(
       (text[cursor] === "-" || text[cursor] === "+" || text[cursor] === "*") &&
       (text[cursor + 1] === " " || text[cursor + 1] === "\t")
     ) {
+      const delimiter = text[cursor] as "-" | "+" | "*";
       cursor += 2;
       containers.push({
         type: "list",
         indentation: columnWidth(text.slice(containerStart, cursor)),
+        leadingIndentation: indentation,
+        marker: "unordered",
+        delimiter,
       });
       continue;
     }
@@ -370,6 +388,10 @@ function blockContent(
       containers.push({
         type: "list",
         indentation: columnWidth(text.slice(containerStart, cursor)),
+        leadingIndentation: indentation,
+        marker: "ordered",
+        delimiter: ordered[0].at(-2) as "." | ")",
+        start: Number.parseInt(ordered[0], 10),
       });
       continue;
     }
@@ -749,6 +771,7 @@ function mdxSyntaxRanges(
 
 function ignoredDestinationRanges(text: string): {
   readonly ignored: Range[];
+  readonly code: Range[];
   readonly expressions: Range[];
   readonly strings: Range[];
 } {
@@ -756,6 +779,7 @@ function ignoredDestinationRanges(text: string): {
   const mdxRanges = mdxSyntaxRanges(text, codeRanges);
   return {
     ignored: mergeRanges([...codeRanges, ...mdxRanges.comments]),
+    code: codeRanges,
     expressions: mdxRanges.expressions,
     strings: mdxRanges.strings,
   };
@@ -827,7 +851,10 @@ function topLevelTagOffsets(tag: string): ReadonlySet<number> {
   return offsets;
 }
 
-function referenceDefinitionTailCloses(text: string, start: number): boolean {
+function referenceDefinitionTailEnd(
+  text: string,
+  start: number,
+): number | undefined {
   let cursor = start;
   let hasSeparation = false;
   while (text[cursor] === " " || text[cursor] === "\t") {
@@ -837,12 +864,12 @@ function referenceDefinitionTailCloses(text: string, start: number): boolean {
   if (
     cursor >= text.length || text[cursor] === "\n" ||
     text[cursor] === "\r"
-  ) return true;
-  if (!hasSeparation) return false;
+  ) return cursor;
+  if (!hasSeparation) return undefined;
 
   const opener = text[cursor];
   const closer = opener === "(" ? ")" : opener;
-  if (opener !== '"' && opener !== "'" && opener !== "(") return false;
+  if (opener !== '"' && opener !== "'" && opener !== "(") return undefined;
   cursor++;
   while (cursor < text.length && text[cursor] !== "\n") {
     if (text[cursor] === "\\" && cursor + 1 < text.length) {
@@ -852,11 +879,90 @@ function referenceDefinitionTailCloses(text: string, start: number): boolean {
     if (text[cursor] === closer) break;
     cursor++;
   }
-  if (text[cursor] !== closer) return false;
+  if (text[cursor] !== closer) return undefined;
   cursor++;
   while (text[cursor] === " " || text[cursor] === "\t") cursor++;
   return cursor >= text.length || text[cursor] === "\n" ||
-    text[cursor] === "\r";
+      text[cursor] === "\r"
+    ? cursor
+    : undefined;
+}
+
+function sameBlockContainer(
+  left: BlockContainerToken,
+  right: BlockContainerToken,
+): boolean {
+  return left.type === "quote" && right.type === "quote" ||
+    left.type === "list" && right.type === "list" &&
+      left.leadingIndentation === right.leadingIndentation &&
+      left.marker === right.marker && left.delimiter === right.delimiter;
+}
+
+function sameBlockContainers(
+  left: readonly BlockContainerToken[],
+  right: readonly BlockContainerToken[],
+): boolean {
+  return left.length === right.length &&
+    left.every((container, index) =>
+      sameBlockContainer(container, right[index]!)
+    );
+}
+
+function referenceDefinitionMayStart(
+  text: string,
+  lineStart: number,
+  previousReferenceEnd: number | undefined,
+): boolean {
+  const followsReference = previousReferenceEnd === lineStart - 1 ||
+    previousReferenceEnd === lineStart - 2 && text[lineStart - 2] === "\r";
+  if (lineStart === 0 || followsReference) return true;
+
+  const previousEnd = text[lineStart - 2] === "\r"
+    ? lineStart - 2
+    : lineStart - 1;
+  const previousStart = text.lastIndexOf("\n", previousEnd - 1) + 1;
+  const previousLine = text.slice(
+    blockContentStart(text, previousStart),
+    previousEnd,
+  );
+  if (previousLine.trim() === "") return true;
+
+  const currentContainers = blockContent(text, lineStart).containers;
+  const previousContainers = blockContent(text, previousStart).containers;
+  const currentLeaf = currentContainers.at(-1);
+  const currentParents = currentContainers.slice(0, -1);
+  const previousLeaf = previousContainers.at(-1);
+  const previousParents = previousContainers.slice(0, -1);
+  const sameOrderedList = currentLeaf?.type === "list" &&
+    currentLeaf.marker === "ordered" && previousLeaf?.type === "list" &&
+    previousLeaf.marker === "ordered" &&
+    currentLeaf.leadingIndentation === previousLeaf.leadingIndentation &&
+    currentLeaf.delimiter === previousLeaf.delimiter &&
+    sameBlockContainers(currentParents, previousParents);
+  const leavesPreviousContainer = currentLeaf?.type === "list" &&
+    currentLeaf.leadingIndentation === 0 &&
+    !sameBlockContainers(currentParents, previousContainers);
+  const startsListItem = currentLeaf?.type === "list" &&
+    (currentLeaf.marker === "unordered" || currentLeaf.start === 1 ||
+      sameOrderedList || leavesPreviousContainer);
+
+  let commonContainers = 0;
+  while (
+    commonContainers < currentContainers.length &&
+    commonContainers < previousContainers.length &&
+    sameBlockContainer(
+      currentContainers[commonContainers]!,
+      previousContainers[commonContainers]!,
+    )
+  ) commonContainers++;
+  const startsBlockQuote = currentLeaf?.type === "quote" &&
+    currentContainers.slice(commonContainers).some((container) =>
+      container.type === "quote"
+    );
+
+  return startsListItem || startsBlockQuote ||
+    allowsFollowingIndentedCode(previousLine) ||
+    /^( {0,3})(`{3,}|~{3,})[ \t]*$/.test(previousLine);
 }
 
 /**
@@ -868,7 +974,13 @@ function referenceDefinitionTailCloses(text: string, start: number): boolean {
 function referenceDestinationAt(
   text: string,
   lineStart: number,
-): (Destination & { label: string; labelStart: number }) | undefined {
+):
+  | (Destination & {
+    label: string;
+    labelStart: number;
+    definitionEnd: number;
+  })
+  | undefined {
   const labelStart = blockContentStart(text, lineStart);
   if (
     isBackslashEscaped(text, labelStart) || text[labelStart + 1] === "^"
@@ -903,15 +1015,17 @@ function referenceDestinationAt(
     if (text[cursor] !== ">") return undefined;
     cursor++;
   }
-  return destinationEnd > destinationStart &&
-      referenceDefinitionTailCloses(text, cursor)
-    ? {
-      href: text.slice(destinationStart, destinationEnd),
-      offset: destinationStart,
-      label: text.slice(labelStart + 1, afterLabel - 1),
-      labelStart,
-    }
+  const definitionEnd = destinationEnd > destinationStart
+    ? referenceDefinitionTailEnd(text, cursor)
     : undefined;
+  return definitionEnd === undefined ? undefined : {
+    href: text.slice(destinationStart, destinationEnd),
+    offset: destinationStart,
+    syntax: "markdown",
+    label: text.slice(labelStart + 1, afterLabel - 1),
+    labelStart,
+    definitionEnd,
+  };
 }
 
 function normalizeReferenceLabel(label: string): string {
@@ -945,18 +1059,25 @@ function afterInlineLink(text: string, start: number): number | undefined {
   return undefined;
 }
 
-function usedReferenceLabels(
+interface ReferenceUsage {
+  readonly label: string;
+  readonly range: Range;
+}
+
+function usedReferences(
   text: string,
   ignoredRanges: readonly Range[],
   definitionStarts: ReadonlySet<number>,
-): Set<string> {
+): { readonly labels: Set<string>; readonly usages: ReferenceUsage[] } {
   const labels = new Set<string>();
+  const usages: ReferenceUsage[] = [];
   for (let start = 0; start < text.length; start++) {
     if (
       text[start] !== "[" || definitionStarts.has(start) ||
       isInsideRange(ignoredRanges, start) || isBackslashEscaped(text, start) ||
       text[start + 1] === "^"
     ) continue;
+    const linkStart = start;
     const afterText = afterMarkdownLabel(text, start);
     if (afterText === undefined) continue;
     if (text[afterText] === "(") {
@@ -975,16 +1096,61 @@ function usedReferenceLabels(
     } else {
       start = afterText - 1;
     }
-    labels.add(normalizeReferenceLabel(label));
+    const normalized = normalizeReferenceLabel(label);
+    labels.add(normalized);
+    usages.push({
+      label: normalized,
+      range: { start: linkStart, end: start + 1 },
+    });
   }
-  return labels;
+  return { labels, usages };
 }
 
 /** A link destination and where it starts, so an issue can name its line. */
 export interface Destination {
   href: string;
   offset: number;
-  markdownSyntax?: boolean;
+  syntax: DestinationSyntax;
+}
+
+function recordDestination(
+  found: Destination[],
+  offsets: Set<number>,
+  destination: Destination,
+): void {
+  found.push(destination);
+  offsets.add(destination.offset);
+}
+
+function trimBareAutolink(rawHref: string): string {
+  const bracketBoundary = rawHref.search(/\](?=[([])/);
+  let end = bracketBoundary === -1 ? rawHref.length : bracketBoundary;
+  while (end > 0) {
+    const href = rawHref.slice(0, end);
+    const characterReference = href.match(/&[A-Za-z]+;$/);
+    if (characterReference) {
+      end -= characterReference[0].length;
+      continue;
+    }
+    if (/[!*,.:;?_~]/.test(rawHref[end - 1] ?? "")) {
+      end--;
+      continue;
+    }
+    if (rawHref[end - 1] === "]") {
+      end--;
+      continue;
+    }
+    if (rawHref[end - 1] === ")") {
+      const openings = href.split("(").length - 1;
+      const closings = href.split(")").length - 1;
+      if (closings > openings) {
+        end--;
+        continue;
+      }
+    }
+    break;
+  }
+  return rawHref.slice(0, end);
 }
 
 function markdownDestinationCloses(text: string, start: number): boolean {
@@ -1027,20 +1193,6 @@ function markdownDestinationStart(
   return cursor;
 }
 
-function trimGfmAutolink(rawHref: string): string {
-  let href = rawHref.replace(/[?!.,:*_~]+$/, "");
-  const openingParentheses = href.match(/\(/g)?.length ?? 0;
-  let closingParentheses = href.match(/\)/g)?.length ?? 0;
-  while (
-    href.endsWith(")") && closingParentheses > openingParentheses
-  ) {
-    href = href.slice(0, -1);
-    closingParentheses--;
-  }
-  if (/&[A-Za-z0-9]+;$/.test(href)) href = href.slice(0, -1);
-  return href;
-}
-
 /**
  * Every destination in `text`, with its offset.
  *
@@ -1053,6 +1205,7 @@ export function scanDestinations(text: string): Destination[] {
   // A scanner is required here because valid Markdown labels can contain
   // balanced brackets or escaped closing brackets.
   const found: Destination[] = [];
+  const destinationOffsets = new Set<number>();
   const syntaxRanges = ignoredDestinationRanges(text);
   const ignoredRanges = syntaxRanges.ignored;
   const tagRanges = htmlTagRanges(
@@ -1067,7 +1220,7 @@ export function scanDestinations(text: string): Destination[] {
     ...tagRanges,
   ]);
   const markdownAngleDestinationRanges: Range[] = [];
-  const inlineLinkRanges: Range[] = [];
+  const markdownLinkRanges: Range[] = [];
   for (let start = 0; start < text.length; start++) {
     if (
       isInsideRange(markdownIgnoredRanges, start) ||
@@ -1075,6 +1228,7 @@ export function scanDestinations(text: string): Destination[] {
     ) continue;
     const afterLabel = afterMarkdownLabel(text, start);
     if (afterLabel === undefined || text[afterLabel] !== "(") continue;
+    const linkStart = start;
 
     let cursor = markdownDestinationStart(text, afterLabel + 1);
     if (cursor === undefined || cursor >= text.length) continue;
@@ -1098,13 +1252,14 @@ export function scanDestinations(text: string): Destination[] {
           start: rangeStart,
           end: cursor + 1,
         });
-        found.push({
+        recordDestination(found, destinationOffsets, {
           href: text.slice(destinationStart, cursor),
           offset: destinationStart,
+          syntax: "markdown",
         });
         const linkEnd = afterInlineLink(text, afterLabel);
         if (linkEnd !== undefined) {
-          inlineLinkRanges.push({ start, end: linkEnd });
+          markdownLinkRanges.push({ start: linkStart, end: linkEnd });
         }
       }
       start = cursor;
@@ -1131,12 +1286,15 @@ export function scanDestinations(text: string): Destination[] {
     if (
       cursor > destinationStart && markdownDestinationCloses(text, cursor)
     ) {
-      found.push({
+      recordDestination(found, destinationOffsets, {
         href: text.slice(destinationStart, cursor),
         offset: destinationStart,
+        syntax: "markdown",
       });
       const linkEnd = afterInlineLink(text, afterLabel);
-      if (linkEnd !== undefined) inlineLinkRanges.push({ start, end: linkEnd });
+      if (linkEnd !== undefined) {
+        markdownLinkRanges.push({ start: linkStart, end: linkEnd });
+      }
     }
     start = cursor;
   }
@@ -1173,11 +1331,13 @@ export function scanDestinations(text: string): Destination[] {
         ? decodeJavaScriptStringLiteral(rawHref)
         : rawHref;
       if (href === undefined) continue;
-      found.push({
+      recordDestination(found, destinationOffsets, {
         href,
         offset: tagRange.start + htmlMatch.index +
           htmlMatch[0].lastIndexOf(rawHref),
-        markdownSyntax: expression === undefined,
+        syntax: expression === undefined
+          ? "html-attribute"
+          : "javascript-string",
       });
     }
   }
@@ -1191,84 +1351,96 @@ export function scanDestinations(text: string): Destination[] {
     if (
       isInsideRange(markdownAngleDestinationRanges, autolinkMatch.index)
     ) continue;
-    found.push({
+    recordDestination(found, destinationOffsets, {
       href: autolinkMatch[1]!,
       offset: autolinkMatch.index + 1,
+      syntax: "autolink",
     });
   }
 
   // A reference definition is only a definition at the start of a line, and
   // only participates in rendering when a link uses its normalized label.
   const references: Array<
-    Destination & { label: string; labelStart: number }
+    Destination & {
+      label: string;
+      labelStart: number;
+      definitionEnd: number;
+    }
   > = [];
-  const referenceDefinitionRanges: Range[] = [];
-  let canStartReferenceDefinition = true;
-  let previousContainerSignature = "";
+  let previousReferenceEnd: number | undefined;
   for (let lineStart = 0; lineStart <= text.length;) {
     const next = text.indexOf("\n", lineStart);
-    const lineEnd = next === -1 ? text.length : next;
-    const content = blockContent(text, lineStart);
-    const containerSignature = content.containers.map((container) =>
-      container.type === "quote" ? ">" : `list:${container.indentation}`
-    ).join("/");
-    const containerBoundary = containerSignature !== previousContainerSignature;
     if (isInsideRange(markdownIgnoredRanges, lineStart)) {
-      canStartReferenceDefinition = true;
-      previousContainerSignature = containerSignature;
       if (next === -1) break;
       lineStart = next + 1;
       continue;
     }
-    const reference: ReturnType<typeof referenceDestinationAt> =
-      canStartReferenceDefinition || containerBoundary
-        ? referenceDestinationAt(text, lineStart)
-        : undefined;
+    const previousLineEnd = text[lineStart - 2] === "\r"
+      ? lineStart - 2
+      : lineStart - 1;
+    const followsCodeBlock = previousLineEnd > 0 &&
+      isInsideRange(syntaxRanges.code, previousLineEnd - 1);
+    const reference = followsCodeBlock || referenceDefinitionMayStart(
+        text,
+        lineStart,
+        previousReferenceEnd,
+      )
+      ? referenceDestinationAt(text, lineStart)
+      : undefined;
     if (reference) {
       references.push(reference);
-      referenceDefinitionRanges.push({ start: lineStart, end: lineEnd });
+      previousReferenceEnd = reference.definitionEnd;
     }
-    const blockLine = text.slice(content.start, lineEnd).replace(/\r$/, "");
-    canStartReferenceDefinition = reference !== undefined ||
-      blockLine.trim() === "" || allowsFollowingIndentedCode(blockLine);
-    previousContainerSignature = containerSignature;
     if (next === -1) break;
     lineStart = next + 1;
   }
-  const usedLabels = usedReferenceLabels(
+  const referenceUse = usedReferences(
     text,
     markdownIgnoredRanges,
     new Set(references.map((reference) => reference.labelStart)),
   );
   const definedLabels = new Set<string>();
   for (const reference of references) {
+    destinationOffsets.add(reference.offset);
     const label = normalizeReferenceLabel(reference.label);
     if (definedLabels.has(label)) continue;
     definedLabels.add(label);
-    if (usedLabels.has(label)) found.push(reference);
+    if (referenceUse.labels.has(label)) {
+      recordDestination(found, destinationOffsets, reference);
+    }
   }
 
-  const existingDestinationRanges = mergeRanges(
-    found.map((destination) => ({
-      start: destination.offset,
-      end: destination.offset + destination.href.length,
-    })),
-  );
+  const renderedLinkRanges = mergeRanges([
+    ...markdownLinkRanges,
+    ...referenceUse.usages
+      .filter((usage) => definedLabels.has(usage.label))
+      .map((usage) => usage.range),
+  ]);
   const bareAutolinkIgnoredRanges = mergeRanges([
     ...markdownIgnoredRanges,
-    ...inlineLinkRanges,
-    ...referenceDefinitionRanges,
+    ...renderedLinkRanges,
+    ...references.map((reference) => ({
+      start: reference.labelStart,
+      end: reference.definitionEnd,
+    })),
   ]);
-  let bareAutolinkMatch: RegExpExecArray | null;
-  while ((bareAutolinkMatch = GFM_AUTOLINK_SOURCE.exec(text))) {
-    const offset = bareAutolinkMatch.index;
+
+  let bareMatch: RegExpExecArray | null;
+  while ((bareMatch = BARE_AUTOLINK_SOURCE.exec(text))) {
+    const offset = bareMatch.index;
     if (
-      isInsideRange(bareAutolinkIgnoredRanges, offset) ||
-      isInsideRange(existingDestinationRanges, offset) ||
-      text[offset - 1] === "<" && isBackslashEscaped(text, offset - 1)
+      /[A-Za-z]/.test(text[offset - 1] ?? "") ||
+      text[offset - 1] === "<" || destinationOffsets.has(offset) ||
+      isInsideRange(bareAutolinkIgnoredRanges, offset)
     ) continue;
-    const href = trimGfmAutolink(bareAutolinkMatch[0]);
-    if (href !== "") found.push({ href, offset });
+    const href = trimBareAutolink(bareMatch[0]);
+    if (href !== "") {
+      recordDestination(found, destinationOffsets, {
+        href,
+        offset,
+        syntax: "autolink",
+      });
+    }
   }
 
   return found;
@@ -1304,8 +1476,8 @@ export function collectUnpublishedLinkIssues(
   }
 
   const issues: PublicDocIssue[] = [];
-  for (const { href, offset, markdownSyntax } of scanDestinations(content)) {
-    const target = resolveDocumentationTarget(path, href, markdownSyntax);
+  for (const { href, offset, syntax } of scanDestinations(content)) {
+    const target = resolveDocumentationTarget(path, href, syntax);
     if (path === "README.md" && !target?.startsWith("docs/")) continue;
     if (target === undefined || publishedTargetExists(target, stat)) continue;
     const line = lineAt(lineStarts, offset);
