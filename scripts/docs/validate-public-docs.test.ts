@@ -5,6 +5,7 @@ import {
   collectUnpublishedLinkIssues,
   destinations,
   publishedTargetCandidates,
+  publishedTargetExists,
 } from "./validate-public-docs.ts";
 
 describe("public docs validation", () => {
@@ -93,6 +94,17 @@ describe("public docs validation", () => {
     );
 
     assertEquals(issues.length, 1);
+  });
+
+  it("matches only the private examples repository URL", () => {
+    const issues = collectIssues(
+      "docs/guides/example.md",
+      "https://notgithub.com/veryfront/veryfront-examples\n" +
+        "https://github.com/veryfront/veryfront-examples-public\n" +
+        "https://example.com/github.com/veryfront/veryfront-examples",
+    );
+
+    assertEquals(issues, []);
   });
 
   it("finds destinations that wrap across lines", () => {
@@ -187,13 +199,17 @@ describe("public docs validation", () => {
     const issues = collectUnpublishedLinkIssues(
       "docs/guides/example.md",
       "[private](/code/architecture/private) " +
-        "[public](/code/guides/deploying)",
+        "[public](/code/guides/deploying)\n" +
+        "[absolute private](https://veryfront.com/code/architecture/private) " +
+        "[absolute public](https://veryfront.com/code/guides/deploying)",
     );
 
-    assertEquals(issues.length, 1);
+    assertEquals(issues.length, 2);
     assertEquals(
-      issues[0]?.message.includes("docs/architecture/private"),
-      true,
+      issues.map((issue) =>
+        issue.message.includes("docs/architecture/private")
+      ),
+      [true, true],
     );
   });
 
@@ -253,6 +269,26 @@ describe("public docs validation", () => {
     );
   });
 
+  it("scans rendered paragraphs indented inside list items", () => {
+    const issues = collectUnpublishedLinkIssues(
+      "docs/guides/example.md",
+      "- Details:\n\n    [gate](../architecture/private.md)",
+    );
+
+    assertEquals(issues.length, 1);
+  });
+
+  it("ignores destinations inside MDX comments", () => {
+    assertEquals(
+      destinations(
+        "{/* [old](../architecture/private.md) */}\n" +
+          '{/*\n<a href="../architecture/html.md">old</a>\n*/}\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+  });
+
   it("validates Veryfront documentation autolinks", () => {
     const issues = collectUnpublishedLinkIssues(
       "docs/guides/example.md",
@@ -291,6 +327,20 @@ describe("public docs validation", () => {
         "docs/guides/example/index.mdx",
       ],
     );
+  });
+
+  it("rejects directory routes without an index page", () => {
+    const exists = publishedTargetExists(
+      "docs/guides/no-index",
+      (path) => {
+        if (path.endsWith("/docs/guides/no-index")) {
+          return { isFile: false };
+        }
+        throw new Error("missing");
+      },
+    );
+
+    assertEquals(exists, false);
   });
 
   it("reports the destination line for a multiline MDX href", () => {

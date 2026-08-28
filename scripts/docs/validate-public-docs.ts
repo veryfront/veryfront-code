@@ -109,11 +109,14 @@ export function publishedTargetCandidates(target: string): string[] {
   ];
 }
 
-function publishedTargetExists(target: string): boolean {
+export function publishedTargetExists(
+  target: string,
+  stat: (path: string) => { readonly isFile: boolean } = Deno.statSync,
+): boolean {
   for (const candidate of publishedTargetCandidates(target)) {
     try {
-      const entry = Deno.statSync(`${ROOT}/${candidate}`);
-      if (entry.isFile || entry.isDirectory) return true;
+      const entry = stat(`${ROOT}/${candidate}`);
+      if (entry.isFile) return true;
     } catch {
       // Try the next published-route spelling.
     }
@@ -235,12 +238,15 @@ function resolveDocumentationTarget(
   }
   let pathname: string;
   if (resolved.origin === VERYFRONT_DOCS_ORIGIN) {
-    if (!resolved.pathname.startsWith(VERYFRONT_CODE_DOCS_PREFIX)) {
+    const prefix = resolved.pathname.startsWith(VERYFRONT_CODE_DOCS_PREFIX)
+      ? VERYFRONT_CODE_DOCS_PREFIX
+      : resolved.pathname.startsWith(VERYFRONT_SITE_CODE_PREFIX)
+      ? VERYFRONT_SITE_CODE_PREFIX
+      : undefined;
+    if (prefix === undefined) {
       return undefined;
     }
-    pathname = `/docs/${
-      resolved.pathname.slice(VERYFRONT_CODE_DOCS_PREFIX.length)
-    }`;
+    pathname = `/docs/${resolved.pathname.slice(prefix.length)}`;
   } else if (
     resolved.origin === RESOLUTION_ORIGIN &&
     href.startsWith(VERYFRONT_CODE_DOCS_PREFIX)
@@ -322,6 +328,7 @@ function markdownCodeRanges(text: string): Range[] {
   const ranges: Range[] = [];
   const lines = text.split("\n");
   let offset = 0;
+  let listContentIndent: number | undefined;
   let fence:
     | { marker: "`" | "~"; length: number; start: number }
     | undefined;
@@ -349,9 +356,33 @@ function markdownCodeRanges(text: string): Range[] {
         length: fenceMatch[2]!.length,
         start: offset,
       };
-    } else if (/^(?: {4}|\t)/.test(line)) {
-      ranges.push({ start: offset, end: lineEnd });
     } else {
+      const listItem = line.match(
+        /^( {0,3})(?:[-+*]|\d{1,9}[.)])([ \t]{1,4})/,
+      );
+      if (listItem) {
+        listContentIndent = listItem[1]!.length +
+          line.slice(listItem[1]!.length).search(/[ \t]/) +
+          listItem[2]!.length;
+      } else if (line.trim() !== "") {
+        const indentation = line.match(/^[ \t]*/)?.[0].replaceAll("\t", "    ")
+          .length ?? 0;
+        if (
+          listContentIndent !== undefined && indentation < listContentIndent
+        ) {
+          listContentIndent = undefined;
+        }
+      }
+      const indentation = line.match(/^[ \t]*/)?.[0].replaceAll("\t", "    ")
+        .length ?? 0;
+      if (
+        line.trim() !== "" &&
+        indentation >= (listContentIndent ?? 0) + 4
+      ) {
+        ranges.push({ start: offset, end: lineEnd });
+        offset = lineEnd + 1;
+        continue;
+      }
       for (let cursor = offset; cursor < lineEnd;) {
         if (text[cursor] !== "`") {
           cursor++;
@@ -375,7 +406,37 @@ function markdownCodeRanges(text: string): Range[] {
 }
 
 function isInsideRange(ranges: readonly Range[], offset: number): boolean {
-  return ranges.some((range) => range.start <= offset && offset < range.end);
+  let low = 0;
+  let high = ranges.length - 1;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const range = ranges[middle]!;
+    if (offset < range.start) high = middle - 1;
+    else if (offset >= range.end) low = middle + 1;
+    else return true;
+  }
+  return false;
+}
+
+function ignoredDestinationRanges(text: string): Range[] {
+  const ranges = markdownCodeRanges(text);
+  const comment = /\{\/\*[\s\S]*?\*\/\}/g;
+  let match: RegExpExecArray | null;
+  while ((match = comment.exec(text))) {
+    ranges.push({ start: match.index, end: match.index + match[0].length });
+  }
+  ranges.sort((left, right) => left.start - right.start);
+
+  const merged: Range[] = [];
+  for (const range of ranges) {
+    const previous = merged.at(-1);
+    if (previous && range.start <= previous.end) {
+      previous.end = Math.max(previous.end, range.end);
+    } else {
+      merged.push({ ...range });
+    }
+  }
+  return merged;
 }
 
 /**
@@ -434,10 +495,10 @@ export function scanDestinations(text: string): Destination[] {
   // A scanner is required here because valid Markdown labels can contain
   // balanced brackets or escaped closing brackets.
   const found: Destination[] = [];
-  const codeRanges = markdownCodeRanges(text);
+  const ignoredRanges = ignoredDestinationRanges(text);
   const markdownAngleDestinationRanges: Range[] = [];
   for (let start = 0; start < text.length; start++) {
-    if (isInsideRange(codeRanges, start)) continue;
+    if (isInsideRange(ignoredRanges, start)) continue;
     const afterLabel = afterMarkdownLabel(text, start);
     if (afterLabel === undefined || text[afterLabel] !== "(") continue;
 
@@ -499,7 +560,7 @@ export function scanDestinations(text: string): Destination[] {
   const htmlHref = new RegExp(HTML_HREF_SOURCE, "gi");
   let htmlMatch: RegExpExecArray | null;
   while ((htmlMatch = htmlHref.exec(text))) {
-    if (isInsideRange(codeRanges, htmlMatch.index)) continue;
+    if (isInsideRange(ignoredRanges, htmlMatch.index)) continue;
     const rawHref = htmlMatch[1] ?? htmlMatch[2] ?? htmlMatch[3] ??
       htmlMatch[4] ?? htmlMatch[5];
     if (rawHref === undefined) continue;
@@ -516,7 +577,7 @@ export function scanDestinations(text: string): Destination[] {
 
   let autolinkMatch: RegExpExecArray | null;
   while ((autolinkMatch = URI_AUTOLINK_SOURCE.exec(text))) {
-    if (isInsideRange(codeRanges, autolinkMatch.index)) continue;
+    if (isInsideRange(ignoredRanges, autolinkMatch.index)) continue;
     if (
       isInsideRange(markdownAngleDestinationRanges, autolinkMatch.index)
     ) continue;
@@ -528,7 +589,7 @@ export function scanDestinations(text: string): Destination[] {
 
   // A reference definition is only a definition at the start of a line.
   for (let lineStart = 0; lineStart <= text.length;) {
-    if (isInsideRange(codeRanges, lineStart)) {
+    if (isInsideRange(ignoredRanges, lineStart)) {
       const next = text.indexOf("\n", lineStart);
       if (next === -1) break;
       lineStart = next + 1;
@@ -622,7 +683,8 @@ const RULES: Rule[] = [
   {
     // Host names are case-insensitive, so a GitHub.com spelling reaches the
     // same private repository.
-    pattern: /github\.com\/veryfront\/veryfront-examples/i,
+    pattern:
+      /(?:^|[\s("'=<])(?:https?:\/\/)?github\.com\/veryfront\/veryfront-examples(?:[/?#]|$)/i,
     message:
       "veryfront/veryfront-examples is a private repository. A reader following this link gets a 404, so link a public example or inline the code instead.",
   },
