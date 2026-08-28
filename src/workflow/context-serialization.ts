@@ -49,7 +49,6 @@ const objectKeys = Object.keys;
 const objectPrototype = Object.prototype;
 const objectToString = Object.prototype.toString;
 const POSITIVE_INFINITY = Number.POSITIVE_INFINITY;
-const ProxyConstructor = Proxy;
 const reflectApply = Reflect.apply;
 const reflectGet = Reflect.get;
 const reflectOwnKeys = Reflect.ownKeys;
@@ -60,7 +59,6 @@ const setAdd = Set.prototype.add;
 const setDelete = Set.prototype.delete;
 const setHas = Set.prototype.has;
 const StringConstructor = String;
-const stringSlice = String.prototype.slice;
 const StringValueOf = String.prototype.valueOf;
 const SymbolValueOf = Symbol.prototype.valueOf;
 const symbolToStringTag = Symbol.toStringTag;
@@ -548,6 +546,199 @@ function encodeNormalizedJson(root: unknown): string | undefined {
   return reflectApply(arrayJoin, chunks, [""]);
 }
 
+interface JsonTailArrayEncodingFrame {
+  index: number;
+  readonly kind: "array";
+  readonly length: number;
+  readonly value: JsonTraversalReference;
+}
+
+interface JsonTailObjectEncodingFrame {
+  index: number;
+  readonly keys: string[];
+  readonly kind: "object";
+  readonly value: JsonTraversalReference;
+  wroteProperty: boolean;
+}
+
+interface JsonTailValueEncodingFrame {
+  readonly kind: "value";
+  readonly value: unknown;
+}
+
+type JsonTailEncodingFrame =
+  | JsonTailArrayEncodingFrame
+  | JsonTailObjectEncodingFrame
+  | JsonTailValueEncodingFrame;
+
+function appendJsonTailEncodingFrame(
+  frames: JsonTailEncodingFrame[],
+  frame: JsonTailEncodingFrame,
+): void {
+  defineArrayElement(frames, frames.length, frame);
+}
+
+function prepareJsonTailValue(value: unknown, key: string, applyToJson: boolean): unknown {
+  let prepared = value;
+  const type = typeof prepared;
+  if (
+    applyToJson &&
+    (type === "object" && prepared !== null || type === "function" || type === "bigint")
+  ) {
+    const receiver = type === "bigint"
+      ? ObjectConstructor(prepared)
+      : prepared as JsonTraversalReference;
+    const toJson = reflectGet(receiver, "toJSON");
+    if (typeof toJson === "function") {
+      prepared = reflectApply(toJson, prepared, [key]);
+    }
+  }
+  if (prepared !== null && typeof prepared === "object") {
+    const slot = boxedPrimitiveSlot(prepared);
+    if (slot !== null) return unboxAsJsonWould(prepared, slot);
+  }
+  return prepared;
+}
+
+function encodeJsonTailIteratively(
+  root: JsonTraversalReference,
+  key: string,
+  outerActive: Set<JsonTraversalReference>,
+  applyRootToJson: boolean,
+): { containsRawJson: boolean; serialized: string | undefined } {
+  const preparedRoot = prepareJsonTailValue(root, key, applyRootToJson);
+  if (isOmittedJsonObjectValue(preparedRoot)) {
+    return { containsRawJson: false, serialized: undefined };
+  }
+
+  const frames: JsonTailEncodingFrame[] = [{ kind: "value", value: preparedRoot }];
+  const localActive = new SetConstructor<JsonTraversalReference>();
+  const chunks: string[] = [];
+  let chunk = "";
+  let containsRawJson = false;
+  const append = (value: string) => {
+    chunk += value;
+    if (chunk.length >= 8192) {
+      defineArrayElement(chunks, chunks.length, chunk);
+      chunk = "";
+    }
+  };
+
+  while (frames.length > 0) {
+    const frameIndex = frames.length - 1;
+    const frame = frames[frameIndex]!;
+    frames.length = frameIndex;
+
+    if (frame.kind === "array") {
+      if (frame.index >= frame.length) {
+        reflectApply(setDelete, localActive, [frame.value]);
+        append("]");
+        continue;
+      }
+      if (frame.index > 0) append(",");
+      const indexKey = StringConstructor(frame.index++);
+      const nested = prepareJsonTailValue(
+        reflectGet(frame.value, indexKey),
+        indexKey,
+        true,
+      );
+      appendJsonTailEncodingFrame(frames, frame);
+      if (isOmittedJsonObjectValue(nested)) append("null");
+      else appendJsonTailEncodingFrame(frames, { kind: "value", value: nested });
+      continue;
+    }
+
+    if (frame.kind === "object") {
+      let nested: unknown;
+      let nestedKey: string | undefined;
+      while (frame.index < frame.keys.length) {
+        nestedKey = frame.keys[frame.index++]!;
+        nested = prepareJsonTailValue(
+          reflectGet(frame.value, nestedKey),
+          nestedKey,
+          true,
+        );
+        if (!isOmittedJsonObjectValue(nested)) break;
+        nestedKey = undefined;
+      }
+      if (nestedKey === undefined) {
+        reflectApply(setDelete, localActive, [frame.value]);
+        append("}");
+        continue;
+      }
+      if (frame.wroteProperty) append(",");
+      append(jsonStringify(nestedKey)!);
+      append(":");
+      frame.wroteProperty = true;
+      appendJsonTailEncodingFrame(frames, frame);
+      appendJsonTailEncodingFrame(frames, { kind: "value", value: nested });
+      continue;
+    }
+
+    const value = frame.value;
+    if (value === null) {
+      append("null");
+      continue;
+    }
+    const type = typeof value;
+    if (type === "string") {
+      append(jsonStringify(value)!);
+      continue;
+    }
+    if (type === "number") {
+      append(numberIsFinite(value) ? jsonStringify(value)! : "null");
+      continue;
+    }
+    if (type === "boolean") {
+      append(value ? "true" : "false");
+      continue;
+    }
+    if (type === "bigint") throw BIGINT_JSON_TAIL_VALUE;
+    if (type !== "object") continue;
+
+    const reference = value as JsonTraversalReference;
+    if (
+      jsonIsRawJSON !== undefined &&
+      reflectApply(jsonIsRawJSON, jsonRawSupport, [reference])
+    ) {
+      containsRawJson = true;
+      append(reflectGet(reference, "rawJSON") as string);
+      continue;
+    }
+    if (
+      reflectApply(setHas, outerActive, [reference]) ||
+      reflectApply(setHas, localActive, [reference])
+    ) {
+      throw ACTIVE_JSON_TAIL_REFERENCE;
+    }
+    reflectApply(setAdd, localActive, [reference]);
+    if (arrayIsArray(reference)) {
+      append("[");
+      appendJsonTailEncodingFrame(frames, {
+        index: 0,
+        kind: "array",
+        length: toJsonLength(reflectGet(reference, "length")),
+        value: reference,
+      });
+    } else {
+      append("{");
+      appendJsonTailEncodingFrame(frames, {
+        index: 0,
+        keys: objectKeys(reference),
+        kind: "object",
+        value: reference,
+        wroteProperty: false,
+      });
+    }
+  }
+
+  if (chunk.length > 0) defineArrayElement(chunks, chunks.length, chunk);
+  return {
+    containsRawJson,
+    serialized: reflectApply(arrayJoin, chunks, [""]),
+  };
+}
+
 /** Encode an uninspected tail now, preserving native hook order and output. */
 function normalizeJsonTail(
   value: JsonTraversalReference,
@@ -573,68 +764,19 @@ function normalizeJsonTail(
     return jsonParse(encodeNormalizedJson(value)!) as NormalizedJsonValue;
   }
 
-  let suppressRootToJson = !applyRootToJson;
-  const tailValue = applyRootToJson ? value : new ProxyConstructor(value, {
-    get(target, property) {
-      if (suppressRootToJson && property === "toJSON") {
-        suppressRootToJson = false;
-        return undefined;
-      }
-      return reflectGet(target, property, target);
-    },
-  });
-  const holder = objectCreate(null);
-  objectDefineProperty(holder, key, {
-    value: tailValue,
-    enumerable: true,
-    configurable: true,
-    writable: true,
-  });
-  let containsRawJson = false;
-  const parents = new WeakMapConstructor<JsonTraversalReference, JsonTraversalReference>();
-  const hasAncestor = (
-    holder: JsonTraversalReference,
-    candidate: JsonTraversalReference,
-  ): boolean => {
-    let ancestor: JsonTraversalReference | undefined = holder;
-    while (ancestor !== undefined) {
-      if (ancestor === candidate) return true;
-      ancestor = reflectApply(weakMapGet, parents, [ancestor]) as
-        | JsonTraversalReference
-        | undefined;
-    }
-    return false;
-  };
-  const serializedHolder = jsonStringify(holder, function (
-    this: JsonTraversalReference,
-    _key,
-    nested,
-  ) {
-    if (typeof nested === "bigint") throw BIGINT_JSON_TAIL_VALUE;
-    if (nested !== null && typeof nested === "object") {
-      if (boxedPrimitiveSlot(nested) === "bigint") throw BIGINT_JSON_TAIL_VALUE;
-      if (
-        jsonIsRawJSON !== undefined &&
-        reflectApply(jsonIsRawJSON, jsonRawSupport, [nested])
-      ) {
-        containsRawJson = true;
-      }
-      if (reflectApply(setHas, active, [nested])) throw ACTIVE_JSON_TAIL_REFERENCE;
-      if (hasAncestor(this, nested)) throw ACTIVE_JSON_TAIL_REFERENCE;
-      reflectApply(weakMapSet, parents, [nested, this]);
-    }
-    return nested;
-  });
-  if (serializedHolder === "{}") return OMIT_JSON_VALUE;
-
-  const encodedKey = jsonStringify(key)!;
-  const prefixLength = encodedKey.length + 2;
-  const serializedValue = reflectApply(stringSlice, serializedHolder!, [prefixLength, -1]);
+  const { containsRawJson, serialized } = encodeJsonTailIteratively(
+    value,
+    key,
+    active,
+    applyRootToJson,
+  );
+  if (serialized === undefined) return OMIT_JSON_VALUE;
+  state.requiresIterativeEncoding = true;
   if (!containsRawJson || jsonRawJSON === undefined) {
-    return jsonParse(serializedValue) as NormalizedJsonValue;
+    return jsonParse(serialized) as NormalizedJsonValue;
   }
   return jsonParse(
-    serializedValue,
+    serialized,
     (_key, parsed, context?: { source?: string }) => {
       if (context?.source === undefined || jsonRawJSON === undefined) return parsed;
       return reflectApply(jsonRawJSON, jsonRawSupport, [context.source]);

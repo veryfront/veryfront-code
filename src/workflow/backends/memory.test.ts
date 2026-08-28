@@ -302,6 +302,25 @@ describe("MemoryBackend", () => {
       assertEquals(retrieved.status, "pending");
     });
 
+    it("reads the source context once while creating a run", async () => {
+      const source = createTestRun("run-context-single-read");
+      let contextReads = 0;
+      Object.defineProperty(source, "context", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          contextReads++;
+          if (contextReads > 1) throw new Error("context read more than once");
+          return { input: {}, stored: true };
+        },
+      });
+
+      await backend.createRun(source);
+
+      assertEquals(contextReads, 1);
+      assertEquals((await backend.getRun(source.id))?.context, { input: {}, stored: true });
+    });
+
     it("rejects a malformed source policy before persisting a run", async () => {
       const run = createTestRun("run-malformed-policy", {
         sourceIntegrationPolicy: {
@@ -377,6 +396,54 @@ describe("MemoryBackend", () => {
         preserved: "kept",
         added: "stored",
       });
+    });
+
+    it("derives omitted context keys from the pre-serialization key snapshot", async () => {
+      const runId = "run-context-key-snapshot";
+      await backend.createRun(createTestRun(runId, {
+        context: { input: {}, preserve: "existing" },
+      }));
+      const contextPatch: Record<string, unknown> = {};
+      Object.defineProperty(contextPatch, "trigger", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          contextPatch.preserve = undefined;
+          return "stored";
+        },
+      });
+
+      await backend.updateRun(runId, { context: contextPatch });
+
+      assertEquals((await backend.getRun(runId))?.context, {
+        input: {},
+        preserve: "existing",
+        trigger: "stored",
+      });
+    });
+
+    it("applies a context hook patch to the latest canonical run", async () => {
+      const runId = "run-context-reentrant-update";
+      await backend.createRun(createTestRun(runId, {
+        status: "running",
+        workerId: "worker-original",
+      }));
+      const dynamic = {
+        toJSON() {
+          void backend.updateRun(runId, {
+            status: "completed",
+            workerId: "worker-replaced",
+          });
+          return "stored";
+        },
+      };
+
+      await backend.updateRun(runId, { context: { dynamic } });
+
+      const updated = await backend.getRun(runId);
+      assertEquals(updated?.status, "completed");
+      assertEquals(updated?.workerId, "worker-replaced");
+      assertEquals(updated?.context.dynamic, "stored");
     });
 
     it("deletes context keys omitted by JSON through conditional updates", async () => {

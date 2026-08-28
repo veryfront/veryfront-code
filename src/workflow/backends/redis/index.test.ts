@@ -2168,6 +2168,30 @@ describe("RedisBackend", () => {
       });
     });
 
+    it("derives omitted context keys from the pre-serialization key snapshot", async () => {
+      const runId = "run-context-key-snapshot";
+      await backend.createRun(createTestRun(runId, {
+        context: { input: {}, preserve: "existing" },
+      }));
+      const contextPatch: Record<string, unknown> = {};
+      Object.defineProperty(contextPatch, "trigger", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          contextPatch.preserve = undefined;
+          return "stored";
+        },
+      });
+
+      await backend.updateRun(runId, { context: contextPatch });
+
+      assertEquals((await backend.getRun(runId))?.context, {
+        input: {},
+        preserve: "existing",
+        trigger: "stored",
+      });
+    });
+
     it("keeps context merge and deletion values opaque in Redis Lua", async () => {
       const runId = "run-deep-context-lua-opaque";
       let deep: unknown = { leaf: true };

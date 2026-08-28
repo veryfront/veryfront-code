@@ -371,6 +371,40 @@ describe("workflow checkpoint retention", () => {
     );
   });
 
+  it("defers owned Date subclasses until after the fence", async () => {
+    let hookCalls = 0;
+    class OwnedDate extends Date {
+      override toISOString(): string {
+        hookCalls++;
+        return "subclass-date-hook";
+      }
+    }
+    const date = new OwnedDate(0);
+    const snapshot = cloneOwnedCheckpointForPersistence({
+      ...checkpoint("owned-date-subclass"),
+      context: { input: { date } },
+    });
+    const backend = new MemoryBackend();
+    await backend.createRun(run("owned-date-subclass", "worker-current"));
+
+    assertEquals(hookCalls, 0);
+    assertEquals(
+      await backend.saveCheckpointIfStatusAndWorker(
+        "owned-date-subclass",
+        "owned-date-subclass",
+        ["running"],
+        "worker-current",
+        snapshot,
+      ),
+      true,
+    );
+    assertEquals(hookCalls, 1);
+    assertEquals(
+      (await backend.getLatestCheckpoint("owned-date-subclass"))?.context.input,
+      { date: "subclass-date-hook" },
+    );
+  });
+
   it("snapshots ordinary owned arrays above the proxy-read limit", () => {
     const values = new Array(100_001);
     values[100_000] = "stored";

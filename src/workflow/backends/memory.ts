@@ -187,8 +187,9 @@ function clonePersistedWorkflowContext(value: WorkflowContext): WorkflowContext 
 }
 
 function cloneWorkflowRunWithContext(run: WorkflowRun, context: WorkflowContext): WorkflowRun {
+  const { context: _context, ...runWithoutContext } = run;
   return {
-    ...structuredClone({ ...run, context: undefined }),
+    ...structuredClone(runWithoutContext),
     context,
   };
 }
@@ -296,20 +297,23 @@ export class MemoryBackend implements WorkflowBackend {
 
   createRun(run: WorkflowRun): Promise<void> {
     logger.debug(`Creating run: ${run.id}`);
-    let sourceIntegrationPolicy;
+    let runForClone: WorkflowRun;
     let context: WorkflowContext;
     try {
-      sourceIntegrationPolicy = requireWorkflowSourceIntegrationPolicy(run);
-      context = persistedWorkflowContext(run.context, run.id, this.config);
+      const { context: sourceContext, ...runWithoutContext } = run;
+      const sourceIntegrationPolicy = requireWorkflowSourceIntegrationPolicy(run);
+      context = persistedWorkflowContext(sourceContext, run.id, this.config);
+      runForClone = {
+        ...runWithoutContext,
+        context,
+        sourceIntegrationPolicy,
+      };
     } catch (error) {
       return Promise.reject(error);
     }
     this.runs.set(
       run.id,
-      cloneWorkflowRunWithContext({
-        ...run,
-        sourceIntegrationPolicy,
-      }, context),
+      cloneWorkflowRunWithContext(runForClone, context),
     );
     this.runRevisions.set(run.id, 0);
     return Promise.resolve();
@@ -341,26 +345,36 @@ export class MemoryBackend implements WorkflowBackend {
 
     logger.debug(`Updating run: ${runId}`, patch);
 
-    const { contextDeletes = [], nodeStateDeletes = [], ...storedPatch } = patch;
+    const {
+      context: patchContext,
+      contextDeletes = [],
+      nodeStateDeletes = [],
+      ...storedPatch
+    } = patch;
+    const patchContextKeys = patchContext === undefined ? [] : objectKeys(patchContext);
     let contextPatch: Partial<WorkflowContext> | undefined;
     try {
-      contextPatch = patch.context === undefined
+      contextPatch = patchContext === undefined
         ? undefined
-        : persistedWorkflowContextPatch(patch.context, runId, this.config);
+        : persistedWorkflowContextPatch(patchContext, runId, this.config);
     } catch (error) {
       return Promise.reject(error);
     }
-    const context = { ...run.context, ...contextPatch };
-    if (patch.context !== undefined && contextPatch !== undefined) {
-      for (const key of objectKeys(patch.context)) {
+    const currentRun = this.runs.get(runId);
+    if (!currentRun) {
+      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
+    const context = { ...currentRun.context, ...contextPatch };
+    if (contextPatch !== undefined) {
+      for (const key of patchContextKeys) {
         if (!objectHasOwn(contextPatch, key)) delete context[key];
       }
     }
     for (const key of contextDeletes) delete context[key];
-    const nodeStates = { ...run.nodeStates, ...patch.nodeStates };
+    const nodeStates = { ...currentRun.nodeStates, ...patch.nodeStates };
     for (const key of nodeStateDeletes) delete nodeStates[key];
     const updated: WorkflowRun = {
-      ...run,
+      ...currentRun,
       ...storedPatch,
       nodeStates,
       context,

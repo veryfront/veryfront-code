@@ -1047,6 +1047,32 @@ describe("serializeWorkflowContext", () => {
       assertEquals(restored, 0);
     });
 
+    it("encodes a deep accessor tail without native recursion", () => {
+      const depth = PAST_THE_WALK + 8_000;
+      let getterCalls = 0;
+      const leaf = {} as { value: string };
+      Object.defineProperty(leaf, "value", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return "stored";
+        },
+      });
+      let value: unknown = leaf;
+      for (let index = 0; index < depth; index++) value = { nested: value };
+
+      const prepared = prepareWorkflowJson(value, "output");
+      let restored = prepared.normalized;
+      for (let index = 0; index < depth; index++) {
+        restored = (restored as { nested: unknown }).nested;
+      }
+
+      assertEquals(restored, { value: "stored" });
+      assertEquals(getterCalls, 1);
+      assertEquals(prepared.serialized.endsWith('{"value":"stored"}' + "}".repeat(depth)), true);
+    });
+
     it("keeps control strings and JSON edge primitives in an encoded tail", () => {
       const marker = "\u0000workflow-tail";
       const leaf = Object.create(null) as Record<string, unknown>;

@@ -384,7 +384,7 @@ function cloneOwnedCheckpointValue<T>(value: T): T {
   }
   if (isDate(value)) {
     if (!hasStableDatePrototype(value)) {
-      return checkpointPersistenceSentinel("a Date with a custom prototype") as T;
+      return deferWorkflowJsonValue(value) as T;
     }
     return (hasOwnDateSerializationOverride(value)
       ? deferWorkflowJsonValue(value)
@@ -416,7 +416,7 @@ function cloneOwnedCheckpointValue<T>(value: T): T {
     }
     if (isDate(source)) {
       if (!hasStableDatePrototype(source)) {
-        return checkpointPersistenceSentinel("a Date with a custom prototype");
+        return deferReference(source);
       }
       return hasOwnDateSerializationOverride(source) ? deferReference(source) : cloneDate(source);
     }
