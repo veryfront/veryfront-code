@@ -782,6 +782,7 @@ type JavaScriptSignificantTokenKind =
   | "declaration-header"
   | "expression-header"
   | "other"
+  | "operand"
   | "postfix-update"
   | "prefix-update"
   | "regex"
@@ -817,6 +818,7 @@ interface JavaScriptSignificantToken {
   readonly kind: JavaScriptSignificantTokenKind;
   readonly followsForOfLeftOperand?: true;
   readonly precedingIdentifierKeyword?: JavaScriptPrecedingIdentifierKeyword;
+  readonly uninitializedDeclaration?: "let" | "var";
 }
 
 type JavaScriptQuote = '"' | "'";
@@ -838,6 +840,10 @@ function javaScriptTokenWithIdentifierContext(
 ): JavaScriptSignificantToken {
   if (!javaScriptIdentifierCodeUnitAt(text, start)) {
     return {
+      ...(text[start] !== "{" &&
+          previousSignificantToken?.classDeclaration === true
+        ? { classDeclaration: true }
+        : {}),
       end,
       ...(text[start] === "*" &&
           previousSignificantToken?.functionDeclaration === true
@@ -848,6 +854,13 @@ function javaScriptTokenWithIdentifierContext(
         ? { functionHeader: true }
         : {}),
       kind,
+      ...(text[start] === "," &&
+          previousSignificantToken?.uninitializedDeclaration !== undefined
+        ? {
+          uninitializedDeclaration:
+            previousSignificantToken.uninitializedDeclaration,
+        }
+        : {}),
     };
   }
 
@@ -894,6 +907,13 @@ function javaScriptTokenWithIdentifierContext(
   const classDeclaration =
     previousSignificantToken?.classDeclaration === true ||
     (identifierKeyword === "class" && declarationCandidate);
+  const uninitializedDeclaration =
+    previousSignificantToken?.uninitializedDeclaration ??
+      (previousSignificantToken?.identifierKeyword === "let"
+        ? "let"
+        : previousSignificantToken?.identifierKeyword === "var"
+        ? "var"
+        : undefined);
   let precedingIdentifierKeyword:
     | JavaScriptPrecedingIdentifierKeyword
     | undefined;
@@ -933,6 +953,9 @@ function javaScriptTokenWithIdentifierContext(
     ...(precedingIdentifierKeyword === undefined
       ? {}
       : { precedingIdentifierKeyword }),
+    ...(uninitializedDeclaration === undefined
+      ? {}
+      : { uninitializedDeclaration }),
   };
 }
 
@@ -1018,7 +1041,7 @@ function javaScriptTemplateInterpolationEnd(
       ? javaScriptJsxElementEnd(text, cursor)
       : undefined;
     if (jsxTagEnd !== undefined) {
-      previousSignificantToken = { end: jsxTagEnd, kind: "other" };
+      previousSignificantToken = { end: jsxTagEnd, kind: "operand" };
       cursor = jsxTagEnd;
       continue;
     }
@@ -1139,7 +1162,7 @@ function mdxExpressionAt(
       ? javaScriptJsxElementEnd(text, cursor)
       : undefined;
     if (jsxTagEnd !== undefined) {
-      previousSignificantToken = { end: jsxTagEnd, kind: "other" };
+      previousSignificantToken = { end: jsxTagEnd, kind: "operand" };
       cursor = jsxTagEnd;
       continue;
     }
@@ -1504,7 +1527,8 @@ function javaScriptLineTerminatesRestrictedStatement(
   return token.precedingIdentifierKeyword === "break" ||
     token.precedingIdentifierKeyword === "continue" ||
     token.precedingIdentifierKeyword === "let" ||
-    token.precedingIdentifierKeyword === "var";
+    token.precedingIdentifierKeyword === "var" ||
+    token.uninitializedDeclaration !== undefined;
 }
 
 function javaScriptPreviousSignificantTokenAfterTrivia(
@@ -1612,6 +1636,7 @@ function javaScriptRegexMayStart(
     previousSignificantToken.kind === "prefix-update"
   ) return true;
   if (
+    previousSignificantToken.kind === "operand" ||
     previousSignificantToken.kind === "postfix-update" ||
     previousSignificantToken.kind === "regex"
   ) return false;
@@ -2226,7 +2251,7 @@ function scanTagSyntax(
       ? javaScriptJsxElementEnd(text, cursor)
       : undefined;
     if (jsxTagEnd !== undefined) {
-      previousSignificantToken = { end: jsxTagEnd, kind: "other" };
+      previousSignificantToken = { end: jsxTagEnd, kind: "operand" };
       cursor = jsxTagEnd;
       continue;
     }
@@ -2394,9 +2419,14 @@ function htmlTagRanges(
   stringRanges: readonly Range[] = [],
 ): Range[] {
   const ranges: Range[] = [];
+  let expressionIndex = 0;
   for (let start = 0; start < text.length;) {
     start = text.indexOf("<", start);
     if (start === -1) break;
+    while (
+      expressionIndex < expressionRanges.length &&
+      expressionRanges[expressionIndex]!.start <= start
+    ) expressionIndex++;
     if (
       isInsideRange(stringRanges, start) ||
       (isInsideRange(ignoredRanges, start) &&
@@ -2418,7 +2448,9 @@ function htmlTagRanges(
       : Math.max(commonMarkEnd, mdxJsxEnd);
     if (tagEnd !== undefined) {
       ranges.push({ start, end: tagEnd });
-      start = tagEnd;
+      const containsExpression =
+        (expressionRanges[expressionIndex]?.start ?? tagEnd) < tagEnd;
+      start = containsExpression ? start + 1 : tagEnd;
     } else start++;
   }
   return ranges;
