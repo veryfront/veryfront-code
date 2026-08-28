@@ -49,8 +49,11 @@ import {
 import { MAX_WORKFLOW_RUN_EVENT_MAILBOXES } from "../limits.ts";
 import { ORCHESTRATION_ERROR, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 import { requireWorkflowSourceIntegrationPolicy } from "../source-integration-policy.ts";
+import { AsyncLocalStorage } from "#veryfront/platform/compat/async-context.ts";
 
 const logger = baseLogger.component("memory-backend");
+const AsyncLocalStorageGetStore = AsyncLocalStorage.prototype.getStore;
+const AsyncLocalStorageRun = AsyncLocalStorage.prototype.run;
 const ArrayConstructor = Array;
 const arrayIsArray = Array.isArray;
 const objectCreate = Object.create;
@@ -60,18 +63,16 @@ const objectHasOwn = Object.hasOwn;
 const objectKeys = Object.keys;
 const objectPrototype = Object.prototype;
 const jsonParse = JSON.parse;
+const reflectApply = Reflect.apply;
 const SetConstructor = Set;
 const structuredCloneValue = structuredClone;
-const conditionalRunUpdateControl = Symbol("conditional-run-update-control");
 
 interface ConditionalRunUpdateControl {
   applied: boolean;
+  claimed: boolean;
   readonly precondition: (run: WorkflowRun) => boolean;
+  readonly runId: string;
 }
-
-type ConditionalWorkflowRunUpdate = WorkflowRunUpdate & {
-  readonly [conditionalRunUpdateControl]?: ConditionalRunUpdateControl;
-};
 
 /**
  * Memory backend configuration
@@ -290,6 +291,7 @@ export class MemoryBackend implements WorkflowBackend {
   private stalledClaims = new Map<string, { workerId: string; expiresAt: number }>();
   private runRevisions = new Map<string, number>();
   private runObservers = new Map<string, Set<MemoryRunObserver>>();
+  private conditionalRunUpdateStorage = new AsyncLocalStorage<ConditionalRunUpdateControl>();
   private config: MemoryBackendConfig;
 
   constructor(config: MemoryBackendConfig = {}) {
@@ -341,16 +343,29 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void> {
-    const conditionalPatch = patch as ConditionalWorkflowRunUpdate;
-    const control = conditionalPatch[conditionalRunUpdateControl];
-    return this.applyRunUpdate(runId, conditionalPatch, control?.precondition).then((applied) => {
-      if (control !== undefined) control.applied = applied;
+    let control: ConditionalRunUpdateControl | undefined;
+    try {
+      control = reflectApply(
+        AsyncLocalStorageGetStore,
+        this.conditionalRunUpdateStorage,
+        [],
+      ) as ConditionalRunUpdateControl | undefined;
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    const conditionalControl =
+      control !== undefined && control.runId === runId && control.claimed !== true
+        ? control
+        : undefined;
+    if (conditionalControl !== undefined) conditionalControl.claimed = true;
+    return this.applyRunUpdate(runId, patch, conditionalControl?.precondition).then((applied) => {
+      if (conditionalControl !== undefined) conditionalControl.applied = applied;
     });
   }
 
   private applyRunUpdate(
     runId: string,
-    patch: ConditionalWorkflowRunUpdate,
+    patch: WorkflowRunUpdate,
     precondition?: (run: WorkflowRun) => boolean,
   ): Promise<boolean> {
     const run = this.runs.get(runId);
@@ -370,7 +385,6 @@ export class MemoryBackend implements WorkflowBackend {
     logger.debug(`Updating run: ${runId}`, patch);
 
     const {
-      [conditionalRunUpdateControl]: _conditionalUpdateControl,
       context: patchContext,
       contextDeletes = [],
       nodeStateDeletes = [],
@@ -457,12 +471,29 @@ export class MemoryBackend implements WorkflowBackend {
     patch: WorkflowRunUpdate,
     precondition: (run: WorkflowRun) => boolean,
   ): Promise<boolean> {
-    const control: ConditionalRunUpdateControl = { applied: false, precondition };
-    const conditionalPatch: ConditionalWorkflowRunUpdate = {
-      ...patch,
-      [conditionalRunUpdateControl]: control,
+    const run = this.runs.get(runId);
+    if (!run) {
+      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
+    if (!precondition(run)) return Promise.resolve(false);
+
+    const control: ConditionalRunUpdateControl = {
+      applied: false,
+      claimed: false,
+      precondition,
+      runId,
     };
-    return this.updateRun(runId, conditionalPatch).then(() => control.applied);
+    let updatePromise: Promise<void>;
+    try {
+      updatePromise = reflectApply(
+        AsyncLocalStorageRun,
+        this.conditionalRunUpdateStorage,
+        [control, () => this.updateRun(runId, patch)],
+      ) as Promise<void>;
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return updatePromise.then(() => control.applied);
   }
 
   restoreRunStateIfStatus(

@@ -4,7 +4,11 @@ import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryBackend } from "./memory.ts";
 import type { Checkpoint, PendingApproval, WorkflowQueueItem, WorkflowRun } from "../types.ts";
 import { MAX_TRAVERSAL_DEPTH } from "../context-serialization.ts";
-import type { PersistedPendingApproval, PersistedPendingEventWait } from "./types.ts";
+import type {
+  PersistedPendingApproval,
+  PersistedPendingEventWait,
+  WorkflowRunUpdate,
+} from "./types.ts";
 import {
   MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES,
   MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES,
@@ -545,6 +549,44 @@ describe("MemoryBackend", () => {
       assertEquals(trackingBackend.updates, 1);
     });
 
+    it("preserves conditional results when an updateRun override rebuilds the patch", async () => {
+      class RebuildingMemoryBackend extends MemoryBackend {
+        override updateRun(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
+          return super.updateRun(runId, { status: patch.status });
+        }
+      }
+
+      const rebuildingBackend = new RebuildingMemoryBackend();
+      const runId = "run-conditional-rebuilt-patch";
+      await rebuildingBackend.createRun(createTestRun(runId, { status: "running" }));
+
+      assertEquals(
+        await rebuildingBackend.updateRunIfStatus(
+          runId,
+          ["running"],
+          { status: "waiting" },
+        ),
+        true,
+      );
+      assertEquals((await rebuildingBackend.getRun(runId))?.status, "waiting");
+    });
+
+    it("checks stale conditional preconditions before inspecting the patch", async () => {
+      const runId = "run-conditional-stale-patch";
+      await backend.createRun(createTestRun(runId, { status: "waiting" }));
+      let patchReads = 0;
+      const patch = Object.defineProperty({}, "status", {
+        enumerable: true,
+        get() {
+          patchReads++;
+          throw new Error("stale patch must not be read");
+        },
+      }) as Partial<WorkflowRun>;
+
+      assertEquals(await backend.updateRunIfStatus(runId, ["running"], patch), false);
+      assertEquals(patchReads, 0);
+    });
+
     it("deletes context keys omitted by JSON through conditional updates", async () => {
       await backend.createRun(createTestRun("run-context-conditional-omitted", {
         status: "running",
@@ -771,6 +813,22 @@ describe("MemoryBackend", () => {
         "strictContext",
       );
       assertEquals(await strictBackend.getCheckpoints("run-strict-child"), []);
+    });
+
+    it("rejects revoked update patches asynchronously after missing-run precedence", async () => {
+      const runId = "run-revoked-update-patch";
+      await backend.createRun(createTestRun(runId));
+      const { proxy, revoke } = Proxy.revocable<WorkflowRunUpdate>({ status: "waiting" }, {});
+      revoke();
+
+      await assertRejectsAsynchronously(
+        () => backend.updateRun("missing-revoked-update-patch", proxy),
+        "Run not found",
+      );
+      await assertRejectsAsynchronously(
+        () => backend.updateRun(runId, proxy),
+        "revoked",
+      );
     });
 
     it("merges node-state sets while applying explicit deletions", async () => {
