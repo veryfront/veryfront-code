@@ -220,7 +220,9 @@ function decodeUrlComponentTolerantly(value: string): string {
   return value.replace(/(?:%[0-9a-fA-F]{2})+/g, (encoded) => {
     let decoded = "";
     for (let start = 0; start < encoded.length;) {
-      let end = encoded.length;
+      // A UTF-8 code point occupies at most four bytes, so no successful
+      // decoding boundary requires retrying the full remaining suffix.
+      let end = Math.min(encoded.length, start + 4 * 3);
       let consumed = false;
       for (; end > start; end -= 3) {
         try {
@@ -1050,7 +1052,7 @@ function javaScriptRegexEnd(line: string, start: number): number | undefined {
 function javaScriptRegexMayStart(line: string, start: number): boolean {
   const prefix = line.slice(0, start).trimEnd();
   return prefix === "" ||
-    /(?:[=(:,!\[{;?&|+*%^~<>-]|=>|(?:^|[^A-Za-z0-9_$.#])(?:return|case|throw|default|typeof|void|delete|in|instanceof))$/
+    /(?:[=(:,!\[{;?&|+*%/^~<>-]|=>|(?:^|[^A-Za-z0-9_$.#])(?:return|case|throw|default|typeof|void|delete|in|instanceof))$/
       .test(
         prefix,
       );

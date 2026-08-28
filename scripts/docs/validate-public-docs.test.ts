@@ -766,6 +766,16 @@ describe("public docs validation", () => {
       ).length,
       1,
     );
+    assertEquals(
+      collectIssues(
+        "docs/guides/example.md",
+        `https://github.com/example-org/private%2Dexamples/${
+          "%FF".repeat(512)
+        }`,
+        BLOCKED_REPOSITORY,
+      ).length,
+      1,
+    );
   });
 
   it("finds destinations that wrap across lines", () => {
@@ -1653,6 +1663,13 @@ describe("public docs validation", () => {
       collectUnpublishedLinkIssues(
         "docs/guides/example.mdx",
         'export const sample = `x ${"`"} [old](../architecture/private.md)`',
+      ),
+      [],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.mdx",
+        'export const sample = `${foo / /}`/.test(x) ? "[old](../architecture/private.md)" : ""}`',
       ),
       [],
     );
