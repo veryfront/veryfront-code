@@ -981,23 +981,21 @@ describe("workflow checkpoint retention", () => {
     assertEquals(ownKeysCalls, 0);
   });
 
-  it("snapshots proxy-array descriptors before traversing indexed values", () => {
-    const source = ["original", "later"];
+  it("snapshots proxy-array values through indexed get traps", () => {
+    const source = ["raw"];
     const proxied = new Proxy(source, {
-      getOwnPropertyDescriptor(target, key) {
-        const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
-        if (key === "1") target[0] = "mutated";
-        return descriptor;
+      get(target, key, receiver) {
+        if (key === "0") return "projected";
+        return Reflect.get(target, key, receiver);
       },
     });
 
     const snapshot = cloneCheckpointForPersistence({
-      ...checkpoint("proxy-array-descriptor-order"),
+      ...checkpoint("proxy-array-index-get"),
       context: { input: { proxied } },
     });
 
-    assertEquals(source[0], "mutated");
-    assertEquals(snapshot.context.input, { proxied: ["original", "later"] });
+    assertEquals(snapshot.context.input, { proxied: ["projected"] });
   });
 
   it("defers oversized proxy-array persistence failure without reading indices", async () => {
