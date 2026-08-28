@@ -9,7 +9,6 @@ import type {
   ObservableGauge,
   ObservableResult,
 } from "#veryfront/observability/tracing/api-shim.ts";
-import { getMemoryUsage } from "../metrics/config.ts";
 import type { MetricsConfig } from "../metrics/types.ts";
 import {
   createMemoryInstruments,
@@ -22,6 +21,11 @@ const CONFIG: MetricsConfig = { enabled: true, exporter: "console", prefix: "tes
 /** Heap limit pinned through the configured V8 flags so the percentage has a known denominator. */
 const CONFIGURED_HEAP_LIMIT_MIB = 16;
 const CONFIGURED_HEAP_LIMIT_BYTES = CONFIGURED_HEAP_LIMIT_MIB * 1024 * 1024;
+const MEMORY_USAGE_SAMPLE = {
+  rss: 24 * 1024 * 1024,
+  heapUsed: 8 * 1024 * 1024,
+  heapTotal: 12 * 1024 * 1024,
+};
 
 function createRecordingMeter(
   created: Array<{ name: string; unit: string | undefined }>,
@@ -80,7 +84,7 @@ describe("observability/instruments/memory-instruments", () => {
 
   it("observes rss, heap, and heap utilization through their matching gauges", async () => {
     const instruments = createMemoryInstruments(createRecordingMeter([]), CONFIG);
-    const bindings = createMemoryObservableBindings(instruments);
+    const bindings = createMemoryObservableBindings(instruments, () => MEMORY_USAGE_SAMPLE);
 
     assertEquals(bindings.length, 4, "every memory gauge is bound to a callback");
     assertStrictEquals(
@@ -120,24 +124,12 @@ describe("observability/instruments/memory-instruments", () => {
       _resetEnvironmentConfig();
     }
 
-    assert(heapUsed !== undefined && heapUsed > 0, "the heap gauge observes used heap bytes");
-    assert(
-      heapTotal !== undefined && heapTotal >= heapUsed,
-      "the heap_total gauge observes allocated heap, never less than the used heap",
-    );
-    assert(
-      rss !== undefined && rss > heapTotal,
-      "the usage gauge observes resident memory, which exceeds the allocated V8 heap",
-    );
-
-    const usage = getMemoryUsage();
-    assert(usage !== null, "the host runtime reports memory usage");
-    const expectedPercent = (usage.heapUsed / CONFIGURED_HEAP_LIMIT_BYTES) * 100;
+    assertEquals(rss, MEMORY_USAGE_SAMPLE.rss);
+    assertEquals(heapUsed, MEMORY_USAGE_SAMPLE.heapUsed);
+    assertEquals(heapTotal, MEMORY_USAGE_SAMPLE.heapTotal);
     assert(heapPercent !== undefined, "the heap_percent gauge observes a value");
-    assert(
-      Math.abs(heapPercent - expectedPercent) <= expectedPercent * 0.02,
-      `heap_percent must be heapUsed/limit*100, expected about ${expectedPercent}, observed ${heapPercent}`,
-    );
+    const expectedPercent = (MEMORY_USAGE_SAMPLE.heapUsed / CONFIGURED_HEAP_LIMIT_BYTES) * 100;
+    assertEquals(heapPercent, expectedPercent, "heap_percent must be heapUsed/limit*100");
     assertEquals(
       heapPercent,
       Math.round(heapPercent * 100) / 100,

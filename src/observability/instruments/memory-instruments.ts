@@ -9,6 +9,8 @@ import type { MetricsConfig } from "../metrics/types.ts";
 import type { ObservableCallbackBinding } from "./observable-callbacks.ts";
 
 const BYTES_PER_MEBIBYTE = 1024 * 1024;
+type MemoryUsage = NonNullable<ReturnType<typeof getMemoryUsage>>;
+type MemoryUsageReader = () => MemoryUsage | null;
 
 /** Parse the configured V8 old-space limit, when present. */
 export function parseV8HeapLimitBytes(flags: string): number | undefined {
@@ -66,11 +68,12 @@ export interface MemoryInstruments {
 function createMemoryCallback(
   observe: (
     result: ObservableResult,
-    memoryUsage: NonNullable<ReturnType<typeof getMemoryUsage>>,
+    memoryUsage: MemoryUsage,
   ) => void,
+  readMemoryUsage: MemoryUsageReader,
 ): (result: ObservableResult) => void {
   return (result: ObservableResult) => {
-    const memoryUsage = getMemoryUsage();
+    const memoryUsage = readMemoryUsage();
     if (!memoryUsage) return;
     observe(result, memoryUsage);
   };
@@ -100,25 +103,33 @@ export function createMemoryInstruments(meter: Meter, config: MetricsConfig): Me
 
 export function createMemoryObservableBindings(
   instruments: MemoryInstruments,
+  readMemoryUsage: MemoryUsageReader = getMemoryUsage,
 ): ObservableCallbackBinding[] {
   const bindings: ObservableCallbackBinding[] = [];
   if (instruments.memoryUsageGauge) {
     bindings.push({
       instrument: instruments.memoryUsageGauge,
-      callback: createMemoryCallback((result, memoryUsage) => result.observe(memoryUsage.rss)),
+      callback: createMemoryCallback(
+        (result, memoryUsage) => result.observe(memoryUsage.rss),
+        readMemoryUsage,
+      ),
     });
   }
   if (instruments.heapUsageGauge) {
     bindings.push({
       instrument: instruments.heapUsageGauge,
-      callback: createMemoryCallback((result, memoryUsage) => result.observe(memoryUsage.heapUsed)),
+      callback: createMemoryCallback(
+        (result, memoryUsage) => result.observe(memoryUsage.heapUsed),
+        readMemoryUsage,
+      ),
     });
   }
   if (instruments.heapTotalGauge) {
     bindings.push({
       instrument: instruments.heapTotalGauge,
-      callback: createMemoryCallback((result, memoryUsage) =>
-        result.observe(memoryUsage.heapTotal)
+      callback: createMemoryCallback(
+        (result, memoryUsage) => result.observe(memoryUsage.heapTotal),
+        readMemoryUsage,
       ),
     });
   }
@@ -128,7 +139,7 @@ export function createMemoryObservableBindings(
       callback: async (result) => {
         const heapLimitBytes = await getV8HeapLimitBytes();
         if (heapLimitBytes === undefined) return;
-        const memoryUsage = getMemoryUsage();
+        const memoryUsage = readMemoryUsage();
         if (!memoryUsage) return;
         const percent = (memoryUsage.heapUsed / heapLimitBytes) * 100;
         result.observe(Math.round(percent * 100) / 100);
