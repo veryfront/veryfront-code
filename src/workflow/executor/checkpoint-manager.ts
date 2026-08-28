@@ -3,7 +3,10 @@ import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { Checkpoint, NodeState, WorkflowContext, WorkflowNode } from "../types.ts";
 import { generateId } from "../types.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
-import { cloneRetainedCheckpoint } from "../backends/checkpoint-retention.ts";
+import {
+  cloneCheckpointForPersistence,
+  cloneRetainedCheckpoint,
+} from "../backends/checkpoint-retention.ts";
 import { buildGraph, getReadyNodes, updateInDegreesForCompletedNodes } from "./dag/graph.ts";
 
 const logger = baseLogger.component("checkpoint-manager");
@@ -79,7 +82,8 @@ export class CheckpointManager {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
   ): Promise<Checkpoint> {
-    const checkpoint = cloneRetainedCheckpoint({
+    // The backend must validate the original values before any persistence normalization.
+    const checkpoint = cloneCheckpointForPersistence({
       id: generateId("cp"),
       nodeId,
       timestamp: new Date(),
@@ -88,7 +92,8 @@ export class CheckpointManager {
     });
 
     await this.save(runId, checkpoint);
-    return checkpoint;
+    // Detach the value returned to the caller only after backend validation succeeds.
+    return cloneRetainedCheckpoint(checkpoint);
   }
 
   getLatest(runId: string): Promise<Checkpoint | null> {

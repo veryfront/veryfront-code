@@ -129,6 +129,20 @@ function createTestRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
   };
 }
 
+function deepCheckpointValue(depth: number, leaf: unknown): unknown {
+  let value: unknown = { leaf };
+  for (let index = 0; index < depth; index++) value = { nested: value };
+  return value;
+}
+
+function deepCheckpointLeaf(value: unknown, depth: number): unknown {
+  let cursor = value;
+  for (let index = 0; index < depth; index++) {
+    cursor = (cursor as { nested: unknown }).nested;
+  }
+  return (cursor as { leaf: unknown }).leaf;
+}
+
 describe("DAGExecutor", () => {
   let stepExecutor: StepExecutor;
   let executor: DAGExecutor;
@@ -3267,6 +3281,141 @@ describe("DAGExecutor", () => {
       await exec.execute(nodes, createTestRun());
       assertEquals(cpManager.saved.length, 1);
       assertEquals(cpManager.saved[0]!.nodeId, "cp-node");
+    });
+
+    it("passes deep lossy context to the backend before normalization", async () => {
+      const depth = 8000;
+      let savedLeaf: unknown;
+      let resumeSave!: () => void;
+      const saveGate = new Promise<void>((resolve) => {
+        resumeSave = resolve;
+      });
+      const backend = {
+        saveCheckpoint: () => Promise.resolve(),
+        getLatestCheckpoint: () => Promise.resolve(null),
+      } as unknown as WorkflowBackend;
+      const cpManager = new (class extends CheckpointManager {
+        override async save(_runId: string, checkpoint: Checkpoint): Promise<boolean> {
+          await saveGate;
+          savedLeaf = deepCheckpointLeaf(checkpoint.context.deep, depth);
+          return true;
+        }
+      })({ backend });
+      const exec = new DAGExecutor({ stepExecutor, checkpointManager: cpManager });
+      const lossyLeaf = new Date(0);
+
+      // Full execution clones run state first, so exercise this persistence boundary directly.
+      const checkpointExecutor = exec as unknown as {
+        checkpoint(
+          runId: string,
+          nodeId: string,
+          context: WorkflowContext,
+          nodeStates: Record<string, NodeState>,
+        ): Promise<void>;
+      };
+      const saving = checkpointExecutor.checkpoint(
+        "test-run",
+        "cp-node",
+        { input: {}, deep: deepCheckpointValue(depth, lossyLeaf) },
+        {},
+      );
+      lossyLeaf.setTime(1);
+      resumeSave();
+      await saving;
+
+      assertEquals(savedLeaf instanceof Date, true);
+      assertEquals((savedLeaf as Date).getTime(), 0);
+    });
+
+    it("lets an owned backend fence before snapshotting checkpoint data", async () => {
+      let indexReads = 0;
+      const values = new Proxy([], {
+        get(target, key, receiver) {
+          if (key === "length") return 1_000_000_000_000;
+          if (typeof key === "string" && /^\d+$/.test(key)) indexReads++;
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      const backend = {
+        saveCheckpoint: () => Promise.resolve(),
+        getLatestCheckpoint: () => Promise.resolve(null),
+      } as unknown as WorkflowBackend;
+      const cpManager = new (class extends CheckpointManager {
+        override save(): Promise<boolean> {
+          return Promise.resolve(false);
+        }
+      })({ backend });
+      const exec = new DAGExecutor({ stepExecutor, checkpointManager: cpManager });
+      const checkpointExecutor = exec as unknown as {
+        checkpoint(
+          runId: string,
+          nodeId: string,
+          context: WorkflowContext,
+          nodeStates: Record<string, NodeState>,
+          ownership: { runId: string; workerId: string },
+        ): Promise<void>;
+      };
+
+      await assertRejects(() =>
+        checkpointExecutor.checkpoint(
+          "test-run",
+          "cp-node",
+          { input: { values } },
+          {},
+          { runId: "test-run", workerId: "stale-worker" },
+        )
+      );
+
+      assertEquals(indexReads, 0);
+    });
+
+    it("detaches owned checkpoint node output before an asynchronous fence", async () => {
+      const output = { topic: "original" };
+      let resumeSave!: () => void;
+      let reportSaveStarted!: () => void;
+      const saveGate = new Promise<void>((resolve) => {
+        resumeSave = resolve;
+      });
+      const saveStarted = new Promise<void>((resolve) => {
+        reportSaveStarted = resolve;
+      });
+      let savedTopic: unknown;
+      const backend = {
+        saveCheckpoint: () => Promise.resolve(),
+        getLatestCheckpoint: () => Promise.resolve(null),
+      } as unknown as WorkflowBackend;
+      const cpManager = new (class extends CheckpointManager {
+        override async save(_runId: string, checkpoint: Checkpoint): Promise<boolean> {
+          reportSaveStarted();
+          await saveGate;
+          savedTopic = (checkpoint.nodeStates["cp-node"]?.output as { topic: string }).topic;
+          return true;
+        }
+      })({ backend });
+      const exec = new DAGExecutor({
+        stepExecutor: createMockStepExecutor(
+          new Map([
+            ["cp-node", { success: true, output }],
+          ]),
+        ),
+        checkpointManager: cpManager,
+      });
+      const nodes: WorkflowNode[] = [{
+        id: "cp-node",
+        dependsOn: [],
+        config: { type: "step", checkpoint: true } as any,
+      }];
+
+      const execution = exec.execute(
+        nodes,
+        createTestRun({ workerId: "current-worker" }),
+      );
+      await saveStarted;
+      output.topic = "mutated";
+      resumeSave();
+      await execution;
+
+      assertEquals(savedTopic, "original");
     });
 
     it("should not save checkpoint for non-checkpointed nodes", async () => {

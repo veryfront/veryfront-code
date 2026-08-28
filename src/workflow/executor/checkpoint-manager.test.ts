@@ -49,8 +49,8 @@ function nodeState(nodeId: string, status: NodeState["status"]): NodeState {
   };
 }
 
-function deepValue(depth: number): unknown {
-  let value: unknown = { leaf: "stored" };
+function deepValue(depth: number, leaf: unknown = "stored"): unknown {
+  let value: unknown = { leaf };
   for (let index = 0; index < depth; index++) value = { nested: value };
   return value;
 }
@@ -285,6 +285,30 @@ describe("CheckpointManager", () => {
     assertEquals(persisted.nodeStates.first?.status, "completed");
   });
 
+  it("snapshots checkpoint input before an asynchronous backend yields", async () => {
+    let resumeSave!: () => void;
+    const saveGate = new Promise<void>((resolve) => {
+      resumeSave = resolve;
+    });
+    let backendTopic: unknown;
+    const backend = new (class extends MemoryBackend {
+      override async saveCheckpoint(_runId: string, checkpoint: Checkpoint): Promise<void> {
+        await saveGate;
+        backendTopic = (checkpoint.context.input as { topic: string }).topic;
+      }
+    })();
+    const manager = new CheckpointManager({ backend });
+    const context: WorkflowContext = { input: { topic: "original" } };
+
+    const creating = manager.createCheckpoint("async-snapshot", "first", context, {});
+    (context.input as { topic: string }).topic = "mutated";
+    resumeSave();
+    const created = await creating;
+
+    assertEquals(backendTopic, "original");
+    assertEquals(created.context.input, { topic: "original" });
+  });
+
   it("creates and resumes checkpoints deeper than native cloning can traverse", async () => {
     const runId = "deep-checkpoint-manager";
     const backend = await seed(runId, 0);
@@ -312,6 +336,34 @@ describe("CheckpointManager", () => {
     assertEquals(resume.startFromNode, "second");
     assertEquals(deepLeaf(resume.context.first, depth), "stored");
     assertEquals(deepLeaf(resume.nodeStates.first?.output, depth), "stored");
+  });
+
+  it("lets a strict backend validate lossy values in deep checkpoints", async () => {
+    const runId = "strict-deep-checkpoint-manager";
+    const depth = 8000;
+    let backendSawDate = false;
+    const backend = new (class extends MemoryBackend {
+      override saveCheckpoint(savedRunId: string, savedCheckpoint: Checkpoint): Promise<void> {
+        backendSawDate = deepLeaf(savedCheckpoint.context.first, depth) instanceof Date;
+        return super.saveCheckpoint(savedRunId, savedCheckpoint);
+      }
+    })({ strictContext: true });
+    await backend.createRun(run(runId));
+    const manager = new CheckpointManager({ backend });
+
+    await assertRejects(
+      () =>
+        manager.createCheckpoint(
+          runId,
+          "first",
+          { input: {}, first: deepValue(depth, new Date(0)) },
+          { first: nodeState("first", "completed") },
+        ),
+      VeryfrontError,
+      "strictContext",
+    );
+    assertEquals(backendSawDate, true);
+    assertEquals(await backend.getLatestCheckpoint(runId), null);
   });
 
   it("forwards owned saves through the fenced backend method with its receiver", async () => {
