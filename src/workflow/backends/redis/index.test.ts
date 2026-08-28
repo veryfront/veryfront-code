@@ -20,7 +20,10 @@ import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { RedisBackend } from "./index.ts";
 import { deriveWorkflowRunEventObservation } from "../../events.ts";
-import { MAX_TRAVERSAL_DEPTH, serializeWorkflowJson } from "../../context-serialization.ts";
+import {
+  MAX_TRAVERSAL_DEPTH,
+  serializeWorkflowJson,
+} from "#veryfront/workflow/context-serialization.ts";
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 import type { CheckpointResumeEnvelope, PendingApproval, WorkflowRun } from "../../types.ts";
 import {
