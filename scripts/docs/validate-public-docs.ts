@@ -804,16 +804,17 @@ function javaScriptTokenWithIdentifierContext(
 
   const continuesIdentifierWord = start > 0 &&
     /[A-Za-z]/.test(text[start - 1]!);
-  const followsForKeyword = continuesIdentifierWord
-    ? previousSignificantToken?.followsForKeyword === true
-    : previousSignificantToken === undefined
-    ? false
-    : javaScriptIdentifierWordAtEnd(text, previousSignificantToken.end) ===
-      "for";
-  return followsForKeyword ? { end, kind, followsForKeyword: true } : {
-    end,
-    kind,
-  };
+  let followsForKeyword = false;
+  if (continuesIdentifierWord) {
+    followsForKeyword = previousSignificantToken?.followsForKeyword === true;
+  } else if (previousSignificantToken !== undefined) {
+    followsForKeyword =
+      javaScriptIdentifierWordAtEnd(text, previousSignificantToken.end) ===
+        "for";
+  }
+
+  if (!followsForKeyword) return { end, kind };
+  return { end, kind, followsForKeyword: true };
 }
 
 function significantJavaScriptToken(
