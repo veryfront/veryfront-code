@@ -507,6 +507,7 @@ describe("public docs validation", () => {
           '<a data-ok={value instanceof /}>/} href="../architecture/instanceof-regex.md">ok</a>\n' +
           '<a data-ok={(async () => await /}>/.test(x))()} href="../architecture/await-regex.md">ok</a>\n' +
           '<a data-ok={(function* () { yield /}>/.test(x) })()} href="../architecture/yield-regex.md">ok</a>\n' +
+          '<a data-ok={(async () => await (x) / ({ marker: "}>/" }).length)()} href="../architecture/await-group-division.md">ok</a>\n' +
           '<a data-ok={`x ${"`"} >`} href="../architecture/template.md">ok</a>\n' +
           '<a data-ok={value / count > 1} href="../architecture/division.md">ok</a>\n' +
           '<a data-ok={++/{/.lastIndex} href="../architecture/prefix-update.md">ok</a>\n' +
@@ -544,6 +545,7 @@ describe("public docs validation", () => {
         "../architecture/instanceof-regex.md",
         "../architecture/await-regex.md",
         "../architecture/yield-regex.md",
+        "../architecture/await-group-division.md",
         "../architecture/template.md",
         "../architecture/division.md",
         "../architecture/prefix-update.md",
@@ -1750,6 +1752,18 @@ describe("public docs validation", () => {
     assertEquals(
       destinations(
         'export function sample(value) { if (value) /[}]/.test(value); return "[old](../architecture/control-header.md)"; }\n\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        "export async function sample(items, value) {\n" +
+          "  for await (const item of items) /[}]/.test(item);\n" +
+          "  if (value) {} else /[}]/.test(value);\n" +
+          "  do /[}]/.test(value); while (false);\n" +
+          '  return "[old](../architecture/statement-context.md)";\n' +
+          "}\n\n" +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],

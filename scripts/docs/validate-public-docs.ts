@@ -781,6 +781,7 @@ type JavaScriptSignificantTokenKind =
 interface JavaScriptSignificantToken {
   readonly end: number;
   readonly kind: JavaScriptSignificantTokenKind;
+  readonly followsForKeyword?: true;
 }
 
 type JavaScriptQuote = '"' | "'";
@@ -790,6 +791,29 @@ interface JavaScriptScannedToken {
   readonly end: number;
   readonly kind: JavaScriptSignificantTokenKind | "literal" | "trivia";
   readonly string?: Range;
+}
+
+function javaScriptTokenWithIdentifierContext(
+  text: string,
+  start: number,
+  end: number,
+  kind: JavaScriptSignificantTokenKind,
+  previousSignificantToken: JavaScriptSignificantToken | undefined,
+): JavaScriptSignificantToken {
+  if (!/[A-Za-z]/.test(text[start]!)) return { end, kind };
+
+  const continuesIdentifierWord = start > 0 &&
+    /[A-Za-z]/.test(text[start - 1]!);
+  const followsForKeyword = continuesIdentifierWord
+    ? previousSignificantToken?.followsForKeyword === true
+    : previousSignificantToken === undefined
+    ? false
+    : javaScriptIdentifierWordAtEnd(text, previousSignificantToken.end) ===
+      "for";
+  return followsForKeyword ? { end, kind, followsForKeyword: true } : {
+    end,
+    kind,
+  };
 }
 
 function significantJavaScriptToken(
@@ -809,7 +833,13 @@ function significantJavaScriptToken(
     : token.kind === "literal" || token.kind === "trivia"
     ? "other"
     : token.kind;
-  return { end: token.end, kind };
+  return javaScriptTokenWithIdentifierContext(
+    text,
+    start,
+    token.end,
+    kind,
+    previousSignificantToken,
+  );
 }
 
 function quotedRangeEnd(
@@ -1109,6 +1139,8 @@ const JAVASCRIPT_REGEX_PREFIX_KEYWORDS: ReadonlySet<string> = new Set([
   "new",
   "await",
   "yield",
+  "else",
+  "do",
 ]);
 
 const JAVASCRIPT_CONTROL_HEADER_KEYWORDS: ReadonlySet<string> = new Set([
@@ -1182,7 +1214,10 @@ function javaScriptParenthesisTokenKind(
       ? undefined
       : javaScriptIdentifierWordAtEnd(text, previousSignificantToken.end);
     controlParentheses.push(
-      keyword !== undefined && JAVASCRIPT_CONTROL_HEADER_KEYWORDS.has(keyword),
+      (keyword !== undefined &&
+        JAVASCRIPT_CONTROL_HEADER_KEYWORDS.has(keyword)) ||
+        (keyword === "await" &&
+          previousSignificantToken?.followsForKeyword === true),
     );
   } else if (character === ")" && controlParentheses.pop()) {
     return "control-header";
@@ -1417,7 +1452,13 @@ function scanJavaScriptLine(
         state.previousSignificantToken,
         state,
       );
-      state.previousSignificantToken = { end: cursor + 1, kind };
+      state.previousSignificantToken = javaScriptTokenWithIdentifierContext(
+        text,
+        cursor,
+        cursor + 1,
+        kind,
+        state.previousSignificantToken,
+      );
       if (!state.valid) return;
     }
     cursor++;
@@ -1732,7 +1773,13 @@ function scanTagSyntax(
         previousSignificantToken,
         controlParentheses,
       );
-      previousSignificantToken = { end: cursor + 1, kind };
+      previousSignificantToken = javaScriptTokenWithIdentifierContext(
+        text,
+        cursor,
+        cursor + 1,
+        kind,
+        previousSignificantToken,
+      );
     } else if (character === "{") {
       previousSignificantToken = { end: cursor + 1, kind: "other" };
     }
