@@ -510,9 +510,13 @@ describe("public docs validation", () => {
           '<a data-ok={class extends /[}>]/.constructor {}} href="../architecture/extends-regex.md">ok</a>\n' +
           '<a data-ok={(() => { if (x) {} else /[}>]/.test(x); do /[}>]/.test(x); while (false); })()} href="../architecture/statement-regex.md">ok</a>\n' +
           '<a data-ok={(() => { for (const x of /[}>]/.source) {} return true })()} href="../architecture/for-of-regex.md">ok</a>\n' +
+          '<a data-ok={(() => { for (using of /[}>]/.source) {} return true })()} href="../architecture/for-using-of-regex.md">ok</a>\n' +
+          '<a data-ok={(async () => { for await (const x of /[}>]/.source) {} return true })()} href="../architecture/for-await-of-regex.md">ok</a>\n' +
           '<a data-ok={(() => { for (of / ({ marker: ">/" }).length; false;) {} return true })()} href="../architecture/for-of-division.md">ok</a>\n' +
-          '<a data-ok={of / ({ marker: "}>/" }).length} href="../architecture/of-division.md">ok</a>\n' +
+          '<a data-ok={(() => { for (const x = { value: of / ({ marker: ">/" }).length }; false;) {} return true })()} href="../architecture/for-header-nested-of-division.md">ok</a>\n' +
+          '<a data-ok={of / ({ marker: ">/" }).length} href="../architecture/of-division.md">ok</a>\n' +
           '<a data-ok={(() => { breakfast\n/ ({ marker: ">/" }).length; continueValue\n/ ({ marker: ">/" }).length; debuggerValue\n/ ({ marker: ">/" }).length; return true })()} href="../architecture/asi-prefix-division.md">ok</a>\n' +
+          '<a data-ok={(() => { while (value) { break\n/[}>]/.test(value) } while (value) { continue\n/[}>]/.test(value) } debugger\n/[}>]/.test(value); return true })()} href="../architecture/asi-regex.md">ok</a>\n' +
           '<a data-ok={(async () => await (x) / ({ marker: "}>/" }).length)()} href="../architecture/await-group-division.md">ok</a>\n' +
           '<a data-ok={`x ${"`"} >`} href="../architecture/template.md">ok</a>\n' +
           '<a data-ok={value / count > 1} href="../architecture/division.md">ok</a>\n' +
@@ -554,9 +558,13 @@ describe("public docs validation", () => {
         "../architecture/extends-regex.md",
         "../architecture/statement-regex.md",
         "../architecture/for-of-regex.md",
+        "../architecture/for-using-of-regex.md",
+        "../architecture/for-await-of-regex.md",
         "../architecture/for-of-division.md",
+        "../architecture/for-header-nested-of-division.md",
         "../architecture/of-division.md",
         "../architecture/asi-prefix-division.md",
+        "../architecture/asi-regex.md",
         "../architecture/await-group-division.md",
         "../architecture/template.md",
         "../architecture/division.md",
@@ -1783,9 +1791,24 @@ describe("public docs validation", () => {
     assertEquals(
       destinations(
         "export function sample(value) {\n" +
-          "  for (;;) { break\n/[}]/.test(value) }\n" +
-          "  for (;;) { continue\n/[}]/.test(value) }\n" +
-          "  debugger\n/[}]/.test(value)\n" +
+          "  outer1: while (value) {\n" +
+          "    break outer1\n" +
+          "    /[}]/.test(value);\n" +
+          "  }\n" +
+          "  while (value) {\n" +
+          "    break\n" +
+          "    /[}]/.test(value);\n" +
+          "  }\n" +
+          "  \\u03c0: while (value) {\n" +
+          "    continue \\u03c0\n" +
+          "    /[}]/.test(value);\n" +
+          "  }\n" +
+          "  while (value) {\n" +
+          "    continue\n" +
+          "    /[}]/.test(value);\n" +
+          "  }\n" +
+          "  debugger\n" +
+          "  /[}]/.test(value);\n" +
           '  return "[old](../architecture/asi-statement.md)";\n' +
           "}\n\n" +
           "[real](../architecture/real.md)",

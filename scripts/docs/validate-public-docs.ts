@@ -778,16 +778,15 @@ type JavaScriptSignificantTokenKind =
   | "prefix-update"
   | "regex";
 
+type JavaScriptPrecedingIdentifierKeyword = "break" | "continue" | "for";
+type JavaScriptDelimiterContext = "control" | "for" | "nested" | undefined;
+
 interface JavaScriptSignificantToken {
   readonly end: number;
   readonly kind: JavaScriptSignificantTokenKind;
-  readonly followsForKeyword?: true;
-  readonly forOfSeparator?: true;
-  readonly forOfSeparatorCandidate?: true;
-  readonly lineTerminatedStatement?: true;
+  readonly followsForOfLeftOperand?: true;
+  readonly precedingIdentifierKeyword?: JavaScriptPrecedingIdentifierKeyword;
 }
-
-type JavaScriptControlParenthesis = "for" | "other" | "statement";
 
 type JavaScriptQuote = '"' | "'";
 type JavaScriptStringDelimiter = JavaScriptQuote | "`";
@@ -804,58 +803,47 @@ function javaScriptTokenWithIdentifierContext(
   end: number,
   kind: JavaScriptSignificantTokenKind,
   previousSignificantToken: JavaScriptSignificantToken | undefined,
-  insideForHeader: boolean,
+  delimiterContexts: readonly JavaScriptDelimiterContext[],
 ): JavaScriptSignificantToken {
-  if (!/[A-Za-z]/.test(text[start]!)) return { end, kind };
+  if (!javaScriptIdentifierCodeUnitAt(text, start)) return { end, kind };
 
+  const escapeRange = javaScriptIdentifierEscapeRangeAt(text, start);
+  const codeUnit = text.charCodeAt(start);
   const continuesIdentifierWord = start > 0 &&
-    /[A-Za-z]/.test(text[start - 1]!);
-  let followsForKeyword = false;
+    (javaScriptIdentifierContinueBefore(text, start) ||
+      (escapeRange !== undefined && escapeRange.start < start) ||
+      (codeUnit >= 0xdc00 && codeUnit <= 0xdfff &&
+        javaScriptIdentifierContinueBefore(text, start + 1)));
+  let precedingIdentifierKeyword:
+    | JavaScriptPrecedingIdentifierKeyword
+    | undefined;
+  let followsForOfLeftOperand = false;
   if (continuesIdentifierWord) {
-    followsForKeyword = previousSignificantToken?.followsForKeyword === true;
+    precedingIdentifierKeyword = previousSignificantToken
+      ?.precedingIdentifierKeyword;
+    followsForOfLeftOperand =
+      previousSignificantToken?.followsForOfLeftOperand === true;
   } else if (previousSignificantToken !== undefined) {
-    followsForKeyword =
-      javaScriptIdentifierWordAtEnd(text, previousSignificantToken.end) ===
-        "for";
-  }
-
-  const word = javaScriptIdentifierWordAtEnd(text, end);
-  const completeIdentifier = word !== undefined &&
-    !javaScriptIdentifierContinueAt(text, end);
-  let forOfSeparatorCandidate = false;
-  if (continuesIdentifierWord) {
-    forOfSeparatorCandidate =
-      previousSignificantToken?.forOfSeparatorCandidate === true;
-  } else if (insideForHeader && previousSignificantToken !== undefined) {
-    const precedingWord = javaScriptIdentifierWordAtEnd(
+    const previousWord = javaScriptIdentifierWordAtEnd(
       text,
       previousSignificantToken.end,
     );
-    forOfSeparatorCandidate =
-      !JAVASCRIPT_FOR_DECLARATION_KEYWORDS.has(precedingWord ?? "") &&
-      !javaScriptRegexMayStart(text, start, previousSignificantToken);
+    if (
+      previousWord === "break" || previousWord === "continue" ||
+      previousWord === "for"
+    ) precedingIdentifierKeyword = previousWord;
+    followsForOfLeftOperand = delimiterContexts.at(-1) === "for" &&
+      javaScriptTokenMayEndForOfLeftOperand(text, previousSignificantToken);
   }
-  const forOfSeparator = completeIdentifier && word === "of" &&
-    forOfSeparatorCandidate;
-  const lineTerminatedStatement = completeIdentifier &&
-    JAVASCRIPT_LINE_TERMINATED_STATEMENT_KEYWORDS.has(word);
-  const contextualToken: {
-    end: number;
-    kind: JavaScriptSignificantTokenKind;
-    followsForKeyword?: true;
-    forOfSeparator?: true;
-    forOfSeparatorCandidate?: true;
-    lineTerminatedStatement?: true;
-  } = { end, kind };
-  if (followsForKeyword) contextualToken.followsForKeyword = true;
-  if (forOfSeparator) contextualToken.forOfSeparator = true;
-  if (forOfSeparatorCandidate && !completeIdentifier) {
-    contextualToken.forOfSeparatorCandidate = true;
-  }
-  if (lineTerminatedStatement) {
-    contextualToken.lineTerminatedStatement = true;
-  }
-  return contextualToken;
+
+  return {
+    end,
+    kind,
+    ...(followsForOfLeftOperand ? { followsForOfLeftOperand: true } : {}),
+    ...(precedingIdentifierKeyword === undefined
+      ? {}
+      : { precedingIdentifierKeyword }),
+  };
 }
 
 function significantJavaScriptToken(
@@ -863,25 +851,28 @@ function significantJavaScriptToken(
   start: number,
   token: JavaScriptScannedToken,
   previousSignificantToken: JavaScriptSignificantToken | undefined,
-  controlParentheses: JavaScriptControlParenthesis[],
+  delimiterContexts: JavaScriptDelimiterContext[],
 ): JavaScriptSignificantToken {
-  const kind = token.kind === "other"
-    ? javaScriptParenthesisTokenKind(
+  let kind: JavaScriptSignificantTokenKind;
+  if (token.kind === "other") {
+    kind = javaScriptDelimiterTokenKind(
       text,
       text[start]!,
       previousSignificantToken,
-      controlParentheses,
-    )
-    : token.kind === "literal" || token.kind === "trivia"
-    ? "other"
-    : token.kind;
+      delimiterContexts,
+    );
+  } else if (token.kind === "literal" || token.kind === "trivia") {
+    kind = "other";
+  } else {
+    kind = token.kind;
+  }
   return javaScriptTokenWithIdentifierContext(
     text,
     start,
     token.end,
     kind,
     previousSignificantToken,
-    controlParentheses.at(-1) === "for",
+    delimiterContexts,
   );
 }
 
@@ -926,16 +917,23 @@ function javaScriptTemplateInterpolationEnd(
 ): number | undefined {
   let depth = 1;
   let cursor = start + 2;
-  const controlParentheses: JavaScriptControlParenthesis[] = [];
+  const delimiterContexts: JavaScriptDelimiterContext[] = [];
   let previousSignificantToken: JavaScriptSignificantToken | undefined;
   while (cursor < text.length) {
     const token = javaScriptTokenAt(
       text,
       cursor,
       previousSignificantToken,
+      delimiterContexts,
     );
     if (token === undefined) return undefined;
     if (token.kind === "trivia") {
+      previousSignificantToken = javaScriptPreviousSignificantTokenAfterTrivia(
+        text,
+        cursor,
+        token.end,
+        previousSignificantToken,
+      );
       cursor = token.end;
       continue;
     }
@@ -944,7 +942,7 @@ function javaScriptTemplateInterpolationEnd(
       cursor,
       token,
       previousSignificantToken,
-      controlParentheses,
+      delimiterContexts,
     );
     if (token.kind !== "other") {
       cursor = token.end;
@@ -1028,17 +1026,24 @@ function mdxExpressionAt(
   const strings: Range[] = [];
   let depth = 1;
   let cursor = start + 1;
-  const controlParentheses: JavaScriptControlParenthesis[] = [];
+  const delimiterContexts: JavaScriptDelimiterContext[] = [];
   let previousSignificantToken: JavaScriptSignificantToken | undefined;
   while (cursor < text.length) {
     const token = javaScriptTokenAt(
       text,
       cursor,
       previousSignificantToken,
+      delimiterContexts,
     );
     if (token === undefined) return undefined;
     if (token.string !== undefined) strings.push(token.string);
     if (token.kind === "trivia") {
+      previousSignificantToken = javaScriptPreviousSignificantTokenAfterTrivia(
+        text,
+        cursor,
+        token.end,
+        previousSignificantToken,
+      );
       cursor = token.end;
       continue;
     }
@@ -1047,7 +1052,7 @@ function mdxExpressionAt(
       cursor,
       token,
       previousSignificantToken,
-      controlParentheses,
+      delimiterContexts,
     );
     if (token.kind !== "other") {
       cursor = token.end;
@@ -1139,7 +1144,7 @@ function mdxEsmMayStart(text: string, lineStart: number): boolean {
 
 interface JavaScriptBalance {
   readonly delimiters: string[];
-  readonly controlParentheses: JavaScriptControlParenthesis[];
+  readonly delimiterContexts: JavaScriptDelimiterContext[];
   quote: JavaScriptQuote | undefined;
   blockComment: boolean;
   templateEnd: number;
@@ -1194,25 +1199,46 @@ const JAVASCRIPT_CONTROL_HEADER_KEYWORDS: ReadonlySet<string> = new Set([
   "with",
 ]);
 
-const JAVASCRIPT_LINE_TERMINATED_STATEMENT_KEYWORDS: ReadonlySet<string> =
-  new Set([
-    "break",
-    "continue",
-    "debugger",
-  ]);
-
-const JAVASCRIPT_FOR_DECLARATION_KEYWORDS: ReadonlySet<string> = new Set([
-  "const",
-  "let",
-  "using",
-  "var",
-]);
-
-const JAVASCRIPT_IDENTIFIER_CONTINUE = /[$\u200C\u200D\p{ID_Continue}]/u;
+const JAVASCRIPT_IDENTIFIER_CONTINUE = /[$_\u200C\u200D\p{ID_Continue}]/u;
 const JAVASCRIPT_IDENTIFIER_ESCAPE =
   /\\u(?:([0-9A-Fa-f]{4})|\{([0-9A-Fa-f]{1,6})\})$/;
-const JAVASCRIPT_IDENTIFIER_ESCAPE_AT =
+const JAVASCRIPT_IDENTIFIER_ESCAPE_PREFIX =
   /^\\u(?:([0-9A-Fa-f]{4})|\{([0-9A-Fa-f]{1,6})\})/;
+
+function javaScriptIdentifierEscapeRangeAt(
+  text: string,
+  offset: number,
+): Range | undefined {
+  let start = offset;
+  const earliest = Math.max(0, offset - 9);
+  while (start >= earliest && text[start] !== "\\") start--;
+  if (start < earliest) return undefined;
+  const match = JAVASCRIPT_IDENTIFIER_ESCAPE_PREFIX.exec(text.slice(start));
+  if (match === null) return undefined;
+  const end = start + match[0].length;
+  if (offset >= end) return undefined;
+  const codePoint = Number.parseInt(match[1] ?? match[2] ?? "", 16);
+  if (
+    codePoint > 0x10ffff ||
+    !JAVASCRIPT_IDENTIFIER_CONTINUE.test(String.fromCodePoint(codePoint))
+  ) return undefined;
+  return { start, end };
+}
+
+function javaScriptIdentifierCodeUnitAt(
+  text: string,
+  offset: number,
+): boolean {
+  const codePoint = text.codePointAt(offset);
+  if (
+    codePoint !== undefined &&
+    JAVASCRIPT_IDENTIFIER_CONTINUE.test(String.fromCodePoint(codePoint))
+  ) return true;
+  const codeUnit = text.charCodeAt(offset);
+  return (codeUnit >= 0xdc00 && codeUnit <= 0xdfff &&
+    javaScriptIdentifierContinueBefore(text, offset + 1)) ||
+    javaScriptIdentifierEscapeRangeAt(text, offset) !== undefined;
+}
 
 function javaScriptCodePointBefore(
   text: string,
@@ -1246,27 +1272,6 @@ function javaScriptIdentifierContinueBefore(
     JAVASCRIPT_IDENTIFIER_CONTINUE.test(codePoint);
 }
 
-function javaScriptIdentifierContinueAt(
-  text: string,
-  start: number,
-): boolean {
-  const escapeMatch = JAVASCRIPT_IDENTIFIER_ESCAPE_AT.exec(
-    text.slice(start, start + 10),
-  );
-  if (escapeMatch !== null) {
-    const codePoint = Number.parseInt(
-      escapeMatch[1] ?? escapeMatch[2] ?? "",
-      16,
-    );
-    return codePoint <= 0x10ffff &&
-      JAVASCRIPT_IDENTIFIER_CONTINUE.test(String.fromCodePoint(codePoint));
-  }
-
-  const codePoint = text.codePointAt(start);
-  return codePoint !== undefined &&
-    JAVASCRIPT_IDENTIFIER_CONTINUE.test(String.fromCodePoint(codePoint));
-}
-
 function javaScriptIdentifierWordAtEnd(
   text: string,
   end: number,
@@ -1284,47 +1289,85 @@ function javaScriptIdentifierWordAtEnd(
   return text.slice(start, end);
 }
 
-function javaScriptParenthesisTokenKind(
+function javaScriptLineTerminatesRestrictedStatement(
+  text: string,
+  token: JavaScriptSignificantToken | undefined,
+): boolean {
+  if (token === undefined) return false;
+  const finalWord = javaScriptIdentifierWordAtEnd(text, token.end);
+  if (
+    finalWord === "break" || finalWord === "continue" ||
+    finalWord === "debugger"
+  ) return true;
+  return token.precedingIdentifierKeyword === "break" ||
+    token.precedingIdentifierKeyword === "continue";
+}
+
+function javaScriptPreviousSignificantTokenAfterTrivia(
+  text: string,
+  start: number,
+  end: number,
+  token: JavaScriptSignificantToken | undefined,
+): JavaScriptSignificantToken | undefined {
+  if (
+    /[\n\r\u2028\u2029]/.test(text.slice(start, end)) &&
+    javaScriptLineTerminatesRestrictedStatement(text, token)
+  ) return undefined;
+  return token;
+}
+
+function javaScriptTokenMayEndForOfLeftOperand(
+  text: string,
+  token: JavaScriptSignificantToken,
+): boolean {
+  const word = javaScriptIdentifierWordAtEnd(text, token.end);
+  if (word !== undefined) {
+    return !JAVASCRIPT_REGEX_PREFIX_KEYWORDS.has(word) &&
+      !JAVASCRIPT_CONTROL_HEADER_KEYWORDS.has(word) &&
+      word !== "break" && word !== "continue" && word !== "debugger" &&
+      word !== "const" && word !== "let" && word !== "var";
+  }
+  return ")]}".includes(text[token.end - 1]!);
+}
+
+function javaScriptDelimiterTokenKind(
   text: string,
   character: string,
   previousSignificantToken: JavaScriptSignificantToken | undefined,
-  controlParentheses: JavaScriptControlParenthesis[],
+  delimiterContexts: JavaScriptDelimiterContext[],
 ): JavaScriptSignificantTokenKind {
   if (character === "(") {
     const keyword = previousSignificantToken === undefined
       ? undefined
       : javaScriptIdentifierWordAtEnd(text, previousSignificantToken.end);
+    let context: JavaScriptDelimiterContext;
     if (
       keyword === "for" ||
       (keyword === "await" &&
-        previousSignificantToken?.followsForKeyword === true)
-    ) controlParentheses.push("for");
-    else if (
-      keyword !== undefined &&
-      JAVASCRIPT_CONTROL_HEADER_KEYWORDS.has(keyword)
-    ) controlParentheses.push("statement");
-    else controlParentheses.push("other");
-  } else if (character === ")") {
-    const context = controlParentheses.pop();
-    if (context === "for" || context === "statement") {
-      return "control-header";
+        previousSignificantToken?.precedingIdentifierKeyword === "for")
+    ) {
+      context = "for";
+    } else if (
+      keyword !== undefined && JAVASCRIPT_CONTROL_HEADER_KEYWORDS.has(keyword)
+    ) {
+      context = "control";
     }
+    delimiterContexts.push(context);
+  } else if (character === "[" || character === "{") {
+    delimiterContexts.push("nested");
+  } else if (character === ")" || character === "]" || character === "}") {
+    const context = delimiterContexts.pop();
+    if (context === "control" || context === "for") return "control-header";
   }
   return "other";
 }
 
 function javaScriptRegexMayStart(
   text: string,
-  start: number,
   previousSignificantToken: JavaScriptSignificantToken | undefined,
+  delimiterContexts: readonly JavaScriptDelimiterContext[] = [],
 ): boolean {
   if (previousSignificantToken === undefined) return true;
-  if (
-    previousSignificantToken.lineTerminatedStatement === true &&
-    /[\n\r\u2028\u2029]/.test(
-      text.slice(previousSignificantToken.end, start),
-    )
-  ) return true;
   if (
     previousSignificantToken.kind === "control-header" ||
     previousSignificantToken.kind === "prefix-update"
@@ -1339,15 +1382,18 @@ function javaScriptRegexMayStart(
   if ("=(:,![{;?&|+*%/^~<>-".includes(text[end - 1]!)) return true;
 
   const keyword = javaScriptIdentifierWordAtEnd(text, end);
-  return keyword !== undefined &&
-    (JAVASCRIPT_REGEX_PREFIX_KEYWORDS.has(keyword) ||
-      (keyword === "of" && previousSignificantToken.forOfSeparator === true));
+  if (
+    keyword === "of" && delimiterContexts.at(-1) === "for" &&
+    previousSignificantToken.followsForOfLeftOperand === true
+  ) return true;
+  return keyword !== undefined && JAVASCRIPT_REGEX_PREFIX_KEYWORDS.has(keyword);
 }
 
 function javaScriptUpdateKind(
   text: string,
   start: number,
   previousSignificantToken: JavaScriptSignificantToken | undefined,
+  delimiterContexts: readonly JavaScriptDelimiterContext[] = [],
 ): "postfix-update" | "prefix-update" | undefined {
   const operator = text[start];
   if ((operator !== "+" && operator !== "-") || text[start + 1] !== operator) {
@@ -1358,7 +1404,11 @@ function javaScriptUpdateKind(
     /[\n\r\u2028\u2029]/.test(
       text.slice(previousSignificantToken.end, start),
     ) ||
-    javaScriptRegexMayStart(text, start, previousSignificantToken)
+    javaScriptRegexMayStart(
+      text,
+      previousSignificantToken,
+      delimiterContexts,
+    )
   ) return "prefix-update";
   return "postfix-update";
 }
@@ -1367,6 +1417,7 @@ function javaScriptTokenAt(
   text: string,
   start: number,
   previousSignificantToken: JavaScriptSignificantToken | undefined,
+  delimiterContexts: readonly JavaScriptDelimiterContext[] = [],
 ): JavaScriptScannedToken | undefined {
   const commentEnd = javaScriptCommentEnd(text, start);
   if (commentEnd !== undefined) {
@@ -1385,7 +1436,11 @@ function javaScriptTokenAt(
 
   if (
     character === "/" &&
-    javaScriptRegexMayStart(text, start, previousSignificantToken)
+    javaScriptRegexMayStart(
+      text,
+      previousSignificantToken,
+      delimiterContexts,
+    )
   ) {
     const end = javaScriptRegexEnd(text, start);
     if (end !== undefined) return { end, kind: "regex" };
@@ -1395,6 +1450,7 @@ function javaScriptTokenAt(
     text,
     start,
     previousSignificantToken,
+    delimiterContexts,
   );
   if (updateKind !== undefined) return { end: start + 2, kind: updateKind };
 
@@ -1465,6 +1521,7 @@ function javaScriptLineTokenEnd(
     text,
     start,
     state.previousSignificantToken,
+    state.delimiterContexts,
   );
   if (updateKind !== undefined) {
     const end = start + 2;
@@ -1473,7 +1530,11 @@ function javaScriptLineTokenEnd(
   }
   if (
     character !== "/" ||
-    !javaScriptRegexMayStart(text, start, state.previousSignificantToken)
+    !javaScriptRegexMayStart(
+      text,
+      state.previousSignificantToken,
+      state.delimiterContexts,
+    )
   ) return undefined;
 
   const end = javaScriptRegexEnd(text, start);
@@ -1496,11 +1557,11 @@ function recordJavaScriptDelimiter(
 ): JavaScriptSignificantTokenKind {
   if (character === "(" || character === "[" || character === "{") {
     state.delimiters.push(character);
-    return javaScriptParenthesisTokenKind(
+    return javaScriptDelimiterTokenKind(
       text,
       character,
       previousSignificantToken,
-      state.controlParentheses,
+      state.delimiterContexts,
     );
   }
   const opener = JAVASCRIPT_DELIMITER_CLOSERS[character];
@@ -1510,11 +1571,11 @@ function recordJavaScriptDelimiter(
     return "other";
   }
   state.delimiters.pop();
-  return javaScriptParenthesisTokenKind(
+  return javaScriptDelimiterTokenKind(
     text,
     character,
     previousSignificantToken,
-    state.controlParentheses,
+    state.delimiterContexts,
   );
 }
 
@@ -1555,18 +1616,24 @@ function scanJavaScriptLine(
         cursor + 1,
         kind,
         state.previousSignificantToken,
-        state.controlParentheses.at(-1) === "for",
+        state.delimiterContexts,
       );
       if (!state.valid) return;
     }
     cursor++;
   }
+  if (
+    javaScriptLineTerminatesRestrictedStatement(
+      text,
+      state.previousSignificantToken,
+    )
+  ) state.previousSignificantToken = undefined;
 }
 
 function mdxEsmRangeEnd(text: string, start: number): number | undefined {
   const state: JavaScriptBalance = {
     delimiters: [],
-    controlParentheses: [],
+    delimiterContexts: [],
     quote: undefined,
     blockComment: false,
     templateEnd: start,
@@ -1801,7 +1868,7 @@ function scanTagSyntax(
   let quote: JavaScriptQuote | undefined;
   let quoteUsesJavaScriptEscapes = false;
   let expressionDepth = 0;
-  const controlParentheses: JavaScriptControlParenthesis[] = [];
+  const delimiterContexts: JavaScriptDelimiterContext[] = [];
   let previousSignificantToken: JavaScriptSignificantToken | undefined;
   let cursor = start;
   while (cursor < text.length) {
@@ -1824,11 +1891,22 @@ function scanTagSyntax(
       ? javaScriptCommentEnd(text, cursor)
       : undefined;
     if (commentEnd !== undefined) {
+      previousSignificantToken = javaScriptPreviousSignificantTokenAfterTrivia(
+        text,
+        cursor,
+        commentEnd,
+        previousSignificantToken,
+      );
       cursor = commentEnd;
       continue;
     }
     const updateKind = expressionDepth > 0
-      ? javaScriptUpdateKind(text, cursor, previousSignificantToken)
+      ? javaScriptUpdateKind(
+        text,
+        cursor,
+        previousSignificantToken,
+        delimiterContexts,
+      )
       : undefined;
     if (updateKind !== undefined) {
       cursor += 2;
@@ -1837,7 +1915,11 @@ function scanTagSyntax(
     }
     if (
       expressionDepth > 0 && character === "/" &&
-      javaScriptRegexMayStart(text, cursor, previousSignificantToken)
+      javaScriptRegexMayStart(
+        text,
+        previousSignificantToken,
+        delimiterContexts,
+      )
     ) {
       const regexEnd = javaScriptRegexEnd(text, cursor);
       if (regexEnd !== undefined) {
@@ -1861,15 +1943,21 @@ function scanTagSyntax(
       }
     }
     if (expressionDepth > 0 && /\s/.test(character)) {
+      previousSignificantToken = javaScriptPreviousSignificantTokenAfterTrivia(
+        text,
+        cursor,
+        cursor + 1,
+        previousSignificantToken,
+      );
       cursor++;
       continue;
     }
     if (expressionDepth > 0) {
-      const kind = javaScriptParenthesisTokenKind(
+      const kind = javaScriptDelimiterTokenKind(
         text,
         character,
         previousSignificantToken,
-        controlParentheses,
+        delimiterContexts,
       );
       previousSignificantToken = javaScriptTokenWithIdentifierContext(
         text,
@@ -1877,7 +1965,7 @@ function scanTagSyntax(
         cursor + 1,
         kind,
         previousSignificantToken,
-        controlParentheses.at(-1) === "for",
+        delimiterContexts,
       );
     } else if (character === "{") {
       previousSignificantToken = { end: cursor + 1, kind: "other" };
