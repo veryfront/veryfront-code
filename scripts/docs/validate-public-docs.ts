@@ -791,7 +791,9 @@ type JavaScriptPrecedingIdentifierKeyword =
   | "break"
   | "continue"
   | "export"
-  | "for";
+  | "for"
+  | "let"
+  | "var";
 type JavaScriptDelimiterContext =
   | "block"
   | "control"
@@ -867,7 +869,7 @@ function javaScriptTokenWithIdentifierContext(
   );
   const declarationCandidate = continuesIdentifierWord
     ? previousSignificantToken?.declarationCandidate === true
-    : javaScriptMayStartDeclaration(
+    : javaScriptMayStartStatement(
       text,
       previousSignificantToken,
       delimiterContexts,
@@ -905,7 +907,8 @@ function javaScriptTokenWithIdentifierContext(
     const previousWord = previousSignificantToken.identifierKeyword;
     if (
       previousWord === "break" || previousWord === "continue" ||
-      previousWord === "export" || previousWord === "for"
+      previousWord === "export" || previousWord === "for" ||
+      previousWord === "let" || previousWord === "var"
     ) precedingIdentifierKeyword = previousWord;
     followsForOfLeftOperand = delimiterContexts.at(-1) === "for" &&
       javaScriptTokenMayEndForOfLeftOperand(text, previousSignificantToken);
@@ -1012,7 +1015,7 @@ function javaScriptTemplateInterpolationEnd(
         previousSignificantToken,
         delimiterContexts,
       )
-      ? javaScriptJsxTagEnd(text, cursor)
+      ? javaScriptJsxElementEnd(text, cursor)
       : undefined;
     if (jsxTagEnd !== undefined) {
       previousSignificantToken = { end: jsxTagEnd, kind: "other" };
@@ -1133,7 +1136,7 @@ function mdxExpressionAt(
         previousSignificantToken,
         delimiterContexts,
       )
-      ? javaScriptJsxTagEnd(text, cursor)
+      ? javaScriptJsxElementEnd(text, cursor)
       : undefined;
     if (jsxTagEnd !== undefined) {
       previousSignificantToken = { end: jsxTagEnd, kind: "other" };
@@ -1469,7 +1472,7 @@ function javaScriptIdentifierContinueBefore(
     JAVASCRIPT_IDENTIFIER_CONTINUE.test(codePoint);
 }
 
-function javaScriptMayStartDeclaration(
+function javaScriptMayStartStatement(
   text: string,
   token: JavaScriptSignificantToken | undefined,
   delimiterContexts: readonly JavaScriptDelimiterContext[],
@@ -1499,7 +1502,9 @@ function javaScriptLineTerminatesRestrictedStatement(
     finalWord === "debugger"
   ) return true;
   return token.precedingIdentifierKeyword === "break" ||
-    token.precedingIdentifierKeyword === "continue";
+    token.precedingIdentifierKeyword === "continue" ||
+    token.precedingIdentifierKeyword === "let" ||
+    token.precedingIdentifierKeyword === "var";
 }
 
 function javaScriptPreviousSignificantTokenAfterTrivia(
@@ -1578,7 +1583,12 @@ function javaScriptDelimiterTokenKind(
       previousSignificantToken?.kind === "control-header" ||
       previousSignificantToken?.kind === "declaration-header" ||
       (keyword !== undefined &&
-        JAVASCRIPT_BLOCK_PREFIX_KEYWORDS.has(keyword));
+        JAVASCRIPT_BLOCK_PREFIX_KEYWORDS.has(keyword)) ||
+      javaScriptMayStartStatement(
+        text,
+        previousSignificantToken,
+        delimiterContexts,
+      );
     delimiterContexts.push(statementBlock ? "block" : "nested");
   } else if (character === ")" || character === "]" || character === "}") {
     const context = delimiterContexts.pop();
@@ -2088,18 +2098,83 @@ interface TagSyntaxScan {
   readonly topLevelOffsets: ReadonlySet<number>;
 }
 
-function javaScriptJsxTagEnd(
+interface JavaScriptJsxTag {
+  readonly closing: boolean;
+  readonly end: number;
+  readonly name: string;
+  readonly selfClosing: boolean;
+}
+
+function javaScriptJsxTagAt(
+  text: string,
+  start: number,
+): JavaScriptJsxTag | undefined {
+  if (text.startsWith("<>", start)) {
+    return { closing: false, end: start + 2, name: "", selfClosing: false };
+  }
+  if (text.startsWith("</>", start)) {
+    return { closing: true, end: start + 3, name: "", selfClosing: false };
+  }
+
+  const closing = text.startsWith("</", start);
+  const nameStart = start + (closing ? 2 : 1);
+  const nameEnd = mdxJsxNameEnd(text, nameStart);
+  if (nameEnd === undefined) return undefined;
+  const name = text.slice(nameStart, nameEnd);
+  if (!closing) {
+    const end = mdxJsxTagEnd(text, start);
+    if (end === undefined) return undefined;
+    return {
+      closing: false,
+      end,
+      name,
+      selfClosing: text[end - 2] === "/",
+    };
+  }
+  const end = skipJavaScriptTrivia(text, nameEnd);
+  return text[end] === ">"
+    ? { closing: true, end: end + 1, name, selfClosing: false }
+    : undefined;
+}
+
+function javaScriptJsxElementEnd(
   text: string,
   start: number,
 ): number | undefined {
-  if (text.startsWith("<>", start)) return start + 2;
-  if (text.startsWith("</>", start)) return start + 3;
-  if (!text.startsWith("</", start)) return mdxJsxTagEnd(text, start);
+  const opening = javaScriptJsxTagAt(text, start);
+  if (opening === undefined) return undefined;
+  if (opening.closing || opening.selfClosing) return opening.end;
 
-  const nameEnd = mdxJsxNameEnd(text, start + 2);
-  if (nameEnd === undefined) return undefined;
-  const end = skipJavaScriptTrivia(text, nameEnd);
-  return text[end] === ">" ? end + 1 : undefined;
+  const elementNames = [opening.name];
+  let cursor = opening.end;
+  while (cursor < text.length) {
+    if (text[cursor] === "{") {
+      const expression = mdxExpressionAt(text, cursor);
+      if (expression !== undefined) {
+        cursor = expression.expression.end;
+        continue;
+      }
+    }
+    if (text[cursor] !== "<") {
+      cursor++;
+      continue;
+    }
+
+    const tag = javaScriptJsxTagAt(text, cursor);
+    if (tag === undefined) {
+      cursor++;
+      continue;
+    }
+    if (tag.closing) {
+      if (elementNames.at(-1) !== tag.name) return undefined;
+      elementNames.pop();
+      if (elementNames.length === 0) return tag.end;
+    } else if (!tag.selfClosing) {
+      elementNames.push(tag.name);
+    }
+    cursor = tag.end;
+  }
+  return undefined;
 }
 
 function scanTagSyntax(
@@ -2148,7 +2223,7 @@ function scanTagSyntax(
           previousSignificantToken,
           delimiterContexts,
         )
-      ? javaScriptJsxTagEnd(text, cursor)
+      ? javaScriptJsxElementEnd(text, cursor)
       : undefined;
     if (jsxTagEnd !== undefined) {
       previousSignificantToken = { end: jsxTagEnd, kind: "other" };

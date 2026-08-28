@@ -511,6 +511,7 @@ describe("public docs validation", () => {
           '<a data-ok={(() => { class Sample {} /[}>]/.test(value) })()} href="../architecture/class-block-regex.md">ok</a>\n' +
           '<a data-ok={(() => { if (x) {} else /[}>]/.test(x); do /[}>]/.test(x); while (false); })()} href="../architecture/statement-regex.md">ok</a>\n' +
           '<a data-ok={(() => { try {} catch {} /[}>]/.test(value) })()} href="../architecture/catch-block-regex.md">ok</a>\n' +
+          '<a data-ok={(() => { {}\n/[}>]/.test(value) })()} href="../architecture/standalone-block-regex.md">ok</a>\n' +
           '<a data-ok={(() => { for (const x of /[}>]/.source) {} return true })()} href="../architecture/for-of-regex.md">ok</a>\n' +
           '<a data-ok={(() => { for (using of /[}>]/.source) {} return true })()} href="../architecture/for-using-of-regex.md">ok</a>\n' +
           '<a data-ok={(async () => { for await (const x of /[}>]/.source) {} return true })()} href="../architecture/for-await-of-regex.md">ok</a>\n' +
@@ -530,6 +531,8 @@ describe("public docs validation", () => {
           '<a data-ok={function () {} / ({ marker: ">/" }).length} href="../architecture/function-expression-division.md">ok</a>\n' +
           '<a data-ok={class Sample {} / ({ marker: ">/" }).length} href="../architecture/class-expression-division.md">ok</a>\n' +
           '<a data-ok={<Foo></Foo>} href="../architecture/paired-jsx.md">ok</a>\n' +
+          '<a data-ok={<Foo>child</Foo>} href="../architecture/paired-jsx-text.md">ok</a>\n' +
+          '<a data-ok={(() => { let value\n/[}>]/.test(input); var other\n/[}>]/.test(input) })()} href="../architecture/declaration-asi-regex.md">ok</a>\n' +
           '<a data-ok={(() => { breakfast\n/ ({ marker: ">/" }).length; continueValue\n/ ({ marker: ">/" }).length; debuggerValue\n/ ({ marker: ">/" }).length; return true })()} href="../architecture/asi-prefix-division.md">ok</a>\n' +
           '<a data-ok={(() => { while (value) { break\n/[}>]/.test(value) } while (value) { continue\n/[}>]/.test(value) } debugger\n/[}>]/.test(value); return true })()} href="../architecture/asi-regex.md">ok</a>\n' +
           '<a data-ok={(async () => await (x) / ({ marker: "}>/" }).length)()} href="../architecture/await-group-division.md">ok</a>\n' +
@@ -574,6 +577,7 @@ describe("public docs validation", () => {
         "../architecture/class-block-regex.md",
         "../architecture/statement-regex.md",
         "../architecture/catch-block-regex.md",
+        "../architecture/standalone-block-regex.md",
         "../architecture/for-of-regex.md",
         "../architecture/for-using-of-regex.md",
         "../architecture/for-await-of-regex.md",
@@ -589,6 +593,8 @@ describe("public docs validation", () => {
         "../architecture/function-expression-division.md",
         "../architecture/class-expression-division.md",
         "../architecture/paired-jsx.md",
+        "../architecture/paired-jsx-text.md",
+        "../architecture/declaration-asi-regex.md",
         "../architecture/asi-prefix-division.md",
         "../architecture/asi-regex.md",
         "../architecture/await-group-division.md",
