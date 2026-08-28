@@ -749,6 +749,23 @@ describe("MemoryBackend", () => {
       assertEquals((await backend.getRun(runId))?.status, "waiting");
     });
 
+    it("rejects BigInt status-array lengths asynchronously", async () => {
+      const runId = "run-context-conditional-status-bigint-length";
+      await backend.createRun(createTestRun(runId, { status: "running" }));
+      const expectedStatuses = new Proxy<WorkflowRun["status"][]>(["running"], {
+        get(target, key, receiver) {
+          if (key === "length") return 1n;
+          return Reflect.get(target, key, receiver);
+        },
+      });
+
+      await assertRejectsAsynchronously(
+        () => backend.updateRunIfStatus(runId, expectedStatuses, { status: "failed" }),
+        "BigInt",
+      );
+      assertEquals((await backend.getRun(runId))?.status, "running");
+    });
+
     it("checks run existence before reading conditional status elements", async () => {
       function reentrantStatuses(runId: string): {
         statuses: WorkflowRun["status"][];

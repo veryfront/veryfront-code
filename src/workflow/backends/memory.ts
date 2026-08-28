@@ -61,9 +61,6 @@ const objectKeys = Object.keys;
 const objectPrototype = Object.prototype;
 const jsonParse = JSON.parse;
 const mathFloor = Math.floor;
-const mathMin = Math.min;
-const NumberConstructor = Number;
-const numberIsNaN = Number.isNaN;
 const NUMBER_MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
 const reflectApply = Reflect.apply;
 const SetConstructor = Set;
@@ -88,7 +85,7 @@ interface MemoryRunUpdateCondition {
 const memoryRunUpdateConditionId = "__veryfrontMemoryRunUpdateConditionId";
 
 type ConditionalWorkflowRunUpdate = WorkflowRunUpdate & {
-  [memoryRunUpdateConditionId]?: number;
+  [memoryRunUpdateConditionId]?: string;
 };
 
 interface MaterializedMemoryRunUpdate {
@@ -109,11 +106,11 @@ interface PreparedMemoryRunCondition {
 const DEFAULT_MAX_QUEUE_SIZE = 10_000;
 const RUN_OBSERVATION_QUEUE_SIZE = 64;
 
-function toArrayLength(value: unknown): number {
-  const numericLength = NumberConstructor(value);
-  if (numberIsNaN(numericLength) || numericLength <= 0) return 0;
-  if (numericLength === Infinity) return NUMBER_MAX_SAFE_INTEGER;
-  return mathMin(mathFloor(numericLength), NUMBER_MAX_SAFE_INTEGER);
+function toArrayLength(value: number): number {
+  const numericLength = +value;
+  if (!(numericLength > 0)) return 0;
+  if (numericLength >= NUMBER_MAX_SAFE_INTEGER) return NUMBER_MAX_SAFE_INTEGER;
+  return mathFloor(numericLength);
 }
 
 function snapshotExpectedRunStatuses(
@@ -403,8 +400,7 @@ export class MemoryBackend implements WorkflowBackend {
   private stalledClaims = new Map<string, { workerId: string; expiresAt: number }>();
   private runRevisions = new Map<string, number>();
   private runObservers = new Map<string, Set<MemoryRunObserver>>();
-  private runUpdateConditions = new Map<number, MemoryRunUpdateCondition>();
-  private nextRunUpdateConditionId = 0;
+  private runUpdateConditions = new Map<string, MemoryRunUpdateCondition>();
   private config: MemoryBackendConfig;
 
   constructor(config: MemoryBackendConfig = {}) {
@@ -588,47 +584,32 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve();
   }
 
-  private updateRunConditionally(
+  private async updateRunConditionally(
     runId: string,
     patch: WorkflowRunUpdate,
     expectedStatuses: WorkflowRun["status"][],
     expectedWorkerId?: string,
   ): Promise<boolean> {
-    let prepared: PreparedMemoryRunCondition;
-    try {
-      prepared = this.prepareRunCondition(runId, expectedStatuses, expectedWorkerId);
-    } catch (error) {
-      return Promise.reject(error);
-    }
-    if (prepared.run === null) return Promise.resolve(false);
+    const prepared = this.prepareRunCondition(runId, expectedStatuses, expectedWorkerId);
+    if (prepared.run === null) return false;
 
     const condition: MemoryRunUpdateCondition = {
       matches: prepared.matches,
       runId,
       updated: false,
     };
-    const conditionId = this.nextRunUpdateConditionId++;
-    let conditionalPatch: ConditionalWorkflowRunUpdate;
-    try {
-      conditionalPatch = {
-        ...patch,
-        [memoryRunUpdateConditionId]: conditionId,
-      };
-    } catch (error) {
-      return Promise.reject(error);
-    }
+    const conditionId = crypto.randomUUID();
+    const conditionalPatch: ConditionalWorkflowRunUpdate = {
+      ...patch,
+      [memoryRunUpdateConditionId]: conditionId,
+    };
     this.runUpdateConditions.set(conditionId, condition);
-    const update = Promise.resolve().then(() => this.updateRun(runId, conditionalPatch));
-    return update.then(
-      () => {
-        this.runUpdateConditions.delete(conditionId);
-        return condition.updated;
-      },
-      (error) => {
-        this.runUpdateConditions.delete(conditionId);
-        throw error;
-      },
-    );
+    try {
+      await this.updateRun(runId, conditionalPatch);
+      return condition.updated;
+    } finally {
+      this.runUpdateConditions.delete(conditionId);
+    }
   }
 
   updateRunIfStatus(
