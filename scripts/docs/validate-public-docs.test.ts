@@ -37,7 +37,7 @@ describe("public docs validation", () => {
         "[use][nested [label]]\n\n" +
           "[nested [label]]: ../architecture/nested.md",
       ),
-      ["../architecture/nested.md"],
+      [],
     );
     assertEquals(
       destinations(
@@ -198,11 +198,12 @@ describe("public docs validation", () => {
           `git clone git@github.com:${BLOCKED_REPOSITORY}.git\n` +
           `git clone ssh://git@github.com/${BLOCKED_REPOSITORY}.git\n` +
           "[encoded](https://github.com/example-org/private&#x2d;examples)\n" +
+          `https://%67ithub.com/${BLOCKED_REPOSITORY}\n` +
           String
             .raw`[escaped](https://github.com/example-org/private\-examples)`,
         BLOCKED_REPOSITORY,
       ).length,
-      6,
+      7,
     );
   });
 
@@ -231,6 +232,24 @@ describe("public docs validation", () => {
         "[old]\nIntro paragraph.\n[old]: ../architecture/not-a-definition.md",
       ),
       [],
+    );
+    assertEquals(
+      destinations(
+        "[old]\n\n- Intro\n  [old]: ../architecture/list-paragraph.md",
+      ),
+      [],
+    );
+    assertEquals(
+      destinations(
+        "[old]\n\n[old]: ../architecture/pri)vate.md",
+      ),
+      [],
+    );
+    assertEquals(
+      destinations(
+        "[old]\n\n[old]: ../architecture/pri(vate).md",
+      ),
+      ["../architecture/pri(vate).md"],
     );
   });
 
@@ -518,6 +537,19 @@ describe("public docs validation", () => {
     );
     assertEquals(
       destinations(
+        "[old]: <https://veryfront.com/docs/code/architecture/private>",
+      ),
+      [],
+    );
+    assertEquals(
+      destinations(
+        "[old]\n\n" +
+          "[old]: <https://veryfront.com/docs/code/architecture/private>",
+      ),
+      ["https://veryfront.com/docs/code/architecture/private"],
+    );
+    assertEquals(
+      destinations(
         "[nested [old]](./public.md)\n\n" +
           "[old]: ../architecture/private.md",
       ),
@@ -647,6 +679,14 @@ describe("public docs validation", () => {
       ),
       ["../architecture/root-indented-fence.md"],
     );
+    assertEquals(
+      destinations(
+        "```md\n" +
+          "- ```\n" +
+          "[still code](../architecture/still-code.md)",
+      ),
+      [],
+    );
   });
 
   it("scans rendered paragraphs indented inside list items", () => {
@@ -733,6 +773,14 @@ describe("public docs validation", () => {
         "../architecture/multiline.md",
       ],
     );
+    assertEquals(
+      destinations(
+        '{true /* } */ ? "[plain](../architecture/comment.md)" : ""}\n' +
+          '{true // }\n ? "[line](../architecture/line-comment.md)" : ""}\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
   });
 
   it("keeps multiline MDX expressions from opening false comments", () => {
@@ -751,10 +799,11 @@ describe("public docs validation", () => {
       "docs/guides/example.md",
       "<https://veryfront.com/docs/code/architecture/private>\n" +
         "https://veryfront.com/docs/code/architecture/bare\n" +
-        String.raw`\https://veryfront.com/docs/code/architecture/backslash`,
+        String.raw`\https://veryfront.com/docs/code/architecture/backslash` +
+        "\n_https://veryfront.com/docs/code/architecture/underscore_",
     );
 
-    assertEquals(issues.length, 3);
+    assertEquals(issues.length, 4);
     assertEquals(
       destinations(
         String.raw`\<https://veryfront.com/docs/code/guides/does-not-exist>`,
