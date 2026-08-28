@@ -1,7 +1,7 @@
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd";
 
-describe("Bun AbortSignal reason", () => {
+describe("integration/runtime/compat/abort-signal-reason", () => {
   it("exposes the supplied Error reason as soon as abort sets the signal state", () => {
     const controller = new AbortController();
     const reason = new Error("caller stopped waiting");

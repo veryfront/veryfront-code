@@ -584,6 +584,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
       "tests/bun/dynamic-alias-resolution.test.ts",
       "tests/bun/npm-protocol-resolution.test.ts",
       "tests/bun/workspace-resolution.test.ts",
+      "tests/integration/runtime/compat/abort-signal-reason.test.ts",
       "tests/integration/runtime/compat/kv-polyfill.test.ts",
       "tests/integration/runtime/compat/spawn-missing-executable.test.ts",
       "tests/integration/security/sandbox-runtime-guard.test.ts",
