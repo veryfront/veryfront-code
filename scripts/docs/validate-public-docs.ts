@@ -2472,12 +2472,14 @@ export function scanDestinations(
       .filter((usage) => usage.image && definedLabels.has(usage.label))
       .map((usage) => usage.description),
   );
-  markdownImageLabelRanges.sort((left, right) => left.start - right.start);
+  const markdownImageLabelLookupRanges = mergeRanges(
+    markdownImageLabelRanges,
+  );
 
   for (const tagRange of tagRanges) {
     if (
       isInsideRange(referenceDefinitionRanges, tagRange.start) ||
-      isInsideRange(markdownImageLabelRanges, tagRange.start) ||
+      isInsideRange(markdownImageLabelLookupRanges, tagRange.start) ||
       isInsideRange(rawHtmlBlocks.rawText, tagRange.start)
     ) continue;
     const tag = text.slice(tagRange.start, tagRange.end);
@@ -2548,7 +2550,7 @@ export function scanDestinations(
   ]);
   const uriAutolinkIgnoredRanges = mergeRanges([
     ...markdownIgnoredRanges,
-    ...markdownImageLabelRanges,
+    ...markdownImageLabelLookupRanges,
     ...markdownLinkTailRanges,
     ...referenceDefinitionRanges,
     ...markdownAngleDestinationRanges,
@@ -2567,7 +2569,7 @@ export function scanDestinations(
   }
   const bareAutolinkIgnoredRanges = mergeRanges([
     ...markdownIgnoredRanges,
-    ...markdownImageLabelRanges,
+    ...markdownImageLabelLookupRanges,
     ...renderedLinkRanges,
     ...referenceDefinitionRanges,
   ]);

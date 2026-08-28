@@ -82,6 +82,20 @@ describe("public docs validation", () => {
     );
     assertEquals(
       destinations(
+        '![outer ![one](./one.png) ![two](./two.png) ![three](./three.png) <a href="../architecture/private.md">old</a>][ref]\n' +
+          "![later](./later.png)\n\n" +
+          "[ref]: ./image.png",
+      ),
+      [
+        "./one.png",
+        "./two.png",
+        "./three.png",
+        "./later.png",
+        "./image.png",
+      ],
+    );
+    assertEquals(
+      destinations(
         "[outer ![alt <https://veryfront.com/docs/code/architecture/private>]" +
           "(./diagram.png)](./deploying.md)",
       ),
