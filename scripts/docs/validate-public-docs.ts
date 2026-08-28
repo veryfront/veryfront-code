@@ -50,32 +50,13 @@ const SYNCED_DOC_DIRS = [
 const UNSYNCED_README_PATHS = SYNCED_DOC_DIRS.map((dir) => `${dir}/README.md`);
 
 /**
- * The destination of an inline link, matched from the `](` boundary rather
- * than from the start of the label. A label may contain balanced brackets
- * (`[nested [label]](...)`) or escaped ones (`[label\]](...)`), neither of
- * which a bracket-counting pattern handles, and this check never needs to know
- * what the label says.
- */
-const INLINE_DESTINATION_SOURCE = /\]\(\s*<?([^)>\s]+)>?/;
-
-/**
  * Mintlify renders these pages as MDX, so a raw anchor is a working link on
  * the site and has to clear the same boundary. Quoted values only: an
  * unquoted `href={href}` is a JSX expression, not a destination.
  */
 const HTML_HREF_SOURCE = /\bhref\s*=\s*["']([^"']*)["']/;
-
-/**
- * A reference definition puts the destination on its own line, so the
- * destination is visible without resolving the label. Reading these matters:
- * an inline-only scan passes `[gate][details]` while `[details]: ` still
- * points at an unpublished path.
- */
-const REFERENCE_DEFINITION = /^\s{0,3}\[[^\]]+\]:\s*<?([^\s>]+)>?/;
-
 /** Any origin works: only the resolved path is read back out. */
 const RESOLUTION_ORIGIN = "https://docs.invalid";
-
 function isPublishedPage(target: string): boolean {
   // The sync deletes the section README before publishing, so a link to one
   // 404s exactly like a link out of the tree.
@@ -120,23 +101,105 @@ function isRepositoryRelative(href: string): boolean {
   return !/^(?:[a-z][a-z0-9+.-]*:|[\/\\]|#|["'])/i.test(href);
 }
 
-function destinations(text: string): string[] {
-  // A fresh regex per line: a shared /g pattern carries lastIndex between
-  // calls, and this one is read from more than one place.
-  const found: string[] = [];
-  for (const source of [INLINE_DESTINATION_SOURCE, HTML_HREF_SOURCE]) {
-    const pattern = new RegExp(source, "gi");
-    let match: RegExpExecArray | null;
-    while ((match = pattern.exec(text))) {
-      found.push(match[1]);
+function afterMarkdownLabel(text: string, start: number): number | undefined {
+  if (text[start] !== "[") return undefined;
+
+  let cursor = start + 1;
+  let depth = 1;
+  while (cursor < text.length && depth > 0) {
+    if (text[cursor] === "\\" && cursor + 1 < text.length) {
+      cursor += 2;
+      continue;
     }
+    if (text[cursor] === "[") depth++;
+    if (text[cursor] === "]") depth--;
+    cursor++;
   }
-  const reference = REFERENCE_DEFINITION.exec(text);
-  if (reference) found.push(reference[1]);
+  return depth === 0 ? cursor : undefined;
+}
+
+function referenceDestination(text: string): string | undefined {
+  let labelStart = 0;
+  while (labelStart < 3 && /\s/.test(text[labelStart] ?? "")) labelStart++;
+  const afterLabel = afterMarkdownLabel(text, labelStart);
+  if (afterLabel === undefined || text[afterLabel] !== ":") return undefined;
+
+  let cursor = afterLabel + 1;
+  while (/\s/.test(text[cursor] ?? "")) cursor++;
+  const wrapped = text[cursor] === "<";
+  if (wrapped) cursor++;
+  const destinationStart = cursor;
+  while (
+    cursor < text.length &&
+    (wrapped ? text[cursor] !== ">" : !/\s/.test(text[cursor]!))
+  ) {
+    cursor++;
+  }
+  return cursor > destinationStart
+    ? text.slice(destinationStart, cursor)
+    : undefined;
+}
+
+export function destinations(text: string): string[] {
+  // A scanner is required here because valid Markdown labels can contain
+  // balanced brackets or escaped closing brackets.
+  const found: string[] = [];
+  for (let start = 0; start < text.length; start++) {
+    const afterLabel = afterMarkdownLabel(text, start);
+    if (afterLabel === undefined || text[afterLabel] !== "(") continue;
+
+    let cursor = afterLabel + 1;
+    while (/\s/.test(text[cursor] ?? "")) cursor++;
+    if (cursor >= text.length) continue;
+
+    if (text[cursor] === "<") {
+      const destinationStart = ++cursor;
+      while (cursor < text.length) {
+        if (text[cursor] === "\\" && cursor + 1 < text.length) {
+          cursor += 2;
+          continue;
+        }
+        if (text[cursor] === ">") break;
+        cursor++;
+      }
+      if (text[cursor] === ">" && cursor > destinationStart) {
+        found.push(text.slice(destinationStart, cursor));
+      }
+      start = cursor;
+      continue;
+    }
+
+    const destinationStart = cursor;
+    let destinationDepth = 0;
+    while (cursor < text.length) {
+      if (text[cursor] === "\\" && cursor + 1 < text.length) {
+        cursor += 2;
+        continue;
+      }
+      if (text[cursor] === "(") {
+        destinationDepth++;
+      } else if (text[cursor] === ")") {
+        if (destinationDepth === 0) break;
+        destinationDepth--;
+      } else if (/\s/.test(text[cursor]!) && destinationDepth === 0) {
+        break;
+      }
+      cursor++;
+    }
+    if (cursor > destinationStart) {
+      found.push(text.slice(destinationStart, cursor));
+    }
+    start = cursor;
+  }
+  const htmlHref = new RegExp(HTML_HREF_SOURCE, "gi");
+  let htmlMatch: RegExpExecArray | null;
+  while ((htmlMatch = htmlHref.exec(text))) found.push(htmlMatch[1]);
+  const reference = referenceDestination(text);
+  if (reference) found.push(reference);
   return found;
 }
 
-function collectUnpublishedLinkIssues(
+export function collectUnpublishedLinkIssues(
   path: string,
   content: string,
 ): PublicDocIssue[] {
@@ -305,8 +368,7 @@ const DEPLOY_ACCESS_COVERAGE: CoveragePage[] = [
         pattern: /protected by default/i,
       },
       {
-        label:
-          "state that an unauthenticated request is redirected to sign-in",
+        label: "state that an unauthenticated request is redirected to sign-in",
         pattern: /sign-in/i,
       },
       {
@@ -372,7 +434,7 @@ async function* walkMarkdownFiles(path: string): AsyncGenerator<string> {
   }
 }
 
-function collectIssues(path: string, content: string): PublicDocIssue[] {
+export function collectIssues(path: string, content: string): PublicDocIssue[] {
   const issues: PublicDocIssue[] = [];
   const lines = content.split("\n");
   for (const [index, text] of lines.entries()) {
@@ -389,7 +451,9 @@ function collectIssues(path: string, content: string): PublicDocIssue[] {
 
   for (const rule of WRAPPED_RULES) {
     const hit = lines.findIndex((line, index) =>
-      rule.pattern.test(`${line} ${lines[index + 1] ?? ""}`.replace(/\s+/g, " "))
+      rule.pattern.test(
+        `${line} ${lines[index + 1] ?? ""}`.replace(/\s+/g, " "),
+      )
     );
     if (hit === -1) continue;
     issues.push({
@@ -475,4 +539,4 @@ async function main(): Promise<void> {
   Deno.exit(1);
 }
 
-await main();
+if (import.meta.main) await main();
