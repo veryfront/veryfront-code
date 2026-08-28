@@ -533,6 +533,37 @@ describe("serializeWorkflowContext", () => {
       }
     });
 
+    it("throws when host-recognized builtins hide behind Object.prototype with own data", () => {
+      for (
+        const value of [
+          new WeakRef({}),
+          new FinalizationRegistry(() => {}),
+          new URL("https://example.com"),
+        ]
+      ) {
+        Object.setPrototypeOf(value, Object.prototype);
+        Object.defineProperty(value, "metadata", {
+          configurable: true,
+          enumerable: true,
+          value: "ordinary data",
+          writable: true,
+        });
+
+        const error = assertThrows(
+          () =>
+            serializeWorkflowContext(
+              contextWith({ value }),
+              "run-strict-context",
+              { strictContext: true },
+            ),
+          VeryfrontError,
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertStringIncludes(error.message, "strictContext");
+      }
+    });
+
     it("does not probe intrinsic slot getters for ordinary strict objects", async () => {
       const originalGetTime = Date.prototype.getTime;
       let probeCalls = 0;
@@ -975,11 +1006,15 @@ describe("serializeWorkflowContext", () => {
 
     it("keeps control strings and JSON edge primitives in an encoded tail", () => {
       const marker = "\u0000workflow-tail";
-      const leaf = {
-        marker,
-        values: [undefined, Symbol("omitted"), -0, Number.NaN, true],
-        ["__proto__"]: "ordinary data",
-      };
+      const leaf = Object.create(null) as Record<string, unknown>;
+      leaf.marker = marker;
+      leaf.values = [undefined, Symbol("omitted"), -0, Number.NaN, true];
+      Object.defineProperty(leaf, "__proto__", {
+        configurable: true,
+        enumerable: true,
+        value: "ordinary data",
+        writable: true,
+      });
       let deep: unknown = leaf;
       for (let index = 0; index < PAST_THE_WALK; index++) deep = { nested: deep };
       const value = {

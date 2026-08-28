@@ -1007,6 +1007,67 @@ describe("MemoryBackend", () => {
       );
     });
 
+    it("keeps deep approval decision data cloneable for reconciliation", async () => {
+      const depth = MAX_TRAVERSAL_DEPTH + 1_500;
+      const originalLeaf: Record<string, unknown> = { leaf: "stored" };
+      let deep: unknown = originalLeaf;
+      for (let index = 0; index < depth; index++) deep = { nested: deep };
+
+      const runId = "run-deep-approval-decision";
+      const approval: PendingApproval = {
+        id: "approval-deep-decision",
+        nodeId: "review",
+        status: "pending",
+        message: "Review needed",
+        payload: {},
+        requestedAt: new Date(),
+      };
+      await backend.savePendingApproval(runId, approval);
+
+      assertEquals(
+        await backend.updateApproval(runId, approval.id, {
+          approved: true,
+          approver: "admin@example.com",
+          data: { deep },
+        }),
+        true,
+      );
+      originalLeaf.leaf = "mutated after update";
+
+      const [firstClaim] = await backend.listApprovalDecisionClaims(runId);
+      assertExists(firstClaim);
+      assertEquals(
+        deepLeaf((firstClaim.approval.decisionData as Record<string, unknown>).deep, depth),
+        "stored",
+      );
+      assertEquals(
+        await backend.reserveApprovalDecisionClaim(
+          runId,
+          approval.id,
+          "recovery-1",
+          new Date(),
+          new Date(0),
+        ),
+        true,
+      );
+      await backend.releaseApprovalDecisionClaim(runId, approval.id, "recovery-1");
+      setDeepLeaf(
+        (firstClaim.approval.decisionData as Record<string, unknown>).deep,
+        depth,
+        "mutated after claim",
+      );
+
+      const [secondClaim] = await backend.listApprovalDecisionClaims(runId);
+      assertExists(secondClaim);
+      assertEquals(
+        deepLeaf((secondClaim.approval.decisionData as Record<string, unknown>).deep, depth),
+        "stored",
+      );
+
+      await backend.finalizeApprovalDecision(runId, approval.id);
+      assertEquals(await backend.listApprovalDecisionClaims(runId), []);
+    });
+
     it("rejects strict approval decision data before mutating the approval", async () => {
       const strictBackend = new MemoryBackend({ strictContext: true });
       const approval: PendingApproval = {

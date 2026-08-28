@@ -26,6 +26,26 @@ describe("native brand checks", () => {
     assertEquals(isolated.nativeBrandChecks?.isNonPlainBuiltin({}), false);
   });
 
+  it("identifies prototype-disguised native slots with ordinary own properties", async () => {
+    const isolated = await import("./native-brand-checks.ts?non-plain-own-properties");
+    const values: object[] = [
+      new WeakRef({}),
+      new FinalizationRegistry(() => {}),
+      new URL("https://example.com"),
+    ];
+
+    for (const value of values) {
+      Object.setPrototypeOf(value, Object.prototype);
+      Object.defineProperty(value, "metadata", {
+        configurable: true,
+        enumerable: true,
+        value: "ordinary data",
+        writable: true,
+      });
+      assertEquals(isolated.nativeBrandChecks?.isNonPlainBuiltin(value), true);
+    }
+  });
+
   it("does not invoke proxy traps while checking non-plain builtins", async () => {
     const isolated = await import("./native-brand-checks.ts?non-plain-proxy");
     let trapCalls = 0;

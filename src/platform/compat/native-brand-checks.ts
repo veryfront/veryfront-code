@@ -85,6 +85,20 @@ const finalizationRegistryUnregister = typeof FinalizationRegistry === "function
 const urlHrefGet = typeof URL === "function"
   ? getOwnPropertyDescriptor(URL.prototype, "href")?.get
   : undefined;
+const webIdlBrandSymbol = (() => {
+  if (typeof URL !== "function") return undefined;
+  try {
+    const sample = new URL("https://example.com");
+    for (const key of ownKeys(sample)) {
+      if (typeof key !== "symbol") continue;
+      const descriptor = getOwnPropertyDescriptor(sample, key);
+      if (descriptor?.value === key) return key;
+    }
+  } catch {
+    // URL construction is unavailable in this host.
+  }
+  return undefined;
+})();
 const nativeSlotProbeToken = createObject(null);
 const noArguments: unknown[] = [];
 const nativeSlotProbeArguments = [nativeSlotProbeToken];
@@ -103,12 +117,38 @@ function hasNativeSlot(
   }
 }
 
-function hasPrototypeDisguisedNativeSlot(value: unknown): boolean {
-  if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+function isReflectableValue(value: unknown): value is object {
+  return (typeof value === "object" || typeof value === "function") && value !== null;
+}
+
+function hasOnlyOwnDataProperties(value: unknown): boolean {
+  if (!isReflectableValue(value)) return false;
+  let keys: Array<string | symbol>;
+  try {
+    keys = ownKeys(value);
+  } catch {
     return false;
   }
+  for (const key of keys) {
+    const descriptor = getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined || !hasOwn(descriptor, "value")) return false;
+  }
+  return true;
+}
+
+function hasWebIdlBrandDataProperty(value: unknown): boolean {
+  if (webIdlBrandSymbol === undefined || !isReflectableValue(value)) return false;
+  const descriptor = getOwnPropertyDescriptor(value, webIdlBrandSymbol);
+  return descriptor?.value === webIdlBrandSymbol;
+}
+
+function hasPrototypeDisguisedNativeSlot(value: unknown): boolean {
+  if (!isReflectableValue(value)) return false;
   try {
-    if (getPrototypeOf(value) !== objectPrototype || ownKeys(value).length !== 0) {
+    if (
+      getPrototypeOf(value) !== objectPrototype ||
+      !hasOnlyOwnDataProperties(value)
+    ) {
       return false;
     }
   } catch {
@@ -116,7 +156,8 @@ function hasPrototypeDisguisedNativeSlot(value: unknown): boolean {
   }
   return hasNativeSlot(value, weakRefDeref) ||
     hasNativeSlot(value, finalizationRegistryUnregister, nativeSlotProbeArguments) ||
-    hasNativeSlot(value, urlHrefGet);
+    hasNativeSlot(value, urlHrefGet) ||
+    hasWebIdlBrandDataProperty(value);
 }
 
 function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefined {
@@ -188,9 +229,9 @@ function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefine
       if (needsSymbolSlotFallback && hasNativeSlot(candidate, SymbolValueOf)) return true;
       // WeakRef, FinalizationRegistry, and URL have no node:util/types
       // predicates. Their slot methods throw for ordinary objects, so probe
-      // only the empty Object.prototype shape these built-ins expose after a
-      // prototype disguise. The proxy predicate above makes the reflection
-      // gate hook-free.
+      // only the Object.prototype shape these built-ins expose after a
+      // prototype disguise, and inspect own descriptors without reading values.
+      // The proxy predicate above makes the reflection gate hook-free.
       if (hasPrototypeDisguisedNativeSlot(candidate)) return true;
       return false;
     },
