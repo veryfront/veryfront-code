@@ -5,16 +5,10 @@ import {
 
 type FetchMock = typeof globalThis.fetch | undefined;
 
-/**
- * Address a stubbed request is pinned to instead of asking a real resolver.
- *
- * The egress guard resolves the destination host before it reaches the stub,
- * so without this a fully stubbed test still performs live DNS and dies
- * upstream of its own transport. The literal is public, which keeps the
- * guard's internal-destination checks running exactly as they do in
- * production; the stub transport ignores addresses, so nothing connects to it.
- */
-const STUB_PINNED_ADDRESS = "93.184.216.34";
+const STUB_PINNED_ADDRESS = "192.0.2.1";
+const STUB_TRANSPORT_OPTIONS = {
+  allowedResolvedAddresses: [STUB_PINNED_ADDRESS],
+} as const;
 
 function stubTransport(mockFetch: typeof globalThis.fetch) {
   return {
@@ -94,7 +88,11 @@ export async function withMockFetch<T>(
     if (typeof mockFetch !== "function") {
       return await fn();
     }
-    return await __runWithOutboundFetchTransportForTests(stubTransport(mockFetch), fn);
+    return await __runWithOutboundFetchTransportForTests(
+      stubTransport(mockFetch),
+      fn,
+      STUB_TRANSPORT_OPTIONS,
+    );
   } finally {
     Object.defineProperty(globalThis, "fetch", {
       value: originalFetch,
@@ -122,7 +120,10 @@ export async function withMockFetch<T>(
  * where there is no callback to wrap.
  */
 export function installMockFetch(mockFetch: typeof globalThis.fetch): void {
-  const restoreTransport = __installOutboundFetchTransportForTests(stubTransport(mockFetch));
+  const restoreTransport = __installOutboundFetchTransportForTests(
+    stubTransport(mockFetch),
+    STUB_TRANSPORT_OPTIONS,
+  );
   // Only the first install records the pristine state, so a test that swaps its
   // stub mid-way still restores to the real transport rather than to its own
   // earlier stub.

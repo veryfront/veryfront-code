@@ -315,6 +315,7 @@ async function resolveWorkerHostEgressAddresses(
   hostname: string,
   options: WorkerEgressGuardOptions,
   signal?: AbortSignal,
+  allowedResolvedAddresses: readonly string[] = [],
 ): Promise<string[]> {
   const allowInternalEgress = options.allowInternalEgress === true;
 
@@ -363,7 +364,11 @@ async function resolveWorkerHostEgressAddresses(
         `Worker network egress blocked: resolver returned an invalid address for host ${hostname}`,
       );
     }
-    if (!allowInternalEgress && !allowedInternalHost && isInternalEgressIp(normalizedAddress)) {
+    if (
+      !allowInternalEgress && !allowedInternalHost &&
+      isInternalEgressIp(normalizedAddress) &&
+      !allowedResolvedAddresses.includes(normalizedAddress)
+    ) {
       throw new WorkerEgressBlockedError(
         `Worker network egress blocked for host: ${hostname}`,
       );
@@ -1158,6 +1163,8 @@ export interface GuardedEgressFetchDeps {
   onRedirect?: (redirect: WorkerEgressRedirect) => void | Promise<void>;
   /** Captured runtime primitives used to establish the DNS-pinned tunnel. */
   runtime?: Partial<PinnedEgressRuntime>;
+  /** Resolved addresses admitted by an installed test transport. */
+  allowedResolvedAddressesForTests?: readonly string[];
 }
 
 /** A request body that can be safely replayed across a body-preserving redirect. */
@@ -1266,6 +1273,7 @@ export async function guardedEgressFetch(
             hostname,
             options,
             requestInit.signal ?? undefined,
+            deps.allowedResolvedAddressesForTests,
           );
           const port = parsedUrl.port
             ? Number.parseInt(parsedUrl.port, 10)

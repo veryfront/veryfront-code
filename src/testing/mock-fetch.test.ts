@@ -1,7 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import {
+  guardedOutboundFetch,
+  OutboundRequestBlockedError,
+} from "#veryfront/security/http/outbound-fetch.ts";
 import {
   installMockFetch,
   observeFetchRequestInit,
@@ -69,6 +72,24 @@ describe("mock fetch host resolution", () => {
       realFetch,
       "withMockFetch puts the ambient fetch back once the callback settles",
     );
+  });
+
+  it("does not allow the resolver sentinel as a request destination", async () => {
+    let calls = 0;
+    await withMockFetch(
+      () => {
+        calls++;
+        return Promise.resolve(new Response("unexpected"));
+      },
+      async () => {
+        await assertRejects(
+          () => guardedOutboundFetch("https://192.0.2.1/private"),
+          OutboundRequestBlockedError,
+          "internal host",
+        );
+      },
+    );
+    assertEquals(calls, 0);
   });
 
   it("serializes overlapping callers so each sees only its own stub", async () => {

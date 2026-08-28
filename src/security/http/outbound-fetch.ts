@@ -57,6 +57,10 @@ export interface OutboundFetchTransport {
   resolveHost?: ResolveWorkerHost;
 }
 
+type TrustedHostTransport = OutboundFetchTransport & {
+  allowedResolvedAddressesForTests?: readonly string[];
+};
+
 /** Explicit host transport boundary used by runtime composition and tests. */
 export interface OutboundFetchBoundary {
   guardedFetch(
@@ -69,9 +73,9 @@ export interface OutboundFetchBoundary {
 
 // Capture the host transport before tenant code can replace globalThis.fetch.
 const capturedHostFetch = globalThis.fetch.bind(globalThis);
-let outboundFetchTransportForTests: Readonly<OutboundFetchTransport> | undefined;
+let outboundFetchTransportForTests: Readonly<TrustedHostTransport> | undefined;
 
-function getTrustedHostTransport(): OutboundFetchTransport {
+function getTrustedHostTransport(): TrustedHostTransport {
   if (outboundFetchTransportForTests !== undefined) {
     return outboundFetchTransportForTests;
   }
@@ -134,7 +138,7 @@ async function fetchWithHostTransport(
   input: RequestInfo | URL,
   init: RequestInit | undefined,
   options: GuardedOutboundFetchOptions,
-  transport: OutboundFetchTransport,
+  transport: TrustedHostTransport,
   allowInternalEgress: boolean,
 ): Promise<Response> {
   return await guardedEgressFetch(input, init, {
@@ -154,6 +158,7 @@ async function fetchWithHostTransport(
       await options.authorizeUrl?.(url);
     },
     onRedirect: options.onRedirect,
+    allowedResolvedAddressesForTests: transport.allowedResolvedAddressesForTests,
     options: {
       allowInternalEgress: allowInternalEgress ||
         isInternalEgressOverrideEnabled(getHostEnv(HOST_INTERNAL_EGRESS_OVERRIDE_ENV)),
@@ -335,9 +340,15 @@ export function __installUnpinnedHostTransportForTests(): () => void {
 
 export function __installOutboundFetchTransportForTests(
   transport: OutboundFetchTransport,
+  options: { allowedResolvedAddresses?: readonly string[] } = {},
 ): () => void {
   const previous = outboundFetchTransportForTests;
-  outboundFetchTransportForTests = snapshotOutboundFetchTransport(transport);
+  outboundFetchTransportForTests = Object.freeze({
+    ...snapshotOutboundFetchTransport(transport),
+    allowedResolvedAddressesForTests: options.allowedResolvedAddresses === undefined
+      ? undefined
+      : Object.freeze([...options.allowedResolvedAddresses]),
+  });
   return () => {
     outboundFetchTransportForTests = previous;
   };
@@ -346,8 +357,9 @@ export function __installOutboundFetchTransportForTests(
 export async function __runWithOutboundFetchTransportForTests<T>(
   transport: OutboundFetchTransport,
   fn: () => Promise<T>,
+  options: { allowedResolvedAddresses?: readonly string[] } = {},
 ): Promise<T> {
-  const restore = __installOutboundFetchTransportForTests(transport);
+  const restore = __installOutboundFetchTransportForTests(transport, options);
   try {
     return await fn();
   } finally {
