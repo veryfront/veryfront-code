@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertLess } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   collectIssues,
@@ -720,6 +720,9 @@ describe("public docs validation", () => {
           `https://%67ithub.com.example/${BLOCKED_REPOSITORY}\n` +
           `https://github.com@example.com/${BLOCKED_REPOSITORY}\n` +
           `https://github.com/${BLOCKED_REPOSITORY}_public\n` +
+          "https://github.com/example-org/private%2Dexamples%23-fork/%ZZ\n" +
+          "https://github.com/example-org/private%2Dexamples%2Ffork/%ZZ\n" +
+          "https://github.com/example-org/private%2Dexamples%3Ffork/%ZZ\n" +
           `_https://github.com/${BLOCKED_REPOSITORY}_public_`,
         BLOCKED_REPOSITORY,
       ),
@@ -1679,6 +1682,22 @@ describe("public docs validation", () => {
         'export const sample = "[old](../architecture/markdown.md)"',
       ).length,
       1,
+    );
+  });
+
+  it("scans division-heavy MDX ESM template interpolations in linear time", () => {
+    const interpolation = Array.from({ length: 32_001 }, () => "value").join(
+      "/",
+    );
+    const source = "export const sample = `value ${" + interpolation +
+      "}`\n\n[real](../architecture/real.md)";
+    const startedAt = performance.now();
+
+    assertEquals(destinations(source), ["../architecture/real.md"]);
+    assertLess(
+      performance.now() - startedAt,
+      2_000,
+      "division-heavy template interpolation scanning must stay linear",
     );
   });
 

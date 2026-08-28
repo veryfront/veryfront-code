@@ -243,6 +243,15 @@ function decodeUrlComponentTolerantly(value: string): string {
   });
 }
 
+function decodeUrlPathForRepositoryMatch(value: string): string {
+  return value
+    .split(/(%(?:2[fF]|3[fF]|23))/)
+    .map((part, index) =>
+      index % 2 === 0 ? decodeUrlComponentTolerantly(part) : part
+    )
+    .join("");
+}
+
 function normalizeRepositoryPath(pathname: string): string {
   const decoded = decodeUrlComponentTolerantly(pathname);
   const slashPath = decoded.replaceAll("\\", "/");
@@ -1049,13 +1058,32 @@ function javaScriptRegexEnd(line: string, start: number): number | undefined {
   return undefined;
 }
 
+const JAVASCRIPT_REGEX_PREFIX_KEYWORDS: ReadonlySet<string> = new Set([
+  "return",
+  "case",
+  "throw",
+  "default",
+  "typeof",
+  "void",
+  "delete",
+  "in",
+  "instanceof",
+]);
+
 function javaScriptRegexMayStart(line: string, start: number): boolean {
-  const prefix = line.slice(0, start).trimEnd();
-  return prefix === "" ||
-    /(?:[=(:,!\[{;?&|+*%/^~<>-]|=>|(?:^|[^A-Za-z0-9_$.#])(?:return|case|throw|default|typeof|void|delete|in|instanceof))$/
-      .test(
-        prefix,
-      );
+  let end = start;
+  while (end > 0 && /\s/.test(line[end - 1]!)) end--;
+  if (end === 0) return true;
+
+  if ("=(:,![{;?&|+*%/^~<>-".includes(line[end - 1]!)) return true;
+
+  let wordStart = end;
+  while (wordStart > 0 && /[A-Za-z]/.test(line[wordStart - 1]!)) wordStart--;
+  const keyword = line.slice(wordStart, end);
+  if (!JAVASCRIPT_REGEX_PREFIX_KEYWORDS.has(keyword)) return false;
+
+  return wordStart === 0 ||
+    !/[A-Za-z0-9_$.#]/.test(line[wordStart - 1]!);
 }
 
 function scanJavaScriptLine(
@@ -2633,7 +2661,7 @@ function canonicalizeHttpUrls(text: string): string {
     const candidate = rawUrl.slice(0, rawUrl.length - suffix.length);
     try {
       const url = new URL(candidate);
-      const pathname = decodeUrlComponentTolerantly(url.pathname);
+      const pathname = decodeUrlPathForRepositoryMatch(url.pathname);
       return `${url.protocol}//${url.host}${pathname}${url.search}${url.hash}${suffix}`;
     } catch {
       return rawUrl;
