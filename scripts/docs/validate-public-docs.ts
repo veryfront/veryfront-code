@@ -244,12 +244,10 @@ function decodeUrlComponentTolerantly(value: string): string {
 }
 
 function decodeUrlPathForRepositoryMatch(value: string): string {
-  return value
-    .split(/(%(?:2[fF]|3[fF]|23))/)
-    .map((part, index) =>
-      index % 2 === 0 ? decodeUrlComponentTolerantly(part) : part
-    )
-    .join("");
+  return value.replace(/(?:%[0-9a-fA-F]{2})+/g, (encoded) => {
+    const decoded = decodeUrlComponentTolerantly(encoded);
+    return /^[A-Za-z0-9._~-]+$/.test(decoded) ? decoded : encoded;
+  });
 }
 
 function normalizeRepositoryPath(pathname: string): string {

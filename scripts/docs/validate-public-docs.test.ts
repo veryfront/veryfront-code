@@ -747,6 +747,16 @@ describe("public docs validation", () => {
           "https://github.com/example-org/private%2Dexamples%23-fork/%ZZ\n" +
           "https://github.com/example-org/private%2Dexamples%2Ffork/%ZZ\n" +
           "https://github.com/example-org/private%2Dexamples%3Ffork/%ZZ\n" +
+          "https://github.com/example-org/private%2Dexamples%20-fork/%ZZ\n" +
+          "https://github.com/example-org/private%2Dexamples%29-fork/%ZZ\n" +
+          "https://github.com/example-org/private%2Dexamples%3E-fork/%ZZ\n" +
+          "https://github.com/example-org/private%2Dexamples%5D-fork/%ZZ\n" +
+          "https://github.com/example-org/private%2Dexamples%2C-fork/%ZZ\n" +
+          "https://github.com/example-org/private%2Dexamples%3B-fork/%ZZ\n" +
+          "https://github.com/example-org/private%2Dexamples%3A-fork/%ZZ\n" +
+          "https://github.com/example-org/private%2Dexamples%27-fork/%ZZ\n" +
+          "https://github.com/example-org/private%2Dexamples%22-fork/%ZZ\n" +
+          "https://github.com/example-org/private%2Dexamples%21-fork/%ZZ\n" +
           `_https://github.com/${BLOCKED_REPOSITORY}_public_`,
         BLOCKED_REPOSITORY,
       ),
