@@ -79,7 +79,12 @@ describe("child-run-execution-support", () => {
         "node:util/types must retain the supplied Error brand",
       );
 
-      assertThrows(() => throwIfChildRunAborted(controller.signal), Error, "custom reason");
+      const thrown = assertThrows(
+        () => throwIfChildRunAborted(controller.signal),
+        Error,
+        "custom reason",
+      );
+      assertStrictEquals(thrown, reason);
     });
 
     it("throws an Error reason that was minted outside this realm", () => {
