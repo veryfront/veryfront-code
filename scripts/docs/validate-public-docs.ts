@@ -1088,11 +1088,10 @@ function javaScriptCodePointBefore(
   end: number,
 ): string | undefined {
   if (end <= 0) return undefined;
-  const trailing = text.charCodeAt(end - 1);
-  const startsWithSurrogatePair = end > 1 && trailing >= 0xDC00 &&
-    trailing <= 0xDFFF && text.charCodeAt(end - 2) >= 0xD800 &&
-    text.charCodeAt(end - 2) <= 0xDBFF;
-  return text.slice(end - (startsWithSurrogatePair ? 2 : 1), end);
+  const precedingCodePoint = text.codePointAt(end - 2);
+  const usesSurrogatePair = precedingCodePoint !== undefined &&
+    precedingCodePoint > 0xffff;
+  return text.slice(end - (usesSurrogatePair ? 2 : 1), end);
 }
 
 function javaScriptIdentifierContinueBefore(
