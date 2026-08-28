@@ -814,11 +814,11 @@ function javaScriptTokenWithIdentifierContext(
   if (!javaScriptIdentifierCodeUnitAt(text, start)) return { end, kind };
 
   const escapeRange = javaScriptIdentifierEscapeRangeAt(text, start);
-  const codeUnit = text.charCodeAt(start);
+  const codePoint = text.codePointAt(start);
   const continuesIdentifierWord = start > 0 &&
     (javaScriptIdentifierContinueBefore(text, start) ||
       (escapeRange !== undefined && escapeRange.start < start) ||
-      (codeUnit >= 0xdc00 && codeUnit <= 0xdfff &&
+      (codePoint !== undefined && codePoint >= 0xdc00 && codePoint <= 0xdfff &&
         javaScriptIdentifierContinueBefore(text, start + 1)));
   const identifier = continuesIdentifierWord
     ? previousSignificantToken?.identifier === true
@@ -1245,8 +1245,8 @@ function javaScriptIdentifierCodeUnitAt(
     codePoint !== undefined &&
     JAVASCRIPT_IDENTIFIER_CONTINUE.test(String.fromCodePoint(codePoint))
   ) return true;
-  const codeUnit = text.charCodeAt(offset);
-  return (codeUnit >= 0xdc00 && codeUnit <= 0xdfff &&
+  return (codePoint !== undefined && codePoint >= 0xdc00 &&
+    codePoint <= 0xdfff &&
     javaScriptIdentifierContinueBefore(text, offset + 1)) ||
     javaScriptIdentifierEscapeRangeAt(text, offset) !== undefined;
 }
