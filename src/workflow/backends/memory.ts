@@ -60,6 +60,9 @@ const objectHasOwn = Object.hasOwn;
 const objectKeys = Object.keys;
 const objectPrototype = Object.prototype;
 const jsonParse = JSON.parse;
+const reflectApply = Reflect.apply;
+const SetConstructor = Set;
+const setHas = Set.prototype.has;
 const structuredCloneValue = structuredClone;
 
 /**
@@ -84,6 +87,19 @@ type ConditionalWorkflowRunUpdate = WorkflowRunUpdate & {
 /** Default max queue size */
 const DEFAULT_MAX_QUEUE_SIZE = 10_000;
 const RUN_OBSERVATION_QUEUE_SIZE = 64;
+
+function snapshotExpectedRunStatuses(
+  expectedStatuses: WorkflowRun["status"][],
+): Set<WorkflowRun["status"]> {
+  return new SetConstructor(expectedStatuses);
+}
+
+function hasExpectedRunStatus(
+  expectedStatuses: Set<WorkflowRun["status"]>,
+  status: WorkflowRun["status"],
+): boolean {
+  return reflectApply(setHas, expectedStatuses, [status]) as boolean;
+}
 
 function persistedWorkflowContext(
   context: WorkflowContext,
@@ -446,9 +462,9 @@ export class MemoryBackend implements WorkflowBackend {
     if (!run) {
       return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
     }
-    let statuses: WorkflowRun["status"][];
+    let expectedStatusSnapshot: Set<WorkflowRun["status"]>;
     try {
-      statuses = [...expectedStatuses];
+      expectedStatusSnapshot = snapshotExpectedRunStatuses(expectedStatuses);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -457,7 +473,7 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
     }
     const matches = (candidate: WorkflowRun) =>
-      statuses.includes(candidate.status) &&
+      hasExpectedRunStatus(expectedStatusSnapshot, candidate.status) &&
       (expectedWorkerId === undefined || candidate.workerId === expectedWorkerId);
     if (!matches(run)) return Promise.resolve(false);
 
@@ -510,9 +526,9 @@ export class MemoryBackend implements WorkflowBackend {
     if (!run) {
       return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
     }
-    let statuses: WorkflowRun["status"][];
+    let expectedStatusSnapshot: Set<WorkflowRun["status"]>;
     try {
-      statuses = [...expectedStatuses];
+      expectedStatusSnapshot = snapshotExpectedRunStatuses(expectedStatuses);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -520,7 +536,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (!run) {
       return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
     }
-    if (!statuses.includes(run.status)) return Promise.resolve(false);
+    if (!hasExpectedRunStatus(expectedStatusSnapshot, run.status)) return Promise.resolve(false);
     if (expectedWorkerId !== undefined && run.workerId !== expectedWorkerId) {
       return Promise.resolve(false);
     }
@@ -552,7 +568,9 @@ export class MemoryBackend implements WorkflowBackend {
     if (!currentRun) {
       return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
     }
-    if (!statuses.includes(currentRun.status)) return Promise.resolve(false);
+    if (!hasExpectedRunStatus(expectedStatusSnapshot, currentRun.status)) {
+      return Promise.resolve(false);
+    }
     if (expectedWorkerId !== undefined && currentRun.workerId !== expectedWorkerId) {
       return Promise.resolve(false);
     }
@@ -770,9 +788,11 @@ export class MemoryBackend implements WorkflowBackend {
     expectedWorkerId: string,
     checkpoint: Checkpoint,
   ): Promise<boolean> {
+    const expectedStatusSnapshot = snapshotExpectedRunStatuses(expectedStatuses);
     const run = this.runs.get(ownershipRunId);
     if (
-      !run || !expectedStatuses.includes(run.status) || run.workerId !== expectedWorkerId
+      !run || !hasExpectedRunStatus(expectedStatusSnapshot, run.status) ||
+      run.workerId !== expectedWorkerId
     ) {
       return Promise.resolve(false);
     }
@@ -787,7 +807,7 @@ export class MemoryBackend implements WorkflowBackend {
 
     const currentRun = this.runs.get(ownershipRunId);
     if (
-      !currentRun || !expectedStatuses.includes(currentRun.status) ||
+      !currentRun || !hasExpectedRunStatus(expectedStatusSnapshot, currentRun.status) ||
       currentRun.workerId !== expectedWorkerId
     ) {
       return Promise.resolve(false);
@@ -886,9 +906,11 @@ export class MemoryBackend implements WorkflowBackend {
     expectedWorkerId: string,
     approval: PersistedPendingApproval,
   ): Promise<boolean> {
+    const expectedStatusSnapshot = snapshotExpectedRunStatuses(expectedStatuses);
     const run = this.runs.get(runId);
     if (
-      !run || !expectedStatuses.includes(run.status) || run.workerId !== expectedWorkerId
+      !run || !hasExpectedRunStatus(expectedStatusSnapshot, run.status) ||
+      run.workerId !== expectedWorkerId
     ) {
       return Promise.resolve(false);
     }
@@ -994,7 +1016,7 @@ export class MemoryBackend implements WorkflowBackend {
     const currentApproval = this.approvals.get(runId)?.find((candidate) =>
       candidate.id === approvalId
     );
-    if (!currentApproval) {
+    if (!currentApproval || currentApproval !== approval) {
       return Promise.reject(
         RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` }),
       );
@@ -1144,11 +1166,15 @@ export class MemoryBackend implements WorkflowBackend {
     expectedWorkerId: string,
     wait: PersistedPendingEventWait,
   ): Promise<boolean> {
+    const expectedStatusSnapshot = snapshotExpectedRunStatuses(expectedStatuses);
     const run = this.runs.get(runId);
     if (!run) {
       return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
     }
-    if (!expectedStatuses.includes(run.status) || run.workerId !== expectedWorkerId) {
+    if (
+      !hasExpectedRunStatus(expectedStatusSnapshot, run.status) ||
+      run.workerId !== expectedWorkerId
+    ) {
       return Promise.resolve(false);
     }
     const waits = this.eventWaits.get(runId) ?? [];

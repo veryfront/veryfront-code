@@ -748,6 +748,18 @@ function cloneCheckpointValueForPersistence<T>(value: T): T {
       continue;
     }
     if (frame.arrayProxyLength !== undefined) {
+      if (frame.ownPropertyDescriptors === undefined) {
+        const descriptors = new ArrayConstructor<PropertyDescriptor | undefined>(
+          frame.arrayProxyLength,
+        );
+        for (let index = 0; index < frame.arrayProxyLength; index++) {
+          descriptors[index] = objectGetOwnPropertyDescriptor(
+            frame.source,
+            StringConstructor(index),
+          );
+        }
+        frame.ownPropertyDescriptors = descriptors;
+      }
       const index = frame.arrayIndex ?? 0;
       if (index >= frame.arrayProxyLength) {
         reflectApply(arrayPop, frames, []);
@@ -755,7 +767,10 @@ function cloneCheckpointValueForPersistence<T>(value: T): T {
       }
       frame.arrayIndex = index + 1;
       const key = StringConstructor(index);
-      const sourceValue = reflectGet(frame.source, key);
+      const descriptor = frame.ownPropertyDescriptors[index];
+      const sourceValue = descriptor && "value" in descriptor
+        ? descriptor.value
+        : reflectGet(frame.source, key);
       const snapshot = isCheckpointCloneReference(sourceValue)
         ? cloneReference(sourceValue, key, true, frame.jsonHookDepth)
         : sourceValue;
