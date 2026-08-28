@@ -64,6 +64,7 @@ describe("public docs validation", () => {
           'Configure href="../architecture/prose.md" for the sample.\n' +
           "<a title=\"sample href='../architecture/title.md' text\">safe</a>\n" +
           "<Code value={'Configure href=\"../architecture/string.md\"'} />\n" +
+          '<div title={"<https://veryfront.com/docs/code/architecture/private>"}></div>\n' +
           String.raw`\<a href="../architecture/escaped.md">literal</a>` +
           "\n" +
           String.raw`\\<a href="../architecture/real.md">real</a>`,
@@ -171,9 +172,10 @@ describe("public docs validation", () => {
         "See https://github.com/veryfront/veryfront-examples.\n" +
           "git clone https://github.com/veryfront/veryfront-examples.git\n" +
           "git clone git@github.com:veryfront/veryfront-examples.git\n" +
-          "git clone ssh://git@github.com/veryfront/veryfront-examples.git",
+          "git clone ssh://git@github.com/veryfront/veryfront-examples.git\n" +
+          "[encoded](https://github.com/veryfront/veryfront&#x2d;examples)",
       ).length,
-      4,
+      5,
     );
   });
 
@@ -277,9 +279,10 @@ describe("public docs validation", () => {
       collectUnpublishedLinkIssues(
         "docs/guides/example.md",
         "[private](https://veryfront.com/docs/code/architecture/private) " +
-          "[encoded](https://veryfront.com/docs/%63ode/architecture/private)",
+          "[encoded](https://veryfront.com/docs/%63ode/architecture/private) " +
+          "[http](http://veryfront.com/docs/code/architecture/private)",
       ).length,
-      2,
+      3,
     );
     assertEquals(
       collectUnpublishedLinkIssues(
@@ -425,6 +428,20 @@ describe("public docs validation", () => {
     );
     assertEquals(
       destinations(
+        "`[example](../architecture/private.md)\\`\n" +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        ">     [quoted](../architecture/quoted.md)\n" +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
         "`unmatched\n" +
           "```md\n[fenced](../architecture/fenced.md)\n```\n" +
           "[real](../architecture/real.md)\n`",
@@ -453,6 +470,13 @@ describe("public docs validation", () => {
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        "``` md`bad\n" +
+          "[rendered](../architecture/rendered.md)",
+      ),
+      ["../architecture/rendered.md"],
     );
   });
 

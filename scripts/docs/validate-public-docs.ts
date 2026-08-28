@@ -54,7 +54,7 @@ const HTML_DESTINATION_ATTRIBUTE_SOURCE =
 const URI_AUTOLINK_SOURCE = /<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*)>/g;
 /** Any origin works: only the resolved path is read back out. */
 const RESOLUTION_ORIGIN = "https://docs.invalid";
-const VERYFRONT_DOCS_ORIGIN = "https://veryfront.com";
+const VERYFRONT_DOCS_HOSTNAME = "veryfront.com";
 const VERYFRONT_CODE_DOCS_PREFIX = "/docs/code/";
 const VERYFRONT_SITE_CODE_PREFIX = "/code/";
 const MARKDOWN_URL_ENTITIES: Readonly<Record<string, string>> = {
@@ -244,7 +244,10 @@ function resolveDocumentationTarget(
   }
   const normalizedPathname = `/${normalizeRepositoryPath(resolved.pathname)}`;
   let pathname: string;
-  if (resolved.origin === VERYFRONT_DOCS_ORIGIN) {
+  if (
+    (resolved.protocol === "http:" || resolved.protocol === "https:") &&
+    resolved.hostname === VERYFRONT_DOCS_HOSTNAME
+  ) {
     const prefix = normalizedPathname.startsWith(VERYFRONT_CODE_DOCS_PREFIX)
       ? VERYFRONT_CODE_DOCS_PREFIX
       : normalizedPathname.startsWith(VERYFRONT_SITE_CODE_PREFIX)
@@ -341,6 +344,30 @@ function allowsFollowingIndentedCode(line: string): boolean {
     .test(line);
 }
 
+function blockQuoteContentStart(text: string, lineStart: number): number {
+  let cursor = lineStart;
+  let indentation = 0;
+  while (indentation < 3 && text[cursor] === " ") {
+    cursor++;
+    indentation++;
+  }
+  if (text[cursor] !== ">") return lineStart;
+
+  while (text[cursor] === ">") {
+    cursor++;
+    if (text[cursor] === " " || text[cursor] === "\t") cursor++;
+    let nested = cursor;
+    let nestedIndentation = 0;
+    while (nestedIndentation < 3 && text[nested] === " ") {
+      nested++;
+      nestedIndentation++;
+    }
+    if (text[nested] !== ">") break;
+    cursor = nested;
+  }
+  return cursor;
+}
+
 interface Range {
   start: number;
   end: number;
@@ -361,7 +388,12 @@ function markdownCodeRanges(text: string): Range[] {
     const lineEnd = offset + line.length;
     const contentStart = blockContentStart(text, offset);
     const blockLine = text.slice(contentStart, lineEnd);
-    const fenceMatch = blockLine.match(/^( {0,3})(`{3,}|~{3,})/);
+    const possibleFence = blockLine.match(/^( {0,3})(`{3,}|~{3,})/);
+    const fenceMatch = possibleFence &&
+        (possibleFence[2]![0] === "~" ||
+          !blockLine.slice(possibleFence[0].length).includes("`"))
+      ? possibleFence
+      : null;
     if (fence) {
       const closing = blockLine.match(/^( {0,3})(`{3,}|~{3,})[ \t]*$/);
       if (
@@ -387,25 +419,33 @@ function markdownCodeRanges(text: string): Range[] {
       canStartIndentedCode = true;
       indentedCode = false;
     } else {
-      const listItem = line.match(
+      const containerLine = text.slice(
+        blockQuoteContentStart(text, offset),
+        lineEnd,
+      );
+      const listItem = containerLine.match(
         /^( {0,3})(?:[-+*]|\d{1,9}[.)])([ \t]{1,4})/,
       );
       if (listItem) {
         listContentIndent = listItem[1]!.length +
-          line.slice(listItem[1]!.length).search(/[ \t]/) +
+          containerLine.slice(listItem[1]!.length).search(/[ \t]/) +
           listItem[2]!.length;
-      } else if (line.trim() !== "") {
-        const indentation = line.match(/^[ \t]*/)?.[0].replaceAll("\t", "    ")
-          .length ?? 0;
+      } else if (containerLine.trim() !== "") {
+        const indentation = containerLine.match(/^[ \t]*/)?.[0].replaceAll(
+          "\t",
+          "    ",
+        ).length ?? 0;
         if (
           listContentIndent !== undefined && indentation < listContentIndent
         ) {
           listContentIndent = undefined;
         }
       }
-      const indentation = line.match(/^[ \t]*/)?.[0].replaceAll("\t", "    ")
-        .length ?? 0;
-      const blank = line.trim() === "";
+      const indentation = containerLine.match(/^[ \t]*/)?.[0].replaceAll(
+        "\t",
+        "    ",
+      ).length ?? 0;
+      const blank = containerLine.trim() === "";
       const sufficientlyIndented = !blank &&
         indentation >= (listContentIndent ?? 0) + 4;
       if (sufficientlyIndented && (canStartIndentedCode || indentedCode)) {
@@ -467,8 +507,7 @@ function markdownCodeRanges(text: string): Range[] {
       let candidateLength = 1;
       while (text[candidate + candidateLength] === "`") candidateLength++;
       if (
-        candidateLength === length &&
-        !isBackslashEscaped(text, candidate)
+        candidateLength === length
       ) {
         closing = candidate;
         break;
@@ -584,7 +623,8 @@ function htmlTagRanges(
     if (
       isInsideRange(ignoredRanges, start) ||
       isBackslashEscaped(text, start) ||
-      !/[A-Za-z]/.test(text[start + 1] ?? "")
+      !/[A-Za-z]/.test(text[start + 1] ?? "") ||
+      /^[A-Za-z][A-Za-z0-9+.-]{1,31}:/.test(text.slice(start + 1))
     ) {
       start++;
       continue;
@@ -861,7 +901,8 @@ export function scanDestinations(text: string): Destination[] {
     start = cursor;
   }
 
-  for (const tagRange of htmlTagRanges(text, ignoredRanges)) {
+  const tagRanges = htmlTagRanges(text, ignoredRanges);
+  for (const tagRange of tagRanges) {
     const tag = text.slice(tagRange.start, tagRange.end);
     const topLevelOffsets = topLevelTagOffsets(tag);
     const htmlDestination = new RegExp(
@@ -905,6 +946,7 @@ export function scanDestinations(text: string): Destination[] {
   while ((autolinkMatch = URI_AUTOLINK_SOURCE.exec(text))) {
     if (
       isInsideRange(ignoredRanges, autolinkMatch.index) ||
+      isInsideRange(tagRanges, autolinkMatch.index) ||
       isBackslashEscaped(text, autolinkMatch.index)
     ) continue;
     if (
@@ -1211,8 +1253,9 @@ export function collectIssues(path: string, content: string): PublicDocIssue[] {
   const issues: PublicDocIssue[] = [];
   const lines = content.split("\n");
   for (const [index, text] of lines.entries()) {
+    const renderedText = decodeMarkdownCharacterReferences(text);
     for (const rule of RULES) {
-      if (!rule.pattern.test(text)) continue;
+      if (!rule.pattern.test(renderedText)) continue;
       issues.push({
         path,
         line: index + 1,
