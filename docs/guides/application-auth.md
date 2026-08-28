@@ -14,10 +14,6 @@ Veryfront speaks OpenID Connect to the provider, verifies the ID token, creates
 an encrypted application session, and exposes one normalized identity to
 middleware and routes.
 
-See the complete
-[application auth example](https://github.com/veryfront/veryfront-examples/tree/main/application-auth)
-for a local Authelia deployment and protected routes.
-
 ## Choose a mode
 
 Use OIDC for user login in Veryfront Cloud and self-hosted deployments. Use
