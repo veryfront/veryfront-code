@@ -131,6 +131,13 @@ This is an operator-owned host setting, not application configuration. List
 comma-separated exact origins when the provider uses more than one internal
 origin. Do not use the broad internal-egress override for application auth.
 
+If the provider uses a private CA, add its PEM certificate bundle to the host
+runtime trust settings. Use `NODE_EXTRA_CA_CERTS` for Node.js and Bun. Use
+`DENO_CERT` or `deno --cert` for Deno. Veryfront keeps certificate and hostname
+verification enabled and adds the private CA to the runtime's normal trust
+roots. On Veryfront Cloud, expose the provider through a certificate chain the
+Cloud runtime already trusts.
+
 Changing `clientId`, claim mappings, scopes, signing algorithms, issuer,
 callback origin, or `trustedEndpointOrigins` invalidates existing sessions.
 
@@ -148,6 +155,10 @@ Logout requires `POST` and a same-origin `Origin` header.
 After a request is admitted, middleware and routes receive the same identity.
 The stable user key is `(issuer, subject)`. Map that pair to your own user
 record before applying application authorization.
+
+When an API route sends identity data to a browser, return only the normalized
+fields that the UI needs. Do not return the raw provider claims object by
+default. Keep authorization decisions in server-side middleware or route code.
 
 Microsoft group overage does not become an empty group list. When a token says
 groups must be fetched elsewhere, Veryfront sets `groupsComplete: false`.
