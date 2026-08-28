@@ -97,6 +97,24 @@ function persistedApprovalDecisionData(
   return jsonParse(serializeWorkflowJson(data, "approval decision data", runId, options));
 }
 
+function clonePersistedWorkflowContext(context: WorkflowContext, runId: string): WorkflowContext {
+  return persistedWorkflowContext(context, runId, { strictContext: false });
+}
+
+function cloneWorkflowRunWithContext(run: WorkflowRun, context: WorkflowContext): WorkflowRun {
+  return {
+    ...structuredClone({ ...run, context: undefined }),
+    context,
+  };
+}
+
+function cloneWorkflowRun(run: WorkflowRun): WorkflowRun {
+  return cloneWorkflowRunWithContext(
+    run,
+    clonePersistedWorkflowContext(run.context, run.id),
+  );
+}
+
 class ObservationFeed implements AsyncIterable<WorkflowRunObservedState> {
   readonly #values: WorkflowRunObservedState[] = [];
   readonly #waiters: Array<{
@@ -203,11 +221,10 @@ export class MemoryBackend implements WorkflowBackend {
     }
     this.runs.set(
       run.id,
-      structuredClone({
+      cloneWorkflowRunWithContext({
         ...run,
-        context,
         sourceIntegrationPolicy,
-      }),
+      }, context),
     );
     this.runRevisions.set(run.id, 0);
     return Promise.resolve();
@@ -218,7 +235,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (!run) return null;
 
     return {
-      ...structuredClone(run),
+      ...cloneWorkflowRun(run),
       pendingApprovals: await this.getPendingApprovals(runId),
     };
   }
@@ -412,7 +429,7 @@ export class MemoryBackend implements WorkflowBackend {
 
     return Promise.resolve({
       initial: {
-        ...structuredClone(run),
+        ...cloneWorkflowRun(run),
         pendingApprovals: (this.approvals.get(runId) ?? []).map((approval) =>
           structuredClone(approval)
         ),
@@ -511,7 +528,7 @@ export class MemoryBackend implements WorkflowBackend {
     const end = filter.limit ? start + filter.limit : undefined;
     runs = runs.slice(start, end);
 
-    return Promise.resolve(runs.map((r) => structuredClone(r)));
+    return Promise.resolve(runs.map((run) => cloneWorkflowRun(run)));
   }
 
   countRuns(filter: RunFilter): Promise<number> {
@@ -1351,7 +1368,7 @@ export class MemoryBackend implements WorkflowBackend {
           run.createdAt.getTime();
         return now - lastActivity >= stalledThreshold;
       })
-      .map((run) => structuredClone(run));
+      .map((run) => cloneWorkflowRun(run));
 
     return Promise.resolve(stalled);
   }

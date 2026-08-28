@@ -1192,17 +1192,18 @@ export class RedisBackend implements WorkflowBackend {
   private serializeCheckpoint(runId: string, checkpoint: Checkpoint): string {
     // Checked before the rest of the checkpoint is encoded below, so a value
     // JSON refuses is named by its path rather than by the native error.
-    const { normalized: context } = prepareWorkflowJson(
+    const { serialized: context } = prepareWorkflowJson(
       checkpoint.context,
       "checkpoint.context",
       runId,
       { strictContext: this.config.strictContext },
     );
-    return JSON.stringify({
-      ...checkpoint,
-      context,
+    const { context: _context, ...checkpointWithoutContext } = checkpoint;
+    const serializedCheckpoint = JSON.stringify({
+      ...checkpointWithoutContext,
       timestamp: checkpoint.timestamp.toISOString(),
     });
+    return `${serializedCheckpoint.slice(0, -1)},"context":${context}}`;
   }
 
   private serializeApproval(approval: PersistedPendingApproval): string {

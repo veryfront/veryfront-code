@@ -49,6 +49,7 @@ const objectKeys = Object.keys;
 const objectPrototype = Object.prototype;
 const objectToString = Object.prototype.toString;
 const POSITIVE_INFINITY = Number.POSITIVE_INFINITY;
+const ProxyConstructor = Proxy;
 const reflectApply = Reflect.apply;
 const reflectGet = Reflect.get;
 const reflectOwnKeys = Reflect.ownKeys;
@@ -243,13 +244,14 @@ function isUnsafeJsonTailReference(
 function hasSafeJsonTailPrototype(
   value: JsonTraversalReference,
   isArray: boolean,
+  inspectToJson: boolean,
 ): boolean {
   try {
     const prototype = objectGetPrototypeOf(value);
     return (isArray
       ? prototype === arrayPrototype
       : prototype === objectPrototype || prototype === null) &&
-      !hasJsonTailHook(value, prototype);
+      (!inspectToJson || !hasJsonTailHook(value, prototype));
   } catch {
     return false;
   }
@@ -287,6 +289,7 @@ function appendJsonTailOwnDataValues(
 function canSnapshotJsonTailWithoutReplacer(
   root: JsonTraversalReference,
   active: Set<JsonTraversalReference>,
+  applyRootToJson: boolean,
 ): boolean {
   if (!canIdentifyProxyWithoutHooks) return false;
 
@@ -297,6 +300,16 @@ function canSnapshotJsonTailWithoutReplacer(
     const candidate = pending[cursor++];
     if (candidate === null) continue;
     if (isJsonTailPrimitive(candidate)) continue;
+    if (typeof candidate === "function") {
+      const reference = candidate as JsonTraversalReference;
+      if (isUnsafeJsonTailReference(reference, active, seen)) return false;
+      try {
+        if (hasJsonTailHook(reference, objectGetPrototypeOf(reference))) return false;
+      } catch {
+        return false;
+      }
+      continue;
+    }
     if (typeof candidate !== "object") return false;
 
     const reference = candidate as JsonTraversalReference;
@@ -304,7 +317,8 @@ function canSnapshotJsonTailWithoutReplacer(
     reflectApply(setAdd, seen, [reference]);
 
     const isArray = arrayIsArray(reference);
-    if (!hasSafeJsonTailPrototype(reference, isArray)) return false;
+    const inspectToJson = applyRootToJson || reference !== root;
+    if (!hasSafeJsonTailPrototype(reference, isArray, inspectToJson)) return false;
     if (!appendJsonTailOwnDataValues(reference, isArray, pending)) return false;
   }
   return true;
@@ -459,20 +473,31 @@ function normalizeJsonTail(
   key: string,
   active: Set<JsonTraversalReference>,
   state: JsonSerializationState,
+  applyRootToJson: boolean,
 ): NormalizedJsonValue | typeof OMIT_JSON_VALUE {
   // This branch has proved the tail contains only inert JSON data: no hooks,
   // accessors, proxies, exotic objects, raw tokens, cycles, or aliases. Encode
   // it iteratively now, before later sibling hooks can mutate its data or its
   // prototypes. Native stringify here combines its depth with every active
   // normalize frame, while deferring the object makes a later hook observable.
-  if (canSnapshotJsonTailWithoutReplacer(value, active)) {
+  if (canSnapshotJsonTailWithoutReplacer(value, active, applyRootToJson)) {
     state.requiresIterativeEncoding = true;
     return jsonParse(encodeNormalizedJson(value)!) as NormalizedJsonValue;
   }
 
+  let suppressRootToJson = !applyRootToJson;
+  const tailValue = applyRootToJson ? value : new ProxyConstructor(value, {
+    get(target, property) {
+      if (suppressRootToJson && property === "toJSON") {
+        suppressRootToJson = false;
+        return undefined;
+      }
+      return reflectGet(target, property, target);
+    },
+  });
   const holder = objectCreate(null);
   objectDefineProperty(holder, key, {
-    value,
+    value: tailValue,
     enumerable: true,
     configurable: true,
     writable: true,
@@ -992,7 +1017,7 @@ function normalizeAndFindUnrepresentableValues(
         return nested as NormalizedJsonValue;
       }
       try {
-        return normalizeJsonTail(nested, key, active, serializationState);
+        return normalizeJsonTail(nested, key, active, serializationState, applyToJson);
       } catch (error) {
         if (error === ACTIVE_JSON_TAIL_REFERENCE) {
           recordFatal(path, "circular reference");

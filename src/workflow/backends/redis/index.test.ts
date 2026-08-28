@@ -2720,6 +2720,30 @@ describe("RedisBackend", () => {
       assertEquals(Object.is(checkpoint?.context.step, -0), true);
     });
 
+    it("saves checkpoint context deeper than native JSON can traverse", async () => {
+      const runId = "run-cp-deep-context";
+      let deep: unknown = { leaf: true };
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH + 7_000; index++) {
+        deep = { nested: deep };
+      }
+
+      await backend.saveCheckpoint(runId, {
+        id: "cp-deep-context",
+        nodeId: "step",
+        timestamp: new Date("2025-01-01T01:00:00Z"),
+        context: { input: {}, step: deep },
+        nodeStates: {},
+      });
+
+      const checkpoint = await backend.getLatestCheckpoint(runId);
+      assertEquals(checkpoint?.id, "cp-deep-context");
+      let restored = checkpoint?.context.step;
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH + 7_000; index++) {
+        restored = (restored as { nested: unknown }).nested;
+      }
+      assertEquals(restored, { leaf: true });
+    });
+
     it("should return null when no checkpoints", async () => {
       assertEquals(await backend.getLatestCheckpoint("no-such"), null);
     });

@@ -1157,6 +1157,46 @@ describe("serializeWorkflowContext", () => {
       assertEquals(JSON.parse(serialized).step.later.observed, 1);
     });
 
+    it("does not reapply toJSON on a cutoff replacement value", () => {
+      let leafToJsonCalls = 0;
+      let replacementToJsonCalls = 0;
+      let replacementGetterCalls = 0;
+      const replacement = {
+        value: 1,
+        toJSON() {
+          replacementToJsonCalls++;
+          return { value: 2 };
+        },
+      };
+      Object.defineProperty(replacement, "dynamic", {
+        enumerable: true,
+        get() {
+          replacementGetterCalls++;
+          return 3;
+        },
+      });
+      let deep: unknown = {
+        toJSON() {
+          leafToJsonCalls++;
+          return replacement;
+        },
+      };
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH - 1; index++) {
+        deep = { n: deep };
+      }
+
+      const serialized = serializeWorkflowContext(contextWith(deep));
+      let parsed = JSON.parse(serialized).step;
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH - 1; index++) {
+        parsed = parsed.n;
+      }
+
+      assertEquals(leafToJsonCalls, 1);
+      assertEquals(replacementToJsonCalls, 0);
+      assertEquals(replacementGetterCalls, 1);
+      assertEquals(parsed, { value: 1, dynamic: 3 });
+    });
+
     it("snapshots an inert deep tail before a later sibling mutates it", () => {
       const makeContext = (): WorkflowContext => {
         const leaf = { value: 1 };

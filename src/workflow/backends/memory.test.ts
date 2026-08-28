@@ -45,6 +45,27 @@ describe("MemoryBackend", () => {
     };
   }
 
+  function deepLeaf(value: unknown, depth: number): unknown {
+    let current = value;
+    for (let index = 0; index < depth; index++) {
+      if (current === null || typeof current !== "object") return undefined;
+      current = (current as Record<string, unknown>).nested;
+    }
+    if (current === null || typeof current !== "object") return undefined;
+    return (current as Record<string, unknown>).leaf;
+  }
+
+  function setDeepLeaf(value: unknown, depth: number, leaf: unknown): void {
+    let current = value;
+    for (let index = 0; index < depth; index++) {
+      if (current === null || typeof current !== "object") return;
+      current = (current as Record<string, unknown>).nested;
+    }
+    if (current !== null && typeof current === "object") {
+      (current as Record<string, unknown>).leaf = leaf;
+    }
+  }
+
   async function assertRejectsAsynchronously<T>(
     operation: () => Promise<T>,
     message: string,
@@ -368,6 +389,42 @@ describe("MemoryBackend", () => {
         later: "2025-06-15T12:00:00.000Z",
         invalidRatio: null,
       });
+    });
+
+    it("stores accepted deep context without a stack-limited whole-run clone", async () => {
+      const depth = MAX_TRAVERSAL_DEPTH + 1_500;
+      const originalLeaf: Record<string, unknown> = { leaf: "stored" };
+      let deep: unknown = originalLeaf;
+      for (let index = 0; index < depth; index++) deep = { nested: deep };
+
+      await backend.createRun(createTestRun("run-deep-context", {
+        status: "running",
+        context: { input: {}, deep },
+        startedAt: new Date(0),
+        heartbeatAt: new Date(0),
+      }));
+      originalLeaf.leaf = "mutated after create";
+
+      const firstRead = await backend.getRun("run-deep-context");
+      assertExists(firstRead);
+      assertEquals(deepLeaf(firstRead.context.deep, depth), "stored");
+      assertEquals(
+        deepLeaf((await backend.listRuns({}))[0]?.context.deep, depth),
+        "stored",
+      );
+      const observation = await backend.openRunObservation("run-deep-context");
+      assertExists(observation);
+      assertEquals(deepLeaf(observation.initial.context.deep, depth), "stored");
+      await observation.close();
+      assertEquals(
+        deepLeaf((await backend.findStalledRuns(0))[0]?.context.deep, depth),
+        "stored",
+      );
+
+      setDeepLeaf(firstRead.context.deep, depth, "mutated after read");
+      const secondRead = await backend.getRun("run-deep-context");
+      assertExists(secondRead);
+      assertEquals(deepLeaf(secondRead.context.deep, depth), "stored");
     });
 
     it("rejects context values the durable JSON contract cannot encode", async () => {
