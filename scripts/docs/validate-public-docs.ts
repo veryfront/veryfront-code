@@ -51,10 +51,12 @@ const UNSYNCED_README_PATHS = SYNCED_DOC_DIRS.map((dir) => `${dir}/README.md`);
 
 /**
  * Mintlify renders these pages as MDX, so a raw anchor is a working link on
- * the site and has to clear the same boundary. Quoted values only: an
- * unquoted `href={href}` is a JSX expression, not a destination.
+ * the site and has to clear the same boundary. Both a quoted attribute and a
+ * JSX expression wrapping a string literal name a destination the reader can
+ * click; a genuinely dynamic `href={href}` has no literal to check.
  */
-const HTML_HREF_SOURCE = /\bhref\s*=\s*["']([^"']*)["']/;
+const HTML_HREF_SOURCE =
+  /\bhref\s*=\s*(?:["']([^"']*)["']|\{\s*["']([^"']*)["']\s*\})/;
 /** Any origin works: only the resolved path is read back out. */
 const RESOLUTION_ORIGIN = "https://docs.invalid";
 function isPublishedPage(target: string): boolean {
@@ -118,14 +120,32 @@ function afterMarkdownLabel(text: string, start: number): number | undefined {
   return depth === 0 ? cursor : undefined;
 }
 
-function referenceDestination(text: string): string | undefined {
-  let labelStart = 0;
-  while (labelStart < 3 && /\s/.test(text[labelStart] ?? "")) labelStart++;
+/**
+ * A reference definition starting at `lineStart`. CommonMark lets the
+ * destination sit on the line after the label, so the run of whitespace after
+ * the colon may cross one newline but not a blank line, which ends the
+ * definition.
+ */
+function referenceDestinationAt(
+  text: string,
+  lineStart: number,
+): Destination | undefined {
+  let labelStart = lineStart;
+  while (
+    labelStart < lineStart + 3 && (text[labelStart] === " " ||
+      text[labelStart] === "\t")
+  ) {
+    labelStart++;
+  }
   const afterLabel = afterMarkdownLabel(text, labelStart);
   if (afterLabel === undefined || text[afterLabel] !== ":") return undefined;
 
   let cursor = afterLabel + 1;
-  while (/\s/.test(text[cursor] ?? "")) cursor++;
+  let newlines = 0;
+  while (/\s/.test(text[cursor] ?? "")) {
+    if (text[cursor] === "\n" && ++newlines > 1) return undefined;
+    cursor++;
+  }
   const wrapped = text[cursor] === "<";
   if (wrapped) cursor++;
   const destinationStart = cursor;
@@ -136,14 +156,28 @@ function referenceDestination(text: string): string | undefined {
     cursor++;
   }
   return cursor > destinationStart
-    ? text.slice(destinationStart, cursor)
+    ? { href: text.slice(destinationStart, cursor), offset: destinationStart }
     : undefined;
 }
 
-export function destinations(text: string): string[] {
+/** A link destination and where it starts, so an issue can name its line. */
+export interface Destination {
+  href: string;
+  offset: number;
+}
+
+/**
+ * Every destination in `text`, with its offset.
+ *
+ * Scanned over the whole document rather than line by line: Markdown lets link
+ * text wrap across lines, and lets a reference definition put its destination
+ * on the following line. Neither line holds enough syntax on its own, while
+ * Mintlify still renders both as links.
+ */
+export function scanDestinations(text: string): Destination[] {
   // A scanner is required here because valid Markdown labels can contain
   // balanced brackets or escaped closing brackets.
-  const found: string[] = [];
+  const found: Destination[] = [];
   for (let start = 0; start < text.length; start++) {
     const afterLabel = afterMarkdownLabel(text, start);
     if (afterLabel === undefined || text[afterLabel] !== "(") continue;
@@ -163,7 +197,10 @@ export function destinations(text: string): string[] {
         cursor++;
       }
       if (text[cursor] === ">" && cursor > destinationStart) {
-        found.push(text.slice(destinationStart, cursor));
+        found.push({
+          href: text.slice(destinationStart, cursor),
+          offset: destinationStart,
+        });
       }
       start = cursor;
       continue;
@@ -187,16 +224,48 @@ export function destinations(text: string): string[] {
       cursor++;
     }
     if (cursor > destinationStart) {
-      found.push(text.slice(destinationStart, cursor));
+      found.push({
+        href: text.slice(destinationStart, cursor),
+        offset: destinationStart,
+      });
     }
     start = cursor;
   }
+
   const htmlHref = new RegExp(HTML_HREF_SOURCE, "gi");
   let htmlMatch: RegExpExecArray | null;
-  while ((htmlMatch = htmlHref.exec(text))) found.push(htmlMatch[1]);
-  const reference = referenceDestination(text);
-  if (reference) found.push(reference);
+  while ((htmlMatch = htmlHref.exec(text))) {
+    const href = htmlMatch[1] ?? htmlMatch[2];
+    if (href === undefined) continue;
+    found.push({ href, offset: htmlMatch.index });
+  }
+
+  // A reference definition is only a definition at the start of a line.
+  for (let lineStart = 0; lineStart <= text.length;) {
+    const reference = referenceDestinationAt(text, lineStart);
+    if (reference) found.push(reference);
+    const next = text.indexOf("\n", lineStart);
+    if (next === -1) break;
+    lineStart = next + 1;
+  }
+
   return found;
+}
+
+export function destinations(text: string): string[] {
+  return scanDestinations(text).map((destination) => destination.href);
+}
+
+/** 1-indexed line holding `offset`. */
+function lineAt(lineStarts: readonly number[], offset: number): number {
+  let low = 0;
+  let high = lineStarts.length - 1;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (lineStarts[middle]! <= offset) low = middle;
+    else high = middle - 1;
+  }
+  return low + 1;
 }
 
 export function collectUnpublishedLinkIssues(
@@ -206,22 +275,27 @@ export function collectUnpublishedLinkIssues(
   if (!isPublishedPage(path)) return [];
 
   const fromDir = path.slice(0, path.lastIndexOf("/"));
+  const lines = content.split("\n");
+  const lineStarts: number[] = [0];
+  for (const line of lines.slice(0, -1)) {
+    lineStarts.push(lineStarts[lineStarts.length - 1]! + line.length + 1);
+  }
+
   const issues: PublicDocIssue[] = [];
-  for (const [index, text] of content.split("\n").entries()) {
-    for (const href of destinations(text)) {
-      if (!isRepositoryRelative(href)) continue;
-      const target = resolveRelative(fromDir, href);
-      if (target === undefined || isPublishedPage(target)) continue;
-      issues.push({
-        path,
-        line: index + 1,
-        message:
-          `Do not link published docs to ${target}. veryfront-docs publishes only ${
-            SYNCED_DOC_DIRS.join(", ")
-          }, and drops each section README, so this link 404s on the site.`,
-        text: text.trim(),
-      });
-    }
+  for (const { href, offset } of scanDestinations(content)) {
+    if (!isRepositoryRelative(href)) continue;
+    const target = resolveRelative(fromDir, href);
+    if (target === undefined || isPublishedPage(target)) continue;
+    const line = lineAt(lineStarts, offset);
+    issues.push({
+      path,
+      line,
+      message:
+        `Do not link published docs to ${target}. veryfront-docs publishes only ${
+          SYNCED_DOC_DIRS.join(", ")
+        }, and drops each section README, so this link 404s on the site.`,
+      text: lines[line - 1]!.trim(),
+    });
   }
   return issues;
 }
