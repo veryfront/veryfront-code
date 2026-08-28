@@ -22,28 +22,6 @@ function publishedFiles(...paths: string[]) {
 }
 
 describe("public docs validation", () => {
-  it("handles raw HTML blocks and browser-valid destination boundaries", () => {
-    for (const source of [
-      "<?pi\n[x](docs/architecture/private.md)\n?>",
-      "<!DOCTYPE html\n[x](docs/architecture/private.md)\n>",
-      "<![CDATA[\n[x](docs/architecture/private.md)\n]]>",
-    ]) {
-      assertEquals(collectUnpublishedLinkIssues("README.md", source), []);
-    }
-    assertEquals(
-      destinations("`sample\r\r[x](../architecture/private.md)`"),
-      ["../architecture/private.md"],
-    );
-    assertEquals(destinations("[x](<../architecture/<private.md>)"), []);
-    assertEquals(
-      collectUnpublishedLinkIssues(
-        "README.md",
-        '<a data-ok={`x ${"`"} >`} href="docs/architecture/private.md">x</a>',
-      ).map((issue) => issue.line),
-      [1],
-    );
-  });
-
   it("parses balanced and escaped inline link labels", () => {
     assertEquals(
       destinations(
@@ -333,6 +311,34 @@ describe("public docs validation", () => {
       ).map((issue) => issue.line),
       [2],
     );
+    for (
+      const [opening, closing] of [
+        ["<?target", "?>"],
+        ["<!declaration", ">"],
+        ["<![CDATA[", "]]>"],
+      ]
+    ) {
+      assertEquals(
+        collectUnpublishedLinkIssues(
+          "README.md",
+          `${opening}\n` +
+            "[hidden](docs/architecture/hidden.md)\n" +
+            `${closing}\n` +
+            "[visible](docs/architecture/visible.md)",
+        ).map((issue) => issue.line),
+        [4],
+      );
+    }
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "README.md",
+        "<![CDATA[\n" +
+          "<a href=docs/architecture/hidden.md>raw data</a>\n" +
+          "]]>\n" +
+          "<a href=docs/architecture/visible.md>rendered</a>",
+      ).map((issue) => issue.line),
+      [4],
+    );
   });
 
   it("honors blank-line-terminated Markdown HTML blocks", () => {
@@ -398,6 +404,7 @@ describe("public docs validation", () => {
           '<a data-ok={/<}>/.test(value)} href="../architecture/regex.md">ok</a>\n' +
           '<a title="<!--" href="../architecture/comment-token.md">ok</a>\n' +
           '<a data-ok={/[}>]/.test(value)} href="../architecture/regex-class.md">ok</a>\n' +
+          '<a data-ok={`x ${"`"} >`} href="../architecture/template.md">ok</a>\n' +
           '<a data-ok={value / count > 1} href="../architecture/division.md">ok</a>\n' +
           '<div title="[old](../architecture/title-link.md)"></div>\n' +
           '<div title={"[old](../architecture/expression.md)"}></div>\n' +
@@ -415,9 +422,17 @@ describe("public docs validation", () => {
         "../architecture/regex.md",
         "../architecture/comment-token.md",
         "../architecture/regex-class.md",
+        "../architecture/template.md",
         "../architecture/division.md",
         "../architecture/real.md",
       ],
+    );
+    assertEquals(
+      destinations(
+        '<a data-ok={`x ${`nested ${">"}`} >`} ' +
+          'href="../architecture/nested-template.md">ok</a>',
+      ),
+      ["../architecture/nested-template.md"],
     );
   });
 
@@ -484,6 +499,28 @@ describe("public docs validation", () => {
           "[gate]: ../architecture/private.md",
       ),
       ["../architecture/private.md"],
+    );
+    assertEquals(
+      destinations("[pointy](<../architecture/<private.md>)"),
+      [],
+    );
+    assertEquals(
+      destinations(String.raw`[pointy](<../architecture/\<private.md>)`),
+      [String.raw`../architecture/\<private.md`],
+    );
+    assertEquals(
+      destinations(
+        "[pointy]\n\n[pointy]: <../architecture/<private.md>",
+      ),
+      [],
+    );
+    assertEquals(
+      destinations(
+        String.raw`[pointy]
+
+[pointy]: <../architecture/\<private.md>`,
+      ),
+      [String.raw`../architecture/\<private.md`],
     );
   });
 
@@ -1193,6 +1230,21 @@ describe("public docs validation", () => {
           "\nSetext\n=======\n    [setext](../architecture/setext.md)\n" +
           "\n---\n    [thematic](../architecture/thematic.md)",
       ),
+      [],
+    );
+  });
+
+  it("ends code spans at bare-CR paragraph boundaries", () => {
+    assertEquals(
+      destinations("`sample\r\r[x](docs/architecture/private.md)`"),
+      ["docs/architecture/private.md"],
+    );
+    assertEquals(
+      destinations("[`sample\r\r]`](../architecture/private.md)"),
+      [],
+    );
+    assertEquals(
+      destinations("`[hidden](../architecture/hidden.md)\rcontinuation`"),
       [],
     );
   });

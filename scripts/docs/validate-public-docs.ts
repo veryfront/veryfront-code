@@ -59,8 +59,11 @@ const RAW_HTML_BLOCK_TAG_SOURCE =
   /^<(pre|script|style|textarea)(?=[\t\n\f\r />]|$)/i;
 const RAW_HTML_BLOCK_END_SOURCE = /<\/(?:pre|script|style|textarea)>/i;
 const PROCESSING_INSTRUCTION_HTML_BLOCK_SOURCE = /^<\?/;
-const DECLARATION_HTML_BLOCK_SOURCE = /^<![A-Z]/;
+const PROCESSING_INSTRUCTION_HTML_BLOCK_END_SOURCE = /\?>/;
+const DECLARATION_HTML_BLOCK_SOURCE = /^<![A-Za-z]/;
+const DECLARATION_HTML_BLOCK_END_SOURCE = />/;
 const CDATA_HTML_BLOCK_SOURCE = /^<!\[CDATA\[/;
+const CDATA_HTML_BLOCK_END_SOURCE = /\]\]>/;
 const BLANK_LINE_TERMINATED_HTML_BLOCK_TAG_SOURCE =
   /^<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?=[\t\n\f\r />]|$)/i;
 const HTML_BLOCK_TAG_NAME_SOURCE = "[A-Za-z][A-Za-z0-9-]*";
@@ -310,12 +313,7 @@ function markdownCodeSpanEndAt(
   if (text[start] !== "`" || isBackslashEscaped(text, start)) return undefined;
   let length = 1;
   while (text[start + length] === "`") length++;
-  const paragraphBreak = text.slice(start + length).search(
-    /(?:\r\n?|\n)[ \t]*(?:\r\n?|\n)/,
-  );
-  const limit = paragraphBreak === -1
-    ? text.length
-    : start + length + paragraphBreak;
+  const limit = paragraphBreakStart(text, start + length) ?? text.length;
   let cursor = start + length;
   while (cursor < limit) {
     const candidate = text.indexOf("`", cursor);
@@ -661,12 +659,8 @@ function markdownCodeRanges(text: string): Range[] {
 
     let length = 1;
     while (text[cursor + length] === "`") length++;
-    const paragraphBreak = text.slice(cursor + length).search(
-      /(?:\r\n?|\n)[ \t]*(?:\r\n?|\n)/,
-    );
-    const paragraphLimit = paragraphBreak === -1
-      ? text.length
-      : cursor + length + paragraphBreak;
+    const paragraphLimit = paragraphBreakStart(text, cursor + length) ??
+      text.length;
     const limit = Math.min(
       paragraphLimit,
       blockRanges[blockIndex]?.start ?? text.length,
@@ -747,7 +741,7 @@ function quotedRangeEnd(
   start: number,
   quote: '"' | "'" | "`",
 ): number | undefined {
-  if (quote === "`") return templateLiteralEnd(text, start);
+  if (quote === "`") return javaScriptTemplateEnd(text, start);
   for (let cursor = start + 1; cursor < text.length; cursor++) {
     if (text[cursor] === "\\") cursor++;
     else if (text[cursor] === quote) return cursor + 1;
@@ -755,37 +749,63 @@ function quotedRangeEnd(
   return undefined;
 }
 
-function templateLiteralEnd(text: string, start: number): number | undefined {
-  for (let cursor = start + 1; cursor < text.length; cursor++) {
+function javaScriptTemplateEnd(
+  text: string,
+  start: number,
+): number | undefined {
+  let cursor = start + 1;
+  while (cursor < text.length) {
     if (text[cursor] === "\\") {
-      cursor++;
+      cursor += 2;
       continue;
     }
     if (text[cursor] === "`") return cursor + 1;
-    if (!text.startsWith("${", cursor)) continue;
-
-    let depth = 1;
-    for (cursor += 2; cursor < text.length && depth > 0; cursor++) {
-      const character = text[cursor]!;
-      if (character === "\\") {
-        cursor++;
-        continue;
-      }
-      const commentEnd = javaScriptCommentEnd(text, cursor);
-      if (commentEnd !== undefined) {
-        cursor = commentEnd - 1;
-        continue;
-      }
-      if (character === '"' || character === "'" || character === "`") {
-        const end = quotedRangeEnd(text, cursor, character);
-        if (end === undefined) return undefined;
-        cursor = end - 1;
-        continue;
-      }
-      if (character === "{") depth++;
-      else if (character === "}") depth--;
+    if (text.startsWith("${", cursor)) {
+      const interpolationEnd = javaScriptTemplateInterpolationEnd(text, cursor);
+      if (interpolationEnd === undefined) return undefined;
+      cursor = interpolationEnd;
+      continue;
     }
-    if (depth !== 0) return undefined;
+    cursor++;
+  }
+  return undefined;
+}
+
+function javaScriptTemplateInterpolationEnd(
+  text: string,
+  start: number,
+): number | undefined {
+  let depth = 1;
+  let cursor = start + 2;
+  while (cursor < text.length) {
+    const commentEnd = javaScriptCommentEnd(text, cursor);
+    if (commentEnd !== undefined) {
+      cursor = commentEnd;
+      continue;
+    }
+    const character = text[cursor]!;
+    if (character === '"' || character === "'") {
+      const end = quotedRangeEnd(text, cursor, character);
+      if (end === undefined) return undefined;
+      cursor = end;
+      continue;
+    }
+    if (character === "`") {
+      const end = javaScriptTemplateEnd(text, cursor);
+      if (end === undefined) return undefined;
+      cursor = end;
+      continue;
+    }
+    if (character === "/" && javaScriptRegexMayStart(text, cursor)) {
+      const regexEnd = javaScriptRegexEnd(text, cursor);
+      if (regexEnd !== undefined) {
+        cursor = regexEnd;
+        continue;
+      }
+    }
+    if (character === "{") depth++;
+    else if (character === "}" && --depth === 0) return cursor + 1;
+    cursor++;
   }
   return undefined;
 }
@@ -867,7 +887,14 @@ function mdxExpressionAt(
       continue;
     }
     const character = text[cursor]!;
-    if (character === '"' || character === "'" || character === "`") {
+    if (character === "`") {
+      const end = javaScriptTemplateEnd(text, cursor);
+      if (end === undefined) return undefined;
+      strings.push({ start: cursor, end });
+      cursor = end;
+      continue;
+    }
+    if (character === '"' || character === "'") {
       const end = quotedRangeEnd(text, cursor, character);
       if (end === undefined) return undefined;
       strings.push({ start: cursor, end });
@@ -1247,6 +1274,60 @@ function followsCompletedHtmlBlock(
   return htmlBlocks.some((range) => range.end === lineStart);
 }
 
+interface TagSyntaxScan {
+  readonly end: number | undefined;
+  readonly topLevelOffsets: ReadonlySet<number>;
+}
+
+function scanTagSyntax(text: string, start: number): TagSyntaxScan {
+  const topLevelOffsets = new Set<number>();
+  let quote: '"' | "'" | "`" | undefined;
+  let expressionDepth = 0;
+  for (let cursor = start; cursor < text.length; cursor++) {
+    const character = text[cursor]!;
+    if (quote !== undefined) {
+      if (character === "\\") cursor++;
+      else if (character === quote) quote = undefined;
+      continue;
+    }
+    const commentEnd = expressionDepth > 0
+      ? javaScriptCommentEnd(text, cursor)
+      : undefined;
+    if (commentEnd !== undefined) {
+      cursor = commentEnd - 1;
+      continue;
+    }
+    if (
+      expressionDepth > 0 && character === "/" &&
+      javaScriptRegexMayStart(text, cursor)
+    ) {
+      const regexEnd = javaScriptRegexEnd(text, cursor);
+      if (regexEnd !== undefined) {
+        cursor = regexEnd - 1;
+        continue;
+      }
+    }
+    if (expressionDepth === 0) {
+      topLevelOffsets.add(cursor);
+      if (character === ">") {
+        return { end: cursor + 1, topLevelOffsets };
+      }
+    }
+    if (character === "`" && expressionDepth > 0) {
+      const templateEnd = javaScriptTemplateEnd(text, cursor);
+      if (templateEnd !== undefined) {
+        cursor = templateEnd - 1;
+        continue;
+      }
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      quote = character;
+    } else if (character === "{") expressionDepth++;
+    else if (character === "}" && expressionDepth > 0) expressionDepth--;
+  }
+  return { end: undefined, topLevelOffsets };
+}
+
 function htmlTagRanges(
   text: string,
   ignoredRanges: readonly Range[],
@@ -1269,44 +1350,10 @@ function htmlTagRanges(
       continue;
     }
 
-    let quote: '"' | "'" | "`" | undefined;
-    let expressionDepth = 0;
-    let cursor = start + 2;
-    for (; cursor < text.length; cursor++) {
-      const character = text[cursor]!;
-      if (quote !== undefined) {
-        const end = quotedRangeEnd(text, cursor - 1, quote);
-        if (end === undefined) break;
-        cursor = end - 1;
-        quote = undefined;
-        continue;
-      }
-      const commentEnd = expressionDepth > 0
-        ? javaScriptCommentEnd(text, cursor)
-        : undefined;
-      if (commentEnd !== undefined) {
-        cursor = commentEnd - 1;
-        continue;
-      }
-      if (
-        expressionDepth > 0 && character === "/" &&
-        javaScriptRegexMayStart(text, cursor)
-      ) {
-        const regexEnd = javaScriptRegexEnd(text, cursor);
-        if (regexEnd !== undefined) {
-          cursor = regexEnd - 1;
-          continue;
-        }
-      }
-      if (character === '"' || character === "'" || character === "`") {
-        quote = character;
-      } else if (character === "{") expressionDepth++;
-      else if (character === "}" && expressionDepth > 0) expressionDepth--;
-      else if (character === ">" && expressionDepth === 0) break;
-    }
-    if (text[cursor] === ">") {
-      ranges.push({ start, end: cursor + 1 });
-      start = cursor + 1;
+    const tag = scanTagSyntax(text, start);
+    if (tag.end !== undefined) {
+      ranges.push({ start, end: tag.end });
+      start = tag.end;
     } else break;
   }
   return ranges;
@@ -1322,7 +1369,9 @@ interface RawHtmlBlockBodyRanges {
  * CommonMark HTML blocks render Markdown-shaped text as raw HTML.
  *
  * Type-1 blocks (`script`, `style`, `pre`, and `textarea`) end at their closing
- * tag or container exit. Type-6 and type-7 blocks end at the next blank line.
+ * tag. Type-3 through type-5 blocks end at their matching delimiter. Type-6
+ * and type-7 blocks end at the next blank line. Every block ends at its
+ * container exit or the end of the document.
  */
 function rawHtmlBlockBodyRanges(
   text: string,
@@ -1345,27 +1394,21 @@ function rawHtmlBlockBodyRanges(
     const rawTextOpening = ignored
       ? null
       : blockLine.match(RAW_HTML_BLOCK_TAG_SOURCE);
-    const specialOpening = ignored
-      ? null
-      : PROCESSING_INSTRUCTION_HTML_BLOCK_SOURCE.test(blockLine)
-      ? "processing-instruction"
-      : DECLARATION_HTML_BLOCK_SOURCE.test(blockLine)
-      ? "declaration"
-      : CDATA_HTML_BLOCK_SOURCE.test(blockLine)
-      ? "cdata"
-      : null;
+    const terminatedRawHtmlBlockEnd = ignored
+      ? undefined
+      : terminatedRawHtmlBlockEndPattern(blockLine);
     const typeSixOpening = !ignored &&
       BLANK_LINE_TERMINATED_HTML_BLOCK_TAG_SOURCE.test(blockLine);
     const typeSevenMayStart = followsCompletedHtmlBlock(lineStart, blocks) ||
       referenceDefinitionMayStart(text, lineStart, undefined);
     const blankLineTerminated = rawTextOpening === null &&
-      specialOpening === null &&
+      terminatedRawHtmlBlockEnd === undefined &&
       !insideHtmlBlock &&
       (typeSixOpening ||
         !ignored && typeSevenMayStart &&
           COMPLETE_HTML_BLOCK_TAG_LINE_SOURCE.test(blockLine));
     if (
-      rawTextOpening === null && specialOpening === null &&
+      rawTextOpening === null && terminatedRawHtmlBlockEnd === undefined &&
       !blankLineTerminated
     ) {
       if (newline === -1) break;
@@ -1390,7 +1433,7 @@ function rawHtmlBlockBodyRanges(
         break;
       }
       const currentLine = text.slice(currentLineStart, currentLineEnd);
-      if (rawTextOpening === null && specialOpening === null) {
+      if (rawTextOpening === null && terminatedRawHtmlBlockEnd === undefined) {
         if (
           currentLineStart !== lineStart &&
           text.slice(currentContentStart, currentLineEnd).trim() === ""
@@ -1398,18 +1441,10 @@ function rawHtmlBlockBodyRanges(
           end = currentLineStart;
           break;
         }
-      } else if (rawTextOpening !== null) {
-        if (RAW_HTML_BLOCK_END_SOURCE.test(currentLine)) {
-          end = currentNewline === -1 ? text.length : currentNewline + 1;
-          break;
-        }
       } else {
-        const endMarker = specialOpening === "processing-instruction"
-          ? "?>"
-          : specialOpening === "declaration"
-          ? ">"
-          : "]]" + ">";
-        if (currentLine.includes(endMarker)) {
+        const endPattern = terminatedRawHtmlBlockEnd ??
+          RAW_HTML_BLOCK_END_SOURCE;
+        if (endPattern.test(currentLine)) {
           end = currentNewline === -1 ? text.length : currentNewline + 1;
           break;
         }
@@ -1424,6 +1459,7 @@ function rawHtmlBlockBodyRanges(
     };
     markdown.push(range);
     if (
+      terminatedRawHtmlBlockEnd !== undefined ||
       rawTextOpening !== null && rawTextOpening[1]!.toLowerCase() !== "pre"
     ) {
       rawText.push(range);
@@ -1438,43 +1474,23 @@ function rawHtmlBlockBodyRanges(
   };
 }
 
-function topLevelTagOffsets(tag: string): ReadonlySet<number> {
-  const offsets = new Set<number>();
-  let quote: '"' | "'" | "`" | undefined;
-  let expressionDepth = 0;
-  for (let cursor = 0; cursor < tag.length; cursor++) {
-    const character = tag[cursor]!;
-    if (quote !== undefined) {
-        const end = quotedRangeEnd(tag, cursor - 1, quote);
-      if (end === undefined) break;
-      cursor = end - 1;
-      quote = undefined;
-      continue;
-    }
-    const commentEnd = expressionDepth > 0
-      ? javaScriptCommentEnd(tag, cursor)
-      : undefined;
-    if (commentEnd !== undefined) {
-      cursor = commentEnd - 1;
-      continue;
-    }
-    if (
-      expressionDepth > 0 && character === "/" &&
-      javaScriptRegexMayStart(tag, cursor)
-    ) {
-      const regexEnd = javaScriptRegexEnd(tag, cursor);
-      if (regexEnd !== undefined) {
-        cursor = regexEnd - 1;
-        continue;
-      }
-    }
-    if (expressionDepth === 0) offsets.add(cursor);
-    if (character === '"' || character === "'" || character === "`") {
-      quote = character;
-    } else if (character === "{") expressionDepth++;
-    else if (character === "}" && expressionDepth > 0) expressionDepth--;
+function terminatedRawHtmlBlockEndPattern(
+  blockLine: string,
+): RegExp | undefined {
+  if (PROCESSING_INSTRUCTION_HTML_BLOCK_SOURCE.test(blockLine)) {
+    return PROCESSING_INSTRUCTION_HTML_BLOCK_END_SOURCE;
   }
-  return offsets;
+  if (DECLARATION_HTML_BLOCK_SOURCE.test(blockLine)) {
+    return DECLARATION_HTML_BLOCK_END_SOURCE;
+  }
+  if (CDATA_HTML_BLOCK_SOURCE.test(blockLine)) {
+    return CDATA_HTML_BLOCK_END_SOURCE;
+  }
+  return undefined;
+}
+
+function topLevelTagOffsets(tag: string): ReadonlySet<number> {
+  return scanTagSyntax(tag, 0).topLevelOffsets;
 }
 
 function referenceTitleEnd(
@@ -1695,6 +1711,7 @@ function referenceDestinationAt(
       cursor += 2;
       continue;
     }
+    if (wrapped && text[cursor] === "<") return undefined;
     if (!wrapped && text[cursor] === "(") destinationDepth++;
     else if (!wrapped && text[cursor] === ")") {
       if (destinationDepth === 0) break;
@@ -1871,6 +1888,13 @@ function lineEndingEnd(text: string, start: number): number | undefined {
   return text[start + 1] === "\n" ? start + 2 : start + 1;
 }
 
+function paragraphBreakStart(text: string, start: number): number | undefined {
+  const match = /(?:\r\n|\r|\n)[ \t]*(?:\r\n|\r|\n)/.exec(
+    text.slice(start),
+  );
+  return match === null ? undefined : start + match.index;
+}
+
 function markdownWhitespaceEnd(
   text: string,
   start: number,
@@ -1962,7 +1986,8 @@ function markdownInlineDestinationAt(
         cursor += 2;
         continue;
       }
-      if (text[cursor] === ">" || text[cursor] === "<") break;
+      if (text[cursor] === "<") return undefined;
+      if (text[cursor] === ">") break;
       cursor++;
     }
     if (
