@@ -617,6 +617,25 @@ describe("MemoryBackend", () => {
       assertEquals((await cloningBackend.getRun(runId))?.status, "waiting");
     });
 
+    it("keeps bookkeeping base updates separate from the forwarded patch", async () => {
+      class BookkeepingUpdateBackend extends MemoryBackend {
+        override async updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void> {
+          await super.updateRun(runId, { status: "waiting" });
+          await super.updateRun(runId, structuredClone(patch));
+        }
+      }
+
+      const bookkeepingBackend = new BookkeepingUpdateBackend();
+      const runId = "run-conditional-override-bookkeeping";
+      await bookkeepingBackend.createRun(createTestRun(runId, { status: "running" }));
+
+      assertEquals(
+        await bookkeepingBackend.updateRunIfStatus(runId, ["running"], { status: "failed" }),
+        false,
+      );
+      assertEquals((await bookkeepingBackend.getRun(runId))?.status, "waiting");
+    });
+
     it("does not evaluate a conditional patch when its initial guard fails", async () => {
       const runId = "run-conditional-initial-guard";
       await backend.createRun(createTestRun(runId, { status: "waiting" }));
@@ -707,6 +726,26 @@ describe("MemoryBackend", () => {
         false,
       );
       assertEquals(iteratorCalls, 0);
+      assertEquals((await backend.getRun(runId))?.status, "waiting");
+    });
+
+    it("normalizes fractional status-array lengths before indexed reads", async () => {
+      const runId = "run-context-conditional-status-length";
+      await backend.createRun(createTestRun(runId, { status: "waiting" }));
+      let secondIndexReads = 0;
+      const expectedStatuses = new Proxy<WorkflowRun["status"][]>(["running", "waiting"], {
+        get(target, key, receiver) {
+          if (key === "length") return 1.5;
+          if (key === "1") secondIndexReads++;
+          return Reflect.get(target, key, receiver);
+        },
+      });
+
+      assertEquals(
+        await backend.updateRunIfStatus(runId, expectedStatuses, { status: "failed" }),
+        false,
+      );
+      assertEquals(secondIndexReads, 0);
       assertEquals((await backend.getRun(runId))?.status, "waiting");
     });
 
