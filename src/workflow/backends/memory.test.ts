@@ -4,7 +4,11 @@ import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryBackend } from "./memory.ts";
 import type { Checkpoint, PendingApproval, WorkflowQueueItem, WorkflowRun } from "../types.ts";
 import { MAX_TRAVERSAL_DEPTH } from "../context-serialization.ts";
-import type { PersistedPendingApproval, PersistedPendingEventWait } from "./types.ts";
+import type {
+  PersistedPendingApproval,
+  PersistedPendingEventWait,
+  WorkflowRunUpdate,
+} from "./types.ts";
 import {
   MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES,
   MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES,
@@ -354,18 +358,18 @@ describe("MemoryBackend", () => {
       assertExists(updated?.startedAt);
     });
 
-    it("rejects invalid patches asynchronously after the run check", async () => {
-      const revoked = Proxy.revocable({}, {});
-      revoked.revoke();
-      const patch = revoked.proxy as Partial<WorkflowRun>;
+    it("rejects revoked update patches asynchronously after the run check", async () => {
+      const { proxy, revoke } = Proxy.revocable<WorkflowRunUpdate>({ status: "waiting" }, {});
+      revoke();
 
       await assertRejectsAsynchronously(
-        () => backend.updateRun("run-missing-control", patch),
+        () => backend.updateRun("run-missing-revoked-patch", proxy),
         "Run not found",
       );
-      await backend.createRun(createTestRun("run-existing-control"));
+
+      await backend.createRun(createTestRun("run-existing-revoked-patch"));
       await assertRejectsAsynchronously(
-        () => backend.updateRun("run-existing-control", patch),
+        () => backend.updateRun("run-existing-revoked-patch", proxy),
         "revoked",
       );
     });
@@ -547,7 +551,7 @@ describe("MemoryBackend", () => {
       assertEquals(workerRun?.context.workerHook, undefined);
     });
 
-    it("preserves conditional guards through structured-clone forwarding", async () => {
+    it("preserves conditional guards through updateRun override copies", async () => {
       class CopyingUpdateBackend extends MemoryBackend {
         readonly updateStarted = Promise.withResolvers<void>();
         readonly releaseUpdate = Promise.withResolvers<void>();
@@ -555,7 +559,7 @@ describe("MemoryBackend", () => {
         override async updateRun(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
           this.updateStarted.resolve();
           await this.releaseUpdate.promise;
-          await super.updateRun(runId, structuredClone(patch));
+          await super.updateRun(runId, { ...patch });
         }
 
         forceUpdate(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
@@ -578,6 +582,39 @@ describe("MemoryBackend", () => {
 
       assertEquals(await conditionalUpdate, false);
       assertEquals((await copyingBackend.getRun(runId))?.status, "waiting");
+    });
+
+    it("preserves conditional guards through structured-clone forwarding", async () => {
+      class CloningUpdateBackend extends MemoryBackend {
+        readonly updateStarted = Promise.withResolvers<void>();
+        readonly releaseUpdate = Promise.withResolvers<void>();
+
+        override async updateRun(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
+          this.updateStarted.resolve();
+          await this.releaseUpdate.promise;
+          await super.updateRun(runId, structuredClone(patch));
+        }
+
+        forceUpdate(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
+          return super.updateRun(runId, patch);
+        }
+      }
+
+      const cloningBackend = new CloningUpdateBackend();
+      const runId = "run-conditional-override-clone";
+      await cloningBackend.createRun(createTestRun(runId, { status: "running" }));
+
+      const conditionalUpdate = cloningBackend.updateRunIfStatus(
+        runId,
+        ["running"],
+        { status: "failed" },
+      );
+      await cloningBackend.updateStarted.promise;
+      await cloningBackend.forceUpdate(runId, { status: "waiting" });
+      cloningBackend.releaseUpdate.resolve();
+
+      assertEquals(await conditionalUpdate, false);
+      assertEquals((await cloningBackend.getRun(runId))?.status, "waiting");
     });
 
     it("does not evaluate a conditional patch when its initial guard fails", async () => {
@@ -652,8 +689,8 @@ describe("MemoryBackend", () => {
       assertEquals(stored?.context.statusHook, "stored");
     });
 
-    it("snapshots conditional statuses without invoking a custom iterator", async () => {
-      const runId = "run-conditional-status-iterator";
+    it("snapshots conditional statuses by index without invoking their iterator", async () => {
+      const runId = "run-context-conditional-status-iterator";
       await backend.createRun(createTestRun(runId, { status: "waiting" }));
       const expectedStatuses: WorkflowRun["status"][] = ["running"];
       let iteratorCalls = 0;

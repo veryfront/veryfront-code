@@ -5,7 +5,7 @@
  * Data is NOT persisted across restarts.
  */
 
-import { AsyncLocalStorage } from "node:async_hooks";
+import { AsyncLocalStorage } from "#veryfront/platform/compat/async-context.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 import type {
   ApprovalDecision,
