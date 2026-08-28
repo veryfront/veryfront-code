@@ -70,17 +70,15 @@ const HTML_BLOCK_TAG_NAME_SOURCE = "[A-Za-z][A-Za-z0-9-]*";
 const HTML_BLOCK_ATTRIBUTE_NAME_SOURCE = "[A-Za-z_:][A-Za-z0-9_.:-]*";
 const HTML_BLOCK_ATTRIBUTE_VALUE_SOURCE =
   "(?:[^\\s\"'=<>`]+|'[^']*'|\"[^\"]*\")";
-const COMPLETE_MARKDOWN_HTML_OPEN_TAG_SOURCE = new RegExp(
-  `^<${HTML_BLOCK_TAG_NAME_SOURCE}(?:[ \\t\\n\\f\\r]+${HTML_BLOCK_ATTRIBUTE_NAME_SOURCE}(?:[ \\t\\n\\f\\r]*=[ \\t\\n\\f\\r]*${HTML_BLOCK_ATTRIBUTE_VALUE_SOURCE})?)*[ \\t\\n\\f\\r]*\\/?>$`,
-);
-const COMPLETE_MARKDOWN_HTML_CLOSING_TAG_SOURCE = new RegExp(
-  `^<\\/${HTML_BLOCK_TAG_NAME_SOURCE}[ \\t\\n\\f\\r]*>$`,
+const COMMONMARK_HTML_TAG_SOURCE = new RegExp(
+  `^<(?:${HTML_BLOCK_TAG_NAME_SOURCE}(?:[\\t\\n\\f\\r ]+${HTML_BLOCK_ATTRIBUTE_NAME_SOURCE}(?:[\\t\\n\\f\\r ]*=[\\t\\n\\f\\r ]*${HTML_BLOCK_ATTRIBUTE_VALUE_SOURCE})?)*[\\t\\n\\f\\r ]*\\/?|\\/${HTML_BLOCK_TAG_NAME_SOURCE}[\\t\\n\\f\\r ]*)>`,
 );
 const COMPLETE_HTML_BLOCK_TAG_LINE_SOURCE = new RegExp(
   `^<(?:${HTML_BLOCK_TAG_NAME_SOURCE}(?:[ \\t]+${HTML_BLOCK_ATTRIBUTE_NAME_SOURCE}(?:[ \\t]*=[ \\t]*${HTML_BLOCK_ATTRIBUTE_VALUE_SOURCE})?)*[ \\t]*\\/?|\\/${HTML_BLOCK_TAG_NAME_SOURCE}[ \\t]*)>[ \\t\\r]*$`,
 );
 const URI_AUTOLINK_SOURCE = /<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*)>/g;
 const BARE_AUTOLINK_SOURCE = /https?:\/\/[^\s<>"']+/gi;
+const MAX_MARKDOWN_DESTINATION_PARENTHESIS_DEPTH = 32;
 type DestinationSyntax =
   | "markdown"
   | "autolink"
@@ -100,7 +98,6 @@ const JAVASCRIPT_SIMPLE_ESCAPES: Readonly<Record<string, string>> = {
   t: "\t",
   v: "\v",
 };
-const MAX_MARKDOWN_DESTINATION_PARENTHESIS_DEPTH = 32;
 
 function isPublishedPage(target: string): boolean {
   // The sync deletes the section README before publishing, so a link to one
@@ -353,14 +350,14 @@ function afterMarkdownLabel(text: string, start: number): number | undefined {
       cursor += lineEndingEnd(text, cursor + 1) === undefined ? 2 : 1;
       continue;
     }
+    const inlineHtmlEnd = commonMarkInlineHtmlEnd(text, cursor);
+    if (inlineHtmlEnd !== undefined) {
+      cursor = inlineHtmlEnd;
+      continue;
+    }
     const codeSpanEnd = markdownCodeSpanEndAt(text, cursor);
     if (codeSpanEnd !== undefined) {
       cursor = codeSpanEnd;
-      continue;
-    }
-    const htmlTagEnd = markdownHtmlTagEndAt(text, cursor);
-    if (htmlTagEnd !== undefined) {
-      cursor = htmlTagEnd;
       continue;
     }
     if (text[cursor] === "[") depth++;
@@ -1035,7 +1032,7 @@ function javaScriptRegexEnd(line: string, start: number): number | undefined {
 function javaScriptRegexMayStart(line: string, start: number): boolean {
   const prefix = line.slice(0, start).trimEnd();
   return prefix === "" ||
-    /(?:[=(:,!\[{;?&|+*%^~<>-]|=>|\b(?:return|case|throw|default|typeof|void|delete))$/
+    /(?:[=(:,!\[{;?&|+*%^~<>-]|=>|(?:^|[^A-Za-z0-9_$.])(?:return|case|throw|default|typeof|void|delete))$/
       .test(
         prefix,
       );
@@ -1242,7 +1239,6 @@ function ignoredDestinationRanges(
     baseIgnoredRanges,
     mdxRanges.expressions,
     mdxRanges.strings,
-    syntax,
   );
   const htmlComments = syntax === "markdown"
     ? htmlCommentRanges(
@@ -1296,18 +1292,15 @@ interface TagSyntaxScan {
 function scanTagSyntax(
   text: string,
   start: number,
-  syntax: DocumentSyntax,
 ): TagSyntaxScan {
   const topLevelOffsets = new Set<number>();
-  let quote: '"' | "'" | "`" | undefined;
+  let quote: '"' | "'" | undefined;
+  let quoteUsesJavaScriptEscapes = false;
   let expressionDepth = 0;
   for (let cursor = start; cursor < text.length; cursor++) {
     const character = text[cursor]!;
     if (quote !== undefined) {
-      if (
-        character === "\\" &&
-        (syntax === "mdx" || expressionDepth > 0)
-      ) cursor++;
+      if (quoteUsesJavaScriptEscapes && character === "\\") cursor++;
       else if (character === quote) quote = undefined;
       continue;
     }
@@ -1341,29 +1334,89 @@ function scanTagSyntax(
         continue;
       }
     }
-    if (character === '"' || character === "'" || character === "`") {
+    if (character === '"' || character === "'") {
       quote = character;
+      quoteUsesJavaScriptEscapes = expressionDepth > 0;
     } else if (character === "{") expressionDepth++;
     else if (character === "}" && expressionDepth > 0) expressionDepth--;
   }
   return { end: undefined, topLevelOffsets };
 }
 
-function isCompleteMarkdownHtmlTag(tag: string): boolean {
-  return COMPLETE_MARKDOWN_HTML_OPEN_TAG_SOURCE.test(tag) ||
-    COMPLETE_MARKDOWN_HTML_CLOSING_TAG_SOURCE.test(tag);
+function commonMarkHtmlTagEnd(text: string, start: number): number | undefined {
+  if (text[start] !== "<" || !/[A-Za-z/]/.test(text[start + 1] ?? "")) {
+    return undefined;
+  }
+  const match = COMMONMARK_HTML_TAG_SOURCE.exec(text.slice(start));
+  return match === null ? undefined : start + match[0].length;
 }
 
-function markdownHtmlTagEndAt(
+function commonMarkInlineHtmlEnd(
   text: string,
   start: number,
 ): number | undefined {
-  if (text[start] !== "<" || isBackslashEscaped(text, start)) return undefined;
-  const tag = scanTagSyntax(text, start, "markdown");
-  if (tag.end === undefined) return undefined;
-  return isCompleteMarkdownHtmlTag(text.slice(start, tag.end))
-    ? tag.end
-    : undefined;
+  const tagEnd = commonMarkHtmlTagEnd(text, start);
+  if (tagEnd !== undefined) return tagEnd;
+
+  let delimiter: string | undefined;
+  if (text.startsWith("<!--", start)) delimiter = "-->";
+  else if (text.startsWith("<?", start)) delimiter = "?>";
+  else if (text.startsWith("<![CDATA[", start)) delimiter = "]]>";
+  else if (/^<![A-Za-z]+[\t\n\f\r ]/.test(text.slice(start))) {
+    delimiter = ">";
+  }
+  if (delimiter === undefined) return undefined;
+  const closing = text.indexOf(delimiter, start + 2);
+  return closing === -1 ? undefined : closing + delimiter.length;
+}
+
+function mdxJsxNameEnd(text: string, start: number): number | undefined {
+  if (!/[A-Za-z_$]/.test(text[start] ?? "")) return undefined;
+  let cursor = start + 1;
+  while (/[A-Za-z0-9_$:.-]/.test(text[cursor] ?? "")) cursor++;
+  return cursor;
+}
+
+function mdxJsxTagEnd(text: string, start: number): number | undefined {
+  if (text[start] !== "<") return undefined;
+  let cursor = mdxJsxNameEnd(text, start + 1);
+  if (cursor === undefined) return undefined;
+
+  while (cursor < text.length) {
+    const attributeSeparatorStart = cursor;
+    while (/[\t\n\f\r ]/.test(text[cursor] ?? "")) cursor++;
+    if (text.startsWith("/>", cursor)) return cursor + 2;
+    if (text[cursor] === ">") return cursor + 1;
+    if (cursor === attributeSeparatorStart) return undefined;
+    if (text[cursor] === "{") {
+      const expression = mdxExpressionAt(text, cursor);
+      if (expression === undefined) return undefined;
+      const spreadStart = skipJavaScriptTrivia(text, cursor + 1);
+      if (!text.startsWith("...", spreadStart)) return undefined;
+      cursor = expression.expression.end;
+      continue;
+    }
+
+    const nameEnd = mdxJsxNameEnd(text, cursor);
+    if (nameEnd === undefined) return undefined;
+    cursor = nameEnd;
+    while (/[\t\n\f\r ]/.test(text[cursor] ?? "")) cursor++;
+    if (text[cursor] !== "=") continue;
+    cursor++;
+    while (/[\t\n\f\r ]/.test(text[cursor] ?? "")) cursor++;
+    const quote = text[cursor];
+    if (quote === '"' || quote === "'") {
+      const closing = text.indexOf(quote, cursor + 1);
+      if (closing === -1) return undefined;
+      cursor = closing + 1;
+      continue;
+    }
+    if (text[cursor] !== "{") return undefined;
+    const expression = mdxExpressionAt(text, cursor);
+    if (expression === undefined) return undefined;
+    cursor = expression.expression.end;
+  }
+  return undefined;
 }
 
 function htmlTagRanges(
@@ -1371,7 +1424,6 @@ function htmlTagRanges(
   ignoredRanges: readonly Range[],
   expressionRanges: readonly Range[] = [],
   stringRanges: readonly Range[] = [],
-  syntax: DocumentSyntax = "mdx",
 ): Range[] {
   const ranges: Range[] = [];
   for (let start = 0; start < text.length;) {
@@ -1389,14 +1441,16 @@ function htmlTagRanges(
       continue;
     }
 
-    const tag = scanTagSyntax(text, start, syntax);
-    if (
-      tag.end !== undefined &&
-      (syntax === "mdx" ||
-        isCompleteMarkdownHtmlTag(text.slice(start, tag.end)))
-    ) {
-      ranges.push({ start, end: tag.end });
-      start = tag.end;
+    const commonMarkEnd = commonMarkHtmlTagEnd(text, start);
+    const mdxJsxEnd = mdxJsxTagEnd(text, start);
+    const tagEnd = commonMarkEnd === undefined
+      ? mdxJsxEnd
+      : mdxJsxEnd === undefined
+      ? commonMarkEnd
+      : Math.max(commonMarkEnd, mdxJsxEnd);
+    if (tagEnd !== undefined) {
+      ranges.push({ start, end: tagEnd });
+      start = tagEnd;
     } else start++;
   }
   return ranges;
@@ -1532,11 +1586,8 @@ function terminatedRawHtmlBlockEndPattern(
   return undefined;
 }
 
-function topLevelTagOffsets(
-  tag: string,
-  syntax: DocumentSyntax,
-): ReadonlySet<number> {
-  return scanTagSyntax(tag, 0, syntax).topLevelOffsets;
+function topLevelTagOffsets(tag: string): ReadonlySet<number> {
+  return scanTagSyntax(tag, 0).topLevelOffsets;
 }
 
 function referenceTitleEnd(
@@ -1745,31 +1796,24 @@ function referenceDestinationAt(
   const wrapped = text[cursor] === "<";
   if (wrapped) cursor++;
   const destinationStart = cursor;
-  let destinationDepth = 0;
-  while (
-    cursor < text.length &&
-    (wrapped
-      ? text[cursor] !== ">" && text[cursor] !== "\n" &&
-        text[cursor] !== "\r"
-      : !/\s/.test(text[cursor]!))
-  ) {
-    if (text[cursor] === "\\" && cursor + 1 < text.length) {
-      cursor += 2;
-      continue;
+  if (wrapped) {
+    while (
+      cursor < text.length && text[cursor] !== ">" &&
+      text[cursor] !== "\n" && text[cursor] !== "\r"
+    ) {
+      if (text[cursor] === "\\" && cursor + 1 < text.length) {
+        cursor += 2;
+        continue;
+      }
+      if (text[cursor] === "<") return undefined;
+      cursor++;
     }
-    if (wrapped && text[cursor] === "<") return undefined;
-    if (!wrapped && text[cursor] === "(") {
-      if (
-        ++destinationDepth > MAX_MARKDOWN_DESTINATION_PARENTHESIS_DEPTH
-      ) return undefined;
-    } else if (!wrapped && text[cursor] === ")") {
-      if (destinationDepth === 0) break;
-      destinationDepth--;
-    }
-    cursor++;
+  } else {
+    const destinationEnd = bareMarkdownDestinationEnd(text, cursor);
+    if (destinationEnd === undefined) return undefined;
+    cursor = destinationEnd;
   }
   const destinationEnd = cursor;
-  if (!wrapped && destinationDepth !== 0) return undefined;
   if (wrapped) {
     if (text[cursor] !== ">") return undefined;
     cursor++;
@@ -2003,6 +2047,31 @@ function markdownDestinationStart(
   return markdownWhitespaceEnd(text, start);
 }
 
+function bareMarkdownDestinationEnd(
+  text: string,
+  start: number,
+): number | undefined {
+  let cursor = start;
+  let depth = 0;
+  while (cursor < text.length) {
+    if (text[cursor] === "\\" && cursor + 1 < text.length) {
+      cursor += 2;
+      continue;
+    }
+    if (text[cursor] === "(") {
+      depth++;
+      if (depth > MAX_MARKDOWN_DESTINATION_PARENTHESIS_DEPTH) {
+        return undefined;
+      }
+    } else if (text[cursor] === ")") {
+      if (depth === 0) break;
+      depth--;
+    } else if (/\s/.test(text[cursor]!)) break;
+    cursor++;
+  }
+  return depth === 0 ? cursor : undefined;
+}
+
 interface MarkdownInlineDestination {
   readonly href: string;
   readonly offset: number;
@@ -2048,22 +2117,9 @@ function markdownInlineDestinationAt(
     angle = { start: rangeStart, end: cursor + 1 };
   } else {
     const destinationStart = cursor;
-    let destinationDepth = 0;
-    while (cursor < text.length) {
-      if (text[cursor] === "\\" && cursor + 1 < text.length) {
-        cursor += 2;
-        continue;
-      }
-      if (text[cursor] === "(") {
-        if (
-          ++destinationDepth > MAX_MARKDOWN_DESTINATION_PARENTHESIS_DEPTH
-        ) return undefined;
-      } else if (text[cursor] === ")") {
-        if (destinationDepth === 0) break;
-        destinationDepth--;
-      } else if (/\s/.test(text[cursor]!)) break;
-      cursor++;
-    }
+    const destinationEnd = bareMarkdownDestinationEnd(text, cursor);
+    if (destinationEnd === undefined) return undefined;
+    cursor = destinationEnd;
     if (!markdownDestinationCloses(text, cursor)) return undefined;
     href = text.slice(destinationStart, cursor);
     offset = destinationStart;
@@ -2146,32 +2202,19 @@ export function scanDestinations(
     ignoredRanges,
     syntaxRanges.expressions,
     syntaxRanges.strings,
-    syntax,
   );
-  const structuralTagKeys = new Set(
-    tagRanges.map((range) => `${range.start}:${range.end}`),
-  );
-  const destinationTagRanges = syntax === "markdown"
-    ? [
-      ...tagRanges,
-      ...htmlTagRanges(
-        text,
-        ignoredRanges,
-        syntaxRanges.expressions,
-        syntaxRanges.strings,
-        "mdx",
-      ).filter((range) =>
-        !structuralTagKeys.has(`${range.start}:${range.end}`)
-      ),
-    ]
+  const structuralTagRanges = syntax === "markdown"
+    ? tagRanges.filter((range) =>
+      commonMarkHtmlTagEnd(text, range.start) === range.end
+    )
     : tagRanges;
   const rawHtmlBlocks: RawHtmlBlockBodyRanges = syntax === "markdown"
-    ? rawHtmlBlockBodyRanges(text, tagRanges, ignoredRanges)
+    ? rawHtmlBlockBodyRanges(text, structuralTagRanges, ignoredRanges)
     : { markdown: [], rawText: [], blocks: [] };
   const structuralMarkdownIgnoredRanges = mergeRanges([
     ...ignoredRanges,
     ...syntaxRanges.expressions,
-    ...tagRanges,
+    ...structuralTagRanges,
     ...rawHtmlBlocks.markdown,
   ]);
 
@@ -2280,18 +2323,13 @@ export function scanDestinations(
     }
   }
 
-  for (const tagRange of destinationTagRanges) {
+  for (const tagRange of tagRanges) {
     if (
       isInsideRange(referenceDefinitionRanges, tagRange.start) ||
       isInsideRange(rawHtmlBlocks.rawText, tagRange.start)
     ) continue;
     const tag = text.slice(tagRange.start, tagRange.end);
-    const structurallyValid = syntax !== "markdown" ||
-      structuralTagKeys.has(`${tagRange.start}:${tagRange.end}`);
-    const topLevelOffsets = topLevelTagOffsets(
-      tag,
-      structurallyValid ? syntax : "mdx",
-    );
+    const topLevelOffsets = topLevelTagOffsets(tag);
     const htmlDestination = new RegExp(
       HTML_DESTINATION_ATTRIBUTE_SOURCE,
       "gi",
@@ -2305,7 +2343,6 @@ export function scanDestinations(
       const expression = expressionStart === undefined
         ? undefined
         : staticJsxStringExpression(tag, expressionStart);
-      if (!structurallyValid && expressionStart === undefined) continue;
       const rawHref = htmlMatch[1] ?? htmlMatch[2] ?? expression?.value;
       if (rawHref === undefined) continue;
       const href = expressionStart !== undefined
@@ -2322,7 +2359,7 @@ export function scanDestinations(
           : "javascript-string",
       });
     }
-    if (syntax === "markdown" && structurallyValid) {
+    if (syntax === "markdown") {
       const unquotedDestination = new RegExp(
         MARKDOWN_UNQUOTED_DESTINATION_ATTRIBUTE_SOURCE,
         "gi",

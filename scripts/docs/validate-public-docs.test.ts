@@ -89,25 +89,28 @@ describe("public docs validation", () => {
       ),
       ["docs/architecture/private.md"],
     );
-  });
-
-  it("enforces CommonMark destination parenthesis depth", () => {
-    const accepted = `${"(".repeat(32)}docs/guides/accepted.md${
-      ")".repeat(32)
-    }`;
-    const rejected = `${"(".repeat(33)}docs/architecture/private.md${
-      ")".repeat(33)
-    }`;
-
+    for (
+      const token of [
+        "<!-- ] -->",
+        "<?pi ] ?>",
+        "<!DECL ] >",
+        "<![CDATA[]]]>",
+      ]
+    ) {
+      assertEquals(
+        scanDestinations(
+          `[${token}gate](docs/architecture/private.md)`,
+          "markdown",
+        ).map((destination) => destination.href),
+        ["docs/architecture/private.md"],
+      );
+    }
     assertEquals(
-      destinations(`[accepted](${accepted})\n[rejected](${rejected})`),
-      [accepted],
-    );
-    assertEquals(
-      destinations(
-        `[accepted] [rejected]\n\n[accepted]: ${accepted}\n[rejected]: ${rejected}`,
+      scanDestinations(
+        "[<!-- ] gate](docs/architecture/private.md)",
+        "markdown",
       ),
-      [accepted],
+      [],
     );
   });
 
@@ -250,20 +253,34 @@ describe("public docs validation", () => {
       ["docs/architecture/private.md"],
     );
     assertEquals(
-      scanDestinations(
-        '<foo href="docs/architecture/not-rendered.md" ' +
-          "[gate](docs/architecture/private.md)>",
-        "markdown",
-      ).map((destination) => destination.href),
-      ["docs/architecture/private.md"],
-    );
-    assertEquals(
-      scanDestinations(
+      collectUnpublishedLinkIssues(
+        "README.md",
         '<span title="x\\">ok</span>\n' +
           '<a href="docs/architecture/private.md">private</a>',
-        "markdown",
-      ).map((destination) => destination.href),
-      ["docs/architecture/private.md"],
+      ).map((issue) => issue.line),
+      [2],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "README.md",
+        "<foo [gate](docs/architecture/private.md)>",
+      ).map((issue) => issue.line),
+      [1],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "README.md",
+        '<foo href="docs/architecture/private.md" [invalid]>',
+      ),
+      [],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "README.md",
+        "<foo [invalid]>\n" +
+          '<a href="docs/architecture/private.md">private</a>',
+      ).map((issue) => issue.line),
+      [2],
     );
   });
 
@@ -448,7 +465,7 @@ describe("public docs validation", () => {
           '<a data-ok={/[}>]/.test(value)} href="../architecture/regex-class.md">ok</a>\n' +
           '<a data-ok={typeof /}>/} href="../architecture/typeof-regex.md">ok</a>\n' +
           '<a data-ok={void /}>/} href="../architecture/void-regex.md">ok</a>\n' +
-          '<a data-ok={delete /}>/.value} href="../architecture/delete-regex.md">ok</a>\n' +
+          '<a data-ok={delete /}>/} href="../architecture/delete-regex.md">ok</a>\n' +
           '<a data-ok={`x ${"`"} >`} href="../architecture/template.md">ok</a>\n' +
           '<a data-ok={value / count > 1} href="../architecture/division.md">ok</a>\n' +
           '<div title="[old](../architecture/title-link.md)"></div>\n' +
@@ -569,6 +586,40 @@ describe("public docs validation", () => {
 [pointy]: <../architecture/\<private.md>`,
       ),
       [String.raw`../architecture/\<private.md`],
+    );
+    assertEquals(
+      destinations(
+        "[deep](../architecture/" + "(".repeat(33) + "private" +
+          ")".repeat(33) + ".md)",
+      ),
+      [],
+    );
+    assertEquals(
+      destinations(
+        "[deep]\n\n[deep]: ../architecture/" + "(".repeat(33) + "private" +
+          ")".repeat(33) + ".md",
+      ),
+      [],
+    );
+    assertEquals(
+      destinations(
+        "[deep](../architecture/" + "(".repeat(32) + "private" +
+          ")".repeat(32) + ".md)",
+      ),
+      [
+        "../architecture/" + "(".repeat(32) + "private" +
+        ")".repeat(32) + ".md",
+      ],
+    );
+    assertEquals(
+      destinations(
+        "[deep]\n\n[deep]: ../architecture/" + "(".repeat(32) +
+          "private" + ")".repeat(32) + ".md",
+      ),
+      [
+        "../architecture/" + "(".repeat(32) + "private" +
+        ")".repeat(32) + ".md",
+      ],
     );
   });
 
