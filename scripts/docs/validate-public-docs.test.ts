@@ -8,6 +8,8 @@ import {
   publishedTargetExists,
 } from "./validate-public-docs.ts";
 
+const BLOCKED_REPOSITORY = "example-org/private-examples";
+
 function publishedFiles(...paths: string[]) {
   const suffixes = paths.map((path) => `/${path}`);
   return (path: string): { readonly isFile: boolean } => {
@@ -44,6 +46,10 @@ describe("public docs validation", () => {
       ),
       ["../architecture/escaped.md"],
     );
+    assertEquals(
+      destinations("[ſ]\n[s]: ../architecture/case-folded.md"),
+      ["../architecture/case-folded.md"],
+    );
   });
 
   it("parses quoted HTML anchors and angle-bracket destinations", () => {
@@ -63,6 +69,8 @@ describe("public docs validation", () => {
           '<div data-href="../architecture/data.md"></div>\n' +
           'Configure href="../architecture/prose.md" for the sample.\n' +
           "<a title=\"sample href='../architecture/title.md' text\">safe</a>\n" +
+          '<div title="[old](../architecture/title-link.md)"></div>\n' +
+          '<div title={"[old](../architecture/expression.md)"}></div>\n' +
           "<Code value={'Configure href=\"../architecture/string.md\"'} />\n" +
           '<div title={"<https://veryfront.com/docs/code/architecture/private>"}></div>\n' +
           String.raw`\<a href="../architecture/escaped.md">literal</a>` +
@@ -84,7 +92,9 @@ describe("public docs validation", () => {
     assertEquals(
       destinations(
         "[plain](./does-not-exist.md\n" +
-          "[wrapped](<./also-missing.md>\n",
+          "[wrapped](<./also-missing.md>\n" +
+          "[paragraph](\n\n../architecture/paragraph.md)\n" +
+          "[reference]\n[reference]: <../architecture/reference.md",
       ),
       [],
     );
@@ -150,7 +160,8 @@ describe("public docs validation", () => {
   it("rejects case variants of private repository URLs", () => {
     const issues = collectIssues(
       "docs/guides/example.md",
-      "https://GitHub.com/veryfront/veryfront-examples",
+      `https://GitHub.com/${BLOCKED_REPOSITORY}`,
+      BLOCKED_REPOSITORY,
     );
 
     assertEquals(issues.length, 1);
@@ -160,22 +171,26 @@ describe("public docs validation", () => {
     assertEquals(
       collectIssues(
         "docs/guides/example.md",
-        "https://notgithub.com/veryfront/veryfront-examples\n" +
-          "https://github.com/veryfront/veryfront-examples-public\n" +
-          "https://example.com/github.com/veryfront/veryfront-examples",
+        `https://notgithub.com/${BLOCKED_REPOSITORY}\n` +
+          `https://github.com/${BLOCKED_REPOSITORY}-public\n` +
+          `https://example.com/github.com/${BLOCKED_REPOSITORY}`,
+        BLOCKED_REPOSITORY,
       ),
       [],
     );
     assertEquals(
       collectIssues(
         "docs/guides/example.md",
-        "See https://github.com/veryfront/veryfront-examples.\n" +
-          "git clone https://github.com/veryfront/veryfront-examples.git\n" +
-          "git clone git@github.com:veryfront/veryfront-examples.git\n" +
-          "git clone ssh://git@github.com/veryfront/veryfront-examples.git\n" +
-          "[encoded](https://github.com/veryfront/veryfront&#x2d;examples)",
+        `See https://github.com/${BLOCKED_REPOSITORY}.\n` +
+          `git clone https://github.com/${BLOCKED_REPOSITORY}.git\n` +
+          `git clone git@github.com:${BLOCKED_REPOSITORY}.git\n` +
+          `git clone ssh://git@github.com/${BLOCKED_REPOSITORY}.git\n` +
+          "[encoded](https://github.com/example-org/private&#x2d;examples)\n" +
+          String
+            .raw`[escaped](https://github.com/example-org/private\-examples)`,
+        BLOCKED_REPOSITORY,
       ).length,
-      5,
+      6,
     );
   });
 
@@ -478,6 +493,13 @@ describe("public docs validation", () => {
       ),
       ["../architecture/rendered.md"],
     );
+    assertEquals(
+      destinations(
+        "\t```md\n" +
+          "[rendered](../architecture/tab-rendered.md)",
+      ),
+      ["../architecture/tab-rendered.md"],
+    );
   });
 
   it("scans rendered paragraphs indented inside list items", () => {
@@ -528,6 +550,14 @@ describe("public docs validation", () => {
           "{/* real */}",
       ),
       ["../architecture/private.md"],
+    );
+    assertEquals(
+      destinations(
+        "Unmatched prose {\n\n" +
+          "{/* [old](../architecture/commented.md) */}\n" +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
     );
   });
 

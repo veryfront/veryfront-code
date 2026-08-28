@@ -311,12 +311,20 @@ function blockContentStart(text: string, lineStart: number): number {
   let cursor = lineStart;
   while (true) {
     let indentation = 0;
-    while (
-      indentation < 3 &&
-      (text[cursor] === " " || text[cursor] === "\t")
-    ) {
-      cursor++;
-      indentation++;
+    while (indentation < 3) {
+      if (text[cursor] === " ") {
+        cursor++;
+        indentation++;
+        continue;
+      }
+      if (text[cursor] === "\t") {
+        const width = 4 - indentation % 4;
+        if (indentation + width > 3) break;
+        cursor++;
+        indentation += width;
+        continue;
+      }
+      break;
     }
     if (text[cursor] === ">") {
       cursor++;
@@ -540,6 +548,20 @@ function isInsideRange(ranges: readonly Range[], offset: number): boolean {
   return false;
 }
 
+function mergeRanges(ranges: readonly Range[]): Range[] {
+  const sorted = [...ranges].sort((left, right) => left.start - right.start);
+  const merged: Range[] = [];
+  for (const range of sorted) {
+    const previous = merged.at(-1);
+    if (previous && range.start <= previous.end) {
+      previous.end = Math.max(previous.end, range.end);
+    } else {
+      merged.push({ ...range });
+    }
+  }
+  return merged;
+}
+
 function mdxCommentRanges(
   text: string,
   codeRanges: readonly Range[],
@@ -569,7 +591,13 @@ function mdxCommentRanges(
       continue;
     }
     if (expressionDepth > 0) {
-      if (character === '"' || character === "'" || character === "`") {
+      if (
+        character === "\n" && /^\n[ \t]*\n/.test(text.slice(cursor))
+      ) {
+        expressionDepth = 0;
+      } else if (
+        character === '"' || character === "'" || character === "`"
+      ) {
         quote = character;
       } else if (character === "{") expressionDepth++;
       else if (character === "}") expressionDepth--;
@@ -597,19 +625,7 @@ function mdxCommentRanges(
 
 function ignoredDestinationRanges(text: string): Range[] {
   const codeRanges = markdownCodeRanges(text);
-  const ranges = [...codeRanges, ...mdxCommentRanges(text, codeRanges)];
-  ranges.sort((left, right) => left.start - right.start);
-
-  const merged: Range[] = [];
-  for (const range of ranges) {
-    const previous = merged.at(-1);
-    if (previous && range.start <= previous.end) {
-      previous.end = Math.max(previous.end, range.end);
-    } else {
-      merged.push({ ...range });
-    }
-  }
-  return merged;
+  return mergeRanges([...codeRanges, ...mdxCommentRanges(text, codeRanges)]);
 }
 
 function htmlTagRanges(
@@ -674,6 +690,38 @@ function topLevelTagOffsets(tag: string): ReadonlySet<number> {
   return offsets;
 }
 
+function referenceDefinitionTailCloses(text: string, start: number): boolean {
+  let cursor = start;
+  let hasSeparation = false;
+  while (text[cursor] === " " || text[cursor] === "\t") {
+    hasSeparation = true;
+    cursor++;
+  }
+  if (
+    cursor >= text.length || text[cursor] === "\n" ||
+    text[cursor] === "\r"
+  ) return true;
+  if (!hasSeparation) return false;
+
+  const opener = text[cursor];
+  const closer = opener === "(" ? ")" : opener;
+  if (opener !== '"' && opener !== "'" && opener !== "(") return false;
+  cursor++;
+  while (cursor < text.length && text[cursor] !== "\n") {
+    if (text[cursor] === "\\" && cursor + 1 < text.length) {
+      cursor += 2;
+      continue;
+    }
+    if (text[cursor] === closer) break;
+    cursor++;
+  }
+  if (text[cursor] !== closer) return false;
+  cursor++;
+  while (text[cursor] === " " || text[cursor] === "\t") cursor++;
+  return cursor >= text.length || text[cursor] === "\n" ||
+    text[cursor] === "\r";
+}
+
 /**
  * A reference definition starting at `lineStart`. CommonMark lets the
  * destination sit on the line after the label, so the run of whitespace after
@@ -706,13 +754,22 @@ function referenceDestinationAt(
   const destinationStart = cursor;
   while (
     cursor < text.length &&
-    (wrapped ? text[cursor] !== ">" : !/\s/.test(text[cursor]!))
+    (wrapped
+      ? text[cursor] !== ">" && text[cursor] !== "\n" &&
+        text[cursor] !== "\r"
+      : !/\s/.test(text[cursor]!))
   ) {
     cursor++;
   }
-  return cursor > destinationStart
+  const destinationEnd = cursor;
+  if (wrapped) {
+    if (text[cursor] !== ">") return undefined;
+    cursor++;
+  }
+  return destinationEnd > destinationStart &&
+      referenceDefinitionTailCloses(text, cursor)
     ? {
-      href: text.slice(destinationStart, cursor),
+      href: text.slice(destinationStart, destinationEnd),
       offset: destinationStart,
       label: text.slice(labelStart + 1, afterLabel - 1),
       labelStart,
@@ -723,7 +780,7 @@ function referenceDestinationAt(
 function normalizeReferenceLabel(label: string): string {
   return decodeMarkdownBackslashEscapes(
     decodeMarkdownCharacterReferences(label),
-  ).trim().replace(/\s+/g, " ").toLowerCase();
+  ).trim().replace(/\s+/g, " ").toUpperCase().toLowerCase();
 }
 
 function afterInlineLink(text: string, start: number): number | undefined {
@@ -819,6 +876,19 @@ function markdownDestinationCloses(text: string, start: number): boolean {
   return text[cursor] === ")";
 }
 
+function markdownDestinationStart(
+  text: string,
+  start: number,
+): number | undefined {
+  let cursor = start;
+  let newlines = 0;
+  while (/\s/.test(text[cursor] ?? "")) {
+    if (text[cursor] === "\n" && ++newlines > 1) return undefined;
+    cursor++;
+  }
+  return cursor;
+}
+
 /**
  * Every destination in `text`, with its offset.
  *
@@ -832,18 +902,19 @@ export function scanDestinations(text: string): Destination[] {
   // balanced brackets or escaped closing brackets.
   const found: Destination[] = [];
   const ignoredRanges = ignoredDestinationRanges(text);
+  const tagRanges = htmlTagRanges(text, ignoredRanges);
+  const markdownIgnoredRanges = mergeRanges([...ignoredRanges, ...tagRanges]);
   const markdownAngleDestinationRanges: Range[] = [];
   for (let start = 0; start < text.length; start++) {
     if (
-      isInsideRange(ignoredRanges, start) ||
+      isInsideRange(markdownIgnoredRanges, start) ||
       isBackslashEscaped(text, start)
     ) continue;
     const afterLabel = afterMarkdownLabel(text, start);
     if (afterLabel === undefined || text[afterLabel] !== "(") continue;
 
-    let cursor = afterLabel + 1;
-    while (/\s/.test(text[cursor] ?? "")) cursor++;
-    if (cursor >= text.length) continue;
+    let cursor = markdownDestinationStart(text, afterLabel + 1);
+    if (cursor === undefined || cursor >= text.length) continue;
 
     if (text[cursor] === "<") {
       const rangeStart = cursor;
@@ -901,7 +972,6 @@ export function scanDestinations(text: string): Destination[] {
     start = cursor;
   }
 
-  const tagRanges = htmlTagRanges(text, ignoredRanges);
   for (const tagRange of tagRanges) {
     const tag = text.slice(tagRange.start, tagRange.end);
     const topLevelOffsets = topLevelTagOffsets(tag);
@@ -964,7 +1034,7 @@ export function scanDestinations(text: string): Destination[] {
     Destination & { label: string; labelStart: number }
   > = [];
   for (let lineStart = 0; lineStart <= text.length;) {
-    if (isInsideRange(ignoredRanges, lineStart)) {
+    if (isInsideRange(markdownIgnoredRanges, lineStart)) {
       const next = text.indexOf("\n", lineStart);
       if (next === -1) break;
       lineStart = next + 1;
@@ -978,7 +1048,7 @@ export function scanDestinations(text: string): Destination[] {
   }
   const usedLabels = usedReferenceLabels(
     text,
-    ignoredRanges,
+    markdownIgnoredRanges,
     new Set(references.map((reference) => reference.labelStart)),
   );
   const definedLabels = new Set<string>();
@@ -1058,6 +1128,25 @@ const staleGettingStartedPath = new RegExp(
   })\b`,
 );
 
+const DEFAULT_BLOCKED_REPOSITORY = "veryfront/veryfront-examples";
+
+function escapeRegularExpression(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function blockedRepositoryRule(repository: string): Rule {
+  const escapedRepository = escapeRegularExpression(repository);
+  return {
+    pattern: new RegExp(
+      String
+        .raw`(?:^|[\s("'=<])(?:(?:https?:\/\/)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)${escapedRepository}(?:\.git)?(?=$|[/#?\s)>\],;:'"!]|[.](?=\s|$))`,
+      "i",
+    ),
+    message:
+      `${repository} is a private repository. A reader following this link gets a 404, so link a public example or inline the code instead.`,
+  };
+}
+
 const RULES: Rule[] = [
   {
     pattern: /\u2013|\u2014/,
@@ -1067,14 +1156,6 @@ const RULES: Rule[] = [
   {
     pattern: /#veryfront\//,
     message: "Do not expose internal #veryfront imports in public docs.",
-  },
-  {
-    // Host names are case-insensitive, so a GitHub.com spelling reaches the
-    // same private repository.
-    pattern:
-      /(?:^|[\s("'=<])(?:(?:https?:\/\/)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)veryfront\/veryfront-examples(?:\.git)?(?=$|[/#?\s)>\],;:'"!]|[.](?=\s|$))/i,
-    message:
-      "veryfront/veryfront-examples is a private repository. A reader following this link gets a 404, so link a public example or inline the code instead.",
   },
   {
     pattern: /\{@[A-Za-z]/,
@@ -1249,12 +1330,19 @@ async function* walkMarkdownFiles(path: string): AsyncGenerator<string> {
   }
 }
 
-export function collectIssues(path: string, content: string): PublicDocIssue[] {
+export function collectIssues(
+  path: string,
+  content: string,
+  blockedRepository = DEFAULT_BLOCKED_REPOSITORY,
+): PublicDocIssue[] {
   const issues: PublicDocIssue[] = [];
+  const rules = [...RULES, blockedRepositoryRule(blockedRepository)];
   const lines = content.split("\n");
   for (const [index, text] of lines.entries()) {
-    const renderedText = decodeMarkdownCharacterReferences(text);
-    for (const rule of RULES) {
+    const renderedText = decodeMarkdownBackslashEscapes(
+      decodeMarkdownCharacterReferences(text),
+    );
+    for (const rule of rules) {
       if (!rule.pattern.test(renderedText)) continue;
       issues.push({
         path,
