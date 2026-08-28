@@ -289,6 +289,15 @@ describe("public docs validation", () => {
       issues[0]?.message.includes("docs/architecture/private.md"),
       true,
     );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.md",
+        '<a href={"./deploying.md&#35;section"}>broken</a>\n' +
+          '<a href="./deploying.md&#35;section">published</a>',
+        publishedFiles("docs/guides/deploying.md"),
+      ).length,
+      1,
+    );
   });
 
   it("ignores a dynamic JSX href expression", () => {
@@ -645,13 +654,25 @@ describe("public docs validation", () => {
     const issues = collectUnpublishedLinkIssues(
       "docs/guides/example.md",
       "<https://veryfront.com/docs/code/architecture/private>\n" +
-        "https://veryfront.com/docs/code/architecture/bare",
+        "https://veryfront.com/docs/code/architecture/bare\n" +
+        String.raw`\https://veryfront.com/docs/code/architecture/backslash`,
     );
 
-    assertEquals(issues.length, 2);
+    assertEquals(issues.length, 3);
     assertEquals(
       destinations(
         String.raw`\<https://veryfront.com/docs/code/guides/does-not-exist>`,
+      ),
+      [],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.md",
+        '[public](./deploying.md "https://veryfront.com/docs/code/guides/does-not-exist")\n' +
+          "*https://veryfront.com/docs/code/guides/deploying*\n" +
+          "_https://veryfront.com/docs/code/guides/deploying_\n" +
+          "~https://veryfront.com/docs/code/guides/deploying~",
+        publishedFiles("docs/guides/deploying.md"),
       ),
       [],
     );

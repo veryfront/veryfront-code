@@ -232,10 +232,13 @@ function normalizeRepositoryPath(pathname: string): string {
 function resolveDocumentationTarget(
   fromPath: string,
   rawHref: string,
+  markdownSyntax = true,
 ): string | undefined {
-  const href = decodeMarkdownBackslashEscapes(
-    decodeMarkdownCharacterReferences(rawHref),
-  );
+  const href = markdownSyntax
+    ? decodeMarkdownBackslashEscapes(
+      decodeMarkdownCharacterReferences(rawHref),
+    )
+    : rawHref;
   if (/^(?:#|["'])/.test(href)) return undefined;
   let resolved: URL;
   try {
@@ -981,6 +984,7 @@ function usedReferenceLabels(
 export interface Destination {
   href: string;
   offset: number;
+  markdownSyntax?: boolean;
 }
 
 function markdownDestinationCloses(text: string, start: number): boolean {
@@ -1024,8 +1028,16 @@ function markdownDestinationStart(
 }
 
 function trimGfmAutolink(rawHref: string): string {
-  let href = rawHref;
-  while (/[.,!?;:)}\]]$/.test(href)) href = href.slice(0, -1);
+  let href = rawHref.replace(/[?!.,:*_~]+$/, "");
+  const openingParentheses = href.match(/\(/g)?.length ?? 0;
+  let closingParentheses = href.match(/\)/g)?.length ?? 0;
+  while (
+    href.endsWith(")") && closingParentheses > openingParentheses
+  ) {
+    href = href.slice(0, -1);
+    closingParentheses--;
+  }
+  if (/&[A-Za-z0-9]+;$/.test(href)) href = href.slice(0, -1);
   return href;
 }
 
@@ -1055,6 +1067,7 @@ export function scanDestinations(text: string): Destination[] {
     ...tagRanges,
   ]);
   const markdownAngleDestinationRanges: Range[] = [];
+  const inlineLinkRanges: Range[] = [];
   for (let start = 0; start < text.length; start++) {
     if (
       isInsideRange(markdownIgnoredRanges, start) ||
@@ -1089,6 +1102,10 @@ export function scanDestinations(text: string): Destination[] {
           href: text.slice(destinationStart, cursor),
           offset: destinationStart,
         });
+        const linkEnd = afterInlineLink(text, afterLabel);
+        if (linkEnd !== undefined) {
+          inlineLinkRanges.push({ start, end: linkEnd });
+        }
       }
       start = cursor;
       continue;
@@ -1118,6 +1135,8 @@ export function scanDestinations(text: string): Destination[] {
         href: text.slice(destinationStart, cursor),
         offset: destinationStart,
       });
+      const linkEnd = afterInlineLink(text, afterLabel);
+      if (linkEnd !== undefined) inlineLinkRanges.push({ start, end: linkEnd });
     }
     start = cursor;
   }
@@ -1158,6 +1177,7 @@ export function scanDestinations(text: string): Destination[] {
         href,
         offset: tagRange.start + htmlMatch.index +
           htmlMatch[0].lastIndexOf(rawHref),
+        markdownSyntax: expression === undefined,
       });
     }
   }
@@ -1182,6 +1202,7 @@ export function scanDestinations(text: string): Destination[] {
   const references: Array<
     Destination & { label: string; labelStart: number }
   > = [];
+  const referenceDefinitionRanges: Range[] = [];
   let canStartReferenceDefinition = true;
   let previousContainerSignature = "";
   for (let lineStart = 0; lineStart <= text.length;) {
@@ -1203,7 +1224,10 @@ export function scanDestinations(text: string): Destination[] {
       canStartReferenceDefinition || containerBoundary
         ? referenceDestinationAt(text, lineStart)
         : undefined;
-    if (reference) references.push(reference);
+    if (reference) {
+      references.push(reference);
+      referenceDefinitionRanges.push({ start: lineStart, end: lineEnd });
+    }
     const blockLine = text.slice(content.start, lineEnd).replace(/\r$/, "");
     canStartReferenceDefinition = reference !== undefined ||
       blockLine.trim() === "" || allowsFollowingIndentedCode(blockLine);
@@ -1230,13 +1254,17 @@ export function scanDestinations(text: string): Destination[] {
       end: destination.offset + destination.href.length,
     })),
   );
+  const bareAutolinkIgnoredRanges = mergeRanges([
+    ...markdownIgnoredRanges,
+    ...inlineLinkRanges,
+    ...referenceDefinitionRanges,
+  ]);
   let bareAutolinkMatch: RegExpExecArray | null;
   while ((bareAutolinkMatch = GFM_AUTOLINK_SOURCE.exec(text))) {
     const offset = bareAutolinkMatch.index;
     if (
-      isInsideRange(markdownIgnoredRanges, offset) ||
+      isInsideRange(bareAutolinkIgnoredRanges, offset) ||
       isInsideRange(existingDestinationRanges, offset) ||
-      isBackslashEscaped(text, offset) ||
       text[offset - 1] === "<" && isBackslashEscaped(text, offset - 1)
     ) continue;
     const href = trimGfmAutolink(bareAutolinkMatch[0]);
@@ -1276,8 +1304,8 @@ export function collectUnpublishedLinkIssues(
   }
 
   const issues: PublicDocIssue[] = [];
-  for (const { href, offset } of scanDestinations(content)) {
-    const target = resolveDocumentationTarget(path, href);
+  for (const { href, offset, markdownSyntax } of scanDestinations(content)) {
+    const target = resolveDocumentationTarget(path, href, markdownSyntax);
     if (path === "README.md" && !target?.startsWith("docs/")) continue;
     if (target === undefined || publishedTargetExists(target, stat)) continue;
     const line = lineAt(lineStarts, offset);
