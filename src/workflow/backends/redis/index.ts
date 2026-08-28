@@ -66,8 +66,8 @@ const APPROVAL_RECOVERY_SCAN_COUNT = 100;
  * Merge top-level JSON objects without decoding their values through Redis's
  * bundled cjson. Standard Redis 7 turns a decoded empty array into an empty
  * Lua table and then encodes it as `{}`. The native cjson path handles normal
- * objects; only documents containing an ambiguous empty-array token use the
- * raw-slice fallback that preserves nested values byte-for-byte.
+ * objects; documents containing an ambiguous empty-array token and callers
+ * that keep deep values opaque use the raw-slice fallback.
  */
 const JSON_OBJECT_PATCH_LUA = String.raw`
 local function skipJsonWhitespace(value, position)
@@ -187,12 +187,19 @@ local function encodeJsonObject(fields)
   return '{' .. table.concat(entries, ',') .. '}'
 end
 
+local function decodeJsonObjectField(fields, key)
+  local encoded = fields[key]
+  if encoded == nil then return nil end
+  return cjson.decode(encoded)
+end
+
 local function containsAmbiguousEmptyArray(value)
   return string.find(value, '%[%s*%]') ~= nil
 end
 
-local function mergeJsonObjects(currentJson, patchJson)
-  if containsAmbiguousEmptyArray(currentJson) or containsAmbiguousEmptyArray(patchJson) then
+local function mergeJsonObjects(currentJson, patchJson, forceRawValues)
+  if forceRawValues or
+      containsAmbiguousEmptyArray(currentJson) or containsAmbiguousEmptyArray(patchJson) then
     local current = parseJsonObject(currentJson)
     local patch = parseJsonObject(patchJson)
     for key, changed in pairs(patch) do current[key] = changed end
@@ -205,9 +212,9 @@ local function mergeJsonObjects(currentJson, patchJson)
   return next(current) == nil and '{}' or cjson.encode(current)
 end
 
-local function deleteJsonObjectFields(currentJson, deletedJson)
+local function deleteJsonObjectFields(currentJson, deletedJson, forceRawValues)
   local deleted = cjson.decode(deletedJson)
-  if containsAmbiguousEmptyArray(currentJson) then
+  if forceRawValues or containsAmbiguousEmptyArray(currentJson) then
     local current = parseJsonObject(currentJson)
     for _, key in ipairs(deleted) do current[key] = nil end
     return encodeJsonObject(current)
@@ -623,8 +630,9 @@ const RETAIN_APPROVALS_LUA = `local function retainApprovals(key, maxEntries)
   for i = 0, len - 1 do
     local raw = redis.call('lindex', key, i)
     if raw then
-      local approval = cjson.decode(raw)
-      if approval.status ~= 'pending' and approval.reconciliationPending ~= true then
+      local approval = parseJsonObject(raw)
+      if decodeJsonObjectField(approval, 'status') ~= 'pending' and
+          decodeJsonObjectField(approval, 'reconciliationPending') ~= true then
         table.insert(decidedIndexes, i)
         if #decidedIndexes == evictionsRequired then break end
       end
@@ -752,17 +760,21 @@ function parseRunObservationRecords(
  * happen atomically.
  */
 const SAVE_PENDING_APPROVAL_SCRIPT = `-- observable-approval-append
+${JSON_OBJECT_PATCH_LUA}
 ${RETAIN_APPROVALS_LUA}
 ${JOURNAL_APPROVAL_PROJECTION_LUA}
-local approval = cjson.decode(ARGV[1])
+local approval = parseJsonObject(ARGV[1])
 if ARGV[5] == '1' then
   local existingApprovals = redis.call('lrange', KEYS[2], 0, -1)
   for i = 1, #existingApprovals do
-    local candidate = cjson.decode(existingApprovals[i])
-    if (candidate.status == 'pending' or candidate.reconciliationPending == true) and
-        candidate.nodeId == approval.nodeId and
-        (candidate.waitInstanceId == nil or approval.waitInstanceId == nil or
-          candidate.waitInstanceId == approval.waitInstanceId) then
+    local candidate = parseJsonObject(existingApprovals[i])
+    local candidateWaitInstanceId = decodeJsonObjectField(candidate, 'waitInstanceId')
+    local approvalWaitInstanceId = decodeJsonObjectField(approval, 'waitInstanceId')
+    if (decodeJsonObjectField(candidate, 'status') == 'pending' or
+        decodeJsonObjectField(candidate, 'reconciliationPending') == true) and
+        decodeJsonObjectField(candidate, 'nodeId') == decodeJsonObjectField(approval, 'nodeId') and
+        (candidateWaitInstanceId == nil or approvalWaitInstanceId == nil or
+          candidateWaitInstanceId == approvalWaitInstanceId) then
       return 3
     end
   end
@@ -783,10 +795,14 @@ local nodesJson = next(nodes) == nil and '{}' or cjson.encode(nodes)
 local rawApprovals = redis.call('lrange', KEYS[2], 0, -1)
 local pending = {}
 for i = 1, #rawApprovals do
-  local candidate = cjson.decode(rawApprovals[i])
-  if candidate.status == 'pending' then
-    local entry = { id = candidate.id, nodeId = candidate.nodeId }
-    if candidate.message ~= nil then entry.message = candidate.message end
+  local candidate = parseJsonObject(rawApprovals[i])
+  if decodeJsonObjectField(candidate, 'status') == 'pending' then
+    local entry = {
+      id = decodeJsonObjectField(candidate, 'id'),
+      nodeId = decodeJsonObjectField(candidate, 'nodeId')
+    }
+    local message = decodeJsonObjectField(candidate, 'message')
+    if message ~= nil then entry.message = message end
     pending[#pending + 1] = entry
   end
 end
@@ -825,6 +841,7 @@ return 1`;
  * approval already exists for the same node.
  */
 const SAVE_PENDING_APPROVAL_IF_OWNED_SCRIPT = `-- conditional-owned-approval-append
+${JSON_OBJECT_PATCH_LUA}
 ${RETAIN_APPROVALS_LUA}
 ${JOURNAL_APPROVAL_PROJECTION_LUA}
 local status = redis.call('hget', KEYS[1], 'status')
@@ -839,14 +856,17 @@ end
 if not allowed then return 0 end
 local expectedWorkerId = ARGV[expectedCount + 2]
 if redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then return 0 end
-local approval = cjson.decode(ARGV[expectedCount + 3])
+local approval = parseJsonObject(ARGV[expectedCount + 3])
 local existingApprovals = redis.call('lrange', KEYS[2], 0, -1)
 for i = 1, #existingApprovals do
-  local candidate = cjson.decode(existingApprovals[i])
-  if (candidate.status == 'pending' or candidate.reconciliationPending == true) and
-      candidate.nodeId == approval.nodeId and
-      (candidate.waitInstanceId == nil or approval.waitInstanceId == nil or
-        candidate.waitInstanceId == approval.waitInstanceId) then
+  local candidate = parseJsonObject(existingApprovals[i])
+  local candidateWaitInstanceId = decodeJsonObjectField(candidate, 'waitInstanceId')
+  local approvalWaitInstanceId = decodeJsonObjectField(approval, 'waitInstanceId')
+  if (decodeJsonObjectField(candidate, 'status') == 'pending' or
+      decodeJsonObjectField(candidate, 'reconciliationPending') == true) and
+      decodeJsonObjectField(candidate, 'nodeId') == decodeJsonObjectField(approval, 'nodeId') and
+      (candidateWaitInstanceId == nil or approvalWaitInstanceId == nil or
+        candidateWaitInstanceId == approvalWaitInstanceId) then
     return 3
   end
 end
@@ -866,10 +886,14 @@ local nodesJson = next(nodes) == nil and '{}' or cjson.encode(nodes)
 local rawApprovals = redis.call('lrange', KEYS[2], 0, -1)
 local pending = {}
 for i = 1, #rawApprovals do
-  local candidate = cjson.decode(rawApprovals[i])
-  if candidate.status == 'pending' then
-    local entry = { id = candidate.id, nodeId = candidate.nodeId }
-    if candidate.message ~= nil then entry.message = candidate.message end
+  local candidate = parseJsonObject(rawApprovals[i])
+  if decodeJsonObjectField(candidate, 'status') == 'pending' then
+    local entry = {
+      id = decodeJsonObjectField(candidate, 'id'),
+      nodeId = decodeJsonObjectField(candidate, 'nodeId')
+    }
+    local message = decodeJsonObjectField(candidate, 'message')
+    if message ~= nil then entry.message = message end
     pending[#pending + 1] = entry
   end
 end
@@ -913,9 +937,9 @@ local len = redis.call('llen', KEYS[1])
 for i = 0, len - 1 do
   local raw = redis.call('lindex', KEYS[1], i)
   if raw then
-    local approval = cjson.decode(raw)
-    if approval.id == approvalId then
-      redis.call('lset', KEYS[1], i, mergeJsonObjects(raw, ARGV[2]))
+    local approval = parseJsonObject(raw)
+    if decodeJsonObjectField(approval, 'id') == approvalId then
+      redis.call('lset', KEYS[1], i, mergeJsonObjects(raw, ARGV[2], true))
       return 1
     end
   end
@@ -943,11 +967,11 @@ local len = redis.call('llen', KEYS[1])
 for i = 0, len - 1 do
   local raw = redis.call('lindex', KEYS[1], i)
   if raw then
-    local approval = cjson.decode(raw)
-    if approval.id == approvalId then
-      if approval.status ~= 'pending' then return 2 end
-      local updated = mergeJsonObjects(raw, ARGV[2])
-      updated = deleteJsonObjectFields(updated, ARGV[3])
+    local approval = parseJsonObject(raw)
+    if decodeJsonObjectField(approval, 'id') == approvalId then
+      if decodeJsonObjectField(approval, 'status') ~= 'pending' then return 2 end
+      local updated = mergeJsonObjects(raw, ARGV[2], true)
+      updated = deleteJsonObjectFields(updated, ARGV[3], true)
       redis.call('lset', KEYS[1], i, updated)
       return 1
     end
@@ -966,14 +990,16 @@ local len = redis.call('llen', KEYS[1])
 for i = 0, len - 1 do
   local raw = redis.call('lindex', KEYS[1], i)
   if raw then
-    local approval = cjson.decode(raw)
-    if approval.id == approvalId then
-      if approval.reconciliationPending ~= true then return 0 end
-      if approval.recoveryClaimId ~= nil and
-          (approval.recoveryClaimedAt == nil or approval.recoveryClaimedAt > staleBefore) then
+    local approval = parseJsonObject(raw)
+    if decodeJsonObjectField(approval, 'id') == approvalId then
+      if decodeJsonObjectField(approval, 'reconciliationPending') ~= true then return 0 end
+      local storedClaimId = decodeJsonObjectField(approval, 'recoveryClaimId')
+      local storedClaimedAt = decodeJsonObjectField(approval, 'recoveryClaimedAt')
+      if storedClaimId ~= nil and
+          (storedClaimedAt == nil or storedClaimedAt > staleBefore) then
         return 2
       end
-      redis.call('lset', KEYS[1], i, mergeJsonObjects(raw, patch))
+      redis.call('lset', KEYS[1], i, mergeJsonObjects(raw, patch, true))
       return 1
     end
   end
@@ -989,11 +1015,11 @@ local len = redis.call('llen', KEYS[1])
 for i = 0, len - 1 do
   local raw = redis.call('lindex', KEYS[1], i)
   if raw then
-    local approval = cjson.decode(raw)
-    if approval.id == approvalId then
-      if approval.recoveryClaimId ~= recoveryClaimId then return 2 end
+    local approval = parseJsonObject(raw)
+    if decodeJsonObjectField(approval, 'id') == approvalId then
+      if decodeJsonObjectField(approval, 'recoveryClaimId') ~= recoveryClaimId then return 2 end
       redis.call('lset', KEYS[1], i,
-        deleteJsonObjectFields(raw, '["recoveryClaimId","recoveryClaimedAt"]'))
+        deleteJsonObjectFields(raw, '["recoveryClaimId","recoveryClaimedAt"]', true))
       return 1
     end
   end
@@ -1009,17 +1035,19 @@ local len = redis.call('llen', KEYS[1])
 for i = 0, len - 1 do
   local raw = redis.call('lindex', KEYS[1], i)
   if raw then
-    local approval = cjson.decode(raw)
-    if approval.id == approvalId then
+    local approval = parseJsonObject(raw)
+    if decodeJsonObjectField(approval, 'id') == approvalId then
+      local storedClaimId = decodeJsonObjectField(approval, 'recoveryClaimId')
       if recoveryClaimId == '' then
-        if approval.recoveryClaimId ~= nil then return 2 end
-      elseif approval.recoveryClaimId ~= recoveryClaimId then
+        if storedClaimId ~= nil then return 2 end
+      elseif storedClaimId ~= recoveryClaimId then
         return 2
       end
       redis.call('lset', KEYS[1], i,
         deleteJsonObjectFields(
           raw,
-          '["reconciliationPending","recoveryClaimId","recoveryClaimedAt"]'
+          '["reconciliationPending","recoveryClaimId","recoveryClaimedAt"]',
+          true
         ))
       return 1
     end
@@ -1870,16 +1898,14 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
     const hasComment = decision.comment !== undefined;
     const hasData = decision.data !== undefined;
-    let decisionData: unknown;
+    let serializedDecisionData: string | undefined;
     if (hasData) {
       try {
-        decisionData = JSON.parse(
-          serializeWorkflowJson(
-            decision.data,
-            "approval decision data",
-            runId,
-            { strictContext: this.config.strictContext },
-          ),
+        serializedDecisionData = serializeWorkflowJson(
+          decision.data,
+          "approval decision data",
+          runId,
+          { strictContext: this.config.strictContext },
         );
       } catch (error) {
         const approval = (await this.getApprovals(runId)).find(({ id }) => id === approvalId);
@@ -1896,19 +1922,24 @@ export class RedisBackend implements WorkflowBackend {
     // Atomic find-by-id + pending-precondition + LSET (see UPDATE_APPROVAL_SCRIPT).
     // decidedAt is computed here so the stored value is deterministic and does
     // not depend on the Redis server clock.
+    const serializedPatchWithoutDecisionData = JSON.stringify({
+      status: decision.approved ? "approved" : "rejected",
+      decidedBy: decision.approver,
+      decidedAt: new Date().toISOString(),
+      reconciliationPending: true,
+      ...(hasComment ? { comment: decision.comment } : {}),
+    });
+    const serializedPatch = serializedDecisionData === undefined
+      ? serializedPatchWithoutDecisionData
+      : `${
+        serializedPatchWithoutDecisionData.slice(0, -1)
+      },"decisionData":${serializedDecisionData}}`;
     const result = await client.eval(
       UPDATE_APPROVAL_SCRIPT,
       [this.approvalsKey(runId)],
       [
         approvalId,
-        JSON.stringify({
-          status: decision.approved ? "approved" : "rejected",
-          decidedBy: decision.approver,
-          decidedAt: new Date().toISOString(),
-          reconciliationPending: true,
-          ...(hasComment ? { comment: decision.comment } : {}),
-          ...(hasData ? { decisionData } : {}),
-        }),
+        serializedPatch,
         JSON.stringify([
           ...(hasComment ? [] : ["comment"]),
           ...(hasData ? [] : ["decisionData"]),

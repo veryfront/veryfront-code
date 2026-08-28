@@ -3452,6 +3452,73 @@ describe("RedisBackend", () => {
       assertStringIncludes(error.cause.message, "strictContext");
     });
 
+    it("keeps deep decision JSON opaque through Redis approval transitions", async () => {
+      const runId = "run-ap-deep-decision";
+      await backend.createRun(createTestRun(runId));
+      await backend.savePendingApproval(runId, makeApproval("ap-deep-decision"));
+
+      let deep: unknown = { leaf: true };
+      const depth = MAX_TRAVERSAL_DEPTH + 4_000;
+      for (let index = 0; index < depth; index++) deep = { nested: deep };
+
+      assertEquals(
+        await backend.updateApproval(runId, "ap-deep-decision", {
+          approved: true,
+          approver: "admin",
+          data: { exact: jsonRawSupport.rawJSON("-0"), deep },
+        }),
+        true,
+      );
+
+      const serializedPatch = mockRedis.lastArgs[1];
+      assertExists(serializedPatch);
+      assertStringIncludes(mockRedis.lastScript, "local approval = parseJsonObject(raw)");
+      assertStringIncludes(mockRedis.lastScript, "mergeJsonObjects(raw, ARGV[2], true)");
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "deleteJsonObjectFields(updated, ARGV[3], true)",
+      );
+      const patch = JSON.parse(serializedPatch);
+      assertEquals(Object.is(patch.decisionData.exact, -0), true);
+      let restored = patch.decisionData.deep;
+      for (let index = 0; index < depth; index++) {
+        restored = (restored as { nested: unknown }).nested;
+      }
+      assertEquals(restored, { leaf: true });
+
+      await backend.updatePendingApproval(runId, "ap-deep-decision", {
+        notificationError: "late notification failure",
+      });
+      assertStringIncludes(mockRedis.lastScript, "mergeJsonObjects(raw, ARGV[2], true)");
+
+      assertEquals(
+        await backend.reserveApprovalDecisionClaim(
+          runId,
+          "ap-deep-decision",
+          "recovery-deep",
+          new Date("2026-08-28T00:00:00.000Z"),
+          new Date("2026-08-27T23:59:00.000Z"),
+        ),
+        true,
+      );
+      assertStringIncludes(mockRedis.lastScript, "mergeJsonObjects(raw, patch, true)");
+
+      await backend.releaseApprovalDecisionClaim(
+        runId,
+        "ap-deep-decision",
+        "recovery-deep",
+      );
+      assertStringIncludes(
+        mockRedis.lastScript,
+        'deleteJsonObjectFields(raw, \'["recoveryClaimId","recoveryClaimedAt"]\', true)',
+      );
+      await backend.finalizeApprovalDecision(runId, "ap-deep-decision");
+      assertStringIncludes(
+        mockRedis.lastScript,
+        '\'["reconciliationPending","recoveryClaimId","recoveryClaimedAt"]\',',
+      );
+    });
+
     it("preserves nested empty arrays in durable approval decision data", async () => {
       await backend.createRun(createTestRun("run-ap-empty-arrays"));
       await backend.savePendingApproval(
