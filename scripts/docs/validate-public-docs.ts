@@ -1079,6 +1079,20 @@ const JAVASCRIPT_REGEX_PREFIX_KEYWORDS: ReadonlySet<string> = new Set([
   "new",
 ]);
 
+const JAVASCRIPT_IDENTIFIER_CONTINUE = /[$\u200C\u200D\p{ID_Continue}]/u;
+
+function javaScriptCodePointBefore(
+  text: string,
+  end: number,
+): string | undefined {
+  if (end <= 0) return undefined;
+  const trailing = text.charCodeAt(end - 1);
+  const startsWithSurrogatePair = end > 1 && trailing >= 0xDC00 &&
+    trailing <= 0xDFFF && text.charCodeAt(end - 2) >= 0xD800 &&
+    text.charCodeAt(end - 2) <= 0xDBFF;
+  return text.slice(end - (startsWithSurrogatePair ? 2 : 1), end);
+}
+
 function javaScriptRegexMayStart(
   text: string,
   previousSignificantToken: JavaScriptSignificantToken | undefined,
@@ -1098,8 +1112,10 @@ function javaScriptRegexMayStart(
   const keyword = text.slice(wordStart, end);
   if (!JAVASCRIPT_REGEX_PREFIX_KEYWORDS.has(keyword)) return false;
 
-  return wordStart === 0 ||
-    !/[A-Za-z0-9_$.#]/.test(text[wordStart - 1]!);
+  const preceding = javaScriptCodePointBefore(text, wordStart);
+  return preceding === undefined ||
+    (preceding !== "." && preceding !== "#" &&
+      !JAVASCRIPT_IDENTIFIER_CONTINUE.test(preceding));
 }
 
 function javaScriptUpdateKind(
