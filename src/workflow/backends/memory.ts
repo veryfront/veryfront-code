@@ -51,8 +51,15 @@ import { ORCHESTRATION_ERROR, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 import { requireWorkflowSourceIntegrationPolicy } from "../source-integration-policy.ts";
 
 const logger = baseLogger.component("memory-backend");
+const ArrayConstructor = Array;
+const arrayIsArray = Array.isArray;
+const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectKeys = Object.keys;
+const objectPrototype = Object.prototype;
 const jsonParse = JSON.parse;
+const structuredCloneValue = structuredClone;
 
 /**
  * Memory backend configuration
@@ -115,8 +122,62 @@ function clonePersistedPendingApproval(
   return cloned;
 }
 
-function clonePersistedWorkflowContext(context: WorkflowContext, runId: string): WorkflowContext {
-  return persistedWorkflowContext(context, runId, { strictContext: false });
+type PersistedJsonContainer = Record<string, unknown> | unknown[];
+
+interface PersistedJsonCloneFrame {
+  readonly source: PersistedJsonContainer;
+  readonly target: PersistedJsonContainer;
+  readonly keys: string[];
+}
+
+function isStructuredCloneRangeError(error: unknown): boolean {
+  return error instanceof RangeError;
+}
+
+function isPersistedJsonContainer(value: unknown): value is PersistedJsonContainer {
+  return typeof value === "object" && value !== null;
+}
+
+function createPersistedJsonContainer(value: PersistedJsonContainer): PersistedJsonContainer {
+  return arrayIsArray(value) ? new ArrayConstructor(value.length) : objectCreate(objectPrototype);
+}
+
+function clonePersistedWorkflowContext(value: WorkflowContext): WorkflowContext {
+  try {
+    return structuredCloneValue(value);
+  } catch (error) {
+    if (!isStructuredCloneRangeError(error)) throw error;
+  }
+
+  const root = createPersistedJsonContainer(value);
+  const frames: PersistedJsonCloneFrame[] = [{
+    source: value,
+    target: root,
+    keys: objectKeys(value),
+  }];
+  while (frames.length > 0) {
+    const frame = frames.pop()!;
+    for (const key of frame.keys) {
+      const field = objectGetOwnPropertyDescriptor(frame.source, key)?.value;
+      const clonedField = isPersistedJsonContainer(field)
+        ? createPersistedJsonContainer(field)
+        : field;
+      objectDefineProperty(frame.target, key, {
+        value: clonedField,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+      if (isPersistedJsonContainer(field) && isPersistedJsonContainer(clonedField)) {
+        frames.push({
+          source: field,
+          target: clonedField,
+          keys: objectKeys(field),
+        });
+      }
+    }
+  }
+  return root as WorkflowContext;
 }
 
 function cloneWorkflowRunWithContext(run: WorkflowRun, context: WorkflowContext): WorkflowRun {
@@ -129,7 +190,7 @@ function cloneWorkflowRunWithContext(run: WorkflowRun, context: WorkflowContext)
 function cloneWorkflowRun(run: WorkflowRun): WorkflowRun {
   return cloneWorkflowRunWithContext(
     run,
-    clonePersistedWorkflowContext(run.context, run.id),
+    clonePersistedWorkflowContext(run.context),
   );
 }
 

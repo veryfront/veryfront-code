@@ -79,6 +79,12 @@ Veryfront logs a warning and persists the normalized JSON value:
 | `Number.NaN`             | `null`                              |
 | Class instance           | Plain object with enumerable fields |
 
+On edge hosts that cannot identify proxies without invoking project hooks,
+default mode still warns for built-ins that Veryfront can identify from native
+slots. It cannot safely distinguish every class instance from a proxy-backed
+plain object, so use `strictContext` when persistence must reject every value
+whose identity cannot be verified.
+
 Enable `strictContext` on a built-in backend to reject these lossy values
 instead of warning and normalizing:
 

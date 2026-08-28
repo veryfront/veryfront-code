@@ -1129,7 +1129,8 @@ function normalizeAndFindUnrepresentableValues(
       if (
         found.fatalCount === 0 &&
         (
-          (options.strictContext === true && isKnownNonPlainBuiltin(nested)) ||
+          ((options.strictContext === true || !canIdentifyProxyWithoutHooks) &&
+            isKnownNonPlainBuiltin(nested)) ||
           !isPlainObject(nested, options.strictContext === true)
         )
       ) {

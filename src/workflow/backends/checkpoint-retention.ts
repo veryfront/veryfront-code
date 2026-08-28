@@ -5,17 +5,15 @@ import { MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES } from "../limits.ts";
 const jsonParse = JSON.parse;
 const structuredCloneValue = structuredClone;
 
-function isStackLimitedCloneError(error: unknown): boolean {
-  return error instanceof RangeError &&
-    typeof error.message === "string" &&
-    error.message.includes("Maximum call stack size exceeded");
+function isStructuredCloneRangeError(error: unknown): boolean {
+  return error instanceof RangeError;
 }
 
 function cloneCheckpointJson<T>(value: T, label: string): T {
   try {
     return structuredCloneValue(value);
   } catch (error) {
-    if (!isStackLimitedCloneError(error)) throw error;
+    if (!isStructuredCloneRangeError(error)) throw error;
   }
   return jsonParse(
     serializeWorkflowJson(value, label, undefined, { strictContext: false }),

@@ -13,6 +13,9 @@ import {
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
+const jsonRawSupport = JSON as typeof JSON & {
+  rawJSON(source: string): unknown;
+};
 
 describe("MemoryBackend", () => {
   let backend: MemoryBackend;
@@ -399,7 +402,7 @@ describe("MemoryBackend", () => {
 
       await backend.createRun(createTestRun("run-deep-context", {
         status: "running",
-        context: { input: {}, deep },
+        context: { input: {}, deep, exact: jsonRawSupport.rawJSON("-0") },
         startedAt: new Date(0),
         heartbeatAt: new Date(0),
       }));
@@ -408,23 +411,24 @@ describe("MemoryBackend", () => {
       const firstRead = await backend.getRun("run-deep-context");
       assertExists(firstRead);
       assertEquals(deepLeaf(firstRead.context.deep, depth), "stored");
-      assertEquals(
-        deepLeaf((await backend.listRuns({}))[0]?.context.deep, depth),
-        "stored",
-      );
+      assertEquals(Object.is(firstRead.context.exact, -0), true);
+      const listed = (await backend.listRuns({}))[0];
+      assertEquals(deepLeaf(listed?.context.deep, depth), "stored");
+      assertEquals(Object.is(listed?.context.exact, -0), true);
       const observation = await backend.openRunObservation("run-deep-context");
       assertExists(observation);
       assertEquals(deepLeaf(observation.initial.context.deep, depth), "stored");
+      assertEquals(Object.is(observation.initial.context.exact, -0), true);
       await observation.close();
-      assertEquals(
-        deepLeaf((await backend.findStalledRuns(0))[0]?.context.deep, depth),
-        "stored",
-      );
+      const stalled = (await backend.findStalledRuns(0))[0];
+      assertEquals(deepLeaf(stalled?.context.deep, depth), "stored");
+      assertEquals(Object.is(stalled?.context.exact, -0), true);
 
       setDeepLeaf(firstRead.context.deep, depth, "mutated after read");
       const secondRead = await backend.getRun("run-deep-context");
       assertExists(secondRead);
       assertEquals(deepLeaf(secondRead.context.deep, depth), "stored");
+      assertEquals(Object.is(secondRead.context.exact, -0), true);
     });
 
     it("rejects context values the durable JSON contract cannot encode", async () => {
