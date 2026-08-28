@@ -11,7 +11,6 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { fetchWithPinnedAddresses } from "#veryfront/platform/compat/http/pinned-fetch.ts";
 import { isBun } from "#veryfront/platform/compat/runtime.ts";
 import {
-  __guardedEgressFetchWithAllowedResolvedAddressesForTests,
   guardedEgressFetch,
   isInternalEgressOverrideEnabled,
   type ResolveWorkerHost,
@@ -142,10 +141,10 @@ async function fetchWithHostTransport(
   transport: TrustedHostTransport,
   allowInternalEgress: boolean,
 ): Promise<Response> {
-  const deps = {
+  return await guardedEgressFetch(input, init, {
     fetchImpl: transport.fetch,
     pinnedFetch: transport.pinnedFetch,
-    authorizeUrl: async (url: URL) => {
+    authorizeUrl: async (url) => {
       if (url.protocol !== "http:" && url.protocol !== "https:") {
         throw new OutboundRequestBlockedError(
           `Outbound request blocked: unsupported URL scheme ${url.protocol}`,
@@ -159,16 +158,13 @@ async function fetchWithHostTransport(
       await options.authorizeUrl?.(url);
     },
     onRedirect: options.onRedirect,
+    allowedResolvedAddressesForTests: transport.allowedResolvedAddressesForTests,
     options: {
       allowInternalEgress: allowInternalEgress ||
         isInternalEgressOverrideEnabled(getHostEnv(HOST_INTERNAL_EGRESS_OVERRIDE_ENV)),
       resolveHost: transport.resolveHost,
     },
-  };
-  const allowed = transport.allowedResolvedAddressesForTests;
-  return await (allowed
-    ? __guardedEgressFetchWithAllowedResolvedAddressesForTests(input, init, deps, allowed)
-    : guardedEgressFetch(input, init, deps));
+  });
 }
 
 function parseAllowedInternalProviderOrigins(value: string | undefined): ReadonlySet<string> {

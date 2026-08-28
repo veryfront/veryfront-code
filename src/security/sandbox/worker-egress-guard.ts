@@ -1163,6 +1163,8 @@ export interface GuardedEgressFetchDeps {
   onRedirect?: (redirect: WorkerEgressRedirect) => void | Promise<void>;
   /** Captured runtime primitives used to establish the DNS-pinned tunnel. */
   runtime?: Partial<PinnedEgressRuntime>;
+  /** Resolved addresses admitted by an installed test transport. */
+  allowedResolvedAddressesForTests?: readonly string[];
 }
 
 /** A request body that can be safely replayed across a body-preserving redirect. */
@@ -1184,28 +1186,10 @@ function isReplayableBody(body: BodyInit | null | undefined): boolean {
  * follows manually after re-checking. Credential headers are stripped on a
  * cross-origin hop, matching the platform fetch the guard wraps.
  */
-export function guardedEgressFetch(
+export async function guardedEgressFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
   deps: GuardedEgressFetchDeps = {},
-): Promise<Response> {
-  return guardedEgressFetchImpl(input, init, deps);
-}
-
-export function __guardedEgressFetchWithAllowedResolvedAddressesForTests(
-  input: RequestInfo | URL,
-  init: RequestInit | undefined,
-  deps: GuardedEgressFetchDeps,
-  allowedResolvedAddresses: readonly string[],
-): Promise<Response> {
-  return guardedEgressFetchImpl(input, init, deps, allowedResolvedAddresses);
-}
-
-async function guardedEgressFetchImpl(
-  input: RequestInfo | URL,
-  init: RequestInit | undefined,
-  deps: GuardedEgressFetchDeps,
-  allowedResolvedAddresses: readonly string[] = [],
 ): Promise<Response> {
   const doFetch = deps.fetchImpl ?? fetch;
   const options = deps.options ?? {};
@@ -1289,7 +1273,7 @@ async function guardedEgressFetchImpl(
             hostname,
             options,
             requestInit.signal ?? undefined,
-            allowedResolvedAddresses,
+            deps.allowedResolvedAddressesForTests,
           );
           const port = parsedUrl.port
             ? Number.parseInt(parsedUrl.port, 10)
