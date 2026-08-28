@@ -508,7 +508,9 @@ describe("public docs validation", () => {
           '<a data-ok={(async () => await /}>/.test(x))()} href="../architecture/await-regex.md">ok</a>\n' +
           '<a data-ok={(function* () { yield /}>/.test(x) })()} href="../architecture/yield-regex.md">ok</a>\n' +
           '<a data-ok={class extends /[}>]/.constructor {}} href="../architecture/extends-regex.md">ok</a>\n' +
+          '<a data-ok={(() => { class Sample {} /[}>]/.test(value) })()} href="../architecture/class-block-regex.md">ok</a>\n' +
           '<a data-ok={(() => { if (x) {} else /[}>]/.test(x); do /[}>]/.test(x); while (false); })()} href="../architecture/statement-regex.md">ok</a>\n' +
+          '<a data-ok={(() => { try {} catch {} /[}>]/.test(value) })()} href="../architecture/catch-block-regex.md">ok</a>\n' +
           '<a data-ok={(() => { for (const x of /[}>]/.source) {} return true })()} href="../architecture/for-of-regex.md">ok</a>\n' +
           '<a data-ok={(() => { for (using of /[}>]/.source) {} return true })()} href="../architecture/for-using-of-regex.md">ok</a>\n' +
           '<a data-ok={(async () => { for await (const x of /[}>]/.source) {} return true })()} href="../architecture/for-await-of-regex.md">ok</a>\n' +
@@ -526,6 +528,8 @@ describe("public docs validation", () => {
           '<a data-ok={(() => { for (const x = { value: of / ({ marker: ">/" }).length }; false;) {} return true })()} href="../architecture/for-header-nested-of-division.md">ok</a>\n' +
           '<a data-ok={of / ({ marker: ">/" }).length} href="../architecture/of-division.md">ok</a>\n' +
           '<a data-ok={function () {} / ({ marker: ">/" }).length} href="../architecture/function-expression-division.md">ok</a>\n' +
+          '<a data-ok={class Sample {} / ({ marker: ">/" }).length} href="../architecture/class-expression-division.md">ok</a>\n' +
+          '<a data-ok={<Foo></Foo>} href="../architecture/paired-jsx.md">ok</a>\n' +
           '<a data-ok={(() => { breakfast\n/ ({ marker: ">/" }).length; continueValue\n/ ({ marker: ">/" }).length; debuggerValue\n/ ({ marker: ">/" }).length; return true })()} href="../architecture/asi-prefix-division.md">ok</a>\n' +
           '<a data-ok={(() => { while (value) { break\n/[}>]/.test(value) } while (value) { continue\n/[}>]/.test(value) } debugger\n/[}>]/.test(value); return true })()} href="../architecture/asi-regex.md">ok</a>\n' +
           '<a data-ok={(async () => await (x) / ({ marker: "}>/" }).length)()} href="../architecture/await-group-division.md">ok</a>\n' +
@@ -567,7 +571,9 @@ describe("public docs validation", () => {
         "../architecture/await-regex.md",
         "../architecture/yield-regex.md",
         "../architecture/extends-regex.md",
+        "../architecture/class-block-regex.md",
         "../architecture/statement-regex.md",
+        "../architecture/catch-block-regex.md",
         "../architecture/for-of-regex.md",
         "../architecture/for-using-of-regex.md",
         "../architecture/for-await-of-regex.md",
@@ -581,6 +587,8 @@ describe("public docs validation", () => {
         "../architecture/for-header-nested-of-division.md",
         "../architecture/of-division.md",
         "../architecture/function-expression-division.md",
+        "../architecture/class-expression-division.md",
+        "../architecture/paired-jsx.md",
         "../architecture/asi-prefix-division.md",
         "../architecture/asi-regex.md",
         "../architecture/await-group-division.md",
@@ -1973,6 +1981,20 @@ describe("public docs validation", () => {
       performance.now() - startedAt,
       2_000,
       "division-heavy template interpolation scanning must stay linear",
+    );
+  });
+
+  it("scans long JavaScript identifiers in linear time", () => {
+    const identifier = `value${"x".repeat(32_000)}`;
+    const source = `export const ${identifier} = 1\n\n` +
+      "[real](../architecture/real.md)";
+    const startedAt = performance.now();
+
+    assertEquals(destinations(source), ["../architecture/real.md"]);
+    assertLess(
+      performance.now() - startedAt,
+      2_000,
+      "identifier scanning must stay linear",
     );
   });
 

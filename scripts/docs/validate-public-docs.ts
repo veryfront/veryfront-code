@@ -777,8 +777,10 @@ interface MdxSyntaxRanges {
 // Keep those scanner surfaces on this shared state model, and regression-test
 // both the regex and division forms when adding a new grammar context.
 type JavaScriptSignificantTokenKind =
+  | "arrow"
   | "control-header"
   | "declaration-header"
+  | "expression-header"
   | "other"
   | "postfix-update"
   | "prefix-update"
@@ -795,15 +797,21 @@ type JavaScriptDelimiterContext =
   | "control"
   | "for"
   | "function-declaration"
+  | "function-expression"
+  | "function-body"
   | "nested"
   | undefined;
 
 interface JavaScriptSignificantToken {
+  readonly classDeclaration?: true;
+  readonly declarationCandidate?: true;
   readonly end: number;
   readonly functionDeclaration?: true;
-  readonly functionDeclarationCandidate?: true;
   readonly functionDeclarationPrefix?: true;
+  readonly functionHeader?: true;
   readonly identifier?: true;
+  readonly identifierKeyword?: string;
+  readonly identifierKeywordCandidate?: string;
   readonly kind: JavaScriptSignificantTokenKind;
   readonly followsForOfLeftOperand?: true;
   readonly precedingIdentifierKeyword?: JavaScriptPrecedingIdentifierKeyword;
@@ -833,6 +841,10 @@ function javaScriptTokenWithIdentifierContext(
           previousSignificantToken?.functionDeclaration === true
         ? { functionDeclaration: true }
         : {}),
+      ...(text[start] === "*" &&
+          previousSignificantToken?.functionHeader === true
+        ? { functionHeader: true }
+        : {}),
       kind,
     };
   }
@@ -847,25 +859,39 @@ function javaScriptTokenWithIdentifierContext(
   const identifier = continuesIdentifierWord
     ? previousSignificantToken?.identifier === true
     : javaScriptIdentifierStartsAt(text, start);
-  const functionDeclarationCandidate = continuesIdentifierWord
-    ? previousSignificantToken?.functionDeclarationCandidate === true
-    : javaScriptMayStartFunctionDeclaration(
+  const identifierKeywordCandidate = javaScriptIdentifierKeywordCandidate(
+    text,
+    start,
+    continuesIdentifierWord,
+    previousSignificantToken,
+  );
+  const declarationCandidate = continuesIdentifierWord
+    ? previousSignificantToken?.declarationCandidate === true
+    : javaScriptMayStartDeclaration(
       text,
       previousSignificantToken,
       delimiterContexts,
     );
-  const word = javaScriptIdentifierWordAtEnd(text, end);
-  const completeIdentifier = word !== undefined &&
-    !javaScriptIdentifierCodeUnitAt(text, end);
+  const completeIdentifier = !javaScriptIdentifierCodeUnitAt(text, end);
+  const identifierKeyword = completeIdentifier &&
+      identifierKeywordCandidate !== undefined &&
+      JAVASCRIPT_IDENTIFIER_KEYWORDS.has(identifierKeywordCandidate)
+    ? identifierKeywordCandidate
+    : undefined;
   const functionDeclarationPrefix = completeIdentifier &&
-    ((word === "export" || word === "async") &&
-        functionDeclarationCandidate ||
-      word === "default" &&
+    ((identifierKeyword === "export" || identifierKeyword === "async") &&
+        declarationCandidate ||
+      identifierKeyword === "default" &&
         previousSignificantToken?.functionDeclarationPrefix === true);
   const functionDeclaration =
     previousSignificantToken?.functionDeclaration === true ||
-    (completeIdentifier && word === "function" &&
-      functionDeclarationCandidate);
+    (identifierKeyword === "function" &&
+      declarationCandidate);
+  const functionHeader = previousSignificantToken?.functionHeader === true ||
+    identifierKeyword === "function";
+  const classDeclaration =
+    previousSignificantToken?.classDeclaration === true ||
+    (identifierKeyword === "class" && declarationCandidate);
   let precedingIdentifierKeyword:
     | JavaScriptPrecedingIdentifierKeyword
     | undefined;
@@ -876,10 +902,7 @@ function javaScriptTokenWithIdentifierContext(
     followsForOfLeftOperand =
       previousSignificantToken?.followsForOfLeftOperand === true;
   } else if (previousSignificantToken !== undefined) {
-    const previousWord = javaScriptIdentifierWordAtEnd(
-      text,
-      previousSignificantToken.end,
-    );
+    const previousWord = previousSignificantToken.identifierKeyword;
     if (
       previousWord === "break" || previousWord === "continue" ||
       previousWord === "export" || previousWord === "for"
@@ -889,13 +912,19 @@ function javaScriptTokenWithIdentifierContext(
   }
 
   return {
+    ...(classDeclaration ? { classDeclaration: true } : {}),
+    ...(declarationCandidate && !completeIdentifier
+      ? { declarationCandidate: true }
+      : {}),
     end,
     ...(functionDeclaration ? { functionDeclaration: true } : {}),
-    ...(functionDeclarationCandidate && !completeIdentifier
-      ? { functionDeclarationCandidate: true }
-      : {}),
     ...(functionDeclarationPrefix ? { functionDeclarationPrefix: true } : {}),
+    ...(functionHeader ? { functionHeader: true } : {}),
     ...(identifier ? { identifier: true } : {}),
+    ...(identifierKeyword === undefined ? {} : { identifierKeyword }),
+    ...(identifierKeywordCandidate === undefined || completeIdentifier
+      ? {}
+      : { identifierKeywordCandidate }),
     kind,
     ...(followsForOfLeftOperand ? { followsForOfLeftOperand: true } : {}),
     ...(precedingIdentifierKeyword === undefined
@@ -978,6 +1007,18 @@ function javaScriptTemplateInterpolationEnd(
   const delimiterContexts: JavaScriptDelimiterContext[] = ["nested"];
   let previousSignificantToken: JavaScriptSignificantToken | undefined;
   while (cursor < text.length) {
+    const jsxTagEnd = text[cursor] === "<" && javaScriptRegexMayStart(
+        text,
+        previousSignificantToken,
+        delimiterContexts,
+      )
+      ? javaScriptJsxTagEnd(text, cursor)
+      : undefined;
+    if (jsxTagEnd !== undefined) {
+      previousSignificantToken = { end: jsxTagEnd, kind: "other" };
+      cursor = jsxTagEnd;
+      continue;
+    }
     const token = javaScriptTokenAt(
       text,
       cursor,
@@ -1087,6 +1128,18 @@ function mdxExpressionAt(
   const delimiterContexts: JavaScriptDelimiterContext[] = ["nested"];
   let previousSignificantToken: JavaScriptSignificantToken | undefined;
   while (cursor < text.length) {
+    const jsxTagEnd = text[cursor] === "<" && javaScriptRegexMayStart(
+        text,
+        previousSignificantToken,
+        delimiterContexts,
+      )
+      ? javaScriptJsxTagEnd(text, cursor)
+      : undefined;
+    if (jsxTagEnd !== undefined) {
+      previousSignificantToken = { end: jsxTagEnd, kind: "other" };
+      cursor = jsxTagEnd;
+      continue;
+    }
     const token = javaScriptTokenAt(
       text,
       cursor,
@@ -1260,11 +1313,39 @@ const JAVASCRIPT_CONTROL_HEADER_KEYWORDS: ReadonlySet<string> = new Set([
 ]);
 
 const JAVASCRIPT_BLOCK_PREFIX_KEYWORDS: ReadonlySet<string> = new Set([
+  "catch",
   "do",
   "else",
   "finally",
   "try",
 ]);
+
+const JAVASCRIPT_IDENTIFIER_KEYWORDS: ReadonlySet<string> = new Set([
+  ...JAVASCRIPT_REGEX_PREFIX_KEYWORDS,
+  ...JAVASCRIPT_CONTROL_HEADER_KEYWORDS,
+  ...JAVASCRIPT_BLOCK_PREFIX_KEYWORDS,
+  "async",
+  "break",
+  "class",
+  "const",
+  "continue",
+  "debugger",
+  "export",
+  "function",
+  "let",
+  "of",
+  "using",
+  "var",
+]);
+
+const JAVASCRIPT_IDENTIFIER_KEYWORD_PREFIXES: ReadonlySet<string> = new Set(
+  [...JAVASCRIPT_IDENTIFIER_KEYWORDS].flatMap((keyword) =>
+    Array.from(
+      { length: keyword.length },
+      (_, index) => keyword.slice(0, index + 1),
+    )
+  ),
+);
 
 const JAVASCRIPT_IDENTIFIER_START = /[$_\p{ID_Start}]/u;
 const JAVASCRIPT_IDENTIFIER_CONTINUE = /[$_\u200C\u200D\p{ID_Continue}]/u;
@@ -1330,6 +1411,32 @@ function javaScriptIdentifierStartsAt(
   );
 }
 
+function javaScriptIdentifierKeywordCandidate(
+  text: string,
+  start: number,
+  continuesIdentifier: boolean,
+  previousSignificantToken: JavaScriptSignificantToken | undefined,
+): string | undefined {
+  const character = text[start]!;
+  if (!/[A-Za-z]/.test(character)) return undefined;
+  if (!continuesIdentifier) {
+    if (
+      previousSignificantToken !== undefined &&
+      ".#".includes(text[previousSignificantToken.end - 1]!)
+    ) return undefined;
+    return JAVASCRIPT_IDENTIFIER_KEYWORD_PREFIXES.has(character)
+      ? character
+      : undefined;
+  }
+
+  const previous = previousSignificantToken?.identifierKeywordCandidate;
+  if (previous === undefined) return undefined;
+  const candidate = previous + character;
+  return JAVASCRIPT_IDENTIFIER_KEYWORD_PREFIXES.has(candidate)
+    ? candidate
+    : undefined;
+}
+
 function javaScriptCodePointBefore(
   text: string,
   end: number,
@@ -1362,34 +1469,18 @@ function javaScriptIdentifierContinueBefore(
     JAVASCRIPT_IDENTIFIER_CONTINUE.test(codePoint);
 }
 
-function javaScriptIdentifierWordAtEnd(
-  text: string,
-  end: number,
-): string | undefined {
-  let start = end;
-  while (start > 0 && /[A-Za-z]/.test(text[start - 1]!)) start--;
-  if (start === end) return undefined;
-
-  const preceding = javaScriptCodePointBefore(text, start);
-  if (
-    preceding !== undefined &&
-    (preceding === "." || preceding === "#" ||
-      javaScriptIdentifierContinueBefore(text, start))
-  ) return undefined;
-  return text.slice(start, end);
-}
-
-function javaScriptMayStartFunctionDeclaration(
+function javaScriptMayStartDeclaration(
   text: string,
   token: JavaScriptSignificantToken | undefined,
   delimiterContexts: readonly JavaScriptDelimiterContext[],
 ): boolean {
   if (
-    delimiterContexts.length > 0 && delimiterContexts.at(-1) !== "block"
+    delimiterContexts.length > 0 && delimiterContexts.at(-1) !== "block" &&
+    delimiterContexts.at(-1) !== "function-body"
   ) return false;
   if (token === undefined) return true;
   if (token.functionDeclarationPrefix === true) return true;
-  const word = javaScriptIdentifierWordAtEnd(text, token.end);
+  const word = token.identifierKeyword;
   if (word === "export") return true;
   if (
     (word === "default" || word === "async") &&
@@ -1399,11 +1490,10 @@ function javaScriptMayStartFunctionDeclaration(
 }
 
 function javaScriptLineTerminatesRestrictedStatement(
-  text: string,
   token: JavaScriptSignificantToken | undefined,
 ): boolean {
   if (token === undefined) return false;
-  const finalWord = javaScriptIdentifierWordAtEnd(text, token.end);
+  const finalWord = token.identifierKeyword;
   if (
     finalWord === "break" || finalWord === "continue" ||
     finalWord === "debugger"
@@ -1420,7 +1510,7 @@ function javaScriptPreviousSignificantTokenAfterTrivia(
 ): JavaScriptSignificantToken | undefined {
   if (
     /[\n\r\u2028\u2029]/.test(text.slice(start, end)) &&
-    javaScriptLineTerminatesRestrictedStatement(text, token)
+    javaScriptLineTerminatesRestrictedStatement(token)
   ) return undefined;
   return token;
 }
@@ -1429,7 +1519,7 @@ function javaScriptTokenMayEndForOfLeftOperand(
   text: string,
   token: JavaScriptSignificantToken,
 ): boolean {
-  const word = javaScriptIdentifierWordAtEnd(text, token.end);
+  const word = token.identifierKeyword;
   if (token.identifier === true) {
     if (word === undefined) return true;
     return !JAVASCRIPT_REGEX_PREFIX_KEYWORDS.has(word) &&
@@ -1446,13 +1536,17 @@ function javaScriptDelimiterTokenKind(
   previousSignificantToken: JavaScriptSignificantToken | undefined,
   delimiterContexts: JavaScriptDelimiterContext[],
 ): JavaScriptSignificantTokenKind {
+  if (
+    character === ">" && previousSignificantToken !== undefined &&
+    text[previousSignificantToken.end - 1] === "="
+  ) return "arrow";
   if (character === "(") {
-    const keyword = previousSignificantToken === undefined
-      ? undefined
-      : javaScriptIdentifierWordAtEnd(text, previousSignificantToken.end);
+    const keyword = previousSignificantToken?.identifierKeyword;
     let context: JavaScriptDelimiterContext;
-    if (previousSignificantToken?.functionDeclaration === true) {
-      context = "function-declaration";
+    if (previousSignificantToken?.functionHeader === true) {
+      context = previousSignificantToken.functionDeclaration === true
+        ? "function-declaration"
+        : "function-expression";
     } else if (
       keyword === "for" ||
       (keyword === "await" &&
@@ -1468,9 +1562,18 @@ function javaScriptDelimiterTokenKind(
   } else if (character === "[") {
     delimiterContexts.push("nested");
   } else if (character === "{") {
-    const keyword = previousSignificantToken === undefined
-      ? undefined
-      : javaScriptIdentifierWordAtEnd(text, previousSignificantToken.end);
+    const keyword = previousSignificantToken?.identifierKeyword;
+    if (previousSignificantToken?.classDeclaration === true) {
+      delimiterContexts.push("block");
+      return "other";
+    }
+    if (
+      previousSignificantToken?.kind === "arrow" ||
+      previousSignificantToken?.kind === "expression-header"
+    ) {
+      delimiterContexts.push("function-body");
+      return "other";
+    }
     const statementBlock =
       previousSignificantToken?.kind === "control-header" ||
       previousSignificantToken?.kind === "declaration-header" ||
@@ -1481,6 +1584,7 @@ function javaScriptDelimiterTokenKind(
     const context = delimiterContexts.pop();
     if (context === "control" || context === "for") return "control-header";
     if (context === "function-declaration") return "declaration-header";
+    if (context === "function-expression") return "expression-header";
     if (context === "block") return "statement-block";
   }
   return "other";
@@ -1506,7 +1610,7 @@ function javaScriptRegexMayStart(
   if (text.slice(end - 3, end) === "...") return true;
   if ("=(:,![{;?&|+*%/^~<>-".includes(text[end - 1]!)) return true;
 
-  const keyword = javaScriptIdentifierWordAtEnd(text, end);
+  const keyword = previousSignificantToken.identifierKeyword;
   if (
     keyword === "of" && delimiterContexts.at(-1) === "for" &&
     previousSignificantToken.followsForOfLeftOperand === true
@@ -1749,7 +1853,6 @@ function scanJavaScriptLine(
   }
   if (
     javaScriptLineTerminatesRestrictedStatement(
-      text,
       state.previousSignificantToken,
     )
   ) state.previousSignificantToken = undefined;
@@ -1985,6 +2088,20 @@ interface TagSyntaxScan {
   readonly topLevelOffsets: ReadonlySet<number>;
 }
 
+function javaScriptJsxTagEnd(
+  text: string,
+  start: number,
+): number | undefined {
+  if (text.startsWith("<>", start)) return start + 2;
+  if (text.startsWith("</>", start)) return start + 3;
+  if (!text.startsWith("</", start)) return mdxJsxTagEnd(text, start);
+
+  const nameEnd = mdxJsxNameEnd(text, start + 2);
+  if (nameEnd === undefined) return undefined;
+  const end = skipJavaScriptTrivia(text, nameEnd);
+  return text[end] === ">" ? end + 1 : undefined;
+}
+
 function scanTagSyntax(
   text: string,
   start: number,
@@ -2023,6 +2140,19 @@ function scanTagSyntax(
         previousSignificantToken,
       );
       cursor = commentEnd;
+      continue;
+    }
+    const jsxTagEnd = expressionDepth > 0 && character === "<" &&
+        javaScriptRegexMayStart(
+          text,
+          previousSignificantToken,
+          delimiterContexts,
+        )
+      ? javaScriptJsxTagEnd(text, cursor)
+      : undefined;
+    if (jsxTagEnd !== undefined) {
+      previousSignificantToken = { end: jsxTagEnd, kind: "other" };
+      cursor = jsxTagEnd;
       continue;
     }
     const updateKind = expressionDepth > 0
