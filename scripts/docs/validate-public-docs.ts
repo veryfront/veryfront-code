@@ -70,6 +70,12 @@ const HTML_BLOCK_TAG_NAME_SOURCE = "[A-Za-z][A-Za-z0-9-]*";
 const HTML_BLOCK_ATTRIBUTE_NAME_SOURCE = "[A-Za-z_:][A-Za-z0-9_.:-]*";
 const HTML_BLOCK_ATTRIBUTE_VALUE_SOURCE =
   "(?:[^\\s\"'=<>`]+|'[^']*'|\"[^\"]*\")";
+const COMPLETE_MARKDOWN_HTML_OPEN_TAG_SOURCE = new RegExp(
+  `^<${HTML_BLOCK_TAG_NAME_SOURCE}(?:[ \\t\\n\\f\\r]+${HTML_BLOCK_ATTRIBUTE_NAME_SOURCE}(?:[ \\t\\n\\f\\r]*=[ \\t\\n\\f\\r]*${HTML_BLOCK_ATTRIBUTE_VALUE_SOURCE})?)*[ \\t\\n\\f\\r]*\\/?>$`,
+);
+const COMPLETE_MARKDOWN_HTML_CLOSING_TAG_SOURCE = new RegExp(
+  `^<\\/${HTML_BLOCK_TAG_NAME_SOURCE}[ \\t\\n\\f\\r]*>$`,
+);
 const COMPLETE_HTML_BLOCK_TAG_LINE_SOURCE = new RegExp(
   `^<(?:${HTML_BLOCK_TAG_NAME_SOURCE}(?:[ \\t]+${HTML_BLOCK_ATTRIBUTE_NAME_SOURCE}(?:[ \\t]*=[ \\t]*${HTML_BLOCK_ATTRIBUTE_VALUE_SOURCE})?)*[ \\t]*\\/?|\\/${HTML_BLOCK_TAG_NAME_SOURCE}[ \\t]*)>[ \\t\\r]*$`,
 );
@@ -94,6 +100,7 @@ const JAVASCRIPT_SIMPLE_ESCAPES: Readonly<Record<string, string>> = {
   t: "\t",
   v: "\v",
 };
+const MAX_MARKDOWN_DESTINATION_PARENTHESIS_DEPTH = 32;
 
 function isPublishedPage(target: string): boolean {
   // The sync deletes the section README before publishing, so a link to one
@@ -349,6 +356,11 @@ function afterMarkdownLabel(text: string, start: number): number | undefined {
     const codeSpanEnd = markdownCodeSpanEndAt(text, cursor);
     if (codeSpanEnd !== undefined) {
       cursor = codeSpanEnd;
+      continue;
+    }
+    const htmlTagEnd = markdownHtmlTagEndAt(text, cursor);
+    if (htmlTagEnd !== undefined) {
+      cursor = htmlTagEnd;
       continue;
     }
     if (text[cursor] === "[") depth++;
@@ -1023,9 +1035,10 @@ function javaScriptRegexEnd(line: string, start: number): number | undefined {
 function javaScriptRegexMayStart(line: string, start: number): boolean {
   const prefix = line.slice(0, start).trimEnd();
   return prefix === "" ||
-    /(?:[=(:,!\[{;?&|+*%^~<>-]|=>|\b(?:return|case|throw|default))$/.test(
-      prefix,
-    );
+    /(?:[=(:,!\[{;?&|+*%^~<>-]|=>|\b(?:return|case|throw|default|typeof|void|delete))$/
+      .test(
+        prefix,
+      );
 }
 
 function scanJavaScriptLine(line: string, state: JavaScriptBalance): void {
@@ -1229,6 +1242,7 @@ function ignoredDestinationRanges(
     baseIgnoredRanges,
     mdxRanges.expressions,
     mdxRanges.strings,
+    syntax,
   );
   const htmlComments = syntax === "markdown"
     ? htmlCommentRanges(
@@ -1279,14 +1293,21 @@ interface TagSyntaxScan {
   readonly topLevelOffsets: ReadonlySet<number>;
 }
 
-function scanTagSyntax(text: string, start: number): TagSyntaxScan {
+function scanTagSyntax(
+  text: string,
+  start: number,
+  syntax: DocumentSyntax,
+): TagSyntaxScan {
   const topLevelOffsets = new Set<number>();
   let quote: '"' | "'" | "`" | undefined;
   let expressionDepth = 0;
   for (let cursor = start; cursor < text.length; cursor++) {
     const character = text[cursor]!;
     if (quote !== undefined) {
-      if (character === "\\") cursor++;
+      if (
+        character === "\\" &&
+        (syntax === "mdx" || expressionDepth > 0)
+      ) cursor++;
       else if (character === quote) quote = undefined;
       continue;
     }
@@ -1328,11 +1349,29 @@ function scanTagSyntax(text: string, start: number): TagSyntaxScan {
   return { end: undefined, topLevelOffsets };
 }
 
+function isCompleteMarkdownHtmlTag(tag: string): boolean {
+  return COMPLETE_MARKDOWN_HTML_OPEN_TAG_SOURCE.test(tag) ||
+    COMPLETE_MARKDOWN_HTML_CLOSING_TAG_SOURCE.test(tag);
+}
+
+function markdownHtmlTagEndAt(
+  text: string,
+  start: number,
+): number | undefined {
+  if (text[start] !== "<" || isBackslashEscaped(text, start)) return undefined;
+  const tag = scanTagSyntax(text, start, "markdown");
+  if (tag.end === undefined) return undefined;
+  return isCompleteMarkdownHtmlTag(text.slice(start, tag.end))
+    ? tag.end
+    : undefined;
+}
+
 function htmlTagRanges(
   text: string,
   ignoredRanges: readonly Range[],
   expressionRanges: readonly Range[] = [],
   stringRanges: readonly Range[] = [],
+  syntax: DocumentSyntax = "mdx",
 ): Range[] {
   const ranges: Range[] = [];
   for (let start = 0; start < text.length;) {
@@ -1350,11 +1389,15 @@ function htmlTagRanges(
       continue;
     }
 
-    const tag = scanTagSyntax(text, start);
-    if (tag.end !== undefined) {
+    const tag = scanTagSyntax(text, start, syntax);
+    if (
+      tag.end !== undefined &&
+      (syntax === "mdx" ||
+        isCompleteMarkdownHtmlTag(text.slice(start, tag.end)))
+    ) {
       ranges.push({ start, end: tag.end });
       start = tag.end;
-    } else break;
+    } else start++;
   }
   return ranges;
 }
@@ -1489,8 +1532,11 @@ function terminatedRawHtmlBlockEndPattern(
   return undefined;
 }
 
-function topLevelTagOffsets(tag: string): ReadonlySet<number> {
-  return scanTagSyntax(tag, 0).topLevelOffsets;
+function topLevelTagOffsets(
+  tag: string,
+  syntax: DocumentSyntax,
+): ReadonlySet<number> {
+  return scanTagSyntax(tag, 0, syntax).topLevelOffsets;
 }
 
 function referenceTitleEnd(
@@ -1712,8 +1758,11 @@ function referenceDestinationAt(
       continue;
     }
     if (wrapped && text[cursor] === "<") return undefined;
-    if (!wrapped && text[cursor] === "(") destinationDepth++;
-    else if (!wrapped && text[cursor] === ")") {
+    if (!wrapped && text[cursor] === "(") {
+      if (
+        ++destinationDepth > MAX_MARKDOWN_DESTINATION_PARENTHESIS_DEPTH
+      ) return undefined;
+    } else if (!wrapped && text[cursor] === ")") {
       if (destinationDepth === 0) break;
       destinationDepth--;
     }
@@ -2005,8 +2054,11 @@ function markdownInlineDestinationAt(
         cursor += 2;
         continue;
       }
-      if (text[cursor] === "(") destinationDepth++;
-      else if (text[cursor] === ")") {
+      if (text[cursor] === "(") {
+        if (
+          ++destinationDepth > MAX_MARKDOWN_DESTINATION_PARENTHESIS_DEPTH
+        ) return undefined;
+      } else if (text[cursor] === ")") {
         if (destinationDepth === 0) break;
         destinationDepth--;
       } else if (/\s/.test(text[cursor]!)) break;
@@ -2094,7 +2146,25 @@ export function scanDestinations(
     ignoredRanges,
     syntaxRanges.expressions,
     syntaxRanges.strings,
+    syntax,
   );
+  const structuralTagKeys = new Set(
+    tagRanges.map((range) => `${range.start}:${range.end}`),
+  );
+  const destinationTagRanges = syntax === "markdown"
+    ? [
+      ...tagRanges,
+      ...htmlTagRanges(
+        text,
+        ignoredRanges,
+        syntaxRanges.expressions,
+        syntaxRanges.strings,
+        "mdx",
+      ).filter((range) =>
+        !structuralTagKeys.has(`${range.start}:${range.end}`)
+      ),
+    ]
+    : tagRanges;
   const rawHtmlBlocks: RawHtmlBlockBodyRanges = syntax === "markdown"
     ? rawHtmlBlockBodyRanges(text, tagRanges, ignoredRanges)
     : { markdown: [], rawText: [], blocks: [] };
@@ -2210,13 +2280,18 @@ export function scanDestinations(
     }
   }
 
-  for (const tagRange of tagRanges) {
+  for (const tagRange of destinationTagRanges) {
     if (
       isInsideRange(referenceDefinitionRanges, tagRange.start) ||
       isInsideRange(rawHtmlBlocks.rawText, tagRange.start)
     ) continue;
     const tag = text.slice(tagRange.start, tagRange.end);
-    const topLevelOffsets = topLevelTagOffsets(tag);
+    const structurallyValid = syntax !== "markdown" ||
+      structuralTagKeys.has(`${tagRange.start}:${tagRange.end}`);
+    const topLevelOffsets = topLevelTagOffsets(
+      tag,
+      structurallyValid ? syntax : "mdx",
+    );
     const htmlDestination = new RegExp(
       HTML_DESTINATION_ATTRIBUTE_SOURCE,
       "gi",
@@ -2230,6 +2305,7 @@ export function scanDestinations(
       const expression = expressionStart === undefined
         ? undefined
         : staticJsxStringExpression(tag, expressionStart);
+      if (!structurallyValid && expressionStart === undefined) continue;
       const rawHref = htmlMatch[1] ?? htmlMatch[2] ?? expression?.value;
       if (rawHref === undefined) continue;
       const href = expressionStart !== undefined
@@ -2246,7 +2322,7 @@ export function scanDestinations(
           : "javascript-string",
       });
     }
-    if (syntax === "markdown") {
+    if (syntax === "markdown" && structurallyValid) {
       const unquotedDestination = new RegExp(
         MARKDOWN_UNQUOTED_DESTINATION_ATTRIBUTE_SOURCE,
         "gi",

@@ -83,6 +83,32 @@ describe("public docs validation", () => {
       destinations("[`]`](docs/architecture/private.md)"),
       ["docs/architecture/private.md"],
     );
+    assertEquals(
+      destinations(
+        '[<span title="]">gate</span>](docs/architecture/private.md)',
+      ),
+      ["docs/architecture/private.md"],
+    );
+  });
+
+  it("enforces CommonMark destination parenthesis depth", () => {
+    const accepted = `${"(".repeat(32)}docs/guides/accepted.md${
+      ")".repeat(32)
+    }`;
+    const rejected = `${"(".repeat(33)}docs/architecture/private.md${
+      ")".repeat(33)
+    }`;
+
+    assertEquals(
+      destinations(`[accepted](${accepted})\n[rejected](${rejected})`),
+      [accepted],
+    );
+    assertEquals(
+      destinations(
+        `[accepted] [rejected]\n\n[accepted]: ${accepted}\n[rejected]: ${rejected}`,
+      ),
+      [accepted],
+    );
   });
 
   it("validates reference definition labels", () => {
@@ -219,6 +245,22 @@ describe("public docs validation", () => {
       scanDestinations(
         "<a href=\n" +
           "docs/architecture/private.md title=sample>private</a>",
+        "markdown",
+      ).map((destination) => destination.href),
+      ["docs/architecture/private.md"],
+    );
+    assertEquals(
+      scanDestinations(
+        '<foo href="docs/architecture/not-rendered.md" ' +
+          "[gate](docs/architecture/private.md)>",
+        "markdown",
+      ).map((destination) => destination.href),
+      ["docs/architecture/private.md"],
+    );
+    assertEquals(
+      scanDestinations(
+        '<span title="x\\">ok</span>\n' +
+          '<a href="docs/architecture/private.md">private</a>',
         "markdown",
       ).map((destination) => destination.href),
       ["docs/architecture/private.md"],
@@ -404,6 +446,9 @@ describe("public docs validation", () => {
           '<a data-ok={/<}>/.test(value)} href="../architecture/regex.md">ok</a>\n' +
           '<a title="<!--" href="../architecture/comment-token.md">ok</a>\n' +
           '<a data-ok={/[}>]/.test(value)} href="../architecture/regex-class.md">ok</a>\n' +
+          '<a data-ok={typeof /}>/} href="../architecture/typeof-regex.md">ok</a>\n' +
+          '<a data-ok={void /}>/} href="../architecture/void-regex.md">ok</a>\n' +
+          '<a data-ok={delete /}>/.value} href="../architecture/delete-regex.md">ok</a>\n' +
           '<a data-ok={`x ${"`"} >`} href="../architecture/template.md">ok</a>\n' +
           '<a data-ok={value / count > 1} href="../architecture/division.md">ok</a>\n' +
           '<div title="[old](../architecture/title-link.md)"></div>\n' +
@@ -422,6 +467,9 @@ describe("public docs validation", () => {
         "../architecture/regex.md",
         "../architecture/comment-token.md",
         "../architecture/regex-class.md",
+        "../architecture/typeof-regex.md",
+        "../architecture/void-regex.md",
+        "../architecture/delete-regex.md",
         "../architecture/template.md",
         "../architecture/division.md",
         "../architecture/real.md",
