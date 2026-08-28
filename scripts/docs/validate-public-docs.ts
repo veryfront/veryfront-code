@@ -777,7 +777,6 @@ interface MdxSyntaxRanges {
 // Keep those scanner surfaces on this shared state model, and regression-test
 // both the regex and division forms when adding a new grammar context.
 type JavaScriptSignificantTokenKind =
-  | "arrow"
   | "control-header"
   | "declaration-header"
   | "expression-header"
@@ -791,32 +790,34 @@ type JavaScriptPrecedingIdentifierKeyword =
   | "break"
   | "continue"
   | "export"
-  | "for"
-  | "let"
-  | "var";
+  | "for";
+type JavaScriptVariableDeclarationPhase = "binding" | "initializer";
 type JavaScriptDelimiterContext =
   | "block"
   | "control"
+  | "expression-block"
   | "for"
   | "function-declaration"
   | "function-expression"
-  | "function-body"
   | "nested"
   | undefined;
 
 interface JavaScriptSignificantToken {
-  readonly classDeclaration?: true;
+  readonly classDeclarationDepth?: number;
   readonly declarationCandidate?: true;
+  readonly declarationPrefix?: true;
   readonly end: number;
   readonly functionDeclaration?: true;
-  readonly functionDeclarationPrefix?: true;
-  readonly functionHeader?: true;
+  readonly functionExpression?: true;
   readonly identifier?: true;
-  readonly identifierKeyword?: string;
-  readonly identifierKeywordCandidate?: string;
+  readonly identifierStart?: number;
+  readonly identifierWord?: string;
   readonly kind: JavaScriptSignificantTokenKind;
   readonly followsForOfLeftOperand?: true;
   readonly precedingIdentifierKeyword?: JavaScriptPrecedingIdentifierKeyword;
+  readonly uninitializedDeclaration?: true;
+  readonly variableDeclarationDepth?: number;
+  readonly variableDeclarationPhase?: JavaScriptVariableDeclarationPhase;
 }
 
 type JavaScriptQuote = '"' | "'";
@@ -828,6 +829,53 @@ interface JavaScriptScannedToken {
   readonly string?: Range;
 }
 
+type JavaScriptJsxScanCache = Map<number, number | undefined>;
+
+interface JavaScriptVariableDeclarationContext {
+  readonly depth: number;
+  readonly phase: JavaScriptVariableDeclarationPhase;
+}
+
+function javaScriptVariableDeclarationContext(
+  text: string,
+  start: number,
+  previousSignificantToken: JavaScriptSignificantToken | undefined,
+  delimiterContexts: readonly JavaScriptDelimiterContext[],
+): JavaScriptVariableDeclarationContext | undefined {
+  const depth = previousSignificantToken?.variableDeclarationDepth;
+  let phase = previousSignificantToken?.variableDeclarationPhase;
+  if (depth === undefined || phase === undefined) return undefined;
+  if (delimiterContexts.length < depth) return undefined;
+  if (delimiterContexts.length === depth) {
+    if (text[start] === ";") return undefined;
+    if (text[start] === "=") phase = "initializer";
+    else if (text[start] === ",") phase = "binding";
+  }
+  return { depth, phase };
+}
+
+function javaScriptTokenWithPersistentContext(
+  end: number,
+  kind: JavaScriptSignificantTokenKind,
+  previousSignificantToken: JavaScriptSignificantToken | undefined,
+): JavaScriptSignificantToken {
+  const classDeclarationDepth = previousSignificantToken
+    ?.classDeclarationDepth;
+  const variableDeclarationDepth = previousSignificantToken
+    ?.variableDeclarationDepth;
+  const variableDeclarationPhase = previousSignificantToken
+    ?.variableDeclarationPhase;
+  return {
+    end,
+    ...(classDeclarationDepth === undefined ? {} : { classDeclarationDepth }),
+    kind,
+    ...(variableDeclarationDepth === undefined ||
+        variableDeclarationPhase === undefined
+      ? {}
+      : { variableDeclarationDepth, variableDeclarationPhase }),
+  };
+}
+
 function javaScriptTokenWithIdentifierContext(
   text: string,
   start: number,
@@ -837,17 +885,41 @@ function javaScriptTokenWithIdentifierContext(
   delimiterContexts: readonly JavaScriptDelimiterContext[],
 ): JavaScriptSignificantToken {
   if (!javaScriptIdentifierCodeUnitAt(text, start)) {
+    const classDeclarationDepth = previousSignificantToken
+      ?.classDeclarationDepth;
+    const variableDeclaration = javaScriptVariableDeclarationContext(
+      text,
+      start,
+      previousSignificantToken,
+      delimiterContexts,
+    );
+    const startsClassDeclarationBody = text[start] === "{" &&
+      classDeclarationDepth !== undefined &&
+      delimiterContexts.length === classDeclarationDepth + 1 &&
+      delimiterContexts.at(-1) === "block";
+    const uninitializedDeclaration = variableDeclaration?.phase ===
+        "binding" &&
+      delimiterContexts.length === variableDeclaration.depth &&
+      "]}".includes(text[start]!);
     return {
       end,
+      ...(classDeclarationDepth !== undefined && !startsClassDeclarationBody
+        ? { classDeclarationDepth }
+        : {}),
       ...(text[start] === "*" &&
           previousSignificantToken?.functionDeclaration === true
         ? { functionDeclaration: true }
         : {}),
       ...(text[start] === "*" &&
-          previousSignificantToken?.functionHeader === true
-        ? { functionHeader: true }
+          previousSignificantToken?.functionExpression === true
+        ? { functionExpression: true }
         : {}),
       kind,
+      ...(uninitializedDeclaration ? { uninitializedDeclaration: true } : {}),
+      ...(variableDeclaration === undefined ? {} : {
+        variableDeclarationDepth: variableDeclaration.depth,
+        variableDeclarationPhase: variableDeclaration.phase,
+      }),
     };
   }
 
@@ -861,39 +933,57 @@ function javaScriptTokenWithIdentifierContext(
   const identifier = continuesIdentifierWord
     ? previousSignificantToken?.identifier === true
     : javaScriptIdentifierStartsAt(text, start);
-  const identifierKeywordCandidate = javaScriptIdentifierKeywordCandidate(
-    text,
-    start,
-    continuesIdentifierWord,
-    previousSignificantToken,
-  );
+  const precedingCodePoint = javaScriptCodePointBefore(text, start);
+  const identifierStart = continuesIdentifierWord
+    ? previousSignificantToken?.identifierStart
+    : identifier && precedingCodePoint !== "." && precedingCodePoint !== "#"
+    ? start
+    : undefined;
   const declarationCandidate = continuesIdentifierWord
     ? previousSignificantToken?.declarationCandidate === true
-    : javaScriptMayStartStatement(
+    : javaScriptMayStartDeclaration(
       text,
       previousSignificantToken,
       delimiterContexts,
     );
-  const completeIdentifier = !javaScriptIdentifierCodeUnitAt(text, end);
-  const identifierKeyword = completeIdentifier &&
-      identifierKeywordCandidate !== undefined &&
-      JAVASCRIPT_IDENTIFIER_KEYWORDS.has(identifierKeywordCandidate)
-    ? identifierKeywordCandidate
+  const completeIdentifier = identifier &&
+    !javaScriptIdentifierCodeUnitAt(text, end);
+  const identifierWord = completeIdentifier && identifierStart !== undefined
+    ? text.slice(identifierStart, end)
     : undefined;
-  const functionDeclarationPrefix = completeIdentifier &&
-    ((identifierKeyword === "export" || identifierKeyword === "async") &&
+  const declarationPrefix = completeIdentifier &&
+    ((identifierWord === "export" || identifierWord === "async") &&
         declarationCandidate ||
-      identifierKeyword === "default" &&
-        previousSignificantToken?.functionDeclarationPrefix === true);
+      identifierWord === "default" &&
+        previousSignificantToken?.declarationPrefix === true);
   const functionDeclaration =
     previousSignificantToken?.functionDeclaration === true ||
-    (identifierKeyword === "function" &&
+    (completeIdentifier && identifierWord === "function" &&
       declarationCandidate);
-  const functionHeader = previousSignificantToken?.functionHeader === true ||
-    identifierKeyword === "function";
-  const classDeclaration =
-    previousSignificantToken?.classDeclaration === true ||
-    (identifierKeyword === "class" && declarationCandidate);
+  const functionExpression =
+    previousSignificantToken?.functionExpression === true ||
+    (completeIdentifier && identifierWord === "function" &&
+      !declarationCandidate);
+  const classDeclarationDepth = previousSignificantToken
+    ?.classDeclarationDepth ??
+    (completeIdentifier && identifierWord === "class" && declarationCandidate
+      ? delimiterContexts.length
+      : undefined);
+  let variableDeclaration = javaScriptVariableDeclarationContext(
+    text,
+    start,
+    previousSignificantToken,
+    delimiterContexts,
+  );
+  const startsVariableDeclaration = completeIdentifier &&
+    (identifierWord === "let" || identifierWord === "var") &&
+    declarationCandidate;
+  if (startsVariableDeclaration) {
+    variableDeclaration = {
+      depth: delimiterContexts.length,
+      phase: "binding",
+    };
+  }
   let precedingIdentifierKeyword:
     | JavaScriptPrecedingIdentifierKeyword
     | undefined;
@@ -904,35 +994,39 @@ function javaScriptTokenWithIdentifierContext(
     followsForOfLeftOperand =
       previousSignificantToken?.followsForOfLeftOperand === true;
   } else if (previousSignificantToken !== undefined) {
-    const previousWord = previousSignificantToken.identifierKeyword;
+    const previousWord = previousSignificantToken.identifierWord;
     if (
       previousWord === "break" || previousWord === "continue" ||
-      previousWord === "export" || previousWord === "for" ||
-      previousWord === "let" || previousWord === "var"
+      previousWord === "export" || previousWord === "for"
     ) precedingIdentifierKeyword = previousWord;
     followsForOfLeftOperand = delimiterContexts.at(-1) === "for" &&
       javaScriptTokenMayEndForOfLeftOperand(text, previousSignificantToken);
   }
-
+  const uninitializedDeclaration = completeIdentifier &&
+    !startsVariableDeclaration && variableDeclaration?.phase === "binding" &&
+    delimiterContexts.length === variableDeclaration.depth;
   return {
-    ...(classDeclaration ? { classDeclaration: true } : {}),
+    ...(classDeclarationDepth === undefined ? {} : { classDeclarationDepth }),
     ...(declarationCandidate && !completeIdentifier
       ? { declarationCandidate: true }
       : {}),
+    ...(declarationPrefix ? { declarationPrefix: true } : {}),
     end,
     ...(functionDeclaration ? { functionDeclaration: true } : {}),
-    ...(functionDeclarationPrefix ? { functionDeclarationPrefix: true } : {}),
-    ...(functionHeader ? { functionHeader: true } : {}),
+    ...(functionExpression ? { functionExpression: true } : {}),
     ...(identifier ? { identifier: true } : {}),
-    ...(identifierKeyword === undefined ? {} : { identifierKeyword }),
-    ...(identifierKeywordCandidate === undefined || completeIdentifier
-      ? {}
-      : { identifierKeywordCandidate }),
+    ...(identifierStart === undefined ? {} : { identifierStart }),
+    ...(identifierWord === undefined ? {} : { identifierWord }),
     kind,
     ...(followsForOfLeftOperand ? { followsForOfLeftOperand: true } : {}),
     ...(precedingIdentifierKeyword === undefined
       ? {}
       : { precedingIdentifierKeyword }),
+    ...(uninitializedDeclaration ? { uninitializedDeclaration: true } : {}),
+    ...(variableDeclaration === undefined ? {} : {
+      variableDeclarationDepth: variableDeclaration.depth,
+      variableDeclarationPhase: variableDeclaration.phase,
+    }),
   };
 }
 
@@ -970,8 +1064,9 @@ function quotedRangeEnd(
   text: string,
   start: number,
   quote: JavaScriptStringDelimiter,
+  jsxScanCache?: JavaScriptJsxScanCache,
 ): number | undefined {
-  if (quote === "`") return javaScriptTemplateEnd(text, start);
+  if (quote === "`") return javaScriptTemplateEnd(text, start, jsxScanCache);
   for (let cursor = start + 1; cursor < text.length; cursor++) {
     if (text[cursor] === "\\") cursor++;
     else if (text[cursor] === quote) return cursor + 1;
@@ -982,6 +1077,7 @@ function quotedRangeEnd(
 function javaScriptTemplateEnd(
   text: string,
   start: number,
+  jsxScanCache?: JavaScriptJsxScanCache,
 ): number | undefined {
   let cursor = start + 1;
   while (cursor < text.length) {
@@ -991,7 +1087,11 @@ function javaScriptTemplateEnd(
     }
     if (text[cursor] === "`") return cursor + 1;
     if (text.startsWith("${", cursor)) {
-      const interpolationEnd = javaScriptTemplateInterpolationEnd(text, cursor);
+      const interpolationEnd = javaScriptTemplateInterpolationEnd(
+        text,
+        cursor,
+        jsxScanCache,
+      );
       if (interpolationEnd === undefined) return undefined;
       cursor = interpolationEnd;
       continue;
@@ -1004,29 +1104,20 @@ function javaScriptTemplateEnd(
 function javaScriptTemplateInterpolationEnd(
   text: string,
   start: number,
+  jsxScanCache?: JavaScriptJsxScanCache,
 ): number | undefined {
   let depth = 1;
   let cursor = start + 2;
   const delimiterContexts: JavaScriptDelimiterContext[] = ["nested"];
   let previousSignificantToken: JavaScriptSignificantToken | undefined;
   while (cursor < text.length) {
-    const jsxTagEnd = text[cursor] === "<" && javaScriptRegexMayStart(
-        text,
-        previousSignificantToken,
-        delimiterContexts,
-      )
-      ? javaScriptJsxElementEnd(text, cursor)
-      : undefined;
-    if (jsxTagEnd !== undefined) {
-      previousSignificantToken = { end: jsxTagEnd, kind: "other" };
-      cursor = jsxTagEnd;
-      continue;
-    }
     const token = javaScriptTokenAt(
       text,
       cursor,
       previousSignificantToken,
       delimiterContexts,
+      true,
+      jsxScanCache,
     );
     if (token === undefined) return undefined;
     if (token.kind === "trivia") {
@@ -1124,6 +1215,7 @@ function staticJsxStringExpression(
 function mdxExpressionAt(
   text: string,
   start: number,
+  jsxScanCache?: JavaScriptJsxScanCache,
 ): { readonly expression: Range; readonly strings: Range[] } | undefined {
   const strings: Range[] = [];
   let depth = 1;
@@ -1131,23 +1223,13 @@ function mdxExpressionAt(
   const delimiterContexts: JavaScriptDelimiterContext[] = ["nested"];
   let previousSignificantToken: JavaScriptSignificantToken | undefined;
   while (cursor < text.length) {
-    const jsxTagEnd = text[cursor] === "<" && javaScriptRegexMayStart(
-        text,
-        previousSignificantToken,
-        delimiterContexts,
-      )
-      ? javaScriptJsxElementEnd(text, cursor)
-      : undefined;
-    if (jsxTagEnd !== undefined) {
-      previousSignificantToken = { end: jsxTagEnd, kind: "other" };
-      cursor = jsxTagEnd;
-      continue;
-    }
     const token = javaScriptTokenAt(
       text,
       cursor,
       previousSignificantToken,
       delimiterContexts,
+      true,
+      jsxScanCache,
     );
     if (token === undefined) return undefined;
     if (token.string !== undefined) strings.push(token.string);
@@ -1189,6 +1271,7 @@ function mdxSyntaxRanges(
   const comments: Range[] = [];
   const expressions: Range[] = [];
   const strings: Range[] = [];
+  const jsxScanCache: JavaScriptJsxScanCache = new Map();
   let codeIndex = 0;
   let cursor = 0;
   while (cursor < text.length) {
@@ -1221,7 +1304,7 @@ function mdxSyntaxRanges(
       continue;
     }
 
-    const expression = mdxExpressionAt(text, cursor);
+    const expression = mdxExpressionAt(text, cursor, jsxScanCache);
     if (expression === undefined) {
       cursor++;
       continue;
@@ -1323,33 +1406,6 @@ const JAVASCRIPT_BLOCK_PREFIX_KEYWORDS: ReadonlySet<string> = new Set([
   "try",
 ]);
 
-const JAVASCRIPT_IDENTIFIER_KEYWORDS: ReadonlySet<string> = new Set([
-  ...JAVASCRIPT_REGEX_PREFIX_KEYWORDS,
-  ...JAVASCRIPT_CONTROL_HEADER_KEYWORDS,
-  ...JAVASCRIPT_BLOCK_PREFIX_KEYWORDS,
-  "async",
-  "break",
-  "class",
-  "const",
-  "continue",
-  "debugger",
-  "export",
-  "function",
-  "let",
-  "of",
-  "using",
-  "var",
-]);
-
-const JAVASCRIPT_IDENTIFIER_KEYWORD_PREFIXES: ReadonlySet<string> = new Set(
-  [...JAVASCRIPT_IDENTIFIER_KEYWORDS].flatMap((keyword) =>
-    Array.from(
-      { length: keyword.length },
-      (_, index) => keyword.slice(0, index + 1),
-    )
-  ),
-);
-
 const JAVASCRIPT_IDENTIFIER_START = /[$_\p{ID_Start}]/u;
 const JAVASCRIPT_IDENTIFIER_CONTINUE = /[$_\u200C\u200D\p{ID_Continue}]/u;
 const JAVASCRIPT_IDENTIFIER_ESCAPE =
@@ -1414,32 +1470,6 @@ function javaScriptIdentifierStartsAt(
   );
 }
 
-function javaScriptIdentifierKeywordCandidate(
-  text: string,
-  start: number,
-  continuesIdentifier: boolean,
-  previousSignificantToken: JavaScriptSignificantToken | undefined,
-): string | undefined {
-  const character = text[start]!;
-  if (!/[A-Za-z]/.test(character)) return undefined;
-  if (!continuesIdentifier) {
-    if (
-      previousSignificantToken !== undefined &&
-      ".#".includes(text[previousSignificantToken.end - 1]!)
-    ) return undefined;
-    return JAVASCRIPT_IDENTIFIER_KEYWORD_PREFIXES.has(character)
-      ? character
-      : undefined;
-  }
-
-  const previous = previousSignificantToken?.identifierKeywordCandidate;
-  if (previous === undefined) return undefined;
-  const candidate = previous + character;
-  return JAVASCRIPT_IDENTIFIER_KEYWORD_PREFIXES.has(candidate)
-    ? candidate
-    : undefined;
-}
-
 function javaScriptCodePointBefore(
   text: string,
   end: number,
@@ -1472,18 +1502,19 @@ function javaScriptIdentifierContinueBefore(
     JAVASCRIPT_IDENTIFIER_CONTINUE.test(codePoint);
 }
 
-function javaScriptMayStartStatement(
+function javaScriptMayStartDeclaration(
   text: string,
   token: JavaScriptSignificantToken | undefined,
   delimiterContexts: readonly JavaScriptDelimiterContext[],
 ): boolean {
   if (
-    delimiterContexts.length > 0 && delimiterContexts.at(-1) !== "block" &&
-    delimiterContexts.at(-1) !== "function-body"
+    delimiterContexts.length > 0 &&
+    delimiterContexts.at(-1) !== "block" &&
+    delimiterContexts.at(-1) !== "expression-block"
   ) return false;
   if (token === undefined) return true;
-  if (token.functionDeclarationPrefix === true) return true;
-  const word = token.identifierKeyword;
+  if (token.declarationPrefix === true) return true;
+  const word = token.identifierWord;
   if (word === "export") return true;
   if (
     (word === "default" || word === "async") &&
@@ -1492,19 +1523,18 @@ function javaScriptMayStartStatement(
   return ";{}".includes(text[token.end - 1]!);
 }
 
-function javaScriptLineTerminatesRestrictedStatement(
+function javaScriptLineTerminatesStatement(
   token: JavaScriptSignificantToken | undefined,
 ): boolean {
   if (token === undefined) return false;
-  const finalWord = token.identifierKeyword;
+  if (token.uninitializedDeclaration === true) return true;
+  const finalWord = token.identifierWord;
   if (
     finalWord === "break" || finalWord === "continue" ||
     finalWord === "debugger"
   ) return true;
   return token.precedingIdentifierKeyword === "break" ||
-    token.precedingIdentifierKeyword === "continue" ||
-    token.precedingIdentifierKeyword === "let" ||
-    token.precedingIdentifierKeyword === "var";
+    token.precedingIdentifierKeyword === "continue";
 }
 
 function javaScriptPreviousSignificantTokenAfterTrivia(
@@ -1515,7 +1545,7 @@ function javaScriptPreviousSignificantTokenAfterTrivia(
 ): JavaScriptSignificantToken | undefined {
   if (
     /[\n\r\u2028\u2029]/.test(text.slice(start, end)) &&
-    javaScriptLineTerminatesRestrictedStatement(token)
+    javaScriptLineTerminatesStatement(token)
   ) return undefined;
   return token;
 }
@@ -1524,7 +1554,7 @@ function javaScriptTokenMayEndForOfLeftOperand(
   text: string,
   token: JavaScriptSignificantToken,
 ): boolean {
-  const word = token.identifierKeyword;
+  const word = token.identifierWord;
   if (token.identifier === true) {
     if (word === undefined) return true;
     return !JAVASCRIPT_REGEX_PREFIX_KEYWORDS.has(word) &&
@@ -1541,17 +1571,13 @@ function javaScriptDelimiterTokenKind(
   previousSignificantToken: JavaScriptSignificantToken | undefined,
   delimiterContexts: JavaScriptDelimiterContext[],
 ): JavaScriptSignificantTokenKind {
-  if (
-    character === ">" && previousSignificantToken !== undefined &&
-    text[previousSignificantToken.end - 1] === "="
-  ) return "arrow";
   if (character === "(") {
-    const keyword = previousSignificantToken?.identifierKeyword;
+    const keyword = previousSignificantToken?.identifierWord;
     let context: JavaScriptDelimiterContext;
-    if (previousSignificantToken?.functionHeader === true) {
-      context = previousSignificantToken.functionDeclaration === true
-        ? "function-declaration"
-        : "function-expression";
+    if (previousSignificantToken?.functionDeclaration === true) {
+      context = "function-declaration";
+    } else if (previousSignificantToken?.functionExpression === true) {
+      context = "function-expression";
     } else if (
       keyword === "for" ||
       (keyword === "await" &&
@@ -1567,29 +1593,39 @@ function javaScriptDelimiterTokenKind(
   } else if (character === "[") {
     delimiterContexts.push("nested");
   } else if (character === "{") {
-    const keyword = previousSignificantToken?.identifierKeyword;
-    if (previousSignificantToken?.classDeclaration === true) {
-      delimiterContexts.push("block");
-      return "other";
-    }
-    if (
-      previousSignificantToken?.kind === "arrow" ||
-      previousSignificantToken?.kind === "expression-header"
-    ) {
-      delimiterContexts.push("function-body");
-      return "other";
-    }
-    const statementBlock =
+    const keyword = previousSignificantToken?.identifierWord;
+    const statementPosition = delimiterContexts.length === 0 ||
+      delimiterContexts.at(-1) === "block" ||
+      delimiterContexts.at(-1) === "expression-block";
+    const previousCharacter = previousSignificantToken === undefined
+      ? undefined
+      : text[previousSignificantToken.end - 1];
+    const classDeclarationBody =
+      previousSignificantToken?.classDeclarationDepth ===
+        delimiterContexts.length;
+    const expressionBlock = previousSignificantToken?.kind ===
+        "expression-header" ||
+      (previousSignificantToken !== undefined &&
+        text.slice(
+            previousSignificantToken.end - 2,
+            previousSignificantToken.end,
+          ) === "=>");
+    const statementBlock = !expressionBlock && (classDeclarationBody ||
       previousSignificantToken?.kind === "control-header" ||
       previousSignificantToken?.kind === "declaration-header" ||
       (keyword !== undefined &&
         JAVASCRIPT_BLOCK_PREFIX_KEYWORDS.has(keyword)) ||
-      javaScriptMayStartStatement(
-        text,
-        previousSignificantToken,
-        delimiterContexts,
-      );
-    delimiterContexts.push(statementBlock ? "block" : "nested");
+      (statementPosition &&
+        (previousSignificantToken === undefined ||
+          previousCharacter !== undefined &&
+            ";{}".includes(previousCharacter))));
+    delimiterContexts.push(
+      expressionBlock
+        ? "expression-block"
+        : statementBlock
+        ? "block"
+        : "nested",
+    );
   } else if (character === ")" || character === "]" || character === "}") {
     const context = delimiterContexts.pop();
     if (context === "control" || context === "for") return "control-header";
@@ -1620,7 +1656,7 @@ function javaScriptRegexMayStart(
   if (text.slice(end - 3, end) === "...") return true;
   if ("=(:,![{;?&|+*%/^~<>-".includes(text[end - 1]!)) return true;
 
-  const keyword = previousSignificantToken.identifierKeyword;
+  const keyword = previousSignificantToken.identifierWord;
   if (
     keyword === "of" && delimiterContexts.at(-1) === "for" &&
     previousSignificantToken.followsForOfLeftOperand === true
@@ -1657,6 +1693,8 @@ function javaScriptTokenAt(
   start: number,
   previousSignificantToken: JavaScriptSignificantToken | undefined,
   delimiterContexts: readonly JavaScriptDelimiterContext[] = [],
+  scanJsx = true,
+  jsxScanCache?: JavaScriptJsxScanCache,
 ): JavaScriptScannedToken | undefined {
   const commentEnd = javaScriptCommentEnd(text, start);
   if (commentEnd !== undefined) {
@@ -1667,10 +1705,23 @@ function javaScriptTokenAt(
   if (/\s/.test(character)) return { end: start + 1, kind: "trivia" };
 
   if (character === '"' || character === "'" || character === "`") {
-    const end = quotedRangeEnd(text, start, character);
+    const end = quotedRangeEnd(text, start, character, jsxScanCache);
     return end === undefined
       ? undefined
       : { end, kind: "literal", string: { start, end } };
+  }
+
+  if (
+    scanJsx && character === "<" &&
+    javaScriptJsxElementMayStart(
+      text,
+      start,
+      previousSignificantToken,
+      delimiterContexts,
+    )
+  ) {
+    const end = javaScriptJsxElementEnd(text, start, jsxScanCache);
+    return end === undefined ? undefined : { end, kind: "other" };
   }
 
   if (
@@ -1731,7 +1782,11 @@ function javaScriptLineQuoteEnd(
   if (character === "\\") return start + 2;
   if (character === state.quote) {
     state.quote = undefined;
-    state.previousSignificantToken = { end: start + 1, kind: "other" };
+    state.previousSignificantToken = javaScriptTokenWithPersistentContext(
+      start + 1,
+      "other",
+      state.previousSignificantToken,
+    );
   }
   return start + 1;
 }
@@ -1743,11 +1798,36 @@ function javaScriptLineTokenEnd(
   state: JavaScriptBalance,
 ): number | undefined {
   const character = text[start]!;
+  if (
+    character === "<" &&
+    javaScriptJsxElementMayStart(
+      text,
+      start,
+      state.previousSignificantToken,
+      state.delimiterContexts,
+    )
+  ) {
+    const end = javaScriptJsxElementEnd(text, start);
+    if (end === undefined) state.valid = false;
+    else {
+      state.previousSignificantToken = javaScriptTokenWithPersistentContext(
+        end,
+        "other",
+        state.previousSignificantToken,
+      );
+      state.templateEnd = end;
+    }
+    return end ?? lineEnd;
+  }
   if (character === "`") {
     const end = javaScriptTemplateEnd(text, start);
     if (end === undefined) state.valid = false;
     else {
-      state.previousSignificantToken = { end, kind: "other" };
+      state.previousSignificantToken = javaScriptTokenWithPersistentContext(
+        end,
+        "other",
+        state.previousSignificantToken,
+      );
       state.templateEnd = end;
     }
     return end ?? lineEnd;
@@ -1764,7 +1844,11 @@ function javaScriptLineTokenEnd(
   );
   if (updateKind !== undefined) {
     const end = start + 2;
-    state.previousSignificantToken = { end, kind: updateKind };
+    state.previousSignificantToken = javaScriptTokenWithPersistentContext(
+      end,
+      updateKind,
+      state.previousSignificantToken,
+    );
     return end;
   }
   if (
@@ -1778,7 +1862,11 @@ function javaScriptLineTokenEnd(
 
   const end = javaScriptRegexEnd(text, start);
   if (end === undefined) return undefined;
-  state.previousSignificantToken = { end, kind: "regex" };
+  state.previousSignificantToken = javaScriptTokenWithPersistentContext(
+    end,
+    "regex",
+    state.previousSignificantToken,
+  );
   return end;
 }
 
@@ -1862,9 +1950,7 @@ function scanJavaScriptLine(
     cursor++;
   }
   if (
-    javaScriptLineTerminatesRestrictedStatement(
-      state.previousSignificantToken,
-    )
+    javaScriptLineTerminatesStatement(state.previousSignificantToken)
   ) state.previousSignificantToken = undefined;
 }
 
@@ -2098,83 +2184,242 @@ interface TagSyntaxScan {
   readonly topLevelOffsets: ReadonlySet<number>;
 }
 
-interface JavaScriptJsxTag {
-  readonly closing: boolean;
-  readonly end: number;
-  readonly name: string;
-  readonly selfClosing: boolean;
+function javaScriptJsxTagStartsAt(text: string, start: number): boolean {
+  const next = text[start + 1];
+  if (next === "/") {
+    return text[start + 2] === ">" ||
+      /[A-Za-z_$]/.test(text[start + 2] ?? "");
+  }
+  return next === ">" || /[A-Za-z_$]/.test(next ?? "");
 }
 
-function javaScriptJsxTagAt(
+function javaScriptJsxElementMayStart(
   text: string,
   start: number,
-): JavaScriptJsxTag | undefined {
-  if (text.startsWith("<>", start)) {
-    return { closing: false, end: start + 2, name: "", selfClosing: false };
-  }
-  if (text.startsWith("</>", start)) {
-    return { closing: true, end: start + 3, name: "", selfClosing: false };
-  }
+  previousSignificantToken: JavaScriptSignificantToken | undefined,
+  delimiterContexts: readonly JavaScriptDelimiterContext[],
+): boolean {
+  return text[start + 1] !== "/" && javaScriptJsxTagStartsAt(text, start) &&
+    javaScriptRegexMayStart(
+      text,
+      previousSignificantToken,
+      delimiterContexts,
+    );
+}
 
-  const closing = text.startsWith("</", start);
+interface JavaScriptJsxTagFrame {
+  readonly closing: boolean;
+  readonly kind: "tag";
+  readonly name: string;
+  readonly start: number;
+  lastNonWhitespace?: string;
+  quote?: JavaScriptQuote;
+}
+
+interface JavaScriptJsxChildrenFrame {
+  readonly kind: "children";
+  readonly name: string;
+  readonly start: number;
+}
+
+interface JavaScriptJsxExpressionFrame {
+  readonly delimiterContexts: JavaScriptDelimiterContext[];
+  depth: number;
+  readonly kind: "expression";
+  previousSignificantToken: JavaScriptSignificantToken | undefined;
+}
+
+type JavaScriptJsxFrame =
+  | JavaScriptJsxChildrenFrame
+  | JavaScriptJsxExpressionFrame
+  | JavaScriptJsxTagFrame;
+
+function javaScriptJsxTagFrameAt(
+  text: string,
+  start: number,
+): { readonly frame: JavaScriptJsxTagFrame; readonly end: number } | undefined {
+  if (!javaScriptJsxTagStartsAt(text, start)) return undefined;
+  const closing = text[start + 1] === "/";
   const nameStart = start + (closing ? 2 : 1);
   const nameEnd = mdxJsxNameEnd(text, nameStart);
-  if (nameEnd === undefined) return undefined;
-  const name = text.slice(nameStart, nameEnd);
-  if (!closing) {
-    const end = mdxJsxTagEnd(text, start);
-    if (end === undefined) return undefined;
-    return {
-      closing: false,
-      end,
-      name,
-      selfClosing: text[end - 2] === "/",
-    };
-  }
-  const end = skipJavaScriptTrivia(text, nameEnd);
-  return text[end] === ">"
-    ? { closing: true, end: end + 1, name, selfClosing: false }
-    : undefined;
+  const fragment = text[nameStart] === ">";
+  if (nameEnd === undefined && !fragment) return undefined;
+  return {
+    end: nameEnd ?? nameStart,
+    frame: {
+      closing,
+      kind: "tag",
+      name: fragment ? "" : text.slice(nameStart, nameEnd),
+      start,
+    },
+  };
 }
 
 function javaScriptJsxElementEnd(
   text: string,
   start: number,
+  jsxScanCache?: JavaScriptJsxScanCache,
 ): number | undefined {
-  const opening = javaScriptJsxTagAt(text, start);
-  if (opening === undefined) return undefined;
-  if (opening.closing || opening.selfClosing) return opening.end;
+  if (jsxScanCache?.has(start)) return jsxScanCache.get(start);
+  const root = javaScriptJsxTagFrameAt(text, start);
+  if (root === undefined || root.frame.closing) {
+    jsxScanCache?.set(start, undefined);
+    return undefined;
+  }
 
-  const elementNames = [opening.name];
-  let cursor = opening.end;
-  while (cursor < text.length) {
-    if (text[cursor] === "{") {
-      const expression = mdxExpressionAt(text, cursor);
-      if (expression !== undefined) {
-        cursor = expression.expression.end;
-        continue;
+  const frames: JavaScriptJsxFrame[] = [root.frame];
+  const fail = (): undefined => {
+    jsxScanCache?.set(start, undefined);
+    for (const frame of frames) {
+      if (frame.kind !== "expression" && !jsxScanCache?.has(frame.start)) {
+        jsxScanCache?.set(frame.start, undefined);
       }
     }
-    if (text[cursor] !== "<") {
+    return undefined;
+  };
+  let cursor = root.end;
+  while (cursor < text.length) {
+    const frame = frames.at(-1)!;
+    const character = text[cursor]!;
+
+    if (frame.kind === "tag") {
+      if (frame.quote !== undefined) {
+        if (character === frame.quote) frame.quote = undefined;
+        cursor++;
+        continue;
+      }
+      if (character === '"' || character === "'") {
+        if (frame.closing) return fail();
+        frame.lastNonWhitespace = character;
+        frame.quote = character;
+        cursor++;
+        continue;
+      }
+      if (/\s/.test(character)) {
+        cursor++;
+        continue;
+      }
+      if (character === "{") {
+        if (frame.closing) return fail();
+        frame.lastNonWhitespace = character;
+        frames.push({
+          delimiterContexts: ["nested"],
+          depth: 1,
+          kind: "expression",
+          previousSignificantToken: undefined,
+        });
+        cursor++;
+        continue;
+      }
+      if (character !== ">") {
+        if (frame.closing) return fail();
+        frame.lastNonWhitespace = character;
+        cursor++;
+        continue;
+      }
+
+      frames.pop();
       cursor++;
+      if (frame.closing) {
+        if (frame.lastNonWhitespace !== undefined) return fail();
+        const children = frames.at(-1);
+        if (children?.kind !== "children" || children.name !== frame.name) {
+          return fail();
+        }
+        frames.pop();
+        jsxScanCache?.set(children.start, cursor);
+      } else if (frame.lastNonWhitespace !== "/") {
+        frames.push({ kind: "children", name: frame.name, start: frame.start });
+        continue;
+      } else {
+        jsxScanCache?.set(frame.start, cursor);
+      }
+
+      if (frames.length === 0) {
+        jsxScanCache?.set(start, cursor);
+        return cursor;
+      }
+      const parent = frames.at(-1)!;
+      if (parent.kind === "expression") {
+        parent.previousSignificantToken = javaScriptTokenWithPersistentContext(
+          cursor,
+          "other",
+          parent.previousSignificantToken,
+        );
+      }
       continue;
     }
 
-    const tag = javaScriptJsxTagAt(text, cursor);
-    if (tag === undefined) {
-      cursor++;
+    if (frame.kind === "children") {
+      if (character === "<") {
+        const tag = javaScriptJsxTagFrameAt(text, cursor);
+        if (tag === undefined) return fail();
+        frames.push(tag.frame);
+        cursor = tag.end;
+      } else if (character === "{") {
+        frames.push({
+          delimiterContexts: ["nested"],
+          depth: 1,
+          kind: "expression",
+          previousSignificantToken: undefined,
+        });
+        cursor++;
+      } else {
+        cursor++;
+      }
       continue;
     }
-    if (tag.closing) {
-      if (elementNames.at(-1) !== tag.name) return undefined;
-      elementNames.pop();
-      if (elementNames.length === 0) return tag.end;
-    } else if (!tag.selfClosing) {
-      elementNames.push(tag.name);
+
+    if (
+      character === "<" &&
+      javaScriptJsxElementMayStart(
+        text,
+        cursor,
+        frame.previousSignificantToken,
+        frame.delimiterContexts,
+      )
+    ) {
+      const tag = javaScriptJsxTagFrameAt(text, cursor);
+      if (tag === undefined || tag.frame.closing) return fail();
+      frames.push(tag.frame);
+      cursor = tag.end;
+      continue;
     }
-    cursor = tag.end;
+
+    const token = javaScriptTokenAt(
+      text,
+      cursor,
+      frame.previousSignificantToken,
+      frame.delimiterContexts,
+      false,
+      jsxScanCache,
+    );
+    if (token === undefined) return fail();
+    if (token.kind === "trivia") {
+      frame.previousSignificantToken =
+        javaScriptPreviousSignificantTokenAfterTrivia(
+          text,
+          cursor,
+          token.end,
+          frame.previousSignificantToken,
+        );
+      cursor = token.end;
+      continue;
+    }
+    frame.previousSignificantToken = significantJavaScriptToken(
+      text,
+      cursor,
+      token,
+      frame.previousSignificantToken,
+      frame.delimiterContexts,
+    );
+    if (token.kind === "other") {
+      if (character === "{") frame.depth++;
+      else if (character === "}" && --frame.depth === 0) frames.pop();
+    }
+    cursor = token.end;
   }
-  return undefined;
+  return fail();
 }
 
 function scanTagSyntax(
@@ -2195,7 +2440,11 @@ function scanTagSyntax(
       else if (character === quote) {
         quote = undefined;
         if (expressionDepth > 0) {
-          previousSignificantToken = { end: cursor + 1, kind: "other" };
+          previousSignificantToken = javaScriptTokenWithPersistentContext(
+            cursor + 1,
+            "other",
+            previousSignificantToken,
+          );
         }
         quoteUsesJavaScriptEscapes = false;
         cursor++;
@@ -2217,17 +2466,25 @@ function scanTagSyntax(
       cursor = commentEnd;
       continue;
     }
-    const jsxTagEnd = expressionDepth > 0 && character === "<" &&
-        javaScriptRegexMayStart(
-          text,
-          previousSignificantToken,
-          delimiterContexts,
-        )
-      ? javaScriptJsxElementEnd(text, cursor)
-      : undefined;
-    if (jsxTagEnd !== undefined) {
-      previousSignificantToken = { end: jsxTagEnd, kind: "other" };
-      cursor = jsxTagEnd;
+    if (
+      expressionDepth > 0 && character === "<" &&
+      javaScriptJsxElementMayStart(
+        text,
+        cursor,
+        previousSignificantToken,
+        delimiterContexts,
+      )
+    ) {
+      const jsxElementEnd = javaScriptJsxElementEnd(text, cursor);
+      if (jsxElementEnd === undefined) {
+        return { end: undefined, topLevelOffsets };
+      }
+      previousSignificantToken = javaScriptTokenWithPersistentContext(
+        jsxElementEnd,
+        "other",
+        previousSignificantToken,
+      );
+      cursor = jsxElementEnd;
       continue;
     }
     const updateKind = expressionDepth > 0
@@ -2240,7 +2497,11 @@ function scanTagSyntax(
       : undefined;
     if (updateKind !== undefined) {
       cursor += 2;
-      previousSignificantToken = { end: cursor, kind: updateKind };
+      previousSignificantToken = javaScriptTokenWithPersistentContext(
+        cursor,
+        updateKind,
+        previousSignificantToken,
+      );
       continue;
     }
     if (
@@ -2253,7 +2514,11 @@ function scanTagSyntax(
     ) {
       const regexEnd = javaScriptRegexEnd(text, cursor);
       if (regexEnd !== undefined) {
-        previousSignificantToken = { end: regexEnd, kind: "regex" };
+        previousSignificantToken = javaScriptTokenWithPersistentContext(
+          regexEnd,
+          "regex",
+          previousSignificantToken,
+        );
         cursor = regexEnd;
         continue;
       }
@@ -2267,7 +2532,11 @@ function scanTagSyntax(
     if (character === "`" && expressionDepth > 0) {
       const templateEnd = javaScriptTemplateEnd(text, cursor);
       if (templateEnd !== undefined) {
-        previousSignificantToken = { end: templateEnd, kind: "other" };
+        previousSignificantToken = javaScriptTokenWithPersistentContext(
+          templateEnd,
+          "other",
+          previousSignificantToken,
+        );
         cursor = templateEnd;
         continue;
       }
@@ -2345,7 +2614,11 @@ function mdxJsxNameEnd(text: string, start: number): number | undefined {
   return cursor;
 }
 
-function mdxJsxTagEnd(text: string, start: number): number | undefined {
+function mdxJsxTagEnd(
+  text: string,
+  start: number,
+  jsxScanCache?: JavaScriptJsxScanCache,
+): number | undefined {
   if (text[start] !== "<") return undefined;
   let cursor = mdxJsxNameEnd(text, start + 1);
   if (cursor === undefined) return undefined;
@@ -2357,7 +2630,7 @@ function mdxJsxTagEnd(text: string, start: number): number | undefined {
     if (text[cursor] === ">") return cursor + 1;
     if (cursor === attributeSeparatorStart) return undefined;
     if (text[cursor] === "{") {
-      const expression = mdxExpressionAt(text, cursor);
+      const expression = mdxExpressionAt(text, cursor, jsxScanCache);
       if (expression === undefined) return undefined;
       const spreadStart = skipJavaScriptTrivia(text, cursor + 1);
       if (!text.startsWith("...", spreadStart)) return undefined;
@@ -2380,7 +2653,7 @@ function mdxJsxTagEnd(text: string, start: number): number | undefined {
       continue;
     }
     if (text[cursor] !== "{") return undefined;
-    const expression = mdxExpressionAt(text, cursor);
+    const expression = mdxExpressionAt(text, cursor, jsxScanCache);
     if (expression === undefined) return undefined;
     cursor = expression.expression.end;
   }
@@ -2394,6 +2667,7 @@ function htmlTagRanges(
   stringRanges: readonly Range[] = [],
 ): Range[] {
   const ranges: Range[] = [];
+  const jsxScanCache: JavaScriptJsxScanCache = new Map();
   for (let start = 0; start < text.length;) {
     start = text.indexOf("<", start);
     if (start === -1) break;
@@ -2410,7 +2684,7 @@ function htmlTagRanges(
     }
 
     const commonMarkEnd = commonMarkHtmlTagEnd(text, start);
-    const mdxJsxEnd = mdxJsxTagEnd(text, start);
+    const mdxJsxEnd = mdxJsxTagEnd(text, start, jsxScanCache);
     const tagEnd = commonMarkEnd === undefined
       ? mdxJsxEnd
       : mdxJsxEnd === undefined
