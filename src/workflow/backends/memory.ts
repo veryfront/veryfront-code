@@ -84,6 +84,20 @@ type ConditionalWorkflowRunUpdate = WorkflowRunUpdate & {
   [memoryRunUpdateCondition]?: MemoryRunUpdateCondition;
 };
 
+interface MaterializedMemoryRunUpdate {
+  readonly contextPatch: Partial<WorkflowContext> | undefined;
+  readonly contextPatchKeys: string[];
+  readonly contextDeleteKeys: string[];
+  readonly nodeStatePatch: WorkflowRun["nodeStates"] | undefined;
+  readonly nodeStateDeleteKeys: string[];
+  readonly storedPatch: WorkflowRunUpdate;
+}
+
+interface PreparedMemoryRunCondition {
+  readonly matches: (run: WorkflowRun) => boolean;
+  readonly run: WorkflowRun | null;
+}
+
 /** Default max queue size */
 const DEFAULT_MAX_QUEUE_SIZE = 10_000;
 const RUN_OBSERVATION_QUEUE_SIZE = 64;
@@ -99,6 +113,71 @@ function hasExpectedRunStatus(
   status: WorkflowRun["status"],
 ): boolean {
   return reflectApply(setHas, expectedStatuses, [status]) as boolean;
+}
+
+function materializeMemoryRunUpdate(
+  patch: WorkflowRunUpdate,
+  runId: string,
+  options: WorkflowJsonSerializationOptions,
+): MaterializedMemoryRunUpdate {
+  const {
+    [memoryRunUpdateCondition]: _condition,
+    context: patchContext,
+    contextDeletes = [],
+    nodeStates: patchNodeStates,
+    nodeStateDeletes = [],
+    ...storedPatch
+  } = patch as ConditionalWorkflowRunUpdate;
+  const contextPatchKeys = patchContext === undefined ? [] : objectKeys(patchContext);
+  const contextPatch = patchContext === undefined
+    ? undefined
+    : persistedWorkflowContextPatch(patchContext, runId, options);
+  return {
+    contextPatch,
+    contextPatchKeys,
+    contextDeleteKeys: [...contextDeletes],
+    nodeStatePatch: patchNodeStates === undefined ? undefined : { ...patchNodeStates },
+    nodeStateDeleteKeys: [...nodeStateDeletes],
+    storedPatch,
+  };
+}
+
+function mergeMemoryRunUpdate(
+  run: WorkflowRun,
+  update: MaterializedMemoryRunUpdate,
+): WorkflowRun {
+  const context = { ...run.context, ...update.contextPatch };
+  if (update.contextPatch !== undefined) {
+    for (const key of update.contextPatchKeys) {
+      if (!objectHasOwn(update.contextPatch, key)) delete context[key];
+    }
+  }
+  for (const key of update.contextDeleteKeys) delete context[key];
+  const nodeStates = { ...run.nodeStates, ...update.nodeStatePatch };
+  for (const key of update.nodeStateDeleteKeys) delete nodeStates[key];
+  return {
+    ...run,
+    ...update.storedPatch,
+    nodeStates,
+    context,
+  };
+}
+
+function materializeRunStateSnapshot(
+  snapshot: WorkflowRunStateSnapshot,
+  runId: string,
+  options: WorkflowJsonSerializationOptions,
+): WorkflowRunStateSnapshot {
+  const {
+    context: snapshotContext,
+    nodeStates: snapshotNodeStates,
+    ...snapshotFields
+  } = snapshot;
+  return {
+    ...snapshotFields,
+    context: persistedWorkflowContext(snapshotContext, runId, options),
+    nodeStates: { ...snapshotNodeStates },
+  };
 }
 
 function persistedWorkflowContext(
@@ -360,26 +439,73 @@ export class MemoryBackend implements WorkflowBackend {
     return this.applyRunUpdate(runId, patch);
   }
 
+  private requireRun(runId: string): WorkflowRun {
+    const run = this.runs.get(runId);
+    if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+    return run;
+  }
+
+  private runMatchesUpdateCondition(
+    run: WorkflowRun,
+    condition: MemoryRunUpdateCondition | undefined,
+  ): boolean {
+    if (condition === undefined || condition.matches(run)) return true;
+    condition.updated = false;
+    return false;
+  }
+
+  private prepareRunCondition(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId?: string,
+  ): PreparedMemoryRunCondition {
+    this.requireRun(runId);
+    const expectedStatusSnapshot = snapshotExpectedRunStatuses(expectedStatuses);
+    const matches = (candidate: WorkflowRun) =>
+      hasExpectedRunStatus(expectedStatusSnapshot, candidate.status) &&
+      (expectedWorkerId === undefined || candidate.workerId === expectedWorkerId);
+    const run = this.requireRun(runId);
+    return { matches, run: matches(run) ? run : null };
+  }
+
+  private getRunMatchingCondition(
+    runId: string,
+    matches: (run: WorkflowRun) => boolean,
+  ): WorkflowRun | null {
+    const run = this.requireRun(runId);
+    return matches(run) ? run : null;
+  }
+
+  private storeRunUpdate(
+    runId: string,
+    updated: WorkflowRun,
+    status: WorkflowRun["status"] | undefined,
+  ): void {
+    this.runs.set(runId, updated);
+    this.publishRunObservation(runId, updated);
+
+    if (status && status !== "running") this.stalledClaims.delete(runId);
+    if (status !== "completed" && status !== "cancelled") return;
+    if (status === "completed") this.persistRunEventDeliveryReceipts(runId);
+    this.runEvents.delete(runId);
+    this.runEventClaims.delete(runId);
+  }
+
   private applyRunUpdate(
     runId: string,
     patch: WorkflowRunUpdate,
   ): Promise<void> {
-    const run = this.runs.get(runId);
-    // Reject rather than throw synchronously so callers see a rejected Promise
-    // consistently (matching the Redis backend's async error paths).
-    if (!run) {
-      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
-    }
+    let run: WorkflowRun;
     let condition: MemoryRunUpdateCondition | undefined;
     try {
+      // Reject rather than throw synchronously so callers see a rejected Promise
+      // consistently (matching the Redis backend's async error paths).
+      run = this.requireRun(runId);
       condition = (patch as ConditionalWorkflowRunUpdate)[memoryRunUpdateCondition];
     } catch (error) {
       return Promise.reject(error);
     }
-    if (condition !== undefined && !condition.matches(run)) {
-      condition.updated = false;
-      return Promise.resolve();
-    }
+    if (!this.runMatchesUpdateCondition(run, condition)) return Promise.resolve();
 
     try {
       assertWorkflowRunUpdate(patch);
@@ -389,69 +515,21 @@ export class MemoryBackend implements WorkflowBackend {
 
     logger.debug(`Updating run: ${runId}`, patch);
 
-    const {
-      [memoryRunUpdateCondition]: _condition,
-      context: patchContext,
-      contextDeletes = [],
-      nodeStates: patchNodeStates,
-      nodeStateDeletes = [],
-      ...storedPatch
-    } = patch as ConditionalWorkflowRunUpdate;
-    let patchContextKeys: string[];
-    let contextPatch: Partial<WorkflowContext> | undefined;
-    let contextDeleteKeys: string[];
-    let nodeStatePatch: WorkflowRun["nodeStates"] | undefined;
-    let nodeStateDeleteKeys: string[];
+    let materializedUpdate: MaterializedMemoryRunUpdate;
     try {
-      patchContextKeys = patchContext === undefined ? [] : objectKeys(patchContext);
-      contextPatch = patchContext === undefined
-        ? undefined
-        : persistedWorkflowContextPatch(patchContext, runId, this.config);
-      contextDeleteKeys = [...contextDeletes];
-      nodeStatePatch = patchNodeStates === undefined ? undefined : { ...patchNodeStates };
-      nodeStateDeleteKeys = [...nodeStateDeletes];
+      materializedUpdate = materializeMemoryRunUpdate(patch, runId, this.config);
     } catch (error) {
       return Promise.reject(error);
     }
-    const currentRun = this.runs.get(runId);
-    if (!currentRun) {
-      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    let currentRun: WorkflowRun;
+    try {
+      currentRun = this.requireRun(runId);
+    } catch (error) {
+      return Promise.reject(error);
     }
-    if (condition !== undefined && !condition.matches(currentRun)) {
-      condition.updated = false;
-      return Promise.resolve();
-    }
-    const context = { ...currentRun.context, ...contextPatch };
-    if (contextPatch !== undefined) {
-      for (const key of patchContextKeys) {
-        if (!objectHasOwn(contextPatch, key)) delete context[key];
-      }
-    }
-    for (const key of contextDeleteKeys) delete context[key];
-    const nodeStates = { ...currentRun.nodeStates, ...nodeStatePatch };
-    for (const key of nodeStateDeleteKeys) delete nodeStates[key];
-    const updated: WorkflowRun = {
-      ...currentRun,
-      ...storedPatch,
-      nodeStates,
-      context,
-    };
-
-    this.runs.set(runId, updated);
-    this.publishRunObservation(runId, updated);
-
-    // Terminal states should drop any stalled claim lease.
-    if (storedPatch.status && storedPatch.status !== "running") {
-      this.stalledClaims.delete(runId);
-    }
-
-    // Completed and cancelled runs can never consume mail again. Failed runs
-    // are retryable, so their buffered events must survive for the retried DAG.
-    if (storedPatch.status === "completed" || storedPatch.status === "cancelled") {
-      if (storedPatch.status === "completed") this.persistRunEventDeliveryReceipts(runId);
-      this.runEvents.delete(runId);
-      this.runEventClaims.delete(runId);
-    }
+    if (!this.runMatchesUpdateCondition(currentRun, condition)) return Promise.resolve();
+    const updated = mergeMemoryRunUpdate(currentRun, materializedUpdate);
+    this.storeRunUpdate(runId, updated, materializedUpdate.storedPatch.status);
 
     return Promise.resolve();
   }
@@ -462,26 +540,15 @@ export class MemoryBackend implements WorkflowBackend {
     expectedStatuses: WorkflowRun["status"][],
     expectedWorkerId?: string,
   ): Promise<boolean> {
-    let run = this.runs.get(runId);
-    if (!run) {
-      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
-    }
-    let expectedStatusSnapshot: Set<WorkflowRun["status"]>;
+    let prepared: PreparedMemoryRunCondition;
     try {
-      expectedStatusSnapshot = snapshotExpectedRunStatuses(expectedStatuses);
+      prepared = this.prepareRunCondition(runId, expectedStatuses, expectedWorkerId);
     } catch (error) {
       return Promise.reject(error);
     }
-    run = this.runs.get(runId);
-    if (!run) {
-      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
-    }
-    const matches = (candidate: WorkflowRun) =>
-      hasExpectedRunStatus(expectedStatusSnapshot, candidate.status) &&
-      (expectedWorkerId === undefined || candidate.workerId === expectedWorkerId);
-    if (!matches(run)) return Promise.resolve(false);
+    if (prepared.run === null) return Promise.resolve(false);
 
-    const condition: MemoryRunUpdateCondition = { matches, updated: true };
+    const condition: MemoryRunUpdateCondition = { matches: prepared.matches, updated: true };
     let conditionalPatch: ConditionalWorkflowRunUpdate;
     try {
       conditionalPatch = {
@@ -526,24 +593,13 @@ export class MemoryBackend implements WorkflowBackend {
     snapshot: WorkflowRunStateSnapshot,
     expectedWorkerId?: string,
   ): Promise<boolean> {
-    let run = this.runs.get(runId);
-    if (!run) {
-      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
-    }
-    let expectedStatusSnapshot: Set<WorkflowRun["status"]>;
+    let prepared: PreparedMemoryRunCondition;
     try {
-      expectedStatusSnapshot = snapshotExpectedRunStatuses(expectedStatuses);
+      prepared = this.prepareRunCondition(runId, expectedStatuses, expectedWorkerId);
     } catch (error) {
       return Promise.reject(error);
     }
-    run = this.runs.get(runId);
-    if (!run) {
-      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
-    }
-    if (!hasExpectedRunStatus(expectedStatusSnapshot, run.status)) return Promise.resolve(false);
-    if (expectedWorkerId !== undefined && run.workerId !== expectedWorkerId) {
-      return Promise.resolve(false);
-    }
+    if (prepared.run === null) return Promise.resolve(false);
 
     try {
       assertWorkflowRunUpdate(snapshot);
@@ -555,29 +611,17 @@ export class MemoryBackend implements WorkflowBackend {
 
     let storedSnapshot: WorkflowRunStateSnapshot;
     try {
-      const {
-        context: snapshotContext,
-        nodeStates: snapshotNodeStates,
-        ...snapshotFields
-      } = snapshot;
-      storedSnapshot = {
-        ...snapshotFields,
-        context: persistedWorkflowContext(snapshotContext, runId, this.config),
-        nodeStates: { ...snapshotNodeStates },
-      };
+      storedSnapshot = materializeRunStateSnapshot(snapshot, runId, this.config);
     } catch (error) {
       return Promise.reject(error);
     }
-    const currentRun = this.runs.get(runId);
-    if (!currentRun) {
-      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    let currentRun: WorkflowRun | null;
+    try {
+      currentRun = this.getRunMatchingCondition(runId, prepared.matches);
+    } catch (error) {
+      return Promise.reject(error);
     }
-    if (!hasExpectedRunStatus(expectedStatusSnapshot, currentRun.status)) {
-      return Promise.resolve(false);
-    }
-    if (expectedWorkerId !== undefined && currentRun.workerId !== expectedWorkerId) {
-      return Promise.resolve(false);
-    }
+    if (currentRun === null) return Promise.resolve(false);
 
     // Replacement, not the per-key merge updateRun applies: keys written after
     // the snapshot must not survive a checkpoint restore, or nodes completed
@@ -586,17 +630,7 @@ export class MemoryBackend implements WorkflowBackend {
       ...currentRun,
       ...storedSnapshot,
     };
-    this.runs.set(runId, updated);
-    this.publishRunObservation(runId, updated);
-
-    if (storedSnapshot.status && storedSnapshot.status !== "running") {
-      this.stalledClaims.delete(runId);
-    }
-    if (storedSnapshot.status === "completed" || storedSnapshot.status === "cancelled") {
-      if (storedSnapshot.status === "completed") this.persistRunEventDeliveryReceipts(runId);
-      this.runEvents.delete(runId);
-      this.runEventClaims.delete(runId);
-    }
+    this.storeRunUpdate(runId, updated, storedSnapshot.status);
     return Promise.resolve(true);
   }
 
