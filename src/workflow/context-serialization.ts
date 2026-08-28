@@ -304,12 +304,133 @@ function canSnapshotJsonTailWithoutReplacer(
   return true;
 }
 
+interface JsonTailSnapshotFrame {
+  readonly source: JsonTraversalReference;
+  readonly target: NormalizedJsonObject | NormalizedJsonValue[];
+}
+
+function createJsonTailSnapshotTarget(
+  source: JsonTraversalReference,
+): NormalizedJsonObject | NormalizedJsonValue[] {
+  // Plain objects keep the native prototype here. The final stringify uses
+  // V8's substantially deeper plain-object path, while every property is still
+  // installed with defineProperty so a `__proto__` key remains ordinary data.
+  const target = arrayIsArray(source) ? [] : objectCreate(objectPrototype);
+  // A later sibling hook can mutate either native prototype before the final
+  // stringify. Native JSON has already encoded this tail at that point, so an
+  // inert own shadow keeps the snapshot equally unaffected. A proved own data
+  // property named `toJSON` replaces this configurable shadow below.
+  objectDefineProperty(target, "toJSON", {
+    value: undefined,
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+  return target;
+}
+
+function snapshotJsonTailValue(
+  value: unknown,
+  inArray: boolean,
+  pending: JsonTailSnapshotFrame[],
+): NormalizedJsonValue | typeof OMIT_JSON_VALUE {
+  if (value === null) return null;
+  if (typeof value === "object") {
+    const target = createJsonTailSnapshotTarget(value);
+    defineArrayElement(pending, pending.length, { source: value, target });
+    return target;
+  }
+  if (typeof value === "number") {
+    if (!numberIsFinite(value)) return null;
+    return objectIs(value, -0) ? 0 : value;
+  }
+  if (typeof value === "string" || typeof value === "boolean") return value;
+  // The preceding proof excludes functions and BigInts. Undefined and symbols
+  // are omitted from objects and become null inside arrays, matching JSON.
+  return inArray ? null : OMIT_JSON_VALUE;
+}
+
+function snapshotJsonTailArray(
+  source: JsonTraversalReference,
+  target: NormalizedJsonValue[],
+  pending: JsonTailSnapshotFrame[],
+): void {
+  const length = toJsonLength(reflectGet(source, "length"));
+  let index = 0;
+  while (index < length) {
+    const descriptor = objectGetOwnPropertyDescriptor(source, StringConstructor(index))!;
+    const value = snapshotJsonTailValue(descriptor.value, true, pending);
+    defineArrayElement(target, index, value === OMIT_JSON_VALUE ? null : value);
+    index++;
+  }
+}
+
+function snapshotJsonTailObject(
+  source: JsonTraversalReference,
+  target: NormalizedJsonObject,
+  pending: JsonTailSnapshotFrame[],
+): void {
+  const keys = objectKeys(source);
+  let index = 0;
+  while (index < keys.length) {
+    const key = keys[index]!;
+    const descriptor = objectGetOwnPropertyDescriptor(source, key)!;
+    const value = snapshotJsonTailValue(descriptor.value, false, pending);
+    if (value !== OMIT_JSON_VALUE) {
+      objectDefineProperty(target, key, {
+        value,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    }
+    index++;
+  }
+}
+
+/** Clone a proved-inert JSON tail without adding native recursion to this walk. */
+function snapshotJsonTail(
+  root: JsonTraversalReference,
+): NormalizedJsonObject | NormalizedJsonValue[] {
+  const target = createJsonTailSnapshotTarget(root);
+  const pending: JsonTailSnapshotFrame[] = [{ source: root, target }];
+  let cursor = 0;
+  while (cursor < pending.length) {
+    const frame = pending[cursor++]!;
+    if (arrayIsArray(frame.source)) {
+      snapshotJsonTailArray(
+        frame.source,
+        frame.target as NormalizedJsonValue[],
+        pending,
+      );
+    } else {
+      snapshotJsonTailObject(
+        frame.source,
+        frame.target as NormalizedJsonObject,
+        pending,
+      );
+    }
+  }
+  return target;
+}
+
 /** Encode an uninspected tail now, preserving native hook order and output. */
 function normalizeJsonTail(
   value: JsonTraversalReference,
   key: string,
   active: Set<JsonTraversalReference>,
 ): NormalizedJsonValue | typeof OMIT_JSON_VALUE {
+  // This branch has proved the tail contains only inert JSON data: no hooks,
+  // accessors, proxies, exotic objects, raw tokens, cycles, or aliases. Keep
+  // that data attached to the normalized result and let the final stringify
+  // encode it after this recursive walk has unwound. Calling stringify here
+  // would combine JSON's own depth with every active normalize frame, which
+  // can overflow Node's stack for a value that native JSON encodes from the
+  // caller just fine.
+  if (canSnapshotJsonTailWithoutReplacer(value, active)) {
+    return snapshotJsonTail(value);
+  }
+
   const holder = objectCreate(null);
   objectDefineProperty(holder, key, {
     value,
@@ -318,45 +439,40 @@ function normalizeJsonTail(
     writable: true,
   });
   let containsRawJson = false;
-  let serializedHolder: string | undefined;
-  if (canSnapshotJsonTailWithoutReplacer(value, active)) {
-    serializedHolder = jsonStringify(holder);
-  } else {
-    const parents = new WeakMapConstructor<JsonTraversalReference, JsonTraversalReference>();
-    const hasAncestor = (
-      holder: JsonTraversalReference,
-      candidate: JsonTraversalReference,
-    ): boolean => {
-      let ancestor: JsonTraversalReference | undefined = holder;
-      while (ancestor !== undefined) {
-        if (ancestor === candidate) return true;
-        ancestor = reflectApply(weakMapGet, parents, [ancestor]) as
-          | JsonTraversalReference
-          | undefined;
+  const parents = new WeakMapConstructor<JsonTraversalReference, JsonTraversalReference>();
+  const hasAncestor = (
+    holder: JsonTraversalReference,
+    candidate: JsonTraversalReference,
+  ): boolean => {
+    let ancestor: JsonTraversalReference | undefined = holder;
+    while (ancestor !== undefined) {
+      if (ancestor === candidate) return true;
+      ancestor = reflectApply(weakMapGet, parents, [ancestor]) as
+        | JsonTraversalReference
+        | undefined;
+    }
+    return false;
+  };
+  const serializedHolder = jsonStringify(holder, function (
+    this: JsonTraversalReference,
+    _key,
+    nested,
+  ) {
+    if (typeof nested === "bigint") throw BIGINT_JSON_TAIL_VALUE;
+    if (nested !== null && typeof nested === "object") {
+      if (boxedPrimitiveSlot(nested) === "bigint") throw BIGINT_JSON_TAIL_VALUE;
+      if (
+        jsonIsRawJSON !== undefined &&
+        reflectApply(jsonIsRawJSON, jsonRawSupport, [nested])
+      ) {
+        containsRawJson = true;
       }
-      return false;
-    };
-    serializedHolder = jsonStringify(holder, function (
-      this: JsonTraversalReference,
-      _key,
-      nested,
-    ) {
-      if (typeof nested === "bigint") throw BIGINT_JSON_TAIL_VALUE;
-      if (nested !== null && typeof nested === "object") {
-        if (boxedPrimitiveSlot(nested) === "bigint") throw BIGINT_JSON_TAIL_VALUE;
-        if (
-          jsonIsRawJSON !== undefined &&
-          reflectApply(jsonIsRawJSON, jsonRawSupport, [nested])
-        ) {
-          containsRawJson = true;
-        }
-        if (reflectApply(setHas, active, [nested])) throw ACTIVE_JSON_TAIL_REFERENCE;
-        if (hasAncestor(this, nested)) throw ACTIVE_JSON_TAIL_REFERENCE;
-        reflectApply(weakMapSet, parents, [nested, this]);
-      }
-      return nested;
-    });
-  }
+      if (reflectApply(setHas, active, [nested])) throw ACTIVE_JSON_TAIL_REFERENCE;
+      if (hasAncestor(this, nested)) throw ACTIVE_JSON_TAIL_REFERENCE;
+      reflectApply(weakMapSet, parents, [nested, this]);
+    }
+    return nested;
+  });
   if (serializedHolder === "{}") return OMIT_JSON_VALUE;
 
   const encodedKey = jsonStringify(key)!;

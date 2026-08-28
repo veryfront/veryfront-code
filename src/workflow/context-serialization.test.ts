@@ -1130,6 +1130,67 @@ describe("serializeWorkflowContext", () => {
       assertEquals(JSON.parse(serialized).step.later.observed, 1);
     });
 
+    it("snapshots an inert deep tail before a later sibling mutates it", () => {
+      const makeContext = (): WorkflowContext => {
+        const leaf = { value: 1 };
+        let deep: unknown = leaf;
+        for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+
+        const output: Record<string, unknown> = { deep };
+        Object.defineProperty(output, "later", {
+          enumerable: true,
+          get: () => {
+            leaf.value = 2;
+            return true;
+          },
+        });
+        return contextWith(output);
+      };
+
+      assertEquals(
+        serializeWorkflowContext(makeContext()),
+        JSON.stringify(makeContext()),
+      );
+    });
+
+    it("isolates a deep snapshot from later prototype hooks", () => {
+      const objectToJson = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+      const arrayToJson = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+      const restore = (target: object, descriptor: PropertyDescriptor | undefined) => {
+        if (descriptor === undefined) Reflect.deleteProperty(target, "toJSON");
+        else Object.defineProperty(target, "toJSON", descriptor);
+      };
+      const makeContext = (): WorkflowContext => {
+        let deep: unknown = { items: [{ value: 1 }] };
+        for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+
+        const output: Record<string, unknown> = { deep };
+        Object.defineProperty(output, "later", {
+          enumerable: true,
+          get: () => {
+            for (const prototype of [Object.prototype, Array.prototype]) {
+              Object.defineProperty(prototype, "toJSON", {
+                configurable: true,
+                value: () => "polluted",
+              });
+            }
+            return true;
+          },
+        });
+        return contextWith(output);
+      };
+
+      try {
+        const serialized = serializeWorkflowContext(makeContext());
+        restore(Object.prototype, objectToJson);
+        restore(Array.prototype, arrayToJson);
+        assertEquals(serialized, JSON.stringify(makeContext()));
+      } finally {
+        restore(Object.prototype, objectToJson);
+        restore(Array.prototype, arrayToJson);
+      }
+    });
+
     it("names a cycle that returns to an active ancestor at the cutoff", () => {
       const output: Record<string, unknown> = {};
       let deep: unknown = output;
