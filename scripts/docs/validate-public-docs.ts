@@ -28,6 +28,85 @@ const PUBLIC_DOC_ROOTS = [
   "docs/api-reference",
 ];
 
+/**
+ * The directories veryfront-docs copies into its published `docs/code/` tree.
+ * Its sync workflow copies exactly these four and nothing else, so a relative
+ * link out of one of them resolves inside this repository but 404s on the
+ * published site. `docs/architecture/` is private implementation notes, which
+ * makes that particular leak a boundary violation as well as a broken link.
+ */
+const SYNCED_DOC_DIRS = [
+  "docs/getting-started",
+  "docs/guides",
+  "docs/concepts",
+  "docs/api-reference",
+];
+
+/**
+ * The sync deletes the `README.md` at the root of each synced directory, so
+ * those files never reach the published site and may keep pointing readers of
+ * this repository at private notes.
+ */
+const UNSYNCED_README_PATHS = SYNCED_DOC_DIRS.map((dir) => `${dir}/README.md`);
+
+const MARKDOWN_LINK = /\[[^\]]*\]\(([^)\s]+)/g;
+
+function isPublishedTarget(target: string): boolean {
+  return SYNCED_DOC_DIRS.some((dir) =>
+    target === dir || target.startsWith(`${dir}/`)
+  );
+}
+
+/**
+ * Resolve a POSIX path without touching the filesystem. The link may point at a
+ * file that exists here and still be unpublished, so existence is not the
+ * question this check asks.
+ */
+function resolveRelative(fromDir: string, href: string): string {
+  const segments = `${fromDir}/${href}`.split("/");
+  const resolved: string[] = [];
+  for (const segment of segments) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      resolved.pop();
+      continue;
+    }
+    resolved.push(segment);
+  }
+  return resolved.join("/");
+}
+
+function collectUnpublishedLinkIssues(
+  path: string,
+  content: string,
+): PublicDocIssue[] {
+  if (!isPublishedTarget(path)) return [];
+  if (UNSYNCED_README_PATHS.includes(path)) return [];
+
+  const fromDir = path.slice(0, path.lastIndexOf("/"));
+  const issues: PublicDocIssue[] = [];
+  for (const [index, text] of content.split("\n").entries()) {
+    MARKDOWN_LINK.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = MARKDOWN_LINK.exec(text))) {
+      const href = match[1];
+      if (/^(?:[a-z][a-z0-9+.-]*:|\/\/|#|["'])/i.test(href)) continue;
+      const target = resolveRelative(fromDir, href.split("#")[0]);
+      if (isPublishedTarget(target)) continue;
+      issues.push({
+        path,
+        line: index + 1,
+        message:
+          `Do not link published docs to ${target}. veryfront-docs publishes only ${
+            SYNCED_DOC_DIRS.join(", ")
+          }, so this link 404s on the site.`,
+        text: text.trim(),
+      });
+    }
+  }
+  return issues;
+}
+
 const MOVED_GETTING_STARTED_PAGES = [
   "quickstart",
   "cloud-quickstart",
@@ -313,6 +392,7 @@ async function main(): Promise<void> {
   for (const file of sortedFiles) {
     const content = await Deno.readTextFile(`${ROOT}/${file}`);
     issues.push(...collectIssues(file, content));
+    issues.push(...collectUnpublishedLinkIssues(file, content));
   }
   issues.push(...await collectCoverageIssues());
 
