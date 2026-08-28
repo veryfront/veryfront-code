@@ -480,6 +480,57 @@ describe("MemoryBackend", () => {
       });
     });
 
+    it("rechecks conditional status and worker ownership after context hooks", async () => {
+      const statusRunId = "run-context-conditional-status-hook";
+      await backend.createRun(createTestRun(statusRunId, {
+        status: "running",
+        workerId: "worker-original",
+      }));
+      const statusHook = {
+        toJSON() {
+          void backend.updateRun(statusRunId, { status: "waiting" });
+          return "outer-status";
+        },
+      };
+
+      assertEquals(
+        await backend.updateRunIfStatus(statusRunId, ["running"], {
+          status: "failed",
+          context: { statusHook },
+        }),
+        false,
+      );
+      const statusRun = await backend.getRun(statusRunId);
+      assertEquals(statusRun?.status, "waiting");
+      assertEquals(statusRun?.context.statusHook, undefined);
+
+      const workerRunId = "run-context-conditional-worker-hook";
+      await backend.createRun(createTestRun(workerRunId, {
+        status: "running",
+        workerId: "worker-original",
+      }));
+      const workerHook = {
+        toJSON() {
+          void backend.updateRun(workerRunId, { workerId: "worker-replacement" });
+          return "outer-worker";
+        },
+      };
+
+      assertEquals(
+        await backend.updateRunIfStatusAndWorker(
+          workerRunId,
+          ["running"],
+          "worker-original",
+          { status: "failed", context: { workerHook } },
+        ),
+        false,
+      );
+      const workerRun = await backend.getRun(workerRunId);
+      assertEquals(workerRun?.status, "running");
+      assertEquals(workerRun?.workerId, "worker-replacement");
+      assertEquals(workerRun?.context.workerHook, undefined);
+    });
+
     it("persists context through the same JSON contract as Redis", async () => {
       class Receipt {
         constructor(readonly id: string) {}
@@ -769,6 +820,39 @@ describe("MemoryBackend", () => {
         "a node completed after the checkpoint must not survive the restore, " +
           "or replay skips it instead of re-running it",
       );
+    });
+
+    it("rechecks restore ownership after serializing snapshot context", async () => {
+      const runId = "run-restore-context-hook-owner";
+      await backend.createRun(createTestRun(runId, {
+        status: "waiting",
+        workerId: "worker-original",
+        context: { input: {}, preserved: "current" },
+      }));
+      const hook = {
+        toJSON() {
+          void backend.updateRun(runId, { workerId: "worker-replacement" });
+          return "outer-restore";
+        },
+      };
+
+      assertEquals(
+        await backend.restoreRunStateIfStatus(
+          runId,
+          ["waiting"],
+          {
+            status: "running",
+            context: { input: { hook } },
+            nodeStates: {},
+          },
+          "worker-original",
+        ),
+        false,
+      );
+      const stored = await backend.getRun(runId);
+      assertEquals(stored?.status, "waiting");
+      assertEquals(stored?.workerId, "worker-replacement");
+      assertEquals(stored?.context, { input: {}, preserved: "current" });
     });
 
     it("rejects attempts to mutate the source policy after run creation", async () => {
@@ -1091,6 +1175,48 @@ describe("MemoryBackend", () => {
         "Looks good!",
         "a losing decision must not overwrite the recorded comment",
       );
+    });
+
+    it("rechecks approval status after serializing decision data", async () => {
+      const runId = "run-reentrant-approval-decision";
+      const approval: PendingApproval = {
+        id: "approval-reentrant-decision",
+        nodeId: "review",
+        status: "pending",
+        message: "Review needed",
+        payload: {},
+        requestedAt: new Date(),
+      };
+      await backend.savePendingApproval(runId, approval);
+
+      let nestedDecision: Promise<boolean> | undefined;
+      const data = {
+        toJSON() {
+          nestedDecision = backend.updateApproval(runId, approval.id, {
+            approved: true,
+            approver: "first@example.com",
+            comment: "first decision",
+            data: { winner: "first" },
+          });
+          return { winner: "outer" };
+        },
+      };
+
+      assertEquals(
+        await backend.updateApproval(runId, approval.id, {
+          approved: false,
+          approver: "outer@example.com",
+          comment: "outer decision",
+          data,
+        }),
+        false,
+      );
+      assertEquals(await nestedDecision, true);
+      const stored = await backend.getPendingApproval(runId, approval.id);
+      assertEquals(stored?.status, "approved");
+      assertEquals(stored?.decidedBy, "first@example.com");
+      assertEquals(stored?.comment, "first decision");
+      assertEquals(stored?.decisionData, { winner: "first" });
     });
 
     it("uses the JSON persistence contract for non-strict approval decision data", async () => {

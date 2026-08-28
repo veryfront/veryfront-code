@@ -855,6 +855,27 @@ describe("workflow checkpoint retention", () => {
     );
   });
 
+  it("captures all proxy descriptors before traversing property values", () => {
+    const earlier = { value: "before-later-descriptor" };
+    const source = { earlier, later: true };
+    const proxied = new Proxy(source, {
+      getOwnPropertyDescriptor(target, key) {
+        if (key === "later") earlier.value = "after-later-descriptor";
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+
+    const snapshot = cloneCheckpointForPersistence({
+      ...checkpoint("proxy-descriptor-order"),
+      context: { input: { proxied } },
+    });
+
+    assertEquals(
+      JSON.stringify(snapshot.context.input),
+      '{"proxied":{"earlier":{"value":"after-later-descriptor"},"later":true}}',
+    );
+  });
+
   it("snapshots a proxy's dynamic toJSON result", () => {
     const source = { value: "original" };
     const proxied = new Proxy(source, {

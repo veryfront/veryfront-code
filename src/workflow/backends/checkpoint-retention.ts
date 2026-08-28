@@ -75,6 +75,7 @@ interface CheckpointCloneTraversalFrame {
   readonly jsonHookDepth: number;
   keyIndex?: number;
   keys?: Array<string | symbol>;
+  ownPropertyDescriptors?: Array<PropertyDescriptor | undefined>;
   readonly objectProxy?: boolean;
   readonly source: object;
   readonly target: object;
@@ -821,19 +822,31 @@ function cloneCheckpointValueForPersistence<T>(value: T): T {
     }
     if (frame.keys === undefined) {
       frame.keys = reflectOwnKeys(frame.source);
+      if (frame.objectProxy === true) {
+        const descriptors = new ArrayConstructor<PropertyDescriptor | undefined>(
+          frame.keys.length,
+        );
+        for (let index = 0; index < frame.keys.length; index++) {
+          descriptors[index] = objectGetOwnPropertyDescriptor(frame.source, frame.keys[index]!);
+        }
+        frame.ownPropertyDescriptors = descriptors;
+      }
       frame.keyIndex = 0;
       frame.jsonLookupInstalled = false;
     }
     if ((frame.keyIndex ?? 0) < frame.keys.length) {
-      const key = frame.keys[frame.keyIndex ?? 0]!;
-      frame.keyIndex = (frame.keyIndex ?? 0) + 1;
+      const keyIndex = frame.keyIndex ?? 0;
+      const key = frame.keys[keyIndex]!;
+      frame.keyIndex = keyIndex + 1;
       if (
         frame.arrayLength !== undefined &&
         isArrayIndexWithinLength(key, frame.arrayLength)
       ) {
         continue;
       }
-      const descriptor = objectGetOwnPropertyDescriptor(frame.source, key);
+      const descriptor = frame.ownPropertyDescriptors === undefined
+        ? objectGetOwnPropertyDescriptor(frame.source, key)
+        : frame.ownPropertyDescriptors[keyIndex];
       if (descriptor === undefined) continue;
       if (
         key !== "toJSON" &&

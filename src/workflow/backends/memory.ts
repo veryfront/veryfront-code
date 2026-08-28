@@ -330,12 +330,21 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void> {
+    return this.updateRunConditionally(runId, patch).then(() => undefined);
+  }
+
+  private updateRunConditionally(
+    runId: string,
+    patch: WorkflowRunUpdate,
+    precondition?: (run: WorkflowRun) => boolean,
+  ): Promise<boolean> {
     const run = this.runs.get(runId);
     // Reject rather than throw synchronously so callers see a rejected Promise
     // consistently (matching the Redis backend's async error paths).
     if (!run) {
       return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
     }
+    if (precondition !== undefined && !precondition(run)) return Promise.resolve(false);
 
     try {
       assertWorkflowRunUpdate(patch);
@@ -364,6 +373,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (!currentRun) {
       return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
     }
+    if (precondition !== undefined && !precondition(currentRun)) return Promise.resolve(false);
     const context = { ...currentRun.context, ...contextPatch };
     if (contextPatch !== undefined) {
       for (const key of patchContextKeys) {
@@ -396,40 +406,32 @@ export class MemoryBackend implements WorkflowBackend {
       this.runEventClaims.delete(runId);
     }
 
-    return Promise.resolve();
+    return Promise.resolve(true);
   }
 
   updateRunIfStatus(
     runId: string,
     expectedStatuses: WorkflowRun["status"][],
-    patch: Partial<WorkflowRun>,
+    patch: WorkflowRunUpdate,
   ): Promise<boolean> {
-    const run = this.runs.get(runId);
-    if (!run) {
-      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
-    }
-    if (!expectedStatuses.includes(run.status)) return Promise.resolve(false);
-
-    // updateRun mutates synchronously before returning, so the status check and
-    // patch are one atomic operation for this in-memory backend.
-    return this.updateRun(runId, patch).then(() => true);
+    return this.updateRunConditionally(
+      runId,
+      patch,
+      (run) => expectedStatuses.includes(run.status),
+    );
   }
 
   updateRunIfStatusAndWorker(
     runId: string,
     expectedStatuses: WorkflowRun["status"][],
     expectedWorkerId: string,
-    patch: Partial<WorkflowRun>,
+    patch: WorkflowRunUpdate,
   ): Promise<boolean> {
-    const run = this.runs.get(runId);
-    if (!run) {
-      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
-    }
-    if (!expectedStatuses.includes(run.status) || run.workerId !== expectedWorkerId) {
-      return Promise.resolve(false);
-    }
-
-    return this.updateRun(runId, patch).then(() => true);
+    return this.updateRunConditionally(
+      runId,
+      patch,
+      (run) => expectedStatuses.includes(run.status) && run.workerId === expectedWorkerId,
+    );
   }
 
   restoreRunStateIfStatus(
@@ -463,12 +465,20 @@ export class MemoryBackend implements WorkflowBackend {
     } catch (error) {
       return Promise.reject(error);
     }
+    const currentRun = this.runs.get(runId);
+    if (!currentRun) {
+      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
+    if (!expectedStatuses.includes(currentRun.status)) return Promise.resolve(false);
+    if (expectedWorkerId !== undefined && currentRun.workerId !== expectedWorkerId) {
+      return Promise.resolve(false);
+    }
 
     // Replacement, not the per-key merge updateRun applies: keys written after
     // the snapshot must not survive a checkpoint restore, or nodes completed
     // after the checkpoint stay completed and are skipped on replay.
     const updated: WorkflowRun = {
-      ...run,
+      ...currentRun,
       ...snapshot,
       ...(context !== undefined ? { context } : {}),
     };
@@ -887,14 +897,21 @@ export class MemoryBackend implements WorkflowBackend {
         return Promise.reject(error);
       }
     }
+    const currentApproval = this.approvals.get(runId)?.find((candidate) =>
+      candidate.id === approvalId
+    );
+    if (!currentApproval) {
+      throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
+    }
+    if (currentApproval.status !== "pending") return Promise.resolve(false);
     logger.debug("Updating approval", { approvalId, decision });
-    approval.status = decision.approved ? "approved" : "rejected";
-    approval.decidedBy = decision.approver;
-    approval.decidedAt = new Date();
-    approval.comment = decision.comment;
-    if (decision.data === undefined) delete approval.decisionData;
-    else approval.decisionData = decisionData;
-    approval.reconciliationPending = true;
+    currentApproval.status = decision.approved ? "approved" : "rejected";
+    currentApproval.decidedBy = decision.approver;
+    currentApproval.decidedAt = new Date();
+    currentApproval.comment = decision.comment;
+    if (decision.data === undefined) delete currentApproval.decisionData;
+    else currentApproval.decisionData = decisionData;
+    currentApproval.reconciliationPending = true;
     return Promise.resolve(true);
   }
 
