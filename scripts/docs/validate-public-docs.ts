@@ -1080,6 +1080,8 @@ const JAVASCRIPT_REGEX_PREFIX_KEYWORDS: ReadonlySet<string> = new Set([
 ]);
 
 const JAVASCRIPT_IDENTIFIER_CONTINUE = /[$\u200C\u200D\p{ID_Continue}]/u;
+const JAVASCRIPT_IDENTIFIER_ESCAPE =
+  /\\u(?:([0-9A-Fa-f]{4})|\{([0-9A-Fa-f]{1,6})\})$/;
 
 function javaScriptCodePointBefore(
   text: string,
@@ -1091,6 +1093,27 @@ function javaScriptCodePointBefore(
     trailing <= 0xDFFF && text.charCodeAt(end - 2) >= 0xD800 &&
     text.charCodeAt(end - 2) <= 0xDBFF;
   return text.slice(end - (startsWithSurrogatePair ? 2 : 1), end);
+}
+
+function javaScriptIdentifierContinueBefore(
+  text: string,
+  end: number,
+): boolean {
+  const escapeMatch = JAVASCRIPT_IDENTIFIER_ESCAPE.exec(
+    text.slice(Math.max(0, end - 10), end),
+  );
+  if (escapeMatch !== null) {
+    const codePoint = Number.parseInt(
+      escapeMatch[1] ?? escapeMatch[2] ?? "",
+      16,
+    );
+    return codePoint <= 0x10ffff &&
+      JAVASCRIPT_IDENTIFIER_CONTINUE.test(String.fromCodePoint(codePoint));
+  }
+
+  const codePoint = javaScriptCodePointBefore(text, end);
+  return codePoint !== undefined &&
+    JAVASCRIPT_IDENTIFIER_CONTINUE.test(codePoint);
 }
 
 function javaScriptRegexMayStart(
@@ -1115,7 +1138,7 @@ function javaScriptRegexMayStart(
   const preceding = javaScriptCodePointBefore(text, wordStart);
   return preceding === undefined ||
     (preceding !== "." && preceding !== "#" &&
-      !JAVASCRIPT_IDENTIFIER_CONTINUE.test(preceding));
+      !javaScriptIdentifierContinueBefore(text, wordStart));
 }
 
 function javaScriptUpdateKind(

@@ -514,6 +514,9 @@ describe("public docs validation", () => {
           '<a data-ok={this.#instanceof / ({ marker: "}>/" }).length} href="../architecture/private-member.md">ok</a>\n' +
           '<a data-ok={πinstanceof / ({ marker: "}>/" }).length} href="../architecture/unicode-identifier.md">ok</a>\n' +
           '<a data-ok={𐐀instanceof / ({ marker: "}>/" }).length} href="../architecture/astral-identifier.md">ok</a>\n' +
+          String
+            .raw`<a data-ok={\u{10400}instanceof / ({ marker: ">/" }).length} href="../architecture/escaped-astral-identifier.md">ok</a>` +
+          "\n" +
           '<div title="[old](../architecture/title-link.md)"></div>\n' +
           '<div title={"[old](../architecture/expression.md)"}></div>\n' +
           "<Code value={'Configure href=\"../architecture/string.md\"'} />\n" +
@@ -545,6 +548,7 @@ describe("public docs validation", () => {
         "../architecture/private-member.md",
         "../architecture/unicode-identifier.md",
         "../architecture/astral-identifier.md",
+        "../architecture/escaped-astral-identifier.md",
         "../architecture/real.md",
       ],
     );
