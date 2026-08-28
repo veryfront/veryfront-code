@@ -40,13 +40,16 @@ describe("Singleflight", () => {
 
   it("rejects a pre-aborted waiter without waiting for the shared promise", async () => {
     const controller = new AbortController();
-    controller.abort(new Error("already stopped"));
+    const reason = new Error("already stopped");
+    controller.abort(reason);
     const shared = Promise.withResolvers<number>();
 
-    await assertRejects(
+    const error = await assertRejects(
       () => waitForSharedPromise(shared.promise, controller.signal),
       Error,
+      "already stopped",
     );
+    assertStrictEquals(error, reason);
 
     // The detached waiter must still observe the shared rejection, otherwise a
     // sole detached caller leaves it unhandled and crashes the process.
