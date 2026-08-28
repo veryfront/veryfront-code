@@ -495,6 +495,35 @@ describe("MemoryBackend", () => {
       assertEquals(workerRun?.context.workerHook, undefined);
     });
 
+    it("snapshots conditional statuses before context hooks can mutate them", async () => {
+      const runId = "run-context-mutated-status-input";
+      await backend.createRun(createTestRun(runId, { status: "running" }));
+      const expectedStatuses: WorkflowRun["status"][] = ["running"];
+      let mutatedIncludesCalls = 0;
+      const statusHook = {
+        toJSON() {
+          expectedStatuses.includes = () => {
+            mutatedIncludesCalls++;
+            void backend.updateRun(runId, { status: "waiting" });
+            return true;
+          };
+          return "stored";
+        },
+      };
+
+      assertEquals(
+        await backend.updateRunIfStatus(runId, expectedStatuses, {
+          context: { input: {}, statusHook },
+        }),
+        true,
+      );
+
+      assertEquals(mutatedIncludesCalls, 0);
+      const updated = await backend.getRun(runId);
+      assertEquals(updated?.status, "running");
+      assertEquals(updated?.context.statusHook, "stored");
+    });
+
     it("routes conditional run updates through updateRun overrides", async () => {
       class TrackingMemoryBackend extends MemoryBackend {
         updates = 0;
@@ -1200,6 +1229,50 @@ describe("MemoryBackend", () => {
       assertEquals(approval?.decidedBy, "winner@example.com");
       assertEquals(approval?.comment, "First decision");
       assertEquals(approval?.decisionData, undefined);
+    });
+
+    it("does not decide an approval record replaced by a decision data hook", async () => {
+      const runId = "run-approval-replaced-during-decision";
+      const approvalId = "approval-replaced-during-decision";
+      await backend.createRun(createTestRun(runId, { status: "waiting" }));
+      await backend.savePendingApproval(runId, {
+        id: approvalId,
+        nodeId: "original-review",
+        status: "pending",
+        message: "Original approval",
+        payload: {},
+        requestedAt: new Date(),
+      });
+      const decisionData = {
+        toJSON() {
+          void backend.deleteRun(runId);
+          void backend.createRun(createTestRun(runId, { status: "waiting" }));
+          void backend.savePendingApproval(runId, {
+            id: approvalId,
+            nodeId: "replacement-review",
+            status: "pending",
+            message: "Replacement approval",
+            payload: {},
+            requestedAt: new Date(),
+          });
+          return { source: "stale-decision" };
+        },
+      };
+
+      assertEquals(
+        await backend.updateApproval(runId, approvalId, {
+          approved: true,
+          approver: "stale@example.com",
+          data: decisionData,
+        }),
+        false,
+      );
+
+      const replacement = await backend.getPendingApproval(runId, approvalId);
+      assertEquals(replacement?.nodeId, "replacement-review");
+      assertEquals(replacement?.status, "pending");
+      assertEquals(replacement?.decidedBy, undefined);
+      assertEquals(replacement?.decisionData, undefined);
     });
 
     it("uses the JSON persistence contract for non-strict approval decision data", async () => {

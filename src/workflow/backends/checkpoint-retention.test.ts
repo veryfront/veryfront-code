@@ -877,6 +877,35 @@ describe("workflow checkpoint retention", () => {
     assertEquals(JSON.stringify(snapshot.context.input), expected);
   });
 
+  it("does not inspect proxy symbol descriptors while capturing JSON-visible values", () => {
+    const ignored = Symbol("ignored");
+    let symbolDescriptorCalls = 0;
+    const context: WorkflowContext = {
+      input: {},
+      later: { state: "before" },
+    };
+    const source = { visible: "stored", [ignored]: true };
+    const proxied = new Proxy(source, {
+      getOwnPropertyDescriptor(target, key) {
+        if (key === ignored) {
+          symbolDescriptorCalls++;
+          (context.later as { state: string }).state = "after";
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+    context.input = { proxied };
+    const expected = JSON.stringify(context);
+
+    const snapshot = cloneCheckpointForPersistence({
+      ...checkpoint("proxy-symbol-descriptor-order"),
+      context,
+    });
+
+    assertEquals(JSON.stringify(snapshot.context), expected);
+    assertEquals(symbolDescriptorCalls, 0);
+  });
+
   it("snapshots a proxy's dynamic toJSON result", () => {
     const source = { value: "original" };
     const proxied = new Proxy(source, {

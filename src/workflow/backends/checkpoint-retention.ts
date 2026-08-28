@@ -821,17 +821,20 @@ function cloneCheckpointValueForPersistence<T>(value: T): T {
       }
     }
     if (frame.keys === undefined) {
-      frame.keys = reflectOwnKeys(frame.source);
       frame.keyIndex = 0;
       frame.jsonLookupInstalled = false;
       if (frame.objectProxy === true) {
+        const stringKeys: string[] = [];
         const descriptors: Array<PropertyDescriptor | undefined> = [];
-        for (const key of frame.keys) {
-          reflectApply(arrayPush, descriptors, [
-            objectGetOwnPropertyDescriptor(frame.source, key),
-          ]);
+        for (const key of reflectOwnKeys(frame.source)) {
+          if (typeof key === "symbol") continue;
+          reflectApply(arrayPush, stringKeys, [key]);
+          reflectApply(arrayPush, descriptors, [objectGetOwnPropertyDescriptor(frame.source, key)]);
         }
+        frame.keys = stringKeys;
         frame.proxyDescriptors = descriptors;
+      } else {
+        frame.keys = reflectOwnKeys(frame.source);
       }
     }
     if ((frame.keyIndex ?? 0) < frame.keys.length) {

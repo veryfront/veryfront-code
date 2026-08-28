@@ -60,6 +60,7 @@ const objectHasOwn = Object.hasOwn;
 const objectKeys = Object.keys;
 const objectPrototype = Object.prototype;
 const jsonParse = JSON.parse;
+const SetConstructor = Set;
 const structuredCloneValue = structuredClone;
 const conditionalRunUpdateControl = Symbol("conditional-run-update-control");
 
@@ -429,10 +430,11 @@ export class MemoryBackend implements WorkflowBackend {
     expectedStatuses: WorkflowRun["status"][],
     patch: Partial<WorkflowRun>,
   ): Promise<boolean> {
+    const statuses = new SetConstructor(expectedStatuses);
     return this.applyConditionalRunUpdate(
       runId,
       patch,
-      (run) => expectedStatuses.includes(run.status),
+      (run) => statuses.has(run.status),
     );
   }
 
@@ -442,10 +444,11 @@ export class MemoryBackend implements WorkflowBackend {
     expectedWorkerId: string,
     patch: Partial<WorkflowRun>,
   ): Promise<boolean> {
+    const statuses = new SetConstructor(expectedStatuses);
     return this.applyConditionalRunUpdate(
       runId,
       patch,
-      (run) => expectedStatuses.includes(run.status) && run.workerId === expectedWorkerId,
+      (run) => statuses.has(run.status) && run.workerId === expectedWorkerId,
     );
   }
 
@@ -918,8 +921,12 @@ export class MemoryBackend implements WorkflowBackend {
         return Promise.reject(error);
       }
     }
-    const currentApproval = this.approvals.get(runId)?.find((item) => item.id === approvalId);
-    if (!currentApproval || currentApproval.status !== "pending") {
+    const currentApprovals = this.approvals.get(runId);
+    const currentApproval = currentApprovals?.find((item) => item.id === approvalId);
+    if (
+      currentApprovals !== approvals || currentApproval !== approval ||
+      currentApproval.status !== "pending"
+    ) {
       return Promise.resolve(false);
     }
     logger.debug("Updating approval", { approvalId, decision });
