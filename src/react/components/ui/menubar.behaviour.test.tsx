@@ -15,6 +15,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import {
   Menubar,
   MenubarContent,
@@ -24,51 +25,19 @@ import {
   MenubarTrigger,
 } from "./menubar.tsx";
 
-function installDomGlobals(dom: JSDOM): () => void {
-  const window = dom.window;
-  const keys = [
-    "window",
-    "document",
-    "navigator",
-    "self",
-    "Node",
-    "Element",
-    "HTMLElement",
-    "MouseEvent",
-    "KeyboardEvent",
-    "getComputedStyle",
-  ] as const;
-  const previous: Record<string, unknown> = {};
-  for (const k of keys) previous[k] = (globalThis as Record<string, unknown>)[k];
-  Object.assign(globalThis, {
-    window,
-    document: window.document,
-    navigator: window.navigator,
-    self: window,
-    Node: window.Node,
-    Element: window.Element,
-    HTMLElement: window.HTMLElement,
-    MouseEvent: window.MouseEvent,
-    KeyboardEvent: window.KeyboardEvent,
-    getComputedStyle: window.getComputedStyle.bind(window),
-  });
-  return () => {
-    Object.assign(globalThis, previous);
-    dom.window.close();
-  };
-}
-
 function mount(element: React.ReactElement): {
   scope: HTMLElement;
   root: Root;
   click: (el: Element) => void;
-  cleanup: () => void;
+  cleanup: () => Promise<void>;
 } {
   const dom = new JSDOM(
     `<!doctype html><html><body><div id="root"></div></body></html>`,
     { url: "https://example.com/", pretendToBeVisual: true },
   );
-  const restore = installDomGlobals(dom);
+  const restore = installComponentDom(dom, {
+    windowGlobals: ["self", "KeyboardEvent"],
+  });
   const scope = document.createElement("div");
   scope.setAttribute("data-vf-ui", "");
   document.getElementById("root")!.appendChild(scope);
@@ -80,8 +49,12 @@ function mount(element: React.ReactElement): {
     root,
     click: (el: Element) =>
       flushSync(() => el.dispatchEvent(new win.MouseEvent("click", { bubbles: true }))),
-    cleanup: () => {
+    cleanup: async () => {
       root.unmount();
+      // jsdom schedules selection updates with a zero-delay timer when focus
+      // moves. Let that browser task finish before closing the window so Deno's
+      // resource sanitizer can distinguish completed UI work from a real leak.
+      await new Promise<void>((resolve) => win.setTimeout(resolve, 0));
       restore();
     },
   };
@@ -119,7 +92,7 @@ function triggerAt(scope: HTMLElement, i: number): HTMLElement {
 }
 
 describe("Menubar behaviour", () => {
-  it("renders a horizontal role=menubar whose triggers are menuitems with aria-haspopup=menu", () => {
+  it("renders a horizontal role=menubar whose triggers are menuitems with aria-haspopup=menu", async () => {
     const { scope, cleanup } = mount(<Fixture />);
     try {
       const bar = scope.querySelector('[role="menubar"]') as HTMLElement;
@@ -132,11 +105,11 @@ describe("Menubar behaviour", () => {
       assertEquals(file.textContent, "File");
       assertEquals(edit.textContent, "Edit");
     } finally {
-      cleanup();
+      await cleanup();
     }
   });
 
-  it("clicking a trigger opens its menu into the token scope; items render as menuitems", () => {
+  it("clicking a trigger opens its menu into the token scope; items render as menuitems", async () => {
     const { scope, click, cleanup } = mount(<Fixture />);
     try {
       assertEquals(scope.querySelector('[role="menu"]'), null, "closed initially");
@@ -158,11 +131,11 @@ describe("Menubar behaviour", () => {
       assert(surface.querySelector(".vf-test-new"), "the New item rendered into the surface");
       assertEquals(triggerAt(scope, 0).getAttribute("data-state"), "open");
     } finally {
-      cleanup();
+      await cleanup();
     }
   });
 
-  it("opening a second menu closes the first (one menu open at a time)", () => {
+  it("opening a second menu closes the first (one menu open at a time)", async () => {
     const { scope, click, cleanup } = mount(<Fixture />);
     try {
       const file = triggerAt(scope, 0);
@@ -175,11 +148,11 @@ describe("Menubar behaviour", () => {
       assert(scope.querySelector(".vf-test-edit"), "Edit menu is the open one");
       assertEquals(scope.querySelector(".vf-test-file"), null, "File menu closed");
     } finally {
-      cleanup();
+      await cleanup();
     }
   });
 
-  it("selecting an item fires onSelect and closes the menu", () => {
+  it("selecting an item fires onSelect and closes the menu", async () => {
     let selected = 0;
     const { scope, click, cleanup } = mount(
       <Menubar>
@@ -199,11 +172,11 @@ describe("Menubar behaviour", () => {
       assertEquals(selected, 1, "onSelect fired");
       assertEquals(scope.querySelector('[role="menu"]'), null, "menu closed on select");
     } finally {
-      cleanup();
+      await cleanup();
     }
   });
 
-  it("skips disabled triggers during roving keyboard focus", () => {
+  it("skips disabled triggers during roving keyboard focus", async () => {
     const { scope, cleanup } = mount(
       <Menubar>
         <MenubarMenu value="file">
@@ -258,11 +231,11 @@ describe("Menubar behaviour", () => {
       });
       assert(document.activeElement === view, "End focuses the last enabled trigger");
     } finally {
-      cleanup();
+      await cleanup();
     }
   });
 
-  it("moves between open menus with horizontal arrows from focused menu content", () => {
+  it("moves between open menus with horizontal arrows from focused menu content", async () => {
     const { scope, click, cleanup } = mount(<Fixture />);
     try {
       click(triggerAt(scope, 0));
@@ -301,7 +274,7 @@ describe("Menubar behaviour", () => {
       assertEquals(scope.querySelector(".vf-test-edit"), null, "the Edit menu closes");
       assertEquals(triggerAt(scope, 0).getAttribute("data-state"), "open");
     } finally {
-      cleanup();
+      await cleanup();
     }
   });
 });

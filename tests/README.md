@@ -52,6 +52,21 @@ temporary explicit-path migration inventory in
 PR. That inventory is a shrink-only migration aid, not a permanent all-test
 manifest.
 
+### Full local verification
+
+Run the complete Deno inventory with:
+
+```sh
+deno task test
+```
+
+The task generates artifacts once, then executes deterministic, bounded suite
+batches in fresh Deno processes. `DENO_JOBS` controls test-file concurrency
+inside each process; use `DENO_JOBS=1 deno task test` in memory-constrained
+containers. A failed batch stops the remaining work, while process boundaries
+prevent completed modules and resources from accumulating for the entire run.
+Use `deno task test:file <path>` for the focused red-green loop.
+
 ### Semantic Unit-Boundary Audit
 
 `deno task lint:test-semantic-dispositions` is the temporary semantic companion

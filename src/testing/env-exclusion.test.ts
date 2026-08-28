@@ -31,6 +31,10 @@ describe("testing/BDD cross-file environment isolation", () => {
       cwd: PROJECT_ROOT,
       env: {
         CONTEXT7_API_KEY: "probe-context7-key",
+        // This regression deliberately coordinates two test-file isolates.
+        // Keep both participants runnable even when the parent verification
+        // process bounds its own concurrency with DENO_JOBS=1.
+        DENO_JOBS: "2",
         OPENAI_API_KEY: "probe-openai-key",
       },
       stdout: "piped",

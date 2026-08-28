@@ -11,8 +11,10 @@ import { LEAF_TEST_SUITES } from "./suites.ts";
 
 export type SuitePlanId =
   | "unit:parallel"
+  | "unit:serial"
   | "unit:cwd"
   | "unit:cwd-exclusion"
+  | "integration:legacy-source-roots"
   | "integration:legacy-tests-root"
   | "integration:cli"
   | "coverage:unit"
@@ -73,6 +75,9 @@ const UNIT_CWD_FILES = [
   "src/platform/compat/process.test.ts",
   "src/testing/cwd.test.ts",
 ];
+const UNIT_SERIAL_FILES = [
+  "extensions/ext-bundler-esbuild/src/esbuild-bundler.test.ts",
+];
 const UNIT_CWD_EXCLUSION_FILES = [
   "src/testing/cwd-exclusion-a.test.ts",
   "src/testing/cwd-exclusion-b.test.ts",
@@ -91,6 +96,7 @@ const E2E_BINARY_FILES = [
   "tests/integration/compiled-binary-e2e.test.ts",
 ];
 const UNIT_PARALLEL_EXCLUSIONS = new Set([
+  ...UNIT_SERIAL_FILES,
   ...UNIT_CWD_FILES,
   ...UNIT_CWD_EXCLUSION_FILES,
 ]);
@@ -142,8 +148,10 @@ const RUNTIME_EXCLUSIONS = {
 
 const RUNNERS: Record<SuitePlanId, SuitePlanRunner> = {
   "unit:parallel": "deno",
+  "unit:serial": "deno",
   "unit:cwd": "deno",
   "unit:cwd-exclusion": "deno",
+  "integration:legacy-source-roots": "deno",
   "integration:legacy-tests-root": "deno",
   "integration:cli": "deno",
   "coverage:unit": "deno",
@@ -271,11 +279,18 @@ async function selectProfileFiles(
         !path.startsWith("src/workflow/__tests__/") &&
         !UNIT_PARALLEL_EXCLUSIONS.has(path)
       );
+    case "unit:serial":
+      return candidates.filter((path) => UNIT_SERIAL_FILES.includes(path));
     case "unit:cwd":
       return candidates.filter((path) => UNIT_CWD_FILES.includes(path));
     case "unit:cwd-exclusion":
       return candidates.filter((path) =>
         UNIT_CWD_EXCLUSION_FILES.includes(path)
+      );
+    case "integration:legacy-source-roots":
+      return candidates.filter((path) =>
+        startsWithAny(path, UNIT_ROOTS) && isTsTest(path) &&
+        isIntegrationTest(path)
       );
     case "integration:legacy-tests-root":
     case "coverage:integration":
