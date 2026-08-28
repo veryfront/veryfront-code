@@ -50,7 +50,7 @@ const UNSYNCED_README_PATHS = SYNCED_DOC_DIRS.map((dir) => `${dir}/README.md`);
  * load; a genuinely dynamic attribute has no literal to check.
  */
 const HTML_DESTINATION_ATTRIBUTE_SOURCE =
-  /(?:^|\s)(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*\(*\s*"((?:\\[\s\S]|[^"\\])*)"\s*\)*\s*\}|\{\s*\(*\s*'((?:\\[\s\S]|[^'\\])*)'\s*\)*\s*\}|\{\s*\(*\s*`((?:\\[\s\S]|\$(?!\{)|[^`\\$])*)`\s*\)*\s*\})/;
+  /(?:^|\s)(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*((?:\(\s*)*)"((?:\\[\s\S]|[^"\\])*)"((?:\s*\))*)\s*\}|\{\s*((?:\(\s*)*)'((?:\\[\s\S]|[^'\\])*)'((?:\s*\))*)\s*\}|\{\s*((?:\(\s*)*)`((?:\\[\s\S]|\$(?!\{)|[^`\\$])*)`((?:\s*\))*)\s*\})/;
 const URI_AUTOLINK_SOURCE = /<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*)>/g;
 /** Any origin works: only the resolved path is read back out. */
 const RESOLUTION_ORIGIN = "https://docs.invalid";
@@ -336,6 +336,11 @@ function blockContentStart(text: string, lineStart: number): number {
   }
 }
 
+function allowsFollowingIndentedCode(line: string): boolean {
+  return /^(?:#{1,6}(?:[ \t]+|$)|(?:=+|-+)[ \t]*$|(?:\*[ \t]*){3,}$|(?:_[ \t]*){3,}$)/
+    .test(line);
+}
+
 interface Range {
   start: number;
   end: number;
@@ -409,7 +414,7 @@ function markdownCodeRanges(text: string): Range[] {
       } else if (blank) {
         canStartIndentedCode = true;
       } else {
-        canStartIndentedCode = false;
+        canStartIndentedCode = allowsFollowingIndentedCode(blockLine);
         indentedCode = false;
       }
     }
@@ -866,11 +871,25 @@ export function scanDestinations(text: string): Destination[] {
     let htmlMatch: RegExpExecArray | null;
     while ((htmlMatch = htmlDestination.exec(tag))) {
       if (!topLevelOffsets.has(htmlMatch.index)) continue;
-      const rawHref = htmlMatch[1] ?? htmlMatch[2] ?? htmlMatch[3] ??
-        htmlMatch[4] ?? htmlMatch[5];
+      const expression = htmlMatch[4] !== undefined
+        ? { opening: htmlMatch[3]!, href: htmlMatch[4], closing: htmlMatch[5]! }
+        : htmlMatch[7] !== undefined
+        ? { opening: htmlMatch[6]!, href: htmlMatch[7], closing: htmlMatch[8]! }
+        : htmlMatch[10] !== undefined
+        ? {
+          opening: htmlMatch[9]!,
+          href: htmlMatch[10],
+          closing: htmlMatch[11]!,
+        }
+        : undefined;
+      if (
+        expression !== undefined &&
+        (expression.opening.match(/\(/g)?.length ?? 0) !==
+          (expression.closing.match(/\)/g)?.length ?? 0)
+      ) continue;
+      const rawHref = htmlMatch[1] ?? htmlMatch[2] ?? expression?.href;
       if (rawHref === undefined) continue;
-      const href = htmlMatch[3] !== undefined || htmlMatch[4] !== undefined ||
-          htmlMatch[5] !== undefined
+      const href = expression !== undefined
         ? decodeJavaScriptStringLiteral(rawHref)
         : rawHref;
       if (href === undefined) continue;

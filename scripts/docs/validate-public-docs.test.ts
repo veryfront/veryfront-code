@@ -227,6 +227,21 @@ describe("public docs validation", () => {
       destinations('<a href={("../architecture/parenthesized.md")}>gate</a>'),
       ["../architecture/parenthesized.md"],
     );
+    assertEquals(
+      destinations(
+        '<a href={(( "../architecture/nested.md" ))}>gate</a>',
+      ),
+      ["../architecture/nested.md"],
+    );
+    assertEquals(
+      destinations(
+        '<a href={("../architecture/missing-close.md"}>gate</a>\n' +
+          '<a href={"../architecture/missing-open.md")}>gate</a>\n' +
+          '<a href={(("../architecture/too-few.md")}>gate</a>\n' +
+          '<a href={("../architecture/too-many.md"))}>gate</a>',
+      ),
+      [],
+    );
   });
 
   it("evaluates JavaScript escapes in a JSX href string literal", () => {
@@ -415,6 +430,14 @@ describe("public docs validation", () => {
           "[real](../architecture/real.md)\n`",
       ),
       ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        "# Heading\n    [atx](../architecture/atx.md)\n" +
+          "\nSetext\n=======\n    [setext](../architecture/setext.md)\n" +
+          "\n---\n    [thematic](../architecture/thematic.md)",
+      ),
+      [],
     );
   });
 
