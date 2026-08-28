@@ -446,6 +446,55 @@ describe("MemoryBackend", () => {
       assertEquals(updated?.context.dynamic, "stored");
     });
 
+    it("rechecks conditional run preconditions after context hooks", async () => {
+      const statusRunId = "run-context-reentrant-status-fence";
+      await backend.createRun(createTestRun(statusRunId, {
+        status: "running",
+        workerId: "worker-original",
+      }));
+      const statusHook = {
+        toJSON() {
+          void backend.updateRun(statusRunId, { status: "waiting" });
+          return "stale";
+        },
+      };
+
+      assertEquals(
+        await backend.updateRunIfStatus(statusRunId, ["running"], {
+          context: { input: {}, statusHook },
+        }),
+        false,
+      );
+      const statusRun = await backend.getRun(statusRunId);
+      assertEquals(statusRun?.status, "waiting");
+      assertEquals(statusRun?.context.statusHook, undefined);
+
+      const workerRunId = "run-context-reentrant-worker-fence";
+      await backend.createRun(createTestRun(workerRunId, {
+        status: "running",
+        workerId: "worker-original",
+      }));
+      const workerHook = {
+        toJSON() {
+          void backend.updateRun(workerRunId, { workerId: "worker-replaced" });
+          return "stale";
+        },
+      };
+
+      assertEquals(
+        await backend.updateRunIfStatusAndWorker(
+          workerRunId,
+          ["running"],
+          "worker-original",
+          { context: { input: {}, workerHook } },
+        ),
+        false,
+      );
+      const workerRun = await backend.getRun(workerRunId);
+      assertEquals(workerRun?.workerId, "worker-replaced");
+      assertEquals(workerRun?.context.workerHook, undefined);
+    });
+
     it("deletes context keys omitted by JSON through conditional updates", async () => {
       await backend.createRun(createTestRun("run-context-conditional-omitted", {
         status: "running",
@@ -1091,6 +1140,45 @@ describe("MemoryBackend", () => {
         "Looks good!",
         "a losing decision must not overwrite the recorded comment",
       );
+    });
+
+    it("rechecks the winning approval after decision data hooks", async () => {
+      const runId = "run-approval-reentrant-decision";
+      const approvalId = "approval-reentrant-decision";
+      await backend.savePendingApproval(runId, {
+        id: approvalId,
+        nodeId: "review",
+        status: "pending",
+        message: "Review needed",
+        payload: {},
+        requestedAt: new Date(),
+      });
+      const decisionData = {
+        toJSON() {
+          void backend.updateApproval(runId, approvalId, {
+            approved: true,
+            approver: "winner@example.com",
+            comment: "First decision",
+          });
+          return { source: "loser" };
+        },
+      };
+
+      assertEquals(
+        await backend.updateApproval(runId, approvalId, {
+          approved: false,
+          approver: "loser@example.com",
+          comment: "Late decision",
+          data: decisionData,
+        }),
+        false,
+      );
+
+      const approval = await backend.getPendingApproval(runId, approvalId);
+      assertEquals(approval?.status, "approved");
+      assertEquals(approval?.decidedBy, "winner@example.com");
+      assertEquals(approval?.comment, "First decision");
+      assertEquals(approval?.decisionData, undefined);
     });
 
     it("uses the JSON persistence contract for non-strict approval decision data", async () => {
