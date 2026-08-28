@@ -1761,6 +1761,23 @@ describe("public docs validation", () => {
     );
   });
 
+  it("scans multiline MDX ESM block comments in linear time", () => {
+    const comment = Array.from(
+      { length: 80_001 },
+      (_, index) => `line ${index} [old](../architecture/private.md)`,
+    ).join("\n");
+    const source = `export const sample = /*\n${comment}\n*/ "done"\n\n` +
+      "[real](../architecture/real.md)";
+    const startedAt = performance.now();
+
+    assertEquals(destinations(source), ["../architecture/real.md"]);
+    assertLess(
+      performance.now() - startedAt,
+      2_000,
+      "multiline block comment scanning must stay linear",
+    );
+  });
+
   it("ignores destinations inside initial YAML frontmatter", () => {
     const source = '---\ntitle: "[sample](./does-not-exist.md)"\n' +
       "canonical: https://veryfront.com/docs/code/architecture/private\n---\n" +

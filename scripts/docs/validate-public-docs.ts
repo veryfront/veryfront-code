@@ -776,6 +776,9 @@ interface JavaScriptSignificantToken {
   readonly kind: "other" | "regex";
 }
 
+type JavaScriptQuote = '"' | "'";
+type JavaScriptStringDelimiter = JavaScriptQuote | "`";
+
 interface JavaScriptScannedToken {
   readonly end: number;
   readonly kind: "literal" | "other" | "regex" | "trivia";
@@ -785,7 +788,7 @@ interface JavaScriptScannedToken {
 function quotedRangeEnd(
   text: string,
   start: number,
-  quote: '"' | "'" | "`",
+  quote: JavaScriptStringDelimiter,
 ): number | undefined {
   if (quote === "`") return javaScriptTemplateEnd(text, start);
   for (let cursor = start + 1; cursor < text.length; cursor++) {
@@ -1028,7 +1031,7 @@ function mdxEsmMayStart(text: string, lineStart: number): boolean {
 
 interface JavaScriptBalance {
   readonly delimiters: string[];
-  quote: '"' | "'" | undefined;
+  quote: JavaScriptQuote | undefined;
   blockComment: boolean;
   templateEnd: number;
   previousSignificantToken: JavaScriptSignificantToken | undefined;
@@ -1123,83 +1126,130 @@ function javaScriptTokenAt(
   return { end: start + 1, kind: "other" };
 }
 
+function javaScriptLineCommentEnd(
+  text: string,
+  start: number,
+  lineEnd: number,
+  state: JavaScriptBalance,
+): number | undefined {
+  if (state.blockComment) {
+    let closing: number | undefined;
+    for (let cursor = start; cursor + 1 < lineEnd; cursor++) {
+      if (text.startsWith("*/", cursor)) {
+        closing = cursor + 2;
+        break;
+      }
+    }
+    if (closing === undefined) return lineEnd;
+    state.blockComment = false;
+    return closing;
+  }
+  if (state.quote !== undefined) return undefined;
+  if (text.startsWith("//", start)) return lineEnd;
+  if (!text.startsWith("/*", start)) return undefined;
+  state.blockComment = true;
+  return start + 2;
+}
+
+function javaScriptLineQuoteEnd(
+  text: string,
+  start: number,
+  state: JavaScriptBalance,
+): number | undefined {
+  if (state.quote === undefined) return undefined;
+  const character = text[start]!;
+  if (character === "\\") return start + 2;
+  if (character === state.quote) {
+    state.quote = undefined;
+    state.previousSignificantToken = { end: start + 1, kind: "other" };
+  }
+  return start + 1;
+}
+
+function javaScriptLineTokenEnd(
+  text: string,
+  start: number,
+  lineEnd: number,
+  state: JavaScriptBalance,
+): number | undefined {
+  const character = text[start]!;
+  if (character === "`") {
+    const end = javaScriptTemplateEnd(text, start);
+    if (end === undefined) state.valid = false;
+    else {
+      state.previousSignificantToken = { end, kind: "other" };
+      state.templateEnd = end;
+    }
+    return end ?? lineEnd;
+  }
+  if (character === '"' || character === "'") {
+    state.quote = character;
+    return start + 1;
+  }
+  if (
+    character !== "/" ||
+    !javaScriptRegexMayStart(text, state.previousSignificantToken)
+  ) return undefined;
+
+  const end = javaScriptRegexEnd(text, start);
+  if (end === undefined) return undefined;
+  state.previousSignificantToken = { end, kind: "regex" };
+  return end;
+}
+
+const JAVASCRIPT_DELIMITER_CLOSERS: Readonly<Record<string, string>> = {
+  ")": "(",
+  "]": "[",
+  "}": "{",
+};
+
+function recordJavaScriptDelimiter(
+  character: string,
+  state: JavaScriptBalance,
+): void {
+  if (character === "(" || character === "[" || character === "{") {
+    state.delimiters.push(character);
+    return;
+  }
+  const opener = JAVASCRIPT_DELIMITER_CLOSERS[character];
+  if (opener === undefined) return;
+  if (state.delimiters.at(-1) !== opener) {
+    state.valid = false;
+    return;
+  }
+  state.delimiters.pop();
+}
+
 function scanJavaScriptLine(
   text: string,
   lineStart: number,
   lineEnd: number,
   state: JavaScriptBalance,
 ): void {
-  const closers: Readonly<Record<string, string>> = {
-    ")": "(",
-    "]": "[",
-    "}": "{",
-  };
-  for (
-    let cursor = Math.max(lineStart, state.templateEnd);
-    cursor < lineEnd;
-    cursor++
-  ) {
+  let cursor = Math.max(lineStart, state.templateEnd);
+  while (cursor < lineEnd) {
+    const commentEnd = javaScriptLineCommentEnd(text, cursor, lineEnd, state);
+    if (commentEnd !== undefined) {
+      cursor = commentEnd;
+      continue;
+    }
+    const quoteEnd = javaScriptLineQuoteEnd(text, cursor, state);
+    if (quoteEnd !== undefined) {
+      cursor = quoteEnd;
+      continue;
+    }
+    const tokenEnd = javaScriptLineTokenEnd(text, cursor, lineEnd, state);
+    if (tokenEnd !== undefined) {
+      cursor = tokenEnd;
+      continue;
+    }
     const character = text[cursor]!;
-    if (state.blockComment) {
-      if (text.startsWith("*/", cursor)) {
-        state.blockComment = false;
-        cursor++;
-      }
-      continue;
+    if (!/\s/.test(character)) {
+      state.previousSignificantToken = { end: cursor + 1, kind: "other" };
+      recordJavaScriptDelimiter(character, state);
+      if (!state.valid) return;
     }
-    if (state.quote !== undefined) {
-      if (character === "\\") cursor++;
-      else if (character === state.quote) {
-        state.quote = undefined;
-        state.previousSignificantToken = { end: cursor + 1, kind: "other" };
-      }
-      continue;
-    }
-    if (text.startsWith("//", cursor)) break;
-    if (text.startsWith("/*", cursor)) {
-      state.blockComment = true;
-      cursor++;
-      continue;
-    }
-    if (character === "`") {
-      const templateEnd = javaScriptTemplateEnd(text, cursor);
-      if (templateEnd === undefined) {
-        state.valid = false;
-        return;
-      }
-      state.previousSignificantToken = { end: templateEnd, kind: "other" };
-      state.templateEnd = templateEnd;
-      cursor = templateEnd - 1;
-      continue;
-    }
-    if (character === '"' || character === "'") {
-      state.quote = character;
-      continue;
-    }
-    if (
-      character === "/" &&
-      javaScriptRegexMayStart(text, state.previousSignificantToken)
-    ) {
-      const regexEnd = javaScriptRegexEnd(text, cursor);
-      if (regexEnd !== undefined) {
-        state.previousSignificantToken = { end: regexEnd, kind: "regex" };
-        cursor = regexEnd - 1;
-        continue;
-      }
-    }
-    if (/\s/.test(character)) continue;
-    state.previousSignificantToken = { end: cursor + 1, kind: "other" };
-    if (character === "(" || character === "[" || character === "{") {
-      state.delimiters.push(character);
-      continue;
-    }
-    const opener = closers[character];
-    if (opener === undefined) continue;
-    if (state.delimiters.at(-1) !== opener) {
-      state.valid = false;
-      return;
-    }
-    state.delimiters.pop();
+    cursor++;
   }
 }
 
@@ -1437,20 +1487,24 @@ function scanTagSyntax(
   start: number,
 ): TagSyntaxScan {
   const topLevelOffsets = new Set<number>();
-  let quote: '"' | "'" | undefined;
+  let quote: JavaScriptQuote | undefined;
   let quoteUsesJavaScriptEscapes = false;
   let expressionDepth = 0;
   let previousSignificantToken: JavaScriptSignificantToken | undefined;
-  for (let cursor = start; cursor < text.length; cursor++) {
+  let cursor = start;
+  while (cursor < text.length) {
     const character = text[cursor]!;
     if (quote !== undefined) {
-      if (quoteUsesJavaScriptEscapes && character === "\\") cursor++;
+      if (quoteUsesJavaScriptEscapes && character === "\\") cursor += 2;
       else if (character === quote) {
         quote = undefined;
         if (expressionDepth > 0) {
           previousSignificantToken = { end: cursor + 1, kind: "other" };
         }
         quoteUsesJavaScriptEscapes = false;
+        cursor++;
+      } else {
+        cursor++;
       }
       continue;
     }
@@ -1458,7 +1512,7 @@ function scanTagSyntax(
       ? javaScriptCommentEnd(text, cursor)
       : undefined;
     if (commentEnd !== undefined) {
-      cursor = commentEnd - 1;
+      cursor = commentEnd;
       continue;
     }
     if (
@@ -1468,7 +1522,7 @@ function scanTagSyntax(
       const regexEnd = javaScriptRegexEnd(text, cursor);
       if (regexEnd !== undefined) {
         previousSignificantToken = { end: regexEnd, kind: "regex" };
-        cursor = regexEnd - 1;
+        cursor = regexEnd;
         continue;
       }
     }
@@ -1482,11 +1536,14 @@ function scanTagSyntax(
       const templateEnd = javaScriptTemplateEnd(text, cursor);
       if (templateEnd !== undefined) {
         previousSignificantToken = { end: templateEnd, kind: "other" };
-        cursor = templateEnd - 1;
+        cursor = templateEnd;
         continue;
       }
     }
-    if (expressionDepth > 0 && /\s/.test(character)) continue;
+    if (expressionDepth > 0 && /\s/.test(character)) {
+      cursor++;
+      continue;
+    }
     if (expressionDepth > 0 || character === "{") {
       previousSignificantToken = { end: cursor + 1, kind: "other" };
     }
@@ -1495,6 +1552,7 @@ function scanTagSyntax(
       quoteUsesJavaScriptEscapes = expressionDepth > 0;
     } else if (character === "{") expressionDepth++;
     else if (character === "}" && expressionDepth > 0) expressionDepth--;
+    cursor++;
   }
   return { end: undefined, topLevelOffsets };
 }
