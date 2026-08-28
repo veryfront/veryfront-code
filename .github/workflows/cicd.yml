@@ -476,6 +476,38 @@ jobs:
           name: unit
           fail_ci_if_error: false
 
+  # Automatic Analysis runs on Sonar's servers and cannot see coverage, which is
+  # only produced where the tests run. Reuses the shard artifacts; runs no
+  # repository code, like codecov-upload.
+  sonar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    name: sonar
+    needs: [coverage-shards]
+    if: ${{ needs.coverage-shards.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Sonar reads git history for new-code and blame.
+          fetch-depth: 0
+      - name: Download unit coverage lcov files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: coverage-profiles
+          pattern: coverage-shard-*
+      - name: Normalize lcov paths
+        run: |
+          for file in coverage-profiles/coverage-shard-*/lcov.info; do
+            sed -i "s|^SF:${GITHUB_WORKSPACE}/|SF:|" "$file"
+          done
+      - name: SonarQube Cloud scan
+        uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602 # v6.0.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
   tests-e2e-rsc-browser:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
