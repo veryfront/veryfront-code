@@ -788,6 +788,7 @@ type JavaScriptDelimiterContext = "control" | "for" | "nested" | undefined;
 
 interface JavaScriptSignificantToken {
   readonly end: number;
+  readonly identifier?: true;
   readonly kind: JavaScriptSignificantTokenKind;
   readonly followsForOfLeftOperand?: true;
   readonly precedingIdentifierKeyword?: JavaScriptPrecedingIdentifierKeyword;
@@ -819,6 +820,9 @@ function javaScriptTokenWithIdentifierContext(
       (escapeRange !== undefined && escapeRange.start < start) ||
       (codeUnit >= 0xdc00 && codeUnit <= 0xdfff &&
         javaScriptIdentifierContinueBefore(text, start + 1)));
+  const identifier = continuesIdentifierWord
+    ? previousSignificantToken?.identifier === true
+    : javaScriptIdentifierStartsAt(text, start);
   let precedingIdentifierKeyword:
     | JavaScriptPrecedingIdentifierKeyword
     | undefined;
@@ -843,6 +847,7 @@ function javaScriptTokenWithIdentifierContext(
 
   return {
     end,
+    ...(identifier ? { identifier: true } : {}),
     kind,
     ...(followsForOfLeftOperand ? { followsForOfLeftOperand: true } : {}),
     ...(precedingIdentifierKeyword === undefined
@@ -1204,6 +1209,7 @@ const JAVASCRIPT_CONTROL_HEADER_KEYWORDS: ReadonlySet<string> = new Set([
   "with",
 ]);
 
+const JAVASCRIPT_IDENTIFIER_START = /[$_\p{ID_Start}]/u;
 const JAVASCRIPT_IDENTIFIER_CONTINUE = /[$_\u200C\u200D\p{ID_Continue}]/u;
 const JAVASCRIPT_IDENTIFIER_ESCAPE =
   /\\u(?:([0-9A-Fa-f]{4})|\{([0-9A-Fa-f]{1,6})\})$/;
@@ -1243,6 +1249,28 @@ function javaScriptIdentifierCodeUnitAt(
   return (codeUnit >= 0xdc00 && codeUnit <= 0xdfff &&
     javaScriptIdentifierContinueBefore(text, offset + 1)) ||
     javaScriptIdentifierEscapeRangeAt(text, offset) !== undefined;
+}
+
+function javaScriptIdentifierStartsAt(
+  text: string,
+  offset: number,
+): boolean {
+  const codePoint = text.codePointAt(offset);
+  if (
+    codePoint !== undefined &&
+    JAVASCRIPT_IDENTIFIER_START.test(String.fromCodePoint(codePoint))
+  ) return true;
+
+  const escapeRange = javaScriptIdentifierEscapeRangeAt(text, offset);
+  if (escapeRange?.start !== offset) return false;
+  const match = JAVASCRIPT_IDENTIFIER_ESCAPE_PREFIX.exec(
+    text.slice(offset, escapeRange.end),
+  );
+  if (match === null) return false;
+  const escapedCodePoint = Number.parseInt(match[1] ?? match[2] ?? "", 16);
+  return JAVASCRIPT_IDENTIFIER_START.test(
+    String.fromCodePoint(escapedCodePoint),
+  );
 }
 
 function javaScriptCodePointBefore(
@@ -1326,7 +1354,8 @@ function javaScriptTokenMayEndForOfLeftOperand(
   token: JavaScriptSignificantToken,
 ): boolean {
   const word = javaScriptIdentifierWordAtEnd(text, token.end);
-  if (word !== undefined) {
+  if (token.identifier === true) {
+    if (word === undefined) return true;
     return !JAVASCRIPT_REGEX_PREFIX_KEYWORDS.has(word) &&
       !JAVASCRIPT_CONTROL_HEADER_KEYWORDS.has(word) &&
       word !== "break" && word !== "continue" && word !== "debugger" &&

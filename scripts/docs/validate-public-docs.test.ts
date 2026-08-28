@@ -512,6 +512,16 @@ describe("public docs validation", () => {
           '<a data-ok={(() => { for (const x of /[}>]/.source) {} return true })()} href="../architecture/for-of-regex.md">ok</a>\n' +
           '<a data-ok={(() => { for (using of /[}>]/.source) {} return true })()} href="../architecture/for-using-of-regex.md">ok</a>\n' +
           '<a data-ok={(async () => { for await (const x of /[}>]/.source) {} return true })()} href="../architecture/for-await-of-regex.md">ok</a>\n' +
+          '<a data-ok={(() => { for (item1 of /[}>]/.source) {} return true })()} href="../architecture/for-digit-identifier-of-regex.md">ok</a>\n' +
+          '<a data-ok={(() => { for (item_ of /[}>]/.source) {} return true })()} href="../architecture/for-underscore-identifier-of-regex.md">ok</a>\n' +
+          '<a data-ok={(() => { for (item$ of /[}>]/.source) {} return true })()} href="../architecture/for-dollar-identifier-of-regex.md">ok</a>\n' +
+          '<a data-ok={(() => { for (π of /[}>]/.source) {} return true })()} href="../architecture/for-unicode-identifier-of-regex.md">ok</a>\n' +
+          String
+            .raw`<a data-ok={(() => { for (\u{10400}item of /[}>]/.source) {} return true })()} href="../architecture/for-escaped-start-identifier-of-regex.md">ok</a>` +
+          "\n" +
+          String
+            .raw`<a data-ok={(() => { for (item\u0031 of /[}>]/.source) {} return true })()} href="../architecture/for-escaped-end-identifier-of-regex.md">ok</a>` +
+          "\n" +
           '<a data-ok={(() => { for (of / ({ marker: ">/" }).length; false;) {} return true })()} href="../architecture/for-of-division.md">ok</a>\n' +
           '<a data-ok={(() => { for (const x = { value: of / ({ marker: ">/" }).length }; false;) {} return true })()} href="../architecture/for-header-nested-of-division.md">ok</a>\n' +
           '<a data-ok={of / ({ marker: ">/" }).length} href="../architecture/of-division.md">ok</a>\n' +
@@ -560,6 +570,12 @@ describe("public docs validation", () => {
         "../architecture/for-of-regex.md",
         "../architecture/for-using-of-regex.md",
         "../architecture/for-await-of-regex.md",
+        "../architecture/for-digit-identifier-of-regex.md",
+        "../architecture/for-underscore-identifier-of-regex.md",
+        "../architecture/for-dollar-identifier-of-regex.md",
+        "../architecture/for-unicode-identifier-of-regex.md",
+        "../architecture/for-escaped-start-identifier-of-regex.md",
+        "../architecture/for-escaped-end-identifier-of-regex.md",
         "../architecture/for-of-division.md",
         "../architecture/for-header-nested-of-division.md",
         "../architecture/of-division.md",
@@ -1727,6 +1743,20 @@ describe("public docs validation", () => {
     );
     assertEquals(
       destinations(
+        '{(() => { for (item1 of /[}]/.source) {} return "[old](../architecture/expression-for-of.md)"; })()}\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        "export const sample = `${(() => { for (item_ of /[}]/.source) {} return '[old](../architecture/template-for-of.md)'; })()}`\n\n" +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
         "export const sample = `${--/}/.lastIndex} / \\` " +
           "[old](../architecture/prefix-decrement.md)`",
       ),
@@ -1783,6 +1813,16 @@ describe("public docs validation", () => {
           "  if (value) {} else /[}]/.test(value);\n" +
           "  do /[}]/.test(value); while (false);\n" +
           '  return "[old](../architecture/statement-context.md)";\n' +
+          "}\n\n" +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        "export function sample() {\n" +
+          "  for (π of /[}]/.source) {}\n" +
+          '  return "[old](../architecture/esm-for-of.md)";\n' +
           "}\n\n" +
           "[real](../architecture/real.md)",
       ),
