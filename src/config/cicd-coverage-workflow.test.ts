@@ -150,6 +150,12 @@ describe("cicd coverage workflow", () => {
     assertStringIncludes(workflow, "actions/download-artifact");
     assertStringIncludes(workflow, "Download unit coverage lcov files");
     assertStringIncludes(workflow, "pattern: coverage-shard-*");
+    assertStringIncludes(workflow, "sonar:");
+    assertStringIncludes(workflow, "name: sonar");
+    assertStringIncludes(
+      await readRepoFile("sonar-project.properties"),
+      "sonar.javascript.node.maxspace=8192",
+    );
     assertStringIncludes(
       workflow,
       "deno task coverage:ci:merge coverage-profiles/coverage-shard-*",

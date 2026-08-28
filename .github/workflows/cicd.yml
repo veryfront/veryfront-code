@@ -488,7 +488,7 @@ jobs:
     timeout-minutes: 15
     name: sonar
     needs: [coverage-shards]
-    if: ${{ needs.coverage-shards.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.event.pull_request.user.login != 'dependabot[bot]' }}
+    if: ${{ needs.coverage-shards.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
     permissions:
       contents: read
     steps:
@@ -746,13 +746,18 @@ jobs:
       - tests-bun
       - tests-binary-e2e
       - tests-e2e-rsc-browser
+      - sonar
     if: ${{ always() }}
     steps:
       - name: Require merge correctness dependencies
         env:
+          # Sonar needs SONAR_TOKEN, so fork and Dependabot PRs intentionally
+          # skip it. Pushes, merge-group runs, and trusted PRs must block on it.
+          SONAR_REQUIRED: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
           SOURCE_CHECKS_RESULT: ${{ needs.ci.result }}
           UNIT_TESTS_RESULT: ${{ needs.unit-tests.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
+          SONAR_RESULT: ${{ needs.sonar.result }}
           INTEGRATION_TESTS_RESULT: ${{ needs.tests.result }}
           NODE_RUNTIME_TESTS_RESULT: ${{ needs.tests-node.result }}
           BUN_RUNTIME_TESTS_RESULT: ${{ needs.tests-bun.result }}
@@ -764,6 +769,7 @@ jobs:
             SOURCE_CHECKS_RESULT \
             UNIT_TESTS_RESULT \
             COVERAGE_RESULT \
+            SONAR_RESULT \
             INTEGRATION_TESTS_RESULT \
             NODE_RUNTIME_TESTS_RESULT \
             BUN_RUNTIME_TESTS_RESULT \
@@ -771,6 +777,9 @@ jobs:
             RSC_BROWSER_E2E_RESULT
           do
             result="${!result_name}"
+            if [ "$result_name" = "SONAR_RESULT" ] && [ "$SONAR_REQUIRED" != "true" ]; then
+              continue
+            fi
             if [ "$result" != "success" ]; then
               echo "::error::$result_name finished with $result"
               failed=1
