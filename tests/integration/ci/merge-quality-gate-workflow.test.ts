@@ -30,6 +30,11 @@ const RESULT_ENV = {
   BINARY_E2E_RESULT: "${{ needs.tests-binary-e2e.result }}",
   RSC_BROWSER_E2E_RESULT: "${{ needs.tests-e2e-rsc-browser.result }}",
 } as const;
+const SONAR_REQUIRED_CONDITION =
+  "github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]')";
+const SONAR_REQUIRED_EXPRESSION = `\${{ ${SONAR_REQUIRED_CONDITION} }}`;
+const SONAR_JOB_EXPRESSION =
+  "${{ needs.coverage-shards.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.event.pull_request.user.login != 'dependabot[bot]' }}";
 
 function asRecord(value: unknown, context: string): YamlRecord {
   assert(
@@ -129,11 +134,22 @@ describe("merge quality gate workflow", () => {
     assertEquals(
       asRecord(step.env, "merge quality gate result env"),
       {
-        SONAR_REQUIRED:
-          "${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]') }}",
+        SONAR_REQUIRED: SONAR_REQUIRED_EXPRESSION,
         ...RESULT_ENV,
       },
     );
+  });
+
+  it("keeps Sonar execution and merge-gate enforcement on the same trust condition", async () => {
+    const workflow = await readWorkflow();
+    const jobs = asRecord(workflow.jobs, "cicd workflow jobs");
+    const sonar = asRecord(jobs.sonar, "sonar job");
+    const gate = asRecord(jobs["quality-gate-merge"], "merge quality gate job");
+    const step = gateStep(gate);
+    const gateEnv = asRecord(step.env, "merge quality gate result env");
+
+    assertEquals(sonar.if, SONAR_JOB_EXPRESSION);
+    assertEquals(gateEnv.SONAR_REQUIRED, SONAR_REQUIRED_EXPRESSION);
   });
 
   it("blocks every release path on the complete merge correctness gate", async () => {
