@@ -8,6 +8,16 @@ import {
   publishedTargetExists,
 } from "./validate-public-docs.ts";
 
+function publishedFiles(...paths: string[]) {
+  const suffixes = paths.map((path) => `/${path}`);
+  return (path: string): { readonly isFile: boolean } => {
+    if (suffixes.some((suffix) => path.endsWith(suffix))) {
+      return { isFile: true };
+    }
+    throw new Error("missing fixture");
+  };
+}
+
 describe("public docs validation", () => {
   it("parses balanced and escaped inline link labels", () => {
     assertEquals(
@@ -175,6 +185,7 @@ describe("public docs validation", () => {
       collectUnpublishedLinkIssues(
         "docs/guides/example.md",
         String.raw`<a href={".\u002fdeploying.md"}>deploy</a>`,
+        publishedFiles("docs/guides/deploying.md"),
       ),
       [],
     );
@@ -209,6 +220,7 @@ describe("public docs validation", () => {
       collectUnpublishedLinkIssues(
         "docs/guides/example.md",
         "[public](https://veryfront.com/docs/code/guides/deploying)",
+        publishedFiles("docs/guides/deploying.md"),
       ),
       [],
     );
@@ -221,6 +233,7 @@ describe("public docs validation", () => {
         "[public](/code/guides/deploying)\n" +
         "[absolute private](https://veryfront.com/code/architecture/private) " +
         "[absolute public](https://veryfront.com/code/guides/deploying)",
+      publishedFiles("docs/guides/deploying.md"),
     );
 
     assertEquals(issues.length, 2);
@@ -257,6 +270,7 @@ describe("public docs validation", () => {
       collectUnpublishedLinkIssues(
         "docs/guides/integrations/jira.md",
         "[cloud](?tab=cloud)",
+        publishedFiles("docs/guides/integrations/jira.md"),
       ),
       [],
     );
@@ -445,6 +459,10 @@ describe("public docs validation", () => {
       "docs/guides/example.md",
       "[sibling](./deploying.md) [dir](../concepts/) [anchor](#section)\n" +
         "[root](/code/guides/deploying) [query](./deploying.md?x=1)\n",
+      publishedFiles(
+        "docs/guides/deploying.md",
+        "docs/concepts/index.md",
+      ),
     );
 
     assertEquals(issues, []);

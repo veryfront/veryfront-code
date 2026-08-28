@@ -20,14 +20,6 @@ interface Rule {
   message: string;
 }
 
-const PUBLIC_DOC_ROOTS = [
-  "README.md",
-  "docs/getting-started",
-  "docs/guides",
-  "docs/concepts",
-  "docs/api-reference",
-];
-
 /**
  * The directories veryfront-docs copies into its published `docs/code/` tree.
  * Its sync workflow copies exactly these four and nothing else, so a relative
@@ -41,6 +33,8 @@ const SYNCED_DOC_DIRS = [
   "docs/concepts",
   "docs/api-reference",
 ];
+
+const PUBLIC_DOC_ROOTS = ["README.md", ...SYNCED_DOC_DIRS];
 
 /**
  * The sync deletes the `README.md` at the root of each synced directory, so
@@ -654,6 +648,7 @@ function lineAt(lineStarts: readonly number[], offset: number): number {
 export function collectUnpublishedLinkIssues(
   path: string,
   content: string,
+  stat: (path: string) => { readonly isFile: boolean } = Deno.statSync,
 ): PublicDocIssue[] {
   if (!isPublishedPage(path)) return [];
 
@@ -666,7 +661,7 @@ export function collectUnpublishedLinkIssues(
   const issues: PublicDocIssue[] = [];
   for (const { href, offset } of scanDestinations(content)) {
     const target = resolveDocumentationTarget(path, href);
-    if (target === undefined || publishedTargetExists(target)) continue;
+    if (target === undefined || publishedTargetExists(target, stat)) continue;
     const line = lineAt(lineStarts, offset);
     issues.push({
       path,
