@@ -579,7 +579,7 @@ describe("public docs validation", () => {
       [],
     );
     assertEquals(
-      destinations('[label]( "tooltip") and [label]( \'tooltip\')'),
+      destinations("[label]( \"tooltip\") and [label]( 'tooltip')"),
       [],
     );
     assertEquals(
@@ -1658,7 +1658,7 @@ describe("public docs validation", () => {
     );
     assertEquals(
       destinations(
-        'export const sample = `${x++ / value} / ` +\n' +
+        "export const sample = `${x++ / value} / ` +\n" +
           "[old](../architecture/postfix.md)",
       ),
       [],
