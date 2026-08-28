@@ -307,6 +307,13 @@ describe("public docs validation", () => {
       ),
       [],
     );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.md",
+        "[other service](https://veryfront.com:8443/docs/code/architecture/private)",
+      ),
+      [],
+    );
   });
 
   it("validates site-root code destinations", () => {

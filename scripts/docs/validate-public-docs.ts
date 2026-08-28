@@ -246,7 +246,7 @@ function resolveDocumentationTarget(
   let pathname: string;
   if (
     (resolved.protocol === "http:" || resolved.protocol === "https:") &&
-    resolved.hostname === VERYFRONT_DOCS_HOSTNAME
+    resolved.hostname === VERYFRONT_DOCS_HOSTNAME && resolved.port === ""
   ) {
     const prefix = normalizedPathname.startsWith(VERYFRONT_CODE_DOCS_PREFIX)
       ? VERYFRONT_CODE_DOCS_PREFIX
