@@ -772,6 +772,7 @@ interface MdxSyntaxRanges {
 }
 
 type JavaScriptSignificantTokenKind =
+  | "control-header"
   | "other"
   | "postfix-update"
   | "prefix-update"
@@ -789,6 +790,26 @@ interface JavaScriptScannedToken {
   readonly end: number;
   readonly kind: JavaScriptSignificantTokenKind | "literal" | "trivia";
   readonly string?: Range;
+}
+
+function significantJavaScriptToken(
+  text: string,
+  start: number,
+  token: JavaScriptScannedToken,
+  previousSignificantToken: JavaScriptSignificantToken | undefined,
+  controlParentheses: boolean[],
+): JavaScriptSignificantToken {
+  const kind = token.kind === "other"
+    ? javaScriptParenthesisTokenKind(
+      text,
+      text[start]!,
+      previousSignificantToken,
+      controlParentheses,
+    )
+    : token.kind === "literal" || token.kind === "trivia"
+    ? "other"
+    : token.kind;
+  return { end: token.end, kind };
 }
 
 function quotedRangeEnd(
@@ -832,6 +853,7 @@ function javaScriptTemplateInterpolationEnd(
 ): number | undefined {
   let depth = 1;
   let cursor = start + 2;
+  const controlParentheses: boolean[] = [];
   let previousSignificantToken: JavaScriptSignificantToken | undefined;
   while (cursor < text.length) {
     const token = javaScriptTokenAt(
@@ -844,10 +866,13 @@ function javaScriptTemplateInterpolationEnd(
       cursor = token.end;
       continue;
     }
-    previousSignificantToken = {
-      end: token.end,
-      kind: token.kind === "literal" ? "other" : token.kind,
-    };
+    previousSignificantToken = significantJavaScriptToken(
+      text,
+      cursor,
+      token,
+      previousSignificantToken,
+      controlParentheses,
+    );
     if (token.kind !== "other") {
       cursor = token.end;
       continue;
@@ -930,6 +955,7 @@ function mdxExpressionAt(
   const strings: Range[] = [];
   let depth = 1;
   let cursor = start + 1;
+  const controlParentheses: boolean[] = [];
   let previousSignificantToken: JavaScriptSignificantToken | undefined;
   while (cursor < text.length) {
     const token = javaScriptTokenAt(
@@ -943,10 +969,13 @@ function mdxExpressionAt(
       cursor = token.end;
       continue;
     }
-    previousSignificantToken = {
-      end: token.end,
-      kind: token.kind === "literal" ? "other" : token.kind,
-    };
+    previousSignificantToken = significantJavaScriptToken(
+      text,
+      cursor,
+      token,
+      previousSignificantToken,
+      controlParentheses,
+    );
     if (token.kind !== "other") {
       cursor = token.end;
       continue;
@@ -1037,6 +1066,7 @@ function mdxEsmMayStart(text: string, lineStart: number): boolean {
 
 interface JavaScriptBalance {
   readonly delimiters: string[];
+  readonly controlParentheses: boolean[];
   quote: JavaScriptQuote | undefined;
   blockComment: boolean;
   templateEnd: number;
@@ -1077,6 +1107,15 @@ const JAVASCRIPT_REGEX_PREFIX_KEYWORDS: ReadonlySet<string> = new Set([
   "in",
   "instanceof",
   "new",
+  "await",
+  "yield",
+]);
+
+const JAVASCRIPT_CONTROL_HEADER_KEYWORDS: ReadonlySet<string> = new Set([
+  "for",
+  "if",
+  "while",
+  "with",
 ]);
 
 const JAVASCRIPT_IDENTIFIER_CONTINUE = /[$\u200C\u200D\p{ID_Continue}]/u;
@@ -1115,12 +1154,51 @@ function javaScriptIdentifierContinueBefore(
     JAVASCRIPT_IDENTIFIER_CONTINUE.test(codePoint);
 }
 
+function javaScriptIdentifierWordAtEnd(
+  text: string,
+  end: number,
+): string | undefined {
+  let start = end;
+  while (start > 0 && /[A-Za-z]/.test(text[start - 1]!)) start--;
+  if (start === end) return undefined;
+
+  const preceding = javaScriptCodePointBefore(text, start);
+  if (
+    preceding !== undefined &&
+    (preceding === "." || preceding === "#" ||
+      javaScriptIdentifierContinueBefore(text, start))
+  ) return undefined;
+  return text.slice(start, end);
+}
+
+function javaScriptParenthesisTokenKind(
+  text: string,
+  character: string,
+  previousSignificantToken: JavaScriptSignificantToken | undefined,
+  controlParentheses: boolean[],
+): JavaScriptSignificantTokenKind {
+  if (character === "(") {
+    const keyword = previousSignificantToken === undefined
+      ? undefined
+      : javaScriptIdentifierWordAtEnd(text, previousSignificantToken.end);
+    controlParentheses.push(
+      keyword !== undefined && JAVASCRIPT_CONTROL_HEADER_KEYWORDS.has(keyword),
+    );
+  } else if (character === ")" && controlParentheses.pop()) {
+    return "control-header";
+  }
+  return "other";
+}
+
 function javaScriptRegexMayStart(
   text: string,
   previousSignificantToken: JavaScriptSignificantToken | undefined,
 ): boolean {
   if (previousSignificantToken === undefined) return true;
-  if (previousSignificantToken.kind === "prefix-update") return true;
+  if (
+    previousSignificantToken.kind === "control-header" ||
+    previousSignificantToken.kind === "prefix-update"
+  ) return true;
   if (
     previousSignificantToken.kind === "postfix-update" ||
     previousSignificantToken.kind === "regex"
@@ -1130,15 +1208,8 @@ function javaScriptRegexMayStart(
   if (text.slice(end - 3, end) === "...") return true;
   if ("=(:,![{;?&|+*%/^~<>-".includes(text[end - 1]!)) return true;
 
-  let wordStart = end;
-  while (wordStart > 0 && /[A-Za-z]/.test(text[wordStart - 1]!)) wordStart--;
-  const keyword = text.slice(wordStart, end);
-  if (!JAVASCRIPT_REGEX_PREFIX_KEYWORDS.has(keyword)) return false;
-
-  const preceding = javaScriptCodePointBefore(text, wordStart);
-  return preceding === undefined ||
-    (preceding !== "." && preceding !== "#" &&
-      !javaScriptIdentifierContinueBefore(text, wordStart));
+  const keyword = javaScriptIdentifierWordAtEnd(text, end);
+  return keyword !== undefined && JAVASCRIPT_REGEX_PREFIX_KEYWORDS.has(keyword);
 }
 
 function javaScriptUpdateKind(
@@ -1286,20 +1357,33 @@ const JAVASCRIPT_DELIMITER_CLOSERS: Readonly<Record<string, string>> = {
 };
 
 function recordJavaScriptDelimiter(
+  text: string,
   character: string,
+  previousSignificantToken: JavaScriptSignificantToken | undefined,
   state: JavaScriptBalance,
-): void {
+): JavaScriptSignificantTokenKind {
   if (character === "(" || character === "[" || character === "{") {
     state.delimiters.push(character);
-    return;
+    return javaScriptParenthesisTokenKind(
+      text,
+      character,
+      previousSignificantToken,
+      state.controlParentheses,
+    );
   }
   const opener = JAVASCRIPT_DELIMITER_CLOSERS[character];
-  if (opener === undefined) return;
+  if (opener === undefined) return "other";
   if (state.delimiters.at(-1) !== opener) {
     state.valid = false;
-    return;
+    return "other";
   }
   state.delimiters.pop();
+  return javaScriptParenthesisTokenKind(
+    text,
+    character,
+    previousSignificantToken,
+    state.controlParentheses,
+  );
 }
 
 function scanJavaScriptLine(
@@ -1327,8 +1411,13 @@ function scanJavaScriptLine(
     }
     const character = text[cursor]!;
     if (!/\s/.test(character)) {
-      state.previousSignificantToken = { end: cursor + 1, kind: "other" };
-      recordJavaScriptDelimiter(character, state);
+      const kind = recordJavaScriptDelimiter(
+        text,
+        character,
+        state.previousSignificantToken,
+        state,
+      );
+      state.previousSignificantToken = { end: cursor + 1, kind };
       if (!state.valid) return;
     }
     cursor++;
@@ -1338,6 +1427,7 @@ function scanJavaScriptLine(
 function mdxEsmRangeEnd(text: string, start: number): number | undefined {
   const state: JavaScriptBalance = {
     delimiters: [],
+    controlParentheses: [],
     quote: undefined,
     blockComment: false,
     templateEnd: start,
@@ -1572,6 +1662,7 @@ function scanTagSyntax(
   let quote: JavaScriptQuote | undefined;
   let quoteUsesJavaScriptEscapes = false;
   let expressionDepth = 0;
+  const controlParentheses: boolean[] = [];
   let previousSignificantToken: JavaScriptSignificantToken | undefined;
   let cursor = start;
   while (cursor < text.length) {
@@ -1634,7 +1725,15 @@ function scanTagSyntax(
       cursor++;
       continue;
     }
-    if (expressionDepth > 0 || character === "{") {
+    if (expressionDepth > 0) {
+      const kind = javaScriptParenthesisTokenKind(
+        text,
+        character,
+        previousSignificantToken,
+        controlParentheses,
+      );
+      previousSignificantToken = { end: cursor + 1, kind };
+    } else if (character === "{") {
       previousSignificantToken = { end: cursor + 1, kind: "other" };
     }
     if (character === '"' || character === "'") {

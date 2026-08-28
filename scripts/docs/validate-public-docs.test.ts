@@ -505,6 +505,8 @@ describe("public docs validation", () => {
           '<a data-ok={delete /}>/} href="../architecture/delete-regex.md">ok</a>\n' +
           '<a data-ok={"x" in /}>/} href="../architecture/in-regex.md">ok</a>\n' +
           '<a data-ok={value instanceof /}>/} href="../architecture/instanceof-regex.md">ok</a>\n' +
+          '<a data-ok={(async () => await /}>/.test(x))()} href="../architecture/await-regex.md">ok</a>\n' +
+          '<a data-ok={(function* () { yield /}>/.test(x) })()} href="../architecture/yield-regex.md">ok</a>\n' +
           '<a data-ok={`x ${"`"} >`} href="../architecture/template.md">ok</a>\n' +
           '<a data-ok={value / count > 1} href="../architecture/division.md">ok</a>\n' +
           '<a data-ok={++/{/.lastIndex} href="../architecture/prefix-update.md">ok</a>\n' +
@@ -540,6 +542,8 @@ describe("public docs validation", () => {
         "../architecture/delete-regex.md",
         "../architecture/in-regex.md",
         "../architecture/instanceof-regex.md",
+        "../architecture/await-regex.md",
+        "../architecture/yield-regex.md",
         "../architecture/template.md",
         "../architecture/division.md",
         "../architecture/prefix-update.md",
@@ -1694,6 +1698,13 @@ describe("public docs validation", () => {
     );
     assertEquals(
       destinations(
+        '{(() => { if (value) /[}]/.test(value); return "[old](../architecture/expression-control.md)"; })()}\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
         "export const sample = `${--/}/.lastIndex} / \\` " +
           "[old](../architecture/prefix-decrement.md)`",
       ),
@@ -1732,6 +1743,20 @@ describe("public docs validation", () => {
       destinations(
         "export const value = sample\n++/{/.lastIndex\n" +
           'export const hidden = "[old](../architecture/line-break.md)"\n\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        'export function sample(value) { if (value) /[}]/.test(value); return "[old](../architecture/control-header.md)"; }\n\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        'export const sample = `${(() => { if (value) /[}]/.test(value); return "[old](../architecture/template-control.md)"; })()}`\n\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
