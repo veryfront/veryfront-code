@@ -245,6 +245,7 @@ const ACTIVE_JSON_TAIL_REFERENCE = new Error("active JSON tail reference");
 const BIGINT_JSON_TAIL_VALUE = new Error("BigInt JSON tail value");
 
 interface JsonSerializationState {
+  readonly nonPlainBuiltinCache: WeakMap<JsonTraversalReference, boolean>;
   requiresIterativeEncoding: boolean;
 }
 
@@ -281,9 +282,10 @@ function isJsonTailPrimitive(value: unknown): boolean {
 function isUnsafeJsonTailReference(
   value: JsonTraversalReference,
   active: Set<JsonTraversalReference>,
+  nonPlainBuiltinCache: WeakMap<JsonTraversalReference, boolean>,
 ): boolean {
   return isProxyWithoutHooks(value) ||
-    isNonPlainBuiltinWithoutHooks(value) ||
+    isNonPlainBuiltinWithoutHooksCached(value, nonPlainBuiltinCache) ||
     reflectApply(setHas, active, [value]) ||
     (jsonIsRawJSON !== undefined &&
       reflectApply(jsonIsRawJSON, jsonRawSupport, [value]));
@@ -357,6 +359,7 @@ function canSnapshotJsonTailWithoutReplacer(
   root: JsonTraversalReference,
   active: Set<JsonTraversalReference>,
   applyRootToJson: boolean,
+  nonPlainBuiltinCache: WeakMap<JsonTraversalReference, boolean>,
 ): boolean {
   if (!canIdentifyProxyWithoutHooks) return false;
 
@@ -377,7 +380,7 @@ function canSnapshotJsonTailWithoutReplacer(
     if (isJsonTailPrimitive(candidate)) continue;
     if (typeof candidate === "function") {
       const reference = candidate as JsonTraversalReference;
-      if (isUnsafeJsonTailReference(reference, active)) return false;
+      if (isUnsafeJsonTailReference(reference, active, nonPlainBuiltinCache)) return false;
       try {
         if (hasJsonTailHook(reference, objectGetPrototypeOf(reference))) return false;
       } catch {
@@ -390,7 +393,7 @@ function canSnapshotJsonTailWithoutReplacer(
     const reference = candidate as JsonTraversalReference;
     if (reflectApply(setHas, localActive, [reference])) return false;
     if (reflectApply(setHas, localCompleted, [reference])) continue;
-    if (isUnsafeJsonTailReference(reference, active)) return false;
+    if (isUnsafeJsonTailReference(reference, active, nonPlainBuiltinCache)) return false;
 
     const isArray = arrayIsArray(reference);
     const inspectToJson = applyRootToJson || reference !== root;
@@ -558,7 +561,14 @@ function normalizeJsonTail(
   // it iteratively now, before later sibling hooks can mutate its data or its
   // prototypes. Native stringify here combines its depth with every active
   // normalize frame, while deferring the object makes a later hook observable.
-  if (canSnapshotJsonTailWithoutReplacer(value, active, applyRootToJson)) {
+  if (
+    canSnapshotJsonTailWithoutReplacer(
+      value,
+      active,
+      applyRootToJson,
+      state.nonPlainBuiltinCache,
+    )
+  ) {
     state.requiresIterativeEncoding = true;
     return jsonParse(encodeNormalizedJson(value)!) as NormalizedJsonValue;
   }
@@ -679,9 +689,23 @@ function hasWeakCollectionSlot(
   }
 }
 
-function isKnownNonPlainBuiltin(value: JsonTraversalReference): boolean {
+function isNonPlainBuiltinWithoutHooksCached(
+  value: JsonTraversalReference,
+  cache: WeakMap<JsonTraversalReference, boolean>,
+): boolean {
+  const cached = reflectApply(weakMapGet, cache, [value]) as boolean | undefined;
+  if (cached !== undefined) return cached;
+  const result = isNonPlainBuiltinWithoutHooks(value);
+  reflectApply(weakMapSet, cache, [value, result]);
+  return result;
+}
+
+function isKnownNonPlainBuiltin(
+  value: JsonTraversalReference,
+  cache: WeakMap<JsonTraversalReference, boolean>,
+): boolean {
   if (canIdentifyNonPlainBuiltinsWithoutHooks) {
-    return isNonPlainBuiltinWithoutHooks(value);
+    return isNonPlainBuiltinWithoutHooksCached(value, cache);
   }
   return hasNativeSlot(value, dateGetTime) ||
     hasNativeBrand(value, errorIsError, ErrorConstructor) ||
@@ -864,7 +888,10 @@ function normalizeAndFindUnrepresentableValues(
   const found: UnrepresentableValues = { fatal: [], lossy: [], fatalCount: 0, lossyCount: 0 };
   const active = new SetConstructor<JsonTraversalReference>();
   const completed = new SetConstructor<JsonTraversalReference>();
-  const serializationState: JsonSerializationState = { requiresIterativeEncoding: false };
+  const serializationState: JsonSerializationState = {
+    nonPlainBuiltinCache: new WeakMapConstructor<JsonTraversalReference, boolean>(),
+    requiresIterativeEncoding: false,
+  };
 
   const recordFatal = (path: string, kind: string) => {
     found.fatalCount++;
@@ -1235,7 +1262,7 @@ function normalizeAndFindUnrepresentableValues(
         found.fatalCount === 0 &&
         (
           ((options.strictContext === true || !canIdentifyProxyWithoutHooks) &&
-            isKnownNonPlainBuiltin(nested)) ||
+            isKnownNonPlainBuiltin(nested, serializationState.nonPlainBuiltinCache)) ||
           !isPlainObject(nested, options.strictContext === true)
         )
       ) {

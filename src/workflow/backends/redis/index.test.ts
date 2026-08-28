@@ -2166,6 +2166,16 @@ describe("RedisBackend", () => {
         "redis.call('hset', KEYS[1], 'context', mergeJsonObjects(current, value, true))",
         "conditional context merge must not cjson-decode the stored context document",
       );
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "redis.call('hset', KEYS[1], 'nodeStates', deleteJsonObjectFields(current, value, true))",
+        "node-state deletion must not cjson-reencode retained numeric outputs",
+      );
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "redis.call('hset', KEYS[1], field, mergeJsonObjects(current, value, true))",
+        "node-state merge must not cjson-reencode numeric outputs",
+      );
     });
 
     it("preserves strict context key order when patching top-level context", async () => {

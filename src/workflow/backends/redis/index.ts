@@ -342,7 +342,7 @@ ${JSON_OBJECT_PATCH_LUA}
 local function applyPatchField(field, value)
   if field == 'nodeStateDeletes' then
     local current = redis.call('hget', KEYS[1], 'nodeStates') or '{}'
-    redis.call('hset', KEYS[1], 'nodeStates', deleteJsonObjectFields(current, value))
+    redis.call('hset', KEYS[1], 'nodeStates', deleteJsonObjectFields(current, value, true))
   elseif field == 'contextDeletes' then
     local current = redis.call('hget', KEYS[1], 'context') or '{}'
     redis.call('hset', KEYS[1], 'context', deleteJsonObjectFields(current, value, true))
@@ -351,7 +351,7 @@ local function applyPatchField(field, value)
     redis.call('hset', KEYS[1], 'context', mergeJsonObjects(current, value, true))
   elseif field == 'nodeStates' then
     local current = redis.call('hget', KEYS[1], field) or '{}'
-    redis.call('hset', KEYS[1], field, mergeJsonObjects(current, value))
+    redis.call('hset', KEYS[1], field, mergeJsonObjects(current, value, true))
   else
     redis.call('hset', KEYS[1], field, value)
   end
@@ -401,7 +401,7 @@ ${JSON_OBJECT_PATCH_LUA}
 local function applyPatchField(field, value)
   if field == 'nodeStateDeletes' then
     local current = redis.call('hget', KEYS[1], 'nodeStates') or '{}'
-    redis.call('hset', KEYS[1], 'nodeStates', deleteJsonObjectFields(current, value))
+    redis.call('hset', KEYS[1], 'nodeStates', deleteJsonObjectFields(current, value, true))
   elseif field == 'contextDeletes' then
     local current = redis.call('hget', KEYS[1], 'context') or '{}'
     redis.call('hset', KEYS[1], 'context', deleteJsonObjectFields(current, value, true))
@@ -410,7 +410,7 @@ local function applyPatchField(field, value)
     redis.call('hset', KEYS[1], 'context', mergeJsonObjects(current, value, true))
   elseif not replaceMaps and field == 'nodeStates' then
     local current = redis.call('hget', KEYS[1], field) or '{}'
-    redis.call('hset', KEYS[1], field, mergeJsonObjects(current, value))
+    redis.call('hset', KEYS[1], field, mergeJsonObjects(current, value, true))
   else
     redis.call('hset', KEYS[1], field, value)
   end
