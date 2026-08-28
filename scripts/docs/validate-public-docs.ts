@@ -1078,6 +1078,9 @@ function javaScriptRegexMayStart(
   if (previousSignificantToken.kind === "regex") return false;
   const end = previousSignificantToken.end;
 
+  if (text.slice(end - 2, end) === "++" || text.slice(end - 2, end) === "--") {
+    return false;
+  }
   if ("=(:,![{;?&|+*%/^~<>-".includes(text[end - 1]!)) return true;
 
   let wordStart = end;
@@ -1301,6 +1304,9 @@ function htmlCommentRanges(
   ignoredRanges: readonly Range[],
 ): Range[] {
   const ranges: Range[] = [];
+  let hasCachedSearch = false;
+  let cachedSearchStart = -1;
+  let cachedClosing = -1;
   for (let start = 0; start < text.length;) {
     start = text.indexOf("<!--", start);
     if (start === -1) break;
@@ -1311,7 +1317,19 @@ function htmlCommentRanges(
       start += 4;
       continue;
     }
-    const closing = text.indexOf("-->", start + 4);
+    const searchStart = start + 4;
+    let closing: number;
+    if (
+      hasCachedSearch && searchStart >= cachedSearchStart &&
+      (cachedClosing === -1 || cachedClosing >= searchStart)
+    ) {
+      closing = cachedClosing;
+    } else {
+      closing = text.indexOf("-->", searchStart);
+      hasCachedSearch = true;
+      cachedSearchStart = searchStart;
+      cachedClosing = closing;
+    }
     if (closing === -1 && !htmlCommentBlockMayStart(text, start)) {
       start += 4;
       continue;
@@ -2232,8 +2250,26 @@ function markdownInlineDestinationAt(
   const afterLabel = afterMarkdownLabel(text, start);
   if (afterLabel === undefined || text[afterLabel] !== "(") return undefined;
 
-  let cursor = markdownDestinationStart(text, afterLabel + 1);
+  const destinationInput = afterLabel + 1;
+  let cursor = markdownDestinationStart(text, destinationInput);
   if (cursor === undefined || cursor >= text.length) return undefined;
+
+  if (
+    cursor > destinationInput &&
+    (text[cursor] === '"' || text[cursor] === "'" || text[cursor] === "(") &&
+    markdownDestinationCloses(text, cursor)
+  ) {
+    const linkEnd = afterInlineLink(text, afterLabel);
+    if (linkEnd === undefined) return undefined;
+    return {
+      href: "",
+      offset: cursor,
+      labelStart: start + 1,
+      labelEnd: afterLabel - 1,
+      linkEnd,
+      tail: { start: afterLabel, end: linkEnd },
+    };
+  }
 
   let href: string;
   let offset: number;

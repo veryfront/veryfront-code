@@ -579,6 +579,10 @@ describe("public docs validation", () => {
       [],
     );
     assertEquals(
+      destinations('[label]( "tooltip") and [label]( \'tooltip\')'),
+      [],
+    );
+    assertEquals(
       destinations(
         '[sample](../architecture/private.md "title"\n\n)',
       ),
@@ -1609,6 +1613,7 @@ describe("public docs validation", () => {
       ).map((destination) => destination.href),
       ["../architecture/escaped.md", "../architecture/real.md"],
     );
+    assertEquals(destinations("<!--".repeat(1_000)), []);
   });
 
   it("ignores Markdown syntax inside complete MDX expressions", () => {
@@ -1650,6 +1655,13 @@ describe("public docs validation", () => {
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        'export const sample = `${x++ / value} / ` +\n' +
+          "[old](../architecture/postfix.md)",
+      ),
+      [],
     );
   });
 
