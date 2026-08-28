@@ -493,6 +493,24 @@ export class MemoryBackend implements WorkflowBackend {
     return { matches, run: matches(run) ? run : null };
   }
 
+  private captureExpectedStatusesForExistingRun(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+  ):
+    | { readonly run: WorkflowRun; readonly snapshot: Set<WorkflowRun["status"]> }
+    | { readonly error: unknown }
+    | null {
+    if (!this.runs.has(runId)) return null;
+    let snapshot: Set<WorkflowRun["status"]>;
+    try {
+      snapshot = snapshotExpectedRunStatuses(expectedStatuses);
+    } catch (error) {
+      return { error };
+    }
+    const run = this.runs.get(runId);
+    return run ? { run, snapshot } : null;
+  }
+
   private getRunMatchingCondition(
     runId: string,
     matches: (run: WorkflowRun) => boolean,
@@ -859,14 +877,13 @@ export class MemoryBackend implements WorkflowBackend {
     expectedWorkerId: string,
     checkpoint: Checkpoint,
   ): Promise<boolean> {
-    const run = this.runs.get(ownershipRunId);
-    if (!run) return Promise.resolve(false);
-    let expectedStatusSnapshot: Set<WorkflowRun["status"]>;
-    try {
-      expectedStatusSnapshot = snapshotExpectedRunStatuses(expectedStatuses);
-    } catch (error) {
-      return Promise.reject(error);
-    }
+    const captured = this.captureExpectedStatusesForExistingRun(
+      ownershipRunId,
+      expectedStatuses,
+    );
+    if (captured === null) return Promise.resolve(false);
+    if ("error" in captured) return Promise.reject(captured.error);
+    const { run, snapshot: expectedStatusSnapshot } = captured;
     if (
       !hasExpectedRunStatus(expectedStatusSnapshot, run.status) || run.workerId !== expectedWorkerId
     ) {
@@ -982,14 +999,10 @@ export class MemoryBackend implements WorkflowBackend {
     expectedWorkerId: string,
     approval: PersistedPendingApproval,
   ): Promise<boolean> {
-    const run = this.runs.get(runId);
-    if (!run) return Promise.resolve(false);
-    let expectedStatusSnapshot: Set<WorkflowRun["status"]>;
-    try {
-      expectedStatusSnapshot = snapshotExpectedRunStatuses(expectedStatuses);
-    } catch (error) {
-      return Promise.reject(error);
-    }
+    const captured = this.captureExpectedStatusesForExistingRun(runId, expectedStatuses);
+    if (captured === null) return Promise.resolve(false);
+    if ("error" in captured) return Promise.reject(captured.error);
+    const { run, snapshot: expectedStatusSnapshot } = captured;
     if (
       !hasExpectedRunStatus(expectedStatusSnapshot, run.status) || run.workerId !== expectedWorkerId
     ) {
@@ -1247,16 +1260,12 @@ export class MemoryBackend implements WorkflowBackend {
     expectedWorkerId: string,
     wait: PersistedPendingEventWait,
   ): Promise<boolean> {
-    const run = this.runs.get(runId);
-    if (!run) {
+    const captured = this.captureExpectedStatusesForExistingRun(runId, expectedStatuses);
+    if (captured === null) {
       return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
     }
-    let expectedStatusSnapshot: Set<WorkflowRun["status"]>;
-    try {
-      expectedStatusSnapshot = snapshotExpectedRunStatuses(expectedStatuses);
-    } catch (error) {
-      return Promise.reject(error);
-    }
+    if ("error" in captured) return Promise.reject(captured.error);
+    const { run, snapshot: expectedStatusSnapshot } = captured;
     if (
       !hasExpectedRunStatus(expectedStatusSnapshot, run.status) ||
       run.workerId !== expectedWorkerId
