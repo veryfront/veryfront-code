@@ -157,7 +157,8 @@ describe("workflow context serialization on edge hosts", () => {
       }
     `;
     const output = await new Deno.Command(Deno.execPath(), {
-      args: ["eval", script],
+      args: ["eval", "--config=deno.json", script],
+      cwd: new URL("../../../", import.meta.url),
       stderr: "piped",
       stdout: "piped",
     }).output();
@@ -202,7 +203,8 @@ describe("workflow context serialization on edge hosts", () => {
       console.log(JSON.stringify({ serialized, tagReads }));
     `;
     const output = await new Deno.Command(Deno.execPath(), {
-      args: ["eval", script],
+      args: ["eval", "--config=deno.json", script],
+      cwd: new URL("../../../", import.meta.url),
       stderr: "piped",
       stdout: "piped",
     }).output();

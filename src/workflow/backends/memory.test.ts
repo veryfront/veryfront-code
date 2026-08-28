@@ -14,7 +14,7 @@ import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 const jsonRawSupport = JSON as typeof JSON & {
-  rawJSON(source: string): unknown;
+  rawJSON?: (source: string) => unknown;
 };
 
 describe("MemoryBackend", () => {
@@ -460,10 +460,12 @@ describe("MemoryBackend", () => {
       const originalLeaf: Record<string, unknown> = { leaf: "stored" };
       let deep: unknown = originalLeaf;
       for (let index = 0; index < depth; index++) deep = { nested: deep };
+      const context = { input: {}, deep } as WorkflowRun["context"];
+      if (jsonRawSupport.rawJSON) context.exact = jsonRawSupport.rawJSON("-0");
 
       await backend.createRun(createTestRun("run-deep-context", {
         status: "running",
-        context: { input: {}, deep, exact: jsonRawSupport.rawJSON("-0") },
+        context,
         startedAt: new Date(0),
         heartbeatAt: new Date(0),
       }));
@@ -472,10 +474,10 @@ describe("MemoryBackend", () => {
       const firstRead = await backend.getRun("run-deep-context");
       assertExists(firstRead);
       assertEquals(deepLeaf(firstRead.context.deep, depth), "stored");
-      assertEquals(Object.is(firstRead.context.exact, -0), true);
+      if (jsonRawSupport.rawJSON) assertEquals(Object.is(firstRead.context.exact, -0), true);
       const listed = (await backend.listRuns({}))[0];
       assertEquals(deepLeaf(listed?.context.deep, depth), "stored");
-      assertEquals(Object.is(listed?.context.exact, -0), true);
+      if (jsonRawSupport.rawJSON) assertEquals(Object.is(listed?.context.exact, -0), true);
       const observation = await backend.openRunObservation("run-deep-context");
       assertExists(observation);
       assertEquals(deepLeaf(observation.initial.context.deep, depth), "stored");
@@ -1073,6 +1075,8 @@ describe("MemoryBackend", () => {
     });
 
     it("preserves raw numeric approval decision data when reading approvals", async () => {
+      const rawJSON = jsonRawSupport.rawJSON;
+      if (!rawJSON) return;
       const runId = "run-approval-raw-number-read";
       const approval: PendingApproval = {
         id: "approval-raw-number-read",
@@ -1088,7 +1092,7 @@ describe("MemoryBackend", () => {
         await backend.updateApproval(runId, approval.id, {
           approved: true,
           approver: "admin@example.com",
-          data: { exact: jsonRawSupport.rawJSON("-0") },
+          data: { exact: rawJSON("-0") },
         }),
         true,
       );
@@ -1101,6 +1105,8 @@ describe("MemoryBackend", () => {
     });
 
     it("preserves raw numeric approval decision data for reconciliation claims", async () => {
+      const rawJSON = jsonRawSupport.rawJSON;
+      if (!rawJSON) return;
       const runId = "run-approval-raw-number-claim";
       const approval: PendingApproval = {
         id: "approval-raw-number-claim",
@@ -1116,7 +1122,7 @@ describe("MemoryBackend", () => {
         await backend.updateApproval(runId, approval.id, {
           approved: true,
           approver: "admin@example.com",
-          data: { exact: jsonRawSupport.rawJSON("-0") },
+          data: { exact: rawJSON("-0") },
         }),
         true,
       );
