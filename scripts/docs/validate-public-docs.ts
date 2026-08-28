@@ -773,6 +773,11 @@ interface MdxSyntaxRanges {
   readonly strings: Range[];
 }
 
+interface JavaScriptSignificantToken {
+  readonly end: number;
+  readonly kind: "other" | "regex";
+}
+
 function quotedRangeEnd(
   text: string,
   start: number,
@@ -814,8 +819,7 @@ function javaScriptTemplateInterpolationEnd(
 ): number | undefined {
   let depth = 1;
   let cursor = start + 2;
-  let previousSignificantEnd: number | undefined;
-  let previousTokenWasRegex = false;
+  let previousSignificantToken: JavaScriptSignificantToken | undefined;
   while (cursor < text.length) {
     const commentEnd = javaScriptCommentEnd(text, cursor);
     if (commentEnd !== undefined) {
@@ -826,31 +830,24 @@ function javaScriptTemplateInterpolationEnd(
     if (character === '"' || character === "'") {
       const end = quotedRangeEnd(text, cursor, character);
       if (end === undefined) return undefined;
-      previousSignificantEnd = end;
-      previousTokenWasRegex = false;
+      previousSignificantToken = { end, kind: "other" };
       cursor = end;
       continue;
     }
     if (character === "`") {
       const end = javaScriptTemplateEnd(text, cursor);
       if (end === undefined) return undefined;
-      previousSignificantEnd = end;
-      previousTokenWasRegex = false;
+      previousSignificantToken = { end, kind: "other" };
       cursor = end;
       continue;
     }
     if (
       character === "/" &&
-      javaScriptRegexMayStart(
-        text,
-        previousSignificantEnd,
-        previousTokenWasRegex,
-      )
+      javaScriptRegexMayStart(text, previousSignificantToken)
     ) {
       const regexEnd = javaScriptRegexEnd(text, cursor);
       if (regexEnd !== undefined) {
-        previousSignificantEnd = regexEnd;
-        previousTokenWasRegex = true;
+        previousSignificantToken = { end: regexEnd, kind: "regex" };
         cursor = regexEnd;
         continue;
       }
@@ -859,10 +856,9 @@ function javaScriptTemplateInterpolationEnd(
       cursor++;
       continue;
     }
-    previousTokenWasRegex = false;
+    previousSignificantToken = { end: cursor + 1, kind: "other" };
     if (character === "{") depth++;
     else if (character === "}" && --depth === 0) return cursor + 1;
-    previousSignificantEnd = cursor + 1;
     cursor++;
   }
   return undefined;
@@ -938,8 +934,7 @@ function mdxExpressionAt(
   const strings: Range[] = [];
   let depth = 1;
   let cursor = start + 1;
-  let previousSignificantEnd: number | undefined;
-  let previousTokenWasRegex = false;
+  let previousSignificantToken: JavaScriptSignificantToken | undefined;
   while (cursor < text.length) {
     const commentEnd = javaScriptCommentEnd(text, cursor);
     if (commentEnd !== undefined) {
@@ -951,8 +946,7 @@ function mdxExpressionAt(
       const end = javaScriptTemplateEnd(text, cursor);
       if (end === undefined) return undefined;
       strings.push({ start: cursor, end });
-      previousSignificantEnd = end;
-      previousTokenWasRegex = false;
+      previousSignificantToken = { end, kind: "other" };
       cursor = end;
       continue;
     }
@@ -960,23 +954,17 @@ function mdxExpressionAt(
       const end = quotedRangeEnd(text, cursor, character);
       if (end === undefined) return undefined;
       strings.push({ start: cursor, end });
-      previousSignificantEnd = end;
-      previousTokenWasRegex = false;
+      previousSignificantToken = { end, kind: "other" };
       cursor = end;
       continue;
     }
     if (
       character === "/" &&
-      javaScriptRegexMayStart(
-        text,
-        previousSignificantEnd,
-        previousTokenWasRegex,
-      )
+      javaScriptRegexMayStart(text, previousSignificantToken)
     ) {
       const regexEnd = javaScriptRegexEnd(text, cursor);
       if (regexEnd !== undefined) {
-        previousSignificantEnd = regexEnd;
-        previousTokenWasRegex = true;
+        previousSignificantToken = { end: regexEnd, kind: "regex" };
         cursor = regexEnd;
         continue;
       }
@@ -985,12 +973,11 @@ function mdxExpressionAt(
       cursor++;
       continue;
     }
-    previousTokenWasRegex = false;
+    previousSignificantToken = { end: cursor + 1, kind: "other" };
     if (character === "{") depth++;
     else if (character === "}" && --depth === 0) {
       return { expression: { start, end: cursor + 1 }, strings };
     }
-    previousSignificantEnd = cursor + 1;
     cursor++;
   }
   return undefined;
@@ -1075,8 +1062,7 @@ interface JavaScriptBalance {
   quote: '"' | "'" | undefined;
   blockComment: boolean;
   templateEnd: number;
-  previousSignificantEnd: number | undefined;
-  previousTokenWasRegex: boolean;
+  previousSignificantToken: JavaScriptSignificantToken | undefined;
   valid: boolean;
 }
 
@@ -1117,19 +1103,17 @@ const JAVASCRIPT_REGEX_PREFIX_KEYWORDS: ReadonlySet<string> = new Set([
 
 function javaScriptRegexMayStart(
   text: string,
-  previousSignificantEnd: number | undefined,
-  previousTokenWasRegex: boolean,
+  previousSignificantToken: JavaScriptSignificantToken | undefined,
 ): boolean {
-  if (previousTokenWasRegex) return false;
-  if (previousSignificantEnd === undefined) return true;
+  if (previousSignificantToken === undefined) return true;
+  if (previousSignificantToken.kind === "regex") return false;
+  const end = previousSignificantToken.end;
 
-  if (
-    "=(:,![{;?&|+*%/^~<>-".includes(text[previousSignificantEnd - 1]!)
-  ) return true;
+  if ("=(:,![{;?&|+*%/^~<>-".includes(text[end - 1]!)) return true;
 
-  let wordStart = previousSignificantEnd;
+  let wordStart = end;
   while (wordStart > 0 && /[A-Za-z]/.test(text[wordStart - 1]!)) wordStart--;
-  const keyword = text.slice(wordStart, previousSignificantEnd);
+  const keyword = text.slice(wordStart, end);
   if (!JAVASCRIPT_REGEX_PREFIX_KEYWORDS.has(keyword)) return false;
 
   return wordStart === 0 ||
@@ -1147,7 +1131,6 @@ function scanJavaScriptLine(
     "]": "[",
     "}": "{",
   };
-  const line = text.slice(lineStart, lineEnd);
   for (
     let cursor = Math.max(lineStart, state.templateEnd);
     cursor < lineEnd;
@@ -1165,8 +1148,7 @@ function scanJavaScriptLine(
       if (character === "\\") cursor++;
       else if (character === state.quote) {
         state.quote = undefined;
-        state.previousSignificantEnd = cursor + 1;
-        state.previousTokenWasRegex = false;
+        state.previousSignificantToken = { end: cursor + 1, kind: "other" };
       }
       continue;
     }
@@ -1182,37 +1164,28 @@ function scanJavaScriptLine(
         state.valid = false;
         return;
       }
-      state.previousSignificantEnd = templateEnd;
-      state.previousTokenWasRegex = false;
+      state.previousSignificantToken = { end: templateEnd, kind: "other" };
       state.templateEnd = templateEnd;
       cursor = templateEnd - 1;
       continue;
     }
     if (character === '"' || character === "'") {
-      state.previousTokenWasRegex = false;
       state.quote = character;
       continue;
     }
-    const lineCursor = cursor - lineStart;
     if (
       character === "/" &&
-      javaScriptRegexMayStart(
-        text,
-        state.previousSignificantEnd,
-        state.previousTokenWasRegex,
-      )
+      javaScriptRegexMayStart(text, state.previousSignificantToken)
     ) {
-      const regexEnd = javaScriptRegexEnd(line, lineCursor);
+      const regexEnd = javaScriptRegexEnd(text, cursor);
       if (regexEnd !== undefined) {
-        state.previousSignificantEnd = lineStart + regexEnd;
-        state.previousTokenWasRegex = true;
-        cursor = lineStart + regexEnd - 1;
+        state.previousSignificantToken = { end: regexEnd, kind: "regex" };
+        cursor = regexEnd - 1;
         continue;
       }
     }
     if (/\s/.test(character)) continue;
-    state.previousTokenWasRegex = false;
-    state.previousSignificantEnd = cursor + 1;
+    state.previousSignificantToken = { end: cursor + 1, kind: "other" };
     if (character === "(" || character === "[" || character === "{") {
       state.delimiters.push(character);
       continue;
@@ -1233,8 +1206,7 @@ function mdxEsmRangeEnd(text: string, start: number): number | undefined {
     quote: undefined,
     blockComment: false,
     templateEnd: start,
-    previousSignificantEnd: undefined,
-    previousTokenWasRegex: false,
+    previousSignificantToken: undefined,
     valid: true,
   };
   for (let lineStart = start; lineStart <= text.length;) {
@@ -1450,17 +1422,15 @@ function scanTagSyntax(
   let quote: '"' | "'" | undefined;
   let quoteUsesJavaScriptEscapes = false;
   let expressionDepth = 0;
-  let previousSignificantEnd: number | undefined;
-  let previousTokenWasRegex = false;
+  let previousSignificantToken: JavaScriptSignificantToken | undefined;
   for (let cursor = start; cursor < text.length; cursor++) {
     const character = text[cursor]!;
     if (quote !== undefined) {
       if (quoteUsesJavaScriptEscapes && character === "\\") cursor++;
       else if (character === quote) {
         quote = undefined;
-        if (quoteUsesJavaScriptEscapes) {
-          previousSignificantEnd = cursor + 1;
-          previousTokenWasRegex = false;
+        if (expressionDepth > 0) {
+          previousSignificantToken = { end: cursor + 1, kind: "other" };
         }
         quoteUsesJavaScriptEscapes = false;
       }
@@ -1475,16 +1445,11 @@ function scanTagSyntax(
     }
     if (
       expressionDepth > 0 && character === "/" &&
-      javaScriptRegexMayStart(
-        text,
-        previousSignificantEnd,
-        previousTokenWasRegex,
-      )
+      javaScriptRegexMayStart(text, previousSignificantToken)
     ) {
       const regexEnd = javaScriptRegexEnd(text, cursor);
       if (regexEnd !== undefined) {
-        previousSignificantEnd = regexEnd;
-        previousTokenWasRegex = true;
+        previousSignificantToken = { end: regexEnd, kind: "regex" };
         cursor = regexEnd - 1;
         continue;
       }
@@ -1498,16 +1463,14 @@ function scanTagSyntax(
     if (character === "`" && expressionDepth > 0) {
       const templateEnd = javaScriptTemplateEnd(text, cursor);
       if (templateEnd !== undefined) {
-        previousSignificantEnd = templateEnd;
-        previousTokenWasRegex = false;
+        previousSignificantToken = { end: templateEnd, kind: "other" };
         cursor = templateEnd - 1;
         continue;
       }
     }
     if (expressionDepth > 0 && /\s/.test(character)) continue;
-    previousTokenWasRegex = false;
     if (expressionDepth > 0 || character === "{") {
-      previousSignificantEnd = cursor + 1;
+      previousSignificantToken = { end: cursor + 1, kind: "other" };
     }
     if (character === '"' || character === "'") {
       quote = character;
