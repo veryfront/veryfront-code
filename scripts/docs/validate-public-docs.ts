@@ -776,6 +776,12 @@ interface JavaScriptSignificantToken {
   readonly kind: "other" | "regex";
 }
 
+interface JavaScriptScannedToken {
+  readonly end: number;
+  readonly kind: "literal" | "other" | "regex" | "trivia";
+  readonly string?: Range;
+}
+
 function quotedRangeEnd(
   text: string,
   start: number,
@@ -819,45 +825,28 @@ function javaScriptTemplateInterpolationEnd(
   let cursor = start + 2;
   let previousSignificantToken: JavaScriptSignificantToken | undefined;
   while (cursor < text.length) {
-    const commentEnd = javaScriptCommentEnd(text, cursor);
-    if (commentEnd !== undefined) {
-      cursor = commentEnd;
+    const token = javaScriptTokenAt(
+      text,
+      cursor,
+      previousSignificantToken,
+    );
+    if (token === undefined) return undefined;
+    if (token.kind === "trivia") {
+      cursor = token.end;
+      continue;
+    }
+    previousSignificantToken = {
+      end: token.end,
+      kind: token.kind === "regex" ? "regex" : "other",
+    };
+    if (token.kind !== "other") {
+      cursor = token.end;
       continue;
     }
     const character = text[cursor]!;
-    if (character === '"' || character === "'") {
-      const end = quotedRangeEnd(text, cursor, character);
-      if (end === undefined) return undefined;
-      previousSignificantToken = { end, kind: "other" };
-      cursor = end;
-      continue;
-    }
-    if (character === "`") {
-      const end = javaScriptTemplateEnd(text, cursor);
-      if (end === undefined) return undefined;
-      previousSignificantToken = { end, kind: "other" };
-      cursor = end;
-      continue;
-    }
-    if (
-      character === "/" &&
-      javaScriptRegexMayStart(text, previousSignificantToken)
-    ) {
-      const regexEnd = javaScriptRegexEnd(text, cursor);
-      if (regexEnd !== undefined) {
-        previousSignificantToken = { end: regexEnd, kind: "regex" };
-        cursor = regexEnd;
-        continue;
-      }
-    }
-    if (/\s/.test(character)) {
-      cursor++;
-      continue;
-    }
-    previousSignificantToken = { end: cursor + 1, kind: "other" };
     if (character === "{") depth++;
     else if (character === "}" && --depth === 0) return cursor + 1;
-    cursor++;
+    cursor = token.end;
   }
   return undefined;
 }
@@ -934,49 +923,31 @@ function mdxExpressionAt(
   let cursor = start + 1;
   let previousSignificantToken: JavaScriptSignificantToken | undefined;
   while (cursor < text.length) {
-    const commentEnd = javaScriptCommentEnd(text, cursor);
-    if (commentEnd !== undefined) {
-      cursor = commentEnd;
+    const token = javaScriptTokenAt(
+      text,
+      cursor,
+      previousSignificantToken,
+    );
+    if (token === undefined) return undefined;
+    if (token.string !== undefined) strings.push(token.string);
+    if (token.kind === "trivia") {
+      cursor = token.end;
+      continue;
+    }
+    previousSignificantToken = {
+      end: token.end,
+      kind: token.kind === "regex" ? "regex" : "other",
+    };
+    if (token.kind !== "other") {
+      cursor = token.end;
       continue;
     }
     const character = text[cursor]!;
-    if (character === "`") {
-      const end = javaScriptTemplateEnd(text, cursor);
-      if (end === undefined) return undefined;
-      strings.push({ start: cursor, end });
-      previousSignificantToken = { end, kind: "other" };
-      cursor = end;
-      continue;
-    }
-    if (character === '"' || character === "'") {
-      const end = quotedRangeEnd(text, cursor, character);
-      if (end === undefined) return undefined;
-      strings.push({ start: cursor, end });
-      previousSignificantToken = { end, kind: "other" };
-      cursor = end;
-      continue;
-    }
-    if (
-      character === "/" &&
-      javaScriptRegexMayStart(text, previousSignificantToken)
-    ) {
-      const regexEnd = javaScriptRegexEnd(text, cursor);
-      if (regexEnd !== undefined) {
-        previousSignificantToken = { end: regexEnd, kind: "regex" };
-        cursor = regexEnd;
-        continue;
-      }
-    }
-    if (/\s/.test(character)) {
-      cursor++;
-      continue;
-    }
-    previousSignificantToken = { end: cursor + 1, kind: "other" };
     if (character === "{") depth++;
     else if (character === "}" && --depth === 0) {
       return { expression: { start, end: cursor + 1 }, strings };
     }
-    cursor++;
+    cursor = token.end;
   }
   return undefined;
 }
@@ -1116,6 +1087,37 @@ function javaScriptRegexMayStart(
 
   return wordStart === 0 ||
     !/[A-Za-z0-9_$.#]/.test(text[wordStart - 1]!);
+}
+
+function javaScriptTokenAt(
+  text: string,
+  start: number,
+  previousSignificantToken: JavaScriptSignificantToken | undefined,
+): JavaScriptScannedToken | undefined {
+  const commentEnd = javaScriptCommentEnd(text, start);
+  if (commentEnd !== undefined) {
+    return { end: commentEnd, kind: "trivia" };
+  }
+
+  const character = text[start]!;
+  if (/\s/.test(character)) return { end: start + 1, kind: "trivia" };
+
+  if (character === '"' || character === "'" || character === "`") {
+    const end = quotedRangeEnd(text, start, character);
+    return end === undefined
+      ? undefined
+      : { end, kind: "literal", string: { start, end } };
+  }
+
+  if (
+    character === "/" &&
+    javaScriptRegexMayStart(text, previousSignificantToken)
+  ) {
+    const end = javaScriptRegexEnd(text, start);
+    if (end !== undefined) return { end, kind: "regex" };
+  }
+
+  return { end: start + 1, kind: "other" };
 }
 
 function scanJavaScriptLine(
