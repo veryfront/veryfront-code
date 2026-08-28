@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/veryfront/veryfront-code/actions/workflows/cicd.yml/badge.svg?event=merge_group)](https://github.com/veryfront/veryfront-code/actions/workflows/cicd.yml?query=event%3Amerge_group)
 [![npm version](https://badge.fury.io/js/veryfront.svg)](https://www.npmjs.com/package/veryfront)
+[![SonarCloud Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=veryfront_veryfront-code&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=veryfront_veryfront-code)
 [![codecov](https://codecov.io/gh/veryfront/veryfront-code/branch/main/graph/badge.svg)](https://codecov.io/gh/veryfront/veryfront-code)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 
