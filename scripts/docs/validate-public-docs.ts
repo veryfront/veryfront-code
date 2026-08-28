@@ -216,16 +216,33 @@ function decodeJavaScriptStringLiteral(value: string): string | undefined {
   return decoded;
 }
 
+function decodeUrlComponentTolerantly(value: string): string {
+  return value.replace(/(?:%[0-9a-fA-F]{2})+/g, (encoded) => {
+    let decoded = "";
+    for (let start = 0; start < encoded.length;) {
+      let end = encoded.length;
+      let consumed = false;
+      for (; end > start; end -= 3) {
+        try {
+          decoded += decodeURIComponent(encoded.slice(start, end));
+          start = end;
+          consumed = true;
+          break;
+        } catch {
+          // Try a shorter complete UTF-8 sequence.
+        }
+      }
+      if (!consumed) {
+        decoded += encoded.slice(start, start + 3);
+        start += 3;
+      }
+    }
+    return decoded;
+  });
+}
+
 function normalizeRepositoryPath(pathname: string): string {
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(pathname);
-  } catch {
-    decoded = pathname
-      .replace(/%2e/gi, ".")
-      .replace(/%2f/gi, "/")
-      .replace(/%5c/gi, "\\");
-  }
+  const decoded = decodeUrlComponentTolerantly(pathname);
   const slashPath = decoded.replaceAll("\\", "/");
   const segments: string[] = [];
   for (const segment of slashPath.split("/")) {
@@ -263,7 +280,7 @@ function resolveDocumentationTarget(
   const href = syntax === "markdown"
     ? decodeMarkdownBackslashEscapes(withCharacterReferences)
     : withCharacterReferences;
-  if (/^(?:#|["'])/.test(href)) return undefined;
+  if (href.startsWith("#")) return undefined;
   let resolved: URL;
   try {
     resolved = new URL(href, `${RESOLUTION_ORIGIN}/${fromPath}`);
@@ -1002,8 +1019,9 @@ function mdxEsmMayStart(text: string, lineStart: number): boolean {
 
 interface JavaScriptBalance {
   readonly delimiters: string[];
-  quote: '"' | "'" | "`" | undefined;
+  quote: '"' | "'" | undefined;
   blockComment: boolean;
+  templateEnd: number;
   valid: boolean;
 }
 
@@ -1032,22 +1050,32 @@ function javaScriptRegexEnd(line: string, start: number): number | undefined {
 function javaScriptRegexMayStart(line: string, start: number): boolean {
   const prefix = line.slice(0, start).trimEnd();
   return prefix === "" ||
-    /(?:[=(:,!\[{;?&|+*%^~<>-]|=>|(?:^|[^A-Za-z0-9_$.])(?:return|case|throw|default|typeof|void|delete))$/
+    /(?:[=(:,!\[{;?&|+*%^~<>-]|=>|(?:^|[^A-Za-z0-9_$.])(?:return|case|throw|default|typeof|void|delete|in|instanceof))$/
       .test(
         prefix,
       );
 }
 
-function scanJavaScriptLine(line: string, state: JavaScriptBalance): void {
+function scanJavaScriptLine(
+  text: string,
+  lineStart: number,
+  lineEnd: number,
+  state: JavaScriptBalance,
+): void {
   const closers: Readonly<Record<string, string>> = {
     ")": "(",
     "]": "[",
     "}": "{",
   };
-  for (let cursor = 0; cursor < line.length; cursor++) {
-    const character = line[cursor]!;
+  const line = text.slice(lineStart, lineEnd);
+  for (
+    let cursor = Math.max(lineStart, state.templateEnd);
+    cursor < lineEnd;
+    cursor++
+  ) {
+    const character = text[cursor]!;
     if (state.blockComment) {
-      if (line.startsWith("*/", cursor)) {
+      if (text.startsWith("*/", cursor)) {
         state.blockComment = false;
         cursor++;
       }
@@ -1058,20 +1086,31 @@ function scanJavaScriptLine(line: string, state: JavaScriptBalance): void {
       else if (character === state.quote) state.quote = undefined;
       continue;
     }
-    if (line.startsWith("//", cursor)) break;
-    if (line.startsWith("/*", cursor)) {
+    if (text.startsWith("//", cursor)) break;
+    if (text.startsWith("/*", cursor)) {
       state.blockComment = true;
       cursor++;
       continue;
     }
-    if (character === '"' || character === "'" || character === "`") {
+    if (character === "`") {
+      const templateEnd = javaScriptTemplateEnd(text, cursor);
+      if (templateEnd === undefined) {
+        state.valid = false;
+        return;
+      }
+      state.templateEnd = templateEnd;
+      cursor = templateEnd - 1;
+      continue;
+    }
+    if (character === '"' || character === "'") {
       state.quote = character;
       continue;
     }
-    if (character === "/" && javaScriptRegexMayStart(line, cursor)) {
-      const regexEnd = javaScriptRegexEnd(line, cursor);
+    const lineCursor = cursor - lineStart;
+    if (character === "/" && javaScriptRegexMayStart(line, lineCursor)) {
+      const regexEnd = javaScriptRegexEnd(line, lineCursor);
       if (regexEnd !== undefined) {
-        cursor = regexEnd - 1;
+        cursor = lineStart + regexEnd - 1;
         continue;
       }
     }
@@ -1094,6 +1133,7 @@ function mdxEsmRangeEnd(text: string, start: number): number | undefined {
     delimiters: [],
     quote: undefined,
     blockComment: false,
+    templateEnd: start,
     valid: true,
   };
   for (let lineStart = start; lineStart <= text.length;) {
@@ -1103,10 +1143,10 @@ function mdxEsmRangeEnd(text: string, start: number): number | undefined {
     if (
       lineStart > start && line.trim() === "" &&
       state.delimiters.length === 0 && state.quote === undefined &&
-      !state.blockComment
+      !state.blockComment && state.templateEnd <= lineStart
     ) return lineStart;
 
-    scanJavaScriptLine(line, state);
+    scanJavaScriptLine(text, lineStart, lineEnd, state);
     if (!state.valid) return undefined;
     if (next === -1) {
       return state.delimiters.length === 0 && state.quote === undefined &&
@@ -1175,6 +1215,14 @@ function yamlFrontmatterRanges(text: string): Range[] {
   return [];
 }
 
+function htmlCommentBlockMayStart(text: string, start: number): boolean {
+  const lineStart = Math.max(
+    text.lastIndexOf("\n", start - 1),
+    text.lastIndexOf("\r", start - 1),
+  ) + 1;
+  return blockContentStart(text, lineStart) === start;
+}
+
 function htmlCommentRanges(
   text: string,
   ignoredRanges: readonly Range[],
@@ -1191,6 +1239,10 @@ function htmlCommentRanges(
       continue;
     }
     const closing = text.indexOf("-->", start + 4);
+    if (closing === -1 && !htmlCommentBlockMayStart(text, start)) {
+      start += 4;
+      continue;
+    }
     const end = closing === -1 ? text.length : closing + 3;
     ranges.push({ start, end });
     start = end;
@@ -1590,6 +1642,11 @@ function topLevelTagOffsets(tag: string): ReadonlySet<number> {
   return scanTagSyntax(tag, 0).topLevelOffsets;
 }
 
+function nextLineEndingStart(text: string, start: number): number | undefined {
+  const match = /[\r\n]/.exec(text.slice(start));
+  return match === null ? undefined : start + match.index;
+}
+
 function referenceTitleEnd(
   text: string,
   start: number,
@@ -1618,11 +1675,9 @@ function referenceTitleEnd(
         : undefined;
     }
     if (text[cursor] === "\n" || text[cursor] === "\r") {
-      if (text[cursor] === "\r") cursor++;
-      if (text[cursor] !== "\n") return undefined;
-      const lineStart = cursor + 1;
-      const next = text.indexOf("\n", lineStart);
-      const lineEnd = next === -1 ? text.length : next;
+      const lineStart = lineEndingEnd(text, cursor);
+      if (lineStart === undefined) return undefined;
+      const lineEnd = nextLineEndingStart(text, lineStart) ?? text.length;
       const contentStart = blockContainerContentStart(
         text,
         lineStart,
@@ -1634,8 +1689,7 @@ function referenceTitleEnd(
       while (text[significant] === " " || text[significant] === "\t") {
         significant++;
       }
-      const contentEnd = text[lineEnd - 1] === "\r" ? lineEnd - 1 : lineEnd;
-      if (significant >= contentEnd) return undefined;
+      if (significant >= lineEnd) return undefined;
       cursor = contentStart;
       continue;
     }
@@ -1663,11 +1717,9 @@ function referenceDefinitionTailEnd(
   }
 
   const destinationLineEnd = cursor;
-  if (text[cursor] === "\r") cursor++;
-  if (text[cursor] !== "\n") return destinationLineEnd;
-  const titleLineStart = cursor + 1;
-  const next = text.indexOf("\n", titleLineStart);
-  const titleLineEnd = next === -1 ? text.length : next;
+  const titleLineStart = lineEndingEnd(text, cursor);
+  if (titleLineStart === undefined) return destinationLineEnd;
+  const titleLineEnd = nextLineEndingStart(text, titleLineStart) ?? text.length;
   const contentStart = blockContainerContentStart(
     text,
     titleLineStart,
@@ -1881,6 +1933,8 @@ function afterInlineLink(text: string, start: number): number | undefined {
 interface ReferenceUsage {
   readonly label: string;
   readonly range: Range;
+  readonly image: boolean;
+  readonly description: Range;
 }
 
 function usedReferences(
@@ -1897,6 +1951,7 @@ function usedReferences(
       text[start + 1] === "^"
     ) continue;
     const linkStart = start;
+    const image = isImageLabel(text, start);
     const afterText = afterMarkdownLabel(text, start);
     if (afterText === undefined) continue;
     if (
@@ -1923,6 +1978,8 @@ function usedReferences(
     usages.push({
       label: normalized,
       range: { start: linkStart, end: start + 1 },
+      image,
+      description: { start: linkStart + 1, end: afterText - 1 },
     });
   }
   return { labels, usages };
@@ -2323,9 +2380,25 @@ export function scanDestinations(
     }
   }
 
+  const referenceUse = usedReferences(
+    text,
+    mergeRanges([
+      ...markdownIgnoredRanges,
+      ...markdownImageLabelRanges,
+      ...markdownLinkTailRanges,
+    ]),
+    new Set(references.map((reference) => reference.labelStart)),
+  );
+  markdownImageLabelRanges.push(
+    ...referenceUse.usages
+      .filter((usage) => usage.image && definedLabels.has(usage.label))
+      .map((usage) => usage.description),
+  );
+
   for (const tagRange of tagRanges) {
     if (
       isInsideRange(referenceDefinitionRanges, tagRange.start) ||
+      isInsideRange(markdownImageLabelRanges, tagRange.start) ||
       isInsideRange(rawHtmlBlocks.rawText, tagRange.start)
     ) continue;
     const tag = text.slice(tagRange.start, tagRange.end);
@@ -2377,15 +2450,6 @@ export function scanDestinations(
     }
   }
 
-  const referenceUse = usedReferences(
-    text,
-    mergeRanges([
-      ...markdownIgnoredRanges,
-      ...markdownImageLabelRanges,
-      ...markdownLinkTailRanges,
-    ]),
-    new Set(references.map((reference) => reference.labelStart)),
-  );
   const recordedReferenceLabels = new Set<string>();
   for (const reference of references) {
     destinationOffsets.add(reference.offset);
@@ -2567,7 +2631,7 @@ function canonicalizeHttpUrls(text: string): string {
     const candidate = rawUrl.slice(0, rawUrl.length - suffix.length);
     try {
       const url = new URL(candidate);
-      const pathname = decodeURIComponent(url.pathname);
+      const pathname = decodeUrlComponentTolerantly(url.pathname);
       return `${url.protocol}//${url.host}${pathname}${url.search}${url.hash}${suffix}`;
     } catch {
       return rawUrl;

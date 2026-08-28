@@ -196,6 +196,20 @@ describe("public docs validation", () => {
       ),
       ["./deploying.md", "../architecture/private.png"],
     );
+    assertEquals(
+      destinations(
+        "![alt <https://veryfront.com/docs/code/architecture/private>][img]\n\n" +
+          "[img]: ./diagram.png",
+      ),
+      ["./diagram.png"],
+    );
+    assertEquals(
+      destinations(
+        '![alt <a href="../architecture/private.md">old</a>][img]\n\n' +
+          "[img]: ./diagram.png",
+      ),
+      ["./diagram.png"],
+    );
   });
 
   it("parses quoted HTML anchors and angle-bracket destinations", () => {
@@ -466,6 +480,8 @@ describe("public docs validation", () => {
           '<a data-ok={typeof /}>/} href="../architecture/typeof-regex.md">ok</a>\n' +
           '<a data-ok={void /}>/} href="../architecture/void-regex.md">ok</a>\n' +
           '<a data-ok={delete /}>/} href="../architecture/delete-regex.md">ok</a>\n' +
+          '<a data-ok={"x" in /}>/} href="../architecture/in-regex.md">ok</a>\n' +
+          '<a data-ok={value instanceof /}>/} href="../architecture/instanceof-regex.md">ok</a>\n' +
           '<a data-ok={`x ${"`"} >`} href="../architecture/template.md">ok</a>\n' +
           '<a data-ok={value / count > 1} href="../architecture/division.md">ok</a>\n' +
           '<div title="[old](../architecture/title-link.md)"></div>\n' +
@@ -487,6 +503,8 @@ describe("public docs validation", () => {
         "../architecture/typeof-regex.md",
         "../architecture/void-regex.md",
         "../architecture/delete-regex.md",
+        "../architecture/in-regex.md",
+        "../architecture/instanceof-regex.md",
         "../architecture/template.md",
         "../architecture/division.md",
         "../architecture/real.md",
@@ -719,6 +737,7 @@ describe("public docs validation", () => {
             .raw`[escaped](https://github.com/example-org/private\-examples)` +
           `\n_https://github.com/${BLOCKED_REPOSITORY}_\n` +
           `**https://%67ithub.com/example-org/private%2dexamples**\n` +
+          `https://github.com/example-org/private%2Dexamples/%ZZ\n` +
           `***https://github.com/${BLOCKED_REPOSITORY}***\n` +
           `___https://github.com/${BLOCKED_REPOSITORY}___\n` +
           `****https://github.com/${BLOCKED_REPOSITORY}****\n` +
@@ -726,7 +745,7 @@ describe("public docs validation", () => {
           `~https://github.com/${BLOCKED_REPOSITORY}~`,
         BLOCKED_REPOSITORY,
       ).length,
-      15,
+      16,
     );
     assertEquals(
       collectIssues(
@@ -853,6 +872,13 @@ describe("public docs validation", () => {
           "[public]",
       ),
       ["./deploying.md"],
+    );
+    assertEquals(
+      scanDestinations(
+        '[unused]: ./deploying.md\r  "https://veryfront.com/docs/code/guides/does-not-exist"',
+        "markdown",
+      ),
+      [],
     );
   });
 
@@ -1210,11 +1236,12 @@ describe("public docs validation", () => {
     const issues = collectUnpublishedLinkIssues(
       "docs/guides/example.md",
       '<a href="./does-not-exist.md">missing</a>\n' +
+        "<a href=\"'./quote-does-not-exist.md'\">quoted</a>\n" +
         "[missing]\n\n" +
         "[missing]: ./also-does-not-exist.md",
     );
 
-    assertEquals(issues.length, 2);
+    assertEquals(issues.length, 3);
   });
 
   it("finds reference definitions inside block quotes", () => {
@@ -1518,6 +1545,14 @@ describe("public docs validation", () => {
     );
     assertEquals(
       scanDestinations(
+        "before <!-- unfinished\n" +
+          "[gate](../architecture/private.md)",
+        "markdown",
+      ).map((destination) => destination.href),
+      ["../architecture/private.md"],
+    );
+    assertEquals(
+      scanDestinations(
         String.raw`\<!-- [visible](../architecture/escaped.md) -->` +
           '\ntext <div title="<!--"></div>\n' +
           "[real](../architecture/real.md)",
@@ -1611,6 +1646,13 @@ describe("public docs validation", () => {
           '  : ""\n\n[real](../architecture/real.md)',
       ).map((issue) => issue.line),
       [5],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.mdx",
+        'export const sample = `x ${"`"} [old](../architecture/private.md)`',
+      ),
+      [],
     );
     assertEquals(
       collectUnpublishedLinkIssues(
