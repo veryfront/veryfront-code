@@ -315,6 +315,7 @@ async function resolveWorkerHostEgressAddresses(
   hostname: string,
   options: WorkerEgressGuardOptions,
   signal?: AbortSignal,
+  allowedResolvedAddresses: readonly string[] = [],
 ): Promise<string[]> {
   const allowInternalEgress = options.allowInternalEgress === true;
 
@@ -363,7 +364,11 @@ async function resolveWorkerHostEgressAddresses(
         `Worker network egress blocked: resolver returned an invalid address for host ${hostname}`,
       );
     }
-    if (!allowInternalEgress && !allowedInternalHost && isInternalEgressIp(normalizedAddress)) {
+    if (
+      !allowInternalEgress && !allowedInternalHost &&
+      isInternalEgressIp(normalizedAddress) &&
+      !allowedResolvedAddresses.includes(normalizedAddress)
+    ) {
       throw new WorkerEgressBlockedError(
         `Worker network egress blocked for host: ${hostname}`,
       );
@@ -1179,10 +1184,28 @@ function isReplayableBody(body: BodyInit | null | undefined): boolean {
  * follows manually after re-checking. Credential headers are stripped on a
  * cross-origin hop, matching the platform fetch the guard wraps.
  */
-export async function guardedEgressFetch(
+export function guardedEgressFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
   deps: GuardedEgressFetchDeps = {},
+): Promise<Response> {
+  return guardedEgressFetchImpl(input, init, deps);
+}
+
+export function __guardedEgressFetchWithAllowedResolvedAddressesForTests(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  deps: GuardedEgressFetchDeps,
+  allowedResolvedAddresses: readonly string[],
+): Promise<Response> {
+  return guardedEgressFetchImpl(input, init, deps, allowedResolvedAddresses);
+}
+
+async function guardedEgressFetchImpl(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  deps: GuardedEgressFetchDeps,
+  allowedResolvedAddresses: readonly string[] = [],
 ): Promise<Response> {
   const doFetch = deps.fetchImpl ?? fetch;
   const options = deps.options ?? {};
@@ -1266,6 +1289,7 @@ export async function guardedEgressFetch(
             hostname,
             options,
             requestInit.signal ?? undefined,
+            allowedResolvedAddresses,
           );
           const port = parsedUrl.port
             ? Number.parseInt(parsedUrl.port, 10)

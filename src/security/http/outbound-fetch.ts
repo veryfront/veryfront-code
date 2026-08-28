@@ -11,6 +11,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { fetchWithPinnedAddresses } from "#veryfront/platform/compat/http/pinned-fetch.ts";
 import { isBun } from "#veryfront/platform/compat/runtime.ts";
 import {
+  __guardedEgressFetchWithAllowedResolvedAddressesForTests,
   guardedEgressFetch,
   isInternalEgressOverrideEnabled,
   type ResolveWorkerHost,
@@ -57,6 +58,10 @@ export interface OutboundFetchTransport {
   resolveHost?: ResolveWorkerHost;
 }
 
+type TrustedHostTransport = OutboundFetchTransport & {
+  allowedResolvedAddressesForTests?: readonly string[];
+};
+
 /** Explicit host transport boundary used by runtime composition and tests. */
 export interface OutboundFetchBoundary {
   guardedFetch(
@@ -69,9 +74,9 @@ export interface OutboundFetchBoundary {
 
 // Capture the host transport before tenant code can replace globalThis.fetch.
 const capturedHostFetch = globalThis.fetch.bind(globalThis);
-let outboundFetchTransportForTests: Readonly<OutboundFetchTransport> | undefined;
+let outboundFetchTransportForTests: Readonly<TrustedHostTransport> | undefined;
 
-function getTrustedHostTransport(): OutboundFetchTransport {
+function getTrustedHostTransport(): TrustedHostTransport {
   if (outboundFetchTransportForTests !== undefined) {
     return outboundFetchTransportForTests;
   }
@@ -134,13 +139,13 @@ async function fetchWithHostTransport(
   input: RequestInfo | URL,
   init: RequestInit | undefined,
   options: GuardedOutboundFetchOptions,
-  transport: OutboundFetchTransport,
+  transport: TrustedHostTransport,
   allowInternalEgress: boolean,
 ): Promise<Response> {
-  return await guardedEgressFetch(input, init, {
+  const deps = {
     fetchImpl: transport.fetch,
     pinnedFetch: transport.pinnedFetch,
-    authorizeUrl: async (url) => {
+    authorizeUrl: async (url: URL) => {
       if (url.protocol !== "http:" && url.protocol !== "https:") {
         throw new OutboundRequestBlockedError(
           `Outbound request blocked: unsupported URL scheme ${url.protocol}`,
@@ -159,7 +164,11 @@ async function fetchWithHostTransport(
         isInternalEgressOverrideEnabled(getHostEnv(HOST_INTERNAL_EGRESS_OVERRIDE_ENV)),
       resolveHost: transport.resolveHost,
     },
-  });
+  };
+  const allowed = transport.allowedResolvedAddressesForTests;
+  return await (allowed
+    ? __guardedEgressFetchWithAllowedResolvedAddressesForTests(input, init, deps, allowed)
+    : guardedEgressFetch(input, init, deps));
 }
 
 function parseAllowedInternalProviderOrigins(value: string | undefined): ReadonlySet<string> {
@@ -335,9 +344,15 @@ export function __installUnpinnedHostTransportForTests(): () => void {
 
 export function __installOutboundFetchTransportForTests(
   transport: OutboundFetchTransport,
+  options: { allowedResolvedAddresses?: readonly string[] } = {},
 ): () => void {
   const previous = outboundFetchTransportForTests;
-  outboundFetchTransportForTests = snapshotOutboundFetchTransport(transport);
+  outboundFetchTransportForTests = Object.freeze({
+    ...snapshotOutboundFetchTransport(transport),
+    allowedResolvedAddressesForTests: options.allowedResolvedAddresses === undefined
+      ? undefined
+      : Object.freeze([...options.allowedResolvedAddresses]),
+  });
   return () => {
     outboundFetchTransportForTests = previous;
   };
@@ -346,8 +361,9 @@ export function __installOutboundFetchTransportForTests(
 export async function __runWithOutboundFetchTransportForTests<T>(
   transport: OutboundFetchTransport,
   fn: () => Promise<T>,
+  options: { allowedResolvedAddresses?: readonly string[] } = {},
 ): Promise<T> {
-  const restore = __installOutboundFetchTransportForTests(transport);
+  const restore = __installOutboundFetchTransportForTests(transport, options);
   try {
     return await fn();
   } finally {
