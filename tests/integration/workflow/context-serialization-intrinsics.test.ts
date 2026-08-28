@@ -10,6 +10,62 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { serializeWorkflowContext } from "#veryfront/workflow/context-serialization.ts";
 
 describe("workflow context serialization with hostile ambient intrinsics", () => {
+  it("isolates owned snapshots from later intrinsic toJSON mutations", async () => {
+    const script = `
+      const { cloneOwnedCheckpointForPersistence } = await import(
+        "./src/workflow/backends/checkpoint-retention.ts"
+      );
+      const { serializeWorkflowJson } = await import(
+        "./src/workflow/context-serialization.ts"
+      );
+      const snapshot = cloneOwnedCheckpointForPersistence({
+        id: "owned-prototype-snapshot",
+        nodeId: "node",
+        timestamp: new Date(0),
+        context: {
+          input: { value: { name: "original" }, values: [1, 2] },
+          date: new Date(0),
+        },
+        nodeStates: {},
+      });
+
+      Object.defineProperty(Array.prototype, "toJSON", {
+        configurable: true,
+        value: () => "mutated-array-prototype",
+      });
+      Object.defineProperty(Object.prototype, "toJSON", {
+        configurable: true,
+        value: () => "mutated-object-prototype",
+      });
+      Object.defineProperty(Date.prototype, "toJSON", {
+        configurable: true,
+        value: () => "mutated-date-prototype",
+      });
+
+      const result = Object.create(null);
+      result.native = JSON.stringify(snapshot.context);
+      result.serialized = serializeWorkflowJson(snapshot.context, "checkpoint.context");
+      console.log(JSON.stringify(result));
+    `;
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["eval", "--config=deno.json", script],
+      cwd: new URL("../../../", import.meta.url),
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const stderr = new TextDecoder().decode(output.stderr);
+    assertEquals(output.code, 0, stderr);
+    const lines = new TextDecoder().decode(output.stdout).trim().split("\n");
+    const result = JSON.parse(lines.at(-1) ?? "") as {
+      native: string;
+      serialized: string;
+    };
+    const expected =
+      '{"input":{"value":{"name":"original"},"values":[1,2]},"date":"1970-01-01T00:00:00.000Z"}';
+    assertEquals(result.native, expected);
+    assertEquals(result.serialized, expected);
+  });
+
   it("fails strict serialization closed when proxy checks are unavailable", async () => {
     const script = `
       Object.defineProperty(globalThis, "caches", {

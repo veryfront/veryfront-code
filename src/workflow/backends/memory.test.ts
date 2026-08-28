@@ -352,6 +352,67 @@ describe("MemoryBackend", () => {
       });
     });
 
+    it("deletes context keys omitted by JSON persistence", async () => {
+      await backend.createRun(createTestRun("run-context-omitted-values", {
+        context: {
+          input: {},
+          removedUndefined: "stale",
+          removedFunction: "stale",
+          removedSymbol: "stale",
+          preserved: "kept",
+        },
+      }));
+
+      await backend.updateRun("run-context-omitted-values", {
+        context: {
+          removedUndefined: undefined,
+          removedFunction: () => "omitted",
+          removedSymbol: Symbol("omitted"),
+          added: "stored",
+        },
+      });
+
+      assertEquals((await backend.getRun("run-context-omitted-values"))?.context, {
+        input: {},
+        preserved: "kept",
+        added: "stored",
+      });
+    });
+
+    it("deletes context keys omitted by JSON through conditional updates", async () => {
+      await backend.createRun(createTestRun("run-context-conditional-omitted", {
+        status: "running",
+        workerId: "worker-current",
+        context: {
+          input: {},
+          removedByStatus: "stale",
+          removedByOwner: "stale",
+          preserved: "kept",
+        },
+      }));
+
+      assertEquals(
+        await backend.updateRunIfStatus("run-context-conditional-omitted", ["running"], {
+          context: { input: {}, removedByStatus: undefined },
+        }),
+        true,
+      );
+      assertEquals(
+        await backend.updateRunIfStatusAndWorker(
+          "run-context-conditional-omitted",
+          ["running"],
+          "worker-current",
+          { context: { input: {}, removedByOwner: Symbol("omitted") } },
+        ),
+        true,
+      );
+
+      assertEquals((await backend.getRun("run-context-conditional-omitted"))?.context, {
+        input: {},
+        preserved: "kept",
+      });
+    });
+
     it("persists context through the same JSON contract as Redis", async () => {
       class Receipt {
         constructor(readonly id: string) {}
@@ -1008,6 +1069,63 @@ describe("MemoryBackend", () => {
       assertEquals(
         (await backend.getPendingApproval("run-json-bigint", bigintApproval.id))?.status,
         "pending",
+      );
+    });
+
+    it("preserves raw numeric approval decision data when reading approvals", async () => {
+      const runId = "run-approval-raw-number-read";
+      const approval: PendingApproval = {
+        id: "approval-raw-number-read",
+        nodeId: "review",
+        status: "pending",
+        message: "Review needed",
+        payload: {},
+        requestedAt: new Date(),
+      };
+      await backend.savePendingApproval(runId, approval);
+
+      assertEquals(
+        await backend.updateApproval(runId, approval.id, {
+          approved: true,
+          approver: "admin@example.com",
+          data: { exact: jsonRawSupport.rawJSON("-0") },
+        }),
+        true,
+      );
+
+      const stored = await backend.getPendingApproval(runId, approval.id);
+      assertEquals(
+        Object.is((stored?.decisionData as { exact?: unknown } | undefined)?.exact, -0),
+        true,
+      );
+    });
+
+    it("preserves raw numeric approval decision data for reconciliation claims", async () => {
+      const runId = "run-approval-raw-number-claim";
+      const approval: PendingApproval = {
+        id: "approval-raw-number-claim",
+        nodeId: "review",
+        status: "pending",
+        message: "Review needed",
+        payload: {},
+        requestedAt: new Date(),
+      };
+      await backend.savePendingApproval(runId, approval);
+
+      assertEquals(
+        await backend.updateApproval(runId, approval.id, {
+          approved: true,
+          approver: "admin@example.com",
+          data: { exact: jsonRawSupport.rawJSON("-0") },
+        }),
+        true,
+      );
+
+      const [claim] = await backend.listApprovalDecisionClaims(runId);
+      assertExists(claim);
+      assertEquals(
+        Object.is((claim.approval.decisionData as { exact?: unknown } | undefined)?.exact, -0),
+        true,
       );
     });
 

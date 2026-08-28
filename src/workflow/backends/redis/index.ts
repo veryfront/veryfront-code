@@ -149,7 +149,7 @@ local function scanJsonValue(value, position)
 end
 
 local function parseJsonObject(value)
-  local fields = {}
+  local fields = { entries = {}, index = {} }
   local position = skipJsonWhitespace(value, 1)
   if string.sub(value, position, position) ~= '{' then
     error('Run patch field must be a JSON object')
@@ -168,7 +168,11 @@ local function parseJsonObject(value)
     position = skipJsonWhitespace(value, position + 1)
     local valueStart = position
     position = scanJsonValue(value, position)
-    fields[key] = string.sub(value, valueStart, position - 1)
+    table.insert(fields.entries, {
+      key = key,
+      value = string.sub(value, valueStart, position - 1)
+    })
+    fields.index[key] = #fields.entries
     position = skipJsonWhitespace(value, position)
 
     local delimiter = string.sub(value, position, position)
@@ -181,16 +185,38 @@ end
 
 local function encodeJsonObject(fields)
   local entries = {}
-  for key, value in pairs(fields) do
-    table.insert(entries, cjson.encode(key) .. ':' .. value)
+  for _, field in ipairs(fields.entries) do
+    if field ~= false then
+      table.insert(entries, cjson.encode(field.key) .. ':' .. field.value)
+    end
   end
   return '{' .. table.concat(entries, ',') .. '}'
 end
 
 local function decodeJsonObjectField(fields, key)
-  local encoded = fields[key]
-  if encoded == nil then return nil end
-  return cjson.decode(encoded)
+  local index = fields.index[key]
+  if index == nil then return nil end
+  local field = fields.entries[index]
+  if field == false then return nil end
+  return cjson.decode(field.value)
+end
+
+local function setJsonObjectField(fields, key, value)
+  local index = fields.index[key]
+  if index == nil then
+    table.insert(fields.entries, { key = key, value = value })
+    fields.index[key] = #fields.entries
+  else
+    fields.entries[index].value = value
+  end
+end
+
+local function deleteJsonObjectField(fields, key)
+  local index = fields.index[key]
+  if index ~= nil then
+    fields.entries[index] = false
+    fields.index[key] = nil
+  end
 end
 
 local function containsAmbiguousEmptyArray(value)
@@ -202,7 +228,9 @@ local function mergeJsonObjects(currentJson, patchJson, forceRawValues)
       containsAmbiguousEmptyArray(currentJson) or containsAmbiguousEmptyArray(patchJson) then
     local current = parseJsonObject(currentJson)
     local patch = parseJsonObject(patchJson)
-    for key, changed in pairs(patch) do current[key] = changed end
+    for _, field in ipairs(patch.entries) do
+      setJsonObjectField(current, field.key, field.value)
+    end
     return encodeJsonObject(current)
   end
 
@@ -216,7 +244,7 @@ local function deleteJsonObjectFields(currentJson, deletedJson, forceRawValues)
   local deleted = cjson.decode(deletedJson)
   if forceRawValues or containsAmbiguousEmptyArray(currentJson) then
     local current = parseJsonObject(currentJson)
-    for _, key in ipairs(deleted) do current[key] = nil end
+    for _, key in ipairs(deleted) do deleteJsonObjectField(current, key) end
     return encodeJsonObject(current)
   end
 

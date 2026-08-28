@@ -78,10 +78,40 @@ const dataViewByteLengthGet = objectGetOwnPropertyDescriptor(
   "byteLength",
 )?.get;
 const WeakMapConstructor = WeakMap;
+const WeakSetConstructor = WeakSet;
 const weakMapGet = WeakMap.prototype.get;
 const weakMapSet = WeakMap.prototype.set;
+const weakSetAdd = WeakSet.prototype.add;
 const weakSetHas = WeakSet.prototype.has;
 const nativeBrandProbeKey = objectCreate(null);
+const workflowJsonPrototypeSnapshots = new WeakSetConstructor<object>();
+
+function isWorkflowJsonPrototypeSnapshot(value: JsonTraversalReference): boolean {
+  return reflectApply(weakSetHas, workflowJsonPrototypeSnapshots, [value]) === true;
+}
+
+/** @internal Stabilizes inherited `toJSON` lookup on an owned persistence clone. */
+export function stabilizeWorkflowJsonPrototypeSnapshot<T extends object>(value: T): T {
+  objectDefineProperty(value, "toJSON", {
+    configurable: false,
+    enumerable: false,
+    value: undefined,
+    writable: false,
+  });
+  reflectApply(weakSetAdd, workflowJsonPrototypeSnapshots, [value]);
+  return value;
+}
+
+function isWorkflowJsonPrototypeSnapshotShadow(
+  value: JsonTraversalReference,
+  key: string | symbol,
+  descriptor: PropertyDescriptor | undefined,
+): boolean {
+  return key === "toJSON" && descriptor !== undefined &&
+    "value" in descriptor && descriptor.value === undefined &&
+    descriptor.enumerable === false &&
+    isWorkflowJsonPrototypeSnapshot(value);
+}
 
 function defineArrayElement<T>(values: T[], index: number, value: T): void {
   objectDefineProperty(values, index, {
@@ -199,24 +229,21 @@ function hasJsonTailHook(
   value: JsonTraversalReference,
   prototype: JsonTraversalReference | null,
 ): boolean {
-  const ownDescriptor = objectGetOwnPropertyDescriptor(value, "toJSON");
-  if (ownDescriptor !== undefined) {
-    return !objectHasOwn(ownDescriptor, "value") ||
-      typeof ownDescriptor.value === "function";
+  let current: JsonTraversalReference | null = value;
+  for (let depth = 0; current !== null && depth < 100; depth++) {
+    if (canIdentifyProxyWithoutHooks && isProxyWithoutHooks(current)) return true;
+    try {
+      const descriptor = objectGetOwnPropertyDescriptor(current, "toJSON");
+      if (descriptor !== undefined) {
+        return !objectHasOwn(descriptor, "value") ||
+          typeof descriptor.value === "function";
+      }
+      current = current === value ? prototype : objectGetPrototypeOf(current);
+    } catch {
+      return true;
+    }
   }
-  if (prototype === null) return false;
-
-  const prototypeDescriptor = objectGetOwnPropertyDescriptor(prototype, "toJSON");
-  if (prototypeDescriptor !== undefined) {
-    return !objectHasOwn(prototypeDescriptor, "value") ||
-      typeof prototypeDescriptor.value === "function";
-  }
-  if (prototype === objectPrototype) return false;
-
-  const objectDescriptor = objectGetOwnPropertyDescriptor(objectPrototype, "toJSON");
-  return objectDescriptor !== undefined &&
-    (!objectHasOwn(objectDescriptor, "value") ||
-      typeof objectDescriptor.value === "function");
+  return current !== null;
 }
 
 function isJsonTailPrimitive(value: unknown): boolean {
@@ -231,12 +258,10 @@ function isJsonTailPrimitive(value: unknown): boolean {
 function isUnsafeJsonTailReference(
   value: JsonTraversalReference,
   active: Set<JsonTraversalReference>,
-  seen: Set<JsonTraversalReference>,
 ): boolean {
   return isProxyWithoutHooks(value) ||
     isNonPlainBuiltinWithoutHooks(value) ||
     reflectApply(setHas, active, [value]) ||
-    reflectApply(setHas, seen, [value]) ||
     (jsonIsRawJSON !== undefined &&
       reflectApply(jsonIsRawJSON, jsonRawSupport, [value]));
 }
@@ -260,7 +285,7 @@ function hasSafeJsonTailPrototype(
 function appendJsonTailOwnDataValues(
   value: JsonTraversalReference,
   isArray: boolean,
-  pending: unknown[],
+  pending: JsonTailScanFrame[],
 ): boolean {
   if (isArray) {
     const length = toJsonLength(reflectGet(value, "length"));
@@ -268,7 +293,7 @@ function appendJsonTailOwnDataValues(
     while (index < length) {
       const descriptor = objectGetOwnPropertyDescriptor(value, StringConstructor(index));
       if (descriptor === undefined || !objectHasOwn(descriptor, "value")) return false;
-      defineArrayElement(pending, pending.length, descriptor.value);
+      appendJsonTailScanFrame(pending, { kind: "enter", value: descriptor.value });
       index++;
     }
     return true;
@@ -279,10 +304,29 @@ function appendJsonTailOwnDataValues(
   while (index < keys.length) {
     const descriptor = objectGetOwnPropertyDescriptor(value, keys[index]!);
     if (descriptor === undefined || !objectHasOwn(descriptor, "value")) return false;
-    defineArrayElement(pending, pending.length, descriptor.value);
+    appendJsonTailScanFrame(pending, { kind: "enter", value: descriptor.value });
     index++;
   }
   return true;
+}
+
+interface JsonTailScanEnterFrame {
+  readonly kind: "enter";
+  readonly value: unknown;
+}
+
+interface JsonTailScanExitFrame {
+  readonly kind: "exit";
+  readonly value: JsonTraversalReference;
+}
+
+type JsonTailScanFrame = JsonTailScanEnterFrame | JsonTailScanExitFrame;
+
+function appendJsonTailScanFrame(
+  frames: JsonTailScanFrame[],
+  frame: JsonTailScanFrame,
+): void {
+  defineArrayElement(frames, frames.length, frame);
 }
 
 /** Whether native JSON can snapshot this tail without a diagnostic replacer. */
@@ -293,16 +337,24 @@ function canSnapshotJsonTailWithoutReplacer(
 ): boolean {
   if (!canIdentifyProxyWithoutHooks) return false;
 
-  const pending: unknown[] = [root];
-  const seen = new SetConstructor<JsonTraversalReference>();
-  let cursor = 0;
-  while (cursor < pending.length) {
-    const candidate = pending[cursor++];
+  const pending: JsonTailScanFrame[] = [{ kind: "enter", value: root }];
+  const localActive = new SetConstructor<JsonTraversalReference>();
+  const localCompleted = new SetConstructor<JsonTraversalReference>();
+  while (pending.length > 0) {
+    const frame = pending[pending.length - 1]!;
+    pending.length--;
+    if (frame.kind === "exit") {
+      reflectApply(setDelete, localActive, [frame.value]);
+      reflectApply(setAdd, localCompleted, [frame.value]);
+      continue;
+    }
+
+    const candidate = frame.value;
     if (candidate === null) continue;
     if (isJsonTailPrimitive(candidate)) continue;
     if (typeof candidate === "function") {
       const reference = candidate as JsonTraversalReference;
-      if (isUnsafeJsonTailReference(reference, active, seen)) return false;
+      if (isUnsafeJsonTailReference(reference, active)) return false;
       try {
         if (hasJsonTailHook(reference, objectGetPrototypeOf(reference))) return false;
       } catch {
@@ -313,12 +365,15 @@ function canSnapshotJsonTailWithoutReplacer(
     if (typeof candidate !== "object") return false;
 
     const reference = candidate as JsonTraversalReference;
-    if (isUnsafeJsonTailReference(reference, active, seen)) return false;
-    reflectApply(setAdd, seen, [reference]);
+    if (reflectApply(setHas, localActive, [reference])) return false;
+    if (reflectApply(setHas, localCompleted, [reference])) continue;
+    if (isUnsafeJsonTailReference(reference, active)) return false;
 
     const isArray = arrayIsArray(reference);
     const inspectToJson = applyRootToJson || reference !== root;
     if (!hasSafeJsonTailPrototype(reference, isArray, inspectToJson)) return false;
+    reflectApply(setAdd, localActive, [reference]);
+    appendJsonTailScanFrame(pending, { kind: "exit", value: reference });
     if (!appendJsonTailOwnDataValues(reference, isArray, pending)) return false;
   }
   return true;
@@ -912,6 +967,7 @@ function normalizeAndFindUnrepresentableValues(
       } catch {
         continue;
       }
+      if (isWorkflowJsonPrototypeSnapshotShadow(value, ownKey, descriptor)) continue;
       serializedIndexCount += recordArrayOwnProperty(ownKey, descriptor, path, length);
     }
     if (serializedIndexCount < length) recordLossy(path, "array hole");
@@ -1043,7 +1099,9 @@ function normalizeAndFindUnrepresentableValues(
     reflectApply(setAdd, active, [nested]);
     try {
       if (isArray) {
-        const result: NormalizedJsonValue[] = [];
+        const result: NormalizedJsonValue[] = isWorkflowJsonPrototypeSnapshot(nested)
+          ? stabilizeWorkflowJsonPrototypeSnapshot([])
+          : [];
         const length = toJsonLength(reflectGet(nested, "length"));
         if (options.strictContext === true) {
           recordStrictArrayDiagnostics(nested, path, length);
@@ -1097,6 +1155,9 @@ function normalizeAndFindUnrepresentableValues(
         let childKey: string;
         if (options.strictContext === true) {
           const descriptor = objectGetOwnPropertyDescriptor(nested, ownKey);
+          if (isWorkflowJsonPrototypeSnapshotShadow(nested, ownKey, descriptor)) {
+            continue;
+          }
           if (typeof ownKey === "symbol") {
             if (descriptor !== undefined) recordLossy(path, "symbol-keyed property");
             continue;

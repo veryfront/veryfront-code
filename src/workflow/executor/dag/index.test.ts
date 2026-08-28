@@ -32,6 +32,7 @@ import type {
 import { StepExecutor, type StepResult } from "../step-executor.ts";
 import { CheckpointManager } from "../checkpoint-manager.ts";
 import type { WorkflowBackend } from "../../backends/types.ts";
+import { MemoryBackend } from "../../backends/memory.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
@@ -3327,13 +3328,25 @@ describe("DAGExecutor", () => {
       assertEquals((savedLeaf as Date).getTime(), 0);
     });
 
-    it("lets an owned backend fence before snapshotting checkpoint data", async () => {
-      let indexReads = 0;
-      const values = new Proxy([], {
-        get(target, key, receiver) {
-          if (key === "length") return 1_000_000_000_000;
-          if (typeof key === "string" && /^\d+$/.test(key)) indexReads++;
-          return Reflect.get(target, key, receiver);
+    it("lets an owned backend fence before touching a checkpoint object proxy", async () => {
+      let trapCalls = 0;
+      let saveCalled = false;
+      const proxied = new Proxy({}, {
+        get() {
+          trapCalls++;
+          throw new Error("checkpoint proxy get must not run before the fence");
+        },
+        getOwnPropertyDescriptor() {
+          trapCalls++;
+          throw new Error("checkpoint proxy descriptor must not run before the fence");
+        },
+        getPrototypeOf() {
+          trapCalls++;
+          throw new Error("checkpoint proxy prototype must not run before the fence");
+        },
+        ownKeys() {
+          trapCalls++;
+          throw new Error("checkpoint proxy keys must not run before the fence");
         },
       });
       const backend = {
@@ -3342,6 +3355,66 @@ describe("DAGExecutor", () => {
       } as unknown as WorkflowBackend;
       const cpManager = new (class extends CheckpointManager {
         override save(): Promise<boolean> {
+          saveCalled = true;
+          return Promise.resolve(false);
+        }
+      })({ backend });
+      const exec = new DAGExecutor({ stepExecutor, checkpointManager: cpManager });
+      const checkpointExecutor = exec as unknown as {
+        checkpoint(
+          runId: string,
+          nodeId: string,
+          context: WorkflowContext,
+          nodeStates: Record<string, NodeState>,
+          ownership: { runId: string; workerId: string },
+        ): Promise<void>;
+      };
+
+      await assertRejects(() =>
+        checkpointExecutor.checkpoint(
+          "test-run",
+          "cp-node",
+          { input: { proxied } },
+          {},
+          { runId: "test-run", workerId: "stale-worker" },
+        )
+      );
+
+      assertEquals(saveCalled, true);
+      assertEquals(trapCalls, 0);
+    });
+
+    it("lets an owned backend fence before touching a checkpoint proxy array length", async () => {
+      let trapCalls = 0;
+      let saveCalled = false;
+      const values = new Proxy([], {
+        get(target, key, receiver) {
+          trapCalls++;
+          if (key === "length") {
+            throw new Error("checkpoint proxy length must not run before the fence");
+          }
+          return Reflect.get(target, key, receiver);
+        },
+        getOwnPropertyDescriptor() {
+          trapCalls++;
+          throw new Error("checkpoint proxy descriptor must not run before the fence");
+        },
+        getPrototypeOf() {
+          trapCalls++;
+          throw new Error("checkpoint proxy prototype must not run before the fence");
+        },
+        ownKeys() {
+          trapCalls++;
+          throw new Error("checkpoint proxy keys must not run before the fence");
+        },
+      });
+      const backend = {
+        saveCheckpoint: () => Promise.resolve(),
+        getLatestCheckpoint: () => Promise.resolve(null),
+      } as unknown as WorkflowBackend;
+      const cpManager = new (class extends CheckpointManager {
+        override save(): Promise<boolean> {
+          saveCalled = true;
           return Promise.resolve(false);
         }
       })({ backend });
@@ -3366,7 +3439,113 @@ describe("DAGExecutor", () => {
         )
       );
 
-      assertEquals(indexReads, 0);
+      assertEquals(saveCalled, true);
+      assertEquals(trapCalls, 0);
+    });
+
+    it("lets an owned backend fence before executing checkpoint accessors or hooks", async () => {
+      let userCodeCalls = 0;
+      let saveCalled = false;
+      const dynamic = {
+        toJSON() {
+          userCodeCalls++;
+          throw new Error("checkpoint toJSON must not run before the fence");
+        },
+      };
+      Object.defineProperty(dynamic, "value", {
+        enumerable: true,
+        get() {
+          userCodeCalls++;
+          throw new Error("checkpoint getter must not run before the fence");
+        },
+      });
+      const backend = {
+        saveCheckpoint: () => Promise.resolve(),
+        getLatestCheckpoint: () => Promise.resolve(null),
+      } as unknown as WorkflowBackend;
+      const cpManager = new (class extends CheckpointManager {
+        override save(): Promise<boolean> {
+          saveCalled = true;
+          return Promise.resolve(false);
+        }
+      })({ backend });
+      const exec = new DAGExecutor({ stepExecutor, checkpointManager: cpManager });
+      const checkpointExecutor = exec as unknown as {
+        checkpoint(
+          runId: string,
+          nodeId: string,
+          context: WorkflowContext,
+          nodeStates: Record<string, NodeState>,
+          ownership: { runId: string; workerId: string },
+        ): Promise<void>;
+      };
+
+      await assertRejects(() =>
+        checkpointExecutor.checkpoint(
+          "test-run",
+          "cp-node",
+          { input: { dynamic } },
+          {},
+          { runId: "test-run", workerId: "stale-worker" },
+        )
+      );
+
+      assertEquals(saveCalled, true);
+      assertEquals(userCodeCalls, 0);
+    });
+
+    it("raises a typed checkpoint persistence error after a successful owned fence", async () => {
+      let trapCalls = 0;
+      const proxied = new Proxy({}, {
+        get() {
+          trapCalls++;
+          throw new Error("checkpoint proxy get must not run");
+        },
+        getOwnPropertyDescriptor() {
+          trapCalls++;
+          throw new Error("checkpoint proxy descriptor must not run");
+        },
+        getPrototypeOf() {
+          trapCalls++;
+          throw new Error("checkpoint proxy prototype must not run");
+        },
+        ownKeys() {
+          trapCalls++;
+          throw new Error("checkpoint proxy keys must not run");
+        },
+      });
+      const backend = new MemoryBackend();
+      await backend.createRun(createTestRun({
+        id: "test-run",
+        status: "running",
+        workerId: "current-worker",
+      }));
+      const cpManager = new CheckpointManager({ backend });
+      const exec = new DAGExecutor({ stepExecutor, checkpointManager: cpManager });
+      const checkpointExecutor = exec as unknown as {
+        checkpoint(
+          runId: string,
+          nodeId: string,
+          context: WorkflowContext,
+          nodeStates: Record<string, NodeState>,
+          ownership: { runId: string; workerId: string },
+        ): Promise<void>;
+      };
+
+      await assertRejects(
+        () =>
+          checkpointExecutor.checkpoint(
+            "test-run",
+            "cp-node",
+            { input: { proxied } },
+            {},
+            { runId: "test-run", workerId: "current-worker" },
+          ),
+        VeryfrontError,
+        "Proxy value",
+      );
+
+      assertEquals(trapCalls, 0);
     });
 
     it("detaches owned checkpoint node output before an asynchronous fence", async () => {
@@ -3414,6 +3593,55 @@ describe("DAGExecutor", () => {
       output.topic = "mutated";
       resumeSave();
       await execution;
+
+      assertEquals(savedTopic, "original");
+    });
+
+    it("detaches owned checkpoint context before an asynchronous fence", async () => {
+      const contextValue = { topic: "original" };
+      let resumeSave!: () => void;
+      let reportSaveStarted!: () => void;
+      const saveGate = new Promise<void>((resolve) => {
+        resumeSave = resolve;
+      });
+      const saveStarted = new Promise<void>((resolve) => {
+        reportSaveStarted = resolve;
+      });
+      let savedTopic: unknown;
+      const backend = {
+        saveCheckpoint: () => Promise.resolve(),
+        getLatestCheckpoint: () => Promise.resolve(null),
+      } as unknown as WorkflowBackend;
+      const cpManager = new (class extends CheckpointManager {
+        override async save(_runId: string, checkpoint: Checkpoint): Promise<boolean> {
+          reportSaveStarted();
+          await saveGate;
+          savedTopic = (checkpoint.context.value as { topic: string }).topic;
+          return true;
+        }
+      })({ backend });
+      const exec = new DAGExecutor({ stepExecutor, checkpointManager: cpManager });
+      const checkpointExecutor = exec as unknown as {
+        checkpoint(
+          runId: string,
+          nodeId: string,
+          context: WorkflowContext,
+          nodeStates: Record<string, NodeState>,
+          ownership: { runId: string; workerId: string },
+        ): Promise<void>;
+      };
+
+      const saving = checkpointExecutor.checkpoint(
+        "test-run",
+        "cp-node",
+        { input: {}, value: contextValue },
+        {},
+        { runId: "test-run", workerId: "current-worker" },
+      );
+      await saveStarted;
+      contextValue.topic = "mutated";
+      resumeSave();
+      await saving;
 
       assertEquals(savedTopic, "original");
     });

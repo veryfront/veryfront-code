@@ -3,6 +3,67 @@ import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 describe("workflow context serialization on edge hosts", () => {
+  it("preserves the owned checkpoint envelope without proxy detection", async () => {
+    const moduleUrl = new URL(
+      "../../../src/workflow/backends/checkpoint-retention.ts?edge-host-owned-checkpoint",
+      import.meta.url,
+    ).href;
+    const script = `
+      const host = globalThis;
+      const denoDescriptor = Object.getOwnPropertyDescriptor(host, "Deno");
+      const processDescriptor = Object.getOwnPropertyDescriptor(host, "process");
+      Reflect.deleteProperty(host, "Deno");
+      Reflect.deleteProperty(host, "process");
+      let retention;
+      try {
+        retention = await import(${JSON.stringify(moduleUrl)});
+      } finally {
+        if (denoDescriptor) Object.defineProperty(host, "Deno", denoDescriptor);
+        if (processDescriptor) Object.defineProperty(host, "process", processDescriptor);
+      }
+      const snapshot = retention.cloneOwnedCheckpointForPersistence({
+        id: "checkpoint-id",
+        nodeId: "node-id",
+        timestamp: new Date(0),
+        context: { input: {}, value: "unsafe" },
+        nodeStates: {},
+      });
+      let persistenceMessage = "accepted";
+      try {
+        JSON.stringify(snapshot.context);
+      } catch (error) {
+        persistenceMessage = error instanceof Error ? error.message : String(error);
+      }
+      console.log(JSON.stringify({
+        id: snapshot.id,
+        nodeId: snapshot.nodeId,
+        timestamp: snapshot.timestamp.toISOString(),
+        keys: Object.keys(snapshot),
+        persistenceMessage,
+      }));
+    `;
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["eval", "--config=deno.json", script],
+      cwd: new URL("../../../", import.meta.url),
+      stderr: "piped",
+      stdout: "piped",
+    }).output();
+
+    assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
+    const result = JSON.parse(new TextDecoder().decode(output.stdout)) as {
+      id: string;
+      nodeId: string;
+      timestamp: string;
+      keys: string[];
+      persistenceMessage: string;
+    };
+    assertEquals(result.id, "checkpoint-id");
+    assertEquals(result.nodeId, "node-id");
+    assertEquals(result.timestamp, "1970-01-01T00:00:00.000Z");
+    assertEquals(result.keys, ["id", "nodeId", "timestamp", "context", "nodeStates"]);
+    assertStringIncludes(result.persistenceMessage, "Proxy detection");
+  });
+
   it("warns for hook-free built-in brands in default mode", async () => {
     const moduleUrl = new URL(
       "../../../src/workflow/context-serialization.ts?edge-host-default-builtins",

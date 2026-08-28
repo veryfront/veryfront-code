@@ -56,6 +56,7 @@ const arrayIsArray = Array.isArray;
 const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
 const objectKeys = Object.keys;
 const objectPrototype = Object.prototype;
 const jsonParse = JSON.parse;
@@ -107,13 +108,12 @@ function persistedApprovalDecisionData(
 
 function clonePersistedPendingApproval(
   approval: PersistedPendingApproval,
-  runId: string,
 ): PersistedPendingApproval {
   const { decisionData, ...approvalWithoutDecisionData } = approval;
   const cloned = structuredClone(approvalWithoutDecisionData);
   if (decisionData !== undefined) {
     objectDefineProperty(cloned, "decisionData", {
-      value: persistedApprovalDecisionData(decisionData, runId, { strictContext: false }),
+      value: clonePersistedJsonValue(decisionData),
       enumerable: true,
       configurable: true,
       writable: true,
@@ -142,12 +142,14 @@ function createPersistedJsonContainer(value: PersistedJsonContainer): PersistedJ
   return arrayIsArray(value) ? new ArrayConstructor(value.length) : objectCreate(objectPrototype);
 }
 
-function clonePersistedWorkflowContext(value: WorkflowContext): WorkflowContext {
+function clonePersistedJsonValue<T>(value: T): T {
   try {
     return structuredCloneValue(value);
   } catch (error) {
     if (!isStructuredCloneRangeError(error)) throw error;
   }
+
+  if (!isPersistedJsonContainer(value)) return value;
 
   const root = createPersistedJsonContainer(value);
   const frames: PersistedJsonCloneFrame[] = [{
@@ -177,7 +179,11 @@ function clonePersistedWorkflowContext(value: WorkflowContext): WorkflowContext 
       }
     }
   }
-  return root as WorkflowContext;
+  return root as T;
+}
+
+function clonePersistedWorkflowContext(value: WorkflowContext): WorkflowContext {
+  return clonePersistedJsonValue(value);
 }
 
 function cloneWorkflowRunWithContext(run: WorkflowRun, context: WorkflowContext): WorkflowRun {
@@ -345,6 +351,11 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.reject(error);
     }
     const context = { ...run.context, ...contextPatch };
+    if (patch.context !== undefined && contextPatch !== undefined) {
+      for (const key of objectKeys(patch.context)) {
+        if (!objectHasOwn(contextPatch, key)) delete context[key];
+      }
+    }
     for (const key of contextDeletes) delete context[key];
     const nodeStates = { ...run.nodeStates, ...patch.nodeStates };
     for (const key of nodeStateDeletes) delete nodeStates[key];
@@ -510,7 +521,7 @@ export class MemoryBackend implements WorkflowBackend {
       initial: {
         ...cloneWorkflowRun(run),
         pendingApprovals: (this.approvals.get(runId) ?? []).map((approval) =>
-          clonePersistedPendingApproval(approval, runId)
+          clonePersistedPendingApproval(approval)
         ),
       },
       changes: feed,
@@ -809,9 +820,7 @@ export class MemoryBackend implements WorkflowBackend {
   getPendingApprovals(runId: string): Promise<PersistedPendingApproval[]> {
     const approvals = this.approvals.get(runId) ?? [];
     return Promise.resolve(
-      approvals.filter((a) => a.status === "pending").map((a) =>
-        clonePersistedPendingApproval(a, runId)
-      ),
+      approvals.filter((a) => a.status === "pending").map((a) => clonePersistedPendingApproval(a)),
     );
   }
 
@@ -821,7 +830,7 @@ export class MemoryBackend implements WorkflowBackend {
   ): Promise<PersistedPendingApproval | null> {
     const approvals = this.approvals.get(runId) ?? [];
     const approval = approvals.find((a) => a.id === approvalId);
-    return Promise.resolve(approval ? clonePersistedPendingApproval(approval, runId) : null);
+    return Promise.resolve(approval ? clonePersistedPendingApproval(approval) : null);
   }
 
   updateApproval(
@@ -875,7 +884,7 @@ export class MemoryBackend implements WorkflowBackend {
         if (approval.reconciliationPending === true) {
           claims.push({
             runId: claimRunId,
-            approval: clonePersistedPendingApproval(approval, claimRunId),
+            approval: clonePersistedPendingApproval(approval),
           });
         }
       }
@@ -959,7 +968,7 @@ export class MemoryBackend implements WorkflowBackend {
           continue;
         }
 
-        result.push({ runId, approval: clonePersistedPendingApproval(approval, runId) });
+        result.push({ runId, approval: clonePersistedPendingApproval(approval) });
       }
     }
 

@@ -1230,6 +1230,67 @@ describe("serializeWorkflowContext", () => {
       assertEquals(JSON.parse(serialized).step.later.observed, 1);
     });
 
+    it("uses inherited function toJSON hooks through the complete prototype chain below the cutoff", () => {
+      const functionPrototype = Object.getPrototypeOf(function hookCarrier() {});
+      const inheritedToJson = {
+        toJSON() {
+          return { fromHook: true };
+        },
+      };
+      const intermediatePrototype = Object.create(inheritedToJson);
+      function hookCarrier() {}
+      Object.setPrototypeOf(hookCarrier, intermediatePrototype);
+      let deep: unknown = { hookCarrier };
+      for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+
+      try {
+        const serialized = serializeWorkflowContext(contextWith(deep));
+        let parsed = JSON.parse(serialized).step;
+        for (let index = 0; index < PAST_THE_WALK; index++) parsed = parsed.n;
+
+        assertEquals(parsed, { hookCarrier: { fromHook: true } });
+      } finally {
+        Object.setPrototypeOf(hookCarrier, functionPrototype);
+      }
+    });
+
+    it("reports BigInt returned by an inherited function toJSON below the cutoff", () => {
+      const functionPrototype = Object.getPrototypeOf(function hookCarrier() {});
+      const inheritedToJson = {
+        toJSON() {
+          return 1n;
+        },
+      };
+      const intermediatePrototype = Object.create(inheritedToJson);
+      function hookCarrier() {}
+      Object.setPrototypeOf(hookCarrier, intermediatePrototype);
+      let deep: unknown = { hookCarrier };
+      for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+
+      try {
+        const error = assertThrows(
+          () => serializeWorkflowContext(contextWith(deep)),
+          VeryfrontError,
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertStringIncludes(error.message, "cannot be persisted");
+        assertStringIncludes(error.message, "BigInt");
+      } finally {
+        Object.setPrototypeOf(hookCarrier, functionPrototype);
+      }
+    });
+
+    it("keeps deep completed aliases on the iterative encoder", () => {
+      const shared = { value: 1 };
+      let deep: unknown = { left: shared, right: shared };
+      for (let index = 0; index < PAST_THE_WALK + 8000; index++) deep = { n: deep };
+
+      const prepared = prepareWorkflowJson(deep, "output");
+
+      assertEquals(prepared.serialized?.includes('"left":{"value":1},"right":{"value":1}'), true);
+    });
+
     it("does not reapply toJSON on a cutoff replacement value", () => {
       let leafToJsonCalls = 0;
       let replacementToJsonCalls = 0;

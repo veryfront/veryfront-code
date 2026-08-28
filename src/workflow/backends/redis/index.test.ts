@@ -2165,6 +2165,70 @@ describe("RedisBackend", () => {
       );
     });
 
+    it("preserves strict context key order when patching top-level context", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-order-patch:",
+        strictContext: true,
+      });
+      const runId = "run-strict-context-order-patch";
+      await strictBackend.createRun(createTestRun(runId, {
+        context: { input: {}, alpha: 1, beta: 2, gamma: 3 },
+      }));
+
+      await strictBackend.updateRun(runId, {
+        context: { beta: "patched", delta: 4 },
+      });
+
+      const storedContext = mockRedis.hashes
+        .get(`strict-order-patch:schema-v1:run:${runId}`)
+        ?.get("context");
+      assertEquals(
+        storedContext,
+        '{"input":{},"alpha":1,"beta":"patched","gamma":3,"delta":4}',
+      );
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "fields.entries",
+        "raw Lua context merges must preserve parsed object entry order",
+      );
+      assertEquals(
+        mockRedis.lastScript.includes("for key, value in pairs(fields) do"),
+        false,
+        "raw Lua context encoding must not depend on unordered pairs iteration",
+      );
+    });
+
+    it("preserves strict context key order when deleting top-level context keys", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-order-delete:",
+        strictContext: true,
+      });
+      const runId = "run-strict-context-order-delete";
+      await strictBackend.createRun(createTestRun(runId, {
+        context: { input: {}, alpha: 1, beta: 2, gamma: 3, delta: 4 },
+      }));
+
+      await strictBackend.updateRun(runId, {
+        contextDeletes: ["beta"],
+        context: { epsilon: 5 },
+      });
+
+      const storedContext = mockRedis.hashes
+        .get(`strict-order-delete:schema-v1:run:${runId}`)
+        ?.get("context");
+      assertEquals(
+        storedContext,
+        '{"input":{},"alpha":1,"gamma":3,"delta":4,"epsilon":5}',
+      );
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "deleteJsonObjectField",
+        "raw Lua context deletions must remove entries without reordering survivors",
+      );
+    });
+
     it("preserves empty arrays in context and node-state merge patches", async () => {
       await backend.createRun(createTestRun("run-empty-array-patches"));
 

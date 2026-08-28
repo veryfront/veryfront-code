@@ -12,9 +12,11 @@ import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source
 import {
   appendRetainedCheckpoint,
   cloneCheckpointForPersistence,
+  cloneOwnedCheckpointForPersistence,
   deleteOldestCheckpointOccurrences,
 } from "./checkpoint-retention.ts";
 import { MemoryBackend } from "./memory.ts";
+import { VeryfrontError } from "#veryfront/errors";
 
 const jsonRawSupport = JSON as typeof JSON & {
   isRawJSON?: (value: unknown) => boolean;
@@ -141,6 +143,168 @@ describe("workflow checkpoint retention", () => {
     if (jsonRawSupport.isRawJSON) {
       assertEquals(jsonRawSupport.isRawJSON(snapshot.context.raw), true);
     }
+  });
+
+  it("traverses nested child values before later parent siblings", () => {
+    let getterCalls = 0;
+    const nested = {};
+    const context: WorkflowContext = {
+      input: { nested },
+      later: "before",
+    };
+    Object.defineProperty(nested, "trigger", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        getterCalls++;
+        context.later = "after";
+        return "triggered";
+      },
+    });
+
+    const snapshot = cloneCheckpointForPersistence({
+      ...checkpoint("getter-order"),
+      context,
+    });
+
+    assertEquals(snapshot.context.input, { nested: { trigger: "triggered" } });
+    assertEquals(snapshot.context.later, "after");
+    assertEquals(getterCalls, 1);
+  });
+
+  it("snapshots array indices in native JSON order", () => {
+    const reads: string[] = [];
+    const prototype = Object.create(Array.prototype);
+    Object.defineProperty(prototype, "0", {
+      configurable: true,
+      get() {
+        reads.push("inherited-0");
+        return { value: "inherited" };
+      },
+    });
+    Object.defineProperty(prototype, "2", {
+      configurable: true,
+      get() {
+        reads.push("inherited-2");
+        return { value: "later" };
+      },
+    });
+    const values: unknown[] = [];
+    values.length = 3;
+    Object.defineProperty(values, "1", {
+      configurable: true,
+      enumerable: false,
+      get() {
+        reads.push("own-1");
+        return { value: "own" };
+      },
+    });
+    Object.setPrototypeOf(values, prototype);
+
+    const snapshot = cloneCheckpointForPersistence({
+      ...checkpoint("array-index-order"),
+      context: { input: { values } },
+    });
+
+    assertEquals(reads, ["inherited-0", "own-1", "inherited-2"]);
+    assertEquals(
+      JSON.stringify(snapshot.context.input),
+      '{"values":[{"value":"inherited"},{"value":"own"},{"value":"later"}]}',
+    );
+  });
+
+  it("snapshots owned plain values, dates, and raw JSON", () => {
+    const nested = { value: "original" };
+    const context: WorkflowContext = {
+      input: { nested },
+      date: new Date(1),
+    };
+    if (jsonRawSupport.rawJSON) context.raw = jsonRawSupport.rawJSON("-0");
+
+    const snapshot = cloneOwnedCheckpointForPersistence({
+      ...checkpoint("owned-positive"),
+      timestamp: new Date(2),
+      context,
+    });
+    nested.value = "mutated";
+    (context.date as Date).setTime(3);
+
+    assertEquals(snapshot.context.input, { nested: { value: "original" } });
+    assertEquals(snapshot.timestamp instanceof Date, true);
+    assertEquals(snapshot.timestamp.getTime(), 2);
+    assertEquals(snapshot.context.date instanceof Date, true);
+    assertEquals((snapshot.context.date as Date).getTime(), 1);
+    if (jsonRawSupport.isRawJSON) {
+      assertEquals(jsonRawSupport.isRawJSON(snapshot.context.raw), true);
+    }
+  });
+
+  it("keeps strict validation transparent for owned prototype snapshots", async () => {
+    const snapshot = cloneOwnedCheckpointForPersistence({
+      ...checkpoint("owned-strict-prototype-snapshot"),
+      context: { input: { value: { name: "stored" }, values: [1, 2] } },
+    });
+    const backend = new MemoryBackend({ strictContext: true });
+
+    await backend.saveCheckpoint("owned-strict-prototype-snapshot", snapshot);
+
+    assertEquals(
+      (await backend.getLatestCheckpoint("owned-strict-prototype-snapshot"))?.context,
+      { input: { value: { name: "stored" }, values: [1, 2] } },
+    );
+  });
+
+  it("preserves an owned non-callable toJSON data property", () => {
+    const snapshot = cloneOwnedCheckpointForPersistence({
+      ...checkpoint("owned-to-json-data"),
+      context: { input: { value: { toJSON: "data", name: "ok" } } },
+    });
+
+    assertEquals(
+      JSON.stringify(snapshot.context),
+      '{"input":{"value":{"toJSON":"data","name":"ok"}}}',
+    );
+  });
+
+  it("detaches owned values with proxy prototypes without traversing the prototype", () => {
+    let prototypeTraps = 0;
+    const prototype = new Proxy({}, {
+      get() {
+        prototypeTraps++;
+        throw new Error("proxy prototype get must not run");
+      },
+      getOwnPropertyDescriptor() {
+        prototypeTraps++;
+        throw new Error("proxy prototype descriptor must not run");
+      },
+      getPrototypeOf() {
+        prototypeTraps++;
+        throw new Error("proxy prototype traversal must not run");
+      },
+      ownKeys() {
+        prototypeTraps++;
+        throw new Error("proxy prototype keys must not run");
+      },
+    });
+    const value = Object.create(prototype);
+    Object.defineProperty(value, "safe", {
+      configurable: true,
+      enumerable: true,
+      value: "data",
+      writable: true,
+    });
+
+    const snapshot = cloneOwnedCheckpointForPersistence({
+      ...checkpoint("owned-proxy-prototype"),
+      context: { input: { value } },
+    });
+
+    assertThrows(
+      () => JSON.stringify(snapshot.context.input),
+      VeryfrontError,
+      "Proxy prototype",
+    );
+    assertEquals(prototypeTraps, 0);
   });
 
   it("does not inspect properties that a native toJSON hook bypasses", () => {
@@ -332,6 +496,131 @@ describe("workflow checkpoint retention", () => {
     assertEquals(JSON.stringify(snapshot.context.input), '{"value":{"name":"original"}}');
   });
 
+  it("snapshots callable toJSON hooks before asynchronous persistence", () => {
+    const callable = function () {} as (() => void) & { toJSON?: () => unknown };
+    callable.toJSON = () => "original";
+
+    const snapshot = cloneCheckpointForPersistence({
+      ...checkpoint("callable-to-json"),
+      context: { input: { callable } },
+    });
+    callable.toJSON = () => "mutated";
+
+    assertEquals(JSON.stringify(snapshot.context.input), '{"callable":"original"}');
+  });
+
+  it("keeps callable values omitted when a hook is added after the snapshot", () => {
+    const callable = function () {} as (() => void) & { toJSON?: () => unknown };
+
+    const snapshot = cloneCheckpointForPersistence({
+      ...checkpoint("callable-without-to-json"),
+      context: { input: { callable } },
+    });
+    callable.toJSON = () => "mutated";
+
+    assertEquals(JSON.stringify(snapshot.context.input), "{}");
+  });
+
+  it("reads a callable value's non-callable toJSON accessor once", () => {
+    let reads = 0;
+    const callable = function () {};
+    Object.defineProperty(callable, "toJSON", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        reads++;
+        return "not-callable";
+      },
+    });
+
+    const snapshot = cloneCheckpointForPersistence({
+      ...checkpoint("callable-non-hook"),
+      context: { input: { callable } },
+    });
+
+    assertEquals(reads, 1);
+    assertEquals(JSON.stringify(snapshot.context.input), "{}");
+  });
+
+  it("terminates a self-returning toJSON value with an enumerable self reference", () => {
+    const value: Record<string, unknown> & { toJSON(): unknown } = {
+      name: "original",
+      toJSON() {
+        return this;
+      },
+    };
+    value.self = value;
+
+    const snapshot = cloneCheckpointForPersistence({
+      ...checkpoint("self-to-json-cycle"),
+      context: { input: { value } },
+    });
+
+    assertThrows(
+      () => JSON.stringify(snapshot.context.input),
+      TypeError,
+    );
+  });
+
+  it("reapplies a direct self-returning hook before nested cycle detection", () => {
+    let firstCall = true;
+    const value: Record<string, unknown> & { toJSON(): unknown } = {
+      toJSON() {
+        if (firstCall) {
+          firstCall = false;
+          return this;
+        }
+        return "again";
+      },
+    };
+    value.self = value;
+
+    const snapshot = cloneCheckpointForPersistence({
+      ...checkpoint("direct-self-then-primitive"),
+      context: { input: { value } },
+    });
+
+    assertEquals(JSON.stringify(snapshot.context.input), '{"value":{"self":"again"}}');
+  });
+
+  it("reapplies toJSON to a nested source reference in a hook replacement", () => {
+    let firstCall = true;
+    const value = {
+      toJSON(): unknown {
+        if (firstCall) {
+          firstCall = false;
+          return { self: value };
+        }
+        return "again";
+      },
+    };
+
+    const snapshot = cloneCheckpointForPersistence({
+      ...checkpoint("nested-source-hook"),
+      context: { input: { value } },
+    });
+
+    assertEquals(JSON.stringify(snapshot.context.input), '{"value":{"self":"again"}}');
+  });
+
+  it("bounds recursive nested source replacements from toJSON", () => {
+    const value = {
+      toJSON(): unknown {
+        return { self: value };
+      },
+    };
+
+    assertThrows(
+      () =>
+        cloneCheckpointForPersistence({
+          ...checkpoint("recursive-nested-source-hook"),
+          context: { input: { value } },
+        }),
+      VeryfrontError,
+      "checkpoint toJSON replacements exceed the stack-safe nesting limit",
+    );
+  });
+
   it("does not reapply toJSON on a hook replacement", () => {
     let replacementCalls = 0;
     const replacement = {
@@ -437,6 +726,49 @@ describe("workflow checkpoint retention", () => {
 
     assertEquals(snapshot.context.input, { proxied: [1, 2, 3] });
     assertEquals(ownKeysCalls, 0);
+  });
+
+  it("defers oversized proxy-array persistence failure without reading indices", async () => {
+    let indexReads = 0;
+    const values = new Proxy([], {
+      get(target, key, receiver) {
+        if (key === "length") return 1_000_000_000_000;
+        if (typeof key === "string" && /^\d+$/.test(key)) indexReads++;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const snapshot = cloneCheckpointForPersistence({
+      ...checkpoint("oversized-proxy-array"),
+      context: { input: { values } },
+    });
+    assertEquals(indexReads, 0);
+
+    const backend = new MemoryBackend();
+    await backend.createRun(run("oversized-proxy-array", "worker-current"));
+    assertEquals(
+      await backend.saveCheckpointIfStatusAndWorker(
+        "stale-oversized-proxy-array",
+        "oversized-proxy-array",
+        ["running"],
+        "worker-stale",
+        snapshot,
+      ),
+      false,
+    );
+    assertEquals(indexReads, 0);
+    await assertRejects(
+      () =>
+        backend.saveCheckpointIfStatusAndWorker(
+          "accepted-oversized-proxy-array",
+          "oversized-proxy-array",
+          ["running"],
+          "worker-current",
+          snapshot,
+        ),
+      Error,
+      "proxy array",
+    );
+    assertEquals(indexReads, 0);
   });
 
   it("preserves array prototype diagnostics and snapshots inherited indices", async () => {

@@ -18,7 +18,10 @@ import type {
   WorkflowRun,
 } from "../../types.ts";
 import { generateId } from "../../types.ts";
-import { cloneCheckpointForPersistence } from "../../backends/checkpoint-retention.ts";
+import {
+  cloneCheckpointForPersistence,
+  cloneOwnedCheckpointForPersistence,
+} from "../../backends/checkpoint-retention.ts";
 import {
   captureWorkflowSourceIntegrationPolicy,
   runWithWorkflowSourceIntegrationPolicy,
@@ -1111,9 +1114,9 @@ export class DAGExecutor {
       context,
       nodeStates,
     };
-    // Owned backends fence before serialization. Keep that precedence and let
-    // the successful owner snapshot synchronously after the fence.
-    const checkpoint = ownership ? checkpointValue : cloneCheckpointForPersistence(checkpointValue);
+    const checkpoint = ownership
+      ? cloneOwnedCheckpointForPersistence(checkpointValue)
+      : cloneCheckpointForPersistence(checkpointValue);
 
     const saved = await this.config.checkpointManager.save(runId, checkpoint, ownership);
     // Legacy test/double implementations returned void. Only an explicit false
