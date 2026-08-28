@@ -183,6 +183,20 @@ describe("public docs validation", () => {
     );
   });
 
+  it("validates site-root code destinations", () => {
+    const issues = collectUnpublishedLinkIssues(
+      "docs/guides/example.md",
+      "[private](/code/architecture/private) " +
+        "[public](/code/guides/deploying)",
+    );
+
+    assertEquals(issues.length, 1);
+    assertEquals(
+      issues[0]?.message.includes("docs/architecture/private"),
+      true,
+    );
+  });
+
   it("decodes Markdown character references before resolving destinations", () => {
     const issues = collectUnpublishedLinkIssues(
       "docs/guides/example.md",

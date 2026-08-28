@@ -62,6 +62,7 @@ const URI_AUTOLINK_SOURCE = /<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*)>/g;
 const RESOLUTION_ORIGIN = "https://docs.invalid";
 const VERYFRONT_DOCS_ORIGIN = "https://veryfront.com";
 const VERYFRONT_CODE_DOCS_PREFIX = "/docs/code/";
+const VERYFRONT_SITE_CODE_PREFIX = "/code/";
 const MARKDOWN_URL_ENTITIES: Readonly<Record<string, string>> = {
   amp: "&",
   colon: ":",
@@ -246,6 +247,13 @@ function resolveDocumentationTarget(
   ) {
     pathname = `/docs/${
       resolved.pathname.slice(VERYFRONT_CODE_DOCS_PREFIX.length)
+    }`;
+  } else if (
+    resolved.origin === RESOLUTION_ORIGIN &&
+    href.startsWith(VERYFRONT_SITE_CODE_PREFIX)
+  ) {
+    pathname = `/docs/${
+      resolved.pathname.slice(VERYFRONT_SITE_CODE_PREFIX.length)
     }`;
   } else {
     if (resolved.origin !== RESOLUTION_ORIGIN || /^[\/\\]/.test(href)) {
