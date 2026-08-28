@@ -34,24 +34,24 @@ describe("public docs validation", () => {
   it("parses balanced and escaped reference definition labels", () => {
     assertEquals(
       destinations(
-        "[use][nested [label]]\n" +
+        "[use][nested [label]]\n\n" +
           "[nested [label]]: ../architecture/nested.md",
       ),
       ["../architecture/nested.md"],
     );
     assertEquals(
       destinations(
-        String.raw`[use][escaped \] label]` + "\n" +
+        String.raw`[use][escaped \] label]` + "\n\n" +
           String.raw`[escaped \] label]: ../architecture/escaped.md`,
       ),
       ["../architecture/escaped.md"],
     );
     assertEquals(
-      destinations("[ſ]\n[s]: ../architecture/case-folded.md"),
+      destinations("[ſ]\n\n[s]: ../architecture/case-folded.md"),
       ["../architecture/case-folded.md"],
     );
     assertEquals(
-      destinations("[ẞ]\n[ss]: ../architecture/capital-sharp.md"),
+      destinations("[ẞ]\n\n[ss]: ../architecture/capital-sharp.md"),
       ["../architecture/capital-sharp.md"],
     );
   });
@@ -98,7 +98,7 @@ describe("public docs validation", () => {
         "[plain](./does-not-exist.md\n" +
           "[wrapped](<./also-missing.md>\n" +
           "[paragraph](\n\n../architecture/paragraph.md)\n" +
-          "[reference]\n[reference]: <../architecture/reference.md",
+          "[reference]\n\n[reference]: <../architecture/reference.md",
       ),
       [],
     );
@@ -208,14 +208,20 @@ describe("public docs validation", () => {
       ["../architecture/text.md"],
     );
     assertEquals(
-      destinations("[gate]\n[gate]:\n../architecture/reference.md"),
+      destinations("[gate]\n\n[gate]:\n../architecture/reference.md"),
       ["../architecture/reference.md"],
     );
   });
 
   it("ends a reference definition at a blank line", () => {
     assertEquals(
-      destinations("[gate]\n[gate]:\n\n../architecture/orphan.md"),
+      destinations("[gate]\n\n[gate]:\n\n../architecture/orphan.md"),
+      [],
+    );
+    assertEquals(
+      destinations(
+        "[old]\nIntro paragraph.\n[old]: ../architecture/not-a-definition.md",
+      ),
       [],
     );
   });
@@ -342,7 +348,7 @@ describe("public docs validation", () => {
   it("decodes Markdown character references before resolving destinations", () => {
     const issues = collectUnpublishedLinkIssues(
       "docs/guides/example.md",
-      "[decimal] [hex] [named]\n" +
+      "[decimal] [hex] [named]\n\n" +
         "[decimal]: &#46;&#46;/architecture/decimal.md\n" +
         "[hex]: &#x2e;&#x2e;/architecture/hex.md\n" +
         "[named]: &period;&period;&sol;architecture/named.md",
@@ -354,7 +360,7 @@ describe("public docs validation", () => {
   it("decodes Markdown escapes before resolving destinations", () => {
     const issues = collectUnpublishedLinkIssues(
       "docs/guides/example.md",
-      "[gate]\n" + String.raw`[gate]: \../architecture/private.md`,
+      "[gate]\n\n" + String.raw`[gate]: \../architecture/private.md`,
     );
 
     assertEquals(issues.length, 1);
@@ -375,7 +381,7 @@ describe("public docs validation", () => {
     const issues = collectUnpublishedLinkIssues(
       "docs/guides/example.md",
       '<a href="./does-not-exist.md">missing</a>\n' +
-        "[missing]\n" +
+        "[missing]\n\n" +
         "[missing]: ./also-does-not-exist.md",
     );
 
@@ -418,14 +424,14 @@ describe("public docs validation", () => {
     );
     assertEquals(
       destinations(
-        "[nested [old]](./public.md)\n" +
+        "[nested [old]](./public.md)\n\n" +
           "[old]: ../architecture/private.md",
       ),
       ["./public.md"],
     );
     assertEquals(
       destinations(
-        '[inline](./public.md "[old]")\n' +
+        '[inline](./public.md "[old]")\n\n' +
           "[old]: ../architecture/private.md",
       ),
       ["./public.md"],
@@ -511,6 +517,31 @@ describe("public docs validation", () => {
       ),
       ["../architecture/tab-rendered.md"],
     );
+    assertEquals(
+      destinations(
+        "> ```md\n" +
+          "[root](../architecture/root.md)\n" +
+          "> ```",
+      ),
+      ["../architecture/root.md"],
+    );
+    assertEquals(
+      destinations(
+        "- ```md\n" +
+          "[root](../architecture/list-root.md)\n" +
+          "  ```",
+      ),
+      ["../architecture/list-root.md"],
+    );
+    assertEquals(
+      destinations(
+        "```md\r\n" +
+          "[ignored](../architecture/ignored.md)\r\n" +
+          "```\r\n" +
+          "[rendered](../architecture/crlf.md)",
+      ),
+      ["../architecture/crlf.md"],
+    );
   });
 
   it("scans rendered paragraphs indented inside list items", () => {
@@ -570,6 +601,13 @@ describe("public docs validation", () => {
       ),
       ["../architecture/real.md"],
     );
+    assertEquals(
+      destinations(
+        '{"[plain](../architecture/expression.md)"}\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
   });
 
   it("ignores Markdown syntax inside complete MDX expressions", () => {
@@ -606,10 +644,11 @@ describe("public docs validation", () => {
   it("validates Veryfront documentation autolinks", () => {
     const issues = collectUnpublishedLinkIssues(
       "docs/guides/example.md",
-      "<https://veryfront.com/docs/code/architecture/private>",
+      "<https://veryfront.com/docs/code/architecture/private>\n" +
+        "https://veryfront.com/docs/code/architecture/bare",
     );
 
-    assertEquals(issues.length, 1);
+    assertEquals(issues.length, 2);
     assertEquals(
       destinations(
         String.raw`\<https://veryfront.com/docs/code/guides/does-not-exist>`,

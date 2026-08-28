@@ -52,6 +52,7 @@ const UNSYNCED_README_PATHS = SYNCED_DOC_DIRS.map((dir) => `${dir}/README.md`);
 const HTML_DESTINATION_ATTRIBUTE_SOURCE =
   /(?:^|\s)(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*((?:\(\s*)*)"((?:\\[\s\S]|[^"\\])*)"((?:\s*\))*)\s*\}|\{\s*((?:\(\s*)*)'((?:\\[\s\S]|[^'\\])*)'((?:\s*\))*)\s*\}|\{\s*((?:\(\s*)*)`((?:\\[\s\S]|\$(?!\{)|[^`\\$])*)`((?:\s*\))*)\s*\})/;
 const URI_AUTOLINK_SOURCE = /<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*)>/g;
+const GFM_AUTOLINK_SOURCE = /\bhttps?:\/\/[^\s<>"'`]+/gi;
 /** Any origin works: only the resolved path is read back out. */
 const RESOLUTION_ORIGIN = "https://docs.invalid";
 const VERYFRONT_DOCS_HOSTNAME = "veryfront.com";
@@ -307,9 +308,26 @@ function isBackslashEscaped(text: string, offset: number): boolean {
   return backslashes % 2 === 1;
 }
 
-function blockContentStart(text: string, lineStart: number): number {
+type BlockContainerToken =
+  | { type: "quote" }
+  | { type: "list"; indentation: number };
+
+function columnWidth(text: string): number {
+  let column = 0;
+  for (const character of text) {
+    column += character === "\t" ? 4 - column % 4 : 1;
+  }
+  return column;
+}
+
+function blockContent(
+  text: string,
+  lineStart: number,
+): { start: number; containers: BlockContainerToken[] } {
   let cursor = lineStart;
+  const containers: BlockContainerToken[] = [];
   while (true) {
+    const containerStart = cursor;
     let indentation = 0;
     while (indentation < 3) {
       if (text[cursor] === " ") {
@@ -327,6 +345,7 @@ function blockContentStart(text: string, lineStart: number): number {
       break;
     }
     if (text[cursor] === ">") {
+      containers.push({ type: "quote" });
       cursor++;
       if (text[cursor] === " " || text[cursor] === "\t") cursor++;
       continue;
@@ -336,15 +355,66 @@ function blockContentStart(text: string, lineStart: number): number {
       (text[cursor + 1] === " " || text[cursor + 1] === "\t")
     ) {
       cursor += 2;
+      containers.push({
+        type: "list",
+        indentation: columnWidth(text.slice(containerStart, cursor)),
+      });
       continue;
     }
     const ordered = text.slice(cursor).match(/^\d{1,9}[.)][ \t]/);
     if (ordered) {
       cursor += ordered[0].length;
+      containers.push({
+        type: "list",
+        indentation: columnWidth(text.slice(containerStart, cursor)),
+      });
       continue;
     }
-    return cursor;
+    return { start: cursor, containers };
   }
+}
+
+function blockContentStart(text: string, lineStart: number): number {
+  return blockContent(text, lineStart).start;
+}
+
+function blockContainersContinue(
+  text: string,
+  lineStart: number,
+  lineEnd: number,
+  containers: readonly BlockContainerToken[],
+): boolean {
+  if (containers.length === 0) return true;
+  if (text.slice(lineStart, lineEnd).trim() === "") {
+    return containers.every((container) => container.type === "list");
+  }
+
+  let cursor = lineStart;
+  for (const container of containers) {
+    if (container.type === "quote") {
+      let indentation = 0;
+      while (indentation < 3 && text[cursor] === " ") {
+        cursor++;
+        indentation++;
+      }
+      if (text[cursor] !== ">") return false;
+      cursor++;
+      if (text[cursor] === " " || text[cursor] === "\t") cursor++;
+      continue;
+    }
+
+    let indentation = 0;
+    while (indentation < container.indentation) {
+      if (text[cursor] === " ") {
+        cursor++;
+        indentation++;
+      } else if (text[cursor] === "\t") {
+        cursor++;
+        indentation += 4 - indentation % 4;
+      } else return false;
+    }
+  }
+  return true;
 }
 
 function allowsFollowingIndentedCode(line: string): boolean {
@@ -389,19 +459,40 @@ function markdownCodeRanges(text: string): Range[] {
   let indentedCode = false;
   let listContentIndent: number | undefined;
   let fence:
-    | { marker: "`" | "~"; length: number; start: number }
+    | {
+      marker: "`" | "~";
+      length: number;
+      start: number;
+      containers: BlockContainerToken[];
+    }
     | undefined;
 
-  for (const line of lines) {
+  for (const rawLine of lines) {
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
     const lineEnd = offset + line.length;
-    const contentStart = blockContentStart(text, offset);
-    const blockLine = text.slice(contentStart, lineEnd);
+    const nextOffset = offset + rawLine.length + 1;
+    const content = blockContent(text, offset);
+    const blockLine = text.slice(content.start, lineEnd);
     const possibleFence = blockLine.match(/^( {0,3})(`{3,}|~{3,})/);
     const fenceMatch = possibleFence &&
         (possibleFence[2]![0] === "~" ||
           !blockLine.slice(possibleFence[0].length).includes("`"))
       ? possibleFence
       : null;
+    if (
+      fence &&
+      !blockContainersContinue(
+        text,
+        offset,
+        lineEnd,
+        fence.containers,
+      )
+    ) {
+      blockRanges.push({ start: fence.start, end: offset });
+      fence = undefined;
+      canStartIndentedCode = true;
+      indentedCode = false;
+    }
     if (fence) {
       const closing = blockLine.match(/^( {0,3})(`{3,}|~{3,})[ \t]*$/);
       if (
@@ -416,13 +507,14 @@ function markdownCodeRanges(text: string): Range[] {
     } else if (fenceMatch) {
       const marker = fenceMatch[2]![0];
       if (marker !== "`" && marker !== "~") {
-        offset = lineEnd + 1;
+        offset = nextOffset;
         continue;
       }
       fence = {
         marker,
         length: fenceMatch[2]!.length,
         start: offset,
+        containers: content.containers,
       };
       canStartIndentedCode = true;
       indentedCode = false;
@@ -466,7 +558,7 @@ function markdownCodeRanges(text: string): Range[] {
         indentedCode = false;
       }
     }
-    offset = lineEnd + 1;
+    offset = nextOffset;
   }
   if (fence) blockRanges.push({ start: fence.start, end: text.length });
 
@@ -635,7 +727,6 @@ function mdxSyntaxRanges(
       cursor = end;
       continue;
     }
-
     if (text[cursor] !== "{" || isBackslashEscaped(text, cursor)) {
       cursor++;
       continue;
@@ -932,6 +1023,12 @@ function markdownDestinationStart(
   return cursor;
 }
 
+function trimGfmAutolink(rawHref: string): string {
+  let href = rawHref;
+  while (/[.,!?;:)}\]]$/.test(href)) href = href.slice(0, -1);
+  return href;
+}
+
 /**
  * Every destination in `text`, with its offset.
  *
@@ -1085,16 +1182,32 @@ export function scanDestinations(text: string): Destination[] {
   const references: Array<
     Destination & { label: string; labelStart: number }
   > = [];
+  let canStartReferenceDefinition = true;
+  let previousContainerSignature = "";
   for (let lineStart = 0; lineStart <= text.length;) {
+    const next = text.indexOf("\n", lineStart);
+    const lineEnd = next === -1 ? text.length : next;
+    const content = blockContent(text, lineStart);
+    const containerSignature = content.containers.map((container) =>
+      container.type === "quote" ? ">" : `list:${container.indentation}`
+    ).join("/");
+    const containerBoundary = containerSignature !== previousContainerSignature;
     if (isInsideRange(markdownIgnoredRanges, lineStart)) {
-      const next = text.indexOf("\n", lineStart);
+      canStartReferenceDefinition = true;
+      previousContainerSignature = containerSignature;
       if (next === -1) break;
       lineStart = next + 1;
       continue;
     }
-    const reference = referenceDestinationAt(text, lineStart);
+    const reference: ReturnType<typeof referenceDestinationAt> =
+      canStartReferenceDefinition || containerBoundary
+        ? referenceDestinationAt(text, lineStart)
+        : undefined;
     if (reference) references.push(reference);
-    const next = text.indexOf("\n", lineStart);
+    const blockLine = text.slice(content.start, lineEnd).replace(/\r$/, "");
+    canStartReferenceDefinition = reference !== undefined ||
+      blockLine.trim() === "" || allowsFollowingIndentedCode(blockLine);
+    previousContainerSignature = containerSignature;
     if (next === -1) break;
     lineStart = next + 1;
   }
@@ -1109,6 +1222,25 @@ export function scanDestinations(text: string): Destination[] {
     if (definedLabels.has(label)) continue;
     definedLabels.add(label);
     if (usedLabels.has(label)) found.push(reference);
+  }
+
+  const existingDestinationRanges = mergeRanges(
+    found.map((destination) => ({
+      start: destination.offset,
+      end: destination.offset + destination.href.length,
+    })),
+  );
+  let bareAutolinkMatch: RegExpExecArray | null;
+  while ((bareAutolinkMatch = GFM_AUTOLINK_SOURCE.exec(text))) {
+    const offset = bareAutolinkMatch.index;
+    if (
+      isInsideRange(markdownIgnoredRanges, offset) ||
+      isInsideRange(existingDestinationRanges, offset) ||
+      isBackslashEscaped(text, offset) ||
+      text[offset - 1] === "<" && isBackslashEscaped(text, offset - 1)
+    ) continue;
+    const href = trimGfmAutolink(bareAutolinkMatch[0]);
+    if (href !== "") found.push({ href, offset });
   }
 
   return found;
