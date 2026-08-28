@@ -132,6 +132,10 @@ describe("public docs validation", () => {
       destinations("<a href={'../architecture/single.md'}>gate</a>"),
       ["../architecture/single.md"],
     );
+    assertEquals(
+      destinations("<a href={`../architecture/template.md`}>gate</a>"),
+      ["../architecture/template.md"],
+    );
   });
 
   it("evaluates JavaScript escapes in a JSX href string literal", () => {
@@ -155,6 +159,10 @@ describe("public docs validation", () => {
 
   it("ignores a dynamic JSX href expression", () => {
     assertEquals(destinations("<a href={href}>gate</a>"), []);
+    assertEquals(
+      destinations("<a href={`../${section}/private.md`}>gate</a>"),
+      [],
+    );
   });
 
   it("validates Veryfront absolute documentation URLs", () => {
@@ -203,6 +211,76 @@ describe("public docs validation", () => {
       ),
       ["../architecture/private.md", "../architecture/wrapped.md"],
     );
+  });
+
+  it("finds reference definitions inside list containers", () => {
+    assertEquals(
+      destinations(
+        "- [gate]: ../architecture/private.md\n" +
+          "- [wrapped]:\n  ../architecture/wrapped.md",
+      ),
+      ["../architecture/private.md", "../architecture/wrapped.md"],
+    );
+  });
+
+  it("ignores Markdown destinations inside code", () => {
+    assertEquals(
+      destinations(
+        "`[inline](../architecture/inline.md)`\n" +
+          "```md\n[example](../architecture/fenced.md)\n```\n" +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+  });
+
+  it("validates Veryfront documentation autolinks", () => {
+    const issues = collectUnpublishedLinkIssues(
+      "docs/guides/example.md",
+      "<https://veryfront.com/docs/code/architecture/private>",
+    );
+
+    assertEquals(issues.length, 1);
+  });
+
+  it("does not duplicate angle-bracket Markdown destinations as autolinks", () => {
+    const issues = collectUnpublishedLinkIssues(
+      "docs/guides/example.md",
+      "[private](<https://veryfront.com/docs/code/architecture/private>)",
+    );
+
+    assertEquals(issues.length, 1);
+  });
+
+  it("accepts MDX published-route candidates", () => {
+    const page =
+      `${Deno.cwd()}/docs/guides/__validate-public-docs-mdx-fixture.mdx`;
+    const directory =
+      `${Deno.cwd()}/docs/guides/__validate-public-docs-mdx-directory`;
+    try {
+      Deno.writeTextFileSync(page, "");
+      Deno.mkdirSync(directory);
+      Deno.writeTextFileSync(`${directory}/index.mdx`, "");
+      assertEquals(
+        collectUnpublishedLinkIssues(
+          "docs/guides/example.md",
+          "[page](./__validate-public-docs-mdx-fixture) " +
+            "[dir](./__validate-public-docs-mdx-directory)",
+        ),
+        [],
+      );
+    } finally {
+      try {
+        Deno.removeSync(page);
+      } catch {
+        // Fixture did not get created.
+      }
+      try {
+        Deno.removeSync(directory, { recursive: true });
+      } catch {
+        // Fixture did not get created.
+      }
+    }
   });
 
   it("reports the destination line for a multiline MDX href", () => {

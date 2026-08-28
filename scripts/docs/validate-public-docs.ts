@@ -56,7 +56,8 @@ const UNSYNCED_README_PATHS = SYNCED_DOC_DIRS.map((dir) => `${dir}/README.md`);
  * click; a genuinely dynamic `href={href}` has no literal to check.
  */
 const HTML_HREF_SOURCE =
-  /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*"((?:\\[\s\S]|[^"\\])*)"\s*\}|\{\s*'((?:\\[\s\S]|[^'\\])*)'\s*\})/;
+  /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*"((?:\\[\s\S]|[^"\\])*)"\s*\}|\{\s*'((?:\\[\s\S]|[^'\\])*)'\s*\}|\{\s*`((?:\\[\s\S]|\$(?!\{)|[^`\\$])*)`\s*\})/;
+const URI_AUTOLINK_SOURCE = /<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*)>/g;
 /** Any origin works: only the resolved path is read back out. */
 const RESOLUTION_ORIGIN = "https://docs.invalid";
 const VERYFRONT_DOCS_ORIGIN = "https://veryfront.com";
@@ -98,7 +99,15 @@ function isPublishedPage(target: string): boolean {
 function publishedTargetExists(target: string): boolean {
   if (!isPublishedPage(target)) return false;
   const path = target.replace(/\/$/, "");
-  for (const candidate of [path, `${path}.md`, `${path}/index.md`]) {
+  for (
+    const candidate of [
+      path,
+      `${path}.md`,
+      `${path}.mdx`,
+      `${path}/index.md`,
+      `${path}/index.mdx`,
+    ]
+  ) {
     try {
       const entry = Deno.statSync(`${ROOT}/${candidate}`);
       if (entry.isFile || entry.isDirectory) return true;
@@ -273,10 +282,98 @@ function blockContentStart(text: string, lineStart: number): number {
       cursor++;
       indentation++;
     }
-    if (text[cursor] !== ">") return cursor;
-    cursor++;
-    if (text[cursor] === " " || text[cursor] === "\t") cursor++;
+    if (text[cursor] === ">") {
+      cursor++;
+      if (text[cursor] === " " || text[cursor] === "\t") cursor++;
+      continue;
+    }
+    if (
+      (text[cursor] === "-" || text[cursor] === "+" || text[cursor] === "*") &&
+      (text[cursor + 1] === " " || text[cursor + 1] === "\t")
+    ) {
+      cursor += 2;
+      continue;
+    }
+    const ordered = text.slice(cursor).match(/^\d{1,9}[.)][ \t]/);
+    if (ordered) {
+      cursor += ordered[0].length;
+      continue;
+    }
+    return cursor;
   }
+}
+
+interface Range {
+  start: number;
+  end: number;
+}
+
+function markdownCodeRanges(text: string): Range[] {
+  const ranges: Range[] = [];
+  const lines = text.split("\n");
+  let offset = 0;
+  let fence:
+    | { marker: "`" | "~"; length: number; start: number }
+    | undefined;
+
+  for (const line of lines) {
+    const lineEnd = offset + line.length;
+    const fenceMatch = line.match(/^( {0,3})(`{3,}|~{3,})/);
+    if (fence) {
+      const closing = line.match(/^( {0,3})(`{3,}|~{3,})[ \t]*$/);
+      if (
+        closing && closing[2]![0] === fence.marker &&
+        closing[2]!.length >= fence.length
+      ) {
+        ranges.push({ start: fence.start, end: lineEnd });
+        fence = undefined;
+      }
+    } else if (fenceMatch) {
+      const marker = fenceMatch[2]![0];
+      if (marker !== "`" && marker !== "~") {
+        offset = lineEnd + 1;
+        continue;
+      }
+      fence = {
+        marker,
+        length: fenceMatch[2]!.length,
+        start: offset,
+      };
+    } else {
+      for (let cursor = offset; cursor < lineEnd;) {
+        if (text[cursor] !== "`") {
+          cursor++;
+          continue;
+        }
+        let length = 1;
+        while (text[cursor + length] === "`") length++;
+        const closing = text.indexOf("`".repeat(length), cursor + length);
+        if (closing === -1 || closing > lineEnd) {
+          cursor += length;
+          continue;
+        }
+        ranges.push({ start: cursor, end: closing + length });
+        cursor = closing + length;
+      }
+    }
+    offset = lineEnd + 1;
+  }
+  if (fence) ranges.push({ start: fence.start, end: text.length });
+  return ranges;
+}
+
+function isInsideRange(ranges: readonly Range[], offset: number): boolean {
+  return ranges.some((range) => range.start <= offset && offset < range.end);
+}
+
+function previousNonWhitespace(
+  text: string,
+  offset: number,
+): string | undefined {
+  for (let cursor = offset - 1; cursor >= 0; cursor--) {
+    if (!/\s/.test(text[cursor]!)) return text[cursor];
+  }
+  return undefined;
 }
 
 /**
@@ -335,7 +432,9 @@ export function scanDestinations(text: string): Destination[] {
   // A scanner is required here because valid Markdown labels can contain
   // balanced brackets or escaped closing brackets.
   const found: Destination[] = [];
+  const codeRanges = markdownCodeRanges(text);
   for (let start = 0; start < text.length; start++) {
+    if (isInsideRange(codeRanges, start)) continue;
     const afterLabel = afterMarkdownLabel(text, start);
     if (afterLabel === undefined || text[afterLabel] !== "(") continue;
 
@@ -392,10 +491,12 @@ export function scanDestinations(text: string): Destination[] {
   const htmlHref = new RegExp(HTML_HREF_SOURCE, "gi");
   let htmlMatch: RegExpExecArray | null;
   while ((htmlMatch = htmlHref.exec(text))) {
+    if (isInsideRange(codeRanges, htmlMatch.index)) continue;
     const rawHref = htmlMatch[1] ?? htmlMatch[2] ?? htmlMatch[3] ??
-      htmlMatch[4];
+      htmlMatch[4] ?? htmlMatch[5];
     if (rawHref === undefined) continue;
-    const href = htmlMatch[3] !== undefined || htmlMatch[4] !== undefined
+    const href = htmlMatch[3] !== undefined || htmlMatch[4] !== undefined ||
+        htmlMatch[5] !== undefined
       ? decodeJavaScriptStringLiteral(rawHref)
       : rawHref;
     if (href === undefined) continue;
@@ -405,8 +506,24 @@ export function scanDestinations(text: string): Destination[] {
     });
   }
 
+  let autolinkMatch: RegExpExecArray | null;
+  while ((autolinkMatch = URI_AUTOLINK_SOURCE.exec(text))) {
+    if (isInsideRange(codeRanges, autolinkMatch.index)) continue;
+    if (previousNonWhitespace(text, autolinkMatch.index) === "(") continue;
+    found.push({
+      href: autolinkMatch[1]!,
+      offset: autolinkMatch.index + 1,
+    });
+  }
+
   // A reference definition is only a definition at the start of a line.
   for (let lineStart = 0; lineStart <= text.length;) {
+    if (isInsideRange(codeRanges, lineStart)) {
+      const next = text.indexOf("\n", lineStart);
+      if (next === -1) break;
+      lineStart = next + 1;
+      continue;
+    }
     const reference = referenceDestinationAt(text, lineStart);
     if (reference) found.push(reference);
     const next = text.indexOf("\n", lineStart);
