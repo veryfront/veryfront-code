@@ -70,6 +70,17 @@ interface MemoryBackendConfig extends BackendConfig, WorkflowJsonSerializationOp
   maxQueueSize?: number;
 }
 
+const memoryRunUpdateCondition = Symbol("memoryRunUpdateCondition");
+
+interface MemoryRunUpdateCondition {
+  readonly matches: (run: WorkflowRun) => boolean;
+  updated: boolean;
+}
+
+type ConditionalWorkflowRunUpdate = WorkflowRunUpdate & {
+  [memoryRunUpdateCondition]?: MemoryRunUpdateCondition;
+};
+
 /** Default max queue size */
 const DEFAULT_MAX_QUEUE_SIZE = 10_000;
 const RUN_OBSERVATION_QUEUE_SIZE = 64;
@@ -330,21 +341,25 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void> {
-    return this.updateRunConditionally(runId, patch).then(() => undefined);
+    const condition = (patch as ConditionalWorkflowRunUpdate)[memoryRunUpdateCondition];
+    return this.applyRunUpdate(runId, patch, condition);
   }
 
-  private updateRunConditionally(
+  private applyRunUpdate(
     runId: string,
     patch: WorkflowRunUpdate,
-    precondition?: (run: WorkflowRun) => boolean,
-  ): Promise<boolean> {
+    condition?: MemoryRunUpdateCondition,
+  ): Promise<void> {
     const run = this.runs.get(runId);
     // Reject rather than throw synchronously so callers see a rejected Promise
     // consistently (matching the Redis backend's async error paths).
     if (!run) {
       return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
     }
-    if (precondition !== undefined && !precondition(run)) return Promise.resolve(false);
+    if (condition !== undefined && !condition.matches(run)) {
+      condition.updated = false;
+      return Promise.resolve();
+    }
 
     try {
       assertWorkflowRunUpdate(patch);
@@ -373,7 +388,10 @@ export class MemoryBackend implements WorkflowBackend {
     if (!currentRun) {
       return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
     }
-    if (precondition !== undefined && !precondition(currentRun)) return Promise.resolve(false);
+    if (condition !== undefined && !condition.matches(currentRun)) {
+      condition.updated = false;
+      return Promise.resolve();
+    }
     const context = { ...currentRun.context, ...contextPatch };
     if (contextPatch !== undefined) {
       for (const key of patchContextKeys) {
@@ -406,7 +424,23 @@ export class MemoryBackend implements WorkflowBackend {
       this.runEventClaims.delete(runId);
     }
 
-    return Promise.resolve(true);
+    return Promise.resolve();
+  }
+
+  private updateRunConditionally(
+    runId: string,
+    patch: WorkflowRunUpdate,
+    matches: (run: WorkflowRun) => boolean,
+  ): Promise<boolean> {
+    const condition: MemoryRunUpdateCondition = { matches, updated: true };
+    const conditionalPatch: ConditionalWorkflowRunUpdate = { ...patch };
+    objectDefineProperty(conditionalPatch, memoryRunUpdateCondition, {
+      configurable: false,
+      enumerable: false,
+      value: condition,
+      writable: false,
+    });
+    return this.updateRun(runId, conditionalPatch).then(() => condition.updated);
   }
 
   updateRunIfStatus(
