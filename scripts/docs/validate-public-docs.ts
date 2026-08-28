@@ -46,13 +46,18 @@ const PUBLIC_DOC_ROOTS = ["README.md", ...SYNCED_DOC_DIRS];
 const UNSYNCED_README_PATHS = SYNCED_DOC_DIRS.map((dir) => `${dir}/README.md`);
 
 /**
- * Mintlify renders these pages as MDX, so a raw anchor is a working link on
- * the site and has to clear the same boundary. Both a quoted attribute and a
- * JSX expression wrapping a string literal name a destination the reader can
- * load; a genuinely dynamic attribute has no literal to check.
+ * A raw anchor is a working link and has to clear the same boundary. Quoted
+ * attributes and JSX expressions can appear in either document syntax;
+ * CommonMark also permits unquoted values, which the scan accepts only in
+ * Markdown mode. A genuinely dynamic JSX attribute has no literal to check.
  */
 const HTML_DESTINATION_ATTRIBUTE_SOURCE =
-  /(?:^|\s)(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*((?:\(\s*)*)"((?:\\[\s\S]|[^"\\])*)"((?:\s*\))*)\s*\}|\{\s*((?:\(\s*)*)'((?:\\[\s\S]|[^'\\])*)'((?:\s*\))*)\s*\}|\{\s*((?:\(\s*)*)`((?:\\[\s\S]|\$(?!\{)|[^`\\$])*)`((?:\s*\))*)\s*\})/;
+  /(?:^|\s)(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|(\{))/;
+const MARKDOWN_UNQUOTED_DESTINATION_ATTRIBUTE_SOURCE =
+  /(?:^|[ \t\r\n])(?:href|src)(?:[ \t]*=[ \t]*|[ \t]*(?:\r\n|\r|\n)[ \t]*=[ \t]*|[ \t]*=[ \t]*(?:\r\n|\r|\n)[ \t]*)((?!\{)[^\s"'`=<>]+)(?=[ \t\r\n>])/;
+const RAW_HTML_BLOCK_TAG_SOURCE =
+  /^<(pre|script|style|textarea)(?=[\t\n\f\r />]|$)/i;
+const RAW_HTML_BLOCK_END_SOURCE = /<\/(?:pre|script|style|textarea)>/i;
 const URI_AUTOLINK_SOURCE = /<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*)>/g;
 const BARE_AUTOLINK_SOURCE = /https?:\/\/[^\s<>"']+/gi;
 type DestinationSyntax =
@@ -710,6 +715,56 @@ function javaScriptCommentEnd(text: string, start: number): number | undefined {
   return closing === -1 ? undefined : closing + 2;
 }
 
+function skipJavaScriptTrivia(text: string, start: number): number {
+  let cursor = start;
+  while (cursor < text.length) {
+    if (/\s/.test(text[cursor]!)) {
+      cursor++;
+      continue;
+    }
+    const commentEnd = javaScriptCommentEnd(text, cursor);
+    if (commentEnd === undefined) break;
+    cursor = commentEnd;
+  }
+  return cursor;
+}
+
+function hasTemplateInterpolation(value: string): boolean {
+  for (let cursor = 0; cursor < value.length; cursor++) {
+    if (value[cursor] === "\\") cursor++;
+    else if (value.startsWith("${", cursor)) return true;
+  }
+  return false;
+}
+
+function staticJsxStringExpression(
+  text: string,
+  start: number,
+): { readonly value: string; readonly offset: number } | undefined {
+  let cursor = skipJavaScriptTrivia(text, start);
+  let parentheses = 0;
+  while (text[cursor] === "(") {
+    parentheses++;
+    cursor = skipJavaScriptTrivia(text, cursor + 1);
+  }
+
+  const quote = text[cursor];
+  if (quote !== '"' && quote !== "'" && quote !== "`") return undefined;
+  const literalEnd = quotedRangeEnd(text, cursor, quote);
+  if (literalEnd === undefined) return undefined;
+  const value = text.slice(cursor + 1, literalEnd - 1);
+  if (quote === "`" && hasTemplateInterpolation(value)) return undefined;
+  const offset = cursor + 1;
+
+  cursor = skipJavaScriptTrivia(text, literalEnd);
+  while (parentheses > 0 && text[cursor] === ")") {
+    parentheses--;
+    cursor = skipJavaScriptTrivia(text, cursor + 1);
+  }
+  if (parentheses !== 0 || text[cursor] !== "}") return undefined;
+  return { value, offset };
+}
+
 function mdxExpressionAt(
   text: string,
   start: number,
@@ -770,12 +825,16 @@ function mdxSyntaxRanges(
       text.startsWith("{/*", cursor) &&
       !isBackslashEscaped(text, cursor)
     ) {
-      const closing = text.indexOf("*/}", cursor + 3);
-      if (closing === -1) break;
-      const end = closing + 3;
-      comments.push({ start: cursor, end });
-      cursor = end;
-      continue;
+      const commentEnd = javaScriptCommentEnd(text, cursor + 1);
+      if (commentEnd !== undefined) {
+        const expressionEnd = skipJavaScriptTrivia(text, commentEnd);
+        if (text[expressionEnd] === "}") {
+          const end = expressionEnd + 1;
+          comments.push({ start: cursor, end });
+          cursor = end;
+          continue;
+        }
+      }
     }
     if (text[cursor] !== "{" || isBackslashEscaped(text, cursor)) {
       cursor++;
@@ -1021,6 +1080,7 @@ function ignoredDestinationRanges(
 ): {
   readonly ignored: Range[];
   readonly code: Range[];
+  readonly htmlComments: Range[];
   readonly expressions: Range[];
   readonly strings: Range[];
 } {
@@ -1064,9 +1124,32 @@ function ignoredDestinationRanges(
   return {
     ignored: mergeRanges([...baseIgnoredRanges, ...htmlComments]),
     code: codeRanges,
+    htmlComments,
     expressions: mdxRanges.expressions,
     strings: mdxRanges.strings,
   };
+}
+
+function followsClosedHtmlCommentBlock(
+  text: string,
+  lineStart: number,
+  htmlComments: readonly Range[],
+): boolean {
+  const previousEnd = text[lineStart - 2] === "\r"
+    ? lineStart - 2
+    : lineStart - 1;
+  for (const range of htmlComments) {
+    if (
+      range.end > previousEnd ||
+      text.slice(range.end, previousEnd).trim() !== ""
+    ) continue;
+    const openingLineStart = text.lastIndexOf("\n", range.start - 1) + 1;
+    const openingContentStart = blockContentStart(text, openingLineStart);
+    if (/^ {0,3}$/.test(text.slice(openingContentStart, range.start))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function htmlTagRanges(
@@ -1130,6 +1213,77 @@ function htmlTagRanges(
     } else break;
   }
   return ranges;
+}
+
+interface RawHtmlBlockBodyRanges {
+  readonly markdown: Range[];
+  readonly rawText: Range[];
+}
+
+/** CommonMark type-1 HTML bodies render raw until a closing tag or container exit. */
+function rawHtmlBlockBodyRanges(
+  text: string,
+  tagRanges: readonly Range[],
+  ignoredRanges: readonly Range[],
+): RawHtmlBlockBodyRanges {
+  const tagsByStart = new Map(tagRanges.map((range) => [range.start, range]));
+  const markdown: Range[] = [];
+  const rawText: Range[] = [];
+  for (let lineStart = 0; lineStart < text.length;) {
+    const newline = text.indexOf("\n", lineStart);
+    const lineEnd = newline === -1 ? text.length : newline;
+    const content = blockContent(text, lineStart);
+    const opening = isInsideRange(ignoredRanges, content.start)
+      ? null
+      : text.slice(content.start, lineEnd).match(RAW_HTML_BLOCK_TAG_SOURCE);
+    if (opening === null) {
+      if (newline === -1) break;
+      lineStart = newline + 1;
+      continue;
+    }
+
+    let end = text.length;
+    for (let currentLineStart = lineStart; currentLineStart < text.length;) {
+      const currentNewline = text.indexOf("\n", currentLineStart);
+      const currentLineEnd = currentNewline === -1
+        ? text.length
+        : currentNewline;
+      if (
+        currentLineStart !== lineStart &&
+        blockContainerContentStart(
+            text,
+            currentLineStart,
+            currentLineEnd,
+            content.containers,
+          ) === undefined
+      ) {
+        end = currentLineStart;
+        break;
+      }
+      if (
+        RAW_HTML_BLOCK_END_SOURCE.test(
+          text.slice(currentLineStart, currentLineEnd),
+        )
+      ) {
+        end = currentNewline === -1 ? text.length : currentNewline + 1;
+        break;
+      }
+      if (currentNewline === -1) break;
+      currentLineStart = currentNewline + 1;
+    }
+    const range = {
+      start: tagsByStart.get(content.start)?.end ?? content.start,
+      end,
+    };
+    markdown.push(range);
+    if (opening[1]!.toLowerCase() !== "pre") rawText.push(range);
+    if (newline === -1) break;
+    lineStart = newline + 1;
+  }
+  return {
+    markdown: mergeRanges(markdown),
+    rawText: mergeRanges(rawText),
+  };
 }
 
 function topLevelTagOffsets(tag: string): ReadonlySet<number> {
@@ -1481,8 +1635,10 @@ function usedReferences(
     const linkStart = start;
     const afterText = afterMarkdownLabel(text, start);
     if (afterText === undefined) continue;
-    if (text[afterText] === "(") {
-      start = (afterInlineLink(text, afterText) ?? afterText) - 1;
+    if (
+      text[afterText] === "(" &&
+      markdownInlineDestinationAt(text, start) !== undefined
+    ) {
       continue;
     }
 
@@ -1555,13 +1711,31 @@ function trimBareAutolink(rawHref: string): string {
   return rawHref.slice(0, end);
 }
 
-function markdownDestinationCloses(text: string, start: number): boolean {
+function lineEndingEnd(text: string, start: number): number | undefined {
+  if (text[start] === "\n") return start + 1;
+  if (text[start] !== "\r") return undefined;
+  return text[start + 1] === "\n" ? start + 2 : start + 1;
+}
+
+function markdownWhitespaceEnd(
+  text: string,
+  start: number,
+): number | undefined {
   let cursor = start;
-  let newlines = 0;
+  let lineEndings = 0;
   while (/\s/.test(text[cursor] ?? "")) {
-    if (text[cursor] === "\n" && ++newlines > 1) return false;
-    cursor++;
+    const lineEnd = lineEndingEnd(text, cursor);
+    if (lineEnd !== undefined) {
+      if (++lineEndings > 1) return undefined;
+      cursor = lineEnd;
+    } else cursor++;
   }
+  return cursor;
+}
+
+function markdownDestinationCloses(text: string, start: number): boolean {
+  let cursor = markdownWhitespaceEnd(text, start);
+  if (cursor === undefined) return false;
   if (text[cursor] === ")") return true;
 
   const opener = text[cursor];
@@ -1570,15 +1744,28 @@ function markdownDestinationCloses(text: string, start: number): boolean {
   cursor++;
   while (cursor < text.length) {
     if (text[cursor] === "\\" && cursor + 1 < text.length) {
-      cursor += 2;
+      if (text[cursor + 1] !== "\n" && text[cursor + 1] !== "\r") {
+        cursor += 2;
+        continue;
+      }
+    }
+    const nextLineStart = lineEndingEnd(text, cursor);
+    if (nextLineStart !== undefined) {
+      let nextLineEnd = nextLineStart;
+      while (
+        nextLineEnd < text.length && text[nextLineEnd] !== "\n" &&
+        text[nextLineEnd] !== "\r"
+      ) nextLineEnd++;
+      if (text.slice(nextLineStart, nextLineEnd).trim() === "") return false;
+      cursor = nextLineStart;
       continue;
     }
     if (text[cursor] === closer) break;
     cursor++;
   }
   if (text[cursor] !== closer) return false;
-  cursor++;
-  while (/\s/.test(text[cursor] ?? "")) cursor++;
+  cursor = markdownWhitespaceEnd(text, cursor + 1);
+  if (cursor === undefined) return false;
   return text[cursor] === ")";
 }
 
@@ -1586,13 +1773,118 @@ function markdownDestinationStart(
   text: string,
   start: number,
 ): number | undefined {
-  let cursor = start;
-  let newlines = 0;
-  while (/\s/.test(text[cursor] ?? "")) {
-    if (text[cursor] === "\n" && ++newlines > 1) return undefined;
-    cursor++;
+  return markdownWhitespaceEnd(text, start);
+}
+
+interface MarkdownInlineDestination {
+  readonly href: string;
+  readonly offset: number;
+  readonly labelStart: number;
+  readonly labelEnd: number;
+  readonly linkEnd: number;
+  readonly tail: Range;
+  readonly angle?: Range;
+}
+
+function markdownInlineDestinationAt(
+  text: string,
+  start: number,
+): MarkdownInlineDestination | undefined {
+  const afterLabel = afterMarkdownLabel(text, start);
+  if (afterLabel === undefined || text[afterLabel] !== "(") return undefined;
+
+  let cursor = markdownDestinationStart(text, afterLabel + 1);
+  if (cursor === undefined || cursor >= text.length) return undefined;
+
+  let href: string;
+  let offset: number;
+  let angle: Range | undefined;
+  if (text[cursor] === "<") {
+    const rangeStart = cursor;
+    const destinationStart = ++cursor;
+    while (cursor < text.length) {
+      if (text[cursor] === "\n" || text[cursor] === "\r") break;
+      if (text[cursor] === "\\" && cursor + 1 < text.length) {
+        cursor += 2;
+        continue;
+      }
+      if (text[cursor] === ">") break;
+      cursor++;
+    }
+    if (
+      text[cursor] !== ">" ||
+      !markdownDestinationCloses(text, cursor + 1)
+    ) return undefined;
+    href = text.slice(destinationStart, cursor);
+    offset = destinationStart;
+    angle = { start: rangeStart, end: cursor + 1 };
+  } else {
+    const destinationStart = cursor;
+    let destinationDepth = 0;
+    while (cursor < text.length) {
+      if (text[cursor] === "\\" && cursor + 1 < text.length) {
+        cursor += 2;
+        continue;
+      }
+      if (text[cursor] === "(") destinationDepth++;
+      else if (text[cursor] === ")") {
+        if (destinationDepth === 0) break;
+        destinationDepth--;
+      } else if (/\s/.test(text[cursor]!)) break;
+      cursor++;
+    }
+    if (!markdownDestinationCloses(text, cursor)) return undefined;
+    href = text.slice(destinationStart, cursor);
+    offset = destinationStart;
   }
-  return cursor;
+
+  const linkEnd = afterInlineLink(text, afterLabel);
+  if (linkEnd === undefined) return undefined;
+  return {
+    href,
+    offset,
+    labelStart: start + 1,
+    labelEnd: afterLabel - 1,
+    linkEnd,
+    tail: { start: afterLabel, end: linkEnd },
+    angle,
+  };
+}
+
+function isImageLabel(text: string, start: number): boolean {
+  return text[start - 1] === "!" && !isBackslashEscaped(text, start - 1);
+}
+
+function containsNestedRenderedLink(
+  text: string,
+  candidate: MarkdownInlineDestination,
+  ignoredRanges: readonly Range[],
+  definedLabels: ReadonlySet<string>,
+): boolean {
+  for (
+    let nestedStart = candidate.labelStart;
+    nestedStart < candidate.labelEnd;
+    nestedStart++
+  ) {
+    if (
+      text[nestedStart] !== "[" || isImageLabel(text, nestedStart) ||
+      isBackslashEscaped(text, nestedStart) ||
+      isInsideRange(ignoredRanges, nestedStart)
+    ) continue;
+    const nested = markdownInlineDestinationAt(text, nestedStart);
+    if (nested !== undefined && nested.linkEnd <= candidate.labelEnd) {
+      return true;
+    }
+  }
+
+  const labelText = text.slice(candidate.labelStart, candidate.labelEnd);
+  const referenceUse = usedReferences(labelText, [], new Set());
+  return referenceUse.usages.some((usage) => {
+    const usageStart = candidate.labelStart + usage.range.start;
+    return definedLabels.has(usage.label) &&
+      !isImageLabel(text, usageStart) &&
+      !isInsideRange(ignoredRanges, usageStart);
+  });
 }
 
 /**
@@ -1624,10 +1916,14 @@ export function scanDestinations(
     syntaxRanges.expressions,
     syntaxRanges.strings,
   );
+  const rawHtmlBlocks: RawHtmlBlockBodyRanges = syntax === "markdown"
+    ? rawHtmlBlockBodyRanges(text, tagRanges, ignoredRanges)
+    : { markdown: [], rawText: [] };
   const structuralMarkdownIgnoredRanges = mergeRanges([
     ...ignoredRanges,
     ...syntaxRanges.expressions,
     ...tagRanges,
+    ...rawHtmlBlocks.markdown,
   ]);
 
   // Parse definitions before rendered links so title text cannot be mistaken
@@ -1652,11 +1948,17 @@ export function scanDestinations(
       : lineStart - 1;
     const followsCodeBlock = previousLineEnd > 0 &&
       isInsideRange(syntaxRanges.code, previousLineEnd - 1);
-    const reference = followsCodeBlock || referenceDefinitionMayStart(
-        text,
-        lineStart,
-        previousReferenceEnd,
-      )
+    const followsHtmlComment = followsClosedHtmlCommentBlock(
+      text,
+      lineStart,
+      syntaxRanges.htmlComments,
+    );
+    const reference = followsCodeBlock || followsHtmlComment ||
+        referenceDefinitionMayStart(
+          text,
+          lineStart,
+          previousReferenceEnd,
+        )
       ? referenceDestinationAt(text, lineStart)
       : undefined;
     if (reference) {
@@ -1670,99 +1972,65 @@ export function scanDestinations(
     start: reference.labelStart,
     end: reference.definitionEnd,
   }));
+  const definedLabels = new Set<string>();
+  for (const reference of references) {
+    definedLabels.add(normalizeReferenceLabel(reference.label));
+  }
   const markdownIgnoredRanges = mergeRanges([
     ...structuralMarkdownIgnoredRanges,
     ...referenceDefinitionRanges,
   ]);
   const markdownAngleDestinationRanges: Range[] = [];
+  const markdownImageLabelRanges: Range[] = [];
   const markdownLinkRanges: Range[] = [];
   const markdownLinkTailRanges: Range[] = [];
   for (let start = 0; start < text.length; start++) {
     if (
       isInsideRange(markdownIgnoredRanges, start) ||
+      markdownLinkTailRanges.some((range) =>
+        start >= range.start && start < range.end
+      ) ||
       isBackslashEscaped(text, start)
     ) continue;
-    const afterLabel = afterMarkdownLabel(text, start);
-    if (afterLabel === undefined || text[afterLabel] !== "(") continue;
-    const linkStart = start;
-
-    let cursor = markdownDestinationStart(text, afterLabel + 1);
-    if (cursor === undefined || cursor >= text.length) continue;
-
-    if (text[cursor] === "<") {
-      const rangeStart = cursor;
-      const destinationStart = ++cursor;
-      while (cursor < text.length) {
-        if (text[cursor] === "\n" || text[cursor] === "\r") break;
-        if (text[cursor] === "\\" && cursor + 1 < text.length) {
-          cursor += 2;
-          continue;
-        }
-        if (
-          text[cursor] === ">" || text[cursor] === "\n" ||
-          text[cursor] === "\r"
-        ) break;
-        cursor++;
-      }
-      if (
-        text[cursor] === ">" && cursor > destinationStart &&
-        markdownDestinationCloses(text, cursor + 1)
-      ) {
-        markdownAngleDestinationRanges.push({
-          start: rangeStart,
-          end: cursor + 1,
-        });
-        recordDestination(found, destinationOffsets, {
-          href: text.slice(destinationStart, cursor),
-          offset: destinationStart,
-          syntax: "markdown",
-        });
-        const linkEnd = afterInlineLink(text, afterLabel);
-        if (linkEnd !== undefined) {
-          markdownLinkRanges.push({ start: linkStart, end: linkEnd });
-          markdownLinkTailRanges.push({ start: afterLabel, end: linkEnd });
-        }
-      }
-      start = cursor;
+    const candidate = markdownInlineDestinationAt(text, start);
+    if (candidate === undefined) continue;
+    markdownLinkTailRanges.push(candidate.tail);
+    const image = isImageLabel(text, start);
+    if (
+      !image && containsNestedRenderedLink(
+        text,
+        candidate,
+        markdownIgnoredRanges,
+        definedLabels,
+      )
+    ) {
       continue;
     }
-
-    const destinationStart = cursor;
-    let destinationDepth = 0;
-    while (cursor < text.length) {
-      if (text[cursor] === "\\" && cursor + 1 < text.length) {
-        cursor += 2;
-        continue;
-      }
-      if (text[cursor] === "(") {
-        destinationDepth++;
-      } else if (text[cursor] === ")") {
-        if (destinationDepth === 0) break;
-        destinationDepth--;
-      } else if (/\s/.test(text[cursor]!)) {
-        break;
-      }
-      cursor++;
+    if (candidate.angle !== undefined) {
+      markdownAngleDestinationRanges.push(candidate.angle);
     }
-    if (
-      cursor > destinationStart && markdownDestinationCloses(text, cursor)
-    ) {
+    if (candidate.href !== "") {
       recordDestination(found, destinationOffsets, {
-        href: text.slice(destinationStart, cursor),
-        offset: destinationStart,
+        href: candidate.href,
+        offset: candidate.offset,
         syntax: "markdown",
       });
-      const linkEnd = afterInlineLink(text, afterLabel);
-      if (linkEnd !== undefined) {
-        markdownLinkRanges.push({ start: linkStart, end: linkEnd });
-        markdownLinkTailRanges.push({ start: afterLabel, end: linkEnd });
-      }
     }
-    start = cursor;
+    markdownLinkRanges.push({ start, end: candidate.linkEnd });
+    if (image) {
+      markdownImageLabelRanges.push({
+        start: candidate.labelStart,
+        end: candidate.labelEnd,
+      });
+      start = candidate.linkEnd - 1;
+    }
   }
 
   for (const tagRange of tagRanges) {
-    if (isInsideRange(referenceDefinitionRanges, tagRange.start)) continue;
+    if (
+      isInsideRange(referenceDefinitionRanges, tagRange.start) ||
+      isInsideRange(rawHtmlBlocks.rawText, tagRange.start)
+    ) continue;
     const tag = text.slice(tagRange.start, tagRange.end);
     const topLevelOffsets = topLevelTagOffsets(tag);
     const htmlDestination = new RegExp(
@@ -1772,50 +2040,61 @@ export function scanDestinations(
     let htmlMatch: RegExpExecArray | null;
     while ((htmlMatch = htmlDestination.exec(tag))) {
       if (!topLevelOffsets.has(htmlMatch.index)) continue;
-      const expression = htmlMatch[4] !== undefined
-        ? { opening: htmlMatch[3]!, href: htmlMatch[4], closing: htmlMatch[5]! }
-        : htmlMatch[7] !== undefined
-        ? { opening: htmlMatch[6]!, href: htmlMatch[7], closing: htmlMatch[8]! }
-        : htmlMatch[10] !== undefined
-        ? {
-          opening: htmlMatch[9]!,
-          href: htmlMatch[10],
-          closing: htmlMatch[11]!,
-        }
-        : undefined;
-      if (
-        expression !== undefined &&
-        (expression.opening.match(/\(/g)?.length ?? 0) !==
-          (expression.closing.match(/\)/g)?.length ?? 0)
-      ) continue;
-      const rawHref = htmlMatch[1] ?? htmlMatch[2] ?? expression?.href;
+      const expressionStart = htmlMatch[3] === undefined
+        ? undefined
+        : htmlMatch.index + htmlMatch[0].lastIndexOf("{") + 1;
+      const expression = expressionStart === undefined
+        ? undefined
+        : staticJsxStringExpression(tag, expressionStart);
+      const rawHref = htmlMatch[1] ?? htmlMatch[2] ?? expression?.value;
       if (rawHref === undefined) continue;
-      const href = expression !== undefined
+      const href = expressionStart !== undefined
         ? decodeJavaScriptStringLiteral(rawHref)
         : rawHref;
       if (href === undefined) continue;
+      const offset = expression?.offset ??
+        htmlMatch.index + htmlMatch[0].lastIndexOf(rawHref);
       recordDestination(found, destinationOffsets, {
         href,
-        offset: tagRange.start + htmlMatch.index +
-          htmlMatch[0].lastIndexOf(rawHref),
-        syntax: expression === undefined
+        offset: tagRange.start + offset,
+        syntax: expressionStart === undefined
           ? "html-attribute"
           : "javascript-string",
       });
+    }
+    if (syntax === "markdown") {
+      const unquotedDestination = new RegExp(
+        MARKDOWN_UNQUOTED_DESTINATION_ATTRIBUTE_SOURCE,
+        "gi",
+      );
+      while ((htmlMatch = unquotedDestination.exec(tag))) {
+        if (!topLevelOffsets.has(htmlMatch.index)) continue;
+        const href = htmlMatch[1]!;
+        recordDestination(found, destinationOffsets, {
+          href,
+          offset: tagRange.start + htmlMatch.index +
+            htmlMatch[0].lastIndexOf(href),
+          syntax: "html-attribute",
+        });
+      }
     }
   }
 
   const referenceUse = usedReferences(
     text,
-    markdownIgnoredRanges,
+    mergeRanges([
+      ...markdownIgnoredRanges,
+      ...markdownImageLabelRanges,
+      ...markdownLinkTailRanges,
+    ]),
     new Set(references.map((reference) => reference.labelStart)),
   );
-  const definedLabels = new Set<string>();
+  const recordedReferenceLabels = new Set<string>();
   for (const reference of references) {
     destinationOffsets.add(reference.offset);
     const label = normalizeReferenceLabel(reference.label);
-    if (definedLabels.has(label)) continue;
-    definedLabels.add(label);
+    if (recordedReferenceLabels.has(label)) continue;
+    recordedReferenceLabels.add(label);
     if (referenceUse.labels.has(label)) {
       recordDestination(found, destinationOffsets, reference);
     }
@@ -1829,6 +2108,7 @@ export function scanDestinations(
   ]);
   const uriAutolinkIgnoredRanges = mergeRanges([
     ...markdownIgnoredRanges,
+    ...markdownImageLabelRanges,
     ...markdownLinkTailRanges,
     ...referenceDefinitionRanges,
     ...markdownAngleDestinationRanges,
@@ -1847,6 +2127,7 @@ export function scanDestinations(
   }
   const bareAutolinkIgnoredRanges = mergeRanges([
     ...markdownIgnoredRanges,
+    ...markdownImageLabelRanges,
     ...renderedLinkRanges,
     ...referenceDefinitionRanges,
   ]);
