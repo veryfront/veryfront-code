@@ -19,6 +19,28 @@ describe("abort utilities", () => {
     assertStrictEquals(thrown, reason);
   });
 
+  it("reads the immediate AbortSignal Error reason before normalizing", () => {
+    const controller = new AbortController();
+    const reason = new Error("caller aborted during startup");
+
+    controller.abort(reason);
+
+    assertEquals(controller.signal.aborted, true);
+    assertStrictEquals(
+      controller.signal.reason,
+      reason,
+      "AbortSignal must expose the supplied Error reason before shared abort handling reads it",
+    );
+
+    let thrown: unknown;
+    try {
+      throwIfAborted(controller.signal);
+    } catch (error) {
+      thrown = error;
+    }
+    assertStrictEquals(thrown, reason);
+  });
+
   it("keeps a reason minted outside this realm", () => {
     // What an Error created in a worker, a `vm` context, or a second instance of
     // this module graph looks like to `instanceof`.
