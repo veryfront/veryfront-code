@@ -782,7 +782,8 @@ interface JavaScriptSignificantToken {
   readonly end: number;
   readonly kind: JavaScriptSignificantTokenKind;
   readonly followsForKeyword?: true;
-  readonly insideForHeader?: true;
+  readonly forOfSeparator?: true;
+  readonly forOfSeparatorCandidate?: true;
   readonly lineTerminatedStatement?: true;
 }
 
@@ -819,18 +820,38 @@ function javaScriptTokenWithIdentifierContext(
   }
 
   const word = javaScriptIdentifierWordAtEnd(text, end);
-  const lineTerminatedStatement = (word !== undefined &&
-    JAVASCRIPT_LINE_TERMINATED_STATEMENT_KEYWORDS.has(word)) ||
-    previousSignificantToken?.lineTerminatedStatement === true;
+  const completeIdentifier = word !== undefined &&
+    !javaScriptIdentifierContinueAt(text, end);
+  let forOfSeparatorCandidate = false;
+  if (continuesIdentifierWord) {
+    forOfSeparatorCandidate =
+      previousSignificantToken?.forOfSeparatorCandidate === true;
+  } else if (insideForHeader && previousSignificantToken !== undefined) {
+    const precedingWord = javaScriptIdentifierWordAtEnd(
+      text,
+      previousSignificantToken.end,
+    );
+    forOfSeparatorCandidate =
+      !JAVASCRIPT_FOR_DECLARATION_KEYWORDS.has(precedingWord ?? "") &&
+      !javaScriptRegexMayStart(text, start, previousSignificantToken);
+  }
+  const forOfSeparator = completeIdentifier && word === "of" &&
+    forOfSeparatorCandidate;
+  const lineTerminatedStatement = completeIdentifier &&
+    JAVASCRIPT_LINE_TERMINATED_STATEMENT_KEYWORDS.has(word);
   const contextualToken: {
     end: number;
     kind: JavaScriptSignificantTokenKind;
     followsForKeyword?: true;
-    insideForHeader?: true;
+    forOfSeparator?: true;
+    forOfSeparatorCandidate?: true;
     lineTerminatedStatement?: true;
   } = { end, kind };
   if (followsForKeyword) contextualToken.followsForKeyword = true;
-  if (insideForHeader) contextualToken.insideForHeader = true;
+  if (forOfSeparator) contextualToken.forOfSeparator = true;
+  if (forOfSeparatorCandidate && !completeIdentifier) {
+    contextualToken.forOfSeparatorCandidate = true;
+  }
   if (lineTerminatedStatement) {
     contextualToken.lineTerminatedStatement = true;
   }
@@ -1163,6 +1184,7 @@ const JAVASCRIPT_REGEX_PREFIX_KEYWORDS: ReadonlySet<string> = new Set([
   "yield",
   "else",
   "do",
+  "extends",
 ]);
 
 const JAVASCRIPT_CONTROL_HEADER_KEYWORDS: ReadonlySet<string> = new Set([
@@ -1179,9 +1201,18 @@ const JAVASCRIPT_LINE_TERMINATED_STATEMENT_KEYWORDS: ReadonlySet<string> =
     "debugger",
   ]);
 
+const JAVASCRIPT_FOR_DECLARATION_KEYWORDS: ReadonlySet<string> = new Set([
+  "const",
+  "let",
+  "using",
+  "var",
+]);
+
 const JAVASCRIPT_IDENTIFIER_CONTINUE = /[$\u200C\u200D\p{ID_Continue}]/u;
 const JAVASCRIPT_IDENTIFIER_ESCAPE =
   /\\u(?:([0-9A-Fa-f]{4})|\{([0-9A-Fa-f]{1,6})\})$/;
+const JAVASCRIPT_IDENTIFIER_ESCAPE_AT =
+  /^\\u(?:([0-9A-Fa-f]{4})|\{([0-9A-Fa-f]{1,6})\})/;
 
 function javaScriptCodePointBefore(
   text: string,
@@ -1213,6 +1244,27 @@ function javaScriptIdentifierContinueBefore(
   const codePoint = javaScriptCodePointBefore(text, end);
   return codePoint !== undefined &&
     JAVASCRIPT_IDENTIFIER_CONTINUE.test(codePoint);
+}
+
+function javaScriptIdentifierContinueAt(
+  text: string,
+  start: number,
+): boolean {
+  const escapeMatch = JAVASCRIPT_IDENTIFIER_ESCAPE_AT.exec(
+    text.slice(start, start + 10),
+  );
+  if (escapeMatch !== null) {
+    const codePoint = Number.parseInt(
+      escapeMatch[1] ?? escapeMatch[2] ?? "",
+      16,
+    );
+    return codePoint <= 0x10ffff &&
+      JAVASCRIPT_IDENTIFIER_CONTINUE.test(String.fromCodePoint(codePoint));
+  }
+
+  const codePoint = text.codePointAt(start);
+  return codePoint !== undefined &&
+    JAVASCRIPT_IDENTIFIER_CONTINUE.test(String.fromCodePoint(codePoint));
 }
 
 function javaScriptIdentifierWordAtEnd(
@@ -1289,7 +1341,7 @@ function javaScriptRegexMayStart(
   const keyword = javaScriptIdentifierWordAtEnd(text, end);
   return keyword !== undefined &&
     (JAVASCRIPT_REGEX_PREFIX_KEYWORDS.has(keyword) ||
-      (keyword === "of" && previousSignificantToken.insideForHeader === true));
+      (keyword === "of" && previousSignificantToken.forOfSeparator === true));
 }
 
 function javaScriptUpdateKind(
