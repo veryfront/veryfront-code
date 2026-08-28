@@ -25,21 +25,16 @@ describe("workflow context serialization on edge hosts", () => {
         id: "checkpoint-id",
         nodeId: "node-id",
         timestamp: new Date(0),
-        context: { input: {}, value: "unsafe" },
+        context: { input: {}, value: "plain" },
         nodeStates: {},
       });
-      let persistenceMessage = "accepted";
-      try {
-        JSON.stringify(snapshot.context);
-      } catch (error) {
-        persistenceMessage = error instanceof Error ? error.message : String(error);
-      }
+      const serializedContext = JSON.stringify(snapshot.context);
       console.log(JSON.stringify({
         id: snapshot.id,
         nodeId: snapshot.nodeId,
         timestamp: snapshot.timestamp.toISOString(),
         keys: Object.keys(snapshot),
-        persistenceMessage,
+        serializedContext,
       }));
     `;
     const output = await new Deno.Command(Deno.execPath(), {
@@ -55,13 +50,13 @@ describe("workflow context serialization on edge hosts", () => {
       nodeId: string;
       timestamp: string;
       keys: string[];
-      persistenceMessage: string;
+      serializedContext: string;
     };
     assertEquals(result.id, "checkpoint-id");
     assertEquals(result.nodeId, "node-id");
     assertEquals(result.timestamp, "1970-01-01T00:00:00.000Z");
     assertEquals(result.keys, ["id", "nodeId", "timestamp", "context", "nodeStates"]);
-    assertStringIncludes(result.persistenceMessage, "Proxy detection");
+    assertEquals(result.serializedContext, '{"input":{},"value":"plain"}');
   });
 
   it("warns for hook-free built-in brands in default mode", async () => {

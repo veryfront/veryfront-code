@@ -172,6 +172,33 @@ describe("workflow checkpoint retention", () => {
     assertEquals(getterCalls, 1);
   });
 
+  it("does not execute hooks stored below JSON-ignored properties", () => {
+    let hookCalls = 0;
+    const ignored = {
+      toJSON() {
+        hookCalls++;
+        throw new Error("ignored checkpoint hook must not run");
+      },
+    };
+    const value = { kept: "stored" } as Record<string | symbol, unknown>;
+    Object.defineProperty(value, "hidden", {
+      configurable: true,
+      enumerable: false,
+      value: ignored,
+      writable: true,
+    });
+    const symbolKey = Symbol("ignored");
+    value[symbolKey] = ignored;
+
+    const snapshot = cloneCheckpointForPersistence({
+      ...checkpoint("ignored-properties"),
+      context: { input: { value } },
+    });
+
+    assertEquals(JSON.stringify(snapshot.context.input), '{"value":{"kept":"stored"}}');
+    assertEquals(hookCalls, 0);
+  });
+
   it("snapshots array indices in native JSON order", () => {
     const reads: string[] = [];
     const prototype = Object.create(Array.prototype);
@@ -237,6 +264,57 @@ describe("workflow checkpoint retention", () => {
     if (jsonRawSupport.isRawJSON) {
       assertEquals(jsonRawSupport.isRawJSON(snapshot.context.raw), true);
     }
+  });
+
+  it("evaluates owned accessors only after a successful persistence fence", async () => {
+    let getterCalls = 0;
+    const dynamic = {} as { value: string };
+    Object.defineProperty(dynamic, "value", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return "stored";
+      },
+    });
+    const snapshot = cloneOwnedCheckpointForPersistence({
+      ...checkpoint("owned-accessor"),
+      context: { input: { dynamic } },
+    });
+    const backend = new MemoryBackend();
+    await backend.createRun(run("owned-accessor", "worker-current"));
+
+    assertEquals(getterCalls, 0);
+    assertEquals(
+      await backend.saveCheckpointIfStatusAndWorker(
+        "owned-accessor",
+        "owned-accessor",
+        ["running"],
+        "worker-current",
+        snapshot,
+      ),
+      true,
+    );
+    assertEquals(getterCalls, 1);
+    assertEquals(
+      (await backend.getLatestCheckpoint("owned-accessor"))?.context.input,
+      { dynamic: { value: "stored" } },
+    );
+  });
+
+  it("snapshots ordinary owned arrays above the proxy-read limit", () => {
+    const values = new Array(100_001);
+    values[100_000] = "stored";
+
+    const snapshot = cloneOwnedCheckpointForPersistence({
+      ...checkpoint("owned-large-array"),
+      context: { input: { values } },
+    });
+    const storedValues = (snapshot.context.input as { values: unknown[] }).values;
+
+    assertEquals(Array.isArray(storedValues), true);
+    assertEquals(storedValues.length, 100_001);
+    assertEquals(storedValues[100_000], "stored");
   });
 
   it("keeps strict validation transparent for owned prototype snapshots", async () => {

@@ -85,9 +85,32 @@ const weakSetAdd = WeakSet.prototype.add;
 const weakSetHas = WeakSet.prototype.has;
 const nativeBrandProbeKey = objectCreate(null);
 const workflowJsonPrototypeSnapshots = new WeakSetConstructor<object>();
+const deferredWorkflowJsonSources = new WeakMapConstructor<object, JsonTraversalReference>();
 
 function isWorkflowJsonPrototypeSnapshot(value: JsonTraversalReference): boolean {
   return reflectApply(weakSetHas, workflowJsonPrototypeSnapshots, [value]) === true;
+}
+
+/** @internal Defer reading a checkpoint value until its ownership fence passes. */
+export function deferWorkflowJsonValue(value: JsonTraversalReference): object {
+  const deferred = objectCreate(null);
+  objectDefineProperty(deferred, "toJSON", {
+    configurable: false,
+    enumerable: false,
+    value: (key: string) => {
+      const toJson = reflectGet(value, "toJSON");
+      return typeof toJson === "function" ? reflectApply(toJson, value, [key]) : value;
+    },
+    writable: false,
+  });
+  reflectApply(weakMapSet, deferredWorkflowJsonSources, [deferred, value]);
+  return deferred;
+}
+
+/** @internal Whether a value is waiting for a successful persistence fence. */
+export function isDeferredWorkflowJsonValue(value: unknown): value is object {
+  return typeof value === "object" && value !== null &&
+    reflectApply(weakMapGet, deferredWorkflowJsonSources, [value]) !== undefined;
 }
 
 /** @internal Stabilizes inherited `toJSON` lookup on an owned persistence clone. */
@@ -992,6 +1015,18 @@ function normalizeAndFindUnrepresentableValues(
     if (value === null) return null;
 
     const type = typeof value;
+    const deferredSource = type === "object"
+      ? reflectApply(weakMapGet, deferredWorkflowJsonSources, [value]) as
+        | JsonTraversalReference
+        | undefined
+      : undefined;
+    if (deferredSource !== undefined) {
+      if (options.strictContext === true) {
+        recordLossy(path, "deferred checkpoint value");
+        return null;
+      }
+      return normalize(deferredSource, path, key, true, depth);
+    }
     if (
       options.strictContext === true &&
       (type === "object" || type === "function")
