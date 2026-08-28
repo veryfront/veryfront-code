@@ -152,6 +152,12 @@ describe("merge quality gate workflow", () => {
     assertEquals(gateEnv.SONAR_REQUIRED, SONAR_REQUIRED_EXPRESSION);
   });
 
+  it("documents Sonar enforcement for manually dispatched runs", async () => {
+    const qualityGates = await readRepoFile(".github/QUALITY_GATES.md");
+
+    assertStringIncludes(qualityGates, "manually dispatched runs");
+  });
+
   it("blocks every release path on the complete merge correctness gate", async () => {
     const workflow = await readWorkflow();
     const jobs = asRecord(workflow.jobs, "cicd workflow jobs");

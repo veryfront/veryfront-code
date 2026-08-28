@@ -10,13 +10,13 @@ protects a distinct delivery boundary.
 eight-shard coverage dependency with its 80 percent floor, integration tests,
 the full Node and Bun runtime suites, binary end-to-end tests, and RSC browser
 end-to-end tests to succeed for pull requests, merge queue runs, and main
-pushes. Sonar analysis is also mandatory for merge queue runs, main pushes, and
-trusted pull requests. A failed, skipped, or cancelled dependency fails the
-aggregate check, except that Sonar is intentionally skipped and ignored for
-fork and Dependabot pull requests because those runs cannot receive
-`SONAR_TOKEN`. Fork pull requests still skip other protected dependency jobs
-and therefore fail this aggregate gate closed. Codecov reporting remains
-advisory.
+pushes. Sonar analysis is also mandatory for merge queue runs, main pushes,
+manually dispatched runs, and trusted pull requests. A failed, skipped, or
+cancelled dependency fails the aggregate check, except that Sonar is
+intentionally skipped and ignored for fork and Dependabot pull requests because
+those runs cannot receive `SONAR_TOKEN`. Fork pull requests still skip other
+protected dependency jobs and therefore fail this aggregate gate closed.
+Codecov reporting remains advisory.
 
 Evidence: [CI workflow](workflows/cicd.yml) and
 [merge gate contract](../tests/integration/ci/merge-quality-gate-workflow.test.ts).
