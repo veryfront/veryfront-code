@@ -215,13 +215,19 @@ export interface WorkflowBackend {
    * backends declaring `supportsRunPatchKeyMerge`; elsewhere they replace.
    */
   updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void>;
-  /** Apply a run patch only when its current status matches one of the expected statuses. */
+  /**
+   * Apply a run patch only when its current status matches one of the expected statuses.
+   * This atomic operation is independent from `updateRun`.
+   */
   updateRunIfStatus?(
     runId: string,
     expectedStatuses: WorkflowStatus[],
     patch: WorkflowRunUpdate,
   ): Promise<boolean>;
-  /** Apply a run patch only while both status and worker ownership match. */
+  /**
+   * Apply a run patch only while both status and worker ownership match.
+   * This atomic operation is independent from `updateRun`.
+   */
   updateRunIfStatusAndWorker?(
     runId: string,
     expectedStatuses: WorkflowStatus[],
