@@ -9,6 +9,7 @@ import type {
   PersistedPendingEventWait,
   WorkflowRunUpdate,
 } from "./types.ts";
+import { assertWorkflowRunUpdate } from "./types.ts";
 import {
   MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES,
   MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES,
@@ -634,6 +635,29 @@ describe("MemoryBackend", () => {
         false,
       );
       assertEquals((await bookkeepingBackend.getRun(runId))?.status, "waiting");
+    });
+
+    it("keeps conditional guard metadata out of subclass-visible patches", async () => {
+      class ValidatingUpdateBackend extends MemoryBackend {
+        visibleKeys: string[] = [];
+
+        override updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void> {
+          assertWorkflowRunUpdate(patch);
+          this.visibleKeys = Object.keys(patch);
+          return super.updateRun(runId, structuredClone(patch));
+        }
+      }
+
+      const validatingBackend = new ValidatingUpdateBackend();
+      const runId = "run-conditional-override-public-patch";
+      await validatingBackend.createRun(createTestRun(runId, { status: "running" }));
+
+      assertEquals(
+        await validatingBackend.updateRunIfStatus(runId, ["running"], { status: "failed" }),
+        true,
+      );
+      assertEquals(validatingBackend.visibleKeys, ["status"]);
+      assertEquals((await validatingBackend.getRun(runId))?.status, "failed");
     });
 
     it("does not evaluate a conditional patch when its initial guard fails", async () => {
