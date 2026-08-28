@@ -58,6 +58,7 @@ type DestinationSyntax =
   | "autolink"
   | "html-attribute"
   | "javascript-string";
+type DocumentSyntax = "markdown" | "mdx";
 /** Any origin works: only the resolved path is read back out. */
 const RESOLUTION_ORIGIN = "https://docs.invalid";
 const VERYFRONT_DOCS_HOSTNAME = "veryfront.com";
@@ -704,16 +705,17 @@ function quotedRangeEnd(
   return undefined;
 }
 
-function javascriptCommentEnd(text: string, start: number): number | undefined {
-  if (text.startsWith("//", start)) {
+function javaScriptCommentEnd(text: string, start: number): number | undefined {
+  if (text[start] !== "/" || start + 1 >= text.length) return undefined;
+  const marker = text[start + 1];
+  if (marker === "/") {
     const newline = text.indexOf("\n", start + 2);
-    return newline === -1 ? text.length : newline + 1;
+    return newline === -1 ? text.length : newline;
   }
-  if (text.startsWith("/*", start)) {
-    const closing = text.indexOf("*/", start + 2);
-    return closing === -1 ? text.length : closing + 2;
-  }
-  return undefined;
+  if (marker !== "*") return undefined;
+
+  const closing = text.indexOf("*/", start + 2);
+  return closing === -1 ? undefined : closing + 2;
 }
 
 function mdxExpressionAt(
@@ -724,7 +726,7 @@ function mdxExpressionAt(
   let depth = 1;
   let cursor = start + 1;
   while (cursor < text.length) {
-    const commentEnd = javascriptCommentEnd(text, cursor);
+    const commentEnd = javaScriptCommentEnd(text, cursor);
     if (commentEnd !== undefined) {
       cursor = commentEnd;
       continue;
@@ -793,98 +795,185 @@ function mdxSyntaxRanges(
   return { comments, expressions, strings };
 }
 
-function moduleStatementContinues(line: string): boolean {
-  const source = line.trimEnd();
-  return /(?:^|\s)(?:import|export|from|default)\s*$/.test(source) ||
-    /(?:=>|[=,:.?+\-*/%&|^!~<>({[\\])$/.test(source);
+function mdxEsmMayStart(text: string, lineStart: number): boolean {
+  if (lineStart === 0) return true;
+  const previousEnd = text[lineStart - 2] === "\r"
+    ? lineStart - 2
+    : lineStart - 1;
+  const previousStart = text.lastIndexOf("\n", previousEnd - 1) + 1;
+  const previousLine = text.slice(previousStart, previousEnd);
+  return previousLine.trim() === "" ||
+    allowsFollowingIndentedCode(previousLine) ||
+    /^( {0,3})(`{3,}|~{3,})[ \t]*$/.test(previousLine);
 }
 
-function mdxEsmStatementEnd(text: string, start: number): number {
-  let quote: '"' | "'" | "`" | undefined;
-  let blockComment = false;
-  let depth = 0;
-  let lineStart = start;
-  for (let cursor = start; cursor < text.length; cursor++) {
-    const character = text[cursor]!;
-    if (blockComment) {
-      if (text.startsWith("*/", cursor)) {
-        blockComment = false;
+interface JavaScriptBalance {
+  readonly delimiters: string[];
+  quote: '"' | "'" | "`" | undefined;
+  blockComment: boolean;
+  valid: boolean;
+}
+
+function javaScriptRegexEnd(line: string, start: number): number | undefined {
+  let characterClass = false;
+  for (let cursor = start + 1; cursor < line.length; cursor++) {
+    if (line[cursor] === "\\") {
+      cursor++;
+      continue;
+    }
+    if (line[cursor] === "[") characterClass = true;
+    else if (line[cursor] === "]") characterClass = false;
+    else if (line[cursor] === "/" && !characterClass) {
+      cursor++;
+      while (/[A-Za-z]/.test(line[cursor] ?? "")) cursor++;
+      return cursor;
+    }
+  }
+  return undefined;
+}
+
+function javaScriptRegexMayStart(line: string, start: number): boolean {
+  const prefix = line.slice(0, start).trimEnd();
+  return prefix === "" ||
+    /(?:[=(:,!\[{;?&|+*%^~<>-]|=>|\b(?:return|case|throw|default))$/.test(
+      prefix,
+    );
+}
+
+function scanJavaScriptLine(line: string, state: JavaScriptBalance): void {
+  const closers: Readonly<Record<string, string>> = {
+    ")": "(",
+    "]": "[",
+    "}": "{",
+  };
+  for (let cursor = 0; cursor < line.length; cursor++) {
+    const character = line[cursor]!;
+    if (state.blockComment) {
+      if (line.startsWith("*/", cursor)) {
+        state.blockComment = false;
         cursor++;
       }
       continue;
     }
-    if (quote !== undefined) {
+    if (state.quote !== undefined) {
       if (character === "\\") cursor++;
-      else if (character === quote) quote = undefined;
+      else if (character === state.quote) state.quote = undefined;
       continue;
     }
-    if (text.startsWith("//", cursor)) {
-      const newline = text.indexOf("\n", cursor + 2);
-      cursor = newline === -1 ? text.length : newline - 1;
-      continue;
-    }
-    if (text.startsWith("/*", cursor)) {
-      blockComment = true;
+    if (line.startsWith("//", cursor)) break;
+    if (line.startsWith("/*", cursor)) {
+      state.blockComment = true;
       cursor++;
       continue;
     }
     if (character === '"' || character === "'" || character === "`") {
-      quote = character;
-    } else if (character === "(" || character === "[" || character === "{") {
-      depth++;
-    } else if (
-      (character === ")" || character === "]" || character === "}") &&
-      depth > 0
-    ) {
-      depth--;
-    } else if (character === "\n") {
-      const line = text.slice(lineStart, cursor).replace(/\r$/, "");
-      if (depth === 0 && !moduleStatementContinues(line)) return cursor;
-      lineStart = cursor + 1;
+      state.quote = character;
+      continue;
     }
+    if (character === "/" && javaScriptRegexMayStart(line, cursor)) {
+      const regexEnd = javaScriptRegexEnd(line, cursor);
+      if (regexEnd !== undefined) {
+        cursor = regexEnd - 1;
+        continue;
+      }
+    }
+    if (character === "(" || character === "[" || character === "{") {
+      state.delimiters.push(character);
+      continue;
+    }
+    const opener = closers[character];
+    if (opener === undefined) continue;
+    if (state.delimiters.at(-1) !== opener) {
+      state.valid = false;
+      return;
+    }
+    state.delimiters.pop();
   }
-  return text.length;
+}
+
+function mdxEsmRangeEnd(text: string, start: number): number | undefined {
+  const state: JavaScriptBalance = {
+    delimiters: [],
+    quote: undefined,
+    blockComment: false,
+    valid: true,
+  };
+  for (let lineStart = start; lineStart <= text.length;) {
+    const next = text.indexOf("\n", lineStart);
+    const lineEnd = next === -1 ? text.length : next;
+    const line = text.slice(lineStart, lineEnd).replace(/\r$/, "");
+    if (
+      lineStart > start && line.trim() === "" &&
+      state.delimiters.length === 0 && state.quote === undefined &&
+      !state.blockComment
+    ) return lineStart;
+
+    scanJavaScriptLine(line, state);
+    if (!state.valid) return undefined;
+    if (next === -1) {
+      return state.delimiters.length === 0 && state.quote === undefined &&
+          !state.blockComment
+        ? text.length
+        : undefined;
+    }
+    lineStart = next + 1;
+  }
+  return undefined;
 }
 
 function mdxEsmRanges(
   text: string,
-  codeRanges: readonly Range[],
+  ignoredRanges: readonly Range[],
 ): Range[] {
   const ranges: Range[] = [];
-  for (let lineStart = 0; lineStart <= text.length;) {
-    const newline = text.indexOf("\n", lineStart);
-    const lineEnd = newline === -1 ? text.length : newline;
-    if (
-      !isInsideRange(codeRanges, lineStart) &&
-      /^ {0,3}(?:import(?:\s+(?:["'`A-Za-z_$]|[{*]))|export\s+(?:default\b|const\b|let\b|var\b|function\b|class\b|async\b|[{*]))/
-        .test(
-          text.slice(lineStart, lineEnd).replace(/\r$/, ""),
-        )
-    ) {
-      const end = mdxEsmStatementEnd(text, lineStart);
-      ranges.push({ start: lineStart, end });
-      if (end >= text.length) break;
-      lineStart = end + 1;
+  for (let lineStart = 0; lineStart < text.length;) {
+    const next = text.indexOf("\n", lineStart);
+    const lineEnd = next === -1 ? text.length : next;
+    if (isInsideRange(ignoredRanges, lineStart)) {
+      if (next === -1) break;
+      lineStart = next + 1;
       continue;
     }
-    if (newline === -1) break;
-    lineStart = newline + 1;
+
+    const line = text.slice(lineStart, lineEnd);
+    if (
+      /^(?:import|export)\b/.test(line) &&
+      mdxEsmMayStart(text, lineStart)
+    ) {
+      const rangeEnd = mdxEsmRangeEnd(text, lineStart);
+      if (rangeEnd !== undefined) {
+        ranges.push({ start: lineStart, end: rangeEnd });
+        lineStart = rangeEnd;
+        continue;
+      }
+    }
+    if (next === -1) break;
+    lineStart = next + 1;
   }
   return ranges;
 }
 
-function ignoredDestinationRanges(text: string): {
+function ignoredDestinationRanges(
+  text: string,
+  syntax: DocumentSyntax,
+): {
   readonly ignored: Range[];
   readonly code: Range[];
   readonly expressions: Range[];
   readonly strings: Range[];
 } {
   const codeRanges = markdownCodeRanges(text);
-  const esmRanges = mdxEsmRanges(text, codeRanges);
-  const mdxRanges = mdxSyntaxRanges(
-    text,
-    mergeRanges([...codeRanges, ...esmRanges]),
-  );
+  const mdxRanges = mdxSyntaxRanges(text, codeRanges);
+  const esmRanges = syntax === "mdx"
+    ? mdxEsmRanges(
+      text,
+      mergeRanges([
+        ...codeRanges,
+        ...mdxRanges.comments,
+        ...mdxRanges.expressions,
+      ]),
+    )
+    : [];
   return {
     ignored: mergeRanges([...codeRanges, ...mdxRanges.comments, ...esmRanges]),
     code: codeRanges,
@@ -926,7 +1015,7 @@ function htmlTagRanges(
         continue;
       }
       const commentEnd = expressionDepth > 0
-        ? javascriptCommentEnd(text, cursor)
+        ? javaScriptCommentEnd(text, cursor)
         : undefined;
       if (commentEnd !== undefined) {
         cursor = commentEnd - 1;
@@ -958,7 +1047,7 @@ function topLevelTagOffsets(tag: string): ReadonlySet<number> {
       continue;
     }
     const commentEnd = expressionDepth > 0
-      ? javascriptCommentEnd(tag, cursor)
+      ? javaScriptCommentEnd(tag, cursor)
       : undefined;
     if (commentEnd !== undefined) {
       cursor = commentEnd - 1;
@@ -1351,12 +1440,15 @@ function markdownDestinationStart(
  * on the following line. Neither line holds enough syntax on its own, while
  * Mintlify still renders both as links.
  */
-export function scanDestinations(text: string): Destination[] {
+export function scanDestinations(
+  text: string,
+  syntax: DocumentSyntax = "mdx",
+): Destination[] {
   // A scanner is required here because valid Markdown labels can contain
   // balanced brackets or escaped closing brackets.
   const found: Destination[] = [];
   const destinationOffsets = new Set<number>();
-  const syntaxRanges = ignoredDestinationRanges(text);
+  const syntaxRanges = ignoredDestinationRanges(text, syntax);
   const ignoredRanges = syntaxRanges.ignored;
   const tagRanges = htmlTagRanges(
     text,
@@ -1371,6 +1463,7 @@ export function scanDestinations(text: string): Destination[] {
   ]);
   const markdownAngleDestinationRanges: Range[] = [];
   const markdownLinkRanges: Range[] = [];
+  const markdownLinkTailRanges: Range[] = [];
   for (let start = 0; start < text.length; start++) {
     if (
       isInsideRange(markdownIgnoredRanges, start) ||
@@ -1392,7 +1485,10 @@ export function scanDestinations(text: string): Destination[] {
           cursor += 2;
           continue;
         }
-        if (text[cursor] === ">") break;
+        if (
+          text[cursor] === ">" || text[cursor] === "\n" ||
+          text[cursor] === "\r"
+        ) break;
         cursor++;
       }
       if (
@@ -1411,6 +1507,7 @@ export function scanDestinations(text: string): Destination[] {
         const linkEnd = afterInlineLink(text, afterLabel);
         if (linkEnd !== undefined) {
           markdownLinkRanges.push({ start: linkStart, end: linkEnd });
+          markdownLinkTailRanges.push({ start: afterLabel, end: linkEnd });
         }
       }
       start = cursor;
@@ -1445,6 +1542,7 @@ export function scanDestinations(text: string): Destination[] {
       const linkEnd = afterInlineLink(text, afterLabel);
       if (linkEnd !== undefined) {
         markdownLinkRanges.push({ start: linkStart, end: linkEnd });
+        markdownLinkTailRanges.push({ start: afterLabel, end: linkEnd });
       }
     }
     start = cursor;
@@ -1557,7 +1655,7 @@ export function scanDestinations(text: string): Destination[] {
   }));
   const uriAutolinkIgnoredRanges = mergeRanges([
     ...markdownIgnoredRanges,
-    ...renderedLinkRanges,
+    ...markdownLinkTailRanges,
     ...referenceDefinitionRanges,
     ...markdownAngleDestinationRanges,
   ]);
@@ -1616,6 +1714,14 @@ function lineAt(lineStarts: readonly number[], offset: number): number {
   return low + 1;
 }
 
+function lineStartOffsets(lines: readonly string[]): number[] {
+  const starts: number[] = [0];
+  for (const line of lines.slice(0, -1)) {
+    starts.push(starts[starts.length - 1]! + line.length + 1);
+  }
+  return starts;
+}
+
 export function collectUnpublishedLinkIssues(
   path: string,
   content: string,
@@ -1624,13 +1730,16 @@ export function collectUnpublishedLinkIssues(
   if (path !== "README.md" && !isPublishedPage(path)) return [];
 
   const lines = content.split("\n");
-  const lineStarts: number[] = [0];
-  for (const line of lines.slice(0, -1)) {
-    lineStarts.push(lineStarts[lineStarts.length - 1]! + line.length + 1);
-  }
+  const lineStarts = lineStartOffsets(lines);
+  const documentSyntax = path.endsWith(".mdx") ? "mdx" : "markdown";
 
   const issues: PublicDocIssue[] = [];
-  for (const { href, offset, syntax } of scanDestinations(content)) {
+  for (
+    const { href, offset, syntax } of scanDestinations(
+      content,
+      documentSyntax,
+    )
+  ) {
     const target = resolveDocumentationTarget(path, href, syntax);
     if (path === "README.md" && !target?.startsWith("docs/")) continue;
     if (target === undefined || publishedTargetExists(target, stat)) continue;
@@ -1672,39 +1781,45 @@ function escapeRegularExpression(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function blockedRepositoryRule(repository: string): Rule {
+interface RepositoryRule extends Rule {
+  matches(text: string): boolean;
+}
+
+function blockedRepositoryRule(repository: string): RepositoryRule {
   const escapedRepository = escapeRegularExpression(repository);
+  const repositoryUrl = String
+    .raw`(?:(?:https?:\/\/)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)${escapedRepository}(?:\.git)?`;
+  const trailingBoundary = String
+    .raw`(?:$|[/#?\s)>\],;:'"!]|[.](?=\s|$))`;
+  const pattern = new RegExp(
+    String.raw`(?:^|[\s("'=<])${repositoryUrl}(?=${trailingBoundary})`,
+    "i",
+  );
+  const emphasizedPattern = new RegExp(
+    String
+      .raw`(?:^|[\s("'=<])(\*+|_+|~{1,2})${repositoryUrl}\1(?=${trailingBoundary})`,
+    "i",
+  );
   return {
-    pattern: new RegExp(
-      String
-        .raw`(?:^|[\s("'=<])(?:(?:https?:\/\/)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)${escapedRepository}(?:\.git)?(?=$|[/#?\s)>\],;:'"!]|[.](?=\s|$))`,
-      "i",
-    ),
+    pattern,
+    matches: (text) => pattern.test(text) || emphasizedPattern.test(text),
     message:
       `${repository} is a private repository. A reader following this link gets a 404, so link a public example or inline the code instead.`,
   };
 }
 
-function canonicalHttpUrls(text: string): string[] {
-  const urls: string[] = [];
-  const candidates = /https?:\/\/[^\s<>"'`]+/gi;
-  let match: RegExpExecArray | null;
-  while ((match = candidates.exec(text))) {
+function canonicalizeHttpUrls(text: string): string {
+  return text.replace(/https?:\/\/[^\s<>"'`]+/gi, (rawUrl) => {
+    const suffix = rawUrl.match(/[),.;:!?]+$/)?.[0] ?? "";
+    const candidate = rawUrl.slice(0, rawUrl.length - suffix.length);
     try {
-      const url = new URL(match[0]);
-      if (url.protocol === "http:" || url.protocol === "https:") {
-        urls.push(url.href);
-      }
+      const url = new URL(candidate);
+      const pathname = decodeURIComponent(url.pathname);
+      return `${url.protocol}//${url.host}${pathname}${url.search}${url.hash}${suffix}`;
     } catch {
-      // Ignore URL-shaped prose that a browser cannot resolve.
+      return rawUrl;
     }
-  }
-  return urls;
-}
-
-function matchesBlockedRepository(text: string, rule: Rule): boolean {
-  return rule.pattern.test(text) ||
-    canonicalHttpUrls(text).some((url) => rule.pattern.test(url));
+  });
 }
 
 const RULES: Rule[] = [
@@ -1898,7 +2013,19 @@ export function collectIssues(
   const issues: PublicDocIssue[] = [];
   const repositoryRule = blockedRepositoryRule(blockedRepository);
   const lines = content.split("\n");
-  const repositoryIssueLines = new Set<number>();
+  const lineStarts = lineStartOffsets(lines);
+  const documentSyntax = path.endsWith(".mdx") ? "mdx" : "markdown";
+  const blockedDestinationLines = new Set<number>();
+  for (
+    const destination of scanDestinations(content, documentSyntax)
+  ) {
+    if (
+      repositoryRule.matches(destination.href) ||
+      repositoryRule.matches(canonicalizeHttpUrls(destination.href))
+    ) {
+      blockedDestinationLines.add(lineAt(lineStarts, destination.offset));
+    }
+  }
   for (const [index, text] of lines.entries()) {
     const renderedText = decodeMarkdownBackslashEscapes(
       decodeMarkdownCharacterReferences(text),
@@ -1912,8 +2039,12 @@ export function collectIssues(
         text,
       });
     }
-    if (matchesBlockedRepository(renderedText, repositoryRule)) {
-      repositoryIssueLines.add(index + 1);
+    const canonicalText = canonicalizeHttpUrls(renderedText);
+    if (
+      repositoryRule.matches(renderedText) ||
+      repositoryRule.matches(canonicalText) ||
+      blockedDestinationLines.has(index + 1)
+    ) {
       issues.push({
         path,
         line: index + 1,
@@ -1921,23 +2052,6 @@ export function collectIssues(
         text,
       });
     }
-  }
-
-  const lineStarts = [0];
-  for (let offset = 0; offset < content.length; offset++) {
-    if (content[offset] === "\n") lineStarts.push(offset + 1);
-  }
-  for (const destination of scanDestinations(content)) {
-    if (!matchesBlockedRepository(destination.href, repositoryRule)) continue;
-    const line = lineAt(lineStarts, destination.offset);
-    if (repositoryIssueLines.has(line)) continue;
-    repositoryIssueLines.add(line);
-    issues.push({
-      path,
-      line,
-      message: repositoryRule.message,
-      text: lines[line - 1]!,
-    });
   }
 
   for (const rule of WRAPPED_RULES) {

@@ -31,7 +31,7 @@ describe("public docs validation", () => {
     );
   });
 
-  it("parses balanced and escaped reference definition labels", () => {
+  it("validates reference definition labels", () => {
     assertEquals(
       destinations(
         "[use][nested [label]]\n\n" +
@@ -45,6 +45,18 @@ describe("public docs validation", () => {
           String.raw`[escaped \] label]: ../architecture/escaped.md`,
       ),
       ["../architecture/escaped.md"],
+    );
+    assertEquals(
+      destinations("[collapsed][]\n\n[collapsed]: ../architecture/valid.md"),
+      ["../architecture/valid.md"],
+    );
+    const overlyLongLabel = "a".repeat(1000);
+    assertEquals(
+      destinations(
+        `[${overlyLongLabel}]\n\n` +
+          `[${overlyLongLabel}]: ../architecture/too-long.md`,
+      ),
+      [],
     );
     assertEquals(
       destinations("[ſ]\n\n[s]: ../architecture/case-folded.md"),
@@ -81,9 +93,11 @@ describe("public docs validation", () => {
           '<div data-href="../architecture/data.md"></div>\n' +
           'Configure href="../architecture/prose.md" for the sample.\n' +
           "<a title=\"sample href='../architecture/title.md' text\">safe</a>\n" +
+          '<a data-ok={true /* } > */} href="../architecture/commented-tag.md">ok</a>\n' +
+          '<a data-ok={{ value: /* } > */ true }} href="../architecture/nested-comment.md">ok</a>\n' +
+          '<a data-ok={true // } >\n} href="../architecture/line-comment.md">ok</a>\n' +
           '<div title="[old](../architecture/title-link.md)"></div>\n' +
           '<div title={"[old](../architecture/expression.md)"}></div>\n' +
-          '<a data-ok={true /* } > */} href="../architecture/comment-attribute.md">link</a>\n' +
           "<Code value={'Configure href=\"../architecture/string.md\"'} />\n" +
           '<div title={"<https://veryfront.com/docs/code/architecture/private>"}></div>\n' +
           String.raw`\<a href="../architecture/escaped.md">literal</a>` +
@@ -92,7 +106,9 @@ describe("public docs validation", () => {
       ),
       [
         "../architecture/image.png",
-        "../architecture/comment-attribute.md",
+        "../architecture/commented-tag.md",
+        "../architecture/nested-comment.md",
+        "../architecture/line-comment.md",
         "../architecture/real.md",
       ],
     );
@@ -191,7 +207,11 @@ describe("public docs validation", () => {
         "docs/guides/example.md",
         `https://notgithub.com/${BLOCKED_REPOSITORY}\n` +
           `https://github.com/${BLOCKED_REPOSITORY}-public\n` +
-          `https://example.com/github.com/${BLOCKED_REPOSITORY}`,
+          `https://example.com/github.com/${BLOCKED_REPOSITORY}\n` +
+          `https://%67ithub.com.example/${BLOCKED_REPOSITORY}\n` +
+          `https://github.com@example.com/${BLOCKED_REPOSITORY}\n` +
+          `https://github.com/${BLOCKED_REPOSITORY}_public\n` +
+          `_https://github.com/${BLOCKED_REPOSITORY}_public_`,
         BLOCKED_REPOSITORY,
       ),
       [],
@@ -204,18 +224,34 @@ describe("public docs validation", () => {
           `git clone git@github.com:${BLOCKED_REPOSITORY}.git\n` +
           `git clone ssh://git@github.com/${BLOCKED_REPOSITORY}.git\n` +
           "[encoded](https://github.com/example-org/private&#x2d;examples)\n" +
+          '<a href={"https://github.com/example-org/private\\x2dexamples"}>x</a>\n' +
           `https://%67ithub.com/${BLOCKED_REPOSITORY}\n` +
           String
-            .raw`[escaped](https://github.com/example-org/private\-examples)`,
+            .raw`[escaped](https://github.com/example-org/private\-examples)` +
+          `\n_https://github.com/${BLOCKED_REPOSITORY}_\n` +
+          `**https://%67ithub.com/example-org/private%2dexamples**\n` +
+          `***https://github.com/${BLOCKED_REPOSITORY}***\n` +
+          `___https://github.com/${BLOCKED_REPOSITORY}___\n` +
+          `****https://github.com/${BLOCKED_REPOSITORY}****\n` +
+          `____https://github.com/${BLOCKED_REPOSITORY}____\n` +
+          `~https://github.com/${BLOCKED_REPOSITORY}~`,
         BLOCKED_REPOSITORY,
       ).length,
-      7,
+      15,
     );
     assertEquals(
       collectIssues(
-        "docs/guides/example.md",
-        String
-          .raw`<a href={"https://github.com/example-org/private\x2dexamples"}>example</a>`,
+        "docs/guides/example.mdx",
+        '<a href={\n  "https://github.com/example-org/private\\x2dexamples"\n}>x</a>',
+        BLOCKED_REPOSITORY,
+      ).length,
+      1,
+    );
+    assertEquals(
+      collectIssues(
+        "docs/guides/example.mdx",
+        `https://github.com/${BLOCKED_REPOSITORY} ` +
+          '<a href={"https://github.com/example-org/private\\x2dexamples"}>x</a>',
         BLOCKED_REPOSITORY,
       ).length,
       1,
@@ -583,6 +619,7 @@ describe("public docs validation", () => {
     assertEquals(
       destinations(
         "`[inline](../architecture/inline.md)`\n" +
+          "`sample\r\n\r\n[crlf](../architecture/crlf-code-span.md)`\n" +
           "```md\n[example](../architecture/fenced.md)\n```\n" +
           "    [indented](../architecture/indented.md)\n" +
           '    <a href="../architecture/html.md">HTML</a>\n' +
@@ -590,7 +627,7 @@ describe("public docs validation", () => {
           "    <https://veryfront.com/docs/code/architecture/autolink>\n" +
           "[real](../architecture/real.md)",
       ),
-      ["../architecture/real.md"],
+      ["../architecture/crlf-code-span.md", "../architecture/real.md"],
     );
     assertEquals(
       destinations(
@@ -605,13 +642,6 @@ describe("public docs validation", () => {
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
-    );
-    assertEquals(
-      destinations(
-        "`sample\r\n\r\n" +
-          "[gate](../architecture/crlf-paragraph.md)`",
-      ),
-      ["../architecture/crlf-paragraph.md"],
     );
     assertEquals(
       destinations(
@@ -803,6 +833,9 @@ describe("public docs validation", () => {
       ),
       ["../architecture/real.md"],
     );
+  });
+
+  it("ignores Markdown syntax inside MDX ESM blocks", () => {
     assertEquals(
       destinations(
         'import sample from "[old](../architecture/import.md)"\n' +
@@ -812,6 +845,35 @@ describe("public docs validation", () => {
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.mdx",
+        'export const sample = [\n  "[old](../architecture/private.md)",\n];\n\n' +
+          "[real](../architecture/also-private.md)",
+      ).map((issue) => issue.line),
+      [5],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.mdx",
+        'export const sample = {\n\n  old: "[old](../architecture/private.md)",\n};',
+      ),
+      [],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.mdx",
+        ' export const sample = "[old](../architecture/indented.md)"',
+      ).length,
+      1,
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.md",
+        'export const sample = "[old](../architecture/markdown.md)"',
+      ).length,
+      1,
     );
   });
 
@@ -841,6 +903,21 @@ describe("public docs validation", () => {
         String.raw`\<https://veryfront.com/docs/code/guides/does-not-exist>`,
       ),
       [],
+    );
+    assertEquals(
+      destinations(
+        "[<https://veryfront.com/docs/code/architecture/label>](./public.md)",
+      ),
+      [
+        "./public.md",
+        "https://veryfront.com/docs/code/architecture/label",
+      ],
+    );
+    assertEquals(
+      destinations(
+        '[public](./public.md "<https://veryfront.com/docs/code/architecture/title>")',
+      ),
+      ["./public.md"],
     );
     assertEquals(
       collectUnpublishedLinkIssues(
