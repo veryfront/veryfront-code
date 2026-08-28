@@ -312,6 +312,20 @@ class MockRedisAdapter implements RedisAdapter {
       return Promise.resolve(1);
     }
 
+    if (script.includes("conditional-run-precondition-check")) {
+      const expectedCount = Number(args[0]);
+      const expectedStatuses = args.slice(1, expectedCount + 1);
+      const expectedWorkerId = args[expectedCount + 1]!;
+      const checkWorker = args[expectedCount + 2] === "1";
+      const hash = this.hashes.get(key);
+      return Promise.resolve(
+        hash && expectedStatuses.includes(hash.get("status") ?? "") &&
+          (!checkWorker || hash.get("workerId") === expectedWorkerId)
+          ? 1
+          : 0,
+      );
+    }
+
     if (script.includes("observable-approval-append")) {
       const approvalsKey = keys[1]!;
       let list = this.lists.get(approvalsKey);
@@ -2000,6 +2014,22 @@ describe("RedisBackend", () => {
       assertEquals(updated?.status, "running");
     });
 
+    it("does not add an existence round trip to successful updates", async () => {
+      const runId = "run-update-without-exists";
+      await backend.createRun(createTestRun(runId));
+      let existenceChecks = 0;
+      const exists = mockRedis.exists.bind(mockRedis);
+      mockRedis.exists = (...keys) => {
+        existenceChecks++;
+        return exists(...keys);
+      };
+
+      await backend.updateRun(runId, { heartbeatAt: new Date(1) });
+
+      assertEquals(existenceChecks, 0);
+      assertEquals((await backend.getRun(runId))?.heartbeatAt, new Date(1));
+    });
+
     it("rejects an update for a missing run", async () => {
       await assertRejects(
         () => backend.updateRun("missing-run", { status: "running" }),
@@ -2009,7 +2039,7 @@ describe("RedisBackend", () => {
       assertEquals(await backend.getRun("missing-run"), null);
     });
 
-    it("checks missing runs before strict patch validation", async () => {
+    it("preserves missing-run precedence after strict patch validation fails", async () => {
       const strictBackend = new RedisBackend({
         client: mockRedis as unknown as RedisAdapter,
         prefix: "strict-missing-run:",
@@ -2025,7 +2055,8 @@ describe("RedisBackend", () => {
         "Run not found: missing-run-strict",
       );
       assertInstanceOf(error, Error);
-      assertEquals(error.cause, undefined);
+      assertInstanceOf(error.cause, Error);
+      assertStringIncludes(error.cause.message, "strictContext");
     });
 
     it("preserves missing-run semantics when a run disappears before strict validation fails", async () => {
@@ -2042,12 +2073,11 @@ describe("RedisBackend", () => {
       const exists = mockRedis.exists.bind(mockRedis);
       let deleteAfterLookup = true;
       mockRedis.exists = async (key) => {
-        const result = await exists(key);
         if (key === runKey && deleteAfterLookup) {
           deleteAfterLookup = false;
           mockRedis.hashes.delete(key);
         }
-        return result;
+        return await exists(key);
       };
 
       const error = await assertRejects(
@@ -2778,6 +2808,40 @@ describe("RedisBackend", () => {
         "the expected workerId must sit at the ARGV index the Lua fence reads",
       );
       assertEquals((await backend.getCheckpoints("synthetic-child-run"))[0]?.id, "cp-owned");
+    });
+
+    it("checks checkpoint ownership without downloading the run hash", async () => {
+      const runId = "run-cp-selective-owner-check";
+      await backend.createRun(createTestRun(runId, {
+        status: "running",
+        workerId: "worker-current",
+      }));
+      let runHashReads = 0;
+      const hgetall = mockRedis.hgetall.bind(mockRedis);
+      mockRedis.hgetall = (key) => {
+        if (key.endsWith(`:${runId}`)) runHashReads++;
+        return hgetall(key);
+      };
+
+      assertEquals(
+        await backend.saveCheckpointIfStatusAndWorker(
+          runId,
+          runId,
+          ["running"],
+          "worker-current",
+          {
+            id: "cp-selective-owner-check",
+            nodeId: "step",
+            timestamp: new Date(),
+            context: { input: {} },
+            nodeStates: {},
+          },
+        ),
+        true,
+      );
+
+      assertEquals(runHashReads, 0);
+      assertEquals((await backend.getCheckpoints(runId))[0]?.id, "cp-selective-owner-check");
     });
 
     it("checks a stale checkpoint owner before strict context validation", async () => {

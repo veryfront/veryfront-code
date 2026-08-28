@@ -565,6 +565,25 @@ redis.call('rpush', KEYS[1], ARGV[1])
 redis.call('ltrim', KEYS[1], -tonumber(ARGV[2]), -1)
 return redis.call('llen', KEYS[1])`;
 
+/** Read only the run fields needed to reject stale owner-fenced work early. */
+const CHECK_RUN_PRECONDITION_SCRIPT = `-- conditional-run-precondition-check
+local status = redis.call('hget', KEYS[1], 'status')
+local expectedCount = tonumber(ARGV[1])
+local allowed = false
+for i = 2, expectedCount + 1 do
+  if status == ARGV[i] then
+    allowed = true
+    break
+  end
+end
+if not allowed then return 0 end
+local expectedWorkerId = ARGV[expectedCount + 2]
+local checkWorker = ARGV[expectedCount + 3] == '1'
+if checkWorker and redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then
+  return 0
+end
+return 1`;
+
 /** Atomically verify canonical run ownership before appending auxiliary run state. */
 const APPEND_IF_STATUS_AND_WORKER_SCRIPT = `-- conditional-owned-append
 local status = redis.call('hget', KEYS[1], 'status')
@@ -1220,6 +1239,25 @@ export class RedisBackend implements WorkflowBackend {
     return Number(result) === 1;
   }
 
+  private async runPreconditionMatches(
+    client: RedisAdapter,
+    runId: string,
+    expectedStatuses: WorkflowStatus[],
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    const result = await client.eval(
+      CHECK_RUN_PRECONDITION_SCRIPT,
+      [this.runKey(runId)],
+      [
+        String(expectedStatuses.length),
+        ...expectedStatuses,
+        expectedWorkerId ?? "",
+        expectedWorkerId === undefined ? "0" : "1",
+      ],
+    );
+    return Number(result) === 1;
+  }
+
   private deserializeRun(data: Record<string, string>): WorkflowRun {
     if (!data.id) {
       throw INVALID_ARGUMENT.create({ detail: "Invalid workflow run data: missing 'id' field" });
@@ -1402,15 +1440,12 @@ export class RedisBackend implements WorkflowBackend {
   async updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void> {
     const client = await this.ensureClient();
     const runKey = this.runKey(runId);
-    if (await client.exists(runKey) === 0) {
-      throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
-    }
-    assertWorkflowRunUpdate(patch);
 
     if (this.config.debug) logger.debug(`[RedisBackend] Updating run: ${runId}`);
 
     let fields: Record<string, string>;
     try {
+      assertWorkflowRunUpdate(patch);
       fields = this.serializeRunPatch(patch, runId);
     } catch (error) {
       if (await client.exists(runKey) === 0) {
@@ -1499,13 +1534,14 @@ export class RedisBackend implements WorkflowBackend {
     try {
       fields = this.serializeRunPatch(patch, runId);
     } catch (error) {
-      const current = await client.hgetall(this.runKey(runId));
       if (
-        !expectedStatuses.includes(current.status as WorkflowStatus) ||
-        (expectedWorkerId !== undefined && current.workerId !== expectedWorkerId)
-      ) {
-        return false;
-      }
+        !await this.runPreconditionMatches(
+          client,
+          runId,
+          expectedStatuses,
+          expectedWorkerId,
+        )
+      ) return false;
       throw error;
     }
     const fieldArgs = Object.entries(fields).flatMap(([field, value]) => [field, value]);
@@ -1648,11 +1684,13 @@ export class RedisBackend implements WorkflowBackend {
     checkpoint: Checkpoint,
   ): Promise<boolean> {
     const client = await this.ensureClient();
-    const ownershipMatches = async (): Promise<boolean> => {
-      const current = await client.hgetall(this.runKey(ownershipRunId));
-      return expectedStatuses.includes(current.status as WorkflowStatus) &&
-        current.workerId === expectedWorkerId;
-    };
+    const ownershipMatches = (): Promise<boolean> =>
+      this.runPreconditionMatches(
+        client,
+        ownershipRunId,
+        expectedStatuses,
+        expectedWorkerId,
+      );
     if (!await ownershipMatches()) return false;
 
     let serializedCheckpoint: string;
