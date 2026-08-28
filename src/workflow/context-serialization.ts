@@ -188,6 +188,103 @@ const OMIT_JSON_VALUE = Symbol("omit-json-value");
 const ACTIVE_JSON_TAIL_REFERENCE = new Error("active JSON tail reference");
 const BIGINT_JSON_TAIL_VALUE = new Error("BigInt JSON tail value");
 
+function hasJsonTailHook(
+  value: JsonTraversalReference,
+  prototype: JsonTraversalReference | null,
+): boolean {
+  const ownDescriptor = objectGetOwnPropertyDescriptor(value, "toJSON");
+  if (ownDescriptor !== undefined) {
+    return !objectHasOwn(ownDescriptor, "value") ||
+      typeof ownDescriptor.value === "function";
+  }
+  if (prototype === null) return false;
+
+  const prototypeDescriptor = objectGetOwnPropertyDescriptor(prototype, "toJSON");
+  if (prototypeDescriptor !== undefined) {
+    return !objectHasOwn(prototypeDescriptor, "value") ||
+      typeof prototypeDescriptor.value === "function";
+  }
+  if (prototype === objectPrototype) return false;
+
+  const objectDescriptor = objectGetOwnPropertyDescriptor(objectPrototype, "toJSON");
+  return objectDescriptor !== undefined &&
+    (!objectHasOwn(objectDescriptor, "value") ||
+      typeof objectDescriptor.value === "function");
+}
+
+/** Whether native JSON can snapshot this tail without a diagnostic replacer. */
+function canSnapshotJsonTailWithoutReplacer(
+  root: JsonTraversalReference,
+  active: Set<JsonTraversalReference>,
+): boolean {
+  if (!canIdentifyProxyWithoutHooks) return false;
+
+  const pending: unknown[] = [root];
+  const seen = new SetConstructor<JsonTraversalReference>();
+  for (let cursor = 0; cursor < pending.length; cursor++) {
+    const candidate = pending[cursor];
+    if (candidate === null) continue;
+
+    const type = typeof candidate;
+    if (
+      type === "undefined" ||
+      type === "boolean" ||
+      type === "number" ||
+      type === "string" ||
+      type === "symbol"
+    ) {
+      continue;
+    }
+    if (type !== "object") return false;
+
+    const reference = candidate as JsonTraversalReference;
+    if (
+      isProxyWithoutHooks(reference) ||
+      isNonPlainBuiltinWithoutHooks(reference) ||
+      reflectApply(setHas, active, [reference]) ||
+      reflectApply(setHas, seen, [reference]) ||
+      (jsonIsRawJSON !== undefined &&
+        reflectApply(jsonIsRawJSON, jsonRawSupport, [reference]))
+    ) {
+      return false;
+    }
+    reflectApply(setAdd, seen, [reference]);
+
+    const isArray = arrayIsArray(reference);
+    let prototype: object | null;
+    try {
+      prototype = objectGetPrototypeOf(reference);
+    } catch {
+      return false;
+    }
+    if (
+      (isArray && prototype !== arrayPrototype) ||
+      (!isArray && prototype !== objectPrototype && prototype !== null) ||
+      hasJsonTailHook(reference, prototype)
+    ) {
+      return false;
+    }
+
+    if (isArray) {
+      const length = toJsonLength(reflectGet(reference, "length"));
+      for (let index = 0; index < length; index++) {
+        const descriptor = objectGetOwnPropertyDescriptor(reference, StringConstructor(index));
+        if (descriptor === undefined || !objectHasOwn(descriptor, "value")) return false;
+        defineArrayElement(pending, pending.length, descriptor.value);
+      }
+      continue;
+    }
+
+    const keys = objectKeys(reference);
+    for (let index = 0; index < keys.length; index++) {
+      const descriptor = objectGetOwnPropertyDescriptor(reference, keys[index]!);
+      if (descriptor === undefined || !objectHasOwn(descriptor, "value")) return false;
+      defineArrayElement(pending, pending.length, descriptor.value);
+    }
+  }
+  return true;
+}
+
 /** Encode an uninspected tail now, preserving native hook order and output. */
 function normalizeJsonTail(
   value: JsonTraversalReference,
@@ -201,40 +298,46 @@ function normalizeJsonTail(
     configurable: true,
     writable: true,
   });
-  const parents = new WeakMapConstructor<JsonTraversalReference, JsonTraversalReference>();
-  const hasAncestor = (
-    holder: JsonTraversalReference,
-    candidate: JsonTraversalReference,
-  ): boolean => {
-    let ancestor: JsonTraversalReference | undefined = holder;
-    while (ancestor !== undefined) {
-      if (ancestor === candidate) return true;
-      ancestor = reflectApply(weakMapGet, parents, [ancestor]) as
-        | JsonTraversalReference
-        | undefined;
-    }
-    return false;
-  };
   let containsRawJson = false;
-  const serializedHolder = jsonStringify(holder, function (
-    this: JsonTraversalReference,
-    _key,
-    nested,
-  ) {
-    if (typeof nested === "bigint") throw BIGINT_JSON_TAIL_VALUE;
-    if (nested !== null && typeof nested === "object") {
-      if (
-        jsonIsRawJSON !== undefined &&
-        reflectApply(jsonIsRawJSON, jsonRawSupport, [nested])
-      ) {
-        containsRawJson = true;
+  let serializedHolder: string | undefined;
+  if (canSnapshotJsonTailWithoutReplacer(value, active)) {
+    serializedHolder = jsonStringify(holder);
+  } else {
+    const parents = new WeakMapConstructor<JsonTraversalReference, JsonTraversalReference>();
+    const hasAncestor = (
+      holder: JsonTraversalReference,
+      candidate: JsonTraversalReference,
+    ): boolean => {
+      let ancestor: JsonTraversalReference | undefined = holder;
+      while (ancestor !== undefined) {
+        if (ancestor === candidate) return true;
+        ancestor = reflectApply(weakMapGet, parents, [ancestor]) as
+          | JsonTraversalReference
+          | undefined;
       }
-      if (reflectApply(setHas, active, [nested])) throw ACTIVE_JSON_TAIL_REFERENCE;
-      if (hasAncestor(this, nested)) throw ACTIVE_JSON_TAIL_REFERENCE;
-      reflectApply(weakMapSet, parents, [nested, this]);
-    }
-    return nested;
-  });
+      return false;
+    };
+    serializedHolder = jsonStringify(holder, function (
+      this: JsonTraversalReference,
+      _key,
+      nested,
+    ) {
+      if (typeof nested === "bigint") throw BIGINT_JSON_TAIL_VALUE;
+      if (nested !== null && typeof nested === "object") {
+        if (boxedPrimitiveSlot(nested) === "bigint") throw BIGINT_JSON_TAIL_VALUE;
+        if (
+          jsonIsRawJSON !== undefined &&
+          reflectApply(jsonIsRawJSON, jsonRawSupport, [nested])
+        ) {
+          containsRawJson = true;
+        }
+        if (reflectApply(setHas, active, [nested])) throw ACTIVE_JSON_TAIL_REFERENCE;
+        if (hasAncestor(this, nested)) throw ACTIVE_JSON_TAIL_REFERENCE;
+        reflectApply(weakMapSet, parents, [nested, this]);
+      }
+      return nested;
+    });
+  }
   if (serializedHolder === "{}") return OMIT_JSON_VALUE;
 
   const encodedKey = jsonStringify(key)!;
@@ -289,7 +392,7 @@ function hasNativeBrand(
 
 function hasWeakCollectionSlot(
   value: JsonTraversalReference,
-  method: (key: object) => unknown,
+  method: typeof weakMapGet | typeof weakSetHas,
 ): boolean {
   try {
     reflectApply(method, value, [nativeBrandProbeKey]);

@@ -10,6 +10,7 @@ describe("native brand checks", () => {
       new WeakSet(),
       Promise.resolve(),
       Object(Symbol("boxed")),
+      Object(1n),
     ];
 
     for (const value of values) {

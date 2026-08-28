@@ -22,11 +22,16 @@ type HostRequire = (specifier: string) => unknown;
 declare const require: HostRequire | undefined;
 
 const apply = Reflect.apply;
+const BigIntValueOf = BigInt.prototype.valueOf;
+const box = Object;
 const createObject = Object.create;
 const defineProperty = Object.defineProperty;
 const freeze = Object.freeze;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectHasOwnProperty = Object.prototype.hasOwnProperty;
+const objectPrototype = Object.prototype;
+const setPrototypeOf = Object.setPrototypeOf;
+const SymbolValueOf = Symbol.prototype.valueOf;
 
 const nonPlainBuiltinCheckNames = [
   "isAnyArrayBuffer",
@@ -67,6 +72,18 @@ function readOwnDataFunction(
   const descriptor = getOwnPropertyDescriptor(source, key);
   if (!descriptor || !hasOwn(descriptor, "value")) return undefined;
   return typeof descriptor.value === "function" ? descriptor.value : undefined;
+}
+
+function hasNativeSlot(
+  value: unknown,
+  method: (this: unknown) => unknown,
+): boolean {
+  try {
+    apply(method, value, []);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefined {
@@ -113,6 +130,11 @@ function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefine
   }
   freeze(nonPlainBuiltinChecks);
   const proxyCheck = snapshot.isProxy;
+  const boxedPrimitiveCheck = snapshot.isBoxedPrimitive;
+  const disguisedBigInt = setPrototypeOf(box(0n), objectPrototype);
+  const disguisedSymbol = setPrototypeOf(box(Symbol()), objectPrototype);
+  const needsBigIntSlotFallback = !apply(boxedPrimitiveCheck, undefined, [disguisedBigInt]);
+  const needsSymbolSlotFallback = !apply(boxedPrimitiveCheck, undefined, [disguisedSymbol]);
   defineProperty(snapshot, "isNonPlainBuiltin", {
     configurable: false,
     enumerable: true,
@@ -125,6 +147,12 @@ function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefine
         const check = nonPlainBuiltinChecks[key];
         if (check && apply(check, undefined, [candidate]) === true) return true;
       }
+      // Bun's node:util/types currently misses BigInt and Symbol boxes after
+      // their visible prototype changes. Probe only the brands the loaded host
+      // predicates demonstrably lack; Node and Deno retain the exception-free
+      // path for ordinary strict objects.
+      if (needsBigIntSlotFallback && hasNativeSlot(candidate, BigIntValueOf)) return true;
+      if (needsSymbolSlotFallback && hasNativeSlot(candidate, SymbolValueOf)) return true;
       return false;
     },
     writable: false,

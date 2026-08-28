@@ -4,7 +4,10 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 
 describe("workflow context serialization on edge hosts", () => {
   it("does not invoke a Symbol.toStringTag getter before taking the JSON snapshot", async () => {
-    const moduleUrl = new URL("./context-serialization.ts?edge-host-child", import.meta.url).href;
+    const moduleUrl = new URL(
+      "../../../src/workflow/context-serialization.ts?edge-host-child",
+      import.meta.url,
+    ).href;
     const script = `
       const host = globalThis;
       const denoDescriptor = Object.getOwnPropertyDescriptor(host, "Deno");

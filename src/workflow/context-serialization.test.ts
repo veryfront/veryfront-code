@@ -509,6 +509,7 @@ describe("serializeWorkflowContext", () => {
           new WeakSet(),
           Promise.resolve(),
           Object(Symbol("hidden")),
+          Object(1n),
         ]
       ) {
         Object.setPrototypeOf(value, Object.prototype);
@@ -1011,7 +1012,7 @@ describe("serializeWorkflowContext", () => {
       const cyclic: Record<string, unknown> = {};
       cyclic[sensitiveKey] = cyclic;
 
-      for (const tail of [{ [sensitiveKey]: 1n }, cyclic]) {
+      for (const tail of [{ [sensitiveKey]: 1n }, { boxed: Object(1n) }, cyclic]) {
         let deep: unknown = tail;
         for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
 
