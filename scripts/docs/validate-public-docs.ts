@@ -50,7 +50,7 @@ const UNSYNCED_README_PATHS = SYNCED_DOC_DIRS.map((dir) => `${dir}/README.md`);
  * load; a genuinely dynamic attribute has no literal to check.
  */
 const HTML_DESTINATION_ATTRIBUTE_SOURCE =
-  /(?:^|\s)(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*"((?:\\[\s\S]|[^"\\])*)"\s*\}|\{\s*'((?:\\[\s\S]|[^'\\])*)'\s*\}|\{\s*`((?:\\[\s\S]|\$(?!\{)|[^`\\$])*)`\s*\})/;
+  /(?:^|\s)(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*\(*\s*"((?:\\[\s\S]|[^"\\])*)"\s*\)*\s*\}|\{\s*\(*\s*'((?:\\[\s\S]|[^'\\])*)'\s*\)*\s*\}|\{\s*\(*\s*`((?:\\[\s\S]|\$(?!\{)|[^`\\$])*)`\s*\)*\s*\})/;
 const URI_AUTOLINK_SOURCE = /<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*)>/g;
 /** Any origin works: only the resolved path is read back out. */
 const RESOLUTION_ORIGIN = "https://docs.invalid";
@@ -345,6 +345,8 @@ function markdownCodeRanges(text: string): Range[] {
   const blockRanges: Range[] = [];
   const lines = text.split("\n");
   let offset = 0;
+  let canStartIndentedCode = true;
+  let indentedCode = false;
   let listContentIndent: number | undefined;
   let fence:
     | { marker: "`" | "~"; length: number; start: number }
@@ -363,6 +365,8 @@ function markdownCodeRanges(text: string): Range[] {
       ) {
         blockRanges.push({ start: fence.start, end: lineEnd });
         fence = undefined;
+        canStartIndentedCode = true;
+        indentedCode = false;
       }
     } else if (fenceMatch) {
       const marker = fenceMatch[2]![0];
@@ -375,6 +379,8 @@ function markdownCodeRanges(text: string): Range[] {
         length: fenceMatch[2]!.length,
         start: offset,
       };
+      canStartIndentedCode = true;
+      indentedCode = false;
     } else {
       const listItem = line.match(
         /^( {0,3})(?:[-+*]|\d{1,9}[.)])([ \t]{1,4})/,
@@ -394,11 +400,17 @@ function markdownCodeRanges(text: string): Range[] {
       }
       const indentation = line.match(/^[ \t]*/)?.[0].replaceAll("\t", "    ")
         .length ?? 0;
-      if (
-        line.trim() !== "" &&
-        indentation >= (listContentIndent ?? 0) + 4
-      ) {
+      const blank = line.trim() === "";
+      const sufficientlyIndented = !blank &&
+        indentation >= (listContentIndent ?? 0) + 4;
+      if (sufficientlyIndented && (canStartIndentedCode || indentedCode)) {
         blockRanges.push({ start: offset, end: lineEnd });
+        indentedCode = true;
+      } else if (blank) {
+        canStartIndentedCode = true;
+      } else {
+        canStartIndentedCode = false;
+        indentedCode = false;
       }
     }
     offset = lineEnd + 1;
@@ -735,6 +747,33 @@ export interface Destination {
   offset: number;
 }
 
+function markdownDestinationCloses(text: string, start: number): boolean {
+  let cursor = start;
+  let newlines = 0;
+  while (/\s/.test(text[cursor] ?? "")) {
+    if (text[cursor] === "\n" && ++newlines > 1) return false;
+    cursor++;
+  }
+  if (text[cursor] === ")") return true;
+
+  const opener = text[cursor];
+  const closer = opener === "(" ? ")" : opener;
+  if (opener !== '"' && opener !== "'" && opener !== "(") return false;
+  cursor++;
+  while (cursor < text.length) {
+    if (text[cursor] === "\\" && cursor + 1 < text.length) {
+      cursor += 2;
+      continue;
+    }
+    if (text[cursor] === closer) break;
+    cursor++;
+  }
+  if (text[cursor] !== closer) return false;
+  cursor++;
+  while (/\s/.test(text[cursor] ?? "")) cursor++;
+  return text[cursor] === ")";
+}
+
 /**
  * Every destination in `text`, with its offset.
  *
@@ -772,7 +811,10 @@ export function scanDestinations(text: string): Destination[] {
         if (text[cursor] === ">") break;
         cursor++;
       }
-      if (text[cursor] === ">" && cursor > destinationStart) {
+      if (
+        text[cursor] === ">" && cursor > destinationStart &&
+        markdownDestinationCloses(text, cursor + 1)
+      ) {
         markdownAngleDestinationRanges.push({
           start: rangeStart,
           end: cursor + 1,
@@ -803,7 +845,9 @@ export function scanDestinations(text: string): Destination[] {
       }
       cursor++;
     }
-    if (cursor > destinationStart) {
+    if (
+      cursor > destinationStart && markdownDestinationCloses(text, cursor)
+    ) {
       found.push({
         href: text.slice(destinationStart, cursor),
         offset: destinationStart,
@@ -840,7 +884,10 @@ export function scanDestinations(text: string): Destination[] {
 
   let autolinkMatch: RegExpExecArray | null;
   while ((autolinkMatch = URI_AUTOLINK_SOURCE.exec(text))) {
-    if (isInsideRange(ignoredRanges, autolinkMatch.index)) continue;
+    if (
+      isInsideRange(ignoredRanges, autolinkMatch.index) ||
+      isBackslashEscaped(text, autolinkMatch.index)
+    ) continue;
     if (
       isInsideRange(markdownAngleDestinationRanges, autolinkMatch.index)
     ) continue;
@@ -905,7 +952,7 @@ export function collectUnpublishedLinkIssues(
   content: string,
   stat: (path: string) => { readonly isFile: boolean } = Deno.statSync,
 ): PublicDocIssue[] {
-  if (!isPublishedPage(path)) return [];
+  if (path !== "README.md" && !isPublishedPage(path)) return [];
 
   const lines = content.split("\n");
   const lineStarts: number[] = [0];
@@ -916,6 +963,7 @@ export function collectUnpublishedLinkIssues(
   const issues: PublicDocIssue[] = [];
   for (const { href, offset } of scanDestinations(content)) {
     const target = resolveDocumentationTarget(path, href);
+    if (path === "README.md" && !target?.startsWith("docs/")) continue;
     if (target === undefined || publishedTargetExists(target, stat)) continue;
     const line = lineAt(lineStarts, offset);
     issues.push({

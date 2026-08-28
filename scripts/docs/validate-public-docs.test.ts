@@ -79,6 +79,16 @@ describe("public docs validation", () => {
     );
   });
 
+  it("requires a closing inline-link delimiter", () => {
+    assertEquals(
+      destinations(
+        "[plain](./does-not-exist.md\n" +
+          "[wrapped](<./also-missing.md>\n",
+      ),
+      [],
+    );
+  });
+
   it("rejects deleted section READMEs with queries", () => {
     const issues = collectUnpublishedLinkIssues(
       "docs/guides/example.md",
@@ -86,6 +96,20 @@ describe("public docs validation", () => {
     );
 
     assertEquals(issues.length, 1);
+  });
+
+  it("validates documentation boundaries from the public README", () => {
+    const issues = collectUnpublishedLinkIssues(
+      "README.md",
+      "[private](docs/architecture/private.md) " +
+        "[license](./LICENSE)",
+    );
+
+    assertEquals(issues.length, 1);
+    assertEquals(
+      issues[0]?.message.includes("docs/architecture/private.md"),
+      true,
+    );
   });
 
   it("rejects browser-normalized traversal paths", () => {
@@ -198,6 +222,10 @@ describe("public docs validation", () => {
     assertEquals(
       destinations("<a href={`../architecture/template.md`}>gate</a>"),
       ["../architecture/template.md"],
+    );
+    assertEquals(
+      destinations('<a href={("../architecture/parenthesized.md")}>gate</a>'),
+      ["../architecture/parenthesized.md"],
     );
   });
 
@@ -412,6 +440,13 @@ describe("public docs validation", () => {
     );
 
     assertEquals(issues.length, 1);
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.md",
+        "Intro\n    [gate](../architecture/private.md)",
+      ).length,
+      1,
+    );
   });
 
   it("ignores destinations inside MDX comments", () => {
@@ -456,6 +491,12 @@ describe("public docs validation", () => {
     );
 
     assertEquals(issues.length, 1);
+    assertEquals(
+      destinations(
+        String.raw`\<https://veryfront.com/docs/code/guides/does-not-exist>`,
+      ),
+      [],
+    );
   });
 
   it("does not duplicate angle-bracket Markdown destinations as autolinks", () => {
