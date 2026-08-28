@@ -67,6 +67,10 @@ describe("public docs validation", () => {
       ["../architecture/capital-sharp.md"],
     );
     assertEquals(
+      destinations("[a&Tab;b]\n\n[a b]: ../architecture/entity.md"),
+      ["../architecture/entity.md"],
+    );
+    assertEquals(
       destinations(
         "[first] [second]\r\n\r\n" +
           "[first]: ../architecture/first.md\r\n" +
@@ -96,6 +100,8 @@ describe("public docs validation", () => {
           '<a data-ok={true /* } > */} href="../architecture/commented-tag.md">ok</a>\n' +
           '<a data-ok={{ value: /* } > */ true }} href="../architecture/nested-comment.md">ok</a>\n' +
           '<a data-ok={true // } >\n} href="../architecture/line-comment.md">ok</a>\n' +
+          '<a data-ok={/<}>/.test(value)} href="../architecture/regex.md">ok</a>\n' +
+          '<a title="<!--" href="../architecture/comment-token.md">ok</a>\n' +
           '<div title="[old](../architecture/title-link.md)"></div>\n' +
           '<div title={"[old](../architecture/expression.md)"}></div>\n' +
           "<Code value={'Configure href=\"../architecture/string.md\"'} />\n" +
@@ -109,6 +115,8 @@ describe("public docs validation", () => {
         "../architecture/commented-tag.md",
         "../architecture/nested-comment.md",
         "../architecture/line-comment.md",
+        "../architecture/regex.md",
+        "../architecture/comment-token.md",
         "../architecture/real.md",
       ],
     );
@@ -127,6 +135,7 @@ describe("public docs validation", () => {
         "[plain](./does-not-exist.md\n" +
           "[wrapped](<./also-missing.md>\n" +
           "[pointy](<../architecture/\nprivate.md>)\n" +
+          "[whitespace](./does-not-exist(\npath).md)\n" +
           "[paragraph](\n\n../architecture/paragraph.md)\n" +
           "[reference]\n\n[reference]: <../architecture/reference.md",
       ),
@@ -768,6 +777,20 @@ describe("public docs validation", () => {
     );
     assertEquals(
       destinations(
+        "<!-- [old](../architecture/html-comment.md) -->\n" +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        '---\ntitle: "[old](../architecture/frontmatter.md)"\n---\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
         "`{/*`\n" +
           "[inline](../architecture/inline.md)\n" +
           "{/* real comment */}",
@@ -864,6 +887,15 @@ describe("public docs validation", () => {
     assertEquals(
       collectUnpublishedLinkIssues(
         "docs/guides/example.mdx",
+        "export const sample = condition\n" +
+          '  ? "[old](../architecture/ternary.md)"\n' +
+          '  : ""',
+      ),
+      [],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.mdx",
         ' export const sample = "[old](../architecture/indented.md)"',
       ).length,
       1,
@@ -916,6 +948,13 @@ describe("public docs validation", () => {
     assertEquals(
       destinations(
         '[public](./public.md "<https://veryfront.com/docs/code/architecture/title>")',
+      ),
+      ["./public.md"],
+    );
+    assertEquals(
+      destinations(
+        "[public]\n\n[public]: ./public.md\n" +
+          '  "https://veryfront.com/docs/code/architecture/title"',
       ),
       ["./public.md"],
     );

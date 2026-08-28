@@ -1,4 +1,6 @@
 #!/usr/bin/env -S deno run --allow-read
+import { decodeNamedCharacterReference } from "decode-named-character-reference";
+
 /**
  * Public docs quality validator.
  *
@@ -64,19 +66,6 @@ const RESOLUTION_ORIGIN = "https://docs.invalid";
 const VERYFRONT_DOCS_HOSTNAME = "veryfront.com";
 const VERYFRONT_CODE_DOCS_PREFIX = "/docs/code/";
 const VERYFRONT_SITE_CODE_PREFIX = "/code/";
-const MARKDOWN_URL_ENTITIES: Readonly<Record<string, string>> = {
-  amp: "&",
-  colon: ":",
-  period: ".",
-  sol: "/",
-  bsol: "\\",
-  num: "#",
-  quest: "?",
-  equals: "=",
-  percnt: "%",
-  plus: "+",
-  commat: "@",
-};
 const JAVASCRIPT_SIMPLE_ESCAPES: Readonly<Record<string, string>> = {
   b: "\b",
   f: "\f",
@@ -128,7 +117,10 @@ function decodeMarkdownCharacterReferences(href: string): string {
   return href.replace(
     /&(?:#([0-9]{1,7})|#[xX]([0-9a-fA-F]{1,6})|([A-Za-z][A-Za-z0-9]+));/g,
     (reference, decimal: string, hexadecimal: string, named: string) => {
-      if (named !== undefined) return MARKDOWN_URL_ENTITIES[named] ?? reference;
+      if (named !== undefined) {
+        const decoded = decodeNamedCharacterReference(named);
+        return decoded === false ? reference : decoded;
+      }
       const codePoint = Number.parseInt(
         decimal ?? hexadecimal,
         decimal ? 10 : 16,
@@ -795,6 +787,60 @@ function mdxSyntaxRanges(
   return { comments, expressions, strings };
 }
 
+function frontmatterRanges(text: string): Range[] {
+  const firstLineEnd = text.indexOf("\n");
+  if (
+    firstLineEnd === -1 ||
+    text.slice(0, firstLineEnd).replace(/\r$/, "") !== "---"
+  ) return [];
+
+  for (let lineStart = firstLineEnd + 1; lineStart < text.length;) {
+    const next = text.indexOf("\n", lineStart);
+    const lineEnd = next === -1 ? text.length : next;
+    if (
+      /^(?:---|\.\.\.)[ \t]*$/.test(
+        text.slice(lineStart, lineEnd).replace(/\r$/, ""),
+      )
+    ) {
+      return [{ start: 0, end: next === -1 ? text.length : next + 1 }];
+    }
+    if (next === -1) break;
+    lineStart = next + 1;
+  }
+  return [];
+}
+
+function maskRanges(text: string, ranges: readonly Range[]): string {
+  let masked = "";
+  let cursor = 0;
+  for (const range of ranges) {
+    masked += text.slice(cursor, range.start);
+    masked += text.slice(range.start, range.end).replace(/[^\r\n]/g, " ");
+    cursor = range.end;
+  }
+  return masked + text.slice(cursor);
+}
+
+function htmlCommentRanges(
+  text: string,
+  ignoredRanges: readonly Range[],
+): Range[] {
+  const ranges: Range[] = [];
+  for (let start = 0; start < text.length;) {
+    start = text.indexOf("<!--", start);
+    if (start === -1) break;
+    if (isInsideRange(ignoredRanges, start)) {
+      start++;
+      continue;
+    }
+    const closing = text.indexOf("-->", start + 4);
+    const end = closing === -1 ? text.length : closing + 3;
+    ranges.push({ start, end });
+    start = end;
+  }
+  return ranges;
+}
+
 function mdxEsmMayStart(text: string, lineStart: number): boolean {
   if (lineStart === 0) return true;
   const previousEnd = text[lineStart - 2] === "\r"
@@ -817,6 +863,7 @@ interface JavaScriptBalance {
 function javaScriptRegexEnd(line: string, start: number): number | undefined {
   let characterClass = false;
   for (let cursor = start + 1; cursor < line.length; cursor++) {
+    if (line[cursor] === "\n" || line[cursor] === "\r") return undefined;
     if (line[cursor] === "\\") {
       cursor++;
       continue;
@@ -962,20 +1009,47 @@ function ignoredDestinationRanges(
   readonly expressions: Range[];
   readonly strings: Range[];
 } {
-  const codeRanges = markdownCodeRanges(text);
-  const mdxRanges = mdxSyntaxRanges(text, codeRanges);
+  const frontmatter = frontmatterRanges(text);
+  const codeRanges = markdownCodeRanges(maskRanges(text, frontmatter));
+  const initialIgnoredRanges = mergeRanges([...frontmatter, ...codeRanges]);
+  const provisionalMdxRanges = mdxSyntaxRanges(text, initialIgnoredRanges);
+  const provisionalTagRanges = htmlTagRanges(
+    text,
+    initialIgnoredRanges,
+    provisionalMdxRanges.expressions,
+    provisionalMdxRanges.strings,
+  );
+  const htmlComments = htmlCommentRanges(
+    text,
+    mergeRanges([
+      ...initialIgnoredRanges,
+      ...provisionalMdxRanges.comments,
+      ...provisionalMdxRanges.expressions,
+      ...provisionalTagRanges,
+    ]),
+  );
+  const baseIgnoredRanges = mergeRanges([
+    ...frontmatter,
+    ...codeRanges,
+    ...htmlComments,
+  ]);
+  const mdxRanges = mdxSyntaxRanges(text, baseIgnoredRanges);
   const esmRanges = syntax === "mdx"
     ? mdxEsmRanges(
       text,
       mergeRanges([
-        ...codeRanges,
+        ...baseIgnoredRanges,
         ...mdxRanges.comments,
         ...mdxRanges.expressions,
       ]),
     )
     : [];
   return {
-    ignored: mergeRanges([...codeRanges, ...mdxRanges.comments, ...esmRanges]),
+    ignored: mergeRanges([
+      ...baseIgnoredRanges,
+      ...mdxRanges.comments,
+      ...esmRanges,
+    ]),
     code: codeRanges,
     expressions: mdxRanges.expressions,
     strings: mdxRanges.strings,
@@ -1021,6 +1095,16 @@ function htmlTagRanges(
         cursor = commentEnd - 1;
         continue;
       }
+      if (
+        expressionDepth > 0 && character === "/" &&
+        javaScriptRegexMayStart(text, cursor)
+      ) {
+        const regexEnd = javaScriptRegexEnd(text, cursor);
+        if (regexEnd !== undefined) {
+          cursor = regexEnd - 1;
+          continue;
+        }
+      }
       if (character === '"' || character === "'" || character === "`") {
         quote = character;
       } else if (character === "{") expressionDepth++;
@@ -1053,6 +1137,16 @@ function topLevelTagOffsets(tag: string): ReadonlySet<number> {
       cursor = commentEnd - 1;
       continue;
     }
+    if (
+      expressionDepth > 0 && character === "/" &&
+      javaScriptRegexMayStart(tag, cursor)
+    ) {
+      const regexEnd = javaScriptRegexEnd(tag, cursor);
+      if (regexEnd !== undefined) {
+        cursor = regexEnd - 1;
+        continue;
+      }
+    }
     if (expressionDepth === 0) offsets.add(cursor);
     if (character === '"' || character === "'" || character === "`") {
       quote = character;
@@ -1065,6 +1159,7 @@ function topLevelTagOffsets(tag: string): ReadonlySet<number> {
 function referenceDefinitionTailEnd(
   text: string,
   start: number,
+  containers: readonly BlockContainerToken[],
 ): number | undefined {
   let cursor = start;
   let hasSeparation = false;
@@ -1072,17 +1167,47 @@ function referenceDefinitionTailEnd(
     hasSeparation = true;
     cursor++;
   }
-  if (
-    cursor >= text.length || text[cursor] === "\n" ||
-    text[cursor] === "\r"
-  ) return cursor;
-  if (!hasSeparation) return undefined;
+  if (cursor >= text.length) return cursor;
+
+  let definitionEnd: number | undefined;
+  if (text[cursor] === "\n" || text[cursor] === "\r") {
+    definitionEnd = cursor;
+    const nextLineStart = text[cursor] === "\r" && text[cursor + 1] === "\n"
+      ? cursor + 2
+      : cursor + 1;
+    const next = text.indexOf("\n", nextLineStart);
+    const nextLineEnd = next === -1 ? text.length : next;
+    const contentStart = blockContainerContentStart(
+      text,
+      nextLineStart,
+      nextLineEnd,
+      containers,
+    );
+    if (contentStart === undefined) return definitionEnd;
+    cursor = contentStart;
+    let indentation = 0;
+    while (indentation < 3) {
+      if (text[cursor] === " ") {
+        cursor++;
+        indentation++;
+      } else if (text[cursor] === "\t") {
+        const width = 4 - indentation % 4;
+        if (indentation + width > 3) break;
+        cursor++;
+        indentation += width;
+      } else break;
+    }
+  } else if (!hasSeparation) return undefined;
 
   const opener = text[cursor];
   const closer = opener === "(" ? ")" : opener;
-  if (opener !== '"' && opener !== "'" && opener !== "(") return undefined;
+  if (opener !== '"' && opener !== "'" && opener !== "(") {
+    return definitionEnd;
+  }
   cursor++;
-  while (cursor < text.length && text[cursor] !== "\n") {
+  while (
+    cursor < text.length && text[cursor] !== "\n" && text[cursor] !== "\r"
+  ) {
     if (text[cursor] === "\\" && cursor + 1 < text.length) {
       cursor += 2;
       continue;
@@ -1090,13 +1215,13 @@ function referenceDefinitionTailEnd(
     if (text[cursor] === closer) break;
     cursor++;
   }
-  if (text[cursor] !== closer) return undefined;
+  if (text[cursor] !== closer) return definitionEnd;
   cursor++;
   while (text[cursor] === " " || text[cursor] === "\t") cursor++;
   return cursor >= text.length || text[cursor] === "\n" ||
       text[cursor] === "\r"
     ? cursor
-    : undefined;
+    : definitionEnd;
 }
 
 function sameBlockContainer(
@@ -1192,7 +1317,8 @@ function referenceDestinationAt(
     definitionEnd: number;
   })
   | undefined {
-  const labelStart = blockContentStart(text, lineStart);
+  const content = blockContent(text, lineStart);
+  const labelStart = content.start;
   if (
     isBackslashEscaped(text, labelStart) || text[labelStart + 1] === "^"
   ) return undefined;
@@ -1240,7 +1366,7 @@ function referenceDestinationAt(
     cursor++;
   }
   const definitionEnd = destinationEnd > destinationStart
-    ? referenceDefinitionTailEnd(text, cursor)
+    ? referenceDefinitionTailEnd(text, cursor, content.containers)
     : undefined;
   return definitionEnd === undefined ? undefined : {
     href: text.slice(destinationStart, destinationEnd),
@@ -1526,7 +1652,7 @@ export function scanDestinations(
       } else if (text[cursor] === ")") {
         if (destinationDepth === 0) break;
         destinationDepth--;
-      } else if (/\s/.test(text[cursor]!) && destinationDepth === 0) {
+      } else if (/\s/.test(text[cursor]!)) {
         break;
       }
       cursor++;
