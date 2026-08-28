@@ -96,18 +96,20 @@ function isPublishedPage(target: string): boolean {
   );
 }
 
-function publishedTargetExists(target: string): boolean {
-  if (!isPublishedPage(target)) return false;
+export function publishedTargetCandidates(target: string): string[] {
+  if (!isPublishedPage(target)) return [];
   const path = target.replace(/\/$/, "");
-  for (
-    const candidate of [
-      path,
-      `${path}.md`,
-      `${path}.mdx`,
-      `${path}/index.md`,
-      `${path}/index.mdx`,
-    ]
-  ) {
+  return [
+    path,
+    `${path}.md`,
+    `${path}.mdx`,
+    `${path}/index.md`,
+    `${path}/index.mdx`,
+  ];
+}
+
+function publishedTargetExists(target: string): boolean {
+  for (const candidate of publishedTargetCandidates(target)) {
     try {
       const entry = Deno.statSync(`${ROOT}/${candidate}`);
       if (entry.isFile || entry.isDirectory) return true;
@@ -339,6 +341,8 @@ function markdownCodeRanges(text: string): Range[] {
         length: fenceMatch[2]!.length,
         start: offset,
       };
+    } else if (/^(?: {4}|\t)/.test(line)) {
+      ranges.push({ start: offset, end: lineEnd });
     } else {
       for (let cursor = offset; cursor < lineEnd;) {
         if (text[cursor] !== "`") {
@@ -364,16 +368,6 @@ function markdownCodeRanges(text: string): Range[] {
 
 function isInsideRange(ranges: readonly Range[], offset: number): boolean {
   return ranges.some((range) => range.start <= offset && offset < range.end);
-}
-
-function previousNonWhitespace(
-  text: string,
-  offset: number,
-): string | undefined {
-  for (let cursor = offset - 1; cursor >= 0; cursor--) {
-    if (!/\s/.test(text[cursor]!)) return text[cursor];
-  }
-  return undefined;
 }
 
 /**
@@ -433,6 +427,7 @@ export function scanDestinations(text: string): Destination[] {
   // balanced brackets or escaped closing brackets.
   const found: Destination[] = [];
   const codeRanges = markdownCodeRanges(text);
+  const markdownAngleDestinationRanges: Range[] = [];
   for (let start = 0; start < text.length; start++) {
     if (isInsideRange(codeRanges, start)) continue;
     const afterLabel = afterMarkdownLabel(text, start);
@@ -443,6 +438,7 @@ export function scanDestinations(text: string): Destination[] {
     if (cursor >= text.length) continue;
 
     if (text[cursor] === "<") {
+      const rangeStart = cursor;
       const destinationStart = ++cursor;
       while (cursor < text.length) {
         if (text[cursor] === "\\" && cursor + 1 < text.length) {
@@ -453,6 +449,10 @@ export function scanDestinations(text: string): Destination[] {
         cursor++;
       }
       if (text[cursor] === ">" && cursor > destinationStart) {
+        markdownAngleDestinationRanges.push({
+          start: rangeStart,
+          end: cursor + 1,
+        });
         found.push({
           href: text.slice(destinationStart, cursor),
           offset: destinationStart,
@@ -509,7 +509,9 @@ export function scanDestinations(text: string): Destination[] {
   let autolinkMatch: RegExpExecArray | null;
   while ((autolinkMatch = URI_AUTOLINK_SOURCE.exec(text))) {
     if (isInsideRange(codeRanges, autolinkMatch.index)) continue;
-    if (previousNonWhitespace(text, autolinkMatch.index) === "(") continue;
+    if (
+      isInsideRange(markdownAngleDestinationRanges, autolinkMatch.index)
+    ) continue;
     found.push({
       href: autolinkMatch[1]!,
       offset: autolinkMatch.index + 1,

@@ -4,6 +4,7 @@ import {
   collectIssues,
   collectUnpublishedLinkIssues,
   destinations,
+  publishedTargetCandidates,
 } from "./validate-public-docs.ts";
 
 describe("public docs validation", () => {
@@ -228,6 +229,10 @@ describe("public docs validation", () => {
       destinations(
         "`[inline](../architecture/inline.md)`\n" +
           "```md\n[example](../architecture/fenced.md)\n```\n" +
+          "    [indented](../architecture/indented.md)\n" +
+          '    <a href="../architecture/html.md">HTML</a>\n' +
+          "    [reference]: ../architecture/reference.md\n" +
+          "    <https://veryfront.com/docs/code/architecture/autolink>\n" +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
@@ -252,35 +257,26 @@ describe("public docs validation", () => {
     assertEquals(issues.length, 1);
   });
 
+  it("validates a URI autolink wrapped in prose parentheses", () => {
+    const issues = collectUnpublishedLinkIssues(
+      "docs/guides/example.md",
+      "(<https://veryfront.com/docs/code/architecture/private>)",
+    );
+
+    assertEquals(issues.length, 1);
+  });
+
   it("accepts MDX published-route candidates", () => {
-    const page =
-      `${Deno.cwd()}/docs/guides/__validate-public-docs-mdx-fixture.mdx`;
-    const directory =
-      `${Deno.cwd()}/docs/guides/__validate-public-docs-mdx-directory`;
-    try {
-      Deno.writeTextFileSync(page, "");
-      Deno.mkdirSync(directory);
-      Deno.writeTextFileSync(`${directory}/index.mdx`, "");
-      assertEquals(
-        collectUnpublishedLinkIssues(
-          "docs/guides/example.md",
-          "[page](./__validate-public-docs-mdx-fixture) " +
-            "[dir](./__validate-public-docs-mdx-directory)",
-        ),
-        [],
-      );
-    } finally {
-      try {
-        Deno.removeSync(page);
-      } catch {
-        // Fixture did not get created.
-      }
-      try {
-        Deno.removeSync(directory, { recursive: true });
-      } catch {
-        // Fixture did not get created.
-      }
-    }
+    assertEquals(
+      publishedTargetCandidates("docs/guides/example"),
+      [
+        "docs/guides/example",
+        "docs/guides/example.md",
+        "docs/guides/example.mdx",
+        "docs/guides/example/index.md",
+        "docs/guides/example/index.mdx",
+      ],
+    );
   });
 
   it("reports the destination line for a multiline MDX href", () => {
