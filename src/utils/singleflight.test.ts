@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import { FakeTime } from "#std/testing/time";
@@ -10,6 +10,20 @@ import {
 } from "./singleflight.ts";
 
 describe("Singleflight", () => {
+  it("observes Error abort reasons immediately after abort", () => {
+    const controller = new AbortController();
+    const reason = new Error("caller stopped waiting");
+
+    controller.abort(reason);
+
+    assertEquals(controller.signal.aborted, true);
+    assertStrictEquals(
+      controller.signal.reason,
+      reason,
+      "AbortSignal must expose the supplied Error reason immediately after abort()",
+    );
+  });
+
   it("lets one waiter detach without cancelling shared work", async () => {
     const controller = new AbortController();
     const shared = Promise.withResolvers<number>();
@@ -17,7 +31,8 @@ describe("Singleflight", () => {
     const follower = waitForSharedPromise(shared.promise);
 
     controller.abort(new Error("caller stopped waiting"));
-    await assertRejects(() => detached, Error, "caller stopped waiting");
+    const error = await assertRejects(() => detached, Error, "caller stopped waiting");
+    assertStrictEquals(error, controller.signal.reason);
 
     shared.resolve(42);
     assertEquals(await follower, 42);
