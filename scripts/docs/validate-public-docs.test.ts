@@ -32,13 +32,15 @@ describe("public docs validation", () => {
   it("parses balanced and escaped reference definition labels", () => {
     assertEquals(
       destinations(
-        "[nested [label]]: ../architecture/nested.md",
+        "[use][nested [label]]\n" +
+          "[nested [label]]: ../architecture/nested.md",
       ),
       ["../architecture/nested.md"],
     );
     assertEquals(
       destinations(
-        String.raw`[escaped \] label]: ../architecture/escaped.md`,
+        String.raw`[use][escaped \] label]` + "\n" +
+          String.raw`[escaped \] label]: ../architecture/escaped.md`,
       ),
       ["../architecture/escaped.md"],
     );
@@ -58,9 +60,17 @@ describe("public docs validation", () => {
     assertEquals(
       destinations(
         '<img src="../architecture/image.png"> ' +
-          '<div data-href="../architecture/data.md"></div>',
+          '<div data-href="../architecture/data.md"></div>\n' +
+          'Configure href="../architecture/prose.md" for the sample.',
       ),
       ["../architecture/image.png"],
+    );
+  });
+
+  it("ignores escaped Markdown link openers", () => {
+    assertEquals(
+      destinations(String.raw`\[example](../architecture/private.md)`),
+      [],
     );
   });
 
@@ -130,9 +140,11 @@ describe("public docs validation", () => {
       collectIssues(
         "docs/guides/example.md",
         "See https://github.com/veryfront/veryfront-examples.\n" +
-          "git clone https://github.com/veryfront/veryfront-examples.git",
+          "git clone https://github.com/veryfront/veryfront-examples.git\n" +
+          "git clone git@github.com:veryfront/veryfront-examples.git\n" +
+          "git clone ssh://git@github.com/veryfront/veryfront-examples.git",
       ).length,
-      2,
+      4,
     );
   });
 
@@ -146,23 +158,27 @@ describe("public docs validation", () => {
       ["../architecture/text.md"],
     );
     assertEquals(
-      destinations("[gate]:\n../architecture/reference.md"),
+      destinations("[gate]\n[gate]:\n../architecture/reference.md"),
       ["../architecture/reference.md"],
     );
   });
 
   it("ends a reference definition at a blank line", () => {
-    assertEquals(destinations("[gate]:\n\n../architecture/orphan.md"), []);
+    assertEquals(
+      destinations("[gate]\n[gate]:\n\n../architecture/orphan.md"),
+      [],
+    );
   });
 
   it("finds a reference definition below the first line", () => {
     const issues = collectUnpublishedLinkIssues(
       "docs/guides/example.md",
-      "Intro paragraph.\n\n[gate]: ../architecture/private.md\n",
+      "[gate]\nIntro paragraph.\n\n" +
+        "[gate]: ../architecture/private.md\n",
     );
 
     assertEquals(issues.length, 1);
-    assertEquals(issues[0]?.line, 3);
+    assertEquals(issues[0]?.line, 4);
   });
 
   it("reads a string literal in a JSX href expression", () => {
@@ -212,9 +228,10 @@ describe("public docs validation", () => {
     assertEquals(
       collectUnpublishedLinkIssues(
         "docs/guides/example.md",
-        "[private](https://veryfront.com/docs/code/architecture/private)",
+        "[private](https://veryfront.com/docs/code/architecture/private) " +
+          "[encoded](https://veryfront.com/docs/%63ode/architecture/private)",
       ).length,
-      1,
+      2,
     );
     assertEquals(
       collectUnpublishedLinkIssues(
@@ -248,7 +265,8 @@ describe("public docs validation", () => {
   it("decodes Markdown character references before resolving destinations", () => {
     const issues = collectUnpublishedLinkIssues(
       "docs/guides/example.md",
-      "[decimal]: &#46;&#46;/architecture/decimal.md\n" +
+      "[decimal] [hex] [named]\n" +
+        "[decimal]: &#46;&#46;/architecture/decimal.md\n" +
         "[hex]: &#x2e;&#x2e;/architecture/hex.md\n" +
         "[named]: &period;&period;&sol;architecture/named.md",
     );
@@ -259,7 +277,7 @@ describe("public docs validation", () => {
   it("decodes Markdown escapes before resolving destinations", () => {
     const issues = collectUnpublishedLinkIssues(
       "docs/guides/example.md",
-      String.raw`[gate]: \../architecture/private.md`,
+      "[gate]\n" + String.raw`[gate]: \../architecture/private.md`,
     );
 
     assertEquals(issues.length, 1);
@@ -280,6 +298,7 @@ describe("public docs validation", () => {
     const issues = collectUnpublishedLinkIssues(
       "docs/guides/example.md",
       '<a href="./does-not-exist.md">missing</a>\n' +
+        "[missing]\n" +
         "[missing]: ./also-does-not-exist.md",
     );
 
@@ -289,7 +308,8 @@ describe("public docs validation", () => {
   it("finds reference definitions inside block quotes", () => {
     assertEquals(
       destinations(
-        "> [gate]: ../architecture/private.md\n" +
+        "[gate] [wrapped]\n" +
+          "> [gate]: ../architecture/private.md\n" +
           "> [wrapped]:\n> ../architecture/wrapped.md",
       ),
       ["../architecture/private.md", "../architecture/wrapped.md"],
@@ -299,7 +319,8 @@ describe("public docs validation", () => {
   it("finds reference definitions inside list containers", () => {
     assertEquals(
       destinations(
-        "- [gate]: ../architecture/private.md\n" +
+        "[gate] [wrapped]\n" +
+          "- [gate]: ../architecture/private.md\n" +
           "- [wrapped]:\n  ../architecture/wrapped.md",
       ),
       ["../architecture/private.md", "../architecture/wrapped.md"],
@@ -313,6 +334,13 @@ describe("public docs validation", () => {
     );
   });
 
+  it("ignores unused reference definitions", () => {
+    assertEquals(
+      destinations("[old]: ../architecture/private.md"),
+      [],
+    );
+  });
+
   it("ignores Markdown destinations inside code", () => {
     assertEquals(
       destinations(
@@ -322,6 +350,13 @@ describe("public docs validation", () => {
           '    <a href="../architecture/html.md">HTML</a>\n' +
           "    [reference]: ../architecture/reference.md\n" +
           "    <https://veryfront.com/docs/code/architecture/autolink>\n" +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        "`[example](\n../architecture/private.md)`\n" +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
@@ -377,6 +412,14 @@ describe("public docs validation", () => {
       ),
       ["../architecture/fenced.md"],
     );
+    assertEquals(
+      destinations(
+        '{"{/*"}\n' +
+          "[gate](../architecture/private.md)\n" +
+          "{/* real */}",
+      ),
+      ["../architecture/private.md"],
+    );
   });
 
   it("validates Veryfront documentation autolinks", () => {
@@ -431,6 +474,21 @@ describe("public docs validation", () => {
     );
 
     assertEquals(exists, false);
+    assertEquals(
+      publishedTargetCandidates("docs/guides/deploying.md/"),
+      [
+        "docs/guides/deploying.md/index.md",
+        "docs/guides/deploying.md/index.mdx",
+      ],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.md",
+        '<a href="./deploying.md/">deploy</a>',
+        publishedFiles("docs/guides/deploying.md"),
+      ).length,
+      1,
+    );
   });
 
   it("reports the destination line for a multiline MDX href", () => {

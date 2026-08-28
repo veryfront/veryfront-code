@@ -49,8 +49,8 @@ const UNSYNCED_README_PATHS = SYNCED_DOC_DIRS.map((dir) => `${dir}/README.md`);
  * JSX expression wrapping a string literal name a destination the reader can
  * load; a genuinely dynamic attribute has no literal to check.
  */
-const HTML_DESTINATION_SOURCE =
-  /(?:^|[\s<])(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*"((?:\\[\s\S]|[^"\\])*)"\s*\}|\{\s*'((?:\\[\s\S]|[^'\\])*)'\s*\}|\{\s*`((?:\\[\s\S]|\$(?!\{)|[^`\\$])*)`\s*\})/;
+const HTML_DESTINATION_ATTRIBUTE_SOURCE =
+  /(?:^|\s)(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*"((?:\\[\s\S]|[^"\\])*)"\s*\}|\{\s*'((?:\\[\s\S]|[^'\\])*)'\s*\}|\{\s*`((?:\\[\s\S]|\$(?!\{)|[^`\\$])*)`\s*\})/;
 const URI_AUTOLINK_SOURCE = /<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*)>/g;
 /** Any origin works: only the resolved path is read back out. */
 const RESOLUTION_ORIGIN = "https://docs.invalid";
@@ -93,11 +93,10 @@ function isPublishedPage(target: string): boolean {
 
 export function publishedTargetCandidates(target: string): string[] {
   if (!isPublishedPage(target)) return [];
+  const directoryRoute = target.endsWith("/");
   const path = target.replace(/\/$/, "");
   return [
-    path,
-    `${path}.md`,
-    `${path}.mdx`,
+    ...(directoryRoute ? [] : [path, `${path}.md`, `${path}.mdx`]),
     `${path}/index.md`,
     `${path}/index.mdx`,
   ];
@@ -204,8 +203,9 @@ function normalizeRepositoryPath(pathname: string): string {
       .replace(/%2f/gi, "/")
       .replace(/%5c/gi, "\\");
   }
+  const slashPath = decoded.replaceAll("\\", "/");
   const segments: string[] = [];
-  for (const segment of decoded.replaceAll("\\", "/").split("/")) {
+  for (const segment of slashPath.split("/")) {
     if (segment === "" || segment === ".") continue;
     if (segment === "..") {
       segments.pop();
@@ -213,7 +213,10 @@ function normalizeRepositoryPath(pathname: string): string {
     }
     segments.push(segment);
   }
-  return segments.join("/");
+  const normalized = segments.join("/");
+  return slashPath.endsWith("/") && normalized !== ""
+    ? `${normalized}/`
+    : normalized;
 }
 
 /**
@@ -239,36 +242,39 @@ function resolveDocumentationTarget(
   } catch {
     return undefined;
   }
+  const normalizedPathname = `/${normalizeRepositoryPath(resolved.pathname)}`;
   let pathname: string;
   if (resolved.origin === VERYFRONT_DOCS_ORIGIN) {
-    const prefix = resolved.pathname.startsWith(VERYFRONT_CODE_DOCS_PREFIX)
+    const prefix = normalizedPathname.startsWith(VERYFRONT_CODE_DOCS_PREFIX)
       ? VERYFRONT_CODE_DOCS_PREFIX
-      : resolved.pathname.startsWith(VERYFRONT_SITE_CODE_PREFIX)
+      : normalizedPathname.startsWith(VERYFRONT_SITE_CODE_PREFIX)
       ? VERYFRONT_SITE_CODE_PREFIX
       : undefined;
     if (prefix === undefined) {
       return undefined;
     }
-    pathname = `/docs/${resolved.pathname.slice(prefix.length)}`;
+    pathname = `/docs/${normalizedPathname.slice(prefix.length)}`;
   } else if (
     resolved.origin === RESOLUTION_ORIGIN &&
-    href.startsWith(VERYFRONT_CODE_DOCS_PREFIX)
+    /^[\/\\]/.test(href) &&
+    normalizedPathname.startsWith(VERYFRONT_CODE_DOCS_PREFIX)
   ) {
     pathname = `/docs/${
-      resolved.pathname.slice(VERYFRONT_CODE_DOCS_PREFIX.length)
+      normalizedPathname.slice(VERYFRONT_CODE_DOCS_PREFIX.length)
     }`;
   } else if (
     resolved.origin === RESOLUTION_ORIGIN &&
-    href.startsWith(VERYFRONT_SITE_CODE_PREFIX)
+    /^[\/\\]/.test(href) &&
+    normalizedPathname.startsWith(VERYFRONT_SITE_CODE_PREFIX)
   ) {
     pathname = `/docs/${
-      resolved.pathname.slice(VERYFRONT_SITE_CODE_PREFIX.length)
+      normalizedPathname.slice(VERYFRONT_SITE_CODE_PREFIX.length)
     }`;
   } else {
     if (resolved.origin !== RESOLUTION_ORIGIN || /^[\/\\]/.test(href)) {
       return undefined;
     }
-    pathname = resolved.pathname;
+    pathname = normalizedPathname;
   }
   return normalizeRepositoryPath(pathname);
 }
@@ -288,6 +294,14 @@ function afterMarkdownLabel(text: string, start: number): number | undefined {
     cursor++;
   }
   return depth === 0 ? cursor : undefined;
+}
+
+function isBackslashEscaped(text: string, offset: number): boolean {
+  let backslashes = 0;
+  while (offset > backslashes && text[offset - backslashes - 1] === "\\") {
+    backslashes++;
+  }
+  return backslashes % 2 === 1;
 }
 
 function blockContentStart(text: string, lineStart: number): number {
@@ -328,7 +342,7 @@ interface Range {
 }
 
 function markdownCodeRanges(text: string): Range[] {
-  const ranges: Range[] = [];
+  const blockRanges: Range[] = [];
   const lines = text.split("\n");
   let offset = 0;
   let listContentIndent: number | undefined;
@@ -347,7 +361,7 @@ function markdownCodeRanges(text: string): Range[] {
         closing && closing[2]![0] === fence.marker &&
         closing[2]!.length >= fence.length
       ) {
-        ranges.push({ start: fence.start, end: lineEnd });
+        blockRanges.push({ start: fence.start, end: lineEnd });
         fence = undefined;
       }
     } else if (fenceMatch) {
@@ -384,30 +398,73 @@ function markdownCodeRanges(text: string): Range[] {
         line.trim() !== "" &&
         indentation >= (listContentIndent ?? 0) + 4
       ) {
-        ranges.push({ start: offset, end: lineEnd });
-        offset = lineEnd + 1;
-        continue;
-      }
-      for (let cursor = offset; cursor < lineEnd;) {
-        if (text[cursor] !== "`") {
-          cursor++;
-          continue;
-        }
-        let length = 1;
-        while (text[cursor + length] === "`") length++;
-        const closing = text.indexOf("`".repeat(length), cursor + length);
-        if (closing === -1 || closing > lineEnd) {
-          cursor += length;
-          continue;
-        }
-        ranges.push({ start: cursor, end: closing + length });
-        cursor = closing + length;
+        blockRanges.push({ start: offset, end: lineEnd });
       }
     }
     offset = lineEnd + 1;
   }
-  if (fence) ranges.push({ start: fence.start, end: text.length });
-  return ranges;
+  if (fence) blockRanges.push({ start: fence.start, end: text.length });
+
+  const inlineRanges: Range[] = [];
+  let blockIndex = 0;
+  for (let cursor = 0; cursor < text.length;) {
+    while (
+      blockIndex < blockRanges.length &&
+      blockRanges[blockIndex]!.end <= cursor
+    ) blockIndex++;
+    const block = blockRanges[blockIndex];
+    if (block && block.start <= cursor) {
+      cursor = block.end;
+      continue;
+    }
+    if (text[cursor] !== "`" || isBackslashEscaped(text, cursor)) {
+      cursor++;
+      continue;
+    }
+
+    let length = 1;
+    while (text[cursor + length] === "`") length++;
+    const paragraphBreak = text.slice(cursor + length).search(/\n[ \t]*\n/);
+    const limit = paragraphBreak === -1
+      ? text.length
+      : cursor + length + paragraphBreak;
+    let search = cursor + length;
+    let closing: number | undefined;
+    let searchBlockIndex = blockIndex;
+    while (search < limit) {
+      const candidate = text.indexOf("`", search);
+      if (candidate === -1 || candidate >= limit) break;
+      while (
+        searchBlockIndex < blockRanges.length &&
+        blockRanges[searchBlockIndex]!.end <= candidate
+      ) searchBlockIndex++;
+      const candidateBlock = blockRanges[searchBlockIndex];
+      if (candidateBlock && candidateBlock.start <= candidate) {
+        search = candidateBlock.end;
+        continue;
+      }
+      let candidateLength = 1;
+      while (text[candidate + candidateLength] === "`") candidateLength++;
+      if (
+        candidateLength === length &&
+        !isBackslashEscaped(text, candidate)
+      ) {
+        closing = candidate;
+        break;
+      }
+      search = candidate + candidateLength;
+    }
+    if (closing === undefined) {
+      cursor += length;
+      continue;
+    }
+    inlineRanges.push({ start: cursor, end: closing + length });
+    cursor = closing + length;
+  }
+
+  return [...blockRanges, ...inlineRanges].sort((left, right) =>
+    left.start - right.start
+  );
 }
 
 function isInsideRange(ranges: readonly Range[], offset: number): boolean {
@@ -428,19 +485,52 @@ function mdxCommentRanges(
   codeRanges: readonly Range[],
 ): Range[] {
   const ranges: Range[] = [];
+  let codeIndex = 0;
+  let expressionDepth = 0;
+  let quote: '"' | "'" | "`" | undefined;
   let cursor = 0;
   while (cursor < text.length) {
-    const start = text.indexOf("{/*", cursor);
-    if (start === -1) break;
-    if (isInsideRange(codeRanges, start)) {
-      cursor = start + 3;
+    while (
+      codeIndex < codeRanges.length && codeRanges[codeIndex]!.end <= cursor
+    ) codeIndex++;
+    const codeRange = codeRanges[codeIndex];
+    if (codeRange && codeRange.start <= cursor) {
+      cursor = codeRange.end;
       continue;
     }
-    const closing = text.indexOf("*/}", start + 3);
-    if (closing === -1) break;
-    const end = closing + 3;
-    ranges.push({ start, end });
-    cursor = end;
+
+    const character = text[cursor]!;
+    if (quote !== undefined) {
+      if (character === "\\") cursor += 2;
+      else {
+        if (character === quote) quote = undefined;
+        cursor++;
+      }
+      continue;
+    }
+    if (expressionDepth > 0) {
+      if (character === '"' || character === "'" || character === "`") {
+        quote = character;
+      } else if (character === "{") expressionDepth++;
+      else if (character === "}") expressionDepth--;
+      cursor++;
+      continue;
+    }
+    if (
+      text.startsWith("{/*", cursor) &&
+      !isBackslashEscaped(text, cursor)
+    ) {
+      const closing = text.indexOf("*/}", cursor + 3);
+      if (closing === -1) break;
+      const end = closing + 3;
+      ranges.push({ start: cursor, end });
+      cursor = end;
+      continue;
+    }
+    if (character === "{" && !isBackslashEscaped(text, cursor)) {
+      expressionDepth = 1;
+    }
+    cursor++;
   }
   return ranges;
 }
@@ -462,6 +552,46 @@ function ignoredDestinationRanges(text: string): Range[] {
   return merged;
 }
 
+function htmlTagRanges(
+  text: string,
+  ignoredRanges: readonly Range[],
+): Range[] {
+  const ranges: Range[] = [];
+  for (let start = 0; start < text.length;) {
+    start = text.indexOf("<", start);
+    if (start === -1) break;
+    if (
+      isInsideRange(ignoredRanges, start) ||
+      !/[A-Za-z]/.test(text[start + 1] ?? "")
+    ) {
+      start++;
+      continue;
+    }
+
+    let quote: '"' | "'" | "`" | undefined;
+    let expressionDepth = 0;
+    let cursor = start + 2;
+    for (; cursor < text.length; cursor++) {
+      const character = text[cursor]!;
+      if (quote !== undefined) {
+        if (character === "\\") cursor++;
+        else if (character === quote) quote = undefined;
+        continue;
+      }
+      if (character === '"' || character === "'" || character === "`") {
+        quote = character;
+      } else if (character === "{") expressionDepth++;
+      else if (character === "}" && expressionDepth > 0) expressionDepth--;
+      else if (character === ">" && expressionDepth === 0) break;
+    }
+    if (text[cursor] === ">") {
+      ranges.push({ start, end: cursor + 1 });
+      start = cursor + 1;
+    } else break;
+  }
+  return ranges;
+}
+
 /**
  * A reference definition starting at `lineStart`. CommonMark lets the
  * destination sit on the line after the label, so the run of whitespace after
@@ -471,9 +601,11 @@ function ignoredDestinationRanges(text: string): Range[] {
 function referenceDestinationAt(
   text: string,
   lineStart: number,
-): Destination | undefined {
+): (Destination & { label: string; labelStart: number }) | undefined {
   const labelStart = blockContentStart(text, lineStart);
-  if (text[labelStart + 1] === "^") return undefined;
+  if (
+    isBackslashEscaped(text, labelStart) || text[labelStart + 1] === "^"
+  ) return undefined;
   const afterLabel = afterMarkdownLabel(text, labelStart);
   if (afterLabel === undefined || text[afterLabel] !== ":") return undefined;
 
@@ -497,8 +629,50 @@ function referenceDestinationAt(
     cursor++;
   }
   return cursor > destinationStart
-    ? { href: text.slice(destinationStart, cursor), offset: destinationStart }
+    ? {
+      href: text.slice(destinationStart, cursor),
+      offset: destinationStart,
+      label: text.slice(labelStart + 1, afterLabel - 1),
+      labelStart,
+    }
     : undefined;
+}
+
+function normalizeReferenceLabel(label: string): string {
+  return decodeMarkdownBackslashEscapes(
+    decodeMarkdownCharacterReferences(label),
+  ).trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function usedReferenceLabels(
+  text: string,
+  ignoredRanges: readonly Range[],
+  definitionStarts: ReadonlySet<number>,
+): Set<string> {
+  const labels = new Set<string>();
+  for (let start = 0; start < text.length; start++) {
+    if (
+      text[start] !== "[" || definitionStarts.has(start) ||
+      isInsideRange(ignoredRanges, start) || isBackslashEscaped(text, start) ||
+      text[start + 1] === "^"
+    ) continue;
+    const afterText = afterMarkdownLabel(text, start);
+    if (afterText === undefined || text[afterText] === "(") continue;
+
+    const textLabel = text.slice(start + 1, afterText - 1);
+    let label = textLabel;
+    if (text[afterText] === "[") {
+      const afterReference = afterMarkdownLabel(text, afterText);
+      if (afterReference === undefined) continue;
+      const explicit = text.slice(afterText + 1, afterReference - 1);
+      if (explicit !== "") label = explicit;
+      start = afterReference - 1;
+    } else {
+      start = afterText - 1;
+    }
+    labels.add(normalizeReferenceLabel(label));
+  }
+  return labels;
 }
 
 /** A link destination and where it starts, so an issue can name its line. */
@@ -522,7 +696,10 @@ export function scanDestinations(text: string): Destination[] {
   const ignoredRanges = ignoredDestinationRanges(text);
   const markdownAngleDestinationRanges: Range[] = [];
   for (let start = 0; start < text.length; start++) {
-    if (isInsideRange(ignoredRanges, start)) continue;
+    if (
+      isInsideRange(ignoredRanges, start) ||
+      isBackslashEscaped(text, start)
+    ) continue;
     const afterLabel = afterMarkdownLabel(text, start);
     if (afterLabel === undefined || text[afterLabel] !== "(") continue;
 
@@ -581,22 +758,28 @@ export function scanDestinations(text: string): Destination[] {
     start = cursor;
   }
 
-  const htmlHref = new RegExp(HTML_DESTINATION_SOURCE, "gi");
-  let htmlMatch: RegExpExecArray | null;
-  while ((htmlMatch = htmlHref.exec(text))) {
-    if (isInsideRange(ignoredRanges, htmlMatch.index)) continue;
-    const rawHref = htmlMatch[1] ?? htmlMatch[2] ?? htmlMatch[3] ??
-      htmlMatch[4] ?? htmlMatch[5];
-    if (rawHref === undefined) continue;
-    const href = htmlMatch[3] !== undefined || htmlMatch[4] !== undefined ||
-        htmlMatch[5] !== undefined
-      ? decodeJavaScriptStringLiteral(rawHref)
-      : rawHref;
-    if (href === undefined) continue;
-    found.push({
-      href,
-      offset: htmlMatch.index + htmlMatch[0].lastIndexOf(rawHref),
-    });
+  for (const tagRange of htmlTagRanges(text, ignoredRanges)) {
+    const tag = text.slice(tagRange.start, tagRange.end);
+    const htmlDestination = new RegExp(
+      HTML_DESTINATION_ATTRIBUTE_SOURCE,
+      "gi",
+    );
+    let htmlMatch: RegExpExecArray | null;
+    while ((htmlMatch = htmlDestination.exec(tag))) {
+      const rawHref = htmlMatch[1] ?? htmlMatch[2] ?? htmlMatch[3] ??
+        htmlMatch[4] ?? htmlMatch[5];
+      if (rawHref === undefined) continue;
+      const href = htmlMatch[3] !== undefined || htmlMatch[4] !== undefined ||
+          htmlMatch[5] !== undefined
+        ? decodeJavaScriptStringLiteral(rawHref)
+        : rawHref;
+      if (href === undefined) continue;
+      found.push({
+        href,
+        offset: tagRange.start + htmlMatch.index +
+          htmlMatch[0].lastIndexOf(rawHref),
+      });
+    }
   }
 
   let autolinkMatch: RegExpExecArray | null;
@@ -611,7 +794,11 @@ export function scanDestinations(text: string): Destination[] {
     });
   }
 
-  // A reference definition is only a definition at the start of a line.
+  // A reference definition is only a definition at the start of a line, and
+  // only participates in rendering when a link uses its normalized label.
+  const references: Array<
+    Destination & { label: string; labelStart: number }
+  > = [];
   for (let lineStart = 0; lineStart <= text.length;) {
     if (isInsideRange(ignoredRanges, lineStart)) {
       const next = text.indexOf("\n", lineStart);
@@ -620,10 +807,22 @@ export function scanDestinations(text: string): Destination[] {
       continue;
     }
     const reference = referenceDestinationAt(text, lineStart);
-    if (reference) found.push(reference);
+    if (reference) references.push(reference);
     const next = text.indexOf("\n", lineStart);
     if (next === -1) break;
     lineStart = next + 1;
+  }
+  const usedLabels = usedReferenceLabels(
+    text,
+    ignoredRanges,
+    new Set(references.map((reference) => reference.labelStart)),
+  );
+  const definedLabels = new Set<string>();
+  for (const reference of references) {
+    const label = normalizeReferenceLabel(reference.label);
+    if (definedLabels.has(label)) continue;
+    definedLabels.add(label);
+    if (usedLabels.has(label)) found.push(reference);
   }
 
   return found;
@@ -708,7 +907,7 @@ const RULES: Rule[] = [
     // Host names are case-insensitive, so a GitHub.com spelling reaches the
     // same private repository.
     pattern:
-      /(?:^|[\s("'=<])(?:https?:\/\/)?github\.com\/veryfront\/veryfront-examples(?:\.git)?(?=$|[/#?\s)>\],;:'"!]|[.](?=\s|$))/i,
+      /(?:^|[\s("'=<])(?:(?:https?:\/\/)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)veryfront\/veryfront-examples(?:\.git)?(?=$|[/#?\s)>\],;:'"!]|[.](?=\s|$))/i,
     message:
       "veryfront/veryfront-examples is a private repository. A reader following this link gets a 404, so link a public example or inline the code instead.",
   },
