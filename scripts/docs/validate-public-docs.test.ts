@@ -507,6 +507,10 @@ describe("public docs validation", () => {
           '<a data-ok={value instanceof /}>/} href="../architecture/instanceof-regex.md">ok</a>\n' +
           '<a data-ok={`x ${"`"} >`} href="../architecture/template.md">ok</a>\n' +
           '<a data-ok={value / count > 1} href="../architecture/division.md">ok</a>\n' +
+          '<a data-ok={++/{/.lastIndex} href="../architecture/prefix-update.md">ok</a>\n' +
+          '<a data-ok={--/}/.lastIndex} href="../architecture/prefix-decrement.md">ok</a>\n' +
+          '<a data-ok={value++ / count > 1} href="../architecture/postfix-update.md">ok</a>\n' +
+          '<a data-ok={value-- / count > 1} href="../architecture/postfix-decrement.md">ok</a>\n' +
           '<a data-ok={this.#instanceof / ({ marker: "}>/" }).length} href="../architecture/private-member.md">ok</a>\n' +
           '<div title="[old](../architecture/title-link.md)"></div>\n' +
           '<div title={"[old](../architecture/expression.md)"}></div>\n' +
@@ -532,6 +536,10 @@ describe("public docs validation", () => {
         "../architecture/instanceof-regex.md",
         "../architecture/template.md",
         "../architecture/division.md",
+        "../architecture/prefix-update.md",
+        "../architecture/prefix-decrement.md",
+        "../architecture/postfix-update.md",
+        "../architecture/postfix-decrement.md",
         "../architecture/private-member.md",
         "../architecture/real.md",
       ],
@@ -1670,6 +1678,13 @@ describe("public docs validation", () => {
       ),
       [],
     );
+    assertEquals(
+      destinations(
+        "export const sample = `${--/}/.lastIndex} / \\` " +
+          "[old](../architecture/prefix-decrement.md)`",
+      ),
+      [],
+    );
   });
 
   it("ignores Markdown syntax inside MDX ESM blocks", () => {
@@ -1679,6 +1694,30 @@ describe("public docs validation", () => {
           "export const metadata = {\n" +
           '  sample: "[old](../architecture/export.md)",\n' +
           "}\n\n" +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        'export const increment = ++/{/.lastIndex ? "[old](../architecture/prefix.md)" : ""\n' +
+          'export const decrement = --/}/.lastIndex ? "[old](../architecture/prefix-decrement.md)" : ""\n\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        'export const increment = value++ / total ? "[old](../architecture/postfix.md)" : ""\n' +
+          'export const decrement = value-- / total ? "[old](../architecture/postfix-decrement.md)" : ""\n\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        "export const value = sample\n++/{/.lastIndex\n" +
+          'export const hidden = "[old](../architecture/line-break.md)"\n\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
