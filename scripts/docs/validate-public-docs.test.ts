@@ -494,6 +494,7 @@ describe("public docs validation", () => {
           'Configure href="../architecture/prose.md" for the sample.\n' +
           "<a title=\"sample href='../architecture/title.md' text\">safe</a>\n" +
           '<a data-ok={true /* } > */} href="../architecture/commented-tag.md">ok</a>\n' +
+          '<a data-ok={value /* c */ / divisor} href="../architecture/comment-division.md">ok</a>\n' +
           '<a data-ok={{ value: /* } > */ true }} href="../architecture/nested-comment.md">ok</a>\n' +
           '<a data-ok={true // } >\n} href="../architecture/line-comment.md">ok</a>\n' +
           '<a data-ok={/<}>/.test(value)} href="../architecture/regex.md">ok</a>\n' +
@@ -518,6 +519,7 @@ describe("public docs validation", () => {
       [
         "../architecture/image.png",
         "../architecture/commented-tag.md",
+        "../architecture/comment-division.md",
         "../architecture/nested-comment.md",
         "../architecture/line-comment.md",
         "../architecture/regex.md",
@@ -1628,6 +1630,13 @@ describe("public docs validation", () => {
     assertEquals(
       destinations(
         '{/<}>/.test(value) ? "[old](../architecture/regex.md)" : ""}\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        '{new /[}]/ ? "[old](../architecture/new-regex.md)" : ""}\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],

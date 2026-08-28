@@ -814,6 +814,7 @@ function javaScriptTemplateInterpolationEnd(
 ): number | undefined {
   let depth = 1;
   let cursor = start + 2;
+  let previousSignificantEnd: number | undefined;
   let previousTokenWasRegex = false;
   while (cursor < text.length) {
     const commentEnd = javaScriptCommentEnd(text, cursor);
@@ -825,6 +826,7 @@ function javaScriptTemplateInterpolationEnd(
     if (character === '"' || character === "'") {
       const end = quotedRangeEnd(text, cursor, character);
       if (end === undefined) return undefined;
+      previousSignificantEnd = end;
       previousTokenWasRegex = false;
       cursor = end;
       continue;
@@ -832,16 +834,22 @@ function javaScriptTemplateInterpolationEnd(
     if (character === "`") {
       const end = javaScriptTemplateEnd(text, cursor);
       if (end === undefined) return undefined;
+      previousSignificantEnd = end;
       previousTokenWasRegex = false;
       cursor = end;
       continue;
     }
     if (
       character === "/" &&
-      javaScriptRegexMayStart(text, cursor, previousTokenWasRegex)
+      javaScriptRegexMayStart(
+        text,
+        previousSignificantEnd,
+        previousTokenWasRegex,
+      )
     ) {
       const regexEnd = javaScriptRegexEnd(text, cursor);
       if (regexEnd !== undefined) {
+        previousSignificantEnd = regexEnd;
         previousTokenWasRegex = true;
         cursor = regexEnd;
         continue;
@@ -854,6 +862,7 @@ function javaScriptTemplateInterpolationEnd(
     previousTokenWasRegex = false;
     if (character === "{") depth++;
     else if (character === "}" && --depth === 0) return cursor + 1;
+    previousSignificantEnd = cursor + 1;
     cursor++;
   }
   return undefined;
@@ -929,6 +938,7 @@ function mdxExpressionAt(
   const strings: Range[] = [];
   let depth = 1;
   let cursor = start + 1;
+  let previousSignificantEnd: number | undefined;
   let previousTokenWasRegex = false;
   while (cursor < text.length) {
     const commentEnd = javaScriptCommentEnd(text, cursor);
@@ -941,6 +951,7 @@ function mdxExpressionAt(
       const end = javaScriptTemplateEnd(text, cursor);
       if (end === undefined) return undefined;
       strings.push({ start: cursor, end });
+      previousSignificantEnd = end;
       previousTokenWasRegex = false;
       cursor = end;
       continue;
@@ -949,16 +960,22 @@ function mdxExpressionAt(
       const end = quotedRangeEnd(text, cursor, character);
       if (end === undefined) return undefined;
       strings.push({ start: cursor, end });
+      previousSignificantEnd = end;
       previousTokenWasRegex = false;
       cursor = end;
       continue;
     }
     if (
       character === "/" &&
-      javaScriptRegexMayStart(text, cursor, previousTokenWasRegex)
+      javaScriptRegexMayStart(
+        text,
+        previousSignificantEnd,
+        previousTokenWasRegex,
+      )
     ) {
       const regexEnd = javaScriptRegexEnd(text, cursor);
       if (regexEnd !== undefined) {
+        previousSignificantEnd = regexEnd;
         previousTokenWasRegex = true;
         cursor = regexEnd;
         continue;
@@ -973,6 +990,7 @@ function mdxExpressionAt(
     else if (character === "}" && --depth === 0) {
       return { expression: { start, end: cursor + 1 }, strings };
     }
+    previousSignificantEnd = cursor + 1;
     cursor++;
   }
   return undefined;
@@ -1057,6 +1075,7 @@ interface JavaScriptBalance {
   quote: '"' | "'" | undefined;
   blockComment: boolean;
   templateEnd: number;
+  previousSignificantEnd: number | undefined;
   previousTokenWasRegex: boolean;
   valid: boolean;
 }
@@ -1093,27 +1112,28 @@ const JAVASCRIPT_REGEX_PREFIX_KEYWORDS: ReadonlySet<string> = new Set([
   "delete",
   "in",
   "instanceof",
+  "new",
 ]);
 
 function javaScriptRegexMayStart(
-  line: string,
-  start: number,
+  text: string,
+  previousSignificantEnd: number | undefined,
   previousTokenWasRegex: boolean,
 ): boolean {
   if (previousTokenWasRegex) return false;
-  let end = start;
-  while (end > 0 && /\s/.test(line[end - 1]!)) end--;
-  if (end === 0) return true;
+  if (previousSignificantEnd === undefined) return true;
 
-  if ("=(:,![{;?&|+*%/^~<>-".includes(line[end - 1]!)) return true;
+  if (
+    "=(:,![{;?&|+*%/^~<>-".includes(text[previousSignificantEnd - 1]!)
+  ) return true;
 
-  let wordStart = end;
-  while (wordStart > 0 && /[A-Za-z]/.test(line[wordStart - 1]!)) wordStart--;
-  const keyword = line.slice(wordStart, end);
+  let wordStart = previousSignificantEnd;
+  while (wordStart > 0 && /[A-Za-z]/.test(text[wordStart - 1]!)) wordStart--;
+  const keyword = text.slice(wordStart, previousSignificantEnd);
   if (!JAVASCRIPT_REGEX_PREFIX_KEYWORDS.has(keyword)) return false;
 
   return wordStart === 0 ||
-    !/[A-Za-z0-9_$.#]/.test(line[wordStart - 1]!);
+    !/[A-Za-z0-9_$.#]/.test(text[wordStart - 1]!);
 }
 
 function scanJavaScriptLine(
@@ -1143,7 +1163,11 @@ function scanJavaScriptLine(
     }
     if (state.quote !== undefined) {
       if (character === "\\") cursor++;
-      else if (character === state.quote) state.quote = undefined;
+      else if (character === state.quote) {
+        state.quote = undefined;
+        state.previousSignificantEnd = cursor + 1;
+        state.previousTokenWasRegex = false;
+      }
       continue;
     }
     if (text.startsWith("//", cursor)) break;
@@ -1158,6 +1182,7 @@ function scanJavaScriptLine(
         state.valid = false;
         return;
       }
+      state.previousSignificantEnd = templateEnd;
       state.previousTokenWasRegex = false;
       state.templateEnd = templateEnd;
       cursor = templateEnd - 1;
@@ -1172,13 +1197,14 @@ function scanJavaScriptLine(
     if (
       character === "/" &&
       javaScriptRegexMayStart(
-        line,
-        lineCursor,
+        text,
+        state.previousSignificantEnd,
         state.previousTokenWasRegex,
       )
     ) {
       const regexEnd = javaScriptRegexEnd(line, lineCursor);
       if (regexEnd !== undefined) {
+        state.previousSignificantEnd = lineStart + regexEnd;
         state.previousTokenWasRegex = true;
         cursor = lineStart + regexEnd - 1;
         continue;
@@ -1186,6 +1212,7 @@ function scanJavaScriptLine(
     }
     if (/\s/.test(character)) continue;
     state.previousTokenWasRegex = false;
+    state.previousSignificantEnd = cursor + 1;
     if (character === "(" || character === "[" || character === "{") {
       state.delimiters.push(character);
       continue;
@@ -1206,6 +1233,7 @@ function mdxEsmRangeEnd(text: string, start: number): number | undefined {
     quote: undefined,
     blockComment: false,
     templateEnd: start,
+    previousSignificantEnd: undefined,
     previousTokenWasRegex: false,
     valid: true,
   };
@@ -1422,12 +1450,20 @@ function scanTagSyntax(
   let quote: '"' | "'" | undefined;
   let quoteUsesJavaScriptEscapes = false;
   let expressionDepth = 0;
+  let previousSignificantEnd: number | undefined;
   let previousTokenWasRegex = false;
   for (let cursor = start; cursor < text.length; cursor++) {
     const character = text[cursor]!;
     if (quote !== undefined) {
       if (quoteUsesJavaScriptEscapes && character === "\\") cursor++;
-      else if (character === quote) quote = undefined;
+      else if (character === quote) {
+        quote = undefined;
+        if (quoteUsesJavaScriptEscapes) {
+          previousSignificantEnd = cursor + 1;
+          previousTokenWasRegex = false;
+        }
+        quoteUsesJavaScriptEscapes = false;
+      }
       continue;
     }
     const commentEnd = expressionDepth > 0
@@ -1439,10 +1475,15 @@ function scanTagSyntax(
     }
     if (
       expressionDepth > 0 && character === "/" &&
-      javaScriptRegexMayStart(text, cursor, previousTokenWasRegex)
+      javaScriptRegexMayStart(
+        text,
+        previousSignificantEnd,
+        previousTokenWasRegex,
+      )
     ) {
       const regexEnd = javaScriptRegexEnd(text, cursor);
       if (regexEnd !== undefined) {
+        previousSignificantEnd = regexEnd;
         previousTokenWasRegex = true;
         cursor = regexEnd - 1;
         continue;
@@ -1457,6 +1498,7 @@ function scanTagSyntax(
     if (character === "`" && expressionDepth > 0) {
       const templateEnd = javaScriptTemplateEnd(text, cursor);
       if (templateEnd !== undefined) {
+        previousSignificantEnd = templateEnd;
         previousTokenWasRegex = false;
         cursor = templateEnd - 1;
         continue;
@@ -1464,6 +1506,9 @@ function scanTagSyntax(
     }
     if (expressionDepth > 0 && /\s/.test(character)) continue;
     previousTokenWasRegex = false;
+    if (expressionDepth > 0 || character === "{") {
+      previousSignificantEnd = cursor + 1;
+    }
     if (character === '"' || character === "'") {
       quote = character;
       quoteUsesJavaScriptEscapes = expressionDepth > 0;
