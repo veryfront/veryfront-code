@@ -357,20 +357,24 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void> {
-    const condition = (patch as ConditionalWorkflowRunUpdate)[memoryRunUpdateCondition];
-    return this.applyRunUpdate(runId, patch, condition);
+    return this.applyRunUpdate(runId, patch);
   }
 
   private applyRunUpdate(
     runId: string,
     patch: WorkflowRunUpdate,
-    condition?: MemoryRunUpdateCondition,
   ): Promise<void> {
     const run = this.runs.get(runId);
     // Reject rather than throw synchronously so callers see a rejected Promise
     // consistently (matching the Redis backend's async error paths).
     if (!run) {
       return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
+    let condition: MemoryRunUpdateCondition | undefined;
+    try {
+      condition = (patch as ConditionalWorkflowRunUpdate)[memoryRunUpdateCondition];
+    } catch (error) {
+      return Promise.reject(error);
     }
     if (condition !== undefined && !condition.matches(run)) {
       condition.updated = false;

@@ -354,6 +354,32 @@ describe("MemoryBackend", () => {
       assertExists(updated?.startedAt);
     });
 
+    it("rejects conditional control lookup asynchronously after the run check", async () => {
+      let symbolReads = 0;
+      const patch = new Proxy({}, {
+        get(target, key, receiver) {
+          if (typeof key === "symbol") {
+            symbolReads++;
+            throw new Error("conditional control unavailable");
+          }
+          return Reflect.get(target, key, receiver);
+        },
+      }) as Partial<WorkflowRun>;
+
+      await assertRejectsAsynchronously(
+        () => backend.updateRun("run-missing-control", patch),
+        "Run not found",
+      );
+      assertEquals(symbolReads, 0);
+
+      await backend.createRun(createTestRun("run-existing-control"));
+      await assertRejectsAsynchronously(
+        () => backend.updateRun("run-existing-control", patch),
+        "conditional control unavailable",
+      );
+      assertEquals(symbolReads, 1);
+    });
+
     it("merges context sets while applying explicit top-level deletions", async () => {
       await backend.createRun(createTestRun("run-context-delete", {
         context: { input: {}, removed: "stale", concurrent: "preserve" },
