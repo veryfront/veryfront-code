@@ -8,7 +8,6 @@
 
 import type {
   BranchNodeConfig,
-  Checkpoint,
   NodeState,
   ParallelNodeConfig,
   SubWorkflowNodeConfig,
@@ -19,6 +18,7 @@ import type {
   WorkflowRun,
 } from "../../types.ts";
 import { generateId } from "../../types.ts";
+import { cloneRetainedCheckpoint } from "../../backends/checkpoint-retention.ts";
 import {
   captureWorkflowSourceIntegrationPolicy,
   runWithWorkflowSourceIntegrationPolicy,
@@ -1101,13 +1101,13 @@ export class DAGExecutor {
       return;
     }
 
-    const checkpoint: Checkpoint = {
+    const checkpoint = cloneRetainedCheckpoint({
       id: generateId("cp"),
       nodeId,
       timestamp: new Date(),
-      context: structuredClone(context),
-      nodeStates: structuredClone(nodeStates),
-    };
+      context,
+      nodeStates,
+    });
 
     const saved = await this.config.checkpointManager.save(runId, checkpoint, ownership);
     // Legacy test/double implementations returned void. Only an explicit false

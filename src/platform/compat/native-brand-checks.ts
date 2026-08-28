@@ -34,6 +34,8 @@ const getPrototypeOf = Object.getPrototypeOf;
 const ownKeys = Reflect.ownKeys;
 const setPrototypeOf = Object.setPrototypeOf;
 const SymbolValueOf = Symbol.prototype.valueOf;
+const structuredCloneValue = typeof structuredClone === "function" ? structuredClone : undefined;
+const DOMExceptionConstructor = typeof DOMException === "function" ? DOMException : undefined;
 
 const nonPlainBuiltinCheckNames = [
   "isAnyArrayBuffer",
@@ -85,6 +87,24 @@ const finalizationRegistryUnregister = typeof FinalizationRegistry === "function
 const urlHrefGet = typeof URL === "function"
   ? getOwnPropertyDescriptor(URL.prototype, "href")?.get
   : undefined;
+const urlSearchParamsToString = typeof URLSearchParams === "function"
+  ? readOwnDataFunction(URLSearchParams.prototype, "toString")
+  : undefined;
+const headersHas = typeof Headers === "function"
+  ? readOwnDataFunction(Headers.prototype, "has")
+  : undefined;
+const requestUrlGet = typeof Request === "function"
+  ? getOwnPropertyDescriptor(Request.prototype, "url")?.get
+  : undefined;
+const responseStatusGet = typeof Response === "function"
+  ? getOwnPropertyDescriptor(Response.prototype, "status")?.get
+  : undefined;
+const abortControllerSignalGet = typeof AbortController === "function"
+  ? getOwnPropertyDescriptor(AbortController.prototype, "signal")?.get
+  : undefined;
+const formDataHas = typeof FormData === "function"
+  ? readOwnDataFunction(FormData.prototype, "has")
+  : undefined;
 const webIdlBrandSymbol = (() => {
   if (typeof URL !== "function") return undefined;
   try {
@@ -100,8 +120,10 @@ const webIdlBrandSymbol = (() => {
   return undefined;
 })();
 const nativeSlotProbeToken = createObject(null);
+const nativeSlotProbeName = "x-veryfront-brand-probe";
 const noArguments: unknown[] = [];
 const nativeSlotProbeArguments = [nativeSlotProbeToken];
+const nativeSlotProbeNameArguments = [nativeSlotProbeName];
 
 function hasNativeSlot(
   value: unknown,
@@ -136,6 +158,33 @@ function hasOnlyOwnDataProperties(value: unknown): boolean {
   return true;
 }
 
+function hasOnlyShallowCloneSafeOwnData(value: unknown): boolean {
+  if (!isReflectableValue(value)) return false;
+  for (const key of ownKeys(value)) {
+    const descriptor = getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined || !hasOwn(descriptor, "value")) return false;
+    const fieldType = typeof descriptor.value;
+    if (fieldType === "object" && descriptor.value !== null) return false;
+    if (fieldType === "function" || fieldType === "symbol") return false;
+  }
+  return true;
+}
+
+function hasUnsupportedNativeClone(value: unknown): boolean {
+  if (
+    structuredCloneValue === undefined || DOMExceptionConstructor === undefined ||
+    !hasOnlyShallowCloneSafeOwnData(value)
+  ) {
+    return false;
+  }
+  try {
+    structuredCloneValue(value);
+    return false;
+  } catch (error) {
+    return error instanceof DOMExceptionConstructor && error.name === "DataCloneError";
+  }
+}
+
 function hasWebIdlBrandDataProperty(value: unknown): boolean {
   if (webIdlBrandSymbol === undefined || !isReflectableValue(value)) return false;
   const descriptor = getOwnPropertyDescriptor(value, webIdlBrandSymbol);
@@ -157,7 +206,14 @@ function hasPrototypeDisguisedNativeSlot(value: unknown): boolean {
   return hasNativeSlot(value, weakRefDeref) ||
     hasNativeSlot(value, finalizationRegistryUnregister, nativeSlotProbeArguments) ||
     hasNativeSlot(value, urlHrefGet) ||
-    hasWebIdlBrandDataProperty(value);
+    hasNativeSlot(value, urlSearchParamsToString) ||
+    hasNativeSlot(value, headersHas, nativeSlotProbeNameArguments) ||
+    hasNativeSlot(value, requestUrlGet) ||
+    hasNativeSlot(value, responseStatusGet) ||
+    hasNativeSlot(value, abortControllerSignalGet) ||
+    hasNativeSlot(value, formDataHas, nativeSlotProbeNameArguments) ||
+    hasWebIdlBrandDataProperty(value) ||
+    hasUnsupportedNativeClone(value);
 }
 
 function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefined {
@@ -227,11 +283,12 @@ function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefine
       // path for ordinary strict objects.
       if (needsBigIntSlotFallback && hasNativeSlot(candidate, BigIntValueOf)) return true;
       if (needsSymbolSlotFallback && hasNativeSlot(candidate, SymbolValueOf)) return true;
-      // WeakRef, FinalizationRegistry, and URL have no node:util/types
-      // predicates. Their slot methods throw for ordinary objects, so probe
-      // only the Object.prototype shape these built-ins expose after a
-      // prototype disguise, and inspect own descriptors without reading values.
-      // The proxy predicate above makes the reflection gate hook-free.
+      // Some Web API objects have no node:util/types predicates. Their slot
+      // methods reject ordinary objects, so probe only the Object.prototype
+      // shape these built-ins expose after a prototype disguise. The clone
+      // fallback accepts only shallow primitive data, which keeps the boundary
+      // from invoking candidate-controlled accessors. The proxy predicate above
+      // makes the reflection gate hook-free.
       if (hasPrototypeDisguisedNativeSlot(candidate)) return true;
       return false;
     },

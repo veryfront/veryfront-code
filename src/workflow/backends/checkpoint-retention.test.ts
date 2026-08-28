@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { Checkpoint, WorkflowRun } from "../types.ts";
+import type {
+  Checkpoint,
+  CheckpointResumeEnvelope,
+  WorkflowContext,
+  WorkflowRun,
+} from "../types.ts";
 import { MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES } from "../limits.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import {
@@ -33,6 +38,54 @@ function run(id: string, workerId?: string): WorkflowRun {
 
 function identify(checkpoints: readonly Checkpoint[]): Array<{ id: string; nodeId: string }> {
   return checkpoints.map(({ id, nodeId }) => ({ id, nodeId }));
+}
+
+function deepValue(depth: number): unknown {
+  let deep: unknown = { leaf: "stored" };
+  for (let index = 0; index < depth; index++) deep = { nested: deep };
+  return deep;
+}
+
+function deepCheckpointContext(depth: number): WorkflowContext {
+  return { input: {}, deep: deepValue(depth) };
+}
+
+function deepNodeStates(nodeId: string, depth: number): Checkpoint["nodeStates"] {
+  return {
+    [nodeId]: {
+      nodeId,
+      status: "completed",
+      attempt: 1,
+      output: deepValue(depth),
+    },
+  };
+}
+
+function deepResumeEnvelope(nodeId: string, depth: number): CheckpointResumeEnvelope {
+  return {
+    schemaVersion: 2,
+    ownerNodeId: nodeId,
+    context: deepCheckpointContext(depth),
+    nodeStates: deepNodeStates(nodeId, depth),
+    workflowProjection: { context: {} },
+    graphAdmission: {
+      stepsEvaluationContext: deepCheckpointContext(depth),
+      stepsEvaluationProjection: { context: {} },
+      graphIdentity: [],
+      workflowVersion: null,
+    },
+  };
+}
+
+function getField(value: unknown, key: string): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
+  return Reflect.get(value, key);
+}
+
+function deepLeaf(value: unknown, depth: number): unknown {
+  let cursor = value;
+  for (let index = 0; index < depth; index++) cursor = getField(cursor, "nested");
+  return getField(cursor, "leaf");
 }
 
 describe("workflow checkpoint retention", () => {
@@ -139,6 +192,63 @@ describe("workflow checkpoint retention", () => {
     assertEquals(await backend.getCheckpoints("owned"), beforeFailedFence);
     assertEquals(beforeFailedFence.length, MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES);
     assertEquals(beforeFailedFence[0]?.id, "owned-1");
+  });
+
+  it("saves and reads deep MemoryBackend checkpoints without recursive cloning", async () => {
+    const backend = new MemoryBackend();
+    const depth = 4000;
+    const workerId = "run-execution:deep-checkpoint-owner";
+    await backend.createRun(run("deep-checkpoint", workerId));
+
+    await backend.saveCheckpoint("deep-checkpoint", {
+      ...checkpoint("deep-unconditional"),
+      context: deepCheckpointContext(depth),
+      nodeStates: deepNodeStates("deep-unconditional", depth),
+      _resumeEnvelope: deepResumeEnvelope("deep-unconditional", depth),
+    });
+    const latest = await backend.getLatestCheckpoint("deep-checkpoint");
+    assertEquals(
+      deepLeaf(latest?.context.deep, depth),
+      "stored",
+    );
+    assertEquals(
+      deepLeaf(latest?.nodeStates["deep-unconditional"]?.output, depth),
+      "stored",
+    );
+    assertEquals(
+      deepLeaf(latest?._resumeEnvelope?.context.deep, depth),
+      "stored",
+    );
+    assertEquals(
+      deepLeaf(
+        latest?._resumeEnvelope?.graphAdmission.stepsEvaluationContext.deep,
+        depth,
+      ),
+      "stored",
+    );
+
+    assertEquals(
+      await backend.saveCheckpointIfStatusAndWorker(
+        "deep-owned-checkpoint",
+        "deep-checkpoint",
+        ["running"],
+        workerId,
+        {
+          ...checkpoint("deep-owned"),
+          context: deepCheckpointContext(depth),
+          nodeStates: deepNodeStates("deep-owned", depth),
+          _resumeEnvelope: deepResumeEnvelope("deep-owned", depth),
+        },
+      ),
+      true,
+    );
+    const [owned] = await backend.getCheckpoints("deep-owned-checkpoint");
+    assertEquals(deepLeaf(owned?.context.deep, depth), "stored");
+    assertEquals(deepLeaf(owned?.nodeStates["deep-owned"]?.output, depth), "stored");
+    assertEquals(
+      deepLeaf(owned?._resumeEnvelope?.nodeStates["deep-owned"]?.output, depth),
+      "stored",
+    );
   });
 
   it("removes only the older twin when a duplicate ID is deleted once", async () => {

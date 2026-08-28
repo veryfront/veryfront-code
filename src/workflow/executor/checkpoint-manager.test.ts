@@ -49,6 +49,20 @@ function nodeState(nodeId: string, status: NodeState["status"]): NodeState {
   };
 }
 
+function deepValue(depth: number): unknown {
+  let value: unknown = { leaf: "stored" };
+  for (let index = 0; index < depth; index++) value = { nested: value };
+  return value;
+}
+
+function deepLeaf(value: unknown, depth: number): unknown {
+  let cursor = value;
+  for (let index = 0; index < depth; index++) {
+    cursor = (cursor as { nested: unknown }).nested;
+  }
+  return (cursor as { leaf: unknown }).leaf;
+}
+
 async function seed(runId: string, count: number): Promise<MemoryBackend> {
   const backend = new MemoryBackend();
   await backend.createRun(run(runId));
@@ -269,6 +283,35 @@ describe("CheckpointManager", () => {
     assertExists(persisted);
     assertEquals(persisted.context.input, { topic: "original" });
     assertEquals(persisted.nodeStates.first?.status, "completed");
+  });
+
+  it("creates and resumes checkpoints deeper than native cloning can traverse", async () => {
+    const runId = "deep-checkpoint-manager";
+    const backend = await seed(runId, 0);
+    const manager = new CheckpointManager({ backend });
+    const depth = 4000;
+
+    const created = await manager.createCheckpoint(
+      runId,
+      "first",
+      { input: {}, first: deepValue(depth) },
+      {
+        first: {
+          ...nodeState("first", "completed"),
+          output: deepValue(depth),
+        },
+      },
+    );
+    assertEquals(deepLeaf(created.context.first, depth), "stored");
+
+    const resume = await manager.prepareResume(runId, [
+      stepNode("first"),
+      { ...stepNode("second"), dependsOn: ["first"] },
+    ]);
+    assertExists(resume);
+    assertEquals(resume.startFromNode, "second");
+    assertEquals(deepLeaf(resume.context.first, depth), "stored");
+    assertEquals(deepLeaf(resume.nodeStates.first?.output, depth), "stored");
   });
 
   it("forwards owned saves through the fenced backend method with its receiver", async () => {

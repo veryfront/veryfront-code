@@ -1226,12 +1226,35 @@ export class RedisBackend implements WorkflowBackend {
       runId,
       { strictContext: this.config.strictContext },
     );
-    const { context: _context, ...checkpointWithoutContext } = checkpoint;
+    const { serialized: nodeStates } = prepareWorkflowJson(
+      checkpoint.nodeStates,
+      "checkpoint.nodeStates",
+      runId,
+      { strictContext: false },
+    );
+    const {
+      context: _context,
+      nodeStates: _nodeStates,
+      _resumeEnvelope,
+      ...checkpointMetadata
+    } = checkpoint;
     const serializedCheckpoint = JSON.stringify({
-      ...checkpointWithoutContext,
+      ...checkpointMetadata,
       timestamp: checkpoint.timestamp.toISOString(),
     });
-    return `${serializedCheckpoint.slice(0, -1)},"context":${context}}`;
+    const resumeEnvelope = _resumeEnvelope === undefined
+      ? ""
+      : `,"_resumeEnvelope":${
+        prepareWorkflowJson(
+          _resumeEnvelope,
+          "checkpoint._resumeEnvelope",
+          runId,
+          { strictContext: false },
+        ).serialized
+      }`;
+    return `${
+      serializedCheckpoint.slice(0, -1)
+    },"context":${context},"nodeStates":${nodeStates}${resumeEnvelope}}`;
   }
 
   private serializeApproval(approval: PersistedPendingApproval): string {

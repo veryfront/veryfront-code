@@ -3,6 +3,7 @@ import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { Checkpoint, NodeState, WorkflowContext, WorkflowNode } from "../types.ts";
 import { generateId } from "../types.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
+import { cloneRetainedCheckpoint } from "../backends/checkpoint-retention.ts";
 import { buildGraph, getReadyNodes, updateInDegreesForCompletedNodes } from "./dag/graph.ts";
 
 const logger = baseLogger.component("checkpoint-manager");
@@ -78,13 +79,13 @@ export class CheckpointManager {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
   ): Promise<Checkpoint> {
-    const checkpoint: Checkpoint = {
+    const checkpoint = cloneRetainedCheckpoint({
       id: generateId("cp"),
       nodeId,
       timestamp: new Date(),
-      context: structuredClone(context),
-      nodeStates: structuredClone(nodeStates),
-    };
+      context,
+      nodeStates,
+    });
 
     await this.save(runId, checkpoint);
     return checkpoint;
@@ -116,11 +117,12 @@ export class CheckpointManager {
     const startFromNode = this.findNextNode(nodes, checkpoint);
     if (!startFromNode) return null;
 
+    const resumeState = cloneRetainedCheckpoint(checkpoint);
     return {
       checkpoint,
       startFromNode,
-      context: structuredClone(checkpoint.context),
-      nodeStates: structuredClone(checkpoint.nodeStates),
+      context: resumeState.context,
+      nodeStates: resumeState.nodeStates,
     };
   }
 

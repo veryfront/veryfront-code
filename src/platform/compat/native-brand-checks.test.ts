@@ -32,6 +32,12 @@ describe("native brand checks", () => {
       new WeakRef({}),
       new FinalizationRegistry(() => {}),
       new URL("https://example.com"),
+      new URLSearchParams({ a: "1" }),
+      new Headers({ "x-test": "1" }),
+      new Request("https://example.com"),
+      new Response("ok"),
+      new AbortController(),
+      new FormData(),
     ];
 
     for (const value of values) {
@@ -70,6 +76,41 @@ describe("native brand checks", () => {
 
     assertEquals(isolated.nativeBrandChecks?.isNonPlainBuiltin(proxy), false);
     assertEquals(trapCalls, 0);
+  });
+
+  it("does not invoke own accessors while checking non-plain builtins", async () => {
+    const isolated = await import("./native-brand-checks.ts?non-plain-accessor");
+    let accessorCalls = 0;
+    const candidate = {};
+    Object.defineProperty(candidate, "metadata", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        accessorCalls++;
+        return "ordinary accessor";
+      },
+    });
+
+    assertEquals(isolated.nativeBrandChecks?.isNonPlainBuiltin(candidate), false);
+    assertEquals(accessorCalls, 0);
+  });
+
+  it("does not invoke nested accessors held by own data properties", async () => {
+    const isolated = await import("./native-brand-checks.ts?non-plain-nested-accessor");
+    let accessorCalls = 0;
+    const metadata = {};
+    Object.defineProperty(metadata, "nested", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        accessorCalls++;
+        return "nested accessor";
+      },
+    });
+    const candidate = { metadata };
+
+    assertEquals(isolated.nativeBrandChecks?.isNonPlainBuiltin(candidate), false);
+    assertEquals(accessorCalls, 0);
   });
 
   it("does not invoke a replaced node:vm export during initialization", async () => {

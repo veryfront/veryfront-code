@@ -36,6 +36,7 @@ import {
 import { requeueRun } from "./shared/requeue-run.ts";
 import {
   appendRetainedCheckpoint,
+  cloneRetainedCheckpoint,
   deleteOldestCheckpointOccurrences,
 } from "./checkpoint-retention.ts";
 import { appendRetainedPendingApproval } from "./approval-retention.ts";
@@ -615,12 +616,12 @@ export class MemoryBackend implements WorkflowBackend {
     if (!checkpoints?.length) return Promise.resolve(null);
 
     const latest = checkpoints[checkpoints.length - 1];
-    return Promise.resolve(latest ? structuredClone(latest) : null);
+    return Promise.resolve(latest ? cloneRetainedCheckpoint(latest) : null);
   }
 
   getCheckpoints(runId: string): Promise<Checkpoint[]> {
     const checkpoints = this.checkpoints.get(runId) ?? [];
-    return Promise.resolve(checkpoints.map((c) => structuredClone(c)));
+    return Promise.resolve(checkpoints.map((c) => cloneRetainedCheckpoint(c)));
   }
 
   deleteCheckpoint(runId: string, checkpointId: string): Promise<void> {

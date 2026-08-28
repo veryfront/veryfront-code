@@ -1012,7 +1012,7 @@ describe("serializeWorkflowContext", () => {
       Object.defineProperty(leaf, "__proto__", {
         configurable: true,
         enumerable: true,
-        value: "ordinary data",
+        value: null,
         writable: true,
       });
       let deep: unknown = leaf;

@@ -1,5 +1,45 @@
-import type { Checkpoint } from "../types.ts";
+import type { Checkpoint, CheckpointResumeEnvelope, WorkflowContext } from "../types.ts";
+import { serializeWorkflowJson } from "../context-serialization.ts";
 import { MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES } from "../limits.ts";
+
+const jsonParse = JSON.parse;
+const structuredCloneValue = structuredClone;
+
+function isStackLimitedCloneError(error: unknown): boolean {
+  return error instanceof RangeError &&
+    typeof error.message === "string" &&
+    error.message.includes("Maximum call stack size exceeded");
+}
+
+function cloneCheckpointJson<T>(value: T, label: string): T {
+  try {
+    return structuredCloneValue(value);
+  } catch (error) {
+    if (!isStackLimitedCloneError(error)) throw error;
+  }
+  return jsonParse(
+    serializeWorkflowJson(value, label, undefined, { strictContext: false }),
+  ) as T;
+}
+
+export function cloneRetainedCheckpoint(checkpoint: Checkpoint): Checkpoint {
+  const { context, nodeStates, _resumeEnvelope, ...checkpointMetadata } = checkpoint;
+  const clone: Checkpoint = {
+    ...structuredCloneValue(checkpointMetadata),
+    context: cloneCheckpointJson<WorkflowContext>(context, "checkpoint.context"),
+    nodeStates: cloneCheckpointJson<Checkpoint["nodeStates"]>(
+      nodeStates,
+      "checkpoint.nodeStates",
+    ),
+  };
+  if (_resumeEnvelope !== undefined) {
+    clone._resumeEnvelope = cloneCheckpointJson<CheckpointResumeEnvelope>(
+      _resumeEnvelope,
+      "checkpoint._resumeEnvelope",
+    );
+  }
+  return clone;
+}
 
 /**
  * Append a detached checkpoint and retain only the newest bounded history.
@@ -9,7 +49,7 @@ export function appendRetainedCheckpoint(
   checkpoints: Checkpoint[],
   checkpoint: Checkpoint,
 ): void {
-  const snapshot = structuredClone(checkpoint);
+  const snapshot = cloneRetainedCheckpoint(checkpoint);
   checkpoints.push(snapshot);
   const excess = checkpoints.length - MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES;
   if (excess > 0) checkpoints.splice(0, excess);

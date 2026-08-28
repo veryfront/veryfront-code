@@ -22,7 +22,7 @@ import { RedisBackend } from "./index.ts";
 import { deriveWorkflowRunEventObservation } from "../../events.ts";
 import { MAX_TRAVERSAL_DEPTH } from "../../context-serialization.ts";
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
-import type { PendingApproval, WorkflowRun } from "../../types.ts";
+import type { CheckpointResumeEnvelope, PendingApproval, WorkflowRun } from "../../types.ts";
 import {
   MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES,
   MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES,
@@ -2720,7 +2720,7 @@ describe("RedisBackend", () => {
       assertEquals(Object.is(checkpoint?.context.step, -0), true);
     });
 
-    it("saves checkpoint context deeper than native JSON can traverse", async () => {
+    it("saves checkpoint state deeper than native JSON can traverse", async () => {
       const runId = "run-cp-deep-context";
       let deep: unknown = { leaf: true };
       for (let index = 0; index < MAX_TRAVERSAL_DEPTH + 7_000; index++) {
@@ -2732,7 +2732,34 @@ describe("RedisBackend", () => {
         nodeId: "step",
         timestamp: new Date("2025-01-01T01:00:00Z"),
         context: { input: {}, step: deep },
-        nodeStates: {},
+        nodeStates: {
+          step: {
+            nodeId: "step",
+            status: "completed",
+            attempt: 1,
+            output: deep,
+          },
+        },
+        _resumeEnvelope: {
+          schemaVersion: 2,
+          ownerNodeId: "step",
+          context: { input: {}, step: deep },
+          nodeStates: {
+            step: {
+              nodeId: "step",
+              status: "completed",
+              attempt: 1,
+              output: deep,
+            },
+          },
+          workflowProjection: { context: {} },
+          graphAdmission: {
+            stepsEvaluationContext: { input: {}, step: deep },
+            stepsEvaluationProjection: { context: {} },
+            graphIdentity: [],
+            workflowVersion: null,
+          },
+        } satisfies CheckpointResumeEnvelope,
       });
 
       const checkpoint = await backend.getLatestCheckpoint(runId);
@@ -2742,6 +2769,52 @@ describe("RedisBackend", () => {
         restored = (restored as { nested: unknown }).nested;
       }
       assertEquals(restored, { leaf: true });
+      let restoredOutput = checkpoint?.nodeStates.step?.output;
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH + 7_000; index++) {
+        restoredOutput = (restoredOutput as { nested: unknown }).nested;
+      }
+      assertEquals(restoredOutput, { leaf: true });
+      let restoredEnvelopeContext = checkpoint?._resumeEnvelope?.context.step;
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH + 7_000; index++) {
+        restoredEnvelopeContext = (restoredEnvelopeContext as { nested: unknown }).nested;
+      }
+      assertEquals(restoredEnvelopeContext, { leaf: true });
+      let restoredAdmissionContext = checkpoint?._resumeEnvelope?.graphAdmission
+        .stepsEvaluationContext.step;
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH + 7_000; index++) {
+        restoredAdmissionContext = (restoredAdmissionContext as { nested: unknown }).nested;
+      }
+      assertEquals(restoredAdmissionContext, { leaf: true });
+    });
+
+    it("keeps framework node timestamps outside strict context validation", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-checkpoint:",
+        strictContext: true,
+      });
+      const timestamp = new Date("2025-01-01T01:00:00Z");
+
+      await strictBackend.saveCheckpoint("run-cp-strict-node-dates", {
+        id: "cp-strict-node-dates",
+        nodeId: "step",
+        timestamp,
+        context: { input: {}, step: { saved: true } },
+        nodeStates: {
+          step: {
+            nodeId: "step",
+            status: "completed",
+            attempt: 1,
+            startedAt: timestamp,
+            completedAt: timestamp,
+          },
+        },
+      });
+
+      assertEquals(
+        (await strictBackend.getLatestCheckpoint("run-cp-strict-node-dates"))?.id,
+        "cp-strict-node-dates",
+      );
     });
 
     it("should return null when no checkpoints", async () => {
