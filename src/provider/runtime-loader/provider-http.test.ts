@@ -92,6 +92,15 @@ describe("provider-http", () => {
       assertEquals(err.status, 529);
     });
 
+    it("anthropic 529 honors Retry-After", async () => {
+      const err = await buildProviderError(
+        "anthropic",
+        jsonResponse(529, { error: "overloaded" }, { "retry-after": "4" }),
+      );
+      assertEquals(err instanceof ProviderOverloadedError, true);
+      assertEquals(err.retryAfterMs, 4_000);
+    });
+
     it("anthropic 429 -> retryable rate limit, honoring Retry-After", async () => {
       const err = await buildProviderError(
         "anthropic",
@@ -102,10 +111,29 @@ describe("provider-http", () => {
       assertEquals(err.retryAfterMs, 3000);
     });
 
+    it("anthropic 429 is retryable without Retry-After", async () => {
+      const err = await buildProviderError(
+        "anthropic",
+        jsonResponse(429, { error: "rate_limited" }),
+      );
+      assertEquals(err instanceof ProviderRateLimitError, true);
+      assertEquals(err.retryable, true);
+      assertEquals(err.retryAfterMs, undefined);
+    });
+
     it("openai 503 -> retryable overloaded", async () => {
       const err = await buildProviderError("openai", jsonResponse(503, "overloaded"));
       assertEquals(err instanceof ProviderOverloadedError, true);
       assertEquals(err.retryable, true);
+    });
+
+    it("openai 503 honors Retry-After", async () => {
+      const err = await buildProviderError(
+        "openai",
+        jsonResponse(503, "overloaded", { "retry-after": "6" }),
+      );
+      assertEquals(err instanceof ProviderOverloadedError, true);
+      assertEquals(err.retryAfterMs, 6_000);
     });
 
     it("openai 429 insufficient_quota -> non-retryable quota", async () => {
@@ -163,6 +191,19 @@ describe("provider-http", () => {
       );
       assertEquals(err instanceof ProviderRateLimitError, true);
       assertEquals(err.retryable, true);
+    });
+
+    it("openai 429 rate_limit_exceeded honors Retry-After", async () => {
+      const err = await buildProviderError(
+        "openai",
+        jsonResponse(
+          429,
+          { error: { code: "rate_limit_exceeded", message: "slow down" } },
+          { "retry-after": "8" },
+        ),
+      );
+      assertEquals(err instanceof ProviderRateLimitError, true);
+      assertEquals(err.retryAfterMs, 8_000);
     });
 
     it("mistral 429 insufficient_quota -> non-retryable quota", async () => {
@@ -416,6 +457,25 @@ describe("provider-http", () => {
       });
     });
 
+    it("does not preserve truncated structured Veryfront 402 problems", async () => {
+      const responseBody = JSON.stringify({
+        slug: "insufficient-credits",
+        error: "AI credit limit exceeded",
+        padding: "x".repeat(9_000),
+      });
+      const err = await buildProviderError(
+        "openai",
+        jsonResponse(402, responseBody),
+      );
+
+      assertEquals(err.responseBody, undefined);
+      assertEquals(Object.keys(err).includes("responseBody"), false);
+      assertEquals(parseProviderError(err), {
+        code: "EXTERNAL_SERVICE_ERROR",
+        message: "LLM provider service error",
+      });
+    });
+
     it("preserves a Google 400 that names itself INVALID_ARGUMENT", async () => {
       // Google's envelope carries no `type`, so keying preservation on
       // `invalid_request_error` alone dropped the body for every Google 400 --
@@ -463,6 +523,15 @@ describe("provider-http", () => {
         code: "EXTERNAL_SERVICE_ERROR",
         message: "LLM provider service error",
       });
+    });
+
+    it("treats a JSON null error body as an unstructured request error", async () => {
+      const err = await buildProviderError("openai", jsonResponse(400, "null"));
+
+      assertEquals(err instanceof ProviderRequestError, true);
+      assertEquals(err.status, 400);
+      assertEquals(err.retryable, false);
+      assertEquals(err.responseBody, undefined);
     });
 
     it("does not preserve arbitrary provider api error messages", async () => {
@@ -1108,6 +1177,77 @@ describe("provider-http", () => {
         1,
         "a replayable body must not license retrying a failure the classifier called terminal",
       );
+    });
+
+    it("preserves terminal response status when the error body read fails", async () => {
+      const bodyReadFailure = new TypeError("provider body reset");
+      let attempts = 0;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(bodyReadFailure);
+        },
+      });
+
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve(new Response(body, { status: 400 }));
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "openai",
+          }),
+        ProviderRequestError,
+        "status 400",
+      ) as ProviderRequestError;
+
+      assertEquals(error.status, 400);
+      assertEquals(error.retryable, false);
+      assertEquals(attempts, 1, "a terminal status must not be retried after a body-read reset");
+    });
+
+    it("does not retry a terminal response when its error body stalls past the header deadline", async () => {
+      let attempts = 0;
+      let bodyCancellations = 0;
+      const createStalledBody = () =>
+        new ReadableStream<Uint8Array>({
+          pull() {
+            return new Promise<void>(() => {});
+          },
+          cancel() {
+            bodyCancellations++;
+          },
+        });
+
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve(new Response(createStalledBody(), { status: 400 }));
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "openai",
+            headersTimeoutMs: 5,
+          }),
+        ProviderRequestError,
+        "status 400",
+      ) as ProviderRequestError;
+
+      assertEquals(error.status, 400);
+      assertEquals(error.retryable, false);
+      assertEquals(
+        error.message.includes("timed out"),
+        false,
+        "a known terminal status must not be replaced by a synthetic timeout",
+      );
+      assertEquals(attempts, 1, "a known terminal response must not be replayed");
+      assertEquals(bodyCancellations, 1, "the stalled error body must be cancelled");
     });
 
     it("does not retry a typed failure raised after the body is claimed", async () => {

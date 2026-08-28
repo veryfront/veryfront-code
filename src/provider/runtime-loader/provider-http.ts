@@ -136,6 +136,22 @@ function preserveStructuredResponseBody<T extends ProviderError>(
   return error;
 }
 
+interface ParsedProviderErrorBody {
+  readonly parsedBody: Record<string, unknown> | undefined;
+  readonly errorRecord: Record<string, unknown> | undefined;
+  readonly errorType: string | undefined;
+  readonly errorCode: string | undefined;
+}
+
+interface ProviderErrorBodyContext extends ParsedProviderErrorBody {
+  readonly provider: ProviderKind;
+  readonly status: number;
+  readonly message: string;
+  readonly retryAfterMs: number | undefined;
+  readonly rawBody: string;
+  readonly truncated: boolean;
+}
+
 /**
  * Google's canonical `google.rpc.Code` for a request the API rejected as
  * malformed. It arrives in `error.status`, where Anthropic and the
@@ -168,6 +184,14 @@ function isInvalidRequestEnvelope(
 ): boolean {
   return errorType === "invalid_request_error" ||
     errorRecord?.status === GOOGLE_INVALID_ARGUMENT_STATUS;
+}
+
+/**
+ * Whether the provider uses the OpenAI-compatible error envelope for quota and
+ * rate-limit classification.
+ */
+function isOpenAICompatibleProvider(provider: ProviderKind): boolean {
+  return provider === "openai" || provider === "mistral" || provider === "moonshotai";
 }
 
 /** Parses retry after ms. */
@@ -226,29 +250,14 @@ function parseGoogleRetryInfoMs(
 }
 
 /**
- * Inspect a non-2xx response and build the most specific ProviderError
- * subclass we can. Reads the response body as text (it's already dead
- * on the wire by this point). Body classification handles the cases
- * where HTTP status alone is ambiguous — notably OpenAI
- * `insufficient_quota` vs `rate_limit_exceeded` both arriving as 429.
+ * Parse the structured error envelope without trusting it: malformed,
+ * truncated, or non-JSON bodies all become absent metadata and fall back to
+ * status-based classification.
  */
-export async function buildProviderError(
-  provider: ProviderKind,
-  response: Response,
-  abortSignal?: AbortSignal,
-): Promise<ProviderError> {
-  const status = response.status;
-  const { text: rawBody, truncated } = await readResponseTextPrefix(
-    response,
-    MAX_ERROR_BODY_BYTES,
-    abortSignal,
-  );
-  const message = `Provider request failed with status ${status}`;
-  const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
-
+function parseProviderErrorBody(rawBody: string): ParsedProviderErrorBody {
   const parsedBody = (() => {
     try {
-      return JSON.parse(rawBody) as Record<string, unknown>;
+      return readRecord(JSON.parse(rawBody));
     } catch {
       return undefined;
     }
@@ -263,45 +272,219 @@ export async function buildProviderError(
     ? errorRecord.status
     : undefined;
 
-  // Anthropic 529 = overloaded. Anthropic surfaces this with
-  // { error: { type: "overloaded_error" } } in the body.
-  if (provider === "anthropic" && status === 529) {
+  return { parsedBody, errorRecord, errorType, errorCode };
+}
+
+/**
+ * Gather the shared values every provider error classifier needs.
+ */
+function createProviderErrorBodyContext(
+  provider: ProviderKind,
+  response: Response,
+  rawBody: string,
+  truncated: boolean,
+): ProviderErrorBodyContext {
+  return {
+    provider,
+    status: response.status,
+    message: `Provider request failed with status ${response.status}`,
+    retryAfterMs: parseRetryAfterMs(response.headers.get("retry-after")),
+    rawBody,
+    truncated,
+    ...parseProviderErrorBody(rawBody),
+  };
+}
+
+/**
+ * Classify Anthropic statuses whose retry behavior is fixed by HTTP status.
+ */
+function classifyAnthropicStatus(
+  context: ProviderErrorBodyContext,
+): ProviderError | undefined {
+  if (context.provider !== "anthropic") return undefined;
+  if (context.status === 529) {
     return new ProviderOverloadedError({
-      provider,
-      status,
-      message,
+      provider: context.provider,
+      status: context.status,
+      message: context.message,
       retryable: true,
-      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+      ...(context.retryAfterMs !== undefined ? { retryAfterMs: context.retryAfterMs } : {}),
     });
+  }
+  if (context.status === 429) {
+    return new ProviderRateLimitError({
+      provider: context.provider,
+      status: context.status,
+      message: context.message,
+      retryable: true,
+      ...(context.retryAfterMs !== undefined ? { retryAfterMs: context.retryAfterMs } : {}),
+    });
+  }
+  return undefined;
+}
+
+/**
+ * Classify overload statuses shared by Google and OpenAI-compatible providers.
+ */
+function classifyExplicitOverloadStatus(
+  context: ProviderErrorBodyContext,
+): ProviderError | undefined {
+  if (
+    context.status !== 503 ||
+    (!isOpenAICompatibleProvider(context.provider) && context.provider !== "google")
+  ) {
+    return undefined;
+  }
+  return new ProviderOverloadedError({
+    provider: context.provider,
+    status: context.status,
+    message: context.message,
+    retryable: true,
+    ...(context.retryAfterMs !== undefined ? { retryAfterMs: context.retryAfterMs } : {}),
+  });
+}
+
+/**
+ * Split OpenAI-compatible 429 responses into hard quota failures and retryable
+ * rate limits.
+ */
+function classifyOpenAICompatibleRateLimit(
+  context: ProviderErrorBodyContext,
+): ProviderError | undefined {
+  if (!isOpenAICompatibleProvider(context.provider) || context.status !== 429) {
+    return undefined;
+  }
+  if (context.errorCode === "insufficient_quota") {
+    return new ProviderQuotaError({
+      provider: context.provider,
+      status: context.status,
+      message: context.message,
+      retryable: false,
+    });
+  }
+  return new ProviderRateLimitError({
+    provider: context.provider,
+    status: context.status,
+    message: context.message,
+    retryable: true,
+    ...(context.retryAfterMs !== undefined ? { retryAfterMs: context.retryAfterMs } : {}),
+  });
+}
+
+/**
+ * Split Google 429 responses by retry hints, because RESOURCE_EXHAUSTED covers
+ * both permanent quota exhaustion and short-window rate limits.
+ */
+function classifyGoogleRateLimit(
+  context: ProviderErrorBodyContext,
+): ProviderError | undefined {
+  if (context.provider !== "google" || context.status !== 429) return undefined;
+
+  const retryDelayMs = context.retryAfterMs ?? parseGoogleRetryInfoMs(context.errorRecord);
+  if (context.errorCode === "RESOURCE_EXHAUSTED" && retryDelayMs === undefined) {
+    return new ProviderQuotaError({
+      provider: context.provider,
+      status: context.status,
+      message: context.message,
+      retryable: false,
+    });
+  }
+  return new ProviderRateLimitError({
+    provider: context.provider,
+    status: context.status,
+    message: context.message,
+    retryable: true,
+    ...(retryDelayMs !== undefined ? { retryAfterMs: retryDelayMs } : {}),
+  });
+}
+
+/**
+ * Classify conventional transient upstream statuses that can clear on retry.
+ */
+function classifyTransientStatus(
+  context: ProviderErrorBodyContext,
+): ProviderError | undefined {
+  if (!TRANSIENT_PROVIDER_STATUSES.has(context.status)) return undefined;
+  return new ProviderOverloadedError({
+    provider: context.provider,
+    status: context.status,
+    message: context.message,
+    retryable: true,
+    ...(context.retryAfterMs !== undefined ? { retryAfterMs: context.retryAfterMs } : {}),
+  });
+}
+
+/**
+ * Decide whether an otherwise terminal request error carries structured
+ * details that downstream internal classifiers are allowed to inspect.
+ */
+function shouldPreserveStructuredResponseBody(context: ProviderErrorBodyContext): boolean {
+  if (context.truncated || context.parsedBody === undefined) return false;
+  if (
+    context.status === 400 &&
+    isInvalidRequestEnvelope(context.errorType, context.errorRecord)
+  ) {
+    return true;
   }
 
-  // Anthropic 429 = rate limiting. Retryable; honor Retry-After if present.
-  if (provider === "anthropic" && status === 429) {
-    return new ProviderRateLimitError({
-      provider,
-      status,
-      message,
-      retryable: true,
-      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
-    });
+  const problemSlug = typeof context.parsedBody.slug === "string"
+    ? context.parsedBody.slug
+    : undefined;
+  return context.status === 402 &&
+    (problemSlug === "insufficient-credits" || problemSlug === "resource-limit-exceeded");
+}
+
+/**
+ * Inspect a non-2xx response and build the most specific ProviderError
+ * subclass we can. Reads the response body as text (it's already dead
+ * on the wire by this point). Body classification handles the cases
+ * where HTTP status alone is ambiguous — notably OpenAI
+ * `insufficient_quota` vs `rate_limit_exceeded` both arriving as 429.
+ */
+export async function buildProviderError(
+  provider: ProviderKind,
+  response: Response,
+  abortSignal?: AbortSignal,
+): Promise<ProviderError> {
+  let rawBody: string;
+  let truncated: boolean;
+  try {
+    ({ text: rawBody, truncated } = await readResponseTextPrefix(
+      response,
+      MAX_ERROR_BODY_BYTES,
+      abortSignal,
+    ));
+  } catch (error) {
+    if (abortSignal?.aborted === true) throw error;
+    return buildProviderErrorFromUnreadableBody(provider, response);
   }
+  return buildProviderErrorFromBody(provider, response, rawBody, truncated);
+}
+
+/**
+ * Classify a provider error response from a bounded body prefix. The body may
+ * be absent or truncated when the provider stalls, so status-based fallbacks
+ * stay authoritative unless a complete recognised envelope is present.
+ */
+function buildProviderErrorFromBody(
+  provider: ProviderKind,
+  response: Response,
+  rawBody: string,
+  truncated: boolean,
+): ProviderError {
+  const context = createProviderErrorBodyContext(provider, response, rawBody, truncated);
+
+  // Anthropic 529 = overloaded. Anthropic surfaces this with
+  // { error: { type: "overloaded_error" } } in the body.
+  // Anthropic 429 = rate limiting. Retryable; honor Retry-After if present.
+  const anthropicStatus = classifyAnthropicStatus(context);
+  if (anthropicStatus !== undefined) return anthropicStatus;
 
   // OpenAI / Mistral / Moonshotai / Google 503 = overloaded.
   // Mistral and Moonshotai use the OpenAI-compatible wire format so their
   // error shapes are structurally identical to OpenAI's.
-  if (
-    (provider === "openai" || provider === "mistral" || provider === "moonshotai" ||
-      provider === "google") &&
-    status === 503
-  ) {
-    return new ProviderOverloadedError({
-      provider,
-      status,
-      message,
-      retryable: true,
-      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
-    });
-  }
+  const explicitOverload = classifyExplicitOverloadStatus(context);
+  if (explicitOverload !== undefined) return explicitOverload;
 
   // OpenAI / Mistral / Moonshotai 429 splits based on the error code in the body:
   //  - insufficient_quota → hard quota, non-retryable
@@ -313,25 +496,8 @@ export async function buildProviderError(
   // not evidence of exhausted quota, and calling it one ends an agent run on a
   // limit that would have cleared on its own. Retries are bounded by the
   // caller, so a misread hard quota costs attempts, never a hot loop.
-  if (
-    (provider === "openai" || provider === "mistral" || provider === "moonshotai") && status === 429
-  ) {
-    if (errorCode === "insufficient_quota") {
-      return new ProviderQuotaError({
-        provider,
-        status,
-        message,
-        retryable: false,
-      });
-    }
-    return new ProviderRateLimitError({
-      provider,
-      status,
-      message,
-      retryable: true,
-      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
-    });
-  }
+  const openAICompatibleRateLimit = classifyOpenAICompatibleRateLimit(context);
+  if (openAICompatibleRateLimit !== undefined) return openAICompatibleRateLimit;
 
   // Google returns RESOURCE_EXHAUSTED for both the daily free-tier quota and
   // short-window per-minute/per-token limits, so the status alone cannot
@@ -345,57 +511,35 @@ export async function buildProviderError(
   //
   // A body that never parsed names no status at all, so it falls through to
   // the retryable branch for the same reason the OpenAI-compatible split does.
-  if (provider === "google" && status === 429) {
-    const retryDelayMs = retryAfterMs ?? parseGoogleRetryInfoMs(errorRecord);
-    if (errorCode === "RESOURCE_EXHAUSTED" && retryDelayMs === undefined) {
-      return new ProviderQuotaError({
-        provider,
-        status,
-        message,
-        retryable: false,
-      });
-    }
-    return new ProviderRateLimitError({
-      provider,
-      status,
-      message,
-      retryable: true,
-      ...(retryDelayMs !== undefined ? { retryAfterMs: retryDelayMs } : {}),
-    });
-  }
+  const googleRateLimit = classifyGoogleRateLimit(context);
+  if (googleRateLimit !== undefined) return googleRateLimit;
 
   // Retry only statuses that conventionally represent transient upstream
   // failures. Other 5xx responses can describe permanent protocol or
   // configuration errors that an unchanged retry cannot fix.
-  if (TRANSIENT_PROVIDER_STATUSES.has(status)) {
-    return new ProviderOverloadedError({
-      provider,
-      status,
-      message,
-      retryable: true,
-      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
-    });
-  }
+  const transientStatus = classifyTransientStatus(context);
+  if (transientStatus !== undefined) return transientStatus;
 
   const requestError = new ProviderRequestError({
-    provider,
-    status,
-    message,
+    provider: context.provider,
+    status: context.status,
+    message: context.message,
     retryable: false,
   });
 
-  const isStructuredInvalidRequest = status === 400 &&
-    isInvalidRequestEnvelope(errorType, errorRecord) &&
-    parsedBody !== undefined &&
-    !truncated;
-  const problemSlug = typeof parsedBody?.slug === "string" ? parsedBody.slug : undefined;
-  const isStructuredVeryfrontCreditProblem = status === 402 &&
-    (problemSlug === "insufficient-credits" || problemSlug === "resource-limit-exceeded") &&
-    !truncated;
-
-  return isStructuredInvalidRequest || isStructuredVeryfrontCreditProblem
-    ? preserveStructuredResponseBody(requestError, rawBody)
+  return shouldPreserveStructuredResponseBody(context)
+    ? preserveStructuredResponseBody(requestError, context.rawBody)
     : requestError;
+}
+
+/**
+ * Fall back to status-only classification when an error body cannot be read.
+ */
+function buildProviderErrorFromUnreadableBody(
+  provider: ProviderKind,
+  response: Response,
+): ProviderError {
+  return buildProviderErrorFromBody(provider, response, "", true);
 }
 
 interface RequestDeadline {
@@ -889,6 +1033,7 @@ export async function requestStream(options: {
     const deadline = createRequestDeadline(options.init, attemptTimeoutMs, "headersTimeoutMs");
     let streamOwnsDeadline = false;
     let bodyClaimAttempted = false;
+    let responseReceived = false;
 
     try {
       const response = await waitForAbortable(
@@ -896,12 +1041,19 @@ export async function requestStream(options: {
         deadline.deadlineSignal,
         cancelLateResponse,
       );
+      responseReceived = true;
       if (!response.ok) {
-        const err = await buildProviderError(
-          options.providerKind,
-          response,
-          deadline.deadlineSignal,
-        );
+        let err: ProviderError;
+        try {
+          err = await buildProviderError(
+            options.providerKind,
+            response,
+            deadline.deadlineSignal,
+          );
+        } catch (error) {
+          if (!deadline.timedOut) throw error;
+          err = buildProviderErrorFromUnreadableBody(options.providerKind, response);
+        }
         err.message = `${options.providerLabel} request failed: ${err.message}`;
         throw err;
       }
@@ -940,7 +1092,7 @@ export async function requestStream(options: {
         deadline.abort(error);
         throw error;
       }
-      const failure = deadline.timedOut
+      const failure = deadline.timedOut && !responseReceived
         ? providerTimeoutError(options, {
           waitingFor: "the stream response headers",
           // A replay runs on whatever the budget has left, so its deadline is
