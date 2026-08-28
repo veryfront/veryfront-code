@@ -60,7 +60,7 @@ describe("Singleflight", () => {
     controller.abort(new Error("caller gave up"));
     let calls = 0;
 
-    await assertRejects(
+    const error = await assertRejects(
       () =>
         sf.do("key", () => {
           calls++;
@@ -69,6 +69,7 @@ describe("Singleflight", () => {
       Error,
       "caller gave up",
     );
+    assertStrictEquals(error, controller.signal.reason);
 
     assertEquals(calls, 0, "an already-aborted caller must not start the shared operation");
     assertEquals(sf.has("key"), false, "no leader entry may be registered for an aborted caller");
