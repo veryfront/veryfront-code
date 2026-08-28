@@ -657,10 +657,13 @@ describe("MemoryBackend", () => {
       await backend.createRun(createTestRun(runId, { status: "waiting" }));
       const expectedStatuses: WorkflowRun["status"][] = ["running"];
       let iteratorCalls = 0;
-      expectedStatuses[Symbol.iterator] = function* () {
-        iteratorCalls++;
-        yield "waiting";
-      };
+      Object.defineProperty(expectedStatuses, Symbol.iterator, {
+        configurable: true,
+        value: function* () {
+          iteratorCalls++;
+          yield "waiting";
+        },
+      });
 
       assertEquals(
         await backend.updateRunIfStatus(runId, expectedStatuses, { status: "failed" }),
