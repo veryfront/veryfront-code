@@ -859,11 +859,16 @@ export class MemoryBackend implements WorkflowBackend {
     expectedWorkerId: string,
     checkpoint: Checkpoint,
   ): Promise<boolean> {
-    const expectedStatusSnapshot = snapshotExpectedRunStatuses(expectedStatuses);
     const run = this.runs.get(ownershipRunId);
+    if (!run) return Promise.resolve(false);
+    let expectedStatusSnapshot: Set<WorkflowRun["status"]>;
+    try {
+      expectedStatusSnapshot = snapshotExpectedRunStatuses(expectedStatuses);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     if (
-      !run || !hasExpectedRunStatus(expectedStatusSnapshot, run.status) ||
-      run.workerId !== expectedWorkerId
+      !hasExpectedRunStatus(expectedStatusSnapshot, run.status) || run.workerId !== expectedWorkerId
     ) {
       return Promise.resolve(false);
     }
@@ -977,11 +982,16 @@ export class MemoryBackend implements WorkflowBackend {
     expectedWorkerId: string,
     approval: PersistedPendingApproval,
   ): Promise<boolean> {
-    const expectedStatusSnapshot = snapshotExpectedRunStatuses(expectedStatuses);
     const run = this.runs.get(runId);
+    if (!run) return Promise.resolve(false);
+    let expectedStatusSnapshot: Set<WorkflowRun["status"]>;
+    try {
+      expectedStatusSnapshot = snapshotExpectedRunStatuses(expectedStatuses);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     if (
-      !run || !hasExpectedRunStatus(expectedStatusSnapshot, run.status) ||
-      run.workerId !== expectedWorkerId
+      !hasExpectedRunStatus(expectedStatusSnapshot, run.status) || run.workerId !== expectedWorkerId
     ) {
       return Promise.resolve(false);
     }
@@ -1237,10 +1247,15 @@ export class MemoryBackend implements WorkflowBackend {
     expectedWorkerId: string,
     wait: PersistedPendingEventWait,
   ): Promise<boolean> {
-    const expectedStatusSnapshot = snapshotExpectedRunStatuses(expectedStatuses);
     const run = this.runs.get(runId);
     if (!run) {
       return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
+    let expectedStatusSnapshot: Set<WorkflowRun["status"]>;
+    try {
+      expectedStatusSnapshot = snapshotExpectedRunStatuses(expectedStatuses);
+    } catch (error) {
+      return Promise.reject(error);
     }
     if (
       !hasExpectedRunStatus(expectedStatusSnapshot, run.status) ||

@@ -673,6 +673,83 @@ describe("MemoryBackend", () => {
       assertEquals((await backend.getRun(runId))?.status, "waiting");
     });
 
+    it("checks run existence before reading conditional status elements", async () => {
+      function reentrantStatuses(runId: string): {
+        statuses: WorkflowRun["status"][];
+        reads: () => number;
+      } {
+        let reads = 0;
+        const statuses: WorkflowRun["status"][] = ["running"];
+        Object.defineProperty(statuses, 0, {
+          configurable: true,
+          get() {
+            reads++;
+            void backend.createRun(createTestRun(runId, {
+              status: "running",
+              workerId: "worker-current",
+            }));
+            return "running";
+          },
+        });
+        return { statuses, reads: () => reads };
+      }
+
+      const checkpointRunId = "run-missing-checkpoint-status";
+      const checkpointStatuses = reentrantStatuses(checkpointRunId);
+      assertEquals(
+        await backend.saveCheckpointIfStatusAndWorker(
+          "run-checkpoint-storage",
+          checkpointRunId,
+          checkpointStatuses.statuses,
+          "worker-current",
+          createCheckpoint("cp-missing-status", "step", new Date()),
+        ),
+        false,
+      );
+      assertEquals(checkpointStatuses.reads(), 0);
+
+      const approvalRunId = "run-missing-approval-status";
+      const approvalStatuses = reentrantStatuses(approvalRunId);
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          approvalRunId,
+          approvalStatuses.statuses,
+          "worker-current",
+          {
+            id: "approval-missing-status",
+            nodeId: "review",
+            status: "pending",
+            message: "Review",
+            requestedAt: new Date(),
+          },
+        ),
+        false,
+      );
+      assertEquals(approvalStatuses.reads(), 0);
+
+      const waitRunId = "run-missing-event-wait-status";
+      const waitStatuses = reentrantStatuses(waitRunId);
+      await assertRejectsAsynchronously(
+        () =>
+          backend.savePendingEventWaitIfStatusAndWorker(
+            waitRunId,
+            waitStatuses.statuses,
+            "worker-current",
+            {
+              id: "wait-missing-status",
+              runId: waitRunId,
+              nodeId: "await-event",
+              eventName: "event.ready",
+              waitKind: "event",
+              requestedAt: new Date(),
+              status: "pending",
+            },
+          ),
+        "Run not found",
+      );
+      assertEquals(waitStatuses.reads(), 0);
+    });
+
     it("persists context through the same JSON contract as Redis", async () => {
       class Receipt {
         constructor(readonly id: string) {}
