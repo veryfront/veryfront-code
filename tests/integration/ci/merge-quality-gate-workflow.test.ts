@@ -17,11 +17,13 @@ const REQUIRED_DEPENDENCIES = [
   "tests-bun",
   "tests-binary-e2e",
   "tests-e2e-rsc-browser",
+  "sonar",
 ] as const;
 const RESULT_ENV = {
   SOURCE_CHECKS_RESULT: "${{ needs.ci.result }}",
   UNIT_TESTS_RESULT: "${{ needs.unit-tests.result }}",
   COVERAGE_RESULT: "${{ needs.coverage.result }}",
+  SONAR_RESULT: "${{ needs.sonar.result }}",
   INTEGRATION_TESTS_RESULT: "${{ needs.tests.result }}",
   NODE_RUNTIME_TESTS_RESULT: "${{ needs.tests-node.result }}",
   BUN_RUNTIME_TESTS_RESULT: "${{ needs.tests-bun.result }}",
@@ -66,6 +68,7 @@ function gateStep(job: YamlRecord): YamlRecord {
 
 async function runGate(
   overrides: Partial<Record<keyof typeof RESULT_ENV, string>> = {},
+  options: { sonarRequired?: boolean } = {},
 ): Promise<Deno.CommandOutput> {
   const job = await readMergeGate();
   const step = gateStep(job);
@@ -77,7 +80,10 @@ async function runGate(
   );
   return await new Deno.Command("bash", {
     args: ["-c", String(step.run)],
-    env,
+    env: {
+      ...env,
+      SONAR_REQUIRED: String(options.sonarRequired ?? true),
+    },
     stdout: "piped",
     stderr: "piped",
   }).output();
@@ -122,7 +128,11 @@ describe("merge quality gate workflow", () => {
     assertEquals(gate.if, "${{ always() }}");
     assertEquals(
       asRecord(step.env, "merge quality gate result env"),
-      RESULT_ENV,
+      {
+        SONAR_REQUIRED:
+          "${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]') }}",
+        ...RESULT_ENV,
+      },
     );
   });
 
@@ -230,6 +240,21 @@ describe("merge quality gate workflow", () => {
           `${resultName} finished with ${dependencyResult}`,
         );
       }
+    }
+  });
+
+  it("allows intentional Sonar skips when pull requests cannot receive secrets", async () => {
+    for (const dependencyResult of ["skipped", "success"]) {
+      const result = await runGate(
+        { SONAR_RESULT: dependencyResult },
+        { sonarRequired: false },
+      );
+
+      assertEquals(
+        result.code,
+        0,
+        `SONAR_RESULT=${dependencyResult} must not fail the merge gate when Sonar is intentionally skipped`,
+      );
     }
   });
 });
