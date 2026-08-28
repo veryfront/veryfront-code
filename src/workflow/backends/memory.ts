@@ -5,6 +5,7 @@
  * Data is NOT persisted across restarts.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { logger as baseLogger } from "#veryfront/utils";
 import type {
   ApprovalDecision,
@@ -62,6 +63,7 @@ const objectPrototype = Object.prototype;
 const jsonParse = JSON.parse;
 const reflectApply = Reflect.apply;
 const SetConstructor = Set;
+const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
 const structuredCloneValue = structuredClone;
 
@@ -73,16 +75,17 @@ interface MemoryBackendConfig extends BackendConfig, WorkflowJsonSerializationOp
   maxQueueSize?: number;
 }
 
-const memoryRunUpdateCondition = Symbol("memoryRunUpdateCondition");
-
 interface MemoryRunUpdateCondition {
+  claimed: boolean;
+  readonly runId: string;
   readonly matches: (run: WorkflowRun) => boolean;
+  readonly owner: object;
   updated: boolean;
 }
 
-type ConditionalWorkflowRunUpdate = WorkflowRunUpdate & {
-  [memoryRunUpdateCondition]?: MemoryRunUpdateCondition;
-};
+const memoryRunUpdateConditionStorage = new AsyncLocalStorage<MemoryRunUpdateCondition>();
+const asyncLocalStorageGetStore = AsyncLocalStorage.prototype.getStore;
+const asyncLocalStorageRun = AsyncLocalStorage.prototype.run;
 
 interface MaterializedMemoryRunUpdate {
   readonly contextPatch: Partial<WorkflowContext> | undefined;
@@ -105,7 +108,12 @@ const RUN_OBSERVATION_QUEUE_SIZE = 64;
 function snapshotExpectedRunStatuses(
   expectedStatuses: WorkflowRun["status"][],
 ): Set<WorkflowRun["status"]> {
-  return new SetConstructor(expectedStatuses);
+  const snapshot = new SetConstructor<WorkflowRun["status"]>();
+  const length = expectedStatuses.length;
+  for (let index = 0; index < length; index++) {
+    reflectApply(setAdd, snapshot, [expectedStatuses[index]!]);
+  }
+  return snapshot;
 }
 
 function hasExpectedRunStatus(
@@ -115,19 +123,36 @@ function hasExpectedRunStatus(
   return reflectApply(setHas, expectedStatuses, [status]) as boolean;
 }
 
+function getMemoryRunUpdateCondition(): MemoryRunUpdateCondition | undefined {
+  return reflectApply(
+    asyncLocalStorageGetStore,
+    memoryRunUpdateConditionStorage,
+    [],
+  ) as MemoryRunUpdateCondition | undefined;
+}
+
+function runWithMemoryRunUpdateCondition<T>(
+  condition: MemoryRunUpdateCondition,
+  operation: () => T,
+): T {
+  return reflectApply(asyncLocalStorageRun, memoryRunUpdateConditionStorage, [
+    condition,
+    operation,
+  ]) as T;
+}
+
 function materializeMemoryRunUpdate(
   patch: WorkflowRunUpdate,
   runId: string,
   options: WorkflowJsonSerializationOptions,
 ): MaterializedMemoryRunUpdate {
   const {
-    [memoryRunUpdateCondition]: _condition,
     context: patchContext,
     contextDeletes = [],
     nodeStates: patchNodeStates,
     nodeStateDeletes = [],
     ...storedPatch
-  } = patch as ConditionalWorkflowRunUpdate;
+  } = patch;
   const contextPatchKeys = patchContext === undefined ? [] : objectKeys(patchContext);
   const contextPatch = patchContext === undefined
     ? undefined
@@ -501,7 +526,11 @@ export class MemoryBackend implements WorkflowBackend {
       // Reject rather than throw synchronously so callers see a rejected Promise
       // consistently (matching the Redis backend's async error paths).
       run = this.requireRun(runId);
-      condition = (patch as ConditionalWorkflowRunUpdate)[memoryRunUpdateCondition];
+      const candidate = getMemoryRunUpdateCondition();
+      condition = candidate?.owner === this && candidate.runId === runId && !candidate.claimed
+        ? candidate
+        : undefined;
+      if (condition !== undefined) condition.claimed = true;
     } catch (error) {
       return Promise.reject(error);
     }
@@ -530,6 +559,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (!this.runMatchesUpdateCondition(currentRun, condition)) return Promise.resolve();
     const updated = mergeMemoryRunUpdate(currentRun, materializedUpdate);
     this.storeRunUpdate(runId, updated, materializedUpdate.storedPatch.status);
+    if (condition !== undefined) condition.updated = true;
 
     return Promise.resolve();
   }
@@ -548,17 +578,20 @@ export class MemoryBackend implements WorkflowBackend {
     }
     if (prepared.run === null) return Promise.resolve(false);
 
-    const condition: MemoryRunUpdateCondition = { matches: prepared.matches, updated: true };
-    let conditionalPatch: ConditionalWorkflowRunUpdate;
+    const condition: MemoryRunUpdateCondition = {
+      claimed: false,
+      matches: prepared.matches,
+      owner: this,
+      runId,
+      updated: false,
+    };
+    let update: Promise<void>;
     try {
-      conditionalPatch = {
-        ...patch,
-        [memoryRunUpdateCondition]: condition,
-      };
+      update = runWithMemoryRunUpdateCondition(condition, () => this.updateRun(runId, patch));
     } catch (error) {
       return Promise.reject(error);
     }
-    return this.updateRun(runId, conditionalPatch).then(() => condition.updated);
+    return update.then(() => condition.updated);
   }
 
   updateRunIfStatus(

@@ -354,30 +354,20 @@ describe("MemoryBackend", () => {
       assertExists(updated?.startedAt);
     });
 
-    it("rejects conditional control lookup asynchronously after the run check", async () => {
-      let symbolReads = 0;
-      const patch = new Proxy({}, {
-        get(target, key, receiver) {
-          if (typeof key === "symbol") {
-            symbolReads++;
-            throw new Error("conditional control unavailable");
-          }
-          return Reflect.get(target, key, receiver);
-        },
-      }) as Partial<WorkflowRun>;
+    it("rejects invalid patches asynchronously after the run check", async () => {
+      const revoked = Proxy.revocable({}, {});
+      revoked.revoke();
+      const patch = revoked.proxy as Partial<WorkflowRun>;
 
       await assertRejectsAsynchronously(
         () => backend.updateRun("run-missing-control", patch),
         "Run not found",
       );
-      assertEquals(symbolReads, 0);
-
       await backend.createRun(createTestRun("run-existing-control"));
       await assertRejectsAsynchronously(
         () => backend.updateRun("run-existing-control", patch),
-        "conditional control unavailable",
+        "revoked",
       );
-      assertEquals(symbolReads, 1);
     });
 
     it("merges context sets while applying explicit top-level deletions", async () => {
@@ -557,7 +547,7 @@ describe("MemoryBackend", () => {
       assertEquals(workerRun?.context.workerHook, undefined);
     });
 
-    it("preserves conditional guards through updateRun override copies", async () => {
+    it("preserves conditional guards through structured-clone forwarding", async () => {
       class CopyingUpdateBackend extends MemoryBackend {
         readonly updateStarted = Promise.withResolvers<void>();
         readonly releaseUpdate = Promise.withResolvers<void>();
@@ -565,7 +555,7 @@ describe("MemoryBackend", () => {
         override async updateRun(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
           this.updateStarted.resolve();
           await this.releaseUpdate.promise;
-          await super.updateRun(runId, { ...patch });
+          await super.updateRun(runId, structuredClone(patch));
         }
 
         forceUpdate(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
@@ -660,6 +650,24 @@ describe("MemoryBackend", () => {
       const stored = await backend.getRun(runId);
       assertEquals(stored?.status, "running");
       assertEquals(stored?.context.statusHook, "stored");
+    });
+
+    it("snapshots conditional statuses without invoking a custom iterator", async () => {
+      const runId = "run-conditional-status-iterator";
+      await backend.createRun(createTestRun(runId, { status: "waiting" }));
+      const expectedStatuses: WorkflowRun["status"][] = ["running"];
+      let iteratorCalls = 0;
+      expectedStatuses[Symbol.iterator] = function* () {
+        iteratorCalls++;
+        yield "waiting";
+      };
+
+      assertEquals(
+        await backend.updateRunIfStatus(runId, expectedStatuses, { status: "failed" }),
+        false,
+      );
+      assertEquals(iteratorCalls, 0);
+      assertEquals((await backend.getRun(runId))?.status, "waiting");
     });
 
     it("persists context through the same JSON contract as Redis", async () => {
