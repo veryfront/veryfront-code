@@ -10,9 +10,15 @@ import type {
   ApprovalDecision,
   Checkpoint,
   RunFilter,
+  WorkflowContext,
   WorkflowQueueItem,
   WorkflowRun,
 } from "../types.ts";
+import {
+  serializeWorkflowContext,
+  serializeWorkflowJson,
+  type WorkflowJsonSerializationOptions,
+} from "../context-serialization.ts";
 import {
   assertWorkflowRunUpdate,
   type BackendConfig,
@@ -30,6 +36,7 @@ import {
 import { requeueRun } from "./shared/requeue-run.ts";
 import {
   appendRetainedCheckpoint,
+  cloneRetainedCheckpoint,
   deleteOldestCheckpointOccurrences,
 } from "./checkpoint-retention.ts";
 import { appendRetainedPendingApproval } from "./approval-retention.ts";
@@ -44,12 +51,21 @@ import { ORCHESTRATION_ERROR, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 import { requireWorkflowSourceIntegrationPolicy } from "../source-integration-policy.ts";
 
 const logger = baseLogger.component("memory-backend");
+const ArrayConstructor = Array;
+const arrayIsArray = Array.isArray;
+const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
+const objectKeys = Object.keys;
+const objectPrototype = Object.prototype;
+const jsonParse = JSON.parse;
+const structuredCloneValue = structuredClone;
 
 /**
  * Memory backend configuration
  */
-interface MemoryBackendConfig extends BackendConfig {
+interface MemoryBackendConfig extends BackendConfig, WorkflowJsonSerializationOptions {
   /** Maximum queue size (default: 10000) */
   maxQueueSize?: number;
 }
@@ -57,6 +73,133 @@ interface MemoryBackendConfig extends BackendConfig {
 /** Default max queue size */
 const DEFAULT_MAX_QUEUE_SIZE = 10_000;
 const RUN_OBSERVATION_QUEUE_SIZE = 64;
+
+function persistedWorkflowContext(
+  context: WorkflowContext,
+  runId: string,
+  options: WorkflowJsonSerializationOptions,
+): WorkflowContext {
+  return jsonParse(serializeWorkflowContext(context, runId, options));
+}
+
+function persistedWorkflowContextPatch(
+  context: Partial<WorkflowContext>,
+  runId: string,
+  options: WorkflowJsonSerializationOptions,
+): Partial<WorkflowContext> {
+  return jsonParse(serializeWorkflowJson(context, "context", runId, options));
+}
+
+function persistedCheckpointContext(
+  context: WorkflowContext,
+  runId: string,
+  options: WorkflowJsonSerializationOptions,
+): WorkflowContext {
+  return jsonParse(serializeWorkflowJson(context, "checkpoint.context", runId, options));
+}
+
+function persistedApprovalDecisionData(
+  data: unknown,
+  runId: string,
+  options: WorkflowJsonSerializationOptions,
+): unknown {
+  return jsonParse(serializeWorkflowJson(data, "approval decision data", runId, options));
+}
+
+function clonePersistedPendingApproval(
+  approval: PersistedPendingApproval,
+): PersistedPendingApproval {
+  const { decisionData, ...approvalWithoutDecisionData } = approval;
+  const cloned = structuredClone(approvalWithoutDecisionData);
+  if (decisionData !== undefined) {
+    objectDefineProperty(cloned, "decisionData", {
+      value: clonePersistedJsonValue(decisionData),
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return cloned;
+}
+
+type PersistedJsonContainer = Record<string, unknown> | unknown[];
+
+interface PersistedJsonCloneFrame {
+  readonly source: PersistedJsonContainer;
+  readonly target: PersistedJsonContainer;
+  readonly keys: string[];
+}
+
+function isStructuredCloneRangeError(error: unknown): boolean {
+  return error instanceof RangeError;
+}
+
+function isPersistedJsonContainer(value: unknown): value is PersistedJsonContainer {
+  return typeof value === "object" && value !== null;
+}
+
+function createPersistedJsonContainer(value: PersistedJsonContainer): PersistedJsonContainer {
+  return arrayIsArray(value) ? new ArrayConstructor(value.length) : objectCreate(objectPrototype);
+}
+
+function clonePersistedJsonValue<T>(value: T): T {
+  try {
+    return structuredCloneValue(value);
+  } catch (error) {
+    if (!isStructuredCloneRangeError(error)) throw error;
+  }
+
+  if (!isPersistedJsonContainer(value)) return value;
+
+  const root = createPersistedJsonContainer(value);
+  const frames: PersistedJsonCloneFrame[] = [{
+    source: value,
+    target: root,
+    keys: objectKeys(value),
+  }];
+  while (frames.length > 0) {
+    const frame = frames.pop()!;
+    for (const key of frame.keys) {
+      const field = objectGetOwnPropertyDescriptor(frame.source, key)?.value;
+      const clonedField = isPersistedJsonContainer(field)
+        ? createPersistedJsonContainer(field)
+        : field;
+      objectDefineProperty(frame.target, key, {
+        value: clonedField,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+      if (isPersistedJsonContainer(field) && isPersistedJsonContainer(clonedField)) {
+        frames.push({
+          source: field,
+          target: clonedField,
+          keys: objectKeys(field),
+        });
+      }
+    }
+  }
+  return root as T;
+}
+
+function clonePersistedWorkflowContext(value: WorkflowContext): WorkflowContext {
+  return clonePersistedJsonValue(value);
+}
+
+function cloneWorkflowRunWithContext(run: WorkflowRun, context: WorkflowContext): WorkflowRun {
+  const { context: _context, ...runWithoutContext } = run;
+  return {
+    ...structuredClone(runWithoutContext),
+    context,
+  };
+}
+
+function cloneWorkflowRun(run: WorkflowRun): WorkflowRun {
+  return cloneWorkflowRunWithContext(
+    run,
+    clonePersistedWorkflowContext(run.context),
+  );
+}
 
 class ObservationFeed implements AsyncIterable<WorkflowRunObservedState> {
   readonly #values: WorkflowRunObservedState[] = [];
@@ -143,6 +286,7 @@ export class MemoryBackend implements WorkflowBackend {
       prefix: "wf:",
       debug: false,
       maxQueueSize: DEFAULT_MAX_QUEUE_SIZE,
+      strictContext: false,
       ...config,
     };
   }
@@ -153,13 +297,24 @@ export class MemoryBackend implements WorkflowBackend {
 
   createRun(run: WorkflowRun): Promise<void> {
     logger.debug(`Creating run: ${run.id}`);
-    let sourceIntegrationPolicy;
+    let runForClone: WorkflowRun;
+    let context: WorkflowContext;
     try {
-      sourceIntegrationPolicy = requireWorkflowSourceIntegrationPolicy(run);
+      const { context: sourceContext, ...runWithoutContext } = run;
+      const sourceIntegrationPolicy = requireWorkflowSourceIntegrationPolicy(run);
+      context = persistedWorkflowContext(sourceContext, run.id, this.config);
+      runForClone = {
+        ...runWithoutContext,
+        context,
+        sourceIntegrationPolicy,
+      };
     } catch (error) {
       return Promise.reject(error);
     }
-    this.runs.set(run.id, structuredClone({ ...run, sourceIntegrationPolicy }));
+    this.runs.set(
+      run.id,
+      cloneWorkflowRunWithContext(runForClone, context),
+    );
     this.runRevisions.set(run.id, 0);
     return Promise.resolve();
   }
@@ -169,7 +324,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (!run) return null;
 
     return {
-      ...structuredClone(run),
+      ...cloneWorkflowRun(run),
       pendingApprovals: await this.getPendingApprovals(runId),
     };
   }
@@ -190,13 +345,36 @@ export class MemoryBackend implements WorkflowBackend {
 
     logger.debug(`Updating run: ${runId}`, patch);
 
-    const { contextDeletes = [], nodeStateDeletes = [], ...storedPatch } = patch;
-    const context = { ...run.context, ...patch.context };
+    const {
+      context: patchContext,
+      contextDeletes = [],
+      nodeStateDeletes = [],
+      ...storedPatch
+    } = patch;
+    const patchContextKeys = patchContext === undefined ? [] : objectKeys(patchContext);
+    let contextPatch: Partial<WorkflowContext> | undefined;
+    try {
+      contextPatch = patchContext === undefined
+        ? undefined
+        : persistedWorkflowContextPatch(patchContext, runId, this.config);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    const currentRun = this.runs.get(runId);
+    if (!currentRun) {
+      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
+    const context = { ...currentRun.context, ...contextPatch };
+    if (contextPatch !== undefined) {
+      for (const key of patchContextKeys) {
+        if (!objectHasOwn(contextPatch, key)) delete context[key];
+      }
+    }
     for (const key of contextDeletes) delete context[key];
-    const nodeStates = { ...run.nodeStates, ...patch.nodeStates };
+    const nodeStates = { ...currentRun.nodeStates, ...patch.nodeStates };
     for (const key of nodeStateDeletes) delete nodeStates[key];
     const updated: WorkflowRun = {
-      ...run,
+      ...currentRun,
       ...storedPatch,
       nodeStates,
       context,
@@ -277,10 +455,23 @@ export class MemoryBackend implements WorkflowBackend {
 
     logger.debug(`Restoring run state snapshot: ${runId}`);
 
+    let context: WorkflowContext | undefined;
+    try {
+      context = snapshot.context === undefined
+        ? undefined
+        : persistedWorkflowContext(snapshot.context, runId, this.config);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+
     // Replacement, not the per-key merge updateRun applies: keys written after
     // the snapshot must not survive a checkpoint restore, or nodes completed
     // after the checkpoint stay completed and are skipped on replay.
-    const updated: WorkflowRun = { ...run, ...snapshot };
+    const updated: WorkflowRun = {
+      ...run,
+      ...snapshot,
+      ...(context !== undefined ? { context } : {}),
+    };
     this.runs.set(runId, updated);
     this.publishRunObservation(runId, updated);
 
@@ -342,9 +533,9 @@ export class MemoryBackend implements WorkflowBackend {
 
     return Promise.resolve({
       initial: {
-        ...structuredClone(run),
+        ...cloneWorkflowRun(run),
         pendingApprovals: (this.approvals.get(runId) ?? []).map((approval) =>
-          structuredClone(approval)
+          clonePersistedPendingApproval(approval)
         ),
       },
       changes: feed,
@@ -441,7 +632,7 @@ export class MemoryBackend implements WorkflowBackend {
     const end = filter.limit ? start + filter.limit : undefined;
     runs = runs.slice(start, end);
 
-    return Promise.resolve(runs.map((r) => structuredClone(r)));
+    return Promise.resolve(runs.map((run) => cloneWorkflowRun(run)));
   }
 
   countRuns(filter: RunFilter): Promise<number> {
@@ -469,7 +660,13 @@ export class MemoryBackend implements WorkflowBackend {
   saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void> {
     logger.debug("Saving checkpoint", { checkpointId: checkpoint.id, runId });
     const checkpoints = this.checkpoints.get(runId) ?? [];
-    appendRetainedCheckpoint(checkpoints, checkpoint);
+    let context: WorkflowContext;
+    try {
+      context = persistedCheckpointContext(checkpoint.context, runId, this.config);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    appendRetainedCheckpoint(checkpoints, { ...checkpoint, context });
     this.checkpoints.set(runId, checkpoints);
     return Promise.resolve();
   }
@@ -488,8 +685,24 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.resolve(false);
     }
 
+    let persistedCheckpoint: Checkpoint;
+    try {
+      const context = persistedCheckpointContext(checkpoint.context, storageRunId, this.config);
+      persistedCheckpoint = cloneRetainedCheckpoint({ ...checkpoint, context });
+    } catch (error) {
+      return Promise.reject(error);
+    }
+
+    const currentRun = this.runs.get(ownershipRunId);
+    if (
+      !currentRun || !expectedStatuses.includes(currentRun.status) ||
+      currentRun.workerId !== expectedWorkerId
+    ) {
+      return Promise.resolve(false);
+    }
+
     const checkpoints = this.checkpoints.get(storageRunId) ?? [];
-    appendRetainedCheckpoint(checkpoints, checkpoint);
+    appendRetainedCheckpoint(checkpoints, persistedCheckpoint);
     this.checkpoints.set(storageRunId, checkpoints);
     return Promise.resolve(true);
   }
@@ -499,12 +712,12 @@ export class MemoryBackend implements WorkflowBackend {
     if (!checkpoints?.length) return Promise.resolve(null);
 
     const latest = checkpoints[checkpoints.length - 1];
-    return Promise.resolve(latest ? structuredClone(latest) : null);
+    return Promise.resolve(latest ? cloneRetainedCheckpoint(latest) : null);
   }
 
   getCheckpoints(runId: string): Promise<Checkpoint[]> {
     const checkpoints = this.checkpoints.get(runId) ?? [];
-    return Promise.resolve(checkpoints.map((c) => structuredClone(c)));
+    return Promise.resolve(checkpoints.map((c) => cloneRetainedCheckpoint(c)));
   }
 
   deleteCheckpoint(runId: string, checkpointId: string): Promise<void> {
@@ -631,7 +844,7 @@ export class MemoryBackend implements WorkflowBackend {
   getPendingApprovals(runId: string): Promise<PersistedPendingApproval[]> {
     const approvals = this.approvals.get(runId) ?? [];
     return Promise.resolve(
-      approvals.filter((a) => a.status === "pending").map((a) => structuredClone(a)),
+      approvals.filter((a) => a.status === "pending").map((a) => clonePersistedPendingApproval(a)),
     );
   }
 
@@ -641,7 +854,7 @@ export class MemoryBackend implements WorkflowBackend {
   ): Promise<PersistedPendingApproval | null> {
     const approvals = this.approvals.get(runId) ?? [];
     const approval = approvals.find((a) => a.id === approvalId);
-    return Promise.resolve(approval ? structuredClone(approval) : null);
+    return Promise.resolve(approval ? clonePersistedPendingApproval(approval) : null);
   }
 
   updateApproval(
@@ -666,7 +879,14 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.resolve(false);
     }
 
-    const decisionData = decision.data === undefined ? undefined : structuredClone(decision.data);
+    let decisionData: unknown;
+    if (decision.data !== undefined) {
+      try {
+        decisionData = persistedApprovalDecisionData(decision.data, runId, this.config);
+      } catch (error) {
+        return Promise.reject(error);
+      }
+    }
     logger.debug("Updating approval", { approvalId, decision });
     approval.status = decision.approved ? "approved" : "rejected";
     approval.decidedBy = decision.approver;
@@ -686,7 +906,10 @@ export class MemoryBackend implements WorkflowBackend {
       if (runId !== undefined && claimRunId !== runId) continue;
       for (const approval of approvals) {
         if (approval.reconciliationPending === true) {
-          claims.push({ runId: claimRunId, approval: structuredClone(approval) });
+          claims.push({
+            runId: claimRunId,
+            approval: clonePersistedPendingApproval(approval),
+          });
         }
       }
     }
@@ -769,7 +992,7 @@ export class MemoryBackend implements WorkflowBackend {
           continue;
         }
 
-        result.push({ runId, approval: structuredClone(approval) });
+        result.push({ runId, approval: clonePersistedPendingApproval(approval) });
       }
     }
 
@@ -1262,7 +1485,7 @@ export class MemoryBackend implements WorkflowBackend {
           run.createdAt.getTime();
         return now - lastActivity >= stalledThreshold;
       })
-      .map((run) => structuredClone(run));
+      .map((run) => cloneWorkflowRun(run));
 
     return Promise.resolve(stalled);
   }

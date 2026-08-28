@@ -3,6 +3,7 @@ import { VeryfrontError } from "#veryfront/errors";
 import {
   assertEquals,
   assertInstanceOf,
+  assertStrictEquals,
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
@@ -17,6 +18,7 @@ import {
 import type { WorkflowContext } from "./types.ts";
 import {
   MAX_TRAVERSAL_DEPTH,
+  prepareWorkflowJson,
   serializeWorkflowContext,
   serializeWorkflowJson,
 } from "./context-serialization.ts";
@@ -68,7 +70,7 @@ describe("serializeWorkflowContext", () => {
       const error = assertThrows(() => serializeWorkflowContext(contextWith({ total: 1n })));
 
       assertEquals(error instanceof Error, true);
-      assertEquals((error as Error).message.includes("context.step.total"), true);
+      assertEquals((error as Error).message.includes("context.step.<redacted>"), true);
       assertEquals((error as Error).message.includes("BigInt"), true);
     });
 
@@ -78,7 +80,7 @@ describe("serializeWorkflowContext", () => {
 
       const error = assertThrows(() => serializeWorkflowContext(contextWith(cyclic)));
 
-      assertEquals((error as Error).message.includes("context.step.self"), true);
+      assertEquals((error as Error).message.includes("context.step.<redacted>"), true);
       assertEquals((error as Error).message.includes("circular"), true);
     });
 
@@ -87,7 +89,10 @@ describe("serializeWorkflowContext", () => {
         serializeWorkflowContext(contextWith({ rows: [{ id: 9n }] }))
       );
 
-      assertEquals((error as Error).message.includes("context.step.rows[0].id"), true);
+      assertEquals(
+        (error as Error).message.includes("context.step.<redacted>[0].<redacted>"),
+        true,
+      );
     });
 
     it("inspects a fatal value returned by toJSON", () => {
@@ -105,8 +110,29 @@ describe("serializeWorkflowContext", () => {
         serializeWorkflowContext(contextWith({ toJSON: () => replacement }))
       );
 
-      assertEquals((error as Error).message.includes("context.step.self"), true);
+      assertEquals((error as Error).message.includes("context.step.<redacted>"), true);
       assertEquals((error as Error).message.includes("circular"), true);
+    });
+
+    it("stops before a later getter can replace a recorded fatal error", () => {
+      let laterReads = 0;
+      const step = Object.defineProperty({ first: 1n }, "second", {
+        enumerable: true,
+        get() {
+          laterReads++;
+          throw new Error("later getter must not replace the persistence error");
+        },
+      });
+
+      const error = assertThrows(
+        () => serializeWorkflowContext(contextWith(step)),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "context.step.<redacted>");
+      assertStringIncludes(error.message, "BigInt");
+      assertEquals(laterReads, 0);
     });
   });
 
@@ -122,7 +148,7 @@ describe("serializeWorkflowContext", () => {
 
       assertEquals(JSON.parse(serialized).step.when, "1970-01-01T00:00:00.000Z");
       assertEquals(
-        paths.includes("context.step.when (Date)"),
+        paths.includes("context.step.<redacted> (Date)"),
         true,
         "a Date silently persisted as a string must be named in the lossy warning",
       );
@@ -137,7 +163,7 @@ describe("serializeWorkflowContext", () => {
 
       assertEquals(JSON.parse(serialized).step.tags, {});
       assertEquals(
-        paths.includes("context.step.tags (object)"),
+        paths.includes("context.step.<redacted> (object)"),
         true,
         "a Map silently persisted as an empty object must be named in the lossy warning",
       );
@@ -154,6 +180,526 @@ describe("serializeWorkflowContext", () => {
 
       assertEquals(JSON.parse(serialized).step.ratio, null);
     });
+
+    it("throws on lossy values when strictContext is enabled", () => {
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({
+              when: new Date(0),
+              tags: new Map([["a", 1]]),
+              missing: undefined,
+              ratio: Number.NaN,
+            }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.<redacted>");
+      assertStringIncludes(error.message, "Date");
+      assertStringIncludes(error.message, "object");
+      assertStringIncludes(error.message, "undefined");
+      assertStringIncludes(error.message, "number (NaN)");
+    });
+
+    it("throws when strictContext would persist negative zero or symbol-keyed fields lossy", () => {
+      const symbolKey = Symbol("not-persisted");
+      const symbolKeyedOutput: Record<PropertyKey, unknown> = {};
+      symbolKeyedOutput[symbolKey] = "lost";
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({
+              credit: -0,
+              symbolKeyedOutput,
+            }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.<redacted>");
+      assertStringIncludes(error.message, "number (-0)");
+      assertStringIncludes(error.message, "symbol-keyed property");
+    });
+
+    it("throws when strictContext would drop a non-enumerable symbol property", () => {
+      const value = {};
+      Object.defineProperty(value, Symbol("not-persisted"), {
+        value: "lost",
+      });
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({ value }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.<redacted>");
+      assertStringIncludes(error.message, "symbol-keyed property");
+    });
+
+    it("throws when strictContext would restore a non-extensible value as extensible", () => {
+      for (
+        const value of [
+          Object.preventExtensions({}),
+          Object.seal({}),
+          Object.freeze({}),
+          Object.preventExtensions([]),
+        ]
+      ) {
+        const error = assertThrows(
+          () =>
+            serializeWorkflowContext(
+              contextWith({ value }),
+              "run-strict-context",
+              { strictContext: true },
+            ),
+          VeryfrontError,
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertStringIncludes(error.message, "strictContext");
+        assertStringIncludes(error.message, "context.step.<redacted>");
+        assertStringIncludes(error.message, "object extensibility");
+      }
+    });
+
+    it("throws when strictContext would drop enumerable named array properties", () => {
+      const rows: unknown[] = [{ id: 1 }];
+      Object.defineProperty(rows, "meta", {
+        value: "required",
+        enumerable: true,
+      });
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({ rows }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.<redacted>.<redacted>");
+      assertStringIncludes(error.message, "array property");
+    });
+
+    it("throws when strictContext would drop hidden named array properties", () => {
+      const rows = [1, 2];
+      Object.defineProperty(rows, "metadata", {
+        value: "required",
+      });
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({ rows }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.<redacted>.<redacted>");
+      assertStringIncludes(error.message, "non-enumerable property");
+    });
+
+    it("throws when strictContext would persist a raw JSON wrapper as its parsed value", () => {
+      if (typeof jsonRawSupport.rawJSON !== "function") return;
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({ value: jsonRawSupport.rawJSON("123") }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.<redacted>");
+      assertStringIncludes(error.message, "raw JSON value");
+    });
+
+    it("throws for a Proxy in strictContext before invoking proxy traps", () => {
+      let trapCalls = 0;
+      const proxy = new Proxy({}, {
+        get() {
+          trapCalls++;
+          throw new Error("proxy get trap must not run");
+        },
+        getOwnPropertyDescriptor() {
+          trapCalls++;
+          throw new Error("proxy descriptor trap must not run");
+        },
+        getPrototypeOf() {
+          trapCalls++;
+          throw new Error("proxy prototype trap must not run");
+        },
+        ownKeys() {
+          trapCalls++;
+          throw new Error("proxy ownKeys trap must not run");
+        },
+      });
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({ proxy }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.<redacted>");
+      assertStringIncludes(error.message, "object");
+      assertEquals(trapCalls, 0);
+    });
+
+    it("throws when strictContext would duplicate a shared object reference", () => {
+      const shared = { value: 1 };
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({ left: shared, right: shared }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.<redacted>");
+      assertStringIncludes(error.message, "shared reference");
+    });
+
+    it("throws when strictContext would persist an array subclass as a plain array", () => {
+      class Rows extends Array<number> {
+        total(): number {
+          return this.length;
+        }
+      }
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({ rows: new Rows(1, 2) }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.<redacted>");
+      assertStringIncludes(error.message, "array prototype");
+    });
+
+    it("throws when strictContext would persist an accessor as a data property", () => {
+      let getterReads = 0;
+      const step: { readonly count?: number } = {};
+      Object.defineProperty(step, "count", {
+        enumerable: true,
+        get() {
+          getterReads++;
+          return 1;
+        },
+      });
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith(step),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.<redacted>");
+      assertStringIncludes(error.message, "accessor property");
+      assertEquals(getterReads, 1);
+    });
+
+    it("throws when strictContext would relax data property attributes", () => {
+      const readonlyObject = {};
+      Object.defineProperty(readonlyObject, "required", {
+        value: 1,
+        enumerable: true,
+        configurable: true,
+      });
+      const fixedObject = {};
+      Object.defineProperty(fixedObject, "required", {
+        value: 1,
+        enumerable: true,
+        writable: true,
+      });
+      const readonlyIndex = [1];
+      Object.defineProperty(readonlyIndex, "0", {
+        value: 1,
+        enumerable: true,
+        configurable: true,
+        writable: false,
+      });
+      const fixedIndex = [1];
+      Object.defineProperty(fixedIndex, "0", {
+        value: 1,
+        enumerable: true,
+        configurable: false,
+        writable: true,
+      });
+      const hiddenIndex = [1];
+      Object.defineProperty(hiddenIndex, "0", {
+        value: 1,
+        enumerable: false,
+        configurable: true,
+        writable: true,
+      });
+
+      for (
+        const value of [readonlyObject, fixedObject, readonlyIndex, fixedIndex, hiddenIndex]
+      ) {
+        const error = assertThrows(
+          () =>
+            serializeWorkflowContext(
+              contextWith({ value }),
+              "run-strict-context",
+              { strictContext: true },
+            ),
+          VeryfrontError,
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertStringIncludes(error.message, "property attributes");
+      }
+    });
+
+    it("throws when strictContext would restore a writable array length", () => {
+      const rows = [1, 2];
+      Object.defineProperty(rows, "length", { writable: false });
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({ rows }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "array length property");
+    });
+
+    it("throws when a built-in hides behind Object.prototype in strictContext", () => {
+      const disguisedDate = new Date(0);
+      Object.setPrototypeOf(disguisedDate, Object.prototype);
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({ disguisedDate }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "object");
+    });
+
+    it("throws when host-recognized builtins hide behind Object.prototype", () => {
+      for (
+        const value of [
+          new WeakMap(),
+          new WeakSet(),
+          new WeakRef({}),
+          new FinalizationRegistry(() => {}),
+          new URL("https://example.com"),
+          Promise.resolve(),
+          Object(Symbol("hidden")),
+          Object(1n),
+        ]
+      ) {
+        Object.setPrototypeOf(value, Object.prototype);
+
+        const error = assertThrows(
+          () =>
+            serializeWorkflowContext(
+              contextWith({ value }),
+              "run-strict-context",
+              { strictContext: true },
+            ),
+          VeryfrontError,
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertStringIncludes(error.message, "strictContext");
+      }
+    });
+
+    it("throws when host-recognized builtins hide behind Object.prototype with own data", () => {
+      for (
+        const value of [
+          new WeakRef({}),
+          new FinalizationRegistry(() => {}),
+          new URL("https://example.com"),
+        ]
+      ) {
+        Object.setPrototypeOf(value, Object.prototype);
+        Object.defineProperty(value, "metadata", {
+          configurable: true,
+          enumerable: true,
+          value: "ordinary data",
+          writable: true,
+        });
+
+        const error = assertThrows(
+          () =>
+            serializeWorkflowContext(
+              contextWith({ value }),
+              "run-strict-context",
+              { strictContext: true },
+            ),
+          VeryfrontError,
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertStringIncludes(error.message, "strictContext");
+      }
+    });
+
+    it("does not probe intrinsic slot getters for ordinary strict objects", async () => {
+      const originalGetTime = Date.prototype.getTime;
+      let probeCalls = 0;
+      Date.prototype.getTime = function (this: Date): number {
+        probeCalls++;
+        return Reflect.apply(originalGetTime, this, []);
+      };
+
+      try {
+        const isolated = await import(
+          "./context-serialization.ts?non-throwing-native-brand-checks"
+        );
+        isolated.serializeWorkflowContext(
+          contextWith({ value: { nested: true } }),
+          "run-strict-context",
+          { strictContext: true },
+        );
+      } finally {
+        Date.prototype.getTime = originalGetTime;
+      }
+
+      assertEquals(probeCalls, 0);
+    });
+
+    it("throws when strictContext would drop a non-enumerable property", () => {
+      const step = {};
+      Object.defineProperty(step, "required", {
+        value: 1,
+      });
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith(step),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.<redacted>");
+      assertStringIncludes(error.message, "non-enumerable property");
+    });
+
+    it("throws when strictContext would persist a null-prototype object as plain", () => {
+      const step = Object.create(null) as Record<string, unknown>;
+      step.value = 1;
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith(step),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step");
+      assertStringIncludes(error.message, "context.step (object)");
+    });
+
+    it("throws when strictContext would persist an array accessor as a data element", () => {
+      let getterReads = 0;
+      const rows: number[] = [];
+      Object.defineProperty(rows, "0", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          getterReads++;
+          Object.defineProperty(rows, "0", {
+            enumerable: true,
+            value: 1,
+          });
+          return 1;
+        },
+      });
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({ rows }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.<redacted>[0]");
+      assertStringIncludes(error.message, "accessor property");
+      assertEquals(getterReads, 1);
+    });
   });
 
   it("keeps traversing a class instance's enumerable fields", () => {
@@ -167,7 +713,7 @@ describe("serializeWorkflowContext", () => {
 
     const error = assertThrows(() => serializeWorkflowContext(contextWith(new Receipt())));
 
-    assertEquals((error as Error).message.includes("context.step.total"), true);
+    assertEquals((error as Error).message.includes("context.step.<redacted>"), true);
     assertEquals((error as Error).message.includes("BigInt"), true);
   });
 
@@ -178,7 +724,7 @@ describe("serializeWorkflowContext", () => {
 
     const error = assertThrows(() => serializeWorkflowContext(contextWith(new Link())));
 
-    assertEquals((error as Error).message.includes("context.step.next"), true);
+    assertEquals((error as Error).message.includes("context.step.<redacted>"), true);
     assertEquals((error as Error).message.includes("circular"), true);
   });
 
@@ -190,7 +736,10 @@ describe("serializeWorkflowContext", () => {
       serializeWorkflowJson({ step: { output: { total: 1n } } }, "nodeStates")
     );
 
-    assertEquals((error as Error).message.includes("nodeStates.step.output.total"), true);
+    assertEquals(
+      (error as Error).message.includes("nodeStates.step.<redacted>.<redacted>"),
+      true,
+    );
   });
 
   describe("diagnostic content", () => {
@@ -200,13 +749,17 @@ describe("serializeWorkflowContext", () => {
       );
 
       assertEquals((error as Error).message.includes("user@example.com"), false);
-      assertEquals((error as Error).message.includes("<redacted>.total"), true);
+      assertEquals(
+        (error as Error).message.includes("context.step.<redacted>.<redacted>"),
+        true,
+      );
     });
 
-    it("keeps ordinary field names", () => {
-      const error = assertThrows(() => serializeWorkflowContext(contextWith({ orderTotal: 1n })));
+    it("redacts identifier-shaped runtime keys", () => {
+      const error = assertThrows(() => serializeWorkflowContext(contextWith({ acct_ABC123: 1n })));
 
-      assertEquals((error as Error).message.includes("context.step.orderTotal"), true);
+      assertEquals((error as Error).message.includes("acct_ABC123"), false);
+      assertEquals((error as Error).message.includes("context.step.<redacted>"), true);
     });
 
     it("does not trust a value-controlled type label", () => {
@@ -390,6 +943,37 @@ describe("serializeWorkflowContext", () => {
     assertEquals(JSON.parse(serialized).step, [1]);
   });
 
+  it("does not enumerate dense array keys during default persistence diagnostics", () => {
+    let ownKeysCalls = 0;
+    const values = new Proxy([1, 2, 3], {
+      ownKeys(target) {
+        ownKeysCalls++;
+        return Reflect.ownKeys(target);
+      },
+    });
+
+    const serialized = serializeWorkflowContext(contextWith({ values }));
+
+    assertEquals(JSON.parse(serialized).step.values, [1, 2, 3]);
+    assertEquals(ownKeysCalls, 0);
+  });
+
+  it("does not run named-array diagnostics during default persistence", () => {
+    const values = [1, 2, 3];
+    Object.defineProperty(values, "meta", {
+      value: "diagnostic-only",
+      enumerable: true,
+    });
+
+    let serialized = "";
+    const warnings = captureWorkflowWarnings(() => {
+      serialized = serializeWorkflowContext(contextWith({ values }));
+    });
+
+    assertEquals(JSON.parse(serialized).step.values, [1, 2, 3]);
+    assertEquals(warnings, []);
+  });
+
   it("rejects a BigInt array length like native JSON", () => {
     const values = new Proxy([1], {
       get: (target, key, receiver) => {
@@ -433,7 +1017,10 @@ describe("serializeWorkflowContext", () => {
       // the stack overflow itself would test the host, since how deep the walk
       // and `JSON.stringify` each reach depends on the engine and the stack a
       // test runner leaves them.
-      let deep: unknown = { when: new Date(0) };
+      let deep: unknown = {
+        when: new Date(0),
+        exactNumber: jsonRawSupport.rawJSON("1e+2"),
+      };
       for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
 
       let serialized = "";
@@ -443,6 +1030,172 @@ describe("serializeWorkflowContext", () => {
 
       assertEquals(warnings, []);
       assertEquals(serialized, JSON.stringify({ input: {}, step: deep }));
+    });
+
+    it("parses a deep JSON tail without a recursive reviver when no raw token exists", () => {
+      const depth = 4000;
+      let value: unknown = 0;
+      for (let index = 0; index < depth; index++) value = { nested: value };
+      const expected = `${'{"nested":'.repeat(depth)}0${"}".repeat(depth)}`;
+      const prepared = prepareWorkflowJson(value, "output");
+
+      assertEquals(prepared.serialized, expected);
+      let restored = prepared.normalized;
+      for (let index = 0; index < depth; index++) {
+        restored = (restored as { nested: unknown }).nested;
+      }
+      assertEquals(restored, 0);
+    });
+
+    it("encodes a deep accessor tail without native recursion", () => {
+      const depth = PAST_THE_WALK + 8_000;
+      let getterCalls = 0;
+      const leaf = {} as { value: string };
+      Object.defineProperty(leaf, "value", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return "stored";
+        },
+      });
+      let value: unknown = leaf;
+      for (let index = 0; index < depth; index++) value = { nested: value };
+
+      const prepared = prepareWorkflowJson(value, "output");
+      let restored = prepared.normalized;
+      for (let index = 0; index < depth; index++) {
+        restored = (restored as { nested: unknown }).nested;
+      }
+
+      assertEquals(restored, { value: "stored" });
+      assertEquals(getterCalls, 1);
+      assertEquals(prepared.serialized.endsWith('{"value":"stored"}' + "}".repeat(depth)), true);
+    });
+
+    it("keeps control strings and JSON edge primitives in an encoded tail", () => {
+      const marker = "\u0000workflow-tail";
+      const leaf = Object.create(null) as Record<string, unknown>;
+      leaf.marker = marker;
+      leaf.values = [undefined, Symbol("omitted"), -0, Number.NaN, true];
+      Object.defineProperty(leaf, "__proto__", {
+        configurable: true,
+        enumerable: true,
+        value: null,
+        writable: true,
+      });
+      let deep: unknown = leaf;
+      for (let index = 0; index < PAST_THE_WALK; index++) deep = { nested: deep };
+      const value = {
+        [marker]: "outer key",
+        deep,
+        exactNumber: jsonRawSupport.rawJSON("1e+2"),
+      };
+
+      const expected = JSON.stringify(value);
+      const prepared = prepareWorkflowJson(value, "output");
+
+      assertEquals(prepared.serialized, expected);
+      assertEquals(JSON.stringify(prepared.normalized), expected);
+    });
+
+    it("throws in strictContext before persisting uninspected deep values", () => {
+      let deep: unknown = { when: new Date(0) };
+      for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith(deep),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step");
+      assertStringIncludes(error.message, "uninspected value");
+    });
+
+    it("throws the strictContext diagnostic before JSON sees a fatal value below the cutoff", () => {
+      let deep: unknown = { total: 1n };
+      for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith(deep),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "uninspected value");
+    });
+
+    it("translates fatal JSON errors below the cutoff to redacted persistence errors", () => {
+      const sensitiveKey = "user@example.com";
+      const cyclic: Record<string, unknown> = {};
+      cyclic[sensitiveKey] = cyclic;
+
+      for (const tail of [{ [sensitiveKey]: 1n }, { boxed: Object(1n) }, cyclic]) {
+        let deep: unknown = tail;
+        for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+
+        const error = assertThrows(
+          () => serializeWorkflowContext(contextWith(deep)),
+          VeryfrontError,
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertStringIncludes(error.message, "cannot be persisted");
+        assertStringIncludes(error.message, "context.step");
+        assertEquals(error.message.includes(sensitiveKey), false);
+      }
+    });
+
+    it("preserves user TypeErrors thrown below the cutoff", () => {
+      const toJsonError = new TypeError("user toJSON failure");
+      const getterError = new TypeError("user getter failure");
+      const getterTail = Object.defineProperty({}, "value", {
+        enumerable: true,
+        get() {
+          throw getterError;
+        },
+      });
+
+      for (
+        const [tail, expected] of [
+          [{
+            toJSON: () => {
+              throw toJsonError;
+            },
+          }, toJsonError],
+          [getterTail, getterError],
+        ] as const
+      ) {
+        let deep: unknown = tail;
+        for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+
+        const error = assertThrows(() => serializeWorkflowContext(contextWith(deep)));
+
+        assertStrictEquals(error, expected);
+      }
+    });
+
+    it("keeps shared references below the cutoff distinct from cycles", () => {
+      const shared = { value: 1 };
+      let deep: unknown = { left: shared, right: shared };
+      for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+
+      const context = contextWith(deep);
+
+      assertEquals(serializeWorkflowContext(context), JSON.stringify(context));
     });
 
     it("still names a fatal value found above the depth it stops at", () => {
@@ -456,7 +1209,7 @@ describe("serializeWorkflowContext", () => {
         serializeWorkflowContext(contextWith({ shallow: 1n, deep }))
       );
 
-      assertEquals((error as Error).message.includes("context.step.shallow"), true);
+      assertEquals((error as Error).message.includes("context.step.<redacted>"), true);
       assertEquals((error as Error).message.includes(".n.n"), false);
     });
 
@@ -464,7 +1217,7 @@ describe("serializeWorkflowContext", () => {
       // Handing the whole root back to `JSON.stringify` would re-run every
       // getter and `toJSON` the walk had already run on the way down, and a
       // hook that answers differently the second time would then persist a
-      // value this check never saw. Only the subtree below the cutoff is left
+      // value this check never saw. Only the subtree at the cutoff is handed
       // to JSON, so nothing above it is read twice.
       let reads = 0;
       let deep: unknown = { leaf: 1 };
@@ -488,6 +1241,203 @@ describe("serializeWorkflowContext", () => {
       assertEquals(JSON.parse(serialized).step.counted, 1);
     });
 
+    it("runs hooks below the cutoff before reading later siblings", () => {
+      const makeContext = (): WorkflowContext => {
+        const later = { observed: 0 };
+        let deep: unknown = {
+          toJSON() {
+            later.observed = 1;
+            return { leaf: true };
+          },
+        };
+        for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+        return contextWith({ deep, later });
+      };
+
+      const serialized = serializeWorkflowContext(makeContext());
+      const native = JSON.stringify(makeContext());
+
+      assertEquals(serialized, native);
+      assertEquals(JSON.parse(serialized).step.later.observed, 1);
+    });
+
+    it("uses inherited function toJSON hooks through the complete prototype chain below the cutoff", () => {
+      const functionPrototype = Object.getPrototypeOf(function hookCarrier() {});
+      const inheritedToJson = {
+        toJSON() {
+          return { fromHook: true };
+        },
+      };
+      const intermediatePrototype = Object.create(inheritedToJson);
+      function hookCarrier() {}
+      Object.setPrototypeOf(hookCarrier, intermediatePrototype);
+      let deep: unknown = { hookCarrier };
+      for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+
+      try {
+        const serialized = serializeWorkflowContext(contextWith(deep));
+        let parsed = JSON.parse(serialized).step;
+        for (let index = 0; index < PAST_THE_WALK; index++) parsed = parsed.n;
+
+        assertEquals(parsed, { hookCarrier: { fromHook: true } });
+      } finally {
+        Object.setPrototypeOf(hookCarrier, functionPrototype);
+      }
+    });
+
+    it("reports BigInt returned by an inherited function toJSON below the cutoff", () => {
+      const functionPrototype = Object.getPrototypeOf(function hookCarrier() {});
+      const inheritedToJson = {
+        toJSON() {
+          return 1n;
+        },
+      };
+      const intermediatePrototype = Object.create(inheritedToJson);
+      function hookCarrier() {}
+      Object.setPrototypeOf(hookCarrier, intermediatePrototype);
+      let deep: unknown = { hookCarrier };
+      for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+
+      try {
+        const error = assertThrows(
+          () => serializeWorkflowContext(contextWith(deep)),
+          VeryfrontError,
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertStringIncludes(error.message, "cannot be persisted");
+        assertStringIncludes(error.message, "BigInt");
+      } finally {
+        Object.setPrototypeOf(hookCarrier, functionPrototype);
+      }
+    });
+
+    it("keeps deep completed aliases on the iterative encoder", () => {
+      const shared = { value: 1 };
+      let deep: unknown = { left: shared, right: shared };
+      for (let index = 0; index < PAST_THE_WALK + 8000; index++) deep = { n: deep };
+
+      const prepared = prepareWorkflowJson(deep, "output");
+
+      assertEquals(prepared.serialized?.includes('"left":{"value":1},"right":{"value":1}'), true);
+    });
+
+    it("does not reapply toJSON on a cutoff replacement value", () => {
+      let leafToJsonCalls = 0;
+      let replacementToJsonCalls = 0;
+      let replacementGetterCalls = 0;
+      const replacement = {
+        value: 1,
+        toJSON() {
+          replacementToJsonCalls++;
+          return { value: 2 };
+        },
+      };
+      Object.defineProperty(replacement, "dynamic", {
+        enumerable: true,
+        get() {
+          replacementGetterCalls++;
+          return 3;
+        },
+      });
+      let deep: unknown = {
+        toJSON() {
+          leafToJsonCalls++;
+          return replacement;
+        },
+      };
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH - 1; index++) {
+        deep = { n: deep };
+      }
+
+      const serialized = serializeWorkflowContext(contextWith(deep));
+      let parsed = JSON.parse(serialized).step;
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH - 1; index++) {
+        parsed = parsed.n;
+      }
+
+      assertEquals(leafToJsonCalls, 1);
+      assertEquals(replacementToJsonCalls, 0);
+      assertEquals(replacementGetterCalls, 1);
+      assertEquals(parsed, { value: 1, dynamic: 3 });
+    });
+
+    it("snapshots an inert deep tail before a later sibling mutates it", () => {
+      const makeContext = (): WorkflowContext => {
+        const leaf = { value: 1 };
+        let deep: unknown = leaf;
+        for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+
+        const output: Record<string, unknown> = { deep };
+        Object.defineProperty(output, "later", {
+          enumerable: true,
+          get: () => {
+            leaf.value = 2;
+            return true;
+          },
+        });
+        return contextWith(output);
+      };
+
+      assertEquals(
+        serializeWorkflowContext(makeContext()),
+        JSON.stringify(makeContext()),
+      );
+    });
+
+    it("isolates a deep snapshot from later prototype hooks", () => {
+      const objectToJson = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+      const arrayToJson = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+      const restore = (target: object, descriptor: PropertyDescriptor | undefined) => {
+        if (descriptor === undefined) Reflect.deleteProperty(target, "toJSON");
+        else Object.defineProperty(target, "toJSON", descriptor);
+      };
+      const makeContext = (): WorkflowContext => {
+        let deep: unknown = { items: [{ value: 1 }] };
+        for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+
+        const output: Record<string, unknown> = { deep };
+        Object.defineProperty(output, "later", {
+          enumerable: true,
+          get: () => {
+            for (const prototype of [Object.prototype, Array.prototype]) {
+              Object.defineProperty(prototype, "toJSON", {
+                configurable: true,
+                value: () => "polluted",
+              });
+            }
+            return true;
+          },
+        });
+        return contextWith(output);
+      };
+
+      try {
+        const serialized = serializeWorkflowContext(makeContext());
+        restore(Object.prototype, objectToJson);
+        restore(Array.prototype, arrayToJson);
+        assertEquals(serialized, JSON.stringify(makeContext()));
+      } finally {
+        restore(Object.prototype, objectToJson);
+        restore(Array.prototype, arrayToJson);
+      }
+    });
+
+    it("names a cycle that returns to an active ancestor at the cutoff", () => {
+      const output: Record<string, unknown> = {};
+      let deep: unknown = output;
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH; index++) deep = { n: deep };
+      output.deep = deep;
+
+      const error = assertThrows(
+        () => serializeWorkflowContext(contextWith(output)),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "circular reference");
+    });
+
     it("counts every hole in a sparse array without keeping one entry each", () => {
       // Only MAX_REPORTED_PATHS paths ever reach a message, so keeping an entry
       // per hole would spend memory proportional to the payload on the
@@ -502,7 +1452,7 @@ describe("serializeWorkflowContext", () => {
       const retained = process.memoryUsage().heapUsed - before;
       const paths = String(warnings[0]?.context?.paths);
 
-      assertEquals(paths.includes("context.step.rows[0] (array hole)"), true);
+      assertEquals(paths.includes("context.step.<redacted>[0] (array hole)"), true);
       assertEquals(paths.includes("and 499995 more"), true);
       assertEquals(retained < 50_000_000, true);
     });

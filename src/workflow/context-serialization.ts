@@ -1,6 +1,8 @@
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 import {
+  canIdentifyNonPlainBuiltinsWithoutHooks,
   canIdentifyProxyWithoutHooks,
+  isNonPlainBuiltinWithoutHooks,
   isProxyWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
 import { agentLogger } from "#veryfront/utils";
@@ -8,11 +10,23 @@ import type { WorkflowContext } from "./types.ts";
 
 const logger = agentLogger.component("workflow-context");
 const arrayIsArray = Array.isArray;
+const arrayJoin = Array.prototype.join;
+const arrayPrototype = Array.prototype;
 const BigIntValueOf = BigInt.prototype.valueOf;
 const BooleanValueOf = Boolean.prototype.valueOf;
 const dateGetTime = Date.prototype.getTime;
+const ErrorConstructor = Error as typeof Error & {
+  isError?: (value: unknown) => boolean;
+};
+const errorIsError = typeof ErrorConstructor.isError === "function"
+  ? ErrorConstructor.isError
+  : undefined;
 const jsonIsRawJSON = typeof (JSON as JsonRawSupport).isRawJSON === "function"
   ? (JSON as JsonRawSupport).isRawJSON
+  : undefined;
+const jsonParse = JSON.parse;
+const jsonRawJSON = typeof (JSON as JsonRawSupport).rawJSON === "function"
+  ? (JSON as JsonRawSupport).rawJSON
   : undefined;
 const jsonStringify = JSON.stringify;
 const mathFloor = Math.floor;
@@ -25,22 +39,100 @@ const ObjectConstructor = Object;
 const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetOwnPropertySymbols = Object.getOwnPropertySymbols;
 const objectGetPrototypeOf = Object.getPrototypeOf;
+const mapSizeGet = objectGetOwnPropertyDescriptor(Map.prototype, "size")?.get;
 const objectHasOwn = Object.hasOwn;
+const objectIs = Object.is;
+const objectIsExtensible = Object.isExtensible;
 const objectKeys = Object.keys;
 const objectPrototype = Object.prototype;
 const objectToString = Object.prototype.toString;
 const POSITIVE_INFINITY = Number.POSITIVE_INFINITY;
 const reflectApply = Reflect.apply;
 const reflectGet = Reflect.get;
-const regExpExec = RegExp.prototype.exec;
+const reflectOwnKeys = Reflect.ownKeys;
+const regExpSourceGet = objectGetOwnPropertyDescriptor(RegExp.prototype, "source")?.get;
 const SetConstructor = Set;
+const setSizeGet = objectGetOwnPropertyDescriptor(Set.prototype, "size")?.get;
 const setAdd = Set.prototype.add;
 const setDelete = Set.prototype.delete;
 const setHas = Set.prototype.has;
 const StringConstructor = String;
 const StringValueOf = String.prototype.valueOf;
+const SymbolValueOf = Symbol.prototype.valueOf;
 const symbolToStringTag = Symbol.toStringTag;
+const typedArrayPrototype = objectGetPrototypeOf(Uint8Array.prototype);
+const typedArrayByteLengthGet = objectGetOwnPropertyDescriptor(
+  typedArrayPrototype,
+  "byteLength",
+)?.get;
+const arrayBufferByteLengthGet = objectGetOwnPropertyDescriptor(
+  ArrayBuffer.prototype,
+  "byteLength",
+)?.get;
+const dataViewByteLengthGet = objectGetOwnPropertyDescriptor(
+  DataView.prototype,
+  "byteLength",
+)?.get;
+const WeakMapConstructor = WeakMap;
+const WeakSetConstructor = WeakSet;
+const weakMapGet = WeakMap.prototype.get;
+const weakMapSet = WeakMap.prototype.set;
+const weakSetAdd = WeakSet.prototype.add;
+const weakSetHas = WeakSet.prototype.has;
+const nativeBrandProbeKey = objectCreate(null);
+const workflowJsonPrototypeSnapshots = new WeakSetConstructor<object>();
+const deferredWorkflowJsonSources = new WeakMapConstructor<object, JsonTraversalReference>();
+
+function isWorkflowJsonPrototypeSnapshot(value: JsonTraversalReference): boolean {
+  return reflectApply(weakSetHas, workflowJsonPrototypeSnapshots, [value]) === true;
+}
+
+/** @internal Defer reading a checkpoint value until its ownership fence passes. */
+export function deferWorkflowJsonValue(value: JsonTraversalReference): object {
+  const deferred = objectCreate(null);
+  objectDefineProperty(deferred, "toJSON", {
+    configurable: false,
+    enumerable: false,
+    value: (key: string) => {
+      const toJson = reflectGet(value, "toJSON");
+      return typeof toJson === "function" ? reflectApply(toJson, value, [key]) : value;
+    },
+    writable: false,
+  });
+  reflectApply(weakMapSet, deferredWorkflowJsonSources, [deferred, value]);
+  return deferred;
+}
+
+/** @internal Whether a value is waiting for a successful persistence fence. */
+export function isDeferredWorkflowJsonValue(value: unknown): value is object {
+  return typeof value === "object" && value !== null &&
+    reflectApply(weakMapGet, deferredWorkflowJsonSources, [value]) !== undefined;
+}
+
+/** @internal Stabilizes inherited `toJSON` lookup on an owned persistence clone. */
+export function stabilizeWorkflowJsonPrototypeSnapshot<T extends object>(value: T): T {
+  objectDefineProperty(value, "toJSON", {
+    configurable: false,
+    enumerable: false,
+    value: undefined,
+    writable: false,
+  });
+  reflectApply(weakSetAdd, workflowJsonPrototypeSnapshots, [value]);
+  return value;
+}
+
+function isWorkflowJsonPrototypeSnapshotShadow(
+  value: JsonTraversalReference,
+  key: string | symbol,
+  descriptor: PropertyDescriptor | undefined,
+): boolean {
+  return key === "toJSON" && descriptor !== undefined &&
+    "value" in descriptor && descriptor.value === undefined &&
+    descriptor.enumerable === false &&
+    isWorkflowJsonPrototypeSnapshot(value);
+}
 
 function defineArrayElement<T>(values: T[], index: number, value: T): void {
   objectDefineProperty(values, index, {
@@ -67,7 +159,7 @@ const MAX_REPORTED_PATHS = 5;
 export const MAX_TRAVERSAL_DEPTH = 1000;
 
 /**
- * Property names safe to quote verbatim in a diagnostic.
+ * Redact runtime property names before placing them in a diagnostic.
  *
  * A path is built from the keys a step chose, and a step is free to key an
  * object by an email address, an account id, or any other payload value. The
@@ -76,14 +168,11 @@ export const MAX_TRAVERSAL_DEPTH = 1000;
  * unrecognised key would travel into logs and persisted error details as
  * ordinary message text.
  *
- * Field names written by a developer are plain identifiers, which is what this
- * admits. Anything else is replaced: the path still says how deep the value is
- * and what shape it sits in, without repeating the data.
+ * Only the fixed WorkflowContext root fields are structural. Every other
+ * object key may be payload data, even when it looks like an identifier.
  */
-const SAFE_PATH_SEGMENT = /^[A-Za-z_$][A-Za-z0-9_$]{0,39}$/;
-
-function redactPathSegment(key: string): string {
-  return reflectApply(regExpExec, SAFE_PATH_SEGMENT, [key]) !== null ? key : "<redacted>";
+function redactPathSegment(key: string, trustContextRoot = false): string {
+  return trustContextRoot && (key === "input" || key === "step") ? key : "<redacted>";
 }
 
 /** A value the durable codec cannot carry, named by where it sits. */
@@ -120,12 +209,22 @@ interface NormalizedJsonObject {
   [key: string]: NormalizedJsonValue;
 }
 
+export interface WorkflowJsonSerializationOptions {
+  /**
+   * Promote JSON-lossy values such as Date, Map, undefined, and NaN from
+   * warnings to persistence errors. Runtimes without hook-free Proxy
+   * identification reject object and array values when this option is enabled.
+   */
+  strictContext?: boolean;
+}
+
 interface RawJsonValue {
   readonly rawJSON: string;
 }
 
 interface JsonRawSupport {
   isRawJSON?(value: unknown): value is RawJsonValue;
+  rawJSON?(source: string): RawJsonValue;
 }
 
 const jsonRawSupport = JSON as typeof JSON & JsonRawSupport;
@@ -140,6 +239,550 @@ type NormalizedJsonValue =
   | RawJsonValue;
 
 const OMIT_JSON_VALUE = Symbol("omit-json-value");
+const ACTIVE_JSON_TAIL_REFERENCE = new Error("active JSON tail reference");
+const BIGINT_JSON_TAIL_VALUE = new Error("BigInt JSON tail value");
+
+interface JsonSerializationState {
+  readonly nonPlainBuiltinCache: WeakMap<JsonTraversalReference, boolean>;
+  requiresIterativeEncoding: boolean;
+}
+
+function hasJsonTailHook(
+  value: JsonTraversalReference,
+  prototype: JsonTraversalReference | null,
+): boolean {
+  let current: JsonTraversalReference | null = value;
+  for (let depth = 0; current !== null && depth < 100; depth++) {
+    if (canIdentifyProxyWithoutHooks && isProxyWithoutHooks(current)) return true;
+    try {
+      const descriptor = objectGetOwnPropertyDescriptor(current, "toJSON");
+      if (descriptor !== undefined) {
+        return !objectHasOwn(descriptor, "value") ||
+          typeof descriptor.value === "function";
+      }
+      current = current === value ? prototype : objectGetPrototypeOf(current);
+    } catch {
+      return true;
+    }
+  }
+  return current !== null;
+}
+
+function isJsonTailPrimitive(value: unknown): boolean {
+  const type = typeof value;
+  return type === "undefined" ||
+    type === "boolean" ||
+    type === "number" ||
+    type === "string" ||
+    type === "symbol";
+}
+
+function isUnsafeJsonTailReference(
+  value: JsonTraversalReference,
+  active: Set<JsonTraversalReference>,
+  nonPlainBuiltinCache: WeakMap<JsonTraversalReference, boolean>,
+): boolean {
+  return isProxyWithoutHooks(value) ||
+    isNonPlainBuiltinWithoutHooksCached(value, nonPlainBuiltinCache) ||
+    reflectApply(setHas, active, [value]) ||
+    (jsonIsRawJSON !== undefined &&
+      reflectApply(jsonIsRawJSON, jsonRawSupport, [value]));
+}
+
+function hasSafeJsonTailPrototype(
+  value: JsonTraversalReference,
+  isArray: boolean,
+  inspectToJson: boolean,
+): boolean {
+  try {
+    const prototype = objectGetPrototypeOf(value);
+    return (isArray
+      ? prototype === arrayPrototype
+      : prototype === objectPrototype || prototype === null) &&
+      (!inspectToJson || !hasJsonTailHook(value, prototype));
+  } catch {
+    return false;
+  }
+}
+
+function appendJsonTailOwnDataValues(
+  value: JsonTraversalReference,
+  isArray: boolean,
+  pending: JsonTailScanFrame[],
+): boolean {
+  if (isArray) {
+    const length = toJsonLength(reflectGet(value, "length"));
+    let index = 0;
+    while (index < length) {
+      const descriptor = objectGetOwnPropertyDescriptor(value, StringConstructor(index));
+      if (descriptor === undefined || !objectHasOwn(descriptor, "value")) return false;
+      appendJsonTailScanFrame(pending, { kind: "enter", value: descriptor.value });
+      index++;
+    }
+    return true;
+  }
+
+  const keys = objectKeys(value);
+  let index = 0;
+  while (index < keys.length) {
+    const descriptor = objectGetOwnPropertyDescriptor(value, keys[index]!);
+    if (descriptor === undefined || !objectHasOwn(descriptor, "value")) return false;
+    appendJsonTailScanFrame(pending, { kind: "enter", value: descriptor.value });
+    index++;
+  }
+  return true;
+}
+
+interface JsonTailScanEnterFrame {
+  readonly kind: "enter";
+  readonly value: unknown;
+}
+
+interface JsonTailScanExitFrame {
+  readonly kind: "exit";
+  readonly value: JsonTraversalReference;
+}
+
+type JsonTailScanFrame = JsonTailScanEnterFrame | JsonTailScanExitFrame;
+
+function appendJsonTailScanFrame(
+  frames: JsonTailScanFrame[],
+  frame: JsonTailScanFrame,
+): void {
+  defineArrayElement(frames, frames.length, frame);
+}
+
+/** Whether native JSON can snapshot this tail without a diagnostic replacer. */
+function canSnapshotJsonTailWithoutReplacer(
+  root: JsonTraversalReference,
+  active: Set<JsonTraversalReference>,
+  applyRootToJson: boolean,
+  nonPlainBuiltinCache: WeakMap<JsonTraversalReference, boolean>,
+): boolean {
+  if (!canIdentifyProxyWithoutHooks) return false;
+
+  const pending: JsonTailScanFrame[] = [{ kind: "enter", value: root }];
+  const localActive = new SetConstructor<JsonTraversalReference>();
+  const localCompleted = new SetConstructor<JsonTraversalReference>();
+  while (pending.length > 0) {
+    const frame = pending[pending.length - 1]!;
+    pending.length--;
+    if (frame.kind === "exit") {
+      reflectApply(setDelete, localActive, [frame.value]);
+      reflectApply(setAdd, localCompleted, [frame.value]);
+      continue;
+    }
+
+    const candidate = frame.value;
+    if (candidate === null) continue;
+    if (isJsonTailPrimitive(candidate)) continue;
+    if (typeof candidate === "function") {
+      const reference = candidate as JsonTraversalReference;
+      if (isUnsafeJsonTailReference(reference, active, nonPlainBuiltinCache)) return false;
+      try {
+        if (hasJsonTailHook(reference, objectGetPrototypeOf(reference))) return false;
+      } catch {
+        return false;
+      }
+      continue;
+    }
+    if (typeof candidate !== "object") return false;
+
+    const reference = candidate as JsonTraversalReference;
+    if (reflectApply(setHas, localActive, [reference])) return false;
+    if (reflectApply(setHas, localCompleted, [reference])) continue;
+    if (isUnsafeJsonTailReference(reference, active, nonPlainBuiltinCache)) return false;
+
+    const isArray = arrayIsArray(reference);
+    const inspectToJson = applyRootToJson || reference !== root;
+    if (!hasSafeJsonTailPrototype(reference, isArray, inspectToJson)) return false;
+    reflectApply(setAdd, localActive, [reference]);
+    appendJsonTailScanFrame(pending, { kind: "exit", value: reference });
+    if (!appendJsonTailOwnDataValues(reference, isArray, pending)) return false;
+  }
+  return true;
+}
+
+interface JsonArrayEncodingFrame {
+  index: number;
+  readonly kind: "array";
+  readonly length: number;
+  readonly value: JsonTraversalReference;
+}
+
+interface JsonObjectEncodingFrame {
+  index: number;
+  readonly keys: string[];
+  readonly kind: "object";
+  readonly value: JsonTraversalReference;
+  wroteProperty: boolean;
+}
+
+interface JsonValueEncodingFrame {
+  readonly inArray: boolean;
+  readonly kind: "value";
+  readonly value: unknown;
+}
+
+type JsonEncodingFrame =
+  | JsonArrayEncodingFrame
+  | JsonObjectEncodingFrame
+  | JsonValueEncodingFrame;
+
+function appendJsonEncodingFrame(
+  frames: JsonEncodingFrame[],
+  frame: JsonEncodingFrame,
+): void {
+  defineArrayElement(frames, frames.length, frame);
+}
+
+function isOmittedJsonObjectValue(value: unknown): boolean {
+  return value === undefined || typeof value === "function" || typeof value === "symbol";
+}
+
+/** Encode normalized JSON without using the native call stack. */
+function encodeNormalizedJson(root: unknown): string | undefined {
+  if (
+    root === undefined || typeof root === "function" ||
+    typeof root === "symbol"
+  ) {
+    return undefined;
+  }
+
+  const frames: JsonEncodingFrame[] = [{ kind: "value", value: root, inArray: false }];
+  const chunks: string[] = [];
+  let chunk = "";
+  const append = (value: string) => {
+    chunk += value;
+    if (chunk.length >= 8192) {
+      defineArrayElement(chunks, chunks.length, chunk);
+      chunk = "";
+    }
+  };
+  while (frames.length > 0) {
+    const frameIndex = frames.length - 1;
+    const frame = frames[frameIndex]!;
+    frames.length = frameIndex;
+
+    if (frame.kind === "array") {
+      if (frame.index >= frame.length) {
+        append("]");
+        continue;
+      }
+      if (frame.index > 0) append(",");
+      const nested = objectGetOwnPropertyDescriptor(
+        frame.value,
+        StringConstructor(frame.index),
+      )!.value;
+      frame.index++;
+      appendJsonEncodingFrame(frames, frame);
+      appendJsonEncodingFrame(frames, { kind: "value", value: nested, inArray: true });
+      continue;
+    }
+
+    if (frame.kind === "object") {
+      let key: string | undefined;
+      let nested: unknown;
+      while (frame.index < frame.keys.length) {
+        key = frame.keys[frame.index++]!;
+        nested = objectGetOwnPropertyDescriptor(frame.value, key)!.value;
+        if (!isOmittedJsonObjectValue(nested)) break;
+        key = undefined;
+      }
+      if (key === undefined) {
+        append("}");
+        continue;
+      }
+      if (frame.wroteProperty) append(",");
+      append(jsonStringify(key)!);
+      append(":");
+      frame.wroteProperty = true;
+      appendJsonEncodingFrame(frames, frame);
+      appendJsonEncodingFrame(frames, { kind: "value", value: nested, inArray: false });
+      continue;
+    }
+
+    const value = frame.value;
+    if (value === null) {
+      append("null");
+    } else if (typeof value === "object") {
+      if (
+        jsonIsRawJSON !== undefined &&
+        reflectApply(jsonIsRawJSON, jsonRawSupport, [value])
+      ) {
+        append(reflectGet(value, "rawJSON") as string);
+      } else if (arrayIsArray(value)) {
+        append("[");
+        appendJsonEncodingFrame(frames, {
+          index: 0,
+          kind: "array",
+          length: toJsonLength(reflectGet(value, "length")),
+          value,
+        });
+      } else {
+        append("{");
+        appendJsonEncodingFrame(frames, {
+          index: 0,
+          keys: objectKeys(value),
+          kind: "object",
+          value,
+          wroteProperty: false,
+        });
+      }
+    } else if (
+      typeof value === "string" || typeof value === "number" ||
+      typeof value === "bigint"
+    ) {
+      append(jsonStringify(value)!);
+    } else if (typeof value === "boolean") {
+      append(value ? "true" : "false");
+    } else {
+      // Undefined, functions, and symbols become null inside arrays. Object
+      // properties holding them were omitted while their parent was expanded.
+      append(frame.inArray ? "null" : "");
+    }
+  }
+  if (chunk.length > 0) defineArrayElement(chunks, chunks.length, chunk);
+  return reflectApply(arrayJoin, chunks, [""]);
+}
+
+interface JsonTailArrayEncodingFrame {
+  index: number;
+  readonly kind: "array";
+  readonly length: number;
+  readonly value: JsonTraversalReference;
+}
+
+interface JsonTailObjectEncodingFrame {
+  index: number;
+  readonly keys: string[];
+  readonly kind: "object";
+  readonly value: JsonTraversalReference;
+  wroteProperty: boolean;
+}
+
+interface JsonTailValueEncodingFrame {
+  readonly kind: "value";
+  readonly value: unknown;
+}
+
+type JsonTailEncodingFrame =
+  | JsonTailArrayEncodingFrame
+  | JsonTailObjectEncodingFrame
+  | JsonTailValueEncodingFrame;
+
+function appendJsonTailEncodingFrame(
+  frames: JsonTailEncodingFrame[],
+  frame: JsonTailEncodingFrame,
+): void {
+  defineArrayElement(frames, frames.length, frame);
+}
+
+function prepareJsonTailValue(value: unknown, key: string, applyToJson: boolean): unknown {
+  let prepared = value;
+  const type = typeof prepared;
+  if (
+    applyToJson &&
+    (type === "object" && prepared !== null || type === "function" || type === "bigint")
+  ) {
+    const receiver = type === "bigint"
+      ? ObjectConstructor(prepared)
+      : prepared as JsonTraversalReference;
+    const toJson = reflectGet(receiver, "toJSON");
+    if (typeof toJson === "function") {
+      prepared = reflectApply(toJson, prepared, [key]);
+    }
+  }
+  if (prepared !== null && typeof prepared === "object") {
+    const slot = boxedPrimitiveSlot(prepared);
+    if (slot !== null) return unboxAsJsonWould(prepared, slot);
+  }
+  return prepared;
+}
+
+function encodeJsonTailIteratively(
+  root: JsonTraversalReference,
+  key: string,
+  outerActive: Set<JsonTraversalReference>,
+  applyRootToJson: boolean,
+): { containsRawJson: boolean; serialized: string | undefined } {
+  const preparedRoot = prepareJsonTailValue(root, key, applyRootToJson);
+  if (isOmittedJsonObjectValue(preparedRoot)) {
+    return { containsRawJson: false, serialized: undefined };
+  }
+
+  const frames: JsonTailEncodingFrame[] = [{ kind: "value", value: preparedRoot }];
+  const localActive = new SetConstructor<JsonTraversalReference>();
+  const chunks: string[] = [];
+  let chunk = "";
+  let containsRawJson = false;
+  const append = (value: string) => {
+    chunk += value;
+    if (chunk.length >= 8192) {
+      defineArrayElement(chunks, chunks.length, chunk);
+      chunk = "";
+    }
+  };
+
+  while (frames.length > 0) {
+    const frameIndex = frames.length - 1;
+    const frame = frames[frameIndex]!;
+    frames.length = frameIndex;
+
+    if (frame.kind === "array") {
+      if (frame.index >= frame.length) {
+        reflectApply(setDelete, localActive, [frame.value]);
+        append("]");
+        continue;
+      }
+      if (frame.index > 0) append(",");
+      const indexKey = StringConstructor(frame.index++);
+      const nested = prepareJsonTailValue(
+        reflectGet(frame.value, indexKey),
+        indexKey,
+        true,
+      );
+      appendJsonTailEncodingFrame(frames, frame);
+      if (isOmittedJsonObjectValue(nested)) append("null");
+      else appendJsonTailEncodingFrame(frames, { kind: "value", value: nested });
+      continue;
+    }
+
+    if (frame.kind === "object") {
+      let nested: unknown;
+      let nestedKey: string | undefined;
+      while (frame.index < frame.keys.length) {
+        nestedKey = frame.keys[frame.index++]!;
+        nested = prepareJsonTailValue(
+          reflectGet(frame.value, nestedKey),
+          nestedKey,
+          true,
+        );
+        if (!isOmittedJsonObjectValue(nested)) break;
+        nestedKey = undefined;
+      }
+      if (nestedKey === undefined) {
+        reflectApply(setDelete, localActive, [frame.value]);
+        append("}");
+        continue;
+      }
+      if (frame.wroteProperty) append(",");
+      append(jsonStringify(nestedKey)!);
+      append(":");
+      frame.wroteProperty = true;
+      appendJsonTailEncodingFrame(frames, frame);
+      appendJsonTailEncodingFrame(frames, { kind: "value", value: nested });
+      continue;
+    }
+
+    const value = frame.value;
+    if (value === null) {
+      append("null");
+      continue;
+    }
+    const type = typeof value;
+    if (type === "string") {
+      append(jsonStringify(value)!);
+      continue;
+    }
+    if (type === "number") {
+      append(numberIsFinite(value) ? jsonStringify(value)! : "null");
+      continue;
+    }
+    if (type === "boolean") {
+      append(value ? "true" : "false");
+      continue;
+    }
+    if (type === "bigint") throw BIGINT_JSON_TAIL_VALUE;
+    if (type !== "object") continue;
+
+    const reference = value as JsonTraversalReference;
+    if (
+      jsonIsRawJSON !== undefined &&
+      reflectApply(jsonIsRawJSON, jsonRawSupport, [reference])
+    ) {
+      containsRawJson = true;
+      append(reflectGet(reference, "rawJSON") as string);
+      continue;
+    }
+    if (
+      reflectApply(setHas, outerActive, [reference]) ||
+      reflectApply(setHas, localActive, [reference])
+    ) {
+      throw ACTIVE_JSON_TAIL_REFERENCE;
+    }
+    reflectApply(setAdd, localActive, [reference]);
+    if (arrayIsArray(reference)) {
+      append("[");
+      appendJsonTailEncodingFrame(frames, {
+        index: 0,
+        kind: "array",
+        length: toJsonLength(reflectGet(reference, "length")),
+        value: reference,
+      });
+    } else {
+      append("{");
+      appendJsonTailEncodingFrame(frames, {
+        index: 0,
+        keys: objectKeys(reference),
+        kind: "object",
+        value: reference,
+        wroteProperty: false,
+      });
+    }
+  }
+
+  if (chunk.length > 0) defineArrayElement(chunks, chunks.length, chunk);
+  return {
+    containsRawJson,
+    serialized: reflectApply(arrayJoin, chunks, [""]),
+  };
+}
+
+/** Encode an uninspected tail now, preserving native hook order and output. */
+function normalizeJsonTail(
+  value: JsonTraversalReference,
+  key: string,
+  active: Set<JsonTraversalReference>,
+  state: JsonSerializationState,
+  applyRootToJson: boolean,
+): NormalizedJsonValue | typeof OMIT_JSON_VALUE {
+  // This branch has proved the tail contains only inert JSON data: no hooks,
+  // accessors, proxies, exotic objects, raw tokens, cycles, or aliases. Encode
+  // it iteratively now, before later sibling hooks can mutate its data or its
+  // prototypes. Native stringify here combines its depth with every active
+  // normalize frame, while deferring the object makes a later hook observable.
+  if (
+    canSnapshotJsonTailWithoutReplacer(
+      value,
+      active,
+      applyRootToJson,
+      state.nonPlainBuiltinCache,
+    )
+  ) {
+    state.requiresIterativeEncoding = true;
+    return jsonParse(encodeNormalizedJson(value)!) as NormalizedJsonValue;
+  }
+
+  const { containsRawJson, serialized } = encodeJsonTailIteratively(
+    value,
+    key,
+    active,
+    applyRootToJson,
+  );
+  if (serialized === undefined) return OMIT_JSON_VALUE;
+  state.requiresIterativeEncoding = true;
+  if (!containsRawJson || jsonRawJSON === undefined) {
+    return jsonParse(serialized) as NormalizedJsonValue;
+  }
+  return jsonParse(
+    serialized,
+    (_key, parsed, context?: { source?: string }) => {
+      if (context?.source === undefined || jsonRawJSON === undefined) return parsed;
+      return reflectApply(jsonRawJSON, jsonRawSupport, [context.source]);
+    },
+  ) as NormalizedJsonValue;
+}
 
 function describe(value: unknown): string {
   if (value === undefined) return "undefined";
@@ -150,12 +793,90 @@ function describe(value: unknown): string {
   return "object";
 }
 
+function hasNativeSlot(
+  value: JsonTraversalReference,
+  getter: ((this: unknown) => unknown) | undefined,
+): boolean {
+  if (getter === undefined) return false;
+  try {
+    reflectApply(getter, value, []);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function hasNativeBrand(
+  value: JsonTraversalReference,
+  predicate: ((value: unknown) => boolean) | undefined,
+  receiver: unknown,
+): boolean {
+  if (predicate === undefined) return false;
+  try {
+    return reflectApply(predicate, receiver, [value]) === true;
+  } catch {
+    return false;
+  }
+}
+
+function hasWeakCollectionSlot(
+  value: JsonTraversalReference,
+  method: typeof weakMapGet | typeof weakSetHas,
+): boolean {
+  try {
+    reflectApply(method, value, [nativeBrandProbeKey]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isNonPlainBuiltinWithoutHooksCached(
+  value: JsonTraversalReference,
+  cache: WeakMap<JsonTraversalReference, boolean>,
+): boolean {
+  const cached = reflectApply(weakMapGet, cache, [value]) as boolean | undefined;
+  if (cached !== undefined) return cached;
+  const result = isNonPlainBuiltinWithoutHooks(value);
+  reflectApply(weakMapSet, cache, [value, result]);
+  return result;
+}
+
+function isKnownNonPlainBuiltin(
+  value: JsonTraversalReference,
+  cache: WeakMap<JsonTraversalReference, boolean>,
+): boolean {
+  if (canIdentifyNonPlainBuiltinsWithoutHooks) {
+    return isNonPlainBuiltinWithoutHooksCached(value, cache);
+  }
+  return hasNativeSlot(value, dateGetTime) ||
+    hasNativeBrand(value, errorIsError, ErrorConstructor) ||
+    hasNativeSlot(value, mapSizeGet) ||
+    hasNativeSlot(value, setSizeGet) ||
+    hasNativeSlot(value, regExpSourceGet) ||
+    hasNativeSlot(value, typedArrayByteLengthGet) ||
+    hasNativeSlot(value, arrayBufferByteLengthGet) ||
+    hasNativeSlot(value, dataViewByteLengthGet) ||
+    hasNativeSlot(value, SymbolValueOf) ||
+    hasWeakCollectionSlot(value, weakMapGet) ||
+    hasWeakCollectionSlot(value, weakSetHas);
+}
+
 /** Whether a value is a plain `{}` object rather than a class instance. */
-function isPlainObject(value: JsonTraversalReference): boolean {
-  if (!canIdentifyProxyWithoutHooks || isProxyWithoutHooks(value)) return false;
+function isPlainObject(
+  value: JsonTraversalReference,
+  inspectPrototype: boolean,
+): boolean {
+  // Default persistence keeps diagnostic-only prototype traps untouched on
+  // edge-style hosts. Strict persistence opts into the metadata read because
+  // accepting an ordinary class instance would violate its unchanged-value
+  // contract. A throwing trap fails the strict check closed below.
+  if (!canIdentifyProxyWithoutHooks && !inspectPrototype) return true;
+  if (canIdentifyProxyWithoutHooks && isProxyWithoutHooks(value)) return false;
   try {
     const prototype = objectGetPrototypeOf(value);
-    return prototype === objectPrototype || prototype === null;
+    return prototype === objectPrototype ||
+      (!inspectPrototype && prototype === null);
   } catch {
     return false;
   }
@@ -183,8 +904,17 @@ function toJsonLength(value: unknown): number {
   return mathMin(mathFloor(number), MAX_SAFE_INTEGER);
 }
 
+function isSerializedArrayIndexKey(key: string, length: number): boolean {
+  const index = +key;
+  return numberIsFinite(index) &&
+    index >= 0 &&
+    index < length &&
+    mathFloor(index) === index &&
+    StringConstructor(index) === key;
+}
+
 function hasToStringTagWithoutHooks(value: JsonTraversalReference): boolean {
-  if (!canIdentifyProxyWithoutHooks) return true;
+  if (!canIdentifyProxyWithoutHooks) return false;
   let current: object | null = value;
   for (let depth = 0; current !== null && depth < 100; depth++) {
     if (isProxyWithoutHooks(current)) return true;
@@ -207,6 +937,10 @@ function hasToStringTagWithoutHooks(value: JsonTraversalReference): boolean {
  * that has one is sent to the probes instead of being judged here.
  */
 function couldHoldPrimitiveSlot(value: JsonTraversalReference): boolean {
+  // Object.prototype.toString reads Symbol.toStringTag. Server runtimes can
+  // prove that the lookup cannot cross a proxy or accessor before using it;
+  // edge hosts cannot, so they fall back to the hook-free slot probes.
+  if (!canIdentifyProxyWithoutHooks) return true;
   try {
     if (hasToStringTagWithoutHooks(value)) return true;
     const tag = reflectApply(objectToString, value, []);
@@ -287,12 +1021,19 @@ function unboxAsJsonWould(
 function normalizeAndFindUnrepresentableValues(
   root: unknown,
   label: string,
+  options: WorkflowJsonSerializationOptions = {},
 ): {
   normalized: unknown;
+  requiresIterativeEncoding: boolean;
   unrepresentable: UnrepresentableValues;
 } {
   const found: UnrepresentableValues = { fatal: [], lossy: [], fatalCount: 0, lossyCount: 0 };
   const active = new SetConstructor<JsonTraversalReference>();
+  const completed = new SetConstructor<JsonTraversalReference>();
+  const serializationState: JsonSerializationState = {
+    nonPlainBuiltinCache: new WeakMapConstructor<JsonTraversalReference, boolean>(),
+    requiresIterativeEncoding: false,
+  };
 
   const recordFatal = (path: string, kind: string) => {
     found.fatalCount++;
@@ -312,6 +1053,127 @@ function normalizeAndFindUnrepresentableValues(
     });
   };
 
+  const recordEnumerableSymbolKeys = (value: JsonTraversalReference, path: string) => {
+    if (!canIdentifyProxyWithoutHooks || isProxyWithoutHooks(value)) return;
+    let symbolKeys: symbol[];
+    try {
+      symbolKeys = objectGetOwnPropertySymbols(value);
+    } catch {
+      return;
+    }
+    for (const symbolKey of symbolKeys) {
+      let descriptor: PropertyDescriptor | undefined;
+      try {
+        descriptor = objectGetOwnPropertyDescriptor(value, symbolKey);
+      } catch {
+        continue;
+      }
+      if (descriptor?.enumerable === true) {
+        recordLossy(path, "symbol-keyed property");
+      }
+    }
+  };
+
+  const recordArrayPrototype = (value: JsonTraversalReference, path: string) => {
+    if (canIdentifyProxyWithoutHooks && isProxyWithoutHooks(value)) {
+      recordLossy(path, "array proxy");
+      return;
+    }
+    try {
+      if (objectGetPrototypeOf(value) !== arrayPrototype) {
+        recordLossy(path, "array prototype");
+      }
+    } catch {
+      recordLossy(path, "uninspectable array prototype");
+    }
+  };
+
+  const recordPropertyDescriptor = (
+    descriptor: PropertyDescriptor | undefined,
+    path: string,
+  ) => {
+    if (descriptor === undefined) return;
+    if (!objectHasOwn(descriptor, "value")) {
+      recordLossy(path, "accessor property");
+      return;
+    }
+    if (
+      descriptor.enumerable !== true ||
+      descriptor.writable !== true ||
+      descriptor.configurable !== true
+    ) {
+      recordLossy(path, "property attributes");
+    }
+  };
+
+  const recordObjectExtensibility = (value: JsonTraversalReference, path: string) => {
+    try {
+      if (!objectIsExtensible(value)) recordLossy(path, "object extensibility");
+    } catch {
+      recordLossy(path, "uninspectable object extensibility");
+    }
+  };
+
+  const recordArrayOwnProperty = (
+    ownKey: string | symbol,
+    descriptor: PropertyDescriptor | undefined,
+    path: string,
+    length: number,
+  ): 0 | 1 => {
+    if (descriptor === undefined) return 0;
+    if (ownKey === "length") {
+      if (descriptor.writable !== true) recordLossy(path, "array length property");
+      return 0;
+    }
+    if (typeof ownKey === "symbol") {
+      recordLossy(path, "symbol-keyed property");
+      return 0;
+    }
+    if (isSerializedArrayIndexKey(ownKey, length)) {
+      recordPropertyDescriptor(descriptor, `${path}[${ownKey}]`);
+      return 1;
+    }
+    recordLossy(
+      `${path}.${redactPathSegment(ownKey)}`,
+      descriptor.enumerable === true ? "array property" : "non-enumerable property",
+    );
+    return 0;
+  };
+
+  const recordArrayPropertiesFromOwnKeys = (
+    value: JsonTraversalReference,
+    path: string,
+    length: number,
+  ) => {
+    let ownKeys: Array<string | symbol>;
+    try {
+      ownKeys = reflectOwnKeys(value);
+    } catch {
+      return;
+    }
+    let serializedIndexCount = 0;
+    for (const ownKey of ownKeys) {
+      let descriptor: PropertyDescriptor | undefined;
+      try {
+        descriptor = objectGetOwnPropertyDescriptor(value, ownKey);
+      } catch {
+        continue;
+      }
+      if (isWorkflowJsonPrototypeSnapshotShadow(value, ownKey, descriptor)) continue;
+      serializedIndexCount += recordArrayOwnProperty(ownKey, descriptor, path, length);
+    }
+    if (serializedIndexCount < length) recordLossy(path, "array hole");
+  };
+
+  const recordStrictArrayDiagnostics = (
+    value: JsonTraversalReference,
+    path: string,
+    length: number,
+  ) => {
+    recordArrayPropertiesFromOwnKeys(value, path, length);
+    recordArrayPrototype(value, path);
+  };
+
   const normalize = (
     value: unknown,
     path: string,
@@ -322,11 +1184,37 @@ function normalizeAndFindUnrepresentableValues(
     if (value === null) return null;
 
     const type = typeof value;
+    const deferredSource = type === "object"
+      ? reflectApply(weakMapGet, deferredWorkflowJsonSources, [value]) as
+        | JsonTraversalReference
+        | undefined
+      : undefined;
+    if (deferredSource !== undefined) {
+      if (options.strictContext === true) {
+        recordLossy(path, "deferred checkpoint value");
+        return null;
+      }
+      return normalize(deferredSource, path, key, true, depth);
+    }
+    if (
+      options.strictContext === true &&
+      (type === "object" || type === "function")
+    ) {
+      if (!canIdentifyProxyWithoutHooks) {
+        recordLossy(path, "unverifiable Proxy identity");
+        return null;
+      }
+      if (isProxyWithoutHooks(value as JsonTraversalReference)) {
+        recordLossy(path, describe(value));
+        return null;
+      }
+    }
     if (
       type === "object" &&
       jsonIsRawJSON !== undefined &&
       reflectApply(jsonIsRawJSON, jsonRawSupport, [value])
     ) {
+      recordLossy(path, "raw JSON value");
       return value as RawJsonValue;
     }
     if (
@@ -350,6 +1238,10 @@ function normalizeAndFindUnrepresentableValues(
         recordLossy(path, describe(value));
         return null;
       }
+      if (objectIs(value, -0)) {
+        recordLossy(path, "number (-0)");
+        return 0;
+      }
       return value as number;
     }
     if (type === "bigint") {
@@ -366,6 +1258,12 @@ function normalizeAndFindUnrepresentableValues(
       recordFatal(path, "circular reference");
       return null;
     }
+    if (
+      options.strictContext === true &&
+      reflectApply(setHas, completed, [nested])
+    ) {
+      recordLossy(path, "shared reference");
+    }
 
     const isArray = arrayIsArray(nested);
     if (!isArray) {
@@ -376,22 +1274,49 @@ function normalizeAndFindUnrepresentableValues(
       }
     }
 
-    // Past the depth this walk follows, the subtree is spliced in as it is and
-    // left to `JSON.stringify`. Handing back the whole root instead would make
-    // every getter and `toJSON` above this point run a second time, and a hook
-    // that answers differently on its second call would then persist a value
-    // this check never saw. Nothing below here is reported, which is the price.
-    if (depth >= MAX_TRAVERSAL_DEPTH) return nested as NormalizedJsonValue;
+    // Native encoding must run at the cutoff, not after later siblings have
+    // already been read. The active-reference and `toJSON` checks above still
+    // run first, matching JSON's cycle and replacement semantics. A
+    // one-property holder gives a deeper hook the same key it would receive in
+    // the containing object. Raw primitive wrappers preserve exact encoded
+    // tokens when the host supports them; older hosts parse them.
+    if (depth >= MAX_TRAVERSAL_DEPTH) {
+      if (options.strictContext === true) {
+        recordLossy(path, "uninspected value");
+        return nested as NormalizedJsonValue;
+      }
+      try {
+        return normalizeJsonTail(nested, key, active, serializationState, applyToJson);
+      } catch (error) {
+        if (error === ACTIVE_JSON_TAIL_REFERENCE) {
+          recordFatal(path, "circular reference");
+          return null;
+        }
+        if (error === BIGINT_JSON_TAIL_VALUE) {
+          recordFatal(path, "BigInt");
+          return null;
+        }
+        throw error;
+      }
+    }
+
     reflectApply(setAdd, active, [nested]);
     try {
       if (isArray) {
-        const result: NormalizedJsonValue[] = [];
+        const result: NormalizedJsonValue[] = isWorkflowJsonPrototypeSnapshot(nested)
+          ? stabilizeWorkflowJsonPrototypeSnapshot([])
+          : [];
         const length = toJsonLength(reflectGet(nested, "length"));
+        if (options.strictContext === true) {
+          recordStrictArrayDiagnostics(nested, path, length);
+        }
+        const canInspectIndex = canIdentifyProxyWithoutHooks &&
+          !isProxyWithoutHooks(nested);
         for (let index = 0; index < length; index++) {
           const indexKey = StringConstructor(index);
-          const child = reflectGet(nested, indexKey);
           let isHole = false;
-          if (canIdentifyProxyWithoutHooks && !isProxyWithoutHooks(nested)) {
+          const child = reflectGet(nested, indexKey);
+          if (options.strictContext !== true && canInspectIndex) {
             try {
               isHole = !objectHasOwn(nested, indexKey);
             } catch {
@@ -415,29 +1340,80 @@ function normalizeAndFindUnrepresentableValues(
             result.length,
             normalized === OMIT_JSON_VALUE ? null : normalized,
           );
+          if (found.fatalCount > 0) break;
         }
+        if (options.strictContext === true && found.fatalCount === 0) {
+          recordObjectExtensibility(nested, path);
+        }
+        if (options.strictContext !== true) recordEnumerableSymbolKeys(nested, path);
         return result;
       }
 
       const result: NormalizedJsonObject = objectCreate(null);
-      const childKeys = objectKeys(nested);
+      const childKeys = options.strictContext === true
+        ? reflectOwnKeys(nested)
+        : objectKeys(nested);
       for (let childIndex = 0; childIndex < childKeys.length; childIndex++) {
-        const childKey = childKeys[childIndex]!;
+        if (found.fatalCount > 0) break;
+        const ownKey = childKeys[childIndex]!;
+        let childKey: string;
+        if (options.strictContext === true) {
+          const descriptor = objectGetOwnPropertyDescriptor(nested, ownKey);
+          if (isWorkflowJsonPrototypeSnapshotShadow(nested, ownKey, descriptor)) {
+            continue;
+          }
+          if (typeof ownKey === "symbol") {
+            if (descriptor !== undefined) recordLossy(path, "symbol-keyed property");
+            continue;
+          }
+          childKey = ownKey;
+          if (descriptor === undefined) continue;
+          if (descriptor.enumerable !== true) {
+            recordLossy(
+              `${path}.${redactPathSegment(childKey, depth === 0)}`,
+              "non-enumerable property",
+            );
+            continue;
+          }
+          recordPropertyDescriptor(
+            descriptor,
+            `${path}.${redactPathSegment(childKey, depth === 0)}`,
+          );
+        } else {
+          childKey = ownKey as string;
+        }
+        const childPath = `${path}.${redactPathSegment(childKey, depth === 0)}`;
         const normalized = normalize(
           reflectGet(nested, childKey),
-          `${path}.${redactPathSegment(childKey)}`,
+          childPath,
           childKey,
           true,
           depth + 1,
         );
         if (normalized !== OMIT_JSON_VALUE) result[childKey] = normalized;
       }
+      if (found.fatalCount === 0 && options.strictContext !== true) {
+        recordEnumerableSymbolKeys(nested, path);
+      }
+      if (found.fatalCount === 0 && options.strictContext === true) {
+        recordObjectExtensibility(nested, path);
+      }
       // Prototype diagnostics are best-effort and run after the snapshot is
       // complete, so hostile metadata traps cannot change persistence output.
-      if (!isPlainObject(nested)) recordLossy(path, describe(nested));
+      if (
+        found.fatalCount === 0 &&
+        (
+          ((options.strictContext === true || !canIdentifyProxyWithoutHooks) &&
+            isKnownNonPlainBuiltin(nested, serializationState.nonPlainBuiltinCache)) ||
+          !isPlainObject(nested, options.strictContext === true)
+        )
+      ) {
+        recordLossy(path, describe(nested));
+      }
       return result;
     } finally {
       reflectApply(setDelete, active, [nested]);
+      if (options.strictContext === true) reflectApply(setAdd, completed, [nested]);
     }
   };
 
@@ -445,8 +1421,19 @@ function normalizeAndFindUnrepresentableValues(
 
   return {
     normalized: normalized === OMIT_JSON_VALUE ? undefined : normalized,
+    requiresIterativeEncoding: serializationState.requiresIterativeEncoding,
     unrepresentable: found,
   };
+}
+
+function stringifyNormalizedJson(normalized: unknown, requiresIterativeEncoding: boolean): {
+  normalized: unknown;
+  serialized: string | undefined;
+} {
+  if (!requiresIterativeEncoding) {
+    return { normalized, serialized: jsonStringify(normalized) };
+  }
+  return { normalized, serialized: encodeNormalizedJson(normalized) };
 }
 
 function formatPaths(samples: readonly UnrepresentableValue[], total: number): string {
@@ -471,9 +1458,9 @@ function formatPaths(samples: readonly UnrepresentableValue[], total: number): s
  *
  * Checking here makes the mismatch legible at the moment it matters:
  *
- * - Values JSON cannot encode at all fail the run with the field and path that
- *   produced them, instead of `Do not know how to serialize a BigInt` raised
- *   from inside the backend with nothing pointing back at the step.
+ * - Values JSON cannot encode at all fail the run with the field and redacted
+ *   path that produced them, instead of `Do not know how to serialize a BigInt`
+ *   raised from inside the backend with nothing pointing back at the step.
  * - Values it encodes lossily are logged with the same detail, because the
  *   alternative is a step reading a `string` where its predecessor wrote a
  *   `Date`, decided by whether the run happened to pause.
@@ -496,8 +1483,10 @@ export function prepareWorkflowJson(
   value: unknown,
   label: string,
   runId?: string,
+  options: WorkflowJsonSerializationOptions = {},
 ): { normalized: unknown; serialized: string } {
-  const { normalized, unrepresentable } = normalizeAndFindUnrepresentableValues(value, label);
+  const { normalized, requiresIterativeEncoding, unrepresentable } =
+    normalizeAndFindUnrepresentableValues(value, label, options);
   const { fatal, fatalCount, lossy, lossyCount } = unrepresentable;
 
   if (fatalCount > 0) {
@@ -508,7 +1497,19 @@ export function prepareWorkflowJson(
     });
   }
 
-  const serialized = jsonStringify(normalized);
+  if (options.strictContext === true && lossyCount > 0) {
+    throw ORCHESTRATION_ERROR.create({
+      detail:
+        `Workflow run cannot be persisted with strictContext enabled: ${
+          formatPaths(lossy, lossyCount)
+        }. ` +
+        `Workflow state must survive JSON persistence unchanged. Return only JSON values ` +
+        `from the step that produced this value.`,
+    });
+  }
+
+  const prepared = stringifyNormalizedJson(normalized, requiresIterativeEncoding);
+  const serialized = prepared.serialized;
   if (serialized === undefined) {
     const paths = lossyCount > 0
       ? formatPaths(lossy, lossyCount)
@@ -521,25 +1522,35 @@ export function prepareWorkflowJson(
   }
 
   if (lossyCount > 0) {
+    const paths = formatPaths(lossy, lossyCount);
     logger.warn(
       "Workflow state holds values that do not survive persistence unchanged",
       {
         ...(runId ? { runId } : {}),
-        paths: formatPaths(lossy, lossyCount),
+        paths,
       },
     );
   }
 
   // Encoded only once the fatal check has passed, so a value JSON refuses is
   // named by this module rather than by the anonymous error JSON raises.
-  return { normalized, serialized };
+  return { normalized: prepared.normalized, serialized };
 }
 
-export function serializeWorkflowJson(value: unknown, label: string, runId?: string): string {
-  return prepareWorkflowJson(value, label, runId).serialized;
+export function serializeWorkflowJson(
+  value: unknown,
+  label: string,
+  runId?: string,
+  options?: WorkflowJsonSerializationOptions,
+): string {
+  return prepareWorkflowJson(value, label, runId, options).serialized;
 }
 
 /** Serialize a workflow context for durable storage. */
-export function serializeWorkflowContext(context: WorkflowContext, runId?: string): string {
-  return serializeWorkflowJson(context, "context", runId);
+export function serializeWorkflowContext(
+  context: WorkflowContext,
+  runId?: string,
+  options?: WorkflowJsonSerializationOptions,
+): string {
+  return serializeWorkflowJson(context, "context", runId, options);
 }

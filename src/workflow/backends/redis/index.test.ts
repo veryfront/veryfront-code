@@ -20,8 +20,12 @@ import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { RedisBackend } from "./index.ts";
 import { deriveWorkflowRunEventObservation } from "../../events.ts";
+import {
+  MAX_TRAVERSAL_DEPTH,
+  serializeWorkflowJson,
+} from "#veryfront/workflow/context-serialization.ts";
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
-import type { PendingApproval, WorkflowRun } from "../../types.ts";
+import type { CheckpointResumeEnvelope, PendingApproval, WorkflowRun } from "../../types.ts";
 import {
   MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES,
   MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES,
@@ -311,6 +315,20 @@ class MockRedisAdapter implements RedisAdapter {
       return Promise.resolve(1);
     }
 
+    if (script.includes("conditional-run-precondition-check")) {
+      const expectedCount = Number(args[0]);
+      const expectedStatuses = args.slice(1, expectedCount + 1);
+      const expectedWorkerId = args[expectedCount + 1]!;
+      const checkWorker = args[expectedCount + 2] === "1";
+      const hash = this.hashes.get(key);
+      return Promise.resolve(
+        hash && expectedStatuses.includes(hash.get("status") ?? "") &&
+          (!checkWorker || hash.get("workerId") === expectedWorkerId)
+          ? 1
+          : 0,
+      );
+    }
+
     if (script.includes("observable-approval-append")) {
       const approvalsKey = keys[1]!;
       let list = this.lists.get(approvalsKey);
@@ -402,7 +420,10 @@ class MockRedisAdapter implements RedisAdapter {
         for (let i = 0; i < list.length; i++) {
           const approval = JSON.parse(list[i]!);
           if (approval.id === approvalId) {
-            list[i] = JSON.stringify({ ...approval, ...patch, id: approvalId });
+            list[i] = serializeWorkflowJson(
+              { ...approval, ...patch, id: approvalId },
+              "approval",
+            );
             return Promise.resolve(1);
           }
         }
@@ -422,7 +443,7 @@ class MockRedisAdapter implements RedisAdapter {
             if (approval.status !== "pending") return Promise.resolve(2);
             Object.assign(approval, patch);
             for (const field of deletedFields) delete approval[field];
-            list[i] = JSON.stringify(approval);
+            list[i] = serializeWorkflowJson(approval, "approval");
             return Promise.resolve(1);
           }
         }
@@ -447,7 +468,7 @@ class MockRedisAdapter implements RedisAdapter {
               approval.recoveryClaimedAt > staleBefore)
           ) return Promise.resolve(2);
           Object.assign(approval, patch, { recoveryClaimId });
-          list[i] = JSON.stringify(approval);
+          list[i] = serializeWorkflowJson(approval, "approval");
           return Promise.resolve(1);
         }
       }
@@ -465,7 +486,7 @@ class MockRedisAdapter implements RedisAdapter {
           if (approval.recoveryClaimId !== recoveryClaimId) return Promise.resolve(2);
           delete approval.recoveryClaimId;
           delete approval.recoveryClaimedAt;
-          list[i] = JSON.stringify(approval);
+          list[i] = serializeWorkflowJson(approval, "approval");
           return Promise.resolve(1);
         }
       }
@@ -488,7 +509,7 @@ class MockRedisAdapter implements RedisAdapter {
             delete approval.reconciliationPending;
             delete approval.recoveryClaimId;
             delete approval.recoveryClaimedAt;
-            list[i] = JSON.stringify(approval);
+            list[i] = serializeWorkflowJson(approval, "approval");
             return Promise.resolve(1);
           }
         }
@@ -1911,7 +1932,7 @@ describe("RedisBackend", () => {
       await assertRejects(
         () => backend.createRun(run),
         Error,
-        "context.input.total",
+        "context.input.<redacted>",
       );
       assertEquals(await backend.getRun(run.id), null);
     });
@@ -1943,6 +1964,51 @@ describe("RedisBackend", () => {
       // in the free-form context, so that is where it has to be asserted.
       assertEquals(warnings[0]?.run_id, runId);
     });
+
+    it("rejects lossy context values when strictContext is enabled", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict:",
+        strictContext: true,
+      });
+      const rows: unknown[] = [{ id: 1 }];
+      Object.defineProperty(rows, "meta", {
+        value: "required",
+        enumerable: true,
+      });
+      let deep: unknown = { when: new Date(0) };
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH + 25; index++) deep = { n: deep };
+
+      for (
+        const testCase of [
+          {
+            id: "run-strict-date-context",
+            context: { input: {}, when: new Date(0) },
+            message: "strictContext",
+          },
+          {
+            id: "run-strict-array-context",
+            context: { input: {}, rows },
+            message: "array property",
+          },
+          {
+            id: "run-strict-deep-context",
+            context: { input: {}, deep },
+            message: "uninspected value",
+          },
+        ]
+      ) {
+        await assertRejects(
+          () =>
+            strictBackend.createRun(createTestRun(testCase.id, {
+              context: testCase.context,
+            })),
+          Error,
+          testCase.message,
+        );
+        assertEquals(await strictBackend.getRun(testCase.id), null);
+      }
+    });
   });
 
   describe("updateRun", () => {
@@ -1954,6 +2020,22 @@ describe("RedisBackend", () => {
       assertEquals(updated?.status, "running");
     });
 
+    it("does not add an existence round trip to successful updates", async () => {
+      const runId = "run-update-without-exists";
+      await backend.createRun(createTestRun(runId));
+      let existenceChecks = 0;
+      const exists = mockRedis.exists.bind(mockRedis);
+      mockRedis.exists = (...keys) => {
+        existenceChecks++;
+        return exists(...keys);
+      };
+
+      await backend.updateRun(runId, { heartbeatAt: new Date(1) });
+
+      assertEquals(existenceChecks, 0);
+      assertEquals((await backend.getRun(runId))?.heartbeatAt, new Date(1));
+    });
+
     it("rejects an update for a missing run", async () => {
       await assertRejects(
         () => backend.updateRun("missing-run", { status: "running" }),
@@ -1961,6 +2043,60 @@ describe("RedisBackend", () => {
         "Run not found",
       );
       assertEquals(await backend.getRun("missing-run"), null);
+    });
+
+    it("preserves missing-run precedence after strict patch validation fails", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-missing-run:",
+        strictContext: true,
+      });
+
+      const error = await assertRejects(
+        () =>
+          strictBackend.updateRun("missing-run-strict", {
+            context: { input: {}, step: { when: new Date(0) } },
+          }),
+        Error,
+        "Run not found: missing-run-strict",
+      );
+      assertInstanceOf(error, Error);
+      assertInstanceOf(error.cause, Error);
+      assertStringIncludes(error.cause.message, "strictContext");
+    });
+
+    it("preserves missing-run semantics when a run disappears before strict validation fails", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-deleted-run:",
+        strictContext: true,
+      });
+      const runId = "run-strict-concurrent-delete";
+      await strictBackend.createRun(createTestRun(runId));
+      const runKey = [...mockRedis.hashes.keys()].find((key) => key.endsWith(`:${runId}`));
+      assertExists(runKey);
+
+      const exists = mockRedis.exists.bind(mockRedis);
+      let deleteAfterLookup = true;
+      mockRedis.exists = async (key) => {
+        if (key === runKey && deleteAfterLookup) {
+          deleteAfterLookup = false;
+          mockRedis.hashes.delete(key);
+        }
+        return await exists(key);
+      };
+
+      const error = await assertRejects(
+        () =>
+          strictBackend.updateRun(runId, {
+            context: { input: {}, step: { when: new Date(0) } },
+          }),
+        Error,
+        `Run not found: ${runId}`,
+      );
+      assertInstanceOf(error, Error);
+      assertInstanceOf(error.cause, Error);
+      assertStringIncludes(error.cause.message, "strictContext");
     });
 
     it("should update output and context", async () => {
@@ -1978,18 +2114,197 @@ describe("RedisBackend", () => {
       assertEquals(updated?.context, { input: {}, first: "keep", step1: "done" });
       assertStringIncludes(
         mockRedis.lastScript,
-        "local current = cjson.decode(currentJson)",
-        "ordinary patches must stay on Redis's native cjson path",
+        "redis.call('hset', KEYS[1], 'context', mergeJsonObjects(current, value, true))",
+        "context patches must keep serialized values opaque in Lua",
       );
       assertStringIncludes(
         mockRedis.lastScript,
         "containsAmbiguousEmptyArray",
-        "only an ambiguous empty-array token should select the raw-slice fallback",
+        "node-state patches still use the ambiguous empty-array raw-slice fallback",
       );
       assertEquals(
         mockRedis.lastScript.includes("cannot preserve empty arrays"),
         false,
         "standard Redis must accept user-bearing empty arrays",
+      );
+    });
+
+    it("deletes context keys omitted by JSON persistence", async () => {
+      const runId = "run-context-omitted-values";
+      await backend.createRun(createTestRun(runId, {
+        context: {
+          input: {},
+          removedUndefined: "stale",
+          removedFunction: "stale",
+          removedSymbol: "stale",
+          preserved: "kept",
+        },
+      }));
+
+      await backend.updateRun(runId, {
+        context: {
+          removedUndefined: undefined,
+          removedFunction: () => "omitted",
+          added: "stored",
+        },
+      });
+      assertEquals((await backend.getRun(runId))?.context, {
+        input: {},
+        removedSymbol: "stale",
+        preserved: "kept",
+        added: "stored",
+      });
+
+      assertEquals(
+        await backend.updateRunIfStatus(runId, ["pending"], {
+          context: { removedSymbol: Symbol("omitted") },
+        }),
+        true,
+      );
+      assertEquals((await backend.getRun(runId))?.context, {
+        input: {},
+        preserved: "kept",
+        added: "stored",
+      });
+    });
+
+    it("derives omitted context keys from the pre-serialization key snapshot", async () => {
+      const runId = "run-context-key-snapshot";
+      await backend.createRun(createTestRun(runId, {
+        context: { input: {}, preserve: "existing" },
+      }));
+      const contextPatch: Record<string, unknown> = {};
+      Object.defineProperty(contextPatch, "trigger", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          contextPatch.preserve = undefined;
+          return "stored";
+        },
+      });
+
+      await backend.updateRun(runId, { context: contextPatch });
+
+      assertEquals((await backend.getRun(runId))?.context, {
+        input: {},
+        preserve: "existing",
+        trigger: "stored",
+      });
+    });
+
+    it("keeps context merge and deletion values opaque in Redis Lua", async () => {
+      const runId = "run-deep-context-lua-opaque";
+      let deep: unknown = { leaf: true };
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH + 25; index++) {
+        deep = { nested: deep };
+      }
+      await backend.createRun(createTestRun(runId));
+
+      await backend.updateRun(runId, {
+        context: { input: {}, removed: "stale", deep },
+        contextDeletes: ["removed"],
+      });
+
+      assertEquals((await backend.getRun(runId))?.context.removed, undefined);
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "redis.call('hset', KEYS[1], 'context', deleteJsonObjectFields(current, value, true))",
+        "context deletion must not cjson-decode the stored context document",
+      );
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "redis.call('hset', KEYS[1], 'context', mergeJsonObjects(current, value, true))",
+        "context merge must not cjson-decode the stored context document",
+      );
+
+      await backend.updateRunIfStatus(runId, ["pending"], {
+        context: { input: {}, kept: true },
+        contextDeletes: ["deep"],
+      });
+
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "redis.call('hset', KEYS[1], 'context', deleteJsonObjectFields(current, value, true))",
+        "conditional context deletion must not cjson-decode the stored context document",
+      );
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "redis.call('hset', KEYS[1], 'context', mergeJsonObjects(current, value, true))",
+        "conditional context merge must not cjson-decode the stored context document",
+      );
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "redis.call('hset', KEYS[1], 'nodeStates', deleteJsonObjectFields(current, value, true))",
+        "node-state deletion must not cjson-reencode retained numeric outputs",
+      );
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "redis.call('hset', KEYS[1], field, mergeJsonObjects(current, value, true))",
+        "node-state merge must not cjson-reencode numeric outputs",
+      );
+    });
+
+    it("preserves strict context key order when patching top-level context", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-order-patch:",
+        strictContext: true,
+      });
+      const runId = "run-strict-context-order-patch";
+      await strictBackend.createRun(createTestRun(runId, {
+        context: { input: {}, alpha: 1, beta: 2, gamma: 3 },
+      }));
+
+      await strictBackend.updateRun(runId, {
+        context: { beta: "patched", delta: 4 },
+      });
+
+      const storedContext = mockRedis.hashes
+        .get(`strict-order-patch:schema-v1:run:${runId}`)
+        ?.get("context");
+      assertEquals(
+        storedContext,
+        '{"input":{},"alpha":1,"beta":"patched","gamma":3,"delta":4}',
+      );
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "fields.entries",
+        "raw Lua context merges must preserve parsed object entry order",
+      );
+      assertEquals(
+        mockRedis.lastScript.includes("for key, value in pairs(fields) do"),
+        false,
+        "raw Lua context encoding must not depend on unordered pairs iteration",
+      );
+    });
+
+    it("preserves strict context key order when deleting top-level context keys", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-order-delete:",
+        strictContext: true,
+      });
+      const runId = "run-strict-context-order-delete";
+      await strictBackend.createRun(createTestRun(runId, {
+        context: { input: {}, alpha: 1, beta: 2, gamma: 3, delta: 4 },
+      }));
+
+      await strictBackend.updateRun(runId, {
+        contextDeletes: ["beta"],
+        context: { epsilon: 5 },
+      });
+
+      const storedContext = mockRedis.hashes
+        .get(`strict-order-delete:schema-v1:run:${runId}`)
+        ?.get("context");
+      assertEquals(
+        storedContext,
+        '{"input":{},"alpha":1,"gamma":3,"delta":4,"epsilon":5}',
+      );
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "deleteJsonObjectField",
+        "raw Lua context deletions must remove entries without reordering survivors",
       );
     });
 
@@ -2161,7 +2476,7 @@ describe("RedisBackend", () => {
             context: { input: {}, step: output },
           }),
         Error,
-        "context.step.total",
+        "context.step.<redacted>",
       );
       const stored = await backend.getRun(runId);
       assertEquals(stored?.output, undefined);
@@ -2298,6 +2613,51 @@ describe("RedisBackend", () => {
         true,
       );
       assertEquals((await backend.getRun("run-owner-cas"))?.status, "failed");
+    });
+
+    it("checks stale conditional preconditions before surfacing strict serialization errors", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-cas:",
+        strictContext: true,
+      });
+      const runId = "run-strict-stale-cas";
+      await strictBackend.createRun(createTestRun(runId, {
+        status: "running",
+        workerId: "worker-new",
+      }));
+      const lossyPatch = {
+        context: { input: {}, step: { when: new Date(0) } },
+      };
+
+      assertEquals(
+        await strictBackend.updateRunIfStatus(runId, ["pending"], lossyPatch),
+        false,
+      );
+      assertEquals(
+        await strictBackend.updateRunIfStatusAndWorker(
+          runId,
+          ["running"],
+          "worker-old",
+          lossyPatch,
+        ),
+        false,
+      );
+      assertEquals(
+        await strictBackend.restoreRunStateIfStatus(
+          runId,
+          ["pending"],
+          { ...lossyPatch, nodeStates: {} },
+          "worker-new",
+        ),
+        false,
+      );
+      await assertRejects(
+        () => strictBackend.updateRunIfStatus(runId, ["running"], lossyPatch),
+        Error,
+        "strictContext",
+      );
+      assertEquals((await strictBackend.getRun(runId))?.context.step, undefined);
     });
 
     it("rejects attempts to mutate immutable run identity and policy fields", async () => {
@@ -2526,7 +2886,7 @@ describe("RedisBackend", () => {
             nodeStates: {},
           }),
         Error,
-        "checkpoint.context.step.total",
+        "checkpoint.context.step.<redacted>",
       );
       assertEquals(await backend.getCheckpoints(runId), []);
     });
@@ -2543,6 +2903,211 @@ describe("RedisBackend", () => {
 
       const checkpoint = await backend.getLatestCheckpoint(runId);
       assertEquals(Object.is(checkpoint?.context.step, -0), true);
+    });
+
+    it("saves checkpoint state deeper than native JSON can traverse", async () => {
+      const runId = "run-cp-deep-context";
+      let deep: unknown = { leaf: true };
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH + 7_000; index++) {
+        deep = { nested: deep };
+      }
+
+      await backend.saveCheckpoint(runId, {
+        id: "cp-deep-context",
+        nodeId: "step",
+        timestamp: new Date("2025-01-01T01:00:00Z"),
+        context: { input: {}, step: deep },
+        nodeStates: {
+          step: {
+            nodeId: "step",
+            status: "completed",
+            attempt: 1,
+            output: deep,
+          },
+        },
+        _resumeEnvelope: {
+          schemaVersion: 2,
+          ownerNodeId: "step",
+          context: { input: {}, step: deep },
+          nodeStates: {
+            step: {
+              nodeId: "step",
+              status: "completed",
+              attempt: 1,
+              output: deep,
+            },
+          },
+          workflowProjection: { context: {} },
+          graphAdmission: {
+            stepsEvaluationContext: { input: {}, step: deep },
+            stepsEvaluationProjection: { context: {} },
+            graphIdentity: [],
+            workflowVersion: null,
+          },
+        } satisfies CheckpointResumeEnvelope,
+      });
+
+      const checkpoint = await backend.getLatestCheckpoint(runId);
+      assertEquals(checkpoint?.id, "cp-deep-context");
+      let restored = checkpoint?.context.step;
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH + 7_000; index++) {
+        restored = (restored as { nested: unknown }).nested;
+      }
+      assertEquals(restored, { leaf: true });
+      let restoredOutput = checkpoint?.nodeStates.step?.output;
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH + 7_000; index++) {
+        restoredOutput = (restoredOutput as { nested: unknown }).nested;
+      }
+      assertEquals(restoredOutput, { leaf: true });
+      let restoredEnvelopeContext = checkpoint?._resumeEnvelope?.context.step;
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH + 7_000; index++) {
+        restoredEnvelopeContext = (restoredEnvelopeContext as { nested: unknown }).nested;
+      }
+      assertEquals(restoredEnvelopeContext, { leaf: true });
+      let restoredAdmissionContext = checkpoint?._resumeEnvelope?.graphAdmission
+        .stepsEvaluationContext.step;
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH + 7_000; index++) {
+        restoredAdmissionContext = (restoredAdmissionContext as { nested: unknown }).nested;
+      }
+      assertEquals(restoredAdmissionContext, { leaf: true });
+    });
+
+    it("keeps framework node timestamps outside strict context validation", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-checkpoint:",
+        strictContext: true,
+      });
+      const timestamp = new Date("2025-01-01T01:00:00Z");
+      const warnings: LogEntry[] = [];
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+        if (entry.level === "warn" && entry.component === "workflow-context") {
+          warnings.push(entry);
+        }
+      });
+
+      try {
+        await strictBackend.saveCheckpoint("run-cp-strict-node-dates", {
+          id: "cp-strict-node-dates",
+          nodeId: "step",
+          timestamp,
+          context: { input: {}, step: { saved: true } },
+          nodeStates: {
+            step: {
+              nodeId: "step",
+              status: "completed",
+              attempt: 1,
+              startedAt: timestamp,
+              completedAt: timestamp,
+            },
+          },
+          _resumeEnvelope: {
+            schemaVersion: 2,
+            ownerNodeId: "step",
+            context: { input: {}, step: { saved: true } },
+            nodeStates: {
+              step: {
+                nodeId: "step",
+                status: "completed",
+                attempt: 1,
+                startedAt: timestamp,
+                completedAt: timestamp,
+              },
+            },
+            workflowProjection: { context: {} },
+            graphAdmission: {
+              stepsEvaluationContext: { input: {}, step: { saved: true } },
+              stepsEvaluationProjection: { context: {} },
+              graphIdentity: [],
+              workflowVersion: null,
+            },
+          },
+        });
+      } finally {
+        unsubscribe();
+      }
+
+      assertEquals(
+        (await strictBackend.getLatestCheckpoint("run-cp-strict-node-dates"))?.id,
+        "cp-strict-node-dates",
+      );
+      assertEquals(warnings, []);
+
+      await assertRejects(
+        () =>
+          strictBackend.saveCheckpoint("run-cp-strict-user-context-date", {
+            id: "cp-strict-user-context-date",
+            nodeId: "step",
+            timestamp,
+            context: { input: {}, step: { when: timestamp } },
+            nodeStates: {
+              step: {
+                nodeId: "step",
+                status: "completed",
+                attempt: 1,
+                startedAt: timestamp,
+                completedAt: timestamp,
+              },
+            },
+          }),
+        Error,
+        "strictContext",
+      );
+
+      const outputWarnings: LogEntry[] = [];
+      const unsubscribeOutputWarnings = __subscribeLogRecordEmitter((entry) => {
+        if (entry.level === "warn" && entry.component === "workflow-context") {
+          outputWarnings.push(entry);
+        }
+      });
+
+      try {
+        await strictBackend.saveCheckpoint("run-cp-strict-node-output-date", {
+          id: "cp-strict-node-output-date",
+          nodeId: "step",
+          timestamp,
+          context: { input: {}, step: { saved: true } },
+          nodeStates: {
+            step: {
+              nodeId: "step",
+              status: "completed",
+              attempt: 1,
+            },
+          },
+          _resumeEnvelope: {
+            schemaVersion: 2,
+            ownerNodeId: "step",
+            context: { input: {}, step: { saved: true } },
+            nodeStates: {
+              step: {
+                nodeId: "step",
+                status: "completed",
+                attempt: 1,
+                output: { when: timestamp },
+              },
+            },
+            workflowProjection: { context: {} },
+            graphAdmission: {
+              stepsEvaluationContext: { input: {}, step: { saved: true } },
+              stepsEvaluationProjection: { context: {} },
+              graphIdentity: [],
+              workflowVersion: null,
+            },
+          },
+        });
+      } finally {
+        unsubscribeOutputWarnings();
+      }
+
+      assertEquals(outputWarnings.length, 1);
+      const outputWarningPaths = outputWarnings[0]?.context?.paths;
+      if (typeof outputWarningPaths !== "string") {
+        throw new Error("Expected checkpoint warning paths");
+      }
+      assertStringIncludes(
+        outputWarningPaths,
+        "checkpoint._resumeEnvelope.<redacted>.<redacted>.<redacted>.<redacted> (Date)",
+      );
     });
 
     it("should return null when no checkpoints", async () => {
@@ -2611,18 +3176,6 @@ describe("RedisBackend", () => {
         false,
       );
 
-      assertStringIncludes(
-        mockRedis.lastScript,
-        "if redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then return 0 end",
-        "the checkpoint owner fence must live in the Lua the backend executes",
-      );
-      const checkpointFenceArgvCount = Number(mockRedis.lastArgs[0]);
-      assertEquals(
-        mockRedis.lastArgs[checkpointFenceArgvCount + 1],
-        "worker-old",
-        "the expected workerId must sit at the ARGV index the Lua fence reads",
-      );
-
       assertEquals(
         await backend.saveCheckpointIfStatusAndWorker(
           "synthetic-child-run",
@@ -2633,7 +3186,83 @@ describe("RedisBackend", () => {
         ),
         true,
       );
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "if redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then return 0 end",
+        "the final checkpoint owner fence must live in the Lua the backend executes",
+      );
+      const checkpointFenceArgvCount = Number(mockRedis.lastArgs[0]);
+      assertEquals(
+        mockRedis.lastArgs[checkpointFenceArgvCount + 1],
+        "worker-new",
+        "the expected workerId must sit at the ARGV index the Lua fence reads",
+      );
       assertEquals((await backend.getCheckpoints("synthetic-child-run"))[0]?.id, "cp-owned");
+    });
+
+    it("checks checkpoint ownership without downloading the run hash", async () => {
+      const runId = "run-cp-selective-owner-check";
+      await backend.createRun(createTestRun(runId, {
+        status: "running",
+        workerId: "worker-current",
+      }));
+      let runHashReads = 0;
+      const hgetall = mockRedis.hgetall.bind(mockRedis);
+      mockRedis.hgetall = (key) => {
+        if (key.endsWith(`:${runId}`)) runHashReads++;
+        return hgetall(key);
+      };
+
+      assertEquals(
+        await backend.saveCheckpointIfStatusAndWorker(
+          runId,
+          runId,
+          ["running"],
+          "worker-current",
+          {
+            id: "cp-selective-owner-check",
+            nodeId: "step",
+            timestamp: new Date(),
+            context: { input: {} },
+            nodeStates: {},
+          },
+        ),
+        true,
+      );
+
+      assertEquals(runHashReads, 0);
+      assertEquals((await backend.getCheckpoints(runId))[0]?.id, "cp-selective-owner-check");
+    });
+
+    it("checks a stale checkpoint owner before strict context validation", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict:",
+        strictContext: true,
+      });
+      const runId = "run-cp-strict-stale-owner";
+      await strictBackend.createRun(createTestRun(runId, {
+        status: "running",
+        workerId: "worker-current",
+      }));
+
+      assertEquals(
+        await strictBackend.saveCheckpointIfStatusAndWorker(
+          runId,
+          runId,
+          ["running"],
+          "worker-stale",
+          {
+            id: "cp-strict-stale-owner",
+            nodeId: "step",
+            timestamp: new Date(),
+            context: { input: {}, step: { when: new Date(0) } },
+            nodeStates: {},
+          },
+        ),
+        false,
+      );
+      assertEquals(await strictBackend.getCheckpoints(runId), []);
     });
 
     it("reports an invalid context before saving an owner-fenced checkpoint", async () => {
@@ -2660,7 +3289,7 @@ describe("RedisBackend", () => {
       await assertRejects(
         () => operation,
         Error,
-        "checkpoint.context.step.total",
+        "checkpoint.context.step.<redacted>",
       );
       assertEquals(await backend.getCheckpoints(runId), []);
     });
@@ -3133,6 +3762,129 @@ describe("RedisBackend", () => {
       assertEquals(stored.decisionData, { confirmed: true });
     });
 
+    it("rejects strict approval decision data before mutating the approval", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict:",
+        strictContext: true,
+      });
+      await strictBackend.createRun(createTestRun("run-ap-strict-decision"));
+      await strictBackend.savePendingApproval(
+        "run-ap-strict-decision",
+        makeApproval("ap-strict-decision"),
+      );
+
+      await assertRejects(
+        () =>
+          strictBackend.updateApproval("run-ap-strict-decision", "ap-strict-decision", {
+            approved: true,
+            approver: "admin",
+            data: { when: new Date(0) },
+          }),
+        Error,
+        "strictContext",
+      );
+
+      const stored = JSON.parse(
+        mockRedis.lists.get("strict:schema-v1:approvals:run-ap-strict-decision")![0]!,
+      );
+      assertEquals(stored.status, "pending");
+      assertEquals(stored.decidedBy, undefined);
+      assertEquals(stored.decidedAt, undefined);
+      assertEquals(stored.decisionData, undefined);
+      assertEquals(stored.reconciliationPending, undefined);
+    });
+
+    it("preserves strict serialization diagnostics when an approval is missing", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-missing-approval:",
+        strictContext: true,
+      });
+
+      let error: unknown;
+      try {
+        await strictBackend.updateApproval("run-missing-approval", "approval-missing", {
+          approved: true,
+          approver: "admin",
+          data: { when: new Date(0) },
+        });
+      } catch (caught) {
+        error = caught;
+      }
+      assertInstanceOf(error, Error);
+      assertStringIncludes(error.message, "Approval not found");
+      assertInstanceOf(error.cause, Error);
+      assertStringIncludes(error.cause.message, "strictContext");
+    });
+
+    it("keeps deep decision JSON opaque through Redis approval transitions", async () => {
+      const runId = "run-ap-deep-decision";
+      await backend.createRun(createTestRun(runId));
+      await backend.savePendingApproval(runId, makeApproval("ap-deep-decision"));
+
+      let deep: unknown = { leaf: true };
+      const depth = MAX_TRAVERSAL_DEPTH + 4_000;
+      for (let index = 0; index < depth; index++) deep = { nested: deep };
+
+      assertEquals(
+        await backend.updateApproval(runId, "ap-deep-decision", {
+          approved: true,
+          approver: "admin",
+          data: { exact: jsonRawSupport.rawJSON("-0"), deep },
+        }),
+        true,
+      );
+
+      const serializedPatch = mockRedis.lastArgs[1];
+      assertExists(serializedPatch);
+      assertStringIncludes(mockRedis.lastScript, "local approval = parseJsonObject(raw)");
+      assertStringIncludes(mockRedis.lastScript, "mergeJsonObjects(raw, ARGV[2], true)");
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "deleteJsonObjectFields(updated, ARGV[3], true)",
+      );
+      const patch = JSON.parse(serializedPatch);
+      assertEquals(Object.is(patch.decisionData.exact, -0), true);
+      let restored = patch.decisionData.deep;
+      for (let index = 0; index < depth; index++) {
+        restored = (restored as { nested: unknown }).nested;
+      }
+      assertEquals(restored, { leaf: true });
+
+      await backend.updatePendingApproval(runId, "ap-deep-decision", {
+        notificationError: "late notification failure",
+      });
+      assertStringIncludes(mockRedis.lastScript, "mergeJsonObjects(raw, ARGV[2], true)");
+
+      assertEquals(
+        await backend.reserveApprovalDecisionClaim(
+          runId,
+          "ap-deep-decision",
+          "recovery-deep",
+          new Date("2026-08-28T00:00:00.000Z"),
+          new Date("2026-08-27T23:59:00.000Z"),
+        ),
+        true,
+      );
+      assertStringIncludes(mockRedis.lastScript, "mergeJsonObjects(raw, patch, true)");
+
+      await backend.releaseApprovalDecisionClaim(
+        runId,
+        "ap-deep-decision",
+        "recovery-deep",
+      );
+      assertStringIncludes(
+        mockRedis.lastScript,
+        'deleteJsonObjectFields(raw, \'["recoveryClaimId","recoveryClaimedAt"]\', true)',
+      );
+      await backend.finalizeApprovalDecision(runId, "ap-deep-decision");
+      assertStringIncludes(
+        mockRedis.lastScript,
+        '\'["reconciliationPending","recoveryClaimId","recoveryClaimedAt"]\',',
+      );
+    });
+
     it("preserves nested empty arrays in durable approval decision data", async () => {
       await backend.createRun(createTestRun("run-ap-empty-arrays"));
       await backend.savePendingApproval(
@@ -3220,6 +3972,43 @@ describe("RedisBackend", () => {
       );
       assertEquals(stored.status, "approved");
       assertEquals(stored.decidedBy, "first");
+    });
+
+    it("returns false for invalid strict data after losing the approval race", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-race:",
+        strictContext: true,
+      });
+      await strictBackend.createRun(createTestRun("run-ap-strict-race"));
+      await strictBackend.savePendingApproval(
+        "run-ap-strict-race",
+        makeApproval("ap-strict-race"),
+      );
+
+      assertEquals(
+        await strictBackend.updateApproval("run-ap-strict-race", "ap-strict-race", {
+          approved: true,
+          approver: "first",
+          data: { confirmed: true },
+        }),
+        true,
+      );
+      assertEquals(
+        await strictBackend.updateApproval("run-ap-strict-race", "ap-strict-race", {
+          approved: false,
+          approver: "second",
+          data: { when: new Date(0) },
+        }),
+        false,
+      );
+
+      const stored = JSON.parse(
+        mockRedis.lists.get("strict-race:schema-v1:approvals:run-ap-strict-race")![0]!,
+      );
+      assertEquals(stored.status, "approved");
+      assertEquals(stored.decidedBy, "first");
+      assertEquals(stored.decisionData, { confirmed: true });
     });
 
     it("scans approval decision claims without blocking the Redis keyspace", async () => {

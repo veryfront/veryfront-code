@@ -2,10 +2,14 @@ import { isBun, isDeno, isNode } from "./runtime.ts";
 
 export interface NativeBrandChecks {
   isAsyncFunction(value: unknown): boolean;
+  isBoxedPrimitive(value: unknown): boolean;
+  isNonPlainBuiltin(value: unknown): boolean;
   isNativeError(value: unknown): boolean;
   isPromise(value: unknown): boolean;
   isProxy(value: unknown): boolean;
   isUint8Array(value: unknown): boolean;
+  isWeakMap(value: unknown): boolean;
+  isWeakSet(value: unknown): boolean;
 }
 
 interface HostProcess {
@@ -18,11 +22,48 @@ type HostRequire = (specifier: string) => unknown;
 declare const require: HostRequire | undefined;
 
 const apply = Reflect.apply;
+const BigIntValueOf = BigInt.prototype.valueOf;
+const box = Object;
 const createObject = Object.create;
 const defineProperty = Object.defineProperty;
 const freeze = Object.freeze;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectHasOwnProperty = Object.prototype.hasOwnProperty;
+const objectPrototype = Object.prototype;
+const getPrototypeOf = Object.getPrototypeOf;
+const ownKeys = Reflect.ownKeys;
+const setPrototypeOf = Object.setPrototypeOf;
+const SymbolValueOf = Symbol.prototype.valueOf;
+const structuredCloneValue = typeof structuredClone === "function" ? structuredClone : undefined;
+const DOMExceptionConstructor = typeof DOMException === "function" ? DOMException : undefined;
+
+const nonPlainBuiltinCheckNames = [
+  "isAnyArrayBuffer",
+  "isArgumentsObject",
+  "isArrayBufferView",
+  "isBoxedPrimitive",
+  "isCryptoKey",
+  "isDataView",
+  "isDate",
+  "isGeneratorObject",
+  "isKeyObject",
+  "isMap",
+  "isMapIterator",
+  "isModuleNamespaceObject",
+  "isNativeError",
+  "isPromise",
+  "isRegExp",
+  "isSet",
+  "isSetIterator",
+  "isTypedArray",
+  "isWeakMap",
+  "isWeakSet",
+] as const;
+
+// Keep this list to immutable host predicates. JavaScript exposes additional
+// native slots, such as WeakRef and FinalizationRegistry, only through methods
+// that throw on an ordinary object. Probing those methods here would put
+// exception allocation back on every strict JSON object this boundary serves.
 
 function hasOwn(object: PropertyDescriptor, key: PropertyKey): boolean {
   return apply(objectHasOwnProperty, object, [key]) as boolean;
@@ -37,6 +78,144 @@ function readOwnDataFunction(
   return typeof descriptor.value === "function" ? descriptor.value : undefined;
 }
 
+const weakRefDeref = typeof WeakRef === "function"
+  ? readOwnDataFunction(WeakRef.prototype, "deref")
+  : undefined;
+const finalizationRegistryUnregister = typeof FinalizationRegistry === "function"
+  ? readOwnDataFunction(FinalizationRegistry.prototype, "unregister")
+  : undefined;
+const urlHrefGet = typeof URL === "function"
+  ? getOwnPropertyDescriptor(URL.prototype, "href")?.get
+  : undefined;
+const urlSearchParamsToString = typeof URLSearchParams === "function"
+  ? readOwnDataFunction(URLSearchParams.prototype, "toString")
+  : undefined;
+const headersHas = typeof Headers === "function"
+  ? readOwnDataFunction(Headers.prototype, "has")
+  : undefined;
+const requestUrlGet = typeof Request === "function"
+  ? getOwnPropertyDescriptor(Request.prototype, "url")?.get
+  : undefined;
+const responseStatusGet = typeof Response === "function"
+  ? getOwnPropertyDescriptor(Response.prototype, "status")?.get
+  : undefined;
+const abortControllerSignalGet = typeof AbortController === "function"
+  ? getOwnPropertyDescriptor(AbortController.prototype, "signal")?.get
+  : undefined;
+const formDataHas = typeof FormData === "function"
+  ? readOwnDataFunction(FormData.prototype, "has")
+  : undefined;
+const webIdlBrandSymbol = (() => {
+  if (typeof URL !== "function") return undefined;
+  try {
+    const sample = new URL("https://example.com");
+    for (const key of ownKeys(sample)) {
+      if (typeof key !== "symbol") continue;
+      const descriptor = getOwnPropertyDescriptor(sample, key);
+      if (descriptor?.value === key) return key;
+    }
+  } catch {
+    // URL construction is unavailable in this host.
+  }
+  return undefined;
+})();
+const nativeSlotProbeToken = createObject(null);
+const nativeSlotProbeName = "x-veryfront-brand-probe";
+const noArguments: unknown[] = [];
+const nativeSlotProbeArguments = [nativeSlotProbeToken];
+const nativeSlotProbeNameArguments = [nativeSlotProbeName];
+
+function hasNativeSlot(
+  value: unknown,
+  method: ((this: unknown, ...args: unknown[]) => unknown) | undefined,
+  args: unknown[] = noArguments,
+): boolean {
+  if (method === undefined) return false;
+  try {
+    apply(method, value, args);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isReflectableValue(value: unknown): value is object {
+  return (typeof value === "object" || typeof value === "function") && value !== null;
+}
+
+function hasOnlyOwnDataProperties(value: unknown): boolean {
+  if (!isReflectableValue(value)) return false;
+  let keys: Array<string | symbol>;
+  try {
+    keys = ownKeys(value);
+  } catch {
+    return false;
+  }
+  for (const key of keys) {
+    const descriptor = getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined || !hasOwn(descriptor, "value")) return false;
+  }
+  return true;
+}
+
+function hasOnlyShallowCloneSafeOwnData(value: unknown): boolean {
+  if (!isReflectableValue(value)) return false;
+  for (const key of ownKeys(value)) {
+    const descriptor = getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined || !hasOwn(descriptor, "value")) return false;
+    const fieldType = typeof descriptor.value;
+    if (fieldType === "object" && descriptor.value !== null) return false;
+    if (fieldType === "function" || fieldType === "symbol") return false;
+  }
+  return true;
+}
+
+function hasUnsupportedNativeClone(value: unknown): boolean {
+  if (
+    structuredCloneValue === undefined || DOMExceptionConstructor === undefined ||
+    !hasOnlyShallowCloneSafeOwnData(value)
+  ) {
+    return false;
+  }
+  try {
+    structuredCloneValue(value);
+    return false;
+  } catch (error) {
+    return error instanceof DOMExceptionConstructor && error.name === "DataCloneError";
+  }
+}
+
+function hasWebIdlBrandDataProperty(value: unknown): boolean {
+  if (webIdlBrandSymbol === undefined || !isReflectableValue(value)) return false;
+  const descriptor = getOwnPropertyDescriptor(value, webIdlBrandSymbol);
+  return descriptor?.value === webIdlBrandSymbol;
+}
+
+function hasPrototypeDisguisedNativeSlot(value: unknown): boolean {
+  if (!isReflectableValue(value)) return false;
+  try {
+    if (
+      getPrototypeOf(value) !== objectPrototype ||
+      !hasOnlyOwnDataProperties(value)
+    ) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+  return hasNativeSlot(value, weakRefDeref) ||
+    hasNativeSlot(value, finalizationRegistryUnregister, nativeSlotProbeArguments) ||
+    hasNativeSlot(value, urlHrefGet) ||
+    hasNativeSlot(value, urlSearchParamsToString) ||
+    hasNativeSlot(value, headersHas, nativeSlotProbeNameArguments) ||
+    hasNativeSlot(value, requestUrlGet) ||
+    hasNativeSlot(value, responseStatusGet) ||
+    hasNativeSlot(value, abortControllerSignalGet) ||
+    hasNativeSlot(value, formDataHas, nativeSlotProbeNameArguments) ||
+    hasWebIdlBrandDataProperty(value) ||
+    hasUnsupportedNativeClone(value);
+}
+
 function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefined {
   if ((typeof value !== "object" && typeof value !== "function") || value === null) {
     return undefined;
@@ -46,10 +225,13 @@ function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefine
   for (
     const key of [
       "isAsyncFunction",
+      "isBoxedPrimitive",
       "isNativeError",
       "isPromise",
       "isProxy",
       "isUint8Array",
+      "isWeakMap",
+      "isWeakSet",
     ] as const
   ) {
     const check = readOwnDataFunction(value, key);
@@ -61,6 +243,57 @@ function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefine
       writable: false,
     });
   }
+  const nonPlainBuiltinChecks = createObject(null) as Record<
+    (typeof nonPlainBuiltinCheckNames)[number],
+    ((value: unknown) => boolean) | undefined
+  >;
+  for (const key of nonPlainBuiltinCheckNames) {
+    const check = readOwnDataFunction(value, key);
+    if (check) {
+      defineProperty(nonPlainBuiltinChecks, key, {
+        configurable: false,
+        enumerable: true,
+        value: check,
+        writable: false,
+      });
+    }
+  }
+  freeze(nonPlainBuiltinChecks);
+  const proxyCheck = snapshot.isProxy;
+  const boxedPrimitiveCheck = snapshot.isBoxedPrimitive;
+  const disguisedBigInt = setPrototypeOf(new box(0n), objectPrototype);
+  const disguisedSymbol = setPrototypeOf(new box(Symbol()), objectPrototype);
+  const needsBigIntSlotFallback = !apply(boxedPrimitiveCheck, undefined, [disguisedBigInt]);
+  const needsSymbolSlotFallback = !apply(boxedPrimitiveCheck, undefined, [disguisedSymbol]);
+  defineProperty(snapshot, "isNonPlainBuiltin", {
+    configurable: false,
+    enumerable: true,
+    value: (candidate: unknown): boolean => {
+      // Some optional node:util predicates consult internal symbol properties
+      // on proxies. Rejecting proxies belongs to the caller's dedicated proxy
+      // path, so keep this aggregate check hook-free by stopping here.
+      if (apply(proxyCheck, undefined, [candidate]) === true) return false;
+      for (const key of nonPlainBuiltinCheckNames) {
+        const check = nonPlainBuiltinChecks[key];
+        if (check && apply(check, undefined, [candidate]) === true) return true;
+      }
+      // Bun's node:util/types currently misses BigInt and Symbol boxes after
+      // their visible prototype changes. Probe only the brands the loaded host
+      // predicates demonstrably lack; Node and Deno retain the exception-free
+      // path for ordinary strict objects.
+      if (needsBigIntSlotFallback && hasNativeSlot(candidate, BigIntValueOf)) return true;
+      if (needsSymbolSlotFallback && hasNativeSlot(candidate, SymbolValueOf)) return true;
+      // Some Web API objects have no node:util/types predicates. Their slot
+      // methods reject ordinary objects, so probe only the Object.prototype
+      // shape these built-ins expose after a prototype disguise. The clone
+      // fallback accepts only shallow primitive data, which keeps the boundary
+      // from invoking candidate-controlled accessors. The proxy predicate above
+      // makes the reflection gate hook-free.
+      if (hasPrototypeDisguisedNativeSlot(candidate)) return true;
+      return false;
+    },
+    writable: false,
+  });
   return freeze(snapshot);
 }
 

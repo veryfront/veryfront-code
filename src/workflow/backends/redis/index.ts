@@ -66,8 +66,8 @@ const APPROVAL_RECOVERY_SCAN_COUNT = 100;
  * Merge top-level JSON objects without decoding their values through Redis's
  * bundled cjson. Standard Redis 7 turns a decoded empty array into an empty
  * Lua table and then encodes it as `{}`. The native cjson path handles normal
- * objects; only documents containing an ambiguous empty-array token use the
- * raw-slice fallback that preserves nested values byte-for-byte.
+ * objects; documents containing an ambiguous empty-array token and callers
+ * that keep deep values opaque use the raw-slice fallback.
  */
 const JSON_OBJECT_PATCH_LUA = String.raw`
 local function skipJsonWhitespace(value, position)
@@ -149,7 +149,7 @@ local function scanJsonValue(value, position)
 end
 
 local function parseJsonObject(value)
-  local fields = {}
+  local fields = { entries = {}, index = {} }
   local position = skipJsonWhitespace(value, 1)
   if string.sub(value, position, position) ~= '{' then
     error('Run patch field must be a JSON object')
@@ -168,7 +168,11 @@ local function parseJsonObject(value)
     position = skipJsonWhitespace(value, position + 1)
     local valueStart = position
     position = scanJsonValue(value, position)
-    fields[key] = string.sub(value, valueStart, position - 1)
+    table.insert(fields.entries, {
+      key = key,
+      value = string.sub(value, valueStart, position - 1)
+    })
+    fields.index[key] = #fields.entries
     position = skipJsonWhitespace(value, position)
 
     local delimiter = string.sub(value, position, position)
@@ -181,21 +185,52 @@ end
 
 local function encodeJsonObject(fields)
   local entries = {}
-  for key, value in pairs(fields) do
-    table.insert(entries, cjson.encode(key) .. ':' .. value)
+  for _, field in ipairs(fields.entries) do
+    if field ~= false then
+      table.insert(entries, cjson.encode(field.key) .. ':' .. field.value)
+    end
   end
   return '{' .. table.concat(entries, ',') .. '}'
+end
+
+local function decodeJsonObjectField(fields, key)
+  local index = fields.index[key]
+  if index == nil then return nil end
+  local field = fields.entries[index]
+  if field == false then return nil end
+  return cjson.decode(field.value)
+end
+
+local function setJsonObjectField(fields, key, value)
+  local index = fields.index[key]
+  if index == nil then
+    table.insert(fields.entries, { key = key, value = value })
+    fields.index[key] = #fields.entries
+  else
+    fields.entries[index].value = value
+  end
+end
+
+local function deleteJsonObjectField(fields, key)
+  local index = fields.index[key]
+  if index ~= nil then
+    fields.entries[index] = false
+    fields.index[key] = nil
+  end
 end
 
 local function containsAmbiguousEmptyArray(value)
   return string.find(value, '%[%s*%]') ~= nil
 end
 
-local function mergeJsonObjects(currentJson, patchJson)
-  if containsAmbiguousEmptyArray(currentJson) or containsAmbiguousEmptyArray(patchJson) then
+local function mergeJsonObjects(currentJson, patchJson, forceRawValues)
+  if forceRawValues or
+      containsAmbiguousEmptyArray(currentJson) or containsAmbiguousEmptyArray(patchJson) then
     local current = parseJsonObject(currentJson)
     local patch = parseJsonObject(patchJson)
-    for key, changed in pairs(patch) do current[key] = changed end
+    for _, field in ipairs(patch.entries) do
+      setJsonObjectField(current, field.key, field.value)
+    end
     return encodeJsonObject(current)
   end
 
@@ -205,11 +240,11 @@ local function mergeJsonObjects(currentJson, patchJson)
   return next(current) == nil and '{}' or cjson.encode(current)
 end
 
-local function deleteJsonObjectFields(currentJson, deletedJson)
+local function deleteJsonObjectFields(currentJson, deletedJson, forceRawValues)
   local deleted = cjson.decode(deletedJson)
-  if containsAmbiguousEmptyArray(currentJson) then
+  if forceRawValues or containsAmbiguousEmptyArray(currentJson) then
     local current = parseJsonObject(currentJson)
-    for _, key in ipairs(deleted) do current[key] = nil end
+    for _, key in ipairs(deleted) do deleteJsonObjectField(current, key) end
     return encodeJsonObject(current)
   end
 
@@ -307,13 +342,16 @@ ${JSON_OBJECT_PATCH_LUA}
 local function applyPatchField(field, value)
   if field == 'nodeStateDeletes' then
     local current = redis.call('hget', KEYS[1], 'nodeStates') or '{}'
-    redis.call('hset', KEYS[1], 'nodeStates', deleteJsonObjectFields(current, value))
+    redis.call('hset', KEYS[1], 'nodeStates', deleteJsonObjectFields(current, value, true))
   elseif field == 'contextDeletes' then
     local current = redis.call('hget', KEYS[1], 'context') or '{}'
-    redis.call('hset', KEYS[1], 'context', deleteJsonObjectFields(current, value))
-  elseif field == 'nodeStates' or field == 'context' then
+    redis.call('hset', KEYS[1], 'context', deleteJsonObjectFields(current, value, true))
+  elseif field == 'context' then
+    local current = redis.call('hget', KEYS[1], 'context') or '{}'
+    redis.call('hset', KEYS[1], 'context', mergeJsonObjects(current, value, true))
+  elseif field == 'nodeStates' then
     local current = redis.call('hget', KEYS[1], field) or '{}'
-    redis.call('hset', KEYS[1], field, mergeJsonObjects(current, value))
+    redis.call('hset', KEYS[1], field, mergeJsonObjects(current, value, true))
   else
     redis.call('hset', KEYS[1], field, value)
   end
@@ -363,13 +401,16 @@ ${JSON_OBJECT_PATCH_LUA}
 local function applyPatchField(field, value)
   if field == 'nodeStateDeletes' then
     local current = redis.call('hget', KEYS[1], 'nodeStates') or '{}'
-    redis.call('hset', KEYS[1], 'nodeStates', deleteJsonObjectFields(current, value))
+    redis.call('hset', KEYS[1], 'nodeStates', deleteJsonObjectFields(current, value, true))
   elseif field == 'contextDeletes' then
     local current = redis.call('hget', KEYS[1], 'context') or '{}'
-    redis.call('hset', KEYS[1], 'context', deleteJsonObjectFields(current, value))
-  elseif not replaceMaps and (field == 'nodeStates' or field == 'context') then
+    redis.call('hset', KEYS[1], 'context', deleteJsonObjectFields(current, value, true))
+  elseif not replaceMaps and field == 'context' then
+    local current = redis.call('hget', KEYS[1], 'context') or '{}'
+    redis.call('hset', KEYS[1], 'context', mergeJsonObjects(current, value, true))
+  elseif not replaceMaps and field == 'nodeStates' then
     local current = redis.call('hget', KEYS[1], field) or '{}'
-    redis.call('hset', KEYS[1], field, mergeJsonObjects(current, value))
+    redis.call('hset', KEYS[1], field, mergeJsonObjects(current, value, true))
   else
     redis.call('hset', KEYS[1], field, value)
   end
@@ -565,6 +606,25 @@ redis.call('rpush', KEYS[1], ARGV[1])
 redis.call('ltrim', KEYS[1], -tonumber(ARGV[2]), -1)
 return redis.call('llen', KEYS[1])`;
 
+/** Read only the run fields needed to reject stale owner-fenced work early. */
+const CHECK_RUN_PRECONDITION_SCRIPT = `-- conditional-run-precondition-check
+local status = redis.call('hget', KEYS[1], 'status')
+local expectedCount = tonumber(ARGV[1])
+local allowed = false
+for i = 2, expectedCount + 1 do
+  if status == ARGV[i] then
+    allowed = true
+    break
+  end
+end
+if not allowed then return 0 end
+local expectedWorkerId = ARGV[expectedCount + 2]
+local checkWorker = ARGV[expectedCount + 3] == '1'
+if checkWorker and redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then
+  return 0
+end
+return 1`;
+
 /** Atomically verify canonical run ownership before appending auxiliary run state. */
 const APPEND_IF_STATUS_AND_WORKER_SCRIPT = `-- conditional-owned-append
 local status = redis.call('hget', KEYS[1], 'status')
@@ -604,8 +664,9 @@ const RETAIN_APPROVALS_LUA = `local function retainApprovals(key, maxEntries)
   for i = 0, len - 1 do
     local raw = redis.call('lindex', key, i)
     if raw then
-      local approval = cjson.decode(raw)
-      if approval.status ~= 'pending' and approval.reconciliationPending ~= true then
+      local approval = parseJsonObject(raw)
+      if decodeJsonObjectField(approval, 'status') ~= 'pending' and
+          decodeJsonObjectField(approval, 'reconciliationPending') ~= true then
         table.insert(decidedIndexes, i)
         if #decidedIndexes == evictionsRequired then break end
       end
@@ -733,17 +794,21 @@ function parseRunObservationRecords(
  * happen atomically.
  */
 const SAVE_PENDING_APPROVAL_SCRIPT = `-- observable-approval-append
+${JSON_OBJECT_PATCH_LUA}
 ${RETAIN_APPROVALS_LUA}
 ${JOURNAL_APPROVAL_PROJECTION_LUA}
-local approval = cjson.decode(ARGV[1])
+local approval = parseJsonObject(ARGV[1])
 if ARGV[5] == '1' then
   local existingApprovals = redis.call('lrange', KEYS[2], 0, -1)
   for i = 1, #existingApprovals do
-    local candidate = cjson.decode(existingApprovals[i])
-    if (candidate.status == 'pending' or candidate.reconciliationPending == true) and
-        candidate.nodeId == approval.nodeId and
-        (candidate.waitInstanceId == nil or approval.waitInstanceId == nil or
-          candidate.waitInstanceId == approval.waitInstanceId) then
+    local candidate = parseJsonObject(existingApprovals[i])
+    local candidateWaitInstanceId = decodeJsonObjectField(candidate, 'waitInstanceId')
+    local approvalWaitInstanceId = decodeJsonObjectField(approval, 'waitInstanceId')
+    if (decodeJsonObjectField(candidate, 'status') == 'pending' or
+        decodeJsonObjectField(candidate, 'reconciliationPending') == true) and
+        decodeJsonObjectField(candidate, 'nodeId') == decodeJsonObjectField(approval, 'nodeId') and
+        (candidateWaitInstanceId == nil or approvalWaitInstanceId == nil or
+          candidateWaitInstanceId == approvalWaitInstanceId) then
       return 3
     end
   end
@@ -764,10 +829,14 @@ local nodesJson = next(nodes) == nil and '{}' or cjson.encode(nodes)
 local rawApprovals = redis.call('lrange', KEYS[2], 0, -1)
 local pending = {}
 for i = 1, #rawApprovals do
-  local candidate = cjson.decode(rawApprovals[i])
-  if candidate.status == 'pending' then
-    local entry = { id = candidate.id, nodeId = candidate.nodeId }
-    if candidate.message ~= nil then entry.message = candidate.message end
+  local candidate = parseJsonObject(rawApprovals[i])
+  if decodeJsonObjectField(candidate, 'status') == 'pending' then
+    local entry = {
+      id = decodeJsonObjectField(candidate, 'id'),
+      nodeId = decodeJsonObjectField(candidate, 'nodeId')
+    }
+    local message = decodeJsonObjectField(candidate, 'message')
+    if message ~= nil then entry.message = message end
     pending[#pending + 1] = entry
   end
 end
@@ -806,6 +875,7 @@ return 1`;
  * approval already exists for the same node.
  */
 const SAVE_PENDING_APPROVAL_IF_OWNED_SCRIPT = `-- conditional-owned-approval-append
+${JSON_OBJECT_PATCH_LUA}
 ${RETAIN_APPROVALS_LUA}
 ${JOURNAL_APPROVAL_PROJECTION_LUA}
 local status = redis.call('hget', KEYS[1], 'status')
@@ -820,14 +890,17 @@ end
 if not allowed then return 0 end
 local expectedWorkerId = ARGV[expectedCount + 2]
 if redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then return 0 end
-local approval = cjson.decode(ARGV[expectedCount + 3])
+local approval = parseJsonObject(ARGV[expectedCount + 3])
 local existingApprovals = redis.call('lrange', KEYS[2], 0, -1)
 for i = 1, #existingApprovals do
-  local candidate = cjson.decode(existingApprovals[i])
-  if (candidate.status == 'pending' or candidate.reconciliationPending == true) and
-      candidate.nodeId == approval.nodeId and
-      (candidate.waitInstanceId == nil or approval.waitInstanceId == nil or
-        candidate.waitInstanceId == approval.waitInstanceId) then
+  local candidate = parseJsonObject(existingApprovals[i])
+  local candidateWaitInstanceId = decodeJsonObjectField(candidate, 'waitInstanceId')
+  local approvalWaitInstanceId = decodeJsonObjectField(approval, 'waitInstanceId')
+  if (decodeJsonObjectField(candidate, 'status') == 'pending' or
+      decodeJsonObjectField(candidate, 'reconciliationPending') == true) and
+      decodeJsonObjectField(candidate, 'nodeId') == decodeJsonObjectField(approval, 'nodeId') and
+      (candidateWaitInstanceId == nil or approvalWaitInstanceId == nil or
+        candidateWaitInstanceId == approvalWaitInstanceId) then
     return 3
   end
 end
@@ -847,10 +920,14 @@ local nodesJson = next(nodes) == nil and '{}' or cjson.encode(nodes)
 local rawApprovals = redis.call('lrange', KEYS[2], 0, -1)
 local pending = {}
 for i = 1, #rawApprovals do
-  local candidate = cjson.decode(rawApprovals[i])
-  if candidate.status == 'pending' then
-    local entry = { id = candidate.id, nodeId = candidate.nodeId }
-    if candidate.message ~= nil then entry.message = candidate.message end
+  local candidate = parseJsonObject(rawApprovals[i])
+  if decodeJsonObjectField(candidate, 'status') == 'pending' then
+    local entry = {
+      id = decodeJsonObjectField(candidate, 'id'),
+      nodeId = decodeJsonObjectField(candidate, 'nodeId')
+    }
+    local message = decodeJsonObjectField(candidate, 'message')
+    if message ~= nil then entry.message = message end
     pending[#pending + 1] = entry
   end
 end
@@ -894,9 +971,9 @@ local len = redis.call('llen', KEYS[1])
 for i = 0, len - 1 do
   local raw = redis.call('lindex', KEYS[1], i)
   if raw then
-    local approval = cjson.decode(raw)
-    if approval.id == approvalId then
-      redis.call('lset', KEYS[1], i, mergeJsonObjects(raw, ARGV[2]))
+    local approval = parseJsonObject(raw)
+    if decodeJsonObjectField(approval, 'id') == approvalId then
+      redis.call('lset', KEYS[1], i, mergeJsonObjects(raw, ARGV[2], true))
       return 1
     end
   end
@@ -924,11 +1001,11 @@ local len = redis.call('llen', KEYS[1])
 for i = 0, len - 1 do
   local raw = redis.call('lindex', KEYS[1], i)
   if raw then
-    local approval = cjson.decode(raw)
-    if approval.id == approvalId then
-      if approval.status ~= 'pending' then return 2 end
-      local updated = mergeJsonObjects(raw, ARGV[2])
-      updated = deleteJsonObjectFields(updated, ARGV[3])
+    local approval = parseJsonObject(raw)
+    if decodeJsonObjectField(approval, 'id') == approvalId then
+      if decodeJsonObjectField(approval, 'status') ~= 'pending' then return 2 end
+      local updated = mergeJsonObjects(raw, ARGV[2], true)
+      updated = deleteJsonObjectFields(updated, ARGV[3], true)
       redis.call('lset', KEYS[1], i, updated)
       return 1
     end
@@ -947,14 +1024,16 @@ local len = redis.call('llen', KEYS[1])
 for i = 0, len - 1 do
   local raw = redis.call('lindex', KEYS[1], i)
   if raw then
-    local approval = cjson.decode(raw)
-    if approval.id == approvalId then
-      if approval.reconciliationPending ~= true then return 0 end
-      if approval.recoveryClaimId ~= nil and
-          (approval.recoveryClaimedAt == nil or approval.recoveryClaimedAt > staleBefore) then
+    local approval = parseJsonObject(raw)
+    if decodeJsonObjectField(approval, 'id') == approvalId then
+      if decodeJsonObjectField(approval, 'reconciliationPending') ~= true then return 0 end
+      local storedClaimId = decodeJsonObjectField(approval, 'recoveryClaimId')
+      local storedClaimedAt = decodeJsonObjectField(approval, 'recoveryClaimedAt')
+      if storedClaimId ~= nil and
+          (storedClaimedAt == nil or storedClaimedAt > staleBefore) then
         return 2
       end
-      redis.call('lset', KEYS[1], i, mergeJsonObjects(raw, patch))
+      redis.call('lset', KEYS[1], i, mergeJsonObjects(raw, patch, true))
       return 1
     end
   end
@@ -970,11 +1049,11 @@ local len = redis.call('llen', KEYS[1])
 for i = 0, len - 1 do
   local raw = redis.call('lindex', KEYS[1], i)
   if raw then
-    local approval = cjson.decode(raw)
-    if approval.id == approvalId then
-      if approval.recoveryClaimId ~= recoveryClaimId then return 2 end
+    local approval = parseJsonObject(raw)
+    if decodeJsonObjectField(approval, 'id') == approvalId then
+      if decodeJsonObjectField(approval, 'recoveryClaimId') ~= recoveryClaimId then return 2 end
       redis.call('lset', KEYS[1], i,
-        deleteJsonObjectFields(raw, '["recoveryClaimId","recoveryClaimedAt"]'))
+        deleteJsonObjectFields(raw, '["recoveryClaimId","recoveryClaimedAt"]', true))
       return 1
     end
   end
@@ -990,17 +1069,19 @@ local len = redis.call('llen', KEYS[1])
 for i = 0, len - 1 do
   local raw = redis.call('lindex', KEYS[1], i)
   if raw then
-    local approval = cjson.decode(raw)
-    if approval.id == approvalId then
+    local approval = parseJsonObject(raw)
+    if decodeJsonObjectField(approval, 'id') == approvalId then
+      local storedClaimId = decodeJsonObjectField(approval, 'recoveryClaimId')
       if recoveryClaimId == '' then
-        if approval.recoveryClaimId ~= nil then return 2 end
-      elseif approval.recoveryClaimId ~= recoveryClaimId then
+        if storedClaimId ~= nil then return 2 end
+      elseif storedClaimId ~= recoveryClaimId then
         return 2
       end
       redis.call('lset', KEYS[1], i,
         deleteJsonObjectFields(
           raw,
-          '["reconciliationPending","recoveryClaimId","recoveryClaimedAt"]'
+          '["reconciliationPending","recoveryClaimId","recoveryClaimedAt"]',
+          true
         ))
       return 1
     end
@@ -1034,6 +1115,7 @@ export class RedisBackend implements WorkflowBackend {
       groupName: "vf:workflow:workers",
       consumerName: `worker-${crypto.randomUUID().slice(0, 8)}`,
       debug: false,
+      strictContext: false,
       ...config,
     };
     this.config = {
@@ -1104,7 +1186,9 @@ export class RedisBackend implements WorkflowBackend {
     // Encoded before the fields below, on purpose. A step's return value reaches
     // `input`, `output`, and `nodeStates` as well, and those are encoded by
     // `JSON.stringify`, so whichever runs first decides the error a caller sees.
-    const context = serializeWorkflowContext(run.context, run.id);
+    const context = serializeWorkflowContext(run.context, run.id, {
+      strictContext: this.config.strictContext,
+    });
     return {
       id: run.id,
       workflowId: run.workflowId,
@@ -1136,8 +1220,12 @@ export class RedisBackend implements WorkflowBackend {
     // `runId` is passed so a lossy-value warning names the run it came from.
     // Patches are where warnings actually fire, because creation usually writes
     // only `input` while patches write the accumulated node outputs.
-    const context = patch.context !== undefined
-      ? serializeWorkflowJson(patch.context, "context", runId)
+    const patchContext = patch.context;
+    const patchContextKeys = patchContext === undefined ? [] : Object.keys(patchContext);
+    const preparedContext = patchContext !== undefined
+      ? prepareWorkflowJson(patchContext, "context", runId, {
+        strictContext: this.config.strictContext,
+      })
       : undefined;
     const fields: Record<string, string> = {};
     const setOwnedField = (patchKey: keyof WorkflowRunUpdate, fieldKey: string, value: string) => {
@@ -1155,8 +1243,17 @@ export class RedisBackend implements WorkflowBackend {
     if (patch.nodeStates !== undefined) fields.nodeStates = JSON.stringify(patch.nodeStates);
     setNonEmptyArrayField("nodeStateDeletes", patch.nodeStateDeletes);
     if (patch.currentNodes !== undefined) fields.currentNodes = JSON.stringify(patch.currentNodes);
-    if (context !== undefined) fields.context = context;
-    setNonEmptyArrayField("contextDeletes", patch.contextDeletes);
+    if (preparedContext !== undefined) fields.context = preparedContext.serialized;
+    const contextDeletes = [...patch.contextDeletes ?? []];
+    if (preparedContext !== undefined) {
+      const normalizedContext = preparedContext.normalized as Record<string, unknown>;
+      for (const key of patchContextKeys) {
+        if (!Object.hasOwn(normalizedContext, key) && !contextDeletes.includes(key)) {
+          contextDeletes.push(key);
+        }
+      }
+    }
+    setNonEmptyArrayField("contextDeletes", contextDeletes);
     setOwnedField("error", "error", patch.error ? JSON.stringify(patch.error) : "");
     setOwnedField("startedAt", "startedAt", patch.startedAt?.toISOString() ?? "");
     setOwnedField("heartbeatAt", "heartbeatAt", patch.heartbeatAt?.toISOString() ?? "");
@@ -1165,19 +1262,72 @@ export class RedisBackend implements WorkflowBackend {
     return fields;
   }
 
+  private serializeCheckpointNodeStates(
+    runId: string,
+    nodeStates: Checkpoint["nodeStates"],
+  ): string {
+    return prepareWorkflowJson(
+      this.normalizeCheckpointNodeStates(nodeStates),
+      "checkpoint.nodeStates",
+      runId,
+      { strictContext: false },
+    ).serialized;
+  }
+
+  private normalizeCheckpointNodeStates(
+    nodeStates: Checkpoint["nodeStates"],
+  ): Record<string, unknown> {
+    const normalizedNodeStates: Record<string, unknown> = {};
+    for (const [nodeId, nodeState] of Object.entries(nodeStates)) {
+      const normalizedNodeState: Record<string, unknown> = { ...nodeState };
+      if (nodeState.startedAt !== undefined) {
+        normalizedNodeState.startedAt = nodeState.startedAt.toISOString();
+      }
+      if (nodeState.completedAt !== undefined) {
+        normalizedNodeState.completedAt = nodeState.completedAt.toISOString();
+      }
+      normalizedNodeStates[nodeId] = normalizedNodeState;
+    }
+    return normalizedNodeStates;
+  }
+
   private serializeCheckpoint(runId: string, checkpoint: Checkpoint): string {
     // Checked before the rest of the checkpoint is encoded below, so a value
     // JSON refuses is named by its path rather than by the native error.
-    const { normalized: context } = prepareWorkflowJson(
+    const { serialized: context } = prepareWorkflowJson(
       checkpoint.context,
       "checkpoint.context",
       runId,
+      { strictContext: this.config.strictContext },
     );
-    return JSON.stringify({
-      ...checkpoint,
-      context,
+    const nodeStates = this.serializeCheckpointNodeStates(runId, checkpoint.nodeStates);
+    const {
+      context: _context,
+      nodeStates: _nodeStates,
+      _resumeEnvelope,
+      ...checkpointMetadata
+    } = checkpoint;
+    const serializedCheckpoint = JSON.stringify({
+      ...checkpointMetadata,
       timestamp: checkpoint.timestamp.toISOString(),
     });
+    const normalizedResumeEnvelope = _resumeEnvelope === undefined ? undefined : {
+      ..._resumeEnvelope,
+      nodeStates: this.normalizeCheckpointNodeStates(_resumeEnvelope.nodeStates),
+    };
+    const resumeEnvelope = normalizedResumeEnvelope === undefined
+      ? ""
+      : `,"_resumeEnvelope":${
+        prepareWorkflowJson(
+          normalizedResumeEnvelope,
+          "checkpoint._resumeEnvelope",
+          runId,
+          { strictContext: false },
+        ).serialized
+      }`;
+    return `${
+      serializedCheckpoint.slice(0, -1)
+    },"context":${context},"nodeStates":${nodeStates}${resumeEnvelope}}`;
   }
 
   private serializeApproval(approval: PersistedPendingApproval): string {
@@ -1209,6 +1359,25 @@ export class RedisBackend implements WorkflowBackend {
         storageKey,
         value,
         maxEntries === undefined ? "" : String(maxEntries),
+      ],
+    );
+    return Number(result) === 1;
+  }
+
+  private async runPreconditionMatches(
+    client: RedisAdapter,
+    runId: string,
+    expectedStatuses: WorkflowStatus[],
+    expectedWorkerId?: string,
+  ): Promise<boolean> {
+    const result = await client.eval(
+      CHECK_RUN_PRECONDITION_SCRIPT,
+      [this.runKey(runId)],
+      [
+        String(expectedStatuses.length),
+        ...expectedStatuses,
+        expectedWorkerId ?? "",
+        expectedWorkerId === undefined ? "0" : "1",
       ],
     );
     return Number(result) === 1;
@@ -1394,15 +1563,27 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   async updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void> {
-    assertWorkflowRunUpdate(patch);
     const client = await this.ensureClient();
+    const runKey = this.runKey(runId);
 
     if (this.config.debug) logger.debug(`[RedisBackend] Updating run: ${runId}`);
 
-    const fields = this.serializeRunPatch(patch, runId);
+    let fields: Record<string, string>;
+    try {
+      assertWorkflowRunUpdate(patch);
+      fields = this.serializeRunPatch(patch, runId);
+    } catch (error) {
+      if (await client.exists(runKey) === 0) {
+        throw RESOURCE_NOT_FOUND.create({
+          detail: `Run not found: ${runId}`,
+          cause: error,
+        });
+      }
+      throw error;
+    }
     const result = await client.eval(
       UPDATE_RUN_SCRIPT,
-      [this.runKey(runId)],
+      [runKey],
       [
         runId,
         patch.status ?? "",
@@ -1474,7 +1655,20 @@ export class RedisBackend implements WorkflowBackend {
   ): Promise<boolean> {
     assertWorkflowRunUpdate(patch);
     const client = await this.ensureClient();
-    const fields = this.serializeRunPatch(patch, runId);
+    let fields: Record<string, string>;
+    try {
+      fields = this.serializeRunPatch(patch, runId);
+    } catch (error) {
+      if (
+        !await this.runPreconditionMatches(
+          client,
+          runId,
+          expectedStatuses,
+          expectedWorkerId,
+        )
+      ) return false;
+      throw error;
+    }
     const fieldArgs = Object.entries(fields).flatMap(([field, value]) => [field, value]);
     const result = await client.eval(
       UPDATE_RUN_IF_STATUS_SCRIPT,
@@ -1614,12 +1808,29 @@ export class RedisBackend implements WorkflowBackend {
     expectedWorkerId: string,
     checkpoint: Checkpoint,
   ): Promise<boolean> {
+    const client = await this.ensureClient();
+    const ownershipMatches = (): Promise<boolean> =>
+      this.runPreconditionMatches(
+        client,
+        ownershipRunId,
+        expectedStatuses,
+        expectedWorkerId,
+      );
+    if (!await ownershipMatches()) return false;
+
+    let serializedCheckpoint: string;
+    try {
+      serializedCheckpoint = this.serializeCheckpoint(storageRunId, checkpoint);
+    } catch (error) {
+      if (!await ownershipMatches()) return false;
+      throw error;
+    }
     return await this.appendIfStatusAndWorker(
       ownershipRunId,
       expectedStatuses,
       expectedWorkerId,
       this.checkpointsKey(storageRunId),
-      this.serializeCheckpoint(storageRunId, checkpoint),
+      serializedCheckpoint,
       MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES,
     );
   }
@@ -1783,25 +1994,48 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
     const hasComment = decision.comment !== undefined;
     const hasData = decision.data !== undefined;
-    const decisionData = hasData
-      ? JSON.parse(serializeWorkflowJson(decision.data, "approval decision data", runId))
-      : undefined;
+    let serializedDecisionData: string | undefined;
+    if (hasData) {
+      try {
+        serializedDecisionData = serializeWorkflowJson(
+          decision.data,
+          "approval decision data",
+          runId,
+          { strictContext: this.config.strictContext },
+        );
+      } catch (error) {
+        const approval = (await this.getApprovals(runId)).find(({ id }) => id === approvalId);
+        if (approval === undefined) {
+          throw RESOURCE_NOT_FOUND.create({
+            detail: `Approval not found: ${approvalId}`,
+            cause: error,
+          });
+        }
+        if (approval.status !== "pending") return false;
+        throw error;
+      }
+    }
     // Atomic find-by-id + pending-precondition + LSET (see UPDATE_APPROVAL_SCRIPT).
     // decidedAt is computed here so the stored value is deterministic and does
     // not depend on the Redis server clock.
+    const serializedPatchWithoutDecisionData = JSON.stringify({
+      status: decision.approved ? "approved" : "rejected",
+      decidedBy: decision.approver,
+      decidedAt: new Date().toISOString(),
+      reconciliationPending: true,
+      ...(hasComment ? { comment: decision.comment } : {}),
+    });
+    const serializedPatch = serializedDecisionData === undefined
+      ? serializedPatchWithoutDecisionData
+      : `${
+        serializedPatchWithoutDecisionData.slice(0, -1)
+      },"decisionData":${serializedDecisionData}}`;
     const result = await client.eval(
       UPDATE_APPROVAL_SCRIPT,
       [this.approvalsKey(runId)],
       [
         approvalId,
-        JSON.stringify({
-          status: decision.approved ? "approved" : "rejected",
-          decidedBy: decision.approver,
-          decidedAt: new Date().toISOString(),
-          reconciliationPending: true,
-          ...(hasComment ? { comment: decision.comment } : {}),
-          ...(hasData ? { decisionData } : {}),
-        }),
+        serializedPatch,
         JSON.stringify([
           ...(hasComment ? [] : ["comment"]),
           ...(hasData ? [] : ["decisionData"]),

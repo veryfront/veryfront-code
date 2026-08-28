@@ -3,6 +3,7 @@ import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/te
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryBackend } from "./memory.ts";
 import type { Checkpoint, PendingApproval, WorkflowQueueItem, WorkflowRun } from "../types.ts";
+import { MAX_TRAVERSAL_DEPTH } from "../context-serialization.ts";
 import type { PersistedPendingApproval, PersistedPendingEventWait } from "./types.ts";
 import {
   MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES,
@@ -12,6 +13,9 @@ import {
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
+const jsonRawSupport = JSON as typeof JSON & {
+  rawJSON?: (source: string) => unknown;
+};
 
 describe("MemoryBackend", () => {
   let backend: MemoryBackend;
@@ -42,6 +46,42 @@ describe("MemoryBackend", () => {
       context: { runId: "run-1", workflowId: "test", input: {} },
       nodeStates: {},
     };
+  }
+
+  function deepLeaf(value: unknown, depth: number): unknown {
+    let current = value;
+    for (let index = 0; index < depth; index++) {
+      if (current === null || typeof current !== "object") return undefined;
+      current = (current as Record<string, unknown>).nested;
+    }
+    if (current === null || typeof current !== "object") return undefined;
+    return (current as Record<string, unknown>).leaf;
+  }
+
+  function setDeepLeaf(value: unknown, depth: number, leaf: unknown): void {
+    let current = value;
+    for (let index = 0; index < depth; index++) {
+      if (current === null || typeof current !== "object") return;
+      current = (current as Record<string, unknown>).nested;
+    }
+    if (current !== null && typeof current === "object") {
+      (current as Record<string, unknown>).leaf = leaf;
+    }
+  }
+
+  async function assertRejectsAsynchronously<T>(
+    operation: () => Promise<T>,
+    message: string,
+  ): Promise<void> {
+    let promise: Promise<T>;
+    try {
+      promise = operation();
+    } catch (error) {
+      throw new Error("Expected operation to return a rejected Promise instead of throwing", {
+        cause: error,
+      });
+    }
+    await assertRejects(() => promise, Error, message);
   }
 
   beforeEach((): void => {
@@ -262,6 +302,25 @@ describe("MemoryBackend", () => {
       assertEquals(retrieved.status, "pending");
     });
 
+    it("reads the source context once while creating a run", async () => {
+      const source = createTestRun("run-context-single-read");
+      let contextReads = 0;
+      Object.defineProperty(source, "context", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          contextReads++;
+          if (contextReads > 1) throw new Error("context read more than once");
+          return { input: {}, stored: true };
+        },
+      });
+
+      await backend.createRun(source);
+
+      assertEquals(contextReads, 1);
+      assertEquals((await backend.getRun(source.id))?.context, { input: {}, stored: true });
+    });
+
     it("rejects a malformed source policy before persisting a run", async () => {
       const run = createTestRun("run-malformed-policy", {
         sourceIntegrationPolicy: {
@@ -310,6 +369,309 @@ describe("MemoryBackend", () => {
         concurrent: "preserve",
         kept: "updated",
       });
+    });
+
+    it("deletes context keys omitted by JSON persistence", async () => {
+      await backend.createRun(createTestRun("run-context-omitted-values", {
+        context: {
+          input: {},
+          removedUndefined: "stale",
+          removedFunction: "stale",
+          removedSymbol: "stale",
+          preserved: "kept",
+        },
+      }));
+
+      await backend.updateRun("run-context-omitted-values", {
+        context: {
+          removedUndefined: undefined,
+          removedFunction: () => "omitted",
+          removedSymbol: Symbol("omitted"),
+          added: "stored",
+        },
+      });
+
+      assertEquals((await backend.getRun("run-context-omitted-values"))?.context, {
+        input: {},
+        preserved: "kept",
+        added: "stored",
+      });
+    });
+
+    it("derives omitted context keys from the pre-serialization key snapshot", async () => {
+      const runId = "run-context-key-snapshot";
+      await backend.createRun(createTestRun(runId, {
+        context: { input: {}, preserve: "existing" },
+      }));
+      const contextPatch: Record<string, unknown> = {};
+      Object.defineProperty(contextPatch, "trigger", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          contextPatch.preserve = undefined;
+          return "stored";
+        },
+      });
+
+      await backend.updateRun(runId, { context: contextPatch });
+
+      assertEquals((await backend.getRun(runId))?.context, {
+        input: {},
+        preserve: "existing",
+        trigger: "stored",
+      });
+    });
+
+    it("applies a context hook patch to the latest canonical run", async () => {
+      const runId = "run-context-reentrant-update";
+      await backend.createRun(createTestRun(runId, {
+        status: "running",
+        workerId: "worker-original",
+      }));
+      const dynamic = {
+        toJSON() {
+          void backend.updateRun(runId, {
+            status: "completed",
+            workerId: "worker-replaced",
+          });
+          return "stored";
+        },
+      };
+
+      await backend.updateRun(runId, { context: { dynamic } });
+
+      const updated = await backend.getRun(runId);
+      assertEquals(updated?.status, "completed");
+      assertEquals(updated?.workerId, "worker-replaced");
+      assertEquals(updated?.context.dynamic, "stored");
+    });
+
+    it("deletes context keys omitted by JSON through conditional updates", async () => {
+      await backend.createRun(createTestRun("run-context-conditional-omitted", {
+        status: "running",
+        workerId: "worker-current",
+        context: {
+          input: {},
+          removedByStatus: "stale",
+          removedByOwner: "stale",
+          preserved: "kept",
+        },
+      }));
+
+      assertEquals(
+        await backend.updateRunIfStatus("run-context-conditional-omitted", ["running"], {
+          context: { input: {}, removedByStatus: undefined },
+        }),
+        true,
+      );
+      assertEquals(
+        await backend.updateRunIfStatusAndWorker(
+          "run-context-conditional-omitted",
+          ["running"],
+          "worker-current",
+          { context: { input: {}, removedByOwner: Symbol("omitted") } },
+        ),
+        true,
+      );
+
+      assertEquals((await backend.getRun("run-context-conditional-omitted"))?.context, {
+        input: {},
+        preserved: "kept",
+      });
+    });
+
+    it("persists context through the same JSON contract as Redis", async () => {
+      class Receipt {
+        constructor(readonly id: string) {}
+      }
+
+      const initialContext = {
+        input: {},
+        when: new Date(0),
+        tags: new Map([["a", 1]]),
+        receipt: new Receipt("r-1"),
+        missing: undefined,
+        ratio: Number.NaN,
+      };
+      const patchContext = {
+        later: new Date("2025-06-15T12:00:00Z"),
+        skipped: undefined,
+        invalidRatio: Number.NaN,
+      };
+
+      await backend.createRun(createTestRun("run-json-context", {
+        context: initialContext,
+      }));
+      assertEquals((await backend.getRun("run-json-context"))?.context, {
+        input: {},
+        when: "1970-01-01T00:00:00.000Z",
+        tags: {},
+        receipt: { id: "r-1" },
+        ratio: null,
+      });
+
+      await backend.updateRun("run-json-context", { context: patchContext });
+      assertEquals((await backend.getRun("run-json-context"))?.context, {
+        input: {},
+        when: "1970-01-01T00:00:00.000Z",
+        tags: {},
+        receipt: { id: "r-1" },
+        ratio: null,
+        later: "2025-06-15T12:00:00.000Z",
+        invalidRatio: null,
+      });
+    });
+
+    it("stores accepted deep context without a stack-limited whole-run clone", async () => {
+      const depth = MAX_TRAVERSAL_DEPTH + 1_500;
+      const originalLeaf: Record<string, unknown> = { leaf: "stored" };
+      let deep: unknown = originalLeaf;
+      for (let index = 0; index < depth; index++) deep = { nested: deep };
+      const context = { input: {}, deep } as WorkflowRun["context"];
+      if (jsonRawSupport.rawJSON) context.exact = jsonRawSupport.rawJSON("-0");
+
+      await backend.createRun(createTestRun("run-deep-context", {
+        status: "running",
+        context,
+        startedAt: new Date(0),
+        heartbeatAt: new Date(0),
+      }));
+      originalLeaf.leaf = "mutated after create";
+
+      const firstRead = await backend.getRun("run-deep-context");
+      assertExists(firstRead);
+      assertEquals(deepLeaf(firstRead.context.deep, depth), "stored");
+      if (jsonRawSupport.rawJSON) assertEquals(Object.is(firstRead.context.exact, -0), true);
+      const listed = (await backend.listRuns({}))[0];
+      assertEquals(deepLeaf(listed?.context.deep, depth), "stored");
+      if (jsonRawSupport.rawJSON) assertEquals(Object.is(listed?.context.exact, -0), true);
+      const observation = await backend.openRunObservation("run-deep-context");
+      assertExists(observation);
+      assertEquals(deepLeaf(observation.initial.context.deep, depth), "stored");
+      assertEquals(Object.is(observation.initial.context.exact, -0), true);
+      await observation.close();
+      const stalled = (await backend.findStalledRuns(0))[0];
+      assertEquals(deepLeaf(stalled?.context.deep, depth), "stored");
+      assertEquals(Object.is(stalled?.context.exact, -0), true);
+
+      setDeepLeaf(firstRead.context.deep, depth, "mutated after read");
+      const secondRead = await backend.getRun("run-deep-context");
+      assertExists(secondRead);
+      assertEquals(deepLeaf(secondRead.context.deep, depth), "stored");
+      assertEquals(Object.is(secondRead.context.exact, -0), true);
+    });
+
+    it("rejects context values the durable JSON contract cannot encode", async () => {
+      await assertRejects(
+        () =>
+          backend.createRun(createTestRun("run-fatal-context", {
+            context: { input: {}, total: 1n },
+          })),
+        Error,
+        "context.<redacted>",
+      );
+      assertEquals(await backend.getRun("run-fatal-context"), null);
+    });
+
+    it("rejects lossy context values when strictContext is enabled", async () => {
+      const strictBackend = new MemoryBackend({ strictContext: true });
+      const rows: unknown[] = [{ id: 1 }];
+      Object.defineProperty(rows, "meta", {
+        value: "required",
+        enumerable: true,
+      });
+      let deep: unknown = { when: new Date(0) };
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH + 25; index++) deep = { n: deep };
+
+      for (
+        const testCase of [
+          {
+            id: "run-strict-date-context",
+            context: { input: {}, when: new Date(0) },
+            message: "strictContext",
+          },
+          {
+            id: "run-strict-array-context",
+            context: { input: {}, rows },
+            message: "array property",
+          },
+          {
+            id: "run-strict-deep-context",
+            context: { input: {}, deep },
+            message: "uninspected value",
+          },
+        ]
+      ) {
+        await assertRejects(
+          () =>
+            strictBackend.createRun(createTestRun(testCase.id, {
+              context: testCase.context,
+            })),
+          Error,
+          testCase.message,
+        );
+        assertEquals(await strictBackend.getRun(testCase.id), null);
+      }
+    });
+
+    it("rejects invalid context from Promise-returning mutation methods asynchronously", async () => {
+      const strictBackend = new MemoryBackend({ strictContext: true });
+
+      await strictBackend.createRun(createTestRun("run-strict-mutation", {
+        status: "running",
+        workerId: "worker-1",
+      }));
+
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.updateRun("run-strict-mutation", {
+            context: { input: {}, when: new Date(0) },
+          }),
+        "strictContext",
+      );
+      assertEquals((await strictBackend.getRun("run-strict-mutation"))?.context.when, undefined);
+
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.restoreRunStateIfStatus(
+            "run-strict-mutation",
+            ["running"],
+            {
+              status: "waiting",
+              context: { input: {}, when: new Date(0) },
+              nodeStates: {},
+            },
+            "worker-1",
+          ),
+        "strictContext",
+      );
+      assertEquals((await strictBackend.getRun("run-strict-mutation"))?.status, "running");
+
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.saveCheckpoint("run-strict-mutation", {
+            ...createCheckpoint("cp-strict", "step-1", new Date()),
+            context: { input: {}, when: new Date(0) },
+          }),
+        "strictContext",
+      );
+      assertEquals(await strictBackend.getCheckpoints("run-strict-mutation"), []);
+
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.saveCheckpointIfStatusAndWorker(
+            "run-strict-child",
+            "run-strict-mutation",
+            ["running"],
+            "worker-1",
+            {
+              ...createCheckpoint("cp-strict-child", "step-1", new Date()),
+              context: { input: {}, when: new Date(0) },
+            },
+          ),
+        "strictContext",
+      );
+      assertEquals(await strictBackend.getCheckpoints("run-strict-child"), []);
     });
 
     it("merges node-state sets while applying explicit deletions", async () => {
@@ -729,6 +1091,206 @@ describe("MemoryBackend", () => {
         "Looks good!",
         "a losing decision must not overwrite the recorded comment",
       );
+    });
+
+    it("uses the JSON persistence contract for non-strict approval decision data", async () => {
+      const approval: PendingApproval = {
+        id: "approval-json-decision",
+        nodeId: "review",
+        status: "pending",
+        message: "Review needed",
+        payload: {},
+        requestedAt: new Date(),
+      };
+      await backend.savePendingApproval("run-json-approval", approval);
+
+      assertEquals(
+        await backend.updateApproval("run-json-approval", approval.id, {
+          approved: true,
+          approver: "admin@example.com",
+          data: {
+            when: new Date("2026-01-01T00:00:00.000Z"),
+            missing: undefined,
+            ratio: Number.NaN,
+          },
+        }),
+        true,
+      );
+      assertEquals(
+        (await backend.getPendingApproval("run-json-approval", approval.id))?.decisionData,
+        { when: "2026-01-01T00:00:00.000Z", ratio: null },
+      );
+
+      const bigintApproval: PendingApproval = {
+        ...approval,
+        id: "approval-json-bigint",
+      };
+      await backend.savePendingApproval("run-json-bigint", bigintApproval);
+      await assertRejectsAsynchronously(
+        () =>
+          backend.updateApproval("run-json-bigint", bigintApproval.id, {
+            approved: true,
+            approver: "admin@example.com",
+            data: { value: 1n },
+          }),
+        "BigInt",
+      );
+      assertEquals(
+        (await backend.getPendingApproval("run-json-bigint", bigintApproval.id))?.status,
+        "pending",
+      );
+    });
+
+    it("preserves raw numeric approval decision data when reading approvals", async () => {
+      const rawJSON = jsonRawSupport.rawJSON;
+      if (!rawJSON) return;
+      const runId = "run-approval-raw-number-read";
+      const approval: PendingApproval = {
+        id: "approval-raw-number-read",
+        nodeId: "review",
+        status: "pending",
+        message: "Review needed",
+        payload: {},
+        requestedAt: new Date(),
+      };
+      await backend.savePendingApproval(runId, approval);
+
+      assertEquals(
+        await backend.updateApproval(runId, approval.id, {
+          approved: true,
+          approver: "admin@example.com",
+          data: { exact: rawJSON("-0") },
+        }),
+        true,
+      );
+
+      const stored = await backend.getPendingApproval(runId, approval.id);
+      assertEquals(
+        Object.is((stored?.decisionData as { exact?: unknown } | undefined)?.exact, -0),
+        true,
+      );
+    });
+
+    it("preserves raw numeric approval decision data for reconciliation claims", async () => {
+      const rawJSON = jsonRawSupport.rawJSON;
+      if (!rawJSON) return;
+      const runId = "run-approval-raw-number-claim";
+      const approval: PendingApproval = {
+        id: "approval-raw-number-claim",
+        nodeId: "review",
+        status: "pending",
+        message: "Review needed",
+        payload: {},
+        requestedAt: new Date(),
+      };
+      await backend.savePendingApproval(runId, approval);
+
+      assertEquals(
+        await backend.updateApproval(runId, approval.id, {
+          approved: true,
+          approver: "admin@example.com",
+          data: { exact: rawJSON("-0") },
+        }),
+        true,
+      );
+
+      const [claim] = await backend.listApprovalDecisionClaims(runId);
+      assertExists(claim);
+      assertEquals(
+        Object.is((claim.approval.decisionData as { exact?: unknown } | undefined)?.exact, -0),
+        true,
+      );
+    });
+
+    it("keeps deep approval decision data cloneable for reconciliation", async () => {
+      const depth = MAX_TRAVERSAL_DEPTH + 1_500;
+      const originalLeaf: Record<string, unknown> = { leaf: "stored" };
+      let deep: unknown = originalLeaf;
+      for (let index = 0; index < depth; index++) deep = { nested: deep };
+
+      const runId = "run-deep-approval-decision";
+      const approval: PendingApproval = {
+        id: "approval-deep-decision",
+        nodeId: "review",
+        status: "pending",
+        message: "Review needed",
+        payload: {},
+        requestedAt: new Date(),
+      };
+      await backend.savePendingApproval(runId, approval);
+
+      assertEquals(
+        await backend.updateApproval(runId, approval.id, {
+          approved: true,
+          approver: "admin@example.com",
+          data: { deep },
+        }),
+        true,
+      );
+      originalLeaf.leaf = "mutated after update";
+
+      const [firstClaim] = await backend.listApprovalDecisionClaims(runId);
+      assertExists(firstClaim);
+      assertEquals(
+        deepLeaf((firstClaim.approval.decisionData as Record<string, unknown>).deep, depth),
+        "stored",
+      );
+      assertEquals(
+        await backend.reserveApprovalDecisionClaim(
+          runId,
+          approval.id,
+          "recovery-1",
+          new Date(),
+          new Date(0),
+        ),
+        true,
+      );
+      await backend.releaseApprovalDecisionClaim(runId, approval.id, "recovery-1");
+      setDeepLeaf(
+        (firstClaim.approval.decisionData as Record<string, unknown>).deep,
+        depth,
+        "mutated after claim",
+      );
+
+      const [secondClaim] = await backend.listApprovalDecisionClaims(runId);
+      assertExists(secondClaim);
+      assertEquals(
+        deepLeaf((secondClaim.approval.decisionData as Record<string, unknown>).deep, depth),
+        "stored",
+      );
+
+      await backend.finalizeApprovalDecision(runId, approval.id);
+      assertEquals(await backend.listApprovalDecisionClaims(runId), []);
+    });
+
+    it("rejects strict approval decision data before mutating the approval", async () => {
+      const strictBackend = new MemoryBackend({ strictContext: true });
+      const approval: PendingApproval = {
+        id: "approval-strict-decision",
+        nodeId: "review",
+        status: "pending",
+        message: "Review needed",
+        payload: {},
+        requestedAt: new Date(),
+      };
+      await strictBackend.savePendingApproval("run-strict-approval", approval);
+
+      await assertRejectsAsynchronously(
+        () =>
+          strictBackend.updateApproval("run-strict-approval", approval.id, {
+            approved: true,
+            approver: "admin@example.com",
+            data: { when: new Date(0) },
+          }),
+        "strictContext",
+      );
+
+      const stored = await strictBackend.getPendingApproval("run-strict-approval", approval.id);
+      assertEquals(stored?.status, "pending");
+      assertEquals(stored?.decidedBy, undefined);
+      assertEquals(stored?.decidedAt, undefined);
+      assertEquals(stored?.decisionData, undefined);
+      assertEquals(stored?.reconciliationPending, undefined);
     });
 
     it("should condition approval appends on owner and patch notification metadata", async () => {

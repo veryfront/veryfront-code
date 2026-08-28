@@ -3,6 +3,116 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 describe("native brand checks", () => {
+  it("identifies native-slot objects without trusting their prototype", async () => {
+    const isolated = await import("./native-brand-checks.ts?non-plain-builtins");
+    const values: object[] = [
+      new WeakMap(),
+      new WeakSet(),
+      new WeakRef({}),
+      new FinalizationRegistry(() => {}),
+      Promise.resolve(),
+      Object(Symbol("boxed")),
+      Object(1n),
+    ];
+
+    const disguisedUrl = new URL("https://example.com");
+    Object.setPrototypeOf(disguisedUrl, Object.prototype);
+    if (Reflect.ownKeys(disguisedUrl).length === 0) values.push(disguisedUrl);
+
+    for (const value of values) {
+      Object.setPrototypeOf(value, Object.prototype);
+      assertEquals(isolated.nativeBrandChecks?.isNonPlainBuiltin(value), true);
+    }
+    assertEquals(isolated.nativeBrandChecks?.isNonPlainBuiltin({}), false);
+  });
+
+  it("identifies prototype-disguised native slots with ordinary own properties", async () => {
+    const isolated = await import("./native-brand-checks.ts?non-plain-own-properties");
+    const values: object[] = [
+      new WeakRef({}),
+      new FinalizationRegistry(() => {}),
+      new URL("https://example.com"),
+      new URLSearchParams({ a: "1" }),
+      new Headers({ "x-test": "1" }),
+      new Request("https://example.com"),
+      new Response("ok"),
+      new AbortController(),
+      new FormData(),
+    ];
+
+    for (const value of values) {
+      Object.setPrototypeOf(value, Object.prototype);
+      Object.defineProperty(value, "metadata", {
+        configurable: true,
+        enumerable: true,
+        value: "ordinary data",
+        writable: true,
+      });
+      assertEquals(isolated.nativeBrandChecks?.isNonPlainBuiltin(value), true);
+    }
+  });
+
+  it("does not invoke proxy traps while checking non-plain builtins", async () => {
+    const isolated = await import("./native-brand-checks.ts?non-plain-proxy");
+    let trapCalls = 0;
+    const proxy = new Proxy({}, {
+      get() {
+        trapCalls++;
+        return undefined;
+      },
+      getOwnPropertyDescriptor() {
+        trapCalls++;
+        return undefined;
+      },
+      getPrototypeOf() {
+        trapCalls++;
+        return Object.prototype;
+      },
+      ownKeys() {
+        trapCalls++;
+        return [];
+      },
+    });
+
+    assertEquals(isolated.nativeBrandChecks?.isNonPlainBuiltin(proxy), false);
+    assertEquals(trapCalls, 0);
+  });
+
+  it("does not invoke own accessors while checking non-plain builtins", async () => {
+    const isolated = await import("./native-brand-checks.ts?non-plain-accessor");
+    let accessorCalls = 0;
+    const candidate = {};
+    Object.defineProperty(candidate, "metadata", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        accessorCalls++;
+        return "ordinary accessor";
+      },
+    });
+
+    assertEquals(isolated.nativeBrandChecks?.isNonPlainBuiltin(candidate), false);
+    assertEquals(accessorCalls, 0);
+  });
+
+  it("does not invoke nested accessors held by own data properties", async () => {
+    const isolated = await import("./native-brand-checks.ts?non-plain-nested-accessor");
+    let accessorCalls = 0;
+    const metadata = {};
+    Object.defineProperty(metadata, "nested", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        accessorCalls++;
+        return "nested accessor";
+      },
+    });
+    const candidate = { metadata };
+
+    assertEquals(isolated.nativeBrandChecks?.isNonPlainBuiltin(candidate), false);
+    assertEquals(accessorCalls, 0);
+  });
+
   it("does not invoke a replaced node:vm export during initialization", async () => {
     const hostProcess = (globalThis as typeof globalThis & {
       process?: { getBuiltinModule?: (specifier: string) => unknown };

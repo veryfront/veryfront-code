@@ -8,7 +8,6 @@
 
 import type {
   BranchNodeConfig,
-  Checkpoint,
   NodeState,
   ParallelNodeConfig,
   SubWorkflowNodeConfig,
@@ -19,6 +18,10 @@ import type {
   WorkflowRun,
 } from "../../types.ts";
 import { generateId } from "../../types.ts";
+import {
+  cloneCheckpointForPersistence,
+  cloneOwnedCheckpointForPersistence,
+} from "../../backends/checkpoint-retention.ts";
 import {
   captureWorkflowSourceIntegrationPolicy,
   runWithWorkflowSourceIntegrationPolicy,
@@ -401,11 +404,14 @@ export class DAGExecutor {
         applyContextPatch(context, isolatedContextPatch);
         contextPatch = mergeContextPatches(contextPatch, isolatedContextPatch);
 
-        nodeStates[nodeId] = {
-          ...nodeResult.state,
-          attempt: Math.max(nodeResult.state.attempt, baseNodeStates[nodeId]!.attempt),
-          startedAt: baseNodeStates[nodeId]!.startedAt,
-        };
+        nodeStates[nodeId] = cloneExecutionState(
+          {
+            ...nodeResult.state,
+            attempt: Math.max(nodeResult.state.attempt, baseNodeStates[nodeId]!.attempt),
+            startedAt: baseNodeStates[nodeId]!.startedAt,
+          },
+          "Workflow node state",
+        );
 
         if (nodeResult.waiting) {
           // A composite reports the child that actually suspended. Falling back
@@ -1101,13 +1107,16 @@ export class DAGExecutor {
       return;
     }
 
-    const checkpoint: Checkpoint = {
+    const checkpointValue = {
       id: generateId("cp"),
       nodeId,
       timestamp: new Date(),
-      context: structuredClone(context),
-      nodeStates: structuredClone(nodeStates),
+      context,
+      nodeStates,
     };
+    const checkpoint = ownership
+      ? cloneOwnedCheckpointForPersistence(checkpointValue)
+      : cloneCheckpointForPersistence(checkpointValue);
 
     const saved = await this.config.checkpointManager.save(runId, checkpoint, ownership);
     // Legacy test/double implementations returned void. Only an explicit false
