@@ -1219,6 +1219,34 @@ describe("MemoryBackend", () => {
       assertEquals(stored?.decisionData, { winner: "first" });
     });
 
+    it("rejects reentrant approval deletion asynchronously", async () => {
+      const runId = "run-reentrant-approval-deletion";
+      const approval: PendingApproval = {
+        id: "approval-reentrant-deletion",
+        nodeId: "review",
+        status: "pending",
+        message: "Review needed",
+        payload: {},
+        requestedAt: new Date(),
+      };
+      await backend.savePendingApproval(runId, approval);
+
+      await assertRejectsAsynchronously(
+        () =>
+          backend.updateApproval(runId, approval.id, {
+            approved: true,
+            approver: "reviewer@example.com",
+            data: {
+              toJSON() {
+                void backend.deleteRun(runId);
+                return "deleted";
+              },
+            },
+          }),
+        "Approval not found",
+      );
+    });
+
     it("uses the JSON persistence contract for non-strict approval decision data", async () => {
       const approval: PendingApproval = {
         id: "approval-json-decision",

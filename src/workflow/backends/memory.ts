@@ -874,12 +874,16 @@ export class MemoryBackend implements WorkflowBackend {
   ): Promise<boolean> {
     const approvals = this.approvals.get(runId);
     if (!approvals) {
-      throw RESOURCE_NOT_FOUND.create({ detail: `No approvals found for run: ${runId}` });
+      return Promise.reject(
+        RESOURCE_NOT_FOUND.create({ detail: `No approvals found for run: ${runId}` }),
+      );
     }
 
     const approval = approvals.find((a) => a.id === approvalId);
     if (!approval) {
-      throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
+      return Promise.reject(
+        RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` }),
+      );
     }
 
     // Pending-precondition gate: only the first decision wins. A concurrent
@@ -901,7 +905,9 @@ export class MemoryBackend implements WorkflowBackend {
       candidate.id === approvalId
     );
     if (!currentApproval) {
-      throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
+      return Promise.reject(
+        RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` }),
+      );
     }
     if (currentApproval.status !== "pending") return Promise.resolve(false);
     logger.debug("Updating approval", { approvalId, decision });
