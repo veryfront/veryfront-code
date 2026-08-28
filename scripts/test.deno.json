@@ -19,6 +19,7 @@
     "#kreuzberg-wasm-glue": "npm:@kreuzberg/wasm@4.5.2/dist/pkg/kreuzberg_wasm.js",
     "@kreuzberg/node": "npm:@kreuzberg/node@4.4.2",
     "@kreuzberg/wasm": "npm:@kreuzberg/wasm@4.5.2",
+    "decode-named-character-reference": "npm:decode-named-character-reference@1.3.0",
     "jszip": "npm:jszip@3.10.1",
     "pdf-lib": "npm:pdf-lib@1.17.1",
     "es-module-lexer": "npm:es-module-lexer@2.3.1"
