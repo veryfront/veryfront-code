@@ -1,5 +1,5 @@
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert";
-import { describe, it } from "#veryfront/testing/bdd";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 
 describe("integration/runtime/compat/abort-signal-reason", () => {
   it("exposes the supplied Error reason as soon as abort sets the signal state", () => {
