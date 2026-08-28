@@ -49,9 +49,20 @@ const SYNCED_DOC_DIRS = [
  */
 const UNSYNCED_README_PATHS = SYNCED_DOC_DIRS.map((dir) => `${dir}/README.md`);
 
-const MARKDOWN_LINK = /\[[^\]]*\]\(([^)\s]+)/g;
+const INLINE_LINK = /\[[^\]]*\]\(([^)\s]+)/g;
 
-function isPublishedTarget(target: string): boolean {
+/**
+ * A reference definition puts the destination on its own line, so the
+ * destination is visible without resolving the label. Reading these matters:
+ * an inline-only scan passes `[gate][details]` while `[details]: ` still
+ * points at an unpublished path.
+ */
+const REFERENCE_DEFINITION = /^\s{0,3}\[[^\]]+\]:\s*<?([^\s>]+)>?/;
+
+function isPublishedPage(target: string): boolean {
+  // The sync deletes the section README before publishing, so a link to one
+  // 404s exactly like a link out of the tree.
+  if (UNSYNCED_README_PATHS.includes(target)) return false;
   return SYNCED_DOC_DIRS.some((dir) =>
     target === dir || target.startsWith(`${dir}/`)
   );
@@ -76,30 +87,47 @@ function resolveRelative(fromDir: string, href: string): string {
   return resolved.join("/");
 }
 
+/**
+ * Destinations this check cannot resolve to a repository path: absolute URLs,
+ * protocol-relative URLs, in-page anchors, site-root paths, and quoted strings
+ * that are code rather than links. A site-root path is already a published URL
+ * and is not relative to the file, so resolving it here would report a false
+ * positive on a correct link.
+ */
+function isRepositoryRelative(href: string): boolean {
+  return !/^(?:[a-z][a-z0-9+.-]*:|\/|#|["'])/i.test(href);
+}
+
+function* destinations(text: string): Generator<string> {
+  INLINE_LINK.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = INLINE_LINK.exec(text))) {
+    yield match[1];
+  }
+  const reference = REFERENCE_DEFINITION.exec(text);
+  if (reference) yield reference[1];
+}
+
 function collectUnpublishedLinkIssues(
   path: string,
   content: string,
 ): PublicDocIssue[] {
-  if (!isPublishedTarget(path)) return [];
-  if (UNSYNCED_README_PATHS.includes(path)) return [];
+  if (!isPublishedPage(path)) return [];
 
   const fromDir = path.slice(0, path.lastIndexOf("/"));
   const issues: PublicDocIssue[] = [];
   for (const [index, text] of content.split("\n").entries()) {
-    MARKDOWN_LINK.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = MARKDOWN_LINK.exec(text))) {
-      const href = match[1];
-      if (/^(?:[a-z][a-z0-9+.-]*:|\/\/|#|["'])/i.test(href)) continue;
+    for (const href of destinations(text)) {
+      if (!isRepositoryRelative(href)) continue;
       const target = resolveRelative(fromDir, href.split("#")[0]);
-      if (isPublishedTarget(target)) continue;
+      if (isPublishedPage(target)) continue;
       issues.push({
         path,
         line: index + 1,
         message:
           `Do not link published docs to ${target}. veryfront-docs publishes only ${
             SYNCED_DOC_DIRS.join(", ")
-          }, so this link 404s on the site.`,
+          }, and drops each section README, so this link 404s on the site.`,
         text: text.trim(),
       });
     }
