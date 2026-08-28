@@ -4,7 +4,11 @@ import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryBackend } from "./memory.ts";
 import type { Checkpoint, PendingApproval, WorkflowQueueItem, WorkflowRun } from "../types.ts";
 import { MAX_TRAVERSAL_DEPTH } from "../context-serialization.ts";
-import type { PersistedPendingApproval, PersistedPendingEventWait } from "./types.ts";
+import type {
+  PersistedPendingApproval,
+  PersistedPendingEventWait,
+  WorkflowRunUpdate,
+} from "./types.ts";
 import {
   MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES,
   MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES,
@@ -354,6 +358,22 @@ describe("MemoryBackend", () => {
       assertExists(updated?.startedAt);
     });
 
+    it("rejects revoked update patches asynchronously after the run check", async () => {
+      const { proxy, revoke } = Proxy.revocable<WorkflowRunUpdate>({ status: "waiting" }, {});
+      revoke();
+
+      await assertRejectsAsynchronously(
+        () => backend.updateRun("run-missing-revoked-patch", proxy),
+        "Run not found",
+      );
+
+      await backend.createRun(createTestRun("run-existing-revoked-patch"));
+      await assertRejectsAsynchronously(
+        () => backend.updateRun("run-existing-revoked-patch", proxy),
+        "revoked",
+      );
+    });
+
     it("merges context sets while applying explicit top-level deletions", async () => {
       await backend.createRun(createTestRun("run-context-delete", {
         context: { input: {}, removed: "stale", concurrent: "preserve" },
@@ -478,6 +498,289 @@ describe("MemoryBackend", () => {
         input: {},
         preserved: "kept",
       });
+    });
+
+    it("rechecks conditional status and worker ownership after context hooks", async () => {
+      const statusRunId = "run-context-conditional-status-hook";
+      await backend.createRun(createTestRun(statusRunId, {
+        status: "running",
+        workerId: "worker-original",
+      }));
+      const statusHook = {
+        toJSON() {
+          void backend.updateRun(statusRunId, { status: "waiting" });
+          return "outer-status";
+        },
+      };
+
+      assertEquals(
+        await backend.updateRunIfStatus(statusRunId, ["running"], {
+          status: "failed",
+          context: { statusHook },
+        }),
+        false,
+      );
+      const statusRun = await backend.getRun(statusRunId);
+      assertEquals(statusRun?.status, "waiting");
+      assertEquals(statusRun?.context.statusHook, undefined);
+
+      const workerRunId = "run-context-conditional-worker-hook";
+      await backend.createRun(createTestRun(workerRunId, {
+        status: "running",
+        workerId: "worker-original",
+      }));
+      const workerHook = {
+        toJSON() {
+          void backend.updateRun(workerRunId, { workerId: "worker-replacement" });
+          return "outer-worker";
+        },
+      };
+
+      assertEquals(
+        await backend.updateRunIfStatusAndWorker(
+          workerRunId,
+          ["running"],
+          "worker-original",
+          { status: "failed", context: { workerHook } },
+        ),
+        false,
+      );
+      const workerRun = await backend.getRun(workerRunId);
+      assertEquals(workerRun?.status, "running");
+      assertEquals(workerRun?.workerId, "worker-replacement");
+      assertEquals(workerRun?.context.workerHook, undefined);
+    });
+
+    it("keeps conditional updates on the backend atomic path", async () => {
+      class BookkeepingUpdateBackend extends MemoryBackend {
+        updateCalls = 0;
+
+        override async updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void> {
+          this.updateCalls++;
+          await super.updateRun(runId, { heartbeatAt: new Date() });
+          await super.updateRun(runId, patch);
+        }
+      }
+
+      const bookkeepingBackend = new BookkeepingUpdateBackend();
+      const runId = "run-conditional-override-bookkeeping";
+      await bookkeepingBackend.createRun(createTestRun(runId, { status: "running" }));
+
+      assertEquals(
+        await bookkeepingBackend.updateRunIfStatus(runId, ["running"], {
+          status: "failed",
+        }),
+        true,
+      );
+      assertEquals(bookkeepingBackend.updateCalls, 0);
+      assertEquals((await bookkeepingBackend.getRun(runId))?.status, "failed");
+    });
+
+    it("does not evaluate a conditional patch when its initial guard fails", async () => {
+      const runId = "run-conditional-initial-guard";
+      await backend.createRun(createTestRun(runId, { status: "waiting" }));
+      let patchReads = 0;
+      const patch = Object.defineProperty({}, "status", {
+        enumerable: true,
+        get() {
+          patchReads++;
+          return "failed";
+        },
+      }) as Partial<WorkflowRun>;
+
+      assertEquals(await backend.updateRunIfStatus(runId, ["running"], patch), false);
+      assertEquals(patchReads, 0);
+      assertEquals((await backend.getRun(runId))?.status, "waiting");
+    });
+
+    it("rechecks conditional guards after materializing patch containers", async () => {
+      const runId = "run-conditional-node-state-proxy";
+      await backend.createRun(createTestRun(runId, {
+        status: "running",
+        nodeStates: {},
+      }));
+      const nodeStates = new Proxy({
+        step: { nodeId: "step", status: "completed" as const, attempt: 1 },
+      }, {
+        ownKeys(target) {
+          void backend.updateRun(runId, { status: "waiting" });
+          return Reflect.ownKeys(target);
+        },
+      });
+
+      assertEquals(
+        await backend.updateRunIfStatus(runId, ["running"], {
+          status: "failed",
+          nodeStates,
+        }),
+        false,
+      );
+      const stored = await backend.getRun(runId);
+      assertEquals(stored?.status, "waiting");
+      assertEquals(stored?.nodeStates, {});
+    });
+
+    it("snapshots conditional statuses before context hooks can replace includes", async () => {
+      const runId = "run-context-conditional-status-snapshot";
+      await backend.createRun(createTestRun(runId, { status: "running" }));
+      const expectedStatuses: WorkflowRun["status"][] = ["running"];
+      let replacementCalls = 0;
+      const statusHook = {
+        toJSON() {
+          expectedStatuses.includes = () => {
+            replacementCalls++;
+            void backend.updateRun(runId, { status: "waiting" });
+            return true;
+          };
+          return "stored";
+        },
+      };
+
+      assertEquals(
+        await backend.updateRunIfStatus(runId, expectedStatuses, {
+          context: { statusHook },
+        }),
+        true,
+      );
+      assertEquals(replacementCalls, 0);
+      const stored = await backend.getRun(runId);
+      assertEquals(stored?.status, "running");
+      assertEquals(stored?.context.statusHook, "stored");
+    });
+
+    it("snapshots conditional statuses by index without invoking their iterator", async () => {
+      const runId = "run-context-conditional-status-iterator";
+      await backend.createRun(createTestRun(runId, { status: "waiting" }));
+      const expectedStatuses: WorkflowRun["status"][] = ["running"];
+      let iteratorCalls = 0;
+      Object.defineProperty(expectedStatuses, Symbol.iterator, {
+        configurable: true,
+        value: function* () {
+          iteratorCalls++;
+          yield "waiting";
+        },
+      });
+
+      assertEquals(
+        await backend.updateRunIfStatus(runId, expectedStatuses, { status: "failed" }),
+        false,
+      );
+      assertEquals(iteratorCalls, 0);
+      assertEquals((await backend.getRun(runId))?.status, "waiting");
+    });
+
+    it("normalizes fractional status-array lengths before indexed reads", async () => {
+      const runId = "run-context-conditional-status-length";
+      await backend.createRun(createTestRun(runId, { status: "waiting" }));
+      let secondIndexReads = 0;
+      const expectedStatuses = new Proxy<WorkflowRun["status"][]>(["running", "waiting"], {
+        get(target, key, receiver) {
+          if (key === "length") return 1.5;
+          if (key === "1") secondIndexReads++;
+          return Reflect.get(target, key, receiver);
+        },
+      });
+
+      assertEquals(
+        await backend.updateRunIfStatus(runId, expectedStatuses, { status: "failed" }),
+        false,
+      );
+      assertEquals(secondIndexReads, 0);
+      assertEquals((await backend.getRun(runId))?.status, "waiting");
+    });
+
+    it("rejects BigInt status-array lengths asynchronously", async () => {
+      const runId = "run-context-conditional-status-bigint-length";
+      await backend.createRun(createTestRun(runId, { status: "running" }));
+      const expectedStatuses = new Proxy<WorkflowRun["status"][]>(["running"], {
+        get(target, key, receiver) {
+          if (key === "length") return 1n;
+          return Reflect.get(target, key, receiver);
+        },
+      });
+
+      await assertRejectsAsynchronously(
+        () => backend.updateRunIfStatus(runId, expectedStatuses, { status: "failed" }),
+        "BigInt",
+      );
+      assertEquals((await backend.getRun(runId))?.status, "running");
+    });
+
+    it("checks run existence before reading conditional status elements", async () => {
+      function reentrantStatuses(runId: string): {
+        statuses: WorkflowRun["status"][];
+        reads: () => number;
+      } {
+        let reads = 0;
+        const statuses: WorkflowRun["status"][] = ["running"];
+        Object.defineProperty(statuses, 0, {
+          configurable: true,
+          get() {
+            reads++;
+            void backend.createRun(createTestRun(runId, {
+              status: "running",
+              workerId: "worker-current",
+            }));
+            return "running";
+          },
+        });
+        return { statuses, reads: () => reads };
+      }
+
+      const checkpointRunId = "run-missing-checkpoint-status";
+      const checkpointStatuses = reentrantStatuses(checkpointRunId);
+      assertEquals(
+        await backend.saveCheckpointIfStatusAndWorker(
+          "run-checkpoint-storage",
+          checkpointRunId,
+          checkpointStatuses.statuses,
+          "worker-current",
+          createCheckpoint("cp-missing-status", "step", new Date()),
+        ),
+        false,
+      );
+      assertEquals(checkpointStatuses.reads(), 0);
+
+      const approvalRunId = "run-missing-approval-status";
+      const approvalStatuses = reentrantStatuses(approvalRunId);
+      assertEquals(
+        await backend.savePendingApprovalIfStatusAndWorker(
+          approvalRunId,
+          approvalStatuses.statuses,
+          "worker-current",
+          {
+            id: "approval-missing-status",
+            nodeId: "review",
+            status: "pending",
+            message: "Review",
+            requestedAt: new Date(),
+          },
+        ),
+        false,
+      );
+      assertEquals(approvalStatuses.reads(), 0);
+
+      const waitRunId = "run-missing-event-wait-status";
+      const waitStatuses = reentrantStatuses(waitRunId);
+      await assertRejectsAsynchronously(
+        () =>
+          backend.savePendingEventWaitIfStatusAndWorker(
+            waitRunId,
+            waitStatuses.statuses,
+            "worker-current",
+            {
+              id: "wait-missing-status",
+              runId: waitRunId,
+              nodeId: "await-event",
+              eventName: "event.ready",
+              waitKind: "event",
+              requestedAt: new Date(),
+              status: "pending",
+            },
+          ),
+        "Run not found",
+      );
+      assertEquals(waitStatuses.reads(), 0);
     });
 
     it("persists context through the same JSON contract as Redis", async () => {
@@ -769,6 +1072,69 @@ describe("MemoryBackend", () => {
         "a node completed after the checkpoint must not survive the restore, " +
           "or replay skips it instead of re-running it",
       );
+    });
+
+    it("rechecks restore ownership after serializing snapshot context", async () => {
+      const runId = "run-restore-context-hook-owner";
+      await backend.createRun(createTestRun(runId, {
+        status: "waiting",
+        workerId: "worker-original",
+        context: { input: {}, preserved: "current" },
+      }));
+      const hook = {
+        toJSON() {
+          void backend.updateRun(runId, { workerId: "worker-replacement" });
+          return "outer-restore";
+        },
+      };
+
+      assertEquals(
+        await backend.restoreRunStateIfStatus(
+          runId,
+          ["waiting"],
+          {
+            status: "running",
+            context: { input: { hook } },
+            nodeStates: {},
+          },
+          "worker-original",
+        ),
+        false,
+      );
+      const stored = await backend.getRun(runId);
+      assertEquals(stored?.status, "waiting");
+      assertEquals(stored?.workerId, "worker-replacement");
+      assertEquals(stored?.context, { input: {}, preserved: "current" });
+    });
+
+    it("rechecks restore status after materializing snapshot fields", async () => {
+      const runId = "run-restore-field-accessor";
+      await backend.createRun(createTestRun(runId, {
+        status: "waiting",
+        context: { input: {}, preserved: "current" },
+      }));
+      const snapshot = Object.defineProperty(
+        {
+          context: { input: { restored: true } },
+          nodeStates: {},
+        },
+        "status",
+        {
+          enumerable: true,
+          get() {
+            void backend.updateRun(runId, { status: "cancelled" });
+            return "running";
+          },
+        },
+      );
+
+      assertEquals(
+        await backend.restoreRunStateIfStatus(runId, ["waiting"], snapshot),
+        false,
+      );
+      const stored = await backend.getRun(runId);
+      assertEquals(stored?.status, "cancelled");
+      assertEquals(stored?.context, { input: {}, preserved: "current" });
     });
 
     it("rejects attempts to mutate the source policy after run creation", async () => {
@@ -1091,6 +1457,155 @@ describe("MemoryBackend", () => {
         "Looks good!",
         "a losing decision must not overwrite the recorded comment",
       );
+    });
+
+    it("rechecks approval status after serializing decision data", async () => {
+      const runId = "run-reentrant-approval-decision";
+      const approval: PendingApproval = {
+        id: "approval-reentrant-decision",
+        nodeId: "review",
+        status: "pending",
+        message: "Review needed",
+        payload: {},
+        requestedAt: new Date(),
+      };
+      await backend.savePendingApproval(runId, approval);
+
+      let nestedDecision: Promise<boolean> | undefined;
+      const data = {
+        toJSON() {
+          nestedDecision = backend.updateApproval(runId, approval.id, {
+            approved: true,
+            approver: "first@example.com",
+            comment: "first decision",
+            data: { winner: "first" },
+          });
+          return { winner: "outer" };
+        },
+      };
+
+      assertEquals(
+        await backend.updateApproval(runId, approval.id, {
+          approved: false,
+          approver: "outer@example.com",
+          comment: "outer decision",
+          data,
+        }),
+        false,
+      );
+      assertEquals(await nestedDecision, true);
+      const stored = await backend.getPendingApproval(runId, approval.id);
+      assertEquals(stored?.status, "approved");
+      assertEquals(stored?.decidedBy, "first@example.com");
+      assertEquals(stored?.comment, "first decision");
+      assertEquals(stored?.decisionData, { winner: "first" });
+    });
+
+    it("rechecks approval status after reading decision accessors", async () => {
+      const runId = "run-reentrant-approval-accessor";
+      const approval: PendingApproval = {
+        id: "approval-reentrant-accessor",
+        nodeId: "review",
+        status: "pending",
+        message: "Review needed",
+        payload: {},
+        requestedAt: new Date(),
+      };
+      await backend.savePendingApproval(runId, approval);
+
+      let nestedDecision: Promise<boolean> | undefined;
+      const decision = Object.defineProperty(
+        {
+          approved: false,
+          approver: "outer@example.com",
+          comment: "outer decision",
+        },
+        "approved",
+        {
+          enumerable: true,
+          get() {
+            nestedDecision = backend.updateApproval(runId, approval.id, {
+              approved: true,
+              approver: "first@example.com",
+              comment: "first decision",
+            });
+            return false;
+          },
+        },
+      );
+
+      assertEquals(await backend.updateApproval(runId, approval.id, decision), false);
+      assertEquals(await nestedDecision, true);
+      const stored = await backend.getPendingApproval(runId, approval.id);
+      assertEquals(stored?.status, "approved");
+      assertEquals(stored?.decidedBy, "first@example.com");
+      assertEquals(stored?.comment, "first decision");
+    });
+
+    it("rejects reentrant approval deletion asynchronously", async () => {
+      const runId = "run-reentrant-approval-deletion";
+      const approval: PendingApproval = {
+        id: "approval-reentrant-deletion",
+        nodeId: "review",
+        status: "pending",
+        message: "Review needed",
+        payload: {},
+        requestedAt: new Date(),
+      };
+      await backend.savePendingApproval(runId, approval);
+
+      await assertRejectsAsynchronously(
+        () =>
+          backend.updateApproval(runId, approval.id, {
+            approved: true,
+            approver: "reviewer@example.com",
+            data: {
+              toJSON() {
+                void backend.deleteRun(runId);
+                return "deleted";
+              },
+            },
+          }),
+        "Approval not found",
+      );
+    });
+
+    it("rejects a replacement approval created during decision serialization", async () => {
+      const runId = "run-reentrant-approval-replacement";
+      const approval: PendingApproval = {
+        id: "approval-reentrant-replacement",
+        nodeId: "review",
+        status: "pending",
+        message: "Original approval",
+        payload: {},
+        requestedAt: new Date(),
+      };
+      await backend.savePendingApproval(runId, approval);
+
+      await assertRejectsAsynchronously(
+        () =>
+          backend.updateApproval(runId, approval.id, {
+            approved: true,
+            approver: "stale-reviewer@example.com",
+            data: {
+              toJSON() {
+                void backend.deleteRun(runId);
+                void backend.createRun(createTestRun(runId));
+                void backend.savePendingApproval(runId, {
+                  ...approval,
+                  message: "Replacement approval",
+                });
+                return "stale-decision";
+              },
+            },
+          }),
+        "Approval not found",
+      );
+
+      const replacement = await backend.getPendingApproval(runId, approval.id);
+      assertEquals(replacement?.status, "pending");
+      assertEquals(replacement?.message, "Replacement approval");
+      assertEquals(replacement?.decidedBy, undefined);
     });
 
     it("uses the JSON persistence contract for non-strict approval decision data", async () => {

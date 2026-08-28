@@ -139,9 +139,9 @@ Options accepted by parallel.
 | `getAllWorkflowIds`        | List registered workflow IDs for the current project scope.                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/registry.ts#L527)                |
 | `getWorkflow`              | Get metadata for a registered workflow by ID.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/registry.ts#L522)                |
 | `getWorkflowTenant`        | Get the current workflow tenant context. Returns undefined if not executing within a workflow step. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/executor/step-executor.ts#L56)   |
-| `hasEventWaitSupport`      | Check whether durable event waits are available.                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L759)          |
-| `hasRunObservationSupport` | Check whether atomic run observation is available.                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L679)          |
-| `hasWorkerSupport`         | Check whether worker support is present.                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L809)          |
+| `hasEventWaitSupport`      | Check whether durable event waits are available.                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L765)          |
+| `hasRunObservationSupport` | Check whether atomic run observation is available.                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L685)          |
+| `hasWorkerSupport`         | Check whether worker support is present.                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L815)          |
 | `isTerminalRunStatus`      | Whether a run in this status can still produce events.                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/events.ts#L104)                  |
 | `loop`                     | Create a loop workflow step.                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/loop.ts#L57)                 |
 | `map`                      | Create a mapped workflow step.                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/map.ts#L24)                  |
@@ -167,7 +167,7 @@ Options accepted by parallel.
 
 | Name               | Description                | Source                                                                                                          |
 | ------------------ | -------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `MemoryBackend`    | Implement memory backend.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/memory.ts#L267)            |
+| `MemoryBackend`    | Implement memory backend.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/memory.ts#L382)            |
 | `RedisBackend`     | Implement redis backend.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/redis/index.ts#L1093)      |
 | `WorkflowClient`   | Implement workflow client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/api/workflow-client.ts#L97)         |
 | `WorkflowExecutor` | Workflow Executor class    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/executor/workflow-executor.ts#L155) |

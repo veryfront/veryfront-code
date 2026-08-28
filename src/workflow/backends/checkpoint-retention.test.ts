@@ -855,6 +855,55 @@ describe("workflow checkpoint retention", () => {
     );
   });
 
+  it("captures all proxy descriptors before traversing property values", () => {
+    const earlier = { value: "before-later-descriptor" };
+    const source = { earlier, later: true };
+    const proxied = new Proxy(source, {
+      getOwnPropertyDescriptor(target, key) {
+        if (key === "later") earlier.value = "after-later-descriptor";
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+
+    const snapshot = cloneCheckpointForPersistence({
+      ...checkpoint("proxy-descriptor-order"),
+      context: { input: { proxied } },
+    });
+
+    assertEquals(
+      JSON.stringify(snapshot.context.input),
+      '{"proxied":{"earlier":{"value":"after-later-descriptor"},"later":true}}',
+    );
+  });
+
+  it("does not inspect JSON-ignored proxy symbol descriptors", () => {
+    const ignored = Symbol("ignored");
+    const visible = { value: "original" };
+    const source = { visible, [ignored]: true };
+    let ignoredDescriptorCalls = 0;
+    const proxied = new Proxy(source, {
+      getOwnPropertyDescriptor(target, key) {
+        if (key === ignored) {
+          ignoredDescriptorCalls++;
+          visible.value = "mutated";
+          throw new Error("ignored symbol descriptor must not run");
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+
+    const snapshot = cloneCheckpointForPersistence({
+      ...checkpoint("proxy-ignored-symbol-descriptor"),
+      context: { input: { proxied } },
+    });
+
+    assertEquals(
+      JSON.stringify(snapshot.context.input),
+      '{"proxied":{"visible":{"value":"original"}}}',
+    );
+    assertEquals(ignoredDescriptorCalls, 0);
+  });
+
   it("snapshots a proxy's dynamic toJSON result", () => {
     const source = { value: "original" };
     const proxied = new Proxy(source, {
@@ -930,6 +979,23 @@ describe("workflow checkpoint retention", () => {
 
     assertEquals(snapshot.context.input, { proxied: [1, 2, 3] });
     assertEquals(ownKeysCalls, 0);
+  });
+
+  it("snapshots proxy-array values through indexed get traps", () => {
+    const source = ["raw"];
+    const proxied = new Proxy(source, {
+      get(target, key, receiver) {
+        if (key === "0") return "projected";
+        return Reflect.get(target, key, receiver);
+      },
+    });
+
+    const snapshot = cloneCheckpointForPersistence({
+      ...checkpoint("proxy-array-index-get"),
+      context: { input: { proxied } },
+    });
+
+    assertEquals(snapshot.context.input, { proxied: ["projected"] });
   });
 
   it("defers oversized proxy-array persistence failure without reading indices", async () => {
