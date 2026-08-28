@@ -508,6 +508,9 @@ describe("serializeWorkflowContext", () => {
         const value of [
           new WeakMap(),
           new WeakSet(),
+          new WeakRef({}),
+          new FinalizationRegistry(() => {}),
+          new URL("https://example.com"),
           Promise.resolve(),
           Object(Symbol("hidden")),
           Object(1n),
@@ -527,7 +530,6 @@ describe("serializeWorkflowContext", () => {
 
         assertInstanceOf(error, VeryfrontError);
         assertStringIncludes(error.message, "strictContext");
-        assertStringIncludes(error.message, "object");
       }
     });
 
@@ -973,17 +975,11 @@ describe("serializeWorkflowContext", () => {
 
     it("keeps control strings and JSON edge primitives in an encoded tail", () => {
       const marker = "\u0000workflow-tail";
-      const leaf = Object.defineProperty(
-        {
-          marker,
-          values: [undefined, Symbol("omitted"), -0, Number.NaN, true],
-        },
-        "__proto__",
-        {
-          value: "ordinary data",
-          enumerable: true,
-        },
-      );
+      const leaf = {
+        marker,
+        values: [undefined, Symbol("omitted"), -0, Number.NaN, true],
+        ["__proto__"]: "ordinary data",
+      };
       let deep: unknown = leaf;
       for (let index = 0; index < PAST_THE_WALK; index++) deep = { nested: deep };
       const value = {

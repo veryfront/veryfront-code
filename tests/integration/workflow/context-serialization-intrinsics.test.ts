@@ -10,7 +10,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { serializeWorkflowContext } from "#veryfront/workflow/context-serialization.ts";
 
 describe("workflow context serialization with hostile ambient intrinsics", () => {
-  it("keeps strict serialization usable for plain objects when brand checks are unavailable", async () => {
+  it("fails strict serialization closed when proxy checks are unavailable", async () => {
     const script = `
       Object.defineProperty(globalThis, "caches", {
         configurable: true,
@@ -27,12 +27,17 @@ describe("workflow context serialization with hostile ambient intrinsics", () =>
       const { serializeWorkflowContext } = await import(
         "./src/workflow/context-serialization.ts"
       );
-      const serialized = serializeWorkflowContext(
-        { input: {}, step: { ok: true, nested: { value: 1 } } },
-        "run-edge-strict",
-        { strictContext: true },
-      );
-      console.log(JSON.stringify({ canIdentifyProxyWithoutHooks, serialized }));
+      let message = "accepted";
+      try {
+        serializeWorkflowContext(
+          { input: {}, step: { ok: true, nested: { value: 1 } } },
+          "run-edge-strict",
+          { strictContext: true },
+        );
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+      console.log(JSON.stringify({ canIdentifyProxyWithoutHooks, message }));
     `;
     const output = await new Deno.Command(Deno.execPath(), {
       args: ["eval", "--config=deno.json", script],
@@ -42,16 +47,16 @@ describe("workflow context serialization with hostile ambient intrinsics", () =>
     }).output();
     const stderr = new TextDecoder().decode(output.stderr);
     assertEquals(output.code, 0, stderr);
-    assertEquals(
-      JSON.parse(new TextDecoder().decode(output.stdout)),
-      {
-        canIdentifyProxyWithoutHooks: false,
-        serialized: '{"input":{},"step":{"ok":true,"nested":{"value":1}}}',
-      },
-    );
+    const result = JSON.parse(new TextDecoder().decode(output.stdout)) as {
+      canIdentifyProxyWithoutHooks: boolean;
+      message: string;
+    };
+    assertEquals(result.canIdentifyProxyWithoutHooks, false);
+    assertStringIncludes(result.message, "strictContext");
+    assertStringIncludes(result.message, "Proxy identity");
   });
 
-  it("rejects class instances in strict mode when brand checks are unavailable", async () => {
+  it("fails closed before inspecting class instances when proxy checks are unavailable", async () => {
     const script = `
       Object.defineProperty(globalThis, "caches", {
         configurable: true,
@@ -109,12 +114,12 @@ describe("workflow context serialization with hostile ambient intrinsics", () =>
     assertEquals(result.canIdentifyProxyWithoutHooks, false);
     for (const failure of result.failures) {
       assertStringIncludes(failure.message, "strictContext");
-      assertStringIncludes(failure.message, "context.step.<redacted>");
+      assertStringIncludes(failure.message, "Proxy identity");
       assertEquals(failure.message.includes(failure.name), false);
     }
   });
 
-  it("rejects strict object metadata losses when brand checks are unavailable", async () => {
+  it("fails closed before inspecting object metadata when proxy checks are unavailable", async () => {
     const script = `
       Object.defineProperty(globalThis, "caches", {
         configurable: true,
@@ -174,20 +179,14 @@ describe("workflow context serialization with hostile ambient intrinsics", () =>
 
     assertEquals(result.canIdentifyProxyWithoutHooks, false);
     assertStringIncludes(result.failures[0]!.message, "strictContext");
-    assertStringIncludes(
-      result.failures[0]!.message,
-      "context.step.<redacted>.<redacted>",
-    );
-    assertStringIncludes(result.failures[0]!.message, "non-enumerable property");
+    assertStringIncludes(result.failures[0]!.message, "Proxy identity");
     assertStringIncludes(result.failures[1]!.message, "strictContext");
-    assertStringIncludes(result.failures[1]!.message, "context.step.<redacted>");
-    assertStringIncludes(result.failures[1]!.message, "symbol-keyed property");
+    assertStringIncludes(result.failures[1]!.message, "Proxy identity");
     assertStringIncludes(result.failures[2]!.message, "strictContext");
-    assertStringIncludes(result.failures[2]!.message, "context.step.<redacted>");
-    assertStringIncludes(result.failures[2]!.message, "object");
+    assertStringIncludes(result.failures[2]!.message, "Proxy identity");
   });
 
-  it("rejects known non-plain built-ins in strict mode when brand checks are unavailable", async () => {
+  it("fails closed before inspecting built-ins when proxy checks are unavailable", async () => {
     const script = `
       Object.defineProperty(globalThis, "caches", {
         configurable: true,
@@ -248,12 +247,12 @@ describe("workflow context serialization with hostile ambient intrinsics", () =>
     assertEquals(result.canIdentifyProxyWithoutHooks, false);
     for (const failure of result.failures) {
       assertStringIncludes(failure.message, "strictContext");
-      assertStringIncludes(failure.message, "context.step.<redacted>");
+      assertStringIncludes(failure.message, "Proxy identity");
       assertEquals(failure.message.includes(failure.name), false);
     }
   });
 
-  it("rejects named array properties in strict mode when brand checks are unavailable", async () => {
+  it("fails closed before inspecting named array properties without proxy checks", async () => {
     const script = `
       Object.defineProperty(globalThis, "caches", {
         configurable: true,
@@ -312,20 +311,12 @@ describe("workflow context serialization with hostile ambient intrinsics", () =>
 
     assertEquals(result.canIdentifyProxyWithoutHooks, false);
     assertStringIncludes(result.failures[0]!.message, "strictContext");
-    assertStringIncludes(
-      result.failures[0]!.message,
-      "context.step.<redacted>.<redacted>",
-    );
-    assertStringIncludes(result.failures[0]!.message, "array property");
+    assertStringIncludes(result.failures[0]!.message, "Proxy identity");
     assertStringIncludes(result.failures[1]!.message, "strictContext");
-    assertStringIncludes(
-      result.failures[1]!.message,
-      "context.step.<redacted>.<redacted>",
-    );
-    assertStringIncludes(result.failures[1]!.message, "non-enumerable property");
+    assertStringIncludes(result.failures[1]!.message, "Proxy identity");
   });
 
-  it("rejects inherited array holes and numeric accessors in strict mode when brand checks are unavailable", async () => {
+  it("fails closed before inspecting array holes and accessors without proxy checks", async () => {
     const script = `
       Object.defineProperty(globalThis, "caches", {
         configurable: true,
@@ -422,19 +413,16 @@ describe("workflow context serialization with hostile ambient intrinsics", () =>
 
     assertEquals(result.canIdentifyProxyWithoutHooks, false);
     assertStringIncludes(result.failures[0]!.message, "strictContext");
-    assertStringIncludes(result.failures[0]!.message, "context.step.<redacted>");
-    assertStringIncludes(result.failures[0]!.message, "array hole");
+    assertStringIncludes(result.failures[0]!.message, "Proxy identity");
     assertStringIncludes(result.failures[1]!.message, "strictContext");
-    assertStringIncludes(result.failures[1]!.message, "context.step.<redacted>");
-    assertStringIncludes(result.failures[1]!.message, "array hole");
+    assertStringIncludes(result.failures[1]!.message, "Proxy identity");
     assertStringIncludes(result.failures[2]!.message, "strictContext");
-    assertStringIncludes(result.failures[2]!.message, "context.step.<redacted>[0]");
-    assertStringIncludes(result.failures[2]!.message, "accessor property");
-    assertEquals(result.accessorReads, 1);
-    assertEquals(result.proxyOwnKeys, 1);
+    assertStringIncludes(result.failures[2]!.message, "Proxy identity");
+    assertEquals(result.accessorReads, 0);
+    assertEquals(result.proxyOwnKeys, 0);
   });
 
-  it("rejects enumerable symbol properties in strict mode when brand checks are unavailable", async () => {
+  it("fails closed before inspecting symbol properties without proxy checks", async () => {
     const script = `
       Object.defineProperty(globalThis, "caches", {
         configurable: true,
@@ -487,11 +475,10 @@ describe("workflow context serialization with hostile ambient intrinsics", () =>
 
     assertEquals(result.canIdentifyProxyWithoutHooks, false);
     assertStringIncludes(result.message, "strictContext");
-    assertStringIncludes(result.message, "context.step.<redacted>");
-    assertStringIncludes(result.message, "symbol-keyed property");
+    assertStringIncludes(result.message, "Proxy identity");
   });
 
-  it("rejects enumerable array symbol properties in strict mode when brand checks are unavailable", async () => {
+  it("fails closed before inspecting array symbols without proxy checks", async () => {
     const script = `
       Object.defineProperty(globalThis, "caches", {
         configurable: true,
@@ -554,10 +541,9 @@ describe("workflow context serialization with hostile ambient intrinsics", () =>
     };
 
     assertEquals(result.canIdentifyProxyWithoutHooks, false);
-    assertEquals(result.ownKeysCalls, 1);
+    assertEquals(result.ownKeysCalls, 0);
     assertStringIncludes(result.message, "strictContext");
-    assertStringIncludes(result.message, "context.step.<redacted>");
-    assertStringIncludes(result.message, "symbol-keyed property");
+    assertStringIncludes(result.message, "Proxy identity");
   });
 
   it("skips diagnostic-only Proxy metadata when brand checks are unavailable", async () => {
@@ -675,7 +661,7 @@ describe("workflow context serialization with hostile ambient intrinsics", () =>
     );
   });
 
-  it("stops strict edge-host descriptor inspection after a fatal value", async () => {
+  it("does not inspect strict edge-host descriptors without proxy checks", async () => {
     const script = `
       Object.defineProperty(globalThis, "caches", {
         configurable: true,
@@ -748,10 +734,10 @@ describe("workflow context serialization with hostile ambient intrinsics", () =>
     };
 
     assertEquals(result.canIdentifyProxyWithoutHooks, false);
-    assertStringIncludes(result.message, "context.step.<redacted>");
-    assertStringIncludes(result.message, "BigInt");
+    assertStringIncludes(result.message, "strictContext");
+    assertStringIncludes(result.message, "Proxy identity");
     assertEquals(result.message.includes("TRAILING_DESCRIPTOR_TRAP"), false);
-    assertEquals(result.descriptorCalls, ["first"]);
+    assertEquals(result.descriptorCalls, []);
     assertEquals(result.getterCalls, 0);
   });
 

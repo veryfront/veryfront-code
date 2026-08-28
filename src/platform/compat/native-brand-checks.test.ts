@@ -5,13 +5,19 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 describe("native brand checks", () => {
   it("identifies native-slot objects without trusting their prototype", async () => {
     const isolated = await import("./native-brand-checks.ts?non-plain-builtins");
-    const values = [
+    const values: object[] = [
       new WeakMap(),
       new WeakSet(),
+      new WeakRef({}),
+      new FinalizationRegistry(() => {}),
       Promise.resolve(),
       Object(Symbol("boxed")),
       Object(1n),
     ];
+
+    const disguisedUrl = new URL("https://example.com");
+    Object.setPrototypeOf(disguisedUrl, Object.prototype);
+    if (Reflect.ownKeys(disguisedUrl).length === 0) values.push(disguisedUrl);
 
     for (const value of values) {
       Object.setPrototypeOf(value, Object.prototype);

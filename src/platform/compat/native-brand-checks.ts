@@ -30,6 +30,8 @@ const freeze = Object.freeze;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectHasOwnProperty = Object.prototype.hasOwnProperty;
 const objectPrototype = Object.prototype;
+const getPrototypeOf = Object.getPrototypeOf;
+const ownKeys = Reflect.ownKeys;
 const setPrototypeOf = Object.setPrototypeOf;
 const SymbolValueOf = Symbol.prototype.valueOf;
 
@@ -74,16 +76,47 @@ function readOwnDataFunction(
   return typeof descriptor.value === "function" ? descriptor.value : undefined;
 }
 
+const weakRefDeref = typeof WeakRef === "function"
+  ? readOwnDataFunction(WeakRef.prototype, "deref")
+  : undefined;
+const finalizationRegistryUnregister = typeof FinalizationRegistry === "function"
+  ? readOwnDataFunction(FinalizationRegistry.prototype, "unregister")
+  : undefined;
+const urlHrefGet = typeof URL === "function"
+  ? getOwnPropertyDescriptor(URL.prototype, "href")?.get
+  : undefined;
+const nativeSlotProbeToken = createObject(null);
+const noArguments: unknown[] = [];
+const nativeSlotProbeArguments = [nativeSlotProbeToken];
+
 function hasNativeSlot(
   value: unknown,
-  method: (this: unknown) => unknown,
+  method: ((this: unknown, ...args: unknown[]) => unknown) | undefined,
+  args: unknown[] = noArguments,
 ): boolean {
+  if (method === undefined) return false;
   try {
-    apply(method, value, []);
+    apply(method, value, args);
     return true;
   } catch {
     return false;
   }
+}
+
+function hasPrototypeDisguisedNativeSlot(value: unknown): boolean {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+    return false;
+  }
+  try {
+    if (getPrototypeOf(value) !== objectPrototype || ownKeys(value).length !== 0) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+  return hasNativeSlot(value, weakRefDeref) ||
+    hasNativeSlot(value, finalizationRegistryUnregister, nativeSlotProbeArguments) ||
+    hasNativeSlot(value, urlHrefGet);
 }
 
 function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefined {
@@ -153,6 +186,12 @@ function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefine
       // path for ordinary strict objects.
       if (needsBigIntSlotFallback && hasNativeSlot(candidate, BigIntValueOf)) return true;
       if (needsSymbolSlotFallback && hasNativeSlot(candidate, SymbolValueOf)) return true;
+      // WeakRef, FinalizationRegistry, and URL have no node:util/types
+      // predicates. Their slot methods throw for ordinary objects, so probe
+      // only the empty Object.prototype shape these built-ins expose after a
+      // prototype disguise. The proxy predicate above makes the reflection
+      // gate hook-free.
+      if (hasPrototypeDisguisedNativeSlot(candidate)) return true;
       return false;
     },
     writable: false,

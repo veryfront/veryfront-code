@@ -40,7 +40,8 @@ export interface RedisBackendConfig extends BackendConfig {
   debug?: boolean;
   /**
    * Reject context values that JSON would encode lossily instead of warning
-   * and storing their normalized JSON form.
+   * and storing their normalized JSON form. Runtimes without hook-free Proxy
+   * identification reject object and array context values when enabled.
    */
   strictContext?: boolean;
   /** Existing Redis client (optional) */

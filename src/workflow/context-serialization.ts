@@ -160,7 +160,8 @@ interface NormalizedJsonObject {
 export interface WorkflowJsonSerializationOptions {
   /**
    * Promote JSON-lossy values such as Date, Map, undefined, and NaN from
-   * warnings to persistence errors.
+   * warnings to persistence errors. Runtimes without hook-free Proxy
+   * identification reject object and array values when this option is enabled.
    */
   strictContext?: boolean;
 }
@@ -955,6 +956,10 @@ function normalizeAndFindUnrepresentableValues(
     }
 
     const nested = value as JsonTraversalReference;
+    if (options.strictContext === true && !canIdentifyProxyWithoutHooks) {
+      recordLossy(path, "unverifiable Proxy identity");
+      return null;
+    }
     if (reflectApply(setHas, active, [nested])) {
       recordFatal(path, "circular reference");
       return null;

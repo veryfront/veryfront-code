@@ -1,8 +1,68 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 describe("workflow context serialization on edge hosts", () => {
+  it("fails strict serialization closed when proxy identity cannot be verified", async () => {
+    const moduleUrl = new URL(
+      "../../../src/workflow/context-serialization.ts?edge-host-strict-proxy",
+      import.meta.url,
+    ).href;
+    const script = `
+      const host = globalThis;
+      const denoDescriptor = Object.getOwnPropertyDescriptor(host, "Deno");
+      const processDescriptor = Object.getOwnPropertyDescriptor(host, "process");
+      Reflect.deleteProperty(host, "Deno");
+      Reflect.deleteProperty(host, "process");
+      let serializer;
+      try {
+        serializer = await import(${JSON.stringify(moduleUrl)});
+      } finally {
+        if (denoDescriptor) Object.defineProperty(host, "Deno", denoDescriptor);
+        if (processDescriptor) Object.defineProperty(host, "process", processDescriptor);
+      }
+      let reads = 0;
+      const target = { value: 1 };
+      const value = new Proxy(target, {
+        get(target, key, receiver) {
+          reads++;
+          return key === "value" ? reads : Reflect.get(target, key, receiver);
+        },
+        getOwnPropertyDescriptor: Reflect.getOwnPropertyDescriptor,
+        getPrototypeOf: Reflect.getPrototypeOf,
+        ownKeys: Reflect.ownKeys,
+      });
+      try {
+        serializer.serializeWorkflowJson(
+          { value },
+          "output",
+          undefined,
+          { strictContext: true },
+        );
+        console.log(JSON.stringify({ message: "accepted", reads }));
+      } catch (error) {
+        console.log(JSON.stringify({
+          message: error instanceof Error ? error.message : String(error),
+          reads,
+        }));
+      }
+    `;
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["eval", script],
+      stderr: "piped",
+      stdout: "piped",
+    }).output();
+
+    assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
+    const result = JSON.parse(new TextDecoder().decode(output.stdout)) as {
+      message: string;
+      reads: number;
+    };
+    assertStringIncludes(result.message, "strictContext");
+    assertStringIncludes(result.message, "Proxy");
+    assertEquals(result.reads, 0);
+  });
+
   it("does not invoke a Symbol.toStringTag getter before taking the JSON snapshot", async () => {
     const moduleUrl = new URL(
       "../../../src/workflow/context-serialization.ts?edge-host-child",
