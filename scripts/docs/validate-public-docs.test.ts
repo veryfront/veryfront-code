@@ -6,6 +6,7 @@ import {
   destinations,
   publishedTargetCandidates,
   publishedTargetExists,
+  scanDestinations,
 } from "./validate-public-docs.ts";
 
 const BLOCKED_REPOSITORY = "example-org/private-examples";
@@ -67,8 +68,18 @@ describe("public docs validation", () => {
       ["../architecture/capital-sharp.md"],
     );
     assertEquals(
-      destinations("[a&Tab;b]\n\n[a b]: ../architecture/entity.md"),
-      ["../architecture/entity.md"],
+      destinations(
+        "[a\tb]\n\n[a b]: ../architecture/actual-whitespace.md",
+      ),
+      ["../architecture/actual-whitespace.md"],
+    );
+    assertEquals(
+      destinations(
+        "[a&Tab;b] [a&colon;b] [a&#32;b]\n\n" +
+          "[a b]: ../architecture/entity-whitespace.md\n" +
+          "[a:b]: ../architecture/entity-colon.md",
+      ),
+      [],
     );
     assertEquals(
       destinations(
@@ -102,6 +113,8 @@ describe("public docs validation", () => {
           '<a data-ok={true // } >\n} href="../architecture/line-comment.md">ok</a>\n' +
           '<a data-ok={/<}>/.test(value)} href="../architecture/regex.md">ok</a>\n' +
           '<a title="<!--" href="../architecture/comment-token.md">ok</a>\n' +
+          '<a data-ok={/[}>]/.test(value)} href="../architecture/regex-class.md">ok</a>\n' +
+          '<a data-ok={value / count > 1} href="../architecture/division.md">ok</a>\n' +
           '<div title="[old](../architecture/title-link.md)"></div>\n' +
           '<div title={"[old](../architecture/expression.md)"}></div>\n' +
           "<Code value={'Configure href=\"../architecture/string.md\"'} />\n" +
@@ -117,6 +130,8 @@ describe("public docs validation", () => {
         "../architecture/line-comment.md",
         "../architecture/regex.md",
         "../architecture/comment-token.md",
+        "../architecture/regex-class.md",
+        "../architecture/division.md",
         "../architecture/real.md",
       ],
     );
@@ -135,7 +150,7 @@ describe("public docs validation", () => {
         "[plain](./does-not-exist.md\n" +
           "[wrapped](<./also-missing.md>\n" +
           "[pointy](<../architecture/\nprivate.md>)\n" +
-          "[whitespace](./does-not-exist(\npath).md)\n" +
+          "[nested](./does-not-exist(\npath).md)\n" +
           "[paragraph](\n\n../architecture/paragraph.md)\n" +
           "[reference]\n\n[reference]: <../architecture/reference.md",
       ),
@@ -310,6 +325,55 @@ describe("public docs validation", () => {
         "[old]\n\n[old]: ../architecture/pri(vate).md",
       ),
       ["../architecture/pri(vate).md"],
+    );
+    assertEquals(
+      destinations(
+        "[public]: ./deploying.md\n" +
+          '  "https://veryfront.com/docs/code/guides/does-not-exist"\n\n' +
+          "[link][public]",
+      ),
+      ["./deploying.md"],
+    );
+    for (const indentation of ["    ", "\t"]) {
+      assertEquals(
+        destinations(
+          "[public]: ./deploying.md\n" +
+            `${indentation}"https://veryfront.com/docs/code/guides/title"\n\n` +
+            "[public]",
+        ),
+        ["./deploying.md"],
+      );
+    }
+    assertEquals(
+      destinations(
+        '[public]: ./deploying.md "first\n' +
+          'https://veryfront.com/docs/code/guides/title"\n\n' +
+          "[public]",
+      ),
+      ["./deploying.md"],
+    );
+    assertEquals(
+      destinations(
+        '[public]: ./deploying.md "[hidden](../architecture/private.md)"\n\n' +
+          "[public]",
+      ),
+      ["./deploying.md"],
+    );
+    assertEquals(
+      destinations(
+        "[public]: ./deploying.md\n" +
+          '  "[hidden](../architecture/private.md)"\n\n' +
+          "[public]",
+      ),
+      ["./deploying.md"],
+    );
+    assertEquals(
+      destinations(
+        '[public]: ./deploying.md "first\n' +
+          '[hidden](../architecture/private.md)"\n\n' +
+          "[public]",
+      ),
+      ["./deploying.md"],
     );
   });
 
@@ -777,20 +841,6 @@ describe("public docs validation", () => {
     );
     assertEquals(
       destinations(
-        "<!-- [old](../architecture/html-comment.md) -->\n" +
-          "[real](../architecture/real.md)",
-      ),
-      ["../architecture/real.md"],
-    );
-    assertEquals(
-      destinations(
-        '---\ntitle: "[old](../architecture/frontmatter.md)"\n---\n' +
-          "[real](../architecture/real.md)",
-      ),
-      ["../architecture/real.md"],
-    );
-    assertEquals(
-      destinations(
         "`{/*`\n" +
           "[inline](../architecture/inline.md)\n" +
           "{/* real comment */}",
@@ -830,6 +880,46 @@ describe("public docs validation", () => {
     );
   });
 
+  it("scans MDX-only syntax as Markdown in README files", () => {
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "README.md",
+        "{/* [visible](docs/guides/does-not-exist.md) */}",
+      ).map((issue) => issue.line),
+      [1],
+    );
+  });
+
+  it("ignores destinations inside HTML comments", () => {
+    assertEquals(
+      scanDestinations(
+        "<!-- [old](../architecture/markdown.md)\n" +
+          '<a href="../architecture/html.md">old</a>\n' +
+          "https://veryfront.com/docs/code/architecture/autolink -->\n" +
+          "[real](../architecture/real.md)",
+        "markdown",
+      ).map((destination) => destination.href),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      scanDestinations(
+        "<!-- [hidden](../architecture/unclosed.md)\n" +
+          "https://veryfront.com/docs/code/architecture/also-hidden",
+        "markdown",
+      ),
+      [],
+    );
+    assertEquals(
+      scanDestinations(
+        String.raw`\<!-- [visible](../architecture/escaped.md) -->` +
+          '\n<div title="<!--"></div>\n' +
+          "[real](../architecture/real.md)",
+        "markdown",
+      ).map((destination) => destination.href),
+      ["../architecture/escaped.md", "../architecture/real.md"],
+    );
+  });
+
   it("ignores Markdown syntax inside complete MDX expressions", () => {
     assertEquals(
       destinations(
@@ -852,6 +942,13 @@ describe("public docs validation", () => {
       destinations(
         '{true /* } */ ? "[plain](../architecture/comment.md)" : ""}\n' +
           '{true // }\n ? "[line](../architecture/line-comment.md)" : ""}\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        '{/<}>/.test(value) ? "[old](../architecture/regex.md)" : ""}\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
@@ -902,10 +999,50 @@ describe("public docs validation", () => {
     );
     assertEquals(
       collectUnpublishedLinkIssues(
+        "docs/guides/example.mdx",
+        'export const sample = condition\n  ? "[old](../architecture/private.md)"\n' +
+          '  : ""\n\n[real](../architecture/real.md)',
+      ).map((issue) => issue.line),
+      [5],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
         "docs/guides/example.md",
         'export const sample = "[old](../architecture/markdown.md)"',
       ).length,
       1,
+    );
+  });
+
+  it("ignores destinations inside initial YAML frontmatter", () => {
+    const source = '---\ntitle: "[sample](./does-not-exist.md)"\n' +
+      "canonical: https://veryfront.com/docs/code/architecture/private\n---\n" +
+      "[real](../architecture/real.md)";
+    assertEquals(
+      collectUnpublishedLinkIssues("docs/guides/example.md", source).map(
+        (issue) => issue.line,
+      ),
+      [5],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues("docs/guides/example.mdx", source).map(
+        (issue) => issue.line,
+      ),
+      [5],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.md",
+        "Intro\n\n---\n[visible](../architecture/visible.md)\n---",
+      ).map((issue) => issue.line),
+      [4],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.md",
+        '---\ntitle: "[visible](./does-not-exist.md)"\n...\n',
+      ).map((issue) => issue.line),
+      [2],
     );
   });
 

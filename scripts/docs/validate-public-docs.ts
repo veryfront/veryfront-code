@@ -731,6 +731,13 @@ function mdxExpressionAt(
       cursor = end;
       continue;
     }
+    if (character === "/" && javaScriptRegexMayStart(text, cursor)) {
+      const regexEnd = javaScriptRegexEnd(text, cursor);
+      if (regexEnd !== undefined) {
+        cursor = regexEnd;
+        continue;
+      }
+    }
     if (character === "{") depth++;
     else if (character === "}" && --depth === 0) {
       return { expression: { start, end: cursor + 1 }, strings };
@@ -787,29 +794,6 @@ function mdxSyntaxRanges(
   return { comments, expressions, strings };
 }
 
-function frontmatterRanges(text: string): Range[] {
-  const firstLineEnd = text.indexOf("\n");
-  if (
-    firstLineEnd === -1 ||
-    text.slice(0, firstLineEnd).replace(/\r$/, "") !== "---"
-  ) return [];
-
-  for (let lineStart = firstLineEnd + 1; lineStart < text.length;) {
-    const next = text.indexOf("\n", lineStart);
-    const lineEnd = next === -1 ? text.length : next;
-    if (
-      /^(?:---|\.\.\.)[ \t]*$/.test(
-        text.slice(lineStart, lineEnd).replace(/\r$/, ""),
-      )
-    ) {
-      return [{ start: 0, end: next === -1 ? text.length : next + 1 }];
-    }
-    if (next === -1) break;
-    lineStart = next + 1;
-  }
-  return [];
-}
-
 function maskRanges(text: string, ranges: readonly Range[]): string {
   let masked = "";
   let cursor = 0;
@@ -819,26 +803,6 @@ function maskRanges(text: string, ranges: readonly Range[]): string {
     cursor = range.end;
   }
   return masked + text.slice(cursor);
-}
-
-function htmlCommentRanges(
-  text: string,
-  ignoredRanges: readonly Range[],
-): Range[] {
-  const ranges: Range[] = [];
-  for (let start = 0; start < text.length;) {
-    start = text.indexOf("<!--", start);
-    if (start === -1) break;
-    if (isInsideRange(ignoredRanges, start)) {
-      start++;
-      continue;
-    }
-    const closing = text.indexOf("-->", start + 4);
-    const end = closing === -1 ? text.length : closing + 3;
-    ranges.push({ start, end });
-    start = end;
-  }
-  return ranges;
 }
 
 function mdxEsmMayStart(text: string, lineStart: number): boolean {
@@ -865,6 +829,9 @@ function javaScriptRegexEnd(line: string, start: number): number | undefined {
   for (let cursor = start + 1; cursor < line.length; cursor++) {
     if (line[cursor] === "\n" || line[cursor] === "\r") return undefined;
     if (line[cursor] === "\\") {
+      if (line[cursor + 1] === "\n" || line[cursor + 1] === "\r") {
+        return undefined;
+      }
       cursor++;
       continue;
     }
@@ -1000,56 +967,102 @@ function mdxEsmRanges(
   return ranges;
 }
 
+function yamlFrontmatterRanges(text: string): Range[] {
+  const openingEnd = text.startsWith("---\r\n")
+    ? 5
+    : text.startsWith("---\n")
+    ? 4
+    : undefined;
+  if (openingEnd === undefined) return [];
+
+  for (let lineStart = openingEnd; lineStart < text.length;) {
+    const next = text.indexOf("\n", lineStart);
+    const lineEnd = next === -1 ? text.length : next;
+    const line = text.slice(lineStart, lineEnd).replace(/\r$/, "");
+    if (line === "---") {
+      return [{
+        start: 0,
+        end: next === -1 ? text.length : next + 1,
+      }];
+    }
+    if (next === -1) break;
+    lineStart = next + 1;
+  }
+  return [];
+}
+
+function htmlCommentRanges(
+  text: string,
+  ignoredRanges: readonly Range[],
+): Range[] {
+  const ranges: Range[] = [];
+  for (let start = 0; start < text.length;) {
+    start = text.indexOf("<!--", start);
+    if (start === -1) break;
+    if (
+      isInsideRange(ignoredRanges, start) ||
+      isBackslashEscaped(text, start)
+    ) {
+      start += 4;
+      continue;
+    }
+    const closing = text.indexOf("-->", start + 4);
+    const end = closing === -1 ? text.length : closing + 3;
+    ranges.push({ start, end });
+    start = end;
+  }
+  return ranges;
+}
+
 function ignoredDestinationRanges(
   text: string,
   syntax: DocumentSyntax,
+  hasFrontmatter: boolean,
 ): {
   readonly ignored: Range[];
   readonly code: Range[];
   readonly expressions: Range[];
   readonly strings: Range[];
 } {
-  const frontmatter = frontmatterRanges(text);
-  const codeRanges = markdownCodeRanges(maskRanges(text, frontmatter));
-  const initialIgnoredRanges = mergeRanges([...frontmatter, ...codeRanges]);
-  const provisionalMdxRanges = mdxSyntaxRanges(text, initialIgnoredRanges);
-  const provisionalTagRanges = htmlTagRanges(
-    text,
-    initialIgnoredRanges,
-    provisionalMdxRanges.expressions,
-    provisionalMdxRanges.strings,
-  );
-  const htmlComments = htmlCommentRanges(
-    text,
-    mergeRanges([
-      ...initialIgnoredRanges,
-      ...provisionalMdxRanges.comments,
-      ...provisionalMdxRanges.expressions,
-      ...provisionalTagRanges,
-    ]),
-  );
-  const baseIgnoredRanges = mergeRanges([
-    ...frontmatter,
-    ...codeRanges,
-    ...htmlComments,
-  ]);
-  const mdxRanges = mdxSyntaxRanges(text, baseIgnoredRanges);
+  const frontmatterRanges = hasFrontmatter ? yamlFrontmatterRanges(text) : [];
+  const codeRanges = markdownCodeRanges(maskRanges(text, frontmatterRanges));
+  const mdxRanges = syntax === "mdx"
+    ? mdxSyntaxRanges(
+      text,
+      mergeRanges([...frontmatterRanges, ...codeRanges]),
+    )
+    : { comments: [], expressions: [], strings: [] };
   const esmRanges = syntax === "mdx"
     ? mdxEsmRanges(
       text,
       mergeRanges([
-        ...baseIgnoredRanges,
+        ...frontmatterRanges,
+        ...codeRanges,
         ...mdxRanges.comments,
         ...mdxRanges.expressions,
       ]),
     )
     : [];
+  const baseIgnoredRanges = mergeRanges([
+    ...frontmatterRanges,
+    ...codeRanges,
+    ...mdxRanges.comments,
+    ...esmRanges,
+  ]);
+  const preliminaryTagRanges = htmlTagRanges(
+    text,
+    baseIgnoredRanges,
+    mdxRanges.expressions,
+    mdxRanges.strings,
+  );
+  const htmlComments = syntax === "markdown"
+    ? htmlCommentRanges(
+      text,
+      mergeRanges([...baseIgnoredRanges, ...preliminaryTagRanges]),
+    )
+    : [];
   return {
-    ignored: mergeRanges([
-      ...baseIgnoredRanges,
-      ...mdxRanges.comments,
-      ...esmRanges,
-    ]),
+    ignored: mergeRanges([...baseIgnoredRanges, ...htmlComments]),
     code: codeRanges,
     expressions: mdxRanges.expressions,
     strings: mdxRanges.strings,
@@ -1156,6 +1169,60 @@ function topLevelTagOffsets(tag: string): ReadonlySet<number> {
   return offsets;
 }
 
+function referenceTitleEnd(
+  text: string,
+  start: number,
+  containers: readonly BlockContainerToken[],
+): number | undefined {
+  const opener = text[start];
+  const closer = opener === "(" ? ")" : opener;
+  if (opener !== '"' && opener !== "'" && opener !== "(") return undefined;
+
+  let cursor = start + 1;
+  while (cursor < text.length) {
+    if (text[cursor] === "\\" && cursor + 1 < text.length) {
+      if (text[cursor + 1] === "\n" || text[cursor + 1] === "\r") {
+        cursor++;
+        continue;
+      }
+      cursor += 2;
+      continue;
+    }
+    if (text[cursor] === closer) {
+      cursor++;
+      while (text[cursor] === " " || text[cursor] === "\t") cursor++;
+      return cursor >= text.length || text[cursor] === "\n" ||
+          text[cursor] === "\r"
+        ? cursor
+        : undefined;
+    }
+    if (text[cursor] === "\n" || text[cursor] === "\r") {
+      if (text[cursor] === "\r") cursor++;
+      if (text[cursor] !== "\n") return undefined;
+      const lineStart = cursor + 1;
+      const next = text.indexOf("\n", lineStart);
+      const lineEnd = next === -1 ? text.length : next;
+      const contentStart = blockContainerContentStart(
+        text,
+        lineStart,
+        lineEnd,
+        containers,
+      );
+      if (contentStart === undefined) return undefined;
+      let significant = contentStart;
+      while (text[significant] === " " || text[significant] === "\t") {
+        significant++;
+      }
+      const contentEnd = text[lineEnd - 1] === "\r" ? lineEnd - 1 : lineEnd;
+      if (significant >= contentEnd) return undefined;
+      cursor = contentStart;
+      continue;
+    }
+    cursor++;
+  }
+  return undefined;
+}
+
 function referenceDefinitionTailEnd(
   text: string,
   start: number,
@@ -1168,60 +1235,28 @@ function referenceDefinitionTailEnd(
     cursor++;
   }
   if (cursor >= text.length) return cursor;
-
-  let definitionEnd: number | undefined;
-  if (text[cursor] === "\n" || text[cursor] === "\r") {
-    definitionEnd = cursor;
-    const nextLineStart = text[cursor] === "\r" && text[cursor + 1] === "\n"
-      ? cursor + 2
-      : cursor + 1;
-    const next = text.indexOf("\n", nextLineStart);
-    const nextLineEnd = next === -1 ? text.length : next;
-    const contentStart = blockContainerContentStart(
-      text,
-      nextLineStart,
-      nextLineEnd,
-      containers,
-    );
-    if (contentStart === undefined) return definitionEnd;
-    cursor = contentStart;
-    let indentation = 0;
-    while (indentation < 3) {
-      if (text[cursor] === " ") {
-        cursor++;
-        indentation++;
-      } else if (text[cursor] === "\t") {
-        const width = 4 - indentation % 4;
-        if (indentation + width > 3) break;
-        cursor++;
-        indentation += width;
-      } else break;
-    }
-  } else if (!hasSeparation) return undefined;
-
-  const opener = text[cursor];
-  const closer = opener === "(" ? ")" : opener;
-  if (opener !== '"' && opener !== "'" && opener !== "(") {
-    return definitionEnd;
+  if (text[cursor] !== "\n" && text[cursor] !== "\r") {
+    return hasSeparation
+      ? referenceTitleEnd(text, cursor, containers)
+      : undefined;
   }
-  cursor++;
-  while (
-    cursor < text.length && text[cursor] !== "\n" && text[cursor] !== "\r"
-  ) {
-    if (text[cursor] === "\\" && cursor + 1 < text.length) {
-      cursor += 2;
-      continue;
-    }
-    if (text[cursor] === closer) break;
-    cursor++;
-  }
-  if (text[cursor] !== closer) return definitionEnd;
-  cursor++;
+
+  const destinationLineEnd = cursor;
+  if (text[cursor] === "\r") cursor++;
+  if (text[cursor] !== "\n") return destinationLineEnd;
+  const titleLineStart = cursor + 1;
+  const next = text.indexOf("\n", titleLineStart);
+  const titleLineEnd = next === -1 ? text.length : next;
+  const contentStart = blockContainerContentStart(
+    text,
+    titleLineStart,
+    titleLineEnd,
+    containers,
+  );
+  if (contentStart === undefined) return destinationLineEnd;
+  cursor = contentStart;
   while (text[cursor] === " " || text[cursor] === "\t") cursor++;
-  return cursor >= text.length || text[cursor] === "\n" ||
-      text[cursor] === "\r"
-    ? cursor
-    : definitionEnd;
+  return referenceTitleEnd(text, cursor, containers) ?? destinationLineEnd;
 }
 
 function sameBlockContainer(
@@ -1379,9 +1414,11 @@ function referenceDestinationAt(
 }
 
 function normalizeReferenceLabel(label: string): string {
-  return decodeMarkdownBackslashEscapes(
-    decodeMarkdownCharacterReferences(label),
-  ).trim().replace(/\s+/g, " ").toLowerCase().toUpperCase();
+  return label
+    .replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, "")
+    .replace(/[ \t\r\n]+/g, " ")
+    .toLowerCase()
+    .toUpperCase();
 }
 
 function isValidReferenceLabel(label: string): boolean {
@@ -1569,12 +1606,17 @@ function markdownDestinationStart(
 export function scanDestinations(
   text: string,
   syntax: DocumentSyntax = "mdx",
+  hasFrontmatter = false,
 ): Destination[] {
   // A scanner is required here because valid Markdown labels can contain
   // balanced brackets or escaped closing brackets.
   const found: Destination[] = [];
   const destinationOffsets = new Set<number>();
-  const syntaxRanges = ignoredDestinationRanges(text, syntax);
+  const syntaxRanges = ignoredDestinationRanges(
+    text,
+    syntax,
+    hasFrontmatter,
+  );
   const ignoredRanges = syntaxRanges.ignored;
   const tagRanges = htmlTagRanges(
     text,
@@ -1582,10 +1624,55 @@ export function scanDestinations(
     syntaxRanges.expressions,
     syntaxRanges.strings,
   );
-  const markdownIgnoredRanges = mergeRanges([
+  const structuralMarkdownIgnoredRanges = mergeRanges([
     ...ignoredRanges,
     ...syntaxRanges.expressions,
     ...tagRanges,
+  ]);
+
+  // Parse definitions before rendered links so title text cannot be mistaken
+  // for Markdown, HTML, or autolink destinations.
+  const references: Array<
+    Destination & {
+      label: string;
+      labelStart: number;
+      definitionEnd: number;
+    }
+  > = [];
+  let previousReferenceEnd: number | undefined;
+  for (let lineStart = 0; lineStart <= text.length;) {
+    const next = text.indexOf("\n", lineStart);
+    if (isInsideRange(structuralMarkdownIgnoredRanges, lineStart)) {
+      if (next === -1) break;
+      lineStart = next + 1;
+      continue;
+    }
+    const previousLineEnd = text[lineStart - 2] === "\r"
+      ? lineStart - 2
+      : lineStart - 1;
+    const followsCodeBlock = previousLineEnd > 0 &&
+      isInsideRange(syntaxRanges.code, previousLineEnd - 1);
+    const reference = followsCodeBlock || referenceDefinitionMayStart(
+        text,
+        lineStart,
+        previousReferenceEnd,
+      )
+      ? referenceDestinationAt(text, lineStart)
+      : undefined;
+    if (reference) {
+      references.push(reference);
+      previousReferenceEnd = reference.definitionEnd;
+    }
+    if (next === -1) break;
+    lineStart = next + 1;
+  }
+  const referenceDefinitionRanges = references.map((reference) => ({
+    start: reference.labelStart,
+    end: reference.definitionEnd,
+  }));
+  const markdownIgnoredRanges = mergeRanges([
+    ...structuralMarkdownIgnoredRanges,
+    ...referenceDefinitionRanges,
   ]);
   const markdownAngleDestinationRanges: Range[] = [];
   const markdownLinkRanges: Range[] = [];
@@ -1675,6 +1762,7 @@ export function scanDestinations(
   }
 
   for (const tagRange of tagRanges) {
+    if (isInsideRange(referenceDefinitionRanges, tagRange.start)) continue;
     const tag = text.slice(tagRange.start, tagRange.end);
     const topLevelOffsets = topLevelTagOffsets(tag);
     const htmlDestination = new RegExp(
@@ -1717,42 +1805,6 @@ export function scanDestinations(
     }
   }
 
-  // A reference definition is only a definition at the start of a line, and
-  // only participates in rendering when a link uses its normalized label.
-  const references: Array<
-    Destination & {
-      label: string;
-      labelStart: number;
-      definitionEnd: number;
-    }
-  > = [];
-  let previousReferenceEnd: number | undefined;
-  for (let lineStart = 0; lineStart <= text.length;) {
-    const next = text.indexOf("\n", lineStart);
-    if (isInsideRange(markdownIgnoredRanges, lineStart)) {
-      if (next === -1) break;
-      lineStart = next + 1;
-      continue;
-    }
-    const previousLineEnd = text[lineStart - 2] === "\r"
-      ? lineStart - 2
-      : lineStart - 1;
-    const followsCodeBlock = previousLineEnd > 0 &&
-      isInsideRange(syntaxRanges.code, previousLineEnd - 1);
-    const reference = followsCodeBlock || referenceDefinitionMayStart(
-        text,
-        lineStart,
-        previousReferenceEnd,
-      )
-      ? referenceDestinationAt(text, lineStart)
-      : undefined;
-    if (reference) {
-      references.push(reference);
-      previousReferenceEnd = reference.definitionEnd;
-    }
-    if (next === -1) break;
-    lineStart = next + 1;
-  }
   const referenceUse = usedReferences(
     text,
     markdownIgnoredRanges,
@@ -1775,10 +1827,6 @@ export function scanDestinations(
       .filter((usage) => definedLabels.has(usage.label))
       .map((usage) => usage.range),
   ]);
-  const referenceDefinitionRanges = references.map((reference) => ({
-    start: reference.labelStart,
-    end: reference.definitionEnd,
-  }));
   const uriAutolinkIgnoredRanges = mergeRanges([
     ...markdownIgnoredRanges,
     ...markdownLinkTailRanges,
@@ -1864,6 +1912,7 @@ export function collectUnpublishedLinkIssues(
     const { href, offset, syntax } of scanDestinations(
       content,
       documentSyntax,
+      path !== "README.md",
     )
   ) {
     const target = resolveDocumentationTarget(path, href, syntax);
@@ -2143,7 +2192,11 @@ export function collectIssues(
   const documentSyntax = path.endsWith(".mdx") ? "mdx" : "markdown";
   const blockedDestinationLines = new Set<number>();
   for (
-    const destination of scanDestinations(content, documentSyntax)
+    const destination of scanDestinations(
+      content,
+      documentSyntax,
+      path !== "README.md",
+    )
   ) {
     if (
       repositoryRule.matches(destination.href) ||
