@@ -2108,18 +2108,60 @@ describe("RedisBackend", () => {
       assertEquals(updated?.context, { input: {}, first: "keep", step1: "done" });
       assertStringIncludes(
         mockRedis.lastScript,
-        "local current = cjson.decode(currentJson)",
-        "ordinary patches must stay on Redis's native cjson path",
+        "redis.call('hset', KEYS[1], 'context', mergeJsonObjects(current, value, true))",
+        "context patches must keep serialized values opaque in Lua",
       );
       assertStringIncludes(
         mockRedis.lastScript,
         "containsAmbiguousEmptyArray",
-        "only an ambiguous empty-array token should select the raw-slice fallback",
+        "node-state patches still use the ambiguous empty-array raw-slice fallback",
       );
       assertEquals(
         mockRedis.lastScript.includes("cannot preserve empty arrays"),
         false,
         "standard Redis must accept user-bearing empty arrays",
+      );
+    });
+
+    it("keeps context merge and deletion values opaque in Redis Lua", async () => {
+      const runId = "run-deep-context-lua-opaque";
+      let deep: unknown = { leaf: true };
+      for (let index = 0; index < MAX_TRAVERSAL_DEPTH + 25; index++) {
+        deep = { nested: deep };
+      }
+      await backend.createRun(createTestRun(runId));
+
+      await backend.updateRun(runId, {
+        context: { input: {}, removed: "stale", deep },
+        contextDeletes: ["removed"],
+      });
+
+      assertEquals((await backend.getRun(runId))?.context.removed, undefined);
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "redis.call('hset', KEYS[1], 'context', deleteJsonObjectFields(current, value, true))",
+        "context deletion must not cjson-decode the stored context document",
+      );
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "redis.call('hset', KEYS[1], 'context', mergeJsonObjects(current, value, true))",
+        "context merge must not cjson-decode the stored context document",
+      );
+
+      await backend.updateRunIfStatus(runId, ["pending"], {
+        context: { input: {}, kept: true },
+        contextDeletes: ["deep"],
+      });
+
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "redis.call('hset', KEYS[1], 'context', deleteJsonObjectFields(current, value, true))",
+        "conditional context deletion must not cjson-decode the stored context document",
+      );
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "redis.call('hset', KEYS[1], 'context', mergeJsonObjects(current, value, true))",
+        "conditional context merge must not cjson-decode the stored context document",
       );
     });
 
@@ -2794,26 +2836,134 @@ describe("RedisBackend", () => {
         strictContext: true,
       });
       const timestamp = new Date("2025-01-01T01:00:00Z");
-
-      await strictBackend.saveCheckpoint("run-cp-strict-node-dates", {
-        id: "cp-strict-node-dates",
-        nodeId: "step",
-        timestamp,
-        context: { input: {}, step: { saved: true } },
-        nodeStates: {
-          step: {
-            nodeId: "step",
-            status: "completed",
-            attempt: 1,
-            startedAt: timestamp,
-            completedAt: timestamp,
-          },
-        },
+      const warnings: LogEntry[] = [];
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+        if (entry.level === "warn" && entry.component === "workflow-context") {
+          warnings.push(entry);
+        }
       });
+
+      try {
+        await strictBackend.saveCheckpoint("run-cp-strict-node-dates", {
+          id: "cp-strict-node-dates",
+          nodeId: "step",
+          timestamp,
+          context: { input: {}, step: { saved: true } },
+          nodeStates: {
+            step: {
+              nodeId: "step",
+              status: "completed",
+              attempt: 1,
+              startedAt: timestamp,
+              completedAt: timestamp,
+            },
+          },
+          _resumeEnvelope: {
+            schemaVersion: 2,
+            ownerNodeId: "step",
+            context: { input: {}, step: { saved: true } },
+            nodeStates: {
+              step: {
+                nodeId: "step",
+                status: "completed",
+                attempt: 1,
+                startedAt: timestamp,
+                completedAt: timestamp,
+              },
+            },
+            workflowProjection: { context: {} },
+            graphAdmission: {
+              stepsEvaluationContext: { input: {}, step: { saved: true } },
+              stepsEvaluationProjection: { context: {} },
+              graphIdentity: [],
+              workflowVersion: null,
+            },
+          },
+        });
+      } finally {
+        unsubscribe();
+      }
 
       assertEquals(
         (await strictBackend.getLatestCheckpoint("run-cp-strict-node-dates"))?.id,
         "cp-strict-node-dates",
+      );
+      assertEquals(warnings, []);
+
+      await assertRejects(
+        () =>
+          strictBackend.saveCheckpoint("run-cp-strict-user-context-date", {
+            id: "cp-strict-user-context-date",
+            nodeId: "step",
+            timestamp,
+            context: { input: {}, step: { when: timestamp } },
+            nodeStates: {
+              step: {
+                nodeId: "step",
+                status: "completed",
+                attempt: 1,
+                startedAt: timestamp,
+                completedAt: timestamp,
+              },
+            },
+          }),
+        Error,
+        "strictContext",
+      );
+
+      const outputWarnings: LogEntry[] = [];
+      const unsubscribeOutputWarnings = __subscribeLogRecordEmitter((entry) => {
+        if (entry.level === "warn" && entry.component === "workflow-context") {
+          outputWarnings.push(entry);
+        }
+      });
+
+      try {
+        await strictBackend.saveCheckpoint("run-cp-strict-node-output-date", {
+          id: "cp-strict-node-output-date",
+          nodeId: "step",
+          timestamp,
+          context: { input: {}, step: { saved: true } },
+          nodeStates: {
+            step: {
+              nodeId: "step",
+              status: "completed",
+              attempt: 1,
+            },
+          },
+          _resumeEnvelope: {
+            schemaVersion: 2,
+            ownerNodeId: "step",
+            context: { input: {}, step: { saved: true } },
+            nodeStates: {
+              step: {
+                nodeId: "step",
+                status: "completed",
+                attempt: 1,
+                output: { when: timestamp },
+              },
+            },
+            workflowProjection: { context: {} },
+            graphAdmission: {
+              stepsEvaluationContext: { input: {}, step: { saved: true } },
+              stepsEvaluationProjection: { context: {} },
+              graphIdentity: [],
+              workflowVersion: null,
+            },
+          },
+        });
+      } finally {
+        unsubscribeOutputWarnings();
+      }
+
+      assertEquals(outputWarnings.length, 1);
+      const outputWarningPaths = outputWarnings[0]?.context?.paths;
+      if (typeof outputWarningPaths !== "string") {
+        throw new Error("Expected checkpoint warning paths");
+      }
+      assertStringIncludes(
+        outputWarningPaths,
+        "checkpoint._resumeEnvelope.<redacted>.<redacted>.<redacted>.<redacted> (Date)",
       );
     });
 

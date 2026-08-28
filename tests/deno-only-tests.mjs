@@ -25,4 +25,5 @@
 export const DENO_ONLY_TESTS = [
   "src/server/dev-server/handler-only.integration.test.ts",
   "src/testing/cwd-exclusion-*.test.ts",
+  "tests/integration/workflow/context-serialization-edge-host.test.ts",
 ];

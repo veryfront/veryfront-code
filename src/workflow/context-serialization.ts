@@ -937,6 +937,19 @@ function normalizeAndFindUnrepresentableValues(
 
     const type = typeof value;
     if (
+      options.strictContext === true &&
+      (type === "object" || type === "function")
+    ) {
+      if (!canIdentifyProxyWithoutHooks) {
+        recordLossy(path, "unverifiable Proxy identity");
+        return null;
+      }
+      if (isProxyWithoutHooks(value as JsonTraversalReference)) {
+        recordLossy(path, describe(value));
+        return null;
+      }
+    }
+    if (
       type === "object" &&
       jsonIsRawJSON !== undefined &&
       reflectApply(jsonIsRawJSON, jsonRawSupport, [value])
@@ -981,10 +994,6 @@ function normalizeAndFindUnrepresentableValues(
     }
 
     const nested = value as JsonTraversalReference;
-    if (options.strictContext === true && !canIdentifyProxyWithoutHooks) {
-      recordLossy(path, "unverifiable Proxy identity");
-      return null;
-    }
     if (reflectApply(setHas, active, [nested])) {
       recordFatal(path, "circular reference");
       return null;

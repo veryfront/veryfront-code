@@ -317,8 +317,11 @@ local function applyPatchField(field, value)
     redis.call('hset', KEYS[1], 'nodeStates', deleteJsonObjectFields(current, value))
   elseif field == 'contextDeletes' then
     local current = redis.call('hget', KEYS[1], 'context') or '{}'
-    redis.call('hset', KEYS[1], 'context', deleteJsonObjectFields(current, value))
-  elseif field == 'nodeStates' or field == 'context' then
+    redis.call('hset', KEYS[1], 'context', deleteJsonObjectFields(current, value, true))
+  elseif field == 'context' then
+    local current = redis.call('hget', KEYS[1], 'context') or '{}'
+    redis.call('hset', KEYS[1], 'context', mergeJsonObjects(current, value, true))
+  elseif field == 'nodeStates' then
     local current = redis.call('hget', KEYS[1], field) or '{}'
     redis.call('hset', KEYS[1], field, mergeJsonObjects(current, value))
   else
@@ -373,8 +376,11 @@ local function applyPatchField(field, value)
     redis.call('hset', KEYS[1], 'nodeStates', deleteJsonObjectFields(current, value))
   elseif field == 'contextDeletes' then
     local current = redis.call('hget', KEYS[1], 'context') or '{}'
-    redis.call('hset', KEYS[1], 'context', deleteJsonObjectFields(current, value))
-  elseif not replaceMaps and (field == 'nodeStates' or field == 'context') then
+    redis.call('hset', KEYS[1], 'context', deleteJsonObjectFields(current, value, true))
+  elseif not replaceMaps and field == 'context' then
+    local current = redis.call('hget', KEYS[1], 'context') or '{}'
+    redis.call('hset', KEYS[1], 'context', mergeJsonObjects(current, value, true))
+  elseif not replaceMaps and field == 'nodeStates' then
     local current = redis.call('hget', KEYS[1], field) or '{}'
     redis.call('hset', KEYS[1], field, mergeJsonObjects(current, value))
   else
@@ -1217,6 +1223,35 @@ export class RedisBackend implements WorkflowBackend {
     return fields;
   }
 
+  private serializeCheckpointNodeStates(
+    runId: string,
+    nodeStates: Checkpoint["nodeStates"],
+  ): string {
+    return prepareWorkflowJson(
+      this.normalizeCheckpointNodeStates(nodeStates),
+      "checkpoint.nodeStates",
+      runId,
+      { strictContext: false },
+    ).serialized;
+  }
+
+  private normalizeCheckpointNodeStates(
+    nodeStates: Checkpoint["nodeStates"],
+  ): Record<string, unknown> {
+    const normalizedNodeStates: Record<string, unknown> = {};
+    for (const [nodeId, nodeState] of Object.entries(nodeStates)) {
+      const normalizedNodeState: Record<string, unknown> = { ...nodeState };
+      if (nodeState.startedAt !== undefined) {
+        normalizedNodeState.startedAt = nodeState.startedAt.toISOString();
+      }
+      if (nodeState.completedAt !== undefined) {
+        normalizedNodeState.completedAt = nodeState.completedAt.toISOString();
+      }
+      normalizedNodeStates[nodeId] = normalizedNodeState;
+    }
+    return normalizedNodeStates;
+  }
+
   private serializeCheckpoint(runId: string, checkpoint: Checkpoint): string {
     // Checked before the rest of the checkpoint is encoded below, so a value
     // JSON refuses is named by its path rather than by the native error.
@@ -1226,12 +1261,7 @@ export class RedisBackend implements WorkflowBackend {
       runId,
       { strictContext: this.config.strictContext },
     );
-    const { serialized: nodeStates } = prepareWorkflowJson(
-      checkpoint.nodeStates,
-      "checkpoint.nodeStates",
-      runId,
-      { strictContext: false },
-    );
+    const nodeStates = this.serializeCheckpointNodeStates(runId, checkpoint.nodeStates);
     const {
       context: _context,
       nodeStates: _nodeStates,
@@ -1242,11 +1272,15 @@ export class RedisBackend implements WorkflowBackend {
       ...checkpointMetadata,
       timestamp: checkpoint.timestamp.toISOString(),
     });
-    const resumeEnvelope = _resumeEnvelope === undefined
+    const normalizedResumeEnvelope = _resumeEnvelope === undefined ? undefined : {
+      ..._resumeEnvelope,
+      nodeStates: this.normalizeCheckpointNodeStates(_resumeEnvelope.nodeStates),
+    };
+    const resumeEnvelope = normalizedResumeEnvelope === undefined
       ? ""
       : `,"_resumeEnvelope":${
         prepareWorkflowJson(
-          _resumeEnvelope,
+          normalizedResumeEnvelope,
           "checkpoint._resumeEnvelope",
           runId,
           { strictContext: false },

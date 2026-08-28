@@ -343,6 +343,44 @@ describe("serializeWorkflowContext", () => {
       assertStringIncludes(error.message, "raw JSON value");
     });
 
+    it("throws for a Proxy in strictContext before invoking proxy traps", () => {
+      let trapCalls = 0;
+      const proxy = new Proxy({}, {
+        get() {
+          trapCalls++;
+          throw new Error("proxy get trap must not run");
+        },
+        getOwnPropertyDescriptor() {
+          trapCalls++;
+          throw new Error("proxy descriptor trap must not run");
+        },
+        getPrototypeOf() {
+          trapCalls++;
+          throw new Error("proxy prototype trap must not run");
+        },
+        ownKeys() {
+          trapCalls++;
+          throw new Error("proxy ownKeys trap must not run");
+        },
+      });
+
+      const error = assertThrows(
+        () =>
+          serializeWorkflowContext(
+            contextWith({ proxy }),
+            "run-strict-context",
+            { strictContext: true },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, "strictContext");
+      assertStringIncludes(error.message, "context.step.<redacted>");
+      assertStringIncludes(error.message, "object");
+      assertEquals(trapCalls, 0);
+    });
+
     it("throws when strictContext would duplicate a shared object reference", () => {
       const shared = { value: 1 };
 
