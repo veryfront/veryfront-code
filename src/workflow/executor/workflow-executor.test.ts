@@ -208,12 +208,16 @@ class DelayedCancellationBackend extends MemoryBackend {
   readonly cancellationStarted = Promise.withResolvers<void>();
   readonly persistCancellation = Promise.withResolvers<void>();
 
-  override async updateRun(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
+  override async updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
     if (patch.status === "cancelled") {
       this.cancellationStarted.resolve();
       await this.persistCancellation.promise;
     }
-    await super.updateRun(runId, patch);
+    return await super.updateRunIfStatus(runId, expectedStatuses, patch);
   }
 }
 

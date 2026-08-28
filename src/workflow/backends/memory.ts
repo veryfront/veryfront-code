@@ -58,7 +58,6 @@ const objectDefineProperty = Object.defineProperty;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectHasOwn = Object.hasOwn;
 const objectKeys = Object.keys;
-const objectIs = Object.is;
 const objectPrototype = Object.prototype;
 const jsonParse = JSON.parse;
 const mathFloor = Math.floor;
@@ -80,18 +79,7 @@ interface MemoryBackendConfig extends BackendConfig, WorkflowJsonSerializationOp
 
 interface MemoryRunUpdateCondition {
   readonly matches: (run: WorkflowRun) => boolean;
-  readonly patch: WorkflowRunUpdate;
-  readonly shape: MemoryRunUpdateShape;
   updated: boolean;
-}
-
-/** Public, clone-stable shape used to recognize an override's forwarded patch. */
-interface MemoryRunUpdateShape {
-  readonly fields: ReadonlyArray<{
-    readonly key: string;
-    readonly type: string;
-    readonly value?: unknown;
-  }>;
 }
 
 interface MaterializedMemoryRunUpdate {
@@ -135,44 +123,6 @@ function hasExpectedRunStatus(
   status: WorkflowRun["status"],
 ): boolean {
   return reflectApply(setHas, expectedStatuses, [status]) as boolean;
-}
-
-function snapshotMemoryRunUpdateShape(patch: WorkflowRunUpdate): MemoryRunUpdateShape {
-  const fields = objectKeys(patch).map((key) => {
-    const descriptor = objectGetOwnPropertyDescriptor(patch, key);
-    if (descriptor === undefined || !objectHasOwn(descriptor, "value")) {
-      return { key, type: "accessor" };
-    }
-    const value = descriptor.value;
-    const type = value === null ? "null" : typeof value;
-    return type === "object" || type === "function" ? { key, type } : { key, type, value };
-  });
-  return { fields };
-}
-
-function hasMemoryRunUpdateShape(
-  patch: WorkflowRunUpdate,
-  expected: MemoryRunUpdateShape,
-): boolean {
-  const keys = objectKeys(patch);
-  if (keys.length !== expected.fields.length) return false;
-  for (let index = 0; index < keys.length; index++) {
-    const field = expected.fields[index]!;
-    const key = keys[index]!;
-    if (key !== field.key) return false;
-    const descriptor = objectGetOwnPropertyDescriptor(patch, key);
-    if (descriptor === undefined || !objectHasOwn(descriptor, "value")) {
-      if (field.type !== "accessor") return false;
-      continue;
-    }
-    const value = descriptor.value;
-    const type = value === null ? "null" : typeof value;
-    if (type !== field.type) return false;
-    if (type !== "object" && type !== "function" && !objectIs(value, field.value)) {
-      return false;
-    }
-  }
-  return true;
 }
 
 function materializeMemoryRunUpdate(
@@ -444,7 +394,6 @@ export class MemoryBackend implements WorkflowBackend {
   private stalledClaims = new Map<string, { workerId: string; expiresAt: number }>();
   private runRevisions = new Map<string, number>();
   private runObservers = new Map<string, Set<MemoryRunObserver>>();
-  private runUpdateConditions = new Map<string, Set<MemoryRunUpdateCondition>>();
   private config: MemoryBackendConfig;
 
   constructor(config: MemoryBackendConfig = {}) {
@@ -512,23 +461,6 @@ export class MemoryBackend implements WorkflowBackend {
     return condition === undefined || condition.matches(run);
   }
 
-  private findRunUpdateCondition(
-    runId: string,
-    patch: WorkflowRunUpdate,
-  ): MemoryRunUpdateCondition | undefined {
-    const conditions = this.runUpdateConditions.get(runId);
-    if (conditions === undefined) return undefined;
-    for (const condition of conditions) {
-      if (patch === condition.patch) return condition;
-    }
-    // Object spread and structuredClone discard identity. Match their public
-    // field shape without putting private metadata on the patch subclasses see.
-    for (const condition of conditions) {
-      if (hasMemoryRunUpdateShape(patch, condition.shape)) return condition;
-    }
-    return undefined;
-  }
-
   private prepareRunCondition(
     runId: string,
     expectedStatuses: WorkflowRun["status"][],
@@ -587,14 +519,13 @@ export class MemoryBackend implements WorkflowBackend {
   private applyRunUpdate(
     runId: string,
     patch: WorkflowRunUpdate,
+    condition?: MemoryRunUpdateCondition,
   ): Promise<void> {
     let run: WorkflowRun;
-    let condition: MemoryRunUpdateCondition | undefined;
     try {
       // Reject rather than throw synchronously so callers see a rejected Promise
       // consistently (matching the Redis backend's async error paths).
       run = this.requireRun(runId);
-      condition = this.findRunUpdateCondition(runId, patch);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -628,32 +559,25 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve();
   }
 
-  private async updateRunConditionally(
+  private updateRunConditionally(
     runId: string,
     patch: WorkflowRunUpdate,
     expectedStatuses: WorkflowRun["status"][],
     expectedWorkerId?: string,
   ): Promise<boolean> {
-    const prepared = this.prepareRunCondition(runId, expectedStatuses, expectedWorkerId);
-    if (prepared.run === null) return false;
+    let prepared: PreparedMemoryRunCondition;
+    try {
+      prepared = this.prepareRunCondition(runId, expectedStatuses, expectedWorkerId);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    if (prepared.run === null) return Promise.resolve(false);
 
-    const publicPatch: WorkflowRunUpdate = { ...patch };
     const condition: MemoryRunUpdateCondition = {
       matches: prepared.matches,
-      patch: publicPatch,
-      shape: snapshotMemoryRunUpdateShape(publicPatch),
       updated: false,
     };
-    const conditions = this.runUpdateConditions.get(runId) ?? new Set();
-    conditions.add(condition);
-    this.runUpdateConditions.set(runId, conditions);
-    try {
-      await this.updateRun(runId, condition.patch);
-      return condition.updated;
-    } finally {
-      conditions.delete(condition);
-      if (conditions.size === 0) this.runUpdateConditions.delete(runId);
-    }
+    return this.applyRunUpdate(runId, patch, condition).then(() => condition.updated);
   }
 
   updateRunIfStatus(

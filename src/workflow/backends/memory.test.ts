@@ -9,7 +9,6 @@ import type {
   PersistedPendingEventWait,
   WorkflowRunUpdate,
 } from "./types.ts";
-import { assertWorkflowRunUpdate } from "./types.ts";
 import {
   MAX_WORKFLOW_PENDING_EVENT_WAIT_ENTRIES,
   MAX_WORKFLOW_RUN_EVENT_MAILBOX_ENTRIES,
@@ -552,77 +551,14 @@ describe("MemoryBackend", () => {
       assertEquals(workerRun?.context.workerHook, undefined);
     });
 
-    it("preserves conditional guards through updateRun override copies", async () => {
-      class CopyingUpdateBackend extends MemoryBackend {
-        readonly updateStarted = Promise.withResolvers<void>();
-        readonly releaseUpdate = Promise.withResolvers<void>();
-
-        override async updateRun(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
-          this.updateStarted.resolve();
-          await this.releaseUpdate.promise;
-          await super.updateRun(runId, { ...patch });
-        }
-
-        forceUpdate(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
-          return super.updateRun(runId, patch);
-        }
-      }
-
-      const copyingBackend = new CopyingUpdateBackend();
-      const runId = "run-conditional-override-copy";
-      await copyingBackend.createRun(createTestRun(runId, { status: "running" }));
-
-      const conditionalUpdate = copyingBackend.updateRunIfStatus(
-        runId,
-        ["running"],
-        { status: "failed" },
-      );
-      await copyingBackend.updateStarted.promise;
-      await copyingBackend.forceUpdate(runId, { status: "waiting" });
-      copyingBackend.releaseUpdate.resolve();
-
-      assertEquals(await conditionalUpdate, false);
-      assertEquals((await copyingBackend.getRun(runId))?.status, "waiting");
-    });
-
-    it("preserves conditional guards through structured-clone forwarding", async () => {
-      class CloningUpdateBackend extends MemoryBackend {
-        readonly updateStarted = Promise.withResolvers<void>();
-        readonly releaseUpdate = Promise.withResolvers<void>();
-
-        override async updateRun(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
-          this.updateStarted.resolve();
-          await this.releaseUpdate.promise;
-          await super.updateRun(runId, structuredClone(patch));
-        }
-
-        forceUpdate(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
-          return super.updateRun(runId, patch);
-        }
-      }
-
-      const cloningBackend = new CloningUpdateBackend();
-      const runId = "run-conditional-override-clone";
-      await cloningBackend.createRun(createTestRun(runId, { status: "running" }));
-
-      const conditionalUpdate = cloningBackend.updateRunIfStatus(
-        runId,
-        ["running"],
-        { status: "failed" },
-      );
-      await cloningBackend.updateStarted.promise;
-      await cloningBackend.forceUpdate(runId, { status: "waiting" });
-      cloningBackend.releaseUpdate.resolve();
-
-      assertEquals(await conditionalUpdate, false);
-      assertEquals((await cloningBackend.getRun(runId))?.status, "waiting");
-    });
-
-    it("keeps bookkeeping base updates separate from the forwarded patch", async () => {
+    it("keeps conditional updates on the backend atomic path", async () => {
       class BookkeepingUpdateBackend extends MemoryBackend {
+        updateCalls = 0;
+
         override async updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void> {
-          await super.updateRun(runId, { status: "waiting" });
-          await super.updateRun(runId, structuredClone(patch));
+          this.updateCalls++;
+          await super.updateRun(runId, { heartbeatAt: new Date() });
+          await super.updateRun(runId, patch);
         }
       }
 
@@ -631,33 +567,13 @@ describe("MemoryBackend", () => {
       await bookkeepingBackend.createRun(createTestRun(runId, { status: "running" }));
 
       assertEquals(
-        await bookkeepingBackend.updateRunIfStatus(runId, ["running"], { status: "failed" }),
-        false,
-      );
-      assertEquals((await bookkeepingBackend.getRun(runId))?.status, "waiting");
-    });
-
-    it("keeps conditional guard metadata out of subclass-visible patches", async () => {
-      class ValidatingUpdateBackend extends MemoryBackend {
-        visibleKeys: string[] = [];
-
-        override updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void> {
-          assertWorkflowRunUpdate(patch);
-          this.visibleKeys = Object.keys(patch);
-          return super.updateRun(runId, structuredClone(patch));
-        }
-      }
-
-      const validatingBackend = new ValidatingUpdateBackend();
-      const runId = "run-conditional-override-public-patch";
-      await validatingBackend.createRun(createTestRun(runId, { status: "running" }));
-
-      assertEquals(
-        await validatingBackend.updateRunIfStatus(runId, ["running"], { status: "failed" }),
+        await bookkeepingBackend.updateRunIfStatus(runId, ["running"], {
+          status: "failed",
+        }),
         true,
       );
-      assertEquals(validatingBackend.visibleKeys, ["status"]);
-      assertEquals((await validatingBackend.getRun(runId))?.status, "failed");
+      assertEquals(bookkeepingBackend.updateCalls, 0);
+      assertEquals((await bookkeepingBackend.getRun(runId))?.status, "failed");
     });
 
     it("does not evaluate a conditional patch when its initial guard fails", async () => {
