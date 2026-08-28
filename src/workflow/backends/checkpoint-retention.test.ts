@@ -302,6 +302,75 @@ describe("workflow checkpoint retention", () => {
     );
   });
 
+  it("rechecks ownership after materializing deferred checkpoint values", async () => {
+    const backend = new MemoryBackend();
+    await backend.createRun(run("owned-recheck", "worker-current"));
+    let getterCalls = 0;
+    const dynamic = {} as { value: string };
+    Object.defineProperty(dynamic, "value", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        getterCalls++;
+        void backend.updateRun("owned-recheck", { workerId: "worker-replaced" });
+        return "must-not-commit";
+      },
+    });
+    const snapshot = cloneOwnedCheckpointForPersistence({
+      ...checkpoint("owned-recheck"),
+      context: { input: { dynamic } },
+    });
+
+    assertEquals(getterCalls, 0);
+    assertEquals(
+      await backend.saveCheckpointIfStatusAndWorker(
+        "owned-recheck",
+        "owned-recheck",
+        ["running"],
+        "worker-current",
+        snapshot,
+      ),
+      false,
+    );
+    assertEquals(getterCalls, 1);
+    assertEquals(await backend.getCheckpoints("owned-recheck"), []);
+  });
+
+  it("defers owned Date instance serialization hooks until after the fence", async () => {
+    let hookCalls = 0;
+    const date = new Date(0);
+    Object.defineProperty(date, "toISOString", {
+      configurable: true,
+      value() {
+        hookCalls++;
+        return "instance-date-hook";
+      },
+    });
+    const snapshot = cloneOwnedCheckpointForPersistence({
+      ...checkpoint("owned-date-hook"),
+      context: { input: { date } },
+    });
+    const backend = new MemoryBackend();
+    await backend.createRun(run("owned-date-hook", "worker-current"));
+
+    assertEquals(hookCalls, 0);
+    assertEquals(
+      await backend.saveCheckpointIfStatusAndWorker(
+        "owned-date-hook",
+        "owned-date-hook",
+        ["running"],
+        "worker-current",
+        snapshot,
+      ),
+      true,
+    );
+    assertEquals(hookCalls, 1);
+    assertEquals(
+      (await backend.getLatestCheckpoint("owned-date-hook"))?.context.input,
+      { date: "instance-date-hook" },
+    );
+  });
+
   it("snapshots ordinary owned arrays above the proxy-read limit", () => {
     const values = new Array(100_001);
     values[100_000] = "stored";
@@ -786,6 +855,29 @@ describe("workflow checkpoint retention", () => {
     (weakRef as WeakRef<object> & { tag: string }).tag = "mutated";
 
     assertEquals(JSON.stringify(snapshot.context.input), '{"weakRef":{"tag":"original"}}');
+  });
+
+  it("traverses JSON-visible own data on structured-cloneable built-ins", () => {
+    const map = new Map([["entry", 1]]) as Map<string, number> & { label: string };
+    const set = new Set([1]) as Set<number> & { label: string };
+    const regexp = /value/ as RegExp & { label: string };
+    map.label = "map-original";
+    set.label = "set-original";
+    regexp.label = "regexp-original";
+
+    const snapshot = cloneCheckpointForPersistence({
+      ...checkpoint("builtin-own-data"),
+      context: { input: { map, set, regexp } },
+    });
+    map.label = "map-mutated";
+    set.label = "set-mutated";
+    regexp.label = "regexp-mutated";
+
+    assertEquals(
+      JSON.stringify(snapshot.context.input),
+      '{"map":{"label":"map-original"},"set":{"label":"set-original"},' +
+        '"regexp":{"label":"regexp-original"}}',
+    );
   });
 
   it("snapshots proxy arrays without enumerating their keys", () => {

@@ -2126,6 +2126,45 @@ describe("RedisBackend", () => {
       );
     });
 
+    it("deletes context keys omitted by JSON persistence", async () => {
+      const runId = "run-context-omitted-values";
+      await backend.createRun(createTestRun(runId, {
+        context: {
+          input: {},
+          removedUndefined: "stale",
+          removedFunction: "stale",
+          removedSymbol: "stale",
+          preserved: "kept",
+        },
+      }));
+
+      await backend.updateRun(runId, {
+        context: {
+          removedUndefined: undefined,
+          removedFunction: () => "omitted",
+          added: "stored",
+        },
+      });
+      assertEquals((await backend.getRun(runId))?.context, {
+        input: {},
+        removedSymbol: "stale",
+        preserved: "kept",
+        added: "stored",
+      });
+
+      assertEquals(
+        await backend.updateRunIfStatus(runId, ["pending"], {
+          context: { removedSymbol: Symbol("omitted") },
+        }),
+        true,
+      );
+      assertEquals((await backend.getRun(runId))?.context, {
+        input: {},
+        preserved: "kept",
+        added: "stored",
+      });
+    });
+
     it("keeps context merge and deletion values opaque in Redis Lua", async () => {
       const runId = "run-deep-context-lua-opaque";
       let deep: unknown = { leaf: true };

@@ -48,6 +48,7 @@ const SetConstructor = Set;
 const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
 const StringConstructor = String;
+const symbolToPrimitive = Symbol.toPrimitive;
 const structuredCloneValue = structuredClone;
 const DateConstructor = Date;
 const dateGetTime = Date.prototype.getTime;
@@ -328,6 +329,12 @@ function hasStableDatePrototype(value: OwnedCheckpointCloneSource): boolean {
   return descriptor !== undefined && "value" in descriptor && descriptor.value === dateToJSON;
 }
 
+function hasOwnDateSerializationOverride(value: OwnedCheckpointCloneSource): boolean {
+  return objectGetOwnPropertyDescriptor(value, "toISOString") !== undefined ||
+    objectGetOwnPropertyDescriptor(value, "valueOf") !== undefined ||
+    objectGetOwnPropertyDescriptor(value, symbolToPrimitive) !== undefined;
+}
+
 function cloneRawJsonForOwnedCheckpoint(
   value: OwnedCheckpointCloneSource,
 ): OwnedCheckpointCloneSource | undefined {
@@ -376,9 +383,12 @@ function cloneOwnedCheckpointValue<T>(value: T): T {
     return deferWorkflowJsonValue(value) as T;
   }
   if (isDate(value)) {
-    return (hasStableDatePrototype(value)
-      ? cloneDate(value)
-      : checkpointPersistenceSentinel("a Date with a custom prototype")) as T;
+    if (!hasStableDatePrototype(value)) {
+      return checkpointPersistenceSentinel("a Date with a custom prototype") as T;
+    }
+    return (hasOwnDateSerializationOverride(value)
+      ? deferWorkflowJsonValue(value)
+      : cloneDate(value)) as T;
   }
   const rawJson = cloneRawJsonForOwnedCheckpoint(value);
   if (rawJson !== undefined) return rawJson as T;
@@ -405,9 +415,10 @@ function cloneOwnedCheckpointValue<T>(value: T): T {
       return deferReference(source);
     }
     if (isDate(source)) {
-      return hasStableDatePrototype(source)
-        ? cloneDate(source)
-        : checkpointPersistenceSentinel("a Date with a custom prototype");
+      if (!hasStableDatePrototype(source)) {
+        return checkpointPersistenceSentinel("a Date with a custom prototype");
+      }
+      return hasOwnDateSerializationOverride(source) ? deferReference(source) : cloneDate(source);
     }
     const rawJson = cloneRawJsonForOwnedCheckpoint(source);
     if (rawJson !== undefined) return rawJson;

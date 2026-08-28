@@ -671,14 +671,24 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.resolve(false);
     }
 
-    const checkpoints = this.checkpoints.get(storageRunId) ?? [];
-    let context: WorkflowContext;
+    let persistedCheckpoint: Checkpoint;
     try {
-      context = persistedCheckpointContext(checkpoint.context, storageRunId, this.config);
+      const context = persistedCheckpointContext(checkpoint.context, storageRunId, this.config);
+      persistedCheckpoint = cloneRetainedCheckpoint({ ...checkpoint, context });
     } catch (error) {
       return Promise.reject(error);
     }
-    appendRetainedCheckpoint(checkpoints, { ...checkpoint, context });
+
+    const currentRun = this.runs.get(ownershipRunId);
+    if (
+      !currentRun || !expectedStatuses.includes(currentRun.status) ||
+      currentRun.workerId !== expectedWorkerId
+    ) {
+      return Promise.resolve(false);
+    }
+
+    const checkpoints = this.checkpoints.get(storageRunId) ?? [];
+    appendRetainedCheckpoint(checkpoints, persistedCheckpoint);
     this.checkpoints.set(storageRunId, checkpoints);
     return Promise.resolve(true);
   }

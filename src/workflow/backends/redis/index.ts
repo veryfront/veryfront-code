@@ -1220,8 +1220,8 @@ export class RedisBackend implements WorkflowBackend {
     // `runId` is passed so a lossy-value warning names the run it came from.
     // Patches are where warnings actually fire, because creation usually writes
     // only `input` while patches write the accumulated node outputs.
-    const context = patch.context !== undefined
-      ? serializeWorkflowJson(patch.context, "context", runId, {
+    const preparedContext = patch.context !== undefined
+      ? prepareWorkflowJson(patch.context, "context", runId, {
         strictContext: this.config.strictContext,
       })
       : undefined;
@@ -1241,8 +1241,17 @@ export class RedisBackend implements WorkflowBackend {
     if (patch.nodeStates !== undefined) fields.nodeStates = JSON.stringify(patch.nodeStates);
     setNonEmptyArrayField("nodeStateDeletes", patch.nodeStateDeletes);
     if (patch.currentNodes !== undefined) fields.currentNodes = JSON.stringify(patch.currentNodes);
-    if (context !== undefined) fields.context = context;
-    setNonEmptyArrayField("contextDeletes", patch.contextDeletes);
+    if (preparedContext !== undefined) fields.context = preparedContext.serialized;
+    const contextDeletes = [...patch.contextDeletes ?? []];
+    if (patch.context !== undefined && preparedContext !== undefined) {
+      const normalizedContext = preparedContext.normalized as Record<string, unknown>;
+      for (const key of Object.keys(patch.context)) {
+        if (!Object.hasOwn(normalizedContext, key) && !contextDeletes.includes(key)) {
+          contextDeletes.push(key);
+        }
+      }
+    }
+    setNonEmptyArrayField("contextDeletes", contextDeletes);
     setOwnedField("error", "error", patch.error ? JSON.stringify(patch.error) : "");
     setOwnedField("startedAt", "startedAt", patch.startedAt?.toISOString() ?? "");
     setOwnedField("heartbeatAt", "heartbeatAt", patch.heartbeatAt?.toISOString() ?? "");
