@@ -44,6 +44,16 @@ describe("public docs validation", () => {
     );
   });
 
+  it("parses static sources but not hyphenated href attributes", () => {
+    assertEquals(
+      destinations(
+        '<img src="../architecture/image.png"> ' +
+          '<div data-href="../architecture/data.md"></div>',
+      ),
+      ["../architecture/image.png"],
+    );
+  });
+
   it("rejects deleted section READMEs with queries", () => {
     const issues = collectUnpublishedLinkIssues(
       "docs/guides/example.md",
@@ -224,6 +234,25 @@ describe("public docs validation", () => {
     assertEquals(issues.length, 3);
   });
 
+  it("decodes Markdown escapes before resolving destinations", () => {
+    const issues = collectUnpublishedLinkIssues(
+      "docs/guides/example.md",
+      String.raw`[gate]: \../architecture/private.md`,
+    );
+
+    assertEquals(issues.length, 1);
+  });
+
+  it("resolves query-only destinations against the current page", () => {
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/integrations/jira.md",
+        "[cloud](?tab=cloud)",
+      ),
+      [],
+    );
+  });
+
   it("rejects missing files in newly parsed destination forms", () => {
     const issues = collectUnpublishedLinkIssues(
       "docs/guides/example.md",
@@ -254,6 +283,13 @@ describe("public docs validation", () => {
     );
   });
 
+  it("does not treat footnote definitions as link definitions", () => {
+    assertEquals(
+      destinations("[^note]: Explanation of the behavior"),
+      [],
+    );
+  });
+
   it("ignores Markdown destinations inside code", () => {
     assertEquals(
       destinations(
@@ -263,6 +299,21 @@ describe("public docs validation", () => {
           '    <a href="../architecture/html.md">HTML</a>\n' +
           "    [reference]: ../architecture/reference.md\n" +
           "    <https://veryfront.com/docs/code/architecture/autolink>\n" +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+  });
+
+  it("ignores fenced code inside block containers", () => {
+    assertEquals(
+      destinations(
+        "> ```md\n" +
+          "> [quoted](../architecture/quoted.md)\n" +
+          "> ```\n" +
+          "- ```md\n" +
+          "  [listed](../architecture/listed.md)\n" +
+          "  ```\n" +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],

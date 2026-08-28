@@ -53,10 +53,10 @@ const UNSYNCED_README_PATHS = SYNCED_DOC_DIRS.map((dir) => `${dir}/README.md`);
  * Mintlify renders these pages as MDX, so a raw anchor is a working link on
  * the site and has to clear the same boundary. Both a quoted attribute and a
  * JSX expression wrapping a string literal name a destination the reader can
- * click; a genuinely dynamic `href={href}` has no literal to check.
+ * load; a genuinely dynamic attribute has no literal to check.
  */
-const HTML_HREF_SOURCE =
-  /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*"((?:\\[\s\S]|[^"\\])*)"\s*\}|\{\s*'((?:\\[\s\S]|[^'\\])*)'\s*\}|\{\s*`((?:\\[\s\S]|\$(?!\{)|[^`\\$])*)`\s*\})/;
+const HTML_DESTINATION_SOURCE =
+  /(?:^|[\s<])(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*"((?:\\[\s\S]|[^"\\])*)"\s*\}|\{\s*'((?:\\[\s\S]|[^'\\])*)'\s*\}|\{\s*`((?:\\[\s\S]|\$(?!\{)|[^`\\$])*)`\s*\})/;
 const URI_AUTOLINK_SOURCE = /<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*)>/g;
 /** Any origin works: only the resolved path is read back out. */
 const RESOLUTION_ORIGIN = "https://docs.invalid";
@@ -143,6 +143,13 @@ function decodeMarkdownCharacterReferences(href: string): string {
   );
 }
 
+function decodeMarkdownBackslashEscapes(href: string): string {
+  return href.replace(
+    /\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g,
+    "$1",
+  );
+}
+
 function decodeJavaScriptStringLiteral(value: string): string | undefined {
   let decoded = "";
   for (let index = 0; index < value.length; index++) {
@@ -225,14 +232,16 @@ function normalizeRepositoryPath(pathname: string): string {
  * Returns undefined when the destination is not a resolvable path.
  */
 function resolveDocumentationTarget(
-  fromDir: string,
+  fromPath: string,
   rawHref: string,
 ): string | undefined {
-  const href = decodeMarkdownCharacterReferences(rawHref);
+  const href = decodeMarkdownBackslashEscapes(
+    decodeMarkdownCharacterReferences(rawHref),
+  );
   if (/^(?:#|["'])/.test(href)) return undefined;
   let resolved: URL;
   try {
-    resolved = new URL(href, `${RESOLUTION_ORIGIN}/${fromDir}/`);
+    resolved = new URL(href, `${RESOLUTION_ORIGIN}/${fromPath}`);
   } catch {
     return undefined;
   }
@@ -335,9 +344,11 @@ function markdownCodeRanges(text: string): Range[] {
 
   for (const line of lines) {
     const lineEnd = offset + line.length;
-    const fenceMatch = line.match(/^( {0,3})(`{3,}|~{3,})/);
+    const contentStart = blockContentStart(text, offset);
+    const blockLine = text.slice(contentStart, lineEnd);
+    const fenceMatch = blockLine.match(/^( {0,3})(`{3,}|~{3,})/);
     if (fence) {
-      const closing = line.match(/^( {0,3})(`{3,}|~{3,})[ \t]*$/);
+      const closing = blockLine.match(/^( {0,3})(`{3,}|~{3,})[ \t]*$/);
       if (
         closing && closing[2]![0] === fence.marker &&
         closing[2]!.length >= fence.length
@@ -450,6 +461,7 @@ function referenceDestinationAt(
   lineStart: number,
 ): Destination | undefined {
   const labelStart = blockContentStart(text, lineStart);
+  if (text[labelStart + 1] === "^") return undefined;
   const afterLabel = afterMarkdownLabel(text, labelStart);
   if (afterLabel === undefined || text[afterLabel] !== ":") return undefined;
 
@@ -557,7 +569,7 @@ export function scanDestinations(text: string): Destination[] {
     start = cursor;
   }
 
-  const htmlHref = new RegExp(HTML_HREF_SOURCE, "gi");
+  const htmlHref = new RegExp(HTML_DESTINATION_SOURCE, "gi");
   let htmlMatch: RegExpExecArray | null;
   while ((htmlMatch = htmlHref.exec(text))) {
     if (isInsideRange(ignoredRanges, htmlMatch.index)) continue;
@@ -627,7 +639,6 @@ export function collectUnpublishedLinkIssues(
 ): PublicDocIssue[] {
   if (!isPublishedPage(path)) return [];
 
-  const fromDir = path.slice(0, path.lastIndexOf("/"));
   const lines = content.split("\n");
   const lineStarts: number[] = [0];
   for (const line of lines.slice(0, -1)) {
@@ -636,7 +647,7 @@ export function collectUnpublishedLinkIssues(
 
   const issues: PublicDocIssue[] = [];
   for (const { href, offset } of scanDestinations(content)) {
-    const target = resolveDocumentationTarget(fromDir, href);
+    const target = resolveDocumentationTarget(path, href);
     if (target === undefined || publishedTargetExists(target)) continue;
     const line = lineAt(lineStarts, offset);
     issues.push({
