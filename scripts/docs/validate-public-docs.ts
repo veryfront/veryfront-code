@@ -56,7 +56,14 @@ const UNSYNCED_README_PATHS = SYNCED_DOC_DIRS.map((dir) => `${dir}/README.md`);
  * which a bracket-counting pattern handles, and this check never needs to know
  * what the label says.
  */
-const INLINE_DESTINATION_SOURCE = /\]\(([^)\s]+)/;
+const INLINE_DESTINATION_SOURCE = /\]\(\s*<?([^)>\s]+)>?/;
+
+/**
+ * Mintlify renders these pages as MDX, so a raw anchor is a working link on
+ * the site and has to clear the same boundary. Quoted values only: an
+ * unquoted `href={href}` is a JSX expression, not a destination.
+ */
+const HTML_HREF_SOURCE = /\bhref\s*=\s*["']([^"']*)["']/;
 
 /**
  * A reference definition puts the destination on its own line, so the
@@ -116,11 +123,13 @@ function isRepositoryRelative(href: string): boolean {
 function destinations(text: string): string[] {
   // A fresh regex per line: a shared /g pattern carries lastIndex between
   // calls, and this one is read from more than one place.
-  const inline = new RegExp(INLINE_DESTINATION_SOURCE, "g");
   const found: string[] = [];
-  let match: RegExpExecArray | null;
-  while ((match = inline.exec(text))) {
-    found.push(match[1]);
+  for (const source of [INLINE_DESTINATION_SOURCE, HTML_HREF_SOURCE]) {
+    const pattern = new RegExp(source, "gi");
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(text))) {
+      found.push(match[1]);
+    }
   }
   const reference = REFERENCE_DEFINITION.exec(text);
   if (reference) found.push(reference[1]);
