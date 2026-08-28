@@ -771,6 +771,11 @@ interface MdxSyntaxRanges {
   readonly strings: Range[];
 }
 
+// This is a bounded lexical scanner, not a JavaScript parser. It tracks only
+// the token and delimiter context needed to distinguish regex literals from
+// division while balancing JSX, MDX expressions, templates, and ESM blocks.
+// Keep those scanner surfaces on this shared state model, and regression-test
+// both the regex and division forms when adding a new grammar context.
 type JavaScriptSignificantTokenKind =
   | "control-header"
   | "other"
