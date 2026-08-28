@@ -50,6 +50,10 @@ describe("public docs validation", () => {
       destinations("[ſ]\n[s]: ../architecture/case-folded.md"),
       ["../architecture/case-folded.md"],
     );
+    assertEquals(
+      destinations("[ẞ]\n[ss]: ../architecture/capital-sharp.md"),
+      ["../architecture/capital-sharp.md"],
+    );
   });
 
   it("parses quoted HTML anchors and angle-bracket destinations", () => {
@@ -563,6 +567,37 @@ describe("public docs validation", () => {
         "Unmatched prose {\n\n" +
           "{/* [old](../architecture/commented.md) */}\n" +
           "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+  });
+
+  it("ignores Markdown syntax inside complete MDX expressions", () => {
+    assertEquals(
+      destinations(
+        '{"[expression](../architecture/private.md)"}\n' +
+          '{condition && <a href="../architecture/expression.md">link</a>}\n' +
+          "{\ntrue\n\n" +
+          '    ? <a href="../architecture/multiline.md">link</a>\n' +
+          "    : null\n}\n" +
+          "{'<a href=\"../architecture/string.md\">old</a>'}\n" +
+          '{"<https://veryfront.com/docs/code/architecture/autolink>"}\n' +
+          "[real](../architecture/real.md)",
+      ),
+      [
+        "../architecture/real.md",
+        "../architecture/expression.md",
+        "../architecture/multiline.md",
+      ],
+    );
+  });
+
+  it("keeps multiline MDX expressions from opening false comments", () => {
+    assertEquals(
+      destinations(
+        '{\ntrue\n\n? "{/*"\n: ""\n}\n' +
+          "[real](../architecture/real.md)\n" +
+          '{"*/}"}',
       ),
       ["../architecture/real.md"],
     );

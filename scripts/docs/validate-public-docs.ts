@@ -562,14 +562,57 @@ function mergeRanges(ranges: readonly Range[]): Range[] {
   return merged;
 }
 
-function mdxCommentRanges(
+interface MdxSyntaxRanges {
+  readonly comments: Range[];
+  readonly expressions: Range[];
+  readonly strings: Range[];
+}
+
+function quotedRangeEnd(
+  text: string,
+  start: number,
+  quote: '"' | "'" | "`",
+): number | undefined {
+  for (let cursor = start + 1; cursor < text.length; cursor++) {
+    if (text[cursor] === "\\") cursor++;
+    else if (text[cursor] === quote) return cursor + 1;
+  }
+  return undefined;
+}
+
+function mdxExpressionAt(
+  text: string,
+  start: number,
+): { readonly expression: Range; readonly strings: Range[] } | undefined {
+  const strings: Range[] = [];
+  let depth = 1;
+  let cursor = start + 1;
+  while (cursor < text.length) {
+    const character = text[cursor]!;
+    if (character === '"' || character === "'" || character === "`") {
+      const end = quotedRangeEnd(text, cursor, character);
+      if (end === undefined) return undefined;
+      strings.push({ start: cursor, end });
+      cursor = end;
+      continue;
+    }
+    if (character === "{") depth++;
+    else if (character === "}" && --depth === 0) {
+      return { expression: { start, end: cursor + 1 }, strings };
+    }
+    cursor++;
+  }
+  return undefined;
+}
+
+function mdxSyntaxRanges(
   text: string,
   codeRanges: readonly Range[],
-): Range[] {
-  const ranges: Range[] = [];
+): MdxSyntaxRanges {
+  const comments: Range[] = [];
+  const expressions: Range[] = [];
+  const strings: Range[] = [];
   let codeIndex = 0;
-  let expressionDepth = 0;
-  let quote: '"' | "'" | "`" | undefined;
   let cursor = 0;
   while (cursor < text.length) {
     while (
@@ -581,29 +624,6 @@ function mdxCommentRanges(
       continue;
     }
 
-    const character = text[cursor]!;
-    if (quote !== undefined) {
-      if (character === "\\") cursor += 2;
-      else {
-        if (character === quote) quote = undefined;
-        cursor++;
-      }
-      continue;
-    }
-    if (expressionDepth > 0) {
-      if (
-        character === "\n" && /^\n[ \t]*\n/.test(text.slice(cursor))
-      ) {
-        expressionDepth = 0;
-      } else if (
-        character === '"' || character === "'" || character === "`"
-      ) {
-        quote = character;
-      } else if (character === "{") expressionDepth++;
-      else if (character === "}") expressionDepth--;
-      cursor++;
-      continue;
-    }
     if (
       text.startsWith("{/*", cursor) &&
       !isBackslashEscaped(text, cursor)
@@ -611,33 +631,56 @@ function mdxCommentRanges(
       const closing = text.indexOf("*/}", cursor + 3);
       if (closing === -1) break;
       const end = closing + 3;
-      ranges.push({ start: cursor, end });
+      comments.push({ start: cursor, end });
       cursor = end;
       continue;
     }
-    if (character === "{" && !isBackslashEscaped(text, cursor)) {
-      expressionDepth = 1;
+
+    if (text[cursor] !== "{" || isBackslashEscaped(text, cursor)) {
+      cursor++;
+      continue;
     }
-    cursor++;
+
+    const expression = mdxExpressionAt(text, cursor);
+    if (expression === undefined) {
+      cursor++;
+      continue;
+    }
+    expressions.push(expression.expression);
+    strings.push(...expression.strings);
+    cursor = expression.expression.end;
   }
-  return ranges;
+  return { comments, expressions, strings };
 }
 
-function ignoredDestinationRanges(text: string): Range[] {
+function ignoredDestinationRanges(text: string): {
+  readonly ignored: Range[];
+  readonly expressions: Range[];
+  readonly strings: Range[];
+} {
   const codeRanges = markdownCodeRanges(text);
-  return mergeRanges([...codeRanges, ...mdxCommentRanges(text, codeRanges)]);
+  const mdxRanges = mdxSyntaxRanges(text, codeRanges);
+  return {
+    ignored: mergeRanges([...codeRanges, ...mdxRanges.comments]),
+    expressions: mdxRanges.expressions,
+    strings: mdxRanges.strings,
+  };
 }
 
 function htmlTagRanges(
   text: string,
   ignoredRanges: readonly Range[],
+  expressionRanges: readonly Range[] = [],
+  stringRanges: readonly Range[] = [],
 ): Range[] {
   const ranges: Range[] = [];
   for (let start = 0; start < text.length;) {
     start = text.indexOf("<", start);
     if (start === -1) break;
     if (
-      isInsideRange(ignoredRanges, start) ||
+      isInsideRange(stringRanges, start) ||
+      (isInsideRange(ignoredRanges, start) &&
+        !isInsideRange(expressionRanges, start)) ||
       isBackslashEscaped(text, start) ||
       !/[A-Za-z]/.test(text[start + 1] ?? "") ||
       /^[A-Za-z][A-Za-z0-9+.-]{1,31}:/.test(text.slice(start + 1))
@@ -780,7 +823,7 @@ function referenceDestinationAt(
 function normalizeReferenceLabel(label: string): string {
   return decodeMarkdownBackslashEscapes(
     decodeMarkdownCharacterReferences(label),
-  ).trim().replace(/\s+/g, " ").toUpperCase().toLowerCase();
+  ).trim().replace(/\s+/g, " ").toLowerCase().toUpperCase();
 }
 
 function afterInlineLink(text: string, start: number): number | undefined {
@@ -901,9 +944,19 @@ export function scanDestinations(text: string): Destination[] {
   // A scanner is required here because valid Markdown labels can contain
   // balanced brackets or escaped closing brackets.
   const found: Destination[] = [];
-  const ignoredRanges = ignoredDestinationRanges(text);
-  const tagRanges = htmlTagRanges(text, ignoredRanges);
-  const markdownIgnoredRanges = mergeRanges([...ignoredRanges, ...tagRanges]);
+  const syntaxRanges = ignoredDestinationRanges(text);
+  const ignoredRanges = syntaxRanges.ignored;
+  const tagRanges = htmlTagRanges(
+    text,
+    ignoredRanges,
+    syntaxRanges.expressions,
+    syntaxRanges.strings,
+  );
+  const markdownIgnoredRanges = mergeRanges([
+    ...ignoredRanges,
+    ...syntaxRanges.expressions,
+    ...tagRanges,
+  ]);
   const markdownAngleDestinationRanges: Range[] = [];
   for (let start = 0; start < text.length; start++) {
     if (
@@ -1015,8 +1068,7 @@ export function scanDestinations(text: string): Destination[] {
   let autolinkMatch: RegExpExecArray | null;
   while ((autolinkMatch = URI_AUTOLINK_SOURCE.exec(text))) {
     if (
-      isInsideRange(ignoredRanges, autolinkMatch.index) ||
-      isInsideRange(tagRanges, autolinkMatch.index) ||
+      isInsideRange(markdownIgnoredRanges, autolinkMatch.index) ||
       isBackslashEscaped(text, autolinkMatch.index)
     ) continue;
     if (
