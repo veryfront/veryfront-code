@@ -79,6 +79,10 @@ describe("public docs validation", () => {
       ),
       ["./deploying.md", "./diagram.png"],
     );
+    assertEquals(
+      destinations("[`]`](docs/architecture/private.md)"),
+      ["docs/architecture/private.md"],
+    );
   });
 
   it("validates reference definition labels", () => {
@@ -137,6 +141,17 @@ describe("public docs validation", () => {
           "[second]: ../architecture/second.md",
       ),
       ["../architecture/first.md", "../architecture/second.md"],
+    );
+    assertEquals(
+      scanDestinations(
+        '[unused]: <> "https://veryfront.com/docs/code/guides/missing"',
+        "markdown",
+      ),
+      [],
+    );
+    assertEquals(
+      destinations("[used]: <>\n\n[used]"),
+      [],
     );
     assertEquals(
       destinations(
@@ -268,6 +283,23 @@ describe("public docs validation", () => {
     assertEquals(
       collectUnpublishedLinkIssues(
         "README.md",
+        "<Warning bad*name=value>\n" +
+          "[visible](docs/architecture/visible.md)",
+      ).map((issue) => issue.line),
+      [2],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "README.md",
+        "> <div>\n" +
+          "> [hidden](docs/architecture/hidden.md)\n" +
+          "[visible](docs/architecture/visible.md)",
+      ).map((issue) => issue.line),
+      [3],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "README.md",
         "before <pre>[visible](docs/architecture/private.md)</pre> after",
       ).map((issue) => issue.line),
       [1],
@@ -276,6 +308,56 @@ describe("public docs validation", () => {
       collectUnpublishedLinkIssues(
         "docs/guides/example.mdx",
         "<pre>\n[x](../architecture/private.md)\n</pre>",
+      ).map((issue) => issue.line),
+      [2],
+    );
+  });
+
+  it("honors blank-line-terminated Markdown HTML blocks", () => {
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "README.md",
+        "paragraph\n" +
+          "<div>\n" +
+          "[hidden](docs/architecture/hidden.md)\n" +
+          "</div>\n\n" +
+          "[visible](docs/architecture/visible.md)",
+      ).map((issue) => issue.line),
+      [6],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "README.md",
+        "<Warning>\n" +
+          "[hidden](docs/architecture/hidden.md)\n" +
+          "</Warning>\n\n" +
+          "[visible](docs/architecture/visible.md)",
+      ).map((issue) => issue.line),
+      [5],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "README.md",
+        "paragraph\n" +
+          "<Warning>\n" +
+          "[visible](docs/architecture/visible.md)\n" +
+          "</Warning>",
+      ).map((issue) => issue.line),
+      [3],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "README.md",
+        "<div>\n" +
+          "<a href=docs/architecture/private.md>live</a>\n" +
+          "</div>",
+      ).map((issue) => issue.line),
+      [2],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.mdx",
+        "<div>\n[x](../architecture/private.md)\n</div>",
       ).map((issue) => issue.line),
       [2],
     );
@@ -516,6 +598,20 @@ describe("public docs validation", () => {
       destinations("[some\ntext](../architecture/text.md)"),
       ["../architecture/text.md"],
     );
+    for (const blankLine of ["\n\n", "\r\n\r\n", "\n \t\n"]) {
+      assertEquals(
+        destinations(
+          `[some${blankLine}text](../architecture/not-a-link.md)`,
+        ),
+        [],
+      );
+    }
+    assertEquals(
+      destinations(
+        "[some\n\ntext]: ../architecture/not-a-definition.md\n\n[some text]",
+      ),
+      [],
+    );
     assertEquals(
       destinations("[gate]\n\n[gate]:\n../architecture/reference.md"),
       ["../architecture/reference.md"],
@@ -623,7 +719,45 @@ describe("public docs validation", () => {
         ).map((issue) => issue.line),
         [2],
       );
+      for (const tag of ["pre", "script", "style", "textarea"]) {
+        assertEquals(
+          collectUnpublishedLinkIssues(
+            "README.md",
+            `<${tag}>${newline}</${tag}>${newline}` +
+              `[gate]: docs/architecture/private.md${newline}${newline}` +
+              "[gate]",
+          ).map((issue) => issue.line),
+          [3],
+        );
+      }
     }
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "README.md",
+        "<script>\n" +
+          "[gate]: docs/architecture/private.md\n\n" +
+          "[gate]",
+      ),
+      [],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "README.md",
+        "<div>\n</div>\n" +
+          "[gate]: docs/architecture/private.md\n\n" +
+          "[gate]",
+      ),
+      [],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "README.md",
+        "> <script>\n> </script>\n" +
+          "[gate]: docs/architecture/private.md\n\n" +
+          "[gate]",
+      ).map((issue) => issue.line),
+      [3],
+    );
     assertEquals(
       collectUnpublishedLinkIssues(
         "README.md",
@@ -1212,7 +1346,7 @@ describe("public docs validation", () => {
     assertEquals(
       scanDestinations(
         String.raw`\<!-- [visible](../architecture/escaped.md) -->` +
-          '\n<div title="<!--"></div>\n' +
+          '\ntext <div title="<!--"></div>\n' +
           "[real](../architecture/real.md)",
         "markdown",
       ).map((destination) => destination.href),

@@ -58,6 +58,15 @@ const MARKDOWN_UNQUOTED_DESTINATION_ATTRIBUTE_SOURCE =
 const RAW_HTML_BLOCK_TAG_SOURCE =
   /^<(pre|script|style|textarea)(?=[\t\n\f\r />]|$)/i;
 const RAW_HTML_BLOCK_END_SOURCE = /<\/(?:pre|script|style|textarea)>/i;
+const BLANK_LINE_TERMINATED_HTML_BLOCK_TAG_SOURCE =
+  /^<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?=[\t\n\f\r />]|$)/i;
+const HTML_BLOCK_TAG_NAME_SOURCE = "[A-Za-z][A-Za-z0-9-]*";
+const HTML_BLOCK_ATTRIBUTE_NAME_SOURCE = "[A-Za-z_:][A-Za-z0-9_.:-]*";
+const HTML_BLOCK_ATTRIBUTE_VALUE_SOURCE =
+  "(?:[^\\s\"'=<>`]+|'[^']*'|\"[^\"]*\")";
+const COMPLETE_HTML_BLOCK_TAG_LINE_SOURCE = new RegExp(
+  `^<(?:${HTML_BLOCK_TAG_NAME_SOURCE}(?:[ \\t]+${HTML_BLOCK_ATTRIBUTE_NAME_SOURCE}(?:[ \\t]*=[ \\t]*${HTML_BLOCK_ATTRIBUTE_VALUE_SOURCE})?)*[ \\t]*\\/?|\\/${HTML_BLOCK_TAG_NAME_SOURCE}[ \\t]*)>[ \\t\\r]*$`,
+);
 const URI_AUTOLINK_SOURCE = /<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*)>/g;
 const BARE_AUTOLINK_SOURCE = /https?:\/\/[^\s<>"']+/gi;
 type DestinationSyntax =
@@ -291,14 +300,54 @@ function resolveDocumentationTarget(
   return normalizeRepositoryPath(pathname);
 }
 
+function markdownCodeSpanEndAt(
+  text: string,
+  start: number,
+): number | undefined {
+  if (text[start] !== "`" || isBackslashEscaped(text, start)) return undefined;
+  let length = 1;
+  while (text[start + length] === "`") length++;
+  const paragraphBreak = text.slice(start + length).search(
+    /\r?\n[ \t]*\r?\n/,
+  );
+  const limit = paragraphBreak === -1
+    ? text.length
+    : start + length + paragraphBreak;
+  let cursor = start + length;
+  while (cursor < limit) {
+    const candidate = text.indexOf("`", cursor);
+    if (candidate === -1 || candidate >= limit) return undefined;
+    let candidateLength = 1;
+    while (text[candidate + candidateLength] === "`") candidateLength++;
+    if (candidateLength === length) return candidate + length;
+    cursor = candidate + candidateLength;
+  }
+  return undefined;
+}
+
 function afterMarkdownLabel(text: string, start: number): number | undefined {
   if (text[start] !== "[") return undefined;
-
   let cursor = start + 1;
   let depth = 1;
   while (cursor < text.length && depth > 0) {
+    const lineEnd = lineEndingEnd(text, cursor);
+    if (lineEnd !== undefined) {
+      let nextLineEnd = lineEnd;
+      while (
+        nextLineEnd < text.length && text[nextLineEnd] !== "\n" &&
+        text[nextLineEnd] !== "\r"
+      ) nextLineEnd++;
+      if (text.slice(lineEnd, nextLineEnd).trim() === "") return undefined;
+      cursor = lineEnd;
+      continue;
+    }
     if (text[cursor] === "\\" && cursor + 1 < text.length) {
-      cursor += 2;
+      cursor += lineEndingEnd(text, cursor + 1) === undefined ? 2 : 1;
+      continue;
+    }
+    const codeSpanEnd = markdownCodeSpanEndAt(text, cursor);
+    if (codeSpanEnd !== undefined) {
+      cursor = codeSpanEnd;
       continue;
     }
     if (text[cursor] === "[") depth++;
@@ -1152,6 +1201,13 @@ function followsClosedHtmlCommentBlock(
   return false;
 }
 
+function followsCompletedHtmlBlock(
+  lineStart: number,
+  htmlBlocks: readonly Range[],
+): boolean {
+  return htmlBlocks.some((range) => range.end === lineStart);
+}
+
 function htmlTagRanges(
   text: string,
   ignoredRanges: readonly Range[],
@@ -1218,9 +1274,15 @@ function htmlTagRanges(
 interface RawHtmlBlockBodyRanges {
   readonly markdown: Range[];
   readonly rawText: Range[];
+  readonly blocks: Range[];
 }
 
-/** CommonMark type-1 HTML bodies render raw until a closing tag or container exit. */
+/**
+ * CommonMark HTML blocks render Markdown-shaped text as raw HTML.
+ *
+ * Type-1 blocks (`script`, `style`, `pre`, and `textarea`) end at their closing
+ * tag or container exit. Type-6 and type-7 blocks end at the next blank line.
+ */
 function rawHtmlBlockBodyRanges(
   text: string,
   tagRanges: readonly Range[],
@@ -1229,14 +1291,29 @@ function rawHtmlBlockBodyRanges(
   const tagsByStart = new Map(tagRanges.map((range) => [range.start, range]));
   const markdown: Range[] = [];
   const rawText: Range[] = [];
+  const blocks: Range[] = [];
   for (let lineStart = 0; lineStart < text.length;) {
     const newline = text.indexOf("\n", lineStart);
     const lineEnd = newline === -1 ? text.length : newline;
     const content = blockContent(text, lineStart);
-    const opening = isInsideRange(ignoredRanges, content.start)
+    const blockLine = text.slice(content.start, lineEnd);
+    const insideHtmlBlock = markdown.some((range) =>
+      content.start >= range.start && content.start < range.end
+    );
+    const ignored = isInsideRange(ignoredRanges, content.start);
+    const rawTextOpening = ignored
       ? null
-      : text.slice(content.start, lineEnd).match(RAW_HTML_BLOCK_TAG_SOURCE);
-    if (opening === null) {
+      : blockLine.match(RAW_HTML_BLOCK_TAG_SOURCE);
+    const typeSixOpening = !ignored &&
+      BLANK_LINE_TERMINATED_HTML_BLOCK_TAG_SOURCE.test(blockLine);
+    const typeSevenMayStart = followsCompletedHtmlBlock(lineStart, blocks) ||
+      referenceDefinitionMayStart(text, lineStart, undefined);
+    const blankLineTerminated = rawTextOpening === null &&
+      !insideHtmlBlock &&
+      (typeSixOpening ||
+        !ignored && typeSevenMayStart &&
+          COMPLETE_HTML_BLOCK_TAG_LINE_SOURCE.test(blockLine));
+    if (rawTextOpening === null && !blankLineTerminated) {
       if (newline === -1) break;
       lineStart = newline + 1;
       continue;
@@ -1248,41 +1325,52 @@ function rawHtmlBlockBodyRanges(
       const currentLineEnd = currentNewline === -1
         ? text.length
         : currentNewline;
-      if (
-        currentLineStart !== lineStart &&
-        blockContainerContentStart(
-            text,
-            currentLineStart,
-            currentLineEnd,
-            content.containers,
-          ) === undefined
-      ) {
+      const currentContentStart = blockContainerContentStart(
+        text,
+        currentLineStart,
+        currentLineEnd,
+        content.containers,
+      );
+      if (currentLineStart !== lineStart && currentContentStart === undefined) {
         end = currentLineStart;
         break;
       }
-      if (
-        RAW_HTML_BLOCK_END_SOURCE.test(
-          text.slice(currentLineStart, currentLineEnd),
-        )
-      ) {
-        end = currentNewline === -1 ? text.length : currentNewline + 1;
-        break;
+      const currentLine = text.slice(currentLineStart, currentLineEnd);
+      if (rawTextOpening === null) {
+        if (
+          currentLineStart !== lineStart &&
+          text.slice(currentContentStart, currentLineEnd).trim() === ""
+        ) {
+          end = currentLineStart;
+          break;
+        }
+      } else {
+        if (RAW_HTML_BLOCK_END_SOURCE.test(currentLine)) {
+          end = currentNewline === -1 ? text.length : currentNewline + 1;
+          break;
+        }
       }
       if (currentNewline === -1) break;
       currentLineStart = currentNewline + 1;
     }
+    blocks.push({ start: lineStart, end });
     const range = {
       start: tagsByStart.get(content.start)?.end ?? content.start,
       end,
     };
     markdown.push(range);
-    if (opening[1]!.toLowerCase() !== "pre") rawText.push(range);
+    if (
+      rawTextOpening !== null && rawTextOpening[1]!.toLowerCase() !== "pre"
+    ) {
+      rawText.push(range);
+    }
     if (newline === -1) break;
     lineStart = newline + 1;
   }
   return {
     markdown: mergeRanges(markdown),
     rawText: mergeRanges(rawText),
+    blocks,
   };
 }
 
@@ -1554,7 +1642,7 @@ function referenceDestinationAt(
     if (text[cursor] !== ">") return undefined;
     cursor++;
   }
-  const definitionEnd = destinationEnd > destinationStart
+  const definitionEnd = wrapped || destinationEnd > destinationStart
     ? referenceDefinitionTailEnd(text, cursor, content.containers)
     : undefined;
   return definitionEnd === undefined ? undefined : {
@@ -1918,7 +2006,7 @@ export function scanDestinations(
   );
   const rawHtmlBlocks: RawHtmlBlockBodyRanges = syntax === "markdown"
     ? rawHtmlBlockBodyRanges(text, tagRanges, ignoredRanges)
-    : { markdown: [], rawText: [] };
+    : { markdown: [], rawText: [], blocks: [] };
   const structuralMarkdownIgnoredRanges = mergeRanges([
     ...ignoredRanges,
     ...syntaxRanges.expressions,
@@ -1953,7 +2041,12 @@ export function scanDestinations(
       lineStart,
       syntaxRanges.htmlComments,
     );
+    const followsHtmlBlock = followsCompletedHtmlBlock(
+      lineStart,
+      rawHtmlBlocks.blocks,
+    );
     const reference = followsCodeBlock || followsHtmlComment ||
+        followsHtmlBlock ||
         referenceDefinitionMayStart(
           text,
           lineStart,
@@ -2095,7 +2188,7 @@ export function scanDestinations(
     const label = normalizeReferenceLabel(reference.label);
     if (recordedReferenceLabels.has(label)) continue;
     recordedReferenceLabels.add(label);
-    if (referenceUse.labels.has(label)) {
+    if (reference.href !== "" && referenceUse.labels.has(label)) {
       recordDestination(found, destinationOffsets, reference);
     }
   }
