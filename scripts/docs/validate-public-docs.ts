@@ -49,7 +49,14 @@ const SYNCED_DOC_DIRS = [
  */
 const UNSYNCED_README_PATHS = SYNCED_DOC_DIRS.map((dir) => `${dir}/README.md`);
 
-const INLINE_LINK_SOURCE = /\[[^\]]*\]\(([^)\s]+)/;
+/**
+ * The destination of an inline link, matched from the `](` boundary rather
+ * than from the start of the label. A label may contain balanced brackets
+ * (`[nested [label]](...)`) or escaped ones (`[label\]](...)`), neither of
+ * which a bracket-counting pattern handles, and this check never needs to know
+ * what the label says.
+ */
+const INLINE_DESTINATION_SOURCE = /\]\(([^)\s]+)/;
 
 /**
  * A reference definition puts the destination on its own line, so the
@@ -58,6 +65,9 @@ const INLINE_LINK_SOURCE = /\[[^\]]*\]\(([^)\s]+)/;
  * points at an unpublished path.
  */
 const REFERENCE_DEFINITION = /^\s{0,3}\[[^\]]+\]:\s*<?([^\s>]+)>?/;
+
+/** Any origin works: only the resolved path is read back out. */
+const RESOLUTION_ORIGIN = "https://docs.invalid";
 
 function isPublishedPage(target: string): boolean {
   // The sync deletes the section README before publishing, so a link to one
@@ -69,22 +79,27 @@ function isPublishedPage(target: string): boolean {
 }
 
 /**
- * Resolve a POSIX path without touching the filesystem. The link may point at a
- * file that exists here and still be unpublished, so existence is not the
- * question this check asks.
+ * Resolve a destination the way a browser does, then read back the path.
+ *
+ * Hand-rolling this over `/` segments misses every spelling of a traversal a
+ * reader's browser still follows: `..\architecture\` (a special scheme treats
+ * a backslash as a separator), `.%2e/` (a percent-encoded dot segment is still
+ * a dot segment), and a trailing `?query` that leaves the path unchanged.
+ * Returns undefined when the destination is not a resolvable path.
  */
-function resolveRelative(fromDir: string, href: string): string {
-  const segments = `${fromDir}/${href}`.split("/");
-  const resolved: string[] = [];
-  for (const segment of segments) {
-    if (segment === "" || segment === ".") continue;
-    if (segment === "..") {
-      resolved.pop();
-      continue;
-    }
-    resolved.push(segment);
+function resolveRelative(fromDir: string, href: string): string | undefined {
+  let resolved: URL;
+  try {
+    resolved = new URL(href, `${RESOLUTION_ORIGIN}/${fromDir}/`);
+  } catch {
+    return undefined;
   }
-  return resolved.join("/");
+  if (resolved.origin !== RESOLUTION_ORIGIN) return undefined;
+  try {
+    return decodeURIComponent(resolved.pathname).replace(/^\//, "");
+  } catch {
+    return resolved.pathname.replace(/^\//, "");
+  }
 }
 
 /**
@@ -95,13 +110,13 @@ function resolveRelative(fromDir: string, href: string): string {
  * positive on a correct link.
  */
 function isRepositoryRelative(href: string): boolean {
-  return !/^(?:[a-z][a-z0-9+.-]*:|\/|#|["'])/i.test(href);
+  return !/^(?:[a-z][a-z0-9+.-]*:|[\/\\]|#|["'])/i.test(href);
 }
 
 function destinations(text: string): string[] {
   // A fresh regex per line: a shared /g pattern carries lastIndex between
   // calls, and this one is read from more than one place.
-  const inline = new RegExp(INLINE_LINK_SOURCE, "g");
+  const inline = new RegExp(INLINE_DESTINATION_SOURCE, "g");
   const found: string[] = [];
   let match: RegExpExecArray | null;
   while ((match = inline.exec(text))) {
@@ -123,8 +138,8 @@ function collectUnpublishedLinkIssues(
   for (const [index, text] of content.split("\n").entries()) {
     for (const href of destinations(text)) {
       if (!isRepositoryRelative(href)) continue;
-      const target = resolveRelative(fromDir, href.split("#")[0]);
-      if (isPublishedPage(target)) continue;
+      const target = resolveRelative(fromDir, href);
+      if (target === undefined || isPublishedPage(target)) continue;
       issues.push({
         path,
         line: index + 1,
@@ -168,7 +183,9 @@ const RULES: Rule[] = [
     message: "Do not expose internal #veryfront imports in public docs.",
   },
   {
-    pattern: /github\.com\/veryfront\/veryfront-examples/,
+    // Host names are case-insensitive, so a GitHub.com spelling reaches the
+    // same private repository.
+    pattern: /github\.com\/veryfront\/veryfront-examples/i,
     message:
       "veryfront/veryfront-examples is a private repository. A reader following this link gets a 404, so link a public example or inline the code instead.",
   },
