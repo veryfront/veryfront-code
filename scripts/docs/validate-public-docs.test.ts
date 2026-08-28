@@ -67,6 +67,24 @@ describe("public docs validation", () => {
     );
   });
 
+  it("renormalizes encoded separators before checking file existence", () => {
+    const issues = collectUnpublishedLinkIssues(
+      "docs/guides/example.md",
+      "[separator](..%2farchitecture/29-environment-access-gate.md)\n" +
+        "[encoded](%2e%2e%2farchitecture/29-environment-access-gate.md)",
+    );
+
+    assertEquals(issues.length, 2);
+    assertEquals(
+      issues.map((issue) =>
+        issue.message.includes(
+          "docs/architecture/29-environment-access-gate.md",
+        )
+      ),
+      [true, true],
+    );
+  });
+
   it("rejects case variants of private repository URLs", () => {
     const issues = collectIssues(
       "docs/guides/example.md",
@@ -116,8 +134,86 @@ describe("public docs validation", () => {
     );
   });
 
+  it("evaluates JavaScript escapes in a JSX href string literal", () => {
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.md",
+        String.raw`<a href={".\u002fdeploying.md"}>deploy</a>`,
+      ),
+      [],
+    );
+    const issues = collectUnpublishedLinkIssues(
+      "docs/guides/example.md",
+      String.raw`<a href={'.\x2e/architecture/private.md'}>private</a>`,
+    );
+    assertEquals(issues.length, 1);
+    assertEquals(
+      issues[0]?.message.includes("docs/architecture/private.md"),
+      true,
+    );
+  });
+
   it("ignores a dynamic JSX href expression", () => {
     assertEquals(destinations("<a href={href}>gate</a>"), []);
+  });
+
+  it("validates Veryfront absolute documentation URLs", () => {
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.md",
+        "[private](https://veryfront.com/docs/code/architecture/private)",
+      ).length,
+      1,
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.md",
+        "[public](https://veryfront.com/docs/code/guides/deploying)",
+      ),
+      [],
+    );
+  });
+
+  it("decodes Markdown character references before resolving destinations", () => {
+    const issues = collectUnpublishedLinkIssues(
+      "docs/guides/example.md",
+      "[decimal]: &#46;&#46;/architecture/decimal.md\n" +
+        "[hex]: &#x2e;&#x2e;/architecture/hex.md\n" +
+        "[named]: &period;&period;&sol;architecture/named.md",
+    );
+
+    assertEquals(issues.length, 3);
+  });
+
+  it("rejects missing files in newly parsed destination forms", () => {
+    const issues = collectUnpublishedLinkIssues(
+      "docs/guides/example.md",
+      '<a href="./does-not-exist.md">missing</a>\n' +
+        "[missing]: ./also-does-not-exist.md",
+    );
+
+    assertEquals(issues.length, 2);
+  });
+
+  it("finds reference definitions inside block quotes", () => {
+    assertEquals(
+      destinations(
+        "> [gate]: ../architecture/private.md\n" +
+          "> [wrapped]:\n> ../architecture/wrapped.md",
+      ),
+      ["../architecture/private.md", "../architecture/wrapped.md"],
+    );
+  });
+
+  it("reports the destination line for a multiline MDX href", () => {
+    const issues = collectUnpublishedLinkIssues(
+      "docs/guides/example.md",
+      '<a href={\n  "../architecture/private.md"\n}>gate</a>',
+    );
+
+    assertEquals(issues.length, 1);
+    assertEquals(issues[0]?.line, 2);
+    assertEquals(issues[0]?.text, '"../architecture/private.md"');
   });
 
   it("reports the line the destination sits on", () => {

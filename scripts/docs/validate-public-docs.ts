@@ -56,16 +56,148 @@ const UNSYNCED_README_PATHS = SYNCED_DOC_DIRS.map((dir) => `${dir}/README.md`);
  * click; a genuinely dynamic `href={href}` has no literal to check.
  */
 const HTML_HREF_SOURCE =
-  /\bhref\s*=\s*(?:["']([^"']*)["']|\{\s*["']([^"']*)["']\s*\})/;
+  /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*"((?:\\[\s\S]|[^"\\])*)"\s*\}|\{\s*'((?:\\[\s\S]|[^'\\])*)'\s*\})/;
 /** Any origin works: only the resolved path is read back out. */
 const RESOLUTION_ORIGIN = "https://docs.invalid";
+const VERYFRONT_DOCS_ORIGIN = "https://veryfront.com";
+const VERYFRONT_CODE_DOCS_PREFIX = "/docs/code/";
+const MARKDOWN_URL_ENTITIES: Readonly<Record<string, string>> = {
+  amp: "&",
+  colon: ":",
+  period: ".",
+  sol: "/",
+  bsol: "\\",
+  num: "#",
+  quest: "?",
+  equals: "=",
+  percnt: "%",
+  plus: "+",
+  commat: "@",
+};
+const JAVASCRIPT_SIMPLE_ESCAPES: Readonly<Record<string, string>> = {
+  b: "\b",
+  f: "\f",
+  n: "\n",
+  r: "\r",
+  t: "\t",
+  v: "\v",
+};
+
 function isPublishedPage(target: string): boolean {
   // The sync deletes the section README before publishing, so a link to one
   // 404s exactly like a link out of the tree.
-  if (UNSYNCED_README_PATHS.includes(target)) return false;
+  if (
+    UNSYNCED_README_PATHS.includes(target) ||
+    UNSYNCED_README_PATHS.some((path) => target === path.slice(0, -3))
+  ) return false;
   return SYNCED_DOC_DIRS.some((dir) =>
     target === dir || target.startsWith(`${dir}/`)
   );
+}
+
+function publishedTargetExists(target: string): boolean {
+  if (!isPublishedPage(target)) return false;
+  const path = target.replace(/\/$/, "");
+  for (const candidate of [path, `${path}.md`, `${path}/index.md`]) {
+    try {
+      const entry = Deno.statSync(`${ROOT}/${candidate}`);
+      if (entry.isFile || entry.isDirectory) return true;
+    } catch {
+      // Try the next published-route spelling.
+    }
+  }
+  return false;
+}
+
+function decodeMarkdownCharacterReferences(href: string): string {
+  return href.replace(
+    /&(?:#([0-9]{1,7})|#[xX]([0-9a-fA-F]{1,6})|([A-Za-z][A-Za-z0-9]+));/g,
+    (reference, decimal: string, hexadecimal: string, named: string) => {
+      if (named !== undefined) return MARKDOWN_URL_ENTITIES[named] ?? reference;
+      const codePoint = Number.parseInt(
+        decimal ?? hexadecimal,
+        decimal ? 10 : 16,
+      );
+      if (
+        !Number.isInteger(codePoint) || codePoint <= 0 ||
+        codePoint > 0x10ffff ||
+        codePoint >= 0xd800 && codePoint <= 0xdfff
+      ) return "\uFFFD";
+      return String.fromCodePoint(codePoint);
+    },
+  );
+}
+
+function decodeJavaScriptStringLiteral(value: string): string | undefined {
+  let decoded = "";
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index]!;
+    if (character !== "\\") {
+      decoded += character;
+      continue;
+    }
+    const escaped = value[++index];
+    if (escaped === undefined) return undefined;
+    if (escaped === "\n") continue;
+    if (escaped === "\r") {
+      if (value[index + 1] === "\n") index++;
+      continue;
+    }
+    if (escaped === "x") {
+      const hexadecimal = value.slice(index + 1, index + 3);
+      if (!/^[0-9a-fA-F]{2}$/.test(hexadecimal)) return undefined;
+      decoded += String.fromCharCode(Number.parseInt(hexadecimal, 16));
+      index += 2;
+      continue;
+    }
+    if (escaped === "u") {
+      if (value[index + 1] === "{") {
+        const end = value.indexOf("}", index + 2);
+        const hexadecimal = end === -1 ? "" : value.slice(index + 2, end);
+        if (!/^[0-9a-fA-F]{1,6}$/.test(hexadecimal)) return undefined;
+        const codePoint = Number.parseInt(hexadecimal, 16);
+        if (codePoint > 0x10ffff) return undefined;
+        decoded += String.fromCodePoint(codePoint);
+        index = end;
+        continue;
+      }
+      const hexadecimal = value.slice(index + 1, index + 5);
+      if (!/^[0-9a-fA-F]{4}$/.test(hexadecimal)) return undefined;
+      decoded += String.fromCharCode(Number.parseInt(hexadecimal, 16));
+      index += 4;
+      continue;
+    }
+    if (escaped === "0") {
+      if (/^[0-9]$/.test(value[index + 1] ?? "")) return undefined;
+      decoded += "\0";
+      continue;
+    }
+    if (/^[1-9]$/.test(escaped)) return undefined;
+    decoded += JAVASCRIPT_SIMPLE_ESCAPES[escaped] ?? escaped;
+  }
+  return decoded;
+}
+
+function normalizeRepositoryPath(pathname: string): string {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    decoded = pathname
+      .replace(/%2e/gi, ".")
+      .replace(/%2f/gi, "/")
+      .replace(/%5c/gi, "\\");
+  }
+  const segments: string[] = [];
+  for (const segment of decoded.replaceAll("\\", "/").split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      segments.pop();
+      continue;
+    }
+    segments.push(segment);
+  }
+  return segments.join("/");
 }
 
 /**
@@ -77,30 +209,40 @@ function isPublishedPage(target: string): boolean {
  * a dot segment), and a trailing `?query` that leaves the path unchanged.
  * Returns undefined when the destination is not a resolvable path.
  */
-function resolveRelative(fromDir: string, href: string): string | undefined {
+function resolveDocumentationTarget(
+  fromDir: string,
+  rawHref: string,
+): string | undefined {
+  const href = decodeMarkdownCharacterReferences(rawHref);
+  if (/^(?:#|["'])/.test(href)) return undefined;
   let resolved: URL;
   try {
     resolved = new URL(href, `${RESOLUTION_ORIGIN}/${fromDir}/`);
   } catch {
     return undefined;
   }
-  if (resolved.origin !== RESOLUTION_ORIGIN) return undefined;
-  try {
-    return decodeURIComponent(resolved.pathname).replace(/^\//, "");
-  } catch {
-    return resolved.pathname.replace(/^\//, "");
+  let pathname: string;
+  if (resolved.origin === VERYFRONT_DOCS_ORIGIN) {
+    if (!resolved.pathname.startsWith(VERYFRONT_CODE_DOCS_PREFIX)) {
+      return undefined;
+    }
+    pathname = `/docs/${
+      resolved.pathname.slice(VERYFRONT_CODE_DOCS_PREFIX.length)
+    }`;
+  } else if (
+    resolved.origin === RESOLUTION_ORIGIN &&
+    href.startsWith(VERYFRONT_CODE_DOCS_PREFIX)
+  ) {
+    pathname = `/docs/${
+      resolved.pathname.slice(VERYFRONT_CODE_DOCS_PREFIX.length)
+    }`;
+  } else {
+    if (resolved.origin !== RESOLUTION_ORIGIN || /^[\/\\]/.test(href)) {
+      return undefined;
+    }
+    pathname = resolved.pathname;
   }
-}
-
-/**
- * Destinations this check cannot resolve to a repository path: absolute URLs,
- * protocol-relative URLs, in-page anchors, site-root paths, and quoted strings
- * that are code rather than links. A site-root path is already a published URL
- * and is not relative to the file, so resolving it here would report a false
- * positive on a correct link.
- */
-function isRepositoryRelative(href: string): boolean {
-  return !/^(?:[a-z][a-z0-9+.-]*:|[\/\\]|#|["'])/i.test(href);
+  return normalizeRepositoryPath(pathname);
 }
 
 function afterMarkdownLabel(text: string, start: number): number | undefined {
@@ -120,6 +262,23 @@ function afterMarkdownLabel(text: string, start: number): number | undefined {
   return depth === 0 ? cursor : undefined;
 }
 
+function blockContentStart(text: string, lineStart: number): number {
+  let cursor = lineStart;
+  while (true) {
+    let indentation = 0;
+    while (
+      indentation < 3 &&
+      (text[cursor] === " " || text[cursor] === "\t")
+    ) {
+      cursor++;
+      indentation++;
+    }
+    if (text[cursor] !== ">") return cursor;
+    cursor++;
+    if (text[cursor] === " " || text[cursor] === "\t") cursor++;
+  }
+}
+
 /**
  * A reference definition starting at `lineStart`. CommonMark lets the
  * destination sit on the line after the label, so the run of whitespace after
@@ -130,21 +289,19 @@ function referenceDestinationAt(
   text: string,
   lineStart: number,
 ): Destination | undefined {
-  let labelStart = lineStart;
-  while (
-    labelStart < lineStart + 3 && (text[labelStart] === " " ||
-      text[labelStart] === "\t")
-  ) {
-    labelStart++;
-  }
+  const labelStart = blockContentStart(text, lineStart);
   const afterLabel = afterMarkdownLabel(text, labelStart);
   if (afterLabel === undefined || text[afterLabel] !== ":") return undefined;
 
   let cursor = afterLabel + 1;
   let newlines = 0;
   while (/\s/.test(text[cursor] ?? "")) {
-    if (text[cursor] === "\n" && ++newlines > 1) return undefined;
-    cursor++;
+    if (text[cursor] !== "\n") {
+      cursor++;
+      continue;
+    }
+    if (++newlines > 1) return undefined;
+    cursor = blockContentStart(text, cursor + 1);
   }
   const wrapped = text[cursor] === "<";
   if (wrapped) cursor++;
@@ -235,9 +392,17 @@ export function scanDestinations(text: string): Destination[] {
   const htmlHref = new RegExp(HTML_HREF_SOURCE, "gi");
   let htmlMatch: RegExpExecArray | null;
   while ((htmlMatch = htmlHref.exec(text))) {
-    const href = htmlMatch[1] ?? htmlMatch[2];
+    const rawHref = htmlMatch[1] ?? htmlMatch[2] ?? htmlMatch[3] ??
+      htmlMatch[4];
+    if (rawHref === undefined) continue;
+    const href = htmlMatch[3] !== undefined || htmlMatch[4] !== undefined
+      ? decodeJavaScriptStringLiteral(rawHref)
+      : rawHref;
     if (href === undefined) continue;
-    found.push({ href, offset: htmlMatch.index });
+    found.push({
+      href,
+      offset: htmlMatch.index + htmlMatch[0].lastIndexOf(rawHref),
+    });
   }
 
   // A reference definition is only a definition at the start of a line.
@@ -283,9 +448,8 @@ export function collectUnpublishedLinkIssues(
 
   const issues: PublicDocIssue[] = [];
   for (const { href, offset } of scanDestinations(content)) {
-    if (!isRepositoryRelative(href)) continue;
-    const target = resolveRelative(fromDir, href);
-    if (target === undefined || isPublishedPage(target)) continue;
+    const target = resolveDocumentationTarget(fromDir, href);
+    if (target === undefined || publishedTargetExists(target)) continue;
     const line = lineAt(lineStarts, offset);
     issues.push({
       path,
