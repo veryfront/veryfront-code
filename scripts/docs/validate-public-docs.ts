@@ -814,6 +814,7 @@ function javaScriptTemplateInterpolationEnd(
 ): number | undefined {
   let depth = 1;
   let cursor = start + 2;
+  let previousTokenWasRegex = false;
   while (cursor < text.length) {
     const commentEnd = javaScriptCommentEnd(text, cursor);
     if (commentEnd !== undefined) {
@@ -824,22 +825,33 @@ function javaScriptTemplateInterpolationEnd(
     if (character === '"' || character === "'") {
       const end = quotedRangeEnd(text, cursor, character);
       if (end === undefined) return undefined;
+      previousTokenWasRegex = false;
       cursor = end;
       continue;
     }
     if (character === "`") {
       const end = javaScriptTemplateEnd(text, cursor);
       if (end === undefined) return undefined;
+      previousTokenWasRegex = false;
       cursor = end;
       continue;
     }
-    if (character === "/" && javaScriptRegexMayStart(text, cursor)) {
+    if (
+      character === "/" &&
+      javaScriptRegexMayStart(text, cursor, previousTokenWasRegex)
+    ) {
       const regexEnd = javaScriptRegexEnd(text, cursor);
       if (regexEnd !== undefined) {
+        previousTokenWasRegex = true;
         cursor = regexEnd;
         continue;
       }
     }
+    if (/\s/.test(character)) {
+      cursor++;
+      continue;
+    }
+    previousTokenWasRegex = false;
     if (character === "{") depth++;
     else if (character === "}" && --depth === 0) return cursor + 1;
     cursor++;
@@ -917,6 +929,7 @@ function mdxExpressionAt(
   const strings: Range[] = [];
   let depth = 1;
   let cursor = start + 1;
+  let previousTokenWasRegex = false;
   while (cursor < text.length) {
     const commentEnd = javaScriptCommentEnd(text, cursor);
     if (commentEnd !== undefined) {
@@ -928,6 +941,7 @@ function mdxExpressionAt(
       const end = javaScriptTemplateEnd(text, cursor);
       if (end === undefined) return undefined;
       strings.push({ start: cursor, end });
+      previousTokenWasRegex = false;
       cursor = end;
       continue;
     }
@@ -935,16 +949,26 @@ function mdxExpressionAt(
       const end = quotedRangeEnd(text, cursor, character);
       if (end === undefined) return undefined;
       strings.push({ start: cursor, end });
+      previousTokenWasRegex = false;
       cursor = end;
       continue;
     }
-    if (character === "/" && javaScriptRegexMayStart(text, cursor)) {
+    if (
+      character === "/" &&
+      javaScriptRegexMayStart(text, cursor, previousTokenWasRegex)
+    ) {
       const regexEnd = javaScriptRegexEnd(text, cursor);
       if (regexEnd !== undefined) {
+        previousTokenWasRegex = true;
         cursor = regexEnd;
         continue;
       }
     }
+    if (/\s/.test(character)) {
+      cursor++;
+      continue;
+    }
+    previousTokenWasRegex = false;
     if (character === "{") depth++;
     else if (character === "}" && --depth === 0) {
       return { expression: { start, end: cursor + 1 }, strings };
@@ -1033,6 +1057,7 @@ interface JavaScriptBalance {
   quote: '"' | "'" | undefined;
   blockComment: boolean;
   templateEnd: number;
+  previousTokenWasRegex: boolean;
   valid: boolean;
 }
 
@@ -1070,7 +1095,12 @@ const JAVASCRIPT_REGEX_PREFIX_KEYWORDS: ReadonlySet<string> = new Set([
   "instanceof",
 ]);
 
-function javaScriptRegexMayStart(line: string, start: number): boolean {
+function javaScriptRegexMayStart(
+  line: string,
+  start: number,
+  previousTokenWasRegex: boolean,
+): boolean {
+  if (previousTokenWasRegex) return false;
   let end = start;
   while (end > 0 && /\s/.test(line[end - 1]!)) end--;
   if (end === 0) return true;
@@ -1128,22 +1158,34 @@ function scanJavaScriptLine(
         state.valid = false;
         return;
       }
+      state.previousTokenWasRegex = false;
       state.templateEnd = templateEnd;
       cursor = templateEnd - 1;
       continue;
     }
     if (character === '"' || character === "'") {
+      state.previousTokenWasRegex = false;
       state.quote = character;
       continue;
     }
     const lineCursor = cursor - lineStart;
-    if (character === "/" && javaScriptRegexMayStart(line, lineCursor)) {
+    if (
+      character === "/" &&
+      javaScriptRegexMayStart(
+        line,
+        lineCursor,
+        state.previousTokenWasRegex,
+      )
+    ) {
       const regexEnd = javaScriptRegexEnd(line, lineCursor);
       if (regexEnd !== undefined) {
+        state.previousTokenWasRegex = true;
         cursor = lineStart + regexEnd - 1;
         continue;
       }
     }
+    if (/\s/.test(character)) continue;
+    state.previousTokenWasRegex = false;
     if (character === "(" || character === "[" || character === "{") {
       state.delimiters.push(character);
       continue;
@@ -1164,6 +1206,7 @@ function mdxEsmRangeEnd(text: string, start: number): number | undefined {
     quote: undefined,
     blockComment: false,
     templateEnd: start,
+    previousTokenWasRegex: false,
     valid: true,
   };
   for (let lineStart = start; lineStart <= text.length;) {
@@ -1379,6 +1422,7 @@ function scanTagSyntax(
   let quote: '"' | "'" | undefined;
   let quoteUsesJavaScriptEscapes = false;
   let expressionDepth = 0;
+  let previousTokenWasRegex = false;
   for (let cursor = start; cursor < text.length; cursor++) {
     const character = text[cursor]!;
     if (quote !== undefined) {
@@ -1395,10 +1439,11 @@ function scanTagSyntax(
     }
     if (
       expressionDepth > 0 && character === "/" &&
-      javaScriptRegexMayStart(text, cursor)
+      javaScriptRegexMayStart(text, cursor, previousTokenWasRegex)
     ) {
       const regexEnd = javaScriptRegexEnd(text, cursor);
       if (regexEnd !== undefined) {
+        previousTokenWasRegex = true;
         cursor = regexEnd - 1;
         continue;
       }
@@ -1412,10 +1457,13 @@ function scanTagSyntax(
     if (character === "`" && expressionDepth > 0) {
       const templateEnd = javaScriptTemplateEnd(text, cursor);
       if (templateEnd !== undefined) {
+        previousTokenWasRegex = false;
         cursor = templateEnd - 1;
         continue;
       }
     }
+    if (expressionDepth > 0 && /\s/.test(character)) continue;
+    previousTokenWasRegex = false;
     if (character === '"' || character === "'") {
       quote = character;
       quoteUsesJavaScriptEscapes = expressionDepth > 0;
@@ -2424,6 +2472,7 @@ export function scanDestinations(
       .filter((usage) => usage.image && definedLabels.has(usage.label))
       .map((usage) => usage.description),
   );
+  markdownImageLabelRanges.sort((left, right) => left.start - right.start);
 
   for (const tagRange of tagRanges) {
     if (

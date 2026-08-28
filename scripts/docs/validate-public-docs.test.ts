@@ -74,6 +74,14 @@ describe("public docs validation", () => {
     );
     assertEquals(
       destinations(
+        '![alt <a href="../architecture/private.md">old</a>][ref]\n' +
+          "![later](./later.png)\n\n" +
+          "[ref]: ./image.png",
+      ),
+      ["./later.png", "./image.png"],
+    );
+    assertEquals(
+      destinations(
         "[outer ![alt <https://veryfront.com/docs/code/architecture/private>]" +
           "(./diagram.png)](./deploying.md)",
       ),
@@ -1673,6 +1681,13 @@ describe("public docs validation", () => {
       collectUnpublishedLinkIssues(
         "docs/guides/example.mdx",
         'export const sample = `${foo / /}`/.test(x) ? "[old](../architecture/private.md)" : ""}`',
+      ),
+      [],
+    );
+    assertEquals(
+      collectUnpublishedLinkIssues(
+        "docs/guides/example.mdx",
+        "export const sample = `${/a/ / value} / \\` [old](../architecture/private.md)`",
       ),
       [],
     );
