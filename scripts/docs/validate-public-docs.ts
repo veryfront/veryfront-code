@@ -136,6 +136,11 @@ const RULES: Rule[] = [
     message: "Do not expose internal #veryfront imports in public docs.",
   },
   {
+    pattern: /github\.com\/veryfront\/veryfront-examples/,
+    message:
+      "veryfront/veryfront-examples is a private repository. A reader following this link gets a 404, so link a public example or inline the code instead.",
+  },
+  {
     pattern: /\{@[A-Za-z]/,
     message:
       "Do not publish raw inline JSDoc tags. Regenerate the API reference after changing source JSDoc or the generator.",
