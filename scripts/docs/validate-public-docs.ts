@@ -49,7 +49,7 @@ const SYNCED_DOC_DIRS = [
  */
 const UNSYNCED_README_PATHS = SYNCED_DOC_DIRS.map((dir) => `${dir}/README.md`);
 
-const INLINE_LINK = /\[[^\]]*\]\(([^)\s]+)/g;
+const INLINE_LINK_SOURCE = /\[[^\]]*\]\(([^)\s]+)/;
 
 /**
  * A reference definition puts the destination on its own line, so the
@@ -98,14 +98,18 @@ function isRepositoryRelative(href: string): boolean {
   return !/^(?:[a-z][a-z0-9+.-]*:|\/|#|["'])/i.test(href);
 }
 
-function* destinations(text: string): Generator<string> {
-  INLINE_LINK.lastIndex = 0;
+function destinations(text: string): string[] {
+  // A fresh regex per line: a shared /g pattern carries lastIndex between
+  // calls, and this one is read from more than one place.
+  const inline = new RegExp(INLINE_LINK_SOURCE, "g");
+  const found: string[] = [];
   let match: RegExpExecArray | null;
-  while ((match = INLINE_LINK.exec(text))) {
-    yield match[1];
+  while ((match = inline.exec(text))) {
+    found.push(match[1]);
   }
   const reference = REFERENCE_DEFINITION.exec(text);
-  if (reference) yield reference[1];
+  if (reference) found.push(reference[1]);
+  return found;
 }
 
 function collectUnpublishedLinkIssues(
