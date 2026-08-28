@@ -106,15 +106,24 @@ describe("public docs validation", () => {
     assertEquals(issues.length, 1);
   });
 
-  it("matches only the private examples repository URL", () => {
-    const issues = collectIssues(
-      "docs/guides/example.md",
-      "https://notgithub.com/veryfront/veryfront-examples\n" +
-        "https://github.com/veryfront/veryfront-examples-public\n" +
-        "https://example.com/github.com/veryfront/veryfront-examples",
+  it("matches only the exact private examples repository URL", () => {
+    assertEquals(
+      collectIssues(
+        "docs/guides/example.md",
+        "https://notgithub.com/veryfront/veryfront-examples\n" +
+          "https://github.com/veryfront/veryfront-examples-public\n" +
+          "https://example.com/github.com/veryfront/veryfront-examples",
+      ),
+      [],
     );
-
-    assertEquals(issues, []);
+    assertEquals(
+      collectIssues(
+        "docs/guides/example.md",
+        "See https://github.com/veryfront/veryfront-examples.\n" +
+          "git clone https://github.com/veryfront/veryfront-examples.git",
+      ).length,
+      2,
+    );
   });
 
   it("finds destinations that wrap across lines", () => {
@@ -337,6 +346,22 @@ describe("public docs validation", () => {
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        "`{/*`\n" +
+          "[inline](../architecture/inline.md)\n" +
+          "{/* real comment */}",
+      ),
+      ["../architecture/inline.md"],
+    );
+    assertEquals(
+      destinations(
+        "```md\n{/*\n```\n" +
+          "[fenced](../architecture/fenced.md)\n" +
+          "{/* real comment */}",
+      ),
+      ["../architecture/fenced.md"],
     );
   });
 

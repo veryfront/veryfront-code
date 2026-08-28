@@ -429,13 +429,31 @@ function isInsideRange(ranges: readonly Range[], offset: number): boolean {
   return false;
 }
 
-function ignoredDestinationRanges(text: string): Range[] {
-  const ranges = markdownCodeRanges(text);
-  const comment = /\{\/\*[\s\S]*?\*\/\}/g;
-  let match: RegExpExecArray | null;
-  while ((match = comment.exec(text))) {
-    ranges.push({ start: match.index, end: match.index + match[0].length });
+function mdxCommentRanges(
+  text: string,
+  codeRanges: readonly Range[],
+): Range[] {
+  const ranges: Range[] = [];
+  let cursor = 0;
+  while (cursor < text.length) {
+    const start = text.indexOf("{/*", cursor);
+    if (start === -1) break;
+    if (isInsideRange(codeRanges, start)) {
+      cursor = start + 3;
+      continue;
+    }
+    const closing = text.indexOf("*/}", start + 3);
+    if (closing === -1) break;
+    const end = closing + 3;
+    ranges.push({ start, end });
+    cursor = end;
   }
+  return ranges;
+}
+
+function ignoredDestinationRanges(text: string): Range[] {
+  const codeRanges = markdownCodeRanges(text);
+  const ranges = [...codeRanges, ...mdxCommentRanges(text, codeRanges)];
   ranges.sort((left, right) => left.start - right.start);
 
   const merged: Range[] = [];
@@ -695,7 +713,7 @@ const RULES: Rule[] = [
     // Host names are case-insensitive, so a GitHub.com spelling reaches the
     // same private repository.
     pattern:
-      /(?:^|[\s("'=<])(?:https?:\/\/)?github\.com\/veryfront\/veryfront-examples(?:[/?#]|$)/i,
+      /(?:^|[\s("'=<])(?:https?:\/\/)?github\.com\/veryfront\/veryfront-examples(?:\.git)?(?=$|[/#?\s)>\],;:'"!]|[.](?=\s|$))/i,
     message:
       "veryfront/veryfront-examples is a private repository. A reader following this link gets a 404, so link a public example or inline the code instead.",
   },
