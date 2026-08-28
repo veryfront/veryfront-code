@@ -1663,6 +1663,13 @@ describe("public docs validation", () => {
       ),
       [],
     );
+    assertEquals(
+      destinations(
+        "export const sample = `${++/{/.lastIndex} / \\` " +
+          "[old](../architecture/prefix-update.md)`",
+      ),
+      [],
+    );
   });
 
   it("ignores Markdown syntax inside MDX ESM blocks", () => {

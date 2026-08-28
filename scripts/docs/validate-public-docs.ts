@@ -771,9 +771,15 @@ interface MdxSyntaxRanges {
   readonly strings: Range[];
 }
 
+type JavaScriptSignificantTokenKind =
+  | "other"
+  | "postfix-update"
+  | "prefix-update"
+  | "regex";
+
 interface JavaScriptSignificantToken {
   readonly end: number;
-  readonly kind: "other" | "regex";
+  readonly kind: JavaScriptSignificantTokenKind;
 }
 
 type JavaScriptQuote = '"' | "'";
@@ -781,7 +787,7 @@ type JavaScriptStringDelimiter = JavaScriptQuote | "`";
 
 interface JavaScriptScannedToken {
   readonly end: number;
-  readonly kind: "literal" | "other" | "regex" | "trivia";
+  readonly kind: JavaScriptSignificantTokenKind | "literal" | "trivia";
   readonly string?: Range;
 }
 
@@ -840,7 +846,7 @@ function javaScriptTemplateInterpolationEnd(
     }
     previousSignificantToken = {
       end: token.end,
-      kind: token.kind === "regex" ? "regex" : "other",
+      kind: token.kind === "literal" ? "other" : token.kind,
     };
     if (token.kind !== "other") {
       cursor = token.end;
@@ -939,7 +945,7 @@ function mdxExpressionAt(
     }
     previousSignificantToken = {
       end: token.end,
-      kind: token.kind === "regex" ? "regex" : "other",
+      kind: token.kind === "literal" ? "other" : token.kind,
     };
     if (token.kind !== "other") {
       cursor = token.end;
@@ -1078,12 +1084,13 @@ function javaScriptRegexMayStart(
   previousSignificantToken: JavaScriptSignificantToken | undefined,
 ): boolean {
   if (previousSignificantToken === undefined) return true;
-  if (previousSignificantToken.kind === "regex") return false;
+  if (previousSignificantToken.kind === "prefix-update") return true;
+  if (
+    previousSignificantToken.kind === "postfix-update" ||
+    previousSignificantToken.kind === "regex"
+  ) return false;
   const end = previousSignificantToken.end;
 
-  if (text.slice(end - 2, end) === "++" || text.slice(end - 2, end) === "--") {
-    return false;
-  }
   if ("=(:,![{;?&|+*%/^~<>-".includes(text[end - 1]!)) return true;
 
   let wordStart = end;
@@ -1093,6 +1100,25 @@ function javaScriptRegexMayStart(
 
   return wordStart === 0 ||
     !/[A-Za-z0-9_$.#]/.test(text[wordStart - 1]!);
+}
+
+function javaScriptUpdateKind(
+  text: string,
+  start: number,
+  previousSignificantToken: JavaScriptSignificantToken | undefined,
+): "postfix-update" | "prefix-update" | undefined {
+  const operator = text[start];
+  if ((operator !== "+" && operator !== "-") || text[start + 1] !== operator) {
+    return undefined;
+  }
+  if (
+    previousSignificantToken === undefined ||
+    /[\n\r\u2028\u2029]/.test(
+      text.slice(previousSignificantToken.end, start),
+    ) ||
+    javaScriptRegexMayStart(text, previousSignificantToken)
+  ) return "prefix-update";
+  return "postfix-update";
 }
 
 function javaScriptTokenAt(
@@ -1122,6 +1148,13 @@ function javaScriptTokenAt(
     const end = javaScriptRegexEnd(text, start);
     if (end !== undefined) return { end, kind: "regex" };
   }
+
+  const updateKind = javaScriptUpdateKind(
+    text,
+    start,
+    previousSignificantToken,
+  );
+  if (updateKind !== undefined) return { end: start + 2, kind: updateKind };
 
   return { end: start + 1, kind: "other" };
 }
@@ -1185,6 +1218,16 @@ function javaScriptLineTokenEnd(
   if (character === '"' || character === "'") {
     state.quote = character;
     return start + 1;
+  }
+  const updateKind = javaScriptUpdateKind(
+    text,
+    start,
+    state.previousSignificantToken,
+  );
+  if (updateKind !== undefined) {
+    const end = start + 2;
+    state.previousSignificantToken = { end, kind: updateKind };
+    return end;
   }
   if (
     character !== "/" ||
@@ -1513,6 +1556,14 @@ function scanTagSyntax(
       : undefined;
     if (commentEnd !== undefined) {
       cursor = commentEnd;
+      continue;
+    }
+    const updateKind = expressionDepth > 0
+      ? javaScriptUpdateKind(text, cursor, previousSignificantToken)
+      : undefined;
+    if (updateKind !== undefined) {
+      cursor += 2;
+      previousSignificantToken = { end: cursor, kind: updateKind };
       continue;
     }
     if (
