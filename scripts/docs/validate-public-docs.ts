@@ -1128,6 +1128,7 @@ function javaScriptRegexMayStart(
   ) return false;
   const end = previousSignificantToken.end;
 
+  if (text.slice(end - 3, end) === "...") return true;
   if ("=(:,![{;?&|+*%/^~<>-".includes(text[end - 1]!)) return true;
 
   let wordStart = end;

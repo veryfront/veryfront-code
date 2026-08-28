@@ -511,6 +511,7 @@ describe("public docs validation", () => {
           '<a data-ok={--/}/.lastIndex} href="../architecture/prefix-decrement.md">ok</a>\n' +
           '<a data-ok={value++ / count > 1} href="../architecture/postfix-update.md">ok</a>\n' +
           '<a data-ok={value-- / count > 1} href="../architecture/postfix-decrement.md">ok</a>\n' +
+          '<a data-ok={[...++/{/.lastIndex]} href="../architecture/spread-update.md">ok</a>\n' +
           '<a data-ok={this.#instanceof / ({ marker: "}>/" }).length} href="../architecture/private-member.md">ok</a>\n' +
           '<a data-ok={πinstanceof / ({ marker: "}>/" }).length} href="../architecture/unicode-identifier.md">ok</a>\n' +
           '<a data-ok={𐐀instanceof / ({ marker: "}>/" }).length} href="../architecture/astral-identifier.md">ok</a>\n' +
@@ -545,6 +546,7 @@ describe("public docs validation", () => {
         "../architecture/prefix-decrement.md",
         "../architecture/postfix-update.md",
         "../architecture/postfix-decrement.md",
+        "../architecture/spread-update.md",
         "../architecture/private-member.md",
         "../architecture/unicode-identifier.md",
         "../architecture/astral-identifier.md",
