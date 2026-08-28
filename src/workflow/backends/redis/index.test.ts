@@ -2009,6 +2009,60 @@ describe("RedisBackend", () => {
       assertEquals(await backend.getRun("missing-run"), null);
     });
 
+    it("checks missing runs before strict patch validation", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-missing-run:",
+        strictContext: true,
+      });
+
+      const error = await assertRejects(
+        () =>
+          strictBackend.updateRun("missing-run-strict", {
+            context: { input: {}, step: { when: new Date(0) } },
+          }),
+        Error,
+        "Run not found: missing-run-strict",
+      );
+      assertInstanceOf(error, Error);
+      assertEquals(error.cause, undefined);
+    });
+
+    it("preserves missing-run semantics when a run disappears before strict validation fails", async () => {
+      const strictBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "strict-deleted-run:",
+        strictContext: true,
+      });
+      const runId = "run-strict-concurrent-delete";
+      await strictBackend.createRun(createTestRun(runId));
+      const runKey = [...mockRedis.hashes.keys()].find((key) => key.endsWith(`:${runId}`));
+      assertExists(runKey);
+
+      const exists = mockRedis.exists.bind(mockRedis);
+      let deleteAfterLookup = true;
+      mockRedis.exists = async (key) => {
+        const result = await exists(key);
+        if (key === runKey && deleteAfterLookup) {
+          deleteAfterLookup = false;
+          mockRedis.hashes.delete(key);
+        }
+        return result;
+      };
+
+      const error = await assertRejects(
+        () =>
+          strictBackend.updateRun(runId, {
+            context: { input: {}, step: { when: new Date(0) } },
+          }),
+        Error,
+        `Run not found: ${runId}`,
+      );
+      assertInstanceOf(error, Error);
+      assertInstanceOf(error.cause, Error);
+      assertStringIncludes(error.cause.message, "strictContext");
+    });
+
     it("should update output and context", async () => {
       await backend.createRun(createTestRun("run-u2"));
       await backend.updateRun("run-u2", {

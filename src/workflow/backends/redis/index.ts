@@ -1400,15 +1400,30 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   async updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void> {
-    assertWorkflowRunUpdate(patch);
     const client = await this.ensureClient();
+    const runKey = this.runKey(runId);
+    if (await client.exists(runKey) === 0) {
+      throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+    }
+    assertWorkflowRunUpdate(patch);
 
     if (this.config.debug) logger.debug(`[RedisBackend] Updating run: ${runId}`);
 
-    const fields = this.serializeRunPatch(patch, runId);
+    let fields: Record<string, string>;
+    try {
+      fields = this.serializeRunPatch(patch, runId);
+    } catch (error) {
+      if (await client.exists(runKey) === 0) {
+        throw RESOURCE_NOT_FOUND.create({
+          detail: `Run not found: ${runId}`,
+          cause: error,
+        });
+      }
+      throw error;
+    }
     const result = await client.eval(
       UPDATE_RUN_SCRIPT,
-      [this.runKey(runId)],
+      [runKey],
       [
         runId,
         patch.status ?? "",
