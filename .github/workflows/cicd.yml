@@ -488,7 +488,7 @@ jobs:
     timeout-minutes: 15
     name: sonar
     needs: [coverage-shards]
-    if: ${{ needs.coverage-shards.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.event.pull_request.user.login != 'dependabot[bot]' }}
+    if: ${{ needs.coverage-shards.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
     permissions:
       contents: read
     steps:
@@ -753,7 +753,7 @@ jobs:
         env:
           # Sonar needs SONAR_TOKEN, so fork and Dependabot PRs intentionally
           # skip it. Pushes, merge-group runs, and trusted PRs must block on it.
-          SONAR_REQUIRED: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]') }}
+          SONAR_REQUIRED: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
           SOURCE_CHECKS_RESULT: ${{ needs.ci.result }}
           UNIT_TESTS_RESULT: ${{ needs.unit-tests.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}

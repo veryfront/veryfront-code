@@ -31,10 +31,10 @@ const RESULT_ENV = {
   RSC_BROWSER_E2E_RESULT: "${{ needs.tests-e2e-rsc-browser.result }}",
 } as const;
 const SONAR_REQUIRED_CONDITION =
-  "github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]')";
+  "(github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')";
 const SONAR_REQUIRED_EXPRESSION = `\${{ ${SONAR_REQUIRED_CONDITION} }}`;
 const SONAR_JOB_EXPRESSION =
-  "${{ needs.coverage-shards.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.event.pull_request.user.login != 'dependabot[bot]' }}";
+  `\${{ needs.coverage-shards.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
 
 function asRecord(value: unknown, context: string): YamlRecord {
   assert(
@@ -224,8 +224,10 @@ describe("merge quality gate workflow", () => {
       );
     }
     for (const entrypoint of ["lint:ci", "verify", "verify:quick"]) {
+      const entrypointTask = denoConfig.tasks[entrypoint];
+      assert(entrypointTask, `deno.json must define ${entrypoint}`);
       assertStringIncludes(
-        denoConfig.tasks[entrypoint],
+        entrypointTask,
         "deno task lint:ci-typescript",
         `${entrypoint} must run the CI TypeScript static gate`,
       );
