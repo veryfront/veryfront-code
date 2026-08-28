@@ -827,7 +827,10 @@ function cloneCheckpointValueForPersistence<T>(value: T): T {
           frame.keys.length,
         );
         for (let index = 0; index < frame.keys.length; index++) {
-          descriptors[index] = objectGetOwnPropertyDescriptor(frame.source, frame.keys[index]!);
+          const key = frame.keys[index]!;
+          if (typeof key === "string") {
+            descriptors[index] = objectGetOwnPropertyDescriptor(frame.source, key);
+          }
         }
         frame.ownPropertyDescriptors = descriptors;
       }

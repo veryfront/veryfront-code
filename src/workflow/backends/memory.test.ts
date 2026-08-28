@@ -531,6 +531,56 @@ describe("MemoryBackend", () => {
       assertEquals(workerRun?.context.workerHook, undefined);
     });
 
+    it("preserves conditional guards through updateRun override copies", async () => {
+      class CopyingUpdateBackend extends MemoryBackend {
+        readonly updateStarted = Promise.withResolvers<void>();
+        readonly releaseUpdate = Promise.withResolvers<void>();
+
+        override async updateRun(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
+          this.updateStarted.resolve();
+          await this.releaseUpdate.promise;
+          await super.updateRun(runId, { ...patch });
+        }
+
+        forceUpdate(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
+          return super.updateRun(runId, patch);
+        }
+      }
+
+      const copyingBackend = new CopyingUpdateBackend();
+      const runId = "run-conditional-override-copy";
+      await copyingBackend.createRun(createTestRun(runId, { status: "running" }));
+
+      const conditionalUpdate = copyingBackend.updateRunIfStatus(
+        runId,
+        ["running"],
+        { status: "failed" },
+      );
+      await copyingBackend.updateStarted.promise;
+      await copyingBackend.forceUpdate(runId, { status: "waiting" });
+      copyingBackend.releaseUpdate.resolve();
+
+      assertEquals(await conditionalUpdate, false);
+      assertEquals((await copyingBackend.getRun(runId))?.status, "waiting");
+    });
+
+    it("does not evaluate a conditional patch when its initial guard fails", async () => {
+      const runId = "run-conditional-initial-guard";
+      await backend.createRun(createTestRun(runId, { status: "waiting" }));
+      let patchReads = 0;
+      const patch = Object.defineProperty({}, "status", {
+        enumerable: true,
+        get() {
+          patchReads++;
+          return "failed";
+        },
+      }) as Partial<WorkflowRun>;
+
+      assertEquals(await backend.updateRunIfStatus(runId, ["running"], patch), false);
+      assertEquals(patchReads, 0);
+      assertEquals((await backend.getRun(runId))?.status, "waiting");
+    });
+
     it("persists context through the same JSON contract as Redis", async () => {
       class Receipt {
         constructor(readonly id: string) {}
@@ -1217,6 +1267,47 @@ describe("MemoryBackend", () => {
       assertEquals(stored?.decidedBy, "first@example.com");
       assertEquals(stored?.comment, "first decision");
       assertEquals(stored?.decisionData, { winner: "first" });
+    });
+
+    it("rechecks approval status after reading decision accessors", async () => {
+      const runId = "run-reentrant-approval-accessor";
+      const approval: PendingApproval = {
+        id: "approval-reentrant-accessor",
+        nodeId: "review",
+        status: "pending",
+        message: "Review needed",
+        payload: {},
+        requestedAt: new Date(),
+      };
+      await backend.savePendingApproval(runId, approval);
+
+      let nestedDecision: Promise<boolean> | undefined;
+      const decision = Object.defineProperty(
+        {
+          approved: false,
+          approver: "outer@example.com",
+          comment: "outer decision",
+        },
+        "approved",
+        {
+          enumerable: true,
+          get() {
+            nestedDecision = backend.updateApproval(runId, approval.id, {
+              approved: true,
+              approver: "first@example.com",
+              comment: "first decision",
+            });
+            return false;
+          },
+        },
+      );
+
+      assertEquals(await backend.updateApproval(runId, approval.id, decision), false);
+      assertEquals(await nestedDecision, true);
+      const stored = await backend.getPendingApproval(runId, approval.id);
+      assertEquals(stored?.status, "approved");
+      assertEquals(stored?.decidedBy, "first@example.com");
+      assertEquals(stored?.comment, "first decision");
     });
 
     it("rejects reentrant approval deletion asynchronously", async () => {

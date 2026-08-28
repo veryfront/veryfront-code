@@ -876,6 +876,34 @@ describe("workflow checkpoint retention", () => {
     );
   });
 
+  it("does not inspect JSON-ignored proxy symbol descriptors", () => {
+    const ignored = Symbol("ignored");
+    const visible = { value: "original" };
+    const source = { visible, [ignored]: true };
+    let ignoredDescriptorCalls = 0;
+    const proxied = new Proxy(source, {
+      getOwnPropertyDescriptor(target, key) {
+        if (key === ignored) {
+          ignoredDescriptorCalls++;
+          visible.value = "mutated";
+          throw new Error("ignored symbol descriptor must not run");
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+
+    const snapshot = cloneCheckpointForPersistence({
+      ...checkpoint("proxy-ignored-symbol-descriptor"),
+      context: { input: { proxied } },
+    });
+
+    assertEquals(
+      JSON.stringify(snapshot.context.input),
+      '{"proxied":{"visible":{"value":"original"}}}',
+    );
+    assertEquals(ignoredDescriptorCalls, 0);
+  });
+
   it("snapshots a proxy's dynamic toJSON result", () => {
     const source = { value: "original" };
     const proxied = new Proxy(source, {

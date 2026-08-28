@@ -370,11 +370,12 @@ export class MemoryBackend implements WorkflowBackend {
     logger.debug(`Updating run: ${runId}`, patch);
 
     const {
+      [memoryRunUpdateCondition]: _condition,
       context: patchContext,
       contextDeletes = [],
       nodeStateDeletes = [],
       ...storedPatch
-    } = patch;
+    } = patch as ConditionalWorkflowRunUpdate;
     const patchContextKeys = patchContext === undefined ? [] : objectKeys(patchContext);
     let contextPatch: Partial<WorkflowContext> | undefined;
     try {
@@ -432,14 +433,17 @@ export class MemoryBackend implements WorkflowBackend {
     patch: WorkflowRunUpdate,
     matches: (run: WorkflowRun) => boolean,
   ): Promise<boolean> {
+    const run = this.runs.get(runId);
+    if (!run) {
+      return Promise.reject(RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` }));
+    }
+    if (!matches(run)) return Promise.resolve(false);
+
     const condition: MemoryRunUpdateCondition = { matches, updated: true };
-    const conditionalPatch: ConditionalWorkflowRunUpdate = { ...patch };
-    objectDefineProperty(conditionalPatch, memoryRunUpdateCondition, {
-      configurable: false,
-      enumerable: false,
-      value: condition,
-      writable: false,
-    });
+    const conditionalPatch: ConditionalWorkflowRunUpdate = {
+      ...patch,
+      [memoryRunUpdateCondition]: condition,
+    };
     return this.updateRun(runId, conditionalPatch).then(() => condition.updated);
   }
 
@@ -927,13 +931,21 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.resolve(false);
     }
 
+    let approved: boolean;
+    let approver: string;
+    let comment: string | undefined;
+    let sourceDecisionData: unknown;
     let decisionData: unknown;
-    if (decision.data !== undefined) {
-      try {
-        decisionData = persistedApprovalDecisionData(decision.data, runId, this.config);
-      } catch (error) {
-        return Promise.reject(error);
+    try {
+      approved = decision.approved;
+      approver = decision.approver;
+      comment = decision.comment;
+      sourceDecisionData = decision.data;
+      if (sourceDecisionData !== undefined) {
+        decisionData = persistedApprovalDecisionData(sourceDecisionData, runId, this.config);
       }
+    } catch (error) {
+      return Promise.reject(error);
     }
     const currentApproval = this.approvals.get(runId)?.find((candidate) =>
       candidate.id === approvalId
@@ -944,12 +956,12 @@ export class MemoryBackend implements WorkflowBackend {
       );
     }
     if (currentApproval.status !== "pending") return Promise.resolve(false);
-    logger.debug("Updating approval", { approvalId, approved: decision.approved });
-    currentApproval.status = decision.approved ? "approved" : "rejected";
-    currentApproval.decidedBy = decision.approver;
+    logger.debug("Updating approval", { approvalId, approved });
+    currentApproval.status = approved ? "approved" : "rejected";
+    currentApproval.decidedBy = approver;
     currentApproval.decidedAt = new Date();
-    currentApproval.comment = decision.comment;
-    if (decision.data === undefined) delete currentApproval.decisionData;
+    currentApproval.comment = comment;
+    if (sourceDecisionData === undefined) delete currentApproval.decisionData;
     else currentApproval.decisionData = decisionData;
     currentApproval.reconciliationPending = true;
     return Promise.resolve(true);
