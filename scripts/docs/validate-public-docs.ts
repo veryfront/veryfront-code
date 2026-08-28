@@ -2359,26 +2359,8 @@ function markdownInlineDestinationAt(
   const afterLabel = afterMarkdownLabel(text, start);
   if (afterLabel === undefined || text[afterLabel] !== "(") return undefined;
 
-  const destinationInput = afterLabel + 1;
-  let cursor = markdownDestinationStart(text, destinationInput);
+  let cursor = markdownDestinationStart(text, afterLabel + 1);
   if (cursor === undefined || cursor >= text.length) return undefined;
-
-  if (
-    cursor > destinationInput &&
-    (text[cursor] === '"' || text[cursor] === "'" || text[cursor] === "(") &&
-    markdownDestinationCloses(text, cursor)
-  ) {
-    const linkEnd = afterInlineLink(text, afterLabel);
-    if (linkEnd === undefined) return undefined;
-    return {
-      href: "",
-      offset: cursor,
-      labelStart: start + 1,
-      labelEnd: afterLabel - 1,
-      linkEnd,
-      tail: { start: afterLabel, end: linkEnd },
-    };
-  }
 
   let href: string;
   let offset: number;

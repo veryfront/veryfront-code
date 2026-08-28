@@ -587,9 +587,13 @@ describe("public docs validation", () => {
       [],
     );
     assertEquals(
-      destinations("[label]( \"tooltip\") and [label]( 'tooltip')"),
-      [],
+      destinations(
+        "[label]( \"tooltip\") and [label]( 'tooltip') and " +
+          "[label]( (tooltip))",
+      ),
+      ['"tooltip"', "'tooltip'", "(tooltip)"],
     );
+    assertEquals(destinations('[label](<> "tooltip")'), []);
     assertEquals(
       destinations(
         '[sample](../architecture/private.md "title"\n\n)',
