@@ -34,6 +34,8 @@ export interface DenoSuiteProfile {
   readonly heap: boolean;
   /** Collect coverage into --coverage-dir (default "coverage"). */
   readonly coverage: boolean;
+  /** Start a fresh Deno process after this many files; null keeps one process. */
+  readonly maxFilesPerProcess: number | null;
   /** Genuinely suite-specific flags, rendered before the file list. */
   readonly extraFlags: readonly string[];
 }
@@ -46,6 +48,7 @@ const UNIT_PROFILE: DenoSuiteProfile = {
   parallel: true,
   heap: true,
   coverage: false,
+  maxFilesPerProcess: 100,
   extraFlags: [],
 };
 
@@ -53,9 +56,35 @@ export const DENO_SUITE_PROFILES: Readonly<
   Record<DenoSuitePlanId, DenoSuiteProfile>
 > = Object.freeze({
   "unit:parallel": UNIT_PROFILE,
+  // These tests deliberately mutate process-global adapter state.
+  "unit:serial": {
+    ...UNIT_PROFILE,
+    parallel: false,
+    maxFilesPerProcess: null,
+  },
   // Working-directory assertions cannot share a process with parallel peers.
-  "unit:cwd": { ...UNIT_PROFILE, parallel: false },
-  "unit:cwd-exclusion": UNIT_PROFILE,
+  "unit:cwd": {
+    ...UNIT_PROFILE,
+    parallel: false,
+    maxFilesPerProcess: null,
+  },
+  // This two-file regression only observes cross-isolate overlap when both
+  // participants run together, even if the parent suite is memory-limited.
+  "unit:cwd-exclusion": {
+    ...UNIT_PROFILE,
+    env: { ...DENO_TEST_ENV, DENO_JOBS: "2" },
+  },
+  "integration:legacy-source-roots": {
+    env: DENO_TEST_ENV,
+    preload: true,
+    denyNet: true,
+    traceLeaks: true,
+    parallel: true,
+    heap: false,
+    coverage: false,
+    maxFilesPerProcess: 25,
+    extraFlags: [],
+  },
   "integration:legacy-tests-root": {
     env: DENO_TEST_ENV,
     preload: true,
@@ -64,6 +93,7 @@ export const DENO_SUITE_PROFILES: Readonly<
     parallel: true,
     heap: false,
     coverage: false,
+    maxFilesPerProcess: 50,
     // Belt and braces: the planner already excludes these, and the ignore
     // keeps a stray positional path from pulling them back in.
     extraFlags: [
@@ -78,11 +108,13 @@ export const DENO_SUITE_PROFILES: Readonly<
     parallel: true,
     heap: false,
     coverage: false,
+    maxFilesPerProcess: 25,
     extraFlags: [],
   },
   "coverage:unit": {
     ...UNIT_PROFILE,
     coverage: true,
+    maxFilesPerProcess: null,
     extraFlags: ["--fail-fast", "--ignore=tests,src/workflow/__tests__"],
   },
   "coverage:integration": {
@@ -93,6 +125,7 @@ export const DENO_SUITE_PROFILES: Readonly<
     parallel: true,
     heap: true,
     coverage: true,
+    maxFilesPerProcess: null,
     extraFlags: ["--fail-fast"],
   },
   // Spawns real servers and a Chromium page per test; not parallel and not
@@ -105,6 +138,7 @@ export const DENO_SUITE_PROFILES: Readonly<
     parallel: false,
     heap: false,
     coverage: false,
+    maxFilesPerProcess: null,
     extraFlags: [],
   },
   // The compiled binary under test inherits this process env, and the lane
@@ -120,6 +154,7 @@ export const DENO_SUITE_PROFILES: Readonly<
     parallel: false,
     heap: false,
     coverage: false,
+    maxFilesPerProcess: null,
     extraFlags: [],
   },
 });
@@ -191,6 +226,21 @@ export function buildDenoSuiteCommandArgs(
   ];
 }
 
+export function partitionDenoSuiteFiles(
+  files: readonly string[],
+  maxFilesPerProcess: number | null,
+): string[][] {
+  if (maxFilesPerProcess === null || files.length <= maxFilesPerProcess) {
+    return [[...files]];
+  }
+
+  const batches: string[][] = [];
+  for (let start = 0; start < files.length; start += maxFilesPerProcess) {
+    batches.push(files.slice(start, start + maxFilesPerProcess));
+  }
+  return batches;
+}
+
 if (import.meta.main) {
   const flags = parseDenoSuiteArgs(Deno.args);
   if (!flags.suite || !(flags.suite in DENO_SUITE_PROFILES)) {
@@ -200,19 +250,29 @@ if (import.meta.main) {
 
   const suite = flags.suite as DenoSuitePlanId;
   const plan = await planSuiteFiles({ suite });
-  const status = await new Deno.Command("deno", {
-    args: buildDenoSuiteCommandArgs(suite, plan.files, {
-      ...(flags.coverageDir ? { coverageDir: flags.coverageDir } : {}),
-      passthroughArgs: flags.passthroughArgs,
-    }),
-    clearEnv: true,
-    env: buildTestProcessEnv(
-      Deno.env.toObject(),
-      DENO_SUITE_PROFILES[suite].env,
-    ),
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  }).spawn().status;
-  Deno.exit(status.code);
+  const profile = DENO_SUITE_PROFILES[suite];
+  const batches = partitionDenoSuiteFiles(
+    plan.files,
+    profile.maxFilesPerProcess,
+  );
+
+  for (const [index, files] of batches.entries()) {
+    if (batches.length > 1) {
+      console.log(
+        `[test-suite] ${suite} batch ${index + 1}/${batches.length} (${files.length} files)`,
+      );
+    }
+    const status = await new Deno.Command("deno", {
+      args: buildDenoSuiteCommandArgs(suite, files, {
+        ...(flags.coverageDir ? { coverageDir: flags.coverageDir } : {}),
+        passthroughArgs: flags.passthroughArgs,
+      }),
+      clearEnv: true,
+      env: buildTestProcessEnv(Deno.env.toObject(), profile.env),
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    }).spawn().status;
+    if (!status.success) Deno.exit(status.code);
+  }
 }

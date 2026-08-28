@@ -16,6 +16,7 @@ import {
   buildDenoSuiteCommandArgs,
   DENO_SUITE_PROFILES,
   parseDenoSuiteArgs,
+  partitionDenoSuiteFiles,
 } from "./run-deno-suite.ts";
 import {
   DENO_TEST_ENV,
@@ -36,6 +37,10 @@ const UNIT_CWD_FILES = [
   "src/testing/cwd.test.ts",
 ];
 
+const UNIT_SERIAL_FILES = [
+  "extensions/ext-bundler-esbuild/src/esbuild-bundler.test.ts",
+];
+
 const UNIT_CWD_EXCLUSION_FILES = [
   "src/testing/cwd-exclusion-a.test.ts",
   "src/testing/cwd-exclusion-b.test.ts",
@@ -45,8 +50,10 @@ describe("suite planning parity", () => {
   it("preserves every legacy command inventory", async () => {
     const expected: Record<SuitePlanId, string[]> = {
       "unit:parallel": await legacyUnitParallelFiles(),
+      "unit:serial": UNIT_SERIAL_FILES,
       "unit:cwd": UNIT_CWD_FILES,
       "unit:cwd-exclusion": UNIT_CWD_EXCLUSION_FILES,
+      "integration:legacy-source-roots": await legacySourceIntegrationFiles(),
       "integration:legacy-tests-root": await legacyIntegrationRootFiles(),
       "integration:cli": await legacyCliIntegrationFiles(),
       "coverage:unit": await legacyUnitCoverageFiles(),
@@ -69,6 +76,27 @@ describe("suite planning parity", () => {
     }
   });
 
+  it("keeps the isolated full Deno inventory complete and disjoint", async () => {
+    const suites: SuitePlanId[] = [
+      "unit:parallel",
+      "unit:serial",
+      "unit:cwd",
+      "unit:cwd-exclusion",
+      "integration:legacy-source-roots",
+      "integration:legacy-tests-root",
+    ];
+    const planned = (await Promise.all(
+      suites.map(async (suite) => (await planSuiteFiles({ suite })).files),
+    )).flat();
+    const expected = sorted([
+      ...await collectLegacyTestFiles(LEGACY_UNIT_ROOTS),
+      ...await legacyIntegrationRootFiles(),
+    ]);
+
+    assertEquals(planned.length, new Set(planned).size, "full suite overlap");
+    assertEquals(sorted(planned), expected);
+  });
+
   it("runs every root the unit suite claims to own", async () => {
     // Regression guard. suites.ts, deno.json's test.include and
     // suites.test.ts all place extensions/ and react/ in the unit suite, but
@@ -82,6 +110,23 @@ describe("suite planning parity", () => {
         `the unit suite owns ${root}/ but planned no test file from it`,
       );
     }
+  });
+
+  it("keeps process-global esbuild lifecycle tests out of parallel unit batches", async () => {
+    const esbuildLifecycleTest =
+      "extensions/ext-bundler-esbuild/src/esbuild-bundler.test.ts";
+    const parallel = await planSuiteFiles({ suite: "unit:parallel" });
+    const config = JSON.parse(
+      await Deno.readTextFile(new URL("../../deno.json", import.meta.url)),
+    );
+
+    assertEquals(parallel.files.includes(esbuildLifecycleTest), false);
+    assert(
+      (config.tasks["test:unit"] as string | undefined)?.includes(
+        "deno task test:unit:serial",
+      ),
+      "unit verification must run process-global tests in a serial lane",
+    );
   });
 
   it("keeps runtime-guarded Deno references eligible for Node", async () => {
@@ -302,6 +347,14 @@ describe("migration command surface", () => {
     assertEquals(cliIntegration.at(-1), "cli/routes.integration.test.ts");
   });
 
+  it("keeps the cross-file cwd exclusion probe concurrent", () => {
+    assertEquals(
+      DENO_SUITE_PROFILES["unit:cwd-exclusion"].env.DENO_JOBS,
+      "2",
+      "the two-file exclusion probe must overlap even when the parent suite uses DENO_JOBS=1",
+    );
+  });
+
   it("declares every isolation decision explicitly on every Deno suite", () => {
     // A field with a default is a field that can drift silently; the profile
     // type keeps them required and this pins the shape at runtime too.
@@ -322,12 +375,29 @@ describe("migration command surface", () => {
           `${suite} must declare ${field} explicitly`,
         );
       }
+      assert(
+        profile.maxFilesPerProcess === null ||
+          (Number.isInteger(profile.maxFilesPerProcess) &&
+            profile.maxFilesPerProcess > 0),
+        `${suite} must declare a valid process file bound`,
+      );
       assert(Array.isArray(profile.extraFlags), `${suite} extraFlags`);
       assert(
         profile.env !== undefined && typeof profile.env === "object",
         `${suite} env`,
       );
     }
+  });
+
+  it("partitions large suites without dropping or repeating files", () => {
+    const files = ["a.test.ts", "b.test.ts", "c.test.ts", "d.test.ts", "e.test.ts"];
+
+    assertEquals(partitionDenoSuiteFiles(files, 2), [
+      ["a.test.ts", "b.test.ts"],
+      ["c.test.ts", "d.test.ts"],
+      ["e.test.ts"],
+    ]);
+    assertEquals(partitionDenoSuiteFiles(files, null), [files]);
   });
 
   it("denies provider egress on every lane that does not opt out with a reason", () => {
@@ -389,9 +459,11 @@ describe("migration command surface", () => {
     const tasks = config.tasks as Record<string, string | { command: string }>;
     const expectedProfiles: Record<string, SuitePlanId> = {
       "test:unit:parallel": "unit:parallel",
+      "test:unit:serial": "unit:serial",
       "test:unit:cwd": "unit:cwd",
       "test:unit:cwd-exclusion": "unit:cwd-exclusion",
-      "test:integration": "integration:legacy-tests-root",
+      "test:integration:source": "integration:legacy-source-roots",
+      "test:integration:root": "integration:legacy-tests-root",
       "test:integration:cli": "integration:cli",
       "test:coverage:unit": "coverage:unit",
       "test:coverage:integration": "coverage:integration",
@@ -437,6 +509,35 @@ describe("migration command surface", () => {
       ]
     ) {
       assert(tasks[alias], `${alias} compatibility alias must remain defined`);
+    }
+  });
+
+  it("runs full Deno verification through isolated suite processes", async () => {
+    const config = JSON.parse(
+      await Deno.readTextFile(new URL("../../deno.json", import.meta.url)),
+    );
+    const task = config.tasks.test as string | undefined;
+
+    assert(task, "test compatibility alias must remain defined");
+    assertEquals(
+      /(?:^|&&)\s*[^&]*\bdeno test\b/.test(task),
+      false,
+      "the full test task must not retain every module in one Deno process",
+    );
+    for (
+      const isolatedTask of [
+        "test:unit:parallel",
+        "test:unit:serial",
+        "test:unit:cwd",
+        "test:unit:cwd-exclusion",
+        "test:integration:source",
+        "test:integration:root",
+      ]
+    ) {
+      assert(
+        task.includes(`deno task ${isolatedTask}`),
+        `the full test task must execute ${isolatedTask}`,
+      );
     }
   });
 
@@ -505,6 +606,7 @@ const LEGACY_UNIT_ROOTS = (LEAF_TEST_SUITES
 async function legacyUnitParallelFiles(): Promise<string[]> {
   const files = await collectLegacyTestFiles(LEGACY_UNIT_ROOTS);
   const excluded = new Set([
+    ...UNIT_SERIAL_FILES,
     ...UNIT_CWD_FILES,
     ...UNIT_CWD_EXCLUSION_FILES,
   ]);
@@ -521,6 +623,13 @@ async function legacyUnitParallelFiles(): Promise<string[]> {
 async function legacyCliIntegrationFiles(): Promise<string[]> {
   return sorted(
     (await collectLegacyTestFiles(["cli"]))
+      .filter((path) => /\.integration\.test\.tsx?$/.test(path)),
+  );
+}
+
+async function legacySourceIntegrationFiles(): Promise<string[]> {
+  return sorted(
+    (await collectLegacyTestFiles(LEGACY_UNIT_ROOTS))
       .filter((path) => /\.integration\.test\.tsx?$/.test(path)),
   );
 }
