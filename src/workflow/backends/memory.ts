@@ -944,7 +944,7 @@ export class MemoryBackend implements WorkflowBackend {
       );
     }
     if (currentApproval.status !== "pending") return Promise.resolve(false);
-    logger.debug("Updating approval", { approvalId, decision });
+    logger.debug("Updating approval", { approvalId, approved: decision.approved });
     currentApproval.status = decision.approved ? "approved" : "rejected";
     currentApproval.decidedBy = decision.approver;
     currentApproval.decidedAt = new Date();
