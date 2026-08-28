@@ -525,6 +525,7 @@ describe("public docs validation", () => {
           '<a data-ok={(() => { for (of / ({ marker: ">/" }).length; false;) {} return true })()} href="../architecture/for-of-division.md">ok</a>\n' +
           '<a data-ok={(() => { for (const x = { value: of / ({ marker: ">/" }).length }; false;) {} return true })()} href="../architecture/for-header-nested-of-division.md">ok</a>\n' +
           '<a data-ok={of / ({ marker: ">/" }).length} href="../architecture/of-division.md">ok</a>\n' +
+          '<a data-ok={function () {} / ({ marker: ">/" }).length} href="../architecture/function-expression-division.md">ok</a>\n' +
           '<a data-ok={(() => { breakfast\n/ ({ marker: ">/" }).length; continueValue\n/ ({ marker: ">/" }).length; debuggerValue\n/ ({ marker: ">/" }).length; return true })()} href="../architecture/asi-prefix-division.md">ok</a>\n' +
           '<a data-ok={(() => { while (value) { break\n/[}>]/.test(value) } while (value) { continue\n/[}>]/.test(value) } debugger\n/[}>]/.test(value); return true })()} href="../architecture/asi-regex.md">ok</a>\n' +
           '<a data-ok={(async () => await (x) / ({ marker: "}>/" }).length)()} href="../architecture/await-group-division.md">ok</a>\n' +
@@ -579,6 +580,7 @@ describe("public docs validation", () => {
         "../architecture/for-of-division.md",
         "../architecture/for-header-nested-of-division.md",
         "../architecture/of-division.md",
+        "../architecture/function-expression-division.md",
         "../architecture/asi-prefix-division.md",
         "../architecture/asi-regex.md",
         "../architecture/await-group-division.md",
@@ -1765,6 +1767,33 @@ describe("public docs validation", () => {
   });
 
   it("ignores Markdown syntax inside MDX ESM blocks", () => {
+    assertEquals(
+      destinations(
+        "export function sample() {}\n" +
+          "/[}]/.test(value);\n" +
+          'export const hidden = "[old](../architecture/block-regex.md)";\n\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        "export default async function* sample() {}\n" +
+          "/[}]/.test(value);\n" +
+          'export const hidden = "[old](../architecture/async-block-regex.md)";\n\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        "export const sample = function () {}\n" +
+          '/ ({ marker: "}/" }).length;\n' +
+          'export const hidden = "[old](../architecture/function-division.md)";\n\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
     assertEquals(
       destinations(
         'import sample from "[old](../architecture/import.md)"\n' +
