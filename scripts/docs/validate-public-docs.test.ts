@@ -83,13 +83,18 @@ describe("public docs validation", () => {
           "<a title=\"sample href='../architecture/title.md' text\">safe</a>\n" +
           '<div title="[old](../architecture/title-link.md)"></div>\n' +
           '<div title={"[old](../architecture/expression.md)"}></div>\n' +
+          '<a data-ok={true /* } > */} href="../architecture/comment-attribute.md">link</a>\n' +
           "<Code value={'Configure href=\"../architecture/string.md\"'} />\n" +
           '<div title={"<https://veryfront.com/docs/code/architecture/private>"}></div>\n' +
           String.raw`\<a href="../architecture/escaped.md">literal</a>` +
           "\n" +
           String.raw`\\<a href="../architecture/real.md">real</a>`,
       ),
-      ["../architecture/image.png", "../architecture/real.md"],
+      [
+        "../architecture/image.png",
+        "../architecture/comment-attribute.md",
+        "../architecture/real.md",
+      ],
     );
   });
 
@@ -105,6 +110,7 @@ describe("public docs validation", () => {
       destinations(
         "[plain](./does-not-exist.md\n" +
           "[wrapped](<./also-missing.md>\n" +
+          "[pointy](<../architecture/\nprivate.md>)\n" +
           "[paragraph](\n\n../architecture/paragraph.md)\n" +
           "[reference]\n\n[reference]: <../architecture/reference.md",
       ),
@@ -204,6 +210,15 @@ describe("public docs validation", () => {
         BLOCKED_REPOSITORY,
       ).length,
       7,
+    );
+    assertEquals(
+      collectIssues(
+        "docs/guides/example.md",
+        String
+          .raw`<a href={"https://github.com/example-org/private\x2dexamples"}>example</a>`,
+        BLOCKED_REPOSITORY,
+      ).length,
+      1,
     );
   });
 
@@ -593,6 +608,13 @@ describe("public docs validation", () => {
     );
     assertEquals(
       destinations(
+        "`sample\r\n\r\n" +
+          "[gate](../architecture/crlf-paragraph.md)`",
+      ),
+      ["../architecture/crlf-paragraph.md"],
+    );
+    assertEquals(
+      destinations(
         ">     [quoted](../architecture/quoted.md)\n" +
           "[real](../architecture/real.md)",
       ),
@@ -777,6 +799,16 @@ describe("public docs validation", () => {
       destinations(
         '{true /* } */ ? "[plain](../architecture/comment.md)" : ""}\n' +
           '{true // }\n ? "[line](../architecture/line-comment.md)" : ""}\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        'import sample from "[old](../architecture/import.md)"\n' +
+          "export const metadata = {\n" +
+          '  sample: "[old](../architecture/export.md)",\n' +
+          "}\n\n" +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],

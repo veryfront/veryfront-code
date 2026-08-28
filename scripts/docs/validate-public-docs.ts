@@ -611,7 +611,9 @@ function markdownCodeRanges(text: string): Range[] {
 
     let length = 1;
     while (text[cursor + length] === "`") length++;
-    const paragraphBreak = text.slice(cursor + length).search(/\n[ \t]*\n/);
+    const paragraphBreak = text.slice(cursor + length).search(
+      /\r?\n[ \t]*\r?\n/,
+    );
     const paragraphLimit = paragraphBreak === -1
       ? text.length
       : cursor + length + paragraphBreak;
@@ -702,6 +704,18 @@ function quotedRangeEnd(
   return undefined;
 }
 
+function javascriptCommentEnd(text: string, start: number): number | undefined {
+  if (text.startsWith("//", start)) {
+    const newline = text.indexOf("\n", start + 2);
+    return newline === -1 ? text.length : newline + 1;
+  }
+  if (text.startsWith("/*", start)) {
+    const closing = text.indexOf("*/", start + 2);
+    return closing === -1 ? text.length : closing + 2;
+  }
+  return undefined;
+}
+
 function mdxExpressionAt(
   text: string,
   start: number,
@@ -710,15 +724,9 @@ function mdxExpressionAt(
   let depth = 1;
   let cursor = start + 1;
   while (cursor < text.length) {
-    if (text.startsWith("//", cursor)) {
-      const newline = text.indexOf("\n", cursor + 2);
-      cursor = newline === -1 ? text.length : newline + 1;
-      continue;
-    }
-    if (text.startsWith("/*", cursor)) {
-      const closing = text.indexOf("*/", cursor + 2);
-      if (closing === -1) return undefined;
-      cursor = closing + 2;
+    const commentEnd = javascriptCommentEnd(text, cursor);
+    if (commentEnd !== undefined) {
+      cursor = commentEnd;
       continue;
     }
     const character = text[cursor]!;
@@ -785,6 +793,86 @@ function mdxSyntaxRanges(
   return { comments, expressions, strings };
 }
 
+function moduleStatementContinues(line: string): boolean {
+  const source = line.trimEnd();
+  return /(?:^|\s)(?:import|export|from|default)\s*$/.test(source) ||
+    /(?:=>|[=,:.?+\-*/%&|^!~<>({[\\])$/.test(source);
+}
+
+function mdxEsmStatementEnd(text: string, start: number): number {
+  let quote: '"' | "'" | "`" | undefined;
+  let blockComment = false;
+  let depth = 0;
+  let lineStart = start;
+  for (let cursor = start; cursor < text.length; cursor++) {
+    const character = text[cursor]!;
+    if (blockComment) {
+      if (text.startsWith("*/", cursor)) {
+        blockComment = false;
+        cursor++;
+      }
+      continue;
+    }
+    if (quote !== undefined) {
+      if (character === "\\") cursor++;
+      else if (character === quote) quote = undefined;
+      continue;
+    }
+    if (text.startsWith("//", cursor)) {
+      const newline = text.indexOf("\n", cursor + 2);
+      cursor = newline === -1 ? text.length : newline - 1;
+      continue;
+    }
+    if (text.startsWith("/*", cursor)) {
+      blockComment = true;
+      cursor++;
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      quote = character;
+    } else if (character === "(" || character === "[" || character === "{") {
+      depth++;
+    } else if (
+      (character === ")" || character === "]" || character === "}") &&
+      depth > 0
+    ) {
+      depth--;
+    } else if (character === "\n") {
+      const line = text.slice(lineStart, cursor).replace(/\r$/, "");
+      if (depth === 0 && !moduleStatementContinues(line)) return cursor;
+      lineStart = cursor + 1;
+    }
+  }
+  return text.length;
+}
+
+function mdxEsmRanges(
+  text: string,
+  codeRanges: readonly Range[],
+): Range[] {
+  const ranges: Range[] = [];
+  for (let lineStart = 0; lineStart <= text.length;) {
+    const newline = text.indexOf("\n", lineStart);
+    const lineEnd = newline === -1 ? text.length : newline;
+    if (
+      !isInsideRange(codeRanges, lineStart) &&
+      /^ {0,3}(?:import(?:\s+(?:["'`A-Za-z_$]|[{*]))|export\s+(?:default\b|const\b|let\b|var\b|function\b|class\b|async\b|[{*]))/
+        .test(
+          text.slice(lineStart, lineEnd).replace(/\r$/, ""),
+        )
+    ) {
+      const end = mdxEsmStatementEnd(text, lineStart);
+      ranges.push({ start: lineStart, end });
+      if (end >= text.length) break;
+      lineStart = end + 1;
+      continue;
+    }
+    if (newline === -1) break;
+    lineStart = newline + 1;
+  }
+  return ranges;
+}
+
 function ignoredDestinationRanges(text: string): {
   readonly ignored: Range[];
   readonly code: Range[];
@@ -792,9 +880,13 @@ function ignoredDestinationRanges(text: string): {
   readonly strings: Range[];
 } {
   const codeRanges = markdownCodeRanges(text);
-  const mdxRanges = mdxSyntaxRanges(text, codeRanges);
+  const esmRanges = mdxEsmRanges(text, codeRanges);
+  const mdxRanges = mdxSyntaxRanges(
+    text,
+    mergeRanges([...codeRanges, ...esmRanges]),
+  );
   return {
-    ignored: mergeRanges([...codeRanges, ...mdxRanges.comments]),
+    ignored: mergeRanges([...codeRanges, ...mdxRanges.comments, ...esmRanges]),
     code: codeRanges,
     expressions: mdxRanges.expressions,
     strings: mdxRanges.strings,
@@ -833,6 +925,13 @@ function htmlTagRanges(
         else if (character === quote) quote = undefined;
         continue;
       }
+      const commentEnd = expressionDepth > 0
+        ? javascriptCommentEnd(text, cursor)
+        : undefined;
+      if (commentEnd !== undefined) {
+        cursor = commentEnd - 1;
+        continue;
+      }
       if (character === '"' || character === "'" || character === "`") {
         quote = character;
       } else if (character === "{") expressionDepth++;
@@ -856,6 +955,13 @@ function topLevelTagOffsets(tag: string): ReadonlySet<number> {
     if (quote !== undefined) {
       if (character === "\\") cursor++;
       else if (character === quote) quote = undefined;
+      continue;
+    }
+    const commentEnd = expressionDepth > 0
+      ? javascriptCommentEnd(tag, cursor)
+      : undefined;
+    if (commentEnd !== undefined) {
+      cursor = commentEnd - 1;
       continue;
     }
     if (expressionDepth === 0) offsets.add(cursor);
@@ -1281,6 +1387,7 @@ export function scanDestinations(text: string): Destination[] {
       const rangeStart = cursor;
       const destinationStart = ++cursor;
       while (cursor < text.length) {
+        if (text[cursor] === "\n" || text[cursor] === "\r") break;
         if (text[cursor] === "\\" && cursor + 1 < text.length) {
           cursor += 2;
           continue;
@@ -1595,6 +1702,11 @@ function canonicalHttpUrls(text: string): string[] {
   return urls;
 }
 
+function matchesBlockedRepository(text: string, rule: Rule): boolean {
+  return rule.pattern.test(text) ||
+    canonicalHttpUrls(text).some((url) => rule.pattern.test(url));
+}
+
 const RULES: Rule[] = [
   {
     pattern: /\u2013|\u2014/,
@@ -1786,6 +1898,7 @@ export function collectIssues(
   const issues: PublicDocIssue[] = [];
   const repositoryRule = blockedRepositoryRule(blockedRepository);
   const lines = content.split("\n");
+  const repositoryIssueLines = new Set<number>();
   for (const [index, text] of lines.entries()) {
     const renderedText = decodeMarkdownBackslashEscapes(
       decodeMarkdownCharacterReferences(text),
@@ -1799,12 +1912,8 @@ export function collectIssues(
         text,
       });
     }
-    if (
-      repositoryRule.pattern.test(renderedText) ||
-      canonicalHttpUrls(renderedText).some((url) =>
-        repositoryRule.pattern.test(url)
-      )
-    ) {
+    if (matchesBlockedRepository(renderedText, repositoryRule)) {
+      repositoryIssueLines.add(index + 1);
       issues.push({
         path,
         line: index + 1,
@@ -1812,6 +1921,23 @@ export function collectIssues(
         text,
       });
     }
+  }
+
+  const lineStarts = [0];
+  for (let offset = 0; offset < content.length; offset++) {
+    if (content[offset] === "\n") lineStarts.push(offset + 1);
+  }
+  for (const destination of scanDestinations(content)) {
+    if (!matchesBlockedRepository(destination.href, repositoryRule)) continue;
+    const line = lineAt(lineStarts, destination.offset);
+    if (repositoryIssueLines.has(line)) continue;
+    repositoryIssueLines.add(line);
+    issues.push({
+      path,
+      line,
+      message: repositoryRule.message,
+      text: lines[line - 1]!,
+    });
   }
 
   for (const rule of WRAPPED_RULES) {
