@@ -581,6 +581,33 @@ describe("MemoryBackend", () => {
       assertEquals((await backend.getRun(runId))?.status, "waiting");
     });
 
+    it("rechecks conditional guards after materializing patch containers", async () => {
+      const runId = "run-conditional-node-state-proxy";
+      await backend.createRun(createTestRun(runId, {
+        status: "running",
+        nodeStates: {},
+      }));
+      const nodeStates = new Proxy({
+        step: { nodeId: "step", status: "completed" as const, attempt: 1 },
+      }, {
+        ownKeys(target) {
+          void backend.updateRun(runId, { status: "waiting" });
+          return Reflect.ownKeys(target);
+        },
+      });
+
+      assertEquals(
+        await backend.updateRunIfStatus(runId, ["running"], {
+          status: "failed",
+          nodeStates,
+        }),
+        false,
+      );
+      const stored = await backend.getRun(runId);
+      assertEquals(stored?.status, "waiting");
+      assertEquals(stored?.nodeStates, {});
+    });
+
     it("persists context through the same JSON contract as Redis", async () => {
       class Receipt {
         constructor(readonly id: string) {}
@@ -902,6 +929,36 @@ describe("MemoryBackend", () => {
       const stored = await backend.getRun(runId);
       assertEquals(stored?.status, "waiting");
       assertEquals(stored?.workerId, "worker-replacement");
+      assertEquals(stored?.context, { input: {}, preserved: "current" });
+    });
+
+    it("rechecks restore status after materializing snapshot fields", async () => {
+      const runId = "run-restore-field-accessor";
+      await backend.createRun(createTestRun(runId, {
+        status: "waiting",
+        context: { input: {}, preserved: "current" },
+      }));
+      const snapshot = Object.defineProperty(
+        {
+          context: { input: { restored: true } },
+          nodeStates: {},
+        },
+        "status",
+        {
+          enumerable: true,
+          get() {
+            void backend.updateRun(runId, { status: "cancelled" });
+            return "running";
+          },
+        },
+      );
+
+      assertEquals(
+        await backend.restoreRunStateIfStatus(runId, ["waiting"], snapshot),
+        false,
+      );
+      const stored = await backend.getRun(runId);
+      assertEquals(stored?.status, "cancelled");
       assertEquals(stored?.context, { input: {}, preserved: "current" });
     });
 
