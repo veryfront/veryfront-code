@@ -18,6 +18,7 @@ import {
 import type { WorkflowContext } from "./types.ts";
 import {
   MAX_TRAVERSAL_DEPTH,
+  prepareWorkflowJson,
   serializeWorkflowContext,
   serializeWorkflowJson,
 } from "./context-serialization.ts";
@@ -964,8 +965,38 @@ describe("serializeWorkflowContext", () => {
       let value: unknown = 0;
       for (let index = 0; index < 4000; index++) value = { nested: value };
       const expected = JSON.stringify(value);
+      const prepared = prepareWorkflowJson(value, "output");
 
-      assertEquals(serializeWorkflowJson(value, "output"), expected);
+      assertEquals(prepared.serialized, expected);
+      assertEquals(JSON.stringify(prepared.normalized), expected);
+    });
+
+    it("keeps control strings and JSON edge primitives in an encoded tail", () => {
+      const marker = "\u0000workflow-tail";
+      const leaf = Object.defineProperty(
+        {
+          marker,
+          values: [undefined, Symbol("omitted"), -0, Number.NaN, true],
+        },
+        "__proto__",
+        {
+          value: "ordinary data",
+          enumerable: true,
+        },
+      );
+      let deep: unknown = leaf;
+      for (let index = 0; index < PAST_THE_WALK; index++) deep = { nested: deep };
+      const value = {
+        [marker]: "outer key",
+        deep,
+        exactNumber: jsonRawSupport.rawJSON("1e+2"),
+      };
+
+      const expected = JSON.stringify(value);
+      const prepared = prepareWorkflowJson(value, "output");
+
+      assertEquals(prepared.serialized, expected);
+      assertEquals(JSON.stringify(prepared.normalized), expected);
     });
 
     it("throws in strictContext before persisting uninspected deep values", () => {

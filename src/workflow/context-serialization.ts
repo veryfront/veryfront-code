@@ -10,6 +10,7 @@ import type { WorkflowContext } from "./types.ts";
 
 const logger = agentLogger.component("workflow-context");
 const arrayIsArray = Array.isArray;
+const arrayJoin = Array.prototype.join;
 const arrayPrototype = Array.prototype;
 const BigIntValueOf = BigInt.prototype.valueOf;
 const BooleanValueOf = Boolean.prototype.valueOf;
@@ -188,6 +189,10 @@ const OMIT_JSON_VALUE = Symbol("omit-json-value");
 const ACTIVE_JSON_TAIL_REFERENCE = new Error("active JSON tail reference");
 const BIGINT_JSON_TAIL_VALUE = new Error("BigInt JSON tail value");
 
+interface JsonSerializationState {
+  requiresIterativeEncoding: boolean;
+}
+
 function hasJsonTailHook(
   value: JsonTraversalReference,
   prototype: JsonTraversalReference | null,
@@ -304,114 +309,147 @@ function canSnapshotJsonTailWithoutReplacer(
   return true;
 }
 
-interface JsonTailSnapshotFrame {
-  readonly source: JsonTraversalReference;
-  readonly target: NormalizedJsonObject | NormalizedJsonValue[];
+interface JsonArrayEncodingFrame {
+  index: number;
+  readonly kind: "array";
+  readonly length: number;
+  readonly value: JsonTraversalReference;
 }
 
-function createJsonTailSnapshotTarget(
-  source: JsonTraversalReference,
-): NormalizedJsonObject | NormalizedJsonValue[] {
-  // Plain objects keep the native prototype here. The final stringify uses
-  // V8's substantially deeper plain-object path, while every property is still
-  // installed with defineProperty so a `__proto__` key remains ordinary data.
-  const target = arrayIsArray(source) ? [] : objectCreate(objectPrototype);
-  // A later sibling hook can mutate either native prototype before the final
-  // stringify. Native JSON has already encoded this tail at that point, so an
-  // inert own shadow keeps the snapshot equally unaffected. A proved own data
-  // property named `toJSON` replaces this configurable shadow below.
-  objectDefineProperty(target, "toJSON", {
-    value: undefined,
-    enumerable: false,
-    configurable: true,
-    writable: true,
-  });
-  return target;
+interface JsonObjectEncodingFrame {
+  index: number;
+  readonly keys: string[];
+  readonly kind: "object";
+  readonly value: JsonTraversalReference;
+  wroteProperty: boolean;
 }
 
-function snapshotJsonTailValue(
-  value: unknown,
-  inArray: boolean,
-  pending: JsonTailSnapshotFrame[],
-): NormalizedJsonValue | typeof OMIT_JSON_VALUE {
-  if (value === null) return null;
-  if (typeof value === "object") {
-    const target = createJsonTailSnapshotTarget(value);
-    defineArrayElement(pending, pending.length, { source: value, target });
-    return target;
-  }
-  if (typeof value === "number") {
-    if (!numberIsFinite(value)) return null;
-    return objectIs(value, -0) ? 0 : value;
-  }
-  if (typeof value === "string" || typeof value === "boolean") return value;
-  // The preceding proof excludes functions and BigInts. Undefined and symbols
-  // are omitted from objects and become null inside arrays, matching JSON.
-  return inArray ? null : OMIT_JSON_VALUE;
+interface JsonValueEncodingFrame {
+  readonly inArray: boolean;
+  readonly kind: "value";
+  readonly value: unknown;
 }
 
-function snapshotJsonTailArray(
-  source: JsonTraversalReference,
-  target: NormalizedJsonValue[],
-  pending: JsonTailSnapshotFrame[],
+type JsonEncodingFrame =
+  | JsonArrayEncodingFrame
+  | JsonObjectEncodingFrame
+  | JsonValueEncodingFrame;
+
+function appendJsonEncodingFrame(
+  frames: JsonEncodingFrame[],
+  frame: JsonEncodingFrame,
 ): void {
-  const length = toJsonLength(reflectGet(source, "length"));
-  let index = 0;
-  while (index < length) {
-    const descriptor = objectGetOwnPropertyDescriptor(source, StringConstructor(index))!;
-    const value = snapshotJsonTailValue(descriptor.value, true, pending);
-    defineArrayElement(target, index, value === OMIT_JSON_VALUE ? null : value);
-    index++;
-  }
+  defineArrayElement(frames, frames.length, frame);
 }
 
-function snapshotJsonTailObject(
-  source: JsonTraversalReference,
-  target: NormalizedJsonObject,
-  pending: JsonTailSnapshotFrame[],
-): void {
-  const keys = objectKeys(source);
-  let index = 0;
-  while (index < keys.length) {
-    const key = keys[index]!;
-    const descriptor = objectGetOwnPropertyDescriptor(source, key)!;
-    const value = snapshotJsonTailValue(descriptor.value, false, pending);
-    if (value !== OMIT_JSON_VALUE) {
-      objectDefineProperty(target, key, {
-        value,
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      });
+function isOmittedJsonObjectValue(value: unknown): boolean {
+  return value === undefined || typeof value === "function" || typeof value === "symbol";
+}
+
+/** Encode normalized JSON without using the native call stack. */
+function encodeNormalizedJson(root: unknown): string | undefined {
+  if (
+    root === undefined || typeof root === "function" ||
+    typeof root === "symbol"
+  ) {
+    return undefined;
+  }
+
+  const frames: JsonEncodingFrame[] = [{ kind: "value", value: root, inArray: false }];
+  const chunks: string[] = [];
+  let chunk = "";
+  const append = (value: string) => {
+    chunk += value;
+    if (chunk.length >= 8192) {
+      defineArrayElement(chunks, chunks.length, chunk);
+      chunk = "";
     }
-    index++;
-  }
-}
+  };
+  while (frames.length > 0) {
+    const frameIndex = frames.length - 1;
+    const frame = frames[frameIndex]!;
+    frames.length = frameIndex;
 
-/** Clone a proved-inert JSON tail without adding native recursion to this walk. */
-function snapshotJsonTail(
-  root: JsonTraversalReference,
-): NormalizedJsonObject | NormalizedJsonValue[] {
-  const target = createJsonTailSnapshotTarget(root);
-  const pending: JsonTailSnapshotFrame[] = [{ source: root, target }];
-  let cursor = 0;
-  while (cursor < pending.length) {
-    const frame = pending[cursor++]!;
-    if (arrayIsArray(frame.source)) {
-      snapshotJsonTailArray(
-        frame.source,
-        frame.target as NormalizedJsonValue[],
-        pending,
-      );
+    if (frame.kind === "array") {
+      if (frame.index >= frame.length) {
+        append("]");
+        continue;
+      }
+      if (frame.index > 0) append(",");
+      const nested = objectGetOwnPropertyDescriptor(
+        frame.value,
+        StringConstructor(frame.index),
+      )!.value;
+      frame.index++;
+      appendJsonEncodingFrame(frames, frame);
+      appendJsonEncodingFrame(frames, { kind: "value", value: nested, inArray: true });
+      continue;
+    }
+
+    if (frame.kind === "object") {
+      let key: string | undefined;
+      let nested: unknown;
+      while (frame.index < frame.keys.length) {
+        key = frame.keys[frame.index++]!;
+        nested = objectGetOwnPropertyDescriptor(frame.value, key)!.value;
+        if (!isOmittedJsonObjectValue(nested)) break;
+        key = undefined;
+      }
+      if (key === undefined) {
+        append("}");
+        continue;
+      }
+      if (frame.wroteProperty) append(",");
+      append(jsonStringify(key)!);
+      append(":");
+      frame.wroteProperty = true;
+      appendJsonEncodingFrame(frames, frame);
+      appendJsonEncodingFrame(frames, { kind: "value", value: nested, inArray: false });
+      continue;
+    }
+
+    const value = frame.value;
+    if (value === null) {
+      append("null");
+    } else if (typeof value === "object") {
+      if (
+        jsonIsRawJSON !== undefined &&
+        reflectApply(jsonIsRawJSON, jsonRawSupport, [value])
+      ) {
+        append(reflectGet(value, "rawJSON") as string);
+      } else if (arrayIsArray(value)) {
+        append("[");
+        appendJsonEncodingFrame(frames, {
+          index: 0,
+          kind: "array",
+          length: toJsonLength(reflectGet(value, "length")),
+          value,
+        });
+      } else {
+        append("{");
+        appendJsonEncodingFrame(frames, {
+          index: 0,
+          keys: objectKeys(value),
+          kind: "object",
+          value,
+          wroteProperty: false,
+        });
+      }
+    } else if (
+      typeof value === "string" || typeof value === "number" ||
+      typeof value === "bigint"
+    ) {
+      append(jsonStringify(value)!);
+    } else if (typeof value === "boolean") {
+      append(value ? "true" : "false");
     } else {
-      snapshotJsonTailObject(
-        frame.source,
-        frame.target as NormalizedJsonObject,
-        pending,
-      );
+      // Undefined, functions, and symbols become null inside arrays. Object
+      // properties holding them were omitted while their parent was expanded.
+      append(frame.inArray ? "null" : "");
     }
   }
-  return target;
+  if (chunk.length > 0) defineArrayElement(chunks, chunks.length, chunk);
+  return reflectApply(arrayJoin, chunks, [""]);
 }
 
 /** Encode an uninspected tail now, preserving native hook order and output. */
@@ -419,16 +457,16 @@ function normalizeJsonTail(
   value: JsonTraversalReference,
   key: string,
   active: Set<JsonTraversalReference>,
+  state: JsonSerializationState,
 ): NormalizedJsonValue | typeof OMIT_JSON_VALUE {
   // This branch has proved the tail contains only inert JSON data: no hooks,
-  // accessors, proxies, exotic objects, raw tokens, cycles, or aliases. Keep
-  // that data attached to the normalized result and let the final stringify
-  // encode it after this recursive walk has unwound. Calling stringify here
-  // would combine JSON's own depth with every active normalize frame, which
-  // can overflow Node's stack for a value that native JSON encodes from the
-  // caller just fine.
+  // accessors, proxies, exotic objects, raw tokens, cycles, or aliases. Encode
+  // it iteratively now, before later sibling hooks can mutate its data or its
+  // prototypes. Native stringify here combines its depth with every active
+  // normalize frame, while deferring the object makes a later hook observable.
   if (canSnapshotJsonTailWithoutReplacer(value, active)) {
-    return snapshotJsonTail(value);
+    state.requiresIterativeEncoding = true;
+    return jsonParse(encodeNormalizedJson(value)!) as NormalizedJsonValue;
   }
 
   const holder = objectCreate(null);
@@ -716,11 +754,13 @@ function normalizeAndFindUnrepresentableValues(
   options: WorkflowJsonSerializationOptions = {},
 ): {
   normalized: unknown;
+  requiresIterativeEncoding: boolean;
   unrepresentable: UnrepresentableValues;
 } {
   const found: UnrepresentableValues = { fatal: [], lossy: [], fatalCount: 0, lossyCount: 0 };
   const active = new SetConstructor<JsonTraversalReference>();
   const completed = new SetConstructor<JsonTraversalReference>();
+  const serializationState: JsonSerializationState = { requiresIterativeEncoding: false };
 
   const recordFatal = (path: string, kind: string) => {
     found.fatalCount++;
@@ -947,7 +987,7 @@ function normalizeAndFindUnrepresentableValues(
         return nested as NormalizedJsonValue;
       }
       try {
-        return normalizeJsonTail(nested, key, active);
+        return normalizeJsonTail(nested, key, active, serializationState);
       } catch (error) {
         if (error === ACTIVE_JSON_TAIL_REFERENCE) {
           recordFatal(path, "circular reference");
@@ -1076,8 +1116,19 @@ function normalizeAndFindUnrepresentableValues(
 
   return {
     normalized: normalized === OMIT_JSON_VALUE ? undefined : normalized,
+    requiresIterativeEncoding: serializationState.requiresIterativeEncoding,
     unrepresentable: found,
   };
+}
+
+function stringifyNormalizedJson(normalized: unknown, requiresIterativeEncoding: boolean): {
+  normalized: unknown;
+  serialized: string | undefined;
+} {
+  if (!requiresIterativeEncoding) {
+    return { normalized, serialized: jsonStringify(normalized) };
+  }
+  return { normalized, serialized: encodeNormalizedJson(normalized) };
 }
 
 function formatPaths(samples: readonly UnrepresentableValue[], total: number): string {
@@ -1129,11 +1180,8 @@ export function prepareWorkflowJson(
   runId?: string,
   options: WorkflowJsonSerializationOptions = {},
 ): { normalized: unknown; serialized: string } {
-  const { normalized, unrepresentable } = normalizeAndFindUnrepresentableValues(
-    value,
-    label,
-    options,
-  );
+  const { normalized, requiresIterativeEncoding, unrepresentable } =
+    normalizeAndFindUnrepresentableValues(value, label, options);
   const { fatal, fatalCount, lossy, lossyCount } = unrepresentable;
 
   if (fatalCount > 0) {
@@ -1155,7 +1203,8 @@ export function prepareWorkflowJson(
     });
   }
 
-  const serialized = jsonStringify(normalized);
+  const prepared = stringifyNormalizedJson(normalized, requiresIterativeEncoding);
+  const serialized = prepared.serialized;
   if (serialized === undefined) {
     const paths = lossyCount > 0
       ? formatPaths(lossy, lossyCount)
@@ -1180,7 +1229,7 @@ export function prepareWorkflowJson(
 
   // Encoded only once the fatal check has passed, so a value JSON refuses is
   // named by this module rather than by the anonymous error JSON raises.
-  return { normalized, serialized };
+  return { normalized: prepared.normalized, serialized };
 }
 
 export function serializeWorkflowJson(

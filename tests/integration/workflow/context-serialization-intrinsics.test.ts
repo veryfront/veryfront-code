@@ -623,7 +623,7 @@ describe("workflow context serialization with hostile ambient intrinsics", () =>
     );
   });
 
-  it("avoids boxed-primitive exception probes for plain edge-host objects", async () => {
+  it("uses hook-free boxed-primitive probes on edge-host objects", async () => {
     const script = `
       Object.defineProperty(globalThis, "caches", {
         configurable: true,
@@ -669,7 +669,7 @@ describe("workflow context serialization with hostile ambient intrinsics", () =>
       JSON.parse(new TextDecoder().decode(output.stdout)),
       {
         canIdentifyProxyWithoutHooks: false,
-        numberProbes: 0,
+        numberProbes: 5,
         serialized: '{"input":{},"step":{"rows":[{"value":1},{"value":2}]}}',
       },
     );
