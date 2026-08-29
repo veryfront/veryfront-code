@@ -159,7 +159,7 @@ function tokenizerFor(
   options: AcornOptions,
 ): LexicalCache {
   if (
-    lexicalCache !== undefined && lexicalCache.position === position &&
+    lexicalCache?.position === position &&
     input.length > lexicalCache.inputLength
   ) {
     if (
