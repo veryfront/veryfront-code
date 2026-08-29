@@ -1,5 +1,6 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
+import { INVALID_ARGUMENT } from "veryfront/errors";
 import { getConfig } from "veryfront/config";
 import {
   enhanceAdapterWithFS,
@@ -95,7 +96,7 @@ function parseStyleArtifactBuildConfig(rawConfig: string | undefined): StyleArti
   try {
     parsed = JSON.parse(rawConfig);
   } catch {
-    throw new Error("Invalid --config JSON");
+    throw INVALID_ARGUMENT.create({ detail: "Invalid --config JSON" });
   }
 
   return StyleArtifactBuildConfigSchema.parse(normalizeStyleArtifactBuildConfigInput(parsed));

@@ -1,19 +1,32 @@
 import { TIMEOUT_ERROR } from "#veryfront/errors";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+import { sleep } from "#veryfront/utils";
+import {
+  addActiveSpanEvent,
+  setActiveSpanAttributes,
+} from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { RetryConfig, WorkflowNode } from "../../types.ts";
 import { parseDuration, validateRetryConfig } from "../../types.ts";
-import type { NodeExecutionResult } from "./types.ts";
-import { sleep } from "#veryfront/utils";
-import { createSetContextPatch } from "./context-patch.ts";
 import {
   calculateRetryDelay,
   isRetryableWorkflowError,
   retryTelemetryErrorType,
 } from "../retry-policy.ts";
-import {
-  addActiveSpanEvent,
-  setActiveSpanAttributes,
-} from "#veryfront/observability/tracing/otlp-setup.ts";
+import { createSetContextPatch } from "./context-patch.ts";
+import type { NodeExecutionResult } from "./types.ts";
+
+/**
+ * An ownership-fenced write was refused: another worker owns the run row, so
+ * this execution must stop writing instead of retrying or recording failure.
+ */
+export function isOwnershipLossError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const { slug, context } = error as Error & {
+    slug?: unknown;
+    context?: { ownershipLost?: unknown };
+  };
+  return slug === "orchestration-error" && context?.ownershipLost === true;
+}
 
 const DEFAULT_CANCELLATION_GRACE_PERIOD_MS = 1_000;
 
@@ -87,6 +100,9 @@ export async function executeCompositeNodeWithPolicy(
       await sleep(delay, parentSignal);
     } catch (caught) {
       parentSignal?.throwIfAborted();
+      // Ownership loss is not a composite failure: this worker must stop,
+      // not retry children it no longer owns or record a failed state.
+      if (isOwnershipLossError(caught)) throw caught;
       const error = ensureError(caught);
 
       if (attempt < maxAttempts && isRetryableError(error, retry)) {

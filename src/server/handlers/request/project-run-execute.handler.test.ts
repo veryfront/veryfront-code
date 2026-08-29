@@ -10,7 +10,7 @@ import { createEmptyDiscoveryResult } from "#veryfront/discovery";
 import type { HandlerContext } from "#veryfront/types";
 import { createAgentServiceEvalAdapter } from "#veryfront/eval/agent-service.ts";
 import { runEval as runEvalDefinition } from "#veryfront/eval/runner.ts";
-import { datasets, evalAgent, type EvalReport, metrics } from "veryfront/eval";
+import { datasets, evalAgent, evalDataset, type EvalReport, metrics } from "veryfront/eval";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
@@ -891,6 +891,45 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedEnvironmentId, "env-1");
     assertEquals(receivedProjectIdHeader, "proj-1");
     assertEquals(receivedBranchName, "main");
+  });
+
+  it("runs a dataset eval without a runtime API token", async () => {
+    let adapterCreated = false;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findEvalById: async (target) =>
+        target === "eval:dataset"
+          ? {
+            id: "eval:dataset",
+            name: "Dataset grading",
+            filePath: "evals/dataset.eval.ts",
+            exportName: "default",
+            definition: evalDataset({
+              id: "eval:dataset",
+              dataset: datasets.inline([{ id: "case-1", input: "text" }]),
+            }),
+          }
+          : null,
+      createEvalAgentAdapter: () => {
+        adapterCreated = true;
+        return async () => ({ text: "" });
+      },
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_dataset/execute",
+      {
+        runId: "run_eval_dataset",
+        kind: "eval",
+        target: "eval:dataset",
+        projectId: "proj-1",
+      },
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals((await result.response.json()).success, true);
+    assertEquals(adapterCreated, false);
   });
 
   it("returns an eval report artifact path when report upload succeeds", async () => {

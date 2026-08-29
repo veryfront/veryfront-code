@@ -11,7 +11,15 @@ import { VeryfrontError } from "#veryfront/errors";
 import type { Tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { MemoryBackend } from "../backends/memory.ts";
-import { branch, dependsOn, step, waitForApproval, waitForEvent, workflow } from "../dsl/index.ts";
+import {
+  branch,
+  dependsOn,
+  parallel,
+  step,
+  waitForApproval,
+  waitForEvent,
+  workflow,
+} from "../dsl/index.ts";
 import { ApprovalManager } from "../runtime/approval-manager.ts";
 import type { WorkflowRun } from "../types.ts";
 import { WorkflowExecutor } from "./workflow-executor.ts";
@@ -807,6 +815,120 @@ describe("workflow/executor/workflow-executor", () => {
 
     release.resolve();
     await execution;
+  });
+
+  it("persists a recovered parallel child's attempt before its side effect re-runs", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    executor.register(
+      workflow({
+        id: "child-recovery-attempt",
+        steps: [
+          parallel("outer", [
+            step("inner", {
+              tool: createTool("inner", async () => {
+                started.resolve();
+                await release.promise;
+                return { ok: true };
+              }),
+            }),
+          ]),
+        ],
+      }).definition,
+    );
+    const run = {
+      ...createRun("child-recovery-attempt"),
+      status: "running" as const,
+      workerId: "run-execution:old-owner",
+      nodeStates: {
+        outer: {
+          nodeId: "outer",
+          status: "running" as const,
+          attempt: 1,
+          startedAt: new Date(),
+        },
+        "outer/inner": {
+          nodeId: "outer/inner",
+          status: "running" as const,
+          attempt: 1,
+          startedAt: new Date(),
+        },
+      },
+    };
+    await backend.createRun(run);
+
+    const execution = executor.resume(run.id, undefined, run.workerId);
+    await started.promise;
+
+    const persistedWhileRunning = await backend.getRun(run.id);
+    assertExists(persistedWhileRunning);
+    assertEquals(persistedWhileRunning.nodeStates["outer/inner"]?.attempt, 2);
+    assertEquals(persistedWhileRunning.nodeStates["outer/inner"]?.status, "running");
+    // A key merge, not a replacement: the composite's own state survives.
+    assertEquals(persistedWhileRunning.nodeStates["outer"]?.status, "running");
+
+    release.resolve();
+    await execution;
+  });
+
+  it("keeps legacy child recovery semantics on a backend without key merge", async () => {
+    const backend = new ReplacementPatchRecordingBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    executor.register(
+      workflow({
+        id: "child-recovery-replacement-backend",
+        steps: [
+          parallel("outer", [
+            step("inner", {
+              tool: createTool("inner", async () => {
+                started.resolve();
+                await release.promise;
+                return { ok: true };
+              }),
+            }),
+          ]),
+        ],
+      }).definition,
+    );
+    const run = {
+      ...createRun("child-recovery-replacement-backend"),
+      status: "running" as const,
+      workerId: "run-execution:old-owner",
+      nodeStates: {
+        outer: {
+          nodeId: "outer",
+          status: "running" as const,
+          attempt: 1,
+          startedAt: new Date(),
+        },
+        "outer/inner": {
+          nodeId: "outer/inner",
+          status: "running" as const,
+          attempt: 1,
+          startedAt: new Date(),
+        },
+      },
+    };
+    await backend.createRun(run);
+
+    const execution = executor.resume(run.id, undefined, run.workerId);
+    await started.promise;
+
+    // No key merge available: the child fragment must not replace the run's
+    // node-state map, so the raised attempt is not yet durable here.
+    const persistedWhileRunning = await backend.getRun(run.id);
+    assertExists(persistedWhileRunning);
+    assertEquals(persistedWhileRunning.nodeStates["outer/inner"]?.attempt, 1);
+
+    release.resolve();
+    await execution;
+
+    const settled = await backend.getRun(run.id);
+    assertEquals(settled?.nodeStates["outer/inner"]?.status, "completed");
   });
 
   it("releases a waiting run lock after wait persistence and before batch completion", async () => {

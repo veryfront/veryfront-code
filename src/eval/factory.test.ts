@@ -1,7 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { datasets, evalAgent, evalTool, isEvalDefinition, metrics } from "veryfront/eval";
+import {
+  datasets,
+  evalAgent,
+  evalDataset,
+  evalTool,
+  isEvalDefinition,
+  metrics,
+} from "veryfront/eval";
 import type { EvalMockToolsResolver } from "veryfront/eval";
 import type { ToolSet } from "veryfront/tool";
 
@@ -130,6 +137,79 @@ describe("eval/factory", () => {
     assertEquals(resolverDefinition.mockTools, resolver);
     assertEquals(isEvalDefinition(staticDefinition), true);
     assertEquals(isEvalDefinition(resolverDefinition), true);
+  });
+
+  it("creates a target-free dataset eval definition", () => {
+    const definition = evalDataset({
+      id: "eval:rubric-calibration",
+      name: "Rubric calibration",
+      description: "Judge calibration over a labelled corpus.",
+      dataset: datasets.inline([
+        {
+          id: "case-1",
+          input: "Standing answer.",
+          reference: "pass",
+          metadata: { label: "good" },
+        },
+      ]),
+      repetitions: 2,
+      tags: ["calibration"],
+      metadata: { owner: "ai-platform" },
+    });
+
+    assertEquals(isEvalDefinition(definition), true);
+    assertEquals(definition.kind, "eval");
+    assertEquals(definition.targetKind, "dataset");
+    assertEquals(definition.id, "eval:rubric-calibration");
+    assertEquals(definition.name, "Rubric calibration");
+    assertEquals(
+      definition.target,
+      "eval:rubric-calibration",
+      "the stable id wins the derived identity so renames keep baselines valid",
+    );
+    assertEquals(definition.repetitions, 2);
+    assertEquals(definition.tags, ["calibration"]);
+    assertEquals(definition.metadata, { owner: "ai-platform" });
+    assertEquals(Object.hasOwn(definition, "input"), false);
+    assertEquals(Object.hasOwn(definition, "mockTools"), false);
+  });
+
+  it("derives dataset eval identity from the id", () => {
+    const fromId = evalDataset({
+      id: "eval:judge-corpus",
+      dataset: datasets.inline([{ id: "case-1", input: "text" }]),
+    });
+    assertEquals(fromId.target, "eval:judge-corpus");
+    assertEquals(fromId.name, "eval:judge-corpus");
+    assertEquals(isEvalDefinition(fromId), true);
+  });
+
+  it("rejects dataset evals without an id", () => {
+    // The input type requires id; the cast mirrors an untyped JS caller.
+    const targetless = {
+      dataset: datasets.inline([{ id: "case-1", input: "text" }]),
+    } as unknown as Parameters<typeof evalDataset>[0];
+    assertThrows(() => evalDataset(targetless), Error, "non-empty string");
+    assertThrows(
+      () =>
+        evalDataset({
+          id: "   ",
+          dataset: datasets.inline([{ id: "case-1", input: "text" }]),
+        }),
+      Error,
+      "non-empty string",
+    );
+  });
+
+  it("rejects definitions with an unknown or empty target identity", () => {
+    const definition = evalDataset({
+      id: "eval:kind-check",
+      dataset: datasets.inline([{ id: "case-1", input: "text" }]),
+    });
+
+    assertEquals(isEvalDefinition({ ...definition, targetKind: "banana" }), false);
+    assertEquals(isEvalDefinition({ ...definition, target: "" }), false);
+    assertEquals(isEvalDefinition({ ...definition, target: undefined }), false);
   });
 
   it("does not export unfinished target factories", async () => {

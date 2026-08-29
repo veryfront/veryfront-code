@@ -5,6 +5,7 @@
  */
 
 import { parse } from "#std/yaml/parse";
+import { matchFrontMatterSource } from "./front-matter-source.ts";
 
 export interface Extract<T> {
   attrs: T;
@@ -12,11 +13,9 @@ export interface Extract<T> {
   frontMatter: string;
 }
 
-const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)(?:\r?\n)?---(?:\r?\n|$)([\s\S]*)$/;
-
 function extractUnknown(text: string): Extract<unknown> {
-  const match = text.match(FRONTMATTER_RE);
-  if (!match) {
+  const source = matchFrontMatterSource(text);
+  if (source === undefined) {
     return {
       attrs: {},
       body: text,
@@ -24,11 +23,11 @@ function extractUnknown(text: string): Extract<unknown> {
     };
   }
 
-  const frontMatter = match[1] ?? "";
+  const frontMatter = source.frontMatter;
   const parsed = frontMatter.trim() ? parse(frontMatter) : {};
   return {
     attrs: parsed,
-    body: match[2] ?? "",
+    body: source.body,
     frontMatter,
   };
 }

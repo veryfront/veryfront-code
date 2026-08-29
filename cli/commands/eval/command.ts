@@ -3,6 +3,7 @@
  */
 
 import { dirname, isAbsolute, relative, resolve } from "veryfront/platform/path";
+import { INVALID_ARGUMENT } from "veryfront/errors";
 import type { Agent, AgentResponse } from "veryfront/agent";
 import type { VeryfrontConfig } from "veryfront/config";
 import {
@@ -400,14 +401,18 @@ function readNumberField(
   const value = record[field];
   if (value === undefined) return undefined;
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`Invalid --comparison-policy: ${path}.${field} must be a finite number.`);
+    throw INVALID_ARGUMENT.create({
+      detail: `Invalid --comparison-policy: ${path}.${field} must be a finite number.`,
+    });
   }
   return value;
 }
 
 function assertKnownComparisonMetric(metric: string, path: string): EvalModelComparisonMetricName {
   if (MODEL_COMPARISON_METRIC_SET.has(metric)) return metric as EvalModelComparisonMetricName;
-  throw new Error(`Invalid --comparison-policy: ${path} uses unknown metric "${metric}".`);
+  throw INVALID_ARGUMENT.create({
+    detail: `Invalid --comparison-policy: ${path} uses unknown metric "${metric}".`,
+  });
 }
 
 function parseComparisonConstraints(
@@ -415,14 +420,18 @@ function parseComparisonConstraints(
 ): EvalModelComparisonPolicy["constraints"] {
   if (value === undefined) return undefined;
   if (!isRecord(value)) {
-    throw new Error("Invalid --comparison-policy: constraints must be an object.");
+    throw INVALID_ARGUMENT.create({
+      detail: "Invalid --comparison-policy: constraints must be an object.",
+    });
   }
 
   const constraints: NonNullable<EvalModelComparisonPolicy["constraints"]> = {};
   for (const [metricName, rawConstraint] of Object.entries(value)) {
     const metric = assertKnownComparisonMetric(metricName, `constraints.${metricName}`);
     if (!isRecord(rawConstraint)) {
-      throw new Error(`Invalid --comparison-policy: constraints.${metricName} must be an object.`);
+      throw INVALID_ARGUMENT.create({
+        detail: `Invalid --comparison-policy: constraints.${metricName} must be an object.`,
+      });
     }
     const maxRegressionPct = readNumberField(
       rawConstraint,
@@ -430,9 +439,10 @@ function parseComparisonConstraints(
       `constraints.${metricName}`,
     );
     if (maxRegressionPct !== undefined && maxRegressionPct < 0) {
-      throw new Error(
-        `Invalid --comparison-policy: constraints.${metricName}.maxRegressionPct must be at least 0.`,
-      );
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Invalid --comparison-policy: constraints.${metricName}.maxRegressionPct must be at least 0.`,
+      });
     }
     constraints[metric] = {
       ...(rawConstraint.min !== undefined
@@ -450,31 +460,39 @@ function parseComparisonConstraints(
 function parseComparisonObjectives(value: unknown): EvalModelComparisonPolicy["objectives"] {
   if (value === undefined) return undefined;
   if (!isRecord(value)) {
-    throw new Error("Invalid --comparison-policy: objectives must be an object.");
+    throw INVALID_ARGUMENT.create({
+      detail: "Invalid --comparison-policy: objectives must be an object.",
+    });
   }
 
   const objectives: NonNullable<EvalModelComparisonPolicy["objectives"]> = {};
   for (const [metricName, rawObjective] of Object.entries(value)) {
     const metric = assertKnownComparisonMetric(metricName, `objectives.${metricName}`);
     if (!isRecord(rawObjective)) {
-      throw new Error(`Invalid --comparison-policy: objectives.${metricName} must be an object.`);
+      throw INVALID_ARGUMENT.create({
+        detail: `Invalid --comparison-policy: objectives.${metricName} must be an object.`,
+      });
     }
     const weight = readNumberField(rawObjective, "weight", `objectives.${metricName}`);
     if (weight === undefined) {
-      throw new Error(`Invalid --comparison-policy: objectives.${metricName}.weight is required.`);
+      throw INVALID_ARGUMENT.create({
+        detail: `Invalid --comparison-policy: objectives.${metricName}.weight is required.`,
+      });
     }
     if (weight <= 0) {
-      throw new Error(
-        `Invalid --comparison-policy: objectives.${metricName}.weight must be greater than 0.`,
-      );
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Invalid --comparison-policy: objectives.${metricName}.weight must be greater than 0.`,
+      });
     }
     const direction = rawObjective.direction;
     if (
       typeof direction !== "string" || !MODEL_COMPARISON_OBJECTIVE_DIRECTIONS.has(direction)
     ) {
-      throw new Error(
-        `Invalid --comparison-policy: objectives.${metricName}.direction must be "minimize" or "maximize".`,
-      );
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Invalid --comparison-policy: objectives.${metricName}.direction must be "minimize" or "maximize".`,
+      });
     }
     objectives[metric] = {
       weight,
@@ -495,7 +513,7 @@ export async function loadEvalModelComparisonPolicy(
     rawPolicy = await Deno.readTextFile(resolvedPath);
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) {
-      throw new Error("Invalid --comparison-policy: file not found.");
+      throw INVALID_ARGUMENT.create({ detail: "Invalid --comparison-policy: file not found." });
     }
     throw error;
   }
@@ -504,10 +522,14 @@ export async function loadEvalModelComparisonPolicy(
   try {
     policy = JSON.parse(rawPolicy) as unknown;
   } catch {
-    throw new Error("Invalid --comparison-policy: file must contain valid JSON.");
+    throw INVALID_ARGUMENT.create({
+      detail: "Invalid --comparison-policy: file must contain valid JSON.",
+    });
   }
   if (!isRecord(policy)) {
-    throw new Error("Invalid --comparison-policy: root value must be an object.");
+    throw INVALID_ARGUMENT.create({
+      detail: "Invalid --comparison-policy: root value must be an object.",
+    });
   }
   return {
     ...("minGroundedness" in policy
@@ -823,8 +845,11 @@ function printBlankLine(): void {
 /** Width of "Target:", the longest header label, so the header values line up in one column. */
 const HEADER_LABEL_WIDTH = "Target:".length + 1;
 
-function printHeader(label: string, value: string): void {
-  printLine(`${`${label}:`.padEnd(HEADER_LABEL_WIDTH)}${value}`);
+/** Dataset reports swap in the longer "Eval id:" label, so their column is one wider. */
+const DATASET_HEADER_LABEL_WIDTH = "Eval id:".length + 1;
+
+function printHeader(label: string, value: string, width = HEADER_LABEL_WIDTH): void {
+  printLine(`${`${label}:`.padEnd(width)}${value}`);
 }
 
 /** Written artifacts are follow-up detail for the results above them, so they are dimmed. */
@@ -895,13 +920,16 @@ function printReport(
   report: EvalReport,
   options: { name?: string; baseline?: EvalReportComparison } = {},
 ): void {
-  printHeader("Eval", options.name ?? report.definitionId);
-  printHeader("Target", report.target);
+  const dataset = report.targetKind === "dataset";
+  const width = dataset ? DATASET_HEADER_LABEL_WIDTH : HEADER_LABEL_WIDTH;
+  printHeader("Eval", options.name ?? report.definitionId, width);
+  printHeader(dataset ? "Eval id" : "Target", report.target, width);
   printHeader(
     "Result",
     `${report.summary.passed}/${report.summary.records} passed (${
       formatPercent(report.summary.passRate)
     })`,
+    width,
   );
 
   const reasons = groupGateFailureReasons(report.summary.gateFailures ?? []);
@@ -1216,7 +1244,9 @@ function createEvalReportCommandAdapters(input: {
           runId: options.runId,
           adapters: options.targetKind === "tool"
             ? { tool: options.targetAdapter as ReturnType<typeof createToolAdapter> }
-            : { agent: options.targetAdapter as ReturnType<typeof createAgentAdapter> },
+            : options.targetKind === "agent"
+            ? { agent: options.targetAdapter as ReturnType<typeof createAgentAdapter> }
+            : {},
           metadata: options.metadata,
         }),
       resolveTarget: (evalItem: DiscoveredEval) => {
@@ -1235,7 +1265,9 @@ function createEvalReportCommandAdapters(input: {
           target: evalItem.definition.target,
           targetAdapter: evalItem.definition.targetKind === "tool"
             ? createToolAdapter(tool!, createEvalToolExecutionContext(input.config))
-            : createAgentAdapter(agent!, input.options),
+            : evalItem.definition.targetKind === "agent"
+            ? createAgentAdapter(agent!, input.options)
+            : undefined,
         };
       },
       createModelTargetAdapter: (model: string) => {
@@ -1539,7 +1571,9 @@ export async function runEvalCommand(
 
       const targetAdapter = evalItem.definition.targetKind === "tool"
         ? createToolAdapter(tool!, createEvalToolExecutionContext(config))
-        : createAgentAdapter(agent!, options);
+        : evalItem.definition.targetKind === "agent"
+        ? createAgentAdapter(agent!, options)
+        : undefined;
       const outcome = await runWithProjectAgentRuntime(
         projectRuntime,
         async () =>

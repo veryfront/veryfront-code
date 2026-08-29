@@ -8,7 +8,7 @@ const wrapperPath = new URL(
 )
   .pathname;
 const installSmokePath = new URL(
-  "../../../scripts/test/npm-install-smoke.sh",
+  "../../../scripts/test/npm-install-smoke.ts",
   import.meta.url,
 ).pathname;
 const repoRoot = new URL("../../../", import.meta.url);
@@ -84,14 +84,18 @@ describe("exact-version registry smoke", () => {
     const binDir = `${tempDir}/bin`;
     const invocationLog = `${tempDir}/invocation.log`;
     await Deno.mkdir(binDir);
-    await writeExecutable(`${binDir}/deno`, "#!/bin/bash\nexit 0\n");
     await writeExecutable(
-      `${binDir}/bash`,
+      `${binDir}/deno`,
       `#!/bin/bash
-printf '%s\\n' "version=\${VF_NPM_REGISTRY_VERSION:-}" >"\$VF_INVOCATION_LOG"
-printf '%s\\n' "registry=\${VF_NPM_REGISTRY_URL:-}" >>"\$VF_INVOCATION_LOG"
-printf '%s\\n' "packages:" >>"\$VF_INVOCATION_LOG"
-printf '%s' "\${VF_NPM_REGISTRY_PACKAGES:-}" >>"\$VF_INVOCATION_LOG"
+case "\$*" in
+  *npm-install-smoke.ts*)
+    printf '%s\\n' "version=\${VF_NPM_REGISTRY_VERSION:-}" >"\$VF_INVOCATION_LOG"
+    printf '%s\\n' "registry=\${VF_NPM_REGISTRY_URL:-}" >>"\$VF_INVOCATION_LOG"
+    printf '%s\\n' "packages:" >>"\$VF_INVOCATION_LOG"
+    printf '%s' "\${VF_NPM_REGISTRY_PACKAGES:-}" >>"\$VF_INVOCATION_LOG"
+    ;;
+esac
+exit 0
 `,
     );
 
@@ -169,8 +173,8 @@ exit 0
     try {
       const version = "1.2.3-rc.45";
       const registryUrl = "https://registry.example.test/npm/";
-      const output = await new Deno.Command("/bin/bash", {
-        args: [installSmokePath],
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: ["run", "-A", installSmokePath],
         env: {
           PATH: `${binDir}:${Deno.env.get("PATH") ?? ""}`,
           VF_FAKE_NPM_COUNT: npmCount,
@@ -213,8 +217,8 @@ exit 0
     await writeExecutable(`${binDir}/node`, "#!/bin/bash\nexit 1\n");
 
     try {
-      const output = await new Deno.Command("/bin/bash", {
-        args: [installSmokePath],
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: ["run", "-A", installSmokePath],
         env: {
           PATH: `${binDir}:${Deno.env.get("PATH") ?? ""}`,
           VF_NPM_REGISTRY_PACKAGES:
@@ -235,8 +239,8 @@ exit 0
   it("does not expose an absolute artifact path when the artifact is missing", async () => {
     const privatePath = new URL("missing-npm-artifact", import.meta.url)
       .pathname;
-    const output = await new Deno.Command("/bin/bash", {
-      args: [installSmokePath],
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["run", "-A", installSmokePath],
       env: { VF_NPM_PACK_DIR: privatePath },
       stdout: "piped",
       stderr: "piped",
@@ -250,8 +254,8 @@ exit 0
 
   it("rejects credential-bearing registry URLs without leaking them", async () => {
     const credential = "must-not-appear";
-    const output = await new Deno.Command("/bin/bash", {
-      args: [installSmokePath],
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["run", "-A", installSmokePath],
       env: {
         VF_NPM_REGISTRY_PACKAGES: "veryfront\n@veryfront/ext-auth-jwt",
         VF_NPM_REGISTRY_URL: `https://registry-user:${credential}@registry.example.test/npm/`,
@@ -315,10 +319,14 @@ exit 0
       const tempDir = await makeTempDir({ prefix: "vf-registry-phase-" });
       const binDir = `${tempDir}/bin`;
       await Deno.mkdir(binDir);
-      await writeExecutable(`${binDir}/deno`, "#!/bin/bash\nexit 0\n");
       await writeExecutable(
-        `${binDir}/bash`,
-        `#!/bin/bash\nexit ${status}\n`,
+        `${binDir}/deno`,
+        `#!/bin/bash
+case "\$*" in
+  *npm-install-smoke.ts*) exit ${status} ;;
+esac
+exit 0
+`,
       );
 
       try {

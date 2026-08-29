@@ -56,7 +56,17 @@ export function parseAppendConversationRunEventsErrorBody(bodyText: string): str
 }
 
 const TERMINAL_RUN_APPEND_REJECTION_DETAIL = "Cannot append external events to a terminal run";
+// The api's registered slug for this rejection (veryfront-issue-inbox#757);
+// preferred over the English detail, which stays as a fallback for api
+// versions that still emit only `validation-failed`.
+const TERMINAL_RUN_APPEND_REJECTION_SLUG = "terminal-run-append-rejected";
 const DELETED_RUN_APPEND_REJECTION_DETAIL = "resource-not-found";
+
+function isTerminalRunAppendRejection(error: AppendConversationRunEventsError): boolean {
+  return error.status === 400 &&
+    (error.slug === TERMINAL_RUN_APPEND_REJECTION_SLUG ||
+      error.detail === TERMINAL_RUN_APPEND_REJECTION_DETAIL);
+}
 
 /**
  * The run already reached a terminal status server-side, so it will never accept
@@ -73,7 +83,7 @@ export function isTerminalRunConversationRunAppendError(
 ): error is AppendConversationRunEventsError {
   return (
     error instanceof AppendConversationRunEventsError &&
-    ((error.status === 400 && error.detail === TERMINAL_RUN_APPEND_REJECTION_DETAIL) ||
+    (isTerminalRunAppendRejection(error) ||
       (error.status === 404 && error.slug === DELETED_RUN_APPEND_REJECTION_DETAIL))
   );
 }
@@ -95,7 +105,7 @@ export function isIgnorableConversationRunAppendError(
   }
 
   return (
-    error.detail === TERMINAL_RUN_APPEND_REJECTION_DETAIL ||
+    isTerminalRunAppendRejection(error) ||
     error.detail === "Cannot append external events while the run is waiting for a tool result"
   );
 }

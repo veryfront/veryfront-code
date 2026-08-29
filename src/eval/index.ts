@@ -1,5 +1,5 @@
 /**
- * First-class eval primitives for agent quality checks.
+ * First-class eval primitives for agent, tool, and stored dataset quality checks.
  *
  * @module eval
  *
@@ -18,6 +18,31 @@
  *     metrics.agent.noFailedTools().gate(),
  *   ],
  * });
+ * ```
+ *
+ * @example Target-free dataset eval
+ * ```ts
+ * import { datasets, evalDataset, judges, metrics, runEval } from "veryfront/eval";
+ *
+ * const supportReplyQuality = evalDataset({
+ *   id: "eval:support-reply-quality",
+ *   dataset: datasets.inline([
+ *     {
+ *       id: "billing-refund-reply",
+ *       input: "Hello, I checked the duplicate charge and started a refund.",
+ *     },
+ *   ]),
+ *   metrics: [
+ *     metrics.judge.rubric({
+ *       rubric: "The text must be polite, specific, and free of internal jargon.",
+ *       judge: judges.llm.rubric({ framing: "text" }),
+ *     }),
+ *   ],
+ * });
+ *
+ * // No target runs: each example's stored value is graded directly. Metrics still
+ * // execute, so an LLM judge like the one above calls a model provider.
+ * const report = await runEval(supportReplyQuality, { adapters: {} });
  * ```
  *
  * @example Live agent-service eval
@@ -44,7 +69,7 @@
  */
 
 export { datasets } from "./datasets.ts";
-export { evalAgent, evalTool, isEvalDefinition } from "./factory.ts";
+export { evalAgent, evalDataset, evalTool, isEvalDefinition } from "./factory.ts";
 export { judges } from "./judges.ts";
 export { metrics } from "./metrics.ts";
 export {
@@ -83,6 +108,7 @@ export type {
   EvalCheckContext,
   EvalCitation,
   EvalDataset,
+  EvalDatasetInput,
   EvalDatasetLoadContext,
   EvalDefinition,
   EvalDurationSummary,

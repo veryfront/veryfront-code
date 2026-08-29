@@ -12,6 +12,7 @@ import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { mkdir, symlink, writeTextFile } from "#veryfront/platform/compat/fs.ts";
 import { dirname, toFileUrl } from "#veryfront/compat/path/index.ts";
 import { makeTempDir, waitFor, withTempDir } from "#veryfront/testing/deno-compat.ts";
+import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
 
 /** Repeated across the config-load classification tests below. */
 const CONFIG_FILE_NAME = "veryfront.config.js";
@@ -5726,6 +5727,24 @@ export default config as const;
         assertEquals(error.message.includes("alice"), false);
       });
 
+      it("labels a glued double-separator drive path [url] -- a documented limit", async () => {
+        const error = await loadFailure(
+          "vf-config-glued-drive-scheme-",
+          `throw new Error("Failed atC://Users/alice/veryfront.config.ts");\n`,
+        );
+
+        // Documented limit, decided on inbox#852. Glued prose turns the drive
+        // letter into the legal three-character scheme `atC`, and that token is
+        // structurally identical to `...s://host`: a drive-letter rescue rule
+        // that relabels this [path] re-opens the http[path] regression #4236
+        // fixed, and narrowing SCHEME_URL to known schemes would under-redact
+        // real URLs. The label is cosmetic; the redaction is what matters, and
+        // it holds -- nothing from the path survives.
+        assertStringIncludes(error.message, "Failed [url]");
+        assertEquals(error.message.includes("Users"), false);
+        assertEquals(error.message.includes("alice"), false);
+      });
+
       /**
        * Fastest of `runs` timed `loadFailure` calls, with the error it raised.
        *
@@ -7301,8 +7320,8 @@ export default config as const;
             evaluateHostedConfigSource({
               cacheKey: "exact-hosted-rejection-detail",
               source: {
-                source: `import extCssLightning from "@veryfront/ext-css-lightning";\n` +
-                  `export default { extensions: [extCssLightning()] };\n`,
+                source: `import extOther from "some-third-party-extension";\n` +
+                  `export default { extensions: [extOther()] };\n`,
                 fileName: "veryfront.config.ts",
               },
               environmentName: "release",
@@ -7320,6 +7339,54 @@ export default config as const;
         // The sentences after it are for the developer whose project this is.
         assertStringIncludes(error.detail ?? "", "never imports project modules");
         assertStringIncludes(error.detail ?? "", "Remove the import");
+      });
+
+      it("warns that an accepted extension declaration is ignored", async () => {
+        clearConfigCache();
+        const warnings: Array<{ message: string; extensions: unknown }> = [];
+        const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+          if (entry.level === "warn") {
+            warnings.push({ message: entry.message, extensions: entry.context?.extensions });
+          }
+        });
+
+        try {
+          const config = await evaluateHostedConfigSource({
+            cacheKey: "exact-declared-extension-warning",
+            source: {
+              fileName: "veryfront.config.ts",
+              source: `import extRedis from "@veryfront/ext-redis";\n` +
+                `export default { extensions: [extRedis(), { name: "ext-db-sqlite", enabled: false }] };\n`,
+            },
+            environmentName: "release",
+            environment: {},
+          });
+
+          assertEquals(
+            config.extensions,
+            [
+              { name: "ext-redis" },
+              { name: "ext-db-sqlite", enabled: false },
+            ] as unknown as typeof config.extensions,
+          );
+          const declarationWarnings = warnings.filter((entry) =>
+            entry.message.includes("declarations are ignored")
+          );
+          assertEquals(
+            declarationWarnings.length,
+            1,
+            `the ignored declaration must be warned about exactly once, got: ${
+              JSON.stringify(warnings)
+            }`,
+          );
+          assertEquals(
+            declarationWarnings[0]!.extensions,
+            ["ext-redis"],
+            "the warning names the ignored declaration, never the honored disable directive",
+          );
+        } finally {
+          unsubscribe();
+        }
       });
 
       it("binds exact release evaluation to an empty tenant environment", async () => {

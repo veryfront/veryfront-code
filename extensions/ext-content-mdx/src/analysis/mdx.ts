@@ -1,0 +1,782 @@
+import {
+  type Comment,
+  type Expression,
+  type ObjectExpression,
+  type Options as AcornOptions,
+  Parser,
+  type Token,
+} from "acorn";
+import acornJsx from "acorn-jsx";
+import type { Nodes } from "mdast";
+import { mdxFromMarkdown } from "mdast-util-mdx";
+import { mdxExpression } from "micromark-extension-mdx-expression";
+import { mdxJsx } from "micromark-extension-mdx-jsx";
+import { mdxMd } from "micromark-extension-mdx-md";
+import { mdxjsEsm } from "micromark-extension-mdxjs-esm";
+import { combineExtensions } from "micromark-util-combine-extensions";
+import remarkFrontmatter from "remark-frontmatter";
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
+import type { Position } from "unist";
+
+import {
+  analyzeEmbeddedExpression,
+  consumeContextualSlashToken,
+  type ContextualSlashState,
+  EMBEDDED_CODE_LIMIT_MESSAGE,
+  isDestinationAttribute,
+  MAX_EMBEDDED_CODE_UNITS,
+} from "./embedded-code.ts";
+import { analyzeFrontmatterSource } from "./frontmatter.ts";
+import { analyzeMarkdownTree } from "./markdown.ts";
+import { createSourceLocator, type SourceLocator } from "./source.ts";
+import type {
+  ContentAnalysisResult,
+  ContentDestination,
+  ContentSyntaxDiagnostic,
+} from "./types.ts";
+
+const AcornJsxParser = Parser.extend(acornJsx());
+// micromark's acorn bridge rescans every still-open expression, so unbounded nesting is quadratic.
+const MAX_MDX_EXPRESSION_DEPTH = 64;
+const MDX_STRUCTURE_LIMIT_MESSAGE = "Parser capacity exceeded for MDX structure";
+
+type PositionedSyntaxError = SyntaxError & {
+  pos: number;
+  raisedAt: number;
+  loc: { line: number; column: number };
+};
+
+function incompleteExpression(position: number): SyntaxError {
+  const error = new SyntaxError("Incomplete embedded expression") as SyntaxError & {
+    pos: number;
+    raisedAt: number;
+    loc: { line: number; column: number };
+  };
+  error.pos = position;
+  error.raisedAt = position;
+  error.loc = { line: 1, column: position };
+  return error;
+}
+
+function embeddedCodeLimitError(position: number): SyntaxError {
+  const error = new SyntaxError(EMBEDDED_CODE_LIMIT_MESSAGE) as SyntaxError & {
+    pos: number;
+    raisedAt: number;
+    loc: { line: number; column: number };
+  };
+  error.pos = position;
+  error.raisedAt = position;
+  error.loc = { line: 1, column: position };
+  return error;
+}
+
+function mdxStructureLimitError(position: number): SyntaxError {
+  const error = new SyntaxError(MDX_STRUCTURE_LIMIT_MESSAGE) as SyntaxError & {
+    pos: number;
+    raisedAt: number;
+    loc: { line: number; column: number };
+  };
+  error.pos = position;
+  error.raisedAt = position;
+  error.loc = { line: 1, column: position };
+  return error;
+}
+
+interface LexicalState extends ContextualSlashState {
+  bracketDepth: number;
+  braceDepth: number;
+  jsxElementDepth: number;
+  readonly jsxTags: Array<{ closing: boolean }>;
+  parenthesisDepth: number;
+}
+
+interface LexicalCache {
+  grammarRequired: boolean;
+  readonly position: number;
+  inputLength: number;
+  readonly state: LexicalState;
+  readonly comments: Comment[];
+  terminalError: SyntaxError | undefined;
+  readonly tokenizer:
+    & ReturnType<typeof LexicalBoundaryParser.tokenizer>
+    & LexicalBoundaryParser;
+}
+
+let lexicalCache: LexicalCache | undefined;
+let lexicalCapacityError: PositionedSyntaxError | undefined;
+
+function currentLexicalCapacityError(): PositionedSyntaxError | undefined {
+  return lexicalCapacityError;
+}
+
+function consumeBalancedToken(state: LexicalState, label: string): boolean {
+  if (label === "{" || label === "${") state.braceDepth++;
+  else if (label === "}") state.braceDepth--;
+  else if (label === "(") state.parenthesisDepth++;
+  else if (label === ")") state.parenthesisDepth--;
+  else if (label === "[") state.bracketDepth++;
+  else if (label === "]") state.bracketDepth--;
+  else return false;
+  return true;
+}
+
+function consumeJsxToken(state: LexicalState, label: string): boolean {
+  if (label === "jsxTagStart") {
+    state.jsxTags.push({ closing: false });
+    return true;
+  }
+  if (label === "/" && state.previousLabel === "jsxTagStart") {
+    return markCurrentJsxTagClosing(state);
+  }
+  if (label === "jsxTagEnd") {
+    closeCurrentJsxTag(state);
+    return true;
+  }
+  return false;
+}
+
+function markCurrentJsxTagClosing(state: LexicalState): boolean {
+  const tag = state.jsxTags.at(-1);
+  if (tag === undefined) return false;
+  tag.closing = true;
+  return true;
+}
+
+function closeCurrentJsxTag(state: LexicalState): void {
+  const tag = state.jsxTags.pop();
+  if (tag?.closing) {
+    state.jsxElementDepth--;
+    return;
+  }
+  if (state.previousLabel !== "/") state.jsxElementDepth++;
+}
+
+function consumeLexicalToken(state: LexicalState, label: string): void {
+  consumeContextualSlashToken(state, label);
+  if (!consumeBalancedToken(state, label)) consumeJsxToken(state, label);
+  state.previousLabel = label;
+}
+
+function tokenizerFor(
+  input: string,
+  position: number,
+  options: AcornOptions,
+): LexicalCache {
+  if (
+    lexicalCache?.position === position &&
+    input.length > lexicalCache.inputLength
+  ) {
+    if (
+      !lexicalCache.grammarRequired && lexicalCache.terminalError === undefined
+    ) {
+      lexicalCache.tokenizer.extendInput(input.slice(position));
+    }
+    lexicalCache.inputLength = input.length;
+    return lexicalCache;
+  }
+
+  const comments: Comment[] = [];
+  const cache: LexicalCache = {
+    grammarRequired: false,
+    position,
+    inputLength: input.length,
+    state: {
+      bracketDepth: 0,
+      braceDepth: 0,
+      contextualSlash: false,
+      jsxElementDepth: 0,
+      jsxTags: [],
+      pendingSlash: false,
+      parenthesisDepth: 0,
+      previousLabel: undefined,
+    },
+    comments,
+    terminalError: undefined,
+    tokenizer: createLexicalTokenizer(
+      input.slice(position),
+      options,
+      comments,
+    ),
+  };
+  lexicalCache = cache;
+  return cache;
+}
+
+function lexicalBoundaryState(
+  input: string,
+  position: number,
+  options: AcornOptions,
+): LexicalState {
+  if (input.length - position > MAX_EMBEDDED_CODE_UNITS) {
+    throw embeddedCodeLimitError(position);
+  }
+  const cache = tokenizerFor(input, position, options);
+  if (cache.terminalError !== undefined) throw cache.terminalError;
+  if (cache.grammarRequired) return cache.state;
+  try {
+    while (true) {
+      const token = cache.tokenizer.getToken();
+      consumeLexicalToken(cache.state, token.type.label);
+      if (cache.state.braceDepth > MAX_MDX_EXPRESSION_DEPTH) {
+        throw mdxStructureLimitError(cache.position + token.start);
+      }
+      if (cache.state.contextualSlash) {
+        cache.grammarRequired = true;
+        return cache.state;
+      }
+      if (token.type.label === "eof") break;
+    }
+  } catch (error) {
+    // A `}` encountered as JSX text cannot become valid by appending more
+    // source. Preserve that lexical result so later probes do not retokenize
+    // the same invalid prefix.
+    if (isTerminalJsxBoundaryError(error)) {
+      cache.terminalError = error;
+      throw error;
+    }
+    lexicalCache = undefined;
+    throw error;
+  }
+
+  const trailingComment = cache.comments.at(-1);
+  if (
+    trailingComment?.type === "Line" &&
+    trailingComment.end === input.length - position
+  ) {
+    lexicalCache = undefined;
+    throw incompleteExpression(input.length);
+  }
+
+  return cache.state;
+}
+
+function isLexicallyComplete(state: LexicalState): boolean {
+  return state.bracketDepth === 0 && state.braceDepth === 0 &&
+    state.jsxElementDepth === 0 && state.jsxTags.length === 0 &&
+    state.parenthesisDepth === 0;
+}
+
+function isTerminalJsxBoundaryError(error: unknown): error is SyntaxError {
+  return error instanceof SyntaxError &&
+    (error.message.startsWith("Unterminated JSX contents") ||
+      error.message.startsWith("Unexpected token `}`."));
+}
+
+function isMdxStructureLimitError(
+  error: unknown,
+): error is PositionedSyntaxError {
+  return error instanceof SyntaxError &&
+    error.message === MDX_STRUCTURE_LIMIT_MESSAGE &&
+    "pos" in error && typeof error.pos === "number" &&
+    "raisedAt" in error && typeof error.raisedAt === "number" &&
+    "loc" in error && typeof error.loc === "object" && error.loc !== null;
+}
+
+/**
+ * Micromark needs a lexical answer at each possible expression-closing brace.
+ * Building an Acorn AST here would recurse through arbitrarily deep JSX before
+ * the analyzer can reduce it. Tokenization gives micromark the same boundary
+ * answer without claiming to validate grammar; bounded Babel parsing below
+ * owns that validation for every accepted boundary. A slash token is the one
+ * context-sensitive case: JavaScript grammar, not a token label, distinguishes
+ * division from a regular expression, so those expressions take the Acorn
+ * grammar path deterministically before micromark accepts a closing brace.
+ * JSX closing and self-closing slashes are lexical tag punctuation and do not
+ * select that path.
+ */
+class LexicalBoundaryParser extends AcornJsxParser {
+  extendInput(input: string): void {
+    this.input = input;
+  }
+
+  static override parseExpressionAt(
+    input: string,
+    position: number,
+    options: AcornOptions,
+  ): Expression {
+    // The micromark bridge treats an Acorn error as a possibly incomplete
+    // expression and retries it at each later `}`. The first capacity error is
+    // allowed through so the bridge maps its position back to authored source.
+    // A later probe receives the same lexical boundary sentinel used for valid
+    // expressions, and parseMdxRoot surfaces the recorded terminal error.
+    if (lexicalCapacityError !== undefined) {
+      return lexicalPlaceholder(position, input.length);
+    }
+    let state: LexicalState;
+    try {
+      state = lexicalBoundaryState(input, position, options);
+    } catch (error) {
+      if (isMdxStructureLimitError(error)) lexicalCapacityError = error;
+      throw error;
+    }
+    if (state.contextualSlash) {
+      if (lexicalCache !== undefined) lexicalCache.grammarRequired = true;
+      let expression: Expression;
+      try {
+        expression = AcornJsxParser.parseExpressionAt(input, position, {
+          ...options,
+          onToken: capacityTokenHandler(options.onToken),
+        });
+      } catch (error) {
+        if (isMdxStructureLimitError(error)) lexicalCapacityError = error;
+        throw error;
+      }
+      lexicalCache = undefined;
+      return expression;
+    }
+    if (!isLexicallyComplete(state)) {
+      throw incompleteExpression(input.length);
+    }
+    lexicalCache = undefined;
+
+    if (/^\(\{\s*\.\.\./.test(input.slice(position)) && input.endsWith("})")) {
+      const expression: ObjectExpression = {
+        type: "ObjectExpression",
+        start: position,
+        end: input.length,
+        properties: [{
+          type: "SpreadElement",
+          start: position + 2,
+          end: input.length - 2,
+          argument: {
+            type: "Identifier",
+            name: "_veryfront_spread",
+            start: position + 5,
+            end: input.length - 2,
+          },
+        }],
+      };
+      return expression;
+    }
+
+    return lexicalPlaceholder(position, input.length);
+  }
+}
+
+function capacityTokenHandler(
+  downstream: AcornOptions["onToken"],
+): (token: Token) => void {
+  // Contextual slash expressions already require Acorn grammar. Count their
+  // grammar-aware tokens here so regex contents cannot masquerade as braces,
+  // and so recursive JSX or delimiter nesting cannot bypass the limit.
+  const state: LexicalState = {
+    bracketDepth: 0,
+    braceDepth: 0,
+    contextualSlash: false,
+    jsxElementDepth: 0,
+    jsxTags: [],
+    pendingSlash: false,
+    parenthesisDepth: 0,
+    previousLabel: undefined,
+  };
+  return (token) => {
+    if (Array.isArray(downstream)) downstream.push(token);
+    else downstream?.(token);
+    consumeLexicalToken(state, token.type.label);
+    if (
+      state.braceDepth > MAX_MDX_EXPRESSION_DEPTH ||
+      state.bracketDepth > MAX_MDX_EXPRESSION_DEPTH ||
+      state.parenthesisDepth > MAX_MDX_EXPRESSION_DEPTH ||
+      state.jsxElementDepth > MAX_MDX_EXPRESSION_DEPTH
+    ) {
+      throw mdxStructureLimitError(token.start);
+    }
+  };
+}
+
+function lexicalPlaceholder(position: number, end: number): Expression {
+  return {
+    type: "Identifier",
+    name: "_veryfront_expression",
+    start: position,
+    end,
+  };
+}
+
+function createLexicalTokenizer(
+  input: string,
+  options: AcornOptions,
+  comments: Comment[],
+): ReturnType<typeof LexicalBoundaryParser.tokenizer> & LexicalBoundaryParser {
+  const tokenizer = LexicalBoundaryParser.tokenizer(input, {
+    ...options,
+    onComment: comments,
+    onToken: undefined,
+  });
+  if (!(tokenizer instanceof LexicalBoundaryParser)) {
+    throw new TypeError("Acorn did not create the configured lexical tokenizer");
+  }
+  return tokenizer;
+}
+
+const mdxMarkdownSyntax = {
+  disable: { null: ["codeIndented", "htmlFlow", "htmlText"] },
+} satisfies ReturnType<typeof mdxMd>;
+
+const lexicalMdx = combineExtensions([
+  mdxjsEsm({ acorn: AcornJsxParser, addResult: false }),
+  mdxExpression({ acorn: LexicalBoundaryParser, addResult: false }),
+  mdxJsx({ acorn: LexicalBoundaryParser, addResult: false }),
+  mdxMarkdownSyntax,
+]);
+
+function createMdxProcessor(frontmatter: boolean) {
+  const processor = unified().use(remarkParse).use(remarkGfm);
+  if (frontmatter) processor.use(remarkFrontmatter, ["yaml"]);
+  processor.data("micromarkExtensions", [lexicalMdx]);
+  processor.data("fromMarkdownExtensions", [mdxFromMarkdown()]);
+  return processor;
+}
+
+type MdxProcessor = ReturnType<typeof createMdxProcessor>;
+type MdxRoot = ReturnType<MdxProcessor["parse"]>;
+
+interface EmbeddedInput {
+  readonly source: string;
+  readonly absoluteStart: number;
+  readonly attributeName: string | undefined;
+  readonly fragmentKind: "expression" | "jsx-spread-attribute";
+}
+
+type MdxJsxElement = Extract<Nodes, { type: "mdxJsxFlowElement" | "mdxJsxTextElement" }>;
+type MdxJsxAttribute = MdxJsxElement["attributes"][number];
+
+function own(value: unknown, key: string): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
+  return Object.getOwnPropertyDescriptor(value, key)?.value;
+}
+
+function parserMessage(error: Error): string {
+  const causeMessage = own(own(error, "cause"), "message");
+  if (
+    causeMessage === EMBEDDED_CODE_LIMIT_MESSAGE ||
+    causeMessage === MDX_STRUCTURE_LIMIT_MESSAGE
+  ) {
+    return causeMessage;
+  }
+  const reason = own(error, "reason");
+  const message = typeof reason === "string" ? reason : error.message;
+  const firstLine = message.split("\n", 1)[0]?.trim() || error.name;
+  return firstLine.length <= 240 ? firstLine : `${firstLine.slice(0, 237)}...`;
+}
+
+function capacityDiagnostic(
+  locator: SourceLocator,
+  offset: number,
+): ContentSyntaxDiagnostic {
+  const point = locator.point(offset);
+  return {
+    message: MDX_STRUCTURE_LIMIT_MESSAGE,
+    range: { start: point, end: point },
+  };
+}
+
+function parserDiagnostic(
+  error: Error,
+  locator: SourceLocator,
+  sourceOffset: number,
+): ContentSyntaxDiagnostic | undefined {
+  const place = own(error, "place");
+  const start = own(place, "start") ?? place;
+  const offset = own(start, "offset");
+  if (typeof offset === "number") {
+    const point = locator.point(sourceOffset + offset);
+    return { message: parserMessage(error), range: { start: point, end: point } };
+  }
+  return undefined;
+}
+
+function parseMdxRoot(
+  value: string,
+  locator: SourceLocator,
+  sourceOffset: number,
+  frontmatter: boolean,
+): { readonly kind: "root"; readonly root: MdxRoot } | ContentAnalysisResult {
+  const processor = createMdxProcessor(frontmatter);
+  lexicalCache = undefined;
+  lexicalCapacityError = undefined;
+  try {
+    const root = processor.parse(value);
+    const capacityError = currentLexicalCapacityError();
+    if (capacityError !== undefined) {
+      return {
+        kind: "syntax-error",
+        diagnostic: capacityDiagnostic(locator, sourceOffset + capacityError.pos),
+      };
+    }
+    return { kind: "root", root };
+  } catch (error) {
+    const capacityError = currentLexicalCapacityError();
+    if (capacityError !== undefined) {
+      return {
+        kind: "syntax-error",
+        diagnostic: capacityDiagnostic(locator, sourceOffset + capacityError.pos),
+      };
+    }
+    if (!(error instanceof Error)) throw error;
+    const diagnostic = parserDiagnostic(error, locator, sourceOffset);
+    if (diagnostic === undefined) throw error;
+    return { kind: "syntax-error", diagnostic };
+  } finally {
+    lexicalCache = undefined;
+    lexicalCapacityError = undefined;
+  }
+}
+
+function positionOffsets(
+  position: Position | undefined,
+  sourceOffset: number,
+): { readonly start: number; readonly end: number } | undefined {
+  const start = position?.start.offset;
+  const end = position?.end.offset;
+  return start === undefined || end === undefined
+    ? undefined
+    : { start: sourceOffset + start, end: sourceOffset + end };
+}
+
+function childrenOf(node: Nodes): readonly Nodes[] {
+  return "children" in node ? node.children : [];
+}
+
+function quotedAttributeDestination(
+  value: string,
+  position: Position | undefined,
+  locator: SourceLocator,
+  sourceOffset: number,
+): ContentDestination | undefined {
+  const offsets = positionOffsets(position, sourceOffset);
+  if (offsets === undefined) return undefined;
+  const authored = value.slice(offsets.start, offsets.end);
+  const equals = authored.indexOf("=");
+  if (equals === -1) return undefined;
+  let start = equals + 1;
+  while (/\s/.test(authored[start] ?? "")) start++;
+  const quote = authored[start];
+  if (quote !== '"' && quote !== "'") return undefined;
+  const end = authored.lastIndexOf(quote);
+  if (end <= start) return undefined;
+  start++;
+  return {
+    kind: "mdx-jsx-attribute",
+    rawValue: authored.slice(start, end),
+    range: locator.range(offsets.start + start, offsets.start + end),
+    syntax: "html-attribute",
+  };
+}
+
+function embeddedInput(
+  value: string,
+  expression: { readonly value: string; readonly position?: Position },
+  attributeName: string | undefined,
+  fragmentKind: EmbeddedInput["fragmentKind"],
+  sourceOffset: number,
+): EmbeddedInput | undefined {
+  const offsets = positionOffsets(expression.position, sourceOffset);
+  if (offsets === undefined) return undefined;
+  const authored = value.slice(offsets.start, offsets.end);
+  const brace = authored.indexOf("{");
+  return {
+    source: expression.value,
+    absoluteStart: brace === -1 ? offsets.start : offsets.start + brace + 1,
+    attributeName,
+    fragmentKind,
+  };
+}
+
+function documentExpressionInput(
+  node: Extract<Nodes, { type: "mdxFlowExpression" | "mdxTextExpression" }>,
+  sourceOffset: number,
+): EmbeddedInput | undefined {
+  const offsets = positionOffsets(node.position, sourceOffset);
+  return offsets === undefined ? undefined : {
+    source: node.value,
+    absoluteStart: offsets.start + 1,
+    attributeName: undefined,
+    fragmentKind: "expression",
+  };
+}
+
+function appendChildren(pending: Nodes[], node: Nodes): void {
+  const children = childrenOf(node);
+  for (let index = children.length - 1; index >= 0; index--) {
+    const child = children[index];
+    if (child !== undefined) pending.push(child);
+  }
+}
+
+function collectMdxNodeInputs(
+  value: string,
+  node: Nodes,
+  locator: SourceLocator,
+  destinations: ContentDestination[],
+  embedded: EmbeddedInput[],
+  sourceOffset: number,
+): void {
+  if (node.type === "mdxFlowExpression" || node.type === "mdxTextExpression") {
+    const input = documentExpressionInput(node, sourceOffset);
+    if (input !== undefined) embedded.push(input);
+    return;
+  }
+
+  if (node.type !== "mdxJsxFlowElement" && node.type !== "mdxJsxTextElement") {
+    return;
+  }
+
+  for (const attribute of node.attributes) {
+    collectMdxAttribute(
+      value,
+      attribute,
+      locator,
+      destinations,
+      embedded,
+      sourceOffset,
+    );
+  }
+}
+
+function collectMdxAttribute(
+  value: string,
+  attribute: MdxJsxAttribute,
+  locator: SourceLocator,
+  destinations: ContentDestination[],
+  embedded: EmbeddedInput[],
+  sourceOffset: number,
+): void {
+  if (attribute.type === "mdxJsxExpressionAttribute") {
+    const input = embeddedInput(
+      value,
+      attribute,
+      undefined,
+      "jsx-spread-attribute",
+      sourceOffset,
+    );
+    if (input !== undefined) embedded.push(input);
+    return;
+  }
+
+  if (typeof attribute.value === "string") {
+    if (!isDestinationAttribute(attribute.name)) return;
+    const destination = quotedAttributeDestination(
+      value,
+      attribute.position,
+      locator,
+      sourceOffset,
+    );
+    if (destination !== undefined) destinations.push(destination);
+    return;
+  }
+
+  if (attribute.value === null || attribute.value === undefined) return;
+  const input = embeddedInput(
+    value,
+    { value: attribute.value.value, position: attribute.position },
+    attribute.name,
+    "expression",
+    sourceOffset,
+  );
+  if (input !== undefined) embedded.push(input);
+}
+
+function collectMdxEmbeddedInputs(
+  value: string,
+  root: Nodes,
+  locator: SourceLocator,
+  sourceOffset: number,
+): {
+  readonly destinations: readonly ContentDestination[];
+  readonly embedded: readonly EmbeddedInput[];
+} {
+  const destinations: ContentDestination[] = [];
+  const embedded: EmbeddedInput[] = [];
+  const pending: Nodes[] = [root];
+
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (node === undefined) break;
+    collectMdxNodeInputs(
+      value,
+      node,
+      locator,
+      destinations,
+      embedded,
+      sourceOffset,
+    );
+    appendChildren(pending, node);
+  }
+
+  return { destinations, embedded };
+}
+
+async function appendEmbeddedAnalysisDestinations(options: {
+  readonly embedded: readonly EmbeddedInput[];
+  readonly destinations: ContentDestination[];
+  readonly locator: SourceLocator;
+  readonly filePath: string | undefined;
+}): Promise<ContentAnalysisResult | undefined> {
+  const embedded = [...options.embedded].sort((left, right) =>
+    left.absoluteStart - right.absoluteStart
+  );
+
+  for (const input of embedded) {
+    const analysis = await analyzeEmbeddedExpression({
+      ...input,
+      locator: options.locator,
+      filePath: options.filePath,
+    });
+    if (analysis.kind === "syntax-error") return analysis;
+    options.destinations.push(...analysis.destinations);
+    if (analysis.staticDestination !== undefined) {
+      options.destinations.push(analysis.staticDestination);
+    }
+  }
+
+  return undefined;
+}
+
+export async function analyzeMdx(options: {
+  readonly value: string;
+  readonly frontmatter: boolean;
+  readonly filePath: string | undefined;
+}): Promise<ContentAnalysisResult> {
+  const locator = createSourceLocator(options.value);
+  const source = analyzeFrontmatterSource(
+    options.value,
+    options.frontmatter,
+    locator,
+  );
+  if (source.kind === "syntax-error") return source;
+  const parsed = parseMdxRoot(
+    source.value,
+    locator,
+    source.offset,
+    options.frontmatter,
+  );
+  if (parsed.kind !== "root") return parsed;
+
+  const markdown = analyzeMarkdownTree(options.value, parsed.root, {
+    micromarkExtensions: [lexicalMdx],
+    sourceOffset: source.offset,
+    sourceValue: source.value,
+  });
+  const mdx = collectMdxEmbeddedInputs(
+    options.value,
+    parsed.root,
+    locator,
+    source.offset,
+  );
+  const destinations = [...markdown.destinations, ...mdx.destinations];
+  const embeddedError = await appendEmbeddedAnalysisDestinations({
+    embedded: mdx.embedded,
+    destinations,
+    locator,
+    filePath: options.filePath,
+  });
+  if (embeddedError !== undefined) return embeddedError;
+
+  return {
+    kind: "document",
+    destinations,
+  };
+}

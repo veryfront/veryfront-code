@@ -92,7 +92,7 @@ registry_release_smoke_main() {
 	VF_NPM_REGISTRY_PACKAGES="$registry_packages" \
 		VF_NPM_REGISTRY_URL="$registry_url" \
 		VF_NPM_REGISTRY_VERSION="$version" \
-		bash "$root_dir/scripts/test/npm-install-smoke.sh"
+		deno run -A "$root_dir/scripts/test/npm-install-smoke.ts"
 	smoke_status=$?
 	set -e
 	if [[ "$smoke_status" -ne 0 ]]; then

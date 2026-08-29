@@ -15,7 +15,14 @@ import type { ASTNode, ParseOptions } from "veryfront/extensions/parser";
 /** The parse-only subset shared with the full `CodeParser` contract. */
 export interface BabelParseOnlyParserContract {
   /** Parse source code into a Babel-compatible abstract syntax tree. */
-  parse(options: ParseOptions): Promise<ASTNode>;
+  parse(options: BabelParseOnlyOptions): Promise<ASTNode>;
+}
+
+export interface BabelParseOnlyOptions extends ParseOptions {
+  /** Decorator grammar to parse, or both for backward compatibility. */
+  readonly decoratorMode?: "current" | "compatible";
+  /** Source grammar to parse. Defaults to TypeScript for CodeParser compatibility. */
+  readonly syntax?: "javascript" | "typescript";
 }
 
 /**
@@ -28,12 +35,18 @@ export interface BabelParseOnlyParserContract {
  * value, and `.ts` keeps `<T>x` a type assertion because only Markdown paths
  * are rewritten.
  */
-function parseablePath(filePath?: string): string | undefined {
+function parseablePath(
+  filePath: string | undefined,
+  syntax: "javascript" | "typescript",
+): string | undefined {
   if (filePath === undefined) return undefined;
-  return filePath.replace(/\.mdx?$/i, ".tsx");
+  return filePath.replace(/\.mdx?$/i, syntax === "typescript" ? ".tsx" : ".jsx");
 }
 
-function pickPlugins(filePath?: string): parser.ParserPlugin[] {
+function pickPlugins(
+  filePath: string | undefined,
+  syntax: "javascript" | "typescript",
+): parser.ParserPlugin[] {
   const normalizedPath = filePath?.toLowerCase() ?? "";
   const supportsJsx = !filePath ||
     /\.(?:tsx|jsx|js|mjs|cjs)$/.test(normalizedPath);
@@ -47,18 +60,20 @@ function pickPlugins(filePath?: string): parser.ParserPlugin[] {
     "dynamicImport",
     "importAttributes",
     "topLevelAwait",
-    // Hosted configs are authored in TypeScript but can arrive named `.js`, so
-    // the extension cannot decide the dialect. TypeScript is a superset, so
-    // enabling it always only widens what parses.
-    "typescript",
   ];
+  // Hosted configs are authored in TypeScript but can arrive named `.js`, so
+  // the CodeParser-compatible default cannot infer the dialect from the path.
+  if (syntax === "typescript") plugins.push("typescript");
   // JSX stays extension-driven so `.ts` keeps `<T>x` as a type assertion.
   if (supportsJsx) plugins.push("jsx");
   return plugins;
 }
 
-function pickLegacyDecoratorPlugins(filePath?: string): parser.ParserPlugin[] {
-  return pickPlugins(filePath).map((plugin) =>
+function pickLegacyDecoratorPlugins(
+  filePath: string | undefined,
+  syntax: "javascript" | "typescript",
+): parser.ParserPlugin[] {
+  return pickPlugins(filePath, syntax).map((plugin) =>
     plugin === "decorators" ? "decorators-legacy" : plugin
   );
 }
@@ -69,28 +84,41 @@ function isBabelSyntaxError(error: unknown): boolean {
   return code === "BABEL_PARSER_SYNTAX_ERROR";
 }
 
+function isAstNode(value: unknown): value is ASTNode {
+  if (typeof value !== "object" || value === null) return false;
+  return typeof Object.getOwnPropertyDescriptor(value, "type")?.value ===
+    "string";
+}
+
 /**
  * Babel-backed parser with the same parse behavior as {@link BabelCodeParser},
  * without loading traversal, generation, or extension runtime dependencies.
  */
 export class BabelParseOnlyParser implements BabelParseOnlyParserContract {
-  parse(options: ParseOptions): Promise<ASTNode> {
+  async parse(options: BabelParseOnlyOptions): Promise<ASTNode> {
     const filePath = options.filePath?.toLowerCase() ?? "";
+    const decoratorMode = options.decoratorMode ?? "compatible";
+    const syntax = options.syntax ?? "typescript";
     const parseOptions: parser.ParserOptions = {
       sourceType: "unambiguous",
       allowReturnOutsideFunction: options.allowReturnOutsideFunction === true ||
         /\.(?:cjs|js)$/.test(filePath),
-      plugins: pickPlugins(parseablePath(options.filePath)),
+      plugins: pickPlugins(parseablePath(options.filePath, syntax), syntax),
     };
     const ast = (() => {
       try {
         return parser.parse(options.code, parseOptions);
       } catch (error) {
-        if (!isBabelSyntaxError(error)) throw error;
+        if (!isBabelSyntaxError(error) || decoratorMode !== "compatible") {
+          throw error;
+        }
         try {
           return parser.parse(options.code, {
             ...parseOptions,
-            plugins: pickLegacyDecoratorPlugins(parseablePath(options.filePath)),
+            plugins: pickLegacyDecoratorPlugins(
+              parseablePath(options.filePath, syntax),
+              syntax,
+            ),
           });
         } catch {
           // Preserve the primary parser's diagnostic when neither supported
@@ -99,7 +127,9 @@ export class BabelParseOnlyParser implements BabelParseOnlyParserContract {
         }
       }
     })();
-    const node: { type: string } = ast;
-    return Promise.resolve(node as ASTNode);
+    if (!isAstNode(ast)) {
+      throw new TypeError("Babel returned an invalid parser result");
+    }
+    return ast;
   }
 }

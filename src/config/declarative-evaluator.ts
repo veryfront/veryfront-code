@@ -10,6 +10,7 @@
 
 import type { ASTNode, CodeParser } from "#veryfront/extensions/parser/index.ts";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
+import { FIRST_PARTY_EXTENSION_POLICIES } from "#veryfront/extensions/first-party-defaults.ts";
 import {
   canonicalizeConfigSnapshot,
   CONFIG_SNAPSHOT_LIMITS,
@@ -44,6 +45,9 @@ const ReflectApply = Reflect.apply;
 const ReflectOwnKeys = Reflect.ownKeys;
 const StringPrototypeCharAt = String.prototype.charAt;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeIndexOf = String.prototype.indexOf;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeTrim = String.prototype.trim;
 const WeakMapPrototypeGet = WeakMap.prototype.get;
 const WeakMapPrototypeSet = WeakMap.prototype.set;
@@ -83,7 +87,10 @@ const FINGERPRINT_NAMESPACE = "veryfront-declarative-context-v1";
 const FINGERPRINT_PREFIX = "ctx1:";
 const HEX_DIGITS = "0123456789abcdef";
 const MAX_HOSTED_EXTENSION_NAME_LENGTH = 256;
-const POLICY_VERSION = "hosted-declarative-config-v2";
+// v3: first-party extension declaration imports, factory-call markers, and
+// the { name } result shape (veryfront-issue-inbox#688) changed the accepted
+// language, so cached verdicts and worker handshakes must not mix evaluators.
+const POLICY_VERSION = "hosted-declarative-config-v3";
 
 type TrustedCodeParser = Pick<CodeParser, "parse">;
 
@@ -127,7 +134,9 @@ export interface DeclarativeConfigLimits {
 export const DECLARATIVE_CONFIG_LIMITS: Readonly<DeclarativeConfigLimits> = ObjectFreeze({
   maxSourceBytes: 65_536,
   maxTopLevelStatements: 256,
-  maxImports: 1,
+  // One "veryfront" helper import plus one declaration import per first-party
+  // package (veryfront-issue-inbox#688).
+  maxImports: FIRST_PARTY_EXTENSION_POLICIES.length + 1,
   maxImportSpecifiers: 8,
   maxBindings: 128,
   maxAstNodes: 4_096,
@@ -362,7 +371,31 @@ type RuntimeValue = RuntimePrimitive | RuntimeRecord | readonly RuntimeValue[];
 
 type Binding =
   | Readonly<{ kind: "helper"; helper: HelperName }>
+  | Readonly<{ kind: "extension"; name: string }>
   | Readonly<{ kind: "value"; value: RuntimeValue }>;
+
+// A dual-target project imports first-party extension factories for
+// self-hosting. Hosted evaluation accepts the import and turns each factory
+// call into an inert `{ name }` declaration marker; the runtime provides the
+// capability itself and ignores the declaration with a warning
+// (veryfront-issue-inbox#688). Anything outside the first-party set keeps
+// being rejected.
+const HOSTED_EXTENSION_NAME_BY_PACKAGE: Readonly<Record<string, string>> = (() => {
+  const byPackage = ObjectCreate(null) as Record<string, string>;
+  for (let index = 0; index < FIRST_PARTY_EXTENSION_POLICIES.length; index += 1) {
+    const policy = FIRST_PARTY_EXTENSION_POLICIES[index]!;
+    byPackage[`@veryfront/${policy.sourceDirectory}`] = policy.name;
+  }
+  return ObjectFreeze(byPackage);
+})();
+
+const HOSTED_DECLARABLE_EXTENSION_NAMES: Readonly<Record<string, true>> = (() => {
+  const names = ObjectCreate(null) as Record<string, true>;
+  for (let index = 0; index < FIRST_PARTY_EXTENSION_POLICIES.length; index += 1) {
+    names[FIRST_PARTY_EXTENSION_POLICIES[index]!.name] = true;
+  }
+  return ObjectFreeze(names);
+})();
 
 interface LexicalEnvironment {
   readonly bindings: Record<string, Binding>;
@@ -1642,12 +1675,100 @@ function helperFromImportedName(name: string): HelperName | null {
   }
 }
 
+/**
+ * Reduce a Deno npm specifier to its bare package name for the first-party
+ * allowlist lookup: `npm:@veryfront/ext-redis@1.2.3` -> `@veryfront/ext-redis`.
+ * Self-hosted Deno loading preserves `npm:` specifiers, so hosted evaluation
+ * must accept the same spelling. Anything else passes through unchanged.
+ */
+function normalizeExtensionImportSource(source: string): string {
+  if (!ReflectApply(StringPrototypeStartsWith, source, ["npm:"])) return source;
+  const bare = ReflectApply(StringPrototypeSlice, source, ["npm:".length]) as string;
+  const versionSeparator = ReflectApply(StringPrototypeIndexOf, bare, ["@", 1]) as number;
+  return versionSeparator === -1
+    ? bare
+    : ReflectApply(StringPrototypeSlice, bare, [0, versionSeparator]) as string;
+}
+
+function processExtensionImport(
+  node: ASTNode,
+  specifiers: readonly unknown[],
+  extensionName: string,
+  context: EvaluationContext,
+  environment: LexicalEnvironment,
+  countBindings: boolean,
+): void {
+  if (node.importKind === "type") return;
+  if (
+    specifiers.length === 0 || specifiers.length > DECLARATIVE_CONFIG_LIMITS.maxImportSpecifiers
+  ) {
+    return throwEvaluationError(
+      specifiers.length === 0 ? "unsupported-syntax" : "resource-limit-exceeded",
+      "validate",
+      specifiers.length === 0 ? "import-form" : "arguments",
+      context,
+      node,
+    );
+  }
+  // Type-only specifiers are erased at runtime, so a combined
+  // `import ext, { type Config } from "@veryfront/ext-..."` is the same
+  // declaration as the bare default import.
+  let defaultSpecifier: ASTNode | null = null;
+  for (let index = 0; index < specifiers.length; index += 1) {
+    const specifier = requireAstNode(specifiers[index], context, node);
+    if (specifier.importKind === "type") continue;
+    if (
+      specifier.type !== "ImportDefaultSpecifier" || defaultSpecifier !== null
+    ) {
+      return throwEvaluationError(
+        "unsupported-syntax",
+        "validate",
+        "import-form",
+        context,
+        specifier,
+      );
+    }
+    defaultSpecifier = specifier;
+  }
+  if (defaultSpecifier === null) return;
+  const local = requireAstNode(defaultSpecifier.local, context, defaultSpecifier);
+  declareBinding(
+    context,
+    environment,
+    identifierName(local, context),
+    ObjectFreeze({ kind: "extension", name: extensionName }),
+    local,
+    countBindings,
+  );
+}
+
 function processImport(
   node: ASTNode,
   context: EvaluationContext,
   environment: LexicalEnvironment,
   countBindings = true,
 ): void {
+  if (
+    isAstNode(node.source) &&
+    node.source.type === "StringLiteral" &&
+    typeof node.source.value === "string" &&
+    ArrayIsArray(node.specifiers) &&
+    (!ArrayIsArray(node.attributes) || node.attributes.length === 0) &&
+    (!ArrayIsArray(node.assertions) || node.assertions.length === 0)
+  ) {
+    const extensionName =
+      HOSTED_EXTENSION_NAME_BY_PACKAGE[normalizeExtensionImportSource(node.source.value)];
+    if (extensionName !== undefined) {
+      return processExtensionImport(
+        node,
+        node.specifiers,
+        extensionName,
+        context,
+        environment,
+        countBindings,
+      );
+    }
+  }
   if (
     !isAstNode(node.source) ||
     node.source.type !== "StringLiteral" ||
@@ -1752,7 +1873,7 @@ function validateIdentifierExpression(
       node,
     );
   }
-  if (binding.kind === "helper") {
+  if (binding.kind !== "value") {
     return throwEvaluationError(
       "invalid-helper-usage",
       "validate",
@@ -2075,7 +2196,7 @@ function resolveCalledHelper(
   call: ASTNode,
   context: EvaluationContext,
   environment: LexicalEnvironment,
-): HelperName {
+): HelperName | Readonly<{ kind: "extension"; name: string }> {
   const callee = requireAstNode(call.callee, context, call);
   if (callee.type !== "Identifier") {
     return throwEvaluationError(
@@ -2097,6 +2218,7 @@ function resolveCalledHelper(
       callee,
     );
   }
+  if (binding.kind === "extension") return binding;
   if (binding.kind !== "helper") {
     return throwEvaluationError(
       "forbidden-capability",
@@ -2148,6 +2270,28 @@ function validateCallExpression(
   }
 
   const helper = resolveCalledHelper(node, context, environment);
+  if (typeof helper !== "string") {
+    // Extension factory call: at most one options argument, validated like
+    // any expression, discarded at evaluation.
+    if (args.length > 1) {
+      return throwEvaluationError(
+        "invalid-helper-usage",
+        "validate",
+        "helper-arguments",
+        context,
+        node,
+      );
+    }
+    if (args.length === 1) {
+      validateExpression(
+        requireAstNode(args[0], context, node),
+        context,
+        environment,
+        depth + 1,
+      );
+    }
+    return;
+  }
   switch (helper) {
     case "defineConfig":
       if (args.length !== 1) {
@@ -2434,6 +2578,21 @@ function isHostedCorsOriginList(value: readonly RuntimeValue[]): boolean {
   return true;
 }
 
+/**
+ * A first-party extension declaration, `{ name: "ext-..." }`, the shape an
+ * imported extension factory call evaluates to. The hosted runtime provides
+ * the capability itself, so the declaration is accepted and ignored at
+ * orchestration with a warning rather than rejected here.
+ */
+function isHostedExtensionDeclarationMarker(value: RuntimeValue): boolean {
+  if (!isRuntimeRecord(value)) return false;
+  const keys = ReflectOwnKeys(value);
+  if (keys.length !== 1 || !hasOwn(value, "name")) return false;
+  const name = runtimeRecordValue(value, "name");
+  return typeof name === "string" &&
+    HOSTED_DECLARABLE_EXTENSION_NAMES[name] === true;
+}
+
 function isHostedExtensionDisableDirective(value: RuntimeValue): boolean {
   if (!isRuntimeRecord(value)) return false;
   const keys = ReflectOwnKeys(value);
@@ -2619,7 +2778,10 @@ function enforceHostedResultPolicy(
       );
     }
     for (let index = 0; index < extensions.length; index += 1) {
-      if (!isHostedExtensionDisableDirective(extensions[index])) {
+      if (
+        !isHostedExtensionDisableDirective(extensions[index]) &&
+        !isHostedExtensionDeclarationMarker(extensions[index])
+      ) {
         return throwEvaluationError(
           "unsupported-hosted-feature",
           "result",
@@ -3173,6 +3335,15 @@ function evaluateCallExpression(
       values,
       evaluateExpression(args[index]!, context, environment, depth + 1),
     );
+  }
+
+  if (typeof helper !== "string") {
+    // The factory options were evaluated above for resource accounting and
+    // are discarded: only the declaration itself reaches the snapshot.
+    chargeString(context, helper.name.length, node);
+    const marker = ObjectCreate(null) as Record<string, RuntimeValue>;
+    marker.name = helper.name;
+    return ObjectFreeze(marker);
   }
 
   switch (helper) {

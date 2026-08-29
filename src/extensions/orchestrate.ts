@@ -26,7 +26,7 @@ import type {
 /**
  * Options for `orchestrateExtensions`.
  *
- * The `discovery` and `loadFactory` fields are test seams — they are not
+ * The `discovery` and `loadFactory` fields are test seams -- they are not
  * part of the stable public API and default to the real implementations.
  */
 export interface OrchestrateOptions {
@@ -35,7 +35,7 @@ export interface OrchestrateOptions {
   logger: ExtensionLogger;
   /** Contracts to seed into the registry after teardown, before setup(). */
   primeContracts?: Record<string, unknown>;
-  /** Built-in extensions shipped with the framework. Lowest priority — any
+  /** Built-in extensions shipped with the framework. Lowest priority -- any
    *  project, package, or config extension with the same name overrides them.
    *  Users can disable them via `{ name: "ext-llm-anthropic", enabled: false }`. */
   builtinExtensions?: ResolvedExtension[];

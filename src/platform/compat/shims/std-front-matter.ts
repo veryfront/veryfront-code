@@ -1,4 +1,5 @@
 import { parse } from "#std/yaml/parse";
+import { matchFrontMatterSource } from "../std/front-matter-source.ts";
 
 interface FrontMatterResult<T = Record<string, unknown>> {
   attrs: T;
@@ -6,13 +7,11 @@ interface FrontMatterResult<T = Record<string, unknown>> {
   frontMatter: string;
 }
 
-const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)(?:\r?\n)?---(?:\r?\n|$)([\s\S]*)$/;
-
 export function extract<T = Record<string, unknown>>(
   content: string,
 ): FrontMatterResult<T> {
-  const match = content.match(FRONTMATTER_RE);
-  if (!match) {
+  const source = matchFrontMatterSource(content);
+  if (source === undefined) {
     return {
       attrs: {} as T,
       body: content,
@@ -20,12 +19,12 @@ export function extract<T = Record<string, unknown>>(
     };
   }
 
-  const frontMatter = match[1] ?? "";
+  const frontMatter = source.frontMatter;
   const parsed = frontMatter.trim() ? parse(frontMatter) : {};
   const attrs = (parsed && typeof parsed === "object" ? parsed : {}) as T;
   return {
     attrs,
-    body: match[2] ?? "",
+    body: source.body,
     frontMatter,
   };
 }

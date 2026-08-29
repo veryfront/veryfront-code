@@ -182,14 +182,22 @@ function localFirstPartyExtensionDependencies(
 ): Record<string, string> {
   const dependencies: Record<string, string> = {};
   for (const [specifier, target] of Object.entries(manifest.imports ?? {})) {
-    if (!specifier.startsWith("@veryfront/ext-") || !target.startsWith(".")) continue;
-    if (specifier === manifest.name) {
+    if (!specifier.startsWith("@veryfront/ext-") || !target.startsWith(".")) {
+      continue;
+    }
+    const dependency = firstPartyExtensionImport(specifier);
+    if (!dependency) {
+      throw new Error(
+        `${manifest.name} import "${specifier}" must name a first-party extension package or export`,
+      );
+    }
+    if (dependency.packageName === manifest.name) {
       throw new Error(`${manifest.name} cannot depend on itself`);
     }
 
     const dependencyDirectory = join(
       "extensions",
-      extensionPackageDirectoryName(specifier),
+      extensionPackageDirectoryName(dependency.packageName),
     );
     const resolvedTarget = normalize(join(manifestDir, target));
     const relativeTarget = relative(dependencyDirectory, resolvedTarget);
@@ -204,9 +212,21 @@ function localFirstPartyExtensionDependencies(
         `${manifest.name} import "${specifier}" must target its matching first-party extension directory`,
       );
     }
-    dependencies[specifier] = version;
+    dependencies[dependency.packageName] = version;
   }
   return dependencies;
+}
+
+function firstPartyExtensionImport(
+  specifier: string,
+): { packageName: string; subPath?: string } | undefined {
+  const match = /^(@veryfront\/ext-[^/]+)(?:\/(.+))?$/.exec(specifier);
+  if (!match) return undefined;
+
+  return {
+    packageName: match[1]!,
+    ...(match[2] ? { subPath: match[2] } : {}),
+  };
 }
 
 export function normalizeExtensionEntryPoints(input: {
@@ -746,11 +766,13 @@ function createVeryfrontDntMappings(input: {
   for (
     const [specifier, target] of Object.entries(input.manifest.imports ?? {})
   ) {
-    if (specifier.startsWith("@veryfront/ext-") && target.startsWith(".")) {
+    const dependency = firstPartyExtensionImport(specifier);
+    if (dependency && target.startsWith(".")) {
       const resolvedTarget = resolveManifestTarget(input.manifestDir, target);
       mappings[toFileUrl(join(input.rootDir, resolvedTarget)).href] = {
-        name: specifier,
+        name: dependency.packageName,
         version: input.version,
+        ...(dependency.subPath ? { subPath: dependency.subPath } : {}),
       };
       continue;
     }

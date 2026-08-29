@@ -75,6 +75,7 @@ const UNIT_CWD_FILES = [
   "src/platform/compat/process.test.ts",
   "src/testing/cwd.test.ts",
 ];
+// These tests own process-global lifecycle and require a quiet process.
 const UNIT_SERIAL_FILES = [
   "extensions/ext-bundler-esbuild/src/esbuild-bundler.test.ts",
 ];

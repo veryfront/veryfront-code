@@ -33,7 +33,7 @@ import {
 import { createUploadHandler, ragStore } from "../../src/embedding/index.ts";
 import { defineConfig } from "../../src/config/index.ts";
 import { buildCSP } from "../../src/security/http/response/security-handler.ts";
-import { datasets, evalAgent, metrics, runEval } from "../../src/eval/index.ts";
+import { datasets, evalAgent, evalDataset, metrics, runEval } from "../../src/eval/index.ts";
 import { metrics as projectMetrics } from "../../src/metrics/index.ts";
 import {
   type ExtensionFactory,
@@ -1506,5 +1506,30 @@ describe("Guide: evals.md", () => {
     assertEquals(deepResearchEval.target, "agent:researcher");
     assertEquals(report.summary.failed, 0);
     assertEquals(report.summary.records, 1);
+  });
+
+  it("grades a stored dataset value without a target or adapters", async () => {
+    const replyQualityEval = evalDataset({
+      id: "eval:support-reply-quality",
+      dataset: datasets.inline([
+        {
+          id: "billing-refund-reply",
+          input: "Hello, I checked the duplicate charge and started a refund.",
+          reference: "pass",
+          metadata: { locale: "en" },
+        },
+      ]),
+    });
+
+    const report = await runEval(replyQualityEval, { adapters: {} });
+
+    assertEquals(replyQualityEval.targetKind, "dataset");
+    assertEquals(replyQualityEval.target, "eval:support-reply-quality");
+    assertEquals(report.summary.records, 1);
+    assertEquals(report.summary.failed, 0);
+    assertEquals(
+      report.records[0]?.output,
+      "Hello, I checked the duplicate charge and started a refund.",
+    );
   });
 });

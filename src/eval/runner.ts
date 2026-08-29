@@ -489,7 +489,10 @@ async function runRecord(
   let toolInvoked = false;
 
   try {
-    if (definition.targetKind === "tool") {
+    if (definition.targetKind === "dataset") {
+      // Dataset evals grade the stored example value directly: no execution.
+      result = { output: example.input, completed: true };
+    } else if (definition.targetKind === "tool") {
       const toolRun = await runToolTarget(definition, options, example, repetition, runId, () => {
         toolInvoked = true;
       });

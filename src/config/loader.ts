@@ -1416,6 +1416,43 @@ function isDeterministicHostedConfigRejection(
     error.phase !== "worker";
 }
 
+/**
+ * Warn when an evaluated hosted snapshot carries extension declarations.
+ *
+ * The evaluator accepts a first-party declaration as an inert `{ name }`
+ * marker (veryfront-issue-inbox#688); the hosted runtime provides the
+ * capability itself and never activates the extension. Emitted here, on a
+ * fresh evaluation only, because per-project hosted configs never reach
+ * extension orchestration -- this is the one hosted-path boundary that sees
+ * every accepted declaration.
+ */
+function warnIgnoredExtensionDeclarations(
+  snapshot: Record<string, unknown>,
+  configFile: string,
+): void {
+  const extensions = snapshot.extensions;
+  if (!ArrayIsArray(extensions)) return;
+  // Indexed iteration and index assignment: an executable self-hosted config
+  // shares this realm and can poison Array.prototype hooks before a hosted
+  // tenant evaluation reaches this path.
+  const declared: string[] = [];
+  for (let index = 0; index < extensions.length; index++) { // NOSONAR: array traversal must stay index-based under poisoned primordials.
+    const entry: unknown = extensions[index];
+    if (
+      typeof entry === "object" && entry !== null &&
+      ownKeys(entry).length === 1 &&
+      typeof (entry as { name?: unknown }).name === "string"
+    ) {
+      declared[declared.length] = (entry as { name: string }).name;
+    }
+  }
+  if (declared.length === 0) return;
+  logger.warn(
+    "Extension declarations are ignored on the hosted runtime; the platform provides the capability itself",
+    { configFile, extensions: declared },
+  );
+}
+
 function createHostedConfigFlight(
   flightKey: string,
   hostedCacheKey: string,
@@ -1439,6 +1476,7 @@ function createHostedConfigFlight(
       signal: controllerSignal,
     });
     throwIfHostedConfigAborted(controllerSignal);
+    warnIgnoredExtensionDeclarations(snapshot, payload.evaluationOptions.fileName);
     const validate = () => deepFreezeHostedConfig(validateAndMergeConfig(snapshot));
     const merged = validationBoundary ? validationBoundary(validate) : validate();
     throwIfHostedConfigAborted(controllerSignal);
@@ -2046,6 +2084,13 @@ const URI_PAREN_INTERIOR_SOURCE = String.raw`[A-Za-z0-9\-._~:/?#\[\]@!$&()*+,;=%
 const URL_BALANCED_PAREN_SEGMENT_SOURCE = String.raw`\([^\s"']{0,512}\)`;
 const URL_TOKEN_TAIL_SOURCE = String
   .raw`(?:${URI_TOKEN_CHARACTER_SOURCE}|${URL_BALANCED_PAREN_SEGMENT_SOURCE}|\((?=(?:${URI_PAREN_INTERIOR_SOURCE}|\P{ASCII}))|\)(?=${URI_PAREN_INTERIOR_SOURCE})(?![\p{P}\p{S}\p{M}\p{Cf}]{0,16}(?:[\s"']|$)))+`;
+// Documented limit (inbox#852): prose glued to a drive path that also has a
+// redundant double separator -- `Failed atC://Users` -- lengthens the apparent
+// scheme to the RFC-legal `atC` and is labeled [url]. That token is
+// structurally identical to `...s://host`, so a drive-letter rescue here
+// re-opens the http[path] regression #4236 fixed, and a known-scheme whitelist
+// would under-redact real URLs. Redaction stays complete either way; only the
+// label is off. Pinned in loader.test.ts.
 const SCHEME_URL = new RegExp(
   String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
   "gu",
@@ -3238,7 +3283,7 @@ export function __bunConfigHasTopLevelAwaitForTests(
  * Rewrite bare `veryfront` import specifiers to the inline config shim so
  * temp-file config modules can load. Static and literal dynamic imports are
  * rewritten; subpaths like
- * `veryfront/head` are left untouched and will fail loudly, which is correct —
+ * `veryfront/head` are left untouched and will fail loudly, which is correct --
  * they have no meaning in a config file.
  *
  * @internal exported for tests
@@ -6911,7 +6956,7 @@ export function __isBunWorkspaceMemberDirectoryForTests(
  * Widen module ownership to the Bun workspace root when the project belongs to
  * one. Hoisted workspace dependencies resolve into an ancestor `node_modules`
  * or a sibling package directory, so tracking only descendants of the config
- * directory would leave them cached — and stale — across config reloads. The
+ * directory would leave them cached -- and stale -- across config reloads. The
  * The lexical and canonical ancestor chains are both inspected. A project
  * reached through an out-of-tree symlink has no lexical workspace ancestor,
  * while Bun resolves its modules through the physical workspace and its

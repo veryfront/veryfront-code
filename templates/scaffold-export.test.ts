@@ -12,7 +12,7 @@
  * These tests are that missing enforcement, and they live in the repository
  * where a layout change originates. The clean-room half — that the subpath
  * resolves from an installed package, through the published `exports` map —
- * is step 6 of `scripts/test/npm-install-smoke.sh`; nothing that imports by
+ * is step 6 of `scripts/test/npm-install-smoke.ts`; nothing that imports by
  * relative path can prove it.
  *
  * @module templates/scaffold-export.test

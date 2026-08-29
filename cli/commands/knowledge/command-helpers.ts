@@ -1,3 +1,4 @@
+import { INVALID_ARGUMENT } from "veryfront/errors";
 import { createFileSystem } from "veryfront/platform";
 import { basename, extname, join, normalize, relative } from "veryfront/platform/path";
 import { classifyKnowledgeDirectoryPath, classifyKnowledgeSourcePath } from "./source-policy.ts";
@@ -26,7 +27,7 @@ const CHAT_UPLOAD_PREFIX_RE =
 export function normalizeKnowledgeInputPath(inputPath: string): string {
   const normalizedPath = normalize(inputPath).replace(/^\/+/, "").replace(/\\/g, "/");
   if (!normalizedPath || normalizedPath.startsWith("..") || normalizedPath.startsWith("/")) {
-    throw new Error(`Invalid knowledge input path: ${inputPath}`);
+    throw INVALID_ARGUMENT.create({ detail: `Invalid knowledge input path: ${inputPath}` });
   }
   return normalizedPath;
 }

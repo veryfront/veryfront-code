@@ -1,6 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "veryfront/errors";
 import {
   buildUploadCreateUrl,
   buildUploadSignedUrlPath,
@@ -10,8 +17,10 @@ import {
   listAllUploads,
   resolveUploadOutputPath,
   uploadLocalFileToUploads,
+  uploadsCommand,
 } from "./command.ts";
 import type { ApiClient } from "#cli/shared/config";
+import type { ParsedArgs } from "#cli/shared/types";
 
 function createMockClient(overrides: {
   get?: (path: string, params?: Record<string, string>) => Promise<unknown>;
@@ -110,12 +119,33 @@ describe("resolveUploadOutputPath", () => {
     );
   });
 
-  it("rejects traversal attempts", () => {
-    assertThrows(
+  it("rejects traversal attempts as invalid-argument usage errors", () => {
+    const error = assertThrows(
       () => resolveUploadOutputPath("../secrets.txt", "/workspace/uploads"),
-      Error,
+      VeryfrontError,
       "Invalid upload path",
     );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "invalid-argument");
+  });
+});
+
+describe("uploadsCommand", () => {
+  it("rejects unusable subcommand arguments as invalid-argument usage errors", async () => {
+    const cases: Array<[ParsedArgs, string]> = [
+      [{ _: ["uploads", "list"], limit: "many" }, "Invalid uploads list arguments:"],
+      [{ _: ["uploads", "put"] }, "Invalid uploads put arguments:"],
+      [{ _: ["uploads", "delete"] }, "Invalid uploads delete arguments:"],
+    ];
+    for (const [args, expectedDetail] of cases) {
+      const error = await assertRejects(
+        () => uploadsCommand(args),
+        VeryfrontError,
+        expectedDetail,
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "invalid-argument");
+    }
   });
 });
 

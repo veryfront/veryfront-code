@@ -5,6 +5,9 @@ import {
   datasets,
   EVAL_REPORT_SCHEMA_VERSION,
   evalAgent,
+  evalDataset,
+  type EvalMetric,
+  type EvalRecord,
   evalTool,
   metrics,
   runEval,
@@ -71,6 +74,64 @@ describe("eval/runner", () => {
         label: "Answer matched the reference exactly",
       },
     ]);
+  });
+
+  it("grades a dataset eval's stored value without executing a target", async () => {
+    const captured: EvalRecord[] = [];
+    const capture: EvalMetric = {
+      name: "capture",
+      family: "check",
+      severity: "soft",
+      evaluate(record) {
+        captured.push(record);
+        return { name: "capture", family: "check", severity: "soft", pass: true };
+      },
+      gate: () => capture,
+      soft: () => capture,
+      budget: () => capture,
+    };
+    const definition = evalDataset({
+      id: "eval:standing-text",
+      dataset: datasets.inline([
+        {
+          id: "case-1",
+          input: "Standing answer.",
+          reference: "pass",
+          metadata: { label: "good" },
+        },
+      ]),
+      metrics: [capture],
+      repetitions: 2,
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        agent: () => {
+          throw new Error("agent adapter must not run for dataset evals");
+        },
+        tool: () => {
+          throw new Error("tool adapter must not run for dataset evals");
+        },
+      },
+    });
+
+    assertEquals(report.targetKind, "dataset");
+    assertEquals(report.target, "eval:standing-text");
+    assertEquals(report.summary.records, 2);
+    assertEquals(report.summary.passed, 2);
+    assertEquals(report.summary.failed, 0);
+    assertEquals(captured.length, 2);
+    for (const record of report.records) {
+      assertEquals(record.output, "Standing answer.");
+      assertEquals(record.input, "Standing answer.");
+      assertEquals(record.reference, "pass");
+      assertEquals(record.metadata, { label: "good" });
+      assertEquals(record.completed, true);
+      assertEquals(record.error, undefined);
+      assertEquals(record.trace, { events: [], toolCalls: [] });
+      assertEquals(record.usage, {});
+      assertEquals(Object.hasOwn(record, "executionInput"), false);
+    }
   });
 
   it("fails a record on a blown budget metric but not on a soft metric", async () => {
