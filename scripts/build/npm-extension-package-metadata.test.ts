@@ -174,6 +174,41 @@ describe("createExtensionPackageSpec", () => {
     );
   });
 
+  it("publishes first-party extension subpath imports from their package root", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-content-mdx",
+      exports: "./src/index.ts",
+      veryfront: { extension: true },
+      imports: {
+        "@veryfront/ext-parser-babel/parser-only":
+          "../ext-parser-babel/src/parser-only.ts",
+      },
+    };
+
+    const spec = createExtensionPackageSpec({
+      manifestPath: "extensions/ext-content-mdx/deno.json",
+      manifest,
+      rootConfig,
+      rootDir: "/repo",
+      version: "0.1.985",
+      license: "Apache-2.0",
+    });
+
+    assertEquals(spec.packageJson.dependencies, {
+      "@veryfront/ext-parser-babel": "0.1.985",
+    });
+    assertEquals(
+      spec.dntMappings[
+        "file:///repo/extensions/ext-parser-babel/src/parser-only.ts"
+      ],
+      {
+        name: "@veryfront/ext-parser-babel",
+        version: "0.1.985",
+        subPath: "parser-only",
+      },
+    );
+  });
+
   it("externalizes every public Veryfront contract consumed by Redis", async () => {
     const [manifest, actualRootConfig] = await Promise.all([
       Deno.readTextFile("extensions/ext-redis/deno.json").then((source) =>
