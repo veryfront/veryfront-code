@@ -759,6 +759,23 @@ function connectAnthropicReplayIndices(
   dependencies.set(right, rightDependencies);
 }
 
+function belongsToCompactedAnthropicToolRound(
+  index: number,
+  dependencies: ReadonlyMap<number, ReadonlySet<number>>,
+  compactedIndices: ReadonlySet<number>,
+): boolean {
+  const pending = [index];
+  const visited = new Set<number>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === undefined || visited.has(current)) continue;
+    if (compactedIndices.has(current)) return true;
+    visited.add(current);
+    pending.push(...dependencies.get(current) ?? []);
+  }
+  return false;
+}
+
 function planAnthropicRawAssistantReplay(
   prompt: readonly ModelRuntimePromptMessage[],
   rawAssistantMessagesByIndex: ReadonlyMap<number, unknown[]>,
@@ -766,6 +783,8 @@ function planAnthropicRawAssistantReplay(
   lastHistoricalAssistantTextIndex: number,
 ): Set<number> {
   const replayIndices = new Set<number>();
+  const thinkingReplayCandidates = new Set<number>();
+  const compactedToolRoundIndices = new Set<number>();
   const dependencies = new Map<number, Set<number>>();
   const pendingProviderCallIndexById = new Map<string, number>();
 
@@ -783,6 +802,7 @@ function planAnthropicRawAssistantReplay(
       index,
       lastHistoricalAssistantTextIndex,
     );
+    if (shouldCompactCompletedToolRound) compactedToolRoundIndices.add(index);
     if (
       requiresExactAnthropicProviderReplay(message) ||
       !shouldCompactCompletedToolRound && index >= lastUserIndex
@@ -805,7 +825,7 @@ function planAnthropicRawAssistantReplay(
         const block = readRecord(value);
         if (!block || typeof block.type !== "string") continue;
         if (block.type === "thinking" || block.type === "redacted_thinking") {
-          replayIndices.add(index);
+          thinkingReplayCandidates.add(index);
           continue;
         }
         if (
@@ -830,6 +850,18 @@ function planAnthropicRawAssistantReplay(
         }
       }
       if (remainingBlockCount === 0) break;
+    }
+  }
+
+  for (const index of thinkingReplayCandidates) {
+    if (
+      !belongsToCompactedAnthropicToolRound(
+        index,
+        dependencies,
+        compactedToolRoundIndices,
+      )
+    ) {
+      replayIndices.add(index);
     }
   }
 

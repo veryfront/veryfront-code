@@ -4232,6 +4232,10 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       providerMetadata: {
         anthropic: {
           rawAssistantMessages: [[{
+            type: "thinking",
+            thinking: "",
+            signature: "sig-compacted-tool-call",
+          }, {
             type: "server_tool_use",
             id: "server_search_1",
             name: "web_search",
@@ -4258,6 +4262,9 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       providerMetadata: {
         anthropic: {
           rawAssistantMessages: [[{
+            type: "redacted_thinking",
+            data: "redacted-compacted-tool-result",
+          }, {
             type: "web_search_tool_result",
             tool_use_id: "server_search_1",
             content: [{
