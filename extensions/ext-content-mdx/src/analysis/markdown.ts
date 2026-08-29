@@ -1,4 +1,4 @@
-import type { Nodes } from "mdast";
+import type { Nodes, Root } from "mdast";
 import type { Position } from "unist";
 import { unified } from "unified";
 import remarkFrontmatter from "remark-frontmatter";
@@ -218,6 +218,13 @@ export function analyzeMarkdown(value: string, frontmatter: boolean): {
   const processor = unified().use(remarkParse).use(remarkGfm);
   if (frontmatter) processor.use(remarkFrontmatter, ["yaml"]);
   const root = processor.parse(value);
+  return analyzeMarkdownTree(value, root);
+}
+
+export function analyzeMarkdownTree(value: string, root: Root): {
+  readonly renderedRanges: readonly SourceRange[];
+  readonly destinations: readonly ContentDestination[];
+} {
   const locator = createSourceLocator(value);
   const renderedRanges: SourceRange[] = [];
   const destinations: ContentDestination[] = [];

@@ -15,7 +15,12 @@ import type { ASTNode, ParseOptions } from "veryfront/extensions/parser";
 /** The parse-only subset shared with the full `CodeParser` contract. */
 export interface BabelParseOnlyParserContract {
   /** Parse source code into a Babel-compatible abstract syntax tree. */
-  parse(options: ParseOptions): Promise<ASTNode>;
+  parse(options: BabelParseOnlyOptions): Promise<ASTNode>;
+}
+
+export interface BabelParseOnlyOptions extends ParseOptions {
+  /** Decorator grammar to parse, or both for backward compatibility. */
+  readonly decoratorMode?: "current" | "legacy" | "compatible";
 }
 
 /**
@@ -69,24 +74,35 @@ function isBabelSyntaxError(error: unknown): boolean {
   return code === "BABEL_PARSER_SYNTAX_ERROR";
 }
 
+function isAstNode(value: unknown): value is ASTNode {
+  if (typeof value !== "object" || value === null) return false;
+  return typeof Object.getOwnPropertyDescriptor(value, "type")?.value ===
+    "string";
+}
+
 /**
  * Babel-backed parser with the same parse behavior as {@link BabelCodeParser},
  * without loading traversal, generation, or extension runtime dependencies.
  */
 export class BabelParseOnlyParser implements BabelParseOnlyParserContract {
-  parse(options: ParseOptions): Promise<ASTNode> {
+  async parse(options: BabelParseOnlyOptions): Promise<ASTNode> {
     const filePath = options.filePath?.toLowerCase() ?? "";
+    const decoratorMode = options.decoratorMode ?? "compatible";
     const parseOptions: parser.ParserOptions = {
       sourceType: "unambiguous",
       allowReturnOutsideFunction: options.allowReturnOutsideFunction === true ||
         /\.(?:cjs|js)$/.test(filePath),
-      plugins: pickPlugins(parseablePath(options.filePath)),
+      plugins: decoratorMode === "legacy"
+        ? pickLegacyDecoratorPlugins(parseablePath(options.filePath))
+        : pickPlugins(parseablePath(options.filePath)),
     };
     const ast = (() => {
       try {
         return parser.parse(options.code, parseOptions);
       } catch (error) {
-        if (!isBabelSyntaxError(error)) throw error;
+        if (!isBabelSyntaxError(error) || decoratorMode !== "compatible") {
+          throw error;
+        }
         try {
           return parser.parse(options.code, {
             ...parseOptions,
@@ -99,7 +115,9 @@ export class BabelParseOnlyParser implements BabelParseOnlyParserContract {
         }
       }
     })();
-    const node: { type: string } = ast;
-    return Promise.resolve(node as ASTNode);
+    if (!isAstNode(ast)) {
+      throw new TypeError("Babel returned an invalid parser result");
+    }
+    return ast;
   }
 }

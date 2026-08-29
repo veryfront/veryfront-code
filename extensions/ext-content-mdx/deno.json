@@ -13,6 +13,9 @@
     "capabilities": []
   },
   "imports": {
+    "@veryfront/ext-parser-babel/parser-only": "../ext-parser-babel/src/parser-only.ts",
+    "acorn": "npm:acorn@8.17.0",
+    "acorn-jsx": "npm:acorn-jsx@5.3.2",
     "@mdx-js/mdx": "npm:@mdx-js/mdx@3.1.1",
     "@mdx-js/react": "npm:@mdx-js/react@3.1.1",
     "unified": "npm:unified@11.0.5",
@@ -22,6 +25,12 @@
     "remark-parse": "npm:remark-parse@11.0.0",
     "remark-gfm": "npm:remark-gfm@4.0.1",
     "remark-frontmatter": "npm:remark-frontmatter@5.0.0",
+    "mdast-util-mdx": "npm:mdast-util-mdx@3.0.0",
+    "micromark-extension-mdx-expression": "npm:micromark-extension-mdx-expression@3.0.1",
+    "micromark-extension-mdx-jsx": "npm:micromark-extension-mdx-jsx@3.0.2",
+    "micromark-extension-mdx-md": "npm:micromark-extension-mdx-md@2.0.0",
+    "micromark-extension-mdxjs-esm": "npm:micromark-extension-mdxjs-esm@3.0.0",
+    "micromark-util-combine-extensions": "npm:micromark-util-combine-extensions@2.0.1",
     "remark-rehype": "npm:remark-rehype@11.1.2",
     "rehype-highlight": "npm:rehype-highlight@7.0.2",
     "rehype-starry-night": "npm:rehype-starry-night@2.2.0",

@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { BabelParseOnlyParser } from "./parser-only.ts";
 
@@ -68,6 +68,18 @@ describe("BabelParseOnlyParser", () => {
     });
 
     assertEquals(ast.type, "File");
+  });
+
+  it("lets parser clients select one decorator dialect without a syntax retry", async () => {
+    await assertRejects(
+      () =>
+        parser.parse({
+          code: "class Store { load(@inject dep: Dependency) {} }",
+          filePath: "store.ts",
+          decoratorMode: "current",
+        }),
+      SyntaxError,
+    );
   });
 
   it("preserves Babel syntax-error identity and location metadata", async () => {
