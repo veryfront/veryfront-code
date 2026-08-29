@@ -102,7 +102,7 @@ export function isDestinationAttribute(name: string | undefined): boolean {
   const normalized = name?.toLowerCase();
   return normalized === "href" || normalized === "src" ||
     normalized === "action" || normalized === "formaction" ||
-    normalized === "xlinkhref";
+    normalized === "xlinkhref" || normalized === "xlink:href";
 }
 
 function parserMessage(error: Error): string {

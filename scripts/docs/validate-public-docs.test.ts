@@ -2630,15 +2630,19 @@ describe("public docs validation", () => {
     assertStringIncludes(invalid[0]?.message ?? "", "Fix invalid MDX syntax");
   });
 
-  it("validates React SVG destinations at every JSX depth", async () => {
+  it("validates SVG destinations at every JSX depth and spelling", async () => {
     assertEquals(
       await mdxDestinations(
         '<svg><a xlinkHref="../architecture/top-svg.md" /></svg>\n' +
-          '{<svg><a xlinkHref={"../architecture/nested-svg.md"} /></svg>}',
+          '<svg><a xlink:href={"../architecture/top-colon-svg.md"} /></svg>\n' +
+          '{<svg><a xlinkHref={"../architecture/nested-svg.md"} />' +
+          '<a xlink:href="../architecture/nested-colon-svg.md" /></svg>}',
       ),
       [
         "../architecture/top-svg.md",
+        "../architecture/top-colon-svg.md",
         "../architecture/nested-svg.md",
+        "../architecture/nested-colon-svg.md",
       ],
     );
   });
@@ -2988,6 +2992,17 @@ describe("public docs validation", () => {
 
     assertEquals(htmlIssues.map((issue) => issue.line), [1]);
     assertEquals(jsxIssues.map((issue) => issue.line), [1]);
+  });
+
+  it("reports colon-spelled SVG href destinations", async () => {
+    const issues = await collectUnpublishedLinkIssues(
+      "docs/guides/example.mdx",
+      '<svg><a xlink:href="../architecture/private-top-svg.md" /></svg>\n' +
+        '{<svg><a xlink:href={"../architecture/private-nested-svg.md"} /></svg>}',
+      publishedFiles(),
+    );
+
+    assertEquals(issues.map((issue) => issue.line), [1, 2]);
   });
 
   it("reports the line the destination sits on", async () => {

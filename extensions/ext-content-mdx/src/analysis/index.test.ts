@@ -828,16 +828,23 @@ describe("analyzeContent MDX", () => {
     );
   });
 
-  it("returns React SVG xlinkHref destinations at every JSX depth", async () => {
-    const value = '<svg><a xlinkHref="../top.md" /></svg>\n' +
-      '{<svg><a xlinkHref={"../nested.md"} /></svg>}';
+  it("returns SVG href destinations at every JSX depth and spelling", async () => {
+    const value = '<svg><a xlinkHref="../react-top.md" /></svg>\n' +
+      '<svg><a xlink:href={"../colon-top.md"} /></svg>\n' +
+      '{<svg><a xlinkHref={"../react-nested.md"} />' +
+      '<a xlink:href="../colon-nested.md" /></svg>}';
 
     const result = await analyzeContent({ value, syntax: "mdx" });
 
     assert(result.kind === "document");
     assertEquals(
       result.destinations.map((destination) => destination.rawValue),
-      ["../top.md", "../nested.md"],
+      [
+        "../react-top.md",
+        "../colon-top.md",
+        "../react-nested.md",
+        "../colon-nested.md",
+      ],
     );
   });
 
