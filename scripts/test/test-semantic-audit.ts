@@ -887,7 +887,6 @@ export function collectSemanticMarkers(
       nextScopes,
       allowAssignmentClearing,
     );
-    clearTruthinessForUnmodeledMutation(node, nextScopes);
     bindRuntimeDeleteMutation(
       node,
       bindings,
@@ -3545,6 +3544,36 @@ function canonicalCompatSource(source: string): string {
   return normalized;
 }
 
+// Names any syntactic write in the subtree can rebind. Truthiness facts are
+// granted only to bindings with no such writer, which keeps them valid
+// regardless of traversal order (hoisted calls, deferred function bodies,
+// skipped branches, and abrupt completions cannot invalidate them later).
+function collectAssignedIdentifierNames(
+  node: unknown,
+  names: Set<string>,
+): void {
+  if (!isNode(node)) return;
+  if (node.type === "AssignmentExpression") {
+    collectPatternNames(node.left, names);
+  } else if (node.type === "UpdateExpression") {
+    collectPatternNames(node.argument, names);
+  } else if (
+    (node.type === "ForOfStatement" || node.type === "ForInStatement") &&
+    isNode(node.left) && node.left.type !== "VariableDeclaration"
+  ) {
+    collectPatternNames(node.left, names);
+  }
+  for (const key of Object.keys(node)) {
+    if (key === "loc" || COMMENT_KEYS.has(key)) continue;
+    const value = node[key];
+    if (Array.isArray(value)) {
+      for (const item of value) collectAssignedIdentifierNames(item, names);
+    } else {
+      collectAssignedIdentifierNames(value, names);
+    }
+  }
+}
+
 function createScope(
   node: Node,
   imports: ImportBindings,
@@ -3556,6 +3585,8 @@ function createScope(
   const definitelyTruthyNames = new Set<string>();
   const definitelyNonNullishNames = new Set<string>();
   const playwrightFixtures = new Set<string>();
+  const locallyAssignedNames = new Set<string>();
+  collectAssignedIdentifierNames(node, locallyAssignedNames);
   collectLocalDeclaredNames(
     node,
     names,
@@ -3563,6 +3594,7 @@ function createScope(
     definitelyNonUndefinedNames,
     definitelyTruthyNames,
     definitelyNonNullishNames,
+    locallyAssignedNames,
     playwrightFixtures,
   );
   if (hasOwnThisRuntimeBinding(node)) {
@@ -3602,7 +3634,12 @@ function createScope(
         emptyRuntimeNamespaceBinding(),
     );
   }
-  collectLocalRuntimeBindings(node, imports, [...outerScopes, scope]);
+  collectLocalRuntimeBindings(
+    node,
+    imports,
+    [...outerScopes, scope],
+    locallyAssignedNames,
+  );
   if (isVarHoistScope(node)) {
     collectHoistedVarRuntimeBindings(
       node,
@@ -3633,6 +3670,7 @@ function collectLocalDeclaredNames(
   definitelyNonUndefinedNames: Set<string>,
   definitelyTruthyNames: Set<string>,
   definitelyNonNullishNames: Set<string>,
+  assignedNames: Set<string>,
   playwrightFixtures: Set<string>,
 ): void {
   const statements = lexicalScopeStatements(node);
@@ -3647,8 +3685,12 @@ function collectLocalDeclaredNames(
         const name = statement.id.name as string;
         names.add(name);
         definitelyNonUndefinedNames.add(name);
-        definitelyTruthyNames.add(name);
-        definitelyNonNullishNames.add(name);
+        // `declare` bindings are erased at runtime; reassigned names lose
+        // their declaration-form truthiness.
+        if (statement.declare !== true && !assignedNames.has(name)) {
+          definitelyTruthyNames.add(name);
+          definitelyNonNullishNames.add(name);
+        }
         if (statement.type === "FunctionDeclaration") {
           definitelyInitializedNames.add(name);
         }
@@ -3692,8 +3734,10 @@ function collectLocalDeclaredNames(
       names.add(name);
       definitelyInitializedNames.add(name);
       definitelyNonUndefinedNames.add(name);
-      definitelyTruthyNames.add(name);
-      definitelyNonNullishNames.add(name);
+      if (!assignedNames.has(name)) {
+        definitelyTruthyNames.add(name);
+        definitelyNonNullishNames.add(name);
+      }
     }
     for (const param of Array.isArray(node.params) ? node.params : []) {
       collectPatternNames(param, names);
@@ -3709,8 +3753,10 @@ function collectLocalDeclaredNames(
     names.add(name);
     definitelyInitializedNames.add(name);
     definitelyNonUndefinedNames.add(name);
-    definitelyTruthyNames.add(name);
-    definitelyNonNullishNames.add(name);
+    if (node.declare !== true && !assignedNames.has(name)) {
+      definitelyTruthyNames.add(name);
+      definitelyNonNullishNames.add(name);
+    }
     return;
   }
   if (
@@ -3740,6 +3786,7 @@ function collectLocalRuntimeBindings(
   node: Node,
   imports: ImportBindings,
   scopes: readonly Scope[],
+  assignedNames: Set<string>,
 ): void {
   const statements = lexicalScopeStatements(node);
   if (!statements) return;
@@ -3767,6 +3814,22 @@ function collectLocalRuntimeBindings(
         : []
     ) {
       if (!isNode(declarator)) continue;
+      // Truthiness evidence comes only from immutable declaration forms:
+      // a never-reassigned const whose initializer carries the proof.
+      if (
+        declaration.kind === "const" && isNode(declarator.id) &&
+        declarator.id.type === "Identifier" &&
+        !assignedNames.has(declarator.id.name as string)
+      ) {
+        const name = declarator.id.name as string;
+        const truthy = expressionIsDefinitelyTruthy(declarator.init, scopes);
+        if (truthy) scope.definitelyTruthyNames.add(name);
+        if (
+          truthy || expressionIsDefinitelyNonNullish(declarator.init, scopes)
+        ) {
+          scope.definitelyNonNullishNames.add(name);
+        }
+      }
       bindRuntimeDeclaration(declarator, imports, scopes, scope);
     }
   }
@@ -4144,7 +4207,6 @@ function visitRuntimeBindingSummary(
   }
   bindRuntimeClassDeclaration(node, nextScopes);
   bindRuntimeAssignment(node, imports, nextScopes, allowClearing);
-  clearTruthinessForUnmodeledMutation(node, nextScopes);
   bindRuntimeDeleteMutation(node, imports, nextScopes, allowClearing);
   for (const key of Object.keys(node)) {
     if (
@@ -4667,10 +4729,6 @@ function bindRuntimeAssignment(
     canClearPrevious,
     (name) => declaringScopeForName(name, scopes),
   );
-  const assignedDefinitelyTruthy = expressionIsDefinitelyTruthy(
-    node.right,
-    scopes,
-  );
   bindDefinitelyNonUndefinedPattern(
     node.left,
     binding,
@@ -4679,11 +4737,6 @@ function bindRuntimeAssignment(
     scopes,
     canClearPrevious,
     (name) => declaringScopeForName(name, scopes),
-    assignedDefinitelyTruthy,
-    assignedDefinitelyTruthy ||
-      expressionIsDefinitelyNonNullish(node.right, scopes),
-    (name) =>
-      assignmentTargetScope(name, scopes)?.crossesFunctionBoundary !== true,
   );
   if (
     bindRuntimeMemberAssignment(
@@ -7425,38 +7478,6 @@ function assignmentTargetScope(
   return undefined;
 }
 
-// Writes that bindRuntimeAssignment does not model (update expressions,
-// arithmetic compound assignments, bare loop targets) can make a previously
-// truthy binding falsy, so they must drop both truthiness facts.
-function clearTruthinessForUnmodeledMutation(
-  node: Node,
-  scopes: readonly Scope[],
-): void {
-  let target: Node | undefined;
-  if (
-    node.type === "AssignmentExpression" && isNode(node.left) &&
-    !["=", "&&=", "||=", "??="].includes(String(node.operator))
-  ) {
-    target = node.left;
-  } else if (node.type === "UpdateExpression" && isNode(node.argument)) {
-    target = node.argument;
-  } else if (
-    (node.type === "ForOfStatement" || node.type === "ForInStatement") &&
-    isNode(node.left) && node.left.type !== "VariableDeclaration"
-  ) {
-    target = node.left;
-  }
-  if (!target) return;
-  const names = new Set<string>();
-  collectPatternNames(target, names);
-  for (const name of names) {
-    const scope = declaringScopeForName(name, scopes);
-    if (!scope) continue;
-    scope.definitelyTruthyNames.delete(name);
-    scope.definitelyNonNullishNames.delete(name);
-  }
-}
-
 function bindDefinitelyNonUndefinedPattern(
   pattern: Node,
   binding: RuntimeBinding | undefined,
@@ -7465,9 +7486,6 @@ function bindDefinitelyNonUndefinedPattern(
   scopes: readonly Scope[],
   unconditional: boolean,
   scopeForName: (name: string) => Scope | undefined,
-  definitelyTruthy = false,
-  definitelyNonNullish = false,
-  canAddPositiveTruthinessFact: (name: string) => boolean = () => true,
 ): void {
   if (pattern.type === "Identifier") {
     const name = pattern.name as string;
@@ -7477,16 +7495,6 @@ function bindDefinitelyNonUndefinedPattern(
       scope.definitelyNonUndefinedNames.delete(name);
     } else if (unconditional) {
       scope.definitelyNonUndefinedNames.add(name);
-    }
-    if (!definitelyTruthy) {
-      scope.definitelyTruthyNames.delete(name);
-    } else if (unconditional && canAddPositiveTruthinessFact(name)) {
-      scope.definitelyTruthyNames.add(name);
-    }
-    if (!definitelyNonNullish) {
-      scope.definitelyNonNullishNames.delete(name);
-    } else if (unconditional && canAddPositiveTruthinessFact(name)) {
-      scope.definitelyNonNullishNames.add(name);
     }
     return;
   }
@@ -7517,9 +7525,6 @@ function bindDefinitelyNonUndefinedPattern(
       scopes,
       unconditional,
       scopeForName,
-      false,
-      false,
-      canAddPositiveTruthinessFact,
     );
     return;
   }
@@ -7532,9 +7537,6 @@ function bindDefinitelyNonUndefinedPattern(
       scopes,
       unconditional,
       scopeForName,
-      false,
-      false,
-      canAddPositiveTruthinessFact,
     );
     return;
   }
@@ -7554,9 +7556,6 @@ function bindDefinitelyNonUndefinedPattern(
           scopes,
           unconditional,
           scopeForName,
-          false,
-          false,
-          canAddPositiveTruthinessFact,
         );
         continue;
       }
@@ -7574,9 +7573,6 @@ function bindDefinitelyNonUndefinedPattern(
         scopes,
         unconditional,
         scopeForName,
-        false,
-        false,
-        canAddPositiveTruthinessFact,
       );
     }
     return;
@@ -7591,9 +7587,6 @@ function bindDefinitelyNonUndefinedPattern(
       scopes,
       unconditional,
       scopeForName,
-      false,
-      false,
-      canAddPositiveTruthinessFact,
     );
   }
 }
@@ -8265,10 +8258,6 @@ function bindRuntimeDeclaration(
     imports,
     scopes,
   );
-  const initDefinitelyTruthy = expressionIsDefinitelyTruthy(
-    declaration.init,
-    scopes,
-  );
   bindDefinitelyNonUndefinedPattern(
     declaration.id,
     binding,
@@ -8277,9 +8266,6 @@ function bindRuntimeDeclaration(
     scopes,
     !merge,
     (name) => scope.names.has(name) ? scope : undefined,
-    initDefinitelyTruthy,
-    initDefinitelyTruthy ||
-      expressionIsDefinitelyNonNullish(declaration.init, scopes),
   );
   bindRuntimeAlias(
     declaration.id,

@@ -5112,6 +5112,156 @@ SequenceFallback.write("sequence.txt", "x");
     );
   });
 
+  it("grants truthiness evidence only from immutable declaration forms", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class MutatorOriginal {}
+class MutatorFallback {}
+let mutatorReceiver = MutatorOriginal;
+mutate();
+const MutatorAlias = mutatorReceiver || MutatorFallback;
+MutatorAlias.write = Deno.writeTextFile;
+MutatorFallback.write("mutator.txt", "x");
+function mutate() {
+  mutatorReceiver = null;
+}
+`,
+        "src/logical-receiver-hoisted-mutator.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "MutatorFallback.write"]],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class AmbientFallback {}
+(globalThis as { AmbientReceiver: null }).AmbientReceiver = null;
+declare class AmbientReceiver {}
+const AmbientAlias = AmbientReceiver || AmbientFallback;
+AmbientAlias.write = Deno.writeTextFile;
+AmbientFallback.write("ambient.txt", "x");
+`,
+        "src/logical-receiver-declare-class.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["process", "globalThis.AmbientReceiver"],
+        ["filesystem-write", "AmbientFallback.write"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class DoWhileOriginal {}
+class DoWhileFallback {}
+let doWhileReceiver = null;
+do {
+  if (Math.random() > 0.5) break;
+} while (doWhileReceiver = DoWhileOriginal);
+const DoWhileAlias = doWhileReceiver || DoWhileFallback;
+DoWhileAlias.write = Deno.writeTextFile;
+DoWhileFallback.write("do-while.txt", "x");
+`,
+        "src/logical-receiver-do-while-test.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "DoWhileFallback.write"]],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class VarOriginal {}
+class VarFallback {}
+const VarAlias = varReceiver || VarFallback;
+VarAlias.write = Deno.writeTextFile;
+VarFallback.write("var.txt", "x");
+var varReceiver = VarOriginal;
+`,
+        "src/logical-receiver-hoisted-var.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "VarFallback.write"]],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class LabelOriginal {}
+class LabelFallback {}
+let labelReceiver = null;
+outer: {
+  if (Math.random() > 0.5) break outer;
+  labelReceiver = LabelOriginal;
+}
+const LabelAlias = labelReceiver || LabelFallback;
+LabelAlias.write = Deno.writeTextFile;
+LabelFallback.write("label.txt", "x");
+`,
+        "src/logical-receiver-labeled-break.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "LabelFallback.write"]],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class UncalledFallback {}
+let uncalledReceiver = null;
+const mutateUncalled = () => {
+  uncalledReceiver = {};
+};
+const UncalledAlias = uncalledReceiver || UncalledFallback;
+UncalledAlias.write = Deno.writeTextFile;
+UncalledFallback.write("uncalled.txt", "x");
+`,
+        "src/logical-receiver-uncalled-function.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "UncalledFallback.write"]],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class FieldFallback {}
+let fieldReceiver = null;
+class FieldHolder {
+  value = (fieldReceiver = {});
+}
+const FieldAlias = fieldReceiver || FieldFallback;
+FieldAlias.write = Deno.writeTextFile;
+FieldFallback.write("field.txt", "x");
+`,
+        "src/logical-receiver-instance-field.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "FieldFallback.write"]],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class NestedWriteOriginal {}
+class NestedWriteFallback {}
+let nestedWriteReceiver = null;
+nestedWriteReceiver = (nestedWriteReceiver = NestedWriteOriginal, null);
+const NestedWriteAlias = nestedWriteReceiver || NestedWriteFallback;
+NestedWriteAlias.write = Deno.writeTextFile;
+NestedWriteFallback.write("nested-write.txt", "x");
+`,
+        "src/logical-receiver-nested-write.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "NestedWriteFallback.write"]],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class DefaultOriginal {}
+class DefaultFallback {}
+let defaultReceiver = null;
+const { gate = (defaultReceiver = DefaultOriginal) } = { gate: true };
+void gate;
+const DefaultAlias = defaultReceiver || DefaultFallback;
+DefaultAlias.write = Deno.writeTextFile;
+DefaultFallback.write("default.txt", "x");
+`,
+        "src/logical-receiver-skipped-default.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "DefaultFallback.write"]],
+    );
+  });
+
   it("uses JavaScript array-index bounds for sparse writes", () => {
     assertEquals(
       collectSemanticMarkers(
