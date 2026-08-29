@@ -8,7 +8,7 @@ import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 
-import { yamlFrontmatterDiagnostic } from "./frontmatter.ts";
+import { analyzeFrontmatterSource } from "./frontmatter.ts";
 import { createSourceLocator, type SourceLocator } from "./source.ts";
 import type { ContentAnalysisResult, ContentDestination, SourceRange } from "./types.ts";
 
@@ -27,10 +27,13 @@ type DefinitionNode = Extract<Nodes, { type: "definition" }>;
 
 function positionOffsets(
   position: Position | undefined,
+  sourceOffset = 0,
 ): { readonly start: number; readonly end: number } | undefined {
   const start = position?.start.offset;
   const end = position?.end.offset;
-  return start === undefined || end === undefined ? undefined : { start, end };
+  return start === undefined || end === undefined
+    ? undefined
+    : { start: sourceOffset + start, end: sourceOffset + end };
 }
 
 function childrenOf(node: Nodes): readonly Nodes[] {
@@ -40,6 +43,7 @@ function childrenOf(node: Nodes): readonly Nodes[] {
 function markdownTokens(
   value: string,
   extensions: readonly Extension[] = [],
+  sourceOffset = 0,
 ): MarkdownTokens {
   const definitionDestinations: OffsetSpan[] = [];
   const resourceDestinations: OffsetSpan[] = [];
@@ -50,7 +54,10 @@ function markdownTokens(
   );
   for (const [event, token] of events) {
     if (event !== "enter") continue;
-    const span = { start: token.start.offset, end: token.end.offset };
+    const span = {
+      start: sourceOffset + token.start.offset,
+      end: sourceOffset + token.end.offset,
+    };
     if (token.type === "definitionDestinationString") {
       definitionDestinations.push(span);
     } else if (token.type === "resourceDestinationString") {
@@ -96,9 +103,8 @@ function linkDestination(
   locator: SourceLocator,
   tokens: MarkdownTokens,
   tokenBase: number,
+  offsets: OffsetSpan,
 ): ContentDestination | undefined {
-  const offsets = positionOffsets(node.position);
-  if (offsets === undefined) return undefined;
   const autolink = autolinkDestination(value, node, locator, offsets);
   if (autolink !== undefined) return autolink;
 
@@ -194,9 +200,10 @@ function rawHtmlSourceProjection(
   locator: SourceLocator,
 ): SourceProjection {
   // Remark removes blockquote and list continuation prefixes from `node.value`
-  // but keeps node positions in the authored document. Each normalized line is
-  // therefore the suffix of its authored line. Preserve that parser-provided
-  // relationship instead of rediscovering HTML or container syntax here.
+  // and CommonMark replaces NUL with U+FFFD, while node positions stay in the
+  // authored document. Each normalized line is therefore a same-width suffix
+  // of its authored line. Preserve that parser-provided relationship instead
+  // of rediscovering HTML or container syntax here.
   const normalizedLines = lineContents(normalized);
   const authoredLines = lineContents(authored);
   if (normalizedLines.length !== authoredLines.length) {
@@ -207,10 +214,16 @@ function rawHtmlSourceProjection(
     const authoredLine = authoredLines[index]!;
     const normalizedText = normalized.slice(normalizedLine.start, normalizedLine.end);
     const authoredText = authored.slice(authoredLine.start, authoredLine.end);
-    if (!authoredText.endsWith(normalizedText)) {
+    const prefixLength = authoredText.length - normalizedText.length;
+    if (
+      prefixLength < 0 ||
+      !matchesCommonMarkPreprocessing(
+        normalizedText,
+        authoredText.slice(prefixLength),
+      )
+    ) {
       throw new TypeError("Parser-reported raw HTML does not map to authored source");
     }
-    const prefixLength = authoredText.length - normalizedText.length;
     return {
       normalizedStart: normalizedLine.start,
       normalizedEnd: normalizedLine.end,
@@ -238,6 +251,18 @@ function rawHtmlSourceProjection(
       return locator.range(projectOffset(start), projectOffset(end));
     },
   };
+}
+
+function matchesCommonMarkPreprocessing(
+  normalized: string,
+  authored: string,
+): boolean {
+  if (normalized.length !== authored.length) return false;
+  for (let index = 0; index < normalized.length; index++) {
+    if (normalized[index] === authored[index]) continue;
+    if (normalized[index] !== "\uFFFD" || authored[index] !== "\0") return false;
+  }
+  return true;
 }
 
 function isHtmlElement(node: HtmlChildNode): node is HtmlElement {
@@ -350,14 +375,19 @@ export function analyzeMarkdown(
   value: string,
   frontmatter: boolean,
 ): ContentAnalysisResult {
+  const locator = createSourceLocator(value);
+  const source = analyzeFrontmatterSource(value, frontmatter, locator);
+  if (source.kind === "syntax-error") return source;
   const processor = unified().use(remarkParse).use(remarkGfm);
   if (frontmatter) processor.use(remarkFrontmatter, ["yaml"]);
-  const root = processor.parse(value);
-  const locator = createSourceLocator(value);
-  const diagnostic = yamlFrontmatterDiagnostic(value, root, locator);
-  return diagnostic === undefined
-    ? { kind: "document", ...analyzeMarkdownTree(value, root) }
-    : { kind: "syntax-error", diagnostic };
+  const root = processor.parse(source.value);
+  return {
+    kind: "document",
+    ...analyzeMarkdownTree(value, root, {
+      sourceOffset: source.offset,
+      sourceValue: source.value,
+    }),
+  };
 }
 
 function appendMarkdownChildren(pending: Nodes[], node: Nodes): void {
@@ -372,10 +402,10 @@ function markdownLinkDestination(
   value: string,
   node: LinkNode,
   locator: SourceLocator,
-  options: { readonly micromarkExtensions?: readonly Extension[] },
+  options: MarkdownAnalysisOptions,
   documentTokens: () => MarkdownTokens,
 ): ContentDestination | undefined {
-  const offsets = positionOffsets(node.position);
+  const offsets = positionOffsets(node.position, options.sourceOffset);
   if (offsets === undefined) return undefined;
   const authored = value.slice(offsets.start, offsets.end);
   const multiline = /[\r\n]/.test(authored);
@@ -383,7 +413,7 @@ function markdownLinkDestination(
   const tokens = multiline
     ? documentTokens()
     : markdownTokens(authored, options.micromarkExtensions);
-  return linkDestination(value, node, locator, tokens, tokenBase);
+  return linkDestination(value, node, locator, tokens, tokenBase, offsets);
 }
 
 function appendMarkdownHtmlDestinations(
@@ -391,8 +421,9 @@ function appendMarkdownHtmlDestinations(
   node: Extract<Nodes, { type: "html" }>,
   locator: SourceLocator,
   destinations: ContentDestination[],
+  sourceOffset: number,
 ): void {
-  const offsets = positionOffsets(node.position);
+  const offsets = positionOffsets(node.position, sourceOffset);
   if (offsets === undefined) return;
   destinations.push(...rawHtmlAnalysis(
     node.value,
@@ -409,13 +440,14 @@ function appendDefinitionDestinations(
   definitionTokens: MarkdownTokens | undefined,
   locator: SourceLocator,
   destinations: ContentDestination[],
+  sourceOffset: number,
 ): void {
   const resolvedDefinitions = new Set<string>();
   for (const definition of definitions) {
     if (resolvedDefinitions.has(definition.identifier)) continue;
     resolvedDefinitions.add(definition.identifier);
     if (!usedDefinitions.has(definition.identifier)) continue;
-    const offsets = positionOffsets(definition.position);
+    const offsets = positionOffsets(definition.position, sourceOffset);
     if (offsets === undefined) continue;
     const destination = definitionTokens === undefined
       ? undefined
@@ -435,7 +467,7 @@ function appendMarkdownNodeDestinations(
   value: string,
   node: Nodes,
   locator: SourceLocator,
-  options: { readonly micromarkExtensions?: readonly Extension[] },
+  options: MarkdownAnalysisOptions,
   documentTokens: () => MarkdownTokens,
   destinations: ContentDestination[],
 ): void {
@@ -445,14 +477,26 @@ function appendMarkdownNodeDestinations(
     return;
   }
   if (node.type === "html") {
-    appendMarkdownHtmlDestinations(value, node, locator, destinations);
+    appendMarkdownHtmlDestinations(
+      value,
+      node,
+      locator,
+      destinations,
+      options.sourceOffset,
+    );
   }
+}
+
+interface MarkdownAnalysisOptions {
+  readonly micromarkExtensions?: readonly Extension[];
+  readonly sourceOffset: number;
+  readonly sourceValue: string;
 }
 
 interface MarkdownCollectionContext {
   readonly value: string;
   readonly locator: SourceLocator;
-  readonly options: { readonly micromarkExtensions?: readonly Extension[] };
+  readonly options: MarkdownAnalysisOptions;
   readonly documentTokens: () => MarkdownTokens;
   readonly destinations: ContentDestination[];
   readonly usedDefinitions: Set<string>;
@@ -481,10 +525,15 @@ function collectMarkdownNode(
 export function analyzeMarkdownTree(
   value: string,
   root: Root,
-  options: { readonly micromarkExtensions?: readonly Extension[] } = {},
+  options: Partial<MarkdownAnalysisOptions> = {},
 ): {
   readonly destinations: readonly ContentDestination[];
 } {
+  const resolvedOptions: MarkdownAnalysisOptions = {
+    micromarkExtensions: options.micromarkExtensions,
+    sourceOffset: options.sourceOffset ?? 0,
+    sourceValue: options.sourceValue ?? value,
+  };
   const locator = createSourceLocator(value);
   const destinations: ContentDestination[] = [];
   const usedDefinitions = new Set<string>();
@@ -493,14 +542,18 @@ export function analyzeMarkdownTree(
   let documentTokens: MarkdownTokens | undefined;
 
   function getDocumentTokens(): MarkdownTokens {
-    documentTokens ??= markdownTokens(value, options.micromarkExtensions);
+    documentTokens ??= markdownTokens(
+      resolvedOptions.sourceValue,
+      resolvedOptions.micromarkExtensions,
+      resolvedOptions.sourceOffset,
+    );
     return documentTokens;
   }
 
   const collection: MarkdownCollectionContext = {
     value,
     locator,
-    options,
+    options: resolvedOptions,
     documentTokens: getDocumentTokens,
     destinations,
     usedDefinitions,
@@ -524,6 +577,7 @@ export function analyzeMarkdownTree(
     definitionTokens,
     locator,
     destinations,
+    resolvedOptions.sourceOffset,
   );
 
   return { destinations };

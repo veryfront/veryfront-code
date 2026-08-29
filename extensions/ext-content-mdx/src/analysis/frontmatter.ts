@@ -1,42 +1,22 @@
 import { parse } from "@std/yaml/parse";
-import type { Root } from "mdast";
-import type { Position } from "unist";
+import { matchFrontMatterSource } from "#veryfront/platform/compat/std/front-matter-source.ts";
 
 import type { SourceLocator } from "./source.ts";
 import type { ContentSyntaxDiagnostic } from "./types.ts";
 
-interface YamlFrontmatterNode {
-  readonly type: "yaml";
-  readonly value: string;
-  readonly position?: Position;
-}
-
-function isYamlFrontmatterNode(node: unknown): node is YamlFrontmatterNode {
-  if (typeof node !== "object" || node === null) return false;
-  return Object.getOwnPropertyDescriptor(node, "type")?.value === "yaml" &&
-    typeof Object.getOwnPropertyDescriptor(node, "value")?.value === "string";
-}
-
-function hasCompilerClosingFence(value: string, node: YamlFrontmatterNode): boolean {
-  const end = node.position?.end;
-  if (end?.offset === undefined) {
-    throw new TypeError("YAML frontmatter node has no source position");
+export type FrontmatterAnalysis =
+  | {
+    readonly kind: "source";
+    readonly offset: number;
+    readonly value: string;
   }
-  // remark accepts whitespace after the marker, but compilation requires an exact fence.
-  if (end.column !== 4) return false;
-  return end.offset === value.length || value[end.offset] === "\n" ||
-    value.startsWith("\r\n", end.offset);
-}
+  | {
+    readonly kind: "syntax-error";
+    readonly diagnostic: ContentSyntaxDiagnostic;
+  };
 
-function contentStart(value: string, node: YamlFrontmatterNode): number {
-  const start = node.position?.start.offset ?? 0;
-  for (let index = start; index < value.length; index++) {
-    if (value[index] === "\n") return index + 1;
-    if (value[index] === "\r") {
-      return value[index + 1] === "\n" ? index + 2 : index + 1;
-    }
-  }
-  return start;
+function source(value: string, offset = 0): FrontmatterAnalysis {
+  return { kind: "source", offset, value };
 }
 
 function ownValue(value: unknown, key: PropertyKey): unknown {
@@ -120,32 +100,32 @@ function yamlErrorOffset(error: SyntaxError, yaml: string): number | undefined {
   return match === null ? undefined : lineColumnOffset(yaml, Number(match[1]), Number(match[2]));
 }
 
-export function yamlFrontmatterDiagnostic(
+export function analyzeFrontmatterSource(
   value: string,
-  root: Root,
+  enabled: boolean,
   locator: SourceLocator,
-): ContentSyntaxDiagnostic | undefined {
-  // Content compilation extracts YAML only after an LF or CRLF opening fence.
-  // remark-frontmatter also recognizes bare CR, so keep validation on the
-  // compiler's deterministic extraction grammar instead of rejecting content
-  // that compilation treats as an unparsed frontmatter block.
-  if (!value.startsWith("---\n") && !value.startsWith("---\r\n")) return undefined;
+): FrontmatterAnalysis {
+  if (!enabled) return source(value);
+  const matched = matchFrontMatterSource(value);
+  if (matched === undefined) return source(value);
 
-  for (const node of root.children) {
-    if (!isYamlFrontmatterNode(node)) continue;
-    if (!hasCompilerClosingFence(value, node)) continue;
-    try {
-      if (node.value.trim() !== "") parse(node.value);
-    } catch (error) {
-      if (!(error instanceof SyntaxError)) throw error;
-      const firstLine = error.message.split("\n", 1)[0]?.trim() || error.name;
-      const start = contentStart(value, node);
-      const point = locator.point(start + (yamlErrorOffset(error, node.value) ?? 0));
-      return {
+  try {
+    if (matched.frontMatter.trim() !== "") parse(matched.frontMatter);
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    const firstLine = error.message.split("\n", 1)[0]?.trim() || error.name;
+    const point = locator.point(
+      matched.frontMatterStart +
+        (yamlErrorOffset(error, matched.frontMatter) ?? 0),
+    );
+    return {
+      kind: "syntax-error",
+      diagnostic: {
         message: `Invalid YAML frontmatter: ${firstLine}`,
         range: { start: point, end: point },
-      };
-    }
+      },
+    };
   }
-  return undefined;
+
+  return source(matched.body, matched.bodyStart);
 }

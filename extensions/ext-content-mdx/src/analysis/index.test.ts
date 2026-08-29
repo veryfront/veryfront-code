@@ -223,6 +223,36 @@ describe("analyzeContent Markdown", () => {
     assertStringIncludes(result.diagnostic.message, "Invalid YAML frontmatter");
   });
 
+  it("validates frontmatter recognized by the compiler before Markdown parsing", async () => {
+    const value = "---\ntitle: [---\n[Visible](../visible.md)";
+    const result = await analyzeContent({
+      value,
+      syntax: "markdown",
+      frontmatter: true,
+    });
+
+    assert(result.kind === "syntax-error");
+    assertEquals(result.diagnostic.range.start.line, 2);
+    assertStringIncludes(result.diagnostic.message, "Invalid YAML frontmatter");
+  });
+
+  it("analyzes only the compiler-extracted Markdown body", async () => {
+    const value = '---\nsummary: "[Hidden](../hidden.md)"---\n' +
+      "[Visible](../visible.md)";
+    const result = await analyzeContent({
+      value,
+      syntax: "markdown",
+      frontmatter: true,
+    });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => destination.rawValue),
+      ["../visible.md"],
+    );
+    assertEquals(result.destinations[0]?.range.start.line, 3);
+  });
+
   it("accepts malformed bare-carriage-return frontmatter like the compiler", async () => {
     const result = await analyzeContent({
       value: "---\rtitle: [unterminated\r---\rVisible",
@@ -304,6 +334,32 @@ describe("analyzeContent Markdown", () => {
     });
   });
 
+  it("preserves authored HTML offsets across CommonMark NUL normalization", async () => {
+    const nul = "\0";
+    const value = `<a href="../private${nul}.md">x</a>`;
+
+    const result = await analyzeContent({ value, syntax: "markdown" });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => ({
+        rawValue: destination.rawValue,
+        normalizedValue: Reflect.get(destination, "normalizedValue"),
+        source: value.slice(
+          destination.range.start.offset,
+          destination.range.end.offset,
+        ),
+        offset: destination.range.start.offset,
+      })),
+      [{
+        rawValue: `../private${nul}.md`,
+        normalizedValue: "../private\uFFFD.md",
+        source: `../private${nul}.md`,
+        offset: value.indexOf("../private"),
+      }],
+    );
+  });
+
   it("keeps raw-text HTML bodies and comments out of destination analysis", async () => {
     const value = '<script src="../loader.js">\n' +
       '<a href="../hidden.md">hidden</a>\n' +
@@ -381,6 +437,34 @@ describe("analyzeContent Markdown", () => {
         offset: value.indexOf("../nested.md"),
         line: 2,
         column: 12,
+      }],
+    );
+  });
+
+  it("projects CommonMark-normalized HTML inside block containers", async () => {
+    const nul = "\0";
+    const value = "> <div>\n" +
+      `> <a href="../private${nul}.md">x</a>\n` +
+      "> </div>";
+
+    const result = await analyzeContent({ value, syntax: "markdown" });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => ({
+        rawValue: destination.rawValue,
+        normalizedValue: Reflect.get(destination, "normalizedValue"),
+        source: value.slice(
+          destination.range.start.offset,
+          destination.range.end.offset,
+        ),
+        offset: destination.range.start.offset,
+      })),
+      [{
+        rawValue: `../private${nul}.md`,
+        normalizedValue: "../private\uFFFD.md",
+        source: `../private${nul}.md`,
+        offset: value.indexOf("../private"),
       }],
     );
   });
@@ -849,6 +933,52 @@ describe("analyzeContent MDX", () => {
       column: 21,
     });
     assertStringIncludes(result.diagnostic.message, "Invalid YAML frontmatter");
+  });
+
+  it("validates frontmatter recognized by the compiler before MDX parsing", async () => {
+    const value = "---\ntitle: [---\n<Card />";
+    const result = await analyzeContent({
+      value,
+      syntax: "mdx",
+      frontmatter: true,
+    });
+
+    assert(result.kind === "syntax-error");
+    assertEquals(result.diagnostic.range.start.line, 2);
+    assertStringIncludes(result.diagnostic.message, "Invalid YAML frontmatter");
+  });
+
+  it("analyzes only the compiler-extracted MDX body", async () => {
+    const value = "---\nsummary: \"<Broken href='../hidden.md'>\"---\n" +
+      '<Card href="../visible.md" />';
+    const result = await analyzeContent({
+      value,
+      syntax: "mdx",
+      frontmatter: true,
+    });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => destination.rawValue),
+      ["../visible.md"],
+    );
+    assertEquals(result.destinations[0]?.range.start.line, 3);
+  });
+
+  it("maps MDX body diagnostics through the compiler frontmatter boundary", async () => {
+    const value = "---\ntitle: ok\n---\n<Card>text</Panel>";
+    const result = await analyzeContent({
+      value,
+      syntax: "mdx",
+      frontmatter: true,
+    });
+
+    assert(result.kind === "syntax-error");
+    assertEquals(result.diagnostic.range.start.line, 4);
+    assertEquals(
+      result.diagnostic.range.start.offset,
+      value.indexOf("</Panel>"),
+    );
   });
 
   it("accepts malformed bare-carriage-return frontmatter like the compiler", async () => {

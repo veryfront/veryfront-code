@@ -29,7 +29,7 @@ import {
   isDestinationAttribute,
   MAX_EMBEDDED_CODE_UNITS,
 } from "./embedded-code.ts";
-import { yamlFrontmatterDiagnostic } from "./frontmatter.ts";
+import { analyzeFrontmatterSource } from "./frontmatter.ts";
 import { analyzeMarkdownTree } from "./markdown.ts";
 import { createSourceLocator, type SourceLocator } from "./source.ts";
 import type {
@@ -461,12 +461,13 @@ function capacityDiagnostic(
 function parserDiagnostic(
   error: Error,
   locator: SourceLocator,
+  sourceOffset: number,
 ): ContentSyntaxDiagnostic | undefined {
   const place = own(error, "place");
   const start = own(place, "start") ?? place;
   const offset = own(start, "offset");
   if (typeof offset === "number") {
-    const point = locator.point(offset);
+    const point = locator.point(sourceOffset + offset);
     return { message: parserMessage(error), range: { start: point, end: point } };
   }
   return undefined;
@@ -474,8 +475,9 @@ function parserDiagnostic(
 
 function parseMdxRoot(
   value: string,
-  frontmatter: boolean,
   locator: SourceLocator,
+  sourceOffset: number,
+  frontmatter: boolean,
 ): { readonly kind: "root"; readonly root: MdxRoot } | ContentAnalysisResult {
   const processor = createMdxProcessor(frontmatter);
   lexicalCache = undefined;
@@ -486,7 +488,7 @@ function parseMdxRoot(
     if (capacityError !== undefined) {
       return {
         kind: "syntax-error",
-        diagnostic: capacityDiagnostic(locator, capacityError.pos),
+        diagnostic: capacityDiagnostic(locator, sourceOffset + capacityError.pos),
       };
     }
     return { kind: "root", root };
@@ -495,11 +497,11 @@ function parseMdxRoot(
     if (capacityError !== undefined) {
       return {
         kind: "syntax-error",
-        diagnostic: capacityDiagnostic(locator, capacityError.pos),
+        diagnostic: capacityDiagnostic(locator, sourceOffset + capacityError.pos),
       };
     }
     if (!(error instanceof Error)) throw error;
-    const diagnostic = parserDiagnostic(error, locator);
+    const diagnostic = parserDiagnostic(error, locator, sourceOffset);
     if (diagnostic === undefined) throw error;
     return { kind: "syntax-error", diagnostic };
   } finally {
@@ -510,10 +512,13 @@ function parseMdxRoot(
 
 function positionOffsets(
   position: Position | undefined,
+  sourceOffset: number,
 ): { readonly start: number; readonly end: number } | undefined {
   const start = position?.start.offset;
   const end = position?.end.offset;
-  return start === undefined || end === undefined ? undefined : { start, end };
+  return start === undefined || end === undefined
+    ? undefined
+    : { start: sourceOffset + start, end: sourceOffset + end };
 }
 
 function childrenOf(node: Nodes): readonly Nodes[] {
@@ -524,8 +529,9 @@ function quotedAttributeDestination(
   value: string,
   position: Position | undefined,
   locator: SourceLocator,
+  sourceOffset: number,
 ): ContentDestination | undefined {
-  const offsets = positionOffsets(position);
+  const offsets = positionOffsets(position, sourceOffset);
   if (offsets === undefined) return undefined;
   const authored = value.slice(offsets.start, offsets.end);
   const equals = authored.indexOf("=");
@@ -550,8 +556,9 @@ function embeddedInput(
   expression: { readonly value: string; readonly position?: Position },
   attributeName: string | undefined,
   fragmentKind: EmbeddedInput["fragmentKind"],
+  sourceOffset: number,
 ): EmbeddedInput | undefined {
-  const offsets = positionOffsets(expression.position);
+  const offsets = positionOffsets(expression.position, sourceOffset);
   if (offsets === undefined) return undefined;
   const authored = value.slice(offsets.start, offsets.end);
   const brace = authored.indexOf("{");
@@ -565,8 +572,9 @@ function embeddedInput(
 
 function documentExpressionInput(
   node: Extract<Nodes, { type: "mdxFlowExpression" | "mdxTextExpression" }>,
+  sourceOffset: number,
 ): EmbeddedInput | undefined {
-  const offsets = positionOffsets(node.position);
+  const offsets = positionOffsets(node.position, sourceOffset);
   return offsets === undefined ? undefined : {
     source: node.value,
     absoluteStart: offsets.start + 1,
@@ -589,9 +597,10 @@ function collectMdxNodeInputs(
   locator: SourceLocator,
   destinations: ContentDestination[],
   embedded: EmbeddedInput[],
+  sourceOffset: number,
 ): void {
   if (node.type === "mdxFlowExpression" || node.type === "mdxTextExpression") {
-    const input = documentExpressionInput(node);
+    const input = documentExpressionInput(node, sourceOffset);
     if (input !== undefined) embedded.push(input);
     return;
   }
@@ -601,7 +610,14 @@ function collectMdxNodeInputs(
   }
 
   for (const attribute of node.attributes) {
-    collectMdxAttribute(value, attribute, locator, destinations, embedded);
+    collectMdxAttribute(
+      value,
+      attribute,
+      locator,
+      destinations,
+      embedded,
+      sourceOffset,
+    );
   }
 }
 
@@ -611,16 +627,28 @@ function collectMdxAttribute(
   locator: SourceLocator,
   destinations: ContentDestination[],
   embedded: EmbeddedInput[],
+  sourceOffset: number,
 ): void {
   if (attribute.type === "mdxJsxExpressionAttribute") {
-    const input = embeddedInput(value, attribute, undefined, "jsx-spread-attribute");
+    const input = embeddedInput(
+      value,
+      attribute,
+      undefined,
+      "jsx-spread-attribute",
+      sourceOffset,
+    );
     if (input !== undefined) embedded.push(input);
     return;
   }
 
   if (typeof attribute.value === "string") {
     if (!isDestinationAttribute(attribute.name)) return;
-    const destination = quotedAttributeDestination(value, attribute.position, locator);
+    const destination = quotedAttributeDestination(
+      value,
+      attribute.position,
+      locator,
+      sourceOffset,
+    );
     if (destination !== undefined) destinations.push(destination);
     return;
   }
@@ -631,6 +659,7 @@ function collectMdxAttribute(
     { value: attribute.value.value, position: attribute.position },
     attribute.name,
     "expression",
+    sourceOffset,
   );
   if (input !== undefined) embedded.push(input);
 }
@@ -639,6 +668,7 @@ function collectMdxEmbeddedInputs(
   value: string,
   root: Nodes,
   locator: SourceLocator,
+  sourceOffset: number,
 ): {
   readonly destinations: readonly ContentDestination[];
   readonly embedded: readonly EmbeddedInput[];
@@ -650,7 +680,14 @@ function collectMdxEmbeddedInputs(
   while (pending.length > 0) {
     const node = pending.pop();
     if (node === undefined) break;
-    collectMdxNodeInputs(value, node, locator, destinations, embedded);
+    collectMdxNodeInputs(
+      value,
+      node,
+      locator,
+      destinations,
+      embedded,
+      sourceOffset,
+    );
     appendChildren(pending, node);
   }
 
@@ -689,22 +726,31 @@ export async function analyzeMdx(options: {
   readonly filePath: string | undefined;
 }): Promise<ContentAnalysisResult> {
   const locator = createSourceLocator(options.value);
-  const parsed = parseMdxRoot(options.value, options.frontmatter, locator);
-  if (parsed.kind !== "root") return parsed;
-
-  const frontmatterDiagnostic = yamlFrontmatterDiagnostic(
+  const source = analyzeFrontmatterSource(
     options.value,
-    parsed.root,
+    options.frontmatter,
     locator,
   );
-  if (frontmatterDiagnostic !== undefined) {
-    return { kind: "syntax-error", diagnostic: frontmatterDiagnostic };
-  }
+  if (source.kind === "syntax-error") return source;
+  const parsed = parseMdxRoot(
+    source.value,
+    locator,
+    source.offset,
+    options.frontmatter,
+  );
+  if (parsed.kind !== "root") return parsed;
 
   const markdown = analyzeMarkdownTree(options.value, parsed.root, {
     micromarkExtensions: [lexicalMdx],
+    sourceOffset: source.offset,
+    sourceValue: source.value,
   });
-  const mdx = collectMdxEmbeddedInputs(options.value, parsed.root, locator);
+  const mdx = collectMdxEmbeddedInputs(
+    options.value,
+    parsed.root,
+    locator,
+    source.offset,
+  );
   const destinations = [...markdown.destinations, ...mdx.destinations];
   const embeddedError = await appendEmbeddedAnalysisDestinations({
     embedded: mdx.embedded,

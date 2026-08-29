@@ -13,6 +13,7 @@
     "capabilities": []
   },
   "imports": {
+    "#veryfront/platform/compat/std/front-matter-source.ts": "../../src/platform/compat/std/front-matter-source.ts",
     "@std/yaml/parse": "jsr:@std/yaml@1.1.0/parse",
     "@veryfront/ext-parser-babel/parser-only": "../ext-parser-babel/src/parser-only.ts",
     "acorn": "npm:acorn@8.17.0",

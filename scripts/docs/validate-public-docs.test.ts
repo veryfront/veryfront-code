@@ -331,6 +331,18 @@ describe("public docs validation", () => {
     );
   });
 
+  it("preserves raw HTML destinations normalized by CommonMark", async () => {
+    const nul = "\0";
+
+    assertEquals(
+      await destinations(
+        `<a href="docs/architecture/private${nul}.md">private</a>`,
+        "markdown",
+      ),
+      ["docs/architecture/private\uFFFD.md"],
+    );
+  });
+
   it("ignores Markdown-looking text inside raw HTML blocks", async () => {
     for (const tag of ["pre", "script", "style", "textarea"]) {
       assertEquals(
@@ -2694,7 +2706,10 @@ describe("public docs validation", () => {
         issues[0]?.message ?? "",
         `Fix invalid ${extension === "mdx" ? "MDX" : "Markdown"} syntax`,
       );
-      assertStringIncludes(issues[0]?.message ?? "", "Invalid YAML frontmatter");
+      assertStringIncludes(
+        issues[0]?.message ?? "",
+        "Invalid YAML frontmatter",
+      );
 
       assertEquals(
         await collectIssues(
@@ -2709,6 +2724,17 @@ describe("public docs validation", () => {
           "---\ntitle: [unterminated\n---   \n",
         ),
         [],
+      );
+
+      const inlineFenceIssues = await collectIssues(
+        `docs/guides/example.${extension}`,
+        "---\ntitle: [---\nVisible",
+      );
+      assertEquals(inlineFenceIssues.length, 1);
+      assertEquals(inlineFenceIssues[0]?.line, 2);
+      assertStringIncludes(
+        inlineFenceIssues[0]?.message ?? "",
+        "Invalid YAML frontmatter",
       );
     }
   });
