@@ -164,7 +164,7 @@ function autolinkDestination(
   return autolinkValue === node.url ? destination : { ...destination, normalizedValue: node.url };
 }
 
-const HTML_DESTINATION_ATTRIBUTES = new Set(["action", "href", "src"]);
+const HTML_DESTINATION_ATTRIBUTES = new Set(["action", "formaction", "href", "src"]);
 
 type HtmlChildNode = DefaultTreeAdapterMap["childNode"];
 type HtmlElement = DefaultTreeAdapterMap["element"];

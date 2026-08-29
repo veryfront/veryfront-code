@@ -223,10 +223,7 @@ function lexicalBoundaryState(
       if (cache.state.braceDepth > MAX_MDX_EXPRESSION_DEPTH) {
         throw mdxStructureLimitError(cache.position + token.start);
       }
-      if (cache.state.contextualSlash) {
-        cache.grammarRequired = true;
-        return cache.state;
-      }
+      if (cache.state.contextualSlash) cache.grammarRequired = true;
       if (token.type.label === "eof") break;
     }
   } catch (error) {
@@ -240,6 +237,8 @@ function lexicalBoundaryState(
     lexicalCache = undefined;
     throw error;
   }
+
+  if (cache.grammarRequired) return cache.state;
 
   const trailingComment = cache.comments.at(-1);
   if (

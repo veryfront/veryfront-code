@@ -101,7 +101,7 @@ export type EmbeddedCodeAnalysis =
 export function isDestinationAttribute(name: string | undefined): boolean {
   const normalized = name?.toLowerCase();
   return normalized === "href" || normalized === "src" ||
-    normalized === "action" || normalized === "xlinkhref";
+    normalized === "action" || normalized === "formaction" || normalized === "xlinkhref";
 }
 
 function parserMessage(error: Error): string {
@@ -491,6 +491,7 @@ function validateFragment(
   fallbackOffset: number,
   absoluteStart: number,
   locator: SourceLocator,
+  checkPrivateFields = true,
 ):
   | { readonly kind: "valid" }
   | { readonly kind: "syntax-error"; readonly diagnostic: ContentSyntaxDiagnostic } {
@@ -506,6 +507,7 @@ function validateFragment(
     AcornJsxParser.parse(`${prefix}${fragment.value}${suffix}`, {
       ecmaVersion: 2024,
       sourceType: "module",
+      checkPrivateFields,
     });
     return { kind: "valid" };
   } catch (error) {
@@ -1120,11 +1122,12 @@ class EmbeddedExpressionAnalyzer {
     if (expression.tokens.length === 1) return this.emptySpreadDiagnostic(expression);
     const spreadValidation = validateFragment(
       spreadAttributeFragment(this.options.source, expression),
-      "const __veryfront_value = <_Veryfront {",
-      "} />;\n",
+      "class _Veryfront { async *_veryfront() { const __veryfront_value = <_Veryfront {",
+      "} />; } }\n",
       expression.start,
       this.options.absoluteStart,
       this.options.locator,
+      false,
     );
     return spreadValidation.kind === "syntax-error" ? spreadValidation : undefined;
   }

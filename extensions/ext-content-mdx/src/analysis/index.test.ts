@@ -696,6 +696,28 @@ describe("analyzeContent MDX", () => {
     }
   });
 
+  it("accepts JSX spread operands that depend on their enclosing context", async () => {
+    for (
+      const value of [
+        "{(function* () { return <Card {...yield source} /> })}",
+        "{(function () { return <Card {...new.target} /> })}",
+        "{class A extends B { m() { return <Card {...super.x} /> } }}",
+        "{class A { #f = 1; m() { return <Card {...this.#f} /> } }}",
+      ]
+    ) {
+      const result = await analyzeContent({ value, syntax: "mdx" });
+
+      assert(result.kind === "document");
+    }
+  });
+
+  it("rejects a JSX spread operand used outside its enclosing construct", async () => {
+    const result = await analyzeContent({ value: "<Card {...yield x} />", syntax: "mdx" });
+
+    assert(result.kind === "syntax-error");
+    assertStringIncludes(result.diagnostic.message, "yield");
+  });
+
   it("uses MDX grammar for JSX expressions regardless of the source path", async () => {
     const result = await analyzeContent({
       value: "{<Card />}",
@@ -786,6 +808,20 @@ describe("analyzeContent MDX", () => {
     assertEquals(
       result.destinations.map((destination) => destination.rawValue),
       ["../top.md", "../nested.md"],
+    );
+  });
+
+  it("returns form submission override destinations", async () => {
+    const value = '<form action="../form.md"><button formaction="../raw.md" /></form>\n' +
+      '<button formAction="../jsx.md" />\n' +
+      '{<button formAction={"../nested.md"} />}';
+
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => destination.rawValue),
+      ["../form.md", "../raw.md", "../jsx.md", "../nested.md"],
     );
   });
 
@@ -1120,6 +1156,25 @@ describe("analyzeContent MDX", () => {
       result.destinations.map((destination) => destination.rawValue),
       ["../architecture/braces.md"],
     );
+  });
+
+  it("bounds nested JSX child expressions that follow a contextual slash", async () => {
+    const depth = 4_000;
+    const value = "{x / y ? " +
+      "<A>{".repeat(depth) +
+      "value" +
+      "}</A>".repeat(depth) +
+      " : null}";
+    const startedAt = performance.now();
+
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assert(result.kind === "syntax-error");
+    assertEquals(
+      result.diagnostic.message,
+      "Parser capacity exceeded for MDX structure",
+    );
+    assertLess(performance.now() - startedAt, 2_000);
   });
 
   it("bounds 4,000 nested JSX child expressions in the lexer", async () => {
