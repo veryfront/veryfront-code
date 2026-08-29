@@ -12,6 +12,7 @@ import { isNotFoundError, mkdir, remove, writeTextFile } from "#veryfront/compat
 import { join } from "#veryfront/compat/path";
 import { startProductionServer } from "../../../../src/server/production-server.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
+import { fetchViaLoopbackWithHost } from "../../../_helpers/server.ts";
 import { assertDrained } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 import { delay } from "#std/async";
@@ -439,9 +440,12 @@ describe(
             { name: "production", expectNodePositions: false },
           ] as const
         ) {
-          const res = await fetch(
-            `http://${context.projectId}.${scenario.name}.localhost:${port}/a/b/missing`,
-          );
+          const host = `${context.projectId}.${scenario.name}.localhost`;
+          const res = await fetchViaLoopbackWithHost({
+            port,
+            host,
+            path: "/a/b/missing",
+          });
           assertEquals(res.status, 404);
           assertMatch(res.headers.get("content-type") ?? "", /text\/html/i);
           const html = await res.text();

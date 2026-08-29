@@ -2,6 +2,7 @@ import { join } from "#veryfront/compat/path";
 import { isNotFoundError, makeTempDir, mkdir, remove } from "../../src/platform/compat/fs.ts";
 import { startDevServer } from "../../src/server/dev-server.ts";
 import { resetApiHandler } from "../../src/server/handlers/request/api/index.ts";
+import { fetchWithPinnedAddresses } from "../../src/platform/compat/http/pinned-fetch.ts";
 import { testDelay } from "#veryfront/testing";
 import { CLEANUP_CONFIG, SERVER_CONFIG, TEST_TIMEOUTS } from "./constants.ts";
 import { getFreePort } from "./utils.ts";
@@ -57,6 +58,26 @@ export async function fetchWithTimeout(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Issue a GET over loopback with an explicit HTTP Host header.
+ *
+ * Deno fetch cannot override Host, but some Linux CI environments do not
+ * resolve arbitrary `*.localhost` names. This keeps host-based routing under
+ * test without depending on system DNS.
+ */
+export async function fetchViaLoopbackWithHost(options: {
+  port: number;
+  host: string;
+  path: string;
+  headers?: Record<string, string>;
+}): Promise<Response> {
+  return await fetchWithPinnedAddresses(
+    new URL(`http://${options.host}:${options.port}${options.path}`),
+    ["127.0.0.1"],
+    { headers: options.headers },
+  );
 }
 
 /** Release a probe response's body so the connection does not linger as a leak. */
