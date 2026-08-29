@@ -13,6 +13,7 @@ const OFFLINE_REACT_MODULE_PREFIX = "/__veryfront_test_react__/";
 // RFC 5737 TEST-NET-1 address: the offline transport answers esm.sh requests
 // in-process, so this resolution result is never dialed.
 const OFFLINE_REACT_RESOLVED_ADDRESS = "192.0.2.1";
+const REACT_VERSION_19_1 = "19.1.1";
 const OFFLINE_UNIT_MODULE_FIXTURES: Readonly<Record<string, string>> = Object.freeze({
   "/lodash": "export function merge(left, right) { return { ...left, ...right }; }\n",
 });
@@ -23,6 +24,10 @@ const OFFLINE_REACT_PACKAGE_URLS = Object.freeze({
   [REACT_VERSION_18_3]: Object.freeze({
     react: import.meta.resolve("npm:react@18.3.1"),
     "react-dom": import.meta.resolve("npm:react-dom@18.3.1"),
+  }),
+  [REACT_VERSION_19_1]: Object.freeze({
+    react: import.meta.resolve("npm:react@19.1.1"),
+    "react-dom": import.meta.resolve("npm:react-dom@19.1.1"),
   }),
   [REACT_DEFAULT_VERSION]: Object.freeze({
     react: import.meta.resolve("npm:react@19.2.4"),
@@ -178,11 +183,11 @@ function createEntrySource(
 async function buildOfflineReactModules(): Promise<ReadonlyMap<string, string>> {
   const bundler = new EsbuildBundler();
   try {
-    const react18Path = fileURLToPath(
-      new URL(OFFLINE_REACT_PACKAGE_URLS[REACT_VERSION_18_3].react),
-    );
-    const reactDom18Directory = fileURLToPath(
-      new URL(".", OFFLINE_REACT_PACKAGE_URLS[REACT_VERSION_18_3]["react-dom"]),
+    const reactPathByReactDomDirectory = Object.values(OFFLINE_REACT_PACKAGE_URLS).map(
+      (urls) => ({
+        reactPath: fileURLToPath(new URL(urls.react)),
+        reactDomDirectory: fileURLToPath(new URL(".", urls["react-dom"])),
+      }),
     );
     const entryPoints = Object.fromEntries(
       Object.keys(OFFLINE_REACT_PACKAGE_URLS).flatMap((version) =>
@@ -210,7 +215,12 @@ async function buildOfflineReactModules(): Promise<ReadonlyMap<string, string>> 
         setup(build) {
           build.onResolve(
             { filter: /^react$/ },
-            (args) => args.importer.startsWith(reactDom18Directory) ? { path: react18Path } : null,
+            (args) => {
+              const match = reactPathByReactDomDirectory.find(({ reactDomDirectory }) =>
+                args.importer.startsWith(reactDomDirectory)
+              );
+              return match ? { path: match.reactPath } : null;
+            },
           );
           build.onResolve({ filter: /^offline-react:/ }, (args) => ({
             path: args.path.slice("offline-react:".length),

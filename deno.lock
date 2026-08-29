@@ -84,8 +84,10 @@
     "npm:protobufjs@7.6.5": "7.6.5",
     "npm:purgecss@8.0.0": "8.0.0",
     "npm:react-dom@18.3.1": "18.3.1_react@19.2.4",
+    "npm:react-dom@19.1.1": "19.1.1_react@19.2.4",
     "npm:react-dom@19.2.4": "19.2.4_react@19.2.4",
     "npm:react@18.3.1": "18.3.1",
+    "npm:react@19.1.1": "19.1.1",
     "npm:react@19.2.4": "19.2.4",
     "npm:redis@5.11.0": "5.11.0",
     "npm:reflect-metadata@0.2.2": "0.2.2",
@@ -4826,6 +4828,13 @@
         "scheduler@0.23.2"
       ]
     },
+    "react-dom@19.1.1_react@19.2.4": {
+      "integrity": "sha512-Dlq/5LAZgF0Gaz6yiqZCf6VCcZs1ghAJyrsu84Q/GT0gV+mCxbfmKNoGRKBYMJ8IEdGPqu49YWXD02GCknEDkw==",
+      "dependencies": [
+        "react@19.2.4",
+        "scheduler@0.26.0"
+      ]
+    },
     "react-dom@19.2.4_react@19.2.4": {
       "integrity": "sha512-AXJdLo8kgMbimY95O2aKQqsz2iWi9jMgKJhRBAxECE4IFxfcazB2LmzloIoibJI3C12IlY20+KFaLv+71bUJeQ==",
       "dependencies": [
@@ -4838,6 +4847,9 @@
       "dependencies": [
         "loose-envify"
       ]
+    },
+    "react@19.1.1": {
+      "integrity": "sha512-w8nqGImo45dmMIfljjMwOGtbmC/mk4CMYhWIicdSflH91J9TyCyczcPFXJzrZ/ZXcgGRFeP6BU0BEJTw6tZdfQ=="
     },
     "react@19.2.4": {
       "integrity": "sha512-9nfp2hYpCwOjAN+8TZFGhtWEwgvWHXqESH8qT89AT/lWklpLON22Lc8pEtnpsZz7VmawabSU0gCjnj8aC0euHQ=="
@@ -5075,6 +5087,9 @@
       "dependencies": [
         "loose-envify"
       ]
+    },
+    "scheduler@0.26.0": {
+      "integrity": "sha512-NlHwttCI/l5gCPR3D1nNXtWABUmBwvZpEQiD4IXSbIDq8BzLIK/7Ir5gTFSGZDUu37K5cMNp0hFtzO38sC7gWA=="
     },
     "scheduler@0.27.0": {
       "integrity": "sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q=="
