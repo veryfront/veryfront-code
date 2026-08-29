@@ -475,10 +475,10 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
 
   const providerMetadata = readAttachedProviderMetadata(message);
   const assistantMessages = messages.filter((entry) => entry.role === "assistant");
-  // Exact replay metadata describes one provider response. Attaching it after
+  // Provider metadata describes one provider response. Attaching it after
   // conversion split that response would pair it with an incomplete
   // projection, and dropping it would silently send the provider an unsigned
-  // canonical rebuild -- the failure replay state exists to prevent.
+  // canonical rebuild when the metadata came from replay state.
   if (providerMetadata !== undefined && assistantMessages.length === 1) {
     assistantMessages[0]!.providerMetadata = providerMetadata;
   } else if (providerMetadata !== undefined && messages.length === 0) {
@@ -489,8 +489,7 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
     });
   } else if (providerMetadata !== undefined) {
     throw PROVIDER_REPLAY_CHECKPOINT_INVALID.create({
-      detail:
-        "exact provider replay metadata cannot survive an assistant turn conversion that splits the turn",
+      detail: "provider metadata cannot be attached after assistant turn splitting",
       context: { assistantSegmentCount: assistantMessages.length },
     });
   }

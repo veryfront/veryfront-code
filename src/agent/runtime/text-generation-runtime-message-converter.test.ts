@@ -1,6 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import {
   convertToTextGenerationRuntimeMessage,
   convertToTextGenerationRuntimeMessages,
@@ -505,6 +511,37 @@ describe("text-generation-runtime-message-converter", () => {
         content: [{ type: "text", text: "" }],
         providerMetadata,
       }]);
+    });
+
+    it("reports split generic provider metadata without checkpoint-specific wording", () => {
+      const providerMetadata = { testProvider: { opaque: true } };
+      const message = attachProviderMetadata({
+        id: "a-split",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-lookup",
+            toolCallId: "call-1",
+            toolName: "lookup",
+            args: { query: "veryfront" },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "lookup",
+            result: { matches: 1 },
+          },
+          { type: "text", text: "Found it." },
+        ],
+      } as unknown as Message, providerMetadata);
+
+      const error = assertThrows(() => convertToTextGenerationRuntimeMessages([message]));
+      assertInstanceOf(error, VeryfrontError);
+
+      assertEquals(
+        error.detail,
+        "provider metadata cannot be attached after assistant turn splitting",
+      );
     });
 
     it("omits provider-executed tool-only assistant messages from replay", () => {
