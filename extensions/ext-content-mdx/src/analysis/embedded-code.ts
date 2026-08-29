@@ -398,18 +398,16 @@ function grammarTokens(source: string): TokenSpan[] {
   return tokens;
 }
 
-async function validateFragment(
+function validateFragment(
   fragment: ReducedFragment,
   prefix: string,
   suffix: string,
   fallbackOffset: number,
   absoluteStart: number,
   locator: SourceLocator,
-  filePath: string | undefined,
-): Promise<
-  | { readonly kind: "valid"; readonly ast: ASTNode | undefined }
-  | { readonly kind: "syntax-error"; readonly diagnostic: ContentSyntaxDiagnostic }
-> {
+):
+  | { readonly kind: "valid" }
+  | { readonly kind: "syntax-error"; readonly diagnostic: ContentSyntaxDiagnostic } {
   if (fragment.value.length > MAX_EMBEDDED_CODE_UNITS) {
     return {
       kind: "syntax-error",
@@ -423,14 +421,12 @@ async function validateFragment(
   }
 
   try {
-    if (!hasTokens(fragment.value)) return { kind: "valid", ast: undefined };
-    const ast = await babelParser.parse({
-      code: `${prefix}${fragment.value}${suffix}`,
-      filePath: filePath ?? "content.mdx",
-      decoratorMode: "current",
-      syntax: "javascript",
+    if (!hasTokens(fragment.value)) return { kind: "valid" };
+    AcornJsxParser.parse(`${prefix}${fragment.value}${suffix}`, {
+      ecmaVersion: 2024,
+      sourceType: "module",
     });
-    return { kind: "valid", ast };
+    return { kind: "valid" };
   } catch (error) {
     if (!(error instanceof SyntaxError) && !(error instanceof RangeError)) {
       throw error;
@@ -868,26 +864,24 @@ export async function analyzeEmbeddedExpression(options: {
   for (let start = 0; start < tags.length; start += tagBatchSize) {
     const batch = tags.slice(start, start + tagBatchSize);
     const tagFragment = tagValidationFragment(options.source, expressions, batch);
-    const tagValidation = await validateFragment(
+    const tagValidation = validateFragment(
       tagFragment,
       "const __veryfront_tags = [",
       "\n];",
       batch[0]?.start ?? 0,
       options.absoluteStart,
       options.locator,
-      options.filePath,
     );
     if (tagValidation.kind === "syntax-error") return tagValidation;
   }
 
-  const rootValidation = await validateFragment(
+  const rootValidation = validateFragment(
     reducedBuilder.result(),
     "const __veryfront_value = (",
     "\n);",
     expressionAt(expressions, 0)?.end ?? 0,
     options.absoluteStart,
     options.locator,
-    options.filePath,
   );
   if (rootValidation.kind === "syntax-error") return rootValidation;
 

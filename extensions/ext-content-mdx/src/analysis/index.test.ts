@@ -468,6 +468,14 @@ describe("analyzeContent MDX", () => {
     assertStringIncludes(result.diagnostic.message, "Unexpected");
   });
 
+  it("rejects JavaScript proposals outside the MDX compiler grammar", async () => {
+    const value = "{class { accessor value = source }}";
+
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assert(result.kind === "syntax-error");
+  });
+
   it("returns quoted and expression-backed static JSX destinations", async () => {
     const value = '<Card href="../a.md" src={"../b.png"} ' +
       "action={'../c'} data-template={`../d`} dynamic={target}>" +
@@ -576,6 +584,15 @@ describe("analyzeContent MDX", () => {
 
     assert(result.kind === "syntax-error");
     assertEquals(result.diagnostic.range.start.offset, value.indexOf("=="));
+  });
+
+  it("rejects adjacent JSX elements in one embedded expression", async () => {
+    const value = "{<One /><Two />}";
+
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assert(result.kind === "syntax-error");
+    assertEquals(result.diagnostic.range.start.offset, value.indexOf("<Two"));
   });
 
   it("accepts nested JSX spread attributes", async () => {
