@@ -583,11 +583,11 @@ export async function prepareHostedChatExecution<
         runtimeConfig: runtimePreparation.runtimeConfig,
       }),
       abortSignal: input.abortSignal,
+      providerReplayCheckpointMessageIds: input.serverResolvedProviderReplayCheckpoints?.map(
+        (checkpoint) => checkpoint.messageId,
+      ),
       historicalToolInputRetention: {
         diagnostics: historicalToolInputCompactions,
-        preserveSourceMessageIds: input.serverResolvedProviderReplayCheckpoints?.map(
-          (checkpoint) => checkpoint.messageId,
-        ),
       },
     },
   );

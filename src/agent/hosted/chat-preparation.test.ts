@@ -946,6 +946,105 @@ Deno.test("prepareHostedChatExecution strips configured provider history selecte
   }]);
 });
 
+Deno.test(
+  "prepareHostedChatExecution preserves provider history anchored by a server-resolved replay checkpoint",
+  async () => {
+    const messages: ChatUiMessage[] = [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Search the web." }],
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolName: "web_search",
+            toolCallId: "toolu_web_search",
+            input: { query: "Veryfront" },
+            state: "output-available",
+            providerExecuted: true,
+            output: null,
+          },
+          { type: "text", text: "I found the official site." },
+        ],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Continue." }],
+      },
+    ];
+
+    const result = await prepareHostedChatExecution({
+      request: createParsedHostedChatRequest({
+        messages,
+        model: "anthropic/claude-sonnet-4-6",
+        runtimeOverrides: { allowedTools: ["web_search"] },
+        durableRootRun: {
+          runId: "run-1",
+          messageId: "message-1",
+          latestEventId: 3,
+          latestExternalEventSequence: 2,
+        },
+      }),
+      agentConfig: {
+        id: "agent-1",
+        model: "anthropic/claude-sonnet-4-6",
+        providerTools: ["web_search"],
+      },
+      apiUrl: "https://api.example.com",
+      abortSignal: new AbortController().signal,
+      serverResolvedProviderReplayCheckpoints: [{
+        version: 1,
+        messageId: "assistant-1",
+        provider: "anthropic",
+        providerBlocks: [{
+          type: "provider-block",
+          provider: "anthropic",
+          block: {
+            type: "server_tool_use",
+            id: "toolu_web_search",
+            name: "web_search",
+            input: { query: "Veryfront" },
+          },
+        }],
+        providerBlockPositions: [0],
+        totalPartCount: 2,
+      }],
+      resolveModelId: (modelId) => modelId,
+      fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+      buildInstructions: () => "Agent instructions",
+      createRuntime: (options) =>
+        Promise.resolve({
+          runtimeKind: "framework",
+          modelId: options.model ?? "anthropic/claude-sonnet-4-6",
+          cleanup: () => Promise.resolve(),
+          agent: {
+            stream: () =>
+              Promise.resolve({
+                steps: Promise.resolve([]),
+                toUIMessageStream: async function* () {},
+              }),
+          },
+        }),
+    });
+
+    const checkpointedParts = result.finalMessages
+      .filter((message) => message.id === "assistant-1")
+      .flatMap((message) => message.parts);
+    assertEquals(
+      checkpointedParts.flatMap((part) =>
+        "toolCallId" in part && part.toolCallId === "toolu_web_search" ? [part.type] : []
+      ),
+      ["tool-call", "tool-result"],
+      "checkpointed provider call and result survive the production preparation entry point",
+    );
+  },
+);
+
 Deno.test("prepareHostedChatExecution does not carry old submitted form input into a new user turn", async () => {
   const messages: ChatUiMessage[] = [
     {
