@@ -61,7 +61,7 @@ export type ProviderReplayCheckpoint = {
 };
 
 type ApplyProviderReplayCheckpointsOptions = {
-  activeProvider?: ProviderReplayProvider;
+  activeProvider?: ProviderReplayProvider | "unsupported";
 };
 
 /**
@@ -158,6 +158,109 @@ function validateAnthropicProviderToolResultBlock(
   }
   if (block.type === "mcp_tool_result" && typeof block.is_error !== "boolean") {
     invalidCheckpoint("checkpoint provider tool-result block is malformed", context);
+  }
+}
+
+function hasValidAnthropicErrorContent(
+  content: Record<string, unknown>,
+  type: string,
+): boolean {
+  return content.type === type && isNonEmptyString(content.error_code);
+}
+
+function hasValidAnthropicMcpContent(value: unknown): boolean {
+  if (typeof value === "string") return true;
+  if (!Array.isArray(value)) return false;
+  return value.every((item) => {
+    if (!isRecord(item) || item.type !== "text" || typeof item.text !== "string") return false;
+    const citations = item.citations;
+    return citations === undefined || citations === null ||
+      Array.isArray(citations) &&
+        citations.every((citation) => isRecord(citation) && isNonEmptyString(citation.type));
+  });
+}
+
+function expectedAnthropicResultTypeForTool(toolName: string): string | undefined {
+  switch (toolName) {
+    case "web_search":
+      return "web_search_tool_result";
+    case "web_fetch":
+      return "web_fetch_tool_result";
+    case "code_execution":
+      return "code_execution_tool_result";
+    case "bash_code_execution":
+      return "bash_code_execution_tool_result";
+    case "text_editor_code_execution":
+      return "text_editor_code_execution_tool_result";
+    default:
+      return undefined;
+  }
+}
+
+function assertAnthropicProviderToolResultsMatchUses(
+  checkpoint: ProviderReplayCheckpoint,
+): void {
+  const providerToolNames = new Map<string, string>();
+
+  for (const replayBlock of checkpoint.providerBlocks) {
+    const block = replayBlock.block;
+    if (block.type !== "server_tool_use" && block.type !== "mcp_tool_use") continue;
+    const toolUse = toCanonicalAnthropicToolCall(block, true);
+    const toolCallId = String(toolUse.toolCallId);
+    if (providerToolNames.has(toolCallId)) {
+      invalidCheckpoint("checkpoint provider tool-use id is duplicated");
+    }
+    providerToolNames.set(toolCallId, String(toolUse.toolName));
+  }
+
+  for (const replayBlock of checkpoint.providerBlocks) {
+    const block = replayBlock.block;
+    if (
+      typeof block.type !== "string" ||
+      !ANTHROPIC_PROVIDER_TOOL_RESULT_TYPES.has(block.type)
+    ) {
+      continue;
+    }
+    validateAnthropicProviderToolResultBlock(block);
+    const toolCallId = String(block.tool_use_id);
+    const toolName = providerToolNames.get(toolCallId);
+    if (!toolName) {
+      invalidCheckpoint("checkpoint provider tool-result has no matching provider tool-use");
+    }
+    if (block.type === "mcp_tool_result") {
+      if (!hasValidAnthropicMcpContent(block.content)) {
+        invalidCheckpoint("checkpoint MCP tool-result content is malformed");
+      }
+      continue;
+    }
+    const expectedType = expectedAnthropicResultTypeForTool(toolName);
+    if (block.type !== expectedType) {
+      invalidCheckpoint("checkpoint provider tool-result type does not match its tool-use");
+    }
+    const content = isRecord(block.content) ? block.content : undefined;
+    if (
+      (block.type === "web_search_tool_result" && isRecord(block.content) &&
+        !hasValidAnthropicErrorContent(block.content, "web_search_tool_result_error")) ||
+      (block.type === "web_fetch_tool_result" && content?.type !== "web_fetch_result" &&
+        !hasValidAnthropicErrorContent(content ?? {}, "web_fetch_tool_result_error")) ||
+      (block.type === "code_execution_tool_result" &&
+        content?.type !== "code_execution_result" &&
+        content?.type !== "encrypted_code_execution_result" &&
+        !hasValidAnthropicErrorContent(content ?? {}, "code_execution_tool_result_error")) ||
+      (block.type === "bash_code_execution_tool_result" &&
+        content?.type !== "bash_code_execution_result" &&
+        !hasValidAnthropicErrorContent(content ?? {}, "bash_code_execution_tool_result_error")) ||
+      (block.type === "text_editor_code_execution_tool_result" &&
+        content?.type !== "text_editor_code_execution_view_result" &&
+        content?.type !== "text_editor_code_execution_create_result" &&
+        content?.type !== "text_editor_code_execution_str_replace_result" &&
+        !hasValidAnthropicErrorContent(
+          content ?? {},
+          "text_editor_code_execution_tool_result_error",
+        ))
+    ) {
+      invalidCheckpoint("checkpoint provider tool-result content is malformed");
+    }
   }
 }
 
@@ -549,12 +652,16 @@ export function applyProviderReplayCheckpointsToMessages(
   // turn is absent, so deployment skew surfaces immediately.
   for (const checkpoint of checkpoints) {
     assertReconstructibleProviderReplayCheckpoint(checkpoint);
+    if (options.activeProvider === "unsupported") {
+      invalidCheckpoint("active model provider cannot replay provider checkpoints");
+    }
     if (options.activeProvider !== undefined && checkpoint.provider !== options.activeProvider) {
       invalidCheckpoint("checkpoint provider does not match the active model provider", {
         checkpointProvider: checkpoint.provider,
         activeProvider: options.activeProvider,
       });
     }
+    assertAnthropicProviderToolResultsMatchUses(checkpoint);
   }
   for (const checkpoint of checkpoints) {
     const matches = messages.filter((message) => message.id === checkpoint.messageId);

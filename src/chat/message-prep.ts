@@ -1384,6 +1384,10 @@ export function maskOldToolOutputs(
     }
 
     if (msg.role !== "tool" || !Array.isArray(msg.content)) return msg;
+    const sourceMessageId = getProviderModelMessageSourceId(msg);
+    if (sourceMessageId && preservedSourceMessageIds.has(sourceMessageId)) {
+      return msg;
+    }
 
     const newContent: ChatToolResultPart[] = msg.content.map((part) => {
       if (part.type !== "tool-result") {

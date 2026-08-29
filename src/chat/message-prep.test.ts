@@ -348,6 +348,44 @@ Deno.test("maskOldToolOutputs preserves checkpointed historical reasoning", () =
   assertEquals(preserved[1], messages[1]);
 });
 
+Deno.test("maskOldToolOutputs preserves checkpointed historical provider tool outputs", () => {
+  const messages = [
+    { role: "user", content: "run the provider tool" },
+    withProviderModelMessageSourceId(
+      {
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: "srvtool-1",
+          toolName: "web_fetch",
+          input: { url: "https://veryfront.com/docs" },
+          providerExecuted: true,
+        }],
+      },
+      "assistant-1",
+    ),
+    withProviderModelMessageSourceId(
+      {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "srvtool-1",
+          toolName: "web_fetch",
+          output: { type: "json", value: { content: "x".repeat(600) } },
+        }],
+      },
+      "assistant-1",
+    ),
+    { role: "user", content: "continue" },
+  ] satisfies ProviderModelMessage[];
+
+  const preserved = maskOldToolOutputs(messages, {
+    preserveSourceMessageIds: ["assistant-1"],
+  });
+
+  assertEquals(preserved[2], messages[2]);
+});
+
 Deno.test("maskOldToolOutputs masks historical web_search, readFile, web_fetch and task results per tool", () => {
   const messages = [
     { role: "user", content: "gather context" },

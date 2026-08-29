@@ -112,7 +112,7 @@ const FILE_SIZE_CEILINGS: Record<string, number> = {
   // reconciliation). Not React components, so this map does not subject them
   // to the antipattern ratchets above — it only pins their size.
   "src/chat/conversation.ts": 557,
-  "src/chat/message-prep.ts": 1916,
+  "src/chat/message-prep.ts": 1789,
   "src/chat/tool-replay-reconciliation.ts": 291,
   "src/chat/message-part-parsing.ts": 264,
   "src/chat/part-field-access.ts": 65,

@@ -789,6 +789,112 @@ describe("agent/runtime/provider-replay", () => {
       );
     });
 
+    it("should reject provider tool results that do not match their tool use type", () => {
+      const providerCall = {
+        type: "server_tool_use",
+        id: "srvtool-web-fetch",
+        name: "web_fetch",
+        input: { url: "https://veryfront.com/docs" },
+        caller: { type: "direct" },
+      };
+      const providerResult = {
+        type: "web_search_tool_result",
+        tool_use_id: providerCall.id,
+        caller: { type: "direct" },
+        content: [],
+      };
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-call",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            args: providerCall.input,
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            result: [],
+            providerExecuted: true,
+          },
+        ],
+        timestamp: 1,
+      } as Message;
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: target.id,
+        provider: "anthropic",
+        providerBlocks: [providerCall, providerResult].map((block) => ({
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block,
+        })),
+        providerBlockPositions: [0, 1],
+        totalPartCount: 2,
+      };
+
+      assertProviderReplayError(() =>
+        applyProviderReplayCheckpointsToMessages([target], [checkpoint])
+      );
+    });
+
+    it("should reject malformed MCP result elements at the checkpoint boundary", () => {
+      const providerCall = {
+        type: "mcp_tool_use",
+        id: "srvtool-mcp",
+        name: "search_docs",
+        server_name: "docs",
+        input: { query: "provider replay" },
+      };
+      const providerResult = {
+        type: "mcp_tool_result",
+        tool_use_id: providerCall.id,
+        is_error: false,
+        content: [{ type: "image" }],
+      };
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-call",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            args: providerCall.input,
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            result: [],
+            providerExecuted: true,
+          },
+        ],
+        timestamp: 1,
+      } as Message;
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: target.id,
+        provider: "anthropic",
+        providerBlocks: [providerCall, providerResult].map((block) => ({
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block,
+        })),
+        providerBlockPositions: [0, 1],
+        totalPartCount: 2,
+      };
+
+      assertProviderReplayError(() =>
+        applyProviderReplayCheckpointsToMessages([target], [checkpoint])
+      );
+    });
+
     it("should accept a provider tool turn whose text was persisted as one concatenated part", () => {
       const leadingText = { type: "text", text: "Let me search. " };
       const providerCall = {
@@ -1130,6 +1236,18 @@ describe("agent/runtime/provider-replay", () => {
           [target],
           [createValidCheckpoint()],
           { activeProvider: "openai-responses" },
+        )
+      );
+    });
+
+    it("should reject checkpoints when the active model provider cannot replay them", () => {
+      const target = createCheckpointedAssistantMessage("assistant-message-1");
+
+      assertProviderReplayError(() =>
+        applyProviderReplayCheckpointsToMessages(
+          [target],
+          [createValidCheckpoint()],
+          { activeProvider: "unsupported" },
         )
       );
     });

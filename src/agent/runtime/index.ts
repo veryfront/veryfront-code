@@ -64,6 +64,7 @@ import { MiddlewareChain } from "../middleware/chain.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import {
+  getModelRuntimeId,
   getModelRuntimeProvider,
   isLocalModelRuntime,
   supportsModelRuntimeToolCalling,
@@ -204,11 +205,14 @@ const NativeError = Error;
 
 function getActiveProviderReplayProvider(
   languageModel: ModelRuntime,
-): ProviderReplayProvider | undefined {
-  const provider = getModelRuntimeProvider(languageModel);
+): ProviderReplayProvider | "unsupported" {
+  const provider =
+    (typeof languageModel.modelProvider === "string" ? languageModel.modelProvider : undefined) ??
+      getModelRuntimeProvider(languageModel) ??
+      getModelRuntimeId(languageModel)?.split("/")[0];
   if (provider === "anthropic") return "anthropic";
   if (provider === "openai") return "openai-responses";
-  return undefined;
+  return "unsupported";
 }
 
 function resolveRuntimeGenAiProviderName(modelId: string): string | undefined {
