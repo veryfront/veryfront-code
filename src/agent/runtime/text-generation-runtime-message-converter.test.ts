@@ -538,6 +538,7 @@ describe("text-generation-runtime-message-converter", () => {
       const error = assertThrows(() => convertToTextGenerationRuntimeMessages([message]));
       assertInstanceOf(error, VeryfrontError);
 
+      assertEquals(error.slug, "provider-metadata-split-unsupported");
       assertEquals(
         error.detail,
         "provider metadata cannot be attached after assistant turn splitting",

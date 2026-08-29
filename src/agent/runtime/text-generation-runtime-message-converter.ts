@@ -18,7 +18,7 @@ import type {
 } from "./text-generation-runtime-message-types.ts";
 import { assertProviderReachableAttachment } from "./attachment-reachability.ts";
 import { buildDataFileAnnotation } from "#veryfront/chat/types.ts";
-import { PROVIDER_REPLAY_CHECKPOINT_INVALID } from "#veryfront/errors";
+import { PROVIDER_METADATA_SPLIT_UNSUPPORTED } from "#veryfront/errors";
 import { getTextFromParts, getToolArguments, type Message, type ToolCallPart } from "../types.ts";
 import { readAttachedProviderMetadata } from "./provider-metadata.ts";
 
@@ -488,7 +488,7 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
       providerMetadata,
     });
   } else if (providerMetadata !== undefined) {
-    throw PROVIDER_REPLAY_CHECKPOINT_INVALID.create({
+    throw PROVIDER_METADATA_SPLIT_UNSUPPORTED.create({
       detail: "provider metadata cannot be attached after assistant turn splitting",
       context: { assistantSegmentCount: assistantMessages.length },
     });

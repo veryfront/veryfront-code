@@ -94,6 +94,20 @@ export const PROVIDER_REPLAY_CHECKPOINT_INVALID = defineError({
     "Verify the trusted source that resolved the run's provider replay checkpoints; do not retry with the same replay state",
 });
 
+/**
+ * Generic provider metadata could not be preserved through a provider request
+ * conversion. The metadata may be provider-specific state unrelated to replay
+ * checkpoints, so keep the failure distinct from checkpoint validation.
+ */
+export const PROVIDER_METADATA_SPLIT_UNSUPPORTED = defineError({
+  slug: "provider-metadata-split-unsupported",
+  category: "AGENT",
+  status: 500,
+  title: "Provider metadata cannot be attached after assistant turn splitting",
+  suggestion:
+    "Avoid converting one provider response into multiple assistant request messages before provider metadata is consumed",
+});
+
 /** Registry fragment for AGENT errors (slug → definition). */
 export const AGENT_REGISTRY = {
   "agent-error": AGENT_ERROR,
@@ -106,4 +120,5 @@ export const AGENT_REGISTRY = {
   "durable-run-event-persistence-failed": DURABLE_RUN_EVENT_PERSISTENCE_FAILED,
   "default-model-credential-mismatch": DEFAULT_MODEL_CREDENTIAL_MISMATCH,
   "provider-replay-checkpoint-invalid": PROVIDER_REPLAY_CHECKPOINT_INVALID,
+  "provider-metadata-split-unsupported": PROVIDER_METADATA_SPLIT_UNSUPPORTED,
 } as const;
