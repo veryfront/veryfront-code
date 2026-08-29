@@ -30,12 +30,13 @@
  * Requires: `deno task build:npm` output in ./npm, node + npm on PATH.
  */
 
+import { fromFileUrl } from "#std/path";
 import {
   formatNpmCompatibilityArtifactCliError,
   loadNpmCompatibilityArtifact,
 } from "../ci/npm-compatibility-artifact.ts";
 
-const ROOT_DIR = new URL("../../", import.meta.url).pathname.replace(
+const ROOT_DIR = fromFileUrl(new URL("../../", import.meta.url)).replace(
   /\/$/,
   "",
 );
@@ -885,6 +886,7 @@ function pumpStream(
     for await (const chunk of stream) {
       chunks.push(streamDecoder.decode(chunk, { stream: true }));
     }
+    chunks.push(streamDecoder.decode());
   })().catch(() => {});
 }
 
@@ -1234,6 +1236,7 @@ async function runSmoke(workDir: string): Promise<void> {
 
 async function main(): Promise<void> {
   const workDir = await Deno.makeTempDir({ prefix: "veryfront-npm-smoke-" });
+  let exitCode = 0;
   try {
     await runSmoke(workDir);
   } catch (error) {
@@ -1242,19 +1245,23 @@ async function main(): Promise<void> {
         console.error(sanitizeDiagnostics(error.devLog));
       }
       console.error(`SMOKE FAIL: ${sanitizeDiagnostics(error.message)}`);
-      Deno.exit(error.exitCode);
+      exitCode = error.exitCode;
+    } else {
+      console.error(
+        `SMOKE FAIL: ${
+          sanitizeDiagnostics(
+            error instanceof Error ? error.message : String(error),
+          )
+        }`,
+      );
+      exitCode = smokeFailureStatus;
     }
-    console.error(
-      `SMOKE FAIL: ${
-        sanitizeDiagnostics(
-          error instanceof Error ? error.message : String(error),
-        )
-      }`,
-    );
-    Deno.exit(smokeFailureStatus);
   } finally {
+    // Exit only after cleanup: Deno.exit inside the catch would skip this
+    // block and leave the temporary project behind on assertion failure.
     await Deno.remove(workDir, { recursive: true }).catch(() => {});
   }
+  if (exitCode !== 0) Deno.exit(exitCode);
 }
 
 if (import.meta.main) {
