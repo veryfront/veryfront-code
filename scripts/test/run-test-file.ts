@@ -25,6 +25,7 @@ const TEST_OPTIONS_WITH_SEPARATE_VALUE = new Set([
   "--seed",
   "--v8-flags",
 ]);
+const MAX_TARGET_DIRECTORY_ENTRIES = 10_000;
 
 function getPositionalTestTargets(rawArgs: readonly string[]): string[] {
   const targets: string[] = [];
@@ -50,7 +51,7 @@ function getPositionalTestTargets(rawArgs: readonly string[]): string[] {
 export function buildTestFileCommandArgs(rawArgs: string[]): string[] {
   const targets = getPositionalTestTargets(rawArgs);
   const usesScriptsConfig = targets.some(isScriptsPath);
-  const usesIntegrationPermissions = targets.some(isIntegrationPath);
+  const usesIntegrationPermissions = targets.some(isIntegrationTarget);
   const configArgs = usesScriptsConfig
     ? ["--config=scripts/test.deno.json"]
     : ["--preload=src/testing/preload.ts"];
@@ -83,9 +84,41 @@ function isIntegrationPath(arg: string): boolean {
     /\.integration\.test\.tsx?$/.test(normalized);
 }
 
+function isIntegrationTarget(arg: string): boolean {
+  if (isIntegrationPath(arg)) return true;
+  const normalized = arg.replaceAll("\\", "/").replace(/^\.\//, "");
+  try {
+    if (!Deno.statSync(normalized).isDirectory) return false;
+  } catch (error) {
+    return !(error instanceof Deno.errors.NotFound);
+  }
+
+  const pending = [normalized];
+  let visitedEntries = 0;
+  while (pending.length > 0) {
+    const directory = pending.pop()!;
+    try {
+      for (const entry of Deno.readDirSync(directory)) {
+        visitedEntries += 1;
+        if (visitedEntries > MAX_TARGET_DIRECTORY_ENTRIES) return true;
+        if (entry.isSymlink) continue;
+        const path = `${directory}/${entry.name}`;
+        if (entry.isDirectory) {
+          pending.push(path);
+        } else if (entry.isFile && isIntegrationPath(path)) {
+          return true;
+        }
+      }
+    } catch {
+      return true;
+    }
+  }
+  return false;
+}
+
 async function main(): Promise<void> {
   const environment =
-    getPositionalTestTargets(Deno.args).some(isIntegrationPath)
+    getPositionalTestTargets(Deno.args).some(isIntegrationTarget)
       ? DENO_TEST_ENV
       : UNIT_DENO_TEST_ENV;
   const command = new Deno.Command("deno", {

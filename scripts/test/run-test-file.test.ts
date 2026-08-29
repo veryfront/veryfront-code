@@ -80,6 +80,14 @@ describe("test:file task command", () => {
       assertEquals(args.includes(LOOPBACK_ALLOW_NET), false, target);
     }
   });
+
+  it("uses integration permissions when a target directory contains integration tests", () => {
+    const args = buildTestFileCommandArgs(["src/server/dev-server"]);
+
+    assertEquals(args.includes("--allow-all"), true);
+    assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), true);
+    assertEquals(args.includes(LOOPBACK_ALLOW_NET), false);
+  });
 });
 
 describe("buildTestFileCommandArgs leak tracing", () => {
