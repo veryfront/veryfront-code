@@ -706,6 +706,51 @@ describe("public docs validation", () => {
     );
   });
 
+  it("keeps object and class method bodies in statement context", () => {
+    assertEquals(
+      destinations(
+        "<a data-ok={({ method() { {} /[}>]/.test(value) } })} " +
+          'href="../architecture/object-method-regex.md">ok</a>\n' +
+          "<a data-ok={class Sample { method() { {} /[}>]/.test(value) } }} " +
+          'href="../architecture/class-method-regex.md">ok</a>\n' +
+          '<a data-ok={({ ["method"]() { {} /[}>]/.test(value) } })} ' +
+          'href="../architecture/computed-method-regex.md">ok</a>\n' +
+          "<a data-ok={class Sample { static { {} /[}>]/.test(value) } }} " +
+          'href="../architecture/static-class-block-regex.md">ok</a>\n' +
+          "<a data-ok={({ method() { return value " +
+          '/ ({ marker: ">/" }).length } })} ' +
+          'href="../architecture/object-method-division.md">ok</a>\n' +
+          "<a data-ok={class Sample { static { value " +
+          '/ ({ marker: ">/" }).length } }} ' +
+          'href="../architecture/static-class-block-division.md">ok</a>',
+      ),
+      [
+        "../architecture/object-method-regex.md",
+        "../architecture/class-method-regex.md",
+        "../architecture/computed-method-regex.md",
+        "../architecture/static-class-block-regex.md",
+        "../architecture/object-method-division.md",
+        "../architecture/static-class-block-division.md",
+      ],
+    );
+  });
+
+  it("ends a bare return at its line terminator", () => {
+    assertEquals(
+      destinations(
+        "<a data-ok={(() => { return\n{} /[}>]/.test(value) })()} " +
+          'href="../architecture/bare-return-regex.md">ok</a>\n' +
+          "<a data-ok={(() => { return value\n" +
+          '/ ({ marker: ">/" }).length })()} ' +
+          'href="../architecture/return-value-division.md">ok</a>',
+      ),
+      [
+        "../architecture/bare-return-regex.md",
+        "../architecture/return-value-division.md",
+      ],
+    );
+  });
+
   it("ignores escaped Markdown link openers", () => {
     assertEquals(
       destinations(String.raw`\[example](../architecture/private.md)`),
@@ -2188,6 +2233,59 @@ describe("public docs validation", () => {
         'export const sample = "[old](../architecture/markdown.md)"',
       ).length,
       1,
+    );
+  });
+
+  it("starts regex statements after completed module declarations", () => {
+    assertEquals(
+      destinations(
+        'import sample from "sample"\n' +
+          "/[}]/.test(sample)\n" +
+          'export const hidden = "[old](../architecture/import-regex.md)"\n\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        'export { sample } from "sample"\n' +
+          "/[}]/.test(sample)\n" +
+          'export const hidden = "[old](../architecture/export-regex.md)"\n\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        "export default value\n" +
+          '/ ({ marker: "}/" }).length\n' +
+          'export const hidden = "[old](../architecture/export-division.md)"\n\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+  });
+
+  it("keeps labeled blocks in statement context in MDX ESM", () => {
+    assertEquals(
+      destinations(
+        "export function sample(value) {\n" +
+          "label: { {} /[}]/.test(value); }\n" +
+          'return "[old](../architecture/labeled-block-regex.md)";\n' +
+          "}\n\n" +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        "export function sample(value) {\n" +
+          'label: { value / ({ marker: "}/" }).length; }\n' +
+          'return "[old](../architecture/labeled-block-division.md)";\n' +
+          "}\n\n" +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
     );
   });
 

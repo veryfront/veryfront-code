@@ -801,6 +801,7 @@ type JavaScriptDelimiterContext =
   | "for"
   | "function-declaration"
   | "function-expression"
+  | "method"
   | "nested"
   | undefined;
 
@@ -1354,7 +1355,14 @@ interface JavaScriptBalance {
   readonly delimiterContexts: JavaScriptDelimiterContext[];
   quote: JavaScriptQuote | undefined;
   blockComment: boolean;
-  moduleDeclaration: boolean;
+  moduleDeclaration:
+    | {
+      readonly depth: number;
+      readonly kind: "export" | "import";
+      readonly complete: boolean;
+      readonly lineTerminated: boolean;
+    }
+    | undefined;
   templateEnd: number;
   previousSignificantToken: JavaScriptSignificantToken | undefined;
   valid: boolean;
@@ -1414,7 +1422,21 @@ const JAVASCRIPT_BLOCK_PREFIX_KEYWORDS: ReadonlySet<string> = new Set([
   "do",
   "else",
   "finally",
+  "static",
   "try",
+]);
+
+const JAVASCRIPT_MODULE_DECLARATION_CONTINUATION_KEYWORDS: ReadonlySet<string> =
+  new Set(["assert", "from", "with"]);
+
+const JAVASCRIPT_EXPORT_DELEGATE_KEYWORDS: ReadonlySet<string> = new Set([
+  "async",
+  "class",
+  "const",
+  "default",
+  "function",
+  "let",
+  "var",
 ]);
 
 const JAVASCRIPT_IDENTIFIER_START = /[$_\p{ID_Start}]/u;
@@ -1601,6 +1623,11 @@ function javaScriptDelimiterTokenKind(
       keyword !== undefined && JAVASCRIPT_CONTROL_HEADER_KEYWORDS.has(keyword)
     ) {
       context = "control";
+    } else if (
+      delimiterContexts.at(-1) === "block" ||
+      delimiterContexts.at(-1) === "nested"
+    ) {
+      context = "method";
     }
     delimiterContexts.push(context);
   } else if (character === "[") {
@@ -1648,7 +1675,9 @@ function javaScriptDelimiterTokenKind(
   } else if (character === ")" || character === "]" || character === "}") {
     const context = delimiterContexts.pop();
     if (context === "control" || context === "for") return "control-header";
-    if (context === "function-declaration") return "declaration-header";
+    if (context === "function-declaration" || context === "method") {
+      return "declaration-header";
+    }
     if (context === "function-expression") return "expression-header";
     if (
       character === ")" && context === undefined &&
@@ -1812,6 +1841,17 @@ function javaScriptLineQuoteEnd(
       "other",
       state.previousSignificantToken,
     );
+    const moduleDeclaration = state.moduleDeclaration;
+    if (
+      moduleDeclaration !== undefined &&
+      state.delimiterContexts.length === moduleDeclaration.depth
+    ) {
+      state.moduleDeclaration = {
+        ...moduleDeclaration,
+        complete: true,
+        lineTerminated: false,
+      };
+    }
   }
   return start + 1;
 }
@@ -1918,6 +1958,15 @@ function recordJavaScriptDelimiter(
       state.delimiterContexts,
     );
   }
+  if (character === ":") {
+    return javaScriptDelimiterTokenKind(
+      text,
+      start,
+      character,
+      previousSignificantToken,
+      state.delimiterContexts,
+    );
+  }
   const opener = JAVASCRIPT_DELIMITER_CLOSERS[character];
   if (opener === undefined) return "other";
   if (state.delimiters.at(-1) !== opener) {
@@ -1925,13 +1974,66 @@ function recordJavaScriptDelimiter(
     return "other";
   }
   state.delimiters.pop();
-  return javaScriptDelimiterTokenKind(
+  const kind = javaScriptDelimiterTokenKind(
     text,
     start,
     character,
     previousSignificantToken,
     state.delimiterContexts,
   );
+  const moduleDeclaration = state.moduleDeclaration;
+  if (
+    character === "}" && moduleDeclaration !== undefined &&
+    state.delimiterContexts.length === moduleDeclaration.depth
+  ) {
+    state.moduleDeclaration = {
+      ...moduleDeclaration,
+      complete: true,
+      lineTerminated: false,
+    };
+  }
+  return kind;
+}
+
+function updateJavaScriptModuleDeclaration(
+  state: JavaScriptBalance,
+): void {
+  const token = state.previousSignificantToken;
+  const word = token?.identifierWord;
+  if (word === undefined) return;
+
+  const depth = state.delimiterContexts.length;
+  if (depth === 0 && (word === "export" || word === "import")) {
+    state.moduleDeclaration = {
+      depth,
+      kind: word,
+      complete: false,
+      lineTerminated: false,
+    };
+    return;
+  }
+
+  const moduleDeclaration = state.moduleDeclaration;
+  if (moduleDeclaration === undefined || depth !== moduleDeclaration.depth) {
+    return;
+  }
+  if (
+    JAVASCRIPT_MODULE_DECLARATION_CONTINUATION_KEYWORDS.has(word)
+  ) {
+    state.moduleDeclaration = {
+      ...moduleDeclaration,
+      complete: false,
+      lineTerminated: false,
+    };
+    return;
+  }
+  if (
+    moduleDeclaration.lineTerminated ||
+    moduleDeclaration.kind === "export" &&
+      JAVASCRIPT_EXPORT_DELEGATE_KEYWORDS.has(word)
+  ) {
+    state.moduleDeclaration = undefined;
+  }
 }
 
 function scanJavaScriptLine(
@@ -1940,13 +2042,6 @@ function scanJavaScriptLine(
   lineEnd: number,
   state: JavaScriptBalance,
 ): void {
-  if (
-    state.delimiters.length === 0 && state.quote === undefined &&
-    !state.blockComment &&
-    /^(?:import\b(?!\s*[.(])|export\b\s*(?:\{|\*))/.test(
-      text.slice(lineStart, lineEnd),
-    )
-  ) state.moduleDeclaration = true;
   let cursor = Math.max(lineStart, state.templateEnd);
   while (cursor < lineEnd) {
     const commentEnd = javaScriptLineCommentEnd(text, cursor, lineEnd, state);
@@ -1959,13 +2054,27 @@ function scanJavaScriptLine(
       cursor = quoteEnd;
       continue;
     }
+    const character = text[cursor]!;
+    if (
+      state.moduleDeclaration?.lineTerminated === true &&
+      !/\s/.test(character) &&
+      !javaScriptIdentifierCodeUnitAt(text, cursor)
+    ) {
+      state.moduleDeclaration = undefined;
+      state.previousSignificantToken = undefined;
+    }
     const tokenEnd = javaScriptLineTokenEnd(text, cursor, lineEnd, state);
     if (tokenEnd !== undefined) {
       cursor = tokenEnd;
       continue;
     }
-    const character = text[cursor]!;
     if (!/\s/.test(character)) {
+      if (
+        state.moduleDeclaration?.kind === "import" &&
+        state.previousSignificantToken?.identifierWord === "import" &&
+        (character === "(" || character === ".")
+      ) state.moduleDeclaration = undefined;
+      if (character === ";") state.moduleDeclaration = undefined;
       const kind = recordJavaScriptDelimiter(
         text,
         cursor,
@@ -1981,18 +2090,24 @@ function scanJavaScriptLine(
         state.previousSignificantToken,
         state.delimiterContexts,
       );
+      updateJavaScriptModuleDeclaration(state);
       if (!state.valid) return;
     }
     cursor++;
   }
-  const moduleDeclarationEnded = state.moduleDeclaration &&
-    state.delimiters.length === 0 && state.quote === undefined &&
-    !state.blockComment && state.templateEnd <= lineEnd;
+  const moduleDeclaration = state.moduleDeclaration;
   if (
-    moduleDeclarationEnded ||
+    moduleDeclaration?.complete === true &&
+    state.delimiterContexts.length === moduleDeclaration.depth
+  ) {
+    state.moduleDeclaration = {
+      ...moduleDeclaration,
+      lineTerminated: true,
+    };
+  }
+  if (
     javaScriptLineTerminatesStatement(state.previousSignificantToken)
   ) state.previousSignificantToken = undefined;
-  if (moduleDeclarationEnded) state.moduleDeclaration = false;
 }
 
 function mdxEsmRangeEnd(text: string, start: number): number | undefined {
@@ -2001,7 +2116,7 @@ function mdxEsmRangeEnd(text: string, start: number): number | undefined {
     delimiterContexts: [],
     quote: undefined,
     blockComment: false,
-    moduleDeclaration: false,
+    moduleDeclaration: undefined,
     templateEnd: start,
     previousSignificantToken: undefined,
     valid: true,
