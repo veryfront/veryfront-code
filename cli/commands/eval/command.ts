@@ -823,8 +823,8 @@ function printBlankLine(): void {
 /** Width of "Target:", the longest header label, so the header values line up in one column. */
 const HEADER_LABEL_WIDTH = "Target:".length + 1;
 
-/** Dataset reports swap in the longer "Dataset:" label, so their column is one wider. */
-const DATASET_HEADER_LABEL_WIDTH = "Dataset:".length + 1;
+/** Dataset reports swap in the longer "Eval id:" label, so their column is one wider. */
+const DATASET_HEADER_LABEL_WIDTH = "Eval id:".length + 1;
 
 function printHeader(label: string, value: string, width = HEADER_LABEL_WIDTH): void {
   printLine(`${`${label}:`.padEnd(width)}${value}`);
@@ -901,7 +901,7 @@ function printReport(
   const dataset = report.targetKind === "dataset";
   const width = dataset ? DATASET_HEADER_LABEL_WIDTH : HEADER_LABEL_WIDTH;
   printHeader("Eval", options.name ?? report.definitionId, width);
-  printHeader(dataset ? "Dataset" : "Target", report.target, width);
+  printHeader(dataset ? "Eval id" : "Target", report.target, width);
   printHeader(
     "Result",
     `${report.summary.passed}/${report.summary.records} passed (${

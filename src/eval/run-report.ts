@@ -467,7 +467,7 @@ function createEvalMarkdownReport(
     `# Eval report: ${markdownCell(report.definitionId)}`,
     "",
     `Run: \`${markdownCell(report.runId)}\``,
-    `${report.targetKind === "dataset" ? "Dataset" : "Target"}: \`${markdownCell(report.target)}\``,
+    `${report.targetKind === "dataset" ? "Eval id" : "Target"}: \`${markdownCell(report.target)}\``,
     ...(report.metadata?.model ? [`Model: \`${markdownCell(report.metadata.model)}\``] : []),
     `Result: \`${report.summary.passed}/${report.summary.records} passed (${
       percentCell(report.summary.passRate)

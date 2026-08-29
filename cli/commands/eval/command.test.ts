@@ -371,7 +371,7 @@ function relevantEvalHumanLines(output: { stdout: string[]; stderr: string[] }):
     .filter((line) =>
       line.startsWith("Eval:") ||
       line.startsWith("Target: ") ||
-      line.startsWith("Dataset: ") ||
+      line.startsWith("Eval id: ") ||
       line.startsWith("Result: ") ||
       line.startsWith("Report: ") ||
       line.startsWith("Report JSON: ") ||
@@ -1717,7 +1717,7 @@ describe("eval CLI command helpers", () => {
       });
       assertStringIncludes(
         relevantEvalHumanLines(singleOutput).join("\n"),
-        "Dataset: eval:dataset-standing",
+        "Eval id: eval:dataset-standing",
       );
       assertStringIncludes(
         relevantEvalHumanLines(singleOutput).join("\n"),

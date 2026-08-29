@@ -123,7 +123,7 @@ metrics and checks can assert input, output, status, and call count.
 ## Dataset grading
 
 Use `evalDataset` when the graded values already exist -- standing documents, a
-labelled corpus, replies written earlier -- and nothing should execute. A
+labelled corpus, replies written earlier -- and no target should execute. A
 dataset eval has no target: each example's `input` becomes `record.output`
 directly, so rubric judges with `framing: "text"` grade the stored value.
 
@@ -152,7 +152,8 @@ export default supportReplyQuality;
 ```
 
 `id` is required and is the report identity, so renaming `name` keeps saved
-baselines comparable. Running one needs no adapters because nothing executes:
+baselines comparable. Running one needs no target adapter; metrics still
+execute, so the rubric judge above calls a model provider:
 
 ```ts
 import { runEval } from "veryfront/eval";
