@@ -139,6 +139,7 @@ const HTML_DESTINATION_ATTRIBUTES = new Set(["action", "href", "src"]);
 
 type HtmlChildNode = DefaultTreeAdapterMap["childNode"];
 type HtmlElement = DefaultTreeAdapterMap["element"];
+type HtmlAttribute = HtmlElement["attrs"][number];
 
 interface SourceProjection {
   range(start: number, end: number): SourceRange;
@@ -220,6 +221,13 @@ function isHtmlElement(node: HtmlChildNode): node is HtmlElement {
   return "attrs" in node && "tagName" in node;
 }
 
+function htmlAttributeLocationName(attribute: HtmlAttribute): string {
+  const prefix = Object.getOwnPropertyDescriptor(attribute, "prefix")?.value;
+  return typeof prefix === "string" && prefix.length > 0
+    ? `${prefix}:${attribute.name}`
+    : attribute.name;
+}
+
 function htmlAttributeDestination(
   raw: string,
   authoredNode: string,
@@ -277,8 +285,10 @@ function rawHtmlAnalysis(
     if (isHtmlElement(node)) {
       const attributeLocations = node.sourceCodeLocation?.attrs;
       for (const attribute of node.attrs) {
-        if (!HTML_DESTINATION_ATTRIBUTES.has(attribute.name)) continue;
-        const location = attributeLocations?.[attribute.name];
+        const locationName = htmlAttributeLocationName(attribute);
+        const destinationName = locationName === "xlink:href" ? "href" : attribute.name;
+        if (!HTML_DESTINATION_ATTRIBUTES.has(destinationName)) continue;
+        const location = attributeLocations?.[locationName];
         if (location === undefined) continue;
         const destination = htmlAttributeDestination(
           raw,

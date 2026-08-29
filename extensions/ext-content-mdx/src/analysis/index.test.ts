@@ -250,6 +250,23 @@ describe("analyzeContent Markdown", () => {
     );
   });
 
+  it("finds namespaced SVG destination attributes", async () => {
+    const value = '<svg><a xlink:href="../svg.md">svg</a></svg>';
+
+    const result = await analyzeContent({ value, syntax: "markdown" });
+
+    assert(result.kind === "document");
+    assertEquals(result.destinations, [{
+      kind: "html-attribute",
+      rawValue: "../svg.md",
+      range: {
+        start: { offset: 20, line: 1, column: 21 },
+        end: { offset: 29, line: 1, column: 30 },
+      },
+      syntax: "html-attribute",
+    }]);
+  });
+
   it("preserves raw HTML source ranges inside block containers", async () => {
     const value = "> <div>\n" +
       '> <a href="../nested.md">nested</a>\n' +
@@ -492,6 +509,20 @@ describe("analyzeContent MDX", () => {
     }
   });
 
+  it("rejects JSX spread attributes with extra operands", async () => {
+    for (
+      const value of [
+        "<Card {...props, other} />",
+        "{<Card {...props, other} />}",
+      ]
+    ) {
+      const result = await analyzeContent({ value, syntax: "mdx" });
+
+      assert(result.kind === "syntax-error");
+      assertEquals(result.diagnostic.range.start.offset, value.indexOf(","));
+    }
+  });
+
   it("uses MDX grammar for JSX expressions regardless of the source path", async () => {
     const result = await analyzeContent({
       value: "{<Card />}",
@@ -658,9 +689,11 @@ describe("analyzeContent MDX", () => {
     );
   });
 
-  it("rejects empty nested JSX attribute expressions", async () => {
+  it("rejects empty JSX attribute expressions", async () => {
     for (
       const value of [
+        "<Card href={} />",
+        "<Card href={/* note */} />",
         "{<Card href={} />}",
         "{<Card href={/* note */} />}",
       ]
@@ -668,9 +701,8 @@ describe("analyzeContent MDX", () => {
       const result = await analyzeContent({ value, syntax: "mdx" });
 
       assert(result.kind === "syntax-error");
-      assertEquals(
-        result.diagnostic.range.start.offset,
-        value.indexOf("}", value.indexOf("href")),
+      assert(
+        result.diagnostic.range.start.offset >= value.indexOf("{", value.indexOf("href")),
       );
     }
   });

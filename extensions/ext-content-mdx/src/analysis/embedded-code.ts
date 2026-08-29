@@ -276,6 +276,13 @@ function expressionFragment(source: string, expression: ExpressionRecord): Reduc
   return builder.result();
 }
 
+function spreadAttributeFragment(source: string, expression: ExpressionRecord): ReducedFragment {
+  const end = expression.end ?? expression.start;
+  const builder = reducedSourceBuilder(source);
+  builder.authored(expression.start, end);
+  return builder.result();
+}
+
 function own(value: unknown, key: string): unknown {
   if (typeof value !== "object" || value === null) return undefined;
   return Object.getOwnPropertyDescriptor(value, key)?.value;
@@ -874,6 +881,20 @@ export async function analyzeEmbeddedExpression(options: {
           "Expected an expression after the JSX spread operator",
         ),
       };
+    }
+    if (
+      expression.fragmentKind === "jsx-spread-attribute" &&
+      expression.tokens[0]?.label === "..."
+    ) {
+      const spreadValidation = validateFragment(
+        spreadAttributeFragment(options.source, expression),
+        "const __veryfront_value = <_Veryfront {",
+        "} />;\n",
+        expression.start,
+        options.absoluteStart,
+        options.locator,
+      );
+      if (spreadValidation.kind === "syntax-error") return spreadValidation;
     }
   }
 
