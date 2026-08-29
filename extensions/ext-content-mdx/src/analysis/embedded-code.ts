@@ -417,6 +417,26 @@ function hasTokens(fragment: string): boolean {
   return tokenizer.getToken().type.label !== "eof";
 }
 
+/** Tracks a `/` that is division rather than a JSX tag terminator. */
+export interface ContextualSlashState {
+  contextualSlash: boolean;
+  pendingSlash: boolean;
+  previousLabel: string | undefined;
+}
+
+export function consumeContextualSlashToken(
+  state: ContextualSlashState,
+  label: string,
+): void {
+  if (state.pendingSlash) {
+    if (label !== "jsxTagEnd") state.contextualSlash = true;
+    state.pendingSlash = false;
+  }
+  if (label === "/" && state.previousLabel !== "jsxTagStart") {
+    state.pendingSlash = true;
+  }
+}
+
 function embeddedLexicalProfile(source: string): {
   readonly contextualSlash: boolean;
 } {
@@ -424,19 +444,16 @@ function embeddedLexicalProfile(source: string): {
     ecmaVersion: 2024,
     sourceType: "module",
   });
-  let pendingSlash = false;
-  let previousLabel: string | undefined;
+  const state: ContextualSlashState = {
+    contextualSlash: false,
+    pendingSlash: false,
+    previousLabel: undefined,
+  };
   while (true) {
-    const token = tokenizer.getToken();
-    const label = token.type.label;
-    if (pendingSlash) {
-      if (label !== "jsxTagEnd") return { contextualSlash: true };
-      pendingSlash = false;
-    }
-    if (label === "/" && previousLabel !== "jsxTagStart") {
-      pendingSlash = true;
-    }
-    previousLabel = label;
+    const label = tokenizer.getToken().type.label;
+    consumeContextualSlashToken(state, label);
+    if (state.contextualSlash) return { contextualSlash: true };
+    state.previousLabel = label;
     if (label === "eof") break;
   }
   return { contextualSlash: false };

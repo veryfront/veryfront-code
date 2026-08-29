@@ -23,6 +23,8 @@ import type { Position } from "unist";
 
 import {
   analyzeEmbeddedExpression,
+  consumeContextualSlashToken,
+  type ContextualSlashState,
   EMBEDDED_CODE_LIMIT_MESSAGE,
   isDestinationAttribute,
   MAX_EMBEDDED_CODE_UNITS,
@@ -83,15 +85,12 @@ function mdxStructureLimitError(position: number): SyntaxError {
   return error;
 }
 
-interface LexicalState {
+interface LexicalState extends ContextualSlashState {
   bracketDepth: number;
   braceDepth: number;
-  contextualSlash: boolean;
   jsxElementDepth: number;
   readonly jsxTags: Array<{ closing: boolean }>;
-  pendingSlash: boolean;
   parenthesisDepth: number;
-  previousLabel: string | undefined;
 }
 
 interface LexicalCache {
@@ -155,25 +154,9 @@ function closeCurrentJsxTag(state: LexicalState): void {
   if (state.previousLabel !== "/") state.jsxElementDepth++;
 }
 
-function consumePendingSlash(state: LexicalState, label: string): void {
-  if (!state.pendingSlash) return;
-  if (label !== "jsxTagEnd") state.contextualSlash = true;
-  state.pendingSlash = false;
-}
-
-function queuePotentialContextualSlash(state: LexicalState, label: string): void {
-  if (label === "/" && state.previousLabel !== "jsxTagStart") {
-    state.pendingSlash = true;
-  }
-}
-
 function consumeLexicalToken(state: LexicalState, label: string): void {
-  consumePendingSlash(state, label);
-  if (consumeBalancedToken(state, label) || consumeJsxToken(state, label)) {
-    state.previousLabel = label;
-    return;
-  }
-  queuePotentialContextualSlash(state, label);
+  consumeContextualSlashToken(state, label);
+  if (!consumeBalancedToken(state, label)) consumeJsxToken(state, label);
   state.previousLabel = label;
 }
 
