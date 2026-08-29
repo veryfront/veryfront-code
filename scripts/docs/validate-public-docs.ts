@@ -1003,6 +1003,10 @@ function javaScriptTokenWithIdentifierContext(
     followsForOfLeftOperand = delimiterContexts.at(-1) === "for" &&
       javaScriptTokenMayEndForOfLeftOperand(text, previousSignificantToken);
   }
+  const endsForIterationBinding = completeIdentifier &&
+    (identifierWord === "in" || identifierWord === "of") &&
+    delimiterContexts.at(-1) === "for" && followsForOfLeftOperand;
+  if (endsForIterationBinding) variableDeclaration = undefined;
   const uninitializedDeclaration = completeIdentifier &&
     !startsVariableDeclaration && variableDeclaration?.phase === "binding" &&
     delimiterContexts.length === variableDeclaration.depth;

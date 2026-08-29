@@ -656,6 +656,46 @@ describe("public docs validation", () => {
     );
   });
 
+  it("does not rescan quoted JSX attributes as nested tags", () => {
+    assertEquals(
+      destinations(
+        "<Comp title=\"<a href='./literal.md'>\" value={true} />",
+      ),
+      [],
+    );
+    assertEquals(
+      destinations(
+        "<Comp title=\"<a href='./literal.md'>\" " +
+          'value={<a href="../architecture/real.md">x</a>} />',
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        "{<Comp title=\"<a href='./literal.md'>\" " +
+          'value={<a href="../architecture/nested.md">x</a>} />}',
+      ),
+      ["../architecture/nested.md"],
+    );
+  });
+
+  it("keeps for-in and for-of right-hand division inside JSX attributes", () => {
+    assertEquals(
+      destinations(
+        "<a data-ok={(() => { for (let value of values\n" +
+          '/ ({ marker: ">/" }).length) {} return true })()} ' +
+          'href="../architecture/for-of-rhs-division.md">ok</a>\n' +
+          "<a data-ok={(() => { for (var key in object\n" +
+          '/ ({ marker: ">/" }).length) {} return true })()} ' +
+          'href="../architecture/for-in-rhs-division.md">ok</a>',
+      ),
+      [
+        "../architecture/for-of-rhs-division.md",
+        "../architecture/for-in-rhs-division.md",
+      ],
+    );
+  });
+
   it("ignores escaped Markdown link openers", () => {
     assertEquals(
       destinations(String.raw`\[example](../architecture/private.md)`),
