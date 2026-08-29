@@ -860,16 +860,13 @@ function planAnthropicRawAssistantReplay(
   for (const index of thinkingReplayCandidates) {
     if (compactedToolRoundIndices.has(index)) continue;
     const connectedIndices = collectConnectedAnthropicReplayIndices(index, dependencies);
-    if ([...connectedIndices].some((candidate) => compactedToolRoundIndices.has(candidate))) {
-      thinkingOnlyReplayIndices.add(index);
-      for (const connectedIndex of connectedIndices) {
-        if (connectedIndex !== index) validationOnlyReplayIndices.add(connectedIndex);
-      }
-    } else if (!replayIndices.has(index)) {
-      thinkingOnlyReplayIndices.add(index);
-      for (const connectedIndex of connectedIndices) {
-        if (connectedIndex !== index) validationOnlyReplayIndices.add(connectedIndex);
-      }
+    const connectsCompactedToolRound = [...connectedIndices].some((candidate) =>
+      compactedToolRoundIndices.has(candidate)
+    );
+    if (!connectsCompactedToolRound && replayIndices.has(index)) continue;
+    thinkingOnlyReplayIndices.add(index);
+    for (const connectedIndex of connectedIndices) {
+      if (connectedIndex !== index) validationOnlyReplayIndices.add(connectedIndex);
     }
   }
 
