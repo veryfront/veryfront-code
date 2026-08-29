@@ -363,6 +363,26 @@ describe("analyzeContent Markdown", () => {
     );
   });
 
+  it("returns video poster destinations from HTML and JSX", async () => {
+    const html = '<video poster="../html-poster.png"></video>';
+    const jsx = '<Video poster="../jsx-poster.png" />\n' +
+      '{<video poster={"../jsx-expression-poster.png"} />}';
+
+    const htmlResult = await analyzeContent({ value: html, syntax: "markdown" });
+    const jsxResult = await analyzeContent({ value: jsx, syntax: "mdx" });
+
+    assert(htmlResult.kind === "document");
+    assertEquals(
+      htmlResult.destinations.map((destination) => destination.rawValue),
+      ["../html-poster.png"],
+    );
+    assert(jsxResult.kind === "document");
+    assertEquals(
+      jsxResult.destinations.map((destination) => destination.rawValue),
+      ["../jsx-poster.png", "../jsx-expression-poster.png"],
+    );
+  });
+
   it("preserves authored HTML offsets across CommonMark NUL normalization", async () => {
     const nul = "\0";
     const value = `<a href="../private${nul}.md">x</a>`;
