@@ -20,7 +20,10 @@ import { assertProviderReachableAttachment } from "./attachment-reachability.ts"
 import { buildDataFileAnnotation } from "#veryfront/chat/types.ts";
 import { getTextFromParts, getToolArguments, type Message, type ToolCallPart } from "../types.ts";
 import { readAttachedProviderMetadata } from "./provider-metadata.ts";
-import { collectAnthropicProviderToolCallIds } from "./anthropic-provider-replay-block.ts";
+import {
+  collectAnthropicProviderToolCallIds,
+  groupAnthropicRawAssistantMessagesByAnchor,
+} from "./anthropic-provider-replay-block.ts";
 
 function getStringPartField(part: unknown, key: string): string | undefined {
   if (!part || typeof part !== "object" || Array.isArray(part)) return undefined;
@@ -390,6 +393,22 @@ function hasProviderSendableAssistantContent(message: Message): boolean {
   });
 }
 
+function splitAnthropicProviderMetadata(
+  providerMetadata: Record<string, unknown>,
+  segmentCount: number,
+): Record<string, unknown>[] | undefined {
+  if (!isRecord(providerMetadata.anthropic)) return undefined;
+  const anthropic = providerMetadata.anthropic;
+  const grouped = groupAnthropicRawAssistantMessagesByAnchor(
+    anthropic.rawAssistantMessages,
+    segmentCount,
+  );
+  return grouped?.map((rawAssistantMessages) => ({
+    ...providerMetadata,
+    anthropic: { ...anthropic, rawAssistantMessages },
+  }));
+}
+
 function convertAssistantMessageToTextGenerationRuntimeMessages(
   message: Message,
   providerExecutedToolCallIds: Set<string>,
@@ -493,8 +512,6 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
 
   const providerMetadata = readAttachedProviderMetadata(message);
   const assistantMessages = messages.filter((entry) => entry.role === "assistant");
-  // Exact replay metadata describes one provider response. Attaching it after
-  // conversion split that response would pair it with an incomplete projection.
   if (providerMetadata !== undefined && assistantMessages.length === 1) {
     assistantMessages[0]!.providerMetadata = providerMetadata;
   } else if (providerMetadata !== undefined && messages.length === 0) {
@@ -503,6 +520,17 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
       content: [{ type: "text", text: "" }],
       providerMetadata,
     });
+  } else if (providerMetadata !== undefined) {
+    const splitMetadata = splitAnthropicProviderMetadata(
+      providerMetadata,
+      assistantMessages.length,
+    );
+    if (splitMetadata === undefined) {
+      throw new TypeError("Provider replay metadata cannot follow a split assistant turn");
+    }
+    for (const [index, assistantMessage] of assistantMessages.entries()) {
+      assistantMessage.providerMetadata = splitMetadata[index];
+    }
   }
 
   return messages;

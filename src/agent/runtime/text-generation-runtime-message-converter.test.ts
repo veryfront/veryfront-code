@@ -507,6 +507,46 @@ describe("text-generation-runtime-message-converter", () => {
       }]);
     });
 
+    it("distributes replay groups across assistant segments split by a client tool", () => {
+      const rawToolUse = {
+        type: "tool_use",
+        id: "lookup-1",
+        name: "lookup",
+        input: { query: "Veryfront" },
+      };
+      const rawText = { type: "text", text: "Found it." };
+      const message = attachProviderMetadata({
+        id: "assistant-split-replay",
+        role: "assistant",
+        parts: [{
+          type: "tool-lookup",
+          toolCallId: rawToolUse.id,
+          toolName: rawToolUse.name,
+          args: rawToolUse.input,
+        }, {
+          type: "tool-result",
+          toolCallId: rawToolUse.id,
+          toolName: rawToolUse.name,
+          result: { matches: 1 },
+        }, {
+          type: "text",
+          text: rawText.text,
+        }],
+      } as Message, {
+        anthropic: { rawAssistantMessages: [[rawToolUse], [rawText]] },
+      });
+
+      const converted = convertToTextGenerationRuntimeMessages([message]);
+      assertEquals(
+        converted.filter((entry) => entry.role === "assistant").map((entry) =>
+          entry.providerMetadata
+        ),
+        [{ anthropic: { rawAssistantMessages: [[rawToolUse]] } }, {
+          anthropic: { rawAssistantMessages: [[rawText]] },
+        }],
+      );
+    });
+
     it("omits provider-executed tool-only assistant messages from replay", () => {
       const messages = [
         { id: "u1", role: "user", parts: [{ type: "text", text: "search tax guidance" }] },

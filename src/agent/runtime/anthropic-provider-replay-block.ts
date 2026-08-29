@@ -17,9 +17,10 @@ export function isAnthropicProviderToolResultBlock(block: Record<string, unknown
 
 /** Group raw Anthropic responses around the assistant anchors they project. */
 export function groupAnthropicRawAssistantMessagesByAnchor(
-  rawAssistantMessages: readonly unknown[],
+  rawAssistantMessages: unknown,
   anchorCount: number,
 ): Record<string, unknown>[][][] | undefined {
+  if (!Array.isArray(rawAssistantMessages)) return undefined;
   const grouped: Record<string, unknown>[][][] = [];
   let pendingResults: Record<string, unknown>[][] = [];
   for (const rawAssistantMessage of rawAssistantMessages) {
