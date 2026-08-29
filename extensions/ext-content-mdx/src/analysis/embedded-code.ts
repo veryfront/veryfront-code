@@ -860,6 +860,23 @@ export async function analyzeEmbeddedExpression(options: {
     };
   }
 
+  for (const expression of expressions) {
+    if (
+      expression.fragmentKind === "jsx-spread-attribute" &&
+      expression.tokens[0]?.label === "..." && expression.tokens.length === 1
+    ) {
+      return {
+        kind: "syntax-error",
+        diagnostic: diagnostic(
+          options.locator,
+          options.absoluteStart,
+          expression.end ?? expression.tokens[0].end,
+          "Expected an expression after the JSX spread operator",
+        ),
+      };
+    }
+  }
+
   const tagBatchSize = 512;
   for (let start = 0; start < tags.length; start += tagBatchSize) {
     const batch = tags.slice(start, start + tagBatchSize);

@@ -476,6 +476,22 @@ describe("analyzeContent MDX", () => {
     );
   });
 
+  it("rejects JSX spread attributes without an operand", async () => {
+    for (
+      const value of [
+        "<Card {...} />",
+        "<Card {.../* note */} />",
+        "{<Card {...} />}",
+        "{<Card {.../* note */} />}",
+      ]
+    ) {
+      const result = await analyzeContent({ value, syntax: "mdx" });
+
+      assert(result.kind === "syntax-error");
+      assertEquals(result.diagnostic.range.start.offset, value.indexOf("}"));
+    }
+  });
+
   it("uses MDX grammar for JSX expressions regardless of the source path", async () => {
     const result = await analyzeContent({
       value: "{<Card />}",
@@ -484,6 +500,14 @@ describe("analyzeContent MDX", () => {
     });
 
     assert(result.kind === "document");
+  });
+
+  it("rejects invalid expressions nested inside JSX before reduction", async () => {
+    const value = "{<Card value={const x} />}";
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assert(result.kind === "syntax-error");
+    assertEquals(result.diagnostic.range.start.offset, value.indexOf("const"));
   });
 
   it("rejects TypeScript-only syntax from authored MDX expressions", async () => {
