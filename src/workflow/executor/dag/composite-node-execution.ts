@@ -1,4 +1,4 @@
-import { TIMEOUT_ERROR, VeryfrontError } from "#veryfront/errors";
+import { TIMEOUT_ERROR } from "#veryfront/errors";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import { sleep } from "#veryfront/utils";
 import {
@@ -19,27 +19,15 @@ import type { NodeExecutionResult } from "./types.ts";
  * An ownership-fenced write was refused: another worker owns the run row, so
  * this execution must stop writing instead of retrying or recording failure.
  */
-function getOwnDataProperty(value: unknown, key: PropertyKey): unknown {
-  if ((typeof value !== "object" && typeof value !== "function") || value === null) {
-    return undefined;
-  }
-  try {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    return descriptor && "value" in descriptor ? descriptor.value : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 export function isOwnershipLossError(error: unknown): boolean {
-  const isVeryfrontError = error instanceof VeryfrontError ||
-    (error instanceof Error && getOwnDataProperty(error, "name") === "VeryfrontError");
-  if (!isVeryfrontError) return false;
-
-  const context = getOwnDataProperty(error, "context");
-  return getOwnDataProperty(error, "slug") === "orchestration-error" &&
-    getOwnDataProperty(context, "ownershipLost") === true;
+  if (!(error instanceof Error)) return false;
+  const { slug, context } = error as Error & {
+    slug?: unknown;
+    context?: { ownershipLost?: unknown };
+  };
+  return slug === "orchestration-error" && context?.ownershipLost === true;
 }
+
 const DEFAULT_CANCELLATION_GRACE_PERIOD_MS = 1_000;
 
 interface CompositeNodeExecutionInput {
