@@ -360,14 +360,25 @@ describe("agent/runtime/provider-replay", () => {
       );
     });
 
-    it("should fail explicitly when the anchored turn was split into segments", () => {
-      const messages = [
-        createAssistantMessage("assistant-message-1"),
-        { id: "tool-1", role: "tool", parts: [], timestamp: 1 },
-        createAssistantMessage("assistant-message-1-1"),
-      ] as Message[];
-      assertProviderReplayError(() =>
-        applyProviderReplayCheckpointsToMessages(messages, [createValidCheckpoint()])
+    it("should not treat matching ID prefixes as split-turn provenance", () => {
+      const target = createAssistantMessage("assistant-message-1");
+      const unrelated = createAssistantMessage("assistant-message-1-1");
+      applyProviderReplayCheckpointsToMessages([target, unrelated], [createValidCheckpoint()]);
+      assertEquals(
+        readAttachedProviderMetadata(target),
+        {
+          anthropic: {
+            rawAssistantMessages: [
+              createValidCheckpoint().providerBlocks.map((block) => block.block),
+            ],
+          },
+        },
+        "the exact checkpoint target receives replay metadata",
+      );
+      assertEquals(
+        readAttachedProviderMetadata(unrelated),
+        undefined,
+        "an unrelated valid message id with a shared prefix stays untouched",
       );
     });
 

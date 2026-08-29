@@ -277,18 +277,6 @@ export function applyProviderReplayCheckpointsToMessages(
   }
   for (const checkpoint of checkpoints) {
     const matches = messages.filter((message) => message.id === checkpoint.messageId);
-    // A turn carrying tool output is split into `${id}-1`, `${id}-2`, ... segments
-    // downstream; attaching a whole-turn checkpoint to segment 0 while the later
-    // segments keep their own content would replay an altered assistant turn.
-    const segmentPrefix = `${checkpoint.messageId}-`;
-    if (
-      messages.some((message) =>
-        message.id.startsWith(segmentPrefix) &&
-        /^\d+$/.test(message.id.slice(segmentPrefix.length))
-      )
-    ) {
-      invalidCheckpoint("checkpoint messageId anchors to a segmented assistant turn");
-    }
     if (matches.length === 0) continue;
     if (matches.length > 1) {
       invalidCheckpoint("checkpoint messageId matches more than one message");
