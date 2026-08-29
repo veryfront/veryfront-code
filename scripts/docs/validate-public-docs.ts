@@ -1111,11 +1111,16 @@ function javaScriptIdentifierDeclarationContext(
 ): JavaScriptIdentifierDeclarationContext {
   const candidate = lexeme.continues
     ? previousSignificantToken?.declarationCandidate === true
-    : javaScriptMayStartDeclaration(
-      text,
-      previousSignificantToken,
-      delimiterContexts,
-    );
+    : lexeme.start !== undefined &&
+      javaScriptMayStartDeclaration(
+        text,
+        lexeme.start,
+        previousSignificantToken,
+        delimiterContexts,
+      );
+  const labelCandidate = lexeme.continues
+    ? previousSignificantToken?.labelCandidate === true
+    : candidate || previousSignificantToken?.kind === "control-header";
   const functionKeyword = lexeme.complete && lexeme.word === "function";
   let classDeclarationDepth = previousSignificantToken
     ?.classDeclarationDepth;
@@ -1131,7 +1136,7 @@ function javaScriptIdentifierDeclarationContext(
       (functionKeyword && candidate),
     functionExpression: previousSignificantToken?.functionExpression === true ||
       (functionKeyword && !candidate),
-    labelCandidate: lexeme.complete && candidate,
+    labelCandidate,
     prefix: lexeme.complete &&
       (((lexeme.word === "export" || lexeme.word === "async") && candidate) ||
         (lexeme.word === "default" &&
@@ -1792,6 +1797,7 @@ function javaScriptIdentifierContinueBefore(
 
 function javaScriptMayStartDeclaration(
   text: string,
+  start: number,
   token: JavaScriptSignificantToken | undefined,
   delimiterContexts: readonly JavaScriptDelimiterContext[],
 ): boolean {
@@ -1802,6 +1808,14 @@ function javaScriptMayStartDeclaration(
     delimiterContexts.at(-1) !== "switch-block"
   ) return false;
   if (token === undefined) return true;
+  if (
+    javaScriptLineTerminatedExpressionBefore(
+      text,
+      start,
+      token,
+      delimiterContexts,
+    )
+  ) return true;
   if (token.kind === "statement-label") return true;
   if (token.declarationPrefix === true) return true;
   const word = token.identifierWord;
@@ -3008,6 +3022,7 @@ function javaScriptJsxElementEnd(
 function scanTagSyntax(
   text: string,
   start: number,
+  jsxScanCache?: JavaScriptJsxScanCache,
 ): TagSyntaxScan {
   const expressionRanges: Range[] = [];
   const topLevelOffsets = new Set<number>();
@@ -3060,7 +3075,11 @@ function scanTagSyntax(
         delimiterContexts,
       )
     ) {
-      const jsxElementEnd = javaScriptJsxElementEnd(text, cursor);
+      const jsxElementEnd = javaScriptJsxElementEnd(
+        text,
+        cursor,
+        jsxScanCache,
+      );
       if (jsxElementEnd === undefined) {
         return { end: undefined, expressionRanges, topLevelOffsets };
       }
@@ -3342,7 +3361,7 @@ function scanHtmlTag(
   if (tagEnd === undefined) return undefined;
 
   const range = { start, end: tagEnd };
-  const tagSyntax = scanTagSyntax(text, start);
+  const tagSyntax = scanTagSyntax(text, start, jsxScanCache);
   const rescanExpression = tagSyntax.end === tagEnd
     ? tagSyntax.expressionRanges[0]
     : undefined;

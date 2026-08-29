@@ -2393,6 +2393,50 @@ describe("public docs validation", () => {
     );
   });
 
+  it("keeps labels after control headers in statement context", () => {
+    assertEquals(
+      destinations(
+        "export function sample(value) {\n" +
+          "if (value) label: {}\n" +
+          "/[}]/.test(value)\n" +
+          'return "[old](../architecture/control-label-regex.md)"\n' +
+          "}\n\n" +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+  });
+
+  it("starts declarations after ASI line breaks", () => {
+    assertEquals(
+      destinations(
+        "export function sample(value) {\n" +
+          "doSomething()\n" +
+          "class Inner {}\n" +
+          "/[}]/.test(value)\n" +
+          'return "[old](../architecture/asi-declaration-regex.md)"\n' +
+          "}\n\n" +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+  });
+
+  it("starts labels after ASI line breaks", () => {
+    assertEquals(
+      destinations(
+        "export function sample(value) {\n" +
+          "doSomething()\n" +
+          "label: {}\n" +
+          "/[}]/.test(value)\n" +
+          'return "[old](../architecture/asi-label-regex.md)"\n' +
+          "}\n\n" +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+  });
+
   it("keeps switch clause blocks in statement context in MDX ESM", () => {
     assertEquals(
       destinations(
@@ -2469,6 +2513,25 @@ describe("public docs validation", () => {
       performance.now() - startedAt,
       2_000,
       "deep valid JSX scanning must stay iterative",
+    );
+  });
+
+  it("scans JSX nested through attribute expressions in linear time", () => {
+    const depth = 1_600;
+    const source = "<a data-ok={" +
+      "<A value={".repeat(depth) +
+      "null" +
+      "} />".repeat(depth) +
+      '} href="../architecture/deep-jsx-attributes.md">ok</a>';
+    const startedAt = performance.now();
+
+    assertEquals(destinations(source), [
+      "../architecture/deep-jsx-attributes.md",
+    ]);
+    assertLess(
+      performance.now() - startedAt,
+      2_000,
+      "valid JSX attribute-expression scanning must stay linear",
     );
   });
 
