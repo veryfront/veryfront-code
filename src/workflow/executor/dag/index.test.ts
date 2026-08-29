@@ -2405,12 +2405,16 @@ describe("DAGExecutor", () => {
       // durable admission commit. When that fence is refused, the recovered
       // node must not execute.
       const executed: string[] = [];
+      const publishes: Array<Record<string, NodeState>> = [];
       const exec = new DAGExecutor({
         stepExecutor: new MockStepExecutor(new Map(), (node) => {
           executed.push(node.id);
           return { success: true, output: node.id, executionTime: 1 };
         }),
-        onNodeStatesChanged: () => false,
+        onNodeStatesChanged: ({ nodeStates }) => {
+          publishes.push(structuredClone(nodeStates));
+          return false;
+        },
       });
 
       const nodes: WorkflowNode[] = [
@@ -2434,50 +2438,11 @@ describe("DAGExecutor", () => {
         "execution ownership changed",
       );
       assertEquals(executed, []);
-    });
-
-    it("leaves nothing durably spent when ownership is lost at recovery admission", async () => {
-      // Admission must be one fenced commit. When another worker claims the
-      // run row while a recovery is being admitted, the fenced write is
-      // refused, the executor throws, and the durable row must still show the
-      // interrupted attempt -- otherwise the recovery is spent on a node that
-      // never started and the new owner refuses it as out of budget.
-      const executed: string[] = [];
-      const durable: Record<string, NodeState> = {
-        "side-effect": {
-          nodeId: "side-effect",
-          status: "running",
-          attempt: 1,
-          startedAt: new Date(),
-        },
-      };
-      const exec = new DAGExecutor({
-        stepExecutor: new MockStepExecutor(new Map(), (node) => {
-          executed.push(node.id);
-          return { success: true, output: node.id, executionTime: 1 };
-        }),
-        onNodeStatesChanged: ({ nodeStates }) => {
-          // Another worker claimed the run row as admission began. The fenced
-          // write that would charge the recovery is refused before it lands --
-          // so the interrupted attempt must stay the only durable record. A
-          // second durable admission write ahead of this fence (the two-write
-          // race this pins) would land the raised attempt here instead.
-          if (nodeStates["side-effect"]?.status === "running") return false;
-          Object.assign(durable, structuredClone(nodeStates));
-        },
-      });
-
-      const nodes: WorkflowNode[] = [
-        { id: "side-effect", dependsOn: [], config: { type: "step" } as any },
-      ];
-      const run = createTestRun({ status: "running", nodeStates: structuredClone(durable) });
-
-      await assertRejects(() => exec.execute(nodes, run), Error, "execution ownership changed");
-      assertEquals(executed, []);
+      assertEquals(publishes.length, 1);
       assertEquals(
-        durable["side-effect"]!.attempt,
-        1,
-        "an admission the fence refused must leave the recovery unspent",
+        publishes[0]!["side-effect"]!.attempt,
+        2,
+        "the raised attempt must exist only in the write the fence refused",
       );
     });
 
@@ -2760,8 +2725,6 @@ describe("DAGExecutor", () => {
           return { success: true, output: node.id, executionTime: 1 };
         }),
         onNodeStatesChanged: ({ nodeStates }) => {
-          // Record every durable admission of the step's recovery: the node
-          // published as running with a raised attempt.
           const state = nodeStates["side-effect"];
           if (state?.status === "running" && state.attempt > 1) {
             persistedAttempts.push(state.attempt);
@@ -2841,8 +2804,6 @@ describe("DAGExecutor", () => {
           return { success: true, output: node.id, executionTime: 1 };
         }),
         onNodeStatesChanged: ({ nodeStates }) => {
-          // Capture the admission commit: the recovered node published as
-          // running, its raised attempt already durable before it executes.
           if (nodeStates["side-effect"]?.status === "running") {
             persisted = structuredClone(nodeStates);
           }
