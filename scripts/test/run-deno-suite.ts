@@ -3,6 +3,7 @@ import { planSuiteFiles, type SuitePlanId } from "./run-suite.ts";
 import {
   buildTestProcessEnv,
   DENO_TEST_ENV,
+  hasDenoPermissionFlag,
   LOOPBACK_TEST_PERMISSIONS,
   PROVIDER_EGRESS_DENY_NET,
   UNIT_DENO_TEST_ENV,
@@ -219,6 +220,11 @@ export function buildDenoSuiteCommandArgs(
 ): string[] {
   const profile = DENO_SUITE_PROFILES[suite];
   const passthroughArgs = options.passthroughArgs ?? [];
+  if (hasDenoPermissionFlag(passthroughArgs)) {
+    throw new Error(
+      "Deno suite profiles do not accept forwarded permission flags",
+    );
+  }
   return [
     "test",
     ...(profile.preload ? ["--preload=src/testing/preload.ts"] : []),
@@ -264,6 +270,12 @@ if (import.meta.main) {
   }
 
   const suite = flags.suite as DenoSuitePlanId;
+  if (hasDenoPermissionFlag(flags.passthroughArgs)) {
+    console.error(
+      "Deno suite profiles do not accept forwarded permission flags",
+    );
+    Deno.exit(2);
+  }
   const plan = await planSuiteFiles({ suite });
   const profile = DENO_SUITE_PROFILES[suite];
   const batches = partitionDenoSuiteFiles(

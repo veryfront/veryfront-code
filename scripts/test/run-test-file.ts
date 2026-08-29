@@ -1,6 +1,7 @@
 import {
   buildTestProcessEnv,
   DENO_TEST_ENV,
+  hasDenoPermissionFlag,
   LOOPBACK_TEST_PERMISSIONS,
   PROVIDER_EGRESS_DENY_NET,
   UNIT_DENO_TEST_ENV,
@@ -29,6 +30,8 @@ const TEST_OPTIONS_WITH_SEPARATE_VALUE = new Set([
 const MAX_TARGET_DIRECTORY_ENTRIES = 10_000;
 const MISSING_TEST_TARGET_MESSAGE =
   "test:file requires at least one test file or directory target";
+const FORWARDED_PERMISSION_MESSAGE =
+  "test:file does not accept forwarded permission flags";
 
 export interface TestTargetFileSystem {
   statSync(path: string): Pick<Deno.FileInfo, "isDirectory">;
@@ -71,6 +74,9 @@ export function buildTestFileCommandArgs(
   const usesIntegrationPermissions = targets.some((target) =>
     isIntegrationTarget(target, fileSystem)
   );
+  if (hasDenoPermissionFlag(rawArgs)) {
+    throw new TestFileUsageError(FORWARDED_PERMISSION_MESSAGE);
+  }
   const configArgs = usesScriptsConfig
     ? ["--config=scripts/test.deno.json"]
     : ["--preload=src/testing/preload.ts"];
@@ -140,8 +146,10 @@ function isIntegrationTarget(
 
 async function main(): Promise<void> {
   let targets: string[];
+  let commandArgs: string[];
   try {
     targets = getPositionalTestTargets(Deno.args);
+    commandArgs = buildTestFileCommandArgs(Deno.args);
   } catch (error) {
     if (!(error instanceof TestFileUsageError)) throw error;
     console.error(error.message);
@@ -154,7 +162,7 @@ async function main(): Promise<void> {
       ? DENO_TEST_ENV
       : UNIT_DENO_TEST_ENV;
   const command = new Deno.Command("deno", {
-    args: buildTestFileCommandArgs(Deno.args),
+    args: commandArgs,
     clearEnv: true,
     env: buildTestProcessEnv(Deno.env.toObject(), environment),
     stdout: "inherit",

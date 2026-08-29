@@ -3,6 +3,7 @@ import {
   assert,
   assertEquals,
   assertRejects,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { relative } from "node:path";
@@ -484,6 +485,30 @@ describe("migration command surface", () => {
     );
 
     assertEquals(args.slice(-2), ["--no-lock", "tests/routes.test.ts"]);
+  });
+
+  it("rejects task-level permission overrides", () => {
+    for (
+      const permissionFlag of [
+        "--allow-all",
+        "--allow-import=https://example.com",
+        "--allow-net=api.openai.com",
+        "--deny-net=localhost",
+        "-A",
+        "-N",
+      ]
+    ) {
+      assertThrows(
+        () =>
+          buildDenoSuiteCommandArgs(
+            "unit:parallel",
+            ["src/foo.test.ts"],
+            { passthroughArgs: [permissionFlag] },
+          ),
+        Error,
+        "Deno suite profiles do not accept forwarded permission flags",
+      );
+    }
   });
 
   it("routes affected compatibility tasks through declared suite profiles", async () => {

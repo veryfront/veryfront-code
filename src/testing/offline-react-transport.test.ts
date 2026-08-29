@@ -78,6 +78,11 @@ describe("offline React transport", () => {
       assertEquals(react18.version, REACT_VERSION_18_3);
       assertEquals(react19_1.version, REACT_VERSION_19_1);
       assertEquals(defaultReact.version, REACT_DEFAULT_VERSION);
+      assertEquals("createFactory" in react18, true);
+      assertEquals("use" in react18, false);
+      assertEquals("Activity" in react19_1, false);
+      assertEquals("use" in react19_1, true);
+      assertEquals("Activity" in defaultReact, true);
       assert(react18 !== defaultReact);
       assert(react19_1 !== defaultReact);
     } finally {

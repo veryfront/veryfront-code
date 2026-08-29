@@ -14,7 +14,7 @@ describe("test:file task command", () => {
       "src/config/cicd-coverage-workflow.test.ts",
       "--filter",
       "cicd",
-      "--allow-net=api.openai.com",
+      "--shuffle=123",
     ]);
 
     assertEquals(TEST_FILE_ENV.DENO_TESTING, "1");
@@ -26,7 +26,7 @@ describe("test:file task command", () => {
       "src/config/cicd-coverage-workflow.test.ts",
       "--filter",
       "cicd",
-      "--allow-net=api.openai.com",
+      "--shuffle=123",
     ]);
   });
 
@@ -97,6 +97,32 @@ describe("test:file task command", () => {
         "test:file requires at least one test file or directory target",
       );
     }
+  });
+
+  it("rejects permission flags before Deno can widen the test profile", () => {
+    for (
+      const permissionFlag of [
+        "--allow-all",
+        "--allow-import=https://example.com",
+        "--allow-net=api.openai.com",
+        "--deny-net=localhost",
+        "-A",
+        "-N",
+      ]
+    ) {
+      assertThrows(
+        () => buildTestFileCommandArgs(["src/foo.test.ts", permissionFlag]),
+        Error,
+        "test:file does not accept forwarded permission flags",
+      );
+    }
+
+    const scriptArg = buildTestFileCommandArgs([
+      "src/foo.test.ts",
+      "--",
+      "--allow-all",
+    ]);
+    assertEquals(scriptArg.includes(LOOPBACK_ALLOW_NET), true);
   });
 
   it("keeps ambiguous filesystem targets on loopback-only permissions", () => {

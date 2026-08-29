@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildTestProcessEnv,
   DENO_TEST_ENV,
+  hasDenoPermissionFlag,
   LEAF_TEST_SUITES,
   PROVIDER_ENV_KEYS,
   resolveLeafSuiteOwners,
@@ -10,6 +11,22 @@ import {
 } from "./suites.ts";
 
 describe("leaf test suite registry", () => {
+  it("recognizes forwarded Deno permission flags without scanning script arguments", () => {
+    for (
+      const args of [
+        ["--allow-all"],
+        ["--allow-net=api.openai.com"],
+        ["--deny-net", "localhost"],
+        ["-A"],
+        ["-N"],
+      ]
+    ) {
+      assertEquals(hasDenoPermissionFlag(args), true);
+    }
+    assertEquals(hasDenoPermissionFlag(["--filter", "unit"]), false);
+    assertEquals(hasDenoPermissionFlag(["--", "--allow-all"]), false);
+  });
+
   it("removes every provider credential while preserving benign parent values", () => {
     const parentEnv = Object.fromEntries([
       ...PROVIDER_ENV_KEYS.map((key) => [key, "test-only-value"]),

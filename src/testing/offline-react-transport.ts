@@ -1,4 +1,6 @@
 import { isIP } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   __getCapturedHostFetchForTests,
@@ -14,6 +16,13 @@ const OFFLINE_REACT_MODULE_PREFIX = "/__veryfront_test_react__/";
 // in-process, so this resolution result is never dialed.
 const OFFLINE_REACT_RESOLVED_ADDRESS = "192.0.2.1";
 const REACT_VERSION_19_1 = "19.1.1";
+const OFFLINE_REACT_CACHE_PATH = join(
+  tmpdir(),
+  `veryfront-offline-react-v1-${Deno.pid}.json`,
+);
+const OFFLINE_REACT_LOCK_PATH = `${OFFLINE_REACT_CACHE_PATH}.lock`;
+const MAX_OFFLINE_REACT_CACHE_BYTES = 16 * 1024 * 1024;
+const MAX_OFFLINE_REACT_CACHE_ENTRIES = 128;
 const OFFLINE_UNIT_MODULE_FIXTURES: Readonly<Record<string, string>> = Object.freeze({
   "/lodash": "export function merge(left, right) { return { ...left, ...right }; }\n",
 });
@@ -40,7 +49,9 @@ type OfflineReactVersion = keyof typeof OFFLINE_REACT_PACKAGE_URLS;
 type OfflineReactEntry = {
   readonly outputName: string;
   readonly packageName: "react" | "react-dom";
-  readonly exportNames: readonly string[];
+  readonly exportNamesByVersion: Readonly<
+    Record<OfflineReactVersion, readonly string[]>
+  >;
   readonly sourceFileName?: string;
 };
 
@@ -53,102 +64,245 @@ const OFFLINE_REACT_ENTRIES = Object.freeze(
     react: {
       outputName: "react",
       packageName: "react",
-      exportNames: [
-        "Activity",
-        "Children",
-        "Component",
-        "Fragment",
-        "Profiler",
-        "PureComponent",
-        "StrictMode",
-        "Suspense",
-        "__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE",
-        "__COMPILER_RUNTIME",
-        "act",
-        "cache",
-        "cacheSignal",
-        "captureOwnerStack",
-        "cloneElement",
-        "createContext",
-        "createElement",
-        "createRef",
-        "forwardRef",
-        "isValidElement",
-        "lazy",
-        "memo",
-        "startTransition",
-        "unstable_useCacheRefresh",
-        "use",
-        "useActionState",
-        "useCallback",
-        "useContext",
-        "useDebugValue",
-        "useDeferredValue",
-        "useEffect",
-        "useEffectEvent",
-        "useId",
-        "useImperativeHandle",
-        "useInsertionEffect",
-        "useLayoutEffect",
-        "useMemo",
-        "useOptimistic",
-        "useReducer",
-        "useRef",
-        "useState",
-        "useSyncExternalStore",
-        "useTransition",
-        "version",
-      ],
+      exportNamesByVersion: {
+        [REACT_VERSION_18_3]: [
+          "Children",
+          "Component",
+          "Fragment",
+          "Profiler",
+          "PureComponent",
+          "StrictMode",
+          "Suspense",
+          "__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED",
+          "act",
+          "cloneElement",
+          "createContext",
+          "createElement",
+          "createFactory",
+          "createRef",
+          "forwardRef",
+          "isValidElement",
+          "lazy",
+          "memo",
+          "startTransition",
+          "unstable_act",
+          "useCallback",
+          "useContext",
+          "useDebugValue",
+          "useDeferredValue",
+          "useEffect",
+          "useId",
+          "useImperativeHandle",
+          "useInsertionEffect",
+          "useLayoutEffect",
+          "useMemo",
+          "useReducer",
+          "useRef",
+          "useState",
+          "useSyncExternalStore",
+          "useTransition",
+          "version",
+        ],
+        [REACT_VERSION_19_1]: [
+          "Children",
+          "Component",
+          "Fragment",
+          "Profiler",
+          "PureComponent",
+          "StrictMode",
+          "Suspense",
+          "__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE",
+          "__COMPILER_RUNTIME",
+          "act",
+          "cache",
+          "captureOwnerStack",
+          "cloneElement",
+          "createContext",
+          "createElement",
+          "createRef",
+          "forwardRef",
+          "isValidElement",
+          "lazy",
+          "memo",
+          "startTransition",
+          "unstable_useCacheRefresh",
+          "use",
+          "useActionState",
+          "useCallback",
+          "useContext",
+          "useDebugValue",
+          "useDeferredValue",
+          "useEffect",
+          "useId",
+          "useImperativeHandle",
+          "useInsertionEffect",
+          "useLayoutEffect",
+          "useMemo",
+          "useOptimistic",
+          "useReducer",
+          "useRef",
+          "useState",
+          "useSyncExternalStore",
+          "useTransition",
+          "version",
+        ],
+        [REACT_DEFAULT_VERSION]: [
+          "Activity",
+          "Children",
+          "Component",
+          "Fragment",
+          "Profiler",
+          "PureComponent",
+          "StrictMode",
+          "Suspense",
+          "__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE",
+          "__COMPILER_RUNTIME",
+          "act",
+          "cache",
+          "cacheSignal",
+          "captureOwnerStack",
+          "cloneElement",
+          "createContext",
+          "createElement",
+          "createRef",
+          "forwardRef",
+          "isValidElement",
+          "lazy",
+          "memo",
+          "startTransition",
+          "unstable_useCacheRefresh",
+          "use",
+          "useActionState",
+          "useCallback",
+          "useContext",
+          "useDebugValue",
+          "useDeferredValue",
+          "useEffect",
+          "useEffectEvent",
+          "useId",
+          "useImperativeHandle",
+          "useInsertionEffect",
+          "useLayoutEffect",
+          "useMemo",
+          "useOptimistic",
+          "useReducer",
+          "useRef",
+          "useState",
+          "useSyncExternalStore",
+          "useTransition",
+          "version",
+        ],
+      },
     },
     "react-jsx-runtime": {
       outputName: "react-jsx-runtime",
       packageName: "react",
       sourceFileName: "jsx-runtime.js",
-      exportNames: ["Fragment", "jsx", "jsxs"],
+      exportNamesByVersion: {
+        [REACT_VERSION_18_3]: ["Fragment", "jsx", "jsxs"],
+        [REACT_VERSION_19_1]: ["Fragment", "jsx", "jsxs"],
+        [REACT_DEFAULT_VERSION]: ["Fragment", "jsx", "jsxs"],
+      },
     },
     "react-jsx-dev-runtime": {
       outputName: "react-jsx-dev-runtime",
       packageName: "react",
       sourceFileName: "jsx-dev-runtime.js",
-      exportNames: ["Fragment", "jsxDEV"],
+      exportNamesByVersion: {
+        [REACT_VERSION_18_3]: ["Fragment", "jsxDEV"],
+        [REACT_VERSION_19_1]: ["Fragment", "jsxDEV"],
+        [REACT_DEFAULT_VERSION]: ["Fragment", "jsxDEV"],
+      },
     },
     "react-dom": {
       outputName: "react-dom",
       packageName: "react-dom",
-      exportNames: [
-        "__DOM_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE",
-        "createPortal",
-        "flushSync",
-        "preconnect",
-        "prefetchDNS",
-        "preinit",
-        "preinitModule",
-        "preload",
-        "preloadModule",
-        "requestFormReset",
-        "unstable_batchedUpdates",
-        "useFormState",
-        "useFormStatus",
-        "version",
-      ],
+      exportNamesByVersion: {
+        [REACT_VERSION_18_3]: [
+          "__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED",
+          "createPortal",
+          "createRoot",
+          "findDOMNode",
+          "flushSync",
+          "hydrate",
+          "hydrateRoot",
+          "render",
+          "unmountComponentAtNode",
+          "unstable_batchedUpdates",
+          "unstable_renderSubtreeIntoContainer",
+          "version",
+        ],
+        [REACT_VERSION_19_1]: [
+          "__DOM_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE",
+          "createPortal",
+          "flushSync",
+          "preconnect",
+          "prefetchDNS",
+          "preinit",
+          "preinitModule",
+          "preload",
+          "preloadModule",
+          "requestFormReset",
+          "unstable_batchedUpdates",
+          "useFormState",
+          "useFormStatus",
+          "version",
+        ],
+        [REACT_DEFAULT_VERSION]: [
+          "__DOM_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE",
+          "createPortal",
+          "flushSync",
+          "preconnect",
+          "prefetchDNS",
+          "preinit",
+          "preinitModule",
+          "preload",
+          "preloadModule",
+          "requestFormReset",
+          "unstable_batchedUpdates",
+          "useFormState",
+          "useFormStatus",
+          "version",
+        ],
+      },
     },
     "react-dom-client": {
       outputName: "react-dom-client",
       packageName: "react-dom",
       sourceFileName: "client.js",
-      exportNames: ["createRoot", "hydrateRoot", "version"],
+      exportNamesByVersion: {
+        [REACT_VERSION_18_3]: ["createRoot", "hydrateRoot"],
+        [REACT_VERSION_19_1]: ["createRoot", "hydrateRoot", "version"],
+        [REACT_DEFAULT_VERSION]: ["createRoot", "hydrateRoot", "version"],
+      },
     },
     "react-dom-server": {
       outputName: "react-dom-server",
       packageName: "react-dom",
-      sourceFileName: "server.edge.js",
-      exportNames: [
-        "renderToReadableStream",
-        "renderToStaticMarkup",
-        "renderToString",
-        "resume",
-        "version",
-      ],
+      sourceFileName: "server.browser.js",
+      exportNamesByVersion: {
+        [REACT_VERSION_18_3]: [
+          "renderToNodeStream",
+          "renderToReadableStream",
+          "renderToStaticMarkup",
+          "renderToStaticNodeStream",
+          "renderToString",
+          "version",
+        ],
+        [REACT_VERSION_19_1]: [
+          "renderToReadableStream",
+          "renderToStaticMarkup",
+          "renderToString",
+          "version",
+        ],
+        [REACT_DEFAULT_VERSION]: [
+          "renderToReadableStream",
+          "renderToStaticMarkup",
+          "renderToString",
+          "resume",
+          "version",
+        ],
+      },
     },
   } satisfies Readonly<Record<string, OfflineReactEntry>>,
 );
@@ -157,23 +311,83 @@ type OfflineReactEntryKey = keyof typeof OFFLINE_REACT_ENTRIES;
 
 let bundledModules: Promise<ReadonlyMap<string, string>> | undefined;
 
+function parseBundledModuleCache(serialized: string): ReadonlyMap<string, string> | undefined {
+  if (new TextEncoder().encode(serialized).byteLength > MAX_OFFLINE_REACT_CACHE_BYTES) {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(serialized);
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(parsed) || parsed.length > MAX_OFFLINE_REACT_CACHE_ENTRIES) {
+    return undefined;
+  }
+  const modules = new Map<string, string>();
+  for (const entry of parsed) {
+    if (
+      !Array.isArray(entry) ||
+      entry.length !== 2 ||
+      typeof entry[0] !== "string" ||
+      !entry[0].startsWith(OFFLINE_REACT_MODULE_PREFIX) ||
+      typeof entry[1] !== "string"
+    ) {
+      return undefined;
+    }
+    modules.set(entry[0], entry[1]);
+  }
+  return modules;
+}
+
+async function readBundledModuleCache(): Promise<ReadonlyMap<string, string> | undefined> {
+  try {
+    return parseBundledModuleCache(await Deno.readTextFile(OFFLINE_REACT_CACHE_PATH));
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return undefined;
+    throw error;
+  }
+}
+
+async function buildOrReadOfflineReactModules(): Promise<ReadonlyMap<string, string>> {
+  const lockFile = await Deno.open(OFFLINE_REACT_LOCK_PATH, {
+    create: true,
+    read: true,
+    write: true,
+    mode: 0o600,
+  });
+  try {
+    await lockFile.lock(true);
+    const cached = await readBundledModuleCache();
+    if (cached) return cached;
+    const modules = await buildOfflineReactModules();
+    const serialized = JSON.stringify([...modules]);
+    if (new TextEncoder().encode(serialized).byteLength > MAX_OFFLINE_REACT_CACHE_BYTES) {
+      throw new Error("Offline React module cache exceeds its byte limit");
+    }
+    await Deno.writeTextFile(OFFLINE_REACT_CACHE_PATH, serialized, {
+      mode: 0o600,
+    });
+    return modules;
+  } finally {
+    try {
+      await lockFile.unlock();
+    } finally {
+      lockFile.close();
+    }
+  }
+}
+
 function createEntrySource(
   entry: OfflineReactEntry,
   version: OfflineReactVersion,
 ): string {
   const resolvedUrl = new URL(OFFLINE_REACT_PACKAGE_URLS[version][entry.packageName]);
-  const sourceFileName = entry.outputName === "react-dom-server" &&
-      version === REACT_VERSION_18_3
-    ? "server.browser.js"
-    : entry.sourceFileName;
   const packagePath = fileURLToPath(
-    sourceFileName === undefined ? resolvedUrl : new URL(sourceFileName, resolvedUrl),
+    entry.sourceFileName === undefined ? resolvedUrl : new URL(entry.sourceFileName, resolvedUrl),
   );
-  // The export list is maintained by hand and mirrors the esm.sh export
-  // surface, which includes development-only names such as `act`; those
-  // re-export undefined from the production build here exactly as the CDN
-  // module would, so the list must be revisited on REACT_DEFAULT_VERSION bumps.
-  const exports = entry.exportNames.map((name) => `export const ${name} = moduleValue.${name};`)
+  const exports = entry.exportNamesByVersion[version]
+    .map((name) => `export const ${name} = moduleValue.${name};`)
     .join("\n");
   return `import moduleValue from ${
     JSON.stringify(packagePath)
@@ -260,7 +474,7 @@ async function buildOfflineReactModules(): Promise<ReadonlyMap<string, string>> 
 }
 
 function getBundledModules(): Promise<ReadonlyMap<string, string>> {
-  bundledModules ??= buildOfflineReactModules();
+  bundledModules ??= buildOrReadOfflineReactModules();
   return bundledModules;
 }
 
