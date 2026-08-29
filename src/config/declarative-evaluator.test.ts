@@ -748,6 +748,19 @@ export default { extensions: [extRedis(), extSqlite()] };
     ]);
   });
 
+  it("accepts type-only specifiers beside Deno npm extension imports", async () => {
+    const snapshot = await evaluateDeclarativeConfig({
+      source: `
+import extRedis, { type RedisOptions } from "npm:@veryfront/ext-redis@1.2.3";
+
+export default { extensions: [extRedis({ url: "redis://ignored:6379" })] };
+`,
+      environmentName: "production",
+      environment: {},
+    });
+    assertEquals(snapshot.extensions, [{ name: "ext-redis" }]);
+  });
+
   it("keeps factory options inside the declarative data language", async () => {
     // Deliberate contract, not an accident: the whole hosted program stays
     // declarative -- the evaluator rejects even inactive side effects -- so a
