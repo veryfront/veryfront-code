@@ -140,6 +140,19 @@ describe("suite planning parity", () => {
     );
   });
 
+  it("keeps the Deno unit-preload transport test out of external runtimes", async () => {
+    const denoOnlyFile = "src/testing/offline-react-transport.test.ts";
+
+    for (const suite of ["runtime:node", "runtime:bun"] as const) {
+      const plan = await planSuiteFiles({ suite });
+      assertEquals(
+        plan.files.includes(denoOnlyFile),
+        false,
+        `${suite} must leave the Deno unit-preload fixture to the unit suite`,
+      );
+    }
+  });
+
   it("runs the sandbox runtime guard in the Node and Bun suites", async () => {
     const guardFile =
       "tests/integration/security/sandbox-runtime-guard.test.ts";

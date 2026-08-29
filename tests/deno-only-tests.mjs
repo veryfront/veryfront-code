@@ -13,7 +13,9 @@
  * share a working directory. Node and Bun give each file its own process, so
  * there is no property there to assert even if the APIs existed. The dev-server
  * integration imports Deno-only extension discovery through its module graph,
- * which the source-file heuristic cannot see.
+ * which the source-file heuristic cannot see. The offline React transport test
+ * exercises a Deno unit-preload fixture that resolves pinned `npm:` specifiers;
+ * Bun and Node test the published runtime artifacts instead.
  *
  * Kept here rather than duplicated in each runner so the two cannot drift, and
  * so it can be tested -- see ./runtime-test-filters.test.ts.
@@ -25,5 +27,6 @@
 export const DENO_ONLY_TESTS = [
   "src/server/dev-server/handler-only.integration.test.ts",
   "src/testing/cwd-exclusion-*.test.ts",
+  "src/testing/offline-react-transport.test.ts",
   "tests/integration/workflow/context-serialization-edge-host.test.ts",
 ];
