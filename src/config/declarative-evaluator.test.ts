@@ -709,6 +709,19 @@ export default { extensions: [extRedis(), extSqlite()] };
     ]);
   });
 
+  it("keeps factory options inside the declarative data language", async () => {
+    // Deliberate contract, not an accident: the whole hosted program stays
+    // declarative -- the evaluator rejects even inactive side effects -- so a
+    // discarded factory argument gets no validation exemption. Dual-target
+    // options must be literals or getEnv reads; a callback stays rejected.
+    await assertEvaluationError(
+      `import extJwt from "@veryfront/ext-auth-jwt";
+export default { extensions: [extJwt({ jwksResolverFactory: () => null })] };`,
+      "unsupported-hosted-feature",
+      "function-value",
+    );
+  });
+
   it("keeps rejecting extension declarations veryfront does not ship", async () => {
     await assertEvaluationError(
       'import extNope from "@veryfront/ext-nope"; export default {};',

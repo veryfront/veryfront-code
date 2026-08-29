@@ -269,6 +269,11 @@ On Veryfront Cloud the same file evaluates as data: a first-party
 `@veryfront/ext-*` factory call becomes an inert `{ name }` declaration that
 the platform accepts and ignores with a warning, because it provides its own
 capabilities. The extension itself runs only where you run the project.
+
+Factory options in a dual-target file must stay inside the declarative data
+language: literals and `getEnv` reads. An option that needs code, such as a
+callback, keeps the file self-hosted only, because the hosted evaluator
+validates the whole program as data even where a value is discarded.
 Imports of packages outside the first-party set are still rejected at deploy
 time, as are declarations naming unknown extensions.
 
