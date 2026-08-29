@@ -29,7 +29,7 @@ const UP = "\x1b[A";
 const DOWN = "\x1b[B";
 const TAB = "\t";
 const CTRL_C = "\x03";
-const REMOTE_BASE_DIR = "/tmp/veryfront-key-reducer-test";
+const REMOTE_BASE_DIR = "remote-base";
 
 const ENV: KeyEnv = { suggestProjectName: () => "brave-otter" };
 
