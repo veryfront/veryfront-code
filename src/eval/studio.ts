@@ -9,7 +9,9 @@ export const getEvalStudioCapabilitySchema = defineSchema((v) =>
 );
 
 /** Schema for an Eval target primitive kind. */
-export const getEvalTargetKindSchema = defineSchema((v) => v.enum(["agent", "tool"] as const));
+export const getEvalTargetKindSchema = defineSchema((v) =>
+  v.enum(["agent", "tool", "dataset"] as const)
+);
 
 /** Schema for an editable Eval source field name. */
 export const getEvalEditableFieldSchema = defineSchema((v) =>

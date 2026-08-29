@@ -2,6 +2,7 @@ import { datasets } from "./datasets.ts";
 import type {
   EvalAgentInput,
   EvalDataset,
+  EvalDatasetInput,
   EvalDefinition,
   EvalExampleInput,
   EvalMetric,
@@ -115,11 +116,25 @@ export function evalTool(input: EvalToolInput): EvalDefinition {
   return createEvalDefinition("tool", input);
 }
 
+/**
+ * Define a target-free eval that grades each stored dataset example directly.
+ * The definition's `target` identity is derived from `name` or `id`.
+ */
+export function evalDataset(input: EvalDatasetInput): EvalDefinition {
+  const target = normalizeOptionalLabel(input.name, "Eval name") ??
+    normalizeOptionalLabel(input.id, "Eval id");
+  if (!target) {
+    throw createEvalValidationError("Eval dataset definitions require an id or name");
+  }
+  return createEvalDefinition("dataset", { ...input, target });
+}
+
 /** Check whether a value is a normalized eval definition. */
 export function isEvalDefinition(value: unknown): value is EvalDefinition {
   if (!isEvalRecord(value)) return false;
   return value.kind === "eval" &&
-    (value.targetKind === "agent" || value.targetKind === "tool") &&
+    (value.targetKind === "agent" || value.targetKind === "tool" ||
+      value.targetKind === "dataset") &&
     typeof value.id === "string" &&
     typeof value.name === "string" &&
     typeof value.target === "string" &&

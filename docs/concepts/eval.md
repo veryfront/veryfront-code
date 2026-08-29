@@ -14,7 +14,7 @@ checked with one unit test.
 ## Characteristics
 
 - An eval has a stable ID.
-- An eval targets an agent or a tool.
+- An eval targets an agent or a tool, or grades a stored dataset directly with no target.
 - An eval loads examples from inline data, JSON, or JSONL.
 - An eval records `input`, optional `reference`, and optional `metadata` for each example.
 - An eval uses metrics such as exact match, contains, JSON match, required tool calls, forbidden tool calls, no failed tools, retrieval recall, citation precision and recall, latency, tokens, cost, and rubric judges.

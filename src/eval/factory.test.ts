@@ -1,7 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { datasets, evalAgent, evalTool, isEvalDefinition, metrics } from "veryfront/eval";
+import {
+  datasets,
+  evalAgent,
+  evalDataset,
+  evalTool,
+  isEvalDefinition,
+  metrics,
+} from "veryfront/eval";
 import type { EvalMockToolsResolver } from "veryfront/eval";
 import type { ToolSet } from "veryfront/tool";
 
@@ -130,6 +137,76 @@ describe("eval/factory", () => {
     assertEquals(resolverDefinition.mockTools, resolver);
     assertEquals(isEvalDefinition(staticDefinition), true);
     assertEquals(isEvalDefinition(resolverDefinition), true);
+  });
+
+  it("creates a target-free dataset eval definition", () => {
+    const definition = evalDataset({
+      id: "eval:rubric-calibration",
+      name: "Rubric calibration",
+      description: "Judge calibration over a labelled corpus.",
+      dataset: datasets.inline([
+        {
+          id: "case-1",
+          input: "Standing answer.",
+          reference: "pass",
+          metadata: { label: "good" },
+        },
+      ]),
+      repetitions: 2,
+      tags: ["calibration"],
+      metadata: { owner: "ai-platform" },
+    });
+
+    assertEquals(isEvalDefinition(definition), true);
+    assertEquals(definition.kind, "eval");
+    assertEquals(definition.targetKind, "dataset");
+    assertEquals(definition.id, "eval:rubric-calibration");
+    assertEquals(definition.name, "Rubric calibration");
+    assertEquals(definition.target, "Rubric calibration");
+    assertEquals(definition.repetitions, 2);
+    assertEquals(definition.tags, ["calibration"]);
+    assertEquals(definition.metadata, { owner: "ai-platform" });
+    assertEquals(Object.hasOwn(definition, "input"), false);
+    assertEquals(Object.hasOwn(definition, "mockTools"), false);
+  });
+
+  it("derives dataset eval identity from the id when the name is omitted", () => {
+    const definition = evalDataset({
+      id: "eval:judge-corpus",
+      dataset: datasets.inline([{ id: "case-1", input: "text" }]),
+    });
+
+    assertEquals(definition.target, "eval:judge-corpus");
+    assertEquals(definition.name, "eval:judge-corpus");
+    assertEquals(isEvalDefinition(definition), true);
+  });
+
+  it("rejects dataset evals without an id or name", () => {
+    assertThrows(
+      () => evalDataset({ dataset: datasets.inline([{ id: "case-1", input: "text" }]) }),
+      Error,
+      "id or name",
+    );
+    assertThrows(
+      () =>
+        evalDataset({
+          id: "   ",
+          dataset: datasets.inline([{ id: "case-1", input: "text" }]),
+        }),
+      Error,
+      "non-empty string",
+    );
+  });
+
+  it("rejects definitions with an unknown or empty target identity", () => {
+    const definition = evalDataset({
+      id: "eval:kind-check",
+      dataset: datasets.inline([{ id: "case-1", input: "text" }]),
+    });
+
+    assertEquals(isEvalDefinition({ ...definition, targetKind: "banana" }), false);
+    assertEquals(isEvalDefinition({ ...definition, target: "" }), false);
+    assertEquals(isEvalDefinition({ ...definition, target: undefined }), false);
   });
 
   it("does not export unfinished target factories", async () => {

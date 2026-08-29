@@ -1216,7 +1216,9 @@ function createEvalReportCommandAdapters(input: {
           runId: options.runId,
           adapters: options.targetKind === "tool"
             ? { tool: options.targetAdapter as ReturnType<typeof createToolAdapter> }
-            : { agent: options.targetAdapter as ReturnType<typeof createAgentAdapter> },
+            : options.targetKind === "agent"
+            ? { agent: options.targetAdapter as ReturnType<typeof createAgentAdapter> }
+            : {},
           metadata: options.metadata,
         }),
       resolveTarget: (evalItem: DiscoveredEval) => {
@@ -1235,7 +1237,9 @@ function createEvalReportCommandAdapters(input: {
           target: evalItem.definition.target,
           targetAdapter: evalItem.definition.targetKind === "tool"
             ? createToolAdapter(tool!, createEvalToolExecutionContext(input.config))
-            : createAgentAdapter(agent!, input.options),
+            : evalItem.definition.targetKind === "agent"
+            ? createAgentAdapter(agent!, input.options)
+            : undefined,
         };
       },
       createModelTargetAdapter: (model: string) => {
@@ -1539,7 +1543,9 @@ export async function runEvalCommand(
 
       const targetAdapter = evalItem.definition.targetKind === "tool"
         ? createToolAdapter(tool!, createEvalToolExecutionContext(config))
-        : createAgentAdapter(agent!, options);
+        : evalItem.definition.targetKind === "agent"
+        ? createAgentAdapter(agent!, options)
+        : undefined;
       const outcome = await runWithProjectAgentRuntime(
         projectRuntime,
         async () =>

@@ -44,7 +44,7 @@
  */
 
 export { datasets } from "./datasets.ts";
-export { evalAgent, evalTool, isEvalDefinition } from "./factory.ts";
+export { evalAgent, evalDataset, evalTool, isEvalDefinition } from "./factory.ts";
 export { judges } from "./judges.ts";
 export { metrics } from "./metrics.ts";
 export {
@@ -83,6 +83,7 @@ export type {
   EvalCheckContext,
   EvalCitation,
   EvalDataset,
+  EvalDatasetInput,
   EvalDatasetLoadContext,
   EvalDefinition,
   EvalDurationSummary,

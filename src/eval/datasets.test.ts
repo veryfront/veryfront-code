@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { datasets } from "veryfront/eval";
+import { datasets, evalDataset, runEval } from "veryfront/eval";
 
 describe("eval/datasets", () => {
   it("normalizes inline examples and preserves reference plus metadata", async () => {
@@ -67,6 +67,35 @@ describe("eval/datasets", () => {
         { id: "jsonl-1", input: "gamma", reference: "G" },
         { id: "jsonl-2", input: "delta" },
       ]);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("grades a labelled JSONL corpus through a target-free dataset eval", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-eval-dataset-corpus-" });
+    try {
+      await Deno.writeTextFile(
+        `${root}/corpus.jsonl`,
+        [
+          JSON.stringify({ id: "good", input: "Grounded answer.", reference: "pass" }),
+          JSON.stringify({ id: "bad", input: "Hallucinated answer.", reference: "fail" }),
+        ].join("\n"),
+      );
+
+      const definition = evalDataset({
+        id: "eval:judge-calibration",
+        dataset: datasets.jsonl("corpus.jsonl"),
+      });
+      const report = await runEval(definition, { adapters: {}, baseDir: root });
+
+      assertEquals(report.targetKind, "dataset");
+      assertEquals(report.records.map((record) => record.output), [
+        "Grounded answer.",
+        "Hallucinated answer.",
+      ]);
+      assertEquals(report.records.map((record) => record.reference), ["pass", "fail"]);
+      assertEquals(report.records.every((record) => record.completed), true);
     } finally {
       await Deno.remove(root, { recursive: true });
     }

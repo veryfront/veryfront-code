@@ -8,6 +8,7 @@ import {
   type DiscoveredEval,
   EVAL_REPORT_SCHEMA_VERSION,
   evalAgent,
+  evalDataset,
   type EvalReport,
   evalTool,
   metrics,
@@ -1671,6 +1672,71 @@ describe("eval CLI command helpers", () => {
       ]);
     } finally {
       setJsonMode(false);
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("runs a dataset eval without resolving an agent or tool target", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-dataset-cli-" });
+    const configHome = await Deno.makeTempDir({ prefix: "vf-eval-dataset-cli-auth-" });
+    const definition = evalDataset({
+      id: "eval:dataset-standing",
+      dataset: [{ id: "case-1", input: "Standing text.", reference: "pass" }],
+    });
+    definition.source = {
+      filePath: `${projectDir}/evals/dataset-standing.eval.ts`,
+      exportName: "default",
+    };
+    const runtime = createProjectRuntimeDiscovery(normalizeSourceIntegrationPolicy({ allow: {} }));
+    runtime.evals.set(definition.id, definition);
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+
+      const singleOutput = await captureConsoleOutput(async () => {
+        const exitCode = await runEvalCommand(
+          {
+            id: "dataset-standing",
+            list: false,
+            exporters: [],
+            debug: false,
+            candidateModels: [],
+            projectDir,
+            reportDir: `${projectDir}/single`,
+          },
+          { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
+        );
+        assertEquals(exitCode, 0);
+      });
+      assertStringIncludes(
+        relevantEvalHumanLines(singleOutput).join("\n"),
+        "Result: 1/1 passed (100%)",
+      );
+
+      const suiteOutput = await captureConsoleOutput(async () => {
+        const exitCode = await runEvalCommand(
+          {
+            list: false,
+            exporters: [],
+            debug: false,
+            candidateModels: [],
+            projectDir,
+            reportDir: `${projectDir}/suite`,
+          },
+          { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
+        );
+        assertEquals(exitCode, 0);
+      });
+      assertStringIncludes(
+        relevantEvalHumanLines(suiteOutput).join("\n"),
+        "Eval suite: 1/1 passed",
+      );
+    } finally {
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });
     }
