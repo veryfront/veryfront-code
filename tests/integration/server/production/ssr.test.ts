@@ -6,6 +6,7 @@ import { isNotFoundError, mkdir, remove, writeTextFile } from "#veryfront/compat
 import { join } from "#veryfront/compat/path";
 import { startProductionServer } from "../../../../src/server/production-server.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
+import { fetchViaLoopbackWithHost } from "../../../_helpers/server.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
 function registerUnhandledRejectionGuard(): void {
@@ -228,7 +229,7 @@ describe(
             ] as const
           ) {
             const host = `${context.projectId}.${scenario.name}.localhost:${port}`;
-            const pageResponse = await fetch(`http://${host}/`);
+            const pageResponse = await fetchViaLoopbackWithHost({ port, host, path: "/" });
             assertEquals(pageResponse.status, 200);
             const pageHtml = await pageResponse.text();
 
@@ -245,7 +246,11 @@ describe(
               `layout node positions in ${scenario.name}`,
             );
 
-            const notFoundResponse = await fetch(`http://${host}/a/b/missing`);
+            const notFoundResponse = await fetchViaLoopbackWithHost({
+              port,
+              host,
+              path: "/a/b/missing",
+            });
             assertEquals(notFoundResponse.status, 404);
             assertMatch(notFoundResponse.headers.get("content-type") ?? "", /text\/html/i);
             const notFoundHtml = await notFoundResponse.text();
