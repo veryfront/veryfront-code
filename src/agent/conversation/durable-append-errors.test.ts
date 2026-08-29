@@ -90,6 +90,30 @@ describe("agent/durable-append-errors", () => {
     assertEquals(isCursorMismatchConversationRunAppendError(terminal), false);
   });
 
+  // veryfront-issue-inbox#757: the api registers a distinct slug for the
+  // terminal-run rejection, so the runtime prefers it over the English detail --
+  // the string stays as a fallback for api versions that still emit only
+  // `validation-failed`.
+  it("prefers the terminal-run rejection slug over the detail wording", () => {
+    const sluggedTerminal = new AppendConversationRunEventsError({
+      status: 400,
+      detail: "This run is terminal (message reworded by a future api release)",
+      slug: "terminal-run-append-rejected",
+    });
+    const rewordedWithoutSlug = new AppendConversationRunEventsError({
+      status: 400,
+      detail: "This run is terminal (message reworded by a future api release)",
+      slug: "validation-failed",
+    });
+
+    assertEquals(isTerminalRunConversationRunAppendError(sluggedTerminal), true);
+    assertEquals(isIgnorableConversationRunAppendError(sluggedTerminal), true);
+    // Without the distinct slug, a reworded message must miss (noisy retries),
+    // never misfire into the terminal branch.
+    assertEquals(isTerminalRunConversationRunAppendError(rewordedWithoutSlug), false);
+    assertEquals(isIgnorableConversationRunAppendError(rewordedWithoutSlug), false);
+  });
+
   // veryfront-issue-inbox#743: a terminal-run rejection means the run is already
   // finished server-side, so the runtime must stop cleanly instead of completing a
   // run that no longer accepts a terminal transition. Every other rejection --
