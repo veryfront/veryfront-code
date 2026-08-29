@@ -658,6 +658,27 @@ export default {
     ]);
   });
 
+  it("ignores erased type specifiers beside a default extension import", async () => {
+    const snapshot = await evaluateDeclarativeConfig({
+      source: `
+import extJwt, { type ExtJwtConfig } from "@veryfront/ext-auth-jwt";
+
+export default { extensions: [extJwt()] };
+`,
+      environmentName: "production",
+      environment: {},
+    });
+    assertEquals(snapshot.extensions, [{ name: "ext-auth-jwt" }]);
+
+    // A runtime named specifier stays rejected: only the default factory
+    // binding exists on the hosted side.
+    await assertEvaluationError(
+      'import extJwt, { something } from "@veryfront/ext-auth-jwt"; export default {};',
+      "unsupported-syntax",
+      "import-form",
+    );
+  });
+
   it("accepts Deno npm specifiers for first-party extension imports", async () => {
     const snapshot = await evaluateDeclarativeConfig({
       source: `

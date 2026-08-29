@@ -1695,7 +1695,36 @@ function processExtensionImport(
   environment: LexicalEnvironment,
   countBindings: boolean,
 ): void {
-  if (specifiers.length !== 1) {
+  if (
+    specifiers.length === 0 || specifiers.length > DECLARATIVE_CONFIG_LIMITS.maxImportSpecifiers
+  ) {
+    return throwEvaluationError(
+      specifiers.length === 0 ? "unsupported-syntax" : "resource-limit-exceeded",
+      "validate",
+      specifiers.length === 0 ? "import-form" : "arguments",
+      context,
+      node,
+    );
+  }
+  // Type-only named specifiers are erased at runtime, so a combined
+  // `import ext, { type Config } from "@veryfront/ext-..."` is the same
+  // declaration as the bare default import.
+  let defaultSpecifier: ASTNode | undefined;
+  for (let index = 0; index < specifiers.length; index += 1) {
+    const specifier = requireAstNode(specifiers[index], context, node);
+    if (specifier.type === "ImportSpecifier" && specifier.importKind === "type") continue;
+    if (specifier.type !== "ImportDefaultSpecifier" || defaultSpecifier !== undefined) {
+      return throwEvaluationError(
+        "unsupported-syntax",
+        "validate",
+        "import-form",
+        context,
+        specifier,
+      );
+    }
+    defaultSpecifier = specifier;
+  }
+  if (defaultSpecifier === undefined) {
     return throwEvaluationError(
       "unsupported-syntax",
       "validate",
@@ -1704,16 +1733,7 @@ function processExtensionImport(
       node,
     );
   }
-  const specifier = requireAstNode(specifiers[0], context, node);
-  if (specifier.type !== "ImportDefaultSpecifier") {
-    return throwEvaluationError(
-      "unsupported-syntax",
-      "validate",
-      "import-form",
-      context,
-      specifier,
-    );
-  }
+  const specifier = defaultSpecifier;
   if (node.importKind === "type") return;
   const local = requireAstNode(specifier.local, context, specifier);
   declareBinding(
@@ -2563,7 +2583,7 @@ function isHostedCorsOriginList(value: readonly RuntimeValue[]): boolean {
 }
 
 /**
- * A first-party extension declaration, `{ name: "ext-..." }` — the shape an
+ * A first-party extension declaration, `{ name: "ext-..." }` -- the shape an
  * imported extension factory call evaluates to. The hosted runtime provides
  * the capability itself, so the declaration is accepted and ignored at
  * orchestration with a warning rather than rejected here.

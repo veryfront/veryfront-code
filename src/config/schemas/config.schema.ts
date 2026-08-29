@@ -1351,11 +1351,11 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
        * Each entry is a fully-materialized `Extension` object, a disable
        * directive `{ name, enabled: false }` that vetoes an extension
        * discovered from a lower-priority source, or a first-party declaration
-       * `{ name }` — the inert marker a hosted declarative config produces
+       * `{ name }` -- the inert marker a hosted declarative config produces
        * for an imported `@veryfront/ext-*` factory call, accepted and ignored
        * with a warning because the platform provides the capability itself
        * (veryfront-issue-inbox#688). The runtime type is tightened at the
-       * `veryfront/extensions` barrel — we keep this as `v.unknown()` here to
+       * `veryfront/extensions` barrel -- we keep this as `v.unknown()` here to
        * avoid pulling the extensions module into the config layer (would
        * introduce a circular import).
        */

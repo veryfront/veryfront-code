@@ -29,7 +29,7 @@ import type {
 /**
  * Options for `orchestrateExtensions`.
  *
- * The `discovery` and `loadFactory` fields are test seams — they are not
+ * The `discovery` and `loadFactory` fields are test seams -- they are not
  * part of the stable public API and default to the real implementations.
  */
 export interface OrchestrateOptions {
@@ -38,7 +38,7 @@ export interface OrchestrateOptions {
   logger: ExtensionLogger;
   /** Contracts to seed into the registry after teardown, before setup(). */
   primeContracts?: Record<string, unknown>;
-  /** Built-in extensions shipped with the framework. Lowest priority — any
+  /** Built-in extensions shipped with the framework. Lowest priority -- any
    *  project, package, or config extension with the same name overrides them.
    *  Users can disable them via `{ name: "ext-llm-anthropic", enabled: false }`. */
   builtinExtensions?: ResolvedExtension[];
@@ -93,7 +93,7 @@ const FIRST_PARTY_EXTENSION_NAMES = new Set(
 
 /**
  * A first-party extension declaration, `{ name: "ext-..." }` and nothing
- * else — the inert marker a hosted declarative config produces for an
+ * else -- the inert marker a hosted declarative config produces for an
  * imported extension factory call (veryfront-issue-inbox#688). The runtime
  * provides the capability itself, so the declaration activates nothing.
  */
@@ -102,17 +102,23 @@ export function isFirstPartyDeclarationMarker(
   entry: ExtensionConfigEntry,
 ): entry is { name: string } {
   if (typeof entry !== "object" || entry === null) return false;
-  // Reflect.ownKeys sees non-enumerable and symbol keys that Object.keys
-  // misses: a malformed materialized extension carrying hidden fields must
-  // fail validation, not vanish as an inert declaration.
-  const keys = Reflect.ownKeys(entry);
-  if (keys.length !== 1 || keys[0] !== "name") return false;
-  // Descriptor inspection, like validateExtension: an accessor-backed `name`
-  // must neither run user code here nor classify as an inert marker.
-  const descriptor = Object.getOwnPropertyDescriptor(entry, "name");
-  return descriptor !== undefined && "value" in descriptor &&
-    typeof descriptor.value === "string" &&
-    FIRST_PARTY_EXTENSION_NAMES.has(descriptor.value);
+  try {
+    // Reflect.ownKeys sees non-enumerable and symbol keys that Object.keys
+    // misses: a malformed materialized extension carrying hidden fields must
+    // fail validation, not vanish as an inert declaration.
+    const keys = Reflect.ownKeys(entry);
+    if (keys.length !== 1 || keys[0] !== "name") return false;
+    // Descriptor inspection, like validateExtension: an accessor-backed `name`
+    // must neither run user code here nor classify as an inert marker.
+    const descriptor = Object.getOwnPropertyDescriptor(entry, "name");
+    return descriptor !== undefined && "value" in descriptor &&
+      typeof descriptor.value === "string" &&
+      FIRST_PARTY_EXTENSION_NAMES.has(descriptor.value);
+  } catch {
+    // A revoked proxy or throwing trap is not a marker; ordinary extension
+    // validation owns the typed error for it.
+    return false;
+  }
 }
 
 function isDisableDirective(

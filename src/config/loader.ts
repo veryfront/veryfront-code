@@ -1432,14 +1432,18 @@ function warnIgnoredExtensionDeclarations(
 ): void {
   const extensions = snapshot.extensions;
   if (!ArrayIsArray(extensions)) return;
+  // Indexed iteration and index assignment: an executable self-hosted config
+  // shares this realm and can poison Array.prototype hooks before a hosted
+  // tenant evaluation reaches this path.
   const declared: string[] = [];
-  for (const entry of extensions) {
+  for (let index = 0; index < extensions.length; index += 1) {
+    const entry: unknown = extensions[index];
     if (
       typeof entry === "object" && entry !== null &&
       ownKeys(entry).length === 1 &&
       typeof (entry as { name?: unknown }).name === "string"
     ) {
-      declared.push((entry as { name: string }).name);
+      declared[declared.length] = (entry as { name: string }).name;
     }
   }
   if (declared.length === 0) return;
@@ -3272,7 +3276,7 @@ export function __bunConfigHasTopLevelAwaitForTests(
  * Rewrite bare `veryfront` import specifiers to the inline config shim so
  * temp-file config modules can load. Static and literal dynamic imports are
  * rewritten; subpaths like
- * `veryfront/head` are left untouched and will fail loudly, which is correct —
+ * `veryfront/head` are left untouched and will fail loudly, which is correct --
  * they have no meaning in a config file.
  *
  * @internal exported for tests
@@ -6945,7 +6949,7 @@ export function __isBunWorkspaceMemberDirectoryForTests(
  * Widen module ownership to the Bun workspace root when the project belongs to
  * one. Hoisted workspace dependencies resolve into an ancestor `node_modules`
  * or a sibling package directory, so tracking only descendants of the config
- * directory would leave them cached — and stale — across config reloads. The
+ * directory would leave them cached -- and stale -- across config reloads. The
  * The lexical and canonical ancestor chains are both inspected. A project
  * reached through an out-of-tree symlink has no lexical workspace ancestor,
  * while Bun resolves its modules through the physical workspace and its

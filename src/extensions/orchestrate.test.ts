@@ -655,6 +655,22 @@ describe("orchestrateExtensions()", () => {
     assertEquals(isFirstPartyDeclarationMarker(hiddenField as { name: string }), false);
   });
 
+  it("classifies a revoked proxy as a non-marker instead of throwing", () => {
+    // A throwing ownKeys trap or a revoked proxy must fall through to
+    // ordinary extension validation, which owns the typed error, rather than
+    // escaping as a raw trap error from the precheck.
+    const { proxy, revoke } = Proxy.revocable({ name: "ext-redis" }, {});
+    revoke();
+    assertEquals(isFirstPartyDeclarationMarker(proxy as { name: string }), false);
+
+    const throwingTrap = new Proxy({ name: "ext-redis" }, {
+      ownKeys() {
+        throw new Error("trap error must not escape the precheck");
+      },
+    });
+    assertEquals(isFirstPartyDeclarationMarker(throwingTrap as { name: string }), false);
+  });
+
   it("keeps rejecting a bare name that is not a first-party extension", async () => {
     await assertRejects(() =>
       orchestrateExtensions({
