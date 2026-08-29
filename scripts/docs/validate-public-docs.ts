@@ -3313,6 +3313,53 @@ function longestHtmlTagEnd(
   return Math.max(commonMarkEnd, mdxJsxEnd);
 }
 
+interface ContainingHtmlTag {
+  readonly end: number;
+  readonly expressionRanges: Range[];
+}
+
+type ScannedHtmlTag =
+  | {
+    readonly kind: "complete";
+    readonly range: Range;
+    readonly nextStart: number;
+  }
+  | {
+    readonly kind: "containing";
+    readonly range: Range;
+    readonly nextStart: number;
+    readonly containingTag: ContainingHtmlTag;
+  };
+
+function scanHtmlTag(
+  text: string,
+  start: number,
+  jsxScanCache: JavaScriptJsxScanCache,
+): ScannedHtmlTag | undefined {
+  const commonMarkEnd = commonMarkHtmlTagEnd(text, start);
+  const mdxJsxEnd = mdxJsxTagEnd(text, start, jsxScanCache);
+  const tagEnd = longestHtmlTagEnd(commonMarkEnd, mdxJsxEnd);
+  if (tagEnd === undefined) return undefined;
+
+  const range = { start, end: tagEnd };
+  const tagSyntax = scanTagSyntax(text, start);
+  const rescanExpression = tagSyntax.end === tagEnd
+    ? tagSyntax.expressionRanges[0]
+    : undefined;
+  if (rescanExpression === undefined) {
+    return { kind: "complete", range, nextStart: tagEnd };
+  }
+  return {
+    kind: "containing",
+    range,
+    nextStart: rescanExpression.start,
+    containingTag: {
+      end: tagEnd,
+      expressionRanges: tagSyntax.expressionRanges,
+    },
+  };
+}
+
 function htmlTagRanges(
   text: string,
   ignoredRanges: readonly Range[],
@@ -3321,21 +3368,13 @@ function htmlTagRanges(
 ): Range[] {
   const ranges: Range[] = [];
   const jsxScanCache: JavaScriptJsxScanCache = new Map();
-  const containingTags: Array<{
-    readonly end: number;
-    readonly expressionRanges: Range[];
-  }> = [];
-  let expressionIndex = 0;
+  const containingTags: ContainingHtmlTag[] = [];
   for (let start = 0; start < text.length;) {
     start = text.indexOf("<", start);
     if (start === -1) break;
     while (
       containingTags.length > 0 && containingTags.at(-1)!.end <= start
     ) containingTags.pop();
-    while (
-      expressionIndex < expressionRanges.length &&
-      expressionRanges[expressionIndex]!.start <= start
-    ) expressionIndex++;
     if (
       htmlTagStartShouldBeSkipped(
         text,
@@ -3350,23 +3389,16 @@ function htmlTagRanges(
       continue;
     }
 
-    const commonMarkEnd = commonMarkHtmlTagEnd(text, start);
-    const mdxJsxEnd = mdxJsxTagEnd(text, start, jsxScanCache);
-    const tagEnd = longestHtmlTagEnd(commonMarkEnd, mdxJsxEnd);
-    if (tagEnd !== undefined) {
-      ranges.push({ start, end: tagEnd });
-      const tagSyntax = scanTagSyntax(text, start);
-      const rescanExpression = tagSyntax.end === tagEnd
-        ? tagSyntax.expressionRanges[0]
-        : undefined;
-      if (rescanExpression !== undefined) {
-        containingTags.push({
-          end: tagEnd,
-          expressionRanges: tagSyntax.expressionRanges,
-        });
-        start = rescanExpression.start;
-      } else start = tagEnd;
-    } else start++;
+    const scannedTag = scanHtmlTag(text, start, jsxScanCache);
+    if (scannedTag === undefined) {
+      start++;
+      continue;
+    }
+    ranges.push(scannedTag.range);
+    if (scannedTag.kind === "containing") {
+      containingTags.push(scannedTag.containingTag);
+    }
+    start = scannedTag.nextStart;
   }
   return ranges;
 }
