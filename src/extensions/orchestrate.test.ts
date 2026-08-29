@@ -636,6 +636,25 @@ describe("orchestrateExtensions()", () => {
     );
   });
 
+  it("does not classify an entry with hidden keys as a declaration marker", async () => {
+    // Non-enumerable fields and symbol keys are invisible to Object.keys, so a
+    // malformed materialized extension could otherwise be silently ignored as
+    // an inert declaration instead of failing validation.
+    const symbolKeyed = Object.defineProperty(
+      { name: "ext-redis" },
+      Symbol("hidden"),
+      { value: () => {}, enumerable: false },
+    );
+    const hiddenField = Object.defineProperty(
+      { name: "ext-redis" },
+      "setup",
+      { value: () => {}, enumerable: false },
+    );
+
+    assertEquals(isFirstPartyDeclarationMarker(symbolKeyed as { name: string }), false);
+    assertEquals(isFirstPartyDeclarationMarker(hiddenField as { name: string }), false);
+  });
+
   it("keeps rejecting a bare name that is not a first-party extension", async () => {
     await assertRejects(() =>
       orchestrateExtensions({

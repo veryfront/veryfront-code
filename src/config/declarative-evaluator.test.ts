@@ -658,6 +658,23 @@ export default {
     ]);
   });
 
+  it("accepts Deno npm specifiers for first-party extension imports", async () => {
+    const snapshot = await evaluateDeclarativeConfig({
+      source: `
+import extRedis from "npm:@veryfront/ext-redis";
+import extSqlite from "npm:@veryfront/ext-db-sqlite@1.2.3";
+
+export default { extensions: [extRedis(), extSqlite()] };
+`,
+      environmentName: "production",
+      environment: {},
+    });
+    assertEquals(snapshot.extensions, [
+      { name: "ext-redis" },
+      { name: "ext-db-sqlite" },
+    ]);
+  });
+
   it("keeps rejecting extension declarations veryfront does not ship", async () => {
     await assertEvaluationError(
       'import extNope from "@veryfront/ext-nope"; export default {};',
@@ -1656,7 +1673,7 @@ export default process.env;`,
       workerPayload.cacheFingerprint,
       preparedContext.cacheFingerprint,
     );
-    assertEquals(workerPayload.policyVersion, "hosted-declarative-config-v2");
+    assertEquals(workerPayload.policyVersion, "hosted-declarative-config-v3");
     assertEquals(Object.getPrototypeOf(workerPayload), null);
     assertEquals(Object.isFrozen(workerPayload), true);
     assertEquals(Object.isFrozen(workerPayload.evaluationOptions), true);

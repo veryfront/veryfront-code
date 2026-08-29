@@ -102,7 +102,10 @@ export function isFirstPartyDeclarationMarker(
   entry: ExtensionConfigEntry,
 ): entry is { name: string } {
   if (typeof entry !== "object" || entry === null) return false;
-  const keys = Object.keys(entry);
+  // Reflect.ownKeys sees non-enumerable and symbol keys that Object.keys
+  // misses: a malformed materialized extension carrying hidden fields must
+  // fail validation, not vanish as an inert declaration.
+  const keys = Reflect.ownKeys(entry);
   if (keys.length !== 1 || keys[0] !== "name") return false;
   // Descriptor inspection, like validateExtension: an accessor-backed `name`
   // must neither run user code here nor classify as an inert marker.

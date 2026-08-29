@@ -84,7 +84,10 @@ const FINGERPRINT_NAMESPACE = "veryfront-declarative-context-v1";
 const FINGERPRINT_PREFIX = "ctx1:";
 const HEX_DIGITS = "0123456789abcdef";
 const MAX_HOSTED_EXTENSION_NAME_LENGTH = 256;
-const POLICY_VERSION = "hosted-declarative-config-v2";
+// v3: first-party extension declaration imports, factory-call markers, and
+// the { name } result shape (veryfront-issue-inbox#688) changed the accepted
+// language, so cached verdicts and worker handshakes must not mix evaluators.
+const POLICY_VERSION = "hosted-declarative-config-v3";
 
 type TrustedCodeParser = Pick<CodeParser, "parse">;
 
@@ -1671,6 +1674,19 @@ function helperFromImportedName(name: string): HelperName | null {
   }
 }
 
+/**
+ * Reduce a Deno npm specifier to its bare package name for the first-party
+ * allowlist lookup: `npm:@veryfront/ext-redis@1.2.3` -> `@veryfront/ext-redis`.
+ * Self-hosted Deno loading preserves `npm:` specifiers, so hosted evaluation
+ * must accept the same spelling. Anything else passes through unchanged.
+ */
+function normalizeExtensionImportSource(source: string): string {
+  if (!source.startsWith("npm:")) return source;
+  const bare = source.slice("npm:".length);
+  const versionSeparator = bare.indexOf("@", 1);
+  return versionSeparator === -1 ? bare : bare.slice(0, versionSeparator);
+}
+
 function processExtensionImport(
   node: ASTNode,
   specifiers: readonly unknown[],
@@ -1724,7 +1740,8 @@ function processImport(
     (!ArrayIsArray(node.attributes) || node.attributes.length === 0) &&
     (!ArrayIsArray(node.assertions) || node.assertions.length === 0)
   ) {
-    const extensionName = HOSTED_EXTENSION_NAME_BY_PACKAGE[node.source.value];
+    const extensionName =
+      HOSTED_EXTENSION_NAME_BY_PACKAGE[normalizeExtensionImportSource(node.source.value)];
     if (extensionName !== undefined) {
       return processExtensionImport(
         node,
