@@ -174,6 +174,25 @@ describe("eval/factory", () => {
     assertEquals(Object.hasOwn(definition, "mockTools"), false);
   });
 
+  it("preserves dataset eval output mappers", async () => {
+    const definition = evalDataset({
+      id: "eval:stored-answer-field",
+      dataset: datasets.inline([
+        { id: "case-1", input: { answer: "Stored answer.", label: "pass" } },
+      ]),
+      output: (example) => (example.input as { answer: string }).answer,
+    });
+
+    assertEquals(isEvalDefinition(definition), true);
+    assertEquals(
+      await definition.output?.({
+        id: "case-1",
+        input: { answer: "Stored answer.", label: "pass" },
+      }),
+      "Stored answer.",
+    );
+  });
+
   it("derives dataset eval identity from the id", () => {
     const fromId = evalDataset({
       id: "eval:judge-corpus",

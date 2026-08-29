@@ -867,6 +867,16 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+async function resolveSuiteEvalTarget(
+  evalItem: DiscoveredEval,
+  adapters: EvalRunReportAdapters,
+): Promise<Pick<EvalRunTargetOptions, "targetKind" | "target" | "targetAdapter">> {
+  if (!adapters.targets.resolveTarget) {
+    throw new Error("Suite eval target resolution is not configured.");
+  }
+  return await adapters.targets.resolveTarget(evalItem);
+}
+
 async function runEvalReportSuite(
   input: EvalRunReportSuiteInput,
   adapters: EvalRunReportAdapters,
@@ -887,10 +897,13 @@ async function runEvalReportSuite(
     );
 
     try {
-      if (!adapters.targets.resolveTarget) {
-        throw new Error("Suite eval target resolution is not configured.");
-      }
-      const target = await adapters.targets.resolveTarget(evalItem);
+      const target = evalItem.definition.targetKind === "dataset"
+        ? {
+          targetKind: evalItem.definition.targetKind,
+          target: evalItem.definition.target,
+          targetAdapter: undefined,
+        }
+        : await resolveSuiteEvalTarget(evalItem, adapters);
       const finalizedReport = await adapters.billing.runWithGatewayBillingGroup(
         childRunId,
         () =>

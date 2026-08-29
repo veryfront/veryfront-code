@@ -134,6 +134,30 @@ describe("eval/runner", () => {
     }
   });
 
+  it("grades a mapped dataset eval output while preserving the dataset input", async () => {
+    const definition = evalDataset({
+      id: "eval:mapped-standing-text",
+      dataset: datasets.inline([
+        {
+          id: "case-1",
+          input: { answer: "Mapped answer.", rubricLabel: "pass" },
+          reference: "Mapped answer.",
+        },
+      ]),
+      output: (example) => (example.input as { answer: string }).answer,
+      metrics: [metrics.answer.exactMatch().gate()],
+    });
+
+    const report = await runEval(definition, { adapters: {} });
+    const record = report.records[0];
+
+    assertExists(record);
+    assertEquals(record.input, { answer: "Mapped answer.", rubricLabel: "pass" });
+    assertEquals(record.output, "Mapped answer.");
+    assertEquals(record.reference, "Mapped answer.");
+    assertEquals(report.summary.passed, 1);
+  });
+
   it("fails a record on a blown budget metric but not on a soft metric", async () => {
     const definition = evalAgent({
       id: "eval:budget-severity",

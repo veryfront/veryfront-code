@@ -29,6 +29,8 @@ const EVAL_METRIC_FAMILIES = new Set<EvalMetric["family"]>([
 ]);
 const EVAL_SEVERITIES = new Set<EvalMetric["severity"]>(["gate", "soft", "budget"]);
 
+type EvalDefinitionInput = EvalAgentInput | EvalToolInput | (EvalDatasetInput & { target: string });
+
 function isEvalDataset(value: unknown): value is EvalDataset {
   if (!isEvalRecord(value)) return false;
   return EVAL_DATASET_KINDS.has(value.kind as EvalDataset["kind"]) &&
@@ -80,7 +82,7 @@ function normalizeOptionalLabel(value: unknown, label: string): string | undefin
 
 function createEvalDefinition(
   targetKind: EvalTargetKind,
-  input: EvalAgentInput | EvalToolInput,
+  input: EvalDefinitionInput,
 ): EvalDefinition {
   const target = normalizeEvalString(input.target, "Eval target");
   const id = normalizeOptionalLabel(input.id, "Eval id") ?? "";
@@ -101,6 +103,7 @@ function createEvalDefinition(
     tags,
     metadata: normalizeMetadata(input.metadata),
     ...("input" in input && input.input ? { input: input.input } : {}),
+    ...("output" in input && input.output ? { output: input.output } : {}),
     ...("mockTools" in input && input.mockTools ? { mockTools: input.mockTools } : {}),
     ...(input.check ? { check: input.check } : {}),
   };
@@ -143,5 +146,6 @@ export function isEvalDefinition(value: unknown): value is EvalDefinition {
     value.tags.every((tag) => typeof tag === "string" && tag.trim() !== "") &&
     isEvalRecord(value.metadata) &&
     (value.input === undefined || typeof value.input === "function") &&
+    (value.output === undefined || typeof value.output === "function") &&
     (value.check === undefined || typeof value.check === "function");
 }

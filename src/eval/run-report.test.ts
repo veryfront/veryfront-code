@@ -767,6 +767,49 @@ describe("runEvalReport single mode", () => {
 });
 
 describe("runEvalReport suite mode", () => {
+  it("runs dataset evals without a target resolver", async () => {
+    const evalItem = createSuiteEval(
+      "eval:dataset-standing",
+      "/repo/evals/dataset-standing.eval.ts",
+      "eval:dataset-standing",
+      "Dataset standing",
+    );
+    evalItem.definition.targetKind = "dataset";
+    const { adapters, targetRuns } = createAdapters({
+      report: createReport({
+        definitionId: "eval:dataset-standing",
+        targetKind: "dataset",
+        target: "eval:dataset-standing",
+      }),
+    });
+    adapters.targets.resolveTarget = undefined;
+
+    const outcome = await runEvalReport({
+      kind: "suite",
+      projectDir: "/repo",
+      frameworkVersion: "1.2.3",
+      reportDir: "dataset-suite",
+      evalItems: [evalItem],
+      provenance,
+    }, adapters);
+
+    if (outcome.kind !== "suite") throw new Error("expected suite outcome");
+    assertEquals(outcome.exitCode, 0);
+    assertEquals(outcome.suite.passed, 1);
+    assertEquals(
+      targetRuns.map((run) => ({
+        targetKind: run.targetKind,
+        target: run.target,
+        targetAdapter: run.targetAdapter,
+      })),
+      [{
+        targetKind: "dataset",
+        target: "eval:dataset-standing",
+        targetAdapter: undefined,
+      }],
+    );
+  });
+
   it("runs evals sorted by id and file path with sequential child ids, artifacts, and output events", async () => {
     const beta = createSuiteEval("eval:beta", "/repo/evals/beta.eval.ts", "agent:beta", "Beta");
     const alphaB = createSuiteEval(

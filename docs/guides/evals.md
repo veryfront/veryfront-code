@@ -343,6 +343,24 @@ to a task, the value is sent once as `text` rather than twice as `input` and
 in both framings. The default is unchanged, so existing evals grade exactly as
 before.
 
+Use `output` when the graded value is nested inside each dataset example:
+
+```ts
+export default evalDataset({
+  id: "eval:support-reply-field",
+  dataset: datasets.inline([
+    { id: "case-1", input: { reply: "I started the refund.", label: "pass" } },
+  ]),
+  output: (example) => (example.input as { reply: string }).reply,
+  metrics: [
+    metrics.judge.rubric({
+      rubric: PROFESSIONALISM_RUBRIC,
+      judge: judges.llm.rubric({ framing: "text" }),
+    }),
+  ],
+});
+```
+
 ## Metrics
 
 Use deterministic metrics for stable requirements:

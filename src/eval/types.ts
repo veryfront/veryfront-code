@@ -402,6 +402,7 @@ export interface EvalDefinition {
   metadata: Record<string, unknown>;
   source?: EvalSource;
   input?: (example: EvalExample) => EvalMaybePromise<unknown>;
+  output?: (example: EvalExample) => EvalMaybePromise<unknown>;
   mockTools?: EvalMockTools;
   check?: (context: EvalCheckContext) => EvalMaybePromise<void>;
 }
@@ -431,6 +432,11 @@ export interface EvalDatasetInput {
   name?: string;
   description?: string;
   dataset: EvalDataset | EvalExampleInput[];
+  /**
+   * Optional mapper from dataset example to the value metrics grade. When
+   * omitted, the dataset example's `input` value is graded unchanged.
+   */
+  output?: (example: EvalExample) => EvalMaybePromise<unknown>;
   metrics?: EvalMetric[];
   repetitions?: number;
   tags?: string[];

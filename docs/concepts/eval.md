@@ -151,6 +151,9 @@ export const supportReplyQuality = evalDataset({
 export default supportReplyQuality;
 ```
 
+Use `output` when the value to grade is nested inside each dataset example. The
+record preserves the original `input`, while metrics grade the mapped `output`.
+
 `id` is required and is the report identity, so renaming `name` keeps saved
 baselines comparable. Running one needs no target adapter; metrics still
 execute, so the rubric judge above calls a model provider:
