@@ -10,7 +10,12 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { orchestrateExtensions } from "./orchestrate.ts";
 import { mergeExtensions } from "./discovery.ts";
 import { reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
-import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
+import type {
+  Extension,
+  ExtensionConfigEntry,
+  ExtensionSource,
+  ResolvedExtension,
+} from "./types.ts";
 import type { LLMProvider, LLMProviderRegistry } from "./llm/index.ts";
 import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.ts";
 import {
@@ -590,7 +595,7 @@ describe("orchestrateExtensions()", () => {
     await assertRejects(() =>
       orchestrateExtensions({
         projectDir: "/fake",
-        config: { extensions: [{ name: "ext-redis" }] },
+        config: { extensions: [{ name: "ext-redis" } as unknown as ExtensionConfigEntry] },
         logger: noopLogger,
         discovery: emptyDiscovery(),
       })
@@ -602,7 +607,7 @@ describe("orchestrateExtensions()", () => {
       orchestrateExtensions({
         projectDir: "/fake",
         config: {
-          extensions: [{ name: "custom-thing" }],
+          extensions: [{ name: "custom-thing" } as unknown as ExtensionConfigEntry],
         },
         logger: noopLogger,
         discovery: emptyDiscovery(),

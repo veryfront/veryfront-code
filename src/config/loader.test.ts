@@ -7344,10 +7344,13 @@ export default config as const;
             environment: {},
           });
 
-          assertEquals(config.extensions, [
-            { name: "ext-redis" },
-            { name: "ext-db-sqlite", enabled: false },
-          ]);
+          assertEquals(
+            config.extensions,
+            [
+              { name: "ext-redis" },
+              { name: "ext-db-sqlite", enabled: false },
+            ] as unknown as typeof config.extensions,
+          );
           const declarationWarnings = warnings.filter((entry) =>
             entry.message.includes("declarations are ignored")
           );

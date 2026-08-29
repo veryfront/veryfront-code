@@ -64,14 +64,7 @@ export type ExtensionFactory = (config?: unknown) => Extension;
 /** Entry shape for extension config. */
 export type ExtensionConfigEntry =
   | Extension
-  | { name: string; enabled: false }
-  /**
-   * Declaration marker produced by hosted declarative evaluation, where the
-   * platform provides the capability itself and the entry is ignored with a
-   * warning (veryfront-issue-inbox#688). Self-hosted orchestration rejects it:
-   * a project that names an extension must supply its factory.
-   */
-  | { name: string };
+  | { name: string; enabled: false };
 
 /** Public API contract for extension source. */
 export type ExtensionSource =
