@@ -20,6 +20,30 @@
  * });
  * ```
  *
+ * @example Target-free dataset eval
+ * ```ts
+ * import { datasets, evalDataset, judges, metrics, runEval } from "veryfront/eval";
+ *
+ * const supportReplyQuality = evalDataset({
+ *   id: "eval:support-reply-quality",
+ *   dataset: datasets.inline([
+ *     {
+ *       id: "billing-refund-reply",
+ *       input: "Hello, I checked the duplicate charge and started a refund.",
+ *     },
+ *   ]),
+ *   metrics: [
+ *     metrics.judge.rubric({
+ *       rubric: "The text must be polite, specific, and free of internal jargon.",
+ *       judge: judges.llm.rubric({ framing: "text" }),
+ *     }),
+ *   ],
+ * });
+ *
+ * // Nothing executes: each example's input is graded directly.
+ * const report = await runEval(supportReplyQuality, { adapters: {} });
+ * ```
+ *
  * @example Live agent-service eval
  * ```ts
  * import { datasets, evalAgent, metrics, runEval } from "veryfront/eval";
