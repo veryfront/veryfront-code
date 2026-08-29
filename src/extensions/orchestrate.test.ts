@@ -5,7 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module extensions/orchestrate.test
  */
 
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { orchestrateExtensions } from "./orchestrate.ts";
 import { mergeExtensions } from "./discovery.ts";
@@ -581,6 +581,43 @@ describe("orchestrateExtensions()", () => {
 
     // Disable directive removed the only extension → setup was never invoked.
     await loader.teardownAll();
+  });
+
+  it("ignores a first-party extension declaration with a warning", async () => {
+    // A dual-target config declares `extRedis()`; hosted evaluation reduces it
+    // to `{ name: "ext-redis" }`. The runtime provides the capability itself,
+    // so the declaration activates nothing (veryfront-issue-inbox#688).
+    const warnings: string[] = [];
+    const loader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {
+        extensions: [{ name: "ext-redis" }],
+      },
+      logger: {
+        ...noopLogger,
+        warn: (message: string) => {
+          warnings.push(message);
+        },
+      },
+      discovery: emptyDiscovery(),
+    });
+
+    assertEquals(warnings.length, 1);
+    assertStringIncludes(warnings[0]!, "ext-redis");
+    await loader.teardownAll();
+  });
+
+  it("keeps rejecting a bare name that is not a first-party extension", async () => {
+    await assertRejects(() =>
+      orchestrateExtensions({
+        projectDir: "/fake",
+        config: {
+          extensions: [{ name: "custom-thing" }],
+        },
+        logger: noopLogger,
+        discovery: emptyDiscovery(),
+      })
+    );
   });
 
   it("skips loadFactory for disabled package extensions", async () => {

@@ -64,7 +64,13 @@ export type ExtensionFactory = (config?: unknown) => Extension;
 /** Entry shape for extension config. */
 export type ExtensionConfigEntry =
   | Extension
-  | { name: string; enabled: false };
+  | { name: string; enabled: false }
+  /**
+   * First-party extension declaration: the capability is provided by the
+   * runtime itself, so the entry is accepted and ignored with a warning
+   * (veryfront-issue-inbox#688).
+   */
+  | { name: string };
 
 /** Public API contract for extension source. */
 export type ExtensionSource =

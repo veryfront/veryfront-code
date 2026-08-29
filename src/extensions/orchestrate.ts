@@ -13,7 +13,10 @@ import { getDeferredExtensionState } from "./deferred-extension.ts";
 import * as defaultDiscovery from "./discovery.ts";
 import type { BoundExtensionEntrypoint } from "./entrypoint-identity.ts";
 import { loadExtensionFactory as defaultLoadFactory } from "./factory-loader.ts";
-import { FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES } from "./first-party-defaults.ts";
+import {
+  FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES,
+  FIRST_PARTY_EXTENSION_POLICIES,
+} from "./first-party-defaults.ts";
 import { ExtensionLoader } from "./loader.ts";
 import type {
   Extension,
@@ -83,6 +86,25 @@ const FIRST_PARTY_BUILTIN_EXTENSION_TO_PACKAGE = new Map(
     `@veryfront/${policy.sourceDirectory}`,
   ]),
 );
+
+const FIRST_PARTY_EXTENSION_NAMES = new Set(
+  FIRST_PARTY_EXTENSION_POLICIES.map((policy) => policy.name),
+);
+
+/**
+ * A first-party extension declaration, `{ name: "ext-..." }` and nothing
+ * else — the inert marker a hosted declarative config produces for an
+ * imported extension factory call (veryfront-issue-inbox#688). The runtime
+ * provides the capability itself, so the declaration activates nothing.
+ */
+function isFirstPartyDeclarationMarker(
+  entry: ExtensionConfigEntry,
+): entry is { name: string } {
+  if (typeof entry !== "object" || entry === null) return false;
+  const keys = Object.keys(entry);
+  return keys.length === 1 && keys[0] === "name" &&
+    FIRST_PARTY_EXTENSION_NAMES.has((entry as { name: unknown }).name as string);
+}
 
 function isDisableDirective(
   entry: ExtensionConfigEntry,
@@ -198,6 +220,11 @@ async function orchestrateExtensionGeneration(
   for (const entry of configEntries) {
     if (isDisableDirective(entry)) {
       disables.push(entry);
+    } else if (isFirstPartyDeclarationMarker(entry)) {
+      logger.warn(
+        `Extension "${entry.name}" is declared in the project config, but this runtime ` +
+          `provides the capability itself; the declaration is ignored.`,
+      );
     } else {
       configResolved.push({
         extension: entry as Extension,

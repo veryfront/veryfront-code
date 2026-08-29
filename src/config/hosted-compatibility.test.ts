@@ -15,21 +15,33 @@ export default defineConfig({
 `;
 
 describe("hosted config compatibility", () => {
-  it("names the extension import that makes a project undeployable", async () => {
+  it("accepts a first-party extension declaration a dual-target project needs", async () => {
+    // The same config that activates the extension when self-hosted evaluates
+    // hosted to an inert { name } declaration (veryfront-issue-inbox#688).
     const incompatibility = await findHostedConfigIncompatibility(EXTENSION_CONFIG);
+
+    assertEquals(incompatibility, null);
+  });
+
+  it("names the extension import that makes a project undeployable", async () => {
+    const incompatibility = await findHostedConfigIncompatibility(
+      `import { defineConfig } from "veryfront";\n` +
+        `import extOther from "some-third-party-extension";\n\n` +
+        `export default defineConfig({ extensions: [extOther()] });\n`,
+    );
 
     assertEquals(incompatibility?.reason, "unsupported-import");
     assertEquals(incompatibility?.line, 2);
     assertEquals(
       incompatibility?.excerpt,
-      `import extCssLightning from "@veryfront/ext-css-lightning";`,
+      `import extOther from "some-third-party-extension";`,
     );
   });
 
   it("names an extension import that stands on its own", async () => {
     const incompatibility = await findHostedConfigIncompatibility(
-      `import extCssLightning from "@veryfront/ext-css-lightning";\n` +
-        `export default { extensions: [extCssLightning()] };\n`,
+      `import extOther from "some-third-party-extension";\n` +
+        `export default { extensions: [extOther()] };\n`,
     );
 
     assertEquals(incompatibility?.code, "unsupported-syntax");
@@ -188,7 +200,7 @@ describe("hosted config compatibility", () => {
       const [source, reason] of [
         [`export default { cache: { dir: ".tenant-cache" } };`, "hosted-cache-directory"],
         [
-          `export default { extensions: [{ name: "ext-css-lightning" }] };`,
+          `export default { extensions: [{ name: "not-a-first-party-extension" }] };`,
           "hosted-extensions",
         ],
         [

@@ -623,6 +623,80 @@ export default defineConfig({
     }
   });
 
+  it("accepts a first-party extension declaration as an inert marker", async () => {
+    const snapshot = await evaluateDeclarativeConfig({
+      source: `
+import extRedis from "@veryfront/ext-redis";
+import { defineConfig } from "veryfront";
+
+export default defineConfig({
+  title: "Dual target",
+  extensions: [extRedis({ url: "redis://ignored:6379" })],
+});
+`,
+      environmentName: "production",
+      environment: {},
+    });
+    assertEquals(snapshot.extensions, [{ name: "ext-redis" }]);
+  });
+
+  it("accepts a zero-argument extension factory call and a literal declaration", async () => {
+    const snapshot = await evaluateDeclarativeConfig({
+      source: `
+import extCssTailwind from "@veryfront/ext-css-tailwind";
+
+export default {
+  extensions: [extCssTailwind(), { name: "ext-db-sqlite" }],
+};
+`,
+      environmentName: "production",
+      environment: {},
+    });
+    assertEquals(snapshot.extensions, [
+      { name: "ext-css-tailwind" },
+      { name: "ext-db-sqlite" },
+    ]);
+  });
+
+  it("keeps rejecting extension declarations veryfront does not ship", async () => {
+    await assertEvaluationError(
+      'import extNope from "@veryfront/ext-nope"; export default {};',
+      "unsupported-syntax",
+      "unsupported-import",
+    );
+    await assertEvaluationError(
+      'export default { extensions: [{ name: "not-first-party" }] };',
+      "unsupported-hosted-feature",
+      "hosted-extensions",
+    );
+  });
+
+  it("keeps rejecting non-default import forms from extension packages", async () => {
+    await assertEvaluationError(
+      'import { something } from "@veryfront/ext-redis"; export default {};',
+      "unsupported-syntax",
+      "import-form",
+    );
+    await assertEvaluationError(
+      'import * as ext from "@veryfront/ext-redis"; export default {};',
+      "unsupported-syntax",
+      "import-form",
+    );
+  });
+
+  it("rejects an uncalled extension factory in the extensions array", async () => {
+    await assertRejects(
+      () =>
+        evaluateDeclarativeConfig({
+          source:
+            'import extRedis from "@veryfront/ext-redis"; export default { extensions: [extRedis] };',
+          environmentName: "production",
+          environment: {},
+        }),
+      DeclarativeConfigEvaluationError,
+    );
+  });
+
   it("rejects host capabilities and inactive side effects without executing them", async () => {
     const marker = "__veryfrontDeclarativeEvaluatorSideEffect";
     const host = globalThis as Record<string, unknown>;
@@ -1194,9 +1268,12 @@ export default process.env;`,
       "statement-count",
     );
 
+    const importStatements = new Array<string>();
+    for (let index = 0; index <= DECLARATIVE_CONFIG_LIMITS.maxImports; index += 1) {
+      importStatements.push(`import type { A${index} } from "veryfront";`);
+    }
     await assertEvaluationError(
-      `import type { A } from "veryfront";
-       import type { B } from "veryfront";
+      `${importStatements.join("\n")}
        export default {};`,
       "resource-limit-exceeded",
       "unsupported-import",
