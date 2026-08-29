@@ -99,10 +99,12 @@ export type EmbeddedCodeAnalysis =
   };
 
 export function isDestinationAttribute(name: string | undefined): boolean {
-  const normalized = name?.toLowerCase();
+  if (name === undefined) return false;
+  // xlink is namespace-sensitive: only these exact spellings reach the DOM as xlink:href.
+  if (name === "xlinkHref" || name === "xlink:href") return true;
+  const normalized = name.toLowerCase();
   return normalized === "href" || normalized === "src" ||
-    normalized === "action" || normalized === "formaction" ||
-    normalized === "xlinkhref" || normalized === "xlink:href";
+    normalized === "action" || normalized === "formaction";
 }
 
 function parserMessage(error: Error): string {
@@ -1175,14 +1177,13 @@ class EmbeddedExpressionAnalyzer {
   private async staticDestinationForExpression(
     expression: ExpressionRecord,
   ): Promise<ContentDestination | undefined> {
+    if (!isDestinationAttribute(expression.attributeName)) return undefined;
     const literal = await decodeStaticLiteral(
       this.options.source,
       expression,
       this.options.filePath,
     );
-    if (literal === undefined || !isDestinationAttribute(expression.attributeName)) {
-      return undefined;
-    }
+    if (literal === undefined) return undefined;
     return jsxLiteralDestination(
       this.options.source,
       literal.span,

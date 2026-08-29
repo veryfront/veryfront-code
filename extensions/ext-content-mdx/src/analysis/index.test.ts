@@ -848,6 +848,15 @@ describe("analyzeContent MDX", () => {
     );
   });
 
+  it("ignores case variants that do not resolve to the xlink namespace", async () => {
+    const value = '<svg><a xlinkhref="../inert-jsx.md" /></svg>';
+
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assert(result.kind === "document");
+    assertEquals(result.destinations, []);
+  });
+
   it("returns parser-cooked values with distinct JavaScript literal syntax", async () => {
     const lineSeparator = "\u2028";
     const stringRaw = `../a\\${lineSeparator}.md`;
