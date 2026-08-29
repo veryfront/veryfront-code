@@ -284,11 +284,8 @@ export class DAGExecutor {
         nodeStates[nodeId] = runningState;
       }
       if (isDurableRun) {
-        // The sole durable admission commit, recovery charges included. Any
-        // raised attempt rides the same ownership-fenced write as the rest of
-        // the batch state: a lost fence throws before anything executes with
-        // the raised attempt unpersisted, so ownership loss spends no
-        // recovery on a node that never started.
+        // Sole durable admission commit, recovery charges included. A refused
+        // fence throws before anything executes, raised attempt unpersisted.
         publishedNodeStates = await this.publishNodeStates(
           scope,
           nodeStates,
