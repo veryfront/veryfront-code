@@ -5260,6 +5260,20 @@ DefaultFallback.write("default.txt", "x");
       ).map((marker) => [marker.effect, marker.symbol]),
       [["filesystem-write", "DefaultFallback.write"]],
     );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class VarFnFallback {}
+function VarFnReceiver() {}
+var VarFnReceiver = null;
+const VarFnAlias = VarFnReceiver || VarFnFallback;
+VarFnAlias.write = Deno.writeTextFile;
+VarFnFallback.write("var-fn.txt", "x");
+`,
+        "src/logical-receiver-var-redeclared-function.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "VarFnFallback.write"]],
+    );
   });
 
   it("uses JavaScript array-index bounds for sparse writes", () => {

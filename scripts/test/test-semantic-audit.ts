@@ -3557,6 +3557,16 @@ function collectAssignedIdentifierNames(
     collectPatternNames(node.left, names);
   } else if (node.type === "UpdateExpression") {
     collectPatternNames(node.argument, names);
+  } else if (node.type === "VariableDeclaration" && node.kind === "var") {
+    for (
+      const declarator of Array.isArray(node.declarations)
+        ? node.declarations
+        : []
+    ) {
+      if (isNode(declarator) && declarator.init) {
+        collectPatternNames(declarator.id, names);
+      }
+    }
   } else if (
     (node.type === "ForOfStatement" || node.type === "ForInStatement") &&
     isNode(node.left) && node.left.type !== "VariableDeclaration"
@@ -8199,12 +8209,7 @@ function isConditionalBranch(parent: Node, key: string): boolean {
     return true;
   }
   if (parent.type === "LogicalExpression" && key === "right") return true;
-  // A case test only runs when no earlier case matched.
-  if (
-    parent.type === "SwitchCase" && (key === "consequent" || key === "test")
-  ) {
-    return true;
-  }
+  if (parent.type === "SwitchCase" && key === "consequent") return true;
   if (
     (parent.type === "WhileStatement" ||
       parent.type === "DoWhileStatement" ||
@@ -8969,29 +8974,6 @@ function expressionMayBeUndefined(
   );
 }
 
-// Syntactic writes inside the expression being proven run after the proof is
-// computed, so identifier evidence read alongside them may be stale.
-function expressionSubtreeContainsWrite(node: unknown): boolean {
-  if (!isNode(node)) return false;
-  if (
-    node.type === "AssignmentExpression" || node.type === "UpdateExpression"
-  ) {
-    return true;
-  }
-  for (const key of Object.keys(node)) {
-    if (key === "loc" || COMMENT_KEYS.has(key)) continue;
-    const value = node[key];
-    if (Array.isArray(value)) {
-      if (value.some((item) => expressionSubtreeContainsWrite(item))) {
-        return true;
-      }
-    } else if (expressionSubtreeContainsWrite(value)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 // Recorded evidence is unusable across function boundaries (interleaved calls
 // can reassign the outer binding before the function body runs).
 function identifierTruthinessEvidence(
@@ -9016,12 +8998,9 @@ function identifierTruthinessEvidence(
 function expressionIsDefinitelyTruthy(
   expression: unknown,
   scopes: readonly Scope[],
-  identifierEvidenceUsable?: boolean,
 ): boolean {
   const value = unwrapTruthinessProofExpression(expression);
   if (!value) return false;
-  const identifierEvidence = identifierEvidenceUsable ??
-    !expressionSubtreeContainsWrite(value);
   switch (value.type) {
     // JSX is absent: a custom jsxFactory may legally return null or false.
     case "ArrayExpression":
@@ -9039,29 +9018,17 @@ function expressionIsDefinitelyTruthy(
     case "StringLiteral":
       return value.value !== "";
     case "ConditionalExpression":
-      return expressionIsDefinitelyTruthy(
-        value.consequent,
-        scopes,
-        identifierEvidence,
-      ) &&
-        expressionIsDefinitelyTruthy(
-          value.alternate,
-          scopes,
-          identifierEvidence,
-        );
+      return expressionIsDefinitelyTruthy(value.consequent, scopes) &&
+        expressionIsDefinitelyTruthy(value.alternate, scopes);
     case "LogicalExpression": {
-      const left = expressionIsDefinitelyTruthy(
-        value.left,
-        scopes,
-        identifierEvidence,
-      );
+      const left = expressionIsDefinitelyTruthy(value.left, scopes);
       if (value.operator === "&&") {
         return left &&
-          expressionIsDefinitelyTruthy(value.right, scopes, identifierEvidence);
+          expressionIsDefinitelyTruthy(value.right, scopes);
       }
       if (value.operator === "||") {
         return left ||
-          expressionIsDefinitelyTruthy(value.right, scopes, identifierEvidence);
+          expressionIsDefinitelyTruthy(value.right, scopes);
       }
       return left;
     }
@@ -9069,19 +9036,14 @@ function expressionIsDefinitelyTruthy(
       const expressions = Array.isArray(value.expressions)
         ? value.expressions
         : [];
-      return expressionIsDefinitelyTruthy(
-        expressions.at(-1),
-        scopes,
-        identifierEvidence,
-      );
+      return expressionIsDefinitelyTruthy(expressions.at(-1), scopes);
     }
     case "AssignmentExpression":
       return value.operator === "=" &&
-        expressionIsDefinitelyTruthy(value.right, scopes, identifierEvidence);
+        expressionIsDefinitelyTruthy(value.right, scopes);
     case "Identifier":
-      return identifierEvidence &&
-        identifierTruthinessEvidence(value.name as string, scopes)
-          .definitelyTruthy;
+      return identifierTruthinessEvidence(value.name as string, scopes)
+        .definitelyTruthy;
     default:
       return false;
   }
@@ -9090,12 +9052,9 @@ function expressionIsDefinitelyTruthy(
 function expressionIsDefinitelyNonNullish(
   expression: unknown,
   scopes: readonly Scope[],
-  identifierEvidenceUsable?: boolean,
 ): boolean {
   const value = unwrapTruthinessProofExpression(expression);
   if (!value) return false;
-  const identifierEvidence = identifierEvidenceUsable ??
-    !expressionSubtreeContainsWrite(value);
   switch (value.type) {
     case "ArrayExpression":
     case "ArrowFunctionExpression":
@@ -9111,73 +9070,32 @@ function expressionIsDefinitelyNonNullish(
     case "TemplateLiteral":
       return true;
     case "ConditionalExpression":
-      return expressionIsDefinitelyNonNullish(
-        value.consequent,
-        scopes,
-        identifierEvidence,
-      ) &&
-        expressionIsDefinitelyNonNullish(
-          value.alternate,
-          scopes,
-          identifierEvidence,
-        );
+      return expressionIsDefinitelyNonNullish(value.consequent, scopes) &&
+        expressionIsDefinitelyNonNullish(value.alternate, scopes);
     case "LogicalExpression": {
       if (value.operator === "&&") {
-        return expressionIsDefinitelyNonNullish(
-          value.left,
-          scopes,
-          identifierEvidence,
-        ) &&
-          expressionIsDefinitelyNonNullish(
-            value.right,
-            scopes,
-            identifierEvidence,
-          );
+        return expressionIsDefinitelyNonNullish(value.left, scopes) &&
+          expressionIsDefinitelyNonNullish(value.right, scopes);
       }
       if (value.operator === "||") {
-        return expressionIsDefinitelyTruthy(
-          value.left,
-          scopes,
-          identifierEvidence,
-        ) ||
-          expressionIsDefinitelyNonNullish(
-            value.right,
-            scopes,
-            identifierEvidence,
-          );
+        return expressionIsDefinitelyTruthy(value.left, scopes) ||
+          expressionIsDefinitelyNonNullish(value.right, scopes);
       }
-      return expressionIsDefinitelyNonNullish(
-        value.left,
-        scopes,
-        identifierEvidence,
-      ) ||
-        expressionIsDefinitelyNonNullish(
-          value.right,
-          scopes,
-          identifierEvidence,
-        );
+      return expressionIsDefinitelyNonNullish(value.left, scopes) ||
+        expressionIsDefinitelyNonNullish(value.right, scopes);
     }
     case "SequenceExpression": {
       const expressions = Array.isArray(value.expressions)
         ? value.expressions
         : [];
-      return expressionIsDefinitelyNonNullish(
-        expressions.at(-1),
-        scopes,
-        identifierEvidence,
-      );
+      return expressionIsDefinitelyNonNullish(expressions.at(-1), scopes);
     }
     case "AssignmentExpression":
       return value.operator === "=" &&
-        expressionIsDefinitelyNonNullish(
-          value.right,
-          scopes,
-          identifierEvidence,
-        );
+        expressionIsDefinitelyNonNullish(value.right, scopes);
     case "Identifier":
-      return identifierEvidence &&
-        identifierTruthinessEvidence(value.name as string, scopes)
-          .definitelyNonNullish;
+      return identifierTruthinessEvidence(value.name as string, scopes)
+        .definitelyNonNullish;
     default:
       return false;
   }
