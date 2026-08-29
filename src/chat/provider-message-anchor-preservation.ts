@@ -43,6 +43,7 @@ export function preserveEmptyAssistantAnchors(
   const emittedSourceIds = new Set<string>();
   for (const sourceMessage of sourceMessages) {
     const sourceId = sourceMessage.id;
+    if (emittedSourceIds.has(sourceId)) continue;
     const existingMessages = messagesBySourceId.get(sourceId);
     if (existingMessages) {
       result.push(...existingMessages);
