@@ -34,7 +34,12 @@ export type ContentDestination =
   })
   | (DestinationBase & {
     readonly kind: "mdx-jsx-attribute";
-    readonly syntax: "html-attribute" | "javascript-string";
+    readonly syntax: "html-attribute";
+  })
+  | (DestinationBase & {
+    readonly kind: "mdx-jsx-attribute";
+    readonly syntax: "javascript-string" | "javascript-template";
+    readonly cookedValue: string;
   });
 
 export interface ContentSyntaxDiagnostic {

@@ -291,6 +291,36 @@ describe("analyzeContent MDX", () => {
     );
   });
 
+  it("returns parser-cooked values with distinct JavaScript literal syntax", async () => {
+    const lineSeparator = "\u2028";
+    const stringRaw = `../a\\${lineSeparator}.md`;
+    const templateRaw = `../b\\${lineSeparator}.png`;
+    const value = `<Card href={"${stringRaw}"} src={\`${templateRaw}\`} />`;
+
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => ({
+        rawValue: destination.rawValue,
+        syntax: destination.syntax,
+        cookedValue: Reflect.get(destination, "cookedValue"),
+      })),
+      [
+        {
+          rawValue: stringRaw,
+          syntax: "javascript-string",
+          cookedValue: "../a.md",
+        },
+        {
+          rawValue: templateRaw,
+          syntax: "javascript-template",
+          cookedValue: "../b.png",
+        },
+      ],
+    );
+  });
+
   it("finds static attributes on JSX nested inside an expression", async () => {
     const value = '<Card child={<Link href="../nested.md" />} />';
     const contextual = "{(() => { class Sample { static { {} /[}>]/.test(value) } } " +

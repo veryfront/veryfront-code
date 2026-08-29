@@ -1463,6 +1463,20 @@ describe("public docs validation", () => {
     );
   });
 
+  it("uses parser-cooked JavaScript destination values", async () => {
+    const lineSeparator = "\u2028";
+    assertEquals(
+      await mdxDestinations(
+        `<a href={"../architecture/string\\${lineSeparator}.md"}>string</a>\n` +
+          `<a href={\`../architecture/template\\${lineSeparator}.md\`}>template</a>`,
+      ),
+      [
+        "../architecture/string.md",
+        "../architecture/template.md",
+      ],
+    );
+  });
+
   it("preserves character references in JSX expression strings", async () => {
     const published = publishedFiles("docs/guides/deploying.md");
     assertEquals(

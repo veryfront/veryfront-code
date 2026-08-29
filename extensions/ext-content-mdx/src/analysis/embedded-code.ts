@@ -223,14 +223,33 @@ function parsedInitializer(ast: ASTNode): unknown {
   return own(declaration, "init");
 }
 
-function staticLiteralKind(
-  ast: ASTNode,
-): "string" | "template" | undefined {
+interface StaticLiteral {
+  readonly kind: "string" | "template";
+  readonly cookedValue: string;
+}
+
+function staticLiteral(ast: ASTNode): StaticLiteral | undefined {
   const initializer = parsedInitializer(ast);
-  if (nodeType(initializer) === "StringLiteral") return "string";
+  if (nodeType(initializer) === "StringLiteral") {
+    const cookedValue = own(initializer, "value");
+    if (typeof cookedValue !== "string") {
+      throw new TypeError("Babel returned an invalid string literal");
+    }
+    return { kind: "string", cookedValue };
+  }
   if (nodeType(initializer) !== "TemplateLiteral") return undefined;
   const expressions = own(initializer, "expressions");
-  return Array.isArray(expressions) && expressions.length === 0 ? "template" : undefined;
+  if (!Array.isArray(expressions)) {
+    throw new TypeError("Babel returned an invalid template literal");
+  }
+  if (expressions.length !== 0) return undefined;
+  const quasis = own(initializer, "quasis");
+  const quasi = firstArrayItem(quasis);
+  const cookedValue = own(own(quasi, "value"), "cooked");
+  if (!Array.isArray(quasis) || quasis.length !== 1 || typeof cookedValue !== "string") {
+    throw new TypeError("Babel returned an invalid static template literal");
+  }
+  return { kind: "template", cookedValue };
 }
 
 function literalRange(
@@ -312,7 +331,16 @@ async function validateRecord(
   locator: SourceLocator,
   filePath: string | undefined,
 ): Promise<
-  | { readonly kind: "valid"; readonly literal: Span | undefined }
+  | {
+    readonly kind: "valid";
+    readonly literal:
+      | {
+        readonly span: Span;
+        readonly syntax: "javascript-string" | "javascript-template";
+        readonly cookedValue: string;
+      }
+      | undefined;
+  }
   | { readonly kind: "syntax-error"; readonly diagnostic: ContentSyntaxDiagnostic }
 > {
   const fragment = reducedFragment(source, expression);
@@ -336,10 +364,19 @@ async function validateRecord(
       filePath: filePath ?? "content.mdx",
       decoratorMode: "current",
     });
-    const kind = staticLiteralKind(ast);
+    const literal = staticLiteral(ast);
+    if (literal === undefined) return { kind: "valid", literal: undefined };
+    const span = literalRange(expression, literal.kind);
+    if (span === undefined) {
+      throw new TypeError("Acorn did not locate the Babel static literal");
+    }
     return {
       kind: "valid",
-      literal: kind === undefined ? undefined : literalRange(expression, kind),
+      literal: {
+        span,
+        syntax: literal.kind === "string" ? "javascript-string" : "javascript-template",
+        cookedValue: literal.cookedValue,
+      },
     };
   } catch (error) {
     if (!(error instanceof SyntaxError) && !(error instanceof RangeError)) {
@@ -365,12 +402,13 @@ async function validateRecord(
   }
 }
 
-function jsxStringDestination(
+function jsxLiteralDestination(
   source: string,
   span: Span,
   absoluteStart: number,
   locator: SourceLocator,
-  syntax: "html-attribute" | "javascript-string",
+  syntax: "javascript-string" | "javascript-template",
+  cookedValue: string,
 ): ContentDestination {
   return {
     kind: "mdx-jsx-attribute",
@@ -380,6 +418,24 @@ function jsxStringDestination(
       absoluteStart + span.end,
     ),
     syntax,
+    cookedValue,
+  };
+}
+
+function jsxQuotedDestination(
+  source: string,
+  span: Span,
+  absoluteStart: number,
+  locator: SourceLocator,
+): ContentDestination {
+  return {
+    kind: "mdx-jsx-attribute",
+    rawValue: source.slice(span.start, span.end),
+    range: locator.range(
+      absoluteStart + span.start,
+      absoluteStart + span.end,
+    ),
+    syntax: "html-attribute",
   };
 }
 
@@ -566,12 +622,11 @@ export async function analyzeEmbeddedExpression(options: {
       if (label === "string") {
         if (isDestinationAttribute(mode.awaitingAttributeName)) {
           destinations.push(
-            jsxStringDestination(
+            jsxQuotedDestination(
               options.source,
               { start: token.start + 1, end: token.end - 1 },
               options.absoluteStart,
               options.locator,
-              "html-attribute",
             ),
           );
         }
@@ -680,12 +735,13 @@ export async function analyzeEmbeddedExpression(options: {
       validation.literal !== undefined &&
       isDestinationAttribute(expression.attributeName)
     ) {
-      const destination = jsxStringDestination(
+      const destination = jsxLiteralDestination(
         options.source,
-        validation.literal,
+        validation.literal.span,
         options.absoluteStart,
         options.locator,
-        "javascript-string",
+        validation.literal.syntax,
+        validation.literal.cookedValue,
       );
       if (expression.id === 0) staticDestination = destination;
       else destinations.push(destination);

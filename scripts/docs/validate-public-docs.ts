@@ -58,14 +58,6 @@ const RESOLUTION_ORIGIN = "https://docs.invalid";
 const VERYFRONT_DOCS_HOSTNAME = "veryfront.com";
 const VERYFRONT_CODE_DOCS_PREFIX = "/docs/code/";
 const VERYFRONT_SITE_CODE_PREFIX = "/code/";
-const JAVASCRIPT_SIMPLE_ESCAPES: Readonly<Record<string, string>> = {
-  b: "\b",
-  f: "\f",
-  n: "\n",
-  r: "\r",
-  t: "\t",
-  v: "\v",
-};
 
 function isPublishedPage(target: string): boolean {
   // The sync deletes the section README before publishing, so a link to one
@@ -132,56 +124,6 @@ function decodeMarkdownBackslashEscapes(href: string): string {
     /\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g,
     "$1",
   );
-}
-
-function decodeJavaScriptStringLiteral(value: string): string | undefined {
-  let decoded = "";
-  for (let index = 0; index < value.length; index++) {
-    const character = value[index]!;
-    if (character !== "\\") {
-      decoded += character;
-      continue;
-    }
-    const escaped = value[++index];
-    if (escaped === undefined) return undefined;
-    if (escaped === "\n") continue;
-    if (escaped === "\r") {
-      if (value[index + 1] === "\n") index++;
-      continue;
-    }
-    if (escaped === "x") {
-      const hexadecimal = value.slice(index + 1, index + 3);
-      if (!/^[0-9a-fA-F]{2}$/.test(hexadecimal)) return undefined;
-      decoded += String.fromCharCode(Number.parseInt(hexadecimal, 16));
-      index += 2;
-      continue;
-    }
-    if (escaped === "u") {
-      if (value[index + 1] === "{") {
-        const end = value.indexOf("}", index + 2);
-        const hexadecimal = end === -1 ? "" : value.slice(index + 2, end);
-        if (!/^[0-9a-fA-F]{1,6}$/.test(hexadecimal)) return undefined;
-        const codePoint = Number.parseInt(hexadecimal, 16);
-        if (codePoint > 0x10ffff) return undefined;
-        decoded += String.fromCodePoint(codePoint);
-        index = end;
-        continue;
-      }
-      const hexadecimal = value.slice(index + 1, index + 5);
-      if (!/^[0-9a-fA-F]{4}$/.test(hexadecimal)) return undefined;
-      decoded += String.fromCharCode(Number.parseInt(hexadecimal, 16));
-      index += 4;
-      continue;
-    }
-    if (escaped === "0") {
-      if (/^[0-9]$/.test(value[index + 1] ?? "")) return undefined;
-      decoded += "\0";
-      continue;
-    }
-    if (/^[1-9]$/.test(escaped)) return undefined;
-    decoded += JAVASCRIPT_SIMPLE_ESCAPES[escaped] ?? escaped;
-  }
-  return decoded;
 }
 
 function decodeUrlComponentTolerantly(value: string): string {
@@ -336,14 +278,13 @@ export class PublicDocSyntaxError extends Error {
 }
 
 function destinationHref(destination: ContentDestination): string {
-  if (destination.syntax !== "javascript-string") return destination.rawValue;
-  const decoded = decodeJavaScriptStringLiteral(destination.rawValue);
-  if (decoded === undefined) {
-    throw new TypeError(
-      "Content analysis returned an invalid JavaScript string",
-    );
+  if (
+    destination.syntax === "javascript-string" ||
+    destination.syntax === "javascript-template"
+  ) {
+    return destination.cookedValue;
   }
-  return decoded;
+  return destination.rawValue;
 }
 
 function destinationOrder(
