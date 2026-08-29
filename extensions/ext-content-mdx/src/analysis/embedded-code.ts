@@ -117,6 +117,19 @@ function diagnostic(
   return { message, range: { start: point, end: point } };
 }
 
+function embeddedCodeLimitDiagnostic(
+  locator: SourceLocator,
+  absoluteStart: number,
+  relativeOffset: number,
+): ContentSyntaxDiagnostic {
+  return diagnostic(
+    locator,
+    absoluteStart,
+    relativeOffset,
+    `Embedded code exceeds the ${MAX_EMBEDDED_CODE_UNITS}-unit parser limit`,
+  );
+}
+
 function expressionAt(
   expressions: readonly ExpressionRecord[],
   id: number,
@@ -418,12 +431,7 @@ function validateFragment(
   if (fragment.value.length > MAX_EMBEDDED_CODE_UNITS) {
     return {
       kind: "syntax-error",
-      diagnostic: diagnostic(
-        locator,
-        absoluteStart,
-        fallbackOffset,
-        `Embedded code exceeds the ${MAX_EMBEDDED_CODE_UNITS}-unit parser limit`,
-      ),
+      diagnostic: embeddedCodeLimitDiagnostic(locator, absoluteStart, fallbackOffset),
     };
   }
 
@@ -536,6 +544,13 @@ export async function analyzeEmbeddedExpression(options: {
   readonly attributeName?: string;
   readonly fragmentKind?: "expression" | "jsx-spread-attribute";
 }): Promise<EmbeddedCodeAnalysis> {
+  if (options.source.length > MAX_EMBEDDED_CODE_UNITS) {
+    return {
+      kind: "syntax-error",
+      diagnostic: embeddedCodeLimitDiagnostic(options.locator, options.absoluteStart, 0),
+    };
+  }
+
   const expressions: ExpressionRecord[] = [{
     id: 0,
     parentId: undefined,

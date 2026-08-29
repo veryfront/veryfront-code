@@ -1,7 +1,9 @@
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
+import { analyzeEmbeddedExpression, MAX_EMBEDDED_CODE_UNITS } from "./embedded-code.ts";
 import { analyzeContent, type ContentAnalysisResult } from "./index.ts";
+import { createSourceLocator } from "./source.ts";
 
 function summarize(value: string, result: ContentAnalysisResult): unknown {
   assert(result.kind === "document");
@@ -20,6 +22,29 @@ function summarize(value: string, result: ContentAnalysisResult): unknown {
     })),
   };
 }
+
+describe("analyzeEmbeddedExpression boundaries", () => {
+  it("rejects oversized source before tokenizing invalid syntax", async () => {
+    const source = `'${"x".repeat(MAX_EMBEDDED_CODE_UNITS)}`;
+
+    const result = await analyzeEmbeddedExpression({
+      source,
+      absoluteStart: 0,
+      locator: createSourceLocator(source),
+    });
+
+    assertEquals(result, {
+      kind: "syntax-error",
+      diagnostic: {
+        message: `Embedded code exceeds the ${MAX_EMBEDDED_CODE_UNITS}-unit parser limit`,
+        range: {
+          start: { offset: 0, line: 1, column: 1 },
+          end: { offset: 0, line: 1, column: 1 },
+        },
+      },
+    });
+  });
+});
 
 describe("analyzeContent Markdown", () => {
   it("returns links, images, and only used reference definitions", async () => {
