@@ -50,7 +50,10 @@ import {
 } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { executeMapNodeStrategy } from "./map-node-strategy.ts";
 import type { ChildGraphExecutionOptions } from "./node-strategy-types.ts";
-import { executeCompositeNodeWithPolicy } from "./composite-node-execution.ts";
+import {
+  executeCompositeNodeWithPolicy,
+  isOwnershipLossError,
+} from "./composite-node-execution.ts";
 import {
   applyContextPatch,
   applyRecordPatch,
@@ -100,6 +103,7 @@ export class DAGExecutor {
       // whose status is always "running" and would otherwise read a crash.
       resumingWait: run.status === "waiting",
       declaredNodeIds: new Set(),
+      rootKeyspace: true,
       ownership,
     };
     const { contextPatch: _contextPatch, ...result } = await runWithWorkflowSourceIntegrationPolicy(
@@ -258,6 +262,7 @@ export class DAGExecutor {
       ready = ready.slice(this.config.maxConcurrency);
 
       const batchStartedAt = new Date();
+      const recoveredInBatch: string[] = [];
       for (const nodeId of batch) {
         const existing = nodeStates[nodeId];
         // A node already recorded running keeps its attempt: it is being
@@ -267,6 +272,7 @@ export class DAGExecutor {
         // what bounds repeated worker deaths. A node only reaches here once it
         // is actually starting, so the recovery it spends is one it gets to use.
         const isRecovery = recoveryQueued.delete(nodeId);
+        if (isRecovery) recoveredInBatch.push(nodeId);
         const runningState: NodeState = {
           ...existing,
           nodeId,
@@ -294,6 +300,27 @@ export class DAGExecutor {
           contextPatch,
           batch,
         );
+        abortSignal?.throwIfAborted();
+      } else if (scope.rootKeyspace && recoveredInBatch.length > 0) {
+        // A recovered child of a shared-keyspace composite: its raised attempt
+        // must be durable before it executes, or repeated worker deaths re-run
+        // it past its budget. The patch carries only the admitted recoveries,
+        // merged by key into the root map -- never replacing it.
+        const patchSet: Record<string, NodeState> = {};
+        for (const nodeId of recoveredInBatch) {
+          patchSet[nodeId] = structuredClone(nodeStates[nodeId]!);
+        }
+        const persisted = await this.config.onChildRecoveryAdmitted?.({
+          runId: scope.rootRunId,
+          nodeStatePatch: { set: patchSet, delete: [] },
+          ownership: scope.ownership,
+        });
+        if (persisted === false) {
+          throw ORCHESTRATION_ERROR.create({
+            detail: "Workflow execution ownership changed before child recovery persistence",
+            context: { ownershipLost: true },
+          });
+        }
         abortSignal?.throwIfAborted();
       }
 
@@ -351,6 +378,10 @@ export class DAGExecutor {
         const result = results[i]!;
 
         if (result.status !== "fulfilled") {
+          // Ownership loss inside a composite is not a node failure: this
+          // worker no longer owns the run row and must stop writing, not
+          // record a failed state another worker's recovery would then read.
+          if (isOwnershipLossError(result.reason)) throw result.reason;
           const error = result.reason instanceof Error
             ? result.reason.message
             : String(result.reason);
@@ -677,7 +708,13 @@ export class DAGExecutor {
               parentNodeIds: scope.declaredNodeIds,
               runtime: {
                 executeChildGraph: (nodes, run, options) =>
-                  this.executeChildGraph(nodes, run, scope, options, attemptSignal),
+                  this.executeChildGraph(
+                    nodes,
+                    run,
+                    { ...scope, rootKeyspace: false },
+                    options,
+                    attemptSignal,
+                  ),
                 onNodeComplete: this.config.onNodeComplete,
                 abortSignal: attemptSignal,
               },
@@ -735,7 +772,13 @@ export class DAGExecutor {
               parentNodeIds: scope.declaredNodeIds,
               runtime: {
                 executeChildGraph: (nodes, run) =>
-                  this.executeChildGraph(nodes, run, scope, undefined, attemptSignal),
+                  this.executeChildGraph(
+                    nodes,
+                    run,
+                    { ...scope, rootKeyspace: false },
+                    undefined,
+                    attemptSignal,
+                  ),
                 onNodeComplete: this.config.onNodeComplete,
                 abortSignal: attemptSignal,
               },

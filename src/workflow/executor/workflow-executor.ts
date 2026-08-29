@@ -197,6 +197,22 @@ export class WorkflowExecutor {
       debug: this.config.debug,
       // waiting state is handled by executeAsync() after DAG execution returns with waiting: true
       onWaiting: () => {},
+      onChildRecoveryAdmitted: ({ runId, nodeStatePatch, ownership }) => {
+        // Only a key-merge backend can commit a child fragment without
+        // replacing the run's whole node-state map; others keep the legacy
+        // charge-on-parent-return semantics.
+        if (!hasRunPatchKeyMergeSupport(this.config.backend)) return undefined;
+        return updateRunIfStatus(
+          this.config.backend,
+          runId,
+          ["running"],
+          {
+            nodeStates: nodeStatePatch.set,
+            nodeStateDeletes: nodeStatePatch.delete,
+          },
+          ownership?.workerId,
+        );
+      },
       onNodeStatesChanged: ({
         runId,
         nodeStates,

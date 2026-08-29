@@ -43,6 +43,14 @@ export interface ExecutionScope {
   resumingWait: boolean;
   /** Declared node ids in this graph and every graph that contains it. */
   declaredNodeIds: ReadonlySet<string>;
+  /**
+   * True while every enclosing composite carries its child states back into
+   * the root run's node-state map (parallel, branch, subWorkflow). Loop and
+   * map iterations keep children in a private iteration snapshot instead, so
+   * their keys must never be merge-written into the root map -- no later
+   * publish would delete them.
+   */
+  rootKeyspace: boolean;
   ownership?: CheckpointOwnership;
 }
 
@@ -71,6 +79,22 @@ export interface DAGExecutorConfig {
     currentNodes: string[];
     context: WorkflowContext;
     contextPatch: ContextPatch;
+    ownership?: CheckpointOwnership;
+  }) => Promise<boolean | void> | boolean | void;
+  /**
+   * Durably charge a recovered child-graph node before it executes.
+   *
+   * A composite's children run against a synthetic run with no backend row,
+   * so their raised attempts would otherwise reach the backend only after the
+   * child side effect ran. The patch carries only the admitted recovered
+   * nodes and must be applied as a key merge into the root run's node-state
+   * map -- never as a replacement. Returning `false` (ownership lost) aborts
+   * before the child executes; returning nothing skips durability on
+   * backends without key-merge support.
+   */
+  onChildRecoveryAdmitted?: (input: {
+    runId: string;
+    nodeStatePatch: RecordPatch<NodeState>;
     ownership?: CheckpointOwnership;
   }) => Promise<boolean | void> | boolean | void;
   /** Max milliseconds to wait for an aborted composite attempt to settle (default: 1000) */

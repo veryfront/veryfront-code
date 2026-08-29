@@ -1,5 +1,14 @@
-import { TIMEOUT_ERROR } from "#veryfront/errors";
+import { TIMEOUT_ERROR, VeryfrontError } from "#veryfront/errors";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+
+/**
+ * An ownership-fenced write was refused: another worker owns the run row, so
+ * this execution must stop writing instead of retrying or recording failure.
+ */
+export function isOwnershipLossError(error: unknown): boolean {
+  return error instanceof VeryfrontError && error.slug === "orchestration-error" &&
+    (error.context as Record<string, unknown> | undefined)?.ownershipLost === true;
+}
 import type { RetryConfig, WorkflowNode } from "../../types.ts";
 import { parseDuration, validateRetryConfig } from "../../types.ts";
 import type { NodeExecutionResult } from "./types.ts";
@@ -87,6 +96,9 @@ export async function executeCompositeNodeWithPolicy(
       await sleep(delay, parentSignal);
     } catch (caught) {
       parentSignal?.throwIfAborted();
+      // Ownership loss is not a composite failure: this worker must stop,
+      // not retry children it no longer owns or record a failed state.
+      if (isOwnershipLossError(caught)) throw caught;
       const error = ensureError(caught);
 
       if (attempt < maxAttempts && isRetryableError(error, retry)) {
