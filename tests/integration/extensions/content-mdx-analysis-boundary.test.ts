@@ -74,6 +74,8 @@ describe("content analysis package boundary", () => {
     // module graph must not load that environment-sensitive module.
     assertEquals(graph.includes("/debug"), false);
     assertEquals(packages.has("@babel/parser"), true);
+    assertEquals(packages.has("micromark"), true);
+    assertEquals(packages.has("parse5"), true);
   });
 
   it("analyzes in a Worker with no inherited host permissions", async () => {
@@ -95,9 +97,7 @@ describe("content analysis package boundary", () => {
         results: [markdown.kind, mdx.kind],
         denied: {
           env: await isDenied(() => Deno.env.get("CONTENT_ANALYSIS_TEST")),
-          read: await isDenied(() => Deno.readTextFile(${
-      JSON.stringify(analysisUrl)
-    })),
+          read: await isDenied(() => Deno.readTextFile(${JSON.stringify(analysisUrl)})),
           net: await isDenied(() => fetch("http://127.0.0.1:9/")),
           run: await isDenied(() => new Deno.Command(Deno.execPath()).output()),
           ffi: await isDenied(() => Deno.dlopen("missing", {})),

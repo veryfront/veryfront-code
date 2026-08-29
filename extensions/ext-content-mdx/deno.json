@@ -21,6 +21,8 @@
     "unified": "npm:unified@11.0.5",
     "unist-util-visit": "npm:unist-util-visit@5.1.0",
     "mdast-util-to-string": "npm:mdast-util-to-string@4.0.0",
+    "micromark": "npm:micromark@4.0.2",
+    "parse5": "npm:parse5@7.3.0",
     "github-slugger": "npm:github-slugger@2.0.0",
     "remark-parse": "npm:remark-parse@11.0.0",
     "remark-gfm": "npm:remark-gfm@4.0.1",

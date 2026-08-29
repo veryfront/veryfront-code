@@ -8,7 +8,12 @@ export interface SourceLocator {
 export function createSourceLocator(value: string): SourceLocator {
   const lineStarts = [0];
   for (let offset = 0; offset < value.length; offset++) {
-    if (value[offset] === "\n") lineStarts.push(offset + 1);
+    if (value[offset] === "\r") {
+      if (value[offset + 1] === "\n") offset++;
+      lineStarts.push(offset + 1);
+    } else if (value[offset] === "\n") {
+      lineStarts.push(offset + 1);
+    }
   }
 
   function point(offset: number): SourcePoint {

@@ -42,6 +42,8 @@
     "npm:micromark-extension-mdxjs-esm@3.0.0": "3.0.0",
     "npm:micromark-util-combine-extensions@2.0.1": "2.0.1",
     "npm:micromark-util-types@2.0.2": "2.0.2",
+    "npm:micromark@4.0.2": "4.0.2",
+    "npm:parse5@7.3.0": "7.3.0",
     "npm:pdf-lib@1.17.1": "1.17.1",
     "npm:remark-frontmatter@5.0.0": "5.0.0",
     "npm:remark-gfm@4.0.1": "4.0.1",
@@ -550,6 +552,9 @@
       "dependencies": [
         "dequal"
       ]
+    },
+    "entities@6.0.1": {
+      "integrity": "sha512-aN97NXWF6AWBTahfVOIrB/NShkzi5H7F9r1s9mD3cDj4Ko5f2qhhVoYMibXF7GlLveb/D2ioWay8lxI97Ven3g=="
     },
     "es-module-lexer@2.3.1": {
       "integrity": "sha512-shc1dbU90Yl/xq1QrC7QRtfcwURZuVRfPhZbDoldJ1cn1gzDvBaBWlv0eFolj5+0znnPJz5TXLxsN77X/12KTA=="
@@ -1319,6 +1324,12 @@
         "is-hexadecimal"
       ]
     },
+    "parse5@7.3.0": {
+      "integrity": "sha512-IInvU7fabl34qmi9gY8XOVxhYyMyuH2xUNpb2q8/Y+7552KlejkRvqvD19nMoUW/uQGGbqNpA6Tufu5FL5BZgw==",
+      "dependencies": [
+        "entities"
+      ]
+    },
     "pdf-lib@1.17.1": {
       "integrity": "sha512-V/mpyJAoTsN4cnP31vc0wfNA1+p20evqqnap0KLoRUN0Yk/p3wN52DOEsL4oBFcLdb76hlpKPtzJIgo67j/XLw==",
       "dependencies": [
@@ -1609,6 +1620,8 @@
       "npm:micromark-extension-mdxjs-esm@3.0.0",
       "npm:micromark-util-combine-extensions@2.0.1",
       "npm:micromark-util-types@2.0.2",
+      "npm:micromark@4.0.2",
+      "npm:parse5@7.3.0",
       "npm:pdf-lib@1.17.1",
       "npm:remark-frontmatter@5.0.0",
       "npm:remark-gfm@4.0.1",

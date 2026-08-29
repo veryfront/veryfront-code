@@ -1,5 +1,10 @@
-import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { BabelParseOnlyParser } from "./parser-only.ts";
 
 describe("BabelParseOnlyParser", () => {
@@ -50,6 +55,25 @@ describe("BabelParseOnlyParser", () => {
     });
 
     assertEquals(asserted.type, "File");
+  });
+
+  it("supports an explicit JavaScript-only grammar for authored content", async () => {
+    const jsx = await parser.parse({
+      code: "const view = <main />;",
+      filePath: "content.mdx",
+      syntax: "javascript",
+    });
+
+    assertEquals(jsx.type, "File");
+    await assertRejects(
+      () =>
+        parser.parse({
+          code: "const value = input as string;",
+          filePath: "content.mdx",
+          syntax: "javascript",
+        }),
+      SyntaxError,
+    );
   });
 
   it("parses legacy TypeScript parameter decorators", async () => {

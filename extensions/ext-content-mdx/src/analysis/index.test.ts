@@ -1,5 +1,10 @@
-import { assert, assertEquals, assertLess, assertStringIncludes } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import {
+  assert,
+  assertEquals,
+  assertLess,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 
 import { analyzeContent, type ContentAnalysisResult } from "./index.ts";
 
@@ -175,6 +180,25 @@ describe("analyzeContent Markdown", () => {
     );
   });
 
+  it("uses HTML parser boundaries for attributes, comments, and opaque elements", async () => {
+    const opaqueElements = ["iframe", "noembed", "noframes", "title", "xmp"];
+    const value = '<div data-href="../metadata.md">\n' +
+      '<!-- <a href="../commented.md">commented</a> -->\n' +
+      '<a title=\'href="../quoted.md"\' href="../visible.md">visible</a>\n' +
+      opaqueElements.map((tag) => `<${tag}><a href="../${tag}.md">hidden</a></${tag}>`).join("\n") +
+      "\n<script>const marker = \"</scripture><a href='../script.md'>\";</script>\n" +
+      '<a href="">empty</a>\n' +
+      "</div>";
+
+    const result = await analyzeContent({ value, syntax: "markdown" });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => destination.rawValue),
+      ["../visible.md"],
+    );
+  });
+
   it("locates wrapped reference destinations inside block containers", async () => {
     const value = "[quoted] [listed]\n" +
       "> [quoted]:\n> ../quoted.md\n" +
@@ -216,6 +240,46 @@ describe("analyzeContent Markdown", () => {
       }],
     });
   });
+
+  it("uses parser-owned resource and reference delimiters", async () => {
+    const value = '[Guide](./guide.md "see ]( details")\n\n' +
+      String.raw`![first \] second [nested]](image.png)` + "\n\n" +
+      "[API][api]\n\n" +
+      "[api]: ./first.md\n" +
+      "[api]: ../duplicate.md";
+
+    const result = await analyzeContent({ value, syntax: "markdown" });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => destination.rawValue),
+      ["./guide.md", "image.png", "./first.md"],
+    );
+    assertEquals(
+      result.renderedRanges.map((range) => value.slice(range.start.offset, range.end.offset)),
+      ["Guide", String.raw`first \] second [nested]`, "API"],
+    );
+  });
+
+  it("reports ranges after every supported source line ending", async () => {
+    const value = "[LF](./lf.md)\n[CR](./cr.md)\r[CRLF](./crlf.md)\r\n[End](./end.md)";
+
+    const result = await analyzeContent({ value, syntax: "markdown" });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => ({
+        rawValue: destination.rawValue,
+        line: destination.range.start.line,
+      })),
+      [
+        { rawValue: "./lf.md", line: 1 },
+        { rawValue: "./cr.md", line: 2 },
+        { rawValue: "./crlf.md", line: 3 },
+        { rawValue: "./end.md", line: 4 },
+      ],
+    );
+  });
 });
 
 describe("analyzeContent MDX", () => {
@@ -240,6 +304,27 @@ describe("analyzeContent MDX", () => {
       column: 9,
     });
     assertStringIncludes(mdx.diagnostic.message, "Unexpected");
+  });
+
+  it("validates JSX spread attributes in their object-fragment grammar", async () => {
+    const value = '<Card {...props} href="../guide.md" />';
+
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => destination.rawValue),
+      ["../guide.md"],
+    );
+  });
+
+  it("rejects TypeScript-only syntax from authored MDX expressions", async () => {
+    const value = "Before {value as string} after";
+
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assert(result.kind === "syntax-error");
+    assertStringIncludes(result.diagnostic.message, "Unexpected");
   });
 
   it("returns quoted and expression-backed static JSX destinations", async () => {

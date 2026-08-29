@@ -1,4 +1,7 @@
 import type { Nodes, Root } from "mdast";
+import { parse, postprocess, preprocess } from "micromark";
+import type { Extension } from "micromark-util-types";
+import { type DefaultTreeAdapterMap, parseFragment } from "parse5";
 import type { Position } from "unist";
 import { unified } from "unified";
 import remarkFrontmatter from "remark-frontmatter";
@@ -8,9 +11,15 @@ import remarkParse from "remark-parse";
 import { createSourceLocator, type SourceLocator } from "./source.ts";
 import type { ContentDestination, SourceRange } from "./types.ts";
 
-interface AuthoredDestination {
-  readonly rawValue: string;
-  readonly range: SourceRange;
+interface OffsetSpan {
+  readonly start: number;
+  readonly end: number;
+}
+
+interface MarkdownTokens {
+  readonly definitionDestinations: readonly OffsetSpan[];
+  readonly imageLabels: readonly OffsetSpan[];
+  readonly resourceDestinations: readonly OffsetSpan[];
 }
 
 function positionOffsets(
@@ -33,106 +42,46 @@ function childrenOf(node: Nodes): readonly Nodes[] {
   return "children" in node ? node.children : [];
 }
 
-function skipMarkdownWhitespace(value: string, start: number): number {
-  let cursor = start;
-  while (/\s/.test(value[cursor] ?? "")) cursor++;
-  return cursor;
+function markdownTokens(
+  value: string,
+  extensions: readonly Extension[] = [],
+): MarkdownTokens {
+  const definitionDestinations: OffsetSpan[] = [];
+  const imageLabels: OffsetSpan[] = [];
+  const resourceDestinations: OffsetSpan[] = [];
+  const events = postprocess(
+    parse({ extensions: [...extensions] }).document().write(
+      preprocess()(value, undefined, true),
+    ),
+  );
+  for (const [event, token] of events) {
+    if (event !== "enter") continue;
+    const span = { start: token.start.offset, end: token.end.offset };
+    if (token.type === "definitionDestinationString") {
+      definitionDestinations.push(span);
+    } else if (token.type === "resourceDestinationString") {
+      resourceDestinations.push(span);
+    } else if (
+      token.type === "labelText" && value.slice(token.start.offset - 2, token.start.offset) === "!["
+    ) {
+      imageLabels.push(span);
+    }
+  }
+  return { definitionDestinations, imageLabels, resourceDestinations };
 }
 
-function resourceDestination(
-  authored: string,
-  absoluteStart: number,
-  locator: SourceLocator,
-): AuthoredDestination | undefined {
-  const labelEnd = authored.lastIndexOf("](");
-  if (labelEnd === -1) return undefined;
-  let start = skipMarkdownWhitespace(authored, labelEnd + 2);
-  if (authored[start] === "<") {
-    const end = authored.indexOf(">", start + 1);
-    if (end === -1) return undefined;
-    start++;
-    return {
-      rawValue: authored.slice(start, end),
-      range: locator.range(absoluteStart + start, absoluteStart + end),
-    };
-  }
-
-  let cursor = start;
-  let parentheses = 0;
-  while (cursor < authored.length) {
-    const character = authored[cursor];
-    if (character === "\\" && cursor + 1 < authored.length) {
-      cursor += 2;
-      continue;
-    }
-    if (character === "(") parentheses++;
-    else if (character === ")") {
-      if (parentheses === 0) break;
-      parentheses--;
-    } else if (/\s/.test(character ?? "") && parentheses === 0) break;
-    cursor++;
-  }
-  return cursor === start ? undefined : {
-    rawValue: authored.slice(start, cursor),
-    range: locator.range(absoluteStart + start, absoluteStart + cursor),
-  };
-}
-
-function definitionDestination(
-  authored: string,
-  absoluteStart: number,
-  locator: SourceLocator,
-): AuthoredDestination | undefined {
-  let labelEnd = 1;
-  while (labelEnd < authored.length) {
-    if (authored[labelEnd] === "\\") labelEnd++;
-    else if (authored[labelEnd] === "]" && authored[labelEnd + 1] === ":") {
-      break;
-    }
-    labelEnd++;
-  }
-  if (labelEnd >= authored.length) return undefined;
-
-  let start = labelEnd + 2;
-  while (start < authored.length) {
-    const character = authored[start];
-    if (character === " " || character === "\t" || character === "\r") {
-      start++;
-      continue;
-    }
-    if (character !== "\n") break;
-    start++;
-    while (authored[start] === " " || authored[start] === "\t") start++;
-    while (authored[start] === ">") {
-      start++;
-      if (authored[start] === " ") start++;
-      while (authored[start] === "\t") start++;
-    }
-  }
-  if (authored[start] === "<") {
-    const end = authored.indexOf(">", start + 1);
-    if (end <= start + 1) return undefined;
-    start++;
-    return {
-      rawValue: authored.slice(start, end),
-      range: locator.range(absoluteStart + start, absoluteStart + end),
-    };
-  }
-  let end = start;
-  while (end < authored.length && !/\s/.test(authored[end] ?? "")) {
-    if (authored[end] === "\\" && end + 1 < authored.length) end++;
-    end++;
-  }
-  return end === start ? undefined : {
-    rawValue: authored.slice(start, end),
-    range: locator.range(absoluteStart + start, absoluteStart + end),
-  };
+function containedSpan(
+  spans: readonly OffsetSpan[],
+  container: OffsetSpan,
+): OffsetSpan | undefined {
+  return spans.find((span) => span.start >= container.start && span.end <= container.end);
 }
 
 function linkDestination(
   value: string,
   node: Extract<Nodes, { type: "link" | "image" }>,
   locator: SourceLocator,
+  tokens: MarkdownTokens,
 ): ContentDestination | undefined {
   const offsets = positionOffsets(node.position);
   if (offsets === undefined) return undefined;
@@ -153,66 +102,86 @@ function linkDestination(
       syntax: "autolink",
     };
   }
-  const destination = resourceDestination(authored, offsets.start, locator);
-  if (destination === undefined || destination.rawValue === "") return undefined;
+  const destination = tokens.resourceDestinations[tokens.resourceDestinations.length - 1];
+  if (destination === undefined || destination.end === destination.start) return undefined;
   return {
     kind: node.type === "link" ? "markdown-link" : "markdown-image",
-    ...destination,
+    rawValue: authored.slice(destination.start, destination.end),
+    range: locator.range(
+      offsets.start + destination.start,
+      offsets.start + destination.end,
+    ),
     syntax: "markdown",
   };
 }
 
 function imageAltRange(
-  value: string,
   position: Position | undefined,
   locator: SourceLocator,
+  tokens: MarkdownTokens,
+  tokenBase: number,
 ): SourceRange | undefined {
   const offsets = positionOffsets(position);
   if (offsets === undefined) return undefined;
-  const authored = value.slice(offsets.start, offsets.end);
-  const end = authored.indexOf("]", 2);
-  return authored.startsWith("![") && end > 2
-    ? locator.range(offsets.start + 2, offsets.start + end)
-    : undefined;
+  const label = tokens.imageLabels.find((span) => tokenBase + span.start === offsets.start + 2);
+  return label === undefined || label.end <= label.start
+    ? undefined
+    : locator.range(tokenBase + label.start, tokenBase + label.end);
 }
 
-const HTML_DESTINATION_ATTRIBUTE =
-  /\b(?:href|src|action)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi;
+const HTML_DESTINATION_ATTRIBUTES = new Set(["action", "href", "src"]);
+const OPAQUE_HTML_ELEMENTS = new Set([
+  "iframe",
+  "noembed",
+  "noframes",
+  "plaintext",
+  "script",
+  "style",
+  "template",
+  "textarea",
+  "title",
+  "xmp",
+]);
 
-function htmlTagEnd(value: string, start: number): number | undefined {
-  let quote: '"' | "'" | undefined;
-  for (let cursor = start + 1; cursor < value.length; cursor++) {
-    const character = value[cursor];
-    if (quote !== undefined) {
-      if (character === quote) quote = undefined;
-      continue;
-    }
-    if (character === '"' || character === "'") quote = character;
-    else if (character === ">") return cursor + 1;
+type HtmlChildNode = DefaultTreeAdapterMap["childNode"];
+type HtmlElement = DefaultTreeAdapterMap["element"];
+type HtmlText = DefaultTreeAdapterMap["textNode"];
+
+function isHtmlElement(node: HtmlChildNode): node is HtmlElement {
+  return "attrs" in node && "tagName" in node;
+}
+
+function isHtmlText(node: HtmlChildNode): node is HtmlText {
+  return node.nodeName === "#text" && "value" in node;
+}
+
+function htmlAttributeDestination(
+  raw: string,
+  absoluteStart: number,
+  location: { readonly startOffset: number; readonly endOffset: number },
+  locator: SourceLocator,
+): ContentDestination | undefined {
+  const authored = raw.slice(location.startOffset, location.endOffset);
+  const equals = authored.indexOf("=");
+  if (equals === -1) return undefined;
+  let start = equals + 1;
+  while (/[\t\n\f\r ]/.test(authored[start] ?? "")) start++;
+  let end = authored.length;
+  const quote = authored[start];
+  if (quote === '"' || quote === "'") {
+    start++;
+    if (authored[end - 1] === quote) end--;
   }
-  return undefined;
-}
-
-const RAW_TEXT_HTML_ELEMENTS = new Set(["script", "style", "textarea"]);
-
-function htmlTagName(tag: string): {
-  readonly closing: boolean;
-  readonly name: string;
-  readonly selfClosing: boolean;
-} | undefined {
-  const match = /^<\s*(\/?)\s*([A-Za-z][A-Za-z0-9-]*)/.exec(tag);
-  if (match === null) return undefined;
+  if (end <= start) return undefined;
   return {
-    closing: match[1] === "/",
-    name: match[2]!.toLowerCase(),
-    selfClosing: /\/\s*>$/.test(tag),
+    kind: "html-attribute",
+    rawValue: authored.slice(start, end),
+    range: locator.range(
+      absoluteStart + location.startOffset + start,
+      absoluteStart + location.startOffset + end,
+    ),
+    syntax: "html-attribute",
   };
-}
-
-function isHtmlDataBlock(raw: string): boolean {
-  const trimmed = raw.trimStart();
-  return trimmed.startsWith("<!--") || trimmed.startsWith("<?") ||
-    trimmed.startsWith("<![") || /^<![A-Za-z]/.test(trimmed);
 }
 
 function rawHtmlAnalysis(
@@ -225,49 +194,48 @@ function rawHtmlAnalysis(
 } {
   const destinations: ContentDestination[] = [];
   const renderedRanges: SourceRange[] = [];
-  if (isHtmlDataBlock(raw)) return { destinations, renderedRanges };
-  const lowercase = raw.toLowerCase();
-  let cursor = 0;
-  while (cursor < raw.length) {
-    const tagStart = raw.indexOf("<", cursor);
-    const textEnd = tagStart === -1 ? raw.length : tagStart;
-    if (raw.slice(cursor, textEnd).trim() !== "") {
-      renderedRanges.push(
-        locator.range(absoluteStart + cursor, absoluteStart + textEnd),
-      );
+  const root = parseFragment(raw, { sourceCodeLocationInfo: true });
+  const pending: Array<{ readonly node: HtmlChildNode; readonly opaque: boolean }> = [];
+  for (let index = root.childNodes.length - 1; index >= 0; index--) {
+    pending.push({ node: root.childNodes[index]!, opaque: false });
+  }
+
+  while (pending.length > 0) {
+    const entry = pending.pop();
+    if (entry === undefined) break;
+    const { node } = entry;
+    if (isHtmlElement(node)) {
+      const attributeLocations = node.sourceCodeLocation?.attrs;
+      for (const attribute of node.attrs) {
+        if (!HTML_DESTINATION_ATTRIBUTES.has(attribute.name)) continue;
+        const location = attributeLocations?.[attribute.name];
+        if (location === undefined) continue;
+        const destination = htmlAttributeDestination(
+          raw,
+          absoluteStart,
+          location,
+          locator,
+        );
+        if (destination !== undefined) destinations.push(destination);
+      }
+      const opaque = entry.opaque || OPAQUE_HTML_ELEMENTS.has(node.tagName);
+      for (let index = node.childNodes.length - 1; index >= 0; index--) {
+        pending.push({ node: node.childNodes[index]!, opaque });
+      }
+    } else if (isHtmlText(node) && !entry.opaque) {
+      const location = node.sourceCodeLocation;
+      if (
+        location !== undefined && location !== null &&
+        raw.slice(location.startOffset, location.endOffset).trim() !== ""
+      ) {
+        renderedRanges.push(
+          locator.range(
+            absoluteStart + location.startOffset,
+            absoluteStart + location.endOffset,
+          ),
+        );
+      }
     }
-    if (tagStart === -1) break;
-    const tagEnd = htmlTagEnd(raw, tagStart);
-    if (tagEnd === undefined) break;
-    const tag = raw.slice(tagStart, tagEnd);
-    const tagName = htmlTagName(tag);
-    HTML_DESTINATION_ATTRIBUTE.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = HTML_DESTINATION_ATTRIBUTE.exec(tag)) !== null) {
-      const rawValue = match[1] ?? match[2] ?? match[3];
-      if (rawValue === undefined) continue;
-      const relativeValueStart = tagStart + match.index +
-        match[0].lastIndexOf(rawValue);
-      destinations.push({
-        kind: "html-attribute",
-        rawValue,
-        range: locator.range(
-          absoluteStart + relativeValueStart,
-          absoluteStart + relativeValueStart + rawValue.length,
-        ),
-        syntax: "html-attribute",
-      });
-    }
-    if (
-      tagName !== undefined && !tagName.closing && !tagName.selfClosing &&
-      RAW_TEXT_HTML_ELEMENTS.has(tagName.name)
-    ) {
-      const closingStart = lowercase.indexOf(`</${tagName.name}`, tagEnd);
-      if (closingStart === -1) break;
-      cursor = closingStart;
-      continue;
-    }
-    cursor = tagEnd;
   }
   return { destinations, renderedRanges };
 }
@@ -282,7 +250,11 @@ export function analyzeMarkdown(value: string, frontmatter: boolean): {
   return analyzeMarkdownTree(value, root);
 }
 
-export function analyzeMarkdownTree(value: string, root: Root): {
+export function analyzeMarkdownTree(
+  value: string,
+  root: Root,
+  options: { readonly micromarkExtensions?: readonly Extension[] } = {},
+): {
   readonly renderedRanges: readonly SourceRange[];
   readonly destinations: readonly ContentDestination[];
 } {
@@ -292,6 +264,12 @@ export function analyzeMarkdownTree(value: string, root: Root): {
   const usedDefinitions = new Set<string>();
   const definitions: Array<Extract<Nodes, { type: "definition" }>> = [];
   const pending: Nodes[] = [root];
+  let documentTokens: MarkdownTokens | undefined;
+
+  function getDocumentTokens(): MarkdownTokens {
+    documentTokens ??= markdownTokens(value, options.micromarkExtensions);
+    return documentTokens;
+  }
 
   while (pending.length > 0) {
     const node = pending.pop();
@@ -300,10 +278,16 @@ export function analyzeMarkdownTree(value: string, root: Root): {
       const range = rangeFromPosition(node.position, locator);
       if (range !== undefined) renderedRanges.push(range);
     } else if (node.type === "link" || node.type === "image") {
-      const destination = linkDestination(value, node, locator);
+      const offsets = positionOffsets(node.position);
+      if (offsets === undefined) continue;
+      const tokens = markdownTokens(
+        value.slice(offsets.start, offsets.end),
+        options.micromarkExtensions,
+      );
+      const destination = linkDestination(value, node, locator, tokens);
       if (destination !== undefined) destinations.push(destination);
       if (node.type === "image") {
-        const range = imageAltRange(value, node.position, locator);
+        const range = imageAltRange(node.position, locator, tokens, offsets.start);
         if (range !== undefined) renderedRanges.push(range);
       }
     } else if (
@@ -311,7 +295,12 @@ export function analyzeMarkdownTree(value: string, root: Root): {
     ) {
       usedDefinitions.add(node.identifier);
       if (node.type === "imageReference") {
-        const range = imageAltRange(value, node.position, locator);
+        const range = imageAltRange(
+          node.position,
+          locator,
+          getDocumentTokens(),
+          0,
+        );
         if (range !== undefined) renderedRanges.push(range);
       }
     } else if (node.type === "definition") {
@@ -331,20 +320,24 @@ export function analyzeMarkdownTree(value: string, root: Root): {
     }
   }
 
+  const definitionTokens = definitions.length > 0 && usedDefinitions.size > 0
+    ? getDocumentTokens()
+    : undefined;
+  const resolvedDefinitions = new Set<string>();
   for (const definition of definitions) {
+    if (resolvedDefinitions.has(definition.identifier)) continue;
+    resolvedDefinitions.add(definition.identifier);
     if (!usedDefinitions.has(definition.identifier)) continue;
     const offsets = positionOffsets(definition.position);
     if (offsets === undefined) continue;
-    const authored = value.slice(offsets.start, offsets.end);
-    const destination = definitionDestination(
-      authored,
-      offsets.start,
-      locator,
-    );
+    const destination = definitionTokens === undefined
+      ? undefined
+      : containedSpan(definitionTokens.definitionDestinations, offsets);
     if (destination !== undefined) {
       destinations.push({
         kind: "markdown-definition",
-        ...destination,
+        rawValue: value.slice(destination.start, destination.end),
+        range: locator.range(destination.start, destination.end),
         syntax: "markdown",
       });
     }

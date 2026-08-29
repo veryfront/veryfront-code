@@ -313,6 +313,7 @@ interface EmbeddedInput {
   readonly source: string;
   readonly absoluteStart: number;
   readonly attributeName: string | undefined;
+  readonly fragmentKind: "expression" | "jsx-spread-attribute";
 }
 
 function own(value: unknown, key: string): unknown {
@@ -395,6 +396,7 @@ function embeddedInput(
   value: string,
   expression: { readonly value: string; readonly position?: Position },
   attributeName: string | undefined,
+  fragmentKind: EmbeddedInput["fragmentKind"],
 ): EmbeddedInput | undefined {
   const offsets = positionOffsets(expression.position);
   if (offsets === undefined) return undefined;
@@ -404,6 +406,7 @@ function embeddedInput(
     source: expression.value,
     absoluteStart: brace === -1 ? offsets.start : offsets.start + brace + 1,
     attributeName,
+    fragmentKind,
   };
 }
 
@@ -415,6 +418,7 @@ function documentExpressionInput(
     source: node.value,
     absoluteStart: offsets.start + 1,
     attributeName: undefined,
+    fragmentKind: "expression",
   };
 }
 
@@ -441,7 +445,9 @@ export async function analyzeMdx(options: {
     lexicalCache = undefined;
   }
 
-  const markdown = analyzeMarkdownTree(options.value, root);
+  const markdown = analyzeMarkdownTree(options.value, root, {
+    micromarkExtensions: [lexicalMdx],
+  });
   const destinations = [...markdown.destinations];
   const embedded: EmbeddedInput[] = [];
   const pending: Nodes[] = [root];
@@ -458,7 +464,12 @@ export async function analyzeMdx(options: {
     ) {
       for (const attribute of node.attributes) {
         if (attribute.type === "mdxJsxExpressionAttribute") {
-          const input = embeddedInput(options.value, attribute, undefined);
+          const input = embeddedInput(
+            options.value,
+            attribute,
+            undefined,
+            "jsx-spread-attribute",
+          );
           if (input !== undefined) embedded.push(input);
           continue;
         }
@@ -480,6 +491,7 @@ export async function analyzeMdx(options: {
               position: attribute.position,
             },
             attribute.name,
+            "expression",
           );
           if (input !== undefined) embedded.push(input);
         }

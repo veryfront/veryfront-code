@@ -330,6 +330,7 @@ async function validateRecord(
   absoluteStart: number,
   locator: SourceLocator,
   filePath: string | undefined,
+  fragmentKind: "expression" | "jsx-spread-attribute",
 ): Promise<
   | {
     readonly kind: "valid";
@@ -356,13 +357,16 @@ async function validateRecord(
     };
   }
 
-  const prefix = "const __veryfront_value = (";
+  const spreadRoot = expression.root && fragmentKind === "jsx-spread-attribute";
+  const prefix = spreadRoot ? "const __veryfront_value = ({" : "const __veryfront_value = (";
+  const suffix = spreadRoot ? "\n});" : "\n);";
   try {
     if (!hasTokens(fragment.value)) return { kind: "valid", literal: undefined };
     const ast = await babelParser.parse({
-      code: `${prefix}${fragment.value}\n);`,
+      code: `${prefix}${fragment.value}${suffix}`,
       filePath: filePath ?? "content.mdx",
       decoratorMode: "current",
+      syntax: "javascript",
     });
     const literal = staticLiteral(ast);
     if (literal === undefined) return { kind: "valid", literal: undefined };
@@ -445,6 +449,7 @@ export async function analyzeEmbeddedExpression(options: {
   readonly locator: SourceLocator;
   readonly filePath?: string;
   readonly attributeName?: string;
+  readonly fragmentKind?: "expression" | "jsx-spread-attribute";
 }): Promise<EmbeddedCodeAnalysis> {
   const expressions: ExpressionRecord[] = [{
     id: 0,
@@ -729,6 +734,7 @@ export async function analyzeEmbeddedExpression(options: {
       options.absoluteStart,
       options.locator,
       options.filePath,
+      options.fragmentKind ?? "expression",
     );
     if (validation.kind === "syntax-error") return validation;
     if (

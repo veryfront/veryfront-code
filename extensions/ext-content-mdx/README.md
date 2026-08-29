@@ -24,6 +24,30 @@ export default defineConfig({
 - `compileMarkdown(options)` runs a unified Markdown pipeline (`remark-parse` to `remark-rehype` to `rehype-sanitize` to `rehype-stringify`) producing sanitized HTML wrapped in a React component.
 - `getRemarkPlugins()` / `getRehypePlugins()` returns the configured plugin list so callers can build a custom pipeline.
 
+## Content analysis
+
+Import the analysis API from its dedicated subpath. It does not load the MDX compiler or React runtime.
+
+```ts
+import { analyzeContent } from "@veryfront/ext-content-mdx/analysis";
+
+const result = await analyzeContent({
+  value: "[Guide](../guides/start.md)",
+  syntax: "markdown",
+  filePath: "content/guide.md",
+});
+
+if (result.kind === "syntax-error") {
+  console.error(result.diagnostic.message);
+} else {
+  console.log(result.destinations);
+}
+```
+
+Set `syntax` to `"markdown"` or `"mdx"`. You can also pass frontmatter settings with `frontmatter`. A document result contains rendered source ranges and statically known link, image, JSX, and raw HTML destinations. A syntax error contains one positioned diagnostic.
+
+Offsets are zero-based. Lines and columns are one-based. `rawValue` preserves the authored source. Static JavaScript strings and templates in MDX also include `cookedValue` when their runtime value differs from the authored text.
+
 ## Default plugin stack
 
 | Phase  | Plugins                                                                                                       |
