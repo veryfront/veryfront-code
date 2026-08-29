@@ -146,6 +146,11 @@ function sanitizeDiagnostics(text: string): string {
   return sanitized;
 }
 
+/** Deterministic ordinal ordering, matching the Bash glob expansion order. */
+function compareOrdinal(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 async function listTarballs(
   directory: string,
   pattern: RegExp,
@@ -158,7 +163,7 @@ async function listTarballs(
     }
   }
   if (matches.length === 0) fail(`no packed tarball matched ${description}`);
-  return matches.sort();
+  return matches.sort(compareOrdinal);
 }
 
 interface InstallPlan {
