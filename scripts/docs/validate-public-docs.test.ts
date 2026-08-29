@@ -2780,6 +2780,16 @@ describe("public docs validation", () => {
       ),
       [],
     );
+    for (const source of [
+      "<https://veryfront.com/docs/code/guides/does-not-exist>",
+      "<user@example.com>",
+    ]) {
+      await assertRejects(
+        () => mdxDestinations(source),
+        PublicDocSyntaxError,
+        "Invalid MDX syntax",
+      );
+    }
     assertEquals(
       await destinations(
         "[<https://veryfront.com/docs/code/architecture/label>](./public.md)",

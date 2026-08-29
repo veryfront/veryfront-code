@@ -1084,8 +1084,8 @@ describe("analyzeContent MDX", () => {
     );
   });
 
-  it("retains URI autolinks alongside MDX JSX syntax", async () => {
-    const value = "<https://veryfront.com/docs/code/guides/start> " +
+  it("retains GFM bare autolinks alongside MDX JSX syntax", async () => {
+    const value = "https://veryfront.com/docs/code/guides/start " +
       '<Card href="../guide.md" />';
 
     const result = await analyzeContent({ value, syntax: "mdx" });
@@ -1098,6 +1098,20 @@ describe("analyzeContent MDX", () => {
         "../guide.md",
       ],
     );
+  });
+
+  it("keeps angle-bracket autolinks disabled by the MDX grammar", async () => {
+    for (
+      const [value, offset] of [
+        ["<https://veryfront.com/docs/code/guides/start>", 7],
+        ["<user@example.com>", 5],
+      ] as const
+    ) {
+      const result = await analyzeContent({ value, syntax: "mdx" });
+
+      assert(result.kind === "syntax-error");
+      assertEquals(result.diagnostic.range.start.offset, offset);
+    }
   });
 
   it("returns positioned diagnostics for malformed MDX structure and ESM", async () => {

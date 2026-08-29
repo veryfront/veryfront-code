@@ -30,7 +30,6 @@
     "remark-gfm": "npm:remark-gfm@4.0.1",
     "remark-frontmatter": "npm:remark-frontmatter@5.0.0",
     "mdast-util-mdx": "npm:mdast-util-mdx@3.0.0",
-    "micromark-core-commonmark": "npm:micromark-core-commonmark@2.0.3",
     "micromark-extension-mdx-expression": "npm:micromark-extension-mdx-expression@3.0.1",
     "micromark-extension-mdx-jsx": "npm:micromark-extension-mdx-jsx@3.0.2",
     "micromark-extension-mdx-md": "npm:micromark-extension-mdx-md@2.0.0",

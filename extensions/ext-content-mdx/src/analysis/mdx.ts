@@ -9,13 +9,11 @@ import {
 import acornJsx from "acorn-jsx";
 import type { Nodes } from "mdast";
 import { mdxFromMarkdown } from "mdast-util-mdx";
-import { autolink } from "micromark-core-commonmark";
 import { mdxExpression } from "micromark-extension-mdx-expression";
 import { mdxJsx } from "micromark-extension-mdx-jsx";
 import { mdxMd } from "micromark-extension-mdx-md";
 import { mdxjsEsm } from "micromark-extension-mdxjs-esm";
 import { combineExtensions } from "micromark-util-combine-extensions";
-import type { Construct, Extension, Tokenizer } from "micromark-util-types";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
@@ -399,34 +397,14 @@ function createLexicalTokenizer(
   return tokenizer;
 }
 
-function autolinkAwareJsx(
-  extension: Extension,
-): Extension {
-  const flowValue = extension.flow?.[60];
-  const flow = Array.isArray(flowValue) ? flowValue[0] : flowValue;
-  if (flow === undefined) {
-    throw new TypeError("The MDX JSX extension has no flow construct");
-  }
-  const tokenize: Tokenizer = function (effects, ok, nok) {
-    const jsxStart = flow.tokenize.call(this, effects, ok, nok);
-    return effects.check(autolink, nok, jsxStart);
-  };
-  const guardedFlow: Construct = { ...flow, tokenize };
-  return { ...extension, flow: { ...extension.flow, 60: guardedFlow } };
-}
-
 const mdxMarkdownSyntax = {
   disable: { null: ["codeIndented", "htmlFlow", "htmlText"] },
 } satisfies ReturnType<typeof mdxMd>;
-const lexicalJsx = autolinkAwareJsx(
-  mdxJsx({ acorn: LexicalBoundaryParser, addResult: false }),
-);
 
 const lexicalMdx = combineExtensions([
   mdxjsEsm({ acorn: AcornJsxParser, addResult: false }),
   mdxExpression({ acorn: LexicalBoundaryParser, addResult: false }),
-  lexicalJsx,
-  { text: { 60: autolink } },
+  mdxJsx({ acorn: LexicalBoundaryParser, addResult: false }),
   mdxMarkdownSyntax,
 ]);
 
