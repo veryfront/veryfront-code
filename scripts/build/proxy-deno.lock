@@ -1551,6 +1551,7 @@
         "dependencies": [
           "jsr:@std/assert@1.0.19",
           "jsr:@std/testing@1.0.17",
+          "jsr:@std/yaml@1.1.0",
           "npm:@mdx-js/mdx@3.1.1",
           "npm:@mdx-js/react@3.1.1",
           "npm:@types/hast@3.0.3",
@@ -1568,6 +1569,8 @@
           "npm:micromark-extension-mdxjs-esm@3.0.0",
           "npm:micromark-util-combine-extensions@2.0.1",
           "npm:micromark-util-types@2.0.2",
+          "npm:micromark@4.0.2",
+          "npm:parse5@7.3.0",
           "npm:rehype-highlight@7.0.2",
           "npm:rehype-raw@7.0.0",
           "npm:rehype-sanitize@6.0.0",
