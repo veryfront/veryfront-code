@@ -3,6 +3,7 @@ import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import type { AgentConfig } from "../types.ts";
+import type { ProviderReplayCheckpoint } from "./provider-replay.ts";
 import {
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
@@ -234,7 +235,7 @@ describe("agent/runtime-tool-config", () => {
     });
 
     it("returns validated checkpoints from trusted host state", () => {
-      const checkpoint = {
+      const checkpoint: ProviderReplayCheckpoint = {
         version: 1,
         messageId: "assistant-message-1",
         provider: "anthropic",
