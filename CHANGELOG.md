@@ -6,6 +6,13 @@ versions are listed at
 
 ## Unreleased
 
+### Agent provider replay checkpoint contract
+
+The provider replay checkpoint wire contract is now defined for hosted agent
+runs, including strict validation of server-resolved checkpoints and a durable
+checkpoint event shape. Emission remains disabled by default unless
+`VERYFRONT_ENABLE_PROVIDER_REPLAY_CHECKPOINT_EMISSION=true` is set.
+
 ### Breaking: `veryfront dev` enforces CSRF
 
 `security.csrf` now resolves the same way in every environment. Local

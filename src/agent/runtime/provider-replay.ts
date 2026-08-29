@@ -18,6 +18,7 @@ export const PROVIDER_REPLAY_CHECKPOINT_EMISSION_ENV_FLAG =
   "VERYFRONT_ENABLE_PROVIDER_REPLAY_CHECKPOINT_EMISSION" as const;
 
 const MAX_PROVIDER_REPLAY_BLOCKS = 100;
+const MAX_PROVIDER_REPLAY_CHECKPOINTS = 100;
 const MAX_PROVIDER_REPLAY_TOTAL_PARTS = 10_000;
 const MAX_PROVIDER_REPLAY_MESSAGE_ID_LENGTH = 256;
 
@@ -219,6 +220,11 @@ export function parseServerResolvedProviderReplayCheckpoints(
 ): ProviderReplayCheckpoint[] {
   if (!Array.isArray(value)) {
     invalidCheckpoint("server-resolved provider replay checkpoints must be an array");
+  }
+  if (value.length > MAX_PROVIDER_REPLAY_CHECKPOINTS) {
+    invalidCheckpoint(
+      `server-resolved provider replay checkpoints must contain at most ${MAX_PROVIDER_REPLAY_CHECKPOINTS} entries`,
+    );
   }
   const checkpoints = value.map((entry) => parseProviderReplayCheckpoint(entry));
   // The server resolves at most one checkpoint per assistant turn. Duplicates

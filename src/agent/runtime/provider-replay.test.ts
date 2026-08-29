@@ -268,6 +268,14 @@ describe("agent/runtime/provider-replay", () => {
       );
     });
 
+    it("should reject an oversized checkpoint delivery", () => {
+      const checkpoints = Array.from({ length: 101 }, (_, index) => ({
+        ...createValidCheckpoint(),
+        messageId: `assistant-message-${index}`,
+      }));
+      assertProviderReplayError(() => parseServerResolvedProviderReplayCheckpoints(checkpoints));
+    });
+
     it("should reject duplicate checkpoints for one message anchor", () => {
       const error = assertProviderReplayError(() =>
         parseServerResolvedProviderReplayCheckpoints([
