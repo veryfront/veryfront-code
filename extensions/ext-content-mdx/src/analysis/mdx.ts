@@ -153,17 +153,13 @@ function lexicalBoundaryState(
     while (true) {
       const token = cache.tokenizer.getToken();
       consumeLexicalToken(cache.state, token.type.label);
+      if (cache.state.contextualSlash) {
+        cache.grammarRequired = true;
+        return cache.state;
+      }
       if (token.type.label === "eof") break;
     }
   } catch (error) {
-    // Micromark probes every `}` before the complete expression is available.
-    // An unfinished regular-expression token fixes slash handling to Acorn's
-    // grammar for the remaining probes; it is not a failure of the full input.
-    if (isIncompleteRegularExpression(error)) {
-      cache.grammarRequired = true;
-      cache.state.contextualSlash = true;
-      throw error;
-    }
     // A `}` encountered as JSX text cannot become valid by appending more
     // source. Preserve that lexical result so later probes do not retokenize
     // the same invalid prefix.
@@ -191,11 +187,6 @@ function isLexicallyComplete(state: LexicalState): boolean {
   return state.bracketDepth === 0 && state.braceDepth === 0 &&
     state.jsxElementDepth === 0 && state.jsxTags.length === 0 &&
     state.parenthesisDepth === 0;
-}
-
-function isIncompleteRegularExpression(error: unknown): error is SyntaxError {
-  return error instanceof SyntaxError &&
-    error.message.startsWith("Unterminated regular expression");
 }
 
 function isTerminalJsxBoundaryError(error: unknown): error is SyntaxError {

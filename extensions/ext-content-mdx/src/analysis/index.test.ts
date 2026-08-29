@@ -369,6 +369,33 @@ describe("analyzeContent MDX", () => {
     assertStringIncludes(invalidEsm.diagnostic.message, "import/exports");
   });
 
+  it("maps reduced-fragment diagnostics back to their authored source offsets", async () => {
+    const documentValue = "Before\n{<Card /> +}\nafter";
+    const attributeValue = "<Card href={target +} />";
+
+    const documentResult = await analyzeContent({
+      value: documentValue,
+      syntax: "mdx",
+    });
+    const attributeResult = await analyzeContent({
+      value: attributeValue,
+      syntax: "mdx",
+    });
+
+    assert(documentResult.kind === "syntax-error");
+    assertEquals(documentResult.diagnostic.range.start, {
+      offset: documentValue.indexOf("}"),
+      line: 2,
+      column: 12,
+    });
+    assert(attributeResult.kind === "syntax-error");
+    assertEquals(attributeResult.diagnostic.range.start, {
+      offset: attributeValue.indexOf("}"),
+      line: 1,
+      column: attributeValue.indexOf("}") + 1,
+    });
+  });
+
   it("analyzes 4,000 nested JSX children without recursive parsing", async () => {
     const depth = 4_000;
     const value = "<a data-ok={" +

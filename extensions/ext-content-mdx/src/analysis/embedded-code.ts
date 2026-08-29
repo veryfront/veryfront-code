@@ -20,6 +20,18 @@ interface TokenSpan extends Span {
   readonly label: string;
 }
 
+interface ReducedSegment {
+  readonly reducedStart: number;
+  readonly reducedEnd: number;
+  readonly sourceStart: number;
+  readonly replacement: boolean;
+}
+
+interface ReducedFragment {
+  readonly value: string;
+  readonly segments: readonly ReducedSegment[];
+}
+
 interface ExpressionRecord {
   readonly id: number;
   readonly parentId: number | undefined;
@@ -129,18 +141,65 @@ function beginExpression(
   return id;
 }
 
-function reducedFragment(source: string, expression: ExpressionRecord): string {
+function reducedFragment(
+  source: string,
+  expression: ExpressionRecord,
+): ReducedFragment {
   const ranges = [...expression.jsxRanges].sort((left, right) => left.start - right.start);
   const end = expression.end ?? expression.start;
   const parts: string[] = [];
+  const segments: ReducedSegment[] = [];
   let cursor = expression.start;
+  let reducedOffset = 0;
   for (const range of ranges) {
     if (range.start < cursor || range.end > end) continue;
-    parts.push(source.slice(cursor, range.start), "null");
+    const authored = source.slice(cursor, range.start);
+    parts.push(authored);
+    if (authored.length > 0) {
+      segments.push({
+        reducedStart: reducedOffset,
+        reducedEnd: reducedOffset + authored.length,
+        sourceStart: cursor,
+        replacement: false,
+      });
+      reducedOffset += authored.length;
+    }
+    parts.push("null");
+    segments.push({
+      reducedStart: reducedOffset,
+      reducedEnd: reducedOffset + 4,
+      sourceStart: range.start,
+      replacement: true,
+    });
+    reducedOffset += 4;
     cursor = range.end;
   }
-  parts.push(source.slice(cursor, end));
-  return parts.join("");
+  const tail = source.slice(cursor, end);
+  parts.push(tail);
+  if (tail.length > 0) {
+    segments.push({
+      reducedStart: reducedOffset,
+      reducedEnd: reducedOffset + tail.length,
+      sourceStart: cursor,
+      replacement: false,
+    });
+  }
+  return { value: parts.join(""), segments };
+}
+
+function authoredOffsetAt(
+  fragment: ReducedFragment,
+  reducedOffset: number,
+  expression: ExpressionRecord,
+): number {
+  const offset = Math.max(0, Math.min(reducedOffset, fragment.value.length));
+  for (const segment of fragment.segments) {
+    if (offset >= segment.reducedEnd) continue;
+    if (offset < segment.reducedStart) return segment.sourceStart;
+    if (segment.replacement) return segment.sourceStart;
+    return segment.sourceStart + offset - segment.reducedStart;
+  }
+  return expression.end ?? expression.start;
 }
 
 function own(value: unknown, key: string): unknown {
@@ -203,29 +262,30 @@ function embeddedLexicalProfile(source: string): {
     ecmaVersion: 2024,
     sourceType: "module",
   });
-  let contextualSlash = false;
   let pendingSlash = false;
   let previousLabel: string | undefined;
-  try {
-    while (true) {
-      const token = tokenizer.getToken();
-      const label = token.type.label;
-      if (pendingSlash) {
-        if (label !== "jsxTagEnd") contextualSlash = true;
-        pendingSlash = false;
-      }
-      if (label === "/" && previousLabel !== "jsxTagStart") {
-        pendingSlash = true;
-      }
-      previousLabel = label;
-      if (label === "eof") break;
+  while (true) {
+    const token = tokenizer.getToken();
+    const label = token.type.label;
+    if (pendingSlash) {
+      if (label !== "jsxTagEnd") return { contextualSlash: true };
+      pendingSlash = false;
     }
-  } catch (error) {
-    // A slash token was already emitted before the context-free tokenizer
-    // failed. Grammar tokenization below owns the rest of this fixed class.
-    if (!contextualSlash) throw error;
+    if (label === "/" && previousLabel !== "jsxTagStart") {
+      pendingSlash = true;
+    }
+    previousLabel = label;
+    if (label === "eof") break;
   }
-  return { contextualSlash };
+  return { contextualSlash: false };
+}
+
+function parserErrorIndex(error: SyntaxError): number | undefined {
+  const location = own(error, "loc");
+  const locationIndex = own(location, "index");
+  if (typeof locationIndex === "number") return locationIndex;
+  const position = own(error, "pos");
+  return typeof position === "number" ? position : undefined;
 }
 
 function grammarTokens(source: string): TokenSpan[] {
@@ -256,7 +316,7 @@ async function validateRecord(
   | { readonly kind: "syntax-error"; readonly diagnostic: ContentSyntaxDiagnostic }
 > {
   const fragment = reducedFragment(source, expression);
-  if (fragment.length > MAX_EMBEDDED_CODE_UNITS) {
+  if (fragment.value.length > MAX_EMBEDDED_CODE_UNITS) {
     return {
       kind: "syntax-error",
       diagnostic: diagnostic(
@@ -268,11 +328,11 @@ async function validateRecord(
     };
   }
 
+  const prefix = "const __veryfront_value = (";
   try {
-    if (!hasTokens(fragment)) return { kind: "valid", literal: undefined };
-    const prefix = "const __veryfront_value = (";
+    if (!hasTokens(fragment.value)) return { kind: "valid", literal: undefined };
     const ast = await babelParser.parse({
-      code: `${prefix}${fragment}\n);`,
+      code: `${prefix}${fragment.value}\n);`,
       filePath: filePath ?? "content.mdx",
       decoratorMode: "current",
     });
@@ -290,7 +350,13 @@ async function validateRecord(
       diagnostic: diagnostic(
         locator,
         absoluteStart,
-        expression.start,
+        error instanceof SyntaxError
+          ? authoredOffsetAt(
+            fragment,
+            (parserErrorIndex(error) ?? prefix.length) - prefix.length,
+            expression,
+          )
+          : expression.start,
         error instanceof RangeError
           ? "Parser capacity exceeded for embedded code"
           : parserMessage(error),
