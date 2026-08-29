@@ -440,7 +440,7 @@ describe(
             { name: "production", expectNodePositions: false },
           ] as const
         ) {
-          const host = `${context.projectId}.${scenario.name}.localhost:${port}`;
+          const host = `${context.projectId}.${scenario.name}.localhost`;
           const res = await fetchViaLoopbackWithHost({
             port,
             host,

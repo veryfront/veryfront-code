@@ -228,7 +228,7 @@ describe(
               { name: "production", expectNodePositions: false },
             ] as const
           ) {
-            const host = `${context.projectId}.${scenario.name}.localhost:${port}`;
+            const host = `${context.projectId}.${scenario.name}.localhost`;
             const pageResponse = await fetchViaLoopbackWithHost({ port, host, path: "/" });
             assertEquals(pageResponse.status, 200);
             const pageHtml = await pageResponse.text();

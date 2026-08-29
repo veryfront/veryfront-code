@@ -74,7 +74,7 @@ export async function fetchViaLoopbackWithHost(options: {
   headers?: Record<string, string>;
 }): Promise<Response> {
   return await fetchWithPinnedAddresses(
-    new URL(`http://${options.host}${options.path}`),
+    new URL(`http://${options.host}:${options.port}${options.path}`),
     ["127.0.0.1"],
     { headers: options.headers },
   );
