@@ -2,12 +2,15 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
   assertEquals,
+  assertInstanceOf,
   assertRejects,
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { basename, join } from "veryfront/platform/path";
+import { VeryfrontError } from "veryfront/errors";
+import type { ParsedArgs } from "#cli/shared/types";
 import {
   buildSuggestedSlug,
   collectKnowledgeSources,
@@ -17,6 +20,7 @@ import {
   formatKnowledgeUploadSource,
   ingestResolvedSources,
   isLikelyLocalPath,
+  knowledgeCommand,
   normalizeKnowledgeInputPath,
   normalizeProjectUploadPath,
   resolveKnowledgeDownloadOutputDir,
@@ -61,8 +65,26 @@ describe("normalizeKnowledgeInputPath", () => {
     );
   });
 
-  it("rejects traversal", () => {
-    assertThrows(() => normalizeKnowledgeInputPath("../secret.txt"));
+  it("rejects traversal as an invalid-argument usage error", () => {
+    const error = assertThrows(
+      () => normalizeKnowledgeInputPath("../secret.txt"),
+      VeryfrontError,
+      "Invalid knowledge input path",
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "invalid-argument");
+  });
+});
+
+describe("knowledgeCommand", () => {
+  it("rejects unusable ingest arguments as invalid-argument usage errors", async () => {
+    const error = await assertRejects(
+      () => knowledgeCommand({ _: ["knowledge", "ingest"] } as unknown as ParsedArgs),
+      VeryfrontError,
+      "Invalid knowledge ingest arguments",
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "invalid-argument");
   });
 });
 

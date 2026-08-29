@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { getUnderlyingVeryfrontClient, normalizeStyleArtifactBuildConfigInput } from "./command.ts";
+import { VeryfrontError } from "veryfront/errors";
+import type { StylesArgs } from "./handler.ts";
+import {
+  getUnderlyingVeryfrontClient,
+  normalizeStyleArtifactBuildConfigInput,
+  stylesCommand,
+} from "./command.ts";
 
 describe("getUnderlyingVeryfrontClient", () => {
   it("binds getAllSourceFiles to the underlying adapter", async () => {
@@ -57,5 +63,18 @@ describe("normalizeStyleArtifactBuildConfigInput", () => {
       normalizeStyleArtifactBuildConfigInput({ branch: "main", style_profile_hash: "profile-1" }),
       { branch: "main", style_profile_hash: "profile-1" },
     );
+  });
+});
+
+describe("stylesCommand", () => {
+  it("rejects malformed --config JSON as an invalid-argument usage error", async () => {
+    const args: StylesArgs = { subcommand: "build-artifact", config: "{not-json", debug: false };
+    const error = await assertRejects(
+      () => stylesCommand(args),
+      VeryfrontError,
+      "Invalid --config JSON",
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "invalid-argument");
   });
 });

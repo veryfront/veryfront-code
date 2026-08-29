@@ -8,7 +8,9 @@ type SafeParseResult<T> = { success: true; data: T } | {
 import { createFileSystem, cwd, lookupMimeType } from "veryfront/platform";
 import { dirname, join, normalize, resolve } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
+import { INVALID_ARGUMENT } from "veryfront/errors";
 import { cliLogger } from "#cli/utils";
+import { parseArgsOrThrow } from "#cli/shared/args";
 import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
 import { printJson } from "../../shared/json-output.ts";
@@ -137,7 +139,7 @@ Subcommands:
 function normalizeUploadPath(uploadPath: string): string {
   const normalizedPath = normalize(uploadPath).replace(/^\/+/, "");
   if (!normalizedPath || normalizedPath.startsWith("..") || normalizedPath.startsWith("/")) {
-    throw new Error(`Invalid upload path: ${uploadPath}`);
+    throw INVALID_ARGUMENT.create({ detail: `Invalid upload path: ${uploadPath}` });
   }
   return normalizedPath;
 }
@@ -248,7 +250,7 @@ export function resolveUploadOutputPath(uploadPath: string, outputDir: string): 
   const resolvedOutputDir = resolve(outputDir);
 
   if (!fullPath.startsWith(`${resolvedOutputDir}/`) && fullPath !== resolvedOutputDir) {
-    throw new Error(`Invalid upload path: ${uploadPath}`);
+    throw INVALID_ARGUMENT.create({ detail: `Invalid upload path: ${uploadPath}` });
   }
 
   return fullPath;
@@ -331,12 +333,7 @@ export async function uploadsCommand(args: ParsedArgs): Promise<void> {
   await withSpan("cli.command.uploads", async () => {
     switch (subcommand) {
       case "list": {
-        const parsed = parseUploadsListArgs(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid uploads list arguments: ${parsed.error.message}`);
-        }
-
-        const options = parsed.data;
+        const options = parseArgsOrThrow(parseUploadsListArgs, "uploads list", args);
         let config = await resolveConfigWithAuth(options.projectDir);
         if (options.projectSlug) config = { ...config, projectSlug: options.projectSlug };
 
@@ -363,12 +360,7 @@ export async function uploadsCommand(args: ParsedArgs): Promise<void> {
       }
 
       case "pull": {
-        const parsed = parseUploadsPullArgs(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid uploads pull arguments: ${parsed.error.message}`);
-        }
-
-        const options = parsed.data;
+        const options = parseArgsOrThrow(parseUploadsPullArgs, "uploads pull", args);
         let config = await resolveConfigWithAuth(options.projectDir);
         if (options.projectSlug) config = { ...config, projectSlug: options.projectSlug };
 
@@ -414,12 +406,7 @@ export async function uploadsCommand(args: ParsedArgs): Promise<void> {
       }
 
       case "put": {
-        const parsed = parseUploadsPutArgs(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid uploads put arguments: ${parsed.error.message}`);
-        }
-
-        const options = parsed.data;
+        const options = parseArgsOrThrow(parseUploadsPutArgs, "uploads put", args);
         let config = await resolveConfigWithAuth(options.projectDir);
         if (options.projectSlug) config = { ...config, projectSlug: options.projectSlug };
 
@@ -445,12 +432,7 @@ export async function uploadsCommand(args: ParsedArgs): Promise<void> {
 
       case "delete":
       case "rm": {
-        const parsed = parseUploadsDeleteArgs(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid uploads delete arguments: ${parsed.error.message}`);
-        }
-
-        const options = parsed.data;
+        const options = parseArgsOrThrow(parseUploadsDeleteArgs, "uploads delete", args);
         let config = await resolveConfigWithAuth(options.projectDir);
         if (options.projectSlug) config = { ...config, projectSlug: options.projectSlug };
 

@@ -1,3 +1,4 @@
+import { INVALID_ARGUMENT } from "veryfront/errors";
 import { cliLogger, exitProcess } from "#cli/utils";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../shared/json-output.ts";
 import type { SourceTriggerDiscoveryError } from "veryfront/trigger";
@@ -8,7 +9,7 @@ export async function readJsonFile(path: string, label: string): Promise<unknown
     return JSON.parse(content);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Invalid ${label}: ${message}`);
+    throw INVALID_ARGUMENT.create({ detail: `Invalid ${label}: ${message}`, cause: error });
   }
 }
 

@@ -1,6 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "veryfront/errors";
 import { type Agent, agent as createAgent, type AgentResponse } from "veryfront/agent";
 import { defineSchema } from "veryfront/schemas";
 import {
@@ -2133,11 +2139,15 @@ describe("eval CLI command helpers", () => {
     try {
       await Deno.writeTextFile(`${projectDir}/policy.json`, "{not-json");
 
-      const error = await assertRejects(() =>
-        loadEvalModelComparisonPolicy(projectDir, "policy.json")
+      const error = await assertRejects(
+        () => loadEvalModelComparisonPolicy(projectDir, "policy.json"),
+        VeryfrontError,
+        "Invalid --comparison-policy: file must contain valid JSON.",
       );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "invalid-argument");
       assertEquals(
-        error instanceof Error ? error.message : String(error),
+        error.message,
         "Invalid --comparison-policy: file must contain valid JSON.",
       );
     } finally {

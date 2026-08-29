@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "veryfront/errors";
 import {
   buildRemoteFileUrl,
   deleteRemoteFile,
@@ -39,6 +40,16 @@ describe("buildRemoteFileUrl", () => {
       buildRemoteFileUrl("my-project", "knowledge/contracts/q1-report.md"),
       "/projects/my-project/files/knowledge%2Fcontracts%2Fq1-report.md",
     );
+  });
+
+  it("rejects traversal attempts as invalid-argument usage errors", () => {
+    const error = assertThrows(
+      () => buildRemoteFileUrl("my-project", "../secrets.txt"),
+      VeryfrontError,
+      "Invalid remote file path",
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "invalid-argument");
   });
 });
 

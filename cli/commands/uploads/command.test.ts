@@ -1,6 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "veryfront/errors";
 import {
   buildUploadCreateUrl,
   buildUploadSignedUrlPath,
@@ -110,12 +116,14 @@ describe("resolveUploadOutputPath", () => {
     );
   });
 
-  it("rejects traversal attempts", () => {
-    assertThrows(
+  it("rejects traversal attempts as invalid-argument usage errors", () => {
+    const error = assertThrows(
       () => resolveUploadOutputPath("../secrets.txt", "/workspace/uploads"),
-      Error,
+      VeryfrontError,
       "Invalid upload path",
     );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "invalid-argument");
   });
 });
 

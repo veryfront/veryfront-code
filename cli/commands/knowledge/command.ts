@@ -8,6 +8,7 @@ import { createFileSystem, getEnv } from "veryfront/platform";
 import { basename } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { cliLogger } from "#cli/utils";
+import { parseArgsOrThrow } from "#cli/shared/args";
 import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
 import { printJson } from "../../shared/json-output.ts";
@@ -547,12 +548,7 @@ export async function knowledgeCommand(args: ParsedArgs): Promise<void> {
   await withSpan("cli.command.knowledge", async () => {
     switch (subcommand) {
       case "ingest": {
-        const parsed = parseKnowledgeIngestArgs(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid knowledge ingest arguments: ${parsed.error.message}`);
-        }
-
-        const options = parsed.data;
+        const options = parseArgsOrThrow(parseKnowledgeIngestArgs, "knowledge ingest", args);
         let config = await resolveConfigWithAuth(options.projectDir);
         if (options.projectSlug) config = { ...config, projectSlug: options.projectSlug };
 
