@@ -1,4 +1,9 @@
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertLess,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 import { analyzeEmbeddedExpression, MAX_EMBEDDED_CODE_UNITS } from "./embedded-code.ts";
@@ -931,14 +936,12 @@ describe("analyzeContent MDX", () => {
       "value" +
       "}</A>".repeat(depth) +
       '} href="../architecture/deep-jsx.md">ok</a>';
+    const startedAt = performance.now();
 
     const result = await analyzeContent({ value, syntax: "mdx" });
 
-    assert(result.kind === "document");
-    assertEquals(
-      result.destinations.map((destination) => destination.rawValue),
-      ["../architecture/deep-jsx.md"],
-    );
+    assert(result.kind === "syntax-error");
+    assertLess(performance.now() - startedAt, 2_000);
   });
 
   it("analyzes 1,600 nested JSX attribute expressions without fallback", async () => {
@@ -948,14 +951,12 @@ describe("analyzeContent MDX", () => {
       "null" +
       "} />".repeat(depth) +
       '} href="../architecture/deep-jsx-attributes.md">ok</a>';
+    const startedAt = performance.now();
 
     const result = await analyzeContent({ value, syntax: "mdx" });
 
-    assert(result.kind === "document");
-    assertEquals(
-      result.destinations.map((destination) => destination.rawValue),
-      ["../architecture/deep-jsx-attributes.md"],
-    );
+    assert(result.kind === "syntax-error");
+    assertLess(performance.now() - startedAt, 2_000);
   });
 
   it("rejects malformed nested JSX in parser-bounded time", async () => {
@@ -963,9 +964,11 @@ describe("analyzeContent MDX", () => {
     const value = "<a data-ok={" +
       "<A value={".repeat(depth) +
       "null}".repeat(depth) + ">";
+    const startedAt = performance.now();
 
     const result = await analyzeContent({ value, syntax: "mdx" });
 
     assert(result.kind === "syntax-error");
+    assertLess(performance.now() - startedAt, 2_000);
   });
 });

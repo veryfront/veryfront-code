@@ -37,6 +37,8 @@ import type {
 } from "./types.ts";
 
 const AcornJsxParser = Parser.extend(acornJsx());
+// micromark's acorn bridge rescans every still-open expression, so unbounded nesting is quadratic.
+const MAX_MDX_EXPRESSION_DEPTH = 64;
 
 function incompleteExpression(position: number): SyntaxError {
   const error = new SyntaxError("Incomplete embedded expression") as SyntaxError & {
@@ -402,6 +404,17 @@ function parserMessage(error: Error): string {
   return firstLine.length <= 240 ? firstLine : `${firstLine.slice(0, 237)}...`;
 }
 
+function capacityDiagnostic(
+  locator: SourceLocator,
+  offset: number,
+): ContentSyntaxDiagnostic {
+  const point = locator.point(offset);
+  return {
+    message: "Parser capacity exceeded for MDX structure",
+    range: { start: point, end: point },
+  };
+}
+
 function parserDiagnostic(
   error: Error,
   locator: SourceLocator,
@@ -413,13 +426,7 @@ function parserDiagnostic(
     const point = locator.point(offset);
     return { message: parserMessage(error), range: { start: point, end: point } };
   }
-  if (error instanceof RangeError) {
-    const point = locator.point(0);
-    return {
-      message: "Parser capacity exceeded for MDX structure",
-      range: { start: point, end: point },
-    };
-  }
+  if (error instanceof RangeError) return capacityDiagnostic(locator, 0);
   return undefined;
 }
 
@@ -623,6 +630,19 @@ export async function analyzeMdx(options: {
   readonly filePath: string | undefined;
 }): Promise<ContentAnalysisResult> {
   const locator = createSourceLocator(options.value);
+  let depth = 0;
+  for (let index = 0; index < options.value.length; index++) {
+    const code = options.value.charCodeAt(index);
+    if (code === 0x7b) depth++;
+    else if (code === 0x7d) depth--;
+    if (depth > MAX_MDX_EXPRESSION_DEPTH) {
+      return {
+        kind: "syntax-error",
+        diagnostic: capacityDiagnostic(locator, index),
+      };
+    }
+  }
+
   const parsed = parseMdxRoot(options.value, options.frontmatter, locator);
   if (parsed.kind !== "root") return parsed;
 
