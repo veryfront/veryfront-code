@@ -1,5 +1,19 @@
 import { TIMEOUT_ERROR, VeryfrontError } from "#veryfront/errors";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+import { sleep } from "#veryfront/utils";
+import {
+  addActiveSpanEvent,
+  setActiveSpanAttributes,
+} from "#veryfront/observability/tracing/otlp-setup.ts";
+import type { RetryConfig, WorkflowNode } from "../../types.ts";
+import { parseDuration, validateRetryConfig } from "../../types.ts";
+import {
+  calculateRetryDelay,
+  isRetryableWorkflowError,
+  retryTelemetryErrorType,
+} from "../retry-policy.ts";
+import { createSetContextPatch } from "./context-patch.ts";
+import type { NodeExecutionResult } from "./types.ts";
 
 /**
  * An ownership-fenced write was refused: another worker owns the run row, so
@@ -26,21 +40,6 @@ export function isOwnershipLossError(error: unknown): boolean {
   return getOwnDataProperty(error, "slug") === "orchestration-error" &&
     getOwnDataProperty(context, "ownershipLost") === true;
 }
-import type { RetryConfig, WorkflowNode } from "../../types.ts";
-import { parseDuration, validateRetryConfig } from "../../types.ts";
-import type { NodeExecutionResult } from "./types.ts";
-import { sleep } from "#veryfront/utils";
-import { createSetContextPatch } from "./context-patch.ts";
-import {
-  calculateRetryDelay,
-  isRetryableWorkflowError,
-  retryTelemetryErrorType,
-} from "../retry-policy.ts";
-import {
-  addActiveSpanEvent,
-  setActiveSpanAttributes,
-} from "#veryfront/observability/tracing/otlp-setup.ts";
-
 const DEFAULT_CANCELLATION_GRACE_PERIOD_MS = 1_000;
 
 interface CompositeNodeExecutionInput {
