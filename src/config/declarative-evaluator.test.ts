@@ -640,6 +640,19 @@ export default defineConfig({
     assertEquals(snapshot.extensions, [{ name: "ext-redis" }]);
   });
 
+  it("accepts a type-only named specifier alongside the default import", async () => {
+    const snapshot = await evaluateDeclarativeConfig({
+      source: `
+import extRedis, { type RedisOptions } from "@veryfront/ext-redis";
+
+export default { extensions: [extRedis()] };
+`,
+      environmentName: "production",
+      environment: {},
+    });
+    assertEquals(snapshot.extensions, [{ name: "ext-redis" }]);
+  });
+
   it("accepts a zero-argument extension factory call and a literal declaration", async () => {
     const snapshot = await evaluateDeclarativeConfig({
       source: `

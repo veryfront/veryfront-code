@@ -131,11 +131,9 @@ export interface DeclarativeConfigLimits {
 export const DECLARATIVE_CONFIG_LIMITS: Readonly<DeclarativeConfigLimits> = ObjectFreeze({
   maxSourceBytes: 65_536,
   maxTopLevelStatements: 256,
-  // One "veryfront" helper import plus a first-party extension declaration
-  // import for every package in FIRST_PARTY_EXTENSION_POLICIES
-  // (veryfront-issue-inbox#688) -- sized above the inventory so declaring
-  // every supported extension never hits the bound.
-  maxImports: 32,
+  // One "veryfront" helper import plus one declaration import per first-party
+  // package (veryfront-issue-inbox#688).
+  maxImports: FIRST_PARTY_EXTENSION_POLICIES.length + 1,
   maxImportSpecifiers: 8,
   maxBindings: 128,
   maxAstNodes: 4_096,
@@ -1695,7 +1693,24 @@ function processExtensionImport(
   environment: LexicalEnvironment,
   countBindings: boolean,
 ): void {
-  if (specifiers.length !== 1) {
+  let defaultSpecifier: ASTNode | null = null;
+  for (let index = 0; index < specifiers.length; index += 1) {
+    const specifier = requireAstNode(specifiers[index], context, node);
+    if (specifier.importKind === "type") continue;
+    if (
+      specifier.type !== "ImportDefaultSpecifier" || defaultSpecifier !== null
+    ) {
+      return throwEvaluationError(
+        "unsupported-syntax",
+        "validate",
+        "import-form",
+        context,
+        specifier,
+      );
+    }
+    defaultSpecifier = specifier;
+  }
+  if (defaultSpecifier === null) {
     return throwEvaluationError(
       "unsupported-syntax",
       "validate",
@@ -1704,18 +1719,8 @@ function processExtensionImport(
       node,
     );
   }
-  const specifier = requireAstNode(specifiers[0], context, node);
-  if (specifier.type !== "ImportDefaultSpecifier") {
-    return throwEvaluationError(
-      "unsupported-syntax",
-      "validate",
-      "import-form",
-      context,
-      specifier,
-    );
-  }
   if (node.importKind === "type") return;
-  const local = requireAstNode(specifier.local, context, specifier);
+  const local = requireAstNode(defaultSpecifier.local, context, defaultSpecifier);
   declareBinding(
     context,
     environment,
@@ -2563,7 +2568,7 @@ function isHostedCorsOriginList(value: readonly RuntimeValue[]): boolean {
 }
 
 /**
- * A first-party extension declaration, `{ name: "ext-..." }` — the shape an
+ * A first-party extension declaration, `{ name: "ext-..." }`, the shape an
  * imported extension factory call evaluates to. The hosted runtime provides
  * the capability itself, so the declaration is accepted and ignored at
  * orchestration with a warning rather than rejected here.
