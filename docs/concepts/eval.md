@@ -125,9 +125,7 @@ metrics and checks can assert input, output, status, and call count.
 Use `evalDataset` when the graded values already exist -- standing documents, a
 labelled corpus, replies written earlier -- and nothing should execute. A
 dataset eval has no target: each example's `input` becomes `record.output`
-directly, so rubric judges with `framing: "text"` grade the stored value, and a
-judge can be calibrated against labelled references without registering a
-pass-through tool.
+directly, so rubric judges with `framing: "text"` grade the stored value.
 
 ```ts
 // evals/support-reply-quality.eval.ts
@@ -139,7 +137,6 @@ export const supportReplyQuality = evalDataset({
     {
       id: "billing-refund-reply",
       input: "Hello, I checked the duplicate charge and started a refund.",
-      reference: "pass",
       metadata: { locale: "en" },
     },
   ]),
