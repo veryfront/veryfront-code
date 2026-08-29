@@ -2,6 +2,7 @@ import { join } from "#veryfront/compat/path";
 import { isNotFoundError, makeTempDir, mkdir, remove } from "../../src/platform/compat/fs.ts";
 import { startDevServer } from "../../src/server/dev-server.ts";
 import { resetApiHandler } from "../../src/server/handlers/request/api/index.ts";
+import { fetchWithPinnedAddresses } from "../../src/platform/compat/http/pinned-fetch.ts";
 import { testDelay } from "#veryfront/testing";
 import { CLEANUP_CONFIG, SERVER_CONFIG, TEST_TIMEOUTS } from "./constants.ts";
 import { getFreePort } from "./utils.ts";
@@ -59,49 +60,6 @@ export async function fetchWithTimeout(
   }
 }
 
-function concatBytes(chunks: Uint8Array[]): Uint8Array {
-  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const merged = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    merged.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return merged;
-}
-
-function indexOfHeaderEnd(bytes: Uint8Array): number {
-  for (let index = 0; index <= bytes.length - 4; index++) {
-    if (
-      bytes[index] === 13 && bytes[index + 1] === 10 &&
-      bytes[index + 2] === 13 && bytes[index + 3] === 10
-    ) {
-      return index;
-    }
-  }
-  return -1;
-}
-
-function decodeChunkedBody(body: string): string {
-  let offset = 0;
-  let decoded = "";
-  while (offset < body.length) {
-    const sizeEnd = body.indexOf("\r\n", offset);
-    if (sizeEnd === -1) return body;
-
-    const size = Number.parseInt(body.slice(offset, sizeEnd).split(";", 1)[0] ?? "", 16);
-    if (!Number.isFinite(size)) return body;
-    if (size === 0) return decoded;
-
-    const chunkStart = sizeEnd + 2;
-    const chunkEnd = chunkStart + size;
-    if (chunkEnd > body.length) return body;
-    decoded += body.slice(chunkStart, chunkEnd);
-    offset = chunkEnd + 2;
-  }
-  return decoded;
-}
-
 /**
  * Issue a GET over loopback with an explicit HTTP Host header.
  *
@@ -115,61 +73,11 @@ export async function fetchViaLoopbackWithHost(options: {
   path: string;
   headers?: Record<string, string>;
 }): Promise<Response> {
-  const conn = await Deno.connect({ hostname: "127.0.0.1", port: options.port });
-  try {
-    const request = [
-      `GET ${options.path} HTTP/1.1`,
-      `Host: ${options.host}`,
-      ...Object.entries(options.headers ?? {}).map(([key, value]) => `${key}: ${value}`),
-      "Connection: close",
-      "",
-      "",
-    ].join("\r\n");
-
-    const payload = new TextEncoder().encode(request);
-    for (let written = 0; written < payload.length;) {
-      written += await conn.write(payload.subarray(written));
-    }
-
-    const chunks: Uint8Array[] = [];
-    const buffer = new Uint8Array(4096);
-    while (true) {
-      const read = await conn.read(buffer);
-      if (read === null) break;
-      chunks.push(buffer.slice(0, read));
-    }
-
-    const raw = concatBytes(chunks);
-    const headerEnd = indexOfHeaderEnd(raw);
-    if (headerEnd === -1) {
-      throw new Error("Loopback response did not include HTTP headers");
-    }
-
-    const headerText = new TextDecoder().decode(raw.slice(0, headerEnd));
-    const [statusLine = "", ...headerLines] = headerText.split("\r\n");
-    const status = Number(statusLine.match(/^HTTP\/1\.[01] (\d{3})/)?.[1] ?? 0);
-    if (status === 0) throw new Error(`Loopback response had invalid status: ${statusLine}`);
-
-    const headers = new Headers();
-    for (const line of headerLines) {
-      const separator = line.indexOf(":");
-      if (separator === -1) continue;
-      headers.append(line.slice(0, separator), line.slice(separator + 1).trimStart());
-    }
-
-    const bodyBytes = raw.slice(headerEnd + 4);
-    const bodyText = new TextDecoder().decode(bodyBytes);
-    const body = headers.get("transfer-encoding")?.toLowerCase().includes("chunked")
-      ? decodeChunkedBody(bodyText)
-      : bodyText;
-    return new Response(body, { status, headers });
-  } finally {
-    try {
-      conn.close();
-    } catch {
-      // The server may already have closed the connection.
-    }
-  }
+  return await fetchWithPinnedAddresses(
+    new URL(`http://${options.host}${options.path}`),
+    ["127.0.0.1"],
+    { headers: options.headers },
+  );
 }
 
 /** Release a probe response's body so the connection does not linger as a leak. */
