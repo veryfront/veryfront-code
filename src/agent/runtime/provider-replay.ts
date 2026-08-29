@@ -1,6 +1,9 @@
 import { PROVIDER_REPLAY_CHECKPOINT_INVALID } from "#veryfront/errors";
+import {
+  attachProviderMetadata,
+  readAttachedProviderMetadata,
+} from "#veryfront/agent/runtime/provider-metadata.ts";
 import type { Message } from "../types.ts";
-import { attachProviderMetadata, readAttachedProviderMetadata } from "./provider-metadata.ts";
 
 const MAX_PROVIDER_REPLAY_BLOCKS = 100;
 const MAX_PROVIDER_REPLAY_CHECKPOINTS = 100;
