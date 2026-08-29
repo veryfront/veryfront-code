@@ -865,8 +865,8 @@ function planAnthropicRawAssistantReplay(
       for (const connectedIndex of connectedIndices) {
         if (connectedIndex !== index) validationOnlyReplayIndices.add(connectedIndex);
       }
-    } else {
-      replayIndices.add(index);
+    } else if (!replayIndices.has(index)) {
+      thinkingOnlyReplayIndices.add(index);
     }
   }
 
@@ -1127,28 +1127,36 @@ function toAnthropicMessages(
           );
           rawProviderToolNamesById = replay.nextProviderToolNamesById;
           canonicalProviderToolNamesById = replay.nextCanonicalProviderToolNamesById;
-          const clientToolUseIds = new Set(
-            message.content.flatMap((part) =>
-              part.type === "tool-call" && part.providerExecuted !== true ? [part.toolCallId] : []
-            ),
-          );
-          pendingToolUseIds = new Set();
+          const opaqueThinkingContent: Array<Record<string, unknown>> = [];
           for (const rawContent of replay.messages) {
-            const compactedContent = rawContent.flatMap((block) =>
-              block.type === "thinking" ||
-                block.type === "redacted_thinking" ||
-                block.type === "text" ||
-                block.type === "tool_use" &&
-                  typeof block.id === "string" && clientToolUseIds.has(block.id)
-                ? [{ ...block }]
-                : []
-            );
-            if (compactedContent.length > 0) {
-              messages.push({ role: "assistant", content: compactedContent });
-              for (const block of compactedContent) {
-                if (block.type === "tool_use" && typeof block.id === "string") {
-                  pendingToolUseIds.add(block.id);
-                }
+            for (const block of rawContent) {
+              if (block.type === "thinking" || block.type === "redacted_thinking") {
+                opaqueThinkingContent.push({ ...block });
+              }
+            }
+          }
+          const canonicalContent: Array<Record<string, unknown>> = [];
+          for (const part of message.content) {
+            if (part.type === "text") {
+              canonicalContent.push({ type: "text", text: part.text });
+              continue;
+            }
+            if (part.type === "tool-call" && part.providerExecuted !== true) {
+              canonicalContent.push({
+                type: "tool_use",
+                id: part.toolCallId,
+                name: part.toolName,
+                input: part.input,
+              });
+            }
+          }
+          pendingToolUseIds = new Set();
+          const compactedContent = [...opaqueThinkingContent, ...canonicalContent];
+          if (compactedContent.length > 0) {
+            messages.push({ role: "assistant", content: compactedContent });
+            for (const block of canonicalContent) {
+              if (block.type === "tool_use" && typeof block.id === "string") {
+                pendingToolUseIds.add(block.id);
               }
             }
           }

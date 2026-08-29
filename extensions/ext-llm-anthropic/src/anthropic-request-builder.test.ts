@@ -2988,14 +2988,19 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     }]);
   });
 
-  it("replays hidden signed thinking from raw assistant metadata on resume", () => {
+  it("replays hidden signed thinking with canonical assistant content on resume", () => {
     const rawAssistantContent = [{
       type: "thinking",
       thinking: "",
       signature: "sig_hidden_resume",
     }, {
       type: "text",
-      text: "My answer.",
+      text: "Stale raw answer.",
+    }, {
+      type: "tool_use",
+      id: "stale_raw_call",
+      name: "stale_raw_tool",
+      input: { stale: true },
     }];
     const prompt = [{
       role: "assistant",
@@ -3018,7 +3023,14 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
 
     assertEquals(body.messages[0], {
       role: "assistant",
-      content: rawAssistantContent,
+      content: [{
+        type: "thinking",
+        thinking: "",
+        signature: "sig_hidden_resume",
+      }, {
+        type: "text",
+        text: "My answer.",
+      }],
     });
   });
 
