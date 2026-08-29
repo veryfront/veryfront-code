@@ -1770,6 +1770,10 @@ export function dedupeToolHistory(messages: ProviderModelMessage[]): ProviderMod
   };
 
   for (const message of messages) {
+    if (message.role === "user" || message.role === "system") {
+      seenToolCallIds.clear();
+      seenToolResultIds.clear();
+    }
     if (message.role === "user" && Array.isArray(message.content)) {
       const { filtered, changed } = filterParts(message.content);
       if (!changed) {
