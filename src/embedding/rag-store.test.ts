@@ -182,6 +182,41 @@ describe("ragStore", () => {
     });
   }
 
+  it("retries when a listed lock lease disappears before lstat", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      const lockDirectory = `${storagePath}.veryfront-rag.lock`;
+      const leasePath = join(lockDirectory, `${crypto.randomUUID()}.lease`);
+      await Deno.mkdir(lockDirectory, { recursive: true });
+      await Deno.writeTextFile(join(lockDirectory, "owner.json"), "{");
+      await Deno.writeTextFile(leasePath, "live\n");
+
+      const lstatDescriptor = Object.getOwnPropertyDescriptor(Deno, "lstat");
+      assert(lstatDescriptor !== undefined);
+      const originalLstat = Deno.lstat.bind(Deno);
+      let changed = false;
+      Object.defineProperty(Deno, "lstat", {
+        ...lstatDescriptor,
+        value: async (path: string | URL) => {
+          if (!changed && String(path) === leasePath) {
+            changed = true;
+            await Deno.remove(lockDirectory, { recursive: true });
+            throw new Deno.errors.NotFound("lock lease disappeared");
+          }
+          return await originalLstat(path);
+        },
+      });
+
+      try {
+        await withLocalJsonStoreLock(storagePath, async () => undefined);
+        assertEquals(changed, true);
+        assertEquals(await exists(lockDirectory), false);
+      } finally {
+        Object.defineProperty(Deno, "lstat", lstatDescriptor);
+      }
+    });
+  });
+
   it("removes an owner-only lock when the lease write fails", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");

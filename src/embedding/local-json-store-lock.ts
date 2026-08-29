@@ -199,10 +199,11 @@ async function readObservation(
         leaseInfo = await lstat(join(lockDirectory, entryName));
       } catch (error) {
         if (isCanonicalNotFoundError(error)) {
-          throw new LocalJsonStoreLockError(
-            "RAG store lock lease changed while ownership was being inspected",
-            { cause: error },
-          );
+          // The directory listing and lease metadata are one observation. If a
+          // listed lease disappears between them, discard the snapshot. Lock
+          // acquisition retries, while ownership checks still fail closed on
+          // the null observation.
+          return null;
         }
         throw error;
       }
