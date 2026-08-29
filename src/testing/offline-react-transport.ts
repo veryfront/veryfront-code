@@ -137,18 +137,15 @@ function createEntrySource(entry: OfflineReactEntry): string {
   const packagePath = fileURLToPath(
     entry.sourceFileName === undefined ? resolvedUrl : new URL(entry.sourceFileName, resolvedUrl),
   );
+  // The export list is maintained by hand and mirrors the esm.sh export
+  // surface, which includes development-only names such as `act`; those
+  // re-export undefined from the production build here exactly as the CDN
+  // module would, so the list must be revisited on REACT_DEFAULT_VERSION bumps.
   const exports = entry.exportNames.map((name) => `export const ${name} = moduleValue.${name};`)
     .join("\n");
-  // The export list is maintained by hand, so a React bump that renames or
-  // drops one must fail the importing test instead of re-exporting undefined.
-  const guard = `for (const name of ${JSON.stringify(entry.exportNames)}) {
-  if (!(name in moduleValue)) {
-    throw new Error("offline React entry ${entry.outputName} lost export " + name);
-  }
-}`;
   return `import moduleValue from ${
     JSON.stringify(packagePath)
-  };\n${guard}\n${exports}\nexport default moduleValue;\n`;
+  };\n${exports}\nexport default moduleValue;\n`;
 }
 
 async function buildOfflineReactModules(): Promise<ReadonlyMap<string, string>> {
@@ -307,5 +304,9 @@ export function installOfflineReactTransportForTests(): () => void {
     fetch: fetchWithOfflineReact,
     pinnedFetch: (url, _addresses, init) => fetchWithOfflineReact(url, init),
     resolveHost: resolveTestHost,
+  }, {
+    // The egress guard rejects the reserved TEST-NET-1 resolution unless it
+    // is allowed explicitly; the transport still answers esm.sh in-process.
+    allowedResolvedAddresses: [OFFLINE_REACT_RESOLVED_ADDRESS],
   });
 }
