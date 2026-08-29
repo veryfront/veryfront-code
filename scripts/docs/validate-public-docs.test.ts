@@ -2984,6 +2984,17 @@ describe("public docs validation", () => {
     assertEquals(issues[0]?.line, 4);
   });
 
+  it("reports destination text after bare-CR line endings", async () => {
+    const issues = await collectUnpublishedLinkIssues(
+      "docs/guides/example.md",
+      "One\rTwo\r[gate](../architecture/private.md)\r",
+    );
+
+    assertEquals(issues.length, 1);
+    assertEquals(issues[0]?.line, 3);
+    assertEquals(issues[0]?.text, "[gate](../architecture/private.md)");
+  });
+
   it("accepts published relative, directory, anchor, and site-root links", async () => {
     const issues = await collectUnpublishedLinkIssues(
       "docs/guides/example.md",

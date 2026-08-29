@@ -360,6 +360,10 @@ export async function destinations(
   );
 }
 
+function splitSourceLines(content: string): readonly string[] {
+  return content.split(/\r\n?|\n/);
+}
+
 function syntaxIssue(
   path: string,
   content: string,
@@ -373,7 +377,7 @@ function syntaxIssue(
     path,
     line,
     message: `Fix invalid ${label} syntax: ${message}.`,
-    text: content.split("\n")[line - 1]?.trim() ?? "",
+    text: splitSourceLines(content)[line - 1]?.trim() ?? "",
   };
 }
 
@@ -415,7 +419,7 @@ export async function collectUnpublishedLinkIssues(
 ): Promise<PublicDocIssue[]> {
   if (path !== "README.md" && !isPublishedPage(path)) return [];
 
-  const lines = content.split("\n");
+  const lines = splitSourceLines(content);
   const analysis = analyzed ?? await analyzePublicDoc(path, content);
   if (analysis.kind === "syntax-error") return [analysis.issue];
 
@@ -693,7 +697,7 @@ export async function collectIssues(
 ): Promise<PublicDocIssue[]> {
   const issues: PublicDocIssue[] = [];
   const repositoryRule = blockedRepositoryRule(blockedRepository);
-  const lines = content.split("\n");
+  const lines = splitSourceLines(content);
   const analysis = analyzed ?? await analyzePublicDoc(path, content);
   if (analysis.kind === "syntax-error") return [analysis.issue];
   const blockedDestinationLines = new Set<number>();
