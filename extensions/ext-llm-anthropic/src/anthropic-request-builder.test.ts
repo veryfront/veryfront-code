@@ -4232,10 +4232,6 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       providerMetadata: {
         anthropic: {
           rawAssistantMessages: [[{
-            type: "thinking",
-            thinking: "",
-            signature: "sig-compacted-tool-call",
-          }, {
             type: "server_tool_use",
             id: "server_search_1",
             name: "web_search",
@@ -4298,7 +4294,13 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       content: [{ type: "text", text: "Search and inspect" }],
     }, {
       role: "assistant",
-      content: [{ type: "text", text: "Combined both results." }],
+      content: [{
+        type: "redacted_thinking",
+        data: "redacted-compacted-tool-result",
+      }, {
+        type: "text",
+        text: "Combined both results.",
+      }],
     }, {
       role: "user",
       content: [{ type: "text", text: "Summarize that" }],

@@ -759,21 +759,19 @@ function connectAnthropicReplayIndices(
   dependencies.set(right, rightDependencies);
 }
 
-function belongsToCompactedAnthropicToolRound(
+function collectConnectedAnthropicReplayIndices(
   index: number,
   dependencies: ReadonlyMap<number, ReadonlySet<number>>,
-  compactedIndices: ReadonlySet<number>,
-): boolean {
+): Set<number> {
   const pending = [index];
   const visited = new Set<number>();
   while (pending.length > 0) {
     const current = pending.pop();
     if (current === undefined || visited.has(current)) continue;
-    if (compactedIndices.has(current)) return true;
     visited.add(current);
     pending.push(...dependencies.get(current) ?? []);
   }
-  return false;
+  return visited;
 }
 
 function planAnthropicRawAssistantReplay(
@@ -781,8 +779,14 @@ function planAnthropicRawAssistantReplay(
   rawAssistantMessagesByIndex: ReadonlyMap<number, unknown[]>,
   lastUserIndex: number,
   lastHistoricalAssistantTextIndex: number,
-): Set<number> {
+): {
+  exactReplayIndices: Set<number>;
+  thinkingOnlyReplayIndices: Set<number>;
+  validationOnlyReplayIndices: Set<number>;
+} {
   const replayIndices = new Set<number>();
+  const thinkingOnlyReplayIndices = new Set<number>();
+  const validationOnlyReplayIndices = new Set<number>();
   const thinkingReplayCandidates = new Set<number>();
   const compactedToolRoundIndices = new Set<number>();
   const dependencies = new Map<number, Set<number>>();
@@ -854,13 +858,14 @@ function planAnthropicRawAssistantReplay(
   }
 
   for (const index of thinkingReplayCandidates) {
-    if (
-      !belongsToCompactedAnthropicToolRound(
-        index,
-        dependencies,
-        compactedToolRoundIndices,
-      )
-    ) {
+    if (compactedToolRoundIndices.has(index)) continue;
+    const connectedIndices = collectConnectedAnthropicReplayIndices(index, dependencies);
+    if ([...connectedIndices].some((candidate) => compactedToolRoundIndices.has(candidate))) {
+      thinkingOnlyReplayIndices.add(index);
+      for (const connectedIndex of connectedIndices) {
+        if (connectedIndex !== index) validationOnlyReplayIndices.add(connectedIndex);
+      }
+    } else {
       replayIndices.add(index);
     }
   }
@@ -876,7 +881,11 @@ function planAnthropicRawAssistantReplay(
     }
   }
 
-  return replayIndices;
+  return {
+    exactReplayIndices: replayIndices,
+    thinkingOnlyReplayIndices,
+    validationOnlyReplayIndices,
+  };
 }
 
 function toAnthropicUserContent(
@@ -1048,7 +1057,7 @@ function toAnthropicMessages(
       rawAssistantMessagesByIndex.set(index, rawAssistantMessages);
     }
   }
-  const rawReplayIndices = planAnthropicRawAssistantReplay(
+  const rawReplayPlan = planAnthropicRawAssistantReplay(
     prompt,
     rawAssistantMessagesByIndex,
     lastUserIndex,
@@ -1089,7 +1098,7 @@ function toAnthropicMessages(
           lastHistoricalAssistantTextIndex,
         );
         const rawAssistantMessages = rawAssistantMessagesByIndex.get(index);
-        if (rawAssistantMessages && rawReplayIndices.has(index)) {
+        if (rawAssistantMessages && rawReplayPlan.exactReplayIndices.has(index)) {
           const replay = validateAnthropicProviderReplay(
             message,
             rawAssistantMessages,
@@ -1107,6 +1116,42 @@ function toAnthropicMessages(
               }
             }
           }
+          break;
+        }
+        if (rawAssistantMessages && rawReplayPlan.thinkingOnlyReplayIndices.has(index)) {
+          const replay = validateAnthropicProviderReplay(
+            message,
+            rawAssistantMessages,
+            rawProviderToolNamesById,
+            canonicalProviderToolNamesById,
+          );
+          rawProviderToolNamesById = replay.nextProviderToolNamesById;
+          canonicalProviderToolNamesById = replay.nextCanonicalProviderToolNamesById;
+          pendingToolUseIds = new Set();
+          for (const rawContent of replay.messages) {
+            const compactedContent = rawContent.filter((block) =>
+              block.type === "thinking" ||
+              block.type === "redacted_thinking" ||
+              block.type === "text"
+            );
+            if (compactedContent.length > 0) {
+              messages.push({ role: "assistant", content: compactedContent });
+            }
+          }
+          skippingHistoricalToolResults = shouldCompactCompletedToolRound;
+          break;
+        }
+        if (rawAssistantMessages && rawReplayPlan.validationOnlyReplayIndices.has(index)) {
+          const replay = validateAnthropicProviderReplay(
+            message,
+            rawAssistantMessages,
+            rawProviderToolNamesById,
+            canonicalProviderToolNamesById,
+          );
+          rawProviderToolNamesById = replay.nextProviderToolNamesById;
+          canonicalProviderToolNamesById = replay.nextCanonicalProviderToolNamesById;
+          pendingToolUseIds = new Set();
+          skippingHistoricalToolResults = shouldCompactCompletedToolRound;
           break;
         }
         const assistantContent = shouldCompactCompletedToolRound
