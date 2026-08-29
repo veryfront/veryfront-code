@@ -7,7 +7,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { isFirstPartyDeclarationMarker, orchestrateExtensions } from "./orchestrate.ts";
+import { firstPartyDeclarationName, orchestrateExtensions } from "./orchestrate.ts";
 import { mergeExtensions } from "./discovery.ts";
 import { reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
 import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
@@ -621,7 +621,7 @@ describe("orchestrateExtensions()", () => {
       configurable: true,
     });
 
-    assertEquals(isFirstPartyDeclarationMarker(hostile as { name: string }), false);
+    assertEquals(firstPartyDeclarationName(hostile as { name: string }), undefined);
     assertEquals(invoked, 0, "the marker precheck must not invoke the accessor");
 
     // The hostile entry falls through to ordinary extension validation, which
@@ -651,8 +651,8 @@ describe("orchestrateExtensions()", () => {
       { value: () => {}, enumerable: false },
     );
 
-    assertEquals(isFirstPartyDeclarationMarker(symbolKeyed as { name: string }), false);
-    assertEquals(isFirstPartyDeclarationMarker(hiddenField as { name: string }), false);
+    assertEquals(firstPartyDeclarationName(symbolKeyed as { name: string }), undefined);
+    assertEquals(firstPartyDeclarationName(hiddenField as { name: string }), undefined);
   });
 
   it("classifies a revoked proxy as a non-marker instead of throwing", () => {
@@ -661,14 +661,41 @@ describe("orchestrateExtensions()", () => {
     // escaping as a raw trap error from the precheck.
     const { proxy, revoke } = Proxy.revocable({ name: "ext-redis" }, {});
     revoke();
-    assertEquals(isFirstPartyDeclarationMarker(proxy as { name: string }), false);
+    assertEquals(firstPartyDeclarationName(proxy as { name: string }), undefined);
 
     const throwingTrap = new Proxy({ name: "ext-redis" }, {
       ownKeys() {
         throw new Error("trap error must not escape the precheck");
       },
     });
-    assertEquals(isFirstPartyDeclarationMarker(throwingTrap as { name: string }), false);
+    assertEquals(firstPartyDeclarationName(throwingTrap as { name: string }), undefined);
+  });
+
+  it("warns using the validated name, never re-reading the entry", async () => {
+    // A proxy can report an honest data-property descriptor while its get
+    // trap throws; the warning must use the descriptor value captured during
+    // classification instead of reading `entry.name` again.
+    const twoFaced = new Proxy({ name: "ext-redis" }, {
+      get() {
+        throw new Error("get trap must not run after classification");
+      },
+    });
+    const warnings: string[] = [];
+    const loader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: { extensions: [twoFaced as { name: string }] },
+      logger: {
+        ...noopLogger,
+        warn: (message: string) => {
+          warnings.push(message);
+        },
+      },
+      discovery: emptyDiscovery(),
+    });
+
+    assertEquals(warnings.length, 1);
+    assertStringIncludes(warnings[0]!, "ext-redis");
+    await loader.teardownAll();
   });
 
   it("keeps rejecting a bare name that is not a first-party extension", async () => {

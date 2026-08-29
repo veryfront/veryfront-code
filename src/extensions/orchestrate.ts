@@ -99,26 +99,30 @@ const FIRST_PARTY_EXTENSION_NAMES = new Set(
  *
  * @internal Exported for direct accessor-safety coverage.
  */
-export function isFirstPartyDeclarationMarker(
+export function firstPartyDeclarationName(
   entry: ExtensionConfigEntry,
-): entry is { name: string } {
-  if (typeof entry !== "object" || entry === null) return false;
+): string | undefined {
+  if (typeof entry !== "object" || entry === null) return undefined;
   try {
     // Reflect.ownKeys sees non-enumerable and symbol keys that Object.keys
     // misses: a malformed materialized extension carrying hidden fields must
     // fail validation, not vanish as an inert declaration.
     const keys = Reflect.ownKeys(entry);
-    if (keys.length !== 1 || keys[0] !== "name") return false;
+    if (keys.length !== 1 || keys[0] !== "name") return undefined;
     // Descriptor inspection, like validateExtension: an accessor-backed `name`
-    // must neither run user code here nor classify as an inert marker.
+    // must neither run user code here nor classify as an inert marker. The
+    // validated descriptor value is returned so callers never read the entry
+    // again -- a proxy can pair an honest descriptor with a throwing get trap.
     const descriptor = Object.getOwnPropertyDescriptor(entry, "name");
     return descriptor !== undefined && "value" in descriptor &&
-      typeof descriptor.value === "string" &&
-      FIRST_PARTY_EXTENSION_NAMES.has(descriptor.value);
+        typeof descriptor.value === "string" &&
+        FIRST_PARTY_EXTENSION_NAMES.has(descriptor.value)
+      ? descriptor.value
+      : undefined;
   } catch {
     // A revoked proxy or throwing trap is not a marker; ordinary extension
     // validation owns the typed error for it.
-    return false;
+    return undefined;
   }
 }
 
@@ -234,11 +238,14 @@ async function orchestrateExtensionGeneration(
   const configResolved: ResolvedExtension[] = [];
 
   for (const entry of configEntries) {
+    const declarationName = isDisableDirective(entry)
+      ? undefined
+      : firstPartyDeclarationName(entry);
     if (isDisableDirective(entry)) {
       disables.push(entry);
-    } else if (isFirstPartyDeclarationMarker(entry)) {
+    } else if (declarationName !== undefined) {
       logger.warn(
-        `Extension "${entry.name}" is declared in the project config, but this runtime ` +
+        `Extension "${declarationName}" is declared in the project config, but this runtime ` +
           `provides the capability itself; the declaration is ignored.`,
       );
     } else {
