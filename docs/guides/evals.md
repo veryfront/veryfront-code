@@ -1,6 +1,6 @@
 ---
 title: "Evals"
-description: "Define and run quality checks for agents."
+description: "Define and run quality checks for agents and datasets."
 order: 40
 ---
 
@@ -9,9 +9,12 @@ run every discovered eval, or `veryfront eval <eval-id>` to run one.
 
 ## Prerequisites
 
-- A Veryfront project with an `agents/` directory.
-- An agent target such as `agent:researcher`.
 - A dataset with stable example IDs.
+- For agent evals (`evalAgent`), a Veryfront project with an `agents/` directory
+  and an agent target such as `agent:researcher`.
+
+Dataset evals (`evalDataset`) grade stored values directly and need neither. See
+[Evals](../concepts/eval.md) for that shape.
 
 ## Quick start
 

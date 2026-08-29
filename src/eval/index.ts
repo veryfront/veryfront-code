@@ -40,7 +40,8 @@
  *   ],
  * });
  *
- * // Nothing executes: each example's input is graded directly.
+ * // No target runs: each example's stored value is graded directly. Metrics still
+ * // execute, so an LLM judge like the one above calls a model provider.
  * const report = await runEval(supportReplyQuality, { adapters: {} });
  * ```
  *

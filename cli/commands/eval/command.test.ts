@@ -371,6 +371,7 @@ function relevantEvalHumanLines(output: { stdout: string[]; stderr: string[] }):
     .filter((line) =>
       line.startsWith("Eval:") ||
       line.startsWith("Target: ") ||
+      line.startsWith("Dataset: ") ||
       line.startsWith("Result: ") ||
       line.startsWith("Report: ") ||
       line.startsWith("Report JSON: ") ||
@@ -1716,7 +1717,11 @@ describe("eval CLI command helpers", () => {
       });
       assertStringIncludes(
         relevantEvalHumanLines(singleOutput).join("\n"),
-        "Result: 1/1 passed (100%)",
+        "Dataset: eval:dataset-standing",
+      );
+      assertStringIncludes(
+        relevantEvalHumanLines(singleOutput).join("\n"),
+        "Result:  1/1 passed (100%)",
       );
 
       const suiteOutput = await captureConsoleOutput(async () => {
