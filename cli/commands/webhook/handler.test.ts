@@ -305,4 +305,25 @@ describe("readJsonFile", () => {
       assertEquals(error.slug, "invalid-argument");
     }, { prefix: "vf-webhook-payload-" });
   });
+
+  it("rejects malformed payload JSON as an invalid-argument usage error", async () => {
+    await withTempDir(async (tempDir) => {
+      const payloadPath = join(tempDir, "veryfront-payload.json");
+      await Deno.writeTextFile(payloadPath, "{not-json");
+      const error = await assertRejects(
+        () => readJsonFile(payloadPath, "--payload JSON file"),
+        VeryfrontError,
+        "Invalid --payload JSON file:",
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "invalid-argument");
+    }, { prefix: "vf-webhook-payload-" });
+  });
+
+  it("propagates operational read failures without the usage-error envelope", async () => {
+    await withTempDir(async (tempDir) => {
+      const error = await assertRejects(() => readJsonFile(tempDir, "--payload JSON file"));
+      assertEquals(error instanceof VeryfrontError, false);
+    }, { prefix: "vf-webhook-payload-" });
+  });
 });
