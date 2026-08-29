@@ -1,12 +1,20 @@
-import { Parser } from "acorn";
+import {
+  type Comment,
+  type Expression,
+  type ObjectExpression,
+  type Options as AcornOptions,
+  Parser,
+} from "acorn";
 import acornJsx from "acorn-jsx";
 import type { Nodes } from "mdast";
 import { mdxFromMarkdown } from "mdast-util-mdx";
+import { autolink } from "micromark-core-commonmark";
 import { mdxExpression } from "micromark-extension-mdx-expression";
 import { mdxJsx } from "micromark-extension-mdx-jsx";
 import { mdxMd } from "micromark-extension-mdx-md";
 import { mdxjsEsm } from "micromark-extension-mdxjs-esm";
 import { combineExtensions } from "micromark-util-combine-extensions";
+import type { Construct, Extension, Tokenizer } from "micromark-util-types";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
@@ -23,11 +31,291 @@ import type {
 } from "./types.ts";
 
 const AcornJsxParser = Parser.extend(acornJsx());
+
+function incompleteExpression(position: number): SyntaxError {
+  const error = new SyntaxError("Incomplete embedded expression") as SyntaxError & {
+    pos: number;
+    raisedAt: number;
+    loc: { line: number; column: number };
+  };
+  error.pos = position;
+  error.raisedAt = position;
+  error.loc = { line: 1, column: position };
+  return error;
+}
+
+interface LexicalState {
+  bracketDepth: number;
+  braceDepth: number;
+  contextualSlash: boolean;
+  jsxElementDepth: number;
+  readonly jsxTags: Array<{ closing: boolean }>;
+  pendingSlash: boolean;
+  parenthesisDepth: number;
+  previousLabel: string | undefined;
+}
+
+interface LexicalCache {
+  grammarRequired: boolean;
+  readonly position: number;
+  inputLength: number;
+  readonly state: LexicalState;
+  readonly comments: Comment[];
+  terminalError: SyntaxError | undefined;
+  readonly tokenizer:
+    & ReturnType<typeof LexicalBoundaryParser.tokenizer>
+    & LexicalBoundaryParser;
+}
+
+let lexicalCache: LexicalCache | undefined;
+
+function consumeLexicalToken(state: LexicalState, label: string): void {
+  if (state.pendingSlash) {
+    if (label !== "jsxTagEnd") state.contextualSlash = true;
+    state.pendingSlash = false;
+  }
+  if (label === "{" || label === "${") state.braceDepth++;
+  else if (label === "}") state.braceDepth--;
+  else if (label === "(") state.parenthesisDepth++;
+  else if (label === ")") state.parenthesisDepth--;
+  else if (label === "[") state.bracketDepth++;
+  else if (label === "]") state.bracketDepth--;
+  else if (label === "jsxTagStart") state.jsxTags.push({ closing: false });
+  else if (
+    label === "/" && state.previousLabel === "jsxTagStart" &&
+    state.jsxTags.length > 0
+  ) {
+    state.jsxTags[state.jsxTags.length - 1]!.closing = true;
+  } else if (label === "jsxTagEnd") {
+    const tag = state.jsxTags.pop();
+    if (tag?.closing) state.jsxElementDepth--;
+    else if (state.previousLabel !== "/") state.jsxElementDepth++;
+  } else if (label === "/" && state.previousLabel !== "jsxTagStart") {
+    state.pendingSlash = true;
+  }
+  state.previousLabel = label;
+}
+
+function tokenizerFor(
+  input: string,
+  position: number,
+  options: AcornOptions,
+): LexicalCache {
+  if (
+    lexicalCache !== undefined && lexicalCache.position === position &&
+    input.length > lexicalCache.inputLength
+  ) {
+    if (
+      !lexicalCache.grammarRequired && lexicalCache.terminalError === undefined
+    ) {
+      lexicalCache.tokenizer.extendInput(input.slice(position));
+    }
+    lexicalCache.inputLength = input.length;
+    return lexicalCache;
+  }
+
+  const comments: Comment[] = [];
+  const cache: LexicalCache = {
+    grammarRequired: false,
+    position,
+    inputLength: input.length,
+    state: {
+      bracketDepth: 0,
+      braceDepth: 0,
+      contextualSlash: false,
+      jsxElementDepth: 0,
+      jsxTags: [],
+      pendingSlash: false,
+      parenthesisDepth: 0,
+      previousLabel: undefined,
+    },
+    comments,
+    terminalError: undefined,
+    tokenizer: createLexicalTokenizer(
+      input.slice(position),
+      options,
+      comments,
+    ),
+  };
+  lexicalCache = cache;
+  return cache;
+}
+
+function lexicalBoundaryState(
+  input: string,
+  position: number,
+  options: AcornOptions,
+): LexicalState {
+  const cache = tokenizerFor(input, position, options);
+  if (cache.terminalError !== undefined) throw cache.terminalError;
+  if (cache.grammarRequired) return cache.state;
+  try {
+    while (true) {
+      const token = cache.tokenizer.getToken();
+      consumeLexicalToken(cache.state, token.type.label);
+      if (token.type.label === "eof") break;
+    }
+  } catch (error) {
+    // Micromark probes every `}` before the complete expression is available.
+    // An unfinished regular-expression token fixes slash handling to Acorn's
+    // grammar for the remaining probes; it is not a failure of the full input.
+    if (isIncompleteRegularExpression(error)) {
+      cache.grammarRequired = true;
+      cache.state.contextualSlash = true;
+      throw error;
+    }
+    // A `}` encountered as JSX text cannot become valid by appending more
+    // source. Preserve that lexical result so later probes do not retokenize
+    // the same invalid prefix.
+    if (isTerminalJsxBoundaryError(error)) {
+      cache.terminalError = error;
+      throw error;
+    }
+    lexicalCache = undefined;
+    throw error;
+  }
+
+  const trailingComment = cache.comments[cache.comments.length - 1];
+  if (
+    trailingComment?.type === "Line" &&
+    trailingComment.end === input.length - position
+  ) {
+    lexicalCache = undefined;
+    throw incompleteExpression(input.length);
+  }
+
+  return cache.state;
+}
+
+function isLexicallyComplete(state: LexicalState): boolean {
+  return state.bracketDepth === 0 && state.braceDepth === 0 &&
+    state.jsxElementDepth === 0 && state.jsxTags.length === 0 &&
+    state.parenthesisDepth === 0;
+}
+
+function isIncompleteRegularExpression(error: unknown): error is SyntaxError {
+  return error instanceof SyntaxError &&
+    error.message.startsWith("Unterminated regular expression");
+}
+
+function isTerminalJsxBoundaryError(error: unknown): error is SyntaxError {
+  return error instanceof SyntaxError &&
+    (error.message.startsWith("Unterminated JSX contents") ||
+      error.message.startsWith("Unexpected token `}`."));
+}
+
+/**
+ * Micromark needs a lexical answer at each possible expression-closing brace.
+ * Building an Acorn AST here would recurse through arbitrarily deep JSX before
+ * the analyzer can reduce it. Tokenization gives micromark the same boundary
+ * answer without claiming to validate grammar; bounded Babel parsing below
+ * owns that validation for every accepted boundary. A slash token is the one
+ * context-sensitive case: JavaScript grammar, not a token label, distinguishes
+ * division from a regular expression, so those expressions take the Acorn
+ * grammar path deterministically before micromark accepts a closing brace.
+ * JSX closing and self-closing slashes are lexical tag punctuation and do not
+ * select that path.
+ */
+class LexicalBoundaryParser extends AcornJsxParser {
+  extendInput(input: string): void {
+    this.input = input;
+  }
+
+  static override parseExpressionAt(
+    input: string,
+    position: number,
+    options: AcornOptions,
+  ): Expression {
+    const state = lexicalBoundaryState(input, position, options);
+    if (state.contextualSlash) {
+      if (lexicalCache !== undefined) lexicalCache.grammarRequired = true;
+      const expression = AcornJsxParser.parseExpressionAt(
+        input,
+        position,
+        options,
+      );
+      lexicalCache = undefined;
+      return expression;
+    }
+    if (!isLexicallyComplete(state)) {
+      throw incompleteExpression(input.length);
+    }
+    lexicalCache = undefined;
+
+    if (/^\(\{\s*\.\.\./.test(input.slice(position)) && input.endsWith("})")) {
+      const expression: ObjectExpression = {
+        type: "ObjectExpression",
+        start: position,
+        end: input.length,
+        properties: [{
+          type: "SpreadElement",
+          start: position + 2,
+          end: input.length - 2,
+          argument: {
+            type: "Identifier",
+            name: "_veryfront_spread",
+            start: position + 5,
+            end: input.length - 2,
+          },
+        }],
+      };
+      return expression;
+    }
+
+    return {
+      type: "Identifier",
+      name: "_veryfront_expression",
+      start: position,
+      end: input.length,
+    };
+  }
+}
+
+function createLexicalTokenizer(
+  input: string,
+  options: AcornOptions,
+  comments: Comment[],
+): ReturnType<typeof LexicalBoundaryParser.tokenizer> & LexicalBoundaryParser {
+  const tokenizer = LexicalBoundaryParser.tokenizer(input, {
+    ...options,
+    onComment: comments,
+    onToken: undefined,
+  });
+  if (!(tokenizer instanceof LexicalBoundaryParser)) {
+    throw new TypeError("Acorn did not create the configured lexical tokenizer");
+  }
+  return tokenizer;
+}
+
+function autolinkAwareJsx(
+  extension: Extension,
+): Extension {
+  const flowValue = extension.flow?.[60];
+  const flow = Array.isArray(flowValue) ? flowValue[0] : flowValue;
+  if (flow === undefined) {
+    throw new TypeError("The MDX JSX extension has no flow construct");
+  }
+  const tokenize: Tokenizer = function (effects, ok, nok) {
+    const jsxStart = flow.tokenize.call(this, effects, ok, nok);
+    return effects.check(autolink, nok, jsxStart);
+  };
+  const guardedFlow: Construct = { ...flow, tokenize };
+  return { ...extension, flow: { ...extension.flow, 60: guardedFlow } };
+}
+
+const mdxMarkdownSyntax = {
+  disable: { null: ["codeIndented", "htmlFlow", "htmlText"] },
+} satisfies ReturnType<typeof mdxMd>;
+const lexicalJsx = autolinkAwareJsx(
+  mdxJsx({ acorn: LexicalBoundaryParser, addResult: false }),
+);
+
 const lexicalMdx = combineExtensions([
   mdxjsEsm({ acorn: AcornJsxParser, addResult: false }),
-  mdxExpression(),
-  mdxJsx(),
-  mdxMd(),
+  mdxExpression({ acorn: LexicalBoundaryParser, addResult: false }),
+  lexicalJsx,
+  { text: { 60: autolink } },
+  mdxMarkdownSyntax,
 ]);
 
 interface EmbeddedInput {
@@ -150,6 +438,7 @@ export async function analyzeMdx(options: {
   processor.data("fromMarkdownExtensions", [mdxFromMarkdown()]);
   const locator = createSourceLocator(options.value);
   let root: ReturnType<typeof processor.parse>;
+  lexicalCache = undefined;
   try {
     root = processor.parse(options.value);
   } catch (error) {
@@ -157,6 +446,8 @@ export async function analyzeMdx(options: {
     const diagnostic = parserDiagnostic(error, locator);
     if (diagnostic === undefined) throw error;
     return { kind: "syntax-error", diagnostic };
+  } finally {
+    lexicalCache = undefined;
   }
 
   const markdown = analyzeMarkdownTree(options.value, root);
@@ -224,7 +515,6 @@ export async function analyzeMdx(options: {
     }
   }
 
-  destinations.sort((left, right) => left.range.start.offset - right.range.start.offset);
   return {
     kind: "document",
     renderedRanges: markdown.renderedRanges,

@@ -196,6 +196,55 @@ function hasTokens(fragment: string): boolean {
   return tokenizer.getToken().type.label !== "eof";
 }
 
+function embeddedLexicalProfile(source: string): {
+  readonly contextualSlash: boolean;
+} {
+  const tokenizer = AcornJsxParser.tokenizer(source, {
+    ecmaVersion: 2024,
+    sourceType: "module",
+  });
+  let contextualSlash = false;
+  let pendingSlash = false;
+  let previousLabel: string | undefined;
+  try {
+    while (true) {
+      const token = tokenizer.getToken();
+      const label = token.type.label;
+      if (pendingSlash) {
+        if (label !== "jsxTagEnd") contextualSlash = true;
+        pendingSlash = false;
+      }
+      if (label === "/" && previousLabel !== "jsxTagStart") {
+        pendingSlash = true;
+      }
+      previousLabel = label;
+      if (label === "eof") break;
+    }
+  } catch (error) {
+    // A slash token was already emitted before the context-free tokenizer
+    // failed. Grammar tokenization below owns the rest of this fixed class.
+    if (!contextualSlash) throw error;
+  }
+  return { contextualSlash };
+}
+
+function grammarTokens(source: string): TokenSpan[] {
+  const tokens: TokenSpan[] = [];
+  AcornJsxParser.parseExpressionAt(source, 0, {
+    ecmaVersion: 2024,
+    sourceType: "module",
+    onToken: (token) => {
+      tokens.push({
+        label: token.type.label,
+        start: token.start,
+        end: token.end,
+      });
+    },
+  });
+  tokens.push({ label: "eof", start: source.length, end: source.length });
+  return tokens;
+}
+
 async function validateRecord(
   source: string,
   expression: ExpressionRecord,
@@ -294,14 +343,19 @@ export async function analyzeEmbeddedExpression(options: {
   let activeExpressionId = 0;
 
   try {
-    const tokenizer = AcornJsxParser.tokenizer(options.source, {
-      ecmaVersion: 2024,
-      sourceType: "module",
-      locations: true,
-    });
+    const profile = embeddedLexicalProfile(options.source);
+    const contextualTokens = profile.contextualSlash ? grammarTokens(options.source) : undefined;
+    let tokenIndex = 0;
+    const tokenizer = contextualTokens === undefined
+      ? AcornJsxParser.tokenizer(options.source, {
+        ecmaVersion: 2024,
+        sourceType: "module",
+        locations: true,
+      })
+      : undefined;
     while (true) {
-      const token = tokenizer.getToken();
-      const label = token.type.label;
+      const token = contextualTokens?.[tokenIndex++] ?? tokenizer!.getToken();
+      const label = "label" in token ? token.label : token.type.label;
       const mode = currentMode(modes);
       if (mode === undefined) {
         return {

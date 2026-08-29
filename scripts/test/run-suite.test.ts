@@ -39,6 +39,7 @@ const UNIT_CWD_FILES = [
 
 const UNIT_SERIAL_FILES = [
   "extensions/ext-bundler-esbuild/src/esbuild-bundler.test.ts",
+  "extensions/ext-content-mdx/src/analysis/index.test.ts",
 ];
 
 const UNIT_CWD_EXCLUSION_FILES = [
@@ -127,6 +128,16 @@ describe("suite planning parity", () => {
       ),
       "unit verification must run process-global tests in a serial lane",
     );
+  });
+
+  it("keeps wall-clock parser benchmarks out of parallel unit batches", async () => {
+    const parserBenchmark =
+      "extensions/ext-content-mdx/src/analysis/index.test.ts";
+    const parallel = await planSuiteFiles({ suite: "unit:parallel" });
+    const serial = await planSuiteFiles({ suite: "unit:serial" });
+
+    assertEquals(parallel.files.includes(parserBenchmark), false);
+    assertEquals(serial.files.includes(parserBenchmark), true);
   });
 
   it("keeps runtime-guarded Deno references eligible for Node", async () => {
@@ -390,7 +401,13 @@ describe("migration command surface", () => {
   });
 
   it("partitions large suites without dropping or repeating files", () => {
-    const files = ["a.test.ts", "b.test.ts", "c.test.ts", "d.test.ts", "e.test.ts"];
+    const files = [
+      "a.test.ts",
+      "b.test.ts",
+      "c.test.ts",
+      "d.test.ts",
+      "e.test.ts",
+    ];
 
     assertEquals(partitionDenoSuiteFiles(files, 2), [
       ["a.test.ts", "b.test.ts"],

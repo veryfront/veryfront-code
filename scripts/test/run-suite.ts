@@ -75,8 +75,11 @@ const UNIT_CWD_FILES = [
   "src/platform/compat/process.test.ts",
   "src/testing/cwd.test.ts",
 ];
+// These tests need a quiet process because they either own process-global
+// lifecycle or assert a wall-clock performance contract.
 const UNIT_SERIAL_FILES = [
   "extensions/ext-bundler-esbuild/src/esbuild-bundler.test.ts",
+  "extensions/ext-content-mdx/src/analysis/index.test.ts",
 ];
 const UNIT_CWD_EXCLUSION_FILES = [
   "src/testing/cwd-exclusion-a.test.ts",

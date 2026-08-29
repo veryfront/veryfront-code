@@ -83,12 +83,35 @@ function definitionDestination(
   absoluteStart: number,
   locator: SourceLocator,
 ): AuthoredDestination | undefined {
-  const colon = authored.indexOf(":");
-  if (colon === -1) return undefined;
-  let start = skipMarkdownWhitespace(authored, colon + 1);
+  let labelEnd = 1;
+  while (labelEnd < authored.length) {
+    if (authored[labelEnd] === "\\") labelEnd++;
+    else if (authored[labelEnd] === "]" && authored[labelEnd + 1] === ":") {
+      break;
+    }
+    labelEnd++;
+  }
+  if (labelEnd >= authored.length) return undefined;
+
+  let start = labelEnd + 2;
+  while (start < authored.length) {
+    const character = authored[start];
+    if (character === " " || character === "\t" || character === "\r") {
+      start++;
+      continue;
+    }
+    if (character !== "\n") break;
+    start++;
+    while (authored[start] === " " || authored[start] === "\t") start++;
+    while (authored[start] === ">") {
+      start++;
+      if (authored[start] === " ") start++;
+      while (authored[start] === "\t") start++;
+    }
+  }
   if (authored[start] === "<") {
     const end = authored.indexOf(">", start + 1);
-    if (end === -1) return undefined;
+    if (end <= start + 1) return undefined;
     start++;
     return {
       rawValue: authored.slice(start, end),
@@ -117,6 +140,10 @@ function linkDestination(
   const autolink = node.type === "link" &&
     (authored === node.url || authored === `<${node.url}>`);
   if (autolink) {
+    if (
+      authored === node.url && value[offsets.start - 1] === "<" &&
+      value[offsets.start - 2] === "\\"
+    ) return undefined;
     const start = authored[0] === "<" ? offsets.start + 1 : offsets.start;
     const end = authored[0] === "<" ? offsets.end - 1 : offsets.end;
     return {
@@ -127,7 +154,7 @@ function linkDestination(
     };
   }
   const destination = resourceDestination(authored, offsets.start, locator);
-  if (destination === undefined) return undefined;
+  if (destination === undefined || destination.rawValue === "") return undefined;
   return {
     kind: node.type === "link" ? "markdown-link" : "markdown-image",
     ...destination,
@@ -166,6 +193,28 @@ function htmlTagEnd(value: string, start: number): number | undefined {
   return undefined;
 }
 
+const RAW_TEXT_HTML_ELEMENTS = new Set(["script", "style", "textarea"]);
+
+function htmlTagName(tag: string): {
+  readonly closing: boolean;
+  readonly name: string;
+  readonly selfClosing: boolean;
+} | undefined {
+  const match = /^<\s*(\/?)\s*([A-Za-z][A-Za-z0-9-]*)/.exec(tag);
+  if (match === null) return undefined;
+  return {
+    closing: match[1] === "/",
+    name: match[2]!.toLowerCase(),
+    selfClosing: /\/\s*>$/.test(tag),
+  };
+}
+
+function isHtmlDataBlock(raw: string): boolean {
+  const trimmed = raw.trimStart();
+  return trimmed.startsWith("<!--") || trimmed.startsWith("<?") ||
+    trimmed.startsWith("<![") || /^<![A-Za-z]/.test(trimmed);
+}
+
 function rawHtmlAnalysis(
   raw: string,
   absoluteStart: number,
@@ -176,6 +225,8 @@ function rawHtmlAnalysis(
 } {
   const destinations: ContentDestination[] = [];
   const renderedRanges: SourceRange[] = [];
+  if (isHtmlDataBlock(raw)) return { destinations, renderedRanges };
+  const lowercase = raw.toLowerCase();
   let cursor = 0;
   while (cursor < raw.length) {
     const tagStart = raw.indexOf("<", cursor);
@@ -189,6 +240,7 @@ function rawHtmlAnalysis(
     const tagEnd = htmlTagEnd(raw, tagStart);
     if (tagEnd === undefined) break;
     const tag = raw.slice(tagStart, tagEnd);
+    const tagName = htmlTagName(tag);
     HTML_DESTINATION_ATTRIBUTE.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = HTML_DESTINATION_ATTRIBUTE.exec(tag)) !== null) {
@@ -205,6 +257,15 @@ function rawHtmlAnalysis(
         ),
         syntax: "html-attribute",
       });
+    }
+    if (
+      tagName !== undefined && !tagName.closing && !tagName.selfClosing &&
+      RAW_TEXT_HTML_ELEMENTS.has(tagName.name)
+    ) {
+      const closingStart = lowercase.indexOf(`</${tagName.name}`, tagEnd);
+      if (closingStart === -1) break;
+      cursor = closingStart;
+      continue;
     }
     cursor = tagEnd;
   }
@@ -290,6 +351,5 @@ export function analyzeMarkdownTree(value: string, root: Root): {
   }
 
   renderedRanges.sort((left, right) => left.start.offset - right.start.offset);
-  destinations.sort((left, right) => left.range.start.offset - right.range.start.offset);
   return { renderedRanges, destinations };
 }

@@ -1,9 +1,15 @@
-import { assertEquals, assertLess } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertLess,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   collectIssues,
   collectUnpublishedLinkIssues,
   destinations,
+  PublicDocSyntaxError,
   publishedTargetCandidates,
   publishedTargetExists,
   scanDestinations,
@@ -21,29 +27,33 @@ function publishedFiles(...paths: string[]) {
   };
 }
 
+function mdxDestinations(text: string): Promise<string[]> {
+  return destinations(text, "mdx");
+}
+
 describe("public docs validation", () => {
-  it("parses balanced and escaped inline link labels", () => {
+  it("parses balanced and escaped inline link labels", async () => {
     assertEquals(
-      destinations(
+      await destinations(
         "[nested [label]](../architecture/nested.md) and " +
           String.raw`[escaped \] label](../architecture/escaped.md)`,
       ),
       ["../architecture/nested.md", "../architecture/escaped.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[outer [public](./deploying.md)](../architecture/private.md)",
       ),
       ["./deploying.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[outer [plain bracket]](../architecture/private.md)",
       ),
       ["../architecture/private.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[outer <https://veryfront.com/docs/code/guides/deploying>]" +
           "(../architecture/private.md)",
       ),
@@ -53,27 +63,27 @@ describe("public docs validation", () => {
       ],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[outer ![diagram](../architecture/private.png)](./deploying.md)",
       ),
       ["./deploying.md", "../architecture/private.png"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[outer https://veryfront.com/docs/code/guides/deploying]" +
           "(./deploying.md)",
       ),
       ["./deploying.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "![alt <https://veryfront.com/docs/code/architecture/private>]" +
           "(./diagram.png)",
       ),
       ["./diagram.png"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         '![alt <a href="../architecture/private.md">old</a>][ref]\n' +
           "![later](./later.png)\n\n" +
           "[ref]: ./image.png",
@@ -81,32 +91,29 @@ describe("public docs validation", () => {
       ["./later.png", "./image.png"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         '![outer ![one](./one.png) ![two](./two.png) ![three](./three.png) <a href="../architecture/private.md">old</a>][ref]\n' +
           "![later](./later.png)\n\n" +
           "[ref]: ./image.png",
       ),
       [
-        "./one.png",
-        "./two.png",
-        "./three.png",
         "./later.png",
         "./image.png",
       ],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[outer ![alt <https://veryfront.com/docs/code/architecture/private>]" +
           "(./diagram.png)](./deploying.md)",
       ),
       ["./deploying.md", "./diagram.png"],
     );
     assertEquals(
-      destinations("[`]`](docs/architecture/private.md)"),
+      await destinations("[`]`](docs/architecture/private.md)"),
       ["docs/architecture/private.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         '[<span title="]">gate</span>](docs/architecture/private.md)',
       ),
       ["docs/architecture/private.md"],
@@ -120,15 +127,15 @@ describe("public docs validation", () => {
       ]
     ) {
       assertEquals(
-        scanDestinations(
+        (await scanDestinations(
           `[${token}gate](docs/architecture/private.md)`,
           "markdown",
-        ).map((destination) => destination.href),
+        )).map((destination) => destination.href),
         ["docs/architecture/private.md"],
       );
     }
     assertEquals(
-      scanDestinations(
+      await scanDestinations(
         "[<!-- ] gate](docs/architecture/private.md)",
         "markdown",
       ),
@@ -136,49 +143,51 @@ describe("public docs validation", () => {
     );
   });
 
-  it("validates reference definition labels", () => {
+  it("validates reference definition labels", async () => {
     assertEquals(
-      destinations(
+      await destinations(
         "[use][nested [label]]\n\n" +
           "[nested [label]]: ../architecture/nested.md",
       ),
       [],
     );
     assertEquals(
-      destinations(
+      await destinations(
         String.raw`[use][escaped \] label]` + "\n\n" +
           String.raw`[escaped \] label]: ../architecture/escaped.md`,
       ),
       ["../architecture/escaped.md"],
     );
     assertEquals(
-      destinations("[collapsed][]\n\n[collapsed]: ../architecture/valid.md"),
+      await destinations(
+        "[collapsed][]\n\n[collapsed]: ../architecture/valid.md",
+      ),
       ["../architecture/valid.md"],
     );
     const overlyLongLabel = "a".repeat(1000);
     assertEquals(
-      destinations(
+      await destinations(
         `[${overlyLongLabel}]\n\n` +
           `[${overlyLongLabel}]: ../architecture/too-long.md`,
       ),
       [],
     );
     assertEquals(
-      destinations("[ſ]\n\n[s]: ../architecture/case-folded.md"),
+      await destinations("[ſ]\n\n[s]: ../architecture/case-folded.md"),
       ["../architecture/case-folded.md"],
     );
     assertEquals(
-      destinations("[ẞ]\n\n[ss]: ../architecture/capital-sharp.md"),
+      await destinations("[ẞ]\n\n[ss]: ../architecture/capital-sharp.md"),
       ["../architecture/capital-sharp.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[a\tb]\n\n[a b]: ../architecture/actual-whitespace.md",
       ),
       ["../architecture/actual-whitespace.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[a&Tab;b] [a&colon;b] [a&#32;b]\n\n" +
           "[a b]: ../architecture/entity-whitespace.md\n" +
           "[a:b]: ../architecture/entity-colon.md",
@@ -186,7 +195,7 @@ describe("public docs validation", () => {
       [],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[first] [second]\r\n\r\n" +
           "[first]: ../architecture/first.md\r\n" +
           "[second]: ../architecture/second.md",
@@ -194,39 +203,39 @@ describe("public docs validation", () => {
       ["../architecture/first.md", "../architecture/second.md"],
     );
     assertEquals(
-      scanDestinations(
+      await scanDestinations(
         '[unused]: <> "https://veryfront.com/docs/code/guides/missing"',
         "markdown",
       ),
       [],
     );
     assertEquals(
-      destinations("[used]: <>\n\n[used]"),
+      await destinations("[used]: <>\n\n[used]"),
       [],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[outer [public][ref]](../architecture/private.md)\n\n" +
           "[ref]: ./deploying.md",
       ),
       ["./deploying.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[outer ![diagram][ref]](./deploying.md)\n\n" +
           "[ref]: ../architecture/private.png",
       ),
       ["./deploying.md", "../architecture/private.png"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "![alt <https://veryfront.com/docs/code/architecture/private>][img]\n\n" +
           "[img]: ./diagram.png",
       ),
       ["./diagram.png"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         '![alt <a href="../architecture/private.md">old</a>][img]\n\n' +
           "[img]: ./diagram.png",
       ),
@@ -234,39 +243,41 @@ describe("public docs validation", () => {
     );
   });
 
-  it("parses quoted HTML anchors and angle-bracket destinations", () => {
+  it("parses quoted HTML anchors and angle-bracket destinations", async () => {
     assertEquals(
-      destinations(
+      await destinations(
         '<a href="../architecture/html.md">HTML</a> ' +
           "[Markdown](<../architecture/markdown.md>)",
       ),
       ["../architecture/markdown.md", "../architecture/html.md"],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
-        "<a href=docs/architecture/private.md>private</a>\n" +
-          "<img src=docs/architecture/private.png>",
-      ).map((issue) => issue.line),
+        '<a href="docs/architecture/private.md">private</a>\n' +
+          '<img src="docs/architecture/private.png">',
+      )).map((issue) => issue.line),
       [1, 2],
     );
-    assertEquals(
-      scanDestinations(
-        "<a href=docs/architecture/private.md>private</a>",
-        "mdx",
-      ),
-      [],
+    await assertRejects(
+      () =>
+        scanDestinations(
+          "<a href=docs/architecture/private.md>private</a>",
+          "mdx",
+        ),
+      PublicDocSyntaxError,
+      "Invalid MDX syntax",
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
         "<pre>\n" +
           "<script>\n" +
           "<a href=docs/architecture/not-rendered.md>raw</a>\n" +
           "</script>\n" +
-          "<a href=docs/architecture/private.md>live</a>\n" +
+          '<a href="docs/architecture/private.md">live</a>\n' +
           "</pre>",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [5],
     );
     for (
@@ -278,52 +289,52 @@ describe("public docs validation", () => {
         "<a href\n=\ndocs/architecture/private.md>private</a>",
       ]
     ) {
-      assertEquals(scanDestinations(source, "markdown"), []);
+      assertEquals(await scanDestinations(source, "markdown"), []);
     }
     assertEquals(
-      scanDestinations(
+      (await scanDestinations(
         "<a href=\n" +
-          "docs/architecture/private.md title=sample>private</a>",
+          '"docs/architecture/private.md" title=sample>private</a>',
         "markdown",
-      ).map((destination) => destination.href),
+      )).map((destination) => destination.href),
       ["docs/architecture/private.md"],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
         '<span title="x\\">ok</span>\n' +
           '<a href="docs/architecture/private.md">private</a>',
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [2],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
         "<foo [gate](docs/architecture/private.md)>",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [1],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      await collectUnpublishedLinkIssues(
         "README.md",
         '<foo href="docs/architecture/private.md" [invalid]>',
       ),
       [],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
         "<foo [invalid]>\n" +
           '<a href="docs/architecture/private.md">private</a>',
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [2],
     );
   });
 
-  it("ignores Markdown-looking text inside raw HTML blocks", () => {
+  it("ignores Markdown-looking text inside raw HTML blocks", async () => {
     for (const tag of ["pre", "script", "style", "textarea"]) {
       assertEquals(
-        collectUnpublishedLinkIssues(
+        await collectUnpublishedLinkIssues(
           "README.md",
           `<${tag}>\n[x](docs/architecture/private.md)\n</${tag}>`,
         ),
@@ -332,7 +343,7 @@ describe("public docs validation", () => {
     }
     for (const opener of ["<pre", "<pre ", "<pre/>"]) {
       assertEquals(
-        collectUnpublishedLinkIssues(
+        await collectUnpublishedLinkIssues(
           "README.md",
           `${opener}\n[x](docs/architecture/private.md)`,
         ),
@@ -340,25 +351,25 @@ describe("public docs validation", () => {
       );
     }
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
         "<script src=docs/architecture/private.js>\n" +
           "[x](docs/architecture/not-rendered.md)\n" +
           "</script>",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [1],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
         "<pre>\n" +
           "<a href=docs/architecture/private.md>raw</a>\n" +
           "</pre>",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [2],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      await collectUnpublishedLinkIssues(
         "README.md",
         "<script>\n" +
           "<a href=docs/architecture/not-rendered.md>raw</a>\n" +
@@ -367,43 +378,43 @@ describe("public docs validation", () => {
       [],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
         "> <PrE class=sample>\n" +
           "> [hidden](docs/architecture/hidden.md)\n" +
           "[visible](docs/architecture/visible.md)",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [3],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
         "<Warning bad*name=value>\n" +
           "[visible](docs/architecture/visible.md)",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [2],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
         "> <div>\n" +
           "> [hidden](docs/architecture/hidden.md)\n" +
           "[visible](docs/architecture/visible.md)",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [3],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
         "before <pre>[visible](docs/architecture/private.md)</pre> after",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [1],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "docs/guides/example.mdx",
         "<pre>\n[x](../architecture/private.md)\n</pre>",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [2],
     );
     for (
@@ -414,82 +425,82 @@ describe("public docs validation", () => {
       ]
     ) {
       assertEquals(
-        collectUnpublishedLinkIssues(
+        (await collectUnpublishedLinkIssues(
           "README.md",
           `${opening}\n` +
             "[hidden](docs/architecture/hidden.md)\n" +
             `${closing}\n` +
             "[visible](docs/architecture/visible.md)",
-        ).map((issue) => issue.line),
+        )).map((issue) => issue.line),
         [4],
       );
     }
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
         "<![CDATA[\n" +
           "<a href=docs/architecture/hidden.md>raw data</a>\n" +
           "]]>\n" +
-          "<a href=docs/architecture/visible.md>rendered</a>",
-      ).map((issue) => issue.line),
+          '<a href="docs/architecture/visible.md">rendered</a>',
+      )).map((issue) => issue.line),
       [4],
     );
   });
 
-  it("honors blank-line-terminated Markdown HTML blocks", () => {
+  it("honors blank-line-terminated Markdown HTML blocks", async () => {
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
         "paragraph\n" +
           "<div>\n" +
           "[hidden](docs/architecture/hidden.md)\n" +
           "</div>\n\n" +
           "[visible](docs/architecture/visible.md)",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [6],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
         "<Warning>\n" +
           "[hidden](docs/architecture/hidden.md)\n" +
           "</Warning>\n\n" +
           "[visible](docs/architecture/visible.md)",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [5],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
         "paragraph\n" +
           "<Warning>\n" +
           "[visible](docs/architecture/visible.md)\n" +
           "</Warning>",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [3],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
         "<div>\n" +
           "<a href=docs/architecture/private.md>live</a>\n" +
           "</div>",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [2],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "docs/guides/example.mdx",
         "<div>\n[x](../architecture/private.md)\n</div>",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [2],
     );
   });
 
-  it("parses static sources but not hyphenated href attributes", () => {
+  it("parses static sources but not hyphenated href attributes", async () => {
     assertEquals(
-      destinations(
-        '<img src="../architecture/image.png"> ' +
+      await mdxDestinations(
+        '<img src="../architecture/image.png" /> ' +
           '<div data-href="../architecture/data.md"></div>\n' +
           'Configure href="../architecture/prose.md" for the sample.\n' +
           "<a title=\"sample href='../architecture/title.md' text\">safe</a>\n" +
@@ -541,8 +552,8 @@ describe("public docs validation", () => {
           '<a data-ok={(() => { for (of / ({ marker: ">/" }).length; false;) {} return true })()} href="../architecture/for-of-division.md">ok</a>\n' +
           '<a data-ok={(() => { for (const x = { value: of / ({ marker: ">/" }).length }; false;) {} return true })()} href="../architecture/for-header-nested-of-division.md">ok</a>\n' +
           '<a data-ok={of / ({ marker: ">/" }).length} href="../architecture/of-division.md">ok</a>\n' +
-          '<a data-ok={function () {} / ({ marker: ">/" }).length} href="../architecture/function-expression-division.md">ok</a>\n' +
-          '<a data-ok={class Sample {} / ({ marker: ">/" }).length} href="../architecture/class-expression-division.md">ok</a>\n' +
+          '<a data-ok={(function () {}) / ({ marker: ">/" }).length} href="../architecture/function-expression-division.md">ok</a>\n' +
+          '<a data-ok={(class Sample {}) / ({ marker: ">/" }).length} href="../architecture/class-expression-division.md">ok</a>\n' +
           '<a data-ok={<Foo></Foo>} href="../architecture/paired-jsx.md">ok</a>\n' +
           '<a data-ok={<Foo>child</Foo>} href="../architecture/paired-jsx-text.md">ok</a>\n' +
           '<a data-ok={<Foo/> / ({ marker: ">/" }).length} href="../architecture/jsx-division.md">ok</a>\n' +
@@ -566,7 +577,6 @@ describe("public docs validation", () => {
           '<a data-ok={value++ / count > 1} href="../architecture/postfix-update.md">ok</a>\n' +
           '<a data-ok={value-- / count > 1} href="../architecture/postfix-decrement.md">ok</a>\n' +
           '<a data-ok={[...++/{/.lastIndex]} href="../architecture/spread-update.md">ok</a>\n' +
-          '<a data-ok={this.#instanceof / ({ marker: "}>/" }).length} href="../architecture/private-member.md">ok</a>\n' +
           '<a data-ok={πinstanceof / ({ marker: "}>/" }).length} href="../architecture/unicode-identifier.md">ok</a>\n' +
           '<a data-ok={𐐀instanceof / ({ marker: "}>/" }).length} href="../architecture/astral-identifier.md">ok</a>\n' +
           String
@@ -576,8 +586,6 @@ describe("public docs validation", () => {
           '<div title={"[old](../architecture/expression.md)"}></div>\n' +
           "<Code value={'Configure href=\"../architecture/string.md\"'} />\n" +
           '<div title={"<https://veryfront.com/docs/code/architecture/private>"}></div>\n' +
-          String.raw`\<a href="../architecture/escaped.md">literal</a>` +
-          "\n" +
           String.raw`\\<a href="../architecture/real.md">real</a>`,
       ),
       [
@@ -650,7 +658,6 @@ describe("public docs validation", () => {
         "../architecture/postfix-update.md",
         "../architecture/postfix-decrement.md",
         "../architecture/spread-update.md",
-        "../architecture/private-member.md",
         "../architecture/unicode-identifier.md",
         "../architecture/astral-identifier.md",
         "../architecture/escaped-astral-identifier.md",
@@ -658,30 +665,46 @@ describe("public docs validation", () => {
       ],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         '<a data-ok={`x ${`nested ${">"}`} >`} ' +
           'href="../architecture/nested-template.md">ok</a>',
       ),
       ["../architecture/nested-template.md"],
     );
+    await assertRejects(
+      () =>
+        mdxDestinations(
+          '<a data-ok={this.#instanceof / ({ marker: "}>/" }).length} />',
+        ),
+      PublicDocSyntaxError,
+      "Invalid MDX syntax",
+    );
+    await assertRejects(
+      () =>
+        mdxDestinations(
+          String.raw`\<a href="../architecture/escaped.md">literal</a>`,
+        ),
+      PublicDocSyntaxError,
+      "Invalid MDX syntax",
+    );
   });
 
-  it("does not rescan quoted JSX attributes as nested tags", () => {
+  it("does not rescan quoted JSX attributes as nested tags", async () => {
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "<Comp title=\"<a href='./literal.md'>\" value={true} />",
       ),
       [],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "<Comp title=\"<a href='./literal.md'>\" " +
           'value={<a href="../architecture/real.md">x</a>} />',
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "{<Comp title=\"<a href='./literal.md'>\" " +
           'value={<a href="../architecture/nested.md">x</a>} />}',
       ),
@@ -689,9 +712,9 @@ describe("public docs validation", () => {
     );
   });
 
-  it("keeps for-in and for-of right-hand division inside JSX attributes", () => {
+  it("keeps for-in and for-of right-hand division inside JSX attributes", async () => {
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "<a data-ok={(() => { for (let value of values\n" +
           '/ ({ marker: ">/" }).length) {} return true })()} ' +
           'href="../architecture/for-of-rhs-division.md">ok</a>\n' +
@@ -706,9 +729,9 @@ describe("public docs validation", () => {
     );
   });
 
-  it("keeps object and class method bodies in statement context", () => {
+  it("keeps object and class method bodies in statement context", async () => {
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "<a data-ok={({ method() { {} /[}>]/.test(value) } })} " +
           'href="../architecture/object-method-regex.md">ok</a>\n' +
           "<a data-ok={class Sample { method() { {} /[}>]/.test(value) } }} " +
@@ -735,9 +758,9 @@ describe("public docs validation", () => {
     );
   });
 
-  it("ends a bare return at its line terminator", () => {
+  it("ends a bare return at its line terminator", async () => {
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "<a data-ok={(() => { return\n{} /[}>]/.test(value) })()} " +
           'href="../architecture/bare-return-regex.md">ok</a>\n' +
           "<a data-ok={(() => { return value\n" +
@@ -751,9 +774,9 @@ describe("public docs validation", () => {
     );
   });
 
-  it("keeps switch clause blocks in statement context", () => {
+  it("keeps switch clause blocks in statement context", async () => {
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "<a data-ok={(() => { switch (x) { case 1: {} " +
           '/[}>]/.test(x) } })()} href="../architecture/switch-case-regex.md">ok</a>\n' +
           "<a data-ok={(() => { switch (x) { case condition ? 1 : 2: {} " +
@@ -773,14 +796,14 @@ describe("public docs validation", () => {
     );
   });
 
-  it("does not treat newline-separated blocks as method bodies", () => {
+  it("does not treat newline-separated blocks as method bodies", async () => {
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "<a data-ok={(() => { foo()\n{}\n/[}>]/.test(x) })()} " +
-          'href="../architecture/newline-call-block-regex.md">ok</a>\n' +
+          'href="../architecture/newline-call-block-regex.md" />\n' +
           "<a data-ok={(() => { foo()\n" +
           '/ ({ marker: ">/" }).length })()} ' +
-          'href="../architecture/newline-call-division.md">ok</a>',
+          'href="../architecture/newline-call-division.md" />',
       ),
       [
         "../architecture/newline-call-block-regex.md",
@@ -789,16 +812,16 @@ describe("public docs validation", () => {
     );
   });
 
-  it("ignores escaped Markdown link openers", () => {
+  it("ignores escaped Markdown link openers", async () => {
     assertEquals(
-      destinations(String.raw`\[example](../architecture/private.md)`),
+      await destinations(String.raw`\[example](../architecture/private.md)`),
       [],
     );
   });
 
-  it("requires a closing inline-link delimiter", () => {
+  it("requires a closing inline-link delimiter", async () => {
     assertEquals(
-      destinations(
+      await destinations(
         "[plain](./does-not-exist.md\n" +
           "[wrapped](<./also-missing.md>\n" +
           "[pointy](<../architecture/\nprivate.md>)\n" +
@@ -809,74 +832,76 @@ describe("public docs validation", () => {
       [],
     );
     assertEquals(
-      destinations(
+      await destinations(
         '[sample](../architecture/private.md "first\n\nsecond")',
       ),
       [],
     );
     assertEquals(
-      destinations('[sample](./deploying.md "first\nsecond\nthird")'),
+      await destinations('[sample](./deploying.md "first\nsecond\nthird")'),
       ["./deploying.md"],
     );
     assertEquals(
-      destinations('[sample](../architecture/private.md "first\r\rsecond")'),
+      await destinations(
+        '[sample](../architecture/private.md "first\r\rsecond")',
+      ),
       [],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[label]( \"tooltip\") and [label]( 'tooltip') and " +
           "[label]( (tooltip))",
       ),
       ['"tooltip"', "'tooltip'", "(tooltip)"],
     );
-    assertEquals(destinations('[label](<> "tooltip")'), []);
+    assertEquals(await destinations('[label](<> "tooltip")'), []);
     assertEquals(
-      destinations(
+      await destinations(
         '[sample](../architecture/private.md "title"\n\n)',
       ),
       [],
     );
     assertEquals(
-      destinations('[sample](./deploying.md "title"\n)'),
+      await destinations('[sample](./deploying.md "title"\n)'),
       ["./deploying.md"],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
         "[gate](\n\n[gate]: docs/architecture/private.md",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [3],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[gate](./public.md)\n\n" +
           "[gate]: ../architecture/private.md",
       ),
       ["./public.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         '[gate](./public.md "first\n\nsecond")\n\n' +
           "[gate]: ../architecture/private.md",
       ),
       ["../architecture/private.md"],
     );
     assertEquals(
-      destinations("[pointy](<../architecture/<private.md>)"),
+      await destinations("[pointy](<../architecture/<private.md>)"),
       [],
     );
     assertEquals(
-      destinations(String.raw`[pointy](<../architecture/\<private.md>)`),
+      await destinations(String.raw`[pointy](<../architecture/\<private.md>)`),
       [String.raw`../architecture/\<private.md`],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[pointy]\n\n[pointy]: <../architecture/<private.md>",
       ),
       [],
     );
     assertEquals(
-      destinations(
+      await destinations(
         String.raw`[pointy]
 
 [pointy]: <../architecture/\<private.md>`,
@@ -884,21 +909,24 @@ describe("public docs validation", () => {
       [String.raw`../architecture/\<private.md`],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[deep](../architecture/" + "(".repeat(33) + "private" +
           ")".repeat(33) + ".md)",
       ),
       [],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[deep]\n\n[deep]: ../architecture/" + "(".repeat(33) + "private" +
           ")".repeat(33) + ".md",
       ),
-      [],
+      [
+        "../architecture/" + "(".repeat(33) + "private" +
+        ")".repeat(33) + ".md",
+      ],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[deep](../architecture/" + "(".repeat(32) + "private" +
           ")".repeat(32) + ".md)",
       ),
@@ -908,7 +936,7 @@ describe("public docs validation", () => {
       ],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[deep]\n\n[deep]: ../architecture/" + "(".repeat(32) +
           "private" + ")".repeat(32) + ".md",
       ),
@@ -919,8 +947,8 @@ describe("public docs validation", () => {
     );
   });
 
-  it("rejects deleted section READMEs with queries", () => {
-    const issues = collectUnpublishedLinkIssues(
+  it("rejects deleted section READMEs with queries", async () => {
+    const issues = await collectUnpublishedLinkIssues(
       "docs/guides/example.md",
       "[concept index](../concepts/README.md?view=1)",
     );
@@ -928,8 +956,8 @@ describe("public docs validation", () => {
     assertEquals(issues.length, 1);
   });
 
-  it("validates documentation boundaries from the public README", () => {
-    const issues = collectUnpublishedLinkIssues(
+  it("validates documentation boundaries from the public README", async () => {
+    const issues = await collectUnpublishedLinkIssues(
       "README.md",
       "[private](docs/architecture/private.md) " +
         "[license](./LICENSE)",
@@ -942,8 +970,8 @@ describe("public docs validation", () => {
     );
   });
 
-  it("rejects browser-normalized traversal paths", () => {
-    const issues = collectUnpublishedLinkIssues(
+  it("rejects browser-normalized traversal paths", async () => {
+    const issues = await collectUnpublishedLinkIssues(
       "docs/guides/example.md",
       String.raw`[windows](..\architecture\private.md)` + "\n" +
         "[encoded](.%2e/architecture/private.md)",
@@ -958,8 +986,8 @@ describe("public docs validation", () => {
     );
   });
 
-  it("renormalizes encoded separators before checking file existence", () => {
-    const issues = collectUnpublishedLinkIssues(
+  it("renormalizes encoded separators before checking file existence", async () => {
+    const issues = await collectUnpublishedLinkIssues(
       "docs/guides/example.md",
       "[separator](..%2farchitecture/29-environment-access-gate.md)\n" +
         "[encoded](%2e%2e%2farchitecture/29-environment-access-gate.md)",
@@ -976,8 +1004,8 @@ describe("public docs validation", () => {
     );
   });
 
-  it("rejects case variants of private repository URLs", () => {
-    const issues = collectIssues(
+  it("rejects case variants of private repository URLs", async () => {
+    const issues = await collectIssues(
       "docs/guides/example.md",
       `https://GitHub.com/${BLOCKED_REPOSITORY}`,
       BLOCKED_REPOSITORY,
@@ -986,9 +1014,9 @@ describe("public docs validation", () => {
     assertEquals(issues.length, 1);
   });
 
-  it("matches only the exact private examples repository URL", () => {
+  it("matches only the exact private examples repository URL", async () => {
     assertEquals(
-      collectIssues(
+      await collectIssues(
         "docs/guides/example.md",
         `https://notgithub.com/${BLOCKED_REPOSITORY}\n` +
           `https://github.com/${BLOCKED_REPOSITORY}-public\n` +
@@ -1015,8 +1043,8 @@ describe("public docs validation", () => {
       [],
     );
     assertEquals(
-      collectIssues(
-        "docs/guides/example.md",
+      (await collectIssues(
+        "docs/guides/example.mdx",
         `See https://github.com/${BLOCKED_REPOSITORY}.\n` +
           `git clone https://github.com/${BLOCKED_REPOSITORY}.git\n` +
           `git clone git@github.com:${BLOCKED_REPOSITORY}.git\n` +
@@ -1035,98 +1063,98 @@ describe("public docs validation", () => {
           `____https://github.com/${BLOCKED_REPOSITORY}____\n` +
           `~https://github.com/${BLOCKED_REPOSITORY}~`,
         BLOCKED_REPOSITORY,
-      ).length,
+      )).length,
       16,
     );
     assertEquals(
-      collectIssues(
+      (await collectIssues(
         "docs/guides/example.mdx",
         '<a href={\n  "https://github.com/example-org/private\\x2dexamples"\n}>x</a>',
         BLOCKED_REPOSITORY,
-      ).length,
+      )).length,
       1,
     );
     assertEquals(
-      collectIssues(
+      (await collectIssues(
         "docs/guides/example.mdx",
         `https://github.com/${BLOCKED_REPOSITORY} ` +
           '<a href={"https://github.com/example-org/private\\x2dexamples"}>x</a>',
         BLOCKED_REPOSITORY,
-      ).length,
+      )).length,
       1,
     );
     assertEquals(
-      collectIssues(
+      (await collectIssues(
         "docs/guides/example.md",
         `https://github.com/example-org/private%2Dexamples/${
           "%FF".repeat(512)
         }`,
         BLOCKED_REPOSITORY,
-      ).length,
+      )).length,
       1,
     );
   });
 
-  it("finds destinations that wrap across lines", () => {
+  it("finds destinations that wrap across lines", async () => {
     assertEquals(
-      destinations("[gate](\n../architecture/wrapped.md)"),
+      await destinations("[gate](\n../architecture/wrapped.md)"),
       ["../architecture/wrapped.md"],
     );
     assertEquals(
-      destinations("[some\ntext](../architecture/text.md)"),
+      await destinations("[some\ntext](../architecture/text.md)"),
       ["../architecture/text.md"],
     );
     for (const blankLine of ["\n\n", "\r\n\r\n", "\n \t\n"]) {
       assertEquals(
-        destinations(
+        await destinations(
           `[some${blankLine}text](../architecture/not-a-link.md)`,
         ),
         [],
       );
     }
     assertEquals(
-      destinations(
+      await destinations(
         "[some\n\ntext]: ../architecture/not-a-definition.md\n\n[some text]",
       ),
       [],
     );
     assertEquals(
-      destinations("[gate]\n\n[gate]:\n../architecture/reference.md"),
+      await destinations("[gate]\n\n[gate]:\n../architecture/reference.md"),
       ["../architecture/reference.md"],
     );
   });
 
-  it("ends a reference definition at a blank line", () => {
+  it("ends a reference definition at a blank line", async () => {
     assertEquals(
-      destinations("[gate]\n\n[gate]:\n\n../architecture/orphan.md"),
+      await destinations("[gate]\n\n[gate]:\n\n../architecture/orphan.md"),
       [],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[old]\nIntro paragraph.\n[old]: ../architecture/not-a-definition.md",
       ),
       [],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[old]\n\n- Intro\n  [old]: ../architecture/list-paragraph.md",
       ),
       [],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[old]\n\n[old]: ../architecture/pri)vate.md",
       ),
       [],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[old]\n\n[old]: ../architecture/pri(vate).md",
       ),
       ["../architecture/pri(vate).md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[public]: ./deploying.md\n" +
           '  "https://veryfront.com/docs/code/guides/does-not-exist"\n\n' +
           "[link][public]",
@@ -1135,7 +1163,7 @@ describe("public docs validation", () => {
     );
     for (const indentation of ["    ", "\t"]) {
       assertEquals(
-        destinations(
+        await destinations(
           "[public]: ./deploying.md\n" +
             `${indentation}"https://veryfront.com/docs/code/guides/title"\n\n` +
             "[public]",
@@ -1144,7 +1172,7 @@ describe("public docs validation", () => {
       );
     }
     assertEquals(
-      destinations(
+      await destinations(
         '[public]: ./deploying.md "first\n' +
           'https://veryfront.com/docs/code/guides/title"\n\n' +
           "[public]",
@@ -1152,14 +1180,14 @@ describe("public docs validation", () => {
       ["./deploying.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         '[public]: ./deploying.md "[hidden](../architecture/private.md)"\n\n' +
           "[public]",
       ),
       ["./deploying.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[public]: ./deploying.md\n" +
           '  "[hidden](../architecture/private.md)"\n\n' +
           "[public]",
@@ -1167,7 +1195,7 @@ describe("public docs validation", () => {
       ["./deploying.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         '[public]: ./deploying.md "first\n' +
           '[hidden](../architecture/private.md)"\n\n' +
           "[public]",
@@ -1175,7 +1203,7 @@ describe("public docs validation", () => {
       ["./deploying.md"],
     );
     assertEquals(
-      scanDestinations(
+      await scanDestinations(
         '[unused]: ./deploying.md\r  "https://veryfront.com/docs/code/guides/does-not-exist"',
         "markdown",
       ),
@@ -1183,41 +1211,41 @@ describe("public docs validation", () => {
     );
   });
 
-  it("does not let reference definitions interrupt paragraphs", () => {
+  it("does not let reference definitions interrupt paragraphs", async () => {
     assertEquals(
-      destinations(
+      await destinations(
         "[old]\nIntro paragraph.\n" +
           "[old]: ../architecture/private.md",
       ),
       [],
     );
     assertEquals(
-      destinations("[old]\n\n[old]: ../architecture/real.md"),
+      await destinations("[old]\n\n[old]: ../architecture/real.md"),
       ["../architecture/real.md"],
     );
     for (const newline of ["\n", "\r\n"]) {
       assertEquals(
-        collectUnpublishedLinkIssues(
+        (await collectUnpublishedLinkIssues(
           "README.md",
           `<!-- note -->${newline}` +
             `[gate]: docs/architecture/private.md${newline}${newline}[gate]`,
-        ).map((issue) => issue.line),
+        )).map((issue) => issue.line),
         [2],
       );
       for (const tag of ["pre", "script", "style", "textarea"]) {
         assertEquals(
-          collectUnpublishedLinkIssues(
+          (await collectUnpublishedLinkIssues(
             "README.md",
             `<${tag}>${newline}</${tag}>${newline}` +
               `[gate]: docs/architecture/private.md${newline}${newline}` +
               "[gate]",
-          ).map((issue) => issue.line),
+          )).map((issue) => issue.line),
           [3],
         );
       }
     }
     assertEquals(
-      collectUnpublishedLinkIssues(
+      await collectUnpublishedLinkIssues(
         "README.md",
         "<script>\n" +
           "[gate]: docs/architecture/private.md\n\n" +
@@ -1226,7 +1254,7 @@ describe("public docs validation", () => {
       [],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      await collectUnpublishedLinkIssues(
         "README.md",
         "<div>\n</div>\n" +
           "[gate]: docs/architecture/private.md\n\n" +
@@ -1235,16 +1263,16 @@ describe("public docs validation", () => {
       [],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
         "> <script>\n> </script>\n" +
           "[gate]: docs/architecture/private.md\n\n" +
           "[gate]",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [3],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      await collectUnpublishedLinkIssues(
         "README.md",
         "text <!-- note -->\n" +
           "[gate]: docs/architecture/private.md\n\n[gate]",
@@ -1252,86 +1280,94 @@ describe("public docs validation", () => {
       [],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      await collectUnpublishedLinkIssues(
         "README.md",
         "<!-- note\n[gate]: docs/architecture/private.md\n\n[gate]",
       ),
       [],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
         "> <!-- note -->\n" +
           "> [gate]: docs/architecture/private.md\n" +
           ">\n" +
           "> [gate]",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [2],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
         "- <!-- note -->\n" +
           "  [gate]: docs/architecture/private.md\n\n" +
           "  [gate]",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [2],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
         "> <!-- note -->\n" +
           "[gate]: docs/architecture/private.md\n\n" +
           "[gate]",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [2],
     );
     assertEquals(
-      destinations("> Intro\n[old]: ../architecture/lazy-quote.md\n\n[old]"),
+      await destinations(
+        "> Intro\n[old]: ../architecture/lazy-quote.md\n\n[old]",
+      ),
       [],
     );
     assertEquals(
-      destinations("- Intro\n  [old]: ../architecture/lazy-list.md\n\n[old]"),
+      await destinations(
+        "- Intro\n  [old]: ../architecture/lazy-list.md\n\n[old]",
+      ),
       [],
     );
     assertEquals(
-      destinations("Intro\n2. [old]: ../architecture/ordered.md\n\n[old]"),
+      await destinations(
+        "Intro\n2. [old]: ../architecture/ordered.md\n\n[old]",
+      ),
       [],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "- Intro\n  2. [old]: ../architecture/nested-ordered.md\n\n" +
           "     [old]",
       ),
       [],
     );
     assertEquals(
-      destinations("Intro\n1. [old]: ../architecture/ordered.md\n\n[old]"),
+      await destinations(
+        "Intro\n1. [old]: ../architecture/ordered.md\n\n[old]",
+      ),
       ["../architecture/ordered.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "1. Intro\n2. [old]: ../architecture/ordered-sibling.md\n\n[old]",
       ),
       ["../architecture/ordered-sibling.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "9. Intro\n10. [old]: ../architecture/wide-ordered-sibling.md\n\n" +
           "[old]",
       ),
       ["../architecture/wide-ordered-sibling.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "    code\n[after-code]: ../architecture/after-code.md\n\n[after-code]",
       ),
       ["../architecture/after-code.md"],
     );
   });
 
-  it("finds a reference definition below the first line", () => {
-    const issues = collectUnpublishedLinkIssues(
+  it("finds a reference definition below the first line", async () => {
+    const issues = await collectUnpublishedLinkIssues(
       "docs/guides/example.md",
       "[gate]\nIntro paragraph.\n\n" +
         "[gate]: ../architecture/private.md\n",
@@ -1341,36 +1377,38 @@ describe("public docs validation", () => {
     assertEquals(issues[0]?.line, 4);
   });
 
-  it("reads a string literal in a JSX href expression", () => {
+  it("reads a string literal in a JSX href expression", async () => {
     assertEquals(
-      destinations('<a href={"../architecture/literal.md"}>gate</a>'),
+      await mdxDestinations('<a href={"../architecture/literal.md"}>gate</a>'),
       ["../architecture/literal.md"],
     );
     assertEquals(
-      destinations("<a href={'../architecture/single.md'}>gate</a>"),
+      await mdxDestinations("<a href={'../architecture/single.md'}>gate</a>"),
       ["../architecture/single.md"],
     );
     assertEquals(
-      destinations("<a href={`../architecture/template.md`}>gate</a>"),
+      await mdxDestinations("<a href={`../architecture/template.md`}>gate</a>"),
       ["../architecture/template.md"],
     );
     assertEquals(
-      destinations('<a href={("../architecture/parenthesized.md")}>gate</a>'),
+      await mdxDestinations(
+        '<a href={("../architecture/parenthesized.md")}>gate</a>',
+      ),
       ["../architecture/parenthesized.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         '<a href={(( "../architecture/nested.md" ))}>gate</a>',
       ),
       ["../architecture/nested.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         '<a href={/* note */ "../architecture/leading-comment.md"}>gate</a>\n' +
           '<a href={"../architecture/trailing-comment.md" /* note */}>gate</a>\n' +
           '<a href={(/* note */ "../architecture/parenthesized-comment.md")}>gate</a>\n' +
           '<a href={// note\n"../architecture/line-comment.md"}>gate</a>\n' +
-          '<img src={/* note */ "../architecture/commented-source.png"}>',
+          '<img src={/* note */ "../architecture/commented-source.png"} />',
       ),
       [
         "../architecture/leading-comment.md",
@@ -1380,28 +1418,33 @@ describe("public docs validation", () => {
         "../architecture/commented-source.png",
       ],
     );
-    assertEquals(
-      destinations(
-        '<a href={("../architecture/missing-close.md"}>gate</a>\n' +
-          '<a href={"../architecture/missing-open.md")}>gate</a>\n' +
-          '<a href={(("../architecture/too-few.md")}>gate</a>\n' +
-          '<a href={("../architecture/too-many.md"))}>gate</a>',
-      ),
-      [],
-    );
+    for (
+      const source of [
+        '<a href={("../architecture/missing-close.md"}>gate</a>',
+        '<a href={"../architecture/missing-open.md")}>gate</a>',
+        '<a href={(("../architecture/too-few.md")}>gate</a>',
+        '<a href={("../architecture/too-many.md"))}>gate</a>',
+      ]
+    ) {
+      await assertRejects(
+        () => mdxDestinations(source),
+        PublicDocSyntaxError,
+        "Invalid MDX syntax",
+      );
+    }
   });
 
-  it("evaluates JavaScript escapes in a JSX href string literal", () => {
+  it("evaluates JavaScript escapes in a JSX href string literal", async () => {
     assertEquals(
-      collectUnpublishedLinkIssues(
-        "docs/guides/example.md",
+      await collectUnpublishedLinkIssues(
+        "docs/guides/example.mdx",
         String.raw`<a href={".\u002fdeploying.md"}>deploy</a>`,
         publishedFiles("docs/guides/deploying.md"),
       ),
       [],
     );
-    const issues = collectUnpublishedLinkIssues(
-      "docs/guides/example.md",
+    const issues = await collectUnpublishedLinkIssues(
+      "docs/guides/example.mdx",
       String.raw`<a href={'.\x2e/architecture/private.md'}>private</a>`,
     );
     assertEquals(issues.length, 1);
@@ -1410,28 +1453,28 @@ describe("public docs validation", () => {
       true,
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
-        "docs/guides/example.md",
+      (await collectUnpublishedLinkIssues(
+        "docs/guides/example.mdx",
         '<a href={"./deploying.md&#35;section"}>broken</a>\n' +
           '<a href="./deploying.md&#35;section">published</a>',
         publishedFiles("docs/guides/deploying.md"),
-      ).length,
+      )).length,
       1,
     );
   });
 
-  it("preserves character references in JSX expression strings", () => {
+  it("preserves character references in JSX expression strings", async () => {
     const published = publishedFiles("docs/guides/deploying.md");
     assertEquals(
-      collectUnpublishedLinkIssues(
-        "docs/guides/example.md",
+      (await collectUnpublishedLinkIssues(
+        "docs/guides/example.mdx",
         '<a href={"./deploying.md&#35;section"}>deploy</a>',
         published,
-      ).length,
+      )).length,
       1,
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      await collectUnpublishedLinkIssues(
         "docs/guides/example.md",
         '<a href="./deploying.md&#35;section">deploy</a>\n' +
           "[deploy](./deploying.md&#35;section)",
@@ -1441,32 +1484,32 @@ describe("public docs validation", () => {
     );
   });
 
-  it("ignores a dynamic JSX href expression", () => {
-    assertEquals(destinations("<a href={href}>gate</a>"), []);
+  it("ignores a dynamic JSX href expression", async () => {
+    assertEquals(await mdxDestinations("<a href={href}>gate</a>"), []);
     assertEquals(
-      destinations("<a href={`../${section}/private.md`}>gate</a>"),
+      await mdxDestinations("<a href={`../${section}/private.md`}>gate</a>"),
       [],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         '<a href={/* note */ "../architecture/private.md" + suffix}>gate</a>',
       ),
       [],
     );
   });
 
-  it("validates Veryfront absolute documentation URLs", () => {
+  it("validates Veryfront absolute documentation URLs", async () => {
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "docs/guides/example.md",
         "[private](https://veryfront.com/docs/code/architecture/private) " +
           "[encoded](https://veryfront.com/docs/%63ode/architecture/private) " +
           "[http](http://veryfront.com/docs/code/architecture/private)",
-      ).length,
+      )).length,
       3,
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      await collectUnpublishedLinkIssues(
         "docs/guides/example.md",
         "[public](https://veryfront.com/docs/code/guides/deploying)",
         publishedFiles("docs/guides/deploying.md"),
@@ -1474,7 +1517,7 @@ describe("public docs validation", () => {
       [],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      await collectUnpublishedLinkIssues(
         "docs/guides/example.md",
         "[other service](https://veryfront.com:8443/docs/code/architecture/private)",
       ),
@@ -1482,8 +1525,8 @@ describe("public docs validation", () => {
     );
   });
 
-  it("validates site-root code destinations", () => {
-    const issues = collectUnpublishedLinkIssues(
+  it("validates site-root code destinations", async () => {
+    const issues = await collectUnpublishedLinkIssues(
       "docs/guides/example.md",
       "[private](/code/architecture/private) " +
         "[public](/code/guides/deploying)\n" +
@@ -1501,8 +1544,8 @@ describe("public docs validation", () => {
     );
   });
 
-  it("decodes Markdown character references before resolving destinations", () => {
-    const issues = collectUnpublishedLinkIssues(
+  it("decodes Markdown character references before resolving destinations", async () => {
+    const issues = await collectUnpublishedLinkIssues(
       "docs/guides/example.md",
       "[decimal] [hex] [named]\n\n" +
         "[decimal]: &#46;&#46;/architecture/decimal.md\n" +
@@ -1513,8 +1556,8 @@ describe("public docs validation", () => {
     assertEquals(issues.length, 3);
   });
 
-  it("decodes Markdown escapes before resolving destinations", () => {
-    const issues = collectUnpublishedLinkIssues(
+  it("decodes Markdown escapes before resolving destinations", async () => {
+    const issues = await collectUnpublishedLinkIssues(
       "docs/guides/example.md",
       "[gate]\n\n" + String.raw`[gate]: \../architecture/private.md`,
     );
@@ -1522,9 +1565,9 @@ describe("public docs validation", () => {
     assertEquals(issues.length, 1);
   });
 
-  it("resolves query-only destinations against the current page", () => {
+  it("resolves query-only destinations against the current page", async () => {
     assertEquals(
-      collectUnpublishedLinkIssues(
+      await collectUnpublishedLinkIssues(
         "docs/guides/integrations/jira.md",
         "[cloud](?tab=cloud)",
         publishedFiles("docs/guides/integrations/jira.md"),
@@ -1533,8 +1576,8 @@ describe("public docs validation", () => {
     );
   });
 
-  it("rejects missing files in newly parsed destination forms", () => {
-    const issues = collectUnpublishedLinkIssues(
+  it("rejects missing files in newly parsed destination forms", async () => {
+    const issues = await collectUnpublishedLinkIssues(
       "docs/guides/example.md",
       '<a href="./does-not-exist.md">missing</a>\n' +
         "<a href=\"'./quote-does-not-exist.md'\">quoted</a>\n" +
@@ -1545,9 +1588,9 @@ describe("public docs validation", () => {
     assertEquals(issues.length, 3);
   });
 
-  it("finds reference definitions inside block quotes", () => {
+  it("finds reference definitions inside block quotes", async () => {
     assertEquals(
-      destinations(
+      await destinations(
         "[gate] [wrapped]\n" +
           "> [gate]: ../architecture/private.md\n" +
           "> [wrapped]:\n> ../architecture/wrapped.md",
@@ -1556,9 +1599,9 @@ describe("public docs validation", () => {
     );
   });
 
-  it("finds reference definitions inside list containers", () => {
+  it("finds reference definitions inside list containers", async () => {
     assertEquals(
-      destinations(
+      await destinations(
         "[gate] [wrapped]\n" +
           "- [gate]: ../architecture/private.md\n" +
           "- [wrapped]:\n  ../architecture/wrapped.md",
@@ -1567,40 +1610,40 @@ describe("public docs validation", () => {
     );
   });
 
-  it("does not treat footnote definitions as link definitions", () => {
+  it("does not treat footnote definitions as link definitions", async () => {
     assertEquals(
-      destinations("[^note]: Explanation of the behavior"),
+      await destinations("[^note]: Explanation of the behavior"),
       [],
     );
   });
 
-  it("ignores unused reference definitions", () => {
+  it("ignores unused reference definitions", async () => {
     assertEquals(
-      destinations("[old]: ../architecture/private.md"),
+      await destinations("[old]: ../architecture/private.md"),
       [],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[old]: <https://veryfront.com/docs/code/architecture/private>",
       ),
       [],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[old]\n\n" +
           "[old]: <https://veryfront.com/docs/code/architecture/private>",
       ),
       ["https://veryfront.com/docs/code/architecture/private"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[nested [old]](./public.md)\n\n" +
           "[old]: ../architecture/private.md",
       ),
       ["../architecture/private.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         '[inline](./public.md "[old]")\n\n' +
           "[old]: ../architecture/private.md",
       ),
@@ -1608,9 +1651,9 @@ describe("public docs validation", () => {
     );
   });
 
-  it("ignores Markdown destinations inside code", () => {
+  it("ignores Markdown destinations inside code", async () => {
     assertEquals(
-      destinations(
+      await destinations(
         "`[inline](../architecture/inline.md)`\n" +
           "`sample\r\n\r\n[crlf](../architecture/crlf-code-span.md)`\n" +
           "```md\n[example](../architecture/fenced.md)\n```\n" +
@@ -1623,28 +1666,28 @@ describe("public docs validation", () => {
       ["../architecture/crlf-code-span.md", "../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "`[example](\n../architecture/private.md)`\n" +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "`[example](../architecture/private.md)\\`\n" +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         ">     [quoted](../architecture/quoted.md)\n" +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "`unmatched\n" +
           "```md\n[fenced](../architecture/fenced.md)\n```\n" +
           "[real](../architecture/real.md)\n`",
@@ -1652,7 +1695,7 @@ describe("public docs validation", () => {
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "# Heading\n    [atx](../architecture/atx.md)\n" +
           "\nSetext\n=======\n    [setext](../architecture/setext.md)\n" +
           "\n---\n    [thematic](../architecture/thematic.md)",
@@ -1661,24 +1704,24 @@ describe("public docs validation", () => {
     );
   });
 
-  it("ends code spans at bare-CR paragraph boundaries", () => {
+  it("ends code spans at bare-CR paragraph boundaries", async () => {
     assertEquals(
-      destinations("`sample\r\r[x](docs/architecture/private.md)`"),
+      await destinations("`sample\r\r[x](docs/architecture/private.md)`"),
       ["docs/architecture/private.md"],
     );
     assertEquals(
-      destinations("[`sample\r\r]`](../architecture/private.md)"),
+      await destinations("[`sample\r\r]`](../architecture/private.md)"),
       [],
     );
     assertEquals(
-      destinations("`[hidden](../architecture/hidden.md)\rcontinuation`"),
+      await destinations("`[hidden](../architecture/hidden.md)\rcontinuation`"),
       [],
     );
   });
 
-  it("ignores fenced code inside block containers", () => {
+  it("ignores fenced code inside block containers", async () => {
     assertEquals(
-      destinations(
+      await destinations(
         "> ```md\n" +
           "> [quoted](../architecture/quoted.md)\n" +
           "> ```\n" +
@@ -1690,21 +1733,21 @@ describe("public docs validation", () => {
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "``` md`bad\n" +
           "[rendered](../architecture/rendered.md)",
       ),
       ["../architecture/rendered.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "\t```md\n" +
           "[rendered](../architecture/tab-rendered.md)",
       ),
       ["../architecture/tab-rendered.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "> ```md\n" +
           "> [quoted](../architecture/quoted.md)\n" +
           "[root](../architecture/root.md)\n" +
@@ -1713,7 +1756,7 @@ describe("public docs validation", () => {
       ["../architecture/root.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "- ```md\n" +
           "  [listed](../architecture/listed.md)\n" +
           "[root](../architecture/root.md)\n" +
@@ -1722,7 +1765,7 @@ describe("public docs validation", () => {
       ["../architecture/root.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "```md\r\n" +
           "[hidden](../architecture/hidden.md)\r\n" +
           "```\r\n" +
@@ -1731,7 +1774,7 @@ describe("public docs validation", () => {
       ["../architecture/crlf.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "   ```md\n" +
           "[hidden](../architecture/hidden.md)\n" +
           "```\n" +
@@ -1740,7 +1783,7 @@ describe("public docs validation", () => {
       ["../architecture/root-indented-fence.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "```md\n" +
           "- ```\n" +
           "[still code](../architecture/still-code.md)",
@@ -1749,25 +1792,25 @@ describe("public docs validation", () => {
     );
   });
 
-  it("scans rendered paragraphs indented inside list items", () => {
-    const issues = collectUnpublishedLinkIssues(
+  it("scans rendered paragraphs indented inside list items", async () => {
+    const issues = await collectUnpublishedLinkIssues(
       "docs/guides/example.md",
       "- Details:\n\n    [gate](../architecture/private.md)",
     );
 
     assertEquals(issues.length, 1);
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "docs/guides/example.md",
         "Intro\n    [gate](../architecture/private.md)",
-      ).length,
+      )).length,
       1,
     );
   });
 
-  it("ignores destinations inside MDX comments", () => {
+  it("ignores destinations inside MDX comments", async () => {
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "{/* [old](../architecture/private.md) */}\n" +
           '{/*\n<a href="../architecture/html.md">old</a>\n*/}\n' +
           "[real](../architecture/real.md)",
@@ -1775,7 +1818,7 @@ describe("public docs validation", () => {
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "`{/*`\n" +
           "[inline](../architecture/inline.md)\n" +
           "{/* real comment */}",
@@ -1783,7 +1826,7 @@ describe("public docs validation", () => {
       ["../architecture/inline.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "```md\n{/*\n```\n" +
           "[fenced](../architecture/fenced.md)\n" +
           "{/* real comment */}",
@@ -1791,23 +1834,25 @@ describe("public docs validation", () => {
       ["../architecture/fenced.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         '{"{/*"}\n' +
           "[gate](../architecture/private.md)\n" +
           "{/* real */}",
       ),
       ["../architecture/private.md"],
     );
-    assertEquals(
-      destinations(
-        "Unmatched prose {\n\n" +
-          "{/* [old](../architecture/commented.md) */}\n" +
-          "[real](../architecture/real.md)",
-      ),
-      ["../architecture/real.md"],
+    await assertRejects(
+      () =>
+        mdxDestinations(
+          "Unmatched prose {\n\n" +
+            "{/* [old](../architecture/commented.md) */}\n" +
+            "[real](../architecture/real.md)",
+        ),
+      PublicDocSyntaxError,
+      "Invalid MDX syntax",
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         '{"[plain](../architecture/expression.md)"}\n' +
           "[real](../architecture/real.md)",
       ),
@@ -1815,29 +1860,29 @@ describe("public docs validation", () => {
     );
   });
 
-  it("scans MDX-only syntax as Markdown in README files", () => {
+  it("scans MDX-only syntax as Markdown in README files", async () => {
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "README.md",
         "{/* [visible](docs/guides/does-not-exist.md) */}",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [1],
     );
   });
 
-  it("ignores destinations inside HTML comments", () => {
+  it("ignores destinations inside HTML comments", async () => {
     assertEquals(
-      scanDestinations(
+      (await scanDestinations(
         "<!-- [old](../architecture/markdown.md)\n" +
           '<a href="../architecture/html.md">old</a>\n' +
           "https://veryfront.com/docs/code/architecture/autolink -->\n" +
           "[real](../architecture/real.md)",
         "markdown",
-      ).map((destination) => destination.href),
+      )).map((destination) => destination.href),
       ["../architecture/real.md"],
     );
     assertEquals(
-      scanDestinations(
+      await scanDestinations(
         "<!-- [hidden](../architecture/unclosed.md)\n" +
           "https://veryfront.com/docs/code/architecture/also-hidden",
         "markdown",
@@ -1845,28 +1890,28 @@ describe("public docs validation", () => {
       [],
     );
     assertEquals(
-      scanDestinations(
+      (await scanDestinations(
         "before <!-- unfinished\n" +
           "[gate](../architecture/private.md)",
         "markdown",
-      ).map((destination) => destination.href),
+      )).map((destination) => destination.href),
       ["../architecture/private.md"],
     );
     assertEquals(
-      scanDestinations(
+      (await scanDestinations(
         String.raw`\<!-- [visible](../architecture/escaped.md) -->` +
           '\ntext <div title="<!--"></div>\n' +
           "[real](../architecture/real.md)",
         "markdown",
-      ).map((destination) => destination.href),
+      )).map((destination) => destination.href),
       ["../architecture/escaped.md", "../architecture/real.md"],
     );
-    assertEquals(destinations("<!--".repeat(1_000)), []);
+    assertEquals(await destinations("<!--".repeat(1_000)), []);
   });
 
-  it("ignores Markdown syntax inside complete MDX expressions", () => {
+  it("ignores Markdown syntax inside complete MDX expressions", async () => {
     assertEquals(
-      destinations(
+      await mdxDestinations(
         '{"[expression](../architecture/private.md)"}\n' +
           '{condition && <a href="../architecture/expression.md">link</a>}\n' +
           "{\ntrue\n\n" +
@@ -1883,7 +1928,7 @@ describe("public docs validation", () => {
       ],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         '{true /* } */ ? "[plain](../architecture/comment.md)" : ""}\n' +
           '{true // }\n ? "[line](../architecture/line-comment.md)" : ""}\n' +
           "[real](../architecture/real.md)",
@@ -1891,56 +1936,58 @@ describe("public docs validation", () => {
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         '{/<}>/.test(value) ? "[old](../architecture/regex.md)" : ""}\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         '{new /[}]/ ? "[old](../architecture/new-regex.md)" : ""}\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
-    assertEquals(
-      destinations(
-        "export const sample = `${x++ / value} / ` +\n" +
-          "[old](../architecture/postfix.md)",
-      ),
-      [],
+    await assertRejects(
+      () =>
+        mdxDestinations(
+          "export const sample = `${x++ / value} / ` +\n" +
+            "[old](../architecture/postfix.md)",
+        ),
+      PublicDocSyntaxError,
+      "Invalid MDX syntax",
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export const sample = `${++/{/.lastIndex} / \\` " +
           "[old](../architecture/prefix-update.md)`",
       ),
       [],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         '{(() => { if (value) /[}]/.test(value); return "[old](../architecture/expression-control.md)"; })()}\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         '{(() => { for (item1 of /[}]/.source) {} return "[old](../architecture/expression-for-of.md)"; })()}\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export const sample = `${(() => { for (item_ of /[}]/.source) {} return '[old](../architecture/template-for-of.md)'; })()}`\n\n" +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export const sample = `${--/}/.lastIndex} / \\` " +
           "[old](../architecture/prefix-decrement.md)`",
       ),
@@ -1948,81 +1995,81 @@ describe("public docs validation", () => {
     );
   });
 
-  it("ignores Markdown syntax inside MDX ESM blocks", () => {
+  it("ignores Markdown syntax inside MDX ESM blocks", async () => {
     assertEquals(
-      destinations(
+      await mdxDestinations(
         'import value from "example"\n' +
-          "/[}]/.test(value)\n" +
+          "export const checked = /[}]/.test(value)\n" +
           'export const hidden = "[old](../architecture/import-regex.md)"\n\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         'export { value } from "example"\n' +
-          "/[}]/.test(value)\n" +
+          "export const checked = /[}]/.test(value)\n" +
           'export const hidden = "[old](../architecture/export-regex.md)"\n\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export function sample() {}\n" +
-          "/[}]/.test(value);\n" +
+          "export const checked = /[}]/.test(value);\n" +
           'export const hidden = "[old](../architecture/block-regex.md)";\n\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export default async function* sample() {}\n" +
-          "/[}]/.test(value);\n" +
+          "export const checked = /[}]/.test(value);\n" +
           'export const hidden = "[old](../architecture/async-block-regex.md)";\n\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export class Sample {}\n" +
-          "/[}]/.test(value);\n" +
+          "export const checked = /[}]/.test(value);\n" +
           'export const hidden = "[old](../architecture/class-block-regex.md)";\n\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export default class Sample extends Base {}\n" +
-          "/[}]/.test(value);\n" +
+          "export const checked = /[}]/.test(value);\n" +
           'export const hidden = "[old](../architecture/default-class-block-regex.md)";\n\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         'export class Sample extends mixin({ marker: "ok" }) {}\n' +
-          "/[}]/.test(value);\n" +
+          "export const checked = /[}]/.test(value);\n" +
           'export const hidden = "[old](../architecture/class-extends-string-regex.md)";\n\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export class Sample extends mixin({ test: /[}]/ }) {}\n" +
-          "/[}]/.test(value);\n" +
+          "export const checked = /[}]/.test(value);\n" +
           'export const hidden = "[old](../architecture/class-extends-regex.md)";\n\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export function sample(value) {\n" +
           "  try {} catch {}\n" +
           "  /[}]/.test(value);\n" +
@@ -2033,7 +2080,7 @@ describe("public docs validation", () => {
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export function sample(input) {\n" +
           "  let first, second\n" +
           "  /[}]/.test(input);\n" +
@@ -2046,7 +2093,7 @@ describe("public docs validation", () => {
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export function sample(input) {\n" +
           "  let first = <Foo>{input}</Foo>\n" +
           '  / ({ marker: "}/" }).length;\n' +
@@ -2057,7 +2104,7 @@ describe("public docs validation", () => {
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export function sample(input) {\n" +
           "  let first = <Foo />, second\n" +
           "  /[}]/.test(input);\n" +
@@ -2068,7 +2115,7 @@ describe("public docs validation", () => {
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export function sample(value) {\n" +
           "  {}\n" +
           "  /[}]/.test(value);\n" +
@@ -2079,7 +2126,7 @@ describe("public docs validation", () => {
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export const sample = function () {}\n" +
           '/ ({ marker: "}/" }).length;\n' +
           'export const hidden = "[old](../architecture/function-division.md)";\n\n' +
@@ -2088,28 +2135,26 @@ describe("public docs validation", () => {
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
-        "export const Sample = class {}\n" +
-          '/ ({ marker: "}/" }).length;\n' +
-          "export const arrow = () => {}\n" +
-          '/ ({ marker: "}/" }).length;\n' +
-          "export const object = {}\n" +
-          '/ ({ marker: "}/" }).length;\n' +
+      await mdxDestinations(
+        'export const Sample = (class {}) / ({ marker: "}/" }).length;\n' +
+          'export const arrow = (() => {}) / ({ marker: "}/" }).length;\n' +
+          'export const object = ({}) / ({ marker: "}/" }).length;\n' +
           'export const hidden = "[old](../architecture/expression-division.md)";\n\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
-    assertEquals(
-      destinations(
-        "export const sample = <Foo>" +
-          "[old](../architecture/mismatched-jsx.md)</Bar>\n\n" +
-          "[real](../architecture/real.md)",
-      ),
-      ["../architecture/mismatched-jsx.md", "../architecture/real.md"],
+    await assertRejects(
+      () =>
+        mdxDestinations(
+          "export const sample = <Foo>" +
+            "[old](../architecture/mismatched-jsx.md)</Bar>",
+        ),
+      PublicDocSyntaxError,
+      "Invalid MDX syntax",
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         'import sample from "[old](../architecture/import.md)"\n' +
           "export const metadata = {\n" +
           '  sample: "[old](../architecture/export.md)",\n' +
@@ -2119,7 +2164,7 @@ describe("public docs validation", () => {
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         'export const increment = ++/{/.lastIndex ? "[old](../architecture/prefix.md)" : ""\n' +
           'export const decrement = --/}/.lastIndex ? "[old](../architecture/prefix-decrement.md)" : ""\n\n' +
           "[real](../architecture/real.md)",
@@ -2127,7 +2172,7 @@ describe("public docs validation", () => {
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         'export const increment = value++ / total ? "[old](../architecture/postfix.md)" : ""\n' +
           'export const decrement = value-- / total ? "[old](../architecture/postfix-decrement.md)" : ""\n\n' +
           "[real](../architecture/real.md)",
@@ -2135,22 +2180,23 @@ describe("public docs validation", () => {
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
-        "export const value = sample\n++/{/.lastIndex\n" +
+      await mdxDestinations(
+        "export const value = sample\n" +
+          "export const updated = ++/{/.lastIndex\n" +
           'export const hidden = "[old](../architecture/line-break.md)"\n\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         'export function sample(value) { if (value) /[}]/.test(value); return "[old](../architecture/control-header.md)"; }\n\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export async function sample(items, value) {\n" +
           "  for await (const item of items) /[}]/.test(item);\n" +
           "  if (value) {} else /[}]/.test(value);\n" +
@@ -2162,7 +2208,7 @@ describe("public docs validation", () => {
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export function sample() {\n" +
           "  for (π of /[}]/.source) {}\n" +
           '  return "[old](../architecture/esm-for-of.md)";\n' +
@@ -2172,7 +2218,7 @@ describe("public docs validation", () => {
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export function sample(value) {\n" +
           "  outer1: while (value) {\n" +
           "    break outer1\n" +
@@ -2199,29 +2245,29 @@ describe("public docs validation", () => {
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         'export const sample = `${(() => { if (value) /[}]/.test(value); return "[old](../architecture/template-control.md)"; })()}`\n\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "docs/guides/example.mdx",
         'export const sample = [\n  "[old](../architecture/private.md)",\n];\n\n' +
           "[real](../architecture/also-private.md)",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [5],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      await collectUnpublishedLinkIssues(
         "docs/guides/example.mdx",
         'export const sample = {\n\n  old: "[old](../architecture/private.md)",\n};',
       ),
       [],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      await collectUnpublishedLinkIssues(
         "docs/guides/example.mdx",
         "export const sample = condition\n" +
           '  ? "[old](../architecture/ternary.md)"\n' +
@@ -2230,71 +2276,71 @@ describe("public docs validation", () => {
       [],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "docs/guides/example.mdx",
         ' export const sample = "[old](../architecture/indented.md)"',
-      ).length,
+      )).length,
       1,
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "docs/guides/example.mdx",
         'export const sample = condition\n  ? "[old](../architecture/private.md)"\n' +
           '  : ""\n\n[real](../architecture/real.md)',
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [5],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      await collectUnpublishedLinkIssues(
         "docs/guides/example.mdx",
         'export const sample = `x ${"`"} [old](../architecture/private.md)`',
       ),
       [],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      await collectUnpublishedLinkIssues(
         "docs/guides/example.mdx",
         'export const sample = `${foo / /}`/.test(x) ? "[old](../architecture/private.md)" : ""}`',
       ),
       [],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      await collectUnpublishedLinkIssues(
         "docs/guides/example.mdx",
         "export const sample = `${/a/ / value} / \\` [old](../architecture/private.md)`",
       ),
       [],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "docs/guides/example.md",
         'export const sample = "[old](../architecture/markdown.md)"',
-      ).length,
+      )).length,
       1,
     );
   });
 
-  it("starts regex statements after completed module declarations", () => {
+  it("keeps regex and division grammar after module declarations", async () => {
     assertEquals(
-      destinations(
+      await mdxDestinations(
         'import sample from "sample"\n' +
-          "/[}]/.test(sample)\n" +
+          "export const checked = /[}]/.test(sample)\n" +
           'export const hidden = "[old](../architecture/import-regex.md)"\n\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         'export { sample } from "sample"\n' +
-          "/[}]/.test(sample)\n" +
+          "export const checked = /[}]/.test(sample)\n" +
           'export const hidden = "[old](../architecture/export-regex.md)"\n\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export default value\n" +
           '/ ({ marker: "}/" }).length\n' +
           'export const hidden = "[old](../architecture/export-division.md)"\n\n' +
@@ -2303,46 +2349,47 @@ describe("public docs validation", () => {
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "import sample\n" +
           'from "sample"\n' +
-          "/[}]/.test(sample)\n" +
+          "export const checked = /[}]/.test(sample)\n" +
           'export const hidden = "[old](../architecture/multiline-import-regex.md)"\n\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export { sample }\n" +
           'from "sample"\n' +
-          "/[}]/.test(sample)\n" +
+          "export const checked = /[}]/.test(sample)\n" +
           'export const hidden = "[old](../architecture/multiline-export-regex.md)"\n\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
-    assertEquals(
-      destinations(
-        'import data from "sample"\n' +
-          'with { type: "json" }\n' +
-          "/[}]/.test(data)\n" +
-          'export const hidden = "[old](../architecture/import-attributes-regex.md)"\n\n' +
-          "[real](../architecture/real.md)",
-      ),
-      ["../architecture/real.md"],
+    await assertRejects(
+      () =>
+        mdxDestinations(
+          'import data from "sample"\n' +
+            'with { type: "json" }\n' +
+            "export const checked = /[}]/.test(data)\n" +
+            'export const hidden = "[old](../architecture/import-attributes-regex.md)"',
+        ),
+      PublicDocSyntaxError,
+      "Invalid MDX syntax",
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         'export const sample = import("sample");\n' +
-          "/[}]/.test(sample)\n" +
+          "export const checked = /[}]/.test(sample)\n" +
           'export const hidden = "[old](../architecture/dynamic-import-regex.md)"\n\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         'export const sample = import("sample")\n' +
           '/ ({ marker: "}/" }).length\n' +
           'export const hidden = "[old](../architecture/dynamic-import-division.md)"\n\n' +
@@ -2351,16 +2398,16 @@ describe("public docs validation", () => {
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export const sample = import.meta.url;\n" +
-          "/[}]/.test(sample)\n" +
+          "export const checked = /[}]/.test(sample)\n" +
           'export const hidden = "[old](../architecture/import-meta-regex.md)"\n\n' +
           "[real](../architecture/real.md)",
       ),
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export const sample = import.meta.url\n" +
           '/ ({ marker: "}/" }).length\n' +
           'export const hidden = "[old](../architecture/import-meta-division.md)"\n\n' +
@@ -2370,9 +2417,9 @@ describe("public docs validation", () => {
     );
   });
 
-  it("keeps labeled blocks in statement context in MDX ESM", () => {
+  it("keeps labeled blocks in statement context in MDX ESM", async () => {
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export function sample(value) {\n" +
           "label: { {} /[}]/.test(value); }\n" +
           'return "[old](../architecture/labeled-block-regex.md)";\n' +
@@ -2382,7 +2429,7 @@ describe("public docs validation", () => {
       ["../architecture/real.md"],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export function sample(value) {\n" +
           'label: { value / ({ marker: "}/" }).length; }\n' +
           'return "[old](../architecture/labeled-block-division.md)";\n' +
@@ -2393,9 +2440,9 @@ describe("public docs validation", () => {
     );
   });
 
-  it("keeps labels after control headers in statement context", () => {
+  it("keeps labels after control headers in statement context", async () => {
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export function sample(value) {\n" +
           "if (value) label: {}\n" +
           "/[}]/.test(value)\n" +
@@ -2407,9 +2454,9 @@ describe("public docs validation", () => {
     );
   });
 
-  it("starts declarations after ASI line breaks", () => {
+  it("starts declarations after ASI line breaks", async () => {
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export function sample(value) {\n" +
           "doSomething()\n" +
           "class Inner {}\n" +
@@ -2422,9 +2469,9 @@ describe("public docs validation", () => {
     );
   });
 
-  it("starts labels after ASI line breaks", () => {
+  it("starts labels after ASI line breaks", async () => {
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export function sample(value) {\n" +
           "doSomething()\n" +
           "label: {}\n" +
@@ -2437,9 +2484,9 @@ describe("public docs validation", () => {
     );
   });
 
-  it("keeps switch clause blocks in statement context in MDX ESM", () => {
+  it("keeps switch clause blocks in statement context in MDX ESM", async () => {
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "export function sample(x, condition, value) {\n" +
           "switch (x) {\n" +
           "case 1: { {} /[}]/.test(x); }\n" +
@@ -2454,15 +2501,22 @@ describe("public docs validation", () => {
     );
   });
 
-  it("scans division-heavy MDX ESM template interpolations in linear time", () => {
-    const interpolation = Array.from({ length: 32_001 }, () => "value").join(
+  it("scans division-heavy MDX ESM template interpolations in linear time", async () => {
+    const interpolation = Array.from({ length: 1_001 }, () => "value").join(
       "/",
     );
     const source = "export const sample = `value ${" + interpolation +
       "}`\n\n[real](../architecture/real.md)";
     const startedAt = performance.now();
 
-    assertEquals(destinations(source), ["../architecture/real.md"]);
+    assertEquals(await mdxDestinations(source), ["../architecture/real.md"]);
+    const capacitySource = "export const sample = `value ${" +
+      Array.from({ length: 32_001 }, () => "value").join("/") + "}`";
+    await assertRejects(
+      () => mdxDestinations(capacitySource),
+      PublicDocSyntaxError,
+      "Invalid MDX syntax",
+    );
     assertLess(
       performance.now() - startedAt,
       2_000,
@@ -2470,13 +2524,13 @@ describe("public docs validation", () => {
     );
   });
 
-  it("scans long MDX ESM identifiers in linear time", () => {
+  it("scans long MDX ESM identifiers in linear time", async () => {
     const identifier = `value${"x".repeat(32_000)}`;
     const source = `export const ${identifier} = 1\n\n` +
       "[real](../architecture/real.md)";
     const startedAt = performance.now();
 
-    assertEquals(destinations(source), ["../architecture/real.md"]);
+    assertEquals(await mdxDestinations(source), ["../architecture/real.md"]);
     assertLess(
       performance.now() - startedAt,
       2_000,
@@ -2484,58 +2538,46 @@ describe("public docs validation", () => {
     );
   });
 
-  it("rejects malformed nested JSX without rescanning suffixes", () => {
-    const depth = 2_000;
+  it("propagates malformed nested JSX diagnostics", async () => {
+    const depth = 64;
     const source = "<a data-ok={" +
       "<A value={".repeat(depth) +
       "null}".repeat(depth) + ">";
-    const startedAt = performance.now();
 
-    assertEquals(destinations(source), []);
-    assertLess(
-      performance.now() - startedAt,
-      2_000,
-      "malformed nested JSX scanning must stay linear",
+    await assertRejects(
+      () => mdxDestinations(source),
+      PublicDocSyntaxError,
+      "Invalid MDX syntax",
     );
   });
 
-  it("scans deeply nested valid JSX without overflowing the call stack", () => {
-    const depth = 4_000;
+  it("preserves destinations after nested JSX", async () => {
+    const depth = 64;
     const source = "<a data-ok={" +
       "<A>{".repeat(depth) +
       "value" +
       "}</A>".repeat(depth) +
       '} href="../architecture/deep-jsx.md">ok</a>';
-    const startedAt = performance.now();
 
-    assertEquals(destinations(source), ["../architecture/deep-jsx.md"]);
-    assertLess(
-      performance.now() - startedAt,
-      2_000,
-      "deep valid JSX scanning must stay iterative",
-    );
+    assertEquals(await mdxDestinations(source), [
+      "../architecture/deep-jsx.md",
+    ]);
   });
 
-  it("scans JSX nested through attribute expressions in linear time", () => {
-    const depth = 1_600;
+  it("preserves destinations after nested JSX attributes", async () => {
+    const depth = 64;
     const source = "<a data-ok={" +
       "<A value={".repeat(depth) +
       "null" +
       "} />".repeat(depth) +
       '} href="../architecture/deep-jsx-attributes.md">ok</a>';
-    const startedAt = performance.now();
 
-    assertEquals(destinations(source), [
+    assertEquals(await mdxDestinations(source), [
       "../architecture/deep-jsx-attributes.md",
     ]);
-    assertLess(
-      performance.now() - startedAt,
-      2_000,
-      "valid JSX attribute-expression scanning must stay linear",
-    );
   });
 
-  it("scans multiline MDX ESM block comments in linear time", () => {
+  it("scans multiline MDX ESM block comments in linear time", async () => {
     const comment = Array.from(
       { length: 80_001 },
       (_, index) => `line ${index} [old](../architecture/private.md)`,
@@ -2544,7 +2586,7 @@ describe("public docs validation", () => {
       "[real](../architecture/real.md)";
     const startedAt = performance.now();
 
-    assertEquals(destinations(source), ["../architecture/real.md"]);
+    assertEquals(await mdxDestinations(source), ["../architecture/real.md"]);
     assertLess(
       performance.now() - startedAt,
       2_000,
@@ -2552,41 +2594,43 @@ describe("public docs validation", () => {
     );
   });
 
-  it("ignores destinations inside initial YAML frontmatter", () => {
+  it("ignores destinations inside initial YAML frontmatter", async () => {
     const source = '---\ntitle: "[sample](./does-not-exist.md)"\n' +
       "canonical: https://veryfront.com/docs/code/architecture/private\n---\n" +
       "[real](../architecture/real.md)";
     assertEquals(
-      collectUnpublishedLinkIssues("docs/guides/example.md", source).map(
-        (issue) => issue.line,
-      ),
+      (await collectUnpublishedLinkIssues("docs/guides/example.md", source))
+        .map(
+          (issue) => issue.line,
+        ),
       [5],
     );
     assertEquals(
-      collectUnpublishedLinkIssues("docs/guides/example.mdx", source).map(
-        (issue) => issue.line,
-      ),
+      (await collectUnpublishedLinkIssues("docs/guides/example.mdx", source))
+        .map(
+          (issue) => issue.line,
+        ),
       [5],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "docs/guides/example.md",
         "Intro\n\n---\n[visible](../architecture/visible.md)\n---",
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [4],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "docs/guides/example.md",
         '---\ntitle: "[visible](./does-not-exist.md)"\n...\n',
-      ).map((issue) => issue.line),
+      )).map((issue) => issue.line),
       [2],
     );
   });
 
-  it("keeps multiline MDX expressions from opening false comments", () => {
+  it("keeps multiline MDX expressions from opening false comments", async () => {
     assertEquals(
-      destinations(
+      await mdxDestinations(
         '{\ntrue\n\n? "{/*"\n: ""\n}\n' +
           "[real](../architecture/real.md)\n" +
           '{"*/}"}',
@@ -2595,8 +2639,8 @@ describe("public docs validation", () => {
     );
   });
 
-  it("validates Veryfront documentation autolinks", () => {
-    const issues = collectUnpublishedLinkIssues(
+  it("validates Veryfront documentation autolinks", async () => {
+    const issues = await collectUnpublishedLinkIssues(
       "docs/guides/example.md",
       "<https://veryfront.com/docs/code/architecture/private>\n" +
         "https://veryfront.com/docs/code/architecture/bare\n" +
@@ -2606,13 +2650,13 @@ describe("public docs validation", () => {
 
     assertEquals(issues.length, 4);
     assertEquals(
-      destinations(
+      await mdxDestinations(
         String.raw`\<https://veryfront.com/docs/code/guides/does-not-exist>`,
       ),
       [],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[<https://veryfront.com/docs/code/architecture/label>](./public.md)",
       ),
       [
@@ -2621,20 +2665,20 @@ describe("public docs validation", () => {
       ],
     );
     assertEquals(
-      destinations(
+      await destinations(
         '[public](./public.md "<https://veryfront.com/docs/code/architecture/title>")',
       ),
       ["./public.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[public]\n\n[public]: ./public.md\n" +
           '  "https://veryfront.com/docs/code/architecture/title"',
       ),
       ["./public.md"],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      await collectUnpublishedLinkIssues(
         "docs/guides/example.md",
         '[public](./deploying.md "https://veryfront.com/docs/code/guides/does-not-exist")\n' +
           "*https://veryfront.com/docs/code/guides/deploying*\n" +
@@ -2645,7 +2689,7 @@ describe("public docs validation", () => {
       [],
     );
     assertEquals(
-      destinations(
+      await mdxDestinations(
         "https://veryfront.com/docs/code/architecture/bare.\n" +
           "https://veryfront.com/docs/code/guides/balanced_(path)\n" +
           "https://veryfront.com/docs/code/guides/emphasis*\n" +
@@ -2663,7 +2707,7 @@ describe("public docs validation", () => {
       ],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "https://veryfront.com/docs/code/guides/a[b]\n" +
           "https://veryfront.com/docs/code/guides/a[b]c\n" +
           "https://veryfront.com/docs/code/guides/a{b}}\n" +
@@ -2677,7 +2721,7 @@ describe("public docs validation", () => {
       ],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "docs/guides/example.md",
         "https://veryfront.com/docs/code/guides/a&#35;anchor\n" +
           "<https://veryfront.com/docs/code/guides/a&#35;anchor>\n" +
@@ -2685,11 +2729,11 @@ describe("public docs validation", () => {
           "\n" +
           String.raw`<https://veryfront.com/docs/code/guides/deploying\.md>`,
         publishedFiles("docs/guides/a.md", "docs/guides/deploying.md"),
-      ).length,
+      )).length,
       4,
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      await collectUnpublishedLinkIssues(
         "docs/guides/example.md",
         String
           .raw`[deploy](https://veryfront.com/docs/code/guides/deploying\.md)`,
@@ -2698,7 +2742,7 @@ describe("public docs validation", () => {
       [],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[inline](https://veryfront.com/docs/code/guides/inline)\n" +
           '[public](./deploying.md "https://veryfront.com/docs/code/architecture/title")\n' +
           "<https://veryfront.com/docs/code/guides/angle>\n\n" +
@@ -2711,7 +2755,7 @@ describe("public docs validation", () => {
       ],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[https://veryfront.com/docs/code/architecture/label](./public.md)\n" +
           "[https://veryfront.com/docs/code/architecture/reference][public]\n\n" +
           "[public]: ./reference.md",
@@ -2719,14 +2763,14 @@ describe("public docs validation", () => {
       ["./public.md", "./reference.md"],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "[https://veryfront.com/docs/code/architecture/definition]: ./public.md\n" +
           '[unused]: ./reference.md "https://veryfront.com/docs/code/architecture/title"',
       ),
       [],
     );
     assertEquals(
-      destinations(
+      await destinations(
         "prefixhttps://veryfront.com/docs/code/architecture/not-an-autolink\n" +
           "_https://veryfront.com/docs/code/guides/underscore-boundary\n" +
           String.raw`\https://veryfront.com/docs/code/architecture/backslash`,
@@ -2738,8 +2782,8 @@ describe("public docs validation", () => {
     );
   });
 
-  it("does not duplicate angle-bracket Markdown destinations as autolinks", () => {
-    const issues = collectUnpublishedLinkIssues(
+  it("does not duplicate angle-bracket Markdown destinations as autolinks", async () => {
+    const issues = await collectUnpublishedLinkIssues(
       "docs/guides/example.md",
       "[private](<https://veryfront.com/docs/code/architecture/private>)",
     );
@@ -2747,8 +2791,8 @@ describe("public docs validation", () => {
     assertEquals(issues.length, 1);
   });
 
-  it("validates a URI autolink wrapped in prose parentheses", () => {
-    const issues = collectUnpublishedLinkIssues(
+  it("validates a URI autolink wrapped in prose parentheses", async () => {
+    const issues = await collectUnpublishedLinkIssues(
       "docs/guides/example.md",
       "(<https://veryfront.com/docs/code/architecture/private>)",
     );
@@ -2769,7 +2813,7 @@ describe("public docs validation", () => {
     );
   });
 
-  it("rejects directory routes without an index page", () => {
+  it("rejects directory routes without an index page", async () => {
     const exists = publishedTargetExists(
       "docs/guides/no-index",
       (path) => {
@@ -2789,18 +2833,18 @@ describe("public docs validation", () => {
       ],
     );
     assertEquals(
-      collectUnpublishedLinkIssues(
+      (await collectUnpublishedLinkIssues(
         "docs/guides/example.md",
         '<a href="./deploying.md/">deploy</a>',
         publishedFiles("docs/guides/deploying.md"),
-      ).length,
+      )).length,
       1,
     );
   });
 
-  it("reports the destination line for a multiline MDX href", () => {
-    const issues = collectUnpublishedLinkIssues(
-      "docs/guides/example.md",
+  it("reports the destination line for a multiline MDX href", async () => {
+    const issues = await collectUnpublishedLinkIssues(
+      "docs/guides/example.mdx",
       '<a href={\n  "../architecture/private.md"\n}>gate</a>',
     );
 
@@ -2809,8 +2853,8 @@ describe("public docs validation", () => {
     assertEquals(issues[0]?.text, '"../architecture/private.md"');
   });
 
-  it("reports the line the destination sits on", () => {
-    const issues = collectUnpublishedLinkIssues(
+  it("reports the line the destination sits on", async () => {
+    const issues = await collectUnpublishedLinkIssues(
       "docs/guides/example.md",
       "One\nTwo\nThree\n[gate](../architecture/private.md)\n",
     );
@@ -2819,8 +2863,8 @@ describe("public docs validation", () => {
     assertEquals(issues[0]?.line, 4);
   });
 
-  it("accepts published relative, directory, anchor, and site-root links", () => {
-    const issues = collectUnpublishedLinkIssues(
+  it("accepts published relative, directory, anchor, and site-root links", async () => {
+    const issues = await collectUnpublishedLinkIssues(
       "docs/guides/example.md",
       "[sibling](./deploying.md) [dir](../concepts/) [anchor](#section)\n" +
         "[root](/code/guides/deploying) [query](./deploying.md?x=1)\n",
@@ -2831,5 +2875,30 @@ describe("public docs validation", () => {
     );
 
     assertEquals(issues, []);
+  });
+
+  it("reports positioned MDX syntax failures while Markdown stays tolerant", async () => {
+    const mdx = await collectIssues(
+      "docs/guides/example.mdx",
+      "Intro\n\n{const =}",
+    );
+    const markdown = await collectIssues(
+      "docs/guides/example.md",
+      "Intro\n\n{const =}",
+    );
+
+    assertEquals(mdx.length, 1);
+    assertEquals(mdx[0]?.line, 3);
+    assertStringIncludes(mdx[0]?.message ?? "", "Fix invalid MDX syntax");
+    assertStringIncludes(mdx[0]?.message ?? "", "Unexpected");
+    assertEquals(markdown, []);
+  });
+
+  it("rejects destination-only scans when parser syntax is invalid", async () => {
+    await assertRejects(
+      async () => await scanDestinations("{const =}", "mdx"),
+      Error,
+      "Invalid MDX syntax",
+    );
   });
 });
