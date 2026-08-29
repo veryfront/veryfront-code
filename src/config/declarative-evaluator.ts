@@ -45,6 +45,9 @@ const ReflectApply = Reflect.apply;
 const ReflectOwnKeys = Reflect.ownKeys;
 const StringPrototypeCharAt = String.prototype.charAt;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeIndexOf = String.prototype.indexOf;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeTrim = String.prototype.trim;
 const WeakMapPrototypeGet = WeakMap.prototype.get;
 const WeakMapPrototypeSet = WeakMap.prototype.set;
@@ -1679,10 +1682,12 @@ function helperFromImportedName(name: string): HelperName | null {
  * must accept the same spelling. Anything else passes through unchanged.
  */
 function normalizeExtensionImportSource(source: string): string {
-  if (!source.startsWith("npm:")) return source;
-  const bare = source.slice("npm:".length);
-  const versionSeparator = bare.indexOf("@", 1);
-  return versionSeparator === -1 ? bare : bare.slice(0, versionSeparator);
+  if (!ReflectApply(StringPrototypeStartsWith, source, ["npm:"])) return source;
+  const bare = ReflectApply(StringPrototypeSlice, source, ["npm:".length]) as string;
+  const versionSeparator = ReflectApply(StringPrototypeIndexOf, bare, ["@", 1]) as number;
+  return versionSeparator === -1
+    ? bare
+    : ReflectApply(StringPrototypeSlice, bare, [0, versionSeparator]) as string;
 }
 
 function processExtensionImport(
@@ -1693,6 +1698,7 @@ function processExtensionImport(
   environment: LexicalEnvironment,
   countBindings: boolean,
 ): void {
+  if (node.importKind === "type") return;
   if (
     specifiers.length === 0 || specifiers.length > DECLARATIVE_CONFIG_LIMITS.maxImportSpecifiers
   ) {
@@ -1724,16 +1730,7 @@ function processExtensionImport(
     }
     defaultSpecifier = specifier;
   }
-  if (defaultSpecifier === null) {
-    return throwEvaluationError(
-      "unsupported-syntax",
-      "validate",
-      "import-form",
-      context,
-      node,
-    );
-  }
-  if (node.importKind === "type") return;
+  if (defaultSpecifier === null) return;
   const local = requireAstNode(defaultSpecifier.local, context, defaultSpecifier);
   declareBinding(
     context,

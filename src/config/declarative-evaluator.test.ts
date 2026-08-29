@@ -692,6 +692,45 @@ export default { extensions: [extJwt()] };
     );
   });
 
+  it("accepts wholly type-erased first-party extension imports", async () => {
+    const snapshot = await evaluateDeclarativeConfig({
+      source: `
+import type { RedisOptions } from "@veryfront/ext-redis";
+import extRedis from "@veryfront/ext-redis";
+
+export default { extensions: [extRedis()] };
+`,
+      environmentName: "production",
+      environment: {},
+    });
+    assertEquals(snapshot.extensions, [{ name: "ext-redis" }]);
+
+    for (
+      const source of [
+        'import { type RedisOptions } from "@veryfront/ext-redis"; export default {};',
+        'import type { RedisOptions } from "@veryfront/ext-redis"; export default {};',
+      ]
+    ) {
+      const erased = await evaluateDeclarativeConfig({
+        source,
+        environmentName: "production",
+        environment: {},
+      });
+      assertEquals(erased.extensions, undefined);
+    }
+
+    // Runtime import forms without a default factory binding stay rejected.
+    for (
+      const source of [
+        'import { something } from "@veryfront/ext-redis"; export default {};',
+        'import * as ext from "@veryfront/ext-redis"; export default {};',
+        'import "@veryfront/ext-redis"; export default {};',
+      ]
+    ) {
+      await assertEvaluationError(source, "unsupported-syntax", "import-form");
+    }
+  });
+
   it("accepts Deno npm specifiers for first-party extension imports", async () => {
     const snapshot = await evaluateDeclarativeConfig({
       source: `
