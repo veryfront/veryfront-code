@@ -118,6 +118,7 @@ const PUBLISHED_ERROR_SLUGS: readonly string[] = Object.freeze([
   "production-build-required",
   "project-execution-unavailable",
   "project-source-empty",
+  "provider-metadata-split-unsupported",
   "provider-replay-checkpoint-invalid",
   "push-conflict",
   "push-receipt-missing",
