@@ -1256,7 +1256,7 @@ describe("analyzeContent MDX", () => {
     );
     assertEquals(
       result.diagnostic.range.start.offset,
-      prefix.length + "<A>{".repeat(65).length - 1,
+      prefix.length + "<A>{".repeat(64).length + "<A>".length - 1,
     );
     assertLess(performance.now() - startedAt, 2_000);
   });
