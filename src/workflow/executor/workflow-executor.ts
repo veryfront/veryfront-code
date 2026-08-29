@@ -197,14 +197,6 @@ export class WorkflowExecutor {
       debug: this.config.debug,
       // waiting state is handled by executeAsync() after DAG execution returns with waiting: true
       onWaiting: () => {},
-      onRecoveryScheduled: ({ runId, nodeStates, ownership }) =>
-        updateRunIfStatus(
-          this.config.backend,
-          runId,
-          ["running"],
-          { nodeStates },
-          ownership?.workerId,
-        ),
       onNodeStatesChanged: ({
         runId,
         nodeStates,

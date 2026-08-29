@@ -2368,8 +2368,12 @@ describe("DAGExecutor", () => {
           executed.push(node.id);
           return { success: true, output: node.id, executionTime: 1 };
         }),
-        onRecoveryScheduled: ({ nodeId, nodeStates }) => {
-          persistedAttempts.push(nodeStates[nodeId]?.attempt ?? 0);
+        onNodeStatesChanged: ({ nodeStates }) => {
+          // The admission boundary, where the recovered node is recorded
+          // running with its raised attempt; the settle boundary records it
+          // completed and is not a recovery charge.
+          const second = nodeStates["second"];
+          if (second?.status === "running") persistedAttempts.push(second.attempt);
         },
       });
 
@@ -2397,13 +2401,20 @@ describe("DAGExecutor", () => {
     });
 
     it("does not re-run recovered work when recovery state cannot be persisted", async () => {
+      // Recovery state is persisted by the batch-entry boundary write, the one
+      // durable admission commit. When that fence is refused, the recovered
+      // node must not execute.
       const executed: string[] = [];
+      const publishes: Array<Record<string, NodeState>> = [];
       const exec = new DAGExecutor({
         stepExecutor: new MockStepExecutor(new Map(), (node) => {
           executed.push(node.id);
           return { success: true, output: node.id, executionTime: 1 };
         }),
-        onRecoveryScheduled: () => false,
+        onNodeStatesChanged: ({ nodeStates }) => {
+          publishes.push(structuredClone(nodeStates));
+          return false;
+        },
       });
 
       const nodes: WorkflowNode[] = [
@@ -2427,6 +2438,12 @@ describe("DAGExecutor", () => {
         "execution ownership changed",
       );
       assertEquals(executed, []);
+      assertEquals(publishes.length, 1);
+      assertEquals(
+        publishes[0]!["side-effect"]!.attempt,
+        2,
+        "the raised attempt must exist only in the write the fence refused",
+      );
     });
 
     it("never re-runs a node whose retry budget was already spent", async () => {
@@ -2501,15 +2518,15 @@ describe("DAGExecutor", () => {
       // erase every top-level node -- and a workflow whose completed nodes read
       // as pending re-runs from the start, duplicating exactly the side effects
       // this recovery path exists to protect.
-      const persisted: Array<{ runId: string; nodeId: string; keys: string[] }> = [];
+      const persisted: Array<{ runId: string; keys: string[] }> = [];
       const exec = new DAGExecutor({
         stepExecutor: new MockStepExecutor(new Map(), (node) => ({
           success: true,
           output: node.id,
           executionTime: 1,
         })),
-        onRecoveryScheduled: ({ runId, nodeId, nodeStates }) => {
-          persisted.push({ runId, nodeId, keys: Object.keys(nodeStates).sort() });
+        onNodeStatesChanged: ({ runId, nodeStates }) => {
+          persisted.push({ runId, keys: Object.keys(nodeStates).sort() });
         },
       });
 
@@ -2564,9 +2581,17 @@ describe("DAGExecutor", () => {
 
       await exec.execute(nodes, run);
 
-      assertEquals(persisted, [
-        { runId: "test-run", nodeId: "loop", keys: ["before", "loop"] },
-      ]);
+      // The recovery admission commit carries the run's own top-level map,
+      // not the in-flight iteration's keyspace.
+      assertEquals(persisted[0], { runId: "test-run", keys: ["before", "loop"] });
+      for (const boundary of persisted) {
+        assertEquals(boundary.runId, "test-run");
+        assertEquals(
+          boundary.keys.includes("before"),
+          true,
+          "a published map must never drop the run's completed top-level nodes",
+        );
+      }
     });
 
     it("leaves a wait parked on its decision alone", async () => {
@@ -2699,8 +2724,11 @@ describe("DAGExecutor", () => {
           executed.push(node.id);
           return { success: true, output: node.id, executionTime: 1 };
         }),
-        onRecoveryScheduled: ({ nodeId, nodeStates }) => {
-          persistedAttempts.push(nodeStates[nodeId]?.attempt ?? 0);
+        onNodeStatesChanged: ({ nodeStates }) => {
+          const state = nodeStates["side-effect"];
+          if (state?.status === "running" && state.attempt > 1) {
+            persistedAttempts.push(state.attempt);
+          }
         },
         maxConcurrency: 1,
       });
@@ -2775,8 +2803,10 @@ describe("DAGExecutor", () => {
           executed.push(node.id);
           return { success: true, output: node.id, executionTime: 1 };
         }),
-        onRecoveryScheduled: ({ nodeStates }) => {
-          persisted = structuredClone(nodeStates);
+        onNodeStatesChanged: ({ nodeStates }) => {
+          if (nodeStates["side-effect"]?.status === "running") {
+            persisted = structuredClone(nodeStates);
+          }
         },
       });
       const nodes: WorkflowNode[] = [
@@ -2836,9 +2866,6 @@ describe("DAGExecutor", () => {
             atExecution = lastDurable;
             return { success: true, output: node.id, executionTime: 1 };
           }),
-          onRecoveryScheduled: ({ nodeStates }) => {
-            lastDurable = structuredClone(nodeStates);
-          },
           onNodeStatesChanged: ({ nodeStates }) => {
             lastDurable = structuredClone(nodeStates);
           },

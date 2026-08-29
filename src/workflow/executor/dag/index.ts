@@ -258,18 +258,15 @@ export class DAGExecutor {
       ready = ready.slice(this.config.maxConcurrency);
 
       const batchStartedAt = new Date();
-      // Recoveries this batch charges. A node only reaches here once it is
-      // actually starting, so the recovery it spends is one it gets to use.
-      const recovered: string[] = [];
       for (const nodeId of batch) {
         const existing = nodeStates[nodeId];
         // A node already recorded running keeps its attempt: it is being
         // re-entered, not restarted (a composite resuming a parked wait). A
         // node admitted off the recovery queue is the exception -- an
         // interrupted attempt is being replaced, and raising the count here is
-        // what bounds repeated worker deaths.
+        // what bounds repeated worker deaths. A node only reaches here once it
+        // is actually starting, so the recovery it spends is one it gets to use.
         const isRecovery = recoveryQueued.delete(nodeId);
-        if (isRecovery) recovered.push(nodeId);
         const runningState: NodeState = {
           ...existing,
           nodeId,
@@ -287,20 +284,8 @@ export class DAGExecutor {
         nodeStates[nodeId] = runningState;
       }
       if (isDurableRun) {
-        for (const nodeId of recovered) {
-          const persisted = await this.config.onRecoveryScheduled?.({
-            runId: scope.rootRunId,
-            nodeId,
-            nodeStates: structuredClone(nodeStates),
-            ownership: scope.ownership,
-          });
-          if (persisted === false) {
-            throw ORCHESTRATION_ERROR.create({
-              detail:
-                `Cannot recover workflow node "${nodeId}" because execution ownership changed`,
-            });
-          }
-        }
+        // Sole durable admission commit, recovery charges included. A refused
+        // fence throws before anything executes, raised attempt unpersisted.
         publishedNodeStates = await this.publishNodeStates(
           scope,
           nodeStates,
