@@ -12,12 +12,16 @@ on:
       - "deno.json"
       - "deno.lock"
       - ".github/workflows/e2e-playwright.yml"
+      - ".github/actions/setup-deno/**"
 
 permissions:
   contents: read
 
+# GitHub keeps at most one pending run per concurrency group, so main pushes
+# need SHA-qualified groups or a later push silently replaces an earlier queued
+# datapoint in the clean-run history this workflow exists to build.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -36,15 +40,62 @@ jobs:
           warm-cache: "true"
       - name: Materialize locked test dependencies
         run: deno install --frozen
+      # Same hardened installer as the browser jobs in cicd.yml: a runner's
+      # own apt activity or an orphaned attempt can hold the dpkg locks, and a
+      # report-only history poisoned by provisioning failures is worthless.
       - name: Install Playwright Chromium
-        run: deno task test:e2e:playwright:install
+        timeout-minutes: 16
+        run: |
+          readonly install_attempts=2
+          readonly install_timeout_minutes=7
+          readonly install_kill_grace_seconds=15
+          readonly apt_lock_attempts=12
+          readonly apt_lock_sleep_seconds=5
+          readonly retry_backoff_seconds=20
+          readonly apt_lock_files="/var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock /var/lib/apt/lists/lock"
+
+          echo 'DPkg::Lock::Timeout "300";' | sudo tee /etc/apt/apt.conf.d/99vf-lock-timeout >/dev/null
+
+          wait_for_apt_locks() {
+            for _ in $(seq 1 "${apt_lock_attempts}"); do
+              if ! sudo fuser ${apt_lock_files} >/dev/null 2>&1; then
+                return 0
+              fi
+              sleep "${apt_lock_sleep_seconds}"
+            done
+            return 1
+          }
+
+          reap_apt_lock_holders() {
+            sudo fuser -k -TERM ${apt_lock_files} >/dev/null 2>&1 || true
+            sleep 5
+            sudo fuser -k -KILL ${apt_lock_files} >/dev/null 2>&1 || true
+            sudo dpkg --configure -a >/dev/null 2>&1 || true
+          }
+
+          for attempt in $(seq 1 "${install_attempts}"); do
+            if ! wait_for_apt_locks; then
+              echo "::warning::apt/dpkg locks still held; reaping the holders"
+              reap_apt_lock_holders
+            fi
+            timeout --signal=TERM --kill-after="${install_kill_grace_seconds}s" "${install_timeout_minutes}m" \
+              deno task test:e2e:playwright:install && exit 0
+            status=$?
+
+            if [ "$attempt" -eq "${install_attempts}" ]; then
+              exit "$status"
+            fi
+
+            reap_apt_lock_holders
+            sleep "${retry_backoff_seconds}"
+          done
       - name: Run Playwright e2e suite
         run: deno task test:e2e:playwright
       - name: Upload traces and screenshots
         if: ${{ failure() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: playwright-report-${{ github.run_id }}
+          name: playwright-report-${{ github.run_id }}-${{ github.run_attempt }}
           path: tests/e2e/test-results/
           retention-days: 7
           if-no-files-found: ignore
