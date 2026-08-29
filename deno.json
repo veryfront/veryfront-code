@@ -598,6 +598,7 @@
     "test:all-runtimes": "deno task test:unit && deno task test:node && deno task test:bun",
     "test:e2e": "deno task test:e2e:playwright",
     "test:e2e:playwright": "deno run -A npm:playwright@1.60.0 test --config=tests/e2e/playwright.config.cjs",
+    "test:e2e:playwright:install": "deno run -A npm:playwright@1.60.0 install --with-deps chromium",
     "test:e2e:rsc-browser": "deno task generate && deno run --config=scripts/test.deno.json --allow-read --allow-run=deno --allow-env scripts/test/run-deno-suite.ts --suite=e2e:rsc-browser",
     "test:e2e:binary": "deno task generate && deno run --config=scripts/test.deno.json --allow-read --allow-run=deno --allow-env scripts/test/run-deno-suite.ts --suite=e2e:binary",
     "test:e2e:binary:fresh": "deno task generate && VERYFRONT_BINARY_FRESH=1 deno run --config=scripts/test.deno.json --allow-read --allow-run=deno --allow-env scripts/test/run-deno-suite.ts --suite=e2e:binary",
