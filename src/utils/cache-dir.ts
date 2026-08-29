@@ -13,7 +13,7 @@ import { serverLogger } from "./logger/index.ts";
 const logger = serverLogger.component("cache-dir");
 
 const cacheStorage = new AsyncLocalStorage<string>();
-let testHttpBundleCacheDir: string | undefined;
+let testReactHttpBundleCacheDir: string | undefined;
 const nodeModulesLinkOperations = new Map<string, Promise<string | undefined>>();
 
 // Bounded memo of cache roots and their expected framework dependency root.
@@ -120,18 +120,24 @@ export function getMdxEsmCacheDir(): string {
 }
 
 export function getHttpBundleCacheDir(): string {
-  const contextCacheDir = getCacheDirFromContext();
-  return contextCacheDir === undefined
-    ? testHttpBundleCacheDir ?? join(getCacheBaseDir(), "veryfront-http-bundle")
-    : join(contextCacheDir, "veryfront-http-bundle");
+  return join(getCacheBaseDir(), "veryfront-http-bundle");
 }
 
-/** Override only the HTTP bundle cache in a DENO_TESTING process. */
-export function __setHttpBundleCacheDirForTests(path: string | undefined): void {
+/** Return the standard HTTP cache, or the disposable React test cache. */
+export function getReactHttpBundleCacheDir(): string {
+  return testReactHttpBundleCacheDir ?? getHttpBundleCacheDir();
+}
+
+/** Override only React's HTTP bundle cache in a DENO_TESTING process. */
+export function __setReactHttpBundleCacheDirForTests(path: string | undefined): () => void {
   if (getHostEnv("DENO_TESTING") !== "1") {
-    throw new Error("The HTTP bundle cache test override requires DENO_TESTING=1");
+    throw new Error("The React HTTP bundle cache test override requires DENO_TESTING=1");
   }
-  testHttpBundleCacheDir = path;
+  const previous = testReactHttpBundleCacheDir;
+  testReactHttpBundleCacheDir = path;
+  return () => {
+    if (testReactHttpBundleCacheDir === path) testReactHttpBundleCacheDir = previous;
+  };
 }
 
 const CACHE_DIR_IGNORE_CONTENT = [

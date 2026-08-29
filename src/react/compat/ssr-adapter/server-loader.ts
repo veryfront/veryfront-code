@@ -6,7 +6,7 @@ import {
   stripSemverRange,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { getReactUrls } from "#veryfront/transforms/esm/react-cdn.ts";
-import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { getReactHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { rendererLogger } from "#veryfront/utils";
 
 const logger = rendererLogger.component("server-loader");
@@ -63,7 +63,7 @@ async function loadFromCachedHttpModule<T>(
   label: string,
   reactVersion: string,
 ): Promise<T> {
-  const cacheDir = getHttpBundleCacheDir();
+  const cacheDir = getReactHttpBundleCacheDir();
   const cachedPath = await cacheModuleToLocal(url, cacheDir, reactVersion);
   logger.debug(`Loading ${label} from cached HTTP module`, { cachedPath });
   return (await import(cachedPath)) as T;
