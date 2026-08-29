@@ -826,6 +826,13 @@ Provider replay checkpoint is invalid.
 - **HTTP status:** 500
 - **What to do:** Verify the trusted source that resolved the run's provider replay checkpoints; do not retry with the same replay state
 
+### provider-metadata-split-unsupported
+
+Provider metadata cannot be attached after assistant turn splitting.
+
+- **HTTP status:** 500
+- **What to do:** Avoid converting one provider response into multiple assistant request messages before provider metadata is consumed
+
 ## General
 
 Raised anywhere; these are not specific to one subsystem.
