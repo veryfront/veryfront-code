@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildTestFileCommandArgs,
@@ -79,6 +79,23 @@ describe("test:file task command", () => {
       assertEquals(args.includes("--allow-all"), false);
       assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), false);
       assertEquals(args.includes(LOOPBACK_ALLOW_NET), true);
+    }
+  });
+
+  it("rejects invocations without a positional test target", () => {
+    for (
+      const rawArgs of [
+        [],
+        ["--filter", "unit name"],
+        ["--ignore", "tests/integration"],
+        ["--", "script argument"],
+      ]
+    ) {
+      assertThrows(
+        () => buildTestFileCommandArgs(rawArgs),
+        Error,
+        "test:file requires at least one test file or directory target",
+      );
     }
   });
 

@@ -27,6 +27,8 @@ const TEST_OPTIONS_WITH_SEPARATE_VALUE = new Set([
   "--v8-flags",
 ]);
 const MAX_TARGET_DIRECTORY_ENTRIES = 10_000;
+const MISSING_TEST_TARGET_MESSAGE =
+  "test:file requires at least one test file or directory target";
 
 export interface TestTargetFileSystem {
   statSync(path: string): Pick<Deno.FileInfo, "isDirectory">;
@@ -52,8 +54,13 @@ function getPositionalTestTargets(rawArgs: readonly string[]): string[] {
     }
     targets.push(arg);
   }
+  if (targets.length === 0) {
+    throw new TestFileUsageError(MISSING_TEST_TARGET_MESSAGE);
+  }
   return targets;
 }
+
+class TestFileUsageError extends Error {}
 
 export function buildTestFileCommandArgs(
   rawArgs: string[],
@@ -132,8 +139,16 @@ function isIntegrationTarget(
 }
 
 async function main(): Promise<void> {
+  let targets: string[];
+  try {
+    targets = getPositionalTestTargets(Deno.args);
+  } catch (error) {
+    if (!(error instanceof TestFileUsageError)) throw error;
+    console.error(error.message);
+    Deno.exit(2);
+  }
   const environment =
-    getPositionalTestTargets(Deno.args).some((target) =>
+    targets.some((target) =>
         isIntegrationTarget(target, TEST_TARGET_FILE_SYSTEM)
       )
       ? DENO_TEST_ENV
