@@ -516,7 +516,9 @@ describe("public docs validation", () => {
           '<a data-ok={(function () { class Sample {} /[}>]/.test(value); return true })()} href="../architecture/function-body-regex.md">ok</a>\n' +
           '<a data-ok={({ method() { {} /[}>]/.test(value) } })} href="../architecture/method-body-regex.md">ok</a>\n' +
           '<a data-ok={(class { method() { {} /[}>]/.test(value) } })} href="../architecture/class-method-body-regex.md">ok</a>\n' +
+          '<a data-ok={class Sample { static { {} /[}>]/.test(value) } }} href="../architecture/class-static-block-regex.md">ok</a>\n' +
           '<a data-ok={(() => { return\n{} /[}>]/.test(value) })()} href="../architecture/return-asi-regex.md">ok</a>\n' +
+          '<a data-ok={(() => { label: {} /[}>]/.test(value) })()} href="../architecture/labeled-block-regex.md">ok</a>\n' +
           '<a data-ok={<Foo></Foo>} href="../architecture/paired-jsx.md">ok</a>\n' +
           '<a data-ok={<Foo>child</Foo>} href="../architecture/jsx-child-text.md">ok</a>\n' +
           '<a data-ok={value </foo>/.source} href="../architecture/less-than-regex.md">ok</a>\n' +
@@ -603,7 +605,9 @@ describe("public docs validation", () => {
         "../architecture/function-body-regex.md",
         "../architecture/method-body-regex.md",
         "../architecture/class-method-body-regex.md",
+        "../architecture/class-static-block-regex.md",
         "../architecture/return-asi-regex.md",
+        "../architecture/labeled-block-regex.md",
         "../architecture/paired-jsx.md",
         "../architecture/jsx-child-text.md",
         "../architecture/less-than-regex.md",

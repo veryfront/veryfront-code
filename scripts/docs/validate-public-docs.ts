@@ -785,6 +785,7 @@ type JavaScriptSignificantTokenKind =
   | "postfix-update"
   | "prefix-update"
   | "regex"
+  | "statement-label"
   | "statement-block";
 
 type JavaScriptPrecedingIdentifierKeyword =
@@ -814,6 +815,7 @@ interface JavaScriptSignificantToken {
   readonly identifierStart?: number;
   readonly identifierWord?: string;
   readonly kind: JavaScriptSignificantTokenKind;
+  readonly labelCandidate?: true;
   readonly followsForOfLeftOperand?: true;
   readonly precedingIdentifierKeyword?: JavaScriptPrecedingIdentifierKeyword;
   readonly uninitializedDeclaration?: true;
@@ -957,6 +959,7 @@ function javaScriptTokenWithIdentifierContext(
         declarationCandidate ||
       identifierWord === "default" &&
         previousSignificantToken?.declarationPrefix === true);
+  const labelCandidate = completeIdentifier && declarationCandidate;
   const functionDeclaration =
     previousSignificantToken?.functionDeclaration === true ||
     (completeIdentifier && identifierWord === "function" &&
@@ -1023,6 +1026,7 @@ function javaScriptTokenWithIdentifierContext(
     ...(identifierStart === undefined ? {} : { identifierStart }),
     ...(identifierWord === undefined ? {} : { identifierWord }),
     kind,
+    ...(labelCandidate ? { labelCandidate: true } : {}),
     ...(followsForOfLeftOperand ? { followsForOfLeftOperand: true } : {}),
     ...(precedingIdentifierKeyword === undefined
       ? {}
@@ -1520,6 +1524,7 @@ function javaScriptMayStartDeclaration(
     delimiterContexts.at(-1) !== "expression-block"
   ) return false;
   if (token === undefined) return true;
+  if (token.kind === "statement-label") return true;
   if (token.declarationPrefix === true) return true;
   const word = token.identifierWord;
   if (word === "export") return true;
@@ -1621,6 +1626,8 @@ function javaScriptDelimiterTokenKind(
     const statementBlock = !expressionBlock && (classDeclarationBody ||
       previousSignificantToken?.kind === "control-header" ||
       previousSignificantToken?.kind === "declaration-header" ||
+      previousSignificantToken?.kind === "statement-label" ||
+      keyword === "static" ||
       (keyword !== undefined &&
         JAVASCRIPT_BLOCK_PREFIX_KEYWORDS.has(keyword)) ||
       (statementPosition &&
@@ -1634,6 +1641,10 @@ function javaScriptDelimiterTokenKind(
         ? "block"
         : "nested",
     );
+  } else if (
+    character === ":" && previousSignificantToken?.labelCandidate === true
+  ) {
+    return "statement-label";
   } else if (character === ")" || character === "]" || character === "}") {
     const context = delimiterContexts.pop();
     if (context === "control" || context === "for") return "control-header";
