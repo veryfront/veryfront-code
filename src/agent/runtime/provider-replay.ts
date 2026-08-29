@@ -68,32 +68,112 @@ function isProviderReplayProvider(value: unknown): value is ProviderReplayProvid
   return value === "anthropic" || value === "openai-responses";
 }
 
-function toCanonicalAnthropicReplayPart(block: Record<string, unknown>): Record<string, unknown> {
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function isSupportedAnthropicServerToolCaller(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!isRecord(value)) return false;
+  if (value.type === "direct") return true;
+  return (
+    value.type === "code_execution_20250825" || value.type === "code_execution_20260120"
+  ) && isNonEmptyString(value.tool_id);
+}
+
+function toCanonicalAnthropicToolCall(
+  block: Record<string, unknown>,
+  providerExecuted: boolean,
+): Record<string, unknown> {
+  const input = block.input === undefined ? {} : block.input;
+  if (!isNonEmptyString(block.id) || !isNonEmptyString(block.name) || !isRecord(input)) {
+    invalidCheckpoint("checkpoint tool-use block is malformed");
+  }
+  if (block.type === "server_tool_use" && !isSupportedAnthropicServerToolCaller(block.caller)) {
+    invalidCheckpoint("checkpoint server tool-use caller is malformed");
+  }
+  if (block.type === "mcp_tool_use" && !isNonEmptyString(block.server_name)) {
+    invalidCheckpoint("checkpoint MCP tool-use server is malformed");
+  }
+  return {
+    type: "tool-call",
+    toolCallId: block.id,
+    toolName: block.name,
+    input,
+    ...(providerExecuted ? { providerExecuted: true } : {}),
+  };
+}
+
+function toTranscriptVisibleAnthropicReplayPart(
+  block: Record<string, unknown>,
+): Record<string, unknown> | undefined {
   switch (block.type) {
-    case "text":
+    case "text": {
+      if (typeof block.text !== "string") {
+        invalidCheckpoint("checkpoint text block is malformed");
+      }
       return { type: "text", text: block.text };
-    case "thinking":
-      return {
-        type: "reasoning",
-        ...(typeof block.thinking === "string" && block.thinking.length > 0
-          ? { text: block.thinking }
-          : {}),
-        ...(typeof block.signature === "string" ? { signature: block.signature } : {}),
-      };
+    }
+    case "thinking": {
+      if (typeof block.thinking !== "string" && typeof block.signature !== "string") {
+        invalidCheckpoint("checkpoint thinking block is malformed");
+      }
+      return isNonEmptyString(block.thinking)
+        ? { type: "reasoning", text: block.thinking }
+        : undefined;
+    }
     case "redacted_thinking":
-      return {
-        type: "reasoning",
-        ...(typeof block.data === "string" ? { redactedData: block.data } : {}),
-      };
+      if (!isNonEmptyString(block.data)) {
+        invalidCheckpoint("checkpoint redacted thinking block is malformed");
+      }
+      return undefined;
     case "tool_use":
-      return {
-        type: "tool-call",
-        toolCallId: block.id,
-        toolName: block.name,
-        input: block.input,
-      };
+      return toCanonicalAnthropicToolCall(block, false);
+    case "server_tool_use":
+    case "mcp_tool_use":
+      return toCanonicalAnthropicToolCall(block, true);
     default:
       invalidCheckpoint("checkpoint provider block cannot be projected for validation");
+  }
+}
+
+function getProviderExecutedToolCallIds(target: Message): Set<string> {
+  return new Set(
+    target.parts.flatMap((part) => {
+      const value: unknown = part;
+      return isRecord(value) && value.providerExecuted === true &&
+          isNonEmptyString(value.toolCallId)
+        ? [value.toolCallId]
+        : [];
+    }),
+  );
+}
+
+function toTranscriptVisibleProviderPart(
+  part: unknown,
+  providerExecutedToolCallIds: ReadonlySet<string>,
+): Record<string, unknown> | undefined {
+  if (!isRecord(part)) {
+    invalidCheckpoint("checkpoint anchor contains an invalid provider part");
+  }
+  switch (part.type) {
+    case "text":
+      return typeof part.text === "string" ? { type: "text", text: part.text } : undefined;
+    case "reasoning":
+      return isNonEmptyString(part.text) ? { type: "reasoning", text: part.text } : undefined;
+    case "tool-call":
+      return {
+        type: "tool-call",
+        toolCallId: part.toolCallId,
+        toolName: part.toolName,
+        input: part.input,
+        ...(typeof part.toolCallId === "string" &&
+            providerExecutedToolCallIds.has(part.toolCallId)
+          ? { providerExecuted: true }
+          : {}),
+      };
+    default:
+      invalidCheckpoint("checkpoint anchor contains an unsupported provider part");
   }
 }
 
@@ -103,19 +183,25 @@ function assertCheckpointMatchesAssistantTurn(
 ): void {
   const providerProjection = convertAgentRuntimeMessagesToProviderMessages([target])
     .filter((message) => message.role === "assistant");
-  if (providerProjection.length !== 1) {
-    invalidCheckpoint("checkpoint anchor does not project to one assistant message", {
+  if (providerProjection.length > 1) {
+    invalidCheckpoint("checkpoint anchor projects to more than one assistant message", {
       assistantSegmentCount: providerProjection.length,
     });
   }
-  const checkpointProjection = checkpoint.providerBlocks.map((block) =>
-    toCanonicalAnthropicReplayPart(block.block)
-  );
-  const targetProjection = providerProjection[0]!.content;
-  if (
-    !Array.isArray(targetProjection) ||
-    stringifyChatJson(checkpointProjection) !== stringifyChatJson(targetProjection)
-  ) {
+  const checkpointProjection = checkpoint.providerBlocks.flatMap((block) => {
+    const part = toTranscriptVisibleAnthropicReplayPart(block.block);
+    return part ? [part] : [];
+  });
+  const providerExecutedToolCallIds = getProviderExecutedToolCallIds(target);
+  const targetContent = providerProjection[0]?.content ?? [];
+  if (!Array.isArray(targetContent)) {
+    invalidCheckpoint("checkpoint anchor does not carry structured assistant content");
+  }
+  const targetProjection = targetContent.flatMap((part) => {
+    const projected = toTranscriptVisibleProviderPart(part, providerExecutedToolCallIds);
+    return projected ? [projected] : [];
+  });
+  if (stringifyChatJson(checkpointProjection) !== stringifyChatJson(targetProjection)) {
     invalidCheckpoint("checkpoint provider blocks do not match the anchored assistant turn");
   }
 }

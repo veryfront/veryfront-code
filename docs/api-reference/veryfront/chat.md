@@ -583,44 +583,44 @@ import {
 
 | Name                          | Description                                  | Source                                                                                       |
 | ----------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `DEFAULT_MESSAGE_PREP_LIMITS` | Default limits for chat history preparation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L37) |
+| `DEFAULT_MESSAGE_PREP_LIMITS` | Default limits for chat history preparation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L43) |
 
 #### Functions
 
 | Name                                         | Description                                                                           | Source                                                                                         |
 | -------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `compactForStep`                             | Compact for step.                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1915) |
-| `compactHistoricalUiMessageToolInputs`       | Compact large historical UI-message tool inputs after matching results are available. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1632) |
-| `compactOldToolInputs`                       | Compact large historical tool-call inputs after matching results are available.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1545) |
-| `compressTurn`                               | Compress turn.                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L229)  |
-| `dedupeToolHistory`                          | Dedupe tool history.                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1939) |
-| `enforceTokenBudget`                         | Enforce token budget.                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L2006) |
-| `enforceTokenBudgetWithTurnCompression`      | Enforce token budget with turn compression.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L304)  |
-| `ensureToolCallInputs`                       | Ensure tool call inputs helper.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1884) |
-| `estimateMessageTokenBreakdown`              | Estimate token categories for provider, UI, or runtime messages.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L182)  |
-| `estimateOverhead`                           | Estimate overhead.                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1878) |
-| `estimateTokens`                             | Estimate tokens.                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L100)  |
-| `isModelSupportedFileMediaType`              | Check whether the model supports the file media type.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L737)  |
-| `maskOldToolOutputs`                         | Mask old tool outputs.                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1447) |
-| `normalizeMessageFilePartMediaTypes`         | Normalizes message file part media types.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L743)  |
-| `prepareProviderModelMessagesFromUiMessages` | Prepare provider model messages from UI messages.                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1146) |
-| `repairToolPairs`                            | Repair tool pairs.                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1730) |
-| `rewriteUnsupportedFilePartsAsAnnotations`   | Rewrite unsupported file parts as annotations.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L770)  |
-| `sanitizeProviderModelMessages`              | Sanitize provider model messages.                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1043) |
-| `stripPendingToolParts`                      | Strip pending tool parts.                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L872)  |
+| `compactForStep`                             | Compact for step.                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1885) |
+| `compactHistoricalUiMessageToolInputs`       | Compact large historical UI-message tool inputs after matching results are available. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1598) |
+| `compactOldToolInputs`                       | Compact large historical tool-call inputs after matching results are available.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1506) |
+| `compressTurn`                               | Compress turn.                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L190)  |
+| `dedupeToolHistory`                          | Dedupe tool history.                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1909) |
+| `enforceTokenBudget`                         | Enforce token budget.                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1976) |
+| `enforceTokenBudgetWithTurnCompression`      | Enforce token budget with turn compression.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L265)  |
+| `ensureToolCallInputs`                       | Ensure tool call inputs helper.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1854) |
+| `estimateMessageTokenBreakdown`              | Estimate token categories for provider, UI, or runtime messages.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L143)  |
+| `estimateOverhead`                           | Estimate overhead.                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1848) |
+| `estimateTokens`                             | Estimate tokens.                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L61)   |
+| `isModelSupportedFileMediaType`              | Check whether the model supports the file media type.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L698)  |
+| `maskOldToolOutputs`                         | Mask old tool outputs.                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1408) |
+| `normalizeMessageFilePartMediaTypes`         | Normalizes message file part media types.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L704)  |
+| `prepareProviderModelMessagesFromUiMessages` | Prepare provider model messages from UI messages.                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1107) |
+| `repairToolPairs`                            | Repair tool pairs.                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1700) |
+| `rewriteUnsupportedFilePartsAsAnnotations`   | Rewrite unsupported file parts as annotations.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L731)  |
+| `sanitizeProviderModelMessages`              | Sanitize provider model messages.                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1004) |
+| `stripPendingToolParts`                      | Strip pending tool parts.                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L833)  |
 
 #### Types
 
-| Name                                                | Description                                                             | Source                                                                                        |
-| --------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `HistoricalToolInputCompactionDiagnostic`           | Diagnostic emitted when a completed historical tool input is compacted. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L74)  |
-| `HistoricalToolInputRetainedField`                  | Field selector retained in a historical tool-input summary.             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L49)  |
-| `HistoricalToolInputRetentionOptions`               | Options for historical tool-input compaction.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L87)  |
-| `HistoricalToolInputRetentionPolicy`                | Policy for compacting a completed historical tool-call input.           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L61)  |
-| `HistoricalToolInputRetentionPolicyResolver`        | Resolves the retention policy for a completed historical tool input.    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L68)  |
-| `MessagePrepLimits`                                 | Tunable limits used while preparing chat history for model context.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L27)  |
-| `MessageTokenBreakdown`                             | Approximate token categories for context diagnostics.                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L105) |
-| `PrepareProviderModelMessagesFromUiMessagesOptions` | Options accepted by prepare provider model messages from UI messages.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L94)  |
+| Name                                                | Description                                                             | Source                                                                                             |
+| --------------------------------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `HistoricalToolInputCompactionDiagnostic`           | Diagnostic emitted when a completed historical tool input is compacted. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep-types.ts#L37) |
+| `HistoricalToolInputRetainedField`                  | Field selector retained in a historical tool-input summary.             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep-types.ts#L12) |
+| `HistoricalToolInputRetentionOptions`               | Options for historical tool-input compaction.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep-types.ts#L50) |
+| `HistoricalToolInputRetentionPolicy`                | Policy for compacting a completed historical tool-call input.           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep-types.ts#L24) |
+| `HistoricalToolInputRetentionPolicyResolver`        | Resolves the retention policy for a completed historical tool input.    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep-types.ts#L31) |
+| `MessagePrepLimits`                                 | Tunable limits used while preparing chat history for model context.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep-types.ts#L2)  |
+| `MessageTokenBreakdown`                             | Approximate token categories for context diagnostics.                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L66)       |
+| `PrepareProviderModelMessagesFromUiMessagesOptions` | Options accepted by prepare provider model messages from UI messages.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L55)       |
 
 ### `veryfront/chat/protocol`
 

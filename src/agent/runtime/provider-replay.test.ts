@@ -364,6 +364,143 @@ describe("agent/runtime/provider-replay", () => {
       );
     });
 
+    it("should validate opaque reasoning against its transcript-visible projection", () => {
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [{
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "lookup",
+          args: { query: "veryfront" },
+        }],
+        timestamp: 1,
+      } as Message;
+      const checkpoint = createValidCheckpoint();
+
+      applyProviderReplayCheckpointsToMessages([target], [checkpoint]);
+
+      assertEquals(
+        readAttachedProviderMetadata(target),
+        {
+          anthropic: {
+            rawAssistantMessages: [checkpoint.providerBlocks.map((block) => block.block)],
+          },
+        },
+        "private reasoning metadata may be absent from the transcript anchor",
+      );
+    });
+
+    it("should attach an opaque-only checkpoint to its empty transcript anchor", () => {
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [],
+        timestamp: 1,
+      } as Message;
+      const checkpoint: ProviderReplayCheckpoint = {
+        ...createValidCheckpoint(),
+        providerBlocks: createValidCheckpoint().providerBlocks.slice(0, 2),
+        providerBlockPositions: [0, 1],
+        totalPartCount: 2,
+      };
+
+      applyProviderReplayCheckpointsToMessages([target], [checkpoint]);
+
+      assertEquals(
+        readAttachedProviderMetadata(target),
+        {
+          anthropic: {
+            rawAssistantMessages: [checkpoint.providerBlocks.map((block) => block.block)],
+          },
+        },
+        "an opaque-only provider turn remains replayable without public reasoning fields",
+      );
+    });
+
+    it("should validate supported provider tool uses against canonical transcript calls", () => {
+      for (
+        const providerBlock of [
+          {
+            type: "server_tool_use",
+            id: "srvtool-code",
+            name: "code_execution",
+            input: { code: "1 + 1" },
+            caller: { type: "direct" },
+          },
+          {
+            type: "mcp_tool_use",
+            id: "mcptool-echo",
+            name: "echo",
+            server_name: "example-mcp",
+            input: { value: "hello" },
+          },
+        ]
+      ) {
+        const target = {
+          id: "assistant-message-1",
+          role: "assistant",
+          parts: [{
+            type: "tool-call",
+            toolCallId: providerBlock.id,
+            toolName: providerBlock.name,
+            args: providerBlock.input,
+            providerExecuted: true,
+          }],
+          timestamp: 1,
+        } as Message;
+        const checkpoint: ProviderReplayCheckpoint = {
+          version: 1,
+          messageId: target.id,
+          provider: "anthropic",
+          providerBlocks: [{ type: "provider-block", provider: "anthropic", block: providerBlock }],
+          providerBlockPositions: [0],
+          totalPartCount: 1,
+        };
+
+        applyProviderReplayCheckpointsToMessages([target], [checkpoint]);
+
+        assertEquals(
+          readAttachedProviderMetadata(target),
+          { anthropic: { rawAssistantMessages: [[providerBlock]] } },
+          `${providerBlock.type} reattaches through its canonical tool-call identity`,
+        );
+      }
+    });
+
+    it("should reject a provider tool checkpoint for a client-owned transcript call", () => {
+      const providerBlock = {
+        type: "server_tool_use",
+        id: "srvtool-code",
+        name: "code_execution",
+        input: { code: "1 + 1" },
+        caller: { type: "direct" },
+      };
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [{
+          type: "tool-call",
+          toolCallId: providerBlock.id,
+          toolName: providerBlock.name,
+          args: providerBlock.input,
+        }],
+        timestamp: 1,
+      } as Message;
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: target.id,
+        provider: "anthropic",
+        providerBlocks: [{ type: "provider-block", provider: "anthropic", block: providerBlock }],
+        providerBlockPositions: [0],
+        totalPartCount: 1,
+      };
+
+      assertProviderReplayError(() =>
+        applyProviderReplayCheckpointsToMessages([target], [checkpoint])
+      );
+    });
+
     it("should be a no-op for empty or absent deliveries", () => {
       const target = createAssistantMessage("assistant-message-1");
       applyProviderReplayCheckpointsToMessages([target], undefined);
