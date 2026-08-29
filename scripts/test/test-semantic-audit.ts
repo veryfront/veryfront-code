@@ -9014,7 +9014,7 @@ function expressionIsDefinitelyTruthy(
   scopes: readonly Scope[],
   identifierEvidenceUsable?: boolean,
 ): boolean {
-  const value = unwrapExpression(expression);
+  const value = unwrapTruthinessProofExpression(expression);
   if (!value) return false;
   const identifierEvidence = identifierEvidenceUsable ??
     !expressionSubtreeContainsWrite(value);
@@ -9088,7 +9088,7 @@ function expressionIsDefinitelyNonNullish(
   scopes: readonly Scope[],
   identifierEvidenceUsable?: boolean,
 ): boolean {
-  const value = unwrapExpression(expression);
+  const value = unwrapTruthinessProofExpression(expression);
   if (!value) return false;
   const identifierEvidence = identifierEvidenceUsable ??
     !expressionSubtreeContainsWrite(value);
@@ -10747,6 +10747,25 @@ function unwrapExpression(value: unknown): Node | undefined {
     current &&
     (current.type === "AwaitExpression" || current.type === "TSAsExpression" ||
       current.type === "TSTypeAssertion" ||
+      current.type === "TSSatisfiesExpression" ||
+      current.type === "TSInstantiationExpression" ||
+      current.type === "TSNonNullExpression" ||
+      current.type === "ParenthesizedExpression")
+  ) {
+    current = isNode(current.argument)
+      ? current.argument
+      : isNode(current.expression)
+      ? current.expression
+      : undefined;
+  }
+  return current;
+}
+
+function unwrapTruthinessProofExpression(value: unknown): Node | undefined {
+  let current = isNode(value) ? value : undefined;
+  while (
+    current &&
+    (current.type === "TSAsExpression" || current.type === "TSTypeAssertion" ||
       current.type === "TSSatisfiesExpression" ||
       current.type === "TSInstantiationExpression" ||
       current.type === "TSNonNullExpression" ||

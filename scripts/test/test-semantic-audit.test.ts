@@ -4902,6 +4902,33 @@ FalsyGateFallback.write("falsy-gate-fallback.txt", "x");
     );
   });
 
+  it("retains logical receivers for awaited thenables resolving null or falsy", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class AwaitedTruthyOperand {}
+class AwaitedTruthyFallback {}
+const awaitedTruthy = await { then(resolve) { resolve(false); }, value: AwaitedTruthyOperand };
+const AwaitedTruthyAlias = awaitedTruthy || AwaitedTruthyFallback;
+AwaitedTruthyAlias.write = Deno.writeTextFile;
+AwaitedTruthyFallback.write("awaited-truthy.txt", "x");
+
+class AwaitedNonNullishOperand {}
+class AwaitedNonNullishFallback {}
+const awaitedNonNullish = await { then(resolve) { resolve(null); }, value: AwaitedNonNullishOperand };
+const AwaitedNonNullishAlias = awaitedNonNullish ?? AwaitedNonNullishFallback;
+AwaitedNonNullishAlias.write = Deno.writeTextFile;
+AwaitedNonNullishFallback.write("awaited-non-nullish.txt", "x");
+`,
+        "src/logical-receiver-awaited-thenable.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "AwaitedTruthyFallback.write"],
+        ["filesystem-write", "AwaitedNonNullishFallback.write"],
+      ],
+    );
+  });
+
   it("retains logical receivers without operator-specific truthiness proof", () => {
     assertEquals(
       collectSemanticMarkers(
