@@ -14,7 +14,9 @@ import { __installUnpinnedHostTransportForTests } from "../security/http/outboun
 import {
   installOfflineReactTransportForTests,
   OFFLINE_REACT_TEST_ENV,
+  prepareOfflineReactModulesForTests,
 } from "./offline-react-transport.ts";
+import { __setHttpBundleCacheDirForTests } from "../utils/cache-dir.ts";
 
 // Tests that genuinely reach the network use the plain host transport rather
 // than Deno's pinned SOCKS client, which holds connections open past the end of
@@ -22,7 +24,8 @@ import {
 // leaves the test-only decision somewhere a reader can find it.
 if (Deno.env.get(OFFLINE_REACT_TEST_ENV) === "1") {
   const cacheDir = Deno.makeTempDirSync({ prefix: "veryfront-unit-cache-" });
-  Deno.env.set("VERYFRONT_CACHE_DIR", cacheDir);
+  __setHttpBundleCacheDirForTests(cacheDir);
+  await prepareOfflineReactModulesForTests();
   addEventListener("unload", () => {
     try {
       Deno.removeSync(cacheDir, { recursive: true });

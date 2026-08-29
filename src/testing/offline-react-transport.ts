@@ -6,6 +6,7 @@ import {
 } from "#veryfront/security/http/outbound-fetch.ts";
 import { resolveHostAddresses } from "#veryfront/platform/compat/dns.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import { EsbuildBundler } from "@veryfront/ext-bundler-esbuild";
 
 const OFFLINE_REACT_ORIGIN = "https://esm.sh";
 const OFFLINE_REACT_MODULE_PREFIX = "/__veryfront_test_react__/";
@@ -142,7 +143,7 @@ function createEntrySource(entry: OfflineReactEntry): string {
 }
 
 async function buildOfflineReactModules(): Promise<ReadonlyMap<string, string>> {
-  const esbuild = await import("npm:esbuild@0.28.1");
+  const bundler = new EsbuildBundler();
   try {
     const entryPoints = Object.fromEntries(
       Object.entries(OFFLINE_REACT_ENTRIES).map(([key, entry]) => [
@@ -150,7 +151,7 @@ async function buildOfflineReactModules(): Promise<ReadonlyMap<string, string>> 
         `offline-react:${key}`,
       ]),
     );
-    const result = await esbuild.build({
+    const result = await bundler.bundle({
       entryPoints,
       bundle: true,
       splitting: true,
@@ -187,7 +188,7 @@ async function buildOfflineReactModules(): Promise<ReadonlyMap<string, string>> 
     });
 
     const modules = new Map<string, string>();
-    for (const outputFile of result.outputFiles ?? []) {
+    for (const outputFile of result.outputFiles) {
       const normalizedPath = outputFile.path.replaceAll("\\", "/");
       const marker = "/offline-react/";
       const markerIndex = normalizedPath.lastIndexOf(marker);
@@ -197,13 +198,17 @@ async function buildOfflineReactModules(): Promise<ReadonlyMap<string, string>> 
     }
     return modules;
   } finally {
-    await esbuild.stop();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await bundler.stop();
   }
 }
 
 function getBundledModules(): Promise<ReadonlyMap<string, string>> {
   return bundledModules ??= buildOfflineReactModules();
+}
+
+/** Build and stop the test-only ESM bundler before per-test sanitizers start. */
+export async function prepareOfflineReactModulesForTests(): Promise<void> {
+  await getBundledModules();
 }
 
 function responsePath(url: URL): string | undefined {
