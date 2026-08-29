@@ -2121,6 +2121,54 @@ Deno.test("prepareProviderModelMessagesFromUiMessages compacts custom tools thro
   assert((diagnostics[0] as { retainedInputChars?: number }).retainedInputChars! < 1_000);
 });
 
+Deno.test("prepareProviderModelMessagesFromUiMessages preserves checkpointed provider-owned tool history during historical compaction", () => {
+  const inputMarker = "CHECKPOINTED_PROVIDER_TOOL_INPUT_MARKER";
+  const outputMarker = "CHECKPOINTED_PROVIDER_TOOL_OUTPUT_MARKER";
+  const prepared = prepareProviderModelMessagesFromUiMessages(
+    [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Patch the file." }],
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "update_file",
+          toolCallId: "tool-update",
+          input: {
+            path: "components/Checkpointed.tsx",
+            content: `${inputMarker}:${"const value = 1;\n".repeat(3000)}`,
+          },
+          state: "output-available",
+          providerExecuted: true,
+          output: {
+            ok: true,
+            content: `${outputMarker}:${"patched output ".repeat(3000)}`,
+          },
+        }],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Continue from that patch." }],
+      },
+    ],
+    {
+      providerOwnedToolNames: ["update_file"],
+      preserveProviderOwnedToolSourceMessageIds: ["assistant-1"],
+    },
+  );
+
+  const serialized = JSON.stringify(prepared);
+  assertStringIncludes(serialized, inputMarker);
+  assertStringIncludes(serialized, outputMarker);
+  assertEquals(serialized.includes("historical_tool_input_summary"), false);
+  assertEquals(serialized.includes("[update_file output omitted"), false);
+});
+
 Deno.test("compactHistoricalUiMessageToolInputs does not treat raw completed tool calls as results", () => {
   const inputMarker = "RAW_COMPLETED_CALL_IS_NOT_A_RESULT";
   const compacted = compactHistoricalUiMessageToolInputs([

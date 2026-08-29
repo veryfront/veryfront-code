@@ -1040,6 +1040,26 @@ function filterValidMessages(
   );
 }
 
+function mergeHistoricalToolInputRetention(
+  retention: HistoricalToolInputRetentionOptions | undefined,
+  preserveSourceMessageIds: readonly string[] | undefined,
+): HistoricalToolInputRetentionOptions | undefined {
+  if (!preserveSourceMessageIds || preserveSourceMessageIds.length === 0) {
+    return retention;
+  }
+
+  const mergedPreservedIds = [
+    ...(retention?.preserveSourceMessageIds ?? []),
+    ...preserveSourceMessageIds,
+  ];
+  const dedupedPreservedIds = [...new Set(mergedPreservedIds)];
+
+  return {
+    ...retention,
+    preserveSourceMessageIds: dedupedPreservedIds,
+  };
+}
+
 /** Prepare provider model messages from UI messages. */
 export function prepareProviderModelMessagesFromUiMessages(
   messages: ChatUiMessage[],
@@ -1069,8 +1089,12 @@ export function prepareProviderModelMessagesFromUiMessages(
     preserveEmptyAssistantSourceMessageIds: options.preserveProviderOwnedToolSourceMessageIds,
   };
   const sanitized = sanitizeProviderModelMessages(patchedMessages, preserveOptions);
-  const masked = maskOldToolOutputs(sanitized, options.historicalToolInputRetention);
-  const compactedInputs = compactOldToolInputs(masked, options.historicalToolInputRetention);
+  const historicalToolInputRetention = mergeHistoricalToolInputRetention(
+    options.historicalToolInputRetention,
+    options.preserveProviderOwnedToolSourceMessageIds,
+  );
+  const masked = maskOldToolOutputs(sanitized, historicalToolInputRetention);
+  const compactedInputs = compactOldToolInputs(masked, historicalToolInputRetention);
   const compacted = enforceTokenBudget(compactedInputs);
   const filtered = filterValidMessages(compacted, preserveOptions);
   return repairToolPairs(filtered);

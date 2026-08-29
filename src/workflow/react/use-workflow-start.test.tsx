@@ -565,6 +565,11 @@ describe("useWorkflowStart", () => {
     const response = Promise.withResolvers<Response>();
     let root: ReturnType<typeof createRoot> | null = null;
     let domRestored = false;
+    const consoleErrors: unknown[][] = [];
+    const originalConsoleError = console.error;
+    console.error = (...args: unknown[]): void => {
+      consoleErrors.push(args);
+    };
 
     installMockFetch((() => response.promise) as typeof fetch);
 
@@ -578,12 +583,15 @@ describe("useWorkflowStart", () => {
       flushSync(() => root!.render(<Capture />));
       flushSync(() => root!.unmount());
       root = null;
-      restoreDom();
-      domRestored = true;
 
       response.reject(new Error("late list failure"));
       await new Promise((resolve) => setTimeout(resolve, 20));
+      assertEquals(document.getElementById("root")?.textContent, "");
+      assertEquals(consoleErrors, []);
+      restoreDom();
+      domRestored = true;
     } finally {
+      console.error = originalConsoleError;
       if (root) flushSync(() => root!.unmount());
       if (!domRestored) restoreDom();
     }
