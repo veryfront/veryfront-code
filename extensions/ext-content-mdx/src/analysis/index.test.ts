@@ -182,6 +182,74 @@ describe("analyzeContent Markdown", () => {
     );
   });
 
+  it("preserves raw HTML source ranges inside block containers", async () => {
+    const value = "> <div>\n" +
+      '> <a href="../nested.md">nested</a>\n' +
+      '> </div href="../ignored.md">';
+
+    const result = await analyzeContent({ value, syntax: "markdown" });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => ({
+        rawValue: destination.rawValue,
+        source: value.slice(
+          destination.range.start.offset,
+          destination.range.end.offset,
+        ),
+        offset: destination.range.start.offset,
+        line: destination.range.start.line,
+        column: destination.range.start.column,
+      })),
+      [{
+        rawValue: "../nested.md",
+        source: "../nested.md",
+        offset: value.indexOf("../nested.md"),
+        line: 2,
+        column: 12,
+      }],
+    );
+  });
+
+  it("separates authored and normalized multiline HTML attributes", async () => {
+    const value = '> <a href="../a\n> b.md">text</a>';
+
+    const result = await analyzeContent({ value, syntax: "markdown" });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => ({
+        rawValue: destination.rawValue,
+        normalizedValue: Reflect.get(destination, "normalizedValue"),
+        source: value.slice(
+          destination.range.start.offset,
+          destination.range.end.offset,
+        ),
+      })),
+      [{
+        rawValue: "../a\n> b.md",
+        normalizedValue: "../a\nb.md",
+        source: "../a\n> b.md",
+      }],
+    );
+  });
+
+  it("projects parser-reported raw HTML destination ranges", async () => {
+    const count = 32_000;
+    const value = "> <div>\n" +
+      Array.from(
+        { length: count },
+        (_, index) => `> <a href="../item/${index}.md">item</a>`,
+      ).join("\n") +
+      "\n> </div>";
+    const result = await analyzeContent({ value, syntax: "markdown" });
+
+    assert(result.kind === "document");
+    assertEquals(result.destinations.length, count);
+    assertEquals(result.destinations[0]?.rawValue, "../item/0.md");
+    assertEquals(result.destinations.at(-1)?.rawValue, `../item/${count - 1}.md`);
+  });
+
   it("locates wrapped reference destinations inside block containers", async () => {
     const value = "[quoted] [listed]\n" +
       "> [quoted]:\n> ../quoted.md\n" +
@@ -202,6 +270,51 @@ describe("analyzeContent Markdown", () => {
         { rawValue: "../quoted.md", source: "../quoted.md" },
         { rawValue: "../listed.md", source: "../listed.md" },
       ],
+    );
+  });
+
+  it("locates wrapped inline-link destinations inside block containers", async () => {
+    const value = "> [guide](\n> ../guide.md\n> )";
+
+    const result = await analyzeContent({ value, syntax: "markdown" });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => ({
+        rawValue: destination.rawValue,
+        source: value.slice(
+          destination.range.start.offset,
+          destination.range.end.offset,
+        ),
+        offset: destination.range.start.offset,
+        line: destination.range.start.line,
+        column: destination.range.start.column,
+      })),
+      [{
+        rawValue: "../guide.md",
+        source: "../guide.md",
+        offset: value.indexOf("../guide.md"),
+        line: 2,
+        column: 3,
+      }],
+    );
+  });
+
+  it("locates wrapped image destinations inside block containers", async () => {
+    const value = "> ![logo](\n> ../logo.png\n> )";
+
+    const result = await analyzeContent({ value, syntax: "markdown" });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => ({
+        rawValue: destination.rawValue,
+        source: value.slice(
+          destination.range.start.offset,
+          destination.range.end.offset,
+        ),
+      })),
+      [{ rawValue: "../logo.png", source: "../logo.png" }],
     );
   });
 

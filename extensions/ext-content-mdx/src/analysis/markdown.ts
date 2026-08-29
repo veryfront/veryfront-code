@@ -9,7 +9,7 @@ import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 
 import { createSourceLocator, type SourceLocator } from "./source.ts";
-import type { ContentDestination } from "./types.ts";
+import type { ContentDestination, SourceRange } from "./types.ts";
 
 interface OffsetSpan {
   readonly start: number;
@@ -60,7 +60,30 @@ function containedSpan(
   spans: readonly OffsetSpan[],
   container: OffsetSpan,
 ): OffsetSpan | undefined {
-  return spans.find((span) => span.start >= container.start && span.end <= container.end);
+  let low = 0;
+  let high = spans.length;
+  while (low < high) {
+    const middle = low + Math.floor((high - low) / 2);
+    if (spans[middle]!.start < container.start) low = middle + 1;
+    else high = middle;
+  }
+  const span = spans[low];
+  return span !== undefined && span.end <= container.end ? span : undefined;
+}
+
+function lastContainedSpan(
+  spans: readonly OffsetSpan[],
+  container: OffsetSpan,
+): OffsetSpan | undefined {
+  let low = 0;
+  let high = spans.length;
+  while (low < high) {
+    const middle = low + Math.floor((high - low) / 2);
+    if (spans[middle]!.end <= container.end) low = middle + 1;
+    else high = middle;
+  }
+  const span = spans[low - 1];
+  return span !== undefined && span.start >= container.start ? span : undefined;
 }
 
 function linkDestination(
@@ -68,6 +91,7 @@ function linkDestination(
   node: Extract<Nodes, { type: "link" | "image" }>,
   locator: SourceLocator,
   tokens: MarkdownTokens,
+  tokenBase: number,
 ): ContentDestination | undefined {
   const offsets = positionOffsets(node.position);
   if (offsets === undefined) return undefined;
@@ -88,15 +112,17 @@ function linkDestination(
       syntax: "autolink",
     };
   }
-  const destination = tokens.resourceDestinations[tokens.resourceDestinations.length - 1];
+  const destination = lastContainedSpan(tokens.resourceDestinations, {
+    start: offsets.start - tokenBase,
+    end: offsets.end - tokenBase,
+  });
   if (destination === undefined || destination.end === destination.start) return undefined;
+  const start = tokenBase + destination.start;
+  const end = tokenBase + destination.end;
   return {
     kind: node.type === "link" ? "markdown-link" : "markdown-image",
-    rawValue: authored.slice(destination.start, destination.end),
-    range: locator.range(
-      offsets.start + destination.start,
-      offsets.start + destination.end,
-    ),
+    rawValue: value.slice(start, end),
+    range: locator.range(start, end),
     syntax: "markdown",
   };
 }
@@ -106,45 +132,131 @@ const HTML_DESTINATION_ATTRIBUTES = new Set(["action", "href", "src"]);
 type HtmlChildNode = DefaultTreeAdapterMap["childNode"];
 type HtmlElement = DefaultTreeAdapterMap["element"];
 
+interface SourceProjection {
+  range(start: number, end: number): SourceRange;
+}
+
+interface LineContent {
+  readonly start: number;
+  readonly end: number;
+}
+
+function lineContents(value: string): readonly LineContent[] {
+  const lines: LineContent[] = [];
+  let start = 0;
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index];
+    if (character !== "\r" && character !== "\n") continue;
+    lines.push({ start, end: index });
+    if (character === "\r" && value[index + 1] === "\n") index++;
+    start = index + 1;
+  }
+  lines.push({ start, end: value.length });
+  return lines;
+}
+
+function rawHtmlSourceProjection(
+  normalized: string,
+  authored: string,
+  absoluteStart: number,
+  locator: SourceLocator,
+): SourceProjection {
+  // Remark removes blockquote and list continuation prefixes from `node.value`
+  // but keeps node positions in the authored document. Each normalized line is
+  // therefore the suffix of its authored line. Preserve that parser-provided
+  // relationship instead of rediscovering HTML or container syntax here.
+  const normalizedLines = lineContents(normalized);
+  const authoredLines = lineContents(authored);
+  if (normalizedLines.length !== authoredLines.length) {
+    throw new TypeError("Parser-reported raw HTML has inconsistent source lines");
+  }
+
+  const segments = normalizedLines.map((normalizedLine, index) => {
+    const authoredLine = authoredLines[index]!;
+    const normalizedText = normalized.slice(normalizedLine.start, normalizedLine.end);
+    const authoredText = authored.slice(authoredLine.start, authoredLine.end);
+    if (!authoredText.endsWith(normalizedText)) {
+      throw new TypeError("Parser-reported raw HTML does not map to authored source");
+    }
+    const prefixLength = authoredText.length - normalizedText.length;
+    return {
+      normalizedStart: normalizedLine.start,
+      normalizedEnd: normalizedLine.end,
+      authoredStart: absoluteStart + authoredLine.start + prefixLength,
+    };
+  });
+
+  function projectOffset(offset: number): number {
+    let low = 0;
+    let high = segments.length;
+    while (low < high) {
+      const middle = low + Math.floor((high - low) / 2);
+      if (segments[middle]!.normalizedStart <= offset) low = middle + 1;
+      else high = middle;
+    }
+    const segment = segments[low - 1];
+    if (segment !== undefined && offset <= segment.normalizedEnd) {
+      return segment.authoredStart + offset - segment.normalizedStart;
+    }
+    throw new RangeError("Raw HTML offset falls outside parser-reported source");
+  }
+
+  return {
+    range(start, end) {
+      return locator.range(projectOffset(start), projectOffset(end));
+    },
+  };
+}
+
 function isHtmlElement(node: HtmlChildNode): node is HtmlElement {
   return "attrs" in node && "tagName" in node;
 }
 
 function htmlAttributeDestination(
   raw: string,
+  authoredNode: string,
   absoluteStart: number,
   location: { readonly startOffset: number; readonly endOffset: number },
-  locator: SourceLocator,
+  projection: SourceProjection,
 ): ContentDestination | undefined {
-  const authored = raw.slice(location.startOffset, location.endOffset);
-  const equals = authored.indexOf("=");
+  const normalizedAttribute = raw.slice(location.startOffset, location.endOffset);
+  const equals = normalizedAttribute.indexOf("=");
   if (equals === -1) return undefined;
   let start = equals + 1;
-  while (/[\t\n\f\r ]/.test(authored[start] ?? "")) start++;
-  let end = authored.length;
-  const quote = authored[start];
+  while (/[\t\n\f\r ]/.test(normalizedAttribute[start] ?? "")) start++;
+  let end = normalizedAttribute.length;
+  const quote = normalizedAttribute[start];
   if (quote === '"' || quote === "'") {
     start++;
-    if (authored[end - 1] === quote) end--;
+    if (normalizedAttribute[end - 1] === quote) end--;
   }
   if (end <= start) return undefined;
-  return {
+  const normalizedValue = normalizedAttribute.slice(start, end);
+  const range = projection.range(
+    location.startOffset + start,
+    location.startOffset + end,
+  );
+  const rawValue = authoredNode.slice(
+    range.start.offset - absoluteStart,
+    range.end.offset - absoluteStart,
+  );
+  const destination: ContentDestination = {
     kind: "html-attribute",
-    rawValue: authored.slice(start, end),
-    range: locator.range(
-      absoluteStart + location.startOffset + start,
-      absoluteStart + location.startOffset + end,
-    ),
+    rawValue,
+    range,
     syntax: "html-attribute",
   };
+  return normalizedValue === rawValue ? destination : { ...destination, normalizedValue };
 }
 
 function rawHtmlAnalysis(
   raw: string,
+  authored: string,
   absoluteStart: number,
   locator: SourceLocator,
 ): readonly ContentDestination[] {
   const destinations: ContentDestination[] = [];
+  const projection = rawHtmlSourceProjection(raw, authored, absoluteStart, locator);
   const root = parseFragment(raw, { sourceCodeLocationInfo: true });
   const pending: HtmlChildNode[] = [];
   for (let index = root.childNodes.length - 1; index >= 0; index--) {
@@ -162,9 +274,10 @@ function rawHtmlAnalysis(
         if (location === undefined) continue;
         const destination = htmlAttributeDestination(
           raw,
+          authored,
           absoluteStart,
           location,
-          locator,
+          projection,
         );
         if (destination !== undefined) destinations.push(destination);
       }
@@ -210,11 +323,13 @@ export function analyzeMarkdownTree(
     if (node.type === "link" || node.type === "image") {
       const offsets = positionOffsets(node.position);
       if (offsets === undefined) continue;
-      const tokens = markdownTokens(
-        value.slice(offsets.start, offsets.end),
-        options.micromarkExtensions,
-      );
-      const destination = linkDestination(value, node, locator, tokens);
+      const authored = value.slice(offsets.start, offsets.end);
+      const multiline = /[\r\n]/.test(authored);
+      const tokenBase = multiline ? 0 : offsets.start;
+      const tokens = multiline
+        ? getDocumentTokens()
+        : markdownTokens(authored, options.micromarkExtensions);
+      const destination = linkDestination(value, node, locator, tokens, tokenBase);
       if (destination !== undefined) destinations.push(destination);
     } else if (
       node.type === "linkReference" || node.type === "imageReference"
@@ -225,7 +340,12 @@ export function analyzeMarkdownTree(
     } else if (node.type === "html") {
       const offsets = positionOffsets(node.position);
       if (offsets !== undefined) {
-        destinations.push(...rawHtmlAnalysis(node.value, offsets.start, locator));
+        destinations.push(...rawHtmlAnalysis(
+          node.value,
+          value.slice(offsets.start, offsets.end),
+          offsets.start,
+          locator,
+        ));
       }
     }
     const children = childrenOf(node);

@@ -31,6 +31,7 @@ export type ContentDestination =
   | (DestinationBase & {
     readonly kind: "html-attribute";
     readonly syntax: "html-attribute";
+    readonly normalizedValue?: string;
   })
   | (DestinationBase & {
     readonly kind: "mdx-jsx-attribute";

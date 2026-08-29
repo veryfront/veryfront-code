@@ -279,6 +279,12 @@ export class PublicDocSyntaxError extends Error {
 
 function destinationHref(destination: ContentDestination): string {
   if (
+    destination.kind === "html-attribute" &&
+    destination.normalizedValue !== undefined
+  ) {
+    return destination.normalizedValue;
+  }
+  if (
     destination.syntax === "javascript-string" ||
     destination.syntax === "javascript-template"
   ) {

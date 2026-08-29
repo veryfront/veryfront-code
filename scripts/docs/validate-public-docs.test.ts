@@ -1104,6 +1104,12 @@ describe("public docs validation", () => {
       await destinations("[some\ntext](../architecture/text.md)"),
       ["../architecture/text.md"],
     );
+    assertEquals(
+      await destinations(
+        '> <a href="../architecture/wrapped\n> .md">wrapped</a>',
+      ),
+      ["../architecture/wrapped\n.md"],
+    );
     for (const blankLine of ["\n\n", "\r\n\r\n", "\n \t\n"]) {
       assertEquals(
         await destinations(

@@ -44,9 +44,9 @@ if (result.kind === "syntax-error") {
 }
 ```
 
-Set `syntax` to `"markdown"` or `"mdx"`. You can also pass frontmatter settings with `frontmatter`. A document result contains rendered source ranges and statically known link, image, JSX, and raw HTML destinations. A syntax error contains one positioned diagnostic.
+Set `syntax` to `"markdown"` or `"mdx"`. You can also pass frontmatter settings with `frontmatter`. A document result contains statically known link, image, JSX, and raw HTML destinations. A syntax error contains one positioned diagnostic.
 
-Offsets are zero-based. Lines and columns are one-based. `rawValue` preserves the authored source. Static JavaScript strings and templates in MDX also include `cookedValue` when their runtime value differs from the authored text.
+Offsets are zero-based. Lines and columns are one-based. `rawValue` preserves the authored source. A raw HTML destination also includes `normalizedValue` when Markdown removes container prefixes from a multiline attribute. Static JavaScript strings and templates in MDX include `cookedValue` when their runtime value differs from the authored text.
 
 ## Default plugin stack
 
