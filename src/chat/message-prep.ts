@@ -23,16 +23,21 @@ import { historicalToolSummaries } from "../integrations/_tool_summaries.ts";
 import type { IntegrationEndpointHistoricalSummary } from "../integrations/schema.ts";
 import { safeJsonParse } from "#veryfront/utils/json.ts";
 import { stringifyChatJson } from "./json-value.ts";
-
-/** Tunable limits used while preparing chat history for model context. */
-export type MessagePrepLimits = {
-  charsPerToken: number;
-  historicalToolOutputMaskChars: number;
-  historicalToolInputMaskChars: number;
-  retainedMetadataStringMaxChars: number;
-  retainedMetadataArrayMaxItems: number;
-  retainedMetadataObjectMaxEntries: number;
-};
+import type {
+  HistoricalToolInputCompactionDiagnostic,
+  HistoricalToolInputRetainedField,
+  HistoricalToolInputRetentionOptions,
+  HistoricalToolInputRetentionPolicy,
+  MessagePrepLimits,
+} from "./message-prep-types.ts";
+export type {
+  HistoricalToolInputCompactionDiagnostic,
+  HistoricalToolInputRetainedField,
+  HistoricalToolInputRetentionOptions,
+  HistoricalToolInputRetentionPolicy,
+  HistoricalToolInputRetentionPolicyResolver,
+  MessagePrepLimits,
+} from "./message-prep-types.ts";
 
 /** Default limits for chat history preparation. */
 export const DEFAULT_MESSAGE_PREP_LIMITS: MessagePrepLimits = {
@@ -45,52 +50,6 @@ export const DEFAULT_MESSAGE_PREP_LIMITS: MessagePrepLimits = {
 };
 
 const CHARS_PER_TOKEN = DEFAULT_MESSAGE_PREP_LIMITS.charsPerToken;
-
-/** Field selector retained in a historical tool-input summary. */
-export type HistoricalToolInputRetainedField =
-  | string
-  | {
-    inputName: string;
-    outputName?: string;
-  }
-  | {
-    inputNames: readonly string[];
-    outputName: string;
-  };
-
-/** Policy for compacting a completed historical tool-call input. */
-export type HistoricalToolInputRetentionPolicy = {
-  compactCompletedInput: boolean;
-  compactAfterChars?: number;
-  retainInputFields?: readonly HistoricalToolInputRetainedField[];
-};
-
-/** Resolves the retention policy for a completed historical tool input. */
-export type HistoricalToolInputRetentionPolicyResolver = (
-  toolName: string,
-  input: Record<string, unknown>,
-) => HistoricalToolInputRetentionPolicy | null | undefined;
-
-/** Diagnostic emitted when a completed historical tool input is compacted. */
-export type HistoricalToolInputCompactionDiagnostic = {
-  source: "provider" | "ui";
-  toolName: string;
-  toolCallId: string;
-  originalInputChars: number;
-  retainedInputChars: number;
-  originalInputTokens: number;
-  retainedInputTokens: number;
-  originalInputHash: string;
-  reason: "completed_historical_tool_input";
-};
-
-/** Options for historical tool-input compaction. */
-export type HistoricalToolInputRetentionOptions = {
-  resolvePolicy?: HistoricalToolInputRetentionPolicyResolver;
-  diagnostics?: HistoricalToolInputCompactionDiagnostic[];
-  limits?: Partial<MessagePrepLimits>;
-  preserveSourceMessageIds?: readonly string[];
-};
 
 /** Options accepted by prepare provider model messages from UI messages. */
 export interface PrepareProviderModelMessagesFromUiMessagesOptions {
