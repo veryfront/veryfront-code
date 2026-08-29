@@ -1259,11 +1259,13 @@ async function executeEvalRun(
 
   const config = request.config ?? {};
   const report = await deps.runEval(withEvalRunConfig(evalItem.definition, config), {
-    adapters: {
-      agent: deps.createEvalAgentAdapter(
-        createEvalAdapterConfig({ request, definition: evalItem.definition, req, ctx }),
-      ),
-    },
+    adapters: evalItem.definition.targetKind === "agent"
+      ? {
+        agent: deps.createEvalAgentAdapter(
+          createEvalAdapterConfig({ request, definition: evalItem.definition, req, ctx }),
+        ),
+      }
+      : {},
     baseDir: ctx.projectDir,
     runId: request.runId,
   });
