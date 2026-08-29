@@ -819,6 +819,13 @@ Default model has no matching provider credential.
 - **HTTP status:** 400
 - **What to do:** Set the agent's model to a provider you have a key for, or use model: "auto"
 
+### provider-metadata-split-unsupported
+
+Provider metadata cannot be attached after assistant turn splitting.
+
+- **HTTP status:** 500
+- **What to do:** Avoid converting one provider response into multiple assistant request messages before provider metadata is consumed
+
 ### provider-replay-checkpoint-invalid
 
 Provider replay checkpoint is invalid.
