@@ -753,6 +753,7 @@ interface Scope {
   readonly definitelyNonUndefinedNames: Set<string>;
   readonly definitelyTruthyNames: Set<string>;
   readonly definitelyNonNullishNames: Set<string>;
+  readonly assignedNames: Set<string>;
   readonly functionBoundary: boolean;
   readonly playwrightFixtures: Set<string>;
   readonly runtimeBindings: Map<string, RuntimeBinding>;
@@ -3569,9 +3570,19 @@ function collectAssignedIdentifierNames(
     }
   } else if (
     (node.type === "ForOfStatement" || node.type === "ForInStatement") &&
-    isNode(node.left) && node.left.type !== "VariableDeclaration"
+    isNode(node.left)
   ) {
-    collectPatternNames(node.left, names);
+    if (node.left.type !== "VariableDeclaration") {
+      collectPatternNames(node.left, names);
+    } else if (node.left.kind === "var") {
+      for (
+        const declarator of Array.isArray(node.left.declarations)
+          ? node.left.declarations
+          : []
+      ) {
+        if (isNode(declarator)) collectPatternNames(declarator.id, names);
+      }
+    }
   }
   for (const key of Object.keys(node)) {
     if (key === "loc" || COMMENT_KEYS.has(key)) continue;
@@ -3595,8 +3606,11 @@ function createScope(
   const definitelyTruthyNames = new Set<string>();
   const definitelyNonNullishNames = new Set<string>();
   const playwrightFixtures = new Set<string>();
-  const locallyAssignedNames = new Set<string>();
-  collectAssignedIdentifierNames(node, locallyAssignedNames);
+  const locallyAssignedNames = outerScopes[0]?.assignedNames ??
+    new Set<string>();
+  if (!outerScopes[0]) {
+    collectAssignedIdentifierNames(node, locallyAssignedNames);
+  }
   collectLocalDeclaredNames(
     node,
     names,
@@ -3620,6 +3634,7 @@ function createScope(
     definitelyNonUndefinedNames,
     definitelyTruthyNames,
     definitelyNonNullishNames,
+    assignedNames: locallyAssignedNames,
     functionBoundary: isFunctionScopeNode(node),
     playwrightFixtures,
     runtimeBindings: new Map(),
@@ -3899,6 +3914,7 @@ function runtimeReceiverScope(
     definitelyNonUndefinedNames: new Set([THIS_RUNTIME_ROOT]),
     definitelyTruthyNames: new Set(),
     definitelyNonNullishNames: new Set(),
+    assignedNames: new Set(),
     functionBoundary: false,
     playwrightFixtures: new Set(),
     runtimeBindings: new Map([
