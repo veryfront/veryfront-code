@@ -1436,8 +1436,13 @@ function warnIgnoredExtensionDeclarations(
   // shares this realm and can poison Array.prototype hooks before a hosted
   // tenant evaluation reaches this path.
   const declared: string[] = [];
+<<<<<<< HEAD
   for (let index = 0; index < extensions.length; index += 1) {
     const entry: unknown = extensions[index];
+=======
+  for (let index = 0; index < extensions.length; index++) { // NOSONAR: array traversal must stay index-based under poisoned primordials.
+    const entry = extensions[index];
+>>>>>>> origin/feat/688-hosted-extension-declarations
     if (
       typeof entry === "object" && entry !== null &&
       ownKeys(entry).length === 1 &&
