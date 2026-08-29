@@ -3,8 +3,8 @@ import {
   assertRejects,
   assertStringIncludes,
   assertThrows,
-} from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   assertPackageEntryPointsExist,
   createDntExtensionEntryPoints,
@@ -171,6 +171,41 @@ describe("createExtensionPackageSpec", () => {
         "file:///repo/extensions/ext-bundler-esbuild/src/index.ts"
       ],
       { name: "@veryfront/ext-bundler-esbuild", version: "0.1.985" },
+    );
+  });
+
+  it("publishes first-party extension subpath imports from their package root", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-content-mdx",
+      exports: "./src/index.ts",
+      veryfront: { extension: true },
+      imports: {
+        "@veryfront/ext-parser-babel/parser-only":
+          "../ext-parser-babel/src/parser-only.ts",
+      },
+    };
+
+    const spec = createExtensionPackageSpec({
+      manifestPath: "extensions/ext-content-mdx/deno.json",
+      manifest,
+      rootConfig,
+      rootDir: "/repo",
+      version: "0.1.985",
+      license: "Apache-2.0",
+    });
+
+    assertEquals(spec.packageJson.dependencies, {
+      "@veryfront/ext-parser-babel": "0.1.985",
+    });
+    assertEquals(
+      spec.dntMappings[
+        "file:///repo/extensions/ext-parser-babel/src/parser-only.ts"
+      ],
+      {
+        name: "@veryfront/ext-parser-babel",
+        version: "0.1.985",
+        subPath: "parser-only",
+      },
     );
   });
 

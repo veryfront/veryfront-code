@@ -36,6 +36,14 @@ describe("platform/compat/std/front-matter-yaml", () => {
       assertEquals(result.body.trim(), "This is the body.");
     });
 
+    it("should use the compiler's non-line-anchored closing boundary", () => {
+      assertEquals(extract("---\ntitle: Hello---\nBody"), {
+        attrs: { title: "Hello" },
+        body: "Body",
+        frontMatter: "title: Hello",
+      });
+    });
+
     it("should return empty attrs for text without front matter", () => {
       const result = extract("Just plain text");
       assertEquals(Object.keys(result.attrs).length, 0);

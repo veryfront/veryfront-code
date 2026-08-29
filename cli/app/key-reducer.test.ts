@@ -29,6 +29,7 @@ const UP = "\x1b[A";
 const DOWN = "\x1b[B";
 const TAB = "\t";
 const CTRL_C = "\x03";
+const REMOTE_BASE_DIR = "remote-base";
 
 const ENV: KeyEnv = { suggestProjectName: () => "brave-otter" };
 
@@ -48,7 +49,7 @@ function withProjects(): AppState {
 }
 
 function withRemote(slugs: string[] = ["one", "two"]): AppState {
-  return setRemoteProjects(slugs.map((slug) => ({ slug })))(
+  return setRemoteProjects(slugs.map((slug) => ({ slug })), REMOTE_BASE_DIR)(
     setRemoteUser({ email: "dev@example.com" })(withProjects()),
   );
 }
@@ -240,7 +241,7 @@ describe("app/key-reducer", () => {
 
       assertEquals(effects, [{
         kind: "open-browser",
-        project: { slug: "one", path: remoteProjectPath("one"), type: "remote" },
+        project: { slug: "one", path: remoteProjectPath("one", REMOTE_BASE_DIR), type: "remote" },
       }]);
     });
 
@@ -249,7 +250,7 @@ describe("app/key-reducer", () => {
 
       assertEquals(effects, [{
         kind: "pull",
-        project: { slug: "one", path: remoteProjectPath("one"), type: "remote" },
+        project: { slug: "one", path: remoteProjectPath("one", REMOTE_BASE_DIR), type: "remote" },
       }]);
     });
 
