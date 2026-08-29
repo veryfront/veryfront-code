@@ -2718,7 +2718,6 @@ function htmlTagRanges(
     }
 
     const commonMarkEnd = commonMarkHtmlTagEnd(text, start);
-    const tagSyntax = scanTagSyntax(text, start);
     const mdxJsxEnd = mdxJsxTagEnd(text, start, jsxScanCache);
     const tagEnd = commonMarkEnd === undefined
       ? mdxJsxEnd
@@ -2727,6 +2726,7 @@ function htmlTagRanges(
       : Math.max(commonMarkEnd, mdxJsxEnd);
     if (tagEnd !== undefined) {
       ranges.push({ start, end: tagEnd });
+      const tagSyntax = scanTagSyntax(text, start);
       const rescanExpression = tagSyntax.end === tagEnd
         ? tagSyntax.expressionRanges[0]
         : undefined;
