@@ -65,11 +65,11 @@ export type HistoricalToolInputRetentionOptions = {
 };
 
 /** Options accepted by prepare provider model messages from UI messages. */
-export type PrepareProviderModelMessagesFromUiMessagesOptions = {
+export interface PrepareProviderModelMessagesFromUiMessagesOptions {
   providerOwnedToolNames?: readonly string[];
   preserveProviderOwnedToolSourceMessageIds?: readonly string[];
   historicalToolInputRetention?: HistoricalToolInputRetentionOptions;
-};
+}
 
 /** Approximate token categories for context diagnostics. */
 export type MessageTokenBreakdown = {

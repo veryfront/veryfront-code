@@ -239,6 +239,27 @@ describe("agent/runtime/provider-replay", () => {
       });
     });
 
+    it("should reject malformed present thinking fields at the checkpoint boundary", () => {
+      assertInvalidCheckpoint((checkpoint) => {
+        checkpoint.providerBlocks = [{
+          type: "provider-block",
+          provider: "anthropic",
+          block: { type: "thinking", thinking: ["not text"], signature: SIGNATURE },
+        }];
+        checkpoint.providerBlockPositions = [0];
+        checkpoint.totalPartCount = 1;
+      });
+      assertInvalidCheckpoint((checkpoint) => {
+        checkpoint.providerBlocks = [{
+          type: "provider-block",
+          provider: "anthropic",
+          block: { type: "thinking", thinking: "visible reasoning", signature: 123 },
+        }];
+        checkpoint.providerBlockPositions = [0];
+        checkpoint.totalPartCount = 1;
+      });
+    });
+
     it("should reject a block whose provider differs from the checkpoint provider", () => {
       assertInvalidCheckpoint((checkpoint) => {
         (checkpoint.providerBlocks as Array<Record<string, unknown>>)[0]!.provider =

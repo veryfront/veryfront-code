@@ -112,6 +112,21 @@ function toCanonicalAnthropicToolCall(
   };
 }
 
+function validateAnthropicThinkingReplayBlock(
+  block: Record<string, unknown>,
+  context?: Record<string, unknown>,
+): void {
+  if (block.thinking !== undefined && typeof block.thinking !== "string") {
+    invalidCheckpoint("checkpoint thinking block is malformed", context);
+  }
+  if (block.signature !== undefined && typeof block.signature !== "string") {
+    invalidCheckpoint("checkpoint thinking block is malformed", context);
+  }
+  if (block.thinking === undefined && block.signature === undefined) {
+    invalidCheckpoint("checkpoint thinking block is malformed", context);
+  }
+}
+
 function toTranscriptVisibleAnthropicReplayPart(
   block: Record<string, unknown>,
 ): Record<string, unknown> | undefined {
@@ -123,9 +138,7 @@ function toTranscriptVisibleAnthropicReplayPart(
       return { type: "text", text: block.text };
     }
     case "thinking": {
-      if (typeof block.thinking !== "string" && typeof block.signature !== "string") {
-        invalidCheckpoint("checkpoint thinking block is malformed");
-      }
+      validateAnthropicThinkingReplayBlock(block);
       return isNonEmptyString(block.thinking)
         ? { type: "reasoning", text: block.thinking }
         : undefined;
@@ -313,6 +326,9 @@ function parseProviderReplayBlock(
   }
   if (!isRecord(value.block)) {
     invalidCheckpoint("provider block content must be an object", { index });
+  }
+  if (provider === "anthropic" && value.block.type === "thinking") {
+    validateAnthropicThinkingReplayBlock(value.block, { index });
   }
   return { type: "provider-block", provider, block: value.block };
 }
