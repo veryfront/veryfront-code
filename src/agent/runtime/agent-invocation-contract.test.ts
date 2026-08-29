@@ -7,6 +7,7 @@ import {
   parseRuntimeAgentRunInvocationOrError,
   RuntimeAgentRunInvocationSchema,
 } from "../index.ts";
+import { DEFAULT_LIMITS } from "#veryfront/security/input-validation/types.ts";
 
 const conversationId = "10000000-1000-4000-8000-100000000001";
 const messageId = "10000000-1000-4000-8000-100000000002";
@@ -521,6 +522,36 @@ describe("agent/runtime-agent-invocation-contract", () => {
 
     assertEquals(parsed.run.runId, "run_root_1");
     assertEquals(parsed.context.length, 1);
+  });
+
+  it("keeps the default body limit on runtime agent invocation requests", async () => {
+    const result = await parseRuntimeAgentRunInvocationOrError(
+      new Request("http://localhost/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(createInvocation({
+          serverResolvedProviderReplayCheckpoints: [{
+            version: 1,
+            messageId: "assistant-message-1",
+            provider: "anthropic",
+            providerBlocks: [{
+              type: "provider-block",
+              provider: "anthropic",
+              block: {
+                type: "thinking",
+                thinking: "x".repeat(DEFAULT_LIMITS.maxBodySize),
+                signature: "sig-private-large",
+              },
+            }],
+            providerBlockPositions: [0],
+            totalPartCount: 1,
+          }],
+        })),
+      }),
+    );
+
+    assertInstanceOf(result, Response);
+    assertEquals(result.status, 413);
   });
 
   it("returns a 400 response for malformed runtime agent invocation payloads", async () => {

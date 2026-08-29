@@ -242,6 +242,7 @@ export type ChatToolResultPart = {
   toolCallId: string;
   toolName: string;
   output: ChatToolResultOutput;
+  providerExecuted?: boolean;
   providerOptions?: unknown;
 };
 

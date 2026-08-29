@@ -1,11 +1,21 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertMatch, assertStringIncludes, assertThrows } from "#std/assert";
-import type { ChatUiMessage, ProviderModelMessage } from "./types.ts";
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertStrictEquals,
+  assertStringIncludes,
+  assertThrows,
+} from "#std/assert";
+import type { ChatToolResultPart, ChatUiMessage, ProviderModelMessage } from "./types.ts";
+import { withProviderModelMessageSourceId } from "./conversation.ts";
+import { repairToolPairsForPreparation } from "./provider-message-tool-pair-repair.ts";
 import type { HistoricalToolInputCompactionDiagnostic } from "./message-prep.ts";
 import {
   compactForStep,
   compactHistoricalUiMessageToolInputs,
   compressTurn,
+  dedupeToolHistory,
   enforceTokenBudget,
   estimateTokens,
   maskOldToolOutputs,
@@ -218,6 +228,250 @@ Deno.test("repairToolPairs never steals a matching result from a later user turn
   ]);
 });
 
+Deno.test("repairToolPairs leaves a provider-executed call whose result is the next tool message", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "srv-search",
+        toolName: "web_search",
+        input: { query: "veryfront" },
+        providerExecuted: true,
+      }],
+    },
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "srv-search",
+        toolName: "web_search",
+        output: { type: "json", value: { results: [] } },
+      }],
+    },
+  ] satisfies ProviderModelMessage[];
+
+  const repaired = repairToolPairs(messages);
+
+  assertStrictEquals(repaired, messages, "an already-paired turn must not be rewritten");
+  assertEquals(
+    JSON.stringify(repaired).match(/\[tool result unavailable\]/g),
+    null,
+    "the provider result that follows the call must not be shadowed by a placeholder",
+  );
+});
+
+Deno.test("repairToolPairs appends an inline placeholder for an unanswered provider-executed call", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "srv-fetch",
+        toolName: "web_fetch",
+        input: { url: "https://example.com" },
+        providerExecuted: true,
+      }],
+    },
+  ] satisfies ProviderModelMessage[];
+
+  assertEquals(repairToolPairs(messages), [
+    {
+      role: "assistant",
+      content: [
+        messages[0]!.content[0]!,
+        {
+          type: "tool-result",
+          toolCallId: "srv-fetch",
+          toolName: "web_fetch",
+          output: { type: "text", value: "[tool result unavailable]" },
+        },
+      ],
+    },
+  ]);
+});
+
+Deno.test("repairToolPairs leaves checkpoint-preserved provider calls unresolved", () => {
+  const sourceId = "assistant-checkpoint";
+  const message = withProviderModelMessageSourceId({
+    role: "assistant",
+    content: [{
+      type: "tool-call",
+      toolCallId: "srv-deferred",
+      toolName: "mcp_deferred",
+      input: { query: "later" },
+    }],
+  }, sourceId);
+
+  assertEquals(
+    repairToolPairsForPreparation([message], [sourceId]),
+    [message],
+  );
+});
+
+Deno.test("dedupeToolHistory scopes reused checkpoint call ids to transcript segments", () => {
+  const call = {
+    type: "tool-call" as const,
+    toolCallId: "reused-provider-call",
+    toolName: "web_search",
+    input: { query: "one" },
+  };
+  const result = {
+    type: "tool-result" as const,
+    toolCallId: call.toolCallId,
+    toolName: call.toolName,
+    output: { type: "json" as const, value: [] },
+  };
+  const messages = [
+    withProviderModelMessageSourceId({ role: "assistant", content: [call] }, "checkpoint-1"),
+    withProviderModelMessageSourceId({ role: "tool", content: [result] }, "checkpoint-1"),
+    { role: "user" as const, content: "Start another turn" },
+    withProviderModelMessageSourceId({
+      role: "assistant",
+      content: [{ ...call, input: { query: "two" } }],
+    }, "checkpoint-2"),
+    withProviderModelMessageSourceId({ role: "tool", content: [result] }, "checkpoint-2"),
+  ];
+
+  assertEquals(dedupeToolHistory(messages), messages);
+});
+
+Deno.test("repairToolPairs leaves a provider-executed call whose result is already inline", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "srv-exec",
+          toolName: "code_execution",
+          input: { code: "1 + 1" },
+          providerExecuted: true,
+        },
+        {
+          type: "tool-result",
+          toolCallId: "srv-exec",
+          toolName: "code_execution",
+          output: { type: "json", value: { stdout: "2" } },
+        },
+      ],
+    },
+  ] satisfies ProviderModelMessage[];
+
+  const repaired = repairToolPairs(messages);
+
+  assertStrictEquals(repaired, messages, "an inline provider result must not be rewritten");
+  assertEquals(
+    JSON.stringify(repaired).match(/\[tool result unavailable\]/g),
+    null,
+    "the inline provider result must not be duplicated by a placeholder",
+  );
+});
+
+Deno.test("repairToolPairs keeps unrelated results when pulling one out of a later tool message", () => {
+  const unrelatedResult = {
+    type: "tool-result",
+    toolCallId: "call-z",
+    toolName: "lookup",
+    output: { type: "json", value: { from: "unrelated call" } },
+  } satisfies ChatToolResultPart;
+  const otherPendingResult = {
+    type: "tool-result",
+    toolCallId: "call-b",
+    toolName: "lookup",
+    output: { type: "json", value: { from: "other pending call" } },
+  } satisfies ChatToolResultPart;
+  const matchingResult = {
+    type: "tool-result",
+    toolCallId: "call-a",
+    toolName: "lookup",
+    output: { type: "json", value: { from: "matching call" } },
+  } satisfies ChatToolResultPart;
+  const messages = [
+    {
+      role: "assistant",
+      content: [{ type: "tool-call", toolCallId: "call-a", toolName: "lookup", input: {} }],
+    },
+    { role: "assistant", content: [{ type: "text", text: "Still working." }] },
+    { role: "tool", content: [unrelatedResult] },
+    { role: "tool", content: [otherPendingResult, matchingResult] },
+  ] satisfies ProviderModelMessage[];
+
+  assertEquals(repairToolPairs(messages), [
+    messages[0]!,
+    { role: "tool", content: [matchingResult] },
+    messages[1]!,
+    messages[2]!,
+    { role: "tool", content: [otherPendingResult] },
+  ]);
+});
+
+Deno.test("repairToolPairs prepends a recovered result into the adjacent tool message", () => {
+  const adjacentResult = {
+    type: "tool-result",
+    toolCallId: "call-c",
+    toolName: "lookup",
+    output: { type: "json", value: { from: "already adjacent" } },
+  } satisfies ChatToolResultPart;
+  const strandedResult = {
+    type: "tool-result",
+    toolCallId: "call-a",
+    toolName: "lookup",
+    output: { type: "json", value: { from: "stranded result" } },
+  } satisfies ChatToolResultPart;
+  const messages = [
+    {
+      role: "assistant",
+      content: [{ type: "tool-call", toolCallId: "call-a", toolName: "lookup", input: {} }],
+    },
+    { role: "tool", content: [adjacentResult] },
+    { role: "assistant", content: [{ type: "text", text: "Still working." }] },
+    { role: "tool", content: [strandedResult] },
+  ] satisfies ProviderModelMessage[];
+
+  assertEquals(repairToolPairs(messages), [
+    messages[0]!,
+    { role: "tool", content: [strandedResult, adjacentResult] },
+    messages[2]!,
+  ]);
+});
+
+Deno.test("repairToolPairs stops scanning for a stranded result at the next user turn", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: [{ type: "tool-call", toolCallId: "call-a", toolName: "lookup", input: {} }],
+    },
+    { role: "assistant", content: [{ type: "text", text: "Still working." }] },
+    { role: "user", content: "Start a new turn." },
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "call-a",
+        toolName: "lookup",
+        output: { type: "json", value: { from: "later turn" } },
+      }],
+    },
+  ] satisfies ProviderModelMessage[];
+
+  assertEquals(repairToolPairs(messages), [
+    messages[0]!,
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "call-a",
+        toolName: "lookup",
+        output: { type: "text", value: "[tool result unavailable]" },
+      }],
+    },
+    messages[1]!,
+    messages[2]!,
+    messages[3]!,
+  ]);
+});
+
 Deno.test("sanitizeProviderModelMessages drops inline preview screenshots but keeps other data-URL images", () => {
   const messages = [
     {
@@ -328,6 +582,61 @@ Deno.test("maskOldToolOutputs masks large historical tool outputs and removes st
   });
   assertStringIncludes(JSON.stringify(masked[2]), "[Command: npm test — exit 0, output omitted");
   assertEquals(masked[3], messages[3]);
+});
+
+Deno.test("maskOldToolOutputs preserves checkpointed historical reasoning", () => {
+  const messages = [
+    { role: "user", content: "run the check" },
+    withProviderModelMessageSourceId(
+      { role: "assistant", content: [{ type: "reasoning", text: "signed transcript thinking" }] },
+      "assistant-1",
+    ),
+    { role: "user", content: "now summarize it" },
+  ] satisfies ProviderModelMessage[];
+
+  const preserved = maskOldToolOutputs(messages, {
+    preserveSourceMessageIds: ["assistant-1"],
+  });
+
+  assertEquals(preserved[1], messages[1]);
+});
+
+Deno.test("maskOldToolOutputs preserves checkpointed historical provider tool outputs", () => {
+  const messages = [
+    { role: "user", content: "run the provider tool" },
+    withProviderModelMessageSourceId(
+      {
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: "srvtool-1",
+          toolName: "web_fetch",
+          input: { url: "https://veryfront.com/docs" },
+          providerExecuted: true,
+        }],
+      },
+      "assistant-1",
+    ),
+    withProviderModelMessageSourceId(
+      {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "srvtool-1",
+          toolName: "web_fetch",
+          output: { type: "json", value: { content: "x".repeat(600) } },
+        }],
+      },
+      "assistant-1",
+    ),
+    { role: "user", content: "continue" },
+  ] satisfies ProviderModelMessage[];
+
+  const preserved = maskOldToolOutputs(messages, {
+    preserveSourceMessageIds: ["assistant-1"],
+  });
+
+  assertEquals(preserved[2], messages[2]);
 });
 
 Deno.test("maskOldToolOutputs masks historical web_search, readFile, web_fetch and task results per tool", () => {
@@ -2061,6 +2370,54 @@ Deno.test("prepareProviderModelMessagesFromUiMessages compacts custom tools thro
   assertEquals((diagnostics[0] as { toolCallId?: string }).toolCallId, "tool-render");
   assert((diagnostics[0] as { originalInputChars?: number }).originalInputChars! > 1_000);
   assert((diagnostics[0] as { retainedInputChars?: number }).retainedInputChars! < 1_000);
+});
+
+Deno.test("prepareProviderModelMessagesFromUiMessages preserves checkpointed provider-owned tool history during historical compaction", () => {
+  const inputMarker = "CHECKPOINTED_PROVIDER_TOOL_INPUT_MARKER";
+  const outputMarker = "CHECKPOINTED_PROVIDER_TOOL_OUTPUT_MARKER";
+  const prepared = prepareProviderModelMessagesFromUiMessages(
+    [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Patch the file." }],
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "update_file",
+          toolCallId: "tool-update",
+          input: {
+            path: "components/Checkpointed.tsx",
+            content: `${inputMarker}:${"const value = 1;\n".repeat(3000)}`,
+          },
+          state: "output-available",
+          providerExecuted: true,
+          output: {
+            ok: true,
+            content: `${outputMarker}:${"patched output ".repeat(3000)}`,
+          },
+        }],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Continue from that patch." }],
+      },
+    ],
+    {
+      providerOwnedToolNames: ["update_file"],
+      preserveProviderOwnedToolSourceMessageIds: ["assistant-1"],
+    },
+  );
+
+  const serialized = JSON.stringify(prepared);
+  assertStringIncludes(serialized, inputMarker);
+  assertStringIncludes(serialized, outputMarker);
+  assertEquals(serialized.includes("historical_tool_input_summary"), false);
+  assertEquals(serialized.includes("[update_file output omitted"), false);
 });
 
 Deno.test("compactHistoricalUiMessageToolInputs does not treat raw completed tool calls as results", () => {

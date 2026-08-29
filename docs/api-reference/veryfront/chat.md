@@ -581,46 +581,46 @@ import {
 
 #### Components
 
-| Name                          | Description                                  | Source                                                                                       |
-| ----------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `DEFAULT_MESSAGE_PREP_LIMITS` | Default limits for chat history preparation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L37) |
+| Name                          | Description                                  | Source                                                                                             |
+| ----------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `DEFAULT_MESSAGE_PREP_LIMITS` | Default limits for chat history preparation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep-types.ts#L12) |
 
 #### Functions
 
-| Name                                         | Description                                                                           | Source                                                                                         |
-| -------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `compactForStep`                             | Compact for step.                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1915) |
-| `compactHistoricalUiMessageToolInputs`       | Compact large historical UI-message tool inputs after matching results are available. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1632) |
-| `compactOldToolInputs`                       | Compact large historical tool-call inputs after matching results are available.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1545) |
-| `compressTurn`                               | Compress turn.                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L229)  |
-| `dedupeToolHistory`                          | Dedupe tool history.                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1939) |
-| `enforceTokenBudget`                         | Enforce token budget.                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L2006) |
-| `enforceTokenBudgetWithTurnCompression`      | Enforce token budget with turn compression.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L304)  |
-| `ensureToolCallInputs`                       | Ensure tool call inputs helper.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1884) |
-| `estimateMessageTokenBreakdown`              | Estimate token categories for provider, UI, or runtime messages.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L182)  |
-| `estimateOverhead`                           | Estimate overhead.                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1878) |
-| `estimateTokens`                             | Estimate tokens.                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L100)  |
-| `isModelSupportedFileMediaType`              | Check whether the model supports the file media type.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L737)  |
-| `maskOldToolOutputs`                         | Mask old tool outputs.                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1447) |
-| `normalizeMessageFilePartMediaTypes`         | Normalizes message file part media types.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L743)  |
-| `prepareProviderModelMessagesFromUiMessages` | Prepare provider model messages from UI messages.                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1146) |
-| `repairToolPairs`                            | Repair tool pairs.                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1730) |
-| `rewriteUnsupportedFilePartsAsAnnotations`   | Rewrite unsupported file parts as annotations.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L770)  |
-| `sanitizeProviderModelMessages`              | Sanitize provider model messages.                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1043) |
-| `stripPendingToolParts`                      | Strip pending tool parts.                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L872)  |
+| Name                                         | Description                                                                           | Source                                                                                                             |
+| -------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `compactForStep`                             | Compact for step.                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1715)                     |
+| `compactHistoricalUiMessageToolInputs`       | Compact large historical UI-message tool inputs after matching results are available. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1585)                     |
+| `compactOldToolInputs`                       | Compact large historical tool-call inputs after matching results are available.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1493)                     |
+| `compressTurn`                               | Compress turn.                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L181)                      |
+| `dedupeToolHistory`                          | Dedupe tool history.                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1742)                     |
+| `enforceTokenBudget`                         | Enforce token budget.                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1813)                     |
+| `enforceTokenBudgetWithTurnCompression`      | Enforce token budget with turn compression.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L256)                      |
+| `ensureToolCallInputs`                       | Ensure tool call inputs helper.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1684)                     |
+| `estimateMessageTokenBreakdown`              | Estimate token categories for provider, UI, or runtime messages.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L134)                      |
+| `estimateOverhead`                           | Estimate overhead.                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1678)                     |
+| `estimateTokens`                             | Estimate tokens.                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L65)                       |
+| `isModelSupportedFileMediaType`              | Check whether the model supports the file media type.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L689)                      |
+| `maskOldToolOutputs`                         | Mask old tool outputs.                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1383)                     |
+| `normalizeMessageFilePartMediaTypes`         | Normalizes message file part media types.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L695)                      |
+| `prepareProviderModelMessagesFromUiMessages` | Prepare provider model messages from UI messages.                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L1067)                     |
+| `repairToolPairs`                            | Repair tool pairs.                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/provider-message-tool-pair-repair.ts#L176) |
+| `rewriteUnsupportedFilePartsAsAnnotations`   | Rewrite unsupported file parts as annotations.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L722)                      |
+| `sanitizeProviderModelMessages`              | Sanitize provider model messages.                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L996)                      |
+| `stripPendingToolParts`                      | Strip pending tool parts.                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L824)                      |
 
 #### Types
 
-| Name                                                | Description                                                             | Source                                                                                        |
-| --------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `HistoricalToolInputCompactionDiagnostic`           | Diagnostic emitted when a completed historical tool input is compacted. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L74)  |
-| `HistoricalToolInputRetainedField`                  | Field selector retained in a historical tool-input summary.             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L49)  |
-| `HistoricalToolInputRetentionOptions`               | Options for historical tool-input compaction.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L87)  |
-| `HistoricalToolInputRetentionPolicy`                | Policy for compacting a completed historical tool-call input.           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L61)  |
-| `HistoricalToolInputRetentionPolicyResolver`        | Resolves the retention policy for a completed historical tool input.    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L68)  |
-| `MessagePrepLimits`                                 | Tunable limits used while preparing chat history for model context.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L27)  |
-| `MessageTokenBreakdown`                             | Approximate token categories for context diagnostics.                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L105) |
-| `PrepareProviderModelMessagesFromUiMessagesOptions` | Options accepted by prepare provider model messages from UI messages.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L94)  |
+| Name                                                | Description                                                             | Source                                                                                             |
+| --------------------------------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `HistoricalToolInputCompactionDiagnostic`           | Diagnostic emitted when a completed historical tool input is compacted. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep-types.ts#L47) |
+| `HistoricalToolInputRetainedField`                  | Field selector retained in a historical tool-input summary.             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep-types.ts#L22) |
+| `HistoricalToolInputRetentionOptions`               | Options for historical tool-input compaction.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep-types.ts#L60) |
+| `HistoricalToolInputRetentionPolicy`                | Policy for compacting a completed historical tool-call input.           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep-types.ts#L34) |
+| `HistoricalToolInputRetentionPolicyResolver`        | Resolves the retention policy for a completed historical tool input.    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep-types.ts#L41) |
+| `MessagePrepLimits`                                 | Tunable limits used while preparing chat history for model context.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep-types.ts#L2)  |
+| `MessageTokenBreakdown`                             | Approximate token categories for context diagnostics.                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep-types.ts#L75) |
+| `PrepareProviderModelMessagesFromUiMessagesOptions` | Options accepted by prepare provider model messages from UI messages.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep-types.ts#L68) |
 
 ### `veryfront/chat/protocol`
 
@@ -667,18 +667,18 @@ import { buildDataFileAnnotation, isImageFile, isTextPreviewFile } from "veryfro
 
 | Name                                 | Description                                       | Source                                                                                 |
 | ------------------------------------ | ------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `buildDataFileAnnotation`            | Builds data file annotation.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L656) |
-| `isImageFile`                        | Check whether a file is an image.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L614) |
-| `isTextPreviewFile`                  | Check whether a file supports text preview.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L628) |
-| `isValidImageFile`                   | Check whether a file is a supported image upload. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L619) |
-| `normalizeInlineAttachmentMediaType` | Normalizes inline attachment media type.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L633) |
+| `buildDataFileAnnotation`            | Builds data file annotation.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L657) |
+| `isImageFile`                        | Check whether a file is an image.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L615) |
+| `isTextPreviewFile`                  | Check whether a file supports text preview.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L629) |
+| `isValidImageFile`                   | Check whether a file is a supported image upload. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L620) |
+| `normalizeInlineAttachmentMediaType` | Normalizes inline attachment media type.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L634) |
 
 #### Types
 
 | Name                       | Description                                              | Source                                                                                    |
 | -------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `ChatAssistantContentPart` | Public API contract for chat assistant content part.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L251)    |
-| `ChatAssistantMessage`     | Message shape for chat assistant.                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L272)    |
+| `ChatAssistantContentPart` | Public API contract for chat assistant content part.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L252)    |
+| `ChatAssistantMessage`     | Message shape for chat assistant.                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L273)    |
 | `ChatDataUiPart`           | Chat UI part that carries custom data chunks.            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L162)    |
 | `ChatDynamicToolUiPart`    | Tool UI part for a runtime-selected tool name.           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L150)    |
 | `ChatFileUiPart`           | Public API contract for chat file UI part.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L107)    |
@@ -689,15 +689,15 @@ import { buildDataFileAnnotation, isImageFile, isTextPreviewFile } from "veryfro
 | `ChatModelTextPart`        | Provider model message part that carries text.           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L191)    |
 | `ChatNamedToolUiPart`      | Tool UI part keyed by a static tool type.                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L156)    |
 | `ChatReasoningUiPart`      | Public API contract for chat reasoning UI part.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L77)     |
-| `ChatRequestContext`       | Context for chat request.                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L350)    |
-| `ChatRuntimeOverrides`     | Public API contract for chat runtime overrides.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L302)    |
+| `ChatRequestContext`       | Context for chat request.                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L351)    |
+| `ChatRuntimeOverrides`     | Public API contract for chat runtime overrides.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L303)    |
 | `ChatSourceDocumentUiPart` | Public API contract for chat source document UI part.    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L98)     |
 | `ChatSourceUrlUiPart`      | Public API contract for chat source URL UI part.         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L90)     |
 | `ChatStepStartUiPart`      | Public API contract for chat step start UI part.         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L85)     |
-| `ChatSystemMessage`        | Message shape for chat system.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L259)    |
+| `ChatSystemMessage`        | Message shape for chat system.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L260)    |
 | `ChatTextUiPart`           | Public API contract for chat text UI part.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L71)     |
 | `ChatToolCallPart`         | Provider model message part that carries a tool call.    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L216)    |
-| `ChatToolMessage`          | Message shape for chat tool.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L278)    |
+| `ChatToolMessage`          | Message shape for chat tool.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L279)    |
 | `ChatToolPartState`        | State for chat tool part.                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L122)    |
 | `ChatToolResultOutput`     | Output from chat tool result.                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L225)    |
 | `ChatToolResultPart`       | Provider model message part that carries a tool result.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L240)    |
@@ -705,30 +705,30 @@ import { buildDataFileAnnotation, isImageFile, isTextPreviewFile } from "veryfro
 | `ChatUiMessageChunk`       | Public API contract for chat UI message chunk.           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L412) |
 | `ChatUiMessagePart`        | Public API contract for chat UI message part.            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L168)    |
 | `ChatUiMessageRole`        | Public API contract for chat UI message role.            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L68)     |
-| `ChatUserContentPart`      | Public API contract for chat user content part.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L249)    |
-| `ChatUserMessage`          | Message shape for chat user.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L266)    |
+| `ChatUserContentPart`      | Public API contract for chat user content part.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L250)    |
+| `ChatUserMessage`          | Message shape for chat user.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L267)    |
 | `ChildRunAudit`            | Public API contract for child run audit.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L163) |
 | `ChildRunAuditToolCall`    | Public API contract for child run audit tool call.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L148) |
 | `ChildRunAuditToolResult`  | Result returned from child run audit tool.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L155) |
-| `DurableRootRunDescriptor` | Public API contract for durable root run descriptor.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L291)    |
+| `DurableRootRunDescriptor` | Public API contract for durable root run descriptor.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L292)    |
 | `FileUIPartWithUpload`     | File UI part enriched with upload metadata.              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L116)    |
 | `MessageMetadata`          | Public API contract for chat message metadata.           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L175) |
-| `ProjectFile`              | Public API contract for project file.                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L310)    |
-| `ProjectFileListItem`      | Public API contract for project file list item.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L316)    |
-| `ProviderModelMessage`     | Message shape for provider model.                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L284)    |
-| `UploadedFileReference`    | Public API contract for uploaded file reference.         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L325)    |
+| `ProjectFile`              | Public API contract for project file.                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L311)    |
+| `ProjectFileListItem`      | Public API contract for project file list item.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L317)    |
+| `ProviderModelMessage`     | Message shape for provider model.                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L285)    |
+| `UploadedFileReference`    | Public API contract for uploaded file reference.         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L326)    |
 
 #### Constants
 
 | Name                          | Description                                               | Source                                                                                 |
 | ----------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `getChatRequestContextSchema` | Zod schema for get chat request context.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L335) |
-| `getChatToolPartStateSchema`  | Zod schema for get chat tool part state.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L439) |
-| `getChatUiMessagePartSchema`  | Zod schema for get chat UI message part.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L561) |
-| `getChatUiMessageRoleSchema`  | Zod schema for get chat UI message role.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L434) |
-| `getChatUiMessageSchema`      | Zod schema for get chat UI message.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L576) |
-| `getChatUiMessagesSchema`     | Zod schema for get chat UI messages.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L586) |
-| `getMessageMetadataSchema`    | Zod schema for get message metadata.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L401) |
+| `getChatRequestContextSchema` | Zod schema for get chat request context.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L336) |
+| `getChatToolPartStateSchema`  | Zod schema for get chat tool part state.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L440) |
+| `getChatUiMessagePartSchema`  | Zod schema for get chat UI message part.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L562) |
+| `getChatUiMessageRoleSchema`  | Zod schema for get chat UI message role.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L435) |
+| `getChatUiMessageSchema`      | Zod schema for get chat UI message.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L577) |
+| `getChatUiMessagesSchema`     | Zod schema for get chat UI messages.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L587) |
+| `getMessageMetadataSchema`    | Zod schema for get message metadata.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L402) |
 | `imageFileTypes`              | Image media types that chat uploads can display natively. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L53)  |
 | `textFileExtensions`          | File extensions that chat uploads can inline as text.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L50)  |
 

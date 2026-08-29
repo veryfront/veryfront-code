@@ -819,6 +819,13 @@ Default model has no matching provider credential.
 - **HTTP status:** 400
 - **What to do:** Set the agent's model to a provider you have a key for, or use model: "auto"
 
+### provider-replay-checkpoint-invalid
+
+Provider replay checkpoint is invalid.
+
+- **HTTP status:** 500
+- **What to do:** Verify the trusted source that resolved the run's provider replay checkpoints; do not retry with the same replay state
+
 ## General
 
 Raised anywhere; these are not specific to one subsystem.

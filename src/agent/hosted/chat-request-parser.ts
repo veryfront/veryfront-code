@@ -74,6 +74,12 @@ export type ParsedHostedChatRequest = {
   /** True only after a server envelope credential is verified and bound to this run. */
   serverEnvelopeVerified?: true;
   /**
+   * Provider-native replay state resolved by the server outside forwardedProps
+   * so large opaque provider blocks do not consume the public forwardedProps budget.
+   * Ignored unless `serverEnvelopeVerified` is true.
+   */
+  serverResolvedProviderReplayCheckpoints?: unknown;
+  /**
    * Integration tools the control plane resolved for this run, taken from the
    * verified run-event token rather than the request body. Absent unless a
    * token verified, so a forged body can never introduce it.
@@ -130,16 +136,19 @@ export type ParseRuntimeAgentRunInvocationHostedChatRequestOptions =
       | Promise<HostedRuntimeSourceBindingError | undefined>;
   };
 
-async function parseRequestJson(request: Request): Promise<unknown | Response> {
+async function parseRequestJson(
+  request: Request,
+  maxBodySizeBytes: number,
+): Promise<unknown | Response> {
   let body: string;
   try {
-    body = await readBodyWithLimit(request, DEFAULT_MAX_BODY_SIZE_BYTES);
+    body = await readBodyWithLimit(request, maxBodySizeBytes);
   } catch (error) {
     if (isRequestBodyTooLargeError(error)) {
       return Response.json(
         {
           errorCode: "REQUEST_TOO_LARGE",
-          message: `Request body exceeds ${DEFAULT_MAX_BODY_SIZE_BYTES} bytes`,
+          message: `Request body exceeds ${maxBodySizeBytes} bytes`,
         },
         { status: 413 },
       );
@@ -178,8 +187,23 @@ async function withVerifiedRunEventAppendToken(
 ): Promise<ParsedHostedChatRequest | Response> {
   const token = request.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER)?.trim();
   if (!token) {
+    const hasLegacyReplayState = isRecord(parsedRequest.forwardedProps) &&
+      Object.hasOwn(
+        parsedRequest.forwardedProps,
+        "serverResolvedProviderReplayCheckpoints",
+      );
+    if (
+      trustServerEnvelope &&
+      (Object.hasOwn(parsedRequest, "serverResolvedProviderReplayCheckpoints") ||
+        hasLegacyReplayState)
+    ) {
+      return Response.json(
+        { errorCode: "INVALID_RUN_EVENT_APPEND_TOKEN" },
+        { status: 403 },
+      );
+    }
     return {
-      ...parsedRequest,
+      ...stripUnverifiedServerResolvedRequestState(parsedRequest),
       forwardedProps: stripUnverifiedServerResolvedForwardedProps(
         parsedRequest.forwardedProps,
       ),
@@ -207,7 +231,9 @@ async function withVerifiedRunEventAppendToken(
   );
 
   const verifiedRequest: ParsedHostedChatRequest = {
-    ...parsedRequest,
+    ...(trustServerEnvelope
+      ? parsedRequest
+      : stripUnverifiedServerResolvedRequestState(parsedRequest)),
     ...(trustServerEnvelope ? { serverEnvelopeVerified: true as const } : {}),
     ...(verifiedContext
       ? { validatedContext: { ...parsedRequest.validatedContext, ...verifiedContext } }
@@ -228,6 +254,16 @@ async function withVerifiedRunEventAppendToken(
     },
   );
   return verifiedRequest;
+}
+
+function stripUnverifiedServerResolvedRequestState(
+  parsedRequest: ParsedHostedChatRequest,
+): ParsedHostedChatRequest {
+  const {
+    serverResolvedProviderReplayCheckpoints: _serverResolvedProviderReplayCheckpoints,
+    ...publicParsedRequest
+  } = parsedRequest;
+  return publicParsedRequest;
 }
 
 /**
@@ -357,6 +393,7 @@ function normalizeHostedChatRequestMessages(
           toolName,
           input,
           state: mapRawToolCallState(state),
+          ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
         });
         continue;
       }
@@ -377,6 +414,7 @@ function normalizeHostedChatRequestMessages(
           ...(part.is_error === true
             ? { errorText: stringifyUnknown(part.output ?? "Tool error") }
             : {}),
+          ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
         };
 
         const existingIndex = partIndexByToolCallId.get(toolCallId);
@@ -469,6 +507,7 @@ async function buildParsedHostedChatRequestInternal(
     model,
     allowDelegation,
     forwardedProps,
+    serverResolvedProviderReplayCheckpoints,
     runtimeOverrides,
     durableRootRun,
   } = input.chatRequest;
@@ -533,6 +572,9 @@ async function buildParsedHostedChatRequestInternal(
     model,
     allowDelegation,
     forwardedProps,
+    ...(Object.hasOwn(input.chatRequest, "serverResolvedProviderReplayCheckpoints")
+      ? { serverResolvedProviderReplayCheckpoints }
+      : {}),
     runtimeOverrides,
     durableRootRun,
     persistLatestUserMessageBeforeDurableRun: false,
@@ -557,7 +599,7 @@ export async function parseHostedChatRequestFromRequest(
     return authenticatedRequest;
   }
 
-  const requestBody = await parseRequestJson(request);
+  const requestBody = await parseRequestJson(request, DEFAULT_MAX_BODY_SIZE_BYTES);
   if (requestBody instanceof Response) return requestBody;
 
   const parsed = hostedChatRequestSchema.safeParse(requestBody);
@@ -596,7 +638,7 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     return authenticatedRequest;
   }
 
-  const requestBody = await parseRequestJson(request);
+  const requestBody = await parseRequestJson(request, DEFAULT_MAX_BODY_SIZE_BYTES);
   if (requestBody instanceof Response) return requestBody;
 
   const invocation = getRuntimeAgentRunInvocationSchema().safeParse(requestBody);

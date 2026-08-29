@@ -7,6 +7,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { AG_UI_MAX_REQUEST_BODY_BYTES } from "./request-shared.ts";
+import { DEFAULT_LIMITS } from "#veryfront/security/input-validation/types.ts";
 import {
   createAgUiRunErrorEvent,
   createAgUiSseErrorResponse,
@@ -165,6 +166,89 @@ describe("agent/ag-ui-host-support", () => {
       true,
       "the rejection must name the 192 KB forwardedProps budget",
     );
+  });
+
+  it("accepts private provider replay state outside the forwarded props budget", async () => {
+    const request = new Request("http://localhost/api/ag-ui", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [{
+          id: "msg-1",
+          role: "user",
+          parts: [{ type: "text", text: "hello" }],
+        }],
+        forwardedProps: {
+          traceId: "trace-1",
+        },
+        serverResolvedProviderReplayCheckpoints: [{
+          version: 1,
+          messageId: "assistant-message-1",
+          provider: "anthropic",
+          providerBlocks: [{
+            type: "provider-block",
+            provider: "anthropic",
+            block: {
+              type: "thinking",
+              thinking: "x".repeat(220_000),
+              signature: "sig-private-large",
+            },
+          }],
+          providerBlockPositions: [0],
+          totalPartCount: 1,
+        }],
+      }),
+    });
+
+    const parsed = await parseAgUiRequest(request);
+
+    assertEquals(parsed.forwardedProps, { traceId: "trace-1" });
+    assertEquals(
+      Array.isArray(parsed.serverResolvedProviderReplayCheckpoints),
+      true,
+      "large replay payload must not be counted against forwardedProps",
+    );
+  });
+
+  it("rejects public AG-UI provider replay state above the generic request body limit", async () => {
+    const request = new Request("http://localhost/api/ag-ui", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [{
+          id: "msg-1",
+          role: "user",
+          parts: [{ type: "text", text: "hello" }],
+        }],
+        serverResolvedProviderReplayCheckpoints: [{
+          version: 1,
+          messageId: "assistant-message-1",
+          provider: "anthropic",
+          providerBlocks: [{
+            type: "provider-block",
+            provider: "anthropic",
+            block: {
+              type: "thinking",
+              thinking: "x".repeat(1_049_600),
+              signature: "sig-private-large",
+            },
+          }],
+          providerBlockPositions: [0],
+          totalPartCount: 1,
+        }],
+      }),
+    });
+
+    const result = await parseAgUiRequestOrError(request);
+
+    assertInstanceOf(result, Response);
+    assertEquals(result.status, 413);
+    const body = await result.json();
+    assertEquals(body.error, "Invalid AG-UI request");
+    assertEquals(body.details, [{
+      path: [],
+      message: `Request body exceeds ${DEFAULT_LIMITS.maxBodySize} bytes`,
+    }]);
   });
 
   it("returns a 400 Response from parseAgUiRequestOrError for malformed JSON bodies", async () => {

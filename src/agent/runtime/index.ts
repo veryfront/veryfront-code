@@ -64,6 +64,8 @@ import { MiddlewareChain } from "../middleware/chain.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import {
+  getModelRuntimeId,
+  getModelRuntimeProvider,
   isLocalModelRuntime,
   supportsModelRuntimeToolCalling,
 } from "#veryfront/provider/runtime-inspection.ts";
@@ -101,6 +103,7 @@ import { markRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
 import {
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
+  getRuntimeProviderReplayCheckpoints,
   getRuntimeProviderTools,
   getRuntimeSourceIntegrationPolicy,
   getRuntimeToolExposureCheckpoint,
@@ -109,6 +112,10 @@ import {
   resolveRuntimeToolLoading,
   type RuntimeToolFilterConfig,
 } from "./runtime-tool-config.ts";
+import {
+  applyProviderReplayCheckpointsToMessages,
+  type ProviderReplayProvider,
+} from "./provider-replay.ts";
 import {
   applySourceIntegrationPolicy,
   type SourceIntegrationPolicyManifest,
@@ -195,6 +202,21 @@ export {
 } from "./tool-result-continuation.ts";
 
 const NativeError = Error;
+
+function getActiveProviderReplayProvider(
+  languageModel: ModelRuntime,
+): ProviderReplayProvider | "unsupported" {
+  const modelRuntimeId = getModelRuntimeId(languageModel);
+  const provider =
+    (typeof languageModel.modelProvider === "string" ? languageModel.modelProvider : undefined) ??
+      getModelRuntimeProvider(languageModel) ??
+      (modelRuntimeId !== undefined
+        ? resolveRuntimeGenAiProviderName(modelRuntimeId) ?? modelRuntimeId.split("/")[0]
+        : undefined);
+  if (provider === "anthropic") return "anthropic";
+  if (provider === "openai") return "openai-responses";
+  return "unsupported";
+}
 
 function resolveRuntimeGenAiProviderName(modelId: string): string | undefined {
   const normalizedModelId = modelId.startsWith("veryfront-cloud/")
@@ -1496,6 +1518,11 @@ export class AgentRuntime {
 
       const toolCalls: ToolCall[] = [];
       const currentMessages = [...messages];
+      applyProviderReplayCheckpointsToMessages(
+        currentMessages,
+        getRuntimeProviderReplayCheckpoints(this.config),
+        { activeProvider: getActiveProviderReplayProvider(languageModel) },
+      );
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
       if (!supportsToolCalling && this.config.tools) {
@@ -2159,6 +2186,11 @@ export class AgentRuntime {
 
     const toolCalls: ToolCall[] = [];
     const currentMessages = [...messages];
+    applyProviderReplayCheckpointsToMessages(
+      currentMessages,
+      getRuntimeProviderReplayCheckpoints(this.config),
+      { activeProvider: getActiveProviderReplayProvider(languageModel) },
+    );
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
     if (!supportsToolCalling && this.config.tools) {

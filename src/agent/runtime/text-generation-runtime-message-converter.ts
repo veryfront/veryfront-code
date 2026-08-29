@@ -19,7 +19,15 @@ import type {
 import { assertProviderReachableAttachment } from "./attachment-reachability.ts";
 import { buildDataFileAnnotation } from "#veryfront/chat/types.ts";
 import { getTextFromParts, getToolArguments, type Message, type ToolCallPart } from "../types.ts";
-import { readAttachedProviderMetadata } from "./provider-metadata.ts";
+import {
+  isProviderReplayDelivered,
+  markProviderReplayDelivered,
+  readAttachedProviderMetadata,
+} from "./provider-metadata.ts";
+import {
+  collectAnthropicProviderToolCallIds,
+  groupAnthropicRawAssistantMessagesByAnchor,
+} from "./anthropic-provider-replay-block.ts";
 
 function getStringPartField(part: unknown, key: string): string | undefined {
   if (!part || typeof part !== "object" || Array.isArray(part)) return undefined;
@@ -69,6 +77,10 @@ function shouldSkipProviderExecutedToolResult(
     return false;
   }
 
+  if (part.type !== "tool-result" && part.type !== "tool_result") {
+    return false;
+  }
+
   if (isProviderExecutedToolPart(part)) {
     return true;
   }
@@ -88,6 +100,7 @@ function getToolInputRecord(part: Record<string, unknown>): Record<string, unkno
 
 function getTextGenerationToolCallPart(
   part: unknown,
+  providerExecutedToolCallIds: ReadonlySet<string> = new Set(),
 ): TextGenerationRuntimeToolCallPart | null {
   if (!isRecord(part) || typeof part.type !== "string") {
     return null;
@@ -100,10 +113,6 @@ function getTextGenerationToolCallPart(
   ) {
     return null;
   }
-  if (isProviderExecutedToolPart(part)) {
-    return null;
-  }
-
   const toolCallId = getToolCallId(part);
   const toolName = getStringPartField(part, "toolName") ??
     getStringPartField(part, "tool_name") ??
@@ -115,6 +124,9 @@ function getTextGenerationToolCallPart(
   if (!toolCallId || !toolName) {
     return null;
   }
+  if (isProviderExecutedToolPart(part) || providerExecutedToolCallIds.has(toolCallId)) {
+    return null;
+  }
 
   return {
     type: "tool-call",
@@ -122,6 +134,19 @@ function getTextGenerationToolCallPart(
     toolName,
     input: getToolInputRecord(part),
   };
+}
+
+function addProviderMetadataToolCallIds(
+  message: Message,
+  providerExecutedToolCallIds: Set<string>,
+): void {
+  const metadata = readAttachedProviderMetadata(message);
+  if (!isRecord(metadata) || !isRecord(metadata.anthropic)) return;
+  for (
+    const id of collectAnthropicProviderToolCallIds(metadata.anthropic.rawAssistantMessages)
+  ) {
+    providerExecutedToolCallIds.add(id);
+  }
 }
 
 function getTextGenerationToolResultPart(
@@ -261,6 +286,7 @@ export function convertToTextGenerationRuntimeMessage(
     & TextGenerationRuntimeConversionOptions = {},
 ): TextGenerationRuntimeMessage {
   const providerExecutedToolCallIds = options.providerExecutedToolCallIds ?? new Set<string>();
+  addProviderMetadataToolCallIds(msg, providerExecutedToolCallIds);
   const requireInternetReachableAttachments = options.requireInternetReachableAttachments ?? true;
 
   switch (msg.role) {
@@ -301,7 +327,7 @@ export function convertToTextGenerationRuntimeMessage(
           continue;
         }
 
-        const toolPart = getTextGenerationToolCallPart(part);
+        const toolPart = getTextGenerationToolCallPart(part, providerExecutedToolCallIds);
         if (toolPart) {
           content.push({
             type: "tool-call",
@@ -369,6 +395,22 @@ function hasProviderSendableAssistantContent(message: Message): boolean {
 
     return getTextGenerationToolCallPart(part) !== null;
   });
+}
+
+function splitAnthropicProviderMetadata(
+  providerMetadata: Record<string, unknown>,
+  segmentCount: number,
+): Record<string, unknown>[] | undefined {
+  if (!isRecord(providerMetadata.anthropic)) return undefined;
+  const anthropic = providerMetadata.anthropic;
+  const grouped = groupAnthropicRawAssistantMessagesByAnchor(
+    anthropic.rawAssistantMessages,
+    segmentCount,
+  );
+  return grouped?.map((rawAssistantMessages) => ({
+    ...providerMetadata,
+    anthropic: { ...anthropic, rawAssistantMessages },
+  }));
 }
 
 function convertAssistantMessageToTextGenerationRuntimeMessages(
@@ -452,7 +494,7 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
       continue;
     }
 
-    const toolCallPart = getTextGenerationToolCallPart(part);
+    const toolCallPart = getTextGenerationToolCallPart(part, providerExecutedToolCallIds);
     if (toolCallPart) {
       pushAssistantPart(toolCallPart);
       continue;
@@ -474,16 +516,35 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
 
   const providerMetadata = readAttachedProviderMetadata(message);
   const assistantMessages = messages.filter((entry) => entry.role === "assistant");
-  // Exact replay metadata describes one provider response. Attaching it after
-  // conversion split that response would pair it with an incomplete projection.
   if (providerMetadata !== undefined && assistantMessages.length === 1) {
     assistantMessages[0]!.providerMetadata = providerMetadata;
+    if (isProviderReplayDelivered(message)) {
+      markProviderReplayDelivered(assistantMessages[0]!);
+    }
   } else if (providerMetadata !== undefined && messages.length === 0) {
-    messages.push({
+    const anchorMessage: TextGenerationRuntimeMessage = {
       role: "assistant",
       content: [{ type: "text", text: "" }],
       providerMetadata,
-    });
+    };
+    if (isProviderReplayDelivered(message)) {
+      markProviderReplayDelivered(anchorMessage);
+    }
+    messages.push(anchorMessage);
+  } else if (providerMetadata !== undefined) {
+    const splitMetadata = splitAnthropicProviderMetadata(
+      providerMetadata,
+      assistantMessages.length,
+    );
+    if (splitMetadata === undefined) {
+      throw new TypeError("Provider replay metadata cannot follow a split assistant turn");
+    }
+    for (const [index, assistantMessage] of assistantMessages.entries()) {
+      assistantMessage.providerMetadata = splitMetadata[index];
+      if (isProviderReplayDelivered(message)) {
+        markProviderReplayDelivered(assistantMessage);
+      }
+    }
   }
 
   return messages;
@@ -503,6 +564,7 @@ export function convertToTextGenerationRuntimeMessages(
     if (message.role === "user" || message.role === "system") {
       providerExecutedToolCallIds.clear();
     }
+    addProviderMetadataToolCallIds(message, providerExecutedToolCallIds);
 
     for (const part of message.parts) {
       const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
@@ -555,7 +617,13 @@ export function convertToTextGenerationRuntimeRequestMessages(
 ): TextGenerationRuntimeMessage[] {
   const requestMessages = convertToTextGenerationRuntimeMessages(messages, options);
 
-  while (requestMessages.at(-1)?.role === "assistant") {
+  // Only a delivered replay checkpoint may keep a trailing assistant message:
+  // live in-run metadata also reaches converted messages, and providers reject
+  // or misread an unexpected trailing prefill on ordinary resumes.
+  while (
+    requestMessages.at(-1)?.role === "assistant" &&
+    !isProviderReplayDelivered(requestMessages.at(-1))
+  ) {
     requestMessages.pop();
   }
 

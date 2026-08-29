@@ -202,6 +202,8 @@ export async function buildParsedHostedAgUiRequest(
     model: chatContext.model,
     allowDelegation: chatContext.allowDelegation,
     forwardedProps: input.agUiInput.forwardedProps,
+    serverResolvedProviderReplayCheckpoints:
+      input.agUiInput.serverResolvedProviderReplayCheckpoints,
     runtimeOverrides: chatContext.runtimeOverrides,
     durableRootRun: undefined,
     persistLatestUserMessageBeforeDurableRun: true,

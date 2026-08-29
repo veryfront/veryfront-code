@@ -2,9 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { AgentConfig } from "../types.ts";
+import type { ProviderReplayCheckpoint } from "./provider-replay.ts";
 import {
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
+  getRuntimeProviderReplayCheckpoints,
   getRuntimeProviderTools,
   getRuntimeSourceIntegrationPolicy,
   getRuntimeSourceIntegrationPolicyFromContext,
@@ -222,6 +224,42 @@ describe("agent/runtime-tool-config", () => {
           __vfForwardedIntegrationToolDefs: [],
         })),
         undefined,
+      );
+    });
+  });
+
+  describe("getRuntimeProviderReplayCheckpoints", () => {
+    it("returns undefined when the trusted host resolved no replay state", () => {
+      assertEquals(getRuntimeProviderReplayCheckpoints(runtimeConfig()), undefined);
+    });
+
+    it("returns the checkpoints resolved by the trusted host", () => {
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: "assistant-message-1",
+        provider: "anthropic",
+        providerBlocks: [{
+          type: "provider-block",
+          provider: "anthropic",
+          block: { type: "thinking", thinking: "", signature: "sig-config" },
+        }],
+        providerBlockPositions: [0],
+        totalPartCount: 1,
+      };
+      assertEquals(
+        getRuntimeProviderReplayCheckpoints(runtimeConfig({
+          __vfProviderReplayCheckpoints: [checkpoint],
+        })),
+        [checkpoint],
+      );
+    });
+
+    it("passes host-resolved state through without re-parsing it", () => {
+      assertEquals(
+        getRuntimeProviderReplayCheckpoints(runtimeConfig({
+          __vfProviderReplayCheckpoints: [{ version: 1 }],
+        })),
+        [{ version: 1 }] as unknown as readonly ProviderReplayCheckpoint[],
       );
     });
   });

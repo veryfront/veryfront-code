@@ -68,7 +68,10 @@ import {
   resolveMcpServers,
   setFilteredTraceAttributes,
 } from "./cloud-agent-child-tools.ts";
-import { getServerResolvedToolExposureCheckpoint } from "./runtime-request-config.ts";
+import {
+  getServerResolvedProviderReplayCheckpoints,
+  getServerResolvedToolExposureCheckpoint,
+} from "./runtime-request-config.ts";
 import { resolveHostedRequestPreparationSignal } from "../service/request-preparation-context.ts";
 
 const DEFAULT_FORWARDED_CONFIG_NAMESPACE = "veryfront";
@@ -329,6 +332,11 @@ export async function prepareChatExecutionWithinProjectRuntime(
       req.forwardedProps,
       req.serverEnvelopeVerified === true,
     ),
+    serverResolvedProviderReplayCheckpoints: getServerResolvedProviderReplayCheckpoints({
+      forwardedProps: req.forwardedProps,
+      serverResolvedProviderReplayCheckpoints: req.serverResolvedProviderReplayCheckpoints,
+      serverEnvelopeVerified: req.serverEnvelopeVerified === true,
+    }),
     // Sourced from the verified run-event token, never from forwardedProps, so
     // it is trusted on the durable-chat path without trusting that body.
     ...(req.serverResolvedIntegrationToolNames?.length

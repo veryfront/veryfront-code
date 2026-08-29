@@ -526,6 +526,7 @@ export function createAnthropicModelRuntime(
 
   return {
     provider: providerName,
+    modelProvider: "anthropic",
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},

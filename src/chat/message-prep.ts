@@ -1,15 +1,24 @@
 import {
   copyProviderModelMessageSourceId,
+  getProviderModelMessageSourceId,
   getStringField,
   isReasoningPart,
   isToolCallPart,
   isToolResultPart,
 } from "./conversation.ts";
 import { convertUiMessagesToProviderModelMessages } from "./provider-message-conversion.ts";
+import {
+  preserveEmptyAssistantAnchors,
+  type ProviderMessageSanitizationOptions,
+  shouldPreserveEmptyAssistantMessage,
+} from "./provider-message-anchor-preservation.ts";
+import {
+  repairToolPairs,
+  repairToolPairsForPreparation,
+} from "./provider-message-tool-pair-repair.ts";
 import { findProviderVisibleToolReplayMatches } from "./tool-replay-reconciliation.ts";
 import {
   buildDataFileAnnotation,
-  type ChatAssistantContentPart,
   type ChatToolResultOutput,
   type ChatToolResultPart,
   type ChatUiMessage,
@@ -22,97 +31,40 @@ import { historicalToolSummaries } from "../integrations/_tool_summaries.ts";
 import type { IntegrationEndpointHistoricalSummary } from "../integrations/schema.ts";
 import { safeJsonParse } from "#veryfront/utils/json.ts";
 import { stringifyChatJson } from "./json-value.ts";
-
-/** Tunable limits used while preparing chat history for model context. */
-export type MessagePrepLimits = {
-  charsPerToken: number;
-  historicalToolOutputMaskChars: number;
-  historicalToolInputMaskChars: number;
-  retainedMetadataStringMaxChars: number;
-  retainedMetadataArrayMaxItems: number;
-  retainedMetadataObjectMaxEntries: number;
-};
-
-/** Default limits for chat history preparation. */
-export const DEFAULT_MESSAGE_PREP_LIMITS: MessagePrepLimits = {
-  charsPerToken: 4,
-  historicalToolOutputMaskChars: 500,
-  historicalToolInputMaskChars: 1_000,
-  retainedMetadataStringMaxChars: 200,
-  retainedMetadataArrayMaxItems: 20,
-  retainedMetadataObjectMaxEntries: 20,
-};
+import { DEFAULT_MESSAGE_PREP_LIMITS } from "./message-prep-types.ts";
+import {
+  getMessagePartToolCallId,
+  getMessagePartToolName,
+  stripProviderOwnedToolParts,
+} from "./provider-tool-history.ts";
+import type {
+  HistoricalToolInputCompactionDiagnostic,
+  HistoricalToolInputRetainedField,
+  HistoricalToolInputRetentionOptions,
+  HistoricalToolInputRetentionPolicy,
+  MessagePrepLimits,
+  MessageTokenBreakdown,
+  PrepareProviderModelMessagesFromUiMessagesOptions,
+} from "./message-prep-types.ts";
+export { DEFAULT_MESSAGE_PREP_LIMITS } from "./message-prep-types.ts";
+export { repairToolPairs } from "./provider-message-tool-pair-repair.ts";
+export type {
+  HistoricalToolInputCompactionDiagnostic,
+  HistoricalToolInputRetainedField,
+  HistoricalToolInputRetentionOptions,
+  HistoricalToolInputRetentionPolicy,
+  HistoricalToolInputRetentionPolicyResolver,
+  MessagePrepLimits,
+  MessageTokenBreakdown,
+  PrepareProviderModelMessagesFromUiMessagesOptions,
+} from "./message-prep-types.ts";
 
 const CHARS_PER_TOKEN = DEFAULT_MESSAGE_PREP_LIMITS.charsPerToken;
-
-/** Field selector retained in a historical tool-input summary. */
-export type HistoricalToolInputRetainedField =
-  | string
-  | {
-    inputName: string;
-    outputName?: string;
-  }
-  | {
-    inputNames: readonly string[];
-    outputName: string;
-  };
-
-/** Policy for compacting a completed historical tool-call input. */
-export type HistoricalToolInputRetentionPolicy = {
-  compactCompletedInput: boolean;
-  compactAfterChars?: number;
-  retainInputFields?: readonly HistoricalToolInputRetainedField[];
-};
-
-/** Resolves the retention policy for a completed historical tool input. */
-export type HistoricalToolInputRetentionPolicyResolver = (
-  toolName: string,
-  input: Record<string, unknown>,
-) => HistoricalToolInputRetentionPolicy | null | undefined;
-
-/** Diagnostic emitted when a completed historical tool input is compacted. */
-export type HistoricalToolInputCompactionDiagnostic = {
-  source: "provider" | "ui";
-  toolName: string;
-  toolCallId: string;
-  originalInputChars: number;
-  retainedInputChars: number;
-  originalInputTokens: number;
-  retainedInputTokens: number;
-  originalInputHash: string;
-  reason: "completed_historical_tool_input";
-};
-
-/** Options for historical tool-input compaction. */
-export type HistoricalToolInputRetentionOptions = {
-  resolvePolicy?: HistoricalToolInputRetentionPolicyResolver;
-  diagnostics?: HistoricalToolInputCompactionDiagnostic[];
-  limits?: Partial<MessagePrepLimits>;
-};
-
-/** Options accepted by prepare provider model messages from UI messages. */
-export interface PrepareProviderModelMessagesFromUiMessagesOptions {
-  providerOwnedToolNames?: readonly string[];
-  historicalToolInputRetention?: HistoricalToolInputRetentionOptions;
-}
 
 /** Estimate tokens. */
 export function estimateTokens(value: unknown): number {
   return Math.ceil(stringifyChatJson(value ?? "").length / CHARS_PER_TOKEN);
 }
-
-/** Approximate token categories for context diagnostics. */
-export type MessageTokenBreakdown = {
-  totalTokens: number;
-  systemTextTokens: number;
-  userContentTokens: number;
-  assistantContentTokens: number;
-  reasoningTokens: number;
-  toolCallInputTokens: number;
-  toolResultOutputTokens: number;
-  fileTokens: number;
-  unknownTokens: number;
-};
 
 function createEmptyTokenBreakdown(totalTokens: number): MessageTokenBreakdown {
   return {
@@ -1000,7 +952,8 @@ function isKeepableModelPart(
       return (role === "assistant" || role === "tool") &&
         hasNonEmptyStringField(part, "toolCallId") &&
         hasNonEmptyStringField(part, "toolName") &&
-        hasValidToolResultOutput(part.output);
+        hasValidToolResultOutput(part.output) &&
+        (part.providerExecuted === undefined || typeof part.providerExecuted === "boolean");
     case "image":
     case "file": {
       if (
@@ -1042,6 +995,7 @@ function cleanContent<T>(content: T[], role: ProviderModelMessage["role"]): T[] 
 /** Sanitize provider model messages. */
 export function sanitizeProviderModelMessages(
   messages: ProviderModelMessage[],
+  options: ProviderMessageSanitizationOptions = {},
 ): ProviderModelMessage[] {
   const result: ProviderModelMessage[] = [];
 
@@ -1056,6 +1010,9 @@ export function sanitizeProviderModelMessages(
         const cleaned = cleanContent(message.content, message.role);
         if (cleaned.length > 0) {
           result.push(copyProviderModelMessageSourceId(message, { ...message, content: cleaned }));
+        } else if (shouldPreserveEmptyAssistantMessage(message, options)) {
+          const emptyAssistantMessage: ProviderModelMessage = { role: "assistant", content: [] };
+          result.push(copyProviderModelMessageSourceId(message, emptyAssistantMessage));
         }
       } else if (message.role === "tool") {
         const cleaned = cleanContent(message.content, message.role);
@@ -1068,78 +1025,42 @@ export function sanitizeProviderModelMessages(
 
     if (hasValidContent(message)) {
       result.push(message);
+    } else if (shouldPreserveEmptyAssistantMessage(message, options)) {
+      const emptyAssistantMessage: ProviderModelMessage = { role: "assistant", content: [] };
+      result.push(copyProviderModelMessageSourceId(message, emptyAssistantMessage));
     }
   }
 
   return result;
 }
 
-function filterValidMessages(messages: ProviderModelMessage[]): ProviderModelMessage[] {
-  return messages.filter(hasValidContent);
+function filterValidMessages(
+  messages: ProviderModelMessage[],
+  options: ProviderMessageSanitizationOptions = {},
+): ProviderModelMessage[] {
+  return messages.filter((message) =>
+    hasValidContent(message) || shouldPreserveEmptyAssistantMessage(message, options)
+  );
 }
 
-function getMessagePartToolCallId(part: unknown): string | undefined {
-  if (!part || typeof part !== "object" || Array.isArray(part)) return undefined;
-
-  return getStringField(part, "toolCallId", "") ||
-    getStringField(part, "tool_call_id", "") ||
-    getStringField(part, "id", "") ||
-    undefined;
-}
-
-function getMessagePartToolName(part: unknown): string | undefined {
-  if (!part || typeof part !== "object" || Array.isArray(part)) return undefined;
-
-  const record = part as Record<string, unknown>;
-  const explicitToolName = getStringField(part, "toolName", "") ||
-    getStringField(part, "tool_name", "") ||
-    getStringField(part, "name", "") ||
-    undefined;
-  if (explicitToolName) return explicitToolName;
-
-  const type = typeof record.type === "string" ? record.type : undefined;
-  return type?.startsWith("tool-") && type !== "tool-call" && type !== "tool-result"
-    ? type.replace(/^tool-/, "")
-    : undefined;
-}
-
-function stripProviderOwnedToolParts(
-  messages: ChatUiMessage[],
-  providerOwnedToolNames: readonly string[] | undefined,
-): ChatUiMessage[] {
-  if (!providerOwnedToolNames || providerOwnedToolNames.length === 0) {
-    return messages;
+function mergeHistoricalToolInputRetention(
+  retention: HistoricalToolInputRetentionOptions | undefined,
+  preserveSourceMessageIds: readonly string[] | undefined,
+): HistoricalToolInputRetentionOptions | undefined {
+  if (!preserveSourceMessageIds || preserveSourceMessageIds.length === 0) {
+    return retention;
   }
 
-  const providerOwnedNames = new Set(providerOwnedToolNames);
-  const providerOwnedToolCallIds = new Set<string>();
+  const mergedPreservedIds = [
+    ...(retention?.preserveSourceMessageIds ?? []),
+    ...preserveSourceMessageIds,
+  ];
+  const dedupedPreservedIds = [...new Set(mergedPreservedIds)];
 
-  return messages.map((message) => {
-    if (message.role === "user" || message.role === "system") {
-      providerOwnedToolCallIds.clear();
-      return message;
-    }
-
-    let mutated = false;
-    const parts = message.parts.filter((part) => {
-      const toolName = getMessagePartToolName(part);
-      const toolCallId = getMessagePartToolCallId(part);
-      const ownedByName = toolName ? providerOwnedNames.has(toolName) : false;
-      const ownedByCallId = toolCallId ? providerOwnedToolCallIds.has(toolCallId) : false;
-
-      if (!ownedByName && !ownedByCallId) {
-        return true;
-      }
-
-      if (toolCallId) {
-        providerOwnedToolCallIds.add(toolCallId);
-      }
-      mutated = true;
-      return false;
-    });
-
-    return mutated ? { ...message, parts } : message;
-  });
+  return {
+    ...retention,
+    preserveSourceMessageIds: dedupedPreservedIds,
+  };
 }
 
 /** Prepare provider model messages from UI messages. */
@@ -1154,20 +1075,35 @@ export function prepareProviderModelMessagesFromUiMessages(
   const strippedProviderOwnedToolMessages = stripProviderOwnedToolParts(
     normalizedMessages,
     options.providerOwnedToolNames,
+    options.preserveProviderOwnedToolSourceMessageIds,
   );
   const strippedPendingToolMessages = stripPendingToolParts(strippedProviderOwnedToolMessages);
   const strippedSupersededToolMessages = stripSupersededToolErrorParts(strippedPendingToolMessages);
   const rewrittenMessages = rewriteUnsupportedFilePartsAsAnnotations(
     strippedSupersededToolMessages,
   );
-  const providerModelMessages = convertUiMessagesToProviderModelMessages(rewrittenMessages);
+  const providerModelMessages = preserveEmptyAssistantAnchors(
+    convertUiMessagesToProviderModelMessages(rewrittenMessages),
+    rewrittenMessages,
+    options.preserveProviderOwnedToolSourceMessageIds,
+  );
   const patchedMessages = ensureToolCallInputs(dedupeToolHistory(providerModelMessages));
-  const sanitized = sanitizeProviderModelMessages(patchedMessages);
-  const masked = maskOldToolOutputs(sanitized);
-  const compactedInputs = compactOldToolInputs(masked, options.historicalToolInputRetention);
+  const preserveOptions = {
+    preserveEmptyAssistantSourceMessageIds: options.preserveProviderOwnedToolSourceMessageIds,
+  };
+  const sanitized = sanitizeProviderModelMessages(patchedMessages, preserveOptions);
+  const historicalToolInputRetention = mergeHistoricalToolInputRetention(
+    options.historicalToolInputRetention,
+    options.preserveProviderOwnedToolSourceMessageIds,
+  );
+  const masked = maskOldToolOutputs(sanitized, historicalToolInputRetention);
+  const compactedInputs = compactOldToolInputs(masked, historicalToolInputRetention);
   const compacted = enforceTokenBudget(compactedInputs);
-  const filtered = filterValidMessages(compacted);
-  return repairToolPairs(filtered);
+  const filtered = filterValidMessages(compacted, preserveOptions);
+  return repairToolPairsForPreparation(
+    filtered,
+    options.preserveProviderOwnedToolSourceMessageIds,
+  );
 }
 
 function buildToolCallMap(messages: ProviderModelMessage[]): Map<string, ToolCallInfo> {
@@ -1444,7 +1380,10 @@ function wrapToolResultOutput(
 }
 
 /** Mask old tool outputs. */
-export function maskOldToolOutputs(messages: ProviderModelMessage[]): ProviderModelMessage[] {
+export function maskOldToolOutputs(
+  messages: ProviderModelMessage[],
+  options: Pick<HistoricalToolInputRetentionOptions, "preserveSourceMessageIds"> = {},
+): ProviderModelMessage[] {
   let lastUserIdx = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
@@ -1457,11 +1396,16 @@ export function maskOldToolOutputs(messages: ProviderModelMessage[]): ProviderMo
   if (lastUserIdx <= 0) return messages;
 
   const toolCallMap = buildToolCallMap(messages);
+  const preservedSourceMessageIds = new Set(options.preserveSourceMessageIds ?? []);
 
   return messages.map((msg, idx) => {
     if (idx >= lastUserIdx) return msg;
 
     if (msg.role === "assistant" && Array.isArray(msg.content)) {
+      const sourceMessageId = getProviderModelMessageSourceId(msg);
+      if (sourceMessageId && preservedSourceMessageIds.has(sourceMessageId)) {
+        return msg;
+      }
       const filtered = msg.content.filter((part) => !isReasoningPart(part));
       if (filtered.length !== msg.content.length) {
         return copyProviderModelMessageSourceId(msg, { ...msg, content: filtered });
@@ -1470,6 +1414,10 @@ export function maskOldToolOutputs(messages: ProviderModelMessage[]): ProviderMo
     }
 
     if (msg.role !== "tool" || !Array.isArray(msg.content)) return msg;
+    const sourceMessageId = getProviderModelMessageSourceId(msg);
+    if (sourceMessageId && preservedSourceMessageIds.has(sourceMessageId)) {
+      return msg;
+    }
 
     const newContent: ChatToolResultPart[] = msg.content.map((part) => {
       if (part.type !== "tool-result") {
@@ -1559,10 +1507,15 @@ export function compactOldToolInputs(
 
   const historicalResultIds = collectHistoricalToolResultIds(messages, lastUserIdx);
   const limits = resolveMessagePrepLimits(options.limits);
+  const preservedSourceMessageIds = new Set(options.preserveSourceMessageIds ?? []);
   let mutated = false;
 
   const result = messages.map((msg, idx) => {
     if (idx >= lastUserIdx || msg.role !== "assistant" || !Array.isArray(msg.content)) {
+      return msg;
+    }
+    const sourceMessageId = getProviderModelMessageSourceId(msg);
+    if (sourceMessageId && preservedSourceMessageIds.has(sourceMessageId)) {
       return msg;
     }
 
@@ -1646,10 +1599,14 @@ export function compactHistoricalUiMessageToolInputs(
 
   const historicalResultIds = collectHistoricalUiToolResultIds(messages, lastUserIdx);
   const limits = resolveMessagePrepLimits(options.limits);
+  const preservedSourceMessageIds = new Set(options.preserveSourceMessageIds ?? []);
   let mutated = false;
 
   const result = messages.map((message, index) => {
     if (index >= lastUserIdx || message.role !== "assistant") {
+      return message;
+    }
+    if (preservedSourceMessageIds.has(message.id)) {
       return message;
     }
 
@@ -1717,163 +1674,6 @@ export function compactHistoricalUiMessageToolInputs(
   return mutated ? result : messages;
 }
 
-function createSyntheticToolResult(toolCallId: string, toolName: string): ChatToolResultPart {
-  return {
-    type: "tool-result",
-    toolCallId,
-    toolName,
-    output: { type: "text", value: "[tool result unavailable]" },
-  };
-}
-
-/** Repair tool pairs. */
-export function repairToolPairs(messages: ProviderModelMessage[]): ProviderModelMessage[] {
-  const result = [...messages];
-  let mutated = false;
-
-  for (let index = 0; index < result.length; index++) {
-    const message = result[index];
-    if (!message) continue;
-
-    if (message.role !== "assistant" || !Array.isArray(message.content)) {
-      continue;
-    }
-
-    const inlineResultIds = new Set<string>();
-    for (const part of message.content) {
-      if (isToolResultPart(part)) {
-        inlineResultIds.add(part.toolCallId);
-      }
-    }
-
-    const repairedContent: ChatAssistantContentPart[] = [];
-    const regularToolCalls: Array<{ id: string; toolName: string }> = [];
-
-    for (const part of message.content) {
-      repairedContent.push(part);
-
-      if (!isToolCallPart(part)) {
-        continue;
-      }
-
-      const toolName = part.toolName ?? "unknown";
-
-      if (part.providerExecuted) {
-        if (!inlineResultIds.has(part.toolCallId)) {
-          repairedContent.push(createSyntheticToolResult(part.toolCallId, toolName));
-          mutated = true;
-        }
-        continue;
-      }
-
-      if (!inlineResultIds.has(part.toolCallId)) {
-        regularToolCalls.push({ id: part.toolCallId, toolName });
-      }
-    }
-
-    if (repairedContent.length !== message.content.length) {
-      result[index] = copyProviderModelMessageSourceId(message, {
-        ...message,
-        content: repairedContent,
-      });
-    }
-
-    if (regularToolCalls.length === 0) {
-      continue;
-    }
-
-    const nextMessage = result[index + 1];
-    const immediateResultIds = new Set<string>();
-
-    if (nextMessage?.role === "tool" && Array.isArray(nextMessage.content)) {
-      for (const part of nextMessage.content) {
-        if (isToolResultPart(part)) {
-          immediateResultIds.add(part.toolCallId);
-        }
-      }
-    }
-
-    const unresolvedCalls = regularToolCalls.filter((toolCall) =>
-      !immediateResultIds.has(toolCall.id)
-    );
-    if (unresolvedCalls.length === 0) {
-      continue;
-    }
-
-    const movedResults = new Map<string, ChatToolResultPart>();
-
-    if (nextMessage?.role !== "user" && nextMessage?.role !== "system") {
-      for (
-        let laterIndex = index + 2;
-        laterIndex < result.length && movedResults.size < unresolvedCalls.length;
-        laterIndex++
-      ) {
-        const laterMessage = result[laterIndex];
-        if (laterMessage?.role === "user" || laterMessage?.role === "system") {
-          break;
-        }
-        if (laterMessage?.role !== "tool" || !Array.isArray(laterMessage.content)) {
-          continue;
-        }
-
-        let removedFromLater = false;
-        const keptLaterContent = laterMessage.content.filter((part) => {
-          if (!isToolResultPart(part)) {
-            return true;
-          }
-
-          if (
-            !unresolvedCalls.some((toolCall) => toolCall.id === part.toolCallId) ||
-            movedResults.has(part.toolCallId)
-          ) {
-            return true;
-          }
-
-          movedResults.set(part.toolCallId, part);
-          removedFromLater = true;
-          return false;
-        });
-
-        if (!removedFromLater) {
-          continue;
-        }
-
-        if (keptLaterContent.length === 0) {
-          result.splice(laterIndex, 1);
-          laterIndex--;
-          continue;
-        }
-
-        result[laterIndex] = copyProviderModelMessageSourceId(laterMessage, {
-          ...laterMessage,
-          content: keptLaterContent,
-        });
-      }
-    }
-
-    const repairedResults = unresolvedCalls.map(
-      (toolCall) =>
-        movedResults.get(toolCall.id) ?? createSyntheticToolResult(toolCall.id, toolCall.toolName),
-    );
-
-    if (nextMessage?.role === "tool" && Array.isArray(nextMessage.content)) {
-      result[index + 1] = copyProviderModelMessageSourceId(nextMessage, {
-        ...nextMessage,
-        content: [...repairedResults, ...nextMessage.content],
-      });
-    } else {
-      const toolMessage: ProviderModelMessage = {
-        role: "tool",
-        content: repairedResults,
-      };
-      result.splice(index + 1, 0, copyProviderModelMessageSourceId(message, toolMessage));
-    }
-    mutated = true;
-  }
-
-  return mutated ? result : messages;
-}
-
 /** Estimate overhead. */
 export function estimateOverhead(instructions: unknown, toolCount: number): number {
   const instructionTokens = estimateTokens(instructions);
@@ -1920,7 +1720,10 @@ export function compactForStep(
   } = {},
 ): ProviderModelMessage[] {
   const compacted = enforceTokenBudget(
-    compactOldToolInputs(maskOldToolOutputs(messages), options.historicalToolInputRetention),
+    compactOldToolInputs(
+      maskOldToolOutputs(messages, options.historicalToolInputRetention),
+      options.historicalToolInputRetention,
+    ),
     DEFAULT_TOKEN_BUDGET,
     overhead,
   );
@@ -1967,6 +1770,10 @@ export function dedupeToolHistory(messages: ProviderModelMessage[]): ProviderMod
   };
 
   for (const message of messages) {
+    if (message.role === "user" || message.role === "system") {
+      seenToolCallIds.clear();
+      seenToolResultIds.clear();
+    }
     if (message.role === "user" && Array.isArray(message.content)) {
       const { filtered, changed } = filterParts(message.content);
       if (!changed) {

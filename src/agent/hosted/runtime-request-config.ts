@@ -13,6 +13,11 @@ import {
   isSupportedToolExposureCheckpointVersion,
   type ToolExposureCheckpoint,
 } from "../runtime/tool-exposure.ts";
+import {
+  assertReconstructibleProviderReplayCheckpoint,
+  parseServerResolvedProviderReplayCheckpoints,
+  type ProviderReplayCheckpoint,
+} from "../runtime/provider-replay.ts";
 
 /** Request payload for hosted runtime request config. */
 export type HostedRuntimeRequestConfigRequest = Pick<
@@ -84,6 +89,61 @@ export function getServerResolvedToolExposureCheckpoint(
     version: value.version,
     loadedToolNames: [...value.loadedToolNames],
   };
+}
+
+/**
+ * Read the provider replay checkpoints resolved by the authenticated server.
+ *
+ * Unverified envelopes never yield replay state. A verified envelope carrying
+ * malformed state fails explicitly instead of degrading into an unsigned
+ * replay, unlike the tool exposure checkpoint above whose absence is safe.
+ */
+type ServerResolvedProviderReplayCheckpointInput = {
+  forwardedProps?: Record<string, unknown>;
+  serverResolvedProviderReplayCheckpoints?: unknown;
+  serverEnvelopeVerified: boolean;
+};
+
+/** Read the provider replay checkpoints resolved by the authenticated server. */
+export function getServerResolvedProviderReplayCheckpoints(
+  input: ServerResolvedProviderReplayCheckpointInput,
+): ProviderReplayCheckpoint[] | undefined;
+export function getServerResolvedProviderReplayCheckpoints(
+  forwardedProps: Record<string, unknown> | undefined,
+  serverEnvelopeVerified: boolean,
+): ProviderReplayCheckpoint[] | undefined;
+export function getServerResolvedProviderReplayCheckpoints(
+  inputOrForwardedProps:
+    | ServerResolvedProviderReplayCheckpointInput
+    | Record<string, unknown>
+    | undefined,
+  maybeServerEnvelopeVerified?: boolean,
+): ProviderReplayCheckpoint[] | undefined {
+  const input = typeof maybeServerEnvelopeVerified === "boolean"
+    ? {
+      forwardedProps: inputOrForwardedProps as Record<string, unknown> | undefined,
+      serverEnvelopeVerified: maybeServerEnvelopeVerified,
+    }
+    : inputOrForwardedProps as ServerResolvedProviderReplayCheckpointInput;
+  const {
+    forwardedProps,
+    serverResolvedProviderReplayCheckpoints,
+    serverEnvelopeVerified,
+  } = input;
+  if (!serverEnvelopeVerified) return undefined;
+  const value = typeof maybeServerEnvelopeVerified !== "boolean" &&
+      Object.hasOwn(input, "serverResolvedProviderReplayCheckpoints")
+    ? serverResolvedProviderReplayCheckpoints
+    : forwardedProps?.serverResolvedProviderReplayCheckpoints;
+  if (value === undefined) return undefined;
+  const checkpoints = parseServerResolvedProviderReplayCheckpoints(value);
+  // Contract-valid state this runtime version cannot reconstruct (another
+  // provider, sparse blocks) is deployment skew; it fails here at request
+  // preparation rather than skipping into a silently degraded replay.
+  for (const checkpoint of checkpoints) {
+    assertReconstructibleProviderReplayCheckpoint(checkpoint);
+  }
+  return checkpoints;
 }
 
 /** Return forwarded hosted model ID. */

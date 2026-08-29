@@ -40,6 +40,7 @@ import {
 } from "./context-budget-manager.ts";
 import { findSubmittedFormInputResult } from "./form-input-tool.ts";
 import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
+import type { ProviderReplayCheckpoint } from "../runtime/provider-replay.ts";
 import {
   createToolExposureCheckpointEvent,
   TOOL_SEARCH_TOOL_NAME,
@@ -73,6 +74,7 @@ export type PrepareHostedChatRuntimeMessagesOptions =
     authToken?: string;
     apiUrl?: string | URL;
     projectId?: string | null;
+    providerReplayCheckpointMessageIds?: readonly string[];
   };
 
 /** Context for hosted chat runtime preparation root run. */
@@ -90,6 +92,16 @@ export type HostedChatRuntimePreparationSteering = {
   instructions: string;
   skills: RuntimeSkillDefinition[];
 };
+
+function mergePreservedSourceMessageIds(
+  checkpointIds: readonly string[] | undefined,
+  retentionIds: readonly string[] | undefined,
+): readonly string[] | undefined {
+  if (checkpointIds === undefined && retentionIds === undefined) {
+    return undefined;
+  }
+  return [...new Set([...(checkpointIds ?? []), ...(retentionIds ?? [])])];
+}
 
 /** Input payload for hosted chat runtime instructions. */
 export type HostedChatRuntimeInstructionsInput<TRuntimeAgentDefinition> = {
@@ -126,6 +138,8 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
   rootRunContext?: HostedChatRuntimePreparationRootRunContext;
   /** Trusted checkpoint resolved after hosted service authentication. */
   serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
+  /** Verified provider replay state resolved by the authenticated server. */
+  serverResolvedProviderReplayCheckpoints?: readonly ProviderReplayCheckpoint[];
   /** Verified integration tool grant for this run, resolved by the control plane. */
   serverResolvedIntegrationToolNames?: readonly string[];
   /** Service-owned authorization ceiling for Framework host tools. */
@@ -273,6 +287,8 @@ export type HostedChatExecutionPreparationInput<
   contextBudget?: HostedChatContextBudgetOptions;
   /** Trusted checkpoint resolved by the authenticated hosted service. */
   serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
+  /** Verified provider replay state resolved by the authenticated server. */
+  serverResolvedProviderReplayCheckpoints?: readonly ProviderReplayCheckpoint[];
   /** Verified integration tool grant for this run, resolved by the control plane. */
   serverResolvedIntegrationToolNames?: readonly string[];
   /** Service-owned authorization ceiling for Framework host tools. */
@@ -438,6 +454,11 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(input.serverResolvedToolExposureCheckpoint
         ? { serverResolvedToolExposureCheckpoint: input.serverResolvedToolExposureCheckpoint }
         : {}),
+      ...(input.serverResolvedProviderReplayCheckpoints?.length
+        ? {
+          serverResolvedProviderReplayCheckpoints: input.serverResolvedProviderReplayCheckpoints,
+        }
+        : {}),
       ...(input.serverResolvedIntegrationToolNames?.length
         ? { serverResolvedIntegrationToolNames: input.serverResolvedIntegrationToolNames }
         : {}),
@@ -555,11 +576,15 @@ export async function prepareHostedChatExecution<
     fetchSteering: input.fetchSteering,
     buildInstructions: input.buildInstructions,
     serverResolvedToolExposureCheckpoint: input.serverResolvedToolExposureCheckpoint,
+    serverResolvedProviderReplayCheckpoints: input.serverResolvedProviderReplayCheckpoints,
     serverResolvedIntegrationToolNames: input.serverResolvedIntegrationToolNames,
     hostToolPolicy: input.hostToolPolicy,
   });
   const submittedFormInputResult = findSubmittedFormInputResult(normalized.effectiveMessages);
   const historicalToolInputCompactions: HistoricalToolInputCompactionDiagnostic[] = [];
+  const providerReplayCheckpointMessageIds = input.serverResolvedProviderReplayCheckpoints?.map(
+    (checkpoint) => checkpoint.messageId,
+  );
   const preparedMessages = await prepareHostedChatRuntimeMessages(
     normalized.effectiveMessages,
     {
@@ -571,6 +596,7 @@ export async function prepareHostedChatExecution<
         runtimeConfig: runtimePreparation.runtimeConfig,
       }),
       abortSignal: input.abortSignal,
+      providerReplayCheckpointMessageIds,
       historicalToolInputRetention: {
         diagnostics: historicalToolInputCompactions,
       },
@@ -585,7 +611,15 @@ export async function prepareHostedChatExecution<
   let budgetedContext: Awaited<ReturnType<typeof applyContextBudget>> | undefined;
   if (input.contextBudget) {
     try {
-      budgetedContext = await applyContextBudget(finalMessages, input.contextBudget);
+      budgetedContext = await applyContextBudget(finalMessages, {
+        ...input.contextBudget,
+        atomicMessageIds: [
+          ...new Set([
+            ...(input.contextBudget.atomicMessageIds ?? []),
+            ...(providerReplayCheckpointMessageIds ?? []),
+          ]),
+        ],
+      });
     } catch (error) {
       input.contextBudget.logger?.error?.("Hosted chat context compaction failed", {
         error: error instanceof Error ? error.message : String(error),
@@ -636,9 +670,16 @@ export async function prepareHostedChatRuntimeMessages(
       messages,
       emptyConversationPrompt: options.emptyConversationPrompt,
       providerOwnedToolNames: options.providerOwnedToolNames,
+      preserveProviderOwnedToolSourceMessageIds: options.providerReplayCheckpointMessageIds,
       abortSignal: options.abortSignal,
       fileContentFetchTimeoutMs: options.fileContentFetchTimeoutMs,
-      historicalToolInputRetention: options.historicalToolInputRetention,
+      historicalToolInputRetention: {
+        ...options.historicalToolInputRetention,
+        preserveSourceMessageIds: mergePreservedSourceMessageIds(
+          options.providerReplayCheckpointMessageIds,
+          options.historicalToolInputRetention?.preserveSourceMessageIds,
+        ),
+      },
     });
   }
   const authToken = options.authToken;
@@ -648,9 +689,16 @@ export async function prepareHostedChatRuntimeMessages(
     messages,
     emptyConversationPrompt: options.emptyConversationPrompt,
     providerOwnedToolNames: options.providerOwnedToolNames,
+    preserveProviderOwnedToolSourceMessageIds: options.providerReplayCheckpointMessageIds,
     abortSignal: options.abortSignal,
     fileContentFetchTimeoutMs: options.fileContentFetchTimeoutMs,
-    historicalToolInputRetention: options.historicalToolInputRetention,
+    historicalToolInputRetention: {
+      ...options.historicalToolInputRetention,
+      preserveSourceMessageIds: mergePreservedSourceMessageIds(
+        options.providerReplayCheckpointMessageIds,
+        options.historicalToolInputRetention?.preserveSourceMessageIds,
+      ),
+    },
     resolveFileUrl: ({ uploadId }) =>
       getRuntimeUploadUrl({
         apiUrl,

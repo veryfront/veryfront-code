@@ -1,9 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import {
   getForwardedHostedModelId,
   getForwardedHostedRuntimeOverrides,
+  getServerResolvedProviderReplayCheckpoints,
   getServerResolvedToolExposureCheckpoint,
   resolveHostedRuntimeRequestConfig,
   resolveHostedRuntimeThinkingOverride,
@@ -56,6 +58,200 @@ it("server-resolved tool exposure checkpoint parses strictly and fails closed", 
     }, false),
     undefined,
   );
+});
+
+it("server-resolved provider replay checkpoints require a verified envelope and valid state", () => {
+  const checkpoint = {
+    version: 1 as const,
+    messageId: "assistant-message-1",
+    provider: "anthropic" as const,
+    providerBlocks: [{
+      type: "provider-block" as const,
+      provider: "anthropic" as const,
+      block: { type: "thinking", thinking: "", signature: "sig-secret-verified" },
+    }],
+    providerBlockPositions: [0],
+    totalPartCount: 1,
+  };
+  assertEquals(
+    getServerResolvedProviderReplayCheckpoints({
+      serverResolvedProviderReplayCheckpoints: [checkpoint],
+    }, true),
+    [checkpoint],
+    "verified envelope delivers parsed checkpoints",
+  );
+  assertEquals(
+    getServerResolvedProviderReplayCheckpoints({
+      serverResolvedProviderReplayCheckpoints: [checkpoint],
+    }, false),
+    undefined,
+    "unverified envelope never yields replay state",
+  );
+  assertEquals(
+    getServerResolvedProviderReplayCheckpoints({}, true),
+    undefined,
+    "absent replay state resolves to undefined",
+  );
+  assertEquals(
+    getServerResolvedProviderReplayCheckpoints(undefined, true),
+    undefined,
+    "absent forwarded props resolve to undefined",
+  );
+});
+
+it("server-resolved provider replay checkpoints prefer verified private request state outside forwarded props", () => {
+  const forwardedCheckpoint = {
+    version: 1 as const,
+    messageId: "assistant-message-forwarded",
+    provider: "anthropic" as const,
+    providerBlocks: [{
+      type: "provider-block" as const,
+      provider: "anthropic" as const,
+      block: { type: "thinking", thinking: "", signature: "sig-forwarded" },
+    }],
+    providerBlockPositions: [0],
+    totalPartCount: 1,
+  };
+  const privateCheckpoint = {
+    ...forwardedCheckpoint,
+    messageId: "assistant-message-private",
+    providerBlocks: [{
+      type: "provider-block" as const,
+      provider: "anthropic" as const,
+      block: { type: "thinking", thinking: "", signature: "sig-private" },
+    }],
+  };
+
+  assertEquals(
+    getServerResolvedProviderReplayCheckpoints({
+      forwardedProps: {
+        serverResolvedProviderReplayCheckpoints: [forwardedCheckpoint],
+      },
+      serverResolvedProviderReplayCheckpoints: [privateCheckpoint],
+      serverEnvelopeVerified: true,
+    }),
+    [privateCheckpoint],
+    "verified top-level state carries replay without consuming forwardedProps budget",
+  );
+  assertEquals(
+    getServerResolvedProviderReplayCheckpoints({
+      forwardedProps: {
+        serverResolvedProviderReplayCheckpoints: [forwardedCheckpoint],
+      },
+      serverResolvedProviderReplayCheckpoints: [privateCheckpoint],
+      serverEnvelopeVerified: false,
+    }),
+    undefined,
+    "unverified top-level state is ignored",
+  );
+
+  const nullError = assertThrows(() =>
+    getServerResolvedProviderReplayCheckpoints({
+      forwardedProps: {
+        serverResolvedProviderReplayCheckpoints: [forwardedCheckpoint],
+      },
+      serverResolvedProviderReplayCheckpoints: null,
+      serverEnvelopeVerified: true,
+    })
+  );
+  assertInstanceOf(nullError, VeryfrontError);
+  assertEquals(nullError.slug, "provider-replay-checkpoint-invalid");
+});
+
+it("server-resolved provider replay checkpoints reject providers this runtime cannot replay", () => {
+  // Contract-valid on the wire, but stage 1 only reconstructs anthropic
+  // replay: accepting it and skipping later would be silent degraded replay,
+  // so deployment skew fails loudly at request preparation instead.
+  const error = assertThrows(() =>
+    getServerResolvedProviderReplayCheckpoints({
+      serverResolvedProviderReplayCheckpoints: [{
+        version: 1,
+        messageId: "assistant-message-1",
+        provider: "openai-responses",
+        providerBlocks: [{
+          type: "provider-block",
+          provider: "openai-responses",
+          block: { type: "reasoning", id: "rs-1" },
+        }],
+        providerBlockPositions: [0],
+        totalPartCount: 1,
+      }],
+    }, true)
+  );
+  assertInstanceOf(error, VeryfrontError);
+  assertEquals(error.slug, "provider-replay-checkpoint-invalid", "registry slug");
+});
+
+it("server-resolved provider replay checkpoints reject sparse deliveries", () => {
+  const error = assertThrows(() =>
+    getServerResolvedProviderReplayCheckpoints({
+      serverResolvedProviderReplayCheckpoints: [{
+        version: 1,
+        messageId: "assistant-message-1",
+        provider: "anthropic",
+        providerBlocks: [{
+          type: "provider-block",
+          provider: "anthropic",
+          block: { type: "thinking", thinking: "", signature: "sig-sparse" },
+        }],
+        providerBlockPositions: [1],
+        totalPartCount: 2,
+      }],
+    }, true)
+  );
+  assertInstanceOf(error, VeryfrontError);
+  assertEquals(error.slug, "provider-replay-checkpoint-invalid", "registry slug");
+});
+
+it("server-resolved provider replay checkpoints fail explicitly on forgery-shaped state", () => {
+  const validBlock = {
+    type: "provider-block" as const,
+    provider: "anthropic" as const,
+    block: { type: "thinking", thinking: "", signature: "sig-secret-forgery" },
+  };
+  const forgeries: unknown[] = [
+    "not-an-array",
+    [{ version: 1 }],
+    [{
+      version: 1,
+      messageId: "assistant-message-1",
+      provider: "anthropic",
+      providerBlocks: [validBlock],
+      providerBlockPositions: [0],
+      totalPartCount: 1,
+      injected: "extra",
+    }],
+    [{
+      version: 1,
+      messageId: "assistant-message-1",
+      provider: "forged-provider",
+      providerBlocks: [validBlock],
+      providerBlockPositions: [0],
+      totalPartCount: 1,
+    }],
+    [{
+      version: 1,
+      messageId: "assistant-message-1",
+      provider: "anthropic",
+      providerBlocks: [validBlock],
+      providerBlockPositions: [1],
+      totalPartCount: 1,
+    }],
+  ];
+  for (const forgery of forgeries) {
+    const error = assertThrows(() =>
+      getServerResolvedProviderReplayCheckpoints({
+        serverResolvedProviderReplayCheckpoints: forgery,
+      }, true)
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "provider-replay-checkpoint-invalid", "registry slug");
+    assertEquals(
+      `${error.message}${JSON.stringify(error.context ?? {})}`.includes("sig-secret-forgery"),
+      false,
+      "rejection never echoes signed block material",
+    );
+  }
 });
 
 it("ordinary hosted request resolution ignores forwarded private tool exposure state", () => {

@@ -3,6 +3,8 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
+import { convertToTextGenerationRuntimeRequestMessages } from "#veryfront/agent/runtime/text-generation-runtime-message-converter.ts";
+import type { Message } from "#veryfront/agent/types.ts";
 import type { HistoricalToolInputCompactionDiagnostic } from "#veryfront/chat/message-prep.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 import { ContextCompactionError } from "./context-budget-manager.ts";
@@ -301,6 +303,18 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
       version: 1,
       loadedToolNames: ["get_release"],
     },
+    serverResolvedProviderReplayCheckpoints: [{
+      version: 1,
+      messageId: "assistant-message-1",
+      provider: "anthropic",
+      providerBlocks: [{
+        type: "provider-block",
+        provider: "anthropic",
+        block: { type: "thinking", thinking: "", signature: "sig-threading" },
+      }],
+      providerBlockPositions: [0],
+      totalPartCount: 1,
+    }],
     resolveModelId: (modelId) => modelId ? `resolved:${modelId}` : undefined,
     resolveModelThinking: (modelId) => modelId ? { enabled: true, budgetTokens: 1234 } : undefined,
     fetchSteering: (input) => {
@@ -369,6 +383,18 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
       version: 1,
       loadedToolNames: ["get_release"],
     },
+    serverResolvedProviderReplayCheckpoints: [{
+      version: 1,
+      messageId: "assistant-message-1",
+      provider: "anthropic",
+      providerBlocks: [{
+        type: "provider-block",
+        provider: "anthropic",
+        block: { type: "thinking", thinking: "", signature: "sig-threading" },
+      }],
+      providerBlockPositions: [0],
+      totalPartCount: 1,
+    }],
     liveProjectSteering: {
       agent: {
         id: "agent-1",
@@ -921,6 +947,105 @@ Deno.test("prepareHostedChatExecution strips configured provider history selecte
     text: "I found the official site.",
   }]);
 });
+
+Deno.test(
+  "prepareHostedChatExecution preserves provider history anchored by a server-resolved replay checkpoint",
+  async () => {
+    const messages: ChatUiMessage[] = [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Search the web." }],
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolName: "web_search",
+            toolCallId: "toolu_web_search",
+            input: { query: "Veryfront" },
+            state: "output-available",
+            providerExecuted: true,
+            output: null,
+          },
+          { type: "text", text: "I found the official site." },
+        ],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Continue." }],
+      },
+    ];
+
+    const result = await prepareHostedChatExecution({
+      request: createParsedHostedChatRequest({
+        messages,
+        model: "anthropic/claude-sonnet-4-6",
+        runtimeOverrides: { allowedTools: ["web_search"] },
+        durableRootRun: {
+          runId: "run-1",
+          messageId: "message-1",
+          latestEventId: 3,
+          latestExternalEventSequence: 2,
+        },
+      }),
+      agentConfig: {
+        id: "agent-1",
+        model: "anthropic/claude-sonnet-4-6",
+        providerTools: ["web_search"],
+      },
+      apiUrl: "https://api.example.com",
+      abortSignal: new AbortController().signal,
+      serverResolvedProviderReplayCheckpoints: [{
+        version: 1,
+        messageId: "assistant-1",
+        provider: "anthropic",
+        providerBlocks: [{
+          type: "provider-block",
+          provider: "anthropic",
+          block: {
+            type: "server_tool_use",
+            id: "toolu_web_search",
+            name: "web_search",
+            input: { query: "Veryfront" },
+          },
+        }],
+        providerBlockPositions: [0],
+        totalPartCount: 2,
+      }],
+      resolveModelId: (modelId) => modelId,
+      fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+      buildInstructions: () => "Agent instructions",
+      createRuntime: (options) =>
+        Promise.resolve({
+          runtimeKind: "framework",
+          modelId: options.model ?? "anthropic/claude-sonnet-4-6",
+          cleanup: () => Promise.resolve(),
+          agent: {
+            stream: () =>
+              Promise.resolve({
+                steps: Promise.resolve([]),
+                toUIMessageStream: async function* () {},
+              }),
+          },
+        }),
+    });
+
+    const checkpointedParts = result.finalMessages
+      .filter((message) => message.id === "assistant-1")
+      .flatMap((message) => message.parts);
+    assertEquals(
+      checkpointedParts.flatMap((part) =>
+        "toolCallId" in part && part.toolCallId === "toolu_web_search" ? [part.type] : []
+      ),
+      ["tool-call", "tool-result"],
+      "checkpointed provider call and result survive the production preparation entry point",
+    );
+  },
+);
 
 Deno.test("prepareHostedChatExecution does not carry old submitted form input into a new user turn", async () => {
   const messages: ChatUiMessage[] = [
@@ -1622,6 +1747,167 @@ Deno.test("prepareHostedChatRuntimeMessages omits provider-owned remote tool his
   }]);
 });
 
+Deno.test(
+  "prepareHostedChatRuntimeMessages keeps persisted provider-executed tool turns in the model request",
+  async () => {
+    const prepared = await prepareHostedChatRuntimeMessages([
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Search my notes." }],
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "notion__search_notion",
+          toolCallId: "srvtool-notion-search",
+          input: { query: "research notes" },
+          state: "output-available",
+          providerExecuted: true,
+          output: { data: [] },
+        }],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Create a template I can use." }],
+      },
+    ]);
+
+    const requestMessages = convertToTextGenerationRuntimeRequestMessages(
+      prepared as unknown as Message[],
+    );
+
+    assertEquals(
+      requestMessages.map((message) => message.role),
+      ["user", "assistant", "tool", "user"],
+      "persisted provider-executed turns must stay in the model request",
+    );
+    const assistantContent = requestMessages[1]?.content;
+    if (!Array.isArray(assistantContent)) throw new Error("Expected assistant content parts");
+    assertEquals(
+      assistantContent.some((part) =>
+        typeof part === "object" && part !== null && "type" in part &&
+        part.type === "tool-call" && "toolCallId" in part &&
+        part.toolCallId === "srvtool-notion-search"
+      ),
+      true,
+      "the persisted tool call must reach the prompt",
+    );
+    const toolContent = requestMessages[2]?.content;
+    if (!Array.isArray(toolContent)) throw new Error("Expected tool content parts");
+    assertEquals(
+      toolContent.some((part) =>
+        typeof part === "object" && part !== null && "type" in part &&
+        part.type === "tool-result" && "toolCallId" in part &&
+        part.toolCallId === "srvtool-notion-search"
+      ),
+      true,
+      "the persisted tool result must reach the prompt",
+    );
+  },
+);
+
+Deno.test(
+  "prepareHostedChatRuntimeMessages preserves checkpoint-anchored provider tool history",
+  async () => {
+    const messages = await prepareHostedChatRuntimeMessages(
+      [
+        {
+          id: "user-1",
+          role: "user",
+          parts: [{ type: "text", text: "Search the official documentation." }],
+        },
+        {
+          id: "assistant-1",
+          role: "assistant",
+          parts: [{
+            type: "dynamic-tool",
+            toolName: "web_search",
+            toolCallId: "srvtool-web-search",
+            input: { query: "site:veryfront.com provider replay" },
+            state: "output-available",
+            providerExecuted: true,
+            output: [],
+          }],
+        },
+        {
+          id: "user-2",
+          role: "user",
+          parts: [{ type: "text", text: "Summarize the result." }],
+        },
+      ],
+      {
+        providerOwnedToolNames: ["web_search"],
+        providerReplayCheckpointMessageIds: ["assistant-1"],
+      },
+    );
+
+    const checkpointedParts = messages
+      .filter((message) => message.id === "assistant-1")
+      .flatMap((message) => message.parts);
+    assertEquals(
+      checkpointedParts,
+      [
+        {
+          type: "tool-call",
+          toolCallId: "srvtool-web-search",
+          toolName: "web_search",
+          args: { query: "site:veryfront.com provider replay" },
+        },
+        {
+          type: "tool-result",
+          toolCallId: "srvtool-web-search",
+          toolName: "web_search",
+          result: {
+            type: "json",
+            value: [],
+          },
+        },
+      ],
+      "checkpointed provider call and result remain available for replay validation",
+    );
+  },
+);
+
+Deno.test("prepareHostedChatRuntimeMessages preserves opaque-only checkpoint anchors", async () => {
+  const messages = await prepareHostedChatRuntimeMessages(
+    [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Think privately." }],
+      },
+      {
+        id: "assistant-empty",
+        role: "assistant",
+        parts: [],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Continue." }],
+      },
+    ],
+    {
+      providerReplayCheckpointMessageIds: ["assistant-empty"],
+    },
+  );
+
+  assertEquals(
+    messages.find((message) => message.id === "assistant-empty"),
+    {
+      id: "assistant-empty",
+      role: "assistant",
+      parts: [],
+      timestamp: 1,
+    },
+    "opaque-only replay anchors must survive even when they have no public parts",
+  );
+});
+
 Deno.test("prepareHostedChatRuntimeMessages reports historical tool input compaction diagnostics", async () => {
   const diagnostics: HistoricalToolInputCompactionDiagnostic[] = [];
   const marker = "HOSTED_TOOL_INPUT_MARKER";
@@ -1674,6 +1960,124 @@ Deno.test("prepareHostedChatRuntimeMessages reports historical tool input compac
   assertEquals((diagnostics[0] as { source?: string }).source, "provider");
   assertEquals((diagnostics[0] as { toolName?: string }).toolName, "render_widget");
   assertEquals((diagnostics[0] as { toolCallId?: string }).toolCallId, "tool-render-widget");
+});
+
+Deno.test("prepareHostedChatRuntimeMessages preserves checkpointed historical tool inputs", async () => {
+  const diagnostics: HistoricalToolInputCompactionDiagnostic[] = [];
+  const marker = "CHECKPOINTED_TOOL_INPUT_MARKER";
+  const messages = await prepareHostedChatRuntimeMessages(
+    [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Render the widget." }],
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "render_widget",
+          toolCallId: "tool-render-widget",
+          input: {
+            targetPath: "components/Widget.tsx",
+            source: `${marker}:${"export const widget = true;\n".repeat(2000)}`,
+          },
+          state: "output-available",
+          output: { ok: true },
+        }],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Update the widget." }],
+      },
+    ],
+    {
+      providerReplayCheckpointMessageIds: ["assistant-1"],
+      historicalToolInputRetention: {
+        diagnostics,
+        resolvePolicy: (toolName) =>
+          toolName === "render_widget"
+            ? {
+              compactCompletedInput: true,
+              compactAfterChars: 100,
+            }
+            : undefined,
+      },
+    },
+  );
+
+  const serialized = JSON.stringify(messages);
+  assertEquals(serialized.includes(marker), true);
+  assertEquals(diagnostics, []);
+});
+
+Deno.test("prepareHostedChatRuntimeMessages merges checkpoint and caller-preserved source ids", async () => {
+  const diagnostics: HistoricalToolInputCompactionDiagnostic[] = [];
+  const checkpointMarker = "CHECKPOINT_RETENTION_MARKER";
+  const callerMarker = "CALLER_RETENTION_MARKER";
+  const messages = await prepareHostedChatRuntimeMessages(
+    [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Render both widgets." }],
+      },
+      {
+        id: "assistant-checkpoint",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "render_widget",
+          toolCallId: "tool-render-checkpoint",
+          input: {
+            source: `${checkpointMarker}:${"checkpoint body ".repeat(500)}`,
+          },
+          state: "output-available",
+          output: { ok: true },
+        }],
+      },
+      {
+        id: "assistant-caller",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "render_widget",
+          toolCallId: "tool-render-caller",
+          input: {
+            source: `${callerMarker}:${"caller body ".repeat(500)}`,
+          },
+          state: "output-available",
+          output: { ok: true },
+        }],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Update both widgets." }],
+      },
+    ],
+    {
+      providerReplayCheckpointMessageIds: ["assistant-checkpoint"],
+      historicalToolInputRetention: {
+        diagnostics,
+        preserveSourceMessageIds: ["assistant-caller"],
+        resolvePolicy: (toolName) =>
+          toolName === "render_widget"
+            ? {
+              compactCompletedInput: true,
+              compactAfterChars: 100,
+            }
+            : undefined,
+      },
+    },
+  );
+
+  const serialized = JSON.stringify(messages);
+  assertEquals(serialized.includes(checkpointMarker), true);
+  assertEquals(serialized.includes(callerMarker), true);
+  assertEquals(diagnostics, []);
 });
 
 Deno.test("prepareHostedChatRuntimeCreationOptions applies the skill selector and owner scope", async () => {

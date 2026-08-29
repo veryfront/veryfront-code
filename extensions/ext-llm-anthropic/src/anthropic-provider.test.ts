@@ -86,6 +86,16 @@ function createSettledLegacyMcpPrompt(toolCallId: string) {
 }
 
 describe("anthropic-provider", () => {
+  it("keeps canonical provider identity when the runtime label is customized", () => {
+    const runtime = createAnthropicModelRuntime(
+      { name: "private-anthropic-gateway" },
+      "claude-sonnet-4-6",
+    );
+
+    assertEquals(runtime.provider, "private-anthropic-gateway");
+    assertEquals(runtime.modelProvider, "anthropic");
+  });
+
   it("creates an Anthropic-compatible language runtime without SDK helpers for generate", async () => {
     let requestedUrl = "";
     let requestedInit: RequestInit | undefined;

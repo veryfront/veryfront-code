@@ -30,6 +30,7 @@
       "veryfront/ui": ["./npm/esm/src/react/components/ui/index.d.ts"],
       "veryfront/ui/icons": ["./npm/esm/src/react/components/ui/icons/index.d.ts"],
       "veryfront/chat": ["./npm/esm/src/chat/index.d.ts"],
+      "veryfront/chat/message-prep": ["./npm/esm/src/chat/message-prep.d.ts"],
       "veryfront/chat/types": ["./npm/esm/src/chat/types.d.ts"],
       "veryfront/chat/uploads": ["./npm/esm/src/chat/upload-handler.d.ts"],
       "veryfront/schedule": ["./npm/esm/src/schedule/index.d.ts"],

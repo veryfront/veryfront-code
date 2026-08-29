@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { DEFAULT_LIMITS } from "#veryfront/security/input-validation/types.ts";
 import {
   getAgUiRuntimeRequestSchema,
   normalizeAgUiRuntimeRequest,
@@ -77,6 +78,46 @@ describe("agent/runtime-ag-ui-contract", () => {
     assertEquals(parsed.messages.length, 1);
   });
 
+  it("accepts private provider replay state outside forwarded props", () => {
+    const parsed = getAgUiRuntimeRequestSchema().parse({
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [{
+        id: "user_1",
+        role: "user",
+        content: "Hello",
+      }],
+      context: [],
+      tools: [],
+      forwardedProps: {
+        traceId: "trace-1",
+      },
+      serverResolvedProviderReplayCheckpoints: [{
+        version: 1,
+        messageId: "assistant-message-1",
+        provider: "anthropic",
+        providerBlocks: [{
+          type: "provider-block",
+          provider: "anthropic",
+          block: {
+            type: "thinking",
+            thinking: "x".repeat(220_000),
+            signature: "sig-private-large",
+          },
+        }],
+        providerBlockPositions: [0],
+        totalPartCount: 1,
+      }],
+    });
+
+    assertEquals(parsed.forwardedProps, { traceId: "trace-1" });
+    assertEquals(
+      Array.isArray(parsed.serverResolvedProviderReplayCheckpoints),
+      true,
+      "large replay payload must not be counted against forwardedProps",
+    );
+  });
+
   it("normalizes runtime request defaults without leaking non-object state", () => {
     const normalized = normalizeAgUiRuntimeRequest(
       getAgUiRuntimeRequestSchema().parse({
@@ -147,6 +188,25 @@ describe("agent/runtime-ag-ui-contract", () => {
     const body = await result.json();
     assertEquals(body.error, "Invalid AG-UI runtime request");
     assertEquals(body.details, [{ path: [], message: "Malformed JSON request body" }]);
+  });
+
+  it("keeps public runtime AG-UI requests on the generic body limit", async () => {
+    const result = await parseAgUiRuntimeRequestOrError(
+      new Request("http://localhost/api/runs/run_1", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ padding: "x".repeat(DEFAULT_LIMITS.maxBodySize) }),
+      }),
+    );
+
+    assertInstanceOf(result, Response);
+    assertEquals(result.status, 413);
+    const body = await result.json();
+    assertEquals(body.error, "Invalid AG-UI runtime request");
+    assertEquals(body.details, [{
+      path: [],
+      message: `Request body exceeds ${DEFAULT_LIMITS.maxBodySize} bytes`,
+    }]);
   });
 
   it("returns a 400 response when the runtime AG-UI request has no body", async () => {

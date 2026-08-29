@@ -326,6 +326,7 @@ function createRuntimeAgentConfig(input: {
     __vfAllowedRemoteTools: input.toolAssembly.compatibleRemoteToolNames,
     __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy,
     __vfToolExposureCheckpoint: input.options.serverResolvedToolExposureCheckpoint,
+    __vfProviderReplayCheckpoints: input.options.serverResolvedProviderReplayCheckpoints,
     __vfPersistToolExposureCheckpoint: input.options.persistToolExposureCheckpoint,
     __vfToolExposureCheckpointPersistenceRequired:
       input.options.requireToolExposureCheckpointPersistence === true,

@@ -369,6 +369,7 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
       { message: "forwardedProps must be less than 192 KB" },
     ),
+    serverResolvedProviderReplayCheckpoints: v.unknown().optional(),
   }).superRefine((input, ctx) => {
     if (input.agentConfig && input.agentConfig.id !== input.run.agentId) {
       ctx.addIssue({
@@ -442,6 +443,9 @@ export type RuntimeAgentControlPlaneStreamRequest = {
   agentSource: RuntimeAgentRunInvocation["agentSource"];
   agentConfig?: RuntimeAgentRunInvocation["agentConfig"];
   forwardedProps?: RuntimeAgentRunInvocation["forwardedProps"];
+  serverResolvedProviderReplayCheckpoints?: RuntimeAgentRunInvocation[
+    "serverResolvedProviderReplayCheckpoints"
+  ];
 };
 
 /** Builds runtime agent control plane stream request from invocation. */
@@ -465,6 +469,9 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
     agentSource: input.agentSource,
     ...(input.agentConfig ? { agentConfig: input.agentConfig } : {}),
     ...(input.forwardedProps ? { forwardedProps: input.forwardedProps } : {}),
+    ...(input.serverResolvedProviderReplayCheckpoints !== undefined
+      ? { serverResolvedProviderReplayCheckpoints: input.serverResolvedProviderReplayCheckpoints }
+      : {}),
   };
 }
 

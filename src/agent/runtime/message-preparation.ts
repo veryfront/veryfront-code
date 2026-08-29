@@ -27,6 +27,7 @@ export type PrepareAgentRuntimeMessagesFromUiMessagesOptions = {
   abortSignal?: AbortSignal;
   fileContentFetchTimeoutMs?: number;
   providerOwnedToolNames?: readonly string[];
+  preserveProviderOwnedToolSourceMessageIds?: readonly string[];
   historicalToolInputRetention?: HistoricalToolInputRetentionOptions;
 };
 
@@ -70,6 +71,7 @@ export async function prepareAgentRuntimeMessagesFromUiMessages(
   return convertProviderMessagesToAgentRuntimeMessages(
     prepareProviderModelMessagesFromUiMessages(messagesWithFileContent, {
       providerOwnedToolNames: options.providerOwnedToolNames,
+      preserveProviderOwnedToolSourceMessageIds: options.preserveProviderOwnedToolSourceMessageIds,
       historicalToolInputRetention: options.historicalToolInputRetention,
     }),
   );

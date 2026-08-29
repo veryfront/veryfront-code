@@ -46,6 +46,18 @@ const rawReplayToolResultPart = {
   is_error: false,
 } as const;
 const rawReplayParts = [rawReplayToolCallPart, rawReplayToolResultPart] as const;
+const serverResolvedProviderReplayCheckpoint = {
+  version: 1,
+  messageId: "assistant-message-1",
+  provider: "anthropic",
+  providerBlocks: [{
+    type: "provider-block",
+    provider: "anthropic",
+    block: { type: "thinking", thinking: "", signature: "sig-private-replay" },
+  }],
+  providerBlockPositions: [0],
+  totalPartCount: 1,
+} as const;
 
 type ParsedHostedChatRequestMessagePart = ParsedHostedChatRequest["messages"][number]["parts"][
   number
@@ -1489,6 +1501,48 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(request.messages[0]?.parts as unknown, rawReplayParts);
   });
 
+  it("preserves provider ownership on raw replay parts from runtime invocations", async () => {
+    const providerOwnedParts = rawReplayParts.map((part) => ({
+      ...part,
+      providerExecuted: true,
+    }));
+    const invocation = RuntimeAgentRunInvocationSchema.parse({
+      ...createRuntimeInvocation(),
+      messages: [{
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: providerOwnedParts,
+      }],
+    });
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/control-plane/runs/run_root_1/stream", {
+        method: "POST",
+        headers: { "X-Veryfront-Run-Event-Token": "verified-event-token" },
+        body: JSON.stringify(invocation),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+        runtimeSource,
+      },
+    );
+
+    if (parsed instanceof Response) {
+      throw new Error("Expected parsed runtime invocation");
+    }
+
+    assertEquals(parsed.messages[0]?.parts, [{
+      type: "tool_call",
+      toolCallId: rawReplayToolCallPart.id,
+      toolName: replayToolName,
+      input: rawReplayToolCallPart.input,
+      state: "output-available",
+      output: replayOutput,
+      providerExecuted: true,
+    }]);
+  });
+
   it("normalizes persisted uploaded file parts from runtime invocations", async () => {
     const invocation = RuntimeAgentRunInvocationSchema.parse({
       ...createRuntimeInvocation(),
@@ -1921,7 +1975,10 @@ describe("agent/hosted-chat-request", () => {
         headers: {
           "X-Veryfront-Run-Event-Token": "run-event-service-token",
         },
-        body: JSON.stringify(createRuntimeInvocation()),
+        body: JSON.stringify({
+          ...createRuntimeInvocation(),
+          serverResolvedProviderReplayCheckpoints: [serverResolvedProviderReplayCheckpoint],
+        }),
       }),
       {
         authenticate: () => Promise.resolve({ userId, authToken: "user-api-token" }),
@@ -1943,11 +2000,133 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(Object.keys(parsed).includes("runEventAppendToken"), false);
     assertEquals(JSON.stringify(parsed).includes("run-event-service-token"), false);
     assertEquals(parsed.serverEnvelopeVerified, true);
+    assertEquals(parsed.serverResolvedProviderReplayCheckpoints, [
+      serverResolvedProviderReplayCheckpoint,
+    ]);
     assertEquals(verifiedRunEventTokens, [{
       token: "run-event-service-token",
       projectId,
       runId: "run_root_1",
     }]);
+  });
+
+  it("rejects private provider replay state without a run-event append token", async () => {
+    const response = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        body: JSON.stringify({
+          ...createRuntimeInvocation(),
+          serverResolvedProviderReplayCheckpoints: [serverResolvedProviderReplayCheckpoint],
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "user-api-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+        runtimeSource,
+      },
+    );
+
+    if (!(response instanceof Response)) {
+      throw new Error("Expected missing run-event token response");
+    }
+    assertEquals(response.status, 403);
+    assertEquals(await response.json(), {
+      errorCode: "INVALID_RUN_EVENT_APPEND_TOKEN",
+    });
+  });
+
+  it("rejects legacy forwarded replay state without a run-event append token", async () => {
+    const response = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        body: JSON.stringify({
+          ...createRuntimeInvocation(),
+          forwardedProps: {
+            serverResolvedProviderReplayCheckpoints: [serverResolvedProviderReplayCheckpoint],
+          },
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "user-api-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+        runtimeSource,
+      },
+    );
+
+    if (!(response instanceof Response)) {
+      throw new Error("Expected missing run-event token response");
+    }
+    assertEquals(response.status, 403);
+    assertEquals(await response.json(), {
+      errorCode: "INVALID_RUN_EVENT_APPEND_TOKEN",
+    });
+  });
+
+  it("rejects private provider replay requests above the generic body limit", async () => {
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "X-Veryfront-Run-Event-Token": "run-event-service-token",
+        },
+        body: JSON.stringify({
+          ...createRuntimeInvocation(),
+          serverResolvedProviderReplayCheckpoints: [{
+            ...serverResolvedProviderReplayCheckpoint,
+            providerBlocks: [{
+              type: "provider-block",
+              provider: "anthropic",
+              block: {
+                type: "thinking",
+                thinking: "x".repeat(DEFAULT_MAX_BODY_SIZE_BYTES + 1_024),
+                signature: "sig-private-large",
+              },
+            }],
+          }],
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "user-api-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+        runtimeSource,
+      },
+    );
+
+    if (!(parsed instanceof Response)) {
+      throw new Error("Expected oversized replay request to be rejected");
+    }
+    assertEquals(parsed.status, 413);
+    assertEquals((await parsed.json()).errorCode, "REQUEST_TOO_LARGE");
+  });
+
+  it("rejects ordinary hosted chat requests above the generic body limit", async () => {
+    const response = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/chat", {
+        method: "POST",
+        body: JSON.stringify(
+          createHostedChatRequestBody([
+            createHostedChatRequestMessage("user", [{
+              type: "text",
+              text: "x".repeat(DEFAULT_MAX_BODY_SIZE_BYTES + 1_024),
+            }]),
+          ]),
+        ),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "user-api-token" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+      },
+    );
+
+    assertEquals(response instanceof Response, true);
+    assertEquals((response as Response).status, 413);
+    assertStringIncludes(
+      await (response as Response).text(),
+      `Request body exceeds ${DEFAULT_MAX_BODY_SIZE_BYTES} bytes`,
+    );
   });
 
   it("does not trust server-resolved fields from an ordinary chat body even with a writer token", async () => {
@@ -1961,6 +2140,7 @@ describe("agent/hosted-chat-request", () => {
           messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
           context: { conversationId, projectId, branchId },
           durableRootRun: { runId: "run_root_1", messageId },
+          serverResolvedProviderReplayCheckpoints: [serverResolvedProviderReplayCheckpoint],
           serverResolvedToolExposureCheckpoint: {
             version: 1,
             loadedToolNames: ["delete_project"],
@@ -1986,6 +2166,7 @@ describe("agent/hosted-chat-request", () => {
     assertEquals("runEventAppendToken" in parsed, false);
     assertEquals(JSON.stringify(parsed).includes("run-event-service-token"), false);
     assertEquals(parsed.serverEnvelopeVerified, undefined);
+    assertEquals(parsed.serverResolvedProviderReplayCheckpoints, undefined);
     assertEquals(parsed.forwardedProps, { harmless: "preserved" });
   });
 
