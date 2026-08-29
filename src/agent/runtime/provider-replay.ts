@@ -209,9 +209,41 @@ function toTranscriptVisibleProviderPart(
   }
 }
 
+function normalizeTranscriptVisibleProjection(
+  parts: readonly Record<string, unknown>[],
+): Record<string, unknown>[] {
+  const normalized: Record<string, unknown>[] = [];
+  let pendingText = "";
+
+  const flushText = () => {
+    if (pendingText.trim().length === 0) {
+      pendingText = "";
+      return;
+    }
+    normalized.push({ type: "text", text: pendingText });
+    pendingText = "";
+  };
+
+  for (const part of parts) {
+    if (part.type === "text") {
+      if (typeof part.text !== "string") {
+        invalidCheckpoint("checkpoint transcript text projection is malformed");
+      }
+      pendingText += part.text;
+      continue;
+    }
+    flushText();
+    normalized.push(part);
+  }
+  flushText();
+
+  return normalized;
+}
+
 function assertCheckpointMatchesAssistantTurn(
   target: Message,
   checkpoint: ProviderReplayCheckpoint,
+  toolSiblings: readonly Message[] = [],
 ): void {
   const providerProjection = convertAgentRuntimeMessagesToProviderMessages([target])
     .filter((message) => message.role === "assistant");
@@ -236,17 +268,21 @@ function assertCheckpointMatchesAssistantTurn(
   const checkpointProviderToolResults = checkpointProjection.filter((part) =>
     part.type === "tool-result"
   );
-  const checkpointVisibleProjection = checkpointProjection.filter((part) =>
-    part.type !== "tool-result"
+  const checkpointVisibleProjection = normalizeTranscriptVisibleProjection(
+    checkpointProjection.filter((part) => part.type !== "tool-result"),
   );
-  const targetProviderToolResults = target.parts.flatMap((part) => {
-    const value: unknown = part;
-    if (!isRecord(value) || value.type !== "tool-result") return [];
-    const projected = toTranscriptVisibleProviderPart(value, providerExecutedToolCallIds);
-    return projected?.providerExecuted === true ? [projected] : [];
-  });
+  const normalizedTargetProjection = normalizeTranscriptVisibleProjection(targetProjection);
+  const targetProviderToolResults = [target, ...toolSiblings].flatMap((message) =>
+    message.parts.flatMap((part) => {
+      const value: unknown = part;
+      if (!isRecord(value) || value.type !== "tool-result") return [];
+      const projected = toTranscriptVisibleProviderPart(value, providerExecutedToolCallIds);
+      return projected?.providerExecuted === true ? [projected] : [];
+    })
+  );
   if (
-    stringifyChatJson(checkpointVisibleProjection) !== stringifyChatJson(targetProjection) ||
+    stringifyChatJson(checkpointVisibleProjection) !==
+      stringifyChatJson(normalizedTargetProjection) ||
     stringifyChatJson(checkpointProviderToolResults) !==
       stringifyChatJson(targetProviderToolResults)
   ) {
@@ -477,7 +513,11 @@ export function applyProviderReplayCheckpointsToMessages(
         ...(role ? { role } : {}),
       });
     }
-    assertCheckpointMatchesAssistantTurn(target, checkpoint);
+    assertCheckpointMatchesAssistantTurn(
+      target,
+      checkpoint,
+      matches.filter((message) => message.role === "tool"),
+    );
     // In-process metadata attached during this run is the same replay state at
     // first hand; the durable checkpoint never overrides it.
     if (readAttachedProviderMetadata(target) !== undefined) continue;

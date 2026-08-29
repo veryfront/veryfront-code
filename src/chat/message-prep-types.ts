@@ -8,6 +8,16 @@ export type MessagePrepLimits = {
   retainedMetadataObjectMaxEntries: number;
 };
 
+/** Default limits for chat history preparation. */
+export const DEFAULT_MESSAGE_PREP_LIMITS: MessagePrepLimits = {
+  charsPerToken: 4,
+  historicalToolOutputMaskChars: 500,
+  historicalToolInputMaskChars: 1_000,
+  retainedMetadataStringMaxChars: 200,
+  retainedMetadataArrayMaxItems: 20,
+  retainedMetadataObjectMaxEntries: 20,
+};
+
 /** Field selector retained in a historical tool-input summary. */
 export type HistoricalToolInputRetainedField =
   | string
@@ -52,4 +62,24 @@ export type HistoricalToolInputRetentionOptions = {
   diagnostics?: HistoricalToolInputCompactionDiagnostic[];
   limits?: Partial<MessagePrepLimits>;
   preserveSourceMessageIds?: readonly string[];
+};
+
+/** Options accepted by prepare provider model messages from UI messages. */
+export type PrepareProviderModelMessagesFromUiMessagesOptions = {
+  providerOwnedToolNames?: readonly string[];
+  preserveProviderOwnedToolSourceMessageIds?: readonly string[];
+  historicalToolInputRetention?: HistoricalToolInputRetentionOptions;
+};
+
+/** Approximate token categories for context diagnostics. */
+export type MessageTokenBreakdown = {
+  totalTokens: number;
+  systemTextTokens: number;
+  userContentTokens: number;
+  assistantContentTokens: number;
+  reasoningTokens: number;
+  toolCallInputTokens: number;
+  toolResultOutputTokens: number;
+  fileTokens: number;
+  unknownTokens: number;
 };

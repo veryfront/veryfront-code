@@ -558,6 +558,66 @@ describe("agent/runtime/provider-replay", () => {
       );
     });
 
+    it("should validate provider tool results from a matching tool sibling", () => {
+      const providerCall = {
+        type: "server_tool_use",
+        id: "srvtool-web-search",
+        name: "web_search",
+        input: { query: "provider replay" },
+        caller: { type: "direct" },
+      };
+      const providerResult = {
+        type: "web_search_tool_result",
+        tool_use_id: providerCall.id,
+        caller: { type: "direct" },
+        content: [],
+      };
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [{
+          type: "tool-call",
+          toolCallId: providerCall.id,
+          toolName: providerCall.name,
+          args: providerCall.input,
+          providerExecuted: true,
+        }],
+        timestamp: 1,
+      } as Message;
+      const toolSibling = {
+        id: "assistant-message-1",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: providerCall.id,
+          toolName: providerCall.name,
+          result: [],
+          providerExecuted: true,
+        }],
+        timestamp: 2,
+      } as Message;
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: target.id,
+        provider: "anthropic",
+        providerBlocks: [providerCall, providerResult].map((block) => ({
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block,
+        })),
+        providerBlockPositions: [0, 1],
+        totalPartCount: 2,
+      };
+
+      applyProviderReplayCheckpointsToMessages([target, toolSibling], [checkpoint]);
+
+      assertEquals(
+        readAttachedProviderMetadata(target),
+        { anthropic: { rawAssistantMessages: [[providerCall, providerResult]] } },
+        "provider result siblings remain part of the anchored replay projection",
+      );
+    });
+
     it("should reject a provider tool result without its provider-owned call", () => {
       const providerResult = {
         type: "web_search_tool_result",
@@ -644,6 +704,49 @@ describe("agent/runtime/provider-replay", () => {
         readAttachedProviderMetadata(unrelated),
         undefined,
         "an unrelated valid message id with a shared prefix stays untouched",
+      );
+    });
+
+    it("should normalize transcript text blocks before matching the anchor", () => {
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [
+          { type: "reasoning", text: "" },
+          { type: "text", text: "Hello world" },
+        ],
+        timestamp: 1,
+      } as Message;
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: target.id,
+        provider: "anthropic",
+        providerBlocks: [
+          { type: "provider-block", provider: "anthropic", block: { type: "text", text: "" } },
+          {
+            type: "provider-block",
+            provider: "anthropic",
+            block: { type: "text", text: "Hello " },
+          },
+          { type: "provider-block", provider: "anthropic", block: { type: "text", text: "world" } },
+        ],
+        providerBlockPositions: [0, 1, 2],
+        totalPartCount: 3,
+      };
+
+      applyProviderReplayCheckpointsToMessages([target], [checkpoint]);
+
+      assertEquals(
+        readAttachedProviderMetadata(target),
+        {
+          anthropic: {
+            rawAssistantMessages: [[
+              { type: "text", text: "" },
+              { type: "text", text: "Hello " },
+              { type: "text", text: "world" },
+            ]],
+          },
+        },
       );
     });
 

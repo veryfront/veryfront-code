@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertMatch, assertStringIncludes, assertThrows } from "#std/assert";
 import type { ChatUiMessage, ProviderModelMessage } from "./types.ts";
+import { withProviderModelMessageSourceId } from "./conversation.ts";
 import type { HistoricalToolInputCompactionDiagnostic } from "./message-prep.ts";
 import {
   compactForStep,
@@ -328,6 +329,23 @@ Deno.test("maskOldToolOutputs masks large historical tool outputs and removes st
   });
   assertStringIncludes(JSON.stringify(masked[2]), "[Command: npm test — exit 0, output omitted");
   assertEquals(masked[3], messages[3]);
+});
+
+Deno.test("maskOldToolOutputs preserves checkpointed historical reasoning", () => {
+  const messages = [
+    { role: "user", content: "run the check" },
+    withProviderModelMessageSourceId(
+      { role: "assistant", content: [{ type: "reasoning", text: "signed transcript thinking" }] },
+      "assistant-1",
+    ),
+    { role: "user", content: "now summarize it" },
+  ] satisfies ProviderModelMessage[];
+
+  const preserved = maskOldToolOutputs(messages, {
+    preserveSourceMessageIds: ["assistant-1"],
+  });
+
+  assertEquals(preserved[1], messages[1]);
 });
 
 Deno.test("maskOldToolOutputs masks historical web_search, readFile, web_fetch and task results per tool", () => {

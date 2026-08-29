@@ -23,6 +23,7 @@ import { historicalToolSummaries } from "../integrations/_tool_summaries.ts";
 import type { IntegrationEndpointHistoricalSummary } from "../integrations/schema.ts";
 import { safeJsonParse } from "#veryfront/utils/json.ts";
 import { stringifyChatJson } from "./json-value.ts";
+import { DEFAULT_MESSAGE_PREP_LIMITS } from "./message-prep-types.ts";
 import {
   getMessagePartToolCallId,
   getMessagePartToolName,
@@ -34,7 +35,10 @@ import type {
   HistoricalToolInputRetentionOptions,
   HistoricalToolInputRetentionPolicy,
   MessagePrepLimits,
+  MessageTokenBreakdown,
+  PrepareProviderModelMessagesFromUiMessagesOptions,
 } from "./message-prep-types.ts";
+export { DEFAULT_MESSAGE_PREP_LIMITS } from "./message-prep-types.ts";
 export type {
   HistoricalToolInputCompactionDiagnostic,
   HistoricalToolInputRetainedField,
@@ -42,44 +46,16 @@ export type {
   HistoricalToolInputRetentionPolicy,
   HistoricalToolInputRetentionPolicyResolver,
   MessagePrepLimits,
+  MessageTokenBreakdown,
+  PrepareProviderModelMessagesFromUiMessagesOptions,
 } from "./message-prep-types.ts";
 
-/** Default limits for chat history preparation. */
-export const DEFAULT_MESSAGE_PREP_LIMITS: MessagePrepLimits = {
-  charsPerToken: 4,
-  historicalToolOutputMaskChars: 500,
-  historicalToolInputMaskChars: 1_000,
-  retainedMetadataStringMaxChars: 200,
-  retainedMetadataArrayMaxItems: 20,
-  retainedMetadataObjectMaxEntries: 20,
-};
-
 const CHARS_PER_TOKEN = DEFAULT_MESSAGE_PREP_LIMITS.charsPerToken;
-
-/** Options accepted by prepare provider model messages from UI messages. */
-export interface PrepareProviderModelMessagesFromUiMessagesOptions {
-  providerOwnedToolNames?: readonly string[];
-  preserveProviderOwnedToolSourceMessageIds?: readonly string[];
-  historicalToolInputRetention?: HistoricalToolInputRetentionOptions;
-}
 
 /** Estimate tokens. */
 export function estimateTokens(value: unknown): number {
   return Math.ceil(stringifyChatJson(value ?? "").length / CHARS_PER_TOKEN);
 }
-
-/** Approximate token categories for context diagnostics. */
-export type MessageTokenBreakdown = {
-  totalTokens: number;
-  systemTextTokens: number;
-  userContentTokens: number;
-  assistantContentTokens: number;
-  reasoningTokens: number;
-  toolCallInputTokens: number;
-  toolResultOutputTokens: number;
-  fileTokens: number;
-  unknownTokens: number;
-};
 
 function createEmptyTokenBreakdown(totalTokens: number): MessageTokenBreakdown {
   return {
@@ -1067,7 +1043,7 @@ export function prepareProviderModelMessagesFromUiMessages(
   const providerModelMessages = convertUiMessagesToProviderModelMessages(rewrittenMessages);
   const patchedMessages = ensureToolCallInputs(dedupeToolHistory(providerModelMessages));
   const sanitized = sanitizeProviderModelMessages(patchedMessages);
-  const masked = maskOldToolOutputs(sanitized);
+  const masked = maskOldToolOutputs(sanitized, options.historicalToolInputRetention);
   const compactedInputs = compactOldToolInputs(masked, options.historicalToolInputRetention);
   const compacted = enforceTokenBudget(compactedInputs);
   const filtered = filterValidMessages(compacted);
@@ -1348,7 +1324,10 @@ function wrapToolResultOutput(
 }
 
 /** Mask old tool outputs. */
-export function maskOldToolOutputs(messages: ProviderModelMessage[]): ProviderModelMessage[] {
+export function maskOldToolOutputs(
+  messages: ProviderModelMessage[],
+  options: Pick<HistoricalToolInputRetentionOptions, "preserveSourceMessageIds"> = {},
+): ProviderModelMessage[] {
   let lastUserIdx = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
@@ -1361,11 +1340,16 @@ export function maskOldToolOutputs(messages: ProviderModelMessage[]): ProviderMo
   if (lastUserIdx <= 0) return messages;
 
   const toolCallMap = buildToolCallMap(messages);
+  const preservedSourceMessageIds = new Set(options.preserveSourceMessageIds ?? []);
 
   return messages.map((msg, idx) => {
     if (idx >= lastUserIdx) return msg;
 
     if (msg.role === "assistant" && Array.isArray(msg.content)) {
+      const sourceMessageId = getProviderModelMessageSourceId(msg);
+      if (sourceMessageId && preservedSourceMessageIds.has(sourceMessageId)) {
+        return msg;
+      }
       const filtered = msg.content.filter((part) => !isReasoningPart(part));
       if (filtered.length !== msg.content.length) {
         return copyProviderModelMessageSourceId(msg, { ...msg, content: filtered });
@@ -1833,7 +1817,10 @@ export function compactForStep(
   } = {},
 ): ProviderModelMessage[] {
   const compacted = enforceTokenBudget(
-    compactOldToolInputs(maskOldToolOutputs(messages), options.historicalToolInputRetention),
+    compactOldToolInputs(
+      maskOldToolOutputs(messages, options.historicalToolInputRetention),
+      options.historicalToolInputRetention,
+    ),
     DEFAULT_TOKEN_BUDGET,
     overhead,
   );
