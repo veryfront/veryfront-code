@@ -7301,8 +7301,8 @@ export default config as const;
             evaluateHostedConfigSource({
               cacheKey: "exact-hosted-rejection-detail",
               source: {
-                source: `import extCssLightning from "@veryfront/ext-css-lightning";\n` +
-                  `export default { extensions: [extCssLightning()] };\n`,
+                source: `import extOther from "some-third-party-extension";\n` +
+                  `export default { extensions: [extOther()] };\n`,
                 fileName: "veryfront.config.ts",
               },
               environmentName: "release",
