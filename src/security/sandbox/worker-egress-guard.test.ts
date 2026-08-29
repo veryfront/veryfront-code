@@ -747,15 +747,25 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
       // The URL host must be a loopback name: `fetch` checks --allow-net
       // against it even though the connection goes through the pinned SOCKS
       // tunnel on 127.0.0.1, so a non-loopback name cannot run on the
-      // loopback-only unit lane (veryfront-issue-inbox#714). The resolver
-      // call count keeps the pinned path observable: the tunnel must be built
-      // from the injected resolution, not from a direct system lookup.
+      // loopback-only unit lane (veryfront-issue-inbox#714). A loopback name
+      // is also directly fetchable, so the old .invalid-TLD tripwire is
+      // replaced by instrumenting the tunnel's data plane: the upstream dial
+      // to the pinned address goes through runtime.connect, and a guard that
+      // stops attaching the pinned client fetches directly and never dials
+      // through this runtime at all.
       let resolveHostCalls = 0;
+      const pinnedDials: string[] = [];
       const response = await guardedEgressFetch(
         `http://localhost:${address.port}/data`,
         undefined,
         {
           fetchImpl: globalThis.fetch.bind(globalThis),
+          runtime: {
+            connect: (options) => {
+              pinnedDials.push(`${options.hostname ?? "127.0.0.1"}:${options.port}`);
+              return Deno.connect(options);
+            },
+          },
           options: {
             allowInternalEgress: true,
             resolveHost: () => {
@@ -767,6 +777,11 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
       );
       assertEquals(await response.text(), "ab");
       assertEquals(resolveHostCalls, 1, "the guard must pin through the injected resolver");
+      assertEquals(
+        pinnedDials,
+        [`127.0.0.1:${address.port}`],
+        "the streamed body must travel through the pinned SOCKS tunnel",
+      );
     } finally {
       await server.shutdown();
     }
