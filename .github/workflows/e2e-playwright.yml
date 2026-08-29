@@ -1,0 +1,49 @@
+# Playwright browser e2e suite. Report-only: the job is not a required check,
+# so failures inform rather than block. Promote it to required once it has a
+# clean run history (veryfront-issue-inbox#749).
+name: e2e-playwright
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "tests/e2e/**"
+      - "deno.json"
+      - "deno.lock"
+      - ".github/workflows/e2e-playwright.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  playwright:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    name: e2e (playwright)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+        with:
+          warm-cache: "true"
+      - name: Materialize locked test dependencies
+        run: deno install --frozen
+      - name: Install Playwright Chromium
+        run: deno task test:e2e:playwright:install
+      - name: Run Playwright e2e suite
+        run: deno task test:e2e:playwright
+      - name: Upload traces and screenshots
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-report-${{ github.run_id }}
+          path: tests/e2e/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
