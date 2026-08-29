@@ -1127,15 +1127,29 @@ function toAnthropicMessages(
           );
           rawProviderToolNamesById = replay.nextProviderToolNamesById;
           canonicalProviderToolNamesById = replay.nextCanonicalProviderToolNamesById;
+          const clientToolUseIds = new Set(
+            message.content.flatMap((part) =>
+              part.type === "tool-call" && part.providerExecuted !== true ? [part.toolCallId] : []
+            ),
+          );
           pendingToolUseIds = new Set();
           for (const rawContent of replay.messages) {
-            const compactedContent = rawContent.filter((block) =>
+            const compactedContent = rawContent.flatMap((block) =>
               block.type === "thinking" ||
-              block.type === "redacted_thinking" ||
-              block.type === "text"
+                block.type === "redacted_thinking" ||
+                block.type === "text" ||
+                block.type === "tool_use" &&
+                  typeof block.id === "string" && clientToolUseIds.has(block.id)
+                ? [{ ...block }]
+                : []
             );
             if (compactedContent.length > 0) {
               messages.push({ role: "assistant", content: compactedContent });
+              for (const block of compactedContent) {
+                if (block.type === "tool_use" && typeof block.id === "string") {
+                  pendingToolUseIds.add(block.id);
+                }
+              }
             }
           }
           skippingHistoricalToolResults = shouldCompactCompletedToolRound;
@@ -1150,9 +1164,6 @@ function toAnthropicMessages(
           );
           rawProviderToolNamesById = replay.nextProviderToolNamesById;
           canonicalProviderToolNamesById = replay.nextCanonicalProviderToolNamesById;
-          pendingToolUseIds = new Set();
-          skippingHistoricalToolResults = shouldCompactCompletedToolRound;
-          break;
         }
         const assistantContent = shouldCompactCompletedToolRound
           ? message.content.filter((part) => part.type === "text" && part.text.length > 0)

@@ -4217,7 +4217,7 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       content: [{ type: "text", text: "Search and inspect" }],
     }, {
       role: "assistant",
-      content: [{
+      content: [{ type: "text", text: "I will search for that." }, {
         type: "tool-call",
         toolCallId: "local_lookup_1",
         toolName: "local_lookup",
@@ -4232,6 +4232,9 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       providerMetadata: {
         anthropic: {
           rawAssistantMessages: [[{
+            type: "text",
+            text: "I will search for that.",
+          }, {
             type: "server_tool_use",
             id: "server_search_1",
             name: "web_search",
@@ -4254,7 +4257,12 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       }],
     }, {
       role: "assistant",
-      content: [{ type: "text", text: "Combined both results." }],
+      content: [{ type: "text", text: "Combined both results." }, {
+        type: "tool-call",
+        toolCallId: "local_followup_1",
+        toolName: "local_followup",
+        input: { id: 1 },
+      }],
       providerMetadata: {
         anthropic: {
           rawAssistantMessages: [[{
@@ -4273,9 +4281,22 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
           }, {
             type: "text",
             text: "Combined both results.",
+          }, {
+            type: "tool_use",
+            id: "local_followup_1",
+            name: "local_followup",
+            input: { id: 1 },
           }]],
         },
       },
+    }, {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "local_followup_1",
+        toolName: "local_followup",
+        output: { type: "json", value: { ok: true } },
+      }],
     }, {
       role: "user",
       content: [{ type: "text", text: "Summarize that" }],
@@ -4289,9 +4310,12 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       createWarningCollector(),
     );
 
-    assertEquals(body.messages, [{
+    assertEquals(JSON.parse(JSON.stringify(body.messages)), [{
       role: "user",
       content: [{ type: "text", text: "Search and inspect" }],
+    }, {
+      role: "assistant",
+      content: [{ type: "text", text: "I will search for that." }],
     }, {
       role: "assistant",
       content: [{
@@ -4300,10 +4324,22 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       }, {
         type: "text",
         text: "Combined both results.",
+      }, {
+        type: "tool_use",
+        id: "local_followup_1",
+        name: "local_followup",
+        input: { id: 1 },
       }],
     }, {
       role: "user",
-      content: [{ type: "text", text: "Summarize that" }],
+      content: [{
+        type: "tool_result",
+        tool_use_id: "local_followup_1",
+        content: '{"ok":true}',
+      }, {
+        type: "text",
+        text: "Summarize that",
+      }],
     }]);
   });
 
