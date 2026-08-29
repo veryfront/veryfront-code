@@ -300,6 +300,66 @@ describe("agent/runtime/provider-replay", () => {
         checkpoint.totalPartCount = 0;
       });
     });
+
+    it("should accept the record and string provider-result content shapes", () => {
+      for (
+        const block of [
+          {
+            type: "web_fetch_tool_result",
+            tool_use_id: "srvtool-1",
+            caller: { type: "direct" },
+            content: {
+              type: "web_fetch_result",
+              url: "https://example.com/a",
+              retrieved_at: "2026-01-01T00:00:00Z",
+              content: {
+                type: "document",
+                source: { type: "text", media_type: "text/plain", data: "hi" },
+              },
+            },
+          },
+          {
+            type: "web_search_tool_result",
+            tool_use_id: "srvtool-1",
+            caller: { type: "direct" },
+            content: { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" },
+          },
+          { type: "mcp_tool_result", tool_use_id: "srvtool-1", is_error: false, content: "ok" },
+        ]
+      ) {
+        const checkpoint = parseProviderReplayCheckpoint({
+          version: 1,
+          messageId: "assistant-1",
+          provider: "anthropic",
+          providerBlocks: [{ type: "provider-block", provider: "anthropic", block }],
+          providerBlockPositions: [0],
+          totalPartCount: 1,
+        });
+        assertEquals(checkpoint.providerBlocks[0]?.block, block);
+      }
+    });
+
+    it("should reject a provider-result content primitive", () => {
+      assertProviderReplayError(() =>
+        parseProviderReplayCheckpoint({
+          version: 1,
+          messageId: "assistant-1",
+          provider: "anthropic",
+          providerBlocks: [{
+            type: "provider-block",
+            provider: "anthropic",
+            block: {
+              type: "web_search_tool_result",
+              tool_use_id: "srvtool-1",
+              caller: { type: "direct" },
+              content: 42,
+            },
+          }],
+          providerBlockPositions: [0],
+          totalPartCount: 1,
+        })
+      );
+    });
   });
 
   describe("parseServerResolvedProviderReplayCheckpoints", () => {

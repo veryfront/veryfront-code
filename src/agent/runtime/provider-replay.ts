@@ -131,6 +131,21 @@ function validateAnthropicThinkingReplayBlock(
   }
 }
 
+// Container shape only; the per-field schema stays with the provider parser.
+// mcp_tool_result carries a string or an array, web_search_tool_result an array
+// of results or an error record, and every other supported result a record.
+function hasSupportedAnthropicProviderToolResultContent(
+  block: Record<string, unknown>,
+): boolean {
+  if (block.type === "mcp_tool_result") {
+    return typeof block.content === "string" || Array.isArray(block.content);
+  }
+  if (block.type === "web_search_tool_result") {
+    return Array.isArray(block.content) || isRecord(block.content);
+  }
+  return isRecord(block.content);
+}
+
 function validateAnthropicProviderToolResultBlock(
   block: Record<string, unknown>,
   context?: Record<string, unknown>,
@@ -138,7 +153,7 @@ function validateAnthropicProviderToolResultBlock(
   if (!isNonEmptyString(block.tool_use_id)) {
     invalidCheckpoint("checkpoint provider tool-result block is malformed", context);
   }
-  if (!Array.isArray(block.content)) {
+  if (!hasSupportedAnthropicProviderToolResultContent(block)) {
     invalidCheckpoint("checkpoint provider tool-result block is malformed", context);
   }
   if (block.type === "mcp_tool_result" && typeof block.is_error !== "boolean") {
