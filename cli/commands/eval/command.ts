@@ -845,8 +845,11 @@ function printBlankLine(): void {
 /** Width of "Target:", the longest header label, so the header values line up in one column. */
 const HEADER_LABEL_WIDTH = "Target:".length + 1;
 
-function printHeader(label: string, value: string): void {
-  printLine(`${`${label}:`.padEnd(HEADER_LABEL_WIDTH)}${value}`);
+/** Dataset reports swap in the longer "Eval id:" label, so their column is one wider. */
+const DATASET_HEADER_LABEL_WIDTH = "Eval id:".length + 1;
+
+function printHeader(label: string, value: string, width = HEADER_LABEL_WIDTH): void {
+  printLine(`${`${label}:`.padEnd(width)}${value}`);
 }
 
 /** Written artifacts are follow-up detail for the results above them, so they are dimmed. */
@@ -917,13 +920,16 @@ function printReport(
   report: EvalReport,
   options: { name?: string; baseline?: EvalReportComparison } = {},
 ): void {
-  printHeader("Eval", options.name ?? report.definitionId);
-  printHeader("Target", report.target);
+  const dataset = report.targetKind === "dataset";
+  const width = dataset ? DATASET_HEADER_LABEL_WIDTH : HEADER_LABEL_WIDTH;
+  printHeader("Eval", options.name ?? report.definitionId, width);
+  printHeader(dataset ? "Eval id" : "Target", report.target, width);
   printHeader(
     "Result",
     `${report.summary.passed}/${report.summary.records} passed (${
       formatPercent(report.summary.passRate)
     })`,
+    width,
   );
 
   const reasons = groupGateFailureReasons(report.summary.gateFailures ?? []);
@@ -1238,7 +1244,9 @@ function createEvalReportCommandAdapters(input: {
           runId: options.runId,
           adapters: options.targetKind === "tool"
             ? { tool: options.targetAdapter as ReturnType<typeof createToolAdapter> }
-            : { agent: options.targetAdapter as ReturnType<typeof createAgentAdapter> },
+            : options.targetKind === "agent"
+            ? { agent: options.targetAdapter as ReturnType<typeof createAgentAdapter> }
+            : {},
           metadata: options.metadata,
         }),
       resolveTarget: (evalItem: DiscoveredEval) => {
@@ -1257,7 +1265,9 @@ function createEvalReportCommandAdapters(input: {
           target: evalItem.definition.target,
           targetAdapter: evalItem.definition.targetKind === "tool"
             ? createToolAdapter(tool!, createEvalToolExecutionContext(input.config))
-            : createAgentAdapter(agent!, input.options),
+            : evalItem.definition.targetKind === "agent"
+            ? createAgentAdapter(agent!, input.options)
+            : undefined,
         };
       },
       createModelTargetAdapter: (model: string) => {
@@ -1561,7 +1571,9 @@ export async function runEvalCommand(
 
       const targetAdapter = evalItem.definition.targetKind === "tool"
         ? createToolAdapter(tool!, createEvalToolExecutionContext(config))
-        : createAgentAdapter(agent!, options);
+        : evalItem.definition.targetKind === "agent"
+        ? createAgentAdapter(agent!, options)
+        : undefined;
       const outcome = await runWithProjectAgentRuntime(
         projectRuntime,
         async () =>

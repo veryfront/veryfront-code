@@ -4,17 +4,17 @@ description: "How evals define repeatable quality checks for agents."
 order: 34
 ---
 
-An eval defines a repeatable quality check for an agent. It names the target,
-dataset, metrics, thresholds, and report shape that prove whether the agent still
-behaves as expected.
+An eval defines a repeatable quality check for an agent, a tool, or a stored
+dataset. It names the target or graded dataset, metrics, thresholds, and report
+shape that prove whether the subject still behaves as expected.
 
-Use evals when agent or tool behavior must be measured across examples, not
-checked with one unit test.
+Use evals when agent, tool, or stored-value quality must be measured across
+examples, not checked with one unit test.
 
 ## Characteristics
 
 - An eval has a stable ID.
-- An eval targets an agent or a tool.
+- An eval targets an agent or a tool, or grades a stored dataset directly with no target.
 - An eval loads examples from inline data, JSON, or JSONL.
 - An eval records `input`, optional `reference`, and optional `metadata` for each example.
 - An eval uses metrics such as exact match, contains, JSON match, required tool calls, forbidden tool calls, no failed tools, retrieval recall, citation precision and recall, latency, tokens, cost, and rubric judges.
@@ -119,6 +119,49 @@ agent deciding whether to call that tool. Tool evals write the dataset example t
 `record.input` and the actual mapped tool input to `record.executionInput`.
 Direct tool calls are normalized into `record.trace.toolCalls`, so the same tool
 metrics and checks can assert input, output, status, and call count.
+
+## Dataset grading
+
+Use `evalDataset` when the graded values already exist -- standing documents, a
+labelled corpus, replies written earlier -- and no target should execute. A
+dataset eval has no target: each example's `input` becomes `record.output`
+directly, so rubric judges with `framing: "text"` grade the stored value.
+
+```ts
+// evals/support-reply-quality.eval.ts
+import { datasets, evalDataset, judges, metrics } from "veryfront/eval";
+
+export const supportReplyQuality = evalDataset({
+  id: "eval:support-reply-quality",
+  dataset: datasets.inline([
+    {
+      id: "billing-refund-reply",
+      input: "Hello, I checked the duplicate charge and started a refund.",
+      metadata: { locale: "en" },
+    },
+  ]),
+  metrics: [
+    metrics.judge.rubric({
+      rubric: "The text must be polite, specific, and free of internal jargon.",
+      judge: judges.llm.rubric({ framing: "text" }),
+    }),
+  ],
+});
+
+export default supportReplyQuality;
+```
+
+`id` is required and is the report identity, so renaming `name` keeps saved
+baselines comparable. Running one needs no target adapter; metrics still
+execute, so the rubric judge above calls a model provider:
+
+```ts
+import { runEval } from "veryfront/eval";
+import { supportReplyQuality } from "./evals/support-reply-quality.eval.ts";
+
+const report = await runEval(supportReplyQuality, { adapters: {} });
+console.log(report.summary.passRate);
+```
 
 ## Studio integration
 

@@ -9,7 +9,9 @@ export const getEvalStudioCapabilitySchema = defineSchema((v) =>
 );
 
 /** Schema for an Eval target primitive kind. */
-export const getEvalTargetKindSchema = defineSchema((v) => v.enum(["agent", "tool"] as const));
+export const getEvalTargetKindSchema = defineSchema((v) =>
+  v.enum(["agent", "tool", "dataset"] as const)
+);
 
 /** Schema for an editable Eval source field name. */
 export const getEvalEditableFieldSchema = defineSchema((v) =>
@@ -318,6 +320,11 @@ export function createEvalSourceDocument(
     ...(definition.input ? ["input" as const] : []),
     ...(definition.check ? ["check" as const] : []),
   ];
+  // A dataset eval's target is derived from its id/name, so editing it could
+  // never round-trip through the source definition.
+  const editableFields = definition.targetKind === "dataset"
+    ? BASE_EDITABLE_FIELDS.filter((field) => field !== "target")
+    : BASE_EDITABLE_FIELDS;
 
   return getEvalSourceDocumentSchema().parse({
     kind: "eval-source-document",
@@ -336,7 +343,7 @@ export function createEvalSourceDocument(
     repetitions: definition.repetitions,
     tags: [...definition.tags],
     metadata: { ...definition.metadata },
-    editableFields: BASE_EDITABLE_FIELDS,
+    editableFields,
     dynamicFields,
     capabilities: options.capabilities ?? DEFAULT_EVAL_STUDIO_CAPABILITIES,
   });

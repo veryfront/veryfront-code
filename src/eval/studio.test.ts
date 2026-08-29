@@ -6,6 +6,7 @@ import {
   datasets,
   type DiscoveredEval,
   evalAgent,
+  evalDataset,
   type EvalRun,
   evalTool,
   getEvalRunSchema,
@@ -101,6 +102,31 @@ describe("eval/studio", () => {
         { name: "answer.exactMatch", editable: false, dynamic: false },
       ],
     );
+  });
+
+  it("excludes target editing from dataset eval source documents", () => {
+    const definition = evalDataset({
+      id: "eval:rubric-calibration",
+      name: "Rubric calibration",
+      dataset: datasets.inline([{ id: "case-1", input: "Standing answer." }]),
+    });
+    const document = createEvalSourceDocument({
+      id: "eval:rubric-calibration",
+      name: definition.name,
+      filePath: "evals/rubric-calibration.eval.ts",
+      exportName: "default",
+      definition,
+    });
+
+    assertEquals(getEvalSourceDocumentSchema().parse(document), document);
+    assertEquals(document.targetKind, "dataset");
+    assertEquals(
+      document.editableFields.includes("target"),
+      false,
+      "the dataset target is derived from id/name, so editing it cannot round-trip",
+    );
+    assertEquals(document.editableFields.includes("name"), true);
+    assertEquals(document.editableFields.includes("dataset"), true);
   });
 
   it("validates V2-ready EvalRun projections", () => {

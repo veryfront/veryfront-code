@@ -7,7 +7,7 @@
 import type { ToolSet } from "#veryfront/tool";
 
 /** Primitive kind an eval can execute. */
-export type EvalTargetKind = "agent" | "tool";
+export type EvalTargetKind = "agent" | "tool" | "dataset";
 
 /** How a metric result affects the final eval result. */
 export type EvalSeverity = "gate" | "soft" | "budget";
@@ -418,6 +418,23 @@ export interface EvalAgentInput {
   tags?: string[];
   metadata?: Record<string, unknown>;
   mockTools?: EvalMockTools;
+  check?: (context: EvalCheckContext) => EvalMaybePromise<void>;
+}
+
+/**
+ * Input accepted by `evalDataset`. Dataset evals grade each stored example
+ * value directly, so they have no execution target; the report identity is
+ * the stable `id`.
+ */
+export interface EvalDatasetInput {
+  id: string;
+  name?: string;
+  description?: string;
+  dataset: EvalDataset | EvalExampleInput[];
+  metrics?: EvalMetric[];
+  repetitions?: number;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
   check?: (context: EvalCheckContext) => EvalMaybePromise<void>;
 }
 
