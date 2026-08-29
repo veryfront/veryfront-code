@@ -183,24 +183,28 @@ function describeReason(
     return {
       summary:
         `The hosted runtime reads the configuration file as data and never imports project ` +
-        `modules: it accepts one import statement, naming any of defineConfig, ` +
-        `defineConfigWithEnv, getEnv and mergeConfigs from "veryfront", and no other import at ` +
-        `all. An imported extension is a function call that runtime cannot make, so a project ` +
-        `that declares one answers 500 on every request.`,
+        `modules: it accepts imports naming any of defineConfig, defineConfigWithEnv, getEnv ` +
+        `and mergeConfigs from "veryfront", default imports of first-party "@veryfront/ext-*" ` +
+        `extension packages, and no other import at all. Any other imported value is a ` +
+        `capability that runtime cannot load, so a project that declares one answers 500 on ` +
+        `every request.`,
       remedy:
         `Remove the import and the value it provides from the configuration file. Extensions ` +
-        `declared this way are supported when you run or self-host the project yourself; they ` +
-        `cannot be declared in a configuration file deployed to Veryfront Cloud.`,
+        `outside the first-party "@veryfront/ext-*" set are supported when you run or ` +
+        `self-host the project yourself; they cannot be declared in a configuration file ` +
+        `deployed to Veryfront Cloud.`,
     };
   }
   if (reason === "hosted-extensions") {
     return {
       summary:
-        `The hosted runtime does not run project-declared extensions: the only entry it accepts ` +
-        `under "extensions" is { name, enabled: false }, which turns an extension off.`,
+        `The hosted runtime does not run project-declared extensions: under "extensions" it ` +
+        `accepts { name, enabled: false }, which turns an extension off, and a first-party ` +
+        `extension declaration (an imported "@veryfront/ext-*" factory call), which it ignores ` +
+        `because the platform provides the capability itself.`,
       remedy:
-        `Remove the extension entries from the configuration file. Extensions are supported when ` +
-        `you run or self-host the project yourself.`,
+        `Remove the other extension entries from the configuration file. Extensions outside ` +
+        `the first-party set are supported when you run or self-host the project yourself.`,
     };
   }
   if (reason === "hosted-cache-directory") {

@@ -45,9 +45,9 @@ describe("extensions/setup-hint", () => {
 
   it("says where the composition it recommends stops working", async () => {
     // The recommended config imports the extension, and Veryfront Cloud
-    // evaluates a project config as data rather than importing it. A hint that
-    // stays silent here hands the reader a project that deploys and then
-    // answers 500 on every request.
+    // evaluates a project config as data rather than importing it: the
+    // declaration deploys but activates nothing there. A hint that stays
+    // silent hands the reader a composition that quietly does less hosted.
     await withTempDir(async (directory) => {
       await writeTextFile(join(directory, "package.json"), `{"name":"scaffold"}`);
 
@@ -61,9 +61,9 @@ describe("extensions/setup-hint", () => {
 
       for (const hint of [created, existing]) {
         assertEquals(
-          hint.includes("cannot be deployed to Veryfront Cloud"),
+          hint.includes("on Veryfront Cloud the declaration is accepted but ignored"),
           true,
-          `hint must say the composition is not deployable, got: ${hint}`,
+          `hint must say the extension does not run on Veryfront Cloud, got: ${hint}`,
         );
       }
     });

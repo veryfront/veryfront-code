@@ -49,14 +49,14 @@ const DEFAULT_CONFIG_FILE: VeryfrontConfigFileName = "veryfront.config.ts";
  * Where the recommended composition stops working.
  *
  * Veryfront Cloud evaluates a project's configuration file as data and never
- * imports it, so the import this hint asks for is rejected there. Saying so
- * here is the earliest the reader can learn it; `veryfront deploy` refuses the
- * same config, and without this line the hint reads as advice that quietly
- * costs the reader a deployable project.
+ * imports it, so the import this hint asks for activates nothing there: the
+ * hosted evaluator accepts a first-party declaration but ignores it with a
+ * warning (veryfront-issue-inbox#688). Saying so here is the earliest the
+ * reader can learn the extension only runs where they run the project.
  */
 const HOSTED_CAVEAT =
-  "Extensions run where you run the project; a configuration file that imports one cannot be " +
-  "deployed to Veryfront Cloud.";
+  "Extensions run where you run the project; on Veryfront Cloud the declaration is " +
+  "accepted but ignored, because the platform provides its own capabilities.";
 
 export interface ExtensionSetupHintOptions {
   /** Project root to inspect; defaults to the working directory. */

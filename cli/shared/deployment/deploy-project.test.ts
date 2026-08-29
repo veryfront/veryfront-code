@@ -177,8 +177,8 @@ describe("DeployProject", () => {
       await Deno.writeTextFile(
         `${projectDir}/veryfront.config.ts`,
         `import { defineConfig } from "veryfront";\n` +
-          `import extCssLightning from "@veryfront/ext-css-lightning";\n\n` +
-          `export default defineConfig({\n  extensions: [extCssLightning()],\n});\n`,
+          `import extOther from "some-third-party-extension";\n\n` +
+          `export default defineConfig({\n  extensions: [extOther()],\n});\n`,
       );
       const controlPlane = new InMemoryDeployControlPlane();
       try {
@@ -186,7 +186,7 @@ describe("DeployProject", () => {
 
         const message = (error as Error).message;
         assertStringIncludes(message, "veryfront.config.ts");
-        assertStringIncludes(message, "@veryfront/ext-css-lightning");
+        assertStringIncludes(message, "some-third-party-extension");
         assertEquals(controlPlane.createdReleases, [], "no release for an undeployable config");
         assertEquals(
           controlPlane.createdDeployments,

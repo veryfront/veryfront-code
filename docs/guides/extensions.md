@@ -24,11 +24,13 @@ Extensions run wherever you run the project: `veryfront dev`, `veryfront
 start`, and any runtime you host yourself.
 
 Veryfront Cloud is the exception. It reads a project's configuration file as
-data rather than importing it, so a configuration file that imports an
-extension factory cannot be evaluated there. `veryfront deploy` refuses such a
-configuration before it creates a release, and names the line it refused. Keep
-a configuration file that Veryfront Cloud serves to literals and the
-`defineConfig`, `defineConfigWithEnv`, `getEnv` and `mergeConfigs` helpers.
+data rather than importing it, so an extension factory never executes there.
+A default import of a first-party `@veryfront/ext-*` package is accepted: the
+factory call evaluates to an inert `{ name }` declaration that the platform
+ignores with a warning, because it provides its own capabilities. Any other
+import is refused by `veryfront deploy` before it creates a release, with the
+line it refused named. See
+[Deploying a config that declares extensions](#deploying-a-config-that-declares-extensions).
 
 ## Enable an extension
 
@@ -247,6 +249,33 @@ export default defineConfig({
 
 HTTP serving does not require the provider. Without it, Node.js WebSocket
 upgrades fail closed with an error that names the required package.
+
+## Deploying a config that declares extensions
+
+A project that targets both self-hosting and Veryfront Cloud can keep one
+configuration file. Self-hosted, an imported first-party factory activates the
+extension:
+
+```ts
+import { defineConfig } from "veryfront";
+import extRedis from "@veryfront/ext-redis";
+
+export default defineConfig({
+  extensions: [extRedis()],
+});
+```
+
+On Veryfront Cloud the same file evaluates as data: a first-party
+`@veryfront/ext-*` factory call becomes an inert `{ name }` declaration that
+the platform accepts and ignores with a warning, because it provides its own
+capabilities. The extension itself runs only where you run the project.
+
+Factory options in a dual-target file must stay inside the declarative data
+language: literals and `getEnv` reads. An option that needs code, such as a
+callback, keeps the file self-hosted only, because the hosted evaluator
+validates the whole program as data even where a value is discarded.
+Imports of packages outside the first-party set are still rejected at deploy
+time, as are declarations naming unknown extensions.
 
 ## First-party extension areas
 

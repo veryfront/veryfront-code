@@ -623,6 +623,183 @@ export default defineConfig({
     }
   });
 
+  it("accepts a first-party extension declaration as an inert marker", async () => {
+    const snapshot = await evaluateDeclarativeConfig({
+      source: `
+import extRedis from "@veryfront/ext-redis";
+import { defineConfig } from "veryfront";
+
+export default defineConfig({
+  title: "Dual target",
+  extensions: [extRedis({ url: "redis://ignored:6379" })],
+});
+`,
+      environmentName: "production",
+      environment: {},
+    });
+    assertEquals(snapshot.extensions, [{ name: "ext-redis" }]);
+  });
+
+  it("accepts a type-only named specifier alongside the default import", async () => {
+    const snapshot = await evaluateDeclarativeConfig({
+      source: `
+import extRedis, { type RedisOptions } from "@veryfront/ext-redis";
+
+export default { extensions: [extRedis()] };
+`,
+      environmentName: "production",
+      environment: {},
+    });
+    assertEquals(snapshot.extensions, [{ name: "ext-redis" }]);
+  });
+
+  it("accepts a zero-argument extension factory call and a literal declaration", async () => {
+    const snapshot = await evaluateDeclarativeConfig({
+      source: `
+import extCssTailwind from "@veryfront/ext-css-tailwind";
+
+export default {
+  extensions: [extCssTailwind(), { name: "ext-db-sqlite" }],
+};
+`,
+      environmentName: "production",
+      environment: {},
+    });
+    assertEquals(snapshot.extensions, [
+      { name: "ext-css-tailwind" },
+      { name: "ext-db-sqlite" },
+    ]);
+  });
+
+  it("ignores erased type specifiers beside a default extension import", async () => {
+    const snapshot = await evaluateDeclarativeConfig({
+      source: `
+import extJwt, { type ExtJwtConfig } from "@veryfront/ext-auth-jwt";
+
+export default { extensions: [extJwt()] };
+`,
+      environmentName: "production",
+      environment: {},
+    });
+    assertEquals(snapshot.extensions, [{ name: "ext-auth-jwt" }]);
+
+    // A runtime named specifier stays rejected: only the default factory
+    // binding exists on the hosted side.
+    await assertEvaluationError(
+      'import extJwt, { something } from "@veryfront/ext-auth-jwt"; export default {};',
+      "unsupported-syntax",
+      "import-form",
+    );
+  });
+
+  it("accepts wholly type-erased first-party extension imports", async () => {
+    const snapshot = await evaluateDeclarativeConfig({
+      source: `
+import type { RedisOptions } from "@veryfront/ext-redis";
+import extRedis from "@veryfront/ext-redis";
+
+export default { extensions: [extRedis()] };
+`,
+      environmentName: "production",
+      environment: {},
+    });
+    assertEquals(snapshot.extensions, [{ name: "ext-redis" }]);
+
+    for (
+      const source of [
+        'import { type RedisOptions } from "@veryfront/ext-redis"; export default {};',
+        'import type { RedisOptions } from "@veryfront/ext-redis"; export default {};',
+      ]
+    ) {
+      const erased = await evaluateDeclarativeConfig({
+        source,
+        environmentName: "production",
+        environment: {},
+      });
+      assertEquals(erased.extensions, undefined);
+    }
+
+    // Runtime import forms without a default factory binding stay rejected.
+    for (
+      const source of [
+        'import { something } from "@veryfront/ext-redis"; export default {};',
+        'import * as ext from "@veryfront/ext-redis"; export default {};',
+        'import "@veryfront/ext-redis"; export default {};',
+      ]
+    ) {
+      await assertEvaluationError(source, "unsupported-syntax", "import-form");
+    }
+  });
+
+  it("accepts Deno npm specifiers for first-party extension imports", async () => {
+    const snapshot = await evaluateDeclarativeConfig({
+      source: `
+import extRedis from "npm:@veryfront/ext-redis";
+import extSqlite from "npm:@veryfront/ext-db-sqlite@1.2.3";
+
+export default { extensions: [extRedis(), extSqlite()] };
+`,
+      environmentName: "production",
+      environment: {},
+    });
+    assertEquals(snapshot.extensions, [
+      { name: "ext-redis" },
+      { name: "ext-db-sqlite" },
+    ]);
+  });
+
+  it("keeps factory options inside the declarative data language", async () => {
+    // Deliberate contract, not an accident: the whole hosted program stays
+    // declarative -- the evaluator rejects even inactive side effects -- so a
+    // discarded factory argument gets no validation exemption. Dual-target
+    // options must be literals or getEnv reads; a callback stays rejected.
+    await assertEvaluationError(
+      `import extJwt from "@veryfront/ext-auth-jwt";
+export default { extensions: [extJwt({ jwksResolverFactory: () => null })] };`,
+      "unsupported-hosted-feature",
+      "function-value",
+    );
+  });
+
+  it("keeps rejecting extension declarations veryfront does not ship", async () => {
+    await assertEvaluationError(
+      'import extNope from "@veryfront/ext-nope"; export default {};',
+      "unsupported-syntax",
+      "unsupported-import",
+    );
+    await assertEvaluationError(
+      'export default { extensions: [{ name: "not-first-party" }] };',
+      "unsupported-hosted-feature",
+      "hosted-extensions",
+    );
+  });
+
+  it("keeps rejecting non-default import forms from extension packages", async () => {
+    await assertEvaluationError(
+      'import { something } from "@veryfront/ext-redis"; export default {};',
+      "unsupported-syntax",
+      "import-form",
+    );
+    await assertEvaluationError(
+      'import * as ext from "@veryfront/ext-redis"; export default {};',
+      "unsupported-syntax",
+      "import-form",
+    );
+  });
+
+  it("rejects an uncalled extension factory in the extensions array", async () => {
+    await assertRejects(
+      () =>
+        evaluateDeclarativeConfig({
+          source:
+            'import extRedis from "@veryfront/ext-redis"; export default { extensions: [extRedis] };',
+          environmentName: "production",
+          environment: {},
+        }),
+      DeclarativeConfigEvaluationError,
+    );
+  });
+
   it("rejects host capabilities and inactive side effects without executing them", async () => {
     const marker = "__veryfrontDeclarativeEvaluatorSideEffect";
     const host = globalThis as Record<string, unknown>;
@@ -1194,9 +1371,12 @@ export default process.env;`,
       "statement-count",
     );
 
+    const importStatements = new Array<string>();
+    for (let index = 0; index <= DECLARATIVE_CONFIG_LIMITS.maxImports; index += 1) {
+      importStatements.push(`import type { A${index} } from "veryfront";`);
+    }
     await assertEvaluationError(
-      `import type { A } from "veryfront";
-       import type { B } from "veryfront";
+      `${importStatements.join("\n")}
        export default {};`,
       "resource-limit-exceeded",
       "unsupported-import",
@@ -1579,7 +1759,7 @@ export default process.env;`,
       workerPayload.cacheFingerprint,
       preparedContext.cacheFingerprint,
     );
-    assertEquals(workerPayload.policyVersion, "hosted-declarative-config-v2");
+    assertEquals(workerPayload.policyVersion, "hosted-declarative-config-v3");
     assertEquals(Object.getPrototypeOf(workerPayload), null);
     assertEquals(Object.isFrozen(workerPayload), true);
     assertEquals(Object.isFrozen(workerPayload.evaluationOptions), true);

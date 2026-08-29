@@ -10,7 +10,12 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { orchestrateExtensions } from "./orchestrate.ts";
 import { mergeExtensions } from "./discovery.ts";
 import { reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
-import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
+import type {
+  Extension,
+  ExtensionConfigEntry,
+  ExtensionSource,
+  ResolvedExtension,
+} from "./types.ts";
 import type { LLMProvider, LLMProviderRegistry } from "./llm/index.ts";
 import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.ts";
 import {
@@ -581,6 +586,33 @@ describe("orchestrateExtensions()", () => {
 
     // Disable directive removed the only extension → setup was never invoked.
     await loader.teardownAll();
+  });
+
+  it("rejects a bare first-party extension declaration", async () => {
+    // A self-hosted config can name a first-party extension without importing
+    // its factory. Orchestration must not silently drop the entry -- the
+    // project would boot without the capability it asked for.
+    await assertRejects(() =>
+      orchestrateExtensions({
+        projectDir: "/fake",
+        config: { extensions: [{ name: "ext-redis" } as unknown as ExtensionConfigEntry] },
+        logger: noopLogger,
+        discovery: emptyDiscovery(),
+      })
+    );
+  });
+
+  it("keeps rejecting a bare name that is not a first-party extension", async () => {
+    await assertRejects(() =>
+      orchestrateExtensions({
+        projectDir: "/fake",
+        config: {
+          extensions: [{ name: "custom-thing" } as unknown as ExtensionConfigEntry],
+        },
+        logger: noopLogger,
+        discovery: emptyDiscovery(),
+      })
+    );
   });
 
   it("skips loadFactory for disabled package extensions", async () => {
