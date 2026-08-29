@@ -31,17 +31,16 @@ const CHECKPOINT_KEYS = new Set([
   "emittedAt",
 ]);
 const BLOCK_KEYS = new Set(["type", "provider", "block"]);
+// Anthropic reports provider tool failures with the ordinary outer result type
+// and the error record inside `content`; there is no outer `*_tool_result_error`
+// block type, so accepting one here would only defer the failure to request
+// construction, where the provider parser rejects it with a bare TypeError.
 const ANTHROPIC_PROVIDER_TOOL_RESULT_TYPES = new Set([
   "web_search_tool_result",
-  "web_search_tool_result_error",
   "web_fetch_tool_result",
-  "web_fetch_tool_result_error",
   "code_execution_tool_result",
-  "code_execution_tool_result_error",
   "bash_code_execution_tool_result",
-  "bash_code_execution_tool_result_error",
   "text_editor_code_execution_tool_result",
-  "text_editor_code_execution_tool_result_error",
   "mcp_tool_result",
 ]);
 const WEB_SEARCH_ERROR_CODES = new Set([
@@ -663,19 +662,14 @@ function normalizeAnthropicProviderToolResultContent(
   const normalized = (() => {
     switch (block.type) {
       case "web_search_tool_result":
-      case "web_search_tool_result_error":
         return normalizeAnthropicWebSearchContent(block.content);
       case "web_fetch_tool_result":
-      case "web_fetch_tool_result_error":
         return normalizeAnthropicWebFetchContent(block.content);
       case "code_execution_tool_result":
-      case "code_execution_tool_result_error":
         return normalizeAnthropicCodeExecutionContent(block.content);
       case "bash_code_execution_tool_result":
-      case "bash_code_execution_tool_result_error":
         return normalizeAnthropicBashCodeExecutionContent(block.content);
       case "text_editor_code_execution_tool_result":
-      case "text_editor_code_execution_tool_result_error":
         return normalizeAnthropicTextEditorCodeExecutionContent(block.content);
       default:
         return block.content;
@@ -704,19 +698,14 @@ function getAnthropicToolNameForResultBlock(
 ): string | undefined {
   switch (block.type) {
     case "web_search_tool_result":
-    case "web_search_tool_result_error":
       return "web_search";
     case "web_fetch_tool_result":
-    case "web_fetch_tool_result_error":
       return "web_fetch";
     case "code_execution_tool_result":
-    case "code_execution_tool_result_error":
       return "code_execution";
     case "bash_code_execution_tool_result":
-    case "bash_code_execution_tool_result_error":
       return "bash_code_execution";
     case "text_editor_code_execution_tool_result":
-    case "text_editor_code_execution_tool_result_error":
       return "text_editor_code_execution";
     default:
       return undefined;
@@ -746,8 +735,7 @@ function isExpectedAnthropicResultTypeForTool(
 ): boolean {
   if (typeof blockType !== "string") return false;
   const expectedType = expectedAnthropicResultTypeForTool(toolName);
-  return expectedType !== undefined &&
-    (blockType === expectedType || blockType === `${expectedType}_error`);
+  return expectedType !== undefined && blockType === expectedType;
 }
 
 type PendingAnthropicProviderTool = {

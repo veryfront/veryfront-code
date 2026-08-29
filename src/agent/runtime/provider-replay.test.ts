@@ -1380,7 +1380,7 @@ describe("agent/runtime/provider-replay", () => {
         caller: { type: "direct" },
       };
       const providerResult = {
-        type: "web_search_tool_result_error",
+        type: "web_search_tool_result",
         tool_use_id: providerCall.id,
         caller: { type: "direct" },
         content: {
@@ -1438,6 +1438,139 @@ describe("agent/runtime/provider-replay", () => {
         readAttachedProviderMetadata(target),
         { anthropic: { rawAssistantMessages: [[providerCall, providerResult]] } },
       );
+    });
+
+    it("should reject outer provider tool-result error block types", () => {
+      const variants: ReadonlyArray<{
+        readonly toolName: string;
+        readonly resultType: string;
+        readonly content: Record<string, unknown>;
+      }> = [
+        {
+          toolName: "web_search",
+          resultType: "web_search_tool_result",
+          content: { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" },
+        },
+        {
+          toolName: "web_fetch",
+          resultType: "web_fetch_tool_result",
+          content: { type: "web_fetch_tool_result_error", error_code: "url_not_accessible" },
+        },
+        {
+          toolName: "code_execution",
+          resultType: "code_execution_tool_result",
+          content: { type: "code_execution_tool_result_error", error_code: "unavailable" },
+        },
+        {
+          toolName: "bash_code_execution",
+          resultType: "bash_code_execution_tool_result",
+          content: {
+            type: "bash_code_execution_tool_result_error",
+            error_code: "output_file_too_large",
+          },
+        },
+        {
+          toolName: "text_editor_code_execution",
+          resultType: "text_editor_code_execution_tool_result",
+          content: {
+            type: "text_editor_code_execution_tool_result_error",
+            error_code: "file_not_found",
+          },
+        },
+      ];
+
+      for (const variant of variants) {
+        const providerCall = {
+          type: "server_tool_use",
+          id: `srvtool-${variant.toolName}`,
+          name: variant.toolName,
+          input: { query: "provider replay" },
+          caller: { type: "direct" },
+        };
+        const providerResult = (resultType: string) => ({
+          type: resultType,
+          tool_use_id: providerCall.id,
+          caller: { type: "direct" },
+          content: variant.content,
+        });
+        const createTarget = () =>
+          ({
+            id: "assistant-message-1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-call",
+                toolCallId: providerCall.id,
+                toolName: providerCall.name,
+                args: providerCall.input,
+                providerExecuted: true,
+              },
+              {
+                type: "tool-result",
+                toolCallId: providerCall.id,
+                toolName: providerCall.name,
+                result: {
+                  type: "json",
+                  value: {
+                    name: "AnthropicServerToolResultError",
+                    provider: "anthropic",
+                    code: variant.content.error_code,
+                    toolCallId: providerCall.id,
+                    toolName: providerCall.name,
+                  },
+                },
+                isError: true,
+                providerExecuted: true,
+              },
+            ],
+            timestamp: 1,
+          }) as Message;
+        const createCheckpoint = (resultType: string): ProviderReplayCheckpoint => ({
+          version: 1,
+          messageId: "assistant-message-1",
+          provider: "anthropic",
+          providerBlocks: [providerCall, providerResult(resultType)].map((block) => ({
+            type: "provider-block" as const,
+            provider: "anthropic" as const,
+            block,
+          })),
+          providerBlockPositions: [0, 1],
+          totalPartCount: 2,
+        });
+
+        // Anthropic never emits an outer `*_tool_result_error` block. Accepting one
+        // here would defer the failure to request construction, where the provider
+        // parser rejects the unsupported outer type with a bare TypeError.
+        const rejected = createTarget();
+        assertProviderReplayError(() =>
+          applyProviderReplayCheckpointsToMessages(
+            [rejected],
+            [createCheckpoint(`${variant.resultType}_error`)],
+          )
+        );
+        assertEquals(
+          readAttachedProviderMetadata(rejected),
+          undefined,
+          `${variant.toolName} outer error block must not attach`,
+        );
+
+        // The real wire shape keeps the ordinary outer type and carries the error
+        // record inside `content`; it must still replay.
+        const accepted = createTarget();
+        applyProviderReplayCheckpointsToMessages(
+          [accepted],
+          [createCheckpoint(variant.resultType)],
+        );
+        assertEquals(
+          readAttachedProviderMetadata(accepted),
+          {
+            anthropic: {
+              rawAssistantMessages: [[providerCall, providerResult(variant.resultType)]],
+            },
+          },
+          `${variant.toolName} ordinary error result must replay`,
+        );
+      }
     });
 
     it("should reset provider-executed ids at transcript boundaries before matching anchors", () => {
