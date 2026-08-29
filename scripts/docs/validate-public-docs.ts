@@ -246,10 +246,10 @@ function resolveDocumentationTarget(
   return normalizeRepositoryPath(pathname);
 }
 
-/** A link destination and where it starts, so an issue can name its line. */
+/** A link destination and the 1-indexed line it starts on, so an issue can name it. */
 export interface Destination {
   href: string;
-  offset: number;
+  line: number;
   syntax: DestinationSyntax;
 }
 
@@ -333,7 +333,7 @@ async function analyzeDestinations(
     kind: "document",
     destinations: ordered.map((destination) => ({
       href: destinationHref(destination),
-      offset: destination.range.start.offset,
+      line: destination.range.start.line,
       syntax: destination.syntax,
     })),
   };
@@ -407,26 +407,6 @@ async function analyzePublicDoc(
     : result;
 }
 
-/** 1-indexed line holding `offset`. */
-function lineAt(lineStarts: readonly number[], offset: number): number {
-  let low = 0;
-  let high = lineStarts.length - 1;
-  while (low < high) {
-    const middle = Math.ceil((low + high) / 2);
-    if (lineStarts[middle]! <= offset) low = middle;
-    else high = middle - 1;
-  }
-  return low + 1;
-}
-
-function lineStartOffsets(lines: readonly string[]): number[] {
-  const starts: number[] = [0];
-  for (const line of lines.slice(0, -1)) {
-    starts.push(starts[starts.length - 1]! + line.length + 1);
-  }
-  return starts;
-}
-
 export async function collectUnpublishedLinkIssues(
   path: string,
   content: string,
@@ -436,16 +416,14 @@ export async function collectUnpublishedLinkIssues(
   if (path !== "README.md" && !isPublishedPage(path)) return [];
 
   const lines = content.split("\n");
-  const lineStarts = lineStartOffsets(lines);
   const analysis = analyzed ?? await analyzePublicDoc(path, content);
   if (analysis.kind === "syntax-error") return [analysis.issue];
 
   const issues: PublicDocIssue[] = [];
-  for (const { href, offset, syntax } of analysis.destinations) {
+  for (const { href, line, syntax } of analysis.destinations) {
     const target = resolveDocumentationTarget(path, href, syntax);
     if (path === "README.md" && !target?.startsWith("docs/")) continue;
     if (target === undefined || publishedTargetExists(target, stat)) continue;
-    const line = lineAt(lineStarts, offset);
     issues.push({
       path,
       line,
@@ -716,7 +694,6 @@ export async function collectIssues(
   const issues: PublicDocIssue[] = [];
   const repositoryRule = blockedRepositoryRule(blockedRepository);
   const lines = content.split("\n");
-  const lineStarts = lineStartOffsets(lines);
   const analysis = analyzed ?? await analyzePublicDoc(path, content);
   if (analysis.kind === "syntax-error") return [analysis.issue];
   const blockedDestinationLines = new Set<number>();
@@ -725,7 +702,7 @@ export async function collectIssues(
       repositoryRule.matches(destination.href) ||
       repositoryRule.matches(canonicalizeHttpUrls(destination.href))
     ) {
-      blockedDestinationLines.add(lineAt(lineStarts, destination.offset));
+      blockedDestinationLines.add(destination.line);
     }
   }
   for (const [index, text] of lines.entries()) {
