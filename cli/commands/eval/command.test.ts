@@ -6,6 +6,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { VeryfrontError } from "veryfront/errors";
 import { type Agent, agent as createAgent, type AgentResponse } from "veryfront/agent";
 import { defineSchema } from "veryfront/schemas";
@@ -2183,8 +2184,7 @@ describe("eval CLI command helpers", () => {
       ],
     ];
 
-    const projectDir = await Deno.makeTempDir();
-    try {
+    await withTempDir(async (projectDir) => {
       for (const [payload, expectedDetail] of cases) {
         await Deno.writeTextFile(`${projectDir}/policy.json`, payload);
         const error = await assertRejects(
@@ -2196,9 +2196,7 @@ describe("eval CLI command helpers", () => {
         assertEquals(error.slug, "invalid-argument");
         assertEquals(error.message, expectedDetail);
       }
-    } finally {
-      await Deno.remove(projectDir, { recursive: true });
-    }
+    }, { prefix: "vf-eval-policy-shapes-" });
   });
 
   it("reports malformed model comparison policy JSON as a usage error", async () => {
