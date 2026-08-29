@@ -6,9 +6,6 @@ import { analyzeContent, type ContentAnalysisResult } from "./index.ts";
 function summarize(value: string, result: ContentAnalysisResult): unknown {
   assert(result.kind === "document");
   return {
-    rendered: result.renderedRanges.map((range) =>
-      value.slice(range.start.offset, range.end.offset)
-    ),
     destinations: result.destinations.map((destination) => ({
       kind: destination.kind,
       rawValue: destination.rawValue,
@@ -32,7 +29,6 @@ describe("analyzeContent Markdown", () => {
     const result = await analyzeContent({ value, syntax: "markdown" });
 
     assertEquals(summarize(value, result), {
-      rendered: ["Guide", " ", "Logo", "API"],
       destinations: [
         {
           kind: "markdown-link",
@@ -72,12 +68,6 @@ describe("analyzeContent Markdown", () => {
     const result = await analyzeContent({ value, syntax: "markdown" });
 
     assertEquals(summarize(value, result), {
-      rendered: [
-        "https://veryfront.com/docs/code/guides/start",
-        " and ",
-        "https://veryfront.com/docs/code/reference/api",
-        ".",
-      ],
       destinations: [
         {
           kind: "autolink",
@@ -101,7 +91,7 @@ describe("analyzeContent Markdown", () => {
     });
   });
 
-  it("excludes frontmatter and code from rendered ranges", async () => {
+  it("excludes frontmatter and code from destinations", async () => {
     const value = "---\ntitle: https://frontmatter.invalid\n---\n\n" +
       "Visible `https://inline.invalid`\n\n" +
       "```ts\nhttps://fence.invalid\n```";
@@ -113,7 +103,6 @@ describe("analyzeContent Markdown", () => {
     });
 
     assertEquals(summarize(value, result), {
-      rendered: ["Visible "],
       destinations: [],
     });
   });
@@ -126,7 +115,6 @@ describe("analyzeContent Markdown", () => {
     const result = await analyzeContent({ value, syntax: "markdown" });
 
     assertEquals(summarize(value, result), {
-      rendered: ["Guide", "x"],
       destinations: [
         {
           kind: "html-attribute",
@@ -223,7 +211,6 @@ describe("analyzeContent Markdown", () => {
     const result = await analyzeContent({ value, syntax: "markdown" });
 
     assertEquals(summarize(value, result), {
-      rendered: ["Guide"],
       destinations: [{
         kind: "markdown-link",
         rawValue: String.raw`../guides/a\)b.md`,
@@ -249,10 +236,6 @@ describe("analyzeContent Markdown", () => {
     assertEquals(
       result.destinations.map((destination) => destination.rawValue),
       ["./guide.md", "image.png", "./first.md"],
-    );
-    assertEquals(
-      result.renderedRanges.map((range) => value.slice(range.start.offset, range.end.offset)),
-      ["Guide", String.raw`first \] second [nested]`, "API"],
     );
   });
 
@@ -289,7 +272,6 @@ describe("analyzeContent MDX", () => {
     });
 
     assertEquals(summarize(value, markdown), {
-      rendered: [value],
       destinations: [],
     });
     assert(mdx.kind === "syntax-error");
@@ -364,10 +346,6 @@ describe("analyzeContent MDX", () => {
           syntax: "javascript-string",
         },
       ],
-    );
-    assertEquals(
-      result.renderedRanges.map((range) => value.slice(range.start.offset, range.end.offset)),
-      ["Visible"],
     );
   });
 

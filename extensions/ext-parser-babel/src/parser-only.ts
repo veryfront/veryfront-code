@@ -20,7 +20,7 @@ export interface BabelParseOnlyParserContract {
 
 export interface BabelParseOnlyOptions extends ParseOptions {
   /** Decorator grammar to parse, or both for backward compatibility. */
-  readonly decoratorMode?: "current" | "legacy" | "compatible";
+  readonly decoratorMode?: "current" | "compatible";
   /** Source grammar to parse. Defaults to TypeScript for CodeParser compatibility. */
   readonly syntax?: "javascript" | "typescript";
 }
@@ -103,9 +103,7 @@ export class BabelParseOnlyParser implements BabelParseOnlyParserContract {
       sourceType: "unambiguous",
       allowReturnOutsideFunction: options.allowReturnOutsideFunction === true ||
         /\.(?:cjs|js)$/.test(filePath),
-      plugins: decoratorMode === "legacy"
-        ? pickLegacyDecoratorPlugins(parseablePath(options.filePath, syntax), syntax)
-        : pickPlugins(parseablePath(options.filePath, syntax), syntax),
+      plugins: pickPlugins(parseablePath(options.filePath, syntax), syntax),
     };
     const ast = (() => {
       try {

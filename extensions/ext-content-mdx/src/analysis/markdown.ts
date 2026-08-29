@@ -9,7 +9,7 @@ import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 
 import { createSourceLocator, type SourceLocator } from "./source.ts";
-import type { ContentDestination, SourceRange } from "./types.ts";
+import type { ContentDestination } from "./types.ts";
 
 interface OffsetSpan {
   readonly start: number;
@@ -18,7 +18,6 @@ interface OffsetSpan {
 
 interface MarkdownTokens {
   readonly definitionDestinations: readonly OffsetSpan[];
-  readonly imageLabels: readonly OffsetSpan[];
   readonly resourceDestinations: readonly OffsetSpan[];
 }
 
@@ -30,14 +29,6 @@ function positionOffsets(
   return start === undefined || end === undefined ? undefined : { start, end };
 }
 
-function rangeFromPosition(
-  position: Position | undefined,
-  locator: SourceLocator,
-): SourceRange | undefined {
-  const offsets = positionOffsets(position);
-  return offsets === undefined ? undefined : locator.range(offsets.start, offsets.end);
-}
-
 function childrenOf(node: Nodes): readonly Nodes[] {
   return "children" in node ? node.children : [];
 }
@@ -47,7 +38,6 @@ function markdownTokens(
   extensions: readonly Extension[] = [],
 ): MarkdownTokens {
   const definitionDestinations: OffsetSpan[] = [];
-  const imageLabels: OffsetSpan[] = [];
   const resourceDestinations: OffsetSpan[] = [];
   const events = postprocess(
     parse({ extensions: [...extensions] }).document().write(
@@ -61,13 +51,9 @@ function markdownTokens(
       definitionDestinations.push(span);
     } else if (token.type === "resourceDestinationString") {
       resourceDestinations.push(span);
-    } else if (
-      token.type === "labelText" && value.slice(token.start.offset - 2, token.start.offset) === "!["
-    ) {
-      imageLabels.push(span);
     }
   }
-  return { definitionDestinations, imageLabels, resourceDestinations };
+  return { definitionDestinations, resourceDestinations };
 }
 
 function containedSpan(
@@ -115,44 +101,13 @@ function linkDestination(
   };
 }
 
-function imageAltRange(
-  position: Position | undefined,
-  locator: SourceLocator,
-  tokens: MarkdownTokens,
-  tokenBase: number,
-): SourceRange | undefined {
-  const offsets = positionOffsets(position);
-  if (offsets === undefined) return undefined;
-  const label = tokens.imageLabels.find((span) => tokenBase + span.start === offsets.start + 2);
-  return label === undefined || label.end <= label.start
-    ? undefined
-    : locator.range(tokenBase + label.start, tokenBase + label.end);
-}
-
 const HTML_DESTINATION_ATTRIBUTES = new Set(["action", "href", "src"]);
-const OPAQUE_HTML_ELEMENTS = new Set([
-  "iframe",
-  "noembed",
-  "noframes",
-  "plaintext",
-  "script",
-  "style",
-  "template",
-  "textarea",
-  "title",
-  "xmp",
-]);
 
 type HtmlChildNode = DefaultTreeAdapterMap["childNode"];
 type HtmlElement = DefaultTreeAdapterMap["element"];
-type HtmlText = DefaultTreeAdapterMap["textNode"];
 
 function isHtmlElement(node: HtmlChildNode): node is HtmlElement {
   return "attrs" in node && "tagName" in node;
-}
-
-function isHtmlText(node: HtmlChildNode): node is HtmlText {
-  return node.nodeName === "#text" && "value" in node;
 }
 
 function htmlAttributeDestination(
@@ -188,22 +143,17 @@ function rawHtmlAnalysis(
   raw: string,
   absoluteStart: number,
   locator: SourceLocator,
-): {
-  readonly destinations: readonly ContentDestination[];
-  readonly renderedRanges: readonly SourceRange[];
-} {
+): readonly ContentDestination[] {
   const destinations: ContentDestination[] = [];
-  const renderedRanges: SourceRange[] = [];
   const root = parseFragment(raw, { sourceCodeLocationInfo: true });
-  const pending: Array<{ readonly node: HtmlChildNode; readonly opaque: boolean }> = [];
+  const pending: HtmlChildNode[] = [];
   for (let index = root.childNodes.length - 1; index >= 0; index--) {
-    pending.push({ node: root.childNodes[index]!, opaque: false });
+    pending.push(root.childNodes[index]!);
   }
 
   while (pending.length > 0) {
-    const entry = pending.pop();
-    if (entry === undefined) break;
-    const { node } = entry;
+    const node = pending.pop();
+    if (node === undefined) break;
     if (isHtmlElement(node)) {
       const attributeLocations = node.sourceCodeLocation?.attrs;
       for (const attribute of node.attrs) {
@@ -218,30 +168,15 @@ function rawHtmlAnalysis(
         );
         if (destination !== undefined) destinations.push(destination);
       }
-      const opaque = entry.opaque || OPAQUE_HTML_ELEMENTS.has(node.tagName);
       for (let index = node.childNodes.length - 1; index >= 0; index--) {
-        pending.push({ node: node.childNodes[index]!, opaque });
-      }
-    } else if (isHtmlText(node) && !entry.opaque) {
-      const location = node.sourceCodeLocation;
-      if (
-        location !== undefined && location !== null &&
-        raw.slice(location.startOffset, location.endOffset).trim() !== ""
-      ) {
-        renderedRanges.push(
-          locator.range(
-            absoluteStart + location.startOffset,
-            absoluteStart + location.endOffset,
-          ),
-        );
+        pending.push(node.childNodes[index]!);
       }
     }
   }
-  return { destinations, renderedRanges };
+  return destinations;
 }
 
 export function analyzeMarkdown(value: string, frontmatter: boolean): {
-  readonly renderedRanges: readonly SourceRange[];
   readonly destinations: readonly ContentDestination[];
 } {
   const processor = unified().use(remarkParse).use(remarkGfm);
@@ -255,11 +190,9 @@ export function analyzeMarkdownTree(
   root: Root,
   options: { readonly micromarkExtensions?: readonly Extension[] } = {},
 ): {
-  readonly renderedRanges: readonly SourceRange[];
   readonly destinations: readonly ContentDestination[];
 } {
   const locator = createSourceLocator(value);
-  const renderedRanges: SourceRange[] = [];
   const destinations: ContentDestination[] = [];
   const usedDefinitions = new Set<string>();
   const definitions: Array<Extract<Nodes, { type: "definition" }>> = [];
@@ -274,10 +207,7 @@ export function analyzeMarkdownTree(
   while (pending.length > 0) {
     const node = pending.pop();
     if (node === undefined) break;
-    if (node.type === "text") {
-      const range = rangeFromPosition(node.position, locator);
-      if (range !== undefined) renderedRanges.push(range);
-    } else if (node.type === "link" || node.type === "image") {
+    if (node.type === "link" || node.type === "image") {
       const offsets = positionOffsets(node.position);
       if (offsets === undefined) continue;
       const tokens = markdownTokens(
@@ -286,31 +216,16 @@ export function analyzeMarkdownTree(
       );
       const destination = linkDestination(value, node, locator, tokens);
       if (destination !== undefined) destinations.push(destination);
-      if (node.type === "image") {
-        const range = imageAltRange(node.position, locator, tokens, offsets.start);
-        if (range !== undefined) renderedRanges.push(range);
-      }
     } else if (
       node.type === "linkReference" || node.type === "imageReference"
     ) {
       usedDefinitions.add(node.identifier);
-      if (node.type === "imageReference") {
-        const range = imageAltRange(
-          node.position,
-          locator,
-          getDocumentTokens(),
-          0,
-        );
-        if (range !== undefined) renderedRanges.push(range);
-      }
     } else if (node.type === "definition") {
       definitions.push(node);
     } else if (node.type === "html") {
       const offsets = positionOffsets(node.position);
       if (offsets !== undefined) {
-        const analysis = rawHtmlAnalysis(node.value, offsets.start, locator);
-        destinations.push(...analysis.destinations);
-        renderedRanges.push(...analysis.renderedRanges);
+        destinations.push(...rawHtmlAnalysis(node.value, offsets.start, locator));
       }
     }
     const children = childrenOf(node);
@@ -343,6 +258,5 @@ export function analyzeMarkdownTree(
     }
   }
 
-  renderedRanges.sort((left, right) => left.start.offset - right.start.offset);
-  return { renderedRanges, destinations };
+  return { destinations };
 }

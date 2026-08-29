@@ -30,10 +30,6 @@ describe("content analysis package boundary", () => {
       JSON.parse(new TextDecoder().decode(output.stdout)),
       {
         kind: "document",
-        renderedRanges: [{
-          start: { offset: 1, line: 1, column: 2 },
-          end: { offset: 6, line: 1, column: 7 },
-        }],
         destinations: [{
           kind: "markdown-link",
           rawValue: "../guides/start.md",

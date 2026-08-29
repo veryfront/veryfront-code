@@ -57,7 +57,6 @@ export interface AnalyzeContentOptions {
 export type ContentAnalysisResult =
   | {
     readonly kind: "document";
-    readonly renderedRanges: readonly SourceRange[];
     readonly destinations: readonly ContentDestination[];
   }
   | {

@@ -520,7 +520,6 @@ export async function analyzeMdx(options: {
 
   return {
     kind: "document",
-    renderedRanges: markdown.renderedRanges,
     destinations,
   };
 }
