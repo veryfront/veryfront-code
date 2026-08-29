@@ -15,6 +15,7 @@ import {
   compactForStep,
   compactHistoricalUiMessageToolInputs,
   compressTurn,
+  dedupeToolHistory,
   enforceTokenBudget,
   estimateTokens,
   maskOldToolOutputs,
@@ -306,6 +307,33 @@ Deno.test("repairToolPairs leaves checkpoint-preserved provider calls unresolved
     repairToolPairsForPreparation([message], [sourceId]),
     [message],
   );
+});
+
+Deno.test("dedupeToolHistory scopes reused checkpoint call ids to transcript segments", () => {
+  const call = {
+    type: "tool-call" as const,
+    toolCallId: "reused-provider-call",
+    toolName: "web_search",
+    input: { query: "one" },
+  };
+  const result = {
+    type: "tool-result" as const,
+    toolCallId: call.toolCallId,
+    toolName: call.toolName,
+    output: { type: "json" as const, value: [] },
+  };
+  const messages = [
+    withProviderModelMessageSourceId({ role: "assistant", content: [call] }, "checkpoint-1"),
+    withProviderModelMessageSourceId({ role: "tool", content: [result] }, "checkpoint-1"),
+    { role: "user" as const, content: "Start another turn" },
+    withProviderModelMessageSourceId({
+      role: "assistant",
+      content: [{ ...call, input: { query: "two" } }],
+    }, "checkpoint-2"),
+    withProviderModelMessageSourceId({ role: "tool", content: [result] }, "checkpoint-2"),
+  ];
+
+  assertEquals(dedupeToolHistory(messages), messages);
 });
 
 Deno.test("repairToolPairs leaves a provider-executed call whose result is already inline", () => {
