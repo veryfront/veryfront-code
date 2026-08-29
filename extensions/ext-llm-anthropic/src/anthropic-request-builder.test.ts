@@ -3034,6 +3034,69 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     });
   });
 
+  it("preserves pause-turn thinking boundaries around canonical content", () => {
+    const prompt = [{
+      role: "assistant",
+      content: [{ type: "text", text: "First answer." }, {
+        type: "text",
+        text: "Second answer.",
+      }],
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "thinking",
+            thinking: "",
+            signature: "sig_first_pause",
+          }, {
+            type: "text",
+            text: "Stale first answer.",
+          }], [{
+            type: "redacted_thinking",
+            data: "redacted-second-pause",
+          }, {
+            type: "text",
+            text: "Stale second answer.",
+          }]],
+        },
+      },
+    }, {
+      role: "user",
+      content: [{ type: "text", text: "Continue" }],
+    }] as unknown as RuntimePromptMessage[];
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      { prompt },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.messages, [{
+      role: "assistant",
+      content: [{
+        type: "thinking",
+        thinking: "",
+        signature: "sig_first_pause",
+      }, {
+        type: "text",
+        text: "First answer.",
+      }],
+    }, {
+      role: "assistant",
+      content: [{
+        type: "redacted_thinking",
+        data: "redacted-second-pause",
+      }, {
+        type: "text",
+        text: "Second answer.",
+      }],
+    }, {
+      role: "user",
+      content: [{ type: "text", text: "Continue" }],
+    }]);
+  });
+
   it("rejects raw client tool tampering when canonical content survives", () => {
     const canonicalCall = {
       type: "tool-call" as const,
