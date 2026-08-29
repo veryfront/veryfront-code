@@ -18,6 +18,7 @@ import {
   prepareOfflineReactModulesForTests,
 } from "./offline-react-transport.ts";
 import { __setHttpModuleCacheDirResolverForTests } from "../transforms/esm/http-cache.ts";
+import { __setDistributedCacheFallbackForTests } from "../transforms/esm/http-cache-wrapper.ts";
 import { getHttpBundleCacheDir } from "../utils/cache-dir.ts";
 
 // Tests that genuinely reach the network use the plain host transport rather
@@ -32,6 +33,7 @@ if (Deno.env.get(OFFLINE_REACT_TEST_ENV) === "1") {
       ? cacheDir
       : undefined
   );
+  __setDistributedCacheFallbackForTests(() => Promise.resolve(null));
   await prepareOfflineReactModulesForTests();
   addEventListener("unload", () => {
     try {

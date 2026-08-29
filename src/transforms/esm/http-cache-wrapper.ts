@@ -36,6 +36,7 @@ import {
 } from "./http-cache-invariants.ts";
 import { looksLikeHtmlContent as looksLikeHtml } from "./html-content.ts";
 import { fingerprintImportMap, type HttpCacheIdentityMetadata } from "./http-cache-helpers.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import {
   canonicalizeServerExternalPackages,
@@ -56,9 +57,14 @@ const getDistributedCache = createDistributedCacheAccessor(
 );
 
 let testDistributedCacheAccessor: (() => Promise<CacheBackend | null>) | null = null;
+let testDistributedCacheFallbackAccessor: (() => Promise<CacheBackend | null>) | null = null;
 
 function resolveDistributedCache(): Promise<CacheBackend | null> {
-  return testDistributedCacheAccessor ? testDistributedCacheAccessor() : getDistributedCache();
+  return testDistributedCacheAccessor
+    ? testDistributedCacheAccessor()
+    : testDistributedCacheFallbackAccessor
+    ? testDistributedCacheFallbackAccessor()
+    : getDistributedCache();
 }
 
 function parseStringRecord(value: unknown): Record<string, string> | undefined {
@@ -153,6 +159,22 @@ export function __setDistributedCacheAccessorForTests(
   accessor: (() => Promise<CacheBackend | null>) | null,
 ): void {
   testDistributedCacheAccessor = accessor;
+}
+
+/** Set the distributed cache fallback used when a test has no explicit backend. */
+export function __setDistributedCacheFallbackForTests(
+  accessor: (() => Promise<CacheBackend | null>) | null,
+): () => void {
+  if (getHostEnv("DENO_TESTING") !== "1") {
+    throw new Error("The distributed cache test fallback requires DENO_TESTING=1");
+  }
+  const previous = testDistributedCacheFallbackAccessor;
+  testDistributedCacheFallbackAccessor = accessor;
+  return () => {
+    if (testDistributedCacheFallbackAccessor === accessor) {
+      testDistributedCacheFallbackAccessor = previous;
+    }
+  };
 }
 
 export async function initializeHttpModuleDistributedCache(): Promise<boolean> {

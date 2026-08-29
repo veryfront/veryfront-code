@@ -226,6 +226,7 @@ describe("cicd coverage workflow", () => {
     const runtimePrefix = ["De", "no", "."].join("");
     assertStringIncludes(preload, `${runtimePrefix}makeTempDirSync`);
     assertStringIncludes(preload, "__setHttpModuleCacheDirResolverForTests");
+    assertStringIncludes(preload, "__setDistributedCacheFallbackForTests");
     assertStringIncludes(preload, "await prepareOfflineReactModulesForTests()");
     assertStringIncludes(preload, `${runtimePrefix}removeSync`);
     assertStringIncludes(
