@@ -14,6 +14,26 @@ export const DENO_TEST_ENV: Readonly<Record<string, string>> = Object.freeze({
   LOG_FORMAT: "text",
 });
 
+/** Unit-only environment enabling the first-party offline React transport. */
+export const UNIT_DENO_TEST_ENV: Readonly<Record<string, string>> = Object.freeze({
+  ...DENO_TEST_ENV,
+  VERYFRONT_TEST_OFFLINE_REACT: "1",
+});
+
+export const LOOPBACK_ALLOW_NET =
+  "--allow-net=127.0.0.1,localhost,0.0.0.0,[::1],[::]";
+
+export const LOOPBACK_TEST_PERMISSIONS: readonly string[] = Object.freeze([
+  "--allow-read",
+  "--allow-write",
+  "--allow-env",
+  "--allow-run",
+  "--allow-sys",
+  "--allow-ffi",
+  "--allow-import",
+  LOOPBACK_ALLOW_NET,
+]);
+
 /**
  * Live inference providers no test process may reach. Lanes that record
  * against live services on purpose (test:record, test:tool-search-live,

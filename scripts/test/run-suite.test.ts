@@ -15,14 +15,11 @@ import {
 import {
   buildDenoSuiteCommandArgs,
   DENO_SUITE_PROFILES,
+  LOOPBACK_ALLOW_NET,
   parseDenoSuiteArgs,
   partitionDenoSuiteFiles,
 } from "./run-deno-suite.ts";
-import {
-  DENO_TEST_ENV,
-  LEAF_TEST_SUITES,
-  PROVIDER_EGRESS_DENY_NET,
-} from "./suites.ts";
+import { LEAF_TEST_SUITES, PROVIDER_EGRESS_DENY_NET } from "./suites.ts";
 import { classifyTestPath } from "./test-layout.ts";
 import {
   formatSuitePlan,
@@ -332,7 +329,9 @@ describe("migration command surface", () => {
 
     assert(parallel.includes("--parallel"));
     assert(parallel.includes("--trace-leaks"));
-    assert(parallel.some((arg) => arg.startsWith("--deny-net=")));
+    assertEquals(parallel.includes("--allow-all"), false);
+    assert(parallel.includes(LOOPBACK_ALLOW_NET));
+    assertEquals(parallel.some((arg) => arg.startsWith("--deny-net=")), false);
     assertEquals(parallel.at(-1), "src/a test.test.ts");
     assertEquals(cwd.includes("--parallel"), false);
     assert(integration.includes("--parallel"));
@@ -376,6 +375,10 @@ describe("migration command surface", () => {
         );
       }
       assert(
+        profile.network === "loopback" || profile.network === "provider-deny",
+        `${suite} must declare its network profile explicitly`,
+      );
+      assert(
         profile.maxFilesPerProcess === null ||
           (Number.isInteger(profile.maxFilesPerProcess) &&
             profile.maxFilesPerProcess > 0),
@@ -400,13 +403,18 @@ describe("migration command surface", () => {
     assertEquals(partitionDenoSuiteFiles(files, null), [files]);
   });
 
-  it("denies provider egress on every lane that does not opt out with a reason", () => {
+  it("keeps unit lanes loopback-only and provider-enabled lanes deny-listed", () => {
     for (const [suite, profile] of Object.entries(DENO_SUITE_PROFILES)) {
       const args = buildDenoSuiteCommandArgs(
         suite as Parameters<typeof buildDenoSuiteCommandArgs>[0],
         ["src/example.test.ts"],
       );
-      if (profile.denyNet) {
+      if (profile.network === "loopback") {
+        assertEquals(args.includes("--allow-all"), false, suite);
+        assert(args.includes(LOOPBACK_ALLOW_NET), suite);
+        assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), false, suite);
+      } else if (profile.denyNet) {
+        assert(args.includes("--allow-all"), suite);
         assert(
           args.includes(PROVIDER_EGRESS_DENY_NET),
           `${suite} must render the provider deny-net flag`,
@@ -430,7 +438,9 @@ describe("migration command surface", () => {
     assertEquals(coverage.env, unit.env);
     assertEquals(coverage.preload, unit.preload);
     assertEquals(coverage.denyNet, unit.denyNet);
-    assertEquals(unit.env, DENO_TEST_ENV);
+    assertEquals(coverage.network, "loopback");
+    assertEquals(unit.network, "loopback");
+    assertEquals(unit.env.VERYFRONT_TEST_OFFLINE_REACT, "1");
   });
 
   it("forwards task-level Deno flags before selected files", () => {

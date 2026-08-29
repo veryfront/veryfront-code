@@ -2,6 +2,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildTestFileCommandArgs,
+  LOOPBACK_ALLOW_NET,
   PROVIDER_EGRESS_DENY_NET,
   TEST_FILE_ENV,
 } from "./run-test-file.ts";
@@ -17,12 +18,9 @@ describe("test:file task command", () => {
 
     assertEquals(TEST_FILE_ENV.DENO_TESTING, "1");
     assertEquals(args.includes("--preload=src/testing/preload.ts"), true);
-    assertEquals(args.includes("--allow-all"), true);
-    assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), true);
-    assertEquals(
-      args.indexOf(PROVIDER_EGRESS_DENY_NET) > args.indexOf("--allow-all"),
-      true,
-    );
+    assertEquals(args.includes("--allow-all"), false);
+    assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), false);
+    assertEquals(args.includes(LOOPBACK_ALLOW_NET), true);
     assertEquals(args.slice(-4), [
       "src/config/cicd-coverage-workflow.test.ts",
       "--filter",
@@ -40,12 +38,21 @@ describe("test:file task command", () => {
 
     assertEquals(args.includes("--config=scripts/test.deno.json"), true);
     assertEquals(args.includes("--preload=src/testing/preload.ts"), false);
-    assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), true);
+    assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), false);
+    assertEquals(args.includes(LOOPBACK_ALLOW_NET), true);
     assertEquals(args.slice(-3), [
       "scripts/test/coverage-ci.test.ts",
       "--filter",
       "coverage",
     ]);
+  });
+
+  it("keeps integration paths on the provider deny-list", () => {
+    const args = buildTestFileCommandArgs(["tests/integration/routes.test.ts"]);
+
+    assertEquals(args.includes("--allow-all"), true);
+    assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), true);
+    assertEquals(args.includes(LOOPBACK_ALLOW_NET), false);
   });
 });
 

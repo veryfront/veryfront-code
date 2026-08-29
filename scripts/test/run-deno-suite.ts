@@ -3,8 +3,13 @@ import { planSuiteFiles, type SuitePlanId } from "./run-suite.ts";
 import {
   buildTestProcessEnv,
   DENO_TEST_ENV,
+  LOOPBACK_ALLOW_NET,
+  LOOPBACK_TEST_PERMISSIONS,
   PROVIDER_EGRESS_DENY_NET,
+  UNIT_DENO_TEST_ENV,
 } from "./suites.ts";
+
+export { LOOPBACK_ALLOW_NET };
 
 type DenoSuitePlanId = Exclude<
   SuitePlanId,
@@ -21,6 +26,8 @@ type DenoSuitePlanId = Exclude<
 export interface DenoSuiteProfile {
   /** Merged over the parent env after provider credentials are removed. */
   readonly env: Readonly<Record<string, string>>;
+  /** Network authority rendered for this lane. */
+  readonly network: "loopback" | "provider-deny";
   /** Install src/testing/preload.ts (test isolation + unpinned transport). */
   readonly preload: boolean;
   /** Deny egress to live inference providers. */
@@ -41,7 +48,8 @@ export interface DenoSuiteProfile {
 }
 
 const UNIT_PROFILE: DenoSuiteProfile = {
-  env: DENO_TEST_ENV,
+  env: UNIT_DENO_TEST_ENV,
+  network: "loopback",
   preload: true,
   denyNet: true,
   traceLeaks: true,
@@ -76,6 +84,7 @@ export const DENO_SUITE_PROFILES: Readonly<
   },
   "integration:legacy-source-roots": {
     env: DENO_TEST_ENV,
+    network: "provider-deny",
     preload: true,
     denyNet: true,
     traceLeaks: true,
@@ -87,6 +96,7 @@ export const DENO_SUITE_PROFILES: Readonly<
   },
   "integration:legacy-tests-root": {
     env: DENO_TEST_ENV,
+    network: "provider-deny",
     preload: true,
     denyNet: true,
     traceLeaks: true,
@@ -102,6 +112,7 @@ export const DENO_SUITE_PROFILES: Readonly<
   },
   "integration:cli": {
     env: DENO_TEST_ENV,
+    network: "provider-deny",
     preload: true,
     denyNet: true,
     traceLeaks: true,
@@ -119,6 +130,7 @@ export const DENO_SUITE_PROFILES: Readonly<
   },
   "coverage:integration": {
     env: DENO_TEST_ENV,
+    network: "provider-deny",
     preload: true,
     denyNet: true,
     traceLeaks: true,
@@ -132,6 +144,7 @@ export const DENO_SUITE_PROFILES: Readonly<
   // memory-bound, but the harness itself is a framework test process.
   "e2e:rsc-browser": {
     env: DENO_TEST_ENV,
+    network: "provider-deny",
     preload: true,
     denyNet: true,
     traceLeaks: true,
@@ -148,6 +161,7 @@ export const DENO_SUITE_PROFILES: Readonly<
   // deny-net apply to the harness process only, never to the binary.
   "e2e:binary": {
     env: {},
+    network: "provider-deny",
     preload: true,
     denyNet: true,
     traceLeaks: true,
@@ -212,8 +226,9 @@ export function buildDenoSuiteCommandArgs(
     "--no-check",
     ...(profile.traceLeaks ? ["--trace-leaks"] : []),
     ...(profile.parallel ? ["--parallel"] : []),
-    "--allow-all",
-    ...(profile.denyNet ? [PROVIDER_EGRESS_DENY_NET] : []),
+    ...(profile.network === "loopback"
+      ? LOOPBACK_TEST_PERMISSIONS
+      : ["--allow-all", ...(profile.denyNet ? [PROVIDER_EGRESS_DENY_NET] : [])]),
     ...(profile.heap ? ["--v8-flags=--max-old-space-size=8192"] : []),
     ...(profile.coverage
       ? [`--coverage=${options.coverageDir ?? "coverage"}`]

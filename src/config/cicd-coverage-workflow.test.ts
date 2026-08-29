@@ -196,32 +196,32 @@ describe("cicd coverage workflow", () => {
     );
   });
 
-  it("blocks live provider egress in every Deno unit coverage path", async () => {
+  it("keeps every Deno unit coverage path loopback-only", async () => {
     const providerDenyNet =
       "--deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai,mcp.context7.com";
+    const loopbackAllowNet = "--allow-net=127.0.0.1,localhost,0.0.0.0,[::1],[::]";
 
-    // The deny-net flag lives once in scripts/test/suites.ts; the coverage
-    // runners import it rather than restating the host list. This pins the
-    // single source and the import edges, and run-suite.test.ts asserts the
-    // rendered command of every suite profile carries the flag at runtime.
+    // Integration lanes retain the provider deny-list. Unit coverage imports
+    // the stronger loopback-only grant from the same central suite contract.
     const suitesScript = await readRepoFile("scripts/test/suites.ts");
     for (const host of providerDenyNet.slice("--deny-net=".length).split(",")) {
       assertStringIncludes(suitesScript, `"${host}"`);
     }
+    assertStringIncludes(suitesScript, loopbackAllowNet);
     for (
       const script of [
         await readRepoFile("scripts/test/coverage-ci.ts"),
         await readRepoFile("scripts/test/run-deno-suite.ts"),
       ]
     ) {
-      assertStringIncludes(script, "PROVIDER_EGRESS_DENY_NET");
+      assertStringIncludes(script, "LOOPBACK_TEST_PERMISSIONS");
       assertStringIncludes(script, 'from "./suites.ts"');
     }
 
-    // test:coverage still spells the flag inline: it is a plain `deno test`
-    // task line, and deno.json cannot reference the shared constant.
-    assertStringIncludes(await readDenoTask("test:coverage"), providerDenyNet);
-    // The converted coverage tasks inherit the flag from their suite records.
+    const legacyCoverageTask = await readDenoTask("test:coverage");
+    assertStringIncludes(legacyCoverageTask, "deno task test:coverage:unit");
+    assertEquals(legacyCoverageTask.includes("--allow-all"), false);
+    assertEquals(legacyCoverageTask.includes("--deny-net="), false);
     assertStringIncludes(
       await readDenoTask("test:coverage:unit"),
       "run-deno-suite.ts --suite=coverage:unit",

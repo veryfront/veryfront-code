@@ -11,9 +11,17 @@ import "./sanitize-process-env.ts";
 import "./bdd.ts";
 import "../schemas/_test-setup.ts";
 import { __installUnpinnedHostTransportForTests } from "../security/http/outbound-fetch.ts";
+import {
+  installOfflineReactTransportForTests,
+  OFFLINE_REACT_TEST_ENV,
+} from "./offline-react-transport.ts";
 
 // Tests that genuinely reach the network use the plain host transport rather
 // than Deno's pinned SOCKS client, which holds connections open past the end of
 // a test. Installing it here keeps the security module to a single rule and
 // leaves the test-only decision somewhere a reader can find it.
-__installUnpinnedHostTransportForTests();
+if (Deno.env.get(OFFLINE_REACT_TEST_ENV) === "1") {
+  installOfflineReactTransportForTests();
+} else {
+  __installUnpinnedHostTransportForTests();
+}
