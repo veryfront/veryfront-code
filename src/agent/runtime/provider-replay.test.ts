@@ -677,6 +677,126 @@ describe("agent/runtime/provider-replay", () => {
       );
     });
 
+    it("should accept a provider tool turn whose text was persisted as one concatenated part", () => {
+      const leadingText = { type: "text", text: "Let me search. " };
+      const providerCall = {
+        type: "server_tool_use",
+        id: "srvtool-1",
+        name: "web_search",
+        input: { query: "q" },
+        caller: { type: "direct" },
+      };
+      const providerResult = {
+        type: "web_search_tool_result",
+        tool_use_id: providerCall.id,
+        caller: { type: "direct" },
+        content: [],
+      };
+      const trailingText = { type: "text", text: "Here is what I found." };
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [
+          { type: "text", text: "Let me search. Here is what I found." },
+          {
+            type: "tool-call",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            args: providerCall.input,
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            result: [],
+            providerExecuted: true,
+          },
+        ],
+        timestamp: 1,
+      } as Message;
+      const blocks = [leadingText, providerCall, providerResult, trailingText];
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: target.id,
+        provider: "anthropic",
+        providerBlocks: blocks.map((block) => ({
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block,
+        })),
+        providerBlockPositions: [0, 1, 2, 3],
+        totalPartCount: 4,
+      };
+
+      applyProviderReplayCheckpointsToMessages([target], [checkpoint]);
+
+      assertEquals(
+        readAttachedProviderMetadata(target),
+        { anthropic: { rawAssistantMessages: [blocks] } },
+        "split provider text matches the single persisted transcript text part",
+      );
+    });
+
+    it("should reject a provider tool turn whose concatenated text differs from the anchor", () => {
+      const providerCall = {
+        type: "server_tool_use",
+        id: "srvtool-1",
+        name: "web_search",
+        input: { query: "q" },
+        caller: { type: "direct" },
+      };
+      const providerResult = {
+        type: "web_search_tool_result",
+        tool_use_id: providerCall.id,
+        caller: { type: "direct" },
+        content: [],
+      };
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [
+          { type: "text", text: "Let me search. Here is what I found." },
+          {
+            type: "tool-call",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            args: providerCall.input,
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            result: [],
+            providerExecuted: true,
+          },
+        ],
+        timestamp: 1,
+      } as Message;
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: target.id,
+        provider: "anthropic",
+        providerBlocks: [
+          { type: "text", text: "Let me search. " },
+          providerCall,
+          providerResult,
+          { type: "text", text: "Here is something else." },
+        ].map((block) => ({
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block,
+        })),
+        providerBlockPositions: [0, 1, 2, 3],
+        totalPartCount: 4,
+      };
+
+      assertProviderReplayError(() =>
+        applyProviderReplayCheckpointsToMessages([target], [checkpoint])
+      );
+    });
+
     it("should be a no-op for empty or absent deliveries", () => {
       const target = createAssistantMessage("assistant-message-1");
       applyProviderReplayCheckpointsToMessages([target], undefined);

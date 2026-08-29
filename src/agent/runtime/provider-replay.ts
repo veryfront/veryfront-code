@@ -222,33 +222,32 @@ function toTranscriptVisibleProviderPart(
   }
 }
 
+// A persisted assistant turn carries at most one text part, so provider text
+// blocks split around tool blocks collapse into a single entry at the position
+// of the first one before either side is compared.
 function normalizeTranscriptVisibleProjection(
   parts: readonly Record<string, unknown>[],
 ): Record<string, unknown>[] {
   const normalized: Record<string, unknown>[] = [];
-  let pendingText = "";
-
-  const flushText = () => {
-    if (pendingText.trim().length === 0) {
-      pendingText = "";
-      return;
-    }
-    normalized.push({ type: "text", text: pendingText });
-    pendingText = "";
-  };
+  let text = "";
+  let textIndex = -1;
 
   for (const part of parts) {
     if (part.type === "text") {
       if (typeof part.text !== "string") {
         invalidCheckpoint("checkpoint transcript text projection is malformed");
       }
-      pendingText += part.text;
+      if (textIndex < 0) {
+        textIndex = normalized.length;
+      }
+      text += part.text;
       continue;
     }
-    flushText();
     normalized.push(part);
   }
-  flushText();
+  if (text.trim().length > 0) {
+    normalized.splice(textIndex, 0, { type: "text", text });
+  }
 
   return normalized;
 }
