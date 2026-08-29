@@ -23,6 +23,14 @@ const CHECKPOINT_KEYS = new Set([
   "emittedAt",
 ]);
 const BLOCK_KEYS = new Set(["type", "provider", "block"]);
+const ANTHROPIC_PROVIDER_TOOL_RESULT_TYPES = new Set([
+  "web_search_tool_result",
+  "web_fetch_tool_result",
+  "code_execution_tool_result",
+  "bash_code_execution_tool_result",
+  "text_editor_code_execution_tool_result",
+  "mcp_tool_result",
+]);
 
 /** Providers whose continuation contract can require opaque block replay. */
 export type ProviderReplayProvider = "anthropic" | "openai-responses";
@@ -132,8 +140,22 @@ function toTranscriptVisibleAnthropicReplayPart(
     case "server_tool_use":
     case "mcp_tool_use":
       return toCanonicalAnthropicToolCall(block, true);
-    default:
+    default: {
+      if (
+        typeof block.type === "string" &&
+        ANTHROPIC_PROVIDER_TOOL_RESULT_TYPES.has(block.type)
+      ) {
+        if (!isNonEmptyString(block.tool_use_id)) {
+          invalidCheckpoint("checkpoint provider tool-result block is malformed");
+        }
+        return {
+          type: "tool-result",
+          toolCallId: block.tool_use_id,
+          providerExecuted: true,
+        };
+      }
       invalidCheckpoint("checkpoint provider block cannot be projected for validation");
+    }
   }
 }
 
@@ -141,7 +163,8 @@ function getProviderExecutedToolCallIds(target: Message): Set<string> {
   return new Set(
     target.parts.flatMap((part) => {
       const value: unknown = part;
-      return isRecord(value) && value.providerExecuted === true &&
+      return isRecord(value) && value.type === "tool-call" &&
+          value.providerExecuted === true &&
           isNonEmptyString(value.toolCallId)
         ? [value.toolCallId]
         : [];
@@ -172,6 +195,15 @@ function toTranscriptVisibleProviderPart(
           ? { providerExecuted: true }
           : {}),
       };
+    case "tool-result":
+      if (!isNonEmptyString(part.toolCallId)) {
+        invalidCheckpoint("checkpoint anchor tool result is malformed");
+      }
+      return {
+        type: "tool-result",
+        toolCallId: part.toolCallId,
+        ...(providerExecutedToolCallIds.has(part.toolCallId) ? { providerExecuted: true } : {}),
+      };
     default:
       invalidCheckpoint("checkpoint anchor contains an unsupported provider part");
   }
@@ -201,7 +233,23 @@ function assertCheckpointMatchesAssistantTurn(
     const projected = toTranscriptVisibleProviderPart(part, providerExecutedToolCallIds);
     return projected ? [projected] : [];
   });
-  if (stringifyChatJson(checkpointProjection) !== stringifyChatJson(targetProjection)) {
+  const checkpointProviderToolResults = checkpointProjection.filter((part) =>
+    part.type === "tool-result"
+  );
+  const checkpointVisibleProjection = checkpointProjection.filter((part) =>
+    part.type !== "tool-result"
+  );
+  const targetProviderToolResults = target.parts.flatMap((part) => {
+    const value: unknown = part;
+    if (!isRecord(value) || value.type !== "tool-result") return [];
+    const projected = toTranscriptVisibleProviderPart(value, providerExecutedToolCallIds);
+    return projected?.providerExecuted === true ? [projected] : [];
+  });
+  if (
+    stringifyChatJson(checkpointVisibleProjection) !== stringifyChatJson(targetProjection) ||
+    stringifyChatJson(checkpointProviderToolResults) !==
+      stringifyChatJson(targetProviderToolResults)
+  ) {
     invalidCheckpoint("checkpoint provider blocks do not match the anchored assistant turn");
   }
 }

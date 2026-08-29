@@ -1646,6 +1646,54 @@ Deno.test("prepareHostedChatRuntimeMessages omits provider-owned remote tool his
   }]);
 });
 
+Deno.test(
+  "prepareHostedChatRuntimeMessages preserves checkpoint-anchored provider tool history",
+  async () => {
+    const messages = await prepareHostedChatRuntimeMessages(
+      [
+        {
+          id: "user-1",
+          role: "user",
+          parts: [{ type: "text", text: "Search the official documentation." }],
+        },
+        {
+          id: "assistant-1",
+          role: "assistant",
+          parts: [{
+            type: "dynamic-tool",
+            toolName: "web_search",
+            toolCallId: "srvtool-web-search",
+            input: { query: "site:veryfront.com provider replay" },
+            state: "output-available",
+            providerExecuted: true,
+            output: [],
+          }],
+        },
+        {
+          id: "user-2",
+          role: "user",
+          parts: [{ type: "text", text: "Summarize the result." }],
+        },
+      ],
+      {
+        providerOwnedToolNames: ["web_search"],
+        providerReplayCheckpointMessageIds: ["assistant-1"],
+      },
+    );
+
+    const checkpointedParts = messages
+      .filter((message) => message.id === "assistant-1")
+      .flatMap((message) => message.parts);
+    assertEquals(
+      checkpointedParts.flatMap((part) =>
+        "toolCallId" in part && part.toolCallId === "srvtool-web-search" ? [part.type] : []
+      ),
+      ["tool-call", "tool-result"],
+      "checkpointed provider call and result remain available for replay validation",
+    );
+  },
+);
+
 Deno.test("prepareHostedChatRuntimeMessages reports historical tool input compaction diagnostics", async () => {
   const diagnostics: HistoricalToolInputCompactionDiagnostic[] = [];
   const marker = "HOSTED_TOOL_INPUT_MARKER";

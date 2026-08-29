@@ -501,6 +501,100 @@ describe("agent/runtime/provider-replay", () => {
       );
     });
 
+    it("should validate provider tool results by their provider-owned call correlation", () => {
+      const providerCall = {
+        type: "server_tool_use",
+        id: "srvtool-web-search",
+        name: "web_search",
+        input: { query: "provider replay" },
+        caller: { type: "direct" },
+      };
+      const providerResult = {
+        type: "web_search_tool_result",
+        tool_use_id: providerCall.id,
+        caller: { type: "direct" },
+        content: [],
+      };
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-call",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            args: providerCall.input,
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            result: [],
+            providerExecuted: true,
+          },
+        ],
+        timestamp: 1,
+      } as Message;
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: target.id,
+        provider: "anthropic",
+        providerBlocks: [providerCall, providerResult].map((block) => ({
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block,
+        })),
+        providerBlockPositions: [0, 1],
+        totalPartCount: 2,
+      };
+
+      applyProviderReplayCheckpointsToMessages([target], [checkpoint]);
+
+      assertEquals(
+        readAttachedProviderMetadata(target),
+        { anthropic: { rawAssistantMessages: [[providerCall, providerResult]] } },
+        "provider result remains correlated to the canonical provider-owned call",
+      );
+    });
+
+    it("should reject a provider tool result without its provider-owned call", () => {
+      const providerResult = {
+        type: "web_search_tool_result",
+        tool_use_id: "srvtool-web-search",
+        caller: { type: "direct" },
+        content: [],
+      };
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [{
+          type: "tool-result",
+          toolCallId: providerResult.tool_use_id,
+          toolName: "web_search",
+          result: [],
+          providerExecuted: true,
+        }],
+        timestamp: 1,
+      } as Message;
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: target.id,
+        provider: "anthropic",
+        providerBlocks: [{
+          type: "provider-block",
+          provider: "anthropic",
+          block: providerResult,
+        }],
+        providerBlockPositions: [0],
+        totalPartCount: 1,
+      };
+
+      assertProviderReplayError(() =>
+        applyProviderReplayCheckpointsToMessages([target], [checkpoint])
+      );
+    });
+
     it("should be a no-op for empty or absent deliveries", () => {
       const target = createAssistantMessage("assistant-message-1");
       applyProviderReplayCheckpointsToMessages([target], undefined);

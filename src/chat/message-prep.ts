@@ -54,6 +54,7 @@ const CHARS_PER_TOKEN = DEFAULT_MESSAGE_PREP_LIMITS.charsPerToken;
 /** Options accepted by prepare provider model messages from UI messages. */
 export interface PrepareProviderModelMessagesFromUiMessagesOptions {
   providerOwnedToolNames?: readonly string[];
+  preserveProviderOwnedToolSourceMessageIds?: readonly string[];
   historicalToolInputRetention?: HistoricalToolInputRetentionOptions;
 }
 
@@ -1067,12 +1068,25 @@ function getMessagePartToolName(part: unknown): string | undefined {
 function stripProviderOwnedToolParts(
   messages: ChatUiMessage[],
   providerOwnedToolNames: readonly string[] | undefined,
+  preserveSourceMessageIds: readonly string[] | undefined,
 ): ChatUiMessage[] {
   if (!providerOwnedToolNames || providerOwnedToolNames.length === 0) {
     return messages;
   }
 
   const providerOwnedNames = new Set(providerOwnedToolNames);
+  const preservedMessageIds = new Set(preserveSourceMessageIds ?? []);
+  const preservedToolCallIds = new Set<string>();
+  for (const message of messages) {
+    if (!preservedMessageIds.has(message.id)) continue;
+    for (const part of message.parts) {
+      const toolName = getMessagePartToolName(part);
+      const toolCallId = getMessagePartToolCallId(part);
+      if (toolCallId && toolName && providerOwnedNames.has(toolName)) {
+        preservedToolCallIds.add(toolCallId);
+      }
+    }
+  }
   const providerOwnedToolCallIds = new Set<string>();
 
   return messages.map((message) => {
@@ -1088,6 +1102,9 @@ function stripProviderOwnedToolParts(
       const ownedByName = toolName ? providerOwnedNames.has(toolName) : false;
       const ownedByCallId = toolCallId ? providerOwnedToolCallIds.has(toolCallId) : false;
 
+      if (toolCallId && preservedToolCallIds.has(toolCallId)) {
+        return true;
+      }
       if (!ownedByName && !ownedByCallId) {
         return true;
       }
@@ -1115,6 +1132,7 @@ export function prepareProviderModelMessagesFromUiMessages(
   const strippedProviderOwnedToolMessages = stripProviderOwnedToolParts(
     normalizedMessages,
     options.providerOwnedToolNames,
+    options.preserveProviderOwnedToolSourceMessageIds,
   );
   const strippedPendingToolMessages = stripPendingToolParts(strippedProviderOwnedToolMessages);
   const strippedSupersededToolMessages = stripSupersededToolErrorParts(strippedPendingToolMessages);

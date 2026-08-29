@@ -651,6 +651,7 @@ export async function prepareHostedChatRuntimeMessages(
       messages,
       emptyConversationPrompt: options.emptyConversationPrompt,
       providerOwnedToolNames: options.providerOwnedToolNames,
+      preserveProviderOwnedToolSourceMessageIds: options.providerReplayCheckpointMessageIds,
       abortSignal: options.abortSignal,
       fileContentFetchTimeoutMs: options.fileContentFetchTimeoutMs,
       historicalToolInputRetention: {
@@ -667,6 +668,7 @@ export async function prepareHostedChatRuntimeMessages(
     messages,
     emptyConversationPrompt: options.emptyConversationPrompt,
     providerOwnedToolNames: options.providerOwnedToolNames,
+    preserveProviderOwnedToolSourceMessageIds: options.providerReplayCheckpointMessageIds,
     abortSignal: options.abortSignal,
     fileContentFetchTimeoutMs: options.fileContentFetchTimeoutMs,
     historicalToolInputRetention: {
