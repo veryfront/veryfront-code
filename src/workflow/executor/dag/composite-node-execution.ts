@@ -5,9 +5,26 @@ import { ensureError } from "#veryfront/errors/veryfront-error.ts";
  * An ownership-fenced write was refused: another worker owns the run row, so
  * this execution must stop writing instead of retrying or recording failure.
  */
+function getOwnDataProperty(value: unknown, key: PropertyKey): unknown {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+    return undefined;
+  }
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function isOwnershipLossError(error: unknown): boolean {
-  return error instanceof VeryfrontError && error.slug === "orchestration-error" &&
-    (error.context as Record<string, unknown> | undefined)?.ownershipLost === true;
+  const isVeryfrontError = error instanceof VeryfrontError ||
+    (error instanceof Error && getOwnDataProperty(error, "name") === "VeryfrontError");
+  if (!isVeryfrontError) return false;
+
+  const context = getOwnDataProperty(error, "context");
+  return getOwnDataProperty(error, "slug") === "orchestration-error" &&
+    getOwnDataProperty(context, "ownershipLost") === true;
 }
 import type { RetryConfig, WorkflowNode } from "../../types.ts";
 import { parseDuration, validateRetryConfig } from "../../types.ts";

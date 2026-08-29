@@ -2590,6 +2590,34 @@ describe("DAGExecutor", () => {
       );
     });
 
+    it("stops when a composite child throws an ownership-loss error from another module copy", async () => {
+      const { VeryfrontError: DuplicateVeryfrontError } = await import(
+        "../../../errors/types.ts?ownership-loss-regression"
+      );
+      const ownershipLost = new DuplicateVeryfrontError("ownership changed", {
+        slug: "orchestration-error",
+        category: "AGENT",
+        status: 500,
+        title: "Multi-agent orchestration error",
+        context: { ownershipLost: true },
+      });
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          if (node.id === "outer/inner") throw ownershipLost;
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const nodes = [parallel("outer", [step("inner", { tool: "noop" })])];
+
+      const error = await assertRejects(
+        () => exec.execute(nodes, createTestRun()),
+        Error,
+        "ownership changed",
+      );
+
+      assertEquals(error, ownershipLost);
+    });
+
     it("does not merge-write recovery for loop iteration children", async () => {
       // A loop iteration's children live in the loop node's private iteration
       // snapshot, not the root node-state map. Merge-writing their keys into
