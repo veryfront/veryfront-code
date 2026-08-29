@@ -1,21 +1,6 @@
 import { PROVIDER_REPLAY_CHECKPOINT_INVALID } from "#veryfront/errors";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
 import type { Message } from "../types.ts";
 import { attachProviderMetadata, readAttachedProviderMetadata } from "./provider-metadata.ts";
-
-/**
- * Durable run event type carrying provider-native replay state.
- *
- * Mirrors `AgentRunProviderReplayCheckpointPayloadSchema` in veryfront-api;
- * both sides validate the same shape so a payload accepted here is accepted
- * there and vice versa.
- */
-export const AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE =
-  "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT" as const;
-
-/** Environment flag gating checkpoint emission; anything but "true" stays off. */
-export const PROVIDER_REPLAY_CHECKPOINT_EMISSION_ENV_FLAG =
-  "VERYFRONT_ENABLE_PROVIDER_REPLAY_CHECKPOINT_EMISSION" as const;
 
 const MAX_PROVIDER_REPLAY_BLOCKS = 100;
 const MAX_PROVIDER_REPLAY_CHECKPOINTS = 100;
@@ -60,11 +45,6 @@ export type ProviderReplayCheckpoint = {
   totalPartCount: number;
   elapsedMs?: number;
   emittedAt?: number;
-};
-
-/** Durable event form of a provider replay checkpoint. */
-export type ProviderReplayCheckpointEvent = ProviderReplayCheckpoint & {
-  type: typeof AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE;
 };
 
 /**
@@ -271,102 +251,6 @@ export function assertReconstructibleProviderReplayCheckpoint(
   }
 }
 
-/** Convert a validated checkpoint into its durable root-run event. */
-export function createProviderReplayCheckpointEvent(
-  checkpoint: ProviderReplayCheckpoint,
-): ProviderReplayCheckpointEvent {
-  return {
-    type: AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE,
-    ...parseProviderReplayCheckpoint(checkpoint),
-  };
-}
-
-/** Return whether checkpoint emission is enabled; default off in every environment. */
-export function isProviderReplayCheckpointEmissionEnabled(
-  readEnv: (name: string) => string | undefined = getEnv,
-): boolean {
-  return readEnv(PROVIDER_REPLAY_CHECKPOINT_EMISSION_ENV_FLAG) === "true";
-}
-
-/**
- * Sole emission entry point for the durable checkpoint event.
- *
- * Returns null while the emission gate is off, so no runtime path can persist
- * a checkpoint before the API-side append support ships and the flag is turned
- * on deliberately (stage 4 of veryfront-issue-inbox#522).
- */
-export function maybeCreateProviderReplayCheckpointEvent(input: {
-  checkpoint: ProviderReplayCheckpoint;
-  readEnv?: (name: string) => string | undefined;
-}): ProviderReplayCheckpointEvent | null {
-  if (!isProviderReplayCheckpointEmissionEnabled(input.readEnv ?? getEnv)) {
-    return null;
-  }
-  return createProviderReplayCheckpointEvent(input.checkpoint);
-}
-
-/**
- * Build a checkpoint from the Anthropic raw-replay metadata the provider
- * already emits in-process (`providerMetadata.anthropic.rawAssistantMessages`).
- *
- * Returns null when the metadata carries no Anthropic replay state; malformed
- * replay state fails explicitly rather than emitting a partial checkpoint.
- */
-export function createAnthropicProviderReplayCheckpoint(input: {
-  messageId: string;
-  providerMetadata: Record<string, unknown> | undefined;
-}): ProviderReplayCheckpoint | null {
-  const anthropic = input.providerMetadata?.anthropic;
-  if (anthropic === undefined) return null;
-  if (!isRecord(anthropic)) {
-    invalidCheckpoint("anthropic provider metadata must be an object");
-  }
-  const rawAssistantMessages = anthropic.rawAssistantMessages;
-  if (rawAssistantMessages === undefined) return null;
-  if (!Array.isArray(rawAssistantMessages) || rawAssistantMessages.length === 0) {
-    invalidCheckpoint("anthropic raw assistant messages must be a non-empty array");
-  }
-  // pause_turn continuations carry one content array per provider response and
-  // the request builder replays each as its own assistant message. The v1 wire
-  // schema has no boundary field, so a multi-message turn cannot be
-  // represented; flattening it would silently change the replayed sequence.
-  if (rawAssistantMessages.length > 1) {
-    invalidCheckpoint(
-      "anthropic raw assistant turns with continuation boundaries are not representable in a v1 checkpoint",
-      { rawMessageCount: rawAssistantMessages.length },
-    );
-  }
-  const rawContent = rawAssistantMessages[0];
-  if (!Array.isArray(rawContent)) {
-    invalidCheckpoint("anthropic raw assistant content must be an array");
-  }
-  const blocks: Record<string, unknown>[] = [];
-  for (const [blockIndex, block] of rawContent.entries()) {
-    if (!isRecord(block) || typeof block.type !== "string") {
-      invalidCheckpoint("anthropic raw assistant block must be a typed object", { blockIndex });
-    }
-    blocks.push(block);
-  }
-  if (blocks.length === 0 || blocks.length > MAX_PROVIDER_REPLAY_BLOCKS) {
-    invalidCheckpoint(
-      `anthropic raw assistant turn must carry 1-${MAX_PROVIDER_REPLAY_BLOCKS} blocks`,
-      { blockCount: blocks.length },
-    );
-  }
-  return parseProviderReplayCheckpoint({
-    version: 1,
-    messageId: input.messageId,
-    provider: "anthropic",
-    providerBlocks: blocks.map((block) => ({
-      type: "provider-block",
-      provider: "anthropic",
-      block,
-    })),
-    providerBlockPositions: blocks.map((_, index) => index),
-    totalPartCount: blocks.length,
-  });
-}
-
 /**
  * Attach delivered replay state to the assistant turns it anchors to.
  *
@@ -390,6 +274,18 @@ export function applyProviderReplayCheckpointsToMessages(
   }
   for (const checkpoint of checkpoints) {
     const matches = messages.filter((message) => message.id === checkpoint.messageId);
+    // A turn carrying tool output is split into `${id}-1`, `${id}-2`, ... segments
+    // downstream; attaching a whole-turn checkpoint to segment 0 while the later
+    // segments keep their own content would replay an altered assistant turn.
+    const segmentPrefix = `${checkpoint.messageId}-`;
+    if (
+      messages.some((message) =>
+        message.id.startsWith(segmentPrefix) &&
+        /^\d+$/.test(message.id.slice(segmentPrefix.length))
+      )
+    ) {
+      invalidCheckpoint("checkpoint messageId anchors to a segmented assistant turn");
+    }
     if (matches.length === 0) continue;
     if (matches.length > 1) {
       invalidCheckpoint("checkpoint messageId matches more than one message");

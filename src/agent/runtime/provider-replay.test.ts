@@ -4,15 +4,9 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import type { Message } from "../types.ts";
 import {
-  AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE,
   applyProviderReplayCheckpointsToMessages,
-  createAnthropicProviderReplayCheckpoint,
-  createProviderReplayCheckpointEvent,
-  isProviderReplayCheckpointEmissionEnabled,
-  maybeCreateProviderReplayCheckpointEvent,
   parseProviderReplayCheckpoint,
   parseServerResolvedProviderReplayCheckpoints,
-  PROVIDER_REPLAY_CHECKPOINT_EMISSION_ENV_FLAG,
   type ProviderReplayCheckpoint,
 } from "./provider-replay.ts";
 import { attachProviderMetadata, readAttachedProviderMetadata } from "./provider-metadata.ts";
@@ -301,191 +295,6 @@ describe("agent/runtime/provider-replay", () => {
     });
   });
 
-  describe("createProviderReplayCheckpointEvent", () => {
-    it("should stamp the durable event type onto a valid checkpoint", () => {
-      const checkpoint = createValidCheckpoint();
-      const event = createProviderReplayCheckpointEvent(checkpoint);
-      assertEquals(event.type, AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE, "event type");
-      const { type: _type, ...payload } = event;
-      assertEquals(payload, checkpoint, "event payload round trip");
-    });
-
-    it("should refuse to mint an event from a malformed checkpoint", () => {
-      assertProviderReplayError(() =>
-        createProviderReplayCheckpointEvent(
-          { ...createValidCheckpoint(), version: 9 } as unknown as ProviderReplayCheckpoint,
-        )
-      );
-    });
-  });
-
-  describe("emission gate", () => {
-    it("should default to disabled when the flag is unset", () => {
-      assertEquals(
-        isProviderReplayCheckpointEmissionEnabled(() => undefined),
-        false,
-        "unset flag stays off",
-      );
-      assertEquals(isProviderReplayCheckpointEmissionEnabled(), false, "real environment default");
-    });
-
-    it("should only enable on the exact literal true", () => {
-      for (const value of ["1", "TRUE", "yes", "on", ""]) {
-        assertEquals(
-          isProviderReplayCheckpointEmissionEnabled(() => value),
-          false,
-          `"${value}" stays off`,
-        );
-      }
-      assertEquals(
-        isProviderReplayCheckpointEmissionEnabled((name) =>
-          name === PROVIDER_REPLAY_CHECKPOINT_EMISSION_ENV_FLAG ? "true" : undefined
-        ),
-        true,
-        "literal true enables",
-      );
-    });
-
-    it("should emit nothing while the gate is off", () => {
-      assertEquals(
-        maybeCreateProviderReplayCheckpointEvent({
-          checkpoint: createValidCheckpoint(),
-          readEnv: () => undefined,
-        }),
-        null,
-        "gate off emits nothing",
-      );
-      assertEquals(
-        maybeCreateProviderReplayCheckpointEvent({ checkpoint: createValidCheckpoint() }),
-        null,
-        "gate off by default in this environment",
-      );
-    });
-
-    it("should mint the event only when the gate is on", () => {
-      const event = maybeCreateProviderReplayCheckpointEvent({
-        checkpoint: createValidCheckpoint(),
-        readEnv: () => "true",
-      });
-      assertEquals(
-        event?.type,
-        AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE,
-        "gate on emits the event",
-      );
-    });
-  });
-
-  describe("createAnthropicProviderReplayCheckpoint", () => {
-    it("should return null when no provider metadata is present", () => {
-      assertEquals(
-        createAnthropicProviderReplayCheckpoint({
-          messageId: "assistant-message-1",
-          providerMetadata: undefined,
-        }),
-        null,
-        "absent metadata",
-      );
-      assertEquals(
-        createAnthropicProviderReplayCheckpoint({
-          messageId: "assistant-message-1",
-          providerMetadata: { google: { rawAssistantParts: [] } },
-        }),
-        null,
-        "non-anthropic metadata is not replay-required",
-      );
-    });
-
-    it("should build a checkpoint from a single raw assistant message preserving order", () => {
-      const rawAssistantMessages = [
-        [
-          { type: "thinking", thinking: "", signature: SIGNATURE },
-          { type: "tool_use", id: "call-1", name: "lookup", input: { query: "veryfront" } },
-          { type: "text", text: "Looking that up." },
-        ],
-      ];
-      const checkpoint = createAnthropicProviderReplayCheckpoint({
-        messageId: "assistant-message-1",
-        providerMetadata: { anthropic: { rawAssistantMessages } },
-      });
-      assertEquals(checkpoint?.provider, "anthropic", "provider");
-      assertEquals(checkpoint?.messageId, "assistant-message-1", "message anchor");
-      assertEquals(checkpoint?.totalPartCount, 3, "total part count");
-      assertEquals(
-        checkpoint?.providerBlockPositions,
-        [0, 1, 2],
-        "positions dense by construction",
-      );
-      assertEquals(
-        checkpoint?.providerBlocks.map((block) => block.block),
-        rawAssistantMessages[0]!,
-        "blocks carried in original order",
-      );
-      assertEquals(
-        checkpoint?.providerBlocks[0]?.block.signature,
-        SIGNATURE,
-        "signature carried byte-exact beside empty thinking text",
-      );
-      assertEquals(checkpoint?.providerBlocks[0]?.block.thinking, "", "empty displayed thinking");
-      assertEquals(
-        parseProviderReplayCheckpoint(checkpoint),
-        checkpoint,
-        "emitted checkpoint satisfies the wire contract",
-      );
-    });
-
-    it("should fail explicitly on continuation boundaries a v1 checkpoint cannot represent", () => {
-      // pause_turn continuations produce one raw content array per provider
-      // response; the wire schema has no boundary field, so flattening would
-      // silently change the replayed assistant-message sequence.
-      assertProviderReplayError(() =>
-        createAnthropicProviderReplayCheckpoint({
-          messageId: "assistant-message-1",
-          providerMetadata: {
-            anthropic: {
-              rawAssistantMessages: [
-                [{ type: "text", text: "first response" }],
-                [{ type: "text", text: "continued response" }],
-              ],
-            },
-          },
-        })
-      );
-    });
-
-    it("should fail explicitly on malformed raw assistant metadata", () => {
-      for (
-        const anthropic of [
-          { rawAssistantMessages: [] },
-          { rawAssistantMessages: "not-an-array" },
-          { rawAssistantMessages: [["not-a-block"]] },
-          { rawAssistantMessages: [[{ thinking: "missing type" }]] },
-        ]
-      ) {
-        assertProviderReplayError(() =>
-          createAnthropicProviderReplayCheckpoint({
-            messageId: "assistant-message-1",
-            providerMetadata: { anthropic },
-          })
-        );
-      }
-    });
-
-    it("should fail explicitly when the turn exceeds the checkpoint block capacity", () => {
-      assertProviderReplayError(() =>
-        createAnthropicProviderReplayCheckpoint({
-          messageId: "assistant-message-1",
-          providerMetadata: {
-            anthropic: {
-              rawAssistantMessages: [
-                Array.from({ length: 101 }, () => ({ type: "text", text: "block" })),
-              ],
-            },
-          },
-        })
-      );
-    });
-  });
-
   describe("applyProviderReplayCheckpointsToMessages", () => {
     it("should attach opaque replay metadata to the matching assistant turn", () => {
       const target = createAssistantMessage("assistant-message-1");
@@ -548,6 +357,17 @@ describe("agent/runtime/provider-replay", () => {
         applyProviderReplayCheckpointsToMessages(messages, [
           { ...createValidCheckpoint(), messageId: "user-1" },
         ])
+      );
+    });
+
+    it("should fail explicitly when the anchored turn was split into segments", () => {
+      const messages = [
+        createAssistantMessage("assistant-message-1"),
+        { id: "tool-1", role: "tool", parts: [], timestamp: 1 },
+        createAssistantMessage("assistant-message-1-1"),
+      ] as Message[];
+      assertProviderReplayError(() =>
+        applyProviderReplayCheckpointsToMessages(messages, [createValidCheckpoint()])
       );
     });
 
