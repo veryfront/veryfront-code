@@ -205,7 +205,10 @@ describe("canonical npm artifact workflow", () => {
     }
 
     const smokeStep = namedStep(smoke, "Clean-room install/import smoke");
-    assertEquals(smokeStep.run, "bash scripts/test/npm-install-smoke.sh");
+    assertEquals(
+      smokeStep.run,
+      "deno run -A scripts/test/npm-install-smoke.ts",
+    );
     assertEquals(
       asRecord(smokeStep.env, "npm smoke environment").VF_NPM_PACK_DIR,
       "${{ github.workspace }}/dist/npm-compatibility",

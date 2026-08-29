@@ -802,8 +802,12 @@ describe("npm supply-chain policy", () => {
   });
 
   it("packs and exercises auto-loaded extensions in npm install smoke tests", async () => {
-    const source = await Deno.readTextFile("scripts/test/npm-install-smoke.sh");
-    assertStringIncludes(source, "--allow-run=tar");
+    const source = await Deno.readTextFile("scripts/test/npm-install-smoke.ts");
+    assertStringIncludes(
+      source,
+      'from "../ci/npm-compatibility-artifact.ts"',
+    );
+    assertStringIncludes(source, "loadNpmCompatibilityArtifact(packDir)");
     const autoLoadedExtensions = [
       "ext-bundler-esbuild",
       "ext-content-mdx",
@@ -815,22 +819,15 @@ describe("npm supply-chain policy", () => {
     ];
 
     for (const extensionName of autoLoadedExtensions) {
-      const tarballName = `veryfront-${extensionName}-*.tgz`;
-
-      assertStringIncludes(
-        source,
-        `npm/extensions/${extensionName}`,
-      );
-      assertStringIncludes(
-        source,
-        tarballName,
-      );
+      assertStringIncludes(source, `"${extensionName}",`);
     }
+    assertStringIncludes(source, "npm/extensions/${extension}");
+    assertStringIncludes(source, "veryfront-${extension}-");
 
     assertStringIncludes(source, "CodeParser was not registered");
     assertStringIncludes(source, "getDeferredExtensionState(resolved)");
     assertStringIncludes(source, "await deferred.load(logger)");
-    assertStringIncludes(source, "deno eval --node-modules-dir=auto");
+    assertStringIncludes(source, '"--node-modules-dir=auto"');
     assertStringIncludes(
       source,
       "Deno could not load the packed bundler extension",
@@ -854,8 +851,8 @@ describe("npm supply-chain policy", () => {
     assertStringIncludes(source, "materializeScaffold");
     assertStringIncludes(source, "template: 'ai-agent'");
     assertStringIncludes(source, "published ai-agent starter");
-    assertStringIncludes(source, "dev --port");
-    assertStringIncludes(source, ">Assistant</title>");
+    assertStringIncludes(source, '"--no-hmr"');
+    assertStringIncludes(source, ">Assistant<");
   });
 
   it("loads CLI command handlers after global routing decisions", async () => {
