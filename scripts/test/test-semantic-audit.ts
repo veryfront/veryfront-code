@@ -4682,6 +4682,8 @@ function bindRuntimeAssignment(
     assignedDefinitelyTruthy,
     assignedDefinitelyTruthy ||
       expressionIsDefinitelyNonNullish(node.right, scopes),
+    (name) =>
+      assignmentTargetScope(name, scopes)?.crossesFunctionBoundary !== true,
   );
   if (
     bindRuntimeMemberAssignment(
@@ -7465,6 +7467,7 @@ function bindDefinitelyNonUndefinedPattern(
   scopeForName: (name: string) => Scope | undefined,
   definitelyTruthy = false,
   definitelyNonNullish = false,
+  canAddPositiveTruthinessFact: (name: string) => boolean = () => true,
 ): void {
   if (pattern.type === "Identifier") {
     const name = pattern.name as string;
@@ -7477,12 +7480,12 @@ function bindDefinitelyNonUndefinedPattern(
     }
     if (!definitelyTruthy) {
       scope.definitelyTruthyNames.delete(name);
-    } else if (unconditional) {
+    } else if (unconditional && canAddPositiveTruthinessFact(name)) {
       scope.definitelyTruthyNames.add(name);
     }
     if (!definitelyNonNullish) {
       scope.definitelyNonNullishNames.delete(name);
-    } else if (unconditional) {
+    } else if (unconditional && canAddPositiveTruthinessFact(name)) {
       scope.definitelyNonNullishNames.add(name);
     }
     return;
@@ -7514,6 +7517,9 @@ function bindDefinitelyNonUndefinedPattern(
       scopes,
       unconditional,
       scopeForName,
+      false,
+      false,
+      canAddPositiveTruthinessFact,
     );
     return;
   }
@@ -7526,6 +7532,9 @@ function bindDefinitelyNonUndefinedPattern(
       scopes,
       unconditional,
       scopeForName,
+      false,
+      false,
+      canAddPositiveTruthinessFact,
     );
     return;
   }
@@ -7545,6 +7554,9 @@ function bindDefinitelyNonUndefinedPattern(
           scopes,
           unconditional,
           scopeForName,
+          false,
+          false,
+          canAddPositiveTruthinessFact,
         );
         continue;
       }
@@ -7562,6 +7574,9 @@ function bindDefinitelyNonUndefinedPattern(
         scopes,
         unconditional,
         scopeForName,
+        false,
+        false,
+        canAddPositiveTruthinessFact,
       );
     }
     return;
@@ -7576,6 +7591,9 @@ function bindDefinitelyNonUndefinedPattern(
       scopes,
       unconditional,
       scopeForName,
+      false,
+      false,
+      canAddPositiveTruthinessFact,
     );
   }
 }

@@ -4991,6 +4991,26 @@ AndKeepLeft.write("and-keep-left.txt", "x");
     );
   });
 
+  it("does not leak positive truthiness facts out of uncalled nested functions", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class ClosureFallback {}
+let closureReceiver;
+function assignClosureReceiver() {
+  closureReceiver = class {};
+}
+void assignClosureReceiver;
+const ClosureAlias = closureReceiver || ClosureFallback;
+ClosureAlias.write = Deno.writeTextFile;
+ClosureFallback.write("closure-fallback.txt", "x");
+`,
+        "src/logical-receiver-uncalled-closure.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "ClosureFallback.write"]],
+    );
+  });
+
   it("retains logical receivers when truthiness evidence is invalidated", () => {
     assertEquals(
       collectSemanticMarkers(
