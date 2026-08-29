@@ -66,6 +66,20 @@ describe("test:file task command", () => {
     assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), false);
     assertEquals(args.includes(LOOPBACK_ALLOW_NET), true);
   });
+
+  it("uses integration permissions for source-root integration tests", () => {
+    for (
+      const target of [
+        "cli/commands/deploy/deploy.integration.test.ts",
+        "src/discovery/auto-discovery.integration.test.ts",
+      ]
+    ) {
+      const args = buildTestFileCommandArgs([target]);
+      assertEquals(args.includes("--allow-all"), true, target);
+      assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), true, target);
+      assertEquals(args.includes(LOOPBACK_ALLOW_NET), false, target);
+    }
+  });
 });
 
 describe("buildTestFileCommandArgs leak tracing", () => {

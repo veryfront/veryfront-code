@@ -37,7 +37,9 @@ function getPositionalTestTargets(rawArgs: readonly string[]): string[] {
     }
     if (!optionsEnded && arg.startsWith("-")) {
       const option = arg.split("=", 1)[0]!;
-      if (!arg.includes("=") && TEST_OPTIONS_WITH_SEPARATE_VALUE.has(option)) index += 1;
+      if (!arg.includes("=") && TEST_OPTIONS_WITH_SEPARATE_VALUE.has(option)) {
+        index += 1;
+      }
       continue;
     }
     targets.push(arg);
@@ -76,13 +78,16 @@ function isScriptsPath(arg: string): boolean {
 
 function isIntegrationPath(arg: string): boolean {
   const normalized = arg.replaceAll("\\", "/").replace(/^\.\//, "");
-  return normalized === "tests" || normalized.startsWith("tests/");
+  return normalized === "tests" ||
+    normalized.startsWith("tests/") ||
+    /\.integration\.test\.tsx?$/.test(normalized);
 }
 
 async function main(): Promise<void> {
-  const environment = getPositionalTestTargets(Deno.args).some(isIntegrationPath)
-    ? DENO_TEST_ENV
-    : UNIT_DENO_TEST_ENV;
+  const environment =
+    getPositionalTestTargets(Deno.args).some(isIntegrationPath)
+      ? DENO_TEST_ENV
+      : UNIT_DENO_TEST_ENV;
   const command = new Deno.Command("deno", {
     args: buildTestFileCommandArgs(Deno.args),
     clearEnv: true,
