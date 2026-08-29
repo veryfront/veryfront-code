@@ -867,6 +867,9 @@ function planAnthropicRawAssistantReplay(
       }
     } else if (!replayIndices.has(index)) {
       thinkingOnlyReplayIndices.add(index);
+      for (const connectedIndex of connectedIndices) {
+        if (connectedIndex !== index) validationOnlyReplayIndices.add(connectedIndex);
+      }
     }
   }
 
@@ -1128,10 +1131,13 @@ function toAnthropicMessages(
           rawProviderToolNamesById = replay.nextProviderToolNamesById;
           canonicalProviderToolNamesById = replay.nextCanonicalProviderToolNamesById;
           const opaqueThinkingContent: Array<Record<string, unknown>> = [];
+          const rawClientToolInputById = new Map<string, unknown>();
           for (const rawContent of replay.messages) {
             for (const block of rawContent) {
               if (block.type === "thinking" || block.type === "redacted_thinking") {
                 opaqueThinkingContent.push({ ...block });
+              } else if (block.type === "tool_use" && typeof block.id === "string") {
+                rawClientToolInputById.set(block.id, block.input);
               }
             }
           }
@@ -1142,11 +1148,14 @@ function toAnthropicMessages(
               continue;
             }
             if (part.type === "tool-call" && part.providerExecuted !== true) {
+              if (!rawClientToolInputById.has(part.toolCallId)) {
+                throw invalidAnthropicClientCallHistory();
+              }
               canonicalContent.push({
                 type: "tool_use",
                 id: part.toolCallId,
                 name: part.toolName,
-                input: part.input,
+                input: rawClientToolInputById.get(part.toolCallId),
               });
             }
           }

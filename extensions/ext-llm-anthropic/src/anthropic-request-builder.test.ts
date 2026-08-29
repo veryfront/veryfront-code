@@ -4273,7 +4273,7 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
         type: "tool-call",
         toolCallId: "local_followup_1",
         toolName: "local_followup",
-        input: { id: 1 },
+        input: '{"id":1}',
       }],
       providerMetadata: {
         anthropic: {
@@ -4352,6 +4352,81 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
         type: "text",
         text: "Summarize that",
       }],
+    }]);
+  });
+
+  it("validates split compacted provider history before replaying result thinking", () => {
+    const prompt: RuntimePromptMessage[] = [{
+      role: "user",
+      content: [{ type: "text", text: "Search" }],
+    }, {
+      role: "assistant",
+      content: [{ type: "text", text: "Searching." }],
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "server_tool_use",
+            id: "server_search_split",
+            name: "web_search",
+            input: { query: "Veryfront" },
+          }]],
+        },
+      },
+    }, {
+      role: "assistant",
+      content: [{ type: "text", text: "Search complete." }],
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "redacted_thinking",
+            data: "redacted-split-result",
+          }, {
+            type: "web_search_tool_result",
+            tool_use_id: "server_search_split",
+            content: [{
+              type: "web_search_result",
+              url: "https://veryfront.com",
+              title: "Veryfront",
+              encrypted_content: "encrypted-result",
+              page_age: null,
+            }],
+          }, {
+            type: "text",
+            text: "Stale raw result text.",
+          }]],
+        },
+      },
+    }, {
+      role: "user",
+      content: [{ type: "text", text: "Continue" }],
+    }];
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      { prompt },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.messages, [{
+      role: "user",
+      content: [{ type: "text", text: "Search" }],
+    }, {
+      role: "assistant",
+      content: [{ type: "text", text: "Searching." }],
+    }, {
+      role: "assistant",
+      content: [{
+        type: "redacted_thinking",
+        data: "redacted-split-result",
+      }, {
+        type: "text",
+        text: "Search complete.",
+      }],
+    }, {
+      role: "user",
+      content: [{ type: "text", text: "Continue" }],
     }]);
   });
 
