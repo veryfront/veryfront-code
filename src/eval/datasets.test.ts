@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { datasets, evalDataset, runEval } from "veryfront/eval";
 
 describe("eval/datasets", () => {
@@ -73,7 +74,7 @@ describe("eval/datasets", () => {
   });
 
   it("grades a labelled JSONL corpus through a target-free dataset eval", async () => {
-    const root = await Deno.makeTempDir({ prefix: "vf-eval-dataset-corpus-" });
+    const root = await makeTempDir({ prefix: "vf-eval-dataset-corpus-" });
     try {
       await Deno.writeTextFile(
         `${root}/corpus.jsonl`,

@@ -26,6 +26,7 @@ import {
   normalizeSourceIntegrationPolicy,
   type SourceIntegrationPolicyManifest,
 } from "../../../src/integrations/source-policy.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { saveToken } from "../../auth/token-store.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
 import { setQuietMode } from "../../utils/index.ts";
@@ -1678,8 +1679,8 @@ describe("eval CLI command helpers", () => {
   });
 
   it("runs a dataset eval without resolving an agent or tool target", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-eval-dataset-cli-" });
-    const configHome = await Deno.makeTempDir({ prefix: "vf-eval-dataset-cli-auth-" });
+    const projectDir = await makeTempDir({ prefix: "vf-eval-dataset-cli-" });
+    const configHome = await makeTempDir({ prefix: "vf-eval-dataset-cli-auth-" });
     const definition = evalDataset({
       id: "eval:dataset-standing",
       dataset: [{ id: "case-1", input: "Standing text.", reference: "pass" }],
