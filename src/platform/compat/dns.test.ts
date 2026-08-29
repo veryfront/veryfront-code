@@ -293,10 +293,6 @@ describe("platform/compat/dns loopback names", () => {
       const addresses = await resolveHostAddresses("broadcasthost", { recordTypes: ["A"] });
       assertEquals(addresses, [], `got ${JSON.stringify(addresses)}`);
     } catch (error) {
-      // Only the fail-closed permission outcome is acceptable here. Anything
-      // else — including the AssertionError above when the hosts file did
-      // answer — must surface with its own message, not a misleading
-      // "expected DnsPermissionError".
       if (!(error instanceof DnsPermissionError)) throw error;
     } finally {
       __resetHostAddressCacheForTests();
