@@ -22,12 +22,17 @@ async function expectGranted(request: PermissionRequest): Promise<void> {
 
 /**
  * What requestPermission must return for a net descriptor in this process:
- * the runtime's own answer, with "prompt" folded to "denied" because a test
- * process cannot grant interactively. Outside Deno the sandbox is a documented
- * auto-granting no-op. Anchoring the expectation to the runtime instead of
- * hard-coding "granted" keeps these cases honest on any lane: they pass under
- * --allow-all and pin the fail-closed answer once the unit suite runs
- * loopback-only (veryfront-issue-inbox#714).
+ * the runtime's own answer, with "prompt" folded to "denied". The fold is a
+ * property of the test runner, not an assumption: `deno test` runs with
+ * permission prompting disabled even on an interactive TTY (measured on Deno
+ * 2.7.7 — the same request under `deno run` blocks on the prompt), so
+ * `request()` can never block or interactively grant here, and nothing in the
+ * suite calls `Deno.permissions.revoke`, so query and request cannot disagree
+ * mid-run. Outside Deno the sandbox is a documented auto-granting no-op.
+ * Anchoring the expectation to the runtime instead of hard-coding "granted"
+ * keeps these cases honest on any lane: they pass under --allow-all and pin
+ * the fail-closed answer once the unit suite runs loopback-only
+ * (veryfront-issue-inbox#714).
  */
 async function expectedNetState(host?: string): Promise<PermissionResult["state"]> {
   const permissions = getDenoRuntime()?.permissions;
