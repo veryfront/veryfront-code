@@ -590,6 +590,35 @@ describe("analyzeContent MDX", () => {
     );
   });
 
+  it("rejects empty nested JSX attribute expressions", async () => {
+    for (
+      const value of [
+        "{<Card href={} />}",
+        "{<Card href={/* note */} />}",
+      ]
+    ) {
+      const result = await analyzeContent({ value, syntax: "mdx" });
+
+      assert(result.kind === "syntax-error");
+      assertEquals(
+        result.diagnostic.range.start.offset,
+        value.indexOf("}", value.indexOf("href")),
+      );
+    }
+  });
+
+  it("preserves namespaced JSX attribute names during destination analysis", async () => {
+    const value = '{<Widget config:href="../private.md" href="../public.md" />}';
+
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => destination.rawValue),
+      ["../public.md"],
+    );
+  });
+
   it("validates nested JSX expressions in their enclosing JavaScript context", async () => {
     const generator = "{(function* () { return <Card value={yield source} /> })}";
     const classBody = "{(class Child extends Parent { " +

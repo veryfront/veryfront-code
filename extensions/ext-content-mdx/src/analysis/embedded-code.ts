@@ -64,6 +64,7 @@ interface JsxTagMode {
   readonly ownsReductionGroup: boolean;
   reductionOpened: boolean;
   pendingAttributeName: string | undefined;
+  pendingAttributeNameEnd: number | undefined;
   awaitingAttributeName: string | undefined;
   readonly expressionIds: number[];
 }
@@ -629,6 +630,7 @@ export async function analyzeEmbeddedExpression(options: {
             ownsReductionGroup,
             reductionOpened: false,
             pendingAttributeName: undefined,
+            pendingAttributeNameEnd: undefined,
             awaitingAttributeName: undefined,
             expressionIds: [],
           });
@@ -685,6 +687,7 @@ export async function analyzeEmbeddedExpression(options: {
             ownsReductionGroup: false,
             reductionOpened: false,
             pendingAttributeName: undefined,
+            pendingAttributeNameEnd: undefined,
             awaitingAttributeName: undefined,
             expressionIds: [],
           });
@@ -730,13 +733,26 @@ export async function analyzeEmbeddedExpression(options: {
       }
       mode.nameComplete = true;
       if (label === "jsxName") {
-        mode.pendingAttributeName = options.source.slice(token.start, token.end);
+        const segment = options.source.slice(token.start, token.end);
+        mode.pendingAttributeName = mode.pendingAttributeNameEnd === token.start
+          ? `${mode.pendingAttributeName ?? ""}${segment}`
+          : segment;
+        mode.pendingAttributeNameEnd = token.end;
         mode.awaitingAttributeName = undefined;
+        continue;
+      }
+      if (
+        label === ":" && mode.pendingAttributeName !== undefined &&
+        mode.pendingAttributeNameEnd === token.start
+      ) {
+        mode.pendingAttributeName += options.source.slice(token.start, token.end);
+        mode.pendingAttributeNameEnd = token.end;
         continue;
       }
       if (label === "=" && mode.pendingAttributeName !== undefined) {
         mode.awaitingAttributeName = mode.pendingAttributeName;
         mode.pendingAttributeName = undefined;
+        mode.pendingAttributeNameEnd = undefined;
         continue;
       }
       if (label === "string") {
@@ -755,6 +771,8 @@ export async function analyzeEmbeddedExpression(options: {
       }
       if (label === "{") {
         const attributeName = mode.awaitingAttributeName;
+        mode.pendingAttributeName = undefined;
+        mode.pendingAttributeNameEnd = undefined;
         mode.awaitingAttributeName = undefined;
         const expressionId = beginExpression(
           expressions,

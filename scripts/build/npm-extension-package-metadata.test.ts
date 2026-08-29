@@ -3,8 +3,8 @@ import {
   assertRejects,
   assertStringIncludes,
   assertThrows,
-} from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   assertPackageEntryPointsExist,
   createDntExtensionEntryPoints,
