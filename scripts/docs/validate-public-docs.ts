@@ -781,6 +781,7 @@ type JavaScriptSignificantTokenKind =
   | "declaration-header"
   | "expression-header"
   | "other"
+  | "operand"
   | "postfix-update"
   | "prefix-update"
   | "regex"
@@ -1648,6 +1649,7 @@ function javaScriptRegexMayStart(
     previousSignificantToken.kind === "prefix-update"
   ) return true;
   if (
+    previousSignificantToken.kind === "operand" ||
     previousSignificantToken.kind === "postfix-update" ||
     previousSignificantToken.kind === "regex"
   ) return false;
@@ -1721,7 +1723,7 @@ function javaScriptTokenAt(
     )
   ) {
     const end = javaScriptJsxElementEnd(text, start, jsxScanCache);
-    return end === undefined ? undefined : { end, kind: "other" };
+    return end === undefined ? undefined : { end, kind: "operand" };
   }
 
   if (
@@ -1812,7 +1814,7 @@ function javaScriptLineTokenEnd(
     else {
       state.previousSignificantToken = javaScriptTokenWithPersistentContext(
         end,
-        "other",
+        "operand",
         state.previousSignificantToken,
       );
       state.templateEnd = end;
@@ -2343,7 +2345,7 @@ function javaScriptJsxElementEnd(
       if (parent.kind === "expression") {
         parent.previousSignificantToken = javaScriptTokenWithPersistentContext(
           cursor,
-          "other",
+          "operand",
           parent.previousSignificantToken,
         );
       }
@@ -2481,7 +2483,7 @@ function scanTagSyntax(
       }
       previousSignificantToken = javaScriptTokenWithPersistentContext(
         jsxElementEnd,
-        "other",
+        "operand",
         previousSignificantToken,
       );
       cursor = jsxElementEnd;
@@ -2668,9 +2670,14 @@ function htmlTagRanges(
 ): Range[] {
   const ranges: Range[] = [];
   const jsxScanCache: JavaScriptJsxScanCache = new Map();
+  let expressionIndex = 0;
   for (let start = 0; start < text.length;) {
     start = text.indexOf("<", start);
     if (start === -1) break;
+    while (
+      expressionIndex < expressionRanges.length &&
+      expressionRanges[expressionIndex]!.start <= start
+    ) expressionIndex++;
     if (
       isInsideRange(stringRanges, start) ||
       (isInsideRange(ignoredRanges, start) &&
@@ -2692,7 +2699,9 @@ function htmlTagRanges(
       : Math.max(commonMarkEnd, mdxJsxEnd);
     if (tagEnd !== undefined) {
       ranges.push({ start, end: tagEnd });
-      start = tagEnd;
+      const containsExpression =
+        (expressionRanges[expressionIndex]?.start ?? tagEnd) < tagEnd;
+      start = containsExpression ? start + 1 : tagEnd;
     } else start++;
   }
   return ranges;

@@ -509,6 +509,7 @@ describe("public docs validation", () => {
           '<a data-ok={(function* () { yield /}>/.test(x) })()} href="../architecture/yield-regex.md">ok</a>\n' +
           '<a data-ok={class extends /[}>]/.constructor {}} href="../architecture/extends-regex.md">ok</a>\n' +
           '<a data-ok={(() => { class Sample {} /[}>]/.test(value) })()} href="../architecture/class-block-regex.md">ok</a>\n' +
+          '<a data-ok={(() => { class Sample extends factory(Base) {} /[}>]/.test(value) })()} href="../architecture/class-heritage-regex.md">ok</a>\n' +
           '<a data-ok={(() => { if (x) {} else /[}>]/.test(x); do /[}>]/.test(x); while (false); })()} href="../architecture/statement-regex.md">ok</a>\n' +
           '<a data-ok={(() => { class Sample {} /[}>]/.test(value); return true })()} href="../architecture/class-block-regex.md">ok</a>\n' +
           '<a data-ok={(() => { {} /[}>]/.test(value); return true })()} href="../architecture/bare-block-regex.md">ok</a>\n' +
@@ -537,7 +538,10 @@ describe("public docs validation", () => {
           '<a data-ok={class Sample {} / ({ marker: ">/" }).length} href="../architecture/class-expression-division.md">ok</a>\n' +
           '<a data-ok={<Foo></Foo>} href="../architecture/paired-jsx.md">ok</a>\n' +
           '<a data-ok={<Foo>child</Foo>} href="../architecture/paired-jsx-text.md">ok</a>\n' +
+          '<a data-ok={<Foo/> / ({ marker: ">/" }).length} href="../architecture/jsx-division.md">ok</a>\n' +
+          '<Comp value={<a href="../architecture/nested-jsx-link.md">x</a>} />\n' +
           '<a data-ok={(() => { let value\n/[}>]/.test(input); var other\n/[}>]/.test(input) })()} href="../architecture/declaration-asi-regex.md">ok</a>\n' +
+          '<a data-ok={(() => { let first, second\n/[}>]/.test(input); var third, fourth\n/[}>]/.test(input) })()} href="../architecture/declaration-list-asi-regex.md">ok</a>\n' +
           '<a data-ok={(() => { breakfast\n/ ({ marker: ">/" }).length; continueValue\n/ ({ marker: ">/" }).length; debuggerValue\n/ ({ marker: ">/" }).length; return true })()} href="../architecture/asi-prefix-division.md">ok</a>\n' +
           '<a data-ok={(() => { while (value) { break\n/[}>]/.test(value) } while (value) { continue\n/[}>]/.test(value) } debugger\n/[}>]/.test(value); return true })()} href="../architecture/asi-regex.md">ok</a>\n' +
           '<a data-ok={(() => { let value\n/[}>]/.test(input); return true })()} href="../architecture/uninitialized-let-asi-regex.md">ok</a>\n' +
@@ -586,6 +590,7 @@ describe("public docs validation", () => {
         "../architecture/yield-regex.md",
         "../architecture/extends-regex.md",
         "../architecture/class-block-regex.md",
+        "../architecture/class-heritage-regex.md",
         "../architecture/statement-regex.md",
         "../architecture/class-block-regex.md",
         "../architecture/bare-block-regex.md",
@@ -610,7 +615,10 @@ describe("public docs validation", () => {
         "../architecture/class-expression-division.md",
         "../architecture/paired-jsx.md",
         "../architecture/paired-jsx-text.md",
+        "../architecture/jsx-division.md",
+        "../architecture/nested-jsx-link.md",
         "../architecture/declaration-asi-regex.md",
+        "../architecture/declaration-list-asi-regex.md",
         "../architecture/asi-prefix-division.md",
         "../architecture/asi-regex.md",
         "../architecture/uninitialized-let-asi-regex.md",
@@ -1876,6 +1884,28 @@ describe("public docs validation", () => {
           "  var third, fourth\n" +
           "  /[}]/.test(input);\n" +
           '  return "[old](../architecture/declaration-list-asi.md)";\n' +
+          "}\n\n" +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        "export function sample(input) {\n" +
+          "  let first = <Foo>{input}</Foo>\n" +
+          '  / ({ marker: "}/" }).length;\n' +
+          '  return "[old](../architecture/jsx-initializer-division.md)";\n' +
+          "}\n\n" +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        "export function sample(input) {\n" +
+          "  let first = <Foo />, second\n" +
+          "  /[}]/.test(input);\n" +
+          '  return "[old](../architecture/jsx-list-regex.md)";\n' +
           "}\n\n" +
           "[real](../architecture/real.md)",
       ),
