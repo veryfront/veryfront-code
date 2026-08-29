@@ -604,6 +604,7 @@ export class DAGExecutor {
     if (published === false) {
       throw ORCHESTRATION_ERROR.create({
         detail: "Workflow execution ownership changed before node-state persistence",
+        context: { ownershipLost: true },
       });
     }
     return cloneExecutionState(nodeStates, "Workflow node states");
@@ -707,14 +708,10 @@ export class DAGExecutor {
               nodeStates,
               parentNodeIds: scope.declaredNodeIds,
               runtime: {
+                // Map children ride the parent node-state map like parallel
+                // children, so the root-keyspace flag is inherited unchanged.
                 executeChildGraph: (nodes, run, options) =>
-                  this.executeChildGraph(
-                    nodes,
-                    run,
-                    { ...scope, rootKeyspace: false },
-                    options,
-                    attemptSignal,
-                  ),
+                  this.executeChildGraph(nodes, run, scope, options, attemptSignal),
                 onNodeComplete: this.config.onNodeComplete,
                 abortSignal: attemptSignal,
               },
@@ -1152,6 +1149,7 @@ export class DAGExecutor {
     if (saved === false) {
       throw ORCHESTRATION_ERROR.create({
         detail: "Workflow execution ownership changed before checkpoint persistence",
+        context: { ownershipLost: true },
       });
     }
   }

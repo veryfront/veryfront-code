@@ -2514,6 +2514,82 @@ describe("DAGExecutor", () => {
       assertEquals(executed, []);
     });
 
+    it("charges a recovered map child durably before it executes", async () => {
+      // Map children live in the root node-state map like parallel children
+      // (the strategy passes the parent map through and merges back), so a
+      // recovered map child must be durably charged at admission too.
+      const order: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          order.push(`exec:${node.id}`);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+        onChildRecoveryAdmitted: ({ nodeStatePatch }) => {
+          order.push(`admit:${Object.keys(nodeStatePatch.set).sort().join(",")}`);
+        },
+      });
+      const nodes = [
+        map("mapper", {
+          items: [{ id: 1 }],
+          processor: step("inner", { tool: "noop" }),
+        }),
+      ];
+      const run = createTestRun({
+        nodeStates: {
+          mapper: { nodeId: "mapper", status: "running", attempt: 1, startedAt: new Date() },
+          mapper_0: { nodeId: "mapper_0", status: "running", attempt: 1, startedAt: new Date() },
+        },
+      });
+
+      const result = await exec.execute(nodes, run);
+
+      assertEquals(result.completed, true);
+      assertEquals(order, ["admit:mapper_0", "exec:mapper_0"]);
+    });
+
+    it("stops instead of failing the composite when a child checkpoint is fenced out", async () => {
+      // A fenced-out checkpoint append means another worker owns the run row.
+      // Inside a composite that must abort the execution, not fall through to
+      // composite retry or record a failed state the new owner would read.
+      const executedNodes: string[] = [];
+      const backend = {
+        saveCheckpoint: () => Promise.resolve(),
+        getLatestCheckpoint: () => Promise.resolve(null),
+      } as unknown as WorkflowBackend;
+      const fencedOut = new (class extends CheckpointManager {
+        override save(): Promise<boolean> {
+          return Promise.resolve(false);
+        }
+      })({ backend });
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executedNodes.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+        checkpointManager: fencedOut,
+      });
+      const inner = step("inner", { tool: "noop" });
+      (inner.config as { checkpoint?: boolean }).checkpoint = true;
+      const nodes = [parallel("outer", [inner])];
+      const run = createTestRun();
+
+      const error = await assertRejects(
+        () =>
+          exec.execute(nodes, run, undefined, undefined, {
+            runId: "test-run",
+            workerId: "run-execution:worker-a",
+          }),
+        Error,
+        "ownership changed",
+      );
+
+      assertEquals(executedNodes, ["outer/inner"]);
+      assertEquals(
+        (error as { context?: { ownershipLost?: boolean } }).context?.ownershipLost,
+        true,
+      );
+    });
+
     it("does not merge-write recovery for loop iteration children", async () => {
       // A loop iteration's children live in the loop node's private iteration
       // snapshot, not the root node-state map. Merge-writing their keys into

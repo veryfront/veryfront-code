@@ -45,8 +45,8 @@ export interface ExecutionScope {
   declaredNodeIds: ReadonlySet<string>;
   /**
    * True while every enclosing composite carries its child states back into
-   * the root run's node-state map (parallel, branch, subWorkflow). Loop and
-   * map iterations keep children in a private iteration snapshot instead, so
+   * the root run's node-state map (parallel, branch, subWorkflow, map). Loop
+   * iterations keep children in a private iteration snapshot instead, so
    * their keys must never be merge-written into the root map -- no later
    * publish would delete them.
    */
