@@ -1,23 +1,19 @@
 import { INVALID_ARGUMENT, VeryfrontError } from "#veryfront/errors";
-import { DEFAULT_LIMITS } from "#veryfront/security/input-validation/types.ts";
 import {
   isRequestBodyTooLargeError,
   readBodyWithLimit,
 } from "#veryfront/security/input-validation/limits.ts";
+import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 
-export const AG_UI_MAX_REQUEST_BODY_BYTES = DEFAULT_LIMITS.maxBodySize;
+export const AG_UI_MAX_REQUEST_BODY_BYTES = DEFAULT_MAX_BODY_SIZE_BYTES;
 
-export async function parseAgUiJsonBody(
-  request: Request,
-  maxBodySizeBytes = AG_UI_MAX_REQUEST_BODY_BYTES,
-): Promise<unknown> {
-  return JSON.parse(await readBodyWithLimit(request, maxBodySizeBytes));
+export async function parseAgUiJsonBody(request: Request): Promise<unknown> {
+  return JSON.parse(await readBodyWithLimit(request, AG_UI_MAX_REQUEST_BODY_BYTES));
 }
 
 export function createAgUiBodyLimitErrorResponse(
   error: unknown,
   errorLabel: string,
-  maxBodySizeBytes = AG_UI_MAX_REQUEST_BODY_BYTES,
 ): Response | undefined {
   if (!isRequestBodyTooLargeError(error)) {
     return undefined;
@@ -28,7 +24,7 @@ export function createAgUiBodyLimitErrorResponse(
       error: errorLabel,
       details: [{
         path: [],
-        message: `Request body exceeds ${maxBodySizeBytes} bytes`,
+        message: `Request body exceeds ${AG_UI_MAX_REQUEST_BODY_BYTES} bytes`,
       }],
     },
     { status: 413 },
@@ -82,12 +78,11 @@ export function extractRequest(requestOrCtx: unknown): Request {
 export async function parseAgUiJsonRequestOrError<T>(
   parseRequest: () => Promise<T>,
   errorLabel: string,
-  maxBodySizeBytes = AG_UI_MAX_REQUEST_BODY_BYTES,
 ): Promise<T | Response> {
   try {
     return await parseRequest();
   } catch (error) {
-    const bodyLimitError = createAgUiBodyLimitErrorResponse(error, errorLabel, maxBodySizeBytes);
+    const bodyLimitError = createAgUiBodyLimitErrorResponse(error, errorLabel);
     if (bodyLimitError) return bodyLimitError;
 
     if (isSchemaValidationError(error)) {

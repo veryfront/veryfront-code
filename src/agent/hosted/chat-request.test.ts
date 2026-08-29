@@ -2,7 +2,6 @@ import "#veryfront/schemas/_test-setup.ts";
 import { convertUiMessagesToProviderModelMessages } from "../../chat/provider-message-conversion.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { MAX_PROVIDER_REPLAY_REQUEST_BODY_BYTES } from "#veryfront/agent/runtime/provider-replay-limits.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import {
   buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation,
@@ -1930,7 +1929,7 @@ describe("agent/hosted-chat-request", () => {
     const response = await parseHostedChatRequestFromRequest(
       new Request("https://agent.example.com/api/runs", {
         method: "POST",
-        body: JSON.stringify({ padding: "x".repeat(MAX_PROVIDER_REPLAY_REQUEST_BODY_BYTES) }),
+        body: JSON.stringify({ padding: "x".repeat(DEFAULT_MAX_BODY_SIZE_BYTES) }),
       }),
       {
         authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
@@ -2037,7 +2036,7 @@ describe("agent/hosted-chat-request", () => {
     });
   });
 
-  it("accepts private provider replay requests above the generic body limit", async () => {
+  it("rejects private provider replay requests above the generic body limit", async () => {
     const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
       new Request("https://agent.example.com/api/control-plane/runs/run_1/stream", {
         method: "POST",
@@ -2068,12 +2067,11 @@ describe("agent/hosted-chat-request", () => {
       },
     );
 
-    if (parsed instanceof Response) throw new Error("Expected parsed request");
-    assertEquals(
-      Array.isArray(parsed.serverResolvedProviderReplayCheckpoints),
-      true,
-      "private replay state uses the replay request envelope, not the generic body cap",
-    );
+    if (!(parsed instanceof Response)) {
+      throw new Error("Expected oversized replay request to be rejected");
+    }
+    assertEquals(parsed.status, 413);
+    assertEquals((await parsed.json()).errorCode, "REQUEST_TOO_LARGE");
   });
 
   it("rejects ordinary hosted chat requests above the generic body limit", async () => {

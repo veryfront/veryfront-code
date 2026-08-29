@@ -8,7 +8,6 @@ import {
   RuntimeAgentRunInvocationSchema,
 } from "../index.ts";
 import { DEFAULT_LIMITS } from "#veryfront/security/input-validation/types.ts";
-import { MAX_PROVIDER_REPLAY_REQUEST_BODY_BYTES } from "./provider-replay-limits.ts";
 
 const conversationId = "10000000-1000-4000-8000-100000000001";
 const messageId = "10000000-1000-4000-8000-100000000002";
@@ -525,8 +524,8 @@ describe("agent/runtime-agent-invocation-contract", () => {
     assertEquals(parsed.context.length, 1);
   });
 
-  it("keeps the replay-sized body limit on runtime agent invocation requests", async () => {
-    const parsed = await parseRuntimeAgentRunInvocation(
+  it("keeps the default body limit on runtime agent invocation requests", async () => {
+    const result = await parseRuntimeAgentRunInvocationOrError(
       new Request("http://localhost/api/control-plane/runs/run_1/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -551,15 +550,8 @@ describe("agent/runtime-agent-invocation-contract", () => {
       }),
     );
 
-    assertEquals(
-      JSON.stringify(parsed).length < MAX_PROVIDER_REPLAY_REQUEST_BODY_BYTES,
-      true,
-      "test fixture must stay inside the replay envelope",
-    );
-    assertEquals(
-      Array.isArray(parsed.serverResolvedProviderReplayCheckpoints),
-      true,
-    );
+    assertInstanceOf(result, Response);
+    assertEquals(result.status, 413);
   });
 
   it("returns a 400 response for malformed runtime agent invocation payloads", async () => {

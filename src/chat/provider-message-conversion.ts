@@ -7,6 +7,7 @@
  * and settles into one ProviderModelMessage[].
  */
 import { isRecord } from "./part-field-access.ts";
+import type { JsonValue } from "./part-field-access.ts";
 import {
   buildRawToolCallResultOutput,
   buildToolResultOutput,
@@ -33,21 +34,16 @@ type ProviderToolResultContent = {
   type: "tool-result";
   toolCallId: string;
   toolName: string;
-  output: ChatToolResultPart["output"];
-  providerExecuted?: boolean;
+  output:
+    | {
+      type: "json";
+      value: JsonValue;
+    }
+    | {
+      type: "error-text";
+      value: string;
+    };
 };
-
-type AssistantContentPart =
-  | { type: "text"; text: string }
-  | { type: "reasoning"; text?: string; signature?: string; redactedData?: string }
-  | { type: "file" | "image"; mediaType: string; data: string; filename?: string }
-  | {
-    type: "tool-call";
-    toolCallId: string;
-    toolName: string;
-    input: Record<string, unknown>;
-    providerExecuted?: boolean;
-  };
 
 function buildToolNameMap(parts: ReadonlyArray<unknown>): Map<string, string> {
   const toolNames = new Map<string, string>();
@@ -88,7 +84,6 @@ function resolveRawToolResultPart(
     toolCallId: rawResult.toolCallId,
     toolName,
     output: rawResult.output,
-    ...(rawResult.providerExecuted === true ? { providerExecuted: true } : {}),
   };
 }
 
@@ -160,7 +155,12 @@ function convertAssistantMessage(
   replayMatches: ProviderVisibleToolReplayMatches,
 ): ProviderModelMessage[] {
   const toolNamesById = buildToolNameMap(message.parts);
-  const assistantContent: AssistantContentPart[] = [];
+  const assistantContent: Array<
+    | { type: "text"; text: string }
+    | { type: "reasoning"; text?: string; signature?: string; redactedData?: string }
+    | { type: "file" | "image"; mediaType: string; data: string; filename?: string }
+    | { type: "tool-call"; toolCallId: string; toolName: string; input: Record<string, unknown> }
+  > = [];
   const deferredAssistantContent: typeof assistantContent = [];
   const toolResults: ProviderToolResultContent[] = [];
   const pendingToolCallIds = new Set<string>();
@@ -190,7 +190,13 @@ function convertAssistantMessage(
     toolResults.length = 0;
   };
 
-  const pushAssistantPart = (part: AssistantContentPart) => {
+  const pushAssistantPart = (
+    part:
+      | { type: "text"; text: string }
+      | { type: "reasoning"; text?: string; signature?: string; redactedData?: string }
+      | { type: "file" | "image"; mediaType: string; data: string; filename?: string }
+      | { type: "tool-call"; toolCallId: string; toolName: string; input: Record<string, unknown> },
+  ) => {
     if (part.type === "tool-call") {
       if (deferredAssistantContent.length > 0) {
         flushAssistantMessage(assistantContent);
@@ -229,7 +235,6 @@ function convertAssistantMessage(
       toolName: string;
       input: Record<string, unknown>;
       state?: string;
-      providerExecuted?: boolean;
     },
     resultOutput: ReturnType<typeof buildToolResultOutput>,
   ) => {
@@ -252,7 +257,6 @@ function convertAssistantMessage(
       toolCallId: toolCall.toolCallId,
       toolName: toolCall.toolName,
       input: toolCall.input,
-      ...(toolCall.providerExecuted === true ? { providerExecuted: true } : {}),
     });
 
     if (resultOutput) {
@@ -261,7 +265,6 @@ function convertAssistantMessage(
         toolCallId: toolCall.toolCallId,
         toolName: toolCall.toolName,
         output: resultOutput,
-        ...(toolCall.providerExecuted === true ? { providerExecuted: true } : {}),
       });
     }
   };
@@ -361,7 +364,6 @@ function convertToolMessage(
           toolCallId: toolPart.toolCallId,
           toolName: toolPart.toolName,
           output,
-          ...(toolPart.providerExecuted === true ? { providerExecuted: true } : {}),
         });
       }
       continue;

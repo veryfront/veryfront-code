@@ -40,14 +40,12 @@ type AgentRuntimeMessageLikePart =
     toolCallId: string;
     toolName: string;
     args: Record<string, unknown>;
-    providerExecuted?: boolean;
   }
   | {
     type: string;
     toolCallId: string;
     toolName: string;
     input: Record<string, unknown>;
-    providerExecuted?: boolean;
   }
   | {
     type: "tool_call";
@@ -59,21 +57,18 @@ type AgentRuntimeMessageLikePart =
     toolName?: string;
     input?: Record<string, unknown>;
     args?: Record<string, unknown>;
-    providerExecuted?: boolean;
   }
   | {
     type: "tool-result";
     toolCallId: string;
     toolName: string;
     result?: unknown;
-    providerExecuted?: boolean;
   }
   | {
     type: "tool-result";
     toolCallId: string;
     toolName: string;
     output: unknown;
-    providerExecuted?: boolean;
   }
   | {
     type: "tool_result";
@@ -83,7 +78,6 @@ type AgentRuntimeMessageLikePart =
     toolName?: string;
     result?: unknown;
     output?: unknown;
-    providerExecuted?: boolean;
   }
   | RuntimeAttachmentLikePart
   | ChatSourceUrlUiPart
@@ -98,14 +92,12 @@ export type AgentRuntimeMessagePart =
     toolCallId: string;
     toolName: string;
     args: Record<string, unknown>;
-    providerExecuted?: boolean;
   }
   | {
     type: "tool-result";
     toolCallId: string;
     toolName: string;
     result: unknown;
-    providerExecuted?: boolean;
   }
   | RuntimeAttachmentPart
   | ChatSourceUrlUiPart
@@ -140,7 +132,6 @@ type ProviderToolCallPart = {
   toolCallId: string;
   toolName: string;
   input: Record<string, unknown>;
-  providerExecuted?: boolean;
 };
 
 /** Error shape for agent runtime message conversion. */
@@ -221,7 +212,6 @@ function convertStructuredPart(part: StructuredProviderPart): AgentRuntimeMessag
         toolCallId: part.toolCallId,
         toolName: part.toolName,
         args: "input" in part ? toChildRunToolInputRecord(part.input) : {},
-        ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
       };
 
     case "tool-result":
@@ -230,7 +220,6 @@ function convertStructuredPart(part: StructuredProviderPart): AgentRuntimeMessag
         toolCallId: part.toolCallId,
         toolName: part.toolName,
         result: "output" in part ? part.output : null,
-        ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
       };
 
     case "image":
@@ -383,12 +372,7 @@ export function getAgentRuntimeReasoningPart(part: unknown): ProviderReasoningPa
 /** Return a runtime tool-call part when the value carries a tool call. */
 export function getAgentRuntimeToolCallPart(
   part: unknown,
-): {
-  toolCallId: string;
-  toolName: string;
-  input: Record<string, unknown>;
-  providerExecuted?: boolean;
-} | null {
+): { toolCallId: string; toolName: string; input: Record<string, unknown> } | null {
   if (!isRecord(part) || typeof part.type !== "string") {
     return null;
   }
@@ -412,7 +396,6 @@ export function getAgentRuntimeToolCallPart(
     toolCallId,
     toolName,
     input: toChildRunToolInputRecord(part.args ?? part.input),
-    ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
   };
 }
 
@@ -420,12 +403,7 @@ export function getAgentRuntimeToolCallPart(
 export function getAgentRuntimeToolResultPart(
   part: unknown,
   toolNameFallback?: string,
-): {
-  toolCallId: string;
-  toolName: string;
-  output: unknown;
-  providerExecuted?: boolean;
-} | null {
+): { toolCallId: string; toolName: string; output: unknown } | null {
   if (!isRecord(part) || part.type !== "tool-result" && part.type !== "tool_result") {
     return null;
   }
@@ -447,7 +425,6 @@ export function getAgentRuntimeToolResultPart(
       : Object.hasOwn(part, "output")
       ? part.output
       : null,
-    ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
   };
 }
 
@@ -465,14 +442,12 @@ export function createToolResultPart(part: {
   toolCallId: string;
   toolName: string;
   output: unknown;
-  providerExecuted?: boolean;
 }): ChatToolResultPart {
   return {
     type: "tool-result",
     toolCallId: part.toolCallId,
     toolName: part.toolName,
     output: toToolResultOutput(part.output),
-    ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
   };
 }
 
@@ -533,7 +508,6 @@ function collectAgentRuntimeProviderContentParts(
         toolCallId: toolCallPart.toolCallId,
         toolName: toolCallPart.toolName,
         input: toolCallPart.input,
-        ...(toolCallPart.providerExecuted === true ? { providerExecuted: true } : {}),
       });
     }
   }
@@ -643,7 +617,6 @@ function convertAssistantAgentRuntimePartsToProviderMessages(
         toolCallId: toolCallPart.toolCallId,
         toolName: toolCallPart.toolName,
         input: toolCallPart.input,
-        ...(toolCallPart.providerExecuted === true ? { providerExecuted: true } : {}),
       });
     }
   }

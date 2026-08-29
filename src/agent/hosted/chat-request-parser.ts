@@ -23,7 +23,6 @@ import {
   readBodyWithLimit,
 } from "#veryfront/security/input-validation/limits.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
-import { MAX_PROVIDER_REPLAY_REQUEST_BODY_BYTES } from "#veryfront/agent/runtime/provider-replay-limits.ts";
 import {
   type HostedRuntimeSourceBindingError,
   type HostedRuntimeSourceIdentity,
@@ -633,7 +632,7 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     return authenticatedRequest;
   }
 
-  const requestBody = await parseRequestJson(request, MAX_PROVIDER_REPLAY_REQUEST_BODY_BYTES);
+  const requestBody = await parseRequestJson(request, DEFAULT_MAX_BODY_SIZE_BYTES);
   if (requestBody instanceof Response) return requestBody;
 
   const invocation = getRuntimeAgentRunInvocationSchema().safeParse(requestBody);

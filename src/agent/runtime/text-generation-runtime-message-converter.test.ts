@@ -1,12 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import {
-  assertEquals,
-  assertInstanceOf,
-  assertStringIncludes,
-  assertThrows,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { VeryfrontError } from "#veryfront/errors";
 import {
   convertToTextGenerationRuntimeMessage,
   convertToTextGenerationRuntimeMessages,
@@ -511,149 +505,6 @@ describe("text-generation-runtime-message-converter", () => {
         content: [{ type: "text", text: "" }],
         providerMetadata,
       }]);
-    });
-
-    it("reports split generic provider metadata without checkpoint-specific wording", () => {
-      const providerMetadata = { testProvider: { opaque: true } };
-      const message = attachProviderMetadata({
-        id: "a-split",
-        role: "assistant",
-        parts: [
-          {
-            type: "tool-lookup",
-            toolCallId: "call-1",
-            toolName: "lookup",
-            args: { query: "veryfront" },
-          },
-          {
-            type: "tool-result",
-            toolCallId: "call-1",
-            toolName: "lookup",
-            result: { matches: 1 },
-          },
-          { type: "text", text: "Found it." },
-        ],
-      } as unknown as Message, providerMetadata);
-
-      const error = assertThrows(() => convertToTextGenerationRuntimeMessages([message]));
-      assertInstanceOf(error, VeryfrontError);
-
-      assertEquals(error.slug, "provider-metadata-split-unsupported");
-      assertEquals(
-        error.detail,
-        "provider metadata cannot be attached after assistant turn splitting",
-      );
-    });
-
-    it("splits anthropic raw assistant messages across the split assistant turns", () => {
-      const rawToolUse = {
-        type: "tool_use",
-        id: "call-1",
-        name: "lookup",
-        input: { query: "veryfront" },
-      };
-      const rawText = { type: "text", text: "Found it." };
-      const message = attachProviderMetadata({
-        id: "a-split",
-        role: "assistant",
-        parts: [
-          { type: "tool-lookup", toolCallId: "call-1", toolName: "lookup", args: rawToolUse.input },
-          { type: "tool-result", toolCallId: "call-1", toolName: "lookup", result: { matches: 1 } },
-          { type: "text", text: "Found it." },
-        ],
-      } as unknown as Message, { anthropic: { rawAssistantMessages: [[rawToolUse], [rawText]] } });
-
-      const converted = convertToTextGenerationRuntimeMessages([message]);
-      const assistantMetadata = converted
-        .filter((entry) => entry.role === "assistant")
-        .map((entry) => entry.providerMetadata);
-
-      assertEquals(assistantMetadata, [
-        { anthropic: { rawAssistantMessages: [[rawToolUse]] } },
-        { anthropic: { rawAssistantMessages: [[rawText]] } },
-      ]);
-    });
-
-    it("groups result-only Anthropic responses with the following split assistant turn", () => {
-      const rawProviderCall = {
-        type: "server_tool_use",
-        id: "server-call-1",
-        name: "web_search",
-        input: { query: "veryfront" },
-      };
-      const rawToolUse = {
-        type: "tool_use",
-        id: "call-1",
-        name: "lookup",
-        input: { query: "veryfront" },
-      };
-      const rawProviderResult = {
-        type: "web_search_tool_result",
-        tool_use_id: "server-call-1",
-        content: [],
-      };
-      const rawText = { type: "text", text: "Found it." };
-      const message = attachProviderMetadata({
-        id: "a-split-pause",
-        role: "assistant",
-        parts: [
-          {
-            type: "tool-web_search",
-            toolCallId: "server-call-1",
-            toolName: "web_search",
-            args: rawProviderCall.input,
-            providerExecuted: true,
-          },
-          { type: "tool-lookup", toolCallId: "call-1", toolName: "lookup", args: rawToolUse.input },
-          {
-            type: "tool-result",
-            toolCallId: "server-call-1",
-            toolName: "web_search",
-            result: [],
-            providerExecuted: true,
-          },
-          { type: "tool-result", toolCallId: "call-1", toolName: "lookup", result: { matches: 1 } },
-          { type: "text", text: "Found it." },
-        ],
-      } as unknown as Message, {
-        anthropic: {
-          rawAssistantMessages: [
-            [rawProviderCall, rawToolUse],
-            [rawProviderResult],
-            [rawText],
-          ],
-        },
-      });
-
-      const converted = convertToTextGenerationRuntimeMessages([message]);
-      const assistantMetadata = converted
-        .filter((entry) => entry.role === "assistant")
-        .map((entry) => entry.providerMetadata);
-
-      assertEquals(assistantMetadata, [{
-        anthropic: { rawAssistantMessages: [[rawProviderCall, rawToolUse]] },
-      }, {
-        anthropic: { rawAssistantMessages: [[rawProviderResult], [rawText]] },
-      }]);
-    });
-
-    it("rejects anthropic raw assistant messages that do not match the split segments", () => {
-      const message = attachProviderMetadata({
-        id: "a-split",
-        role: "assistant",
-        parts: [
-          { type: "tool-lookup", toolCallId: "call-1", toolName: "lookup", args: { q: "vf" } },
-          { type: "tool-result", toolCallId: "call-1", toolName: "lookup", result: { matches: 1 } },
-          { type: "text", text: "Found it." },
-        ],
-      } as unknown as Message, {
-        anthropic: { rawAssistantMessages: [[{ type: "text", text: "Found it." }]] },
-      });
-
-      const error = assertThrows(() => convertToTextGenerationRuntimeMessages([message]));
-      assertInstanceOf(error, VeryfrontError);
-      assertEquals(error.slug, "provider-metadata-split-unsupported");
-      assertEquals(error.context, { assistantSegmentCount: 2 });
     });
 
     it("omits provider-executed tool-only assistant messages from replay", () => {
@@ -1186,39 +1037,6 @@ describe("text-generation-runtime-message-converter", () => {
         [{ role: "user", content: "hi" }],
         "every trailing assistant message must be stripped so the request never ends on an unanswered tool call",
       );
-    });
-
-    it("keeps trailing assistant messages that carry exact provider replay metadata", () => {
-      const providerMetadata = {
-        anthropic: {
-          rawAssistantMessages: [[{
-            type: "thinking",
-            thinking: "",
-            signature: "replay-signature",
-          }]],
-        },
-      };
-      const trailingAssistant = attachProviderMetadata({
-        id: "assistant-replay",
-        role: "assistant",
-        parts: [{
-          type: "reasoning",
-          text: "Private reasoning.",
-          signature: "replay-signature",
-        }],
-      } as unknown as Message, providerMetadata);
-      const messages: Message[] = [
-        { id: "u1", role: "user", parts: [{ type: "text", text: "continue" }] },
-        trailingAssistant,
-      ];
-
-      const requestMessages = convertToTextGenerationRuntimeRequestMessages(messages);
-
-      assertEquals(requestMessages.at(-1), {
-        role: "assistant",
-        content: [{ type: "text", text: "" }],
-        providerMetadata,
-      });
     });
   });
 

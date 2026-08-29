@@ -2,7 +2,6 @@ import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, RefinementCtx } from "#veryfront/extensions/schema/index.ts";
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-extensions.ts";
 import { parseAgUiJsonBody, parseAgUiJsonRequestOrError } from "../ag-ui/request-shared.ts";
-import { MAX_PROVIDER_REPLAY_REQUEST_BODY_BYTES } from "./provider-replay-limits.ts";
 import { getRuntimeAgentMarkdownDefinitionSchema } from "./agent-definition.ts";
 
 ensureBuiltinSchemaValidator();
@@ -480,9 +479,7 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
 export async function parseRuntimeAgentRunInvocation(
   request: Request,
 ): Promise<RuntimeAgentRunInvocation> {
-  return getRuntimeAgentRunInvocationSchema().parse(
-    await parseAgUiJsonBody(request, MAX_PROVIDER_REPLAY_REQUEST_BODY_BYTES),
-  );
+  return getRuntimeAgentRunInvocationSchema().parse(await parseAgUiJsonBody(request));
 }
 
 /** Error shape for parse runtime agent run invocation or. */
@@ -492,6 +489,5 @@ export async function parseRuntimeAgentRunInvocationOrError(
   return await parseAgUiJsonRequestOrError(
     () => parseRuntimeAgentRunInvocation(request),
     "Invalid runtime agent invocation",
-    MAX_PROVIDER_REPLAY_REQUEST_BODY_BYTES,
   );
 }
