@@ -233,6 +233,21 @@ describe("analyzeContent Markdown", () => {
     assert(result.kind === "document");
   });
 
+  it("accepts a malformed trailing-space frontmatter fence like the compiler", async () => {
+    const value = "---\ntitle: [unterminated\n---   \n[Visible](../visible.md)";
+    const result = await analyzeContent({
+      value,
+      syntax: "markdown",
+      frontmatter: true,
+    });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => destination.rawValue),
+      ["../visible.md"],
+    );
+  });
+
   it("maps YAML parser columns after non-BMP source characters", async () => {
     const value = "---\nvalue: [😀, }\n---\n";
     const result = await analyzeContent({
@@ -840,6 +855,22 @@ describe("analyzeContent MDX", () => {
     const result = await analyzeContent({
       value: "---\rtitle: [unterminated\rsummary: '<a href=\"../hidden.md\">x</a>'\r---\r" +
         '<Card href="../visible.md" />',
+      syntax: "mdx",
+      frontmatter: true,
+    });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => destination.rawValue),
+      ["../visible.md"],
+    );
+  });
+
+  it("accepts a malformed trailing-space frontmatter fence like the compiler", async () => {
+    const value = "---\ntitle: [unterminated\n---   \n" +
+      '<Card href="../visible.md" />';
+    const result = await analyzeContent({
+      value,
       syntax: "mdx",
       frontmatter: true,
     });

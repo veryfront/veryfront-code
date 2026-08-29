@@ -2703,6 +2703,13 @@ describe("public docs validation", () => {
         ),
         [],
       );
+      assertEquals(
+        await collectIssues(
+          `docs/guides/example.${extension}`,
+          "---\ntitle: [unterminated\n---   \n",
+        ),
+        [],
+      );
     }
   });
 

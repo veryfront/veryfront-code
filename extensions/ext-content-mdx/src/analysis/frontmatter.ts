@@ -17,6 +17,17 @@ function isYamlFrontmatterNode(node: unknown): node is YamlFrontmatterNode {
     typeof Object.getOwnPropertyDescriptor(node, "value")?.value === "string";
 }
 
+function hasCompilerClosingFence(value: string, node: YamlFrontmatterNode): boolean {
+  const end = node.position?.end;
+  if (end?.offset === undefined) {
+    throw new TypeError("YAML frontmatter node has no source position");
+  }
+  // remark accepts whitespace after the marker, but compilation requires an exact fence.
+  if (end.column !== 4) return false;
+  return end.offset === value.length || value[end.offset] === "\n" ||
+    value.startsWith("\r\n", end.offset);
+}
+
 function contentStart(value: string, node: YamlFrontmatterNode): number {
   const start = node.position?.start.offset ?? 0;
   for (let index = start; index < value.length; index++) {
@@ -122,6 +133,7 @@ export function yamlFrontmatterDiagnostic(
 
   for (const node of root.children) {
     if (!isYamlFrontmatterNode(node)) continue;
+    if (!hasCompilerClosingFence(value, node)) continue;
     try {
       if (node.value.trim() !== "") parse(node.value);
     } catch (error) {
