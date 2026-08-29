@@ -808,19 +808,18 @@ describe("npm supply-chain policy", () => {
       'from "../ci/npm-compatibility-artifact.ts"',
     );
     assertStringIncludes(source, "loadNpmCompatibilityArtifact(packDir)");
-    const autoLoadedExtensions = [
-      "ext-bundler-esbuild",
-      "ext-content-mdx",
-      "ext-css-tailwind",
-      "ext-dev-ui-react",
-      "ext-node-websocket-ws",
-      "ext-parser-babel",
-      "ext-yaml",
-    ];
-
-    for (const extensionName of autoLoadedExtensions) {
-      assertStringIncludes(source, `"${extensionName}",`);
-    }
+    assertStringIncludes(
+      source,
+      `const AUTO_LOADED_EXTENSIONS = [
+  "ext-bundler-esbuild",
+  "ext-content-mdx",
+  "ext-css-tailwind",
+  "ext-dev-ui-react",
+  "ext-node-websocket-ws",
+  "ext-parser-babel",
+  "ext-yaml",
+] as const;`,
+    );
     assertStringIncludes(source, "npm/extensions/${extension}");
     assertStringIncludes(source, "veryfront-${extension}-");
 
