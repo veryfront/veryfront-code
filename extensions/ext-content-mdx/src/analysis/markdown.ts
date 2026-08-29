@@ -8,6 +8,7 @@ import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 
+import { isDestinationAttribute } from "./embedded-code.ts";
 import { analyzeFrontmatterSource } from "./frontmatter.ts";
 import { createSourceLocator, type SourceLocator } from "./source.ts";
 import type { ContentAnalysisResult, ContentDestination, SourceRange } from "./types.ts";
@@ -163,8 +164,6 @@ function autolinkDestination(
   };
   return autolinkValue === node.url ? destination : { ...destination, normalizedValue: node.url };
 }
-
-const HTML_DESTINATION_ATTRIBUTES = new Set(["action", "formaction", "href", "src"]);
 
 type HtmlChildNode = DefaultTreeAdapterMap["childNode"];
 type HtmlElement = DefaultTreeAdapterMap["element"];
@@ -334,7 +333,7 @@ function appendHtmlAttributeDestinations(
   for (const attribute of node.attrs) {
     const locationName = htmlAttributeLocationName(attribute);
     const destinationName = locationName === "xlink:href" ? "href" : attribute.name;
-    if (!HTML_DESTINATION_ATTRIBUTES.has(destinationName)) continue;
+    if (!isDestinationAttribute(destinationName)) continue;
     const location = attributeLocations?.[locationName];
     if (location === undefined) continue;
     const destination = htmlAttributeDestination(

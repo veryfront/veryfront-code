@@ -101,7 +101,8 @@ export type EmbeddedCodeAnalysis =
 export function isDestinationAttribute(name: string | undefined): boolean {
   const normalized = name?.toLowerCase();
   return normalized === "href" || normalized === "src" ||
-    normalized === "action" || normalized === "formaction" || normalized === "xlinkhref";
+    normalized === "action" || normalized === "formaction" ||
+    normalized === "xlinkhref";
 }
 
 function parserMessage(error: Error): string {
@@ -329,13 +330,6 @@ function expressionFragment(source: string, expression: ExpressionRecord): Reduc
   return builder.result();
 }
 
-function spreadAttributeFragment(source: string, expression: ExpressionRecord): ReducedFragment {
-  const end = expression.end ?? expression.start;
-  const builder = reducedSourceBuilder(source);
-  builder.authored(expression.start, end);
-  return builder.result();
-}
-
 function own(value: unknown, key: string): unknown {
   if (typeof value !== "object" || value === null) return undefined;
   return Object.getOwnPropertyDescriptor(value, key)?.value;
@@ -491,7 +485,6 @@ function validateFragment(
   fallbackOffset: number,
   absoluteStart: number,
   locator: SourceLocator,
-  checkPrivateFields = true,
 ):
   | { readonly kind: "valid" }
   | { readonly kind: "syntax-error"; readonly diagnostic: ContentSyntaxDiagnostic } {
@@ -507,7 +500,6 @@ function validateFragment(
     AcornJsxParser.parse(`${prefix}${fragment.value}${suffix}`, {
       ecmaVersion: 2024,
       sourceType: "module",
-      checkPrivateFields,
     });
     return { kind: "valid" };
   } catch (error) {
@@ -671,7 +663,7 @@ class EmbeddedExpressionAnalyzer {
     const scanResult = this.scanTokens();
     if (scanResult !== undefined) return scanResult;
 
-    const spreadValidation = this.validateSpreadExpressions();
+    const spreadValidation = this.validateSpreadOperands();
     if (spreadValidation !== undefined) return spreadValidation;
 
     const tagValidation = this.validateTagBatches();
@@ -754,6 +746,9 @@ class EmbeddedExpressionAnalyzer {
     const root = expressionAt(this.expressions, 0);
     if (root !== undefined) root.end = token.start;
     appendAuthoredThrough(this.reducedBuilder, this.sourceCursor, token.start);
+    if (root !== undefined && this.isSpreadAttributeExpression(root)) {
+      this.reducedBuilder.generated(" : null)", token.start);
+    }
   }
 
   private reachedBalancedRoot(mode: ParseMode): boolean {
@@ -806,6 +801,7 @@ class EmbeddedExpressionAnalyzer {
       expression.tokens.length !== 0 || label !== "..."
     ) return false;
     appendAuthoredThrough(this.reducedBuilder, this.sourceCursor, token.start);
+    this.reducedBuilder.generated("(true ? ", token.start);
     discardThrough(this.sourceCursor, token.end);
     expression.tokens.push({ label, start: token.start, end: token.end });
     return true;
@@ -858,7 +854,10 @@ class EmbeddedExpressionAnalyzer {
     }
     if (expression.root) return this.unexpectedClosingBraceDiagnostic(token);
     appendAuthoredThrough(this.reducedBuilder, this.sourceCursor, token.start);
-    this.reducedBuilder.generated(",", token.start);
+    this.reducedBuilder.generated(
+      this.isSpreadAttributeExpression(expression) ? " : null)," : ",",
+      token.start,
+    );
     discardThrough(this.sourceCursor, token.end);
     expression.end = token.start;
     this.modes.pop();
@@ -1110,26 +1109,12 @@ class EmbeddedExpressionAnalyzer {
     };
   }
 
-  private validateSpreadExpressions(): ScanResult {
+  private validateSpreadOperands(): ScanResult {
     for (const expression of this.expressions) {
-      const validation = this.validateSpreadExpression(expression);
-      if (validation !== undefined) return validation;
+      if (this.isSpreadAttributeExpression(expression) && expression.tokens.length === 1) {
+        return this.emptySpreadDiagnostic(expression);
+      }
     }
-  }
-
-  private validateSpreadExpression(expression: ExpressionRecord): ScanResult {
-    if (!this.isSpreadAttributeExpression(expression)) return undefined;
-    if (expression.tokens.length === 1) return this.emptySpreadDiagnostic(expression);
-    const spreadValidation = validateFragment(
-      spreadAttributeFragment(this.options.source, expression),
-      "class _Veryfront { async *_veryfront() { const __veryfront_value = <_Veryfront {",
-      "} />; } }\n",
-      expression.start,
-      this.options.absoluteStart,
-      this.options.locator,
-      false,
-    );
-    return spreadValidation.kind === "syntax-error" ? spreadValidation : undefined;
   }
 
   private isSpreadAttributeExpression(expression: ExpressionRecord): boolean {

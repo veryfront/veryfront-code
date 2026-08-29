@@ -334,6 +334,26 @@ describe("analyzeContent Markdown", () => {
     });
   });
 
+  it("returns form submission override destinations from HTML and JSX", async () => {
+    const html = '<button formaction="../html-submit">Submit</button>';
+    const jsx = '<Button formAction="../jsx-submit" />\n' +
+      '{<button formAction={"../jsx-expression-submit"} />}';
+
+    const htmlResult = await analyzeContent({ value: html, syntax: "markdown" });
+    const jsxResult = await analyzeContent({ value: jsx, syntax: "mdx" });
+
+    assert(htmlResult.kind === "document");
+    assertEquals(
+      htmlResult.destinations.map((destination) => destination.rawValue),
+      ["../html-submit"],
+    );
+    assert(jsxResult.kind === "document");
+    assertEquals(
+      jsxResult.destinations.map((destination) => destination.rawValue),
+      ["../jsx-submit", "../jsx-expression-submit"],
+    );
+  });
+
   it("preserves authored HTML offsets across CommonMark NUL normalization", async () => {
     const nul = "\0";
     const value = `<a href="../private${nul}.md">x</a>`;
@@ -687,6 +707,7 @@ describe("analyzeContent MDX", () => {
       const value of [
         "<Card {...props, other} />",
         "{<Card {...props, other} />}",
+        "{(function* () { return <Card {...yield source, other} /> })}",
       ]
     ) {
       const result = await analyzeContent({ value, syntax: "mdx" });
@@ -808,20 +829,6 @@ describe("analyzeContent MDX", () => {
     assertEquals(
       result.destinations.map((destination) => destination.rawValue),
       ["../top.md", "../nested.md"],
-    );
-  });
-
-  it("returns form submission override destinations", async () => {
-    const value = '<form action="../form.md"><button formaction="../raw.md" /></form>\n' +
-      '<button formAction="../jsx.md" />\n' +
-      '{<button formAction={"../nested.md"} />}';
-
-    const result = await analyzeContent({ value, syntax: "mdx" });
-
-    assert(result.kind === "document");
-    assertEquals(
-      result.destinations.map((destination) => destination.rawValue),
-      ["../form.md", "../raw.md", "../jsx.md", "../nested.md"],
     );
   });
 
@@ -1158,25 +1165,6 @@ describe("analyzeContent MDX", () => {
     );
   });
 
-  it("bounds nested JSX child expressions that follow a contextual slash", async () => {
-    const depth = 4_000;
-    const value = "{x / y ? " +
-      "<A>{".repeat(depth) +
-      "value" +
-      "}</A>".repeat(depth) +
-      " : null}";
-    const startedAt = performance.now();
-
-    const result = await analyzeContent({ value, syntax: "mdx" });
-
-    assert(result.kind === "syntax-error");
-    assertEquals(
-      result.diagnostic.message,
-      "Parser capacity exceeded for MDX structure",
-    );
-    assertLess(performance.now() - startedAt, 2_000);
-  });
-
   it("bounds 4,000 nested JSX child expressions in the lexer", async () => {
     const depth = 4_000;
     const value = "<a data-ok={" +
@@ -1207,6 +1195,46 @@ describe("analyzeContent MDX", () => {
     assertEquals(
       following.destinations.map((destination) => destination.rawValue),
       ["../architecture/after-capacity.md"],
+    );
+  });
+
+  it("keeps enforcing expression capacity after contextual division", async () => {
+    const depth = 1_000;
+    const value = "<a data-ok={left / right ? " +
+      "<A>{".repeat(depth) +
+      "value" +
+      "}</A>".repeat(depth) +
+      ' : null} href="../architecture/deep-jsx.md">ok</a>';
+    const startedAt = performance.now();
+
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assert(result.kind === "syntax-error");
+    assertEquals(
+      result.diagnostic.message,
+      "Parser capacity exceeded for MDX structure",
+    );
+    assertEquals(
+      result.diagnostic.range.start.offset,
+      "<a data-ok={left / right ? ".length + "<A>{".repeat(65).length - 1,
+    );
+    assertLess(performance.now() - startedAt, 2_000);
+  });
+
+  it("accepts contextual division at the expression capacity boundary", async () => {
+    const depth = 64;
+    const value = "<a data-ok={left / right ? " +
+      "<A>{".repeat(depth) +
+      "value" +
+      "}</A>".repeat(depth) +
+      ' : null} href="../architecture/deep-jsx.md">ok</a>';
+
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => destination.rawValue),
+      ["../architecture/deep-jsx.md"],
     );
   });
 

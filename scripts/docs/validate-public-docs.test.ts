@@ -2974,6 +2974,22 @@ describe("public docs validation", () => {
     assertEquals(issues[0]?.text, '"../architecture/private.md"');
   });
 
+  it("reports HTML and JSX form submission override destinations", async () => {
+    const htmlIssues = await collectUnpublishedLinkIssues(
+      "docs/guides/example.md",
+      '<button formaction="../architecture/private-html.md">Submit</button>',
+      publishedFiles(),
+    );
+    const jsxIssues = await collectUnpublishedLinkIssues(
+      "docs/guides/example.mdx",
+      '<Button formAction="../architecture/private-jsx.md" />',
+      publishedFiles(),
+    );
+
+    assertEquals(htmlIssues.map((issue) => issue.line), [1]);
+    assertEquals(jsxIssues.map((issue) => issue.line), [1]);
+  });
+
   it("reports the line the destination sits on", async () => {
     const issues = await collectUnpublishedLinkIssues(
       "docs/guides/example.md",

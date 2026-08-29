@@ -4,6 +4,7 @@ import {
   type ObjectExpression,
   type Options as AcornOptions,
   Parser,
+  type Token,
 } from "acorn";
 import acornJsx from "acorn-jsx";
 import type { Nodes } from "mdast";
@@ -223,7 +224,10 @@ function lexicalBoundaryState(
       if (cache.state.braceDepth > MAX_MDX_EXPRESSION_DEPTH) {
         throw mdxStructureLimitError(cache.position + token.start);
       }
-      if (cache.state.contextualSlash) cache.grammarRequired = true;
+      if (cache.state.contextualSlash) {
+        cache.grammarRequired = true;
+        return cache.state;
+      }
       if (token.type.label === "eof") break;
     }
   } catch (error) {
@@ -237,8 +241,6 @@ function lexicalBoundaryState(
     lexicalCache = undefined;
     throw error;
   }
-
-  if (cache.grammarRequired) return cache.state;
 
   const trailingComment = cache.comments.at(-1);
   if (
@@ -313,11 +315,16 @@ class LexicalBoundaryParser extends AcornJsxParser {
     }
     if (state.contextualSlash) {
       if (lexicalCache !== undefined) lexicalCache.grammarRequired = true;
-      const expression = AcornJsxParser.parseExpressionAt(
-        input,
-        position,
-        options,
-      );
+      let expression: Expression;
+      try {
+        expression = AcornJsxParser.parseExpressionAt(input, position, {
+          ...options,
+          onToken: capacityTokenHandler(options.onToken),
+        });
+      } catch (error) {
+        if (isMdxStructureLimitError(error)) lexicalCapacityError = error;
+        throw error;
+      }
       lexicalCache = undefined;
       return expression;
     }
@@ -348,6 +355,23 @@ class LexicalBoundaryParser extends AcornJsxParser {
 
     return lexicalPlaceholder(position, input.length);
   }
+}
+
+function capacityTokenHandler(
+  downstream: AcornOptions["onToken"],
+): (token: Token) => void {
+  // Contextual slash expressions already require Acorn grammar. Count their
+  // grammar-aware tokens here so regex contents cannot masquerade as braces.
+  let braceDepth = 0;
+  return (token) => {
+    if (Array.isArray(downstream)) downstream.push(token);
+    else downstream?.(token);
+    if (token.type.label === "{" || token.type.label === "${") braceDepth++;
+    else if (token.type.label === "}") braceDepth--;
+    if (braceDepth > MAX_MDX_EXPRESSION_DEPTH) {
+      throw mdxStructureLimitError(token.start);
+    }
+  };
 }
 
 function lexicalPlaceholder(position: number, end: number): Expression {
