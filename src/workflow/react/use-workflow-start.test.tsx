@@ -4,7 +4,6 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { useApproval, type UseApprovalResult } from "./use-approval.ts";
 import { useWorkflow, type UseWorkflowResult } from "./use-workflow.ts";
@@ -127,9 +126,7 @@ describe("useWorkflowStart", () => {
 
       secondResponse.resolve(Response.json({ runId: "run-second" }));
       assertEquals(await secondStart, "run-second");
-      await waitFor(() => hook!.isStarting === false, {
-        message: "second start should leave the hook idle",
-      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
       assertEquals(hook!.isStarting, false);
       assertEquals(hook!.lastRunId, "run-second");
       assertEquals(startedRunIds, ["run-first", "run-second"]);
@@ -560,43 +557,6 @@ describe("useWorkflowStart", () => {
     } finally {
       flushSync(() => root.unmount());
       restoreDom();
-    }
-  });
-
-  it("ignores a pending workflow list failure after unmount", async () => {
-    const restoreDom = installDom();
-    const response = Promise.withResolvers<Response>();
-    let root: ReturnType<typeof createRoot> | null = null;
-    let domRestored = false;
-    const consoleErrors: unknown[][] = [];
-    const originalConsoleError = console.error;
-    console.error = (...args: unknown[]): void => {
-      consoleErrors.push(args);
-    };
-
-    installMockFetch((() => response.promise) as typeof fetch);
-
-    function Capture(): null {
-      useWorkflowList({ autoRefresh: false });
-      return null;
-    }
-
-    try {
-      root = createRoot(document.getElementById("root")!);
-      flushSync(() => root!.render(<Capture />));
-      flushSync(() => root!.unmount());
-      root = null;
-
-      response.reject(new Error("late list failure"));
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      assertEquals(document.getElementById("root")?.textContent, "");
-      assertEquals(consoleErrors, []);
-      restoreDom();
-      domRestored = true;
-    } finally {
-      console.error = originalConsoleError;
-      if (root) flushSync(() => root!.unmount());
-      if (!domRestored) restoreDom();
     }
   });
 

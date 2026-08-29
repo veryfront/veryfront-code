@@ -595,7 +595,7 @@ describe("agent/runtime/provider-replay", () => {
       }
     });
 
-    it("should reject a provider tool checkpoint for a client-owned transcript call", () => {
+    it("should classify a provider-neutral transcript call from its verified checkpoint", () => {
       const providerBlock = {
         type: "server_tool_use",
         id: "srvtool-code",
@@ -623,9 +623,11 @@ describe("agent/runtime/provider-replay", () => {
         totalPartCount: 1,
       };
 
-      assertProviderReplayError(() =>
-        applyProviderReplayCheckpointsToMessages([target], [checkpoint])
-      );
+      applyProviderReplayCheckpointsToMessages([target], [checkpoint]);
+
+      assertEquals(readAttachedProviderMetadata(target), {
+        anthropic: { rawAssistantMessages: [[providerBlock]] },
+      });
     });
 
     it("should validate provider tool results by their provider-owned call correlation", () => {
@@ -1502,7 +1504,6 @@ describe("agent/runtime/provider-replay", () => {
             toolCallId: providerCall.id,
             toolName: providerCall.name,
             input: providerCall.input,
-            providerExecuted: true,
           }],
         }, sourceId),
         withProviderModelMessageSourceId({
@@ -1512,7 +1513,6 @@ describe("agent/runtime/provider-replay", () => {
             toolCallId: providerCall.id,
             toolName: providerCall.name,
             output: preparedError!,
-            providerExecuted: true,
           }],
         }, sourceId),
       ]);
@@ -1534,6 +1534,13 @@ describe("agent/runtime/provider-replay", () => {
       assertEquals(readAttachedProviderMetadata(runtimeMessages[0]!), {
         anthropic: { rawAssistantMessages: [[providerCall, providerResult]] },
       });
+      assertEquals(convertToTextGenerationRuntimeMessages(runtimeMessages), [{
+        role: "assistant",
+        content: [{ type: "text", text: "" }],
+        providerMetadata: {
+          anthropic: { rawAssistantMessages: [[providerCall, providerResult]] },
+        },
+      }]);
     });
 
     it("should reject outer provider tool-result error block types", () => {

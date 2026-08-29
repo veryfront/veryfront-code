@@ -26,18 +26,13 @@ function providerTextPart(text: string): ProviderStructuredPart {
   return { type: "text", text };
 }
 
-function providerToolCallPart(
-  input: Record<string, unknown>,
-  providerExecuted?: boolean,
-): ProviderStructuredPart {
-  const part: ProviderStructuredPart = {
+function providerToolCallPart(input: Record<string, unknown>): ProviderStructuredPart {
+  return {
     type: "tool-call",
     toolCallId: TOOL_CALL_ID,
     toolName: TOOL_NAME,
     input,
-    ...(providerExecuted === true ? { providerExecuted: true } : {}),
   };
-  return part;
 }
 
 function jsonOutput(value: ChatToolResultOutput["value"]): ChatToolResultOutput {
@@ -47,16 +42,12 @@ function jsonOutput(value: ChatToolResultOutput["value"]): ChatToolResultOutput 
   };
 }
 
-function providerToolResultPart(
-  output: ChatToolResultOutput,
-  providerExecuted?: boolean,
-): ChatToolResultPart {
+function providerToolResultPart(output: ChatToolResultOutput): ChatToolResultPart {
   return {
     type: "tool-result",
     toolCallId: TOOL_CALL_ID,
     toolName: TOOL_NAME,
     output,
-    ...(providerExecuted === true ? { providerExecuted: true } : {}),
   };
 }
 
@@ -86,27 +77,21 @@ function isRuntimeTextPart(
 function agentRuntimeToolCallPart(
   args: Record<string, unknown>,
   type = "tool-call",
-  providerExecuted?: boolean,
 ): AgentRuntimeMessagePart {
   return {
     type,
     toolCallId: TOOL_CALL_ID,
     toolName: TOOL_NAME,
     args,
-    ...(providerExecuted === true ? { providerExecuted: true } : {}),
   };
 }
 
-function agentRuntimeToolResultPart(
-  result: unknown,
-  providerExecuted?: boolean,
-): AgentRuntimeMessagePart {
+function agentRuntimeToolResultPart(result: unknown): AgentRuntimeMessagePart {
   return {
     type: "tool-result",
     toolCallId: TOOL_CALL_ID,
     toolName: TOOL_NAME,
     result,
-    ...(providerExecuted === true ? { providerExecuted: true } : {}),
   };
 }
 
@@ -132,32 +117,6 @@ describe("agent runtime message adapter", () => {
         1,
       ),
       agentRuntimeMessage("tool", [agentRuntimeToolResultPart(jsonOutput({ matches: 2 }))], 2),
-    ]);
-  });
-
-  it("preserves provider ownership when converting provider messages into agent runtime messages", () => {
-    const agentRuntimeMessages = convertProviderMessagesToAgentRuntimeMessages([
-      providerMessage({
-        role: "assistant",
-        content: [providerToolCallPart({ query: "cloud side" }, true)],
-      }),
-      providerMessage({
-        role: "tool",
-        content: [providerToolResultPart(jsonOutput({ matches: 2 }), true)],
-      }),
-    ]);
-
-    assertEquals(agentRuntimeMessages, [
-      agentRuntimeMessage(
-        "assistant",
-        [agentRuntimeToolCallPart({ query: "cloud side" }, "tool-call", true)],
-        0,
-      ),
-      agentRuntimeMessage(
-        "tool",
-        [agentRuntimeToolResultPart(jsonOutput({ matches: 2 }), true)],
-        1,
-      ),
     ]);
   });
 
@@ -412,48 +371,6 @@ describe("agent runtime message adapter", () => {
         role: "tool",
         content: [
           providerToolResultPart(jsonOutput({ matches: 2 })),
-        ],
-      },
-    ]);
-  });
-
-  it("preserves provider ownership when replaying stored runtime tool parts", () => {
-    const providerMessages = convertAgentRuntimeMessagesToProviderMessages([
-      {
-        role: "assistant",
-        parts: [
-          {
-            type: "tool_call",
-            id: TOOL_CALL_ID,
-            name: TOOL_NAME,
-            input: { query: "cloud side" },
-            providerExecuted: true,
-          },
-        ],
-      },
-      {
-        role: "tool",
-        parts: [
-          {
-            type: "tool_result",
-            tool_call_id: TOOL_CALL_ID,
-            tool_name: TOOL_NAME,
-            output: { matches: 2 },
-            providerExecuted: true,
-          },
-        ],
-      },
-    ]);
-
-    assertEquals(providerMessages, [
-      {
-        role: "assistant",
-        content: [providerToolCallPart({ query: "cloud side" }, true)],
-      },
-      {
-        role: "tool",
-        content: [
-          providerToolResultPart(jsonOutput({ matches: 2 }), true),
         ],
       },
     ]);

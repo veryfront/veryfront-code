@@ -3,6 +3,8 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
+import { convertToTextGenerationRuntimeRequestMessages } from "#veryfront/agent/runtime/text-generation-runtime-message-converter.ts";
+import type { Message } from "#veryfront/agent/types.ts";
 import type { HistoricalToolInputCompactionDiagnostic } from "#veryfront/chat/message-prep.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 import { ContextCompactionError } from "./context-budget-manager.ts";
@@ -1746,6 +1748,69 @@ Deno.test("prepareHostedChatRuntimeMessages omits provider-owned remote tool his
 });
 
 Deno.test(
+  "prepareHostedChatRuntimeMessages keeps persisted provider-executed tool turns in the model request",
+  async () => {
+    const prepared = await prepareHostedChatRuntimeMessages([
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Search my notes." }],
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "notion__search_notion",
+          toolCallId: "srvtool-notion-search",
+          input: { query: "research notes" },
+          state: "output-available",
+          providerExecuted: true,
+          output: { data: [] },
+        }],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Create a template I can use." }],
+      },
+    ]);
+
+    const requestMessages = convertToTextGenerationRuntimeRequestMessages(
+      prepared as unknown as Message[],
+    );
+
+    assertEquals(
+      requestMessages.map((message) => message.role),
+      ["user", "assistant", "tool", "user"],
+      "persisted provider-executed turns must stay in the model request",
+    );
+    const assistantContent = requestMessages[1]?.content;
+    if (!Array.isArray(assistantContent)) throw new Error("Expected assistant content parts");
+    assertEquals(
+      assistantContent.some((part) =>
+        typeof part === "object" && part !== null && "type" in part &&
+        part.type === "tool-call" && "toolCallId" in part &&
+        part.toolCallId === "srvtool-notion-search"
+      ),
+      true,
+      "the persisted tool call must reach the prompt",
+    );
+    const toolContent = requestMessages[2]?.content;
+    if (!Array.isArray(toolContent)) throw new Error("Expected tool content parts");
+    assertEquals(
+      toolContent.some((part) =>
+        typeof part === "object" && part !== null && "type" in part &&
+        part.type === "tool-result" && "toolCallId" in part &&
+        part.toolCallId === "srvtool-notion-search"
+      ),
+      true,
+      "the persisted tool result must reach the prompt",
+    );
+  },
+);
+
+Deno.test(
   "prepareHostedChatRuntimeMessages preserves checkpoint-anchored provider tool history",
   async () => {
     const messages = await prepareHostedChatRuntimeMessages(
@@ -1791,7 +1856,6 @@ Deno.test(
           toolCallId: "srvtool-web-search",
           toolName: "web_search",
           args: { query: "site:veryfront.com provider replay" },
-          providerExecuted: true,
         },
         {
           type: "tool-result",
@@ -1801,7 +1865,6 @@ Deno.test(
             type: "json",
             value: [],
           },
-          providerExecuted: true,
         },
       ],
       "checkpointed provider call and result remain available for replay validation",

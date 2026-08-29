@@ -59,13 +59,15 @@ function repairToolPairsWithOptions(
       }
 
       const toolName = part.toolName ?? "unknown";
+      const sourceId = getProviderModelMessageSourceId(message);
+      const preserveUnresolvedCall = sourceId !== undefined &&
+        preservedUnresolvedCallSourceIds.has(sourceId);
 
       if (part.providerExecuted) {
-        const sourceId = getProviderModelMessageSourceId(message);
         if (
           !inlineResultIds.has(part.toolCallId) &&
           !hasImmediateToolResult(nextMessage, part.toolCallId) &&
-          (sourceId === undefined || !preservedUnresolvedCallSourceIds.has(sourceId))
+          !preserveUnresolvedCall
         ) {
           repairedContent.push(createSyntheticToolResult(part.toolCallId, toolName));
           mutated = true;
@@ -73,7 +75,7 @@ function repairToolPairsWithOptions(
         continue;
       }
 
-      if (!inlineResultIds.has(part.toolCallId)) {
+      if (!inlineResultIds.has(part.toolCallId) && !preserveUnresolvedCall) {
         regularToolCalls.push({ id: part.toolCallId, toolName });
       }
     }

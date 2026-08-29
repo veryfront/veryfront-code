@@ -206,10 +206,13 @@ const NativeError = Error;
 function getActiveProviderReplayProvider(
   languageModel: ModelRuntime,
 ): ProviderReplayProvider | "unsupported" {
+  const modelRuntimeId = getModelRuntimeId(languageModel);
   const provider =
     (typeof languageModel.modelProvider === "string" ? languageModel.modelProvider : undefined) ??
       getModelRuntimeProvider(languageModel) ??
-      getModelRuntimeId(languageModel)?.split("/")[0];
+      (modelRuntimeId !== undefined
+        ? resolveRuntimeGenAiProviderName(modelRuntimeId) ?? modelRuntimeId.split("/")[0]
+        : undefined);
   if (provider === "anthropic") return "anthropic";
   if (provider === "openai") return "openai-responses";
   return "unsupported";

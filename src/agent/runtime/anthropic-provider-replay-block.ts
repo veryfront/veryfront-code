@@ -47,3 +47,27 @@ export function groupAnthropicRawAssistantMessagesByAnchor(
   }
   return grouped.length === anchorCount ? grouped : undefined;
 }
+
+/** Collect provider-executed tool call IDs from raw Anthropic responses. */
+export function collectAnthropicProviderToolCallIds(
+  rawAssistantMessages: unknown,
+): Set<string> {
+  const ids = new Set<string>();
+  if (!Array.isArray(rawAssistantMessages)) return ids;
+  for (const rawAssistantMessage of rawAssistantMessages) {
+    if (!Array.isArray(rawAssistantMessage)) continue;
+    for (const block of rawAssistantMessage) {
+      if (
+        block !== null &&
+        typeof block === "object" &&
+        !Array.isArray(block) &&
+        ((block as Record<string, unknown>).type === "server_tool_use" ||
+          (block as Record<string, unknown>).type === "mcp_tool_use") &&
+        typeof (block as Record<string, unknown>).id === "string"
+      ) {
+        ids.add((block as Record<string, unknown>).id as string);
+      }
+    }
+  }
+  return ids;
+}

@@ -299,7 +299,6 @@ Deno.test("repairToolPairs leaves checkpoint-preserved provider calls unresolved
       toolCallId: "srv-deferred",
       toolName: "mcp_deferred",
       input: { query: "later" },
-      providerExecuted: true,
     }],
   }, sourceId);
 
@@ -2204,7 +2203,6 @@ Deno.test("prepareProviderModelMessagesFromUiMessages prefers completed tool out
           toolCallId: "toolu_01Search",
           toolName: "notion__search_notion",
           input: { query: "research notes" },
-          providerExecuted: true,
         },
       ],
     },
@@ -2219,7 +2217,6 @@ Deno.test("prepareProviderModelMessagesFromUiMessages prefers completed tool out
             type: "json",
             value: { data: [] },
           },
-          providerExecuted: true,
         },
       ],
     },

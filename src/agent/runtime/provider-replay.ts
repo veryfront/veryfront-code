@@ -15,6 +15,7 @@ import {
   MAX_PROVIDER_REPLAY_RAW_METADATA_STRING_CHARS,
 } from "./provider-replay-limits.ts";
 import {
+  collectAnthropicProviderToolCallIds,
   groupAnthropicRawAssistantMessagesByAnchor,
   isAnthropicProviderToolResultBlock,
 } from "./anthropic-provider-replay-block.ts";
@@ -1033,8 +1034,19 @@ function getMessageSegmentForTarget(
 function getProviderExecutedToolCallIdsForTargetSegment(
   messages: readonly Message[],
   target: Message,
+  checkpoint: ProviderReplayCheckpoint,
 ): Set<string> {
-  return getProviderExecutedToolCallIdsFromMessages(getMessageSegmentForTarget(messages, target));
+  const ids = getProviderExecutedToolCallIdsFromMessages(
+    getMessageSegmentForTarget(messages, target),
+  );
+  for (
+    const id of collectAnthropicProviderToolCallIds([
+      checkpoint.providerBlocks.map((block) => block.block),
+    ])
+  ) {
+    ids.add(id);
+  }
+  return ids;
 }
 
 function projectProviderToolResults(
@@ -1193,6 +1205,13 @@ function assertCheckpointMatchesSplitAssistantTurns(
   const providerExecutedToolCallIds = getProviderExecutedToolCallIdsFromMessages(
     sameSourceMessages,
   );
+  for (
+    const id of collectAnthropicProviderToolCallIds([
+      checkpoint.providerBlocks.map((block) => block.block),
+    ])
+  ) {
+    providerExecutedToolCallIds.add(id);
+  }
   const targetProjection = assistantMatches.flatMap((message) =>
     message.parts.flatMap((part) => {
       const projected = toTranscriptVisibleProviderPart(part, providerExecutedToolCallIds);
@@ -1529,6 +1548,7 @@ export function applyProviderReplayCheckpointsToMessages(
       const providerExecutedToolCallIds = getProviderExecutedToolCallIdsForTargetSegment(
         messages,
         target,
+        checkpoint,
       );
       assertCheckpointMatchesAssistantTurn(
         target,
