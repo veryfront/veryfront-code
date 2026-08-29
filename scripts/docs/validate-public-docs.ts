@@ -2183,6 +2183,7 @@ function followsCompletedHtmlBlock(
 
 interface TagSyntaxScan {
   readonly end: number | undefined;
+  readonly expressionRanges: Range[];
   readonly topLevelOffsets: ReadonlySet<number>;
 }
 
@@ -2428,7 +2429,9 @@ function scanTagSyntax(
   text: string,
   start: number,
 ): TagSyntaxScan {
+  const expressionRanges: Range[] = [];
   const topLevelOffsets = new Set<number>();
+  let expressionStart: number | undefined;
   let quote: JavaScriptQuote | undefined;
   let quoteUsesJavaScriptEscapes = false;
   let expressionDepth = 0;
@@ -2479,7 +2482,7 @@ function scanTagSyntax(
     ) {
       const jsxElementEnd = javaScriptJsxElementEnd(text, cursor);
       if (jsxElementEnd === undefined) {
-        return { end: undefined, topLevelOffsets };
+        return { end: undefined, expressionRanges, topLevelOffsets };
       }
       previousSignificantToken = javaScriptTokenWithPersistentContext(
         jsxElementEnd,
@@ -2528,7 +2531,7 @@ function scanTagSyntax(
     if (expressionDepth === 0) {
       topLevelOffsets.add(cursor);
       if (character === ">") {
-        return { end: cursor + 1, topLevelOffsets };
+        return { end: cursor + 1, expressionRanges, topLevelOffsets };
       }
     }
     if (character === "`" && expressionDepth > 0) {
@@ -2569,6 +2572,7 @@ function scanTagSyntax(
         delimiterContexts,
       );
     } else if (character === "{") {
+      expressionStart = cursor;
       previousSignificantToken = { end: cursor + 1, kind: "other" };
       delimiterContexts.push("nested");
     }
@@ -2576,10 +2580,16 @@ function scanTagSyntax(
       quote = character;
       quoteUsesJavaScriptEscapes = expressionDepth > 0;
     } else if (character === "{") expressionDepth++;
-    else if (character === "}" && expressionDepth > 0) expressionDepth--;
+    else if (character === "}" && expressionDepth > 0) {
+      expressionDepth--;
+      if (expressionDepth === 0 && expressionStart !== undefined) {
+        expressionRanges.push({ start: expressionStart, end: cursor + 1 });
+        expressionStart = undefined;
+      }
+    }
     cursor++;
   }
-  return { end: undefined, topLevelOffsets };
+  return { end: undefined, expressionRanges, topLevelOffsets };
 }
 
 function commonMarkHtmlTagEnd(text: string, start: number): number | undefined {
@@ -2670,21 +2680,28 @@ function htmlTagRanges(
 ): Range[] {
   const ranges: Range[] = [];
   const jsxScanCache: JavaScriptJsxScanCache = new Map();
-  const containingTagEnds: number[] = [];
+  const containingTags: Array<{
+    readonly end: number;
+    readonly expressionRanges: Range[];
+  }> = [];
   let expressionIndex = 0;
   for (let start = 0; start < text.length;) {
     start = text.indexOf("<", start);
     if (start === -1) break;
     while (
-      containingTagEnds.length > 0 && containingTagEnds.at(-1)! <= start
-    ) containingTagEnds.pop();
+      containingTags.length > 0 && containingTags.at(-1)!.end <= start
+    ) containingTags.pop();
     while (
       expressionIndex < expressionRanges.length &&
       expressionRanges[expressionIndex]!.start <= start
     ) expressionIndex++;
     const insideExpression = isInsideRange(expressionRanges, start);
+    const insideContainingTagExpression = containingTags.some((tag) =>
+      isInsideRange(tag.expressionRanges, start)
+    );
     if (
-      (containingTagEnds.length > 0 && !insideExpression) ||
+      (containingTags.length > 0 && !insideExpression &&
+        !insideContainingTagExpression) ||
       isInsideRange(stringRanges, start) ||
       (isInsideRange(ignoredRanges, start) &&
         !insideExpression) ||
@@ -2697,6 +2714,7 @@ function htmlTagRanges(
     }
 
     const commonMarkEnd = commonMarkHtmlTagEnd(text, start);
+    const tagSyntax = scanTagSyntax(text, start);
     const mdxJsxEnd = mdxJsxTagEnd(text, start, jsxScanCache);
     const tagEnd = commonMarkEnd === undefined
       ? mdxJsxEnd
@@ -2705,11 +2723,15 @@ function htmlTagRanges(
       : Math.max(commonMarkEnd, mdxJsxEnd);
     if (tagEnd !== undefined) {
       ranges.push({ start, end: tagEnd });
-      const containsExpression =
-        (expressionRanges[expressionIndex]?.start ?? tagEnd) < tagEnd;
-      if (containsExpression) {
-        containingTagEnds.push(tagEnd);
-        start = expressionRanges[expressionIndex]!.start;
+      const rescanExpression = tagSyntax.end === tagEnd
+        ? tagSyntax.expressionRanges[0]
+        : undefined;
+      if (rescanExpression !== undefined) {
+        containingTags.push({
+          end: tagEnd,
+          expressionRanges: tagSyntax.expressionRanges,
+        });
+        start = rescanExpression.start;
       } else start = tagEnd;
     } else start++;
   }
