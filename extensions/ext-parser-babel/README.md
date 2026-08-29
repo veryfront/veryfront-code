@@ -36,6 +36,17 @@ loading Babel traversal, code generation, JSX transformation, extension
 lifecycle, or debug dependencies. It does not read environment variables or
 request filesystem/network permissions.
 
+`parse(options)` accepts two parser-only grammar controls:
+
+- `syntax` selects `"javascript"` or `"typescript"`. It defaults to
+  `"typescript"` for compatibility with `CodeParser`.
+- `decoratorMode` selects only the current decorator grammar with `"current"`,
+  or accepts the current and legacy grammars with `"compatible"`. It defaults
+  to `"compatible"`.
+
+The file extension continues to select JSX parsing. Markdown paths are treated
+as JSX-capable inputs because this entry receives their compiled output.
+
 ## Configuration
 
 No factory options. The extension takes no config.

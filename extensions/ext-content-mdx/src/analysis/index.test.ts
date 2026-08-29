@@ -143,19 +143,36 @@ describe("analyzeContent Markdown", () => {
   });
 
   it("returns a syntax diagnostic for malformed YAML frontmatter", async () => {
+    const value = "---\ntitle: ok\nitems:\n  - one\n  - [unterminated\n---\n";
     const result = await analyzeContent({
-      value: "---\ntitle: [unterminated\n---\n",
+      value,
       syntax: "markdown",
       frontmatter: true,
     });
 
     assert(result.kind === "syntax-error");
     assertEquals(result.diagnostic.range.start, {
-      offset: 4,
-      line: 2,
-      column: 1,
+      offset: value.indexOf("[unterminated") + "[unterminated".length,
+      line: 5,
+      column: 18,
     });
     assertStringIncludes(result.diagnostic.message, "Invalid YAML frontmatter");
+  });
+
+  it("maps YAML parser columns after non-BMP source characters", async () => {
+    const value = "---\nvalue: [😀, }\n---\n";
+    const result = await analyzeContent({
+      value,
+      syntax: "markdown",
+      frontmatter: true,
+    });
+
+    assert(result.kind === "syntax-error");
+    assertEquals(result.diagnostic.range.start, {
+      offset: value.indexOf("}") + 1,
+      line: 2,
+      column: 14,
+    });
   });
 
   it("reads destination attributes only inside parser-reported raw HTML", async () => {
@@ -459,6 +476,16 @@ describe("analyzeContent MDX", () => {
     );
   });
 
+  it("uses MDX grammar for JSX expressions regardless of the source path", async () => {
+    const result = await analyzeContent({
+      value: "{<Card />}",
+      syntax: "mdx",
+      filePath: "content.txt",
+    });
+
+    assert(result.kind === "document");
+  });
+
   it("rejects TypeScript-only syntax from authored MDX expressions", async () => {
     const value = "Before {value as string} after";
 
@@ -650,19 +677,35 @@ describe("analyzeContent MDX", () => {
   });
 
   it("returns a syntax diagnostic for malformed MDX YAML frontmatter", async () => {
+    const value = "---\ntitle: [unterminated\n---\n<Card />";
     const result = await analyzeContent({
-      value: "---\ntitle: [unterminated\n---\n<Card />",
+      value,
       syntax: "mdx",
       frontmatter: true,
     });
 
     assert(result.kind === "syntax-error");
     assertEquals(result.diagnostic.range.start, {
-      offset: 4,
+      offset: value.indexOf("[unterminated") + "[unterminated".length,
       line: 2,
-      column: 1,
+      column: 21,
     });
     assertStringIncludes(result.diagnostic.message, "Invalid YAML frontmatter");
+  });
+
+  it("keeps bare-carriage-return frontmatter out of destination analysis", async () => {
+    const result = await analyzeContent({
+      value: "---\rtitle: ok\rsummary: '<a href=\"../hidden.md\">x</a>'\r---\r" +
+        '<Card href="../visible.md" />',
+      syntax: "mdx",
+      frontmatter: true,
+    });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => destination.rawValue),
+      ["../visible.md"],
+    );
   });
 
   it("uses Acorn token boundaries for regexes, templates, and JSX attributes", async () => {
