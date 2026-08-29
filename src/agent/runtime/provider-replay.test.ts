@@ -339,46 +339,6 @@ describe("agent/runtime/provider-replay", () => {
       }
     });
 
-    it("should reject a malformed caller on a web provider result", () => {
-      assertProviderReplayError(() =>
-        parseProviderReplayCheckpoint({
-          version: 1,
-          messageId: "assistant-1",
-          provider: "anthropic",
-          providerBlocks: [{
-            type: "provider-block",
-            provider: "anthropic",
-            block: {
-              type: "web_search_tool_result",
-              tool_use_id: "srvtool-1",
-              caller: { type: "code_execution_20250825" },
-              content: [],
-            },
-          }],
-          providerBlockPositions: [0],
-          totalPartCount: 1,
-        })
-      );
-    });
-
-    it("should reject more raw assistant message groups than the provider accepts", () => {
-      assertProviderReplayError(() =>
-        parseProviderReplayCheckpoint({
-          version: 1,
-          messageId: "assistant-1",
-          provider: "anthropic",
-          providerBlocks: Array.from({ length: 7 }, () => ({
-            type: "provider-block",
-            provider: "anthropic",
-            block: { type: "text", text: "hi" },
-          })),
-          providerBlockPositions: [0, 1, 2, 3, 4, 5, 6],
-          providerMessageBlockCounts: [1, 1, 1, 1, 1, 1, 1],
-          totalPartCount: 7,
-        })
-      );
-    });
-
     it("should reject a provider-result content primitive", () => {
       assertProviderReplayError(() =>
         parseProviderReplayCheckpoint({
@@ -1154,6 +1114,471 @@ describe("agent/runtime/provider-replay", () => {
       );
     });
 
+    it("should reject web provider results with malformed callers", () => {
+      const providerCall = {
+        type: "server_tool_use",
+        id: "srvtool-web-search",
+        name: "web_search",
+        input: { query: "provider replay" },
+        caller: { type: "direct" },
+      };
+      const providerResult = {
+        type: "web_search_tool_result",
+        tool_use_id: providerCall.id,
+        caller: { type: "unknown" },
+        content: [],
+      };
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-call",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            args: providerCall.input,
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            result: [],
+            providerExecuted: true,
+          },
+        ],
+        timestamp: 1,
+      } as Message;
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: target.id,
+        provider: "anthropic",
+        providerBlocks: [providerCall, providerResult].map((block) => ({
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block,
+        })),
+        providerBlockPositions: [0, 1],
+        totalPartCount: 2,
+      };
+
+      assertProviderReplayError(() =>
+        applyProviderReplayCheckpointsToMessages([target], [checkpoint])
+      );
+    });
+
+    it("should reject provider results whose payload differs from the transcript", () => {
+      const providerCall = {
+        type: "server_tool_use",
+        id: "srvtool-web-search",
+        name: "web_search",
+        input: { query: "provider replay" },
+        caller: { type: "direct" },
+      };
+      const transcriptResult = [{
+        type: "web_search_result",
+        url: "https://veryfront.com/actual",
+        title: "Actual",
+        encrypted_content: "actual",
+        page_age: null,
+      }];
+      const providerResult = {
+        type: "web_search_tool_result",
+        tool_use_id: providerCall.id,
+        caller: { type: "direct" },
+        content: [{
+          type: "web_search_result",
+          url: "https://veryfront.com/stale",
+          title: "Stale",
+          encrypted_content: "stale",
+          page_age: null,
+        }],
+      };
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-call",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            args: providerCall.input,
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            result: transcriptResult,
+            providerExecuted: true,
+          },
+        ],
+        timestamp: 1,
+      } as Message;
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: target.id,
+        provider: "anthropic",
+        providerBlocks: [providerCall, providerResult].map((block) => ({
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block,
+        })),
+        providerBlockPositions: [0, 1],
+        totalPartCount: 2,
+      };
+
+      assertProviderReplayError(() =>
+        applyProviderReplayCheckpointsToMessages([target], [checkpoint])
+      );
+    });
+
+    it("should normalize provider results before matching the transcript", () => {
+      const providerCall = {
+        type: "server_tool_use",
+        id: "srvtool-web-search",
+        name: "web_search",
+        input: { query: "provider replay" },
+        caller: { type: "direct" },
+      };
+      const transcriptResult = [{
+        type: "web_search_result",
+        url: "https://veryfront.com/actual",
+        title: "Actual",
+        pageAge: null,
+        encryptedContent: "actual",
+      }];
+      const providerResult = {
+        type: "web_search_tool_result",
+        tool_use_id: providerCall.id,
+        caller: { type: "direct" },
+        content: [{
+          type: "web_search_result",
+          url: "https://veryfront.com/actual",
+          title: "Actual",
+          encrypted_content: "actual",
+          page_age: null,
+        }],
+      };
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-call",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            args: providerCall.input,
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            result: transcriptResult,
+            providerExecuted: true,
+          },
+        ],
+        timestamp: 1,
+      } as Message;
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: target.id,
+        provider: "anthropic",
+        providerBlocks: [providerCall, providerResult].map((block) => ({
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block,
+        })),
+        providerBlockPositions: [0, 1],
+        totalPartCount: 2,
+      };
+
+      applyProviderReplayCheckpointsToMessages([target], [checkpoint]);
+
+      assertEquals(
+        readAttachedProviderMetadata(target),
+        { anthropic: { rawAssistantMessages: [[providerCall, providerResult]] } },
+      );
+    });
+
+    it("should unwrap prepared JSON provider results before matching the transcript", () => {
+      const providerCall = {
+        type: "server_tool_use",
+        id: "srvtool-web-search",
+        name: "web_search",
+        input: { query: "provider replay" },
+        caller: { type: "direct" },
+      };
+      const providerResult = {
+        type: "web_search_tool_result",
+        tool_use_id: providerCall.id,
+        caller: { type: "direct" },
+        content: [{
+          type: "web_search_result",
+          url: "https://veryfront.com/actual",
+          title: "Actual",
+          encrypted_content: "actual",
+          page_age: null,
+        }],
+      };
+      const transcriptResult = [{
+        type: "web_search_result",
+        url: "https://veryfront.com/actual",
+        title: "Actual",
+        pageAge: null,
+        encryptedContent: "actual",
+      }];
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-call",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            args: providerCall.input,
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            result: { type: "json", value: transcriptResult },
+            providerExecuted: true,
+          },
+        ],
+        timestamp: 1,
+      } as Message;
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: target.id,
+        provider: "anthropic",
+        providerBlocks: [providerCall, providerResult].map((block) => ({
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block,
+        })),
+        providerBlockPositions: [0, 1],
+        totalPartCount: 2,
+      };
+
+      applyProviderReplayCheckpointsToMessages([target], [checkpoint]);
+
+      assertEquals(
+        readAttachedProviderMetadata(target),
+        { anthropic: { rawAssistantMessages: [[providerCall, providerResult]] } },
+      );
+    });
+
+    it("should normalize provider error results before matching the transcript", () => {
+      const providerCall = {
+        type: "server_tool_use",
+        id: "srvtool-web-search-error",
+        name: "web_search",
+        input: { query: "provider replay" },
+        caller: { type: "direct" },
+      };
+      const providerResult = {
+        type: "web_search_tool_result_error",
+        tool_use_id: providerCall.id,
+        caller: { type: "direct" },
+        content: {
+          type: "web_search_tool_result_error",
+          error_code: "max_uses_exceeded",
+        },
+      };
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-call",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            args: providerCall.input,
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            result: {
+              type: "json",
+              value: {
+                name: "AnthropicServerToolResultError",
+                provider: "anthropic",
+                code: "max_uses_exceeded",
+                toolCallId: providerCall.id,
+                toolName: providerCall.name,
+              },
+            },
+            isError: true,
+            providerExecuted: true,
+          },
+        ],
+        timestamp: 1,
+      } as Message;
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: target.id,
+        provider: "anthropic",
+        providerBlocks: [providerCall, providerResult].map((block) => ({
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block,
+        })),
+        providerBlockPositions: [0, 1],
+        totalPartCount: 2,
+      };
+
+      applyProviderReplayCheckpointsToMessages([target], [checkpoint]);
+
+      assertEquals(
+        readAttachedProviderMetadata(target),
+        { anthropic: { rawAssistantMessages: [[providerCall, providerResult]] } },
+      );
+    });
+
+    it("should reset provider-executed ids at transcript boundaries before matching anchors", () => {
+      const reusedToolCallId = "reused-tool-call";
+      const historicalProviderCall = {
+        type: "server_tool_use",
+        id: reusedToolCallId,
+        name: "web_search",
+        input: { query: "historical provider call" },
+        caller: { type: "direct" },
+      };
+      const targetRawToolUse = {
+        type: "tool_use",
+        id: reusedToolCallId,
+        name: "lookup",
+        input: { query: "ordinary local call" },
+      };
+      const historicalAssistant = {
+        id: "assistant-historical",
+        role: "assistant",
+        parts: [{
+          type: "tool-call",
+          toolCallId: historicalProviderCall.id,
+          toolName: historicalProviderCall.name,
+          args: historicalProviderCall.input,
+          providerExecuted: true,
+        }],
+        timestamp: 1,
+      } as Message;
+      const boundary = {
+        id: "user-boundary",
+        role: "user",
+        parts: [{ type: "text", text: "new request" }],
+        timestamp: 2,
+      } as Message;
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [{
+          type: "tool-call",
+          toolCallId: targetRawToolUse.id,
+          toolName: targetRawToolUse.name,
+          args: targetRawToolUse.input,
+        }],
+        timestamp: 3,
+      } as Message;
+      attachProviderMetadata(historicalAssistant, {
+        anthropic: { rawAssistantMessages: [[historicalProviderCall]] },
+      });
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: target.id,
+        provider: "anthropic",
+        providerBlocks: [{
+          type: "provider-block",
+          provider: "anthropic",
+          block: targetRawToolUse,
+        }],
+        providerBlockPositions: [0],
+        totalPartCount: 1,
+      };
+
+      applyProviderReplayCheckpointsToMessages([historicalAssistant, boundary, target], [
+        checkpoint,
+      ]);
+
+      assertEquals(
+        readAttachedProviderMetadata(target),
+        { anthropic: { rawAssistantMessages: [[targetRawToolUse]] } },
+      );
+    });
+
+    it("should reject provider results separated from their provider tool use by a transcript boundary", () => {
+      const providerCall = {
+        type: "server_tool_use",
+        id: "srvtool-web-search",
+        name: "web_search",
+        input: { query: "provider replay" },
+        caller: { type: "direct" },
+      };
+      const providerResult = {
+        type: "web_search_tool_result",
+        tool_use_id: providerCall.id,
+        caller: { type: "direct" },
+        content: [],
+      };
+      const callTurn = {
+        id: "assistant-call",
+        role: "assistant",
+        parts: [{
+          type: "tool-call",
+          toolCallId: providerCall.id,
+          toolName: providerCall.name,
+          args: providerCall.input,
+          providerExecuted: true,
+        }],
+        timestamp: 1,
+      } as Message;
+      const boundary = {
+        id: "user-boundary",
+        role: "user",
+        parts: [{ type: "text", text: "new request" }],
+        timestamp: 2,
+      } as Message;
+      const resultTurn = {
+        id: "assistant-result",
+        role: "assistant",
+        parts: [{
+          type: "tool-result",
+          toolCallId: providerCall.id,
+          toolName: providerCall.name,
+          result: [],
+          providerExecuted: true,
+        }],
+        timestamp: 3,
+      } as Message;
+      const callCheckpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: callTurn.id,
+        provider: "anthropic",
+        providerBlocks: [{ type: "provider-block", provider: "anthropic", block: providerCall }],
+        providerBlockPositions: [0],
+        totalPartCount: 1,
+      };
+      const resultCheckpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: resultTurn.id,
+        provider: "anthropic",
+        providerBlocks: [{ type: "provider-block", provider: "anthropic", block: providerResult }],
+        providerBlockPositions: [0],
+        totalPartCount: 1,
+      };
+
+      assertProviderReplayError(() =>
+        applyProviderReplayCheckpointsToMessages(
+          [callTurn, boundary, resultTurn],
+          [callCheckpoint, resultCheckpoint],
+        )
+      );
+    });
+
     it("should reject a provider tool result without its provider-owned call", () => {
       const providerResult = {
         type: "web_search_tool_result",
@@ -1500,6 +1925,201 @@ describe("agent/runtime/provider-replay", () => {
         readAttachedProviderMetadata(trailingAssistant),
         { anthropic: { rawAssistantMessages: [[providerResult, trailingText]] } },
         "the trailing assistant segment carries the provider result before trailing text",
+      );
+      assertEquals(readAttachedProviderMetadata(toolSibling), undefined);
+    });
+
+    it("should group consecutive provider results with the trailing assistant segment", () => {
+      const firstProviderCall = {
+        type: "server_tool_use",
+        id: "srvtool-1",
+        name: "web_search",
+        input: { query: "first" },
+        caller: { type: "direct" },
+      };
+      const secondProviderCall = {
+        type: "server_tool_use",
+        id: "srvtool-2",
+        name: "web_search",
+        input: { query: "second" },
+        caller: { type: "direct" },
+      };
+      const firstProviderResult = {
+        type: "web_search_tool_result",
+        tool_use_id: firstProviderCall.id,
+        caller: { type: "direct" },
+        content: [],
+      };
+      const secondProviderResult = {
+        type: "web_search_tool_result",
+        tool_use_id: secondProviderCall.id,
+        caller: { type: "direct" },
+        content: [],
+      };
+      const trailingText = { type: "text", text: "Found both." };
+      const leadingAssistant = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-call",
+            toolCallId: firstProviderCall.id,
+            toolName: firstProviderCall.name,
+            args: firstProviderCall.input,
+            providerExecuted: true,
+          },
+          {
+            type: "tool-call",
+            toolCallId: secondProviderCall.id,
+            toolName: secondProviderCall.name,
+            args: secondProviderCall.input,
+            providerExecuted: true,
+          },
+        ],
+        timestamp: 1,
+      } as Message;
+      const toolSibling = {
+        id: "assistant-message-1",
+        role: "tool",
+        parts: [
+          {
+            type: "tool-result",
+            toolCallId: firstProviderCall.id,
+            toolName: firstProviderCall.name,
+            result: [],
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: secondProviderCall.id,
+            toolName: secondProviderCall.name,
+            result: [],
+            providerExecuted: true,
+          },
+        ],
+        timestamp: 2,
+      } as Message;
+      const trailingAssistant = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [trailingText],
+        timestamp: 3,
+      } as Message;
+      const checkpointBlocks = [
+        firstProviderCall,
+        secondProviderCall,
+        firstProviderResult,
+        secondProviderResult,
+        trailingText,
+      ];
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: "assistant-message-1",
+        provider: "anthropic",
+        providerBlocks: checkpointBlocks.map((block) => ({
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block,
+        })),
+        providerBlockPositions: [0, 1, 2, 3, 4],
+        totalPartCount: 5,
+      };
+
+      applyProviderReplayCheckpointsToMessages(
+        [leadingAssistant, toolSibling, trailingAssistant],
+        [checkpoint],
+      );
+
+      assertEquals(
+        readAttachedProviderMetadata(leadingAssistant),
+        { anthropic: { rawAssistantMessages: [[firstProviderCall, secondProviderCall]] } },
+        "the leading assistant segment keeps both provider calls together",
+      );
+      assertEquals(
+        readAttachedProviderMetadata(trailingAssistant),
+        {
+          anthropic: {
+            rawAssistantMessages: [[firstProviderResult, secondProviderResult, trailingText]],
+          },
+        },
+        "consecutive provider results stay with the trailing assistant segment",
+      );
+      assertEquals(readAttachedProviderMetadata(toolSibling), undefined);
+    });
+
+    it("should preserve declared raw groups when attaching split same-source turns", () => {
+      const providerCall = {
+        type: "server_tool_use",
+        id: "srvtool-1",
+        name: "web_search",
+        input: { query: "q" },
+        caller: { type: "direct" },
+      };
+      const providerResult = {
+        type: "web_search_tool_result",
+        tool_use_id: providerCall.id,
+        caller: { type: "direct" },
+        content: [],
+      };
+      const trailingText = { type: "text", text: "Found it." };
+      const leadingAssistant = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [{
+          type: "tool-call",
+          toolCallId: providerCall.id,
+          toolName: providerCall.name,
+          args: providerCall.input,
+          providerExecuted: true,
+        }],
+        timestamp: 1,
+      } as Message;
+      const toolSibling = {
+        id: "assistant-message-1",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: providerCall.id,
+          toolName: providerCall.name,
+          result: [],
+          providerExecuted: true,
+        }],
+        timestamp: 2,
+      } as Message;
+      const trailingAssistant = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [trailingText],
+        timestamp: 3,
+      } as Message;
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: "assistant-message-1",
+        provider: "anthropic",
+        providerBlocks: [providerCall, providerResult, trailingText].map((block) => ({
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block,
+        })),
+        providerBlockPositions: [0, 1, 2],
+        providerMessageBlockCounts: [2, 1],
+        totalPartCount: 3,
+      };
+
+      applyProviderReplayCheckpointsToMessages(
+        [leadingAssistant, toolSibling, trailingAssistant],
+        [checkpoint],
+      );
+
+      assertEquals(
+        readAttachedProviderMetadata(leadingAssistant),
+        { anthropic: { rawAssistantMessages: [[providerCall, providerResult]] } },
+        "the first same-source assistant keeps its declared raw provider-result sibling",
+      );
+      assertEquals(
+        readAttachedProviderMetadata(trailingAssistant),
+        { anthropic: { rawAssistantMessages: [[trailingText]] } },
+        "the second same-source assistant keeps the declared trailing raw text group",
       );
       assertEquals(readAttachedProviderMetadata(toolSibling), undefined);
     });
@@ -1856,6 +2476,80 @@ describe("agent/runtime/provider-replay", () => {
           [createAssistantMessage("assistant-message-1")],
           [sparse],
         )
+      );
+    });
+
+    it("should reject replay groups beyond the provider assistant-message limit", () => {
+      const checkpoint = createValidCheckpoint() as unknown as Record<string, unknown>;
+      checkpoint.providerBlocks = Array.from({ length: 7 }, (_, index) => ({
+        type: "provider-block",
+        provider: "anthropic",
+        block: { type: "text", text: `segment ${index}` },
+      }));
+      checkpoint.providerBlockPositions = [0, 1, 2, 3, 4, 5, 6];
+      checkpoint.providerMessageBlockCounts = [1, 1, 1, 1, 1, 1, 1];
+      checkpoint.totalPartCount = 7;
+
+      assertProviderReplayError(() => parseProviderReplayCheckpoint(checkpoint));
+    });
+
+    it("should reject raw replay blocks beyond provider metadata bounds", () => {
+      const checkpoint = createValidCheckpoint() as unknown as Record<string, unknown>;
+      let nested: Record<string, unknown> = { value: "leaf" };
+      for (let depth = 0; depth < 70; depth += 1) {
+        nested = { nested };
+      }
+      checkpoint.providerBlocks = [{
+        type: "provider-block",
+        provider: "anthropic",
+        block: { type: "text", text: "visible", nested },
+      }];
+      checkpoint.providerBlockPositions = [0];
+      checkpoint.totalPartCount = 1;
+
+      assertProviderReplayError(() => parseProviderReplayCheckpoint(checkpoint));
+    });
+
+    it("should reject raw replay blocks beyond canonical JSON byte bounds", () => {
+      const checkpoint = createValidCheckpoint() as unknown as Record<string, unknown>;
+      checkpoint.providerBlocks = [{
+        type: "provider-block",
+        provider: "anthropic",
+        block: {
+          type: "text",
+          text: "\0".repeat(1_400_000),
+        },
+      }];
+      checkpoint.providerBlockPositions = [0];
+      checkpoint.totalPartCount = 1;
+
+      const error = assertProviderReplayError(() => parseProviderReplayCheckpoint(checkpoint));
+      assertEquals(
+        error.detail,
+        "checkpoint provider block exceeds raw metadata bounds",
+      );
+    });
+
+    it("should reject aggregate raw replay metadata beyond provider metadata bounds", () => {
+      const checkpoint = createValidCheckpoint() as unknown as Record<string, unknown>;
+      const blocks = Array.from({ length: 100 }, (_, index) => ({
+        type: "text",
+        text: `segment ${index}`,
+        retained: Array.from({ length: 700 }, (__, itemIndex) => itemIndex),
+      }));
+      checkpoint.providerBlocks = blocks.map((block) => ({
+        type: "provider-block",
+        provider: "anthropic",
+        block,
+      }));
+      checkpoint.providerBlockPositions = blocks.map((_, index) => index);
+      checkpoint.providerMessageBlockCounts = [blocks.length];
+      checkpoint.totalPartCount = blocks.length;
+
+      const error = assertProviderReplayError(() => parseProviderReplayCheckpoint(checkpoint));
+      assertEquals(
+        error.detail,
+        "checkpoint raw assistant messages exceeds raw metadata bounds",
       );
     });
 

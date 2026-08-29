@@ -592,9 +592,16 @@ export function convertToTextGenerationRuntimeRequestMessages(
 ): TextGenerationRuntimeMessage[] {
   const requestMessages = convertToTextGenerationRuntimeMessages(messages, options);
 
-  while (requestMessages.at(-1)?.role === "assistant") {
+  while (shouldTrimTrailingAssistantRequestMessage(requestMessages.at(-1))) {
     requestMessages.pop();
   }
 
   return requestMessages;
+}
+
+function shouldTrimTrailingAssistantRequestMessage(
+  message: TextGenerationRuntimeMessage | undefined,
+): boolean {
+  if (message?.role !== "assistant") return false;
+  return message.providerMetadata === undefined;
 }

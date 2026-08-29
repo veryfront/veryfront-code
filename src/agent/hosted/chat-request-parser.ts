@@ -23,6 +23,7 @@ import {
   readBodyWithLimit,
 } from "#veryfront/security/input-validation/limits.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
+import { MAX_PROVIDER_REPLAY_REQUEST_BODY_BYTES } from "#veryfront/agent/runtime/provider-replay-limits.ts";
 import {
   type HostedRuntimeSourceBindingError,
   type HostedRuntimeSourceIdentity,
@@ -136,16 +137,19 @@ export type ParseRuntimeAgentRunInvocationHostedChatRequestOptions =
       | Promise<HostedRuntimeSourceBindingError | undefined>;
   };
 
-async function parseRequestJson(request: Request): Promise<unknown | Response> {
+async function parseRequestJson(
+  request: Request,
+  maxBodySizeBytes: number,
+): Promise<unknown | Response> {
   let body: string;
   try {
-    body = await readBodyWithLimit(request, DEFAULT_MAX_BODY_SIZE_BYTES);
+    body = await readBodyWithLimit(request, maxBodySizeBytes);
   } catch (error) {
     if (isRequestBodyTooLargeError(error)) {
       return Response.json(
         {
           errorCode: "REQUEST_TOO_LARGE",
-          message: `Request body exceeds ${DEFAULT_MAX_BODY_SIZE_BYTES} bytes`,
+          message: `Request body exceeds ${maxBodySizeBytes} bytes`,
         },
         { status: 413 },
       );
@@ -577,7 +581,7 @@ export async function parseHostedChatRequestFromRequest(
     return authenticatedRequest;
   }
 
-  const requestBody = await parseRequestJson(request);
+  const requestBody = await parseRequestJson(request, DEFAULT_MAX_BODY_SIZE_BYTES);
   if (requestBody instanceof Response) return requestBody;
 
   const parsed = hostedChatRequestSchema.safeParse(requestBody);
@@ -616,7 +620,7 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     return authenticatedRequest;
   }
 
-  const requestBody = await parseRequestJson(request);
+  const requestBody = await parseRequestJson(request, MAX_PROVIDER_REPLAY_REQUEST_BODY_BYTES);
   if (requestBody instanceof Response) return requestBody;
 
   const invocation = getRuntimeAgentRunInvocationSchema().safeParse(requestBody);

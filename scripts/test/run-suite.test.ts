@@ -390,7 +390,13 @@ describe("migration command surface", () => {
   });
 
   it("partitions large suites without dropping or repeating files", () => {
-    const files = ["a.test.ts", "b.test.ts", "c.test.ts", "d.test.ts", "e.test.ts"];
+    const files = [
+      "a.test.ts",
+      "b.test.ts",
+      "c.test.ts",
+      "d.test.ts",
+      "e.test.ts",
+    ];
 
     assertEquals(partitionDenoSuiteFiles(files, 2), [
       ["a.test.ts", "b.test.ts"],
