@@ -582,6 +582,9 @@ export async function prepareHostedChatExecution<
   });
   const submittedFormInputResult = findSubmittedFormInputResult(normalized.effectiveMessages);
   const historicalToolInputCompactions: HistoricalToolInputCompactionDiagnostic[] = [];
+  const providerReplayCheckpointMessageIds = input.serverResolvedProviderReplayCheckpoints?.map(
+    (checkpoint) => checkpoint.messageId,
+  );
   const preparedMessages = await prepareHostedChatRuntimeMessages(
     normalized.effectiveMessages,
     {
@@ -593,9 +596,7 @@ export async function prepareHostedChatExecution<
         runtimeConfig: runtimePreparation.runtimeConfig,
       }),
       abortSignal: input.abortSignal,
-      providerReplayCheckpointMessageIds: input.serverResolvedProviderReplayCheckpoints?.map(
-        (checkpoint) => checkpoint.messageId,
-      ),
+      providerReplayCheckpointMessageIds,
       historicalToolInputRetention: {
         diagnostics: historicalToolInputCompactions,
       },
@@ -610,7 +611,15 @@ export async function prepareHostedChatExecution<
   let budgetedContext: Awaited<ReturnType<typeof applyContextBudget>> | undefined;
   if (input.contextBudget) {
     try {
-      budgetedContext = await applyContextBudget(finalMessages, input.contextBudget);
+      budgetedContext = await applyContextBudget(finalMessages, {
+        ...input.contextBudget,
+        atomicMessageIds: [
+          ...new Set([
+            ...(input.contextBudget.atomicMessageIds ?? []),
+            ...(providerReplayCheckpointMessageIds ?? []),
+          ]),
+        ],
+      });
     } catch (error) {
       input.contextBudget.logger?.error?.("Hosted chat context compaction failed", {
         error: error instanceof Error ? error.message : String(error),

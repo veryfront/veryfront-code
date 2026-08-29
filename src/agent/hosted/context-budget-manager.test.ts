@@ -257,6 +257,46 @@ Deno.test("applyContextBudget keeps tool call and result pairs in the retained t
   ]);
 });
 
+Deno.test("applyContextBudget keeps split checkpoint anchors atomic", async () => {
+  const checkpointId = "assistant-checkpoint";
+  const messages = [
+    message("user-old", "user", "Older goal ".repeat(200)),
+    {
+      ...toolCallMessage(checkpointId, "provider-tool-1"),
+      id: checkpointId,
+    },
+    {
+      ...toolResultMessage(checkpointId, "provider-tool-1"),
+      id: checkpointId,
+    },
+    message(checkpointId, "assistant", "Trailing provider answer ".repeat(8)),
+    message("user-latest", "user", "Continue."),
+  ] satisfies AgentRuntimeMessage[];
+
+  const result = await applyContextBudget(messages, {
+    tokenBudget: 300,
+    reserveTokens: 20,
+    recentTailTokens: 20,
+    atomicMessageIds: [checkpointId],
+    summaryGenerator: ({ messagesToSummarize }) => ({
+      text: `Summarized ${messagesToSummarize.map((entry) => entry.id).join(",")}`,
+    }),
+  });
+
+  assertEquals(result.messages.map((entry) => entry.id), [
+    `context_compaction_summary:${checkpointId}`,
+    checkpointId,
+    checkpointId,
+    checkpointId,
+    "user-latest",
+  ]);
+  assertEquals(
+    result.eventPayload?.summary.text,
+    "Summarized user-old",
+    "every same-ID checkpoint segment must be retained or summarized together",
+  );
+});
+
 Deno.test("applyContextBudget rejects invalid summary output", async () => {
   await assertRejects(
     () =>

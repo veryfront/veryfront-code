@@ -53,6 +53,7 @@ const getHostedChatRawToolCallPartSchema = defineSchema((v) =>
     name: v.string().min(1),
     input: v.record(v.string(), v.unknown()),
     state: v.enum(["streaming", "pending", "completed", "error"]),
+    providerExecuted: v.boolean().optional(),
   }).strip()
 );
 
@@ -63,6 +64,7 @@ const getHostedChatRawToolResultPartSchema = defineSchema((v) =>
     output: v.unknown(),
     is_error: v.boolean().optional(),
     tool_name: v.string().min(1).optional(),
+    providerExecuted: v.boolean().optional(),
   }).strip()
 );
 

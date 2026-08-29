@@ -77,6 +77,8 @@ export type ContextBudgetManagerOptions = {
   reason?: ContextCompactionReason;
   now?: () => number;
   summaryGenerator: ContextSummaryGenerator;
+  /** Message ids whose repeated segments must cross the compaction boundary together. */
+  atomicMessageIds?: readonly string[];
 };
 
 export type ContextBudgetDiagnostics = {
@@ -247,6 +249,54 @@ function expandTailForRecentAssistantTurn(
     : initialStartIndex;
 }
 
+function expandTailForAtomicMessageIds(
+  messages: readonly AgentRuntimeMessage[],
+  initialStartIndex: number,
+  atomicMessageIds: readonly string[] | undefined,
+): number {
+  if (!atomicMessageIds || atomicMessageIds.length === 0) return initialStartIndex;
+  const atomicIds = new Set(atomicMessageIds);
+  let startIndex = initialStartIndex;
+  let changed = true;
+
+  while (changed) {
+    changed = false;
+    const retainedAtomicIds = new Set(
+      messages.slice(startIndex)
+        .map((message) => message.id)
+        .filter((id) => atomicIds.has(id)),
+    );
+    for (let index = 0; index < startIndex; index += 1) {
+      const message = messages[index];
+      if (message && retainedAtomicIds.has(message.id)) {
+        startIndex = index;
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  return startIndex;
+}
+
+function expandTailForDependencies(
+  messages: readonly AgentRuntimeMessage[],
+  initialStartIndex: number,
+  atomicMessageIds: readonly string[] | undefined,
+): number {
+  let startIndex = initialStartIndex;
+  while (true) {
+    const withToolPairs = expandTailForToolPairs(messages, startIndex);
+    const withAtomicMessages = expandTailForAtomicMessageIds(
+      messages,
+      withToolPairs,
+      atomicMessageIds,
+    );
+    if (withAtomicMessages === startIndex) return startIndex;
+    startIndex = withAtomicMessages;
+  }
+}
+
 function createSyntheticSummaryMessage(input: {
   text: string;
   firstKeptEntryId: string;
@@ -351,7 +401,11 @@ export async function applyContextBudget(
     messages,
     initialTailStartIndex,
   );
-  const tailStartIndex = expandTailForToolPairs(messages, conversationTailStartIndex);
+  const tailStartIndex = expandTailForDependencies(
+    messages,
+    conversationTailStartIndex,
+    options.atomicMessageIds,
+  );
   const messagesToSummarize = messages.slice(0, tailStartIndex);
   const retainedMessages = messages.slice(tailStartIndex);
   const firstKeptEntryId = retainedMessages[0]?.id;

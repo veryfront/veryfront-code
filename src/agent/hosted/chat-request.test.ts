@@ -1502,6 +1502,48 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(request.messages[0]?.parts as unknown, rawReplayParts);
   });
 
+  it("preserves provider ownership on raw replay parts from runtime invocations", async () => {
+    const providerOwnedParts = rawReplayParts.map((part) => ({
+      ...part,
+      providerExecuted: true,
+    }));
+    const invocation = RuntimeAgentRunInvocationSchema.parse({
+      ...createRuntimeInvocation(),
+      messages: [{
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: providerOwnedParts,
+      }],
+    });
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/control-plane/runs/run_root_1/stream", {
+        method: "POST",
+        headers: { "X-Veryfront-Run-Event-Token": "verified-event-token" },
+        body: JSON.stringify(invocation),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+        verifyRunEventAppendToken: () => Promise.resolve(true),
+        runtimeSource,
+      },
+    );
+
+    if (parsed instanceof Response) {
+      throw new Error("Expected parsed runtime invocation");
+    }
+
+    assertEquals(parsed.messages[0]?.parts, [{
+      type: "tool_call",
+      toolCallId: rawReplayToolCallPart.id,
+      toolName: replayToolName,
+      input: rawReplayToolCallPart.input,
+      state: "output-available",
+      output: replayOutput,
+      providerExecuted: true,
+    }]);
+  });
+
   it("normalizes persisted uploaded file parts from runtime invocations", async () => {
     const invocation = RuntimeAgentRunInvocationSchema.parse({
       ...createRuntimeInvocation(),

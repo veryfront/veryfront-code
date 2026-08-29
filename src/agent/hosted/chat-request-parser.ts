@@ -379,6 +379,7 @@ function normalizeHostedChatRequestMessages(
           toolName,
           input,
           state: mapRawToolCallState(state),
+          ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
         });
         continue;
       }
@@ -399,6 +400,7 @@ function normalizeHostedChatRequestMessages(
           ...(part.is_error === true
             ? { errorText: stringifyUnknown(part.output ?? "Tool error") }
             : {}),
+          ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
         };
 
         const existingIndex = partIndexByToolCallId.get(toolCallId);

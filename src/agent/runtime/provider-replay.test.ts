@@ -1475,6 +1475,7 @@ describe("agent/runtime/provider-replay", () => {
           content: {
             type: "text_editor_code_execution_tool_result_error",
             error_code: "file_not_found",
+            error_message: null,
           },
         },
       ];
@@ -1832,6 +1833,129 @@ describe("agent/runtime/provider-replay", () => {
             toolCallId: providerCall.id,
             toolName: providerCall.name,
             result: [],
+            providerExecuted: true,
+          },
+        ],
+        timestamp: 1,
+      } as Message;
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: target.id,
+        provider: "anthropic",
+        providerBlocks: [providerCall, providerResult].map((block) => ({
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block,
+        })),
+        providerBlockPositions: [0, 1],
+        totalPartCount: 2,
+      };
+
+      assertProviderReplayError(() =>
+        applyProviderReplayCheckpointsToMessages([target], [checkpoint])
+      );
+    });
+
+    it("should normalize MCP result fields before matching the transcript", () => {
+      const providerCall = {
+        type: "mcp_tool_use",
+        id: "srvtool-mcp",
+        name: "search_docs",
+        server_name: "docs",
+        input: { query: "provider replay" },
+      };
+      const providerResult = {
+        type: "mcp_tool_result",
+        tool_use_id: providerCall.id,
+        is_error: false,
+        content: [{
+          type: "text",
+          text: "matched",
+          provider_extension: "ignored by the durable projection",
+        }],
+      };
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-call",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            args: providerCall.input,
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            result: [{ type: "text", text: "matched" }],
+            providerExecuted: true,
+          },
+        ],
+        timestamp: 1,
+      } as Message;
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: target.id,
+        provider: "anthropic",
+        providerBlocks: [providerCall, providerResult].map((block) => ({
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block,
+        })),
+        providerBlockPositions: [0, 1],
+        totalPartCount: 2,
+      };
+
+      applyProviderReplayCheckpointsToMessages([target], [checkpoint]);
+
+      assertEquals(readAttachedProviderMetadata(target), {
+        anthropic: {
+          rawAssistantMessages: [[providerCall, providerResult]],
+        },
+      });
+    });
+
+    it("should reject text-editor errors that omit error_message", () => {
+      const providerCall = {
+        type: "server_tool_use",
+        id: "srvtool-text-editor",
+        name: "text_editor_code_execution",
+        input: { command: "view", path: "example.txt" },
+        caller: { type: "direct" },
+      };
+      const providerResult = {
+        type: "text_editor_code_execution_tool_result",
+        tool_use_id: providerCall.id,
+        content: {
+          type: "text_editor_code_execution_tool_result_error",
+          error_code: "file_not_found",
+        },
+      };
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-call",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            args: providerCall.input,
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            result: {
+              name: "AnthropicServerToolResultError",
+              provider: "anthropic",
+              code: "file_not_found",
+              toolCallId: providerCall.id,
+              toolName: providerCall.name,
+            },
+            isError: true,
             providerExecuted: true,
           },
         ],

@@ -295,6 +295,19 @@ function hasValidAnthropicMcpContent(value: unknown): boolean {
   });
 }
 
+function normalizeAnthropicMcpContent(value: unknown): unknown {
+  if (typeof value === "string") return value;
+  if (!Array.isArray(value)) return value;
+  return value.map((item) => {
+    if (!isRecord(item)) return item;
+    return {
+      type: "text",
+      text: item.text,
+      ...(item.citations === undefined ? {} : { citations: item.citations }),
+    };
+  });
+}
+
 function hasValidAnthropicFileOutputs(
   value: unknown,
   expectedType: "code_execution_output" | "bash_code_execution_output",
@@ -357,9 +370,8 @@ function hasValidAnthropicTextEditorCodeExecutionContent(
       TEXT_EDITOR_CODE_EXECUTION_ERROR_CODES,
     )
   ) {
-    return !("error_message" in content) ||
-      content.error_message === null ||
-      typeof content.error_message === "string";
+    return "error_message" in content &&
+      (content.error_message === null || typeof content.error_message === "string");
   }
   if (content.type === "text_editor_code_execution_view_result") {
     return typeof content.content === "string" &&
@@ -661,6 +673,8 @@ function normalizeAnthropicProviderToolResultContent(
 ): unknown {
   const normalized = (() => {
     switch (block.type) {
+      case "mcp_tool_result":
+        return normalizeAnthropicMcpContent(block.content);
       case "web_search_tool_result":
         return normalizeAnthropicWebSearchContent(block.content);
       case "web_fetch_tool_result":
