@@ -24,11 +24,13 @@ Extensions run wherever you run the project: `veryfront dev`, `veryfront
 start`, and any runtime you host yourself.
 
 Veryfront Cloud is the exception. It reads a project's configuration file as
-data rather than importing it, so a configuration file that imports an
-extension factory cannot be evaluated there. `veryfront deploy` refuses such a
-configuration before it creates a release, and names the line it refused. Keep
-a configuration file that Veryfront Cloud serves to literals and the
-`defineConfig`, `defineConfigWithEnv`, `getEnv` and `mergeConfigs` helpers.
+data rather than importing it, so an extension factory never executes there.
+A default import of a first-party `@veryfront/ext-*` package is accepted: the
+factory call evaluates to an inert `{ name }` declaration that the platform
+ignores with a warning, because it provides its own capabilities. Any other
+import is refused by `veryfront deploy` before it creates a release, with the
+line it refused named. See
+[Deploying a config that declares extensions](#deploying-a-config-that-declares-extensions).
 
 ## Enable an extension
 
