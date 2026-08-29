@@ -5305,6 +5305,20 @@ EvalFallback.write("eval.txt", "x");
     assertEquals(
       collectSemanticMarkers(
         `
+class CastEvalFallback {}
+class CastEvalReceiver {}
+(eval as unknown as (source: string) => void)("CastEvalReceiver = null");
+const CastEvalAlias = CastEvalReceiver || CastEvalFallback;
+CastEvalAlias.write = Deno.writeTextFile;
+CastEvalFallback.write("cast-eval.txt", "x");
+`,
+        "src/logical-receiver-cast-direct-eval.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "CastEvalFallback.write"]],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
 class ArgumentsFallback {}
 function outer(ArgumentsReceiver) {
   function ArgumentsReceiver() {}

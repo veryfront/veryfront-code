@@ -3552,8 +3552,8 @@ const OPAQUE_BINDING_WRITE = "\u0000opaque-binding-write";
 
 function isOpaqueBindingWrite(node: Node): boolean {
   if (node.type === "CallExpression") {
-    return isNode(node.callee) && node.callee.type === "Identifier" &&
-      node.callee.name === "eval";
+    const callee = unwrapExpression(node.callee);
+    return callee?.type === "Identifier" && callee.name === "eval";
   }
   const target = node.type === "AssignmentExpression"
     ? node.left
