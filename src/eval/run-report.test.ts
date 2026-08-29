@@ -27,7 +27,7 @@ type TargetRun = {
   baseDir: string;
   runId: string;
   frameworkVersion: string;
-  targetKind: "agent" | "tool";
+  targetKind: EvalReport["targetKind"];
   target: string;
   targetAdapter: unknown;
   selectedModel?: string;
