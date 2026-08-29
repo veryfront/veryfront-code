@@ -4,12 +4,12 @@ description: "How evals define repeatable quality checks for agents."
 order: 34
 ---
 
-An eval defines a repeatable quality check for an agent. It names the target,
-dataset, metrics, thresholds, and report shape that prove whether the agent still
-behaves as expected.
+An eval defines a repeatable quality check for an agent, a tool, or a stored
+dataset. It names the target or graded dataset, metrics, thresholds, and report
+shape that prove whether the subject still behaves as expected.
 
-Use evals when agent or tool behavior must be measured across examples, not
-checked with one unit test.
+Use evals when agent, tool, or stored-value quality must be measured across
+examples, not checked with one unit test.
 
 ## Characteristics
 
@@ -119,6 +119,46 @@ agent deciding whether to call that tool. Tool evals write the dataset example t
 `record.input` and the actual mapped tool input to `record.executionInput`.
 Direct tool calls are normalized into `record.trace.toolCalls`, so the same tool
 metrics and checks can assert input, output, status, and call count.
+
+## Dataset grading
+
+Use `evalDataset` when the graded values already exist -- standing documents, a
+labelled corpus, replies written earlier -- and nothing should execute. A
+dataset eval has no target: each example's `input` becomes `record.output`
+directly, so rubric judges with `framing: "text"` grade the stored value, and a
+judge can be calibrated against labelled references without registering a
+pass-through tool.
+
+```ts
+// evals/support-reply-quality.eval.ts
+import { datasets, evalDataset, judges, metrics } from "veryfront/eval";
+
+export default evalDataset({
+  id: "eval:support-reply-quality",
+  dataset: datasets.inline([
+    {
+      id: "billing-refund-reply",
+      input: "Hello, I checked the duplicate charge and started a refund.",
+      reference: "pass",
+      metadata: { locale: "en" },
+    },
+  ]),
+  metrics: [
+    metrics.judge.rubric({
+      rubric: "The text must be polite, specific, and free of internal jargon.",
+      judge: judges.llm.rubric({ framing: "text" }),
+    }),
+  ],
+});
+```
+
+At least one of `id` or `name` is required; the report identity is derived from
+the stable `id` (falling back to `name`), so renaming the eval keeps saved
+baselines comparable. Running one needs no adapters because nothing executes:
+
+```ts
+const report = await runEval(definition, { adapters: {} });
+```
 
 ## Studio integration
 

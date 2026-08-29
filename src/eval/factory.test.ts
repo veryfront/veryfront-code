@@ -162,7 +162,11 @@ describe("eval/factory", () => {
     assertEquals(definition.targetKind, "dataset");
     assertEquals(definition.id, "eval:rubric-calibration");
     assertEquals(definition.name, "Rubric calibration");
-    assertEquals(definition.target, "Rubric calibration");
+    assertEquals(
+      definition.target,
+      "eval:rubric-calibration",
+      "the stable id wins the derived identity so renames keep baselines valid",
+    );
     assertEquals(definition.repetitions, 2);
     assertEquals(definition.tags, ["calibration"]);
     assertEquals(definition.metadata, { owner: "ai-platform" });
@@ -170,23 +174,30 @@ describe("eval/factory", () => {
     assertEquals(Object.hasOwn(definition, "mockTools"), false);
   });
 
-  it("derives dataset eval identity from the id when the name is omitted", () => {
-    const definition = evalDataset({
+  it("derives dataset eval identity from the id, falling back to the name", () => {
+    const fromId = evalDataset({
       id: "eval:judge-corpus",
       dataset: datasets.inline([{ id: "case-1", input: "text" }]),
     });
+    assertEquals(fromId.target, "eval:judge-corpus");
+    assertEquals(fromId.name, "eval:judge-corpus");
+    assertEquals(isEvalDefinition(fromId), true);
 
-    assertEquals(definition.target, "eval:judge-corpus");
-    assertEquals(definition.name, "eval:judge-corpus");
-    assertEquals(isEvalDefinition(definition), true);
+    const fromName = evalDataset({
+      name: "Judge corpus",
+      dataset: datasets.inline([{ id: "case-1", input: "text" }]),
+    });
+    assertEquals(fromName.target, "Judge corpus");
+    assertEquals(fromName.name, "Judge corpus");
+    assertEquals(isEvalDefinition(fromName), true);
   });
 
   it("rejects dataset evals without an id or name", () => {
-    assertThrows(
-      () => evalDataset({ dataset: datasets.inline([{ id: "case-1", input: "text" }]) }),
-      Error,
-      "id or name",
-    );
+    // The input type requires id or name; the cast mirrors an untyped JS caller.
+    const targetless = {
+      dataset: datasets.inline([{ id: "case-1", input: "text" }]),
+    } as unknown as Parameters<typeof evalDataset>[0];
+    assertThrows(() => evalDataset(targetless), Error, "id or name");
     assertThrows(
       () =>
         evalDataset({

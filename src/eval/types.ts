@@ -421,14 +421,8 @@ export interface EvalAgentInput {
   check?: (context: EvalCheckContext) => EvalMaybePromise<void>;
 }
 
-/**
- * Input accepted by `evalDataset`. Dataset evals grade each stored example
- * value directly, so they have no execution target. At least one of `id` or
- * `name` is required to derive the definition's identity.
- */
-export interface EvalDatasetInput {
-  id?: string;
-  name?: string;
+/** Fields shared by every `evalDataset` input shape. */
+export interface EvalDatasetInputBase {
   description?: string;
   dataset: EvalDataset | EvalExampleInput[];
   metrics?: EvalMetric[];
@@ -437,6 +431,16 @@ export interface EvalDatasetInput {
   metadata?: Record<string, unknown>;
   check?: (context: EvalCheckContext) => EvalMaybePromise<void>;
 }
+
+/**
+ * Input accepted by `evalDataset`. Dataset evals grade each stored example
+ * value directly, so they have no execution target. At least one of `id` or
+ * `name` is required to derive the definition's identity, and the union
+ * encodes that requirement for typed callers.
+ */
+export type EvalDatasetInput =
+  | (EvalDatasetInputBase & { id: string; name?: string })
+  | (EvalDatasetInputBase & { id?: string; name: string });
 
 /** Input accepted by `evalTool`. */
 export interface EvalToolInput {
