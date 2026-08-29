@@ -5727,6 +5727,24 @@ export default config as const;
         assertEquals(error.message.includes("alice"), false);
       });
 
+      it("labels a glued double-separator drive path [url] -- a documented limit", async () => {
+        const error = await loadFailure(
+          "vf-config-glued-drive-scheme-",
+          `throw new Error("Failed atC://Users/alice/veryfront.config.ts");\n`,
+        );
+
+        // Documented limit, decided on inbox#852. Glued prose turns the drive
+        // letter into the legal three-character scheme `atC`, and that token is
+        // structurally identical to `...s://host`: a drive-letter rescue rule
+        // that relabels this [path] re-opens the http[path] regression #4236
+        // fixed, and narrowing SCHEME_URL to known schemes would under-redact
+        // real URLs. The label is cosmetic; the redaction is what matters, and
+        // it holds -- nothing from the path survives.
+        assertStringIncludes(error.message, "Failed [url]");
+        assertEquals(error.message.includes("Users"), false);
+        assertEquals(error.message.includes("alice"), false);
+      });
+
       /**
        * Fastest of `runs` timed `loadFailure` calls, with the error it raised.
        *
