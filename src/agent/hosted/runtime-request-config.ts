@@ -131,8 +131,10 @@ export function getServerResolvedProviderReplayCheckpoints(
     serverEnvelopeVerified,
   } = input;
   if (!serverEnvelopeVerified) return undefined;
-  const value = serverResolvedProviderReplayCheckpoints ??
-    forwardedProps?.serverResolvedProviderReplayCheckpoints;
+  const value = typeof maybeServerEnvelopeVerified !== "boolean" &&
+      Object.hasOwn(input, "serverResolvedProviderReplayCheckpoints")
+    ? serverResolvedProviderReplayCheckpoints
+    : forwardedProps?.serverResolvedProviderReplayCheckpoints;
   if (value === undefined) return undefined;
   const checkpoints = parseServerResolvedProviderReplayCheckpoints(value);
   // Contract-valid state this runtime version cannot reconstruct (another

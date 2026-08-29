@@ -13,6 +13,7 @@ import {
   MAX_PROVIDER_REPLAY_RAW_METADATA_NODES,
   MAX_PROVIDER_REPLAY_RAW_METADATA_STRING_CHARS,
 } from "./provider-replay-limits.ts";
+import { isAnthropicProviderToolResultBlock } from "./anthropic-provider-replay-block.ts";
 
 const MAX_PROVIDER_REPLAY_BLOCKS = 100;
 const MAX_PROVIDER_REPLAY_CHECKPOINTS = 100;
@@ -31,18 +32,6 @@ const CHECKPOINT_KEYS = new Set([
   "emittedAt",
 ]);
 const BLOCK_KEYS = new Set(["type", "provider", "block"]);
-// Anthropic reports provider tool failures with the ordinary outer result type
-// and the error record inside `content`; there is no outer `*_tool_result_error`
-// block type, so accepting one here would only defer the failure to request
-// construction, where the provider parser rejects it with a bare TypeError.
-const ANTHROPIC_PROVIDER_TOOL_RESULT_TYPES = new Set([
-  "web_search_tool_result",
-  "web_fetch_tool_result",
-  "code_execution_tool_result",
-  "bash_code_execution_tool_result",
-  "text_editor_code_execution_tool_result",
-  "mcp_tool_result",
-]);
 const WEB_SEARCH_ERROR_CODES = new Set([
   "invalid_tool_input",
   "unavailable",
@@ -246,10 +235,6 @@ function validateAnthropicProviderToolResultBlock(
   ) {
     invalidCheckpoint("checkpoint provider tool-result content is malformed", context);
   }
-}
-
-function isAnthropicProviderToolResultBlock(block: Record<string, unknown>): boolean {
-  return typeof block.type === "string" && ANTHROPIC_PROVIDER_TOOL_RESULT_TYPES.has(block.type);
 }
 
 function validateAnthropicReplayBlock(

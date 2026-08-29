@@ -188,6 +188,15 @@ async function withVerifiedRunEventAppendToken(
 ): Promise<ParsedHostedChatRequest | Response> {
   const token = request.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER)?.trim();
   if (!token) {
+    if (
+      trustServerEnvelope &&
+      Object.hasOwn(parsedRequest, "serverResolvedProviderReplayCheckpoints")
+    ) {
+      return Response.json(
+        { errorCode: "INVALID_RUN_EVENT_APPEND_TOKEN" },
+        { status: 403 },
+      );
+    }
     return {
       ...stripUnverifiedServerResolvedRequestState(parsedRequest),
       forwardedProps: stripUnverifiedServerResolvedForwardedProps(
@@ -558,7 +567,9 @@ async function buildParsedHostedChatRequestInternal(
     model,
     allowDelegation,
     forwardedProps,
-    serverResolvedProviderReplayCheckpoints,
+    ...(Object.hasOwn(input.chatRequest, "serverResolvedProviderReplayCheckpoints")
+      ? { serverResolvedProviderReplayCheckpoints }
+      : {}),
     runtimeOverrides,
     durableRootRun,
     persistLatestUserMessageBeforeDurableRun: false,

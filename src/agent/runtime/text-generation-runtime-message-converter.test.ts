@@ -574,6 +574,69 @@ describe("text-generation-runtime-message-converter", () => {
       ]);
     });
 
+    it("groups result-only Anthropic responses with the following split assistant turn", () => {
+      const rawProviderCall = {
+        type: "server_tool_use",
+        id: "server-call-1",
+        name: "web_search",
+        input: { query: "veryfront" },
+      };
+      const rawToolUse = {
+        type: "tool_use",
+        id: "call-1",
+        name: "lookup",
+        input: { query: "veryfront" },
+      };
+      const rawProviderResult = {
+        type: "web_search_tool_result",
+        tool_use_id: "server-call-1",
+        content: [],
+      };
+      const rawText = { type: "text", text: "Found it." };
+      const message = attachProviderMetadata({
+        id: "a-split-pause",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-web_search",
+            toolCallId: "server-call-1",
+            toolName: "web_search",
+            args: rawProviderCall.input,
+            providerExecuted: true,
+          },
+          { type: "tool-lookup", toolCallId: "call-1", toolName: "lookup", args: rawToolUse.input },
+          {
+            type: "tool-result",
+            toolCallId: "server-call-1",
+            toolName: "web_search",
+            result: [],
+            providerExecuted: true,
+          },
+          { type: "tool-result", toolCallId: "call-1", toolName: "lookup", result: { matches: 1 } },
+          { type: "text", text: "Found it." },
+        ],
+      } as unknown as Message, {
+        anthropic: {
+          rawAssistantMessages: [
+            [rawProviderCall, rawToolUse],
+            [rawProviderResult],
+            [rawText],
+          ],
+        },
+      });
+
+      const converted = convertToTextGenerationRuntimeMessages([message]);
+      const assistantMetadata = converted
+        .filter((entry) => entry.role === "assistant")
+        .map((entry) => entry.providerMetadata);
+
+      assertEquals(assistantMetadata, [{
+        anthropic: { rawAssistantMessages: [[rawProviderCall, rawToolUse]] },
+      }, {
+        anthropic: { rawAssistantMessages: [[rawProviderResult], [rawText]] },
+      }]);
+    });
+
     it("rejects anthropic raw assistant messages that do not match the split segments", () => {
       const message = attachProviderMetadata({
         id: "a-split",

@@ -144,6 +144,18 @@ it("server-resolved provider replay checkpoints prefer verified private request 
     undefined,
     "unverified top-level state is ignored",
   );
+
+  const nullError = assertThrows(() =>
+    getServerResolvedProviderReplayCheckpoints({
+      forwardedProps: {
+        serverResolvedProviderReplayCheckpoints: [forwardedCheckpoint],
+      },
+      serverResolvedProviderReplayCheckpoints: null,
+      serverEnvelopeVerified: true,
+    })
+  );
+  assertInstanceOf(nullError, VeryfrontError);
+  assertEquals(nullError.slug, "provider-replay-checkpoint-invalid");
 });
 
 it("server-resolved provider replay checkpoints reject providers this runtime cannot replay", () => {

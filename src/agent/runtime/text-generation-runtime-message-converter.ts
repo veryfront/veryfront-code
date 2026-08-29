@@ -21,6 +21,7 @@ import { buildDataFileAnnotation } from "#veryfront/chat/types.ts";
 import { PROVIDER_METADATA_SPLIT_UNSUPPORTED } from "#veryfront/errors";
 import { getTextFromParts, getToolArguments, type Message, type ToolCallPart } from "../types.ts";
 import { readAttachedProviderMetadata } from "./provider-metadata.ts";
+import { isAnthropicProviderToolResultBlock } from "./anthropic-provider-replay-block.ts";
 
 function getStringPartField(part: unknown, key: string): string | undefined {
   if (!part || typeof part !== "object" || Array.isArray(part)) return undefined;
@@ -379,14 +380,38 @@ function createSplitAnthropicRawAssistantMetadata(
   const anthropic = providerMetadata.anthropic;
   if (!isRecord(anthropic)) return undefined;
   const rawAssistantMessages = anthropic.rawAssistantMessages;
-  if (!Array.isArray(rawAssistantMessages) || rawAssistantMessages.length !== segmentCount) {
+  if (!Array.isArray(rawAssistantMessages)) {
     return undefined;
   }
-  return rawAssistantMessages.map((rawAssistantMessage) => ({
+
+  const segmentRawAssistantMessages: unknown[][][] = [];
+  let pendingResultOnlyMessages: unknown[][] = [];
+  for (const rawAssistantMessage of rawAssistantMessages) {
+    if (!Array.isArray(rawAssistantMessage)) return undefined;
+    const isResultOnly = rawAssistantMessage.length > 0 &&
+      rawAssistantMessage.every((block) =>
+        isRecord(block) && isAnthropicProviderToolResultBlock(block)
+      );
+    if (isResultOnly) {
+      pendingResultOnlyMessages.push(rawAssistantMessage);
+      continue;
+    }
+    if (segmentRawAssistantMessages.length >= segmentCount) return undefined;
+    segmentRawAssistantMessages.push([...pendingResultOnlyMessages, rawAssistantMessage]);
+    pendingResultOnlyMessages = [];
+  }
+  const finalSegment = segmentRawAssistantMessages.at(-1);
+  if (pendingResultOnlyMessages.length > 0) {
+    if (!finalSegment) return undefined;
+    finalSegment.push(...pendingResultOnlyMessages);
+  }
+  if (segmentRawAssistantMessages.length !== segmentCount) return undefined;
+
+  return segmentRawAssistantMessages.map((segmentMessages) => ({
     ...providerMetadata,
     anthropic: {
       ...anthropic,
-      rawAssistantMessages: [rawAssistantMessage],
+      rawAssistantMessages: segmentMessages,
     },
   }));
 }
