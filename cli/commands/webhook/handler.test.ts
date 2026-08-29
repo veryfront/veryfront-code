@@ -10,6 +10,8 @@ import { clearProjectAgentRuntimeRegistries } from "#veryfront/agent/project/age
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { VeryfrontError } from "veryfront/errors";
+import { join } from "veryfront/platform/path";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
 import { handleWebhookCommand, toWebhookAgentOptions } from "./handler.ts";
@@ -292,12 +294,15 @@ describe("webhook command", () => {
 
 describe("readJsonFile", () => {
   it("rejects an unreadable payload file as an invalid-argument usage error", async () => {
-    const error = await assertRejects(
-      () => readJsonFile("/nonexistent/veryfront-payload.json", "--payload JSON file"),
-      VeryfrontError,
-      "Invalid --payload JSON file:",
-    );
-    assertInstanceOf(error, VeryfrontError);
-    assertEquals(error.slug, "invalid-argument");
+    await withTempDir(async (tempDir) => {
+      const missingPath = join(tempDir, "veryfront-payload.json");
+      const error = await assertRejects(
+        () => readJsonFile(missingPath, "--payload JSON file"),
+        VeryfrontError,
+        "Invalid --payload JSON file:",
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "invalid-argument");
+    }, { prefix: "vf-webhook-payload-" });
   });
 });
