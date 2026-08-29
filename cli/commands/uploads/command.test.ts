@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertInstanceOf,
+  assertRejects,
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
@@ -16,8 +17,10 @@ import {
   listAllUploads,
   resolveUploadOutputPath,
   uploadLocalFileToUploads,
+  uploadsCommand,
 } from "./command.ts";
 import type { ApiClient } from "#cli/shared/config";
+import type { ParsedArgs } from "#cli/shared/types";
 
 function createMockClient(overrides: {
   get?: (path: string, params?: Record<string, string>) => Promise<unknown>;
@@ -124,6 +127,25 @@ describe("resolveUploadOutputPath", () => {
     );
     assertInstanceOf(error, VeryfrontError);
     assertEquals(error.slug, "invalid-argument");
+  });
+});
+
+describe("uploadsCommand", () => {
+  it("rejects unusable subcommand arguments as invalid-argument usage errors", async () => {
+    const cases: Array<[ParsedArgs, string]> = [
+      [{ _: ["uploads", "list"], limit: "many" }, "Invalid uploads list arguments:"],
+      [{ _: ["uploads", "put"] }, "Invalid uploads put arguments:"],
+      [{ _: ["uploads", "delete"] }, "Invalid uploads delete arguments:"],
+    ];
+    for (const [args, expectedDetail] of cases) {
+      const error = await assertRejects(
+        () => uploadsCommand(args),
+        VeryfrontError,
+        expectedDetail,
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "invalid-argument");
+    }
   });
 });
 

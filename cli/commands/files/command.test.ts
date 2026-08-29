@@ -1,15 +1,22 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "veryfront/errors";
 import {
   buildRemoteFileUrl,
   deleteRemoteFile,
+  filesCommand,
   getRemoteFile,
   listRemoteFiles,
   putRemoteFileFromLocal,
 } from "./command.ts";
 import type { ApiClient } from "#cli/shared/config";
+import type { ParsedArgs } from "#cli/shared/types";
 
 function createMockClient(overrides: {
   get?: (path: string, params?: Record<string, string>) => Promise<unknown>;
@@ -136,5 +143,24 @@ describe("deleteRemoteFile", () => {
     await deleteRemoteFile(client, "my-project", "knowledge/q1-report.md");
 
     assertEquals(capturedPath, "/projects/my-project/files/knowledge%2Fq1-report.md");
+  });
+});
+
+describe("filesCommand", () => {
+  it("rejects unusable subcommand arguments as invalid-argument usage errors", async () => {
+    const cases: Array<[ParsedArgs, string]> = [
+      [{ _: ["files", "get"] }, "Invalid files get arguments:"],
+      [{ _: ["files", "put"] }, "Invalid files put arguments:"],
+      [{ _: ["files", "delete"] }, "Invalid files delete arguments:"],
+    ];
+    for (const [args, expectedDetail] of cases) {
+      const error = await assertRejects(
+        () => filesCommand(args),
+        VeryfrontError,
+        expectedDetail,
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "invalid-argument");
+    }
   });
 });
