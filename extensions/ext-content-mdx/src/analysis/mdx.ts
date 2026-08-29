@@ -87,30 +87,67 @@ interface LexicalCache {
 
 let lexicalCache: LexicalCache | undefined;
 
-function consumeLexicalToken(state: LexicalState, label: string): void {
-  if (state.pendingSlash) {
-    if (label !== "jsxTagEnd") state.contextualSlash = true;
-    state.pendingSlash = false;
-  }
+function consumeBalancedToken(state: LexicalState, label: string): boolean {
   if (label === "{" || label === "${") state.braceDepth++;
   else if (label === "}") state.braceDepth--;
   else if (label === "(") state.parenthesisDepth++;
   else if (label === ")") state.parenthesisDepth--;
   else if (label === "[") state.bracketDepth++;
   else if (label === "]") state.bracketDepth--;
-  else if (label === "jsxTagStart") state.jsxTags.push({ closing: false });
-  else if (
-    label === "/" && state.previousLabel === "jsxTagStart" &&
-    state.jsxTags.length > 0
-  ) {
-    state.jsxTags[state.jsxTags.length - 1]!.closing = true;
-  } else if (label === "jsxTagEnd") {
-    const tag = state.jsxTags.pop();
-    if (tag?.closing) state.jsxElementDepth--;
-    else if (state.previousLabel !== "/") state.jsxElementDepth++;
-  } else if (label === "/" && state.previousLabel !== "jsxTagStart") {
+  else return false;
+  return true;
+}
+
+function consumeJsxToken(state: LexicalState, label: string): boolean {
+  if (label === "jsxTagStart") {
+    state.jsxTags.push({ closing: false });
+    return true;
+  }
+  if (label === "/" && state.previousLabel === "jsxTagStart") {
+    return markCurrentJsxTagClosing(state);
+  }
+  if (label === "jsxTagEnd") {
+    closeCurrentJsxTag(state);
+    return true;
+  }
+  return false;
+}
+
+function markCurrentJsxTagClosing(state: LexicalState): boolean {
+  const tag = state.jsxTags.at(-1);
+  if (tag === undefined) return false;
+  tag.closing = true;
+  return true;
+}
+
+function closeCurrentJsxTag(state: LexicalState): void {
+  const tag = state.jsxTags.pop();
+  if (tag?.closing) {
+    state.jsxElementDepth--;
+    return;
+  }
+  if (state.previousLabel !== "/") state.jsxElementDepth++;
+}
+
+function consumePendingSlash(state: LexicalState, label: string): void {
+  if (!state.pendingSlash) return;
+  if (label !== "jsxTagEnd") state.contextualSlash = true;
+  state.pendingSlash = false;
+}
+
+function queuePotentialContextualSlash(state: LexicalState, label: string): void {
+  if (label === "/" && state.previousLabel !== "jsxTagStart") {
     state.pendingSlash = true;
   }
+}
+
+function consumeLexicalToken(state: LexicalState, label: string): void {
+  consumePendingSlash(state, label);
+  if (consumeBalancedToken(state, label) || consumeJsxToken(state, label)) {
+    state.previousLabel = label;
+    return;
+  }
+  queuePotentialContextualSlash(state, label);
   state.previousLabel = label;
 }
 
@@ -192,7 +229,7 @@ function lexicalBoundaryState(
     throw error;
   }
 
-  const trailingComment = cache.comments[cache.comments.length - 1];
+  const trailingComment = cache.comments.at(-1);
   if (
     trailingComment?.type === "Line" &&
     trailingComment.end === input.length - position
@@ -330,12 +367,26 @@ const lexicalMdx = combineExtensions([
   mdxMarkdownSyntax,
 ]);
 
+function createMdxProcessor(frontmatter: boolean) {
+  const processor = unified().use(remarkParse).use(remarkGfm);
+  if (frontmatter) processor.use(remarkFrontmatter, ["yaml"]);
+  processor.data("micromarkExtensions", [lexicalMdx]);
+  processor.data("fromMarkdownExtensions", [mdxFromMarkdown()]);
+  return processor;
+}
+
+type MdxProcessor = ReturnType<typeof createMdxProcessor>;
+type MdxRoot = ReturnType<MdxProcessor["parse"]>;
+
 interface EmbeddedInput {
   readonly source: string;
   readonly absoluteStart: number;
   readonly attributeName: string | undefined;
   readonly fragmentKind: "expression" | "jsx-spread-attribute";
 }
+
+type MdxJsxElement = Extract<Nodes, { type: "mdxJsxFlowElement" | "mdxJsxTextElement" }>;
+type MdxJsxAttribute = MdxJsxElement["attributes"][number];
 
 function own(value: unknown, key: string): unknown {
   if (typeof value !== "object" || value === null) return undefined;
@@ -370,6 +421,25 @@ function parserDiagnostic(
     };
   }
   return undefined;
+}
+
+function parseMdxRoot(
+  value: string,
+  frontmatter: boolean,
+  locator: SourceLocator,
+): { readonly kind: "root"; readonly root: MdxRoot } | ContentAnalysisResult {
+  const processor = createMdxProcessor(frontmatter);
+  lexicalCache = undefined;
+  try {
+    return { kind: "root", root: processor.parse(value) };
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    const diagnostic = parserDiagnostic(error, locator);
+    if (diagnostic === undefined) throw error;
+    return { kind: "syntax-error", diagnostic };
+  } finally {
+    lexicalCache = undefined;
+  }
 }
 
 function positionOffsets(
@@ -439,110 +509,144 @@ function documentExpressionInput(
   };
 }
 
+function appendChildren(pending: Nodes[], node: Nodes): void {
+  const children = childrenOf(node);
+  for (let index = children.length - 1; index >= 0; index--) {
+    const child = children[index];
+    if (child !== undefined) pending.push(child);
+  }
+}
+
+function collectMdxNodeInputs(
+  value: string,
+  node: Nodes,
+  locator: SourceLocator,
+  destinations: ContentDestination[],
+  embedded: EmbeddedInput[],
+): void {
+  if (node.type === "mdxFlowExpression" || node.type === "mdxTextExpression") {
+    const input = documentExpressionInput(node);
+    if (input !== undefined) embedded.push(input);
+    return;
+  }
+
+  if (node.type !== "mdxJsxFlowElement" && node.type !== "mdxJsxTextElement") {
+    return;
+  }
+
+  for (const attribute of node.attributes) {
+    collectMdxAttribute(value, attribute, locator, destinations, embedded);
+  }
+}
+
+function collectMdxAttribute(
+  value: string,
+  attribute: MdxJsxAttribute,
+  locator: SourceLocator,
+  destinations: ContentDestination[],
+  embedded: EmbeddedInput[],
+): void {
+  if (attribute.type === "mdxJsxExpressionAttribute") {
+    const input = embeddedInput(value, attribute, undefined, "jsx-spread-attribute");
+    if (input !== undefined) embedded.push(input);
+    return;
+  }
+
+  if (typeof attribute.value === "string") {
+    if (!isDestinationAttribute(attribute.name)) return;
+    const destination = quotedAttributeDestination(value, attribute.position, locator);
+    if (destination !== undefined) destinations.push(destination);
+    return;
+  }
+
+  if (attribute.value === null || attribute.value === undefined) return;
+  const input = embeddedInput(
+    value,
+    { value: attribute.value.value, position: attribute.position },
+    attribute.name,
+    "expression",
+  );
+  if (input !== undefined) embedded.push(input);
+}
+
+function collectMdxEmbeddedInputs(
+  value: string,
+  root: Nodes,
+  locator: SourceLocator,
+): {
+  readonly destinations: readonly ContentDestination[];
+  readonly embedded: readonly EmbeddedInput[];
+} {
+  const destinations: ContentDestination[] = [];
+  const embedded: EmbeddedInput[] = [];
+  const pending: Nodes[] = [root];
+
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (node === undefined) break;
+    collectMdxNodeInputs(value, node, locator, destinations, embedded);
+    appendChildren(pending, node);
+  }
+
+  return { destinations, embedded };
+}
+
+async function appendEmbeddedAnalysisDestinations(options: {
+  readonly embedded: readonly EmbeddedInput[];
+  readonly destinations: ContentDestination[];
+  readonly locator: SourceLocator;
+  readonly filePath: string | undefined;
+}): Promise<ContentAnalysisResult | undefined> {
+  const embedded = [...options.embedded].sort((left, right) =>
+    left.absoluteStart - right.absoluteStart
+  );
+
+  for (const input of embedded) {
+    const analysis = await analyzeEmbeddedExpression({
+      ...input,
+      locator: options.locator,
+      filePath: options.filePath,
+    });
+    if (analysis.kind === "syntax-error") return analysis;
+    options.destinations.push(...analysis.destinations);
+    if (analysis.staticDestination !== undefined) {
+      options.destinations.push(analysis.staticDestination);
+    }
+  }
+
+  return undefined;
+}
+
 export async function analyzeMdx(options: {
   readonly value: string;
   readonly frontmatter: boolean;
   readonly filePath: string | undefined;
 }): Promise<ContentAnalysisResult> {
-  const processor = unified().use(remarkParse).use(remarkGfm);
-  if (options.frontmatter) processor.use(remarkFrontmatter, ["yaml"]);
-  processor.data("micromarkExtensions", [lexicalMdx]);
-  processor.data("fromMarkdownExtensions", [mdxFromMarkdown()]);
   const locator = createSourceLocator(options.value);
-  let root: ReturnType<typeof processor.parse>;
-  lexicalCache = undefined;
-  try {
-    root = processor.parse(options.value);
-  } catch (error) {
-    if (!(error instanceof Error)) throw error;
-    const diagnostic = parserDiagnostic(error, locator);
-    if (diagnostic === undefined) throw error;
-    return { kind: "syntax-error", diagnostic };
-  } finally {
-    lexicalCache = undefined;
-  }
+  const parsed = parseMdxRoot(options.value, options.frontmatter, locator);
+  if (parsed.kind !== "root") return parsed;
 
   const frontmatterDiagnostic = yamlFrontmatterDiagnostic(
     options.value,
-    root,
+    parsed.root,
     locator,
   );
   if (frontmatterDiagnostic !== undefined) {
     return { kind: "syntax-error", diagnostic: frontmatterDiagnostic };
   }
 
-  const markdown = analyzeMarkdownTree(options.value, root, {
+  const markdown = analyzeMarkdownTree(options.value, parsed.root, {
     micromarkExtensions: [lexicalMdx],
   });
-  const destinations = [...markdown.destinations];
-  const embedded: EmbeddedInput[] = [];
-  const pending: Nodes[] = [root];
-  while (pending.length > 0) {
-    const node = pending.pop();
-    if (node === undefined) break;
-    if (
-      node.type === "mdxFlowExpression" || node.type === "mdxTextExpression"
-    ) {
-      const input = documentExpressionInput(node);
-      if (input !== undefined) embedded.push(input);
-    } else if (
-      node.type === "mdxJsxFlowElement" || node.type === "mdxJsxTextElement"
-    ) {
-      for (const attribute of node.attributes) {
-        if (attribute.type === "mdxJsxExpressionAttribute") {
-          const input = embeddedInput(
-            options.value,
-            attribute,
-            undefined,
-            "jsx-spread-attribute",
-          );
-          if (input !== undefined) embedded.push(input);
-          continue;
-        }
-        if (typeof attribute.value === "string") {
-          if (!isDestinationAttribute(attribute.name)) continue;
-          const destination = quotedAttributeDestination(
-            options.value,
-            attribute.position,
-            locator,
-          );
-          if (destination !== undefined) destinations.push(destination);
-        } else if (
-          attribute.value !== null && attribute.value !== undefined
-        ) {
-          const input = embeddedInput(
-            options.value,
-            {
-              value: attribute.value.value,
-              position: attribute.position,
-            },
-            attribute.name,
-            "expression",
-          );
-          if (input !== undefined) embedded.push(input);
-        }
-      }
-    }
-    const children = childrenOf(node);
-    for (let index = children.length - 1; index >= 0; index--) {
-      const child = children[index];
-      if (child !== undefined) pending.push(child);
-    }
-  }
-
-  embedded.sort((left, right) => left.absoluteStart - right.absoluteStart);
-  for (const input of embedded) {
-    const analysis = await analyzeEmbeddedExpression({
-      ...input,
-      locator,
-      filePath: options.filePath,
-    });
-    if (analysis.kind === "syntax-error") return analysis;
-    destinations.push(...analysis.destinations);
-    if (analysis.staticDestination !== undefined) {
-      destinations.push(analysis.staticDestination);
-    }
-  }
+  const mdx = collectMdxEmbeddedInputs(options.value, parsed.root, locator);
+  const destinations = [...markdown.destinations, ...mdx.destinations];
+  const embeddedError = await appendEmbeddedAnalysisDestinations({
+    embedded: mdx.embedded,
+    destinations,
+    locator,
+    filePath: options.filePath,
+  });
+  if (embeddedError !== undefined) return embeddedError;
 
   return {
     kind: "document",

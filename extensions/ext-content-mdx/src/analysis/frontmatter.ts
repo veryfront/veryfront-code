@@ -42,31 +42,44 @@ function lineColumnOffset(
   targetLine: number,
   targetColumn: number,
 ): number | undefined {
-  if (
-    !Number.isSafeInteger(targetLine) || targetLine < 1 ||
-    !Number.isSafeInteger(targetColumn) || targetColumn < 1
-  ) return undefined;
+  if (!isPositiveSafeInteger(targetLine) || !isPositiveSafeInteger(targetColumn)) {
+    return undefined;
+  }
 
+  const lineStart = offsetForLine(value, targetLine);
+  if (lineStart === undefined) return value.length;
+
+  return offsetForColumn(value, lineStart, targetColumn);
+}
+
+function isPositiveSafeInteger(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 1;
+}
+
+function offsetForLine(value: string, targetLine: number): number | undefined {
   let offset = 0;
   let line = 1;
   while (line < targetLine && offset < value.length) {
-    if (value[offset] === "\r") {
-      offset += value[offset + 1] === "\n" ? 2 : 1;
-      line++;
-    } else if (value[offset] === "\n") {
-      offset++;
-      line++;
-    } else {
-      offset++;
-    }
+    offset = nextLineOffset(value, offset);
+    line++;
   }
-  if (line < targetLine) return value.length;
+  return line === targetLine ? offset : undefined;
+}
 
+function nextLineOffset(value: string, offset: number): number {
+  while (offset < value.length) {
+    const codeUnit = value[offset];
+    offset++;
+    if (codeUnit === "\r") return value[offset] === "\n" ? offset + 1 : offset;
+    if (codeUnit === "\n") return offset;
+  }
+  return offset;
+}
+
+function offsetForColumn(value: string, lineStart: number, targetColumn: number): number {
+  let offset = lineStart;
   let remaining = targetColumn - 1;
-  while (
-    remaining > 0 && offset < value.length && value[offset] !== "\r" &&
-    value[offset] !== "\n"
-  ) {
+  while (remaining > 0 && isLineContent(value, offset)) {
     const codePoint = value.codePointAt(offset);
     offset += codePoint !== undefined && codePoint > 0xffff ? 2 : 1;
     remaining--;
@@ -74,18 +87,24 @@ function lineColumnOffset(
   return offset;
 }
 
-function yamlErrorOffset(error: SyntaxError, yaml: string): number | undefined {
+function isLineContent(value: string, offset: number): boolean {
+  return offset < value.length && value[offset] !== "\r" && value[offset] !== "\n";
+}
+
+function yamlParserOffset(error: SyntaxError, yamlLength: number): number | undefined {
   // The core YAML adapter retains an exact parser offset. The permissionless
   // JSR entry exposes only the parser's line and column in its message.
   const positions = ownValue(ownValue(error, "cause"), "pos");
-  if (Array.isArray(positions)) {
-    const offset = ownValue(positions, "0");
-    if (
-      typeof offset === "number" && Number.isSafeInteger(offset) && offset >= 0 &&
-      offset <= yaml.length
-    ) return offset;
-  }
+  if (!Array.isArray(positions)) return undefined;
+  const offset = ownValue(positions, "0");
+  const validOffset = typeof offset === "number" && Number.isSafeInteger(offset) &&
+    offset >= 0 && offset <= yamlLength;
+  return validOffset ? offset : undefined;
+}
 
+function yamlErrorOffset(error: SyntaxError, yaml: string): number | undefined {
+  const offset = yamlParserOffset(error, yaml.length);
+  if (offset !== undefined) return offset;
   const match = / at line (\d+), column (\d+):/.exec(error.message);
   return match === null ? undefined : lineColumnOffset(yaml, Number(match[1]), Number(match[2]));
 }

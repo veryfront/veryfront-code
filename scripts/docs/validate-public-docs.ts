@@ -368,13 +368,25 @@ function syntaxIssue(
 ): PublicDocIssue {
   const label = syntax === "mdx" ? "MDX" : "Markdown";
   const line = diagnostic.range.start.line;
-  const message = diagnostic.message.replace(/[.\s]+$/, "");
+  const message = trimIssueMessageEnd(diagnostic.message);
   return {
     path,
     line,
     message: `Fix invalid ${label} syntax: ${message}.`,
     text: content.split("\n")[line - 1]?.trim() ?? "",
   };
+}
+
+function trimIssueMessageEnd(message: string): string {
+  let end = message.length;
+  while (end > 0) {
+    const character = message[end - 1];
+    if (character !== "." && character?.trim() !== "") {
+      break;
+    }
+    end--;
+  }
+  return message.slice(0, end);
 }
 
 async function analyzePublicDoc(

@@ -1,24 +1,15 @@
 import { analyzeMarkdown } from "./markdown.ts";
 import { analyzeMdx } from "./mdx.ts";
-import type {
-  AnalyzeContentOptions,
-  ContentAnalysisResult,
+import type { AnalyzeContentOptions, ContentAnalysisResult } from "./types.ts";
+
+export type { AnalyzeContentOptions, ContentAnalysisResult } from "./types.ts";
+export type {
   ContentDestination,
   ContentSyntax,
   ContentSyntaxDiagnostic,
   SourcePoint,
   SourceRange,
 } from "./types.ts";
-
-export type {
-  AnalyzeContentOptions,
-  ContentAnalysisResult,
-  ContentDestination,
-  ContentSyntax,
-  ContentSyntaxDiagnostic,
-  SourcePoint,
-  SourceRange,
-};
 
 export function analyzeContent(
   options: AnalyzeContentOptions,

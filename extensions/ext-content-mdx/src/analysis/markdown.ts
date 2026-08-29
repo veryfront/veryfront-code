@@ -22,6 +22,9 @@ interface MarkdownTokens {
   readonly resourceDestinations: readonly OffsetSpan[];
 }
 
+type LinkNode = Extract<Nodes, { type: "link" | "image" }>;
+type DefinitionNode = Extract<Nodes, { type: "definition" }>;
+
 function positionOffsets(
   position: Position | undefined,
 ): { readonly start: number; readonly end: number } | undefined {
@@ -89,37 +92,27 @@ function lastContainedSpan(
 
 function linkDestination(
   value: string,
-  node: Extract<Nodes, { type: "link" | "image" }>,
+  node: LinkNode,
   locator: SourceLocator,
   tokens: MarkdownTokens,
   tokenBase: number,
 ): ContentDestination | undefined {
   const offsets = positionOffsets(node.position);
   if (offsets === undefined) return undefined;
-  const authored = value.slice(offsets.start, offsets.end);
-  const angleDelimited = authored.startsWith("<") && authored.endsWith(">");
-  const autolinkValue = angleDelimited ? authored.slice(1, -1) : authored;
-  const normalizedAutolink = node.type === "link" &&
-    (
-      autolinkValue === node.url ||
-      `mailto:${autolinkValue}` === node.url ||
-      `http://${autolinkValue}` === node.url
-    );
-  if (normalizedAutolink) {
-    if (
-      !angleDelimited && authored === node.url && value[offsets.start - 1] === "<" &&
-      value[offsets.start - 2] === "\\"
-    ) return undefined;
-    const start = angleDelimited ? offsets.start + 1 : offsets.start;
-    const end = angleDelimited ? offsets.end - 1 : offsets.end;
-    const destination: ContentDestination = {
-      kind: "autolink",
-      rawValue: value.slice(start, end),
-      range: locator.range(start, end),
-      syntax: "autolink",
-    };
-    return autolinkValue === node.url ? destination : { ...destination, normalizedValue: node.url };
-  }
+  const autolink = autolinkDestination(value, node, locator, offsets);
+  if (autolink !== undefined) return autolink;
+
+  return resourceLinkDestination(value, node, locator, tokens, tokenBase, offsets);
+}
+
+function resourceLinkDestination(
+  value: string,
+  node: LinkNode,
+  locator: SourceLocator,
+  tokens: MarkdownTokens,
+  tokenBase: number,
+  offsets: OffsetSpan,
+): ContentDestination | undefined {
   const destination = lastContainedSpan(tokens.resourceDestinations, {
     start: offsets.start - tokenBase,
     end: offsets.end - tokenBase,
@@ -133,6 +126,36 @@ function linkDestination(
     range: locator.range(start, end),
     syntax: "markdown",
   };
+}
+
+function autolinkDestination(
+  value: string,
+  node: LinkNode,
+  locator: SourceLocator,
+  offsets: OffsetSpan,
+): ContentDestination | undefined {
+  const authored = value.slice(offsets.start, offsets.end);
+  const angleDelimited = authored.startsWith("<") && authored.endsWith(">");
+  const autolinkValue = angleDelimited ? authored.slice(1, -1) : authored;
+  const normalized = node.type === "link" &&
+    (autolinkValue === node.url ||
+      `mailto:${autolinkValue}` === node.url ||
+      `http://${autolinkValue}` === node.url);
+  if (!normalized) return undefined;
+  if (
+    !angleDelimited && authored === node.url && value[offsets.start - 1] === "<" &&
+    value[offsets.start - 2] === "\\"
+  ) return undefined;
+
+  const start = angleDelimited ? offsets.start + 1 : offsets.start;
+  const end = angleDelimited ? offsets.end - 1 : offsets.end;
+  const destination: ContentDestination = {
+    kind: "autolink",
+    rawValue: value.slice(start, end),
+    range: locator.range(start, end),
+    syntax: "autolink",
+  };
+  return autolinkValue === node.url ? destination : { ...destination, normalizedValue: node.url };
 }
 
 const HTML_DESTINATION_ATTRIBUTES = new Set(["action", "href", "src"]);
@@ -265,6 +288,41 @@ function htmlAttributeDestination(
   return normalizedValue === rawValue ? destination : { ...destination, normalizedValue };
 }
 
+function appendHtmlChildNodes(
+  pending: HtmlChildNode[],
+  children: readonly HtmlChildNode[],
+): void {
+  for (let index = children.length - 1; index >= 0; index--) {
+    pending.push(children[index]!);
+  }
+}
+
+function appendHtmlAttributeDestinations(
+  destinations: ContentDestination[],
+  node: HtmlElement,
+  raw: string,
+  authored: string,
+  absoluteStart: number,
+  projection: SourceProjection,
+): void {
+  const attributeLocations = node.sourceCodeLocation?.attrs;
+  for (const attribute of node.attrs) {
+    const locationName = htmlAttributeLocationName(attribute);
+    const destinationName = locationName === "xlink:href" ? "href" : attribute.name;
+    if (!HTML_DESTINATION_ATTRIBUTES.has(destinationName)) continue;
+    const location = attributeLocations?.[locationName];
+    if (location === undefined) continue;
+    const destination = htmlAttributeDestination(
+      raw,
+      authored,
+      absoluteStart,
+      location,
+      projection,
+    );
+    if (destination !== undefined) destinations.push(destination);
+  }
+}
+
 function rawHtmlAnalysis(
   raw: string,
   authored: string,
@@ -275,33 +333,14 @@ function rawHtmlAnalysis(
   const projection = rawHtmlSourceProjection(raw, authored, absoluteStart, locator);
   const root = parseFragment(raw, { sourceCodeLocationInfo: true });
   const pending: HtmlChildNode[] = [];
-  for (let index = root.childNodes.length - 1; index >= 0; index--) {
-    pending.push(root.childNodes[index]!);
-  }
+  appendHtmlChildNodes(pending, root.childNodes);
 
   while (pending.length > 0) {
     const node = pending.pop();
     if (node === undefined) break;
     if (isHtmlElement(node)) {
-      const attributeLocations = node.sourceCodeLocation?.attrs;
-      for (const attribute of node.attrs) {
-        const locationName = htmlAttributeLocationName(attribute);
-        const destinationName = locationName === "xlink:href" ? "href" : attribute.name;
-        if (!HTML_DESTINATION_ATTRIBUTES.has(destinationName)) continue;
-        const location = attributeLocations?.[locationName];
-        if (location === undefined) continue;
-        const destination = htmlAttributeDestination(
-          raw,
-          authored,
-          absoluteStart,
-          location,
-          projection,
-        );
-        if (destination !== undefined) destinations.push(destination);
-      }
-      for (let index = node.childNodes.length - 1; index >= 0; index--) {
-        pending.push(node.childNodes[index]!);
-      }
+      appendHtmlAttributeDestinations(destinations, node, raw, authored, absoluteStart, projection);
+      appendHtmlChildNodes(pending, node.childNodes);
     }
   }
   return destinations;
@@ -321,66 +360,56 @@ export function analyzeMarkdown(
     : { kind: "syntax-error", diagnostic };
 }
 
-export function analyzeMarkdownTree(
+function appendMarkdownChildren(pending: Nodes[], node: Nodes): void {
+  const children = childrenOf(node);
+  for (let index = children.length - 1; index >= 0; index--) {
+    const child = children[index];
+    if (child !== undefined) pending.push(child);
+  }
+}
+
+function markdownLinkDestination(
   value: string,
-  root: Root,
-  options: { readonly micromarkExtensions?: readonly Extension[] } = {},
-): {
-  readonly destinations: readonly ContentDestination[];
-} {
-  const locator = createSourceLocator(value);
-  const destinations: ContentDestination[] = [];
-  const usedDefinitions = new Set<string>();
-  const definitions: Array<Extract<Nodes, { type: "definition" }>> = [];
-  const pending: Nodes[] = [root];
-  let documentTokens: MarkdownTokens | undefined;
+  node: LinkNode,
+  locator: SourceLocator,
+  options: { readonly micromarkExtensions?: readonly Extension[] },
+  documentTokens: () => MarkdownTokens,
+): ContentDestination | undefined {
+  const offsets = positionOffsets(node.position);
+  if (offsets === undefined) return undefined;
+  const authored = value.slice(offsets.start, offsets.end);
+  const multiline = /[\r\n]/.test(authored);
+  const tokenBase = multiline ? 0 : offsets.start;
+  const tokens = multiline
+    ? documentTokens()
+    : markdownTokens(authored, options.micromarkExtensions);
+  return linkDestination(value, node, locator, tokens, tokenBase);
+}
 
-  function getDocumentTokens(): MarkdownTokens {
-    documentTokens ??= markdownTokens(value, options.micromarkExtensions);
-    return documentTokens;
-  }
+function appendMarkdownHtmlDestinations(
+  value: string,
+  node: Extract<Nodes, { type: "html" }>,
+  locator: SourceLocator,
+  destinations: ContentDestination[],
+): void {
+  const offsets = positionOffsets(node.position);
+  if (offsets === undefined) return;
+  destinations.push(...rawHtmlAnalysis(
+    node.value,
+    value.slice(offsets.start, offsets.end),
+    offsets.start,
+    locator,
+  ));
+}
 
-  while (pending.length > 0) {
-    const node = pending.pop();
-    if (node === undefined) break;
-    if (node.type === "link" || node.type === "image") {
-      const offsets = positionOffsets(node.position);
-      if (offsets === undefined) continue;
-      const authored = value.slice(offsets.start, offsets.end);
-      const multiline = /[\r\n]/.test(authored);
-      const tokenBase = multiline ? 0 : offsets.start;
-      const tokens = multiline
-        ? getDocumentTokens()
-        : markdownTokens(authored, options.micromarkExtensions);
-      const destination = linkDestination(value, node, locator, tokens, tokenBase);
-      if (destination !== undefined) destinations.push(destination);
-    } else if (
-      node.type === "linkReference" || node.type === "imageReference"
-    ) {
-      usedDefinitions.add(node.identifier);
-    } else if (node.type === "definition") {
-      definitions.push(node);
-    } else if (node.type === "html") {
-      const offsets = positionOffsets(node.position);
-      if (offsets !== undefined) {
-        destinations.push(...rawHtmlAnalysis(
-          node.value,
-          value.slice(offsets.start, offsets.end),
-          offsets.start,
-          locator,
-        ));
-      }
-    }
-    const children = childrenOf(node);
-    for (let index = children.length - 1; index >= 0; index--) {
-      const child = children[index];
-      if (child !== undefined) pending.push(child);
-    }
-  }
-
-  const definitionTokens = definitions.length > 0 && usedDefinitions.size > 0
-    ? getDocumentTokens()
-    : undefined;
+function appendDefinitionDestinations(
+  value: string,
+  definitions: readonly DefinitionNode[],
+  usedDefinitions: ReadonlySet<string>,
+  definitionTokens: MarkdownTokens | undefined,
+  locator: SourceLocator,
+  destinations: ContentDestination[],
+): void {
   const resolvedDefinitions = new Set<string>();
   for (const definition of definitions) {
     if (resolvedDefinitions.has(definition.identifier)) continue;
@@ -400,6 +429,102 @@ export function analyzeMarkdownTree(
       });
     }
   }
+}
+
+function appendMarkdownNodeDestinations(
+  value: string,
+  node: Nodes,
+  locator: SourceLocator,
+  options: { readonly micromarkExtensions?: readonly Extension[] },
+  documentTokens: () => MarkdownTokens,
+  destinations: ContentDestination[],
+): void {
+  if (node.type === "link" || node.type === "image") {
+    const destination = markdownLinkDestination(value, node, locator, options, documentTokens);
+    if (destination !== undefined) destinations.push(destination);
+    return;
+  }
+  if (node.type === "html") {
+    appendMarkdownHtmlDestinations(value, node, locator, destinations);
+  }
+}
+
+interface MarkdownCollectionContext {
+  readonly value: string;
+  readonly locator: SourceLocator;
+  readonly options: { readonly micromarkExtensions?: readonly Extension[] };
+  readonly documentTokens: () => MarkdownTokens;
+  readonly destinations: ContentDestination[];
+  readonly usedDefinitions: Set<string>;
+  readonly definitions: DefinitionNode[];
+}
+
+function collectMarkdownNode(
+  context: MarkdownCollectionContext,
+  node: Nodes,
+): void {
+  appendMarkdownNodeDestinations(
+    context.value,
+    node,
+    context.locator,
+    context.options,
+    context.documentTokens,
+    context.destinations,
+  );
+  if (node.type === "linkReference" || node.type === "imageReference") {
+    context.usedDefinitions.add(node.identifier);
+    return;
+  }
+  if (node.type === "definition") context.definitions.push(node);
+}
+
+export function analyzeMarkdownTree(
+  value: string,
+  root: Root,
+  options: { readonly micromarkExtensions?: readonly Extension[] } = {},
+): {
+  readonly destinations: readonly ContentDestination[];
+} {
+  const locator = createSourceLocator(value);
+  const destinations: ContentDestination[] = [];
+  const usedDefinitions = new Set<string>();
+  const definitions: DefinitionNode[] = [];
+  const pending: Nodes[] = [root];
+  let documentTokens: MarkdownTokens | undefined;
+
+  function getDocumentTokens(): MarkdownTokens {
+    documentTokens ??= markdownTokens(value, options.micromarkExtensions);
+    return documentTokens;
+  }
+
+  const collection: MarkdownCollectionContext = {
+    value,
+    locator,
+    options,
+    documentTokens: getDocumentTokens,
+    destinations,
+    usedDefinitions,
+    definitions,
+  };
+
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (node === undefined) break;
+    collectMarkdownNode(collection, node);
+    appendMarkdownChildren(pending, node);
+  }
+
+  const definitionTokens = definitions.length > 0 && usedDefinitions.size > 0
+    ? getDocumentTokens()
+    : undefined;
+  appendDefinitionDestinations(
+    value,
+    definitions,
+    usedDefinitions,
+    definitionTokens,
+    locator,
+    destinations,
+  );
 
   return { destinations };
 }

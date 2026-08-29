@@ -140,7 +140,7 @@ function expressionAt(
 }
 
 function currentMode(modes: readonly ParseMode[]): ParseMode | undefined {
-  return modes[modes.length - 1];
+  return modes.at(-1);
 }
 
 function beginExpression(
@@ -208,28 +208,61 @@ function tagValidationFragment(
 ): ReducedFragment {
   const builder = reducedSourceBuilder(source);
   for (const tag of tags) {
-    if (tag.closing) {
-      builder.generated(tag.name === "" ? "<>" : `<${tag.name}>`, tag.start);
-    }
+    appendSyntheticOpeningTag(builder, tag);
     let cursor = tag.start;
     for (const expressionId of tag.expressionIds) {
-      const expression = expressionAt(expressions, expressionId);
-      if (expression?.end === undefined) continue;
-      const braceStart = expression.start - 1;
-      const braceEnd = expression.end + 1;
-      builder.authored(cursor, braceStart);
-      const spread = expression.fragmentKind === "jsx-spread-attribute" &&
-        expression.tokens[0]?.label === "...";
-      builder.generated(spread ? "{...{}}" : "{null}", braceStart);
-      cursor = braceEnd;
+      cursor = appendTagValidationExpression(builder, expressions, expressionId, cursor);
     }
     builder.authored(cursor, tag.end);
-    if (!tag.closing && !tag.selfClosing) {
-      builder.generated(tag.name === "" ? "</>" : `</${tag.name}>`, tag.end);
-    }
+    appendSyntheticClosingTag(builder, tag);
     builder.generated(",", tag.end);
   }
   return builder.result();
+}
+
+function syntheticOpeningTag(tag: JsxTagRecord): string {
+  return tag.name === "" ? "<>" : `<${tag.name}>`;
+}
+
+function syntheticClosingTag(tag: JsxTagRecord): string {
+  return tag.name === "" ? "</>" : `</${tag.name}>`;
+}
+
+function appendSyntheticOpeningTag(
+  builder: ReturnType<typeof reducedSourceBuilder>,
+  tag: JsxTagRecord,
+): void {
+  if (tag.closing) builder.generated(syntheticOpeningTag(tag), tag.start);
+}
+
+function appendSyntheticClosingTag(
+  builder: ReturnType<typeof reducedSourceBuilder>,
+  tag: JsxTagRecord,
+): void {
+  if (!tag.closing && !tag.selfClosing) {
+    builder.generated(syntheticClosingTag(tag), tag.end);
+  }
+}
+
+function appendTagValidationExpression(
+  builder: ReturnType<typeof reducedSourceBuilder>,
+  expressions: readonly ExpressionRecord[],
+  expressionId: number,
+  cursor: number,
+): number {
+  const expression = expressionAt(expressions, expressionId);
+  if (expression?.end === undefined) return cursor;
+  const braceStart = expression.start - 1;
+  const braceEnd = expression.end + 1;
+  builder.authored(cursor, braceStart);
+  builder.generated(tagExpressionReplacement(expression), braceStart);
+  return braceEnd;
+}
+
+function tagExpressionReplacement(expression: ExpressionRecord): string {
+  const spread = expression.fragmentKind === "jsx-spread-attribute" &&
+    expression.tokens[0]?.label === "...";
+  return spread ? "{...{}}" : "{null}";
 }
 
 function authoredOffsetAt(
@@ -262,7 +295,7 @@ function discardThrough(cursor: { value: number }, end: number): void {
   cursor.value = Math.max(cursor.value, end);
 }
 
-function staticLiteralCandidate(expression: ExpressionRecord): boolean {
+function staticLiteralLabels(expression: ExpressionRecord): readonly string[] {
   const labels = expression.tokens.map((token) => token.label);
   let start = 0;
   let end = labels.length;
@@ -270,10 +303,15 @@ function staticLiteralCandidate(expression: ExpressionRecord): boolean {
     start++;
     end--;
   }
-  const literalLabels = labels.slice(start, end);
-  if (literalLabels.length === 1) return literalLabels[0] === "string";
-  return literalLabels[0] === "`" &&
-    literalLabels[literalLabels.length - 1] === "`" &&
+  return labels.slice(start, end);
+}
+
+function staticLiteralCandidate(expression: ExpressionRecord): boolean {
+  const literalLabels = staticLiteralLabels(expression);
+  if (literalLabels.length === 1) {
+    return literalLabels[0] === "string";
+  }
+  return literalLabels[0] === "`" && literalLabels.at(-1) === "`" &&
     !literalLabels.includes("${");
 }
 
@@ -358,8 +396,17 @@ function literalRange(
   }
   const delimiters = expression.tokens.filter((token) => token.label === "`");
   const start = delimiters[0]?.end;
-  const end = delimiters[delimiters.length - 1]?.start;
+  const end = delimiters.at(-1)?.start;
   return start === undefined || end === undefined || end < start ? undefined : { start, end };
+}
+
+function reducedJsxValue(
+  ownsReductionGroup: boolean,
+  parentMode: ParseMode | undefined,
+): string {
+  if (ownsReductionGroup) return "null)";
+  if (parentMode?.kind === "jsx-children") return "null,";
+  return "null";
 }
 
 function hasTokens(fragment: string): boolean {
@@ -546,327 +593,487 @@ export async function analyzeEmbeddedExpression(options: {
   readonly attributeName?: string;
   readonly fragmentKind?: "expression" | "jsx-spread-attribute";
 }): Promise<EmbeddedCodeAnalysis> {
-  if (options.source.length > MAX_EMBEDDED_CODE_UNITS) {
+  return await new EmbeddedExpressionAnalyzer(options).analyze();
+}
+
+type EmbeddedExpressionAnalyzerOptions = Parameters<typeof analyzeEmbeddedExpression>[0];
+
+type EmbeddedSyntaxError = Extract<EmbeddedCodeAnalysis, { readonly kind: "syntax-error" }>;
+type ScanResult = EmbeddedSyntaxError | undefined;
+
+interface ParserToken {
+  readonly type: {
+    readonly label: string;
+  };
+  readonly start: number;
+  readonly end: number;
+}
+
+type EmbeddedToken = TokenSpan | ParserToken;
+
+class EmbeddedExpressionAnalyzer {
+  private readonly expressions: ExpressionRecord[];
+  private readonly modes: ParseMode[] = [{ kind: "expression", expressionId: 0 }];
+  private readonly elements: ElementFrame[] = [];
+  private readonly tags: JsxTagRecord[] = [];
+  private readonly destinations: ContentDestination[] = [];
+  private readonly reducedBuilder: ReturnType<typeof reducedSourceBuilder>;
+  private readonly sourceCursor = { value: 0 };
+  private activeExpressionId = 0;
+  private reductionGroupDepth = 0;
+
+  constructor(private readonly options: EmbeddedExpressionAnalyzerOptions) {
+    this.expressions = [{
+      id: 0,
+      parentId: undefined,
+      start: 0,
+      end: undefined,
+      root: true,
+      attributeName: options.attributeName,
+      fragmentKind: options.fragmentKind ?? "expression",
+      braceDepth: 0,
+      tokens: [],
+    }];
+    this.reducedBuilder = reducedSourceBuilder(options.source);
+  }
+
+  async analyze(): Promise<EmbeddedCodeAnalysis> {
+    if (this.options.source.length > MAX_EMBEDDED_CODE_UNITS) {
+      return {
+        kind: "syntax-error",
+        diagnostic: embeddedCodeLimitDiagnostic(
+          this.options.locator,
+          this.options.absoluteStart,
+          0,
+        ),
+      };
+    }
+
+    const scanResult = this.scanTokens();
+    if (scanResult !== undefined) return scanResult;
+
+    const spreadValidation = this.validateSpreadExpressions();
+    if (spreadValidation !== undefined) return spreadValidation;
+
+    const tagValidation = this.validateTagBatches();
+    if (tagValidation !== undefined) return tagValidation;
+
+    const rootValidation = this.validateRootExpression();
+    if (rootValidation !== undefined) return rootValidation;
+
+    const staticDestination = await this.collectStaticDestinations();
+    this.destinations.sort((left, right) => left.range.start.offset - right.range.start.offset);
+    return { kind: "valid", destinations: this.destinations, staticDestination };
+  }
+
+  private scanTokens(): ScanResult {
+    try {
+      return this.processTokenStream();
+    } catch (error) {
+      return this.tokenizerDiagnostic(error);
+    }
+  }
+
+  private processTokenStream(): ScanResult {
+    const tokens = this.createTokenSource();
+    while (true) {
+      const token = tokens.next();
+      const label = this.tokenLabel(token);
+      const mode = currentMode(this.modes);
+      if (mode === undefined) return this.unexpectedTokenDiagnostic(token);
+      if (label === "eof") return this.handleEof(token, mode);
+      const result = this.handleToken(mode, token, label);
+      if (result !== undefined) return result;
+    }
+  }
+
+  private createTokenSource(): { readonly next: () => EmbeddedToken } {
+    const profile = embeddedLexicalProfile(this.options.source);
+    if (profile.contextualSlash) {
+      const tokens = grammarTokens(this.options.source);
+      const terminalToken = tokens.at(-1);
+      if (terminalToken === undefined) throw new TypeError("Missing EOF token");
+      let tokenIndex = 0;
+      return { next: () => tokens[tokenIndex++] ?? terminalToken };
+    }
+    const tokenizer = AcornJsxParser.tokenizer(this.options.source, {
+      ecmaVersion: 2024,
+      sourceType: "module",
+      locations: true,
+    });
+    return { next: () => tokenizer.getToken() as ParserToken };
+  }
+
+  private tokenLabel(token: EmbeddedToken): string {
+    return "label" in token ? token.label : token.type.label;
+  }
+
+  private unexpectedTokenDiagnostic(token: EmbeddedToken): EmbeddedSyntaxError {
     return {
       kind: "syntax-error",
-      diagnostic: embeddedCodeLimitDiagnostic(options.locator, options.absoluteStart, 0),
+      diagnostic: diagnostic(
+        this.options.locator,
+        this.options.absoluteStart,
+        token.start,
+        "Unexpected token after embedded expression",
+      ),
     };
   }
 
-  const expressions: ExpressionRecord[] = [{
-    id: 0,
-    parentId: undefined,
-    start: 0,
-    end: undefined,
-    root: true,
-    attributeName: options.attributeName,
-    fragmentKind: options.fragmentKind ?? "expression",
-    braceDepth: 0,
-    tokens: [],
-  }];
-  const modes: ParseMode[] = [{ kind: "expression", expressionId: 0 }];
-  const elements: ElementFrame[] = [];
-  const tags: JsxTagRecord[] = [];
-  const destinations: ContentDestination[] = [];
-  const reducedBuilder = reducedSourceBuilder(options.source);
-  const sourceCursor = { value: 0 };
-  let activeExpressionId = 0;
-  let reductionGroupDepth = 0;
-
-  try {
-    const profile = embeddedLexicalProfile(options.source);
-    const contextualTokens = profile.contextualSlash ? grammarTokens(options.source) : undefined;
-    let tokenIndex = 0;
-    const tokenizer = contextualTokens === undefined
-      ? AcornJsxParser.tokenizer(options.source, {
-        ecmaVersion: 2024,
-        sourceType: "module",
-        locations: true,
-      })
-      : undefined;
-    while (true) {
-      const token = contextualTokens?.[tokenIndex++] ?? tokenizer!.getToken();
-      const label = "label" in token ? token.label : token.type.label;
-      const mode = currentMode(modes);
-      if (mode === undefined) {
-        return {
-          kind: "syntax-error",
-          diagnostic: diagnostic(
-            options.locator,
-            options.absoluteStart,
-            token.start,
-            "Unexpected token after embedded expression",
-          ),
-        };
-      }
-
-      if (label === "eof") {
-        const root = expressionAt(expressions, 0);
-        if (
-          modes.length !== 1 || mode.kind !== "expression" ||
-          mode.expressionId !== 0 || elements.length !== 0 ||
-          root === undefined || root.braceDepth !== 0
-        ) {
-          return {
-            kind: "syntax-error",
-            diagnostic: diagnostic(
-              options.locator,
-              options.absoluteStart,
-              token.start,
-              "Unexpected end of embedded JSX expression",
-            ),
-          };
-        }
-        root.end = token.start;
-        appendAuthoredThrough(reducedBuilder, sourceCursor, token.start);
-        break;
-      }
-
-      if (mode.kind === "expression") {
-        const expression = expressionAt(expressions, mode.expressionId);
-        if (expression === undefined) throw new TypeError("Missing expression state");
-        if (
-          expression.fragmentKind === "jsx-spread-attribute" &&
-          expression.tokens.length === 0 && label === "..."
-        ) {
-          appendAuthoredThrough(reducedBuilder, sourceCursor, token.start);
-          discardThrough(sourceCursor, token.end);
-          expression.tokens.push({ label, start: token.start, end: token.end });
-          continue;
-        }
-        if (label === "jsxTagStart") {
-          const ownsReductionGroup = reductionGroupDepth === 0 || expression.tokens.length > 0;
-          if (ownsReductionGroup) reductionGroupDepth++;
-          appendAuthoredThrough(reducedBuilder, sourceCursor, token.start);
-          discardThrough(sourceCursor, token.end);
-          modes.push({
-            kind: "jsx-tag",
-            start: token.start,
-            expectedNameOffset: token.end,
-            name: "",
-            nameComplete: false,
-            closing: false,
-            selfClosing: false,
-            ownsReductionGroup,
-            reductionOpened: false,
-            pendingAttributeName: undefined,
-            pendingAttributeNameEnd: undefined,
-            awaitingAttributeName: undefined,
-            expressionIds: [],
-          });
-          continue;
-        }
-        if (label === "{" || label === "${") {
-          expression.braceDepth++;
-          expression.tokens.push({ label, start: token.start, end: token.end });
-          appendAuthoredThrough(reducedBuilder, sourceCursor, token.end);
-          continue;
-        }
-        if (label === "}") {
-          if (expression.braceDepth > 0) {
-            expression.braceDepth--;
-            expression.tokens.push({ label, start: token.start, end: token.end });
-            appendAuthoredThrough(reducedBuilder, sourceCursor, token.end);
-            continue;
-          }
-          if (expression.root) {
-            return {
-              kind: "syntax-error",
-              diagnostic: diagnostic(
-                options.locator,
-                options.absoluteStart,
-                token.start,
-                "Unexpected closing brace in embedded expression",
-              ),
-            };
-          }
-          appendAuthoredThrough(reducedBuilder, sourceCursor, token.start);
-          reducedBuilder.generated(",", token.start);
-          discardThrough(sourceCursor, token.end);
-          expression.end = token.start;
-          modes.pop();
-          activeExpressionId = expression.parentId ?? 0;
-          continue;
-        }
-        expression.tokens.push({ label, start: token.start, end: token.end });
-        appendAuthoredThrough(reducedBuilder, sourceCursor, token.end);
-        continue;
-      }
-
-      if (mode.kind === "jsx-children") {
-        if (label === "jsxTagStart") {
-          discardThrough(sourceCursor, token.end);
-          modes.push({
-            kind: "jsx-tag",
-            start: token.start,
-            expectedNameOffset: token.end,
-            name: "",
-            nameComplete: false,
-            closing: false,
-            selfClosing: false,
-            ownsReductionGroup: false,
-            reductionOpened: false,
-            pendingAttributeName: undefined,
-            pendingAttributeNameEnd: undefined,
-            awaitingAttributeName: undefined,
-            expressionIds: [],
-          });
-        } else if (label === "{") {
-          discardThrough(sourceCursor, token.end);
-          activeExpressionId = beginExpression(
-            expressions,
-            modes,
-            activeExpressionId,
-            token.end,
-            undefined,
-            "expression",
-          );
-        } else {
-          discardThrough(sourceCursor, token.end);
-        }
-        continue;
-      }
-
-      discardThrough(sourceCursor, token.end);
-      if (!mode.nameComplete && token.start > mode.expectedNameOffset) {
-        mode.nameComplete = true;
-      }
-      if (
-        label === "/" && mode.name === "" && !mode.nameComplete &&
-        token.start === mode.expectedNameOffset
-      ) {
-        mode.closing = true;
-        mode.expectedNameOffset = token.end;
-        continue;
-      }
-      if (
-        !mode.nameComplete &&
-        (label === "jsxName" || label === "." || label === ":")
-      ) {
-        mode.name += options.source.slice(token.start, token.end);
-        mode.expectedNameOffset = token.end;
-        continue;
-      }
-      if (!mode.closing && mode.ownsReductionGroup && !mode.reductionOpened) {
-        reducedBuilder.generated("(", mode.start);
-        mode.reductionOpened = true;
-      }
-      mode.nameComplete = true;
-      if (label === "jsxName") {
-        const segment = options.source.slice(token.start, token.end);
-        mode.pendingAttributeName = mode.pendingAttributeNameEnd === token.start
-          ? `${mode.pendingAttributeName ?? ""}${segment}`
-          : segment;
-        mode.pendingAttributeNameEnd = token.end;
-        mode.awaitingAttributeName = undefined;
-        continue;
-      }
-      if (
-        label === ":" && mode.pendingAttributeName !== undefined &&
-        mode.pendingAttributeNameEnd === token.start
-      ) {
-        mode.pendingAttributeName += options.source.slice(token.start, token.end);
-        mode.pendingAttributeNameEnd = token.end;
-        continue;
-      }
-      if (label === "=" && mode.pendingAttributeName !== undefined) {
-        mode.awaitingAttributeName = mode.pendingAttributeName;
-        mode.pendingAttributeName = undefined;
-        mode.pendingAttributeNameEnd = undefined;
-        continue;
-      }
-      if (label === "string") {
-        if (isDestinationAttribute(mode.awaitingAttributeName)) {
-          destinations.push(
-            jsxQuotedDestination(
-              options.source,
-              { start: token.start + 1, end: token.end - 1 },
-              options.absoluteStart,
-              options.locator,
-            ),
-          );
-        }
-        mode.awaitingAttributeName = undefined;
-        continue;
-      }
-      if (label === "{") {
-        const attributeName = mode.awaitingAttributeName;
-        mode.pendingAttributeName = undefined;
-        mode.pendingAttributeNameEnd = undefined;
-        mode.awaitingAttributeName = undefined;
-        const expressionId = beginExpression(
-          expressions,
-          modes,
-          activeExpressionId,
-          token.end,
-          attributeName,
-          attributeName === undefined ? "jsx-spread-attribute" : "expression",
-        );
-        mode.expressionIds.push(expressionId);
-        activeExpressionId = expressionId;
-        continue;
-      }
-      if (label === "/") {
-        mode.selfClosing = true;
-        continue;
-      }
-      if (label !== "jsxTagEnd") continue;
-
-      tags.push({
-        start: mode.start,
-        end: token.end,
-        name: mode.name,
-        closing: mode.closing,
-        selfClosing: mode.selfClosing,
-        expressionIds: mode.expressionIds,
-      });
-      modes.pop();
-      if (mode.closing) {
-        const element = elements.pop();
-        const children = currentMode(modes);
-        if (
-          element === undefined || children?.kind !== "jsx-children" ||
-          element.name !== mode.name
-        ) {
-          return {
-            kind: "syntax-error",
-            diagnostic: diagnostic(
-              options.locator,
-              options.absoluteStart,
-              mode.start,
-              `Unexpected closing JSX tag </${mode.name}>`,
-            ),
-          };
-        }
-        modes.pop();
-        reducedBuilder.generated(
-          element.ownsReductionGroup
-            ? "null)"
-            : currentMode(modes)?.kind === "jsx-children"
-            ? "null,"
-            : "null",
+  private handleEof(token: EmbeddedToken, mode: ParseMode): ScanResult {
+    if (!this.reachedBalancedRoot(mode)) {
+      return {
+        kind: "syntax-error",
+        diagnostic: diagnostic(
+          this.options.locator,
+          this.options.absoluteStart,
           token.start,
-        );
-        if (element.ownsReductionGroup) reductionGroupDepth--;
-        continue;
-      }
-
-      if (mode.selfClosing) {
-        reducedBuilder.generated(
-          mode.ownsReductionGroup
-            ? "null)"
-            : currentMode(modes)?.kind === "jsx-children"
-            ? "null,"
-            : "null",
-          token.start,
-        );
-        if (mode.ownsReductionGroup) reductionGroupDepth--;
-        continue;
-      }
-      elements.push({ name: mode.name, ownsReductionGroup: mode.ownsReductionGroup });
-      modes.push({ kind: "jsx-children" });
+          "Unexpected end of embedded JSX expression",
+        ),
+      };
     }
-  } catch (error) {
+    const root = expressionAt(this.expressions, 0);
+    if (root !== undefined) root.end = token.start;
+    appendAuthoredThrough(this.reducedBuilder, this.sourceCursor, token.start);
+  }
+
+  private reachedBalancedRoot(mode: ParseMode): boolean {
+    const root = expressionAt(this.expressions, 0);
+    return this.modes.length === 1 && mode.kind === "expression" &&
+      mode.expressionId === 0 && this.elements.length === 0 &&
+      root?.braceDepth === 0;
+  }
+
+  private handleToken(
+    mode: ParseMode,
+    token: EmbeddedToken,
+    label: string,
+  ): ScanResult {
+    if (mode.kind === "expression") return this.handleExpressionMode(mode, token, label);
+    if (mode.kind === "jsx-children") {
+      this.handleJsxChildrenMode(token, label);
+      return undefined;
+    }
+    return this.handleJsxTagMode(mode, token, label);
+  }
+
+  private handleExpressionMode(
+    mode: ExpressionMode,
+    token: EmbeddedToken,
+    label: string,
+  ): ScanResult {
+    const expression = expressionAt(this.expressions, mode.expressionId);
+    if (expression === undefined) throw new TypeError("Missing expression state");
+    if (this.handleSpreadOperator(expression, token, label)) return undefined;
+    if (label === "jsxTagStart") {
+      this.startJsxTag(expression, token);
+      return undefined;
+    }
+    if (label === "{" || label === "${") {
+      this.appendExpressionBrace(expression, token, label);
+      return undefined;
+    }
+    if (label === "}") return this.handleClosingExpressionBrace(expression, token, label);
+    this.appendExpressionToken(expression, token, label);
+  }
+
+  private handleSpreadOperator(
+    expression: ExpressionRecord,
+    token: EmbeddedToken,
+    label: string,
+  ): boolean {
+    if (
+      expression.fragmentKind !== "jsx-spread-attribute" ||
+      expression.tokens.length !== 0 || label !== "..."
+    ) return false;
+    appendAuthoredThrough(this.reducedBuilder, this.sourceCursor, token.start);
+    discardThrough(this.sourceCursor, token.end);
+    expression.tokens.push({ label, start: token.start, end: token.end });
+    return true;
+  }
+
+  private startJsxTag(expression: ExpressionRecord, token: EmbeddedToken): void {
+    const ownsReductionGroup = this.reductionGroupDepth === 0 || expression.tokens.length > 0;
+    if (ownsReductionGroup) this.reductionGroupDepth++;
+    appendAuthoredThrough(this.reducedBuilder, this.sourceCursor, token.start);
+    discardThrough(this.sourceCursor, token.end);
+    this.pushJsxTag(token, ownsReductionGroup);
+  }
+
+  private pushJsxTag(token: EmbeddedToken, ownsReductionGroup: boolean): void {
+    this.modes.push({
+      kind: "jsx-tag",
+      start: token.start,
+      expectedNameOffset: token.end,
+      name: "",
+      nameComplete: false,
+      closing: false,
+      selfClosing: false,
+      ownsReductionGroup,
+      reductionOpened: false,
+      pendingAttributeName: undefined,
+      pendingAttributeNameEnd: undefined,
+      awaitingAttributeName: undefined,
+      expressionIds: [],
+    });
+  }
+
+  private appendExpressionBrace(
+    expression: ExpressionRecord,
+    token: EmbeddedToken,
+    label: string,
+  ): void {
+    expression.braceDepth++;
+    this.appendExpressionToken(expression, token, label);
+  }
+
+  private handleClosingExpressionBrace(
+    expression: ExpressionRecord,
+    token: EmbeddedToken,
+    label: string,
+  ): ScanResult {
+    if (expression.braceDepth > 0) {
+      expression.braceDepth--;
+      this.appendExpressionToken(expression, token, label);
+      return undefined;
+    }
+    if (expression.root) return this.unexpectedClosingBraceDiagnostic(token);
+    appendAuthoredThrough(this.reducedBuilder, this.sourceCursor, token.start);
+    this.reducedBuilder.generated(",", token.start);
+    discardThrough(this.sourceCursor, token.end);
+    expression.end = token.start;
+    this.modes.pop();
+    this.activeExpressionId = expression.parentId ?? 0;
+  }
+
+  private unexpectedClosingBraceDiagnostic(token: EmbeddedToken): EmbeddedSyntaxError {
+    return {
+      kind: "syntax-error",
+      diagnostic: diagnostic(
+        this.options.locator,
+        this.options.absoluteStart,
+        token.start,
+        "Unexpected closing brace in embedded expression",
+      ),
+    };
+  }
+
+  private appendExpressionToken(
+    expression: ExpressionRecord,
+    token: EmbeddedToken,
+    label: string,
+  ): void {
+    expression.tokens.push({ label, start: token.start, end: token.end });
+    appendAuthoredThrough(this.reducedBuilder, this.sourceCursor, token.end);
+  }
+
+  private handleJsxChildrenMode(token: EmbeddedToken, label: string): void {
+    if (label === "jsxTagStart") {
+      this.startNestedJsxTag(token);
+    } else if (label === "{") {
+      this.startChildExpression(token);
+    } else {
+      discardThrough(this.sourceCursor, token.end);
+    }
+  }
+
+  private startNestedJsxTag(token: EmbeddedToken): void {
+    discardThrough(this.sourceCursor, token.end);
+    this.pushJsxTag(token, false);
+  }
+
+  private startChildExpression(token: EmbeddedToken): void {
+    discardThrough(this.sourceCursor, token.end);
+    this.activeExpressionId = beginExpression(
+      this.expressions,
+      this.modes,
+      this.activeExpressionId,
+      token.end,
+      undefined,
+      "expression",
+    );
+  }
+
+  private handleJsxTagMode(mode: JsxTagMode, token: EmbeddedToken, label: string): ScanResult {
+    discardThrough(this.sourceCursor, token.end);
+    this.markCompleteNameAfterGap(mode, token);
+    if (this.readClosingTagSlash(mode, token, label)) return undefined;
+    if (this.readTagNamePart(mode, token, label)) return undefined;
+    this.openReductionGroup(mode);
+    mode.nameComplete = true;
+    if (this.handleJsxAttributeToken(mode, token, label)) return undefined;
+    if (label !== "jsxTagEnd") return undefined;
+    return this.finishJsxTag(mode, token);
+  }
+
+  private markCompleteNameAfterGap(mode: JsxTagMode, token: EmbeddedToken): void {
+    if (!mode.nameComplete && token.start > mode.expectedNameOffset) {
+      mode.nameComplete = true;
+    }
+  }
+
+  private readClosingTagSlash(
+    mode: JsxTagMode,
+    token: EmbeddedToken,
+    label: string,
+  ): boolean {
+    if (
+      label !== "/" || mode.name !== "" || mode.nameComplete ||
+      token.start !== mode.expectedNameOffset
+    ) return false;
+    mode.closing = true;
+    mode.expectedNameOffset = token.end;
+    return true;
+  }
+
+  private readTagNamePart(mode: JsxTagMode, token: EmbeddedToken, label: string): boolean {
+    if (mode.nameComplete || !this.isTagNameLabel(label)) return false;
+    mode.name += this.options.source.slice(token.start, token.end);
+    mode.expectedNameOffset = token.end;
+    return true;
+  }
+
+  private isTagNameLabel(label: string): boolean {
+    return label === "jsxName" || label === "." || label === ":";
+  }
+
+  private openReductionGroup(mode: JsxTagMode): void {
+    if (!mode.closing && mode.ownsReductionGroup && !mode.reductionOpened) {
+      this.reducedBuilder.generated("(", mode.start);
+      mode.reductionOpened = true;
+    }
+  }
+
+  private handleJsxAttributeToken(
+    mode: JsxTagMode,
+    token: EmbeddedToken,
+    label: string,
+  ): boolean {
+    if (label === "jsxName") return this.readAttributeName(mode, token);
+    if (label === ":") return this.readAttributeNamespace(mode, token);
+    if (label === "=") return this.readAttributeAssignment(mode);
+    if (label === "string") return this.readQuotedAttribute(mode, token);
+    if (label === "{") return this.startAttributeExpression(mode, token);
+    if (label === "/") return this.readSelfClosingSlash(mode);
+    return false;
+  }
+
+  private readAttributeName(mode: JsxTagMode, token: EmbeddedToken): boolean {
+    const segment = this.options.source.slice(token.start, token.end);
+    mode.pendingAttributeName = mode.pendingAttributeNameEnd === token.start
+      ? `${mode.pendingAttributeName ?? ""}${segment}`
+      : segment;
+    mode.pendingAttributeNameEnd = token.end;
+    mode.awaitingAttributeName = undefined;
+    return true;
+  }
+
+  private readAttributeNamespace(mode: JsxTagMode, token: EmbeddedToken): boolean {
+    if (mode.pendingAttributeName === undefined || mode.pendingAttributeNameEnd !== token.start) {
+      return false;
+    }
+    mode.pendingAttributeName += this.options.source.slice(token.start, token.end);
+    mode.pendingAttributeNameEnd = token.end;
+    return true;
+  }
+
+  private readAttributeAssignment(mode: JsxTagMode): boolean {
+    if (mode.pendingAttributeName === undefined) return false;
+    mode.awaitingAttributeName = mode.pendingAttributeName;
+    mode.pendingAttributeName = undefined;
+    mode.pendingAttributeNameEnd = undefined;
+    return true;
+  }
+
+  private readQuotedAttribute(mode: JsxTagMode, token: EmbeddedToken): boolean {
+    if (isDestinationAttribute(mode.awaitingAttributeName)) {
+      this.destinations.push(
+        jsxQuotedDestination(
+          this.options.source,
+          { start: token.start + 1, end: token.end - 1 },
+          this.options.absoluteStart,
+          this.options.locator,
+        ),
+      );
+    }
+    mode.awaitingAttributeName = undefined;
+    return true;
+  }
+
+  private startAttributeExpression(mode: JsxTagMode, token: EmbeddedToken): boolean {
+    const attributeName = mode.awaitingAttributeName;
+    mode.pendingAttributeName = undefined;
+    mode.pendingAttributeNameEnd = undefined;
+    mode.awaitingAttributeName = undefined;
+    const expressionId = beginExpression(
+      this.expressions,
+      this.modes,
+      this.activeExpressionId,
+      token.end,
+      attributeName,
+      attributeName === undefined ? "jsx-spread-attribute" : "expression",
+    );
+    mode.expressionIds.push(expressionId);
+    this.activeExpressionId = expressionId;
+    return true;
+  }
+
+  private readSelfClosingSlash(mode: JsxTagMode): boolean {
+    mode.selfClosing = true;
+    return true;
+  }
+
+  private finishJsxTag(mode: JsxTagMode, token: EmbeddedToken): ScanResult {
+    this.tags.push({
+      start: mode.start,
+      end: token.end,
+      name: mode.name,
+      closing: mode.closing,
+      selfClosing: mode.selfClosing,
+      expressionIds: mode.expressionIds,
+    });
+    this.modes.pop();
+    if (mode.closing) return this.finishClosingJsxTag(mode, token);
+    if (mode.selfClosing) {
+      this.closeReducedJsxValue(mode.ownsReductionGroup, token.start);
+      return undefined;
+    }
+    this.elements.push({ name: mode.name, ownsReductionGroup: mode.ownsReductionGroup });
+    this.modes.push({ kind: "jsx-children" });
+  }
+
+  private finishClosingJsxTag(mode: JsxTagMode, token: EmbeddedToken): ScanResult {
+    const element = this.elements.pop();
+    const children = currentMode(this.modes);
+    if (
+      element === undefined || children?.kind !== "jsx-children" ||
+      element.name !== mode.name
+    ) return this.unexpectedClosingTagDiagnostic(mode);
+    this.modes.pop();
+    this.closeReducedJsxValue(element.ownsReductionGroup, token.start);
+  }
+
+  private unexpectedClosingTagDiagnostic(mode: JsxTagMode): EmbeddedSyntaxError {
+    return {
+      kind: "syntax-error",
+      diagnostic: diagnostic(
+        this.options.locator,
+        this.options.absoluteStart,
+        mode.start,
+        `Unexpected closing JSX tag </${mode.name}>`,
+      ),
+    };
+  }
+
+  private closeReducedJsxValue(ownsReductionGroup: boolean, tokenStart: number): void {
+    this.reducedBuilder.generated(
+      reducedJsxValue(ownsReductionGroup, currentMode(this.modes)),
+      tokenStart,
+    );
+    if (ownsReductionGroup) this.reductionGroupDepth--;
+  }
+
+  private tokenizerDiagnostic(error: unknown): EmbeddedSyntaxError {
     if (!(error instanceof SyntaxError) && !(error instanceof RangeError)) {
       throw error;
     }
@@ -874,8 +1081,8 @@ export async function analyzeEmbeddedExpression(options: {
     return {
       kind: "syntax-error",
       diagnostic: diagnostic(
-        options.locator,
-        options.absoluteStart,
+        this.options.locator,
+        this.options.absoluteStart,
         typeof position === "number" ? position : 0,
         error instanceof RangeError
           ? "Tokenizer capacity exceeded for embedded code"
@@ -884,86 +1091,107 @@ export async function analyzeEmbeddedExpression(options: {
     };
   }
 
-  for (const expression of expressions) {
-    if (
-      expression.fragmentKind === "jsx-spread-attribute" &&
-      expression.tokens[0]?.label === "..." && expression.tokens.length === 1
-    ) {
-      return {
-        kind: "syntax-error",
-        diagnostic: diagnostic(
-          options.locator,
-          options.absoluteStart,
-          expression.end ?? expression.tokens[0].end,
-          "Expected an expression after the JSX spread operator",
-        ),
-      };
-    }
-    if (
-      expression.fragmentKind === "jsx-spread-attribute" &&
-      expression.tokens[0]?.label === "..."
-    ) {
-      const spreadValidation = validateFragment(
-        spreadAttributeFragment(options.source, expression),
-        "const __veryfront_value = <_Veryfront {",
-        "} />;\n",
-        expression.start,
-        options.absoluteStart,
-        options.locator,
-      );
-      if (spreadValidation.kind === "syntax-error") return spreadValidation;
+  private validateSpreadExpressions(): ScanResult {
+    for (const expression of this.expressions) {
+      const validation = this.validateSpreadExpression(expression);
+      if (validation !== undefined) return validation;
     }
   }
 
-  const tagBatchSize = 512;
-  for (let start = 0; start < tags.length; start += tagBatchSize) {
-    const batch = tags.slice(start, start + tagBatchSize);
-    const tagFragment = tagValidationFragment(options.source, expressions, batch);
+  private validateSpreadExpression(expression: ExpressionRecord): ScanResult {
+    if (!this.isSpreadAttributeExpression(expression)) return undefined;
+    if (expression.tokens.length === 1) return this.emptySpreadDiagnostic(expression);
+    const spreadValidation = validateFragment(
+      spreadAttributeFragment(this.options.source, expression),
+      "const __veryfront_value = <_Veryfront {",
+      "} />;\n",
+      expression.start,
+      this.options.absoluteStart,
+      this.options.locator,
+    );
+    return spreadValidation.kind === "syntax-error" ? spreadValidation : undefined;
+  }
+
+  private isSpreadAttributeExpression(expression: ExpressionRecord): boolean {
+    return expression.fragmentKind === "jsx-spread-attribute" &&
+      expression.tokens[0]?.label === "...";
+  }
+
+  private emptySpreadDiagnostic(expression: ExpressionRecord): EmbeddedSyntaxError {
+    return {
+      kind: "syntax-error",
+      diagnostic: diagnostic(
+        this.options.locator,
+        this.options.absoluteStart,
+        expression.end ?? expression.tokens[0]!.end,
+        "Expected an expression after the JSX spread operator",
+      ),
+    };
+  }
+
+  private validateTagBatches(): ScanResult {
+    const tagBatchSize = 512;
+    for (let start = 0; start < this.tags.length; start += tagBatchSize) {
+      const batch = this.tags.slice(start, start + tagBatchSize);
+      const tagValidation = this.validateTagBatch(batch);
+      if (tagValidation !== undefined) return tagValidation;
+    }
+  }
+
+  private validateTagBatch(batch: readonly JsxTagRecord[]): ScanResult {
+    const tagFragment = tagValidationFragment(this.options.source, this.expressions, batch);
     const tagValidation = validateFragment(
       tagFragment,
       "const __veryfront_tags = [",
       "\n];",
       batch[0]?.start ?? 0,
-      options.absoluteStart,
-      options.locator,
+      this.options.absoluteStart,
+      this.options.locator,
     );
-    if (tagValidation.kind === "syntax-error") return tagValidation;
+    return tagValidation.kind === "syntax-error" ? tagValidation : undefined;
   }
 
-  const rootValidation = validateFragment(
-    reducedBuilder.result(),
-    "const __veryfront_value = (",
-    "\n);",
-    expressionAt(expressions, 0)?.end ?? 0,
-    options.absoluteStart,
-    options.locator,
-  );
-  if (rootValidation.kind === "syntax-error") return rootValidation;
-
-  let staticDestination: ContentDestination | undefined;
-  for (const expression of expressions) {
-    const literal = await decodeStaticLiteral(
-      options.source,
-      expression,
-      options.filePath,
+  private validateRootExpression(): ScanResult {
+    const rootValidation = validateFragment(
+      this.reducedBuilder.result(),
+      "const __veryfront_value = (",
+      "\n);",
+      expressionAt(this.expressions, 0)?.end ?? 0,
+      this.options.absoluteStart,
+      this.options.locator,
     );
-    if (
-      literal !== undefined &&
-      isDestinationAttribute(expression.attributeName)
-    ) {
-      const destination = jsxLiteralDestination(
-        options.source,
-        literal.span,
-        options.absoluteStart,
-        options.locator,
-        literal.syntax,
-        literal.cookedValue,
-      );
+    return rootValidation.kind === "syntax-error" ? rootValidation : undefined;
+  }
+
+  private async collectStaticDestinations(): Promise<ContentDestination | undefined> {
+    let staticDestination: ContentDestination | undefined;
+    for (const expression of this.expressions) {
+      const destination = await this.staticDestinationForExpression(expression);
+      if (destination === undefined) continue;
       if (expression.id === 0) staticDestination = destination;
-      else destinations.push(destination);
+      else this.destinations.push(destination);
     }
+    return staticDestination;
   }
 
-  destinations.sort((left, right) => left.range.start.offset - right.range.start.offset);
-  return { kind: "valid", destinations, staticDestination };
+  private async staticDestinationForExpression(
+    expression: ExpressionRecord,
+  ): Promise<ContentDestination | undefined> {
+    const literal = await decodeStaticLiteral(
+      this.options.source,
+      expression,
+      this.options.filePath,
+    );
+    if (literal === undefined || !isDestinationAttribute(expression.attributeName)) {
+      return undefined;
+    }
+    return jsxLiteralDestination(
+      this.options.source,
+      literal.span,
+      this.options.absoluteStart,
+      this.options.locator,
+      literal.syntax,
+      literal.cookedValue,
+    );
+  }
 }
