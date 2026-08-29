@@ -983,6 +983,48 @@ describe("agent/runtime/provider-replay", () => {
       );
     });
 
+    it("should reject duplicate client tool-use ids and provider-owned collisions", () => {
+      const clientCall = {
+        type: "tool_use",
+        id: "duplicate-tool-use",
+        name: "lookup",
+        input: { query: "provider replay" },
+      };
+      const providerCall = {
+        type: "server_tool_use",
+        id: clientCall.id,
+        name: "web_search",
+        input: { query: "provider replay" },
+        caller: { type: "direct" },
+      };
+      const target = createAssistantMessage("assistant-message-1");
+
+      for (
+        const blocks of [
+          [clientCall, clientCall],
+          [clientCall, providerCall],
+          [providerCall, clientCall],
+        ]
+      ) {
+        const checkpoint: ProviderReplayCheckpoint = {
+          version: 1,
+          messageId: target.id,
+          provider: "anthropic",
+          providerBlocks: blocks.map((block) => ({
+            type: "provider-block",
+            provider: "anthropic",
+            block,
+          })),
+          providerBlockPositions: [0, 1],
+          totalPartCount: 2,
+        };
+
+        assertProviderReplayError(() =>
+          applyProviderReplayCheckpointsToMessages([target], [checkpoint])
+        );
+      }
+    });
+
     it("should reject MCP provider results for server-owned tool uses", () => {
       const providerCall = {
         type: "server_tool_use",

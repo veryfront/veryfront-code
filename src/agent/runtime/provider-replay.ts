@@ -763,13 +763,13 @@ type PendingAnthropicProviderTool = {
 
 type AnthropicProviderToolCorrelationState = {
   readonly pendingProviderTools: Map<string, PendingAnthropicProviderTool>;
-  readonly providerToolUseIds: Set<string>;
+  readonly toolUseIds: Set<string>;
 };
 
 function createAnthropicProviderToolCorrelationState(): AnthropicProviderToolCorrelationState {
   return {
     pendingProviderTools: new Map(),
-    providerToolUseIds: new Set(),
+    toolUseIds: new Set(),
   };
 }
 
@@ -777,20 +777,29 @@ function resetAnthropicProviderToolCorrelationState(
   state: AnthropicProviderToolCorrelationState,
 ): void {
   state.pendingProviderTools.clear();
-  state.providerToolUseIds.clear();
+  state.toolUseIds.clear();
 }
 
 function validateAnthropicProviderToolCorrelationBlock(
   block: Record<string, unknown>,
   state: AnthropicProviderToolCorrelationState,
 ): void {
+  if (block.type === "tool_use") {
+    const toolUse = toCanonicalAnthropicToolCall(block, false);
+    const toolCallId = String(toolUse.toolCallId);
+    if (state.toolUseIds.has(toolCallId)) {
+      invalidCheckpoint("checkpoint tool-use id is duplicated");
+    }
+    state.toolUseIds.add(toolCallId);
+    return;
+  }
   if (block.type === "server_tool_use" || block.type === "mcp_tool_use") {
     const toolUse = toCanonicalAnthropicToolCall(block, true);
     const toolCallId = String(toolUse.toolCallId);
-    if (state.providerToolUseIds.has(toolCallId)) {
+    if (state.toolUseIds.has(toolCallId)) {
       invalidCheckpoint("checkpoint provider tool-use id is duplicated");
     }
-    state.providerToolUseIds.add(toolCallId);
+    state.toolUseIds.add(toolCallId);
     state.pendingProviderTools.set(toolCallId, {
       name: String(toolUse.toolName),
       type: block.type,
