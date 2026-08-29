@@ -225,9 +225,10 @@ export function buildDenoSuiteCommandArgs(
     "--no-check",
     ...(profile.traceLeaks ? ["--trace-leaks"] : []),
     ...(profile.parallel ? ["--parallel"] : []),
-    ...(profile.network === "loopback"
-      ? LOOPBACK_TEST_PERMISSIONS
-      : ["--allow-all", ...(profile.denyNet ? [PROVIDER_EGRESS_DENY_NET] : [])]),
+    ...(profile.network === "loopback" ? LOOPBACK_TEST_PERMISSIONS : [
+      "--allow-all",
+      ...(profile.denyNet ? [PROVIDER_EGRESS_DENY_NET] : []),
+    ]),
     ...(profile.heap ? ["--v8-flags=--max-old-space-size=8192"] : []),
     ...(profile.coverage
       ? [`--coverage=${options.coverageDir ?? "coverage"}`]
@@ -273,7 +274,9 @@ if (import.meta.main) {
   for (const [index, files] of batches.entries()) {
     if (batches.length > 1) {
       console.log(
-        `[test-suite] ${suite} batch ${index + 1}/${batches.length} (${files.length} files)`,
+        `[test-suite] ${suite} batch ${
+          index + 1
+        }/${batches.length} (${files.length} files)`,
       );
     }
     const status = await new Deno.Command("deno", {

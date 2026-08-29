@@ -17,6 +17,7 @@ const TEST_OPTIONS_WITH_SEPARATE_VALUE = new Set([
   "--config",
   "--env-file",
   "--filter",
+  "--ignore",
   "--import-map",
   "--junit-path",
   "--location",
@@ -27,16 +28,22 @@ const TEST_OPTIONS_WITH_SEPARATE_VALUE = new Set([
 ]);
 const MAX_TARGET_DIRECTORY_ENTRIES = 10_000;
 
+export interface TestTargetFileSystem {
+  statSync(path: string): Pick<Deno.FileInfo, "isDirectory">;
+  readDirSync(path: string): Iterable<Deno.DirEntry>;
+}
+
+const TEST_TARGET_FILE_SYSTEM: TestTargetFileSystem = {
+  statSync: (path) => Deno.statSync(path),
+  readDirSync: (path) => Deno.readDirSync(path),
+};
+
 function getPositionalTestTargets(rawArgs: readonly string[]): string[] {
   const targets: string[] = [];
-  let optionsEnded = false;
   for (let index = 0; index < rawArgs.length; index++) {
     const arg = rawArgs[index]!;
-    if (!optionsEnded && arg === "--") {
-      optionsEnded = true;
-      continue;
-    }
-    if (!optionsEnded && arg.startsWith("-")) {
+    if (arg === "--") break;
+    if (arg.startsWith("-")) {
       const option = arg.split("=", 1)[0]!;
       if (!arg.includes("=") && TEST_OPTIONS_WITH_SEPARATE_VALUE.has(option)) {
         index += 1;
@@ -48,10 +55,15 @@ function getPositionalTestTargets(rawArgs: readonly string[]): string[] {
   return targets;
 }
 
-export function buildTestFileCommandArgs(rawArgs: string[]): string[] {
+export function buildTestFileCommandArgs(
+  rawArgs: string[],
+  fileSystem: TestTargetFileSystem = TEST_TARGET_FILE_SYSTEM,
+): string[] {
   const targets = getPositionalTestTargets(rawArgs);
   const usesScriptsConfig = targets.some(isScriptsPath);
-  const usesIntegrationPermissions = targets.some(isIntegrationTarget);
+  const usesIntegrationPermissions = targets.some((target) =>
+    isIntegrationTarget(target, fileSystem)
+  );
   const configArgs = usesScriptsConfig
     ? ["--config=scripts/test.deno.json"]
     : ["--preload=src/testing/preload.ts"];
@@ -84,13 +96,16 @@ function isIntegrationPath(arg: string): boolean {
     /\.integration\.test\.tsx?$/.test(normalized);
 }
 
-function isIntegrationTarget(arg: string): boolean {
+function isIntegrationTarget(
+  arg: string,
+  fileSystem: TestTargetFileSystem = TEST_TARGET_FILE_SYSTEM,
+): boolean {
   if (isIntegrationPath(arg)) return true;
   const normalized = arg.replaceAll("\\", "/").replace(/^\.\//, "");
   try {
-    if (!Deno.statSync(normalized).isDirectory) return false;
-  } catch (error) {
-    return !(error instanceof Deno.errors.NotFound);
+    if (!fileSystem.statSync(normalized).isDirectory) return false;
+  } catch {
+    return false;
   }
 
   const pending = [normalized];
@@ -98,9 +113,9 @@ function isIntegrationTarget(arg: string): boolean {
   while (pending.length > 0) {
     const directory = pending.pop()!;
     try {
-      for (const entry of Deno.readDirSync(directory)) {
+      for (const entry of fileSystem.readDirSync(directory)) {
         visitedEntries += 1;
-        if (visitedEntries > MAX_TARGET_DIRECTORY_ENTRIES) return true;
+        if (visitedEntries > MAX_TARGET_DIRECTORY_ENTRIES) return false;
         if (entry.isSymlink) continue;
         const path = `${directory}/${entry.name}`;
         if (entry.isDirectory) {
@@ -110,7 +125,7 @@ function isIntegrationTarget(arg: string): boolean {
         }
       }
     } catch {
-      return true;
+      return false;
     }
   }
   return false;
@@ -118,7 +133,9 @@ function isIntegrationTarget(arg: string): boolean {
 
 async function main(): Promise<void> {
   const environment =
-    getPositionalTestTargets(Deno.args).some(isIntegrationTarget)
+    getPositionalTestTargets(Deno.args).some((target) =>
+        isIntegrationTarget(target, TEST_TARGET_FILE_SYSTEM)
+      )
       ? DENO_TEST_ENV
       : UNIT_DENO_TEST_ENV;
   const command = new Deno.Command("deno", {

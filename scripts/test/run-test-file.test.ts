@@ -5,6 +5,7 @@ import {
   LOOPBACK_ALLOW_NET,
   PROVIDER_EGRESS_DENY_NET,
   TEST_FILE_ENV,
+  type TestTargetFileSystem,
 } from "./run-test-file.ts";
 
 describe("test:file task command", () => {
@@ -65,6 +66,60 @@ describe("test:file task command", () => {
     assertEquals(args.includes("--allow-all"), false);
     assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), false);
     assertEquals(args.includes(LOOPBACK_ALLOW_NET), true);
+  });
+
+  it("does not classify ignored paths or script arguments as integration targets", () => {
+    for (
+      const rawArgs of [
+        ["src/foo.test.ts", "--ignore", "tests/integration"],
+        ["src/foo.test.ts", "--", "tests/integration"],
+      ]
+    ) {
+      const args = buildTestFileCommandArgs(rawArgs);
+      assertEquals(args.includes("--allow-all"), false);
+      assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), false);
+      assertEquals(args.includes(LOOPBACK_ALLOW_NET), true);
+    }
+  });
+
+  it("keeps ambiguous filesystem targets on loopback-only permissions", () => {
+    const permissionDenied = new Deno.errors.PermissionDenied(
+      "test target is unreadable",
+    );
+    const failures: TestTargetFileSystem[] = [
+      {
+        statSync: () => {
+          throw permissionDenied;
+        },
+        readDirSync: () => [],
+      },
+      {
+        statSync: () => ({ isDirectory: true }),
+        readDirSync: () => {
+          throw permissionDenied;
+        },
+      },
+      {
+        statSync: () => ({ isDirectory: true }),
+        readDirSync: function* () {
+          for (let index = 0; index <= 10_000; index++) {
+            yield {
+              name: `entry-${index}`,
+              isDirectory: false,
+              isFile: true,
+              isSymlink: false,
+            };
+          }
+        },
+      },
+    ];
+
+    for (const fileSystem of failures) {
+      const args = buildTestFileCommandArgs(["ambiguous-target"], fileSystem);
+      assertEquals(args.includes("--allow-all"), false);
+      assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), false);
+      assertEquals(args.includes(LOOPBACK_ALLOW_NET), true);
+    }
   });
 
   it("uses integration permissions for source-root integration tests", () => {

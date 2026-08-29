@@ -17,9 +17,9 @@ import {
   OFFLINE_REACT_TEST_ENV,
   prepareOfflineReactModulesForTests,
 } from "./offline-react-transport.ts";
-import { __setHttpModuleCacheDirResolverForTests } from "../transforms/esm/http-cache.ts";
-import { __setDistributedCacheFallbackForTests } from "../transforms/esm/http-cache-wrapper.ts";
-import { getHttpBundleCacheDir } from "../utils/cache-dir.ts";
+import { __setHttpModuleCacheDirResolverForTests } from "#veryfront/transforms/esm/http-cache.ts";
+import { __setDistributedCacheFallbackForTests } from "#veryfront/transforms/esm/http-cache-wrapper.ts";
+import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 
 // Tests that genuinely reach the network use the plain host transport rather
 // than Deno's pinned SOCKS client, which holds connections open past the end of

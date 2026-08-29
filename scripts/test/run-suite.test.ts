@@ -393,7 +393,13 @@ describe("migration command surface", () => {
   });
 
   it("partitions large suites without dropping or repeating files", () => {
-    const files = ["a.test.ts", "b.test.ts", "c.test.ts", "d.test.ts", "e.test.ts"];
+    const files = [
+      "a.test.ts",
+      "b.test.ts",
+      "c.test.ts",
+      "d.test.ts",
+      "e.test.ts",
+    ];
 
     assertEquals(partitionDenoSuiteFiles(files, 2), [
       ["a.test.ts", "b.test.ts"],
@@ -411,7 +417,11 @@ describe("migration command surface", () => {
       );
       if (profile.network === "loopback") {
         assertEquals(args.includes("--allow-all"), false, suite);
-        assertEquals(args.some((arg) => arg.startsWith("--allow-import")), false, suite);
+        assertEquals(
+          args.some((arg) => arg.startsWith("--allow-import")),
+          false,
+          suite,
+        );
         assert(args.includes(LOOPBACK_ALLOW_NET), suite);
         assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), false, suite);
       } else if (profile.denyNet) {

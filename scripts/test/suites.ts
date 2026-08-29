@@ -15,10 +15,11 @@ export const DENO_TEST_ENV: Readonly<Record<string, string>> = Object.freeze({
 });
 
 /** Unit-only environment enabling the first-party offline React transport. */
-export const UNIT_DENO_TEST_ENV: Readonly<Record<string, string>> = Object.freeze({
-  ...DENO_TEST_ENV,
-  VERYFRONT_TEST_OFFLINE_REACT: "1",
-});
+export const UNIT_DENO_TEST_ENV: Readonly<Record<string, string>> = Object
+  .freeze({
+    ...DENO_TEST_ENV,
+    VERYFRONT_TEST_OFFLINE_REACT: "1",
+  });
 
 export const LOOPBACK_ALLOW_NET =
   "--allow-net=127.0.0.1,localhost,0.0.0.0,[::1],[::]";
