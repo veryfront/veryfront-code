@@ -41,6 +41,12 @@ const AcornJsxParser = Parser.extend(acornJsx());
 const MAX_MDX_EXPRESSION_DEPTH = 64;
 const MDX_STRUCTURE_LIMIT_MESSAGE = "Parser capacity exceeded for MDX structure";
 
+type PositionedSyntaxError = SyntaxError & {
+  pos: number;
+  raisedAt: number;
+  loc: { line: number; column: number };
+};
+
 function incompleteExpression(position: number): SyntaxError {
   const error = new SyntaxError("Incomplete embedded expression") as SyntaxError & {
     pos: number;
@@ -101,6 +107,11 @@ interface LexicalCache {
 }
 
 let lexicalCache: LexicalCache | undefined;
+let lexicalCapacityError: PositionedSyntaxError | undefined;
+
+function currentLexicalCapacityError(): PositionedSyntaxError | undefined {
+  return lexicalCapacityError;
+}
 
 function consumeBalancedToken(state: LexicalState, label: string): boolean {
   if (label === "{" || label === "${") state.braceDepth++;
@@ -271,6 +282,16 @@ function isTerminalJsxBoundaryError(error: unknown): error is SyntaxError {
       error.message.startsWith("Unexpected token `}`."));
 }
 
+function isMdxStructureLimitError(
+  error: unknown,
+): error is PositionedSyntaxError {
+  return error instanceof SyntaxError &&
+    error.message === MDX_STRUCTURE_LIMIT_MESSAGE &&
+    "pos" in error && typeof error.pos === "number" &&
+    "raisedAt" in error && typeof error.raisedAt === "number" &&
+    "loc" in error && typeof error.loc === "object" && error.loc !== null;
+}
+
 /**
  * Micromark needs a lexical answer at each possible expression-closing brace.
  * Building an Acorn AST here would recurse through arbitrarily deep JSX before
@@ -293,7 +314,21 @@ class LexicalBoundaryParser extends AcornJsxParser {
     position: number,
     options: AcornOptions,
   ): Expression {
-    const state = lexicalBoundaryState(input, position, options);
+    // The micromark bridge treats an Acorn error as a possibly incomplete
+    // expression and retries it at each later `}`. The first capacity error is
+    // allowed through so the bridge maps its position back to authored source.
+    // A later probe receives the same lexical boundary sentinel used for valid
+    // expressions, and parseMdxRoot surfaces the recorded terminal error.
+    if (lexicalCapacityError !== undefined) {
+      return lexicalPlaceholder(position, input.length);
+    }
+    let state: LexicalState;
+    try {
+      state = lexicalBoundaryState(input, position, options);
+    } catch (error) {
+      if (isMdxStructureLimitError(error)) lexicalCapacityError = error;
+      throw error;
+    }
     if (state.contextualSlash) {
       if (lexicalCache !== undefined) lexicalCache.grammarRequired = true;
       const expression = AcornJsxParser.parseExpressionAt(
@@ -329,13 +364,17 @@ class LexicalBoundaryParser extends AcornJsxParser {
       return expression;
     }
 
-    return {
-      type: "Identifier",
-      name: "_veryfront_expression",
-      start: position,
-      end: input.length,
-    };
+    return lexicalPlaceholder(position, input.length);
   }
+}
+
+function lexicalPlaceholder(position: number, end: number): Expression {
+  return {
+    type: "Identifier",
+    name: "_veryfront_expression",
+    start: position,
+    end,
+  };
 }
 
 function createLexicalTokenizer(
@@ -458,15 +497,32 @@ function parseMdxRoot(
 ): { readonly kind: "root"; readonly root: MdxRoot } | ContentAnalysisResult {
   const processor = createMdxProcessor(frontmatter);
   lexicalCache = undefined;
+  lexicalCapacityError = undefined;
   try {
-    return { kind: "root", root: processor.parse(value) };
+    const root = processor.parse(value);
+    const capacityError = currentLexicalCapacityError();
+    if (capacityError !== undefined) {
+      return {
+        kind: "syntax-error",
+        diagnostic: capacityDiagnostic(locator, capacityError.pos),
+      };
+    }
+    return { kind: "root", root };
   } catch (error) {
+    const capacityError = currentLexicalCapacityError();
+    if (capacityError !== undefined) {
+      return {
+        kind: "syntax-error",
+        diagnostic: capacityDiagnostic(locator, capacityError.pos),
+      };
+    }
     if (!(error instanceof Error)) throw error;
     const diagnostic = parserDiagnostic(error, locator);
     if (diagnostic === undefined) throw error;
     return { kind: "syntax-error", diagnostic };
   } finally {
     lexicalCache = undefined;
+    lexicalCapacityError = undefined;
   }
 }
 

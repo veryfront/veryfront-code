@@ -976,7 +976,21 @@ describe("analyzeContent MDX", () => {
       result.diagnostic.message,
       "Parser capacity exceeded for MDX structure",
     );
+    assertEquals(
+      result.diagnostic.range.start.offset,
+      "<a data-ok={".length + "<A>{".repeat(65).length - 1,
+    );
     assertLess(performance.now() - startedAt, 2_000);
+
+    const following = await analyzeContent({
+      value: '<a href="../architecture/after-capacity.md">ok</a>',
+      syntax: "mdx",
+    });
+    assert(following.kind === "document");
+    assertEquals(
+      following.destinations.map((destination) => destination.rawValue),
+      ["../architecture/after-capacity.md"],
+    );
   });
 
   it("bounds 1,600 nested JSX attribute expressions in the lexer", async () => {
