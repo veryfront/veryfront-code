@@ -488,13 +488,6 @@ function validateFragment(
 ):
   | { readonly kind: "valid" }
   | { readonly kind: "syntax-error"; readonly diagnostic: ContentSyntaxDiagnostic } {
-  if (fragment.value.length > MAX_EMBEDDED_CODE_UNITS) {
-    return {
-      kind: "syntax-error",
-      diagnostic: embeddedCodeLimitDiagnostic(locator, absoluteStart, fallbackOffset),
-    };
-  }
-
   try {
     if (!hasTokens(fragment.value)) return { kind: "valid" };
     AcornJsxParser.parse(`${prefix}${fragment.value}${suffix}`, {

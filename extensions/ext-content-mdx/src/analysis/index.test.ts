@@ -76,6 +76,15 @@ describe("analyzeContent MDX parser boundaries", () => {
     assert(result.kind === "document");
   });
 
+  it("applies the parser limit to authored source instead of reduced code", async () => {
+    const value = `{[${"<A/>,".repeat(10_000)}]}`;
+    assertLess(value.length, MAX_EMBEDDED_CODE_UNITS);
+
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assert(result.kind === "document");
+  });
+
   it("does not count surrounding document text toward the embedded limit", async () => {
     const value = `{value}\n\n${"prose".repeat(MAX_EMBEDDED_CODE_UNITS)}`;
 
@@ -1200,11 +1209,12 @@ describe("analyzeContent MDX", () => {
 
   it("keeps enforcing expression capacity after contextual division", async () => {
     const depth = 1_000;
-    const value = "<a data-ok={left / right ? " +
+    const prefix = "<a data-ok={left / right ? <A>{ok}</A> : ";
+    const value = prefix +
       "<A>{".repeat(depth) +
       "value" +
       "}</A>".repeat(depth) +
-      ' : null} href="../architecture/deep-jsx.md">ok</a>';
+      '} href="../architecture/deep-jsx.md">ok</a>';
     const startedAt = performance.now();
 
     const result = await analyzeContent({ value, syntax: "mdx" });
@@ -1216,7 +1226,7 @@ describe("analyzeContent MDX", () => {
     );
     assertEquals(
       result.diagnostic.range.start.offset,
-      "<a data-ok={left / right ? ".length + "<A>{".repeat(65).length - 1,
+      prefix.length + "<A>{".repeat(65).length - 1,
     );
     assertLess(performance.now() - startedAt, 2_000);
   });
