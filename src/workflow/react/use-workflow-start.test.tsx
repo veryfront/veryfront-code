@@ -560,6 +560,35 @@ describe("useWorkflowStart", () => {
     }
   });
 
+  it("ignores a pending workflow list failure after unmount", async () => {
+    const restoreDom = installDom();
+    const response = Promise.withResolvers<Response>();
+    let root: ReturnType<typeof createRoot> | null = null;
+    let domRestored = false;
+
+    installMockFetch((() => response.promise) as typeof fetch);
+
+    function Capture(): null {
+      useWorkflowList({ autoRefresh: false });
+      return null;
+    }
+
+    try {
+      root = createRoot(document.getElementById("root")!);
+      flushSync(() => root!.render(<Capture />));
+      flushSync(() => root!.unmount());
+      root = null;
+      restoreDom();
+      domRestored = true;
+
+      response.reject(new Error("late list failure"));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    } finally {
+      if (root) flushSync(() => root!.unmount());
+      if (!domRestored) restoreDom();
+    }
+  });
+
   it("keeps loading active when an obsolete refresh finishes during replacement loading", async () => {
     const restoreDom = installDom();
     const oldRefreshResponse = Promise.withResolvers<Response>();

@@ -71,8 +71,10 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
   );
   const requestSequence = useRef(0);
   const activeRequestSequence = useRef<number | null>(null);
+  const isMounted = useRef(true);
   const isCurrentRequest = useCallback(
     (request: { authorizationContext: typeof authorizationContext; sequence: number }): boolean =>
+      isMounted.current &&
       request.sequence === requestSequence.current &&
       request.authorizationContext === currentAuthorizationContext.current,
     [],
@@ -166,6 +168,15 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
       stableHeaders,
     ],
   );
+
+  useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+      requestSequence.current++;
+      activeRequestSequence.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     // Data from one authorization context must not remain visible while a
