@@ -95,6 +95,12 @@ export function yamlFrontmatterDiagnostic(
   root: Root,
   locator: SourceLocator,
 ): ContentSyntaxDiagnostic | undefined {
+  // Content compilation extracts YAML only after an LF or CRLF opening fence.
+  // remark-frontmatter also recognizes bare CR, so keep validation on the
+  // compiler's deterministic extraction grammar instead of rejecting content
+  // that compilation treats as an unparsed frontmatter block.
+  if (!value.startsWith("---\n") && !value.startsWith("---\r\n")) return undefined;
+
   for (const node of root.children) {
     if (!isYamlFrontmatterNode(node)) continue;
     try {

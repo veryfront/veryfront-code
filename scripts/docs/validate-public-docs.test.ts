@@ -2618,6 +2618,19 @@ describe("public docs validation", () => {
     assertStringIncludes(invalid[0]?.message ?? "", "Fix invalid MDX syntax");
   });
 
+  it("validates React SVG destinations at every JSX depth", async () => {
+    assertEquals(
+      await mdxDestinations(
+        '<svg><a xlinkHref="../architecture/top-svg.md" /></svg>\n' +
+          '{<svg><a xlinkHref={"../architecture/nested-svg.md"} /></svg>}',
+      ),
+      [
+        "../architecture/top-svg.md",
+        "../architecture/nested-svg.md",
+      ],
+    );
+  });
+
   it("scans multiline MDX ESM block comments in linear time", async () => {
     const comment = Array.from(
       { length: 80_001 },
@@ -2682,6 +2695,14 @@ describe("public docs validation", () => {
         `Fix invalid ${extension === "mdx" ? "MDX" : "Markdown"} syntax`,
       );
       assertStringIncludes(issues[0]?.message ?? "", "Invalid YAML frontmatter");
+
+      assertEquals(
+        await collectIssues(
+          `docs/guides/example.${extension}`,
+          "---\rtitle: [unterminated\r---\r",
+        ),
+        [],
+      );
     }
   });
 

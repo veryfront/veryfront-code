@@ -23,8 +23,8 @@ function summarize(value: string, result: ContentAnalysisResult): unknown {
   };
 }
 
-describe("analyzeEmbeddedExpression boundaries", () => {
-  it("rejects oversized source before tokenizing invalid syntax", async () => {
+describe("analyzeContent MDX parser boundaries", () => {
+  it("bounds direct embedded analysis before tokenizing invalid syntax", async () => {
     const source = `'${"x".repeat(MAX_EMBEDDED_CODE_UNITS)}`;
 
     const result = await analyzeEmbeddedExpression({
@@ -43,6 +43,39 @@ describe("analyzeEmbeddedExpression boundaries", () => {
         },
       },
     });
+  });
+
+  it("rejects oversized embedded source before tokenizing invalid syntax", async () => {
+    const value = `{'${"x".repeat(MAX_EMBEDDED_CODE_UNITS)}}`;
+
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assertEquals(result, {
+      kind: "syntax-error",
+      diagnostic: {
+        message: `Embedded code exceeds the ${MAX_EMBEDDED_CODE_UNITS}-unit parser limit`,
+        range: {
+          start: { offset: 1, line: 1, column: 2 },
+          end: { offset: 1, line: 1, column: 2 },
+        },
+      },
+    });
+  });
+
+  it("accepts embedded source at the parser limit", async () => {
+    const value = `{"${"x".repeat(MAX_EMBEDDED_CODE_UNITS - 2)}"}`;
+
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assert(result.kind === "document");
+  });
+
+  it("does not count surrounding document text toward the embedded limit", async () => {
+    const value = `{value}\n\n${"prose".repeat(MAX_EMBEDDED_CODE_UNITS)}`;
+
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assert(result.kind === "document");
   });
 });
 
@@ -182,6 +215,16 @@ describe("analyzeContent Markdown", () => {
       column: 18,
     });
     assertStringIncludes(result.diagnostic.message, "Invalid YAML frontmatter");
+  });
+
+  it("accepts malformed bare-carriage-return frontmatter like the compiler", async () => {
+    const result = await analyzeContent({
+      value: "---\rtitle: [unterminated\r---\rVisible",
+      syntax: "markdown",
+      frontmatter: true,
+    });
+
+    assert(result.kind === "document");
   });
 
   it("maps YAML parser columns after non-BMP source characters", async () => {
@@ -628,6 +671,19 @@ describe("analyzeContent MDX", () => {
     );
   });
 
+  it("returns React SVG xlinkHref destinations at every JSX depth", async () => {
+    const value = '<svg><a xlinkHref="../top.md" /></svg>\n' +
+      '{<svg><a xlinkHref={"../nested.md"} /></svg>}';
+
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => destination.rawValue),
+      ["../top.md", "../nested.md"],
+    );
+  });
+
   it("returns parser-cooked values with distinct JavaScript literal syntax", async () => {
     const lineSeparator = "\u2028";
     const stringRaw = `../a\\${lineSeparator}.md`;
@@ -774,9 +830,9 @@ describe("analyzeContent MDX", () => {
     assertStringIncludes(result.diagnostic.message, "Invalid YAML frontmatter");
   });
 
-  it("keeps bare-carriage-return frontmatter out of destination analysis", async () => {
+  it("accepts malformed bare-carriage-return frontmatter like the compiler", async () => {
     const result = await analyzeContent({
-      value: "---\rtitle: ok\rsummary: '<a href=\"../hidden.md\">x</a>'\r---\r" +
+      value: "---\rtitle: [unterminated\rsummary: '<a href=\"../hidden.md\">x</a>'\r---\r" +
         '<Card href="../visible.md" />',
       syntax: "mdx",
       frontmatter: true,

@@ -7,6 +7,8 @@ import type { SourceLocator } from "./source.ts";
 import type { ContentDestination, ContentSyntaxDiagnostic } from "./types.ts";
 
 export const MAX_EMBEDDED_CODE_UNITS = 65_536;
+export const EMBEDDED_CODE_LIMIT_MESSAGE =
+  `Embedded code exceeds the ${MAX_EMBEDDED_CODE_UNITS}-unit parser limit`;
 
 const AcornJsxParser = Parser.extend(acornJsx());
 const babelParser = new BabelParseOnlyParser();
@@ -96,10 +98,10 @@ export type EmbeddedCodeAnalysis =
     readonly diagnostic: ContentSyntaxDiagnostic;
   };
 
-function isDestinationAttribute(name: string | undefined): boolean {
+export function isDestinationAttribute(name: string | undefined): boolean {
   const normalized = name?.toLowerCase();
   return normalized === "href" || normalized === "src" ||
-    normalized === "action";
+    normalized === "action" || normalized === "xlinkhref";
 }
 
 function parserMessage(error: Error): string {
@@ -126,7 +128,7 @@ function embeddedCodeLimitDiagnostic(
     locator,
     absoluteStart,
     relativeOffset,
-    `Embedded code exceeds the ${MAX_EMBEDDED_CODE_UNITS}-unit parser limit`,
+    EMBEDDED_CODE_LIMIT_MESSAGE,
   );
 }
 

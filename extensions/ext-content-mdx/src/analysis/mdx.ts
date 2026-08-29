@@ -21,7 +21,12 @@ import remarkParse from "remark-parse";
 import { unified } from "unified";
 import type { Position } from "unist";
 
-import { analyzeEmbeddedExpression } from "./embedded-code.ts";
+import {
+  analyzeEmbeddedExpression,
+  EMBEDDED_CODE_LIMIT_MESSAGE,
+  isDestinationAttribute,
+  MAX_EMBEDDED_CODE_UNITS,
+} from "./embedded-code.ts";
 import { yamlFrontmatterDiagnostic } from "./frontmatter.ts";
 import { analyzeMarkdownTree } from "./markdown.ts";
 import { createSourceLocator, type SourceLocator } from "./source.ts";
@@ -35,6 +40,18 @@ const AcornJsxParser = Parser.extend(acornJsx());
 
 function incompleteExpression(position: number): SyntaxError {
   const error = new SyntaxError("Incomplete embedded expression") as SyntaxError & {
+    pos: number;
+    raisedAt: number;
+    loc: { line: number; column: number };
+  };
+  error.pos = position;
+  error.raisedAt = position;
+  error.loc = { line: 1, column: position };
+  return error;
+}
+
+function embeddedCodeLimitError(position: number): SyntaxError {
+  const error = new SyntaxError(EMBEDDED_CODE_LIMIT_MESSAGE) as SyntaxError & {
     pos: number;
     raisedAt: number;
     loc: { line: number; column: number };
@@ -147,6 +164,9 @@ function lexicalBoundaryState(
   position: number,
   options: AcornOptions,
 ): LexicalState {
+  if (input.length - position > MAX_EMBEDDED_CODE_UNITS) {
+    throw embeddedCodeLimitError(position);
+  }
   const cache = tokenizerFor(input, position, options);
   if (cache.terminalError !== undefined) throw cache.terminalError;
   if (cache.grammarRequired) return cache.state;
@@ -323,6 +343,8 @@ function own(value: unknown, key: string): unknown {
 }
 
 function parserMessage(error: Error): string {
+  const causeMessage = own(own(error, "cause"), "message");
+  if (causeMessage === EMBEDDED_CODE_LIMIT_MESSAGE) return causeMessage;
   const reason = own(error, "reason");
   const message = typeof reason === "string" ? reason : error.message;
   const firstLine = message.split("\n", 1)[0]?.trim() || error.name;
@@ -360,12 +382,6 @@ function positionOffsets(
 
 function childrenOf(node: Nodes): readonly Nodes[] {
   return "children" in node ? node.children : [];
-}
-
-function isDestinationAttribute(name: string): boolean {
-  const normalized = name.toLowerCase();
-  return normalized === "href" || normalized === "src" ||
-    normalized === "action";
 }
 
 function quotedAttributeDestination(
