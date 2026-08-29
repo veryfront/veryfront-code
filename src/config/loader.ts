@@ -1433,13 +1433,14 @@ function warnIgnoredExtensionDeclarations(
   const extensions = snapshot.extensions;
   if (!ArrayIsArray(extensions)) return;
   const declared: string[] = [];
-  for (const entry of extensions) {
+  for (let index = 0; index < extensions.length; index++) { // NOSONAR: array traversal must stay index-based under poisoned primordials.
+    const entry = extensions[index];
     if (
       typeof entry === "object" && entry !== null &&
       ownKeys(entry).length === 1 &&
       typeof (entry as { name?: unknown }).name === "string"
     ) {
-      declared.push((entry as { name: string }).name);
+      declared[declared.length] = (entry as { name: string }).name;
     }
   }
   if (declared.length === 0) return;

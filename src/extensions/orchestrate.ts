@@ -93,11 +93,12 @@ const FIRST_PARTY_EXTENSION_NAMES = new Set(
 
 /**
  * A first-party extension declaration, `{ name: "ext-..." }` and nothing
- * else — the inert marker a hosted declarative config produces for an
+ * else, the inert marker a hosted declarative config produces for an
  * imported extension factory call (veryfront-issue-inbox#688). The runtime
  * provides the capability itself, so the declaration activates nothing.
+ *
+ * @internal Exported for direct accessor-safety coverage.
  */
-/** @internal Exported for direct accessor-safety coverage. */
 export function isFirstPartyDeclarationMarker(
   entry: ExtensionConfigEntry,
 ): entry is { name: string } {
