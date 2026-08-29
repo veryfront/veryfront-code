@@ -15,6 +15,5 @@ const options: PrepareProviderModelMessagesFromUiMessagesOptions = {
   downstreamTraceId: "consumer-owned-field",
 };
 
-if (options.downstreamTraceId !== undefined) {
-  options.downstreamTraceId.toUpperCase();
-}
+// The annotation is the proof: augmentation must widen the interface with a string.
+export const upperTraceId: string | undefined = options.downstreamTraceId?.toUpperCase();
