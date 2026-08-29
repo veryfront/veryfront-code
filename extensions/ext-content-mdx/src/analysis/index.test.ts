@@ -1278,6 +1278,30 @@ describe("analyzeContent MDX", () => {
     );
   });
 
+  it("bounds nested JSX elements after contextual division", async () => {
+    const depth = 4_000;
+    const prefix = "<a data-ok={left / right ? ";
+    const value = prefix +
+      "<A>".repeat(depth) +
+      "leaf" +
+      "</A>".repeat(depth) +
+      ' : null} href="../architecture/deep-jsx-elements.md">ok</a>';
+    const startedAt = performance.now();
+
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assert(result.kind === "syntax-error");
+    assertEquals(
+      result.diagnostic.message,
+      "Parser capacity exceeded for MDX structure",
+    );
+    assertEquals(
+      result.diagnostic.range.start.offset,
+      prefix.length + "<A>".repeat(65).length - 1,
+    );
+    assertLess(performance.now() - startedAt, 2_000);
+  });
+
   it("bounds 1,600 nested JSX attribute expressions in the lexer", async () => {
     const depth = 1_600;
     const value = "<a data-ok={" +

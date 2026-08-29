@@ -359,14 +359,28 @@ function capacityTokenHandler(
   downstream: AcornOptions["onToken"],
 ): (token: Token) => void {
   // Contextual slash expressions already require Acorn grammar. Count their
-  // grammar-aware tokens here so regex contents cannot masquerade as braces.
-  let braceDepth = 0;
+  // grammar-aware tokens here so regex contents cannot masquerade as braces,
+  // and so recursive JSX or delimiter nesting cannot bypass the limit.
+  const state: LexicalState = {
+    bracketDepth: 0,
+    braceDepth: 0,
+    contextualSlash: false,
+    jsxElementDepth: 0,
+    jsxTags: [],
+    pendingSlash: false,
+    parenthesisDepth: 0,
+    previousLabel: undefined,
+  };
   return (token) => {
     if (Array.isArray(downstream)) downstream.push(token);
     else downstream?.(token);
-    if (token.type.label === "{" || token.type.label === "${") braceDepth++;
-    else if (token.type.label === "}") braceDepth--;
-    if (braceDepth > MAX_MDX_EXPRESSION_DEPTH) {
+    consumeLexicalToken(state, token.type.label);
+    if (
+      state.braceDepth > MAX_MDX_EXPRESSION_DEPTH ||
+      state.bracketDepth > MAX_MDX_EXPRESSION_DEPTH ||
+      state.parenthesisDepth > MAX_MDX_EXPRESSION_DEPTH ||
+      state.jsxElementDepth > MAX_MDX_EXPRESSION_DEPTH
+    ) {
       throw mdxStructureLimitError(token.start);
     }
   };
