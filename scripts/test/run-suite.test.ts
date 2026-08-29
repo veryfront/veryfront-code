@@ -411,6 +411,7 @@ describe("migration command surface", () => {
       );
       if (profile.network === "loopback") {
         assertEquals(args.includes("--allow-all"), false, suite);
+        assertEquals(args.some((arg) => arg.startsWith("--allow-import")), false, suite);
         assert(args.includes(LOOPBACK_ALLOW_NET), suite);
         assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), false, suite);
       } else if (profile.denyNet) {

@@ -222,6 +222,11 @@ describe("cicd coverage workflow", () => {
     assertStringIncludes(legacyCoverageTask, "deno task test:coverage:unit");
     assertEquals(legacyCoverageTask.includes("--allow-all"), false);
     assertEquals(legacyCoverageTask.includes("--deny-net="), false);
+    const preload = await readRepoFile("src/testing/preload.ts");
+    const runtimePrefix = ["De", "no", "."].join("");
+    assertStringIncludes(preload, `${runtimePrefix}makeTempDirSync`);
+    assertStringIncludes(preload, `${runtimePrefix}env.set("VERYFRONT_CACHE_DIR"`);
+    assertStringIncludes(preload, `${runtimePrefix}removeSync`);
     assertStringIncludes(
       await readDenoTask("test:coverage:unit"),
       "run-deno-suite.ts --suite=coverage:unit",

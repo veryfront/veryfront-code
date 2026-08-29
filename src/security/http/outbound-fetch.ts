@@ -338,6 +338,11 @@ export function __installUnpinnedHostTransportForTests(): () => void {
   });
 }
 
+/** Return the host fetch captured before test or tenant code can replace it. */
+export function __getCapturedHostFetchForTests(): typeof globalThis.fetch {
+  return capturedHostFetch;
+}
+
 export function __installOutboundFetchTransportForTests(
   transport: OutboundFetchTransport,
   options: { allowedResolvedAddresses?: readonly string[] } = {},

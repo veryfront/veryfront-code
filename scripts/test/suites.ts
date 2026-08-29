@@ -30,7 +30,6 @@ export const LOOPBACK_TEST_PERMISSIONS: readonly string[] = Object.freeze([
   "--allow-run",
   "--allow-sys",
   "--allow-ffi",
-  "--allow-import",
   LOOPBACK_ALLOW_NET,
 ]);
 

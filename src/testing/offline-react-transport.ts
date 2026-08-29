@@ -1,6 +1,9 @@
 import { isIP } from "node:net";
 import { fileURLToPath } from "node:url";
-import { __installOutboundFetchTransportForTests } from "#veryfront/security/http/outbound-fetch.ts";
+import {
+  __getCapturedHostFetchForTests,
+  __installOutboundFetchTransportForTests,
+} from "#veryfront/security/http/outbound-fetch.ts";
 import { resolveHostAddresses } from "#veryfront/platform/compat/dns.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 
@@ -269,7 +272,7 @@ async function resolveTestHost(hostname: string): Promise<string[]> {
 
 /** Install the unit-suite-only React ESM transport until the returned cleanup runs. */
 export function installOfflineReactTransportForTests(): () => void {
-  const hostFetch = globalThis.fetch.bind(globalThis);
+  const hostFetch = __getCapturedHostFetchForTests();
   const fetchWithOfflineReact: typeof globalThis.fetch = async (input, init) => {
     const url = input instanceof Request
       ? new URL(input.url)

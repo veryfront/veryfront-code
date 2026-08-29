@@ -21,6 +21,15 @@ import {
 // a test. Installing it here keeps the security module to a single rule and
 // leaves the test-only decision somewhere a reader can find it.
 if (Deno.env.get(OFFLINE_REACT_TEST_ENV) === "1") {
+  const cacheDir = Deno.makeTempDirSync({ prefix: "veryfront-unit-cache-" });
+  Deno.env.set("VERYFRONT_CACHE_DIR", cacheDir);
+  addEventListener("unload", () => {
+    try {
+      Deno.removeSync(cacheDir, { recursive: true });
+    } catch {
+      // Process teardown is already discarding the isolated cache.
+    }
+  });
   installOfflineReactTransportForTests();
 } else {
   __installUnpinnedHostTransportForTests();
