@@ -93,6 +93,16 @@ export type HostedChatRuntimePreparationSteering = {
   skills: RuntimeSkillDefinition[];
 };
 
+function mergePreservedSourceMessageIds(
+  checkpointIds: readonly string[] | undefined,
+  retentionIds: readonly string[] | undefined,
+): readonly string[] | undefined {
+  if (checkpointIds === undefined && retentionIds === undefined) {
+    return undefined;
+  }
+  return [...new Set([...(checkpointIds ?? []), ...(retentionIds ?? [])])];
+}
+
 /** Input payload for hosted chat runtime instructions. */
 export type HostedChatRuntimeInstructionsInput<TRuntimeAgentDefinition> = {
   agentConfig: TRuntimeAgentDefinition;
@@ -656,8 +666,10 @@ export async function prepareHostedChatRuntimeMessages(
       fileContentFetchTimeoutMs: options.fileContentFetchTimeoutMs,
       historicalToolInputRetention: {
         ...options.historicalToolInputRetention,
-        preserveSourceMessageIds: options.providerReplayCheckpointMessageIds ??
+        preserveSourceMessageIds: mergePreservedSourceMessageIds(
+          options.providerReplayCheckpointMessageIds,
           options.historicalToolInputRetention?.preserveSourceMessageIds,
+        ),
       },
     });
   }
@@ -673,8 +685,10 @@ export async function prepareHostedChatRuntimeMessages(
     fileContentFetchTimeoutMs: options.fileContentFetchTimeoutMs,
     historicalToolInputRetention: {
       ...options.historicalToolInputRetention,
-      preserveSourceMessageIds: options.providerReplayCheckpointMessageIds ??
+      preserveSourceMessageIds: mergePreservedSourceMessageIds(
+        options.providerReplayCheckpointMessageIds,
         options.historicalToolInputRetention?.preserveSourceMessageIds,
+      ),
     },
     resolveFileUrl: ({ uploadId }) =>
       getRuntimeUploadUrl({

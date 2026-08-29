@@ -16,6 +16,10 @@ import {
 } from "./part-field-access.ts";
 import type { JsonValue } from "./part-field-access.ts";
 
+type ParsedToolResultOutput =
+  | { type: "json"; value: JsonValue }
+  | { type: "error-text"; value: string };
+
 export function getToolPart(part: unknown): {
   toolCallId: string;
   toolName: string;
@@ -23,6 +27,7 @@ export function getToolPart(part: unknown): {
   state: string;
   output?: unknown;
   errorText?: string;
+  providerExecuted?: boolean;
 } | null {
   if (!isRecord(part) || typeof part.type !== "string") {
     return null;
@@ -52,6 +57,7 @@ export function getToolPart(part: unknown): {
     state,
     ...(output !== undefined ? { output } : {}),
     ...(errorText !== undefined ? { errorText } : {}),
+    ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
   };
 }
 
@@ -62,6 +68,7 @@ export function getRawToolCallPart(part: unknown): {
   state?: string;
   output?: unknown;
   errorText?: string;
+  providerExecuted?: boolean;
 } | null {
   if (!isRecord(part) || part.type !== "tool_call") {
     return null;
@@ -85,21 +92,15 @@ export function getRawToolCallPart(part: unknown): {
     ...(typeof part.state === "string" ? { state: part.state } : {}),
     ...(Object.hasOwn(part, "output") ? { output: part.output } : {}),
     ...(typeof part.errorText === "string" ? { errorText: part.errorText } : {}),
+    ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
   };
 }
 
 export function getRawToolResultPart(part: unknown): {
   toolCallId: string;
   toolName?: string;
-  output:
-    | {
-      type: "json";
-      value: JsonValue;
-    }
-    | {
-      type: "error-text";
-      value: string;
-    };
+  output: ParsedToolResultOutput;
+  providerExecuted?: boolean;
 } | null {
   if (!isRecord(part) || part.type !== "tool_result") {
     return null;
@@ -130,21 +131,13 @@ export function getRawToolResultPart(part: unknown): {
     toolCallId,
     ...(toolName ? { toolName } : {}),
     output,
+    ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
   };
 }
 
 export function buildToolResultOutput(
   toolPart: { state: string; output?: unknown; errorText?: string },
-):
-  | {
-    type: "json";
-    value: JsonValue;
-  }
-  | {
-    type: "error-text";
-    value: string;
-  }
-  | null {
+): ParsedToolResultOutput | null {
   if (toolPart.state === "output-available") {
     return {
       type: "json",

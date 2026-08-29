@@ -639,6 +639,59 @@ describe("agent/runtime/provider-replay", () => {
       );
     });
 
+    it("should reject malformed provider tool-result blocks before attachment", () => {
+      const providerCall = {
+        type: "server_tool_use",
+        id: "srvtool-web-search",
+        name: "web_search",
+        input: { query: "provider replay" },
+        caller: { type: "direct" },
+      };
+      const malformedProviderResult = {
+        type: "web_search_tool_result",
+        tool_use_id: providerCall.id,
+        caller: { type: "direct" },
+        content: "not an array",
+      };
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-call",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            args: providerCall.input,
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            result: [],
+            providerExecuted: true,
+          },
+        ],
+        timestamp: 1,
+      } as Message;
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: target.id,
+        provider: "anthropic",
+        providerBlocks: [providerCall, malformedProviderResult].map((block) => ({
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block,
+        })),
+        providerBlockPositions: [0, 1],
+        totalPartCount: 2,
+      };
+
+      assertProviderReplayError(() =>
+        applyProviderReplayCheckpointsToMessages([target], [checkpoint])
+      );
+    });
+
     it("should reject a provider tool result without its provider-owned call", () => {
       const providerResult = {
         type: "web_search_tool_result",
@@ -734,6 +787,53 @@ describe("agent/runtime/provider-replay", () => {
         readAttachedProviderMetadata(target),
         { anthropic: { rawAssistantMessages: [blocks] } },
         "split provider text matches the single persisted transcript text part",
+      );
+    });
+
+    it("should match replay blocks against persisted assistant transcript order", () => {
+      const providerCall = {
+        type: "server_tool_use",
+        id: "srvtool-1",
+        name: "web_search",
+        input: { query: "q" },
+        caller: { type: "direct" },
+      };
+      const trailingText = { type: "text", text: "Here is what I found." };
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [
+          { type: "text", text: "Here is what I found." },
+          {
+            type: "tool-call",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            args: providerCall.input,
+            providerExecuted: true,
+          },
+        ],
+        timestamp: 1,
+      } as Message;
+      const blocks = [providerCall, trailingText];
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: target.id,
+        provider: "anthropic",
+        providerBlocks: blocks.map((block) => ({
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block,
+        })),
+        providerBlockPositions: [0, 1],
+        totalPartCount: 2,
+      };
+
+      applyProviderReplayCheckpointsToMessages([target], [checkpoint]);
+
+      assertEquals(
+        readAttachedProviderMetadata(target),
+        { anthropic: { rawAssistantMessages: [blocks] } },
+        "raw replay order is retained after matching against normalized transcript order",
       );
     });
 
@@ -958,6 +1058,18 @@ describe("agent/runtime/provider-replay", () => {
         applyProviderReplayCheckpointsToMessages(
           [createAssistantMessage("assistant-message-1")],
           [checkpoint],
+        )
+      );
+    });
+
+    it("should reject checkpoints for a provider that is not active for the current model", () => {
+      const target = createCheckpointedAssistantMessage("assistant-message-1");
+
+      assertProviderReplayError(() =>
+        applyProviderReplayCheckpointsToMessages(
+          [target],
+          [createValidCheckpoint()],
+          { activeProvider: "openai-responses" },
         )
       );
     });

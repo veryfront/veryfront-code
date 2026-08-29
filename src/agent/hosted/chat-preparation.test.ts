@@ -1784,14 +1784,66 @@ Deno.test(
       .filter((message) => message.id === "assistant-1")
       .flatMap((message) => message.parts);
     assertEquals(
-      checkpointedParts.flatMap((part) =>
-        "toolCallId" in part && part.toolCallId === "srvtool-web-search" ? [part.type] : []
-      ),
-      ["tool-call", "tool-result"],
+      checkpointedParts,
+      [
+        {
+          type: "tool-call",
+          toolCallId: "srvtool-web-search",
+          toolName: "web_search",
+          args: { query: "site:veryfront.com provider replay" },
+          providerExecuted: true,
+        },
+        {
+          type: "tool-result",
+          toolCallId: "srvtool-web-search",
+          toolName: "web_search",
+          result: {
+            type: "json",
+            value: [],
+          },
+          providerExecuted: true,
+        },
+      ],
       "checkpointed provider call and result remain available for replay validation",
     );
   },
 );
+
+Deno.test("prepareHostedChatRuntimeMessages preserves opaque-only checkpoint anchors", async () => {
+  const messages = await prepareHostedChatRuntimeMessages(
+    [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Think privately." }],
+      },
+      {
+        id: "assistant-empty",
+        role: "assistant",
+        parts: [],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Continue." }],
+      },
+    ],
+    {
+      providerReplayCheckpointMessageIds: ["assistant-empty"],
+    },
+  );
+
+  assertEquals(
+    messages.find((message) => message.id === "assistant-empty"),
+    {
+      id: "assistant-empty",
+      role: "assistant",
+      parts: [],
+      timestamp: 1,
+    },
+    "opaque-only replay anchors must survive even when they have no public parts",
+  );
+});
 
 Deno.test("prepareHostedChatRuntimeMessages reports historical tool input compaction diagnostics", async () => {
   const diagnostics: HistoricalToolInputCompactionDiagnostic[] = [];
@@ -1895,6 +1947,73 @@ Deno.test("prepareHostedChatRuntimeMessages preserves checkpointed historical to
 
   const serialized = JSON.stringify(messages);
   assertEquals(serialized.includes(marker), true);
+  assertEquals(diagnostics, []);
+});
+
+Deno.test("prepareHostedChatRuntimeMessages merges checkpoint and caller-preserved source ids", async () => {
+  const diagnostics: HistoricalToolInputCompactionDiagnostic[] = [];
+  const checkpointMarker = "CHECKPOINT_RETENTION_MARKER";
+  const callerMarker = "CALLER_RETENTION_MARKER";
+  const messages = await prepareHostedChatRuntimeMessages(
+    [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Render both widgets." }],
+      },
+      {
+        id: "assistant-checkpoint",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "render_widget",
+          toolCallId: "tool-render-checkpoint",
+          input: {
+            source: `${checkpointMarker}:${"checkpoint body ".repeat(500)}`,
+          },
+          state: "output-available",
+          output: { ok: true },
+        }],
+      },
+      {
+        id: "assistant-caller",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "render_widget",
+          toolCallId: "tool-render-caller",
+          input: {
+            source: `${callerMarker}:${"caller body ".repeat(500)}`,
+          },
+          state: "output-available",
+          output: { ok: true },
+        }],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Update both widgets." }],
+      },
+    ],
+    {
+      providerReplayCheckpointMessageIds: ["assistant-checkpoint"],
+      historicalToolInputRetention: {
+        diagnostics,
+        preserveSourceMessageIds: ["assistant-caller"],
+        resolvePolicy: (toolName) =>
+          toolName === "render_widget"
+            ? {
+              compactCompletedInput: true,
+              compactAfterChars: 100,
+            }
+            : undefined,
+      },
+    },
+  );
+
+  const serialized = JSON.stringify(messages);
+  assertEquals(serialized.includes(checkpointMarker), true);
+  assertEquals(serialized.includes(callerMarker), true);
   assertEquals(diagnostics, []);
 });
 

@@ -60,6 +60,10 @@ export type ProviderReplayCheckpoint = {
   emittedAt?: number;
 };
 
+type ApplyProviderReplayCheckpointsOptions = {
+  activeProvider?: ProviderReplayProvider;
+};
+
 /**
  * Fails checkpoint validation without echoing payload contents. Blocks carry
  * signed reasoning material, so details name fields and indices only.
@@ -127,6 +131,21 @@ function validateAnthropicThinkingReplayBlock(
   }
 }
 
+function validateAnthropicProviderToolResultBlock(
+  block: Record<string, unknown>,
+  context?: Record<string, unknown>,
+): void {
+  if (!isNonEmptyString(block.tool_use_id)) {
+    invalidCheckpoint("checkpoint provider tool-result block is malformed", context);
+  }
+  if (!Array.isArray(block.content)) {
+    invalidCheckpoint("checkpoint provider tool-result block is malformed", context);
+  }
+  if (block.type === "mcp_tool_result" && typeof block.is_error !== "boolean") {
+    invalidCheckpoint("checkpoint provider tool-result block is malformed", context);
+  }
+}
+
 function toTranscriptVisibleAnthropicReplayPart(
   block: Record<string, unknown>,
 ): Record<string, unknown> | undefined {
@@ -158,9 +177,7 @@ function toTranscriptVisibleAnthropicReplayPart(
         typeof block.type === "string" &&
         ANTHROPIC_PROVIDER_TOOL_RESULT_TYPES.has(block.type)
       ) {
-        if (!isNonEmptyString(block.tool_use_id)) {
-          invalidCheckpoint("checkpoint provider tool-result block is malformed");
-        }
+        validateAnthropicProviderToolResultBlock(block);
         return {
           type: "tool-result",
           toolCallId: block.tool_use_id,
@@ -222,23 +239,19 @@ function toTranscriptVisibleProviderPart(
   }
 }
 
-// A persisted assistant turn carries at most one text part, so provider text
-// blocks split around tool blocks collapse into a single entry at the position
-// of the first one before either side is compared.
+// A persisted assistant turn carries at most one leading text part, so provider
+// text blocks split around tool blocks collapse into that leading transcript
+// entry before either side is compared. Raw replay order stays untouched.
 function normalizeTranscriptVisibleProjection(
   parts: readonly Record<string, unknown>[],
 ): Record<string, unknown>[] {
   const normalized: Record<string, unknown>[] = [];
   let text = "";
-  let textIndex = -1;
 
   for (const part of parts) {
     if (part.type === "text") {
       if (typeof part.text !== "string") {
         invalidCheckpoint("checkpoint transcript text projection is malformed");
-      }
-      if (textIndex < 0) {
-        textIndex = normalized.length;
       }
       text += part.text;
       continue;
@@ -246,7 +259,7 @@ function normalizeTranscriptVisibleProjection(
     normalized.push(part);
   }
   if (text.trim().length > 0) {
-    normalized.splice(textIndex, 0, { type: "text", text });
+    normalized.unshift({ type: "text", text });
   }
 
   return normalized;
@@ -328,6 +341,13 @@ function parseProviderReplayBlock(
   }
   if (provider === "anthropic" && value.block.type === "thinking") {
     validateAnthropicThinkingReplayBlock(value.block, { index });
+  }
+  if (
+    provider === "anthropic" &&
+    typeof value.block.type === "string" &&
+    ANTHROPIC_PROVIDER_TOOL_RESULT_TYPES.has(value.block.type)
+  ) {
+    validateAnthropicProviderToolResultBlock(value.block, { index });
   }
   return { type: "provider-block", provider, block: value.block };
 }
@@ -506,6 +526,7 @@ export function assertReconstructibleProviderReplayCheckpoint(
 export function applyProviderReplayCheckpointsToMessages(
   messages: readonly Message[],
   checkpoints: readonly ProviderReplayCheckpoint[] | undefined,
+  options: ApplyProviderReplayCheckpointsOptions = {},
 ): void {
   if (checkpoints === undefined || checkpoints.length === 0) return;
   // Runtime support is a property of the delivery, not of which turns are
@@ -513,6 +534,12 @@ export function applyProviderReplayCheckpointsToMessages(
   // turn is absent, so deployment skew surfaces immediately.
   for (const checkpoint of checkpoints) {
     assertReconstructibleProviderReplayCheckpoint(checkpoint);
+    if (options.activeProvider !== undefined && checkpoint.provider !== options.activeProvider) {
+      invalidCheckpoint("checkpoint provider does not match the active model provider", {
+        checkpointProvider: checkpoint.provider,
+        activeProvider: options.activeProvider,
+      });
+    }
   }
   for (const checkpoint of checkpoints) {
     const matches = messages.filter((message) => message.id === checkpoint.messageId);

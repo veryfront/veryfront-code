@@ -64,6 +64,7 @@ import { MiddlewareChain } from "../middleware/chain.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import {
+  getModelRuntimeProvider,
   isLocalModelRuntime,
   supportsModelRuntimeToolCalling,
 } from "#veryfront/provider/runtime-inspection.ts";
@@ -110,7 +111,10 @@ import {
   resolveRuntimeToolLoading,
   type RuntimeToolFilterConfig,
 } from "./runtime-tool-config.ts";
-import { applyProviderReplayCheckpointsToMessages } from "./provider-replay.ts";
+import {
+  applyProviderReplayCheckpointsToMessages,
+  type ProviderReplayProvider,
+} from "./provider-replay.ts";
 import {
   applySourceIntegrationPolicy,
   type SourceIntegrationPolicyManifest,
@@ -197,6 +201,15 @@ export {
 } from "./tool-result-continuation.ts";
 
 const NativeError = Error;
+
+function getActiveProviderReplayProvider(
+  languageModel: ModelRuntime,
+): ProviderReplayProvider | undefined {
+  const provider = getModelRuntimeProvider(languageModel);
+  if (provider === "anthropic") return "anthropic";
+  if (provider === "openai") return "openai-responses";
+  return undefined;
+}
 
 function resolveRuntimeGenAiProviderName(modelId: string): string | undefined {
   const normalizedModelId = modelId.startsWith("veryfront-cloud/")
@@ -1501,6 +1514,7 @@ export class AgentRuntime {
       applyProviderReplayCheckpointsToMessages(
         currentMessages,
         getRuntimeProviderReplayCheckpoints(this.config),
+        { activeProvider: getActiveProviderReplayProvider(languageModel) },
       );
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
@@ -2168,6 +2182,7 @@ export class AgentRuntime {
     applyProviderReplayCheckpointsToMessages(
       currentMessages,
       getRuntimeProviderReplayCheckpoints(this.config),
+      { activeProvider: getActiveProviderReplayProvider(languageModel) },
     );
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
