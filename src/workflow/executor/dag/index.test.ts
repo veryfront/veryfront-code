@@ -2446,6 +2446,227 @@ describe("DAGExecutor", () => {
       );
     });
 
+    it("charges a recovered composite child durably before it executes", async () => {
+      // A recovered child of a parallel composite runs against a synthetic run
+      // that persists nothing, so its raised attempt reached the backend only
+      // after the child side effect had already run -- repeated worker deaths
+      // re-ran the child past its retry budget (veryfront-issue-inbox#754).
+      const order: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          order.push(`exec:${node.id}`);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+        onChildRecoveryAdmitted: ({ runId, nodeStatePatch }) => {
+          const keys = Object.keys(nodeStatePatch.set).sort();
+          const attempt = nodeStatePatch.set["outer/inner"]?.attempt;
+          order.push(`admit:${keys.join(",")}@${attempt}:${runId}`);
+        },
+      });
+      const nodes = [
+        parallel("outer", [step("inner", { tool: "noop" })]),
+      ];
+      const run = createTestRun({
+        nodeStates: {
+          outer: { nodeId: "outer", status: "running", attempt: 1, startedAt: new Date() },
+          "outer/inner": {
+            nodeId: "outer/inner",
+            status: "running",
+            attempt: 1,
+            startedAt: new Date(),
+          },
+        },
+      });
+
+      const result = await exec.execute(nodes, run);
+
+      assertEquals(result.completed, true);
+      // The merge patch carries only the recovered child, charged to the root
+      // run id, and lands before the child executes.
+      assertEquals(order, ["admit:outer/inner@2:test-run", "exec:outer/inner"]);
+    });
+
+    it("does not execute a recovered child the merge fence refused", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+        onChildRecoveryAdmitted: () => false,
+      });
+      const nodes = [
+        parallel("outer", [step("inner", { tool: "noop" })]),
+      ];
+      const run = createTestRun({
+        nodeStates: {
+          outer: { nodeId: "outer", status: "running", attempt: 1, startedAt: new Date() },
+          "outer/inner": {
+            nodeId: "outer/inner",
+            status: "running",
+            attempt: 1,
+            startedAt: new Date(),
+          },
+        },
+      });
+
+      await assertRejects(() => exec.execute(nodes, run), Error, "ownership changed");
+      assertEquals(executed, []);
+    });
+
+    it("charges a recovered map child durably before it executes", async () => {
+      // Map children live in the root node-state map like parallel children
+      // (the strategy passes the parent map through and merges back), so a
+      // recovered map child must be durably charged at admission too.
+      const order: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          order.push(`exec:${node.id}`);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+        onChildRecoveryAdmitted: ({ nodeStatePatch }) => {
+          order.push(`admit:${Object.keys(nodeStatePatch.set).sort().join(",")}`);
+        },
+      });
+      const nodes = [
+        map("mapper", {
+          items: [{ id: 1 }],
+          processor: step("inner", { tool: "noop" }),
+        }),
+      ];
+      const run = createTestRun({
+        nodeStates: {
+          mapper: { nodeId: "mapper", status: "running", attempt: 1, startedAt: new Date() },
+          mapper_0: { nodeId: "mapper_0", status: "running", attempt: 1, startedAt: new Date() },
+        },
+      });
+
+      const result = await exec.execute(nodes, run);
+
+      assertEquals(result.completed, true);
+      assertEquals(order, ["admit:mapper_0", "exec:mapper_0"]);
+    });
+
+    it("stops instead of failing the composite when a child checkpoint is fenced out", async () => {
+      // A fenced-out checkpoint append means another worker owns the run row.
+      // Inside a composite that must abort the execution, not fall through to
+      // composite retry or record a failed state the new owner would read.
+      const executedNodes: string[] = [];
+      const backend = {
+        saveCheckpoint: () => Promise.resolve(),
+        getLatestCheckpoint: () => Promise.resolve(null),
+      } as unknown as WorkflowBackend;
+      const fencedOut = new (class extends CheckpointManager {
+        override save(): Promise<boolean> {
+          return Promise.resolve(false);
+        }
+      })({ backend });
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executedNodes.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+        checkpointManager: fencedOut,
+      });
+      const inner = step("inner", { tool: "noop" });
+      (inner.config as { checkpoint?: boolean }).checkpoint = true;
+      const nodes = [parallel("outer", [inner])];
+      const run = createTestRun();
+
+      const error = await assertRejects(
+        () =>
+          exec.execute(nodes, run, undefined, undefined, {
+            runId: "test-run",
+            workerId: "run-execution:worker-a",
+          }),
+        Error,
+        "ownership changed",
+      );
+
+      assertEquals(executedNodes, ["outer/inner"]);
+      assertEquals(
+        (error as { context?: { ownershipLost?: boolean } }).context?.ownershipLost,
+        true,
+      );
+    });
+
+    it("stops when a composite child throws an ownership-loss error from another module copy", async () => {
+      const { VeryfrontError: DuplicateVeryfrontError } = await import(
+        "../../../errors/types.ts?ownership-loss-regression"
+      );
+      const ownershipLost = new DuplicateVeryfrontError("ownership changed", {
+        slug: "orchestration-error",
+        category: "AGENT",
+        status: 500,
+        title: "Multi-agent orchestration error",
+        context: { ownershipLost: true },
+      });
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          if (node.id === "outer/inner") throw ownershipLost;
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const nodes = [parallel("outer", [step("inner", { tool: "noop" })])];
+
+      const error = await assertRejects(
+        () => exec.execute(nodes, createTestRun()),
+        Error,
+        "ownership changed",
+      );
+
+      assertEquals(error, ownershipLost);
+    });
+
+    it("does not merge-write recovery for loop iteration children", async () => {
+      // A loop iteration's children live in the loop node's private iteration
+      // snapshot, not the root node-state map. Merge-writing their keys into
+      // the root map would strand stale entries no later publish deletes.
+      const admitted: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => ({
+          success: true,
+          output: node.id,
+          executionTime: 1,
+        })),
+        onChildRecoveryAdmitted: ({ nodeStatePatch }) => {
+          admitted.push(...Object.keys(nodeStatePatch.set));
+        },
+      });
+      const nodes = [
+        loop("the-loop", {
+          maxIterations: 1,
+          while: (_context, iteration) => iteration.iteration < 1,
+          steps: [step("inner", { tool: "noop" })],
+        }),
+      ];
+      const run = createTestRun({
+        nodeStates: {
+          "the-loop": { nodeId: "the-loop", status: "running", attempt: 1, startedAt: new Date() },
+        },
+        context: {
+          input: { topic: "test" },
+          "the-loop_loop_state": {
+            iteration: 0,
+            previousResults: [],
+            iterationNodeStates: {
+              inner: {
+                nodeId: "inner",
+                status: "running",
+                attempt: 1,
+                startedAt: new Date().toISOString(),
+              },
+            },
+          },
+        },
+      });
+
+      const result = await exec.execute(nodes, run);
+
+      assertEquals(result.completed, true);
+      assertEquals(admitted, []);
+    });
+
     it("never re-runs a node whose retry budget was already spent", async () => {
       const executed: string[] = [];
       const exec = new DAGExecutor({
