@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { getDenoRuntime, isDeno } from "#veryfront/platform/compat/runtime.ts";
 import {
   type Permission,
   type PermissionRequest,
@@ -18,6 +18,29 @@ function assertValidState(state: string): void {
 async function expectGranted(request: PermissionRequest): Promise<void> {
   const result = await requestPermission(request);
   assertEquals(result.state, "granted");
+}
+
+/**
+ * What requestPermission must return for a net descriptor in this process:
+ * the runtime's own answer, with "prompt" folded to "denied" because a test
+ * process cannot grant interactively. Outside Deno the sandbox is a documented
+ * auto-granting no-op. Anchoring the expectation to the runtime instead of
+ * hard-coding "granted" keeps these cases honest on any lane: they pass under
+ * --allow-all and pin the fail-closed answer once the unit suite runs
+ * loopback-only (veryfront-issue-inbox#714).
+ */
+async function expectedNetState(host?: string): Promise<PermissionResult["state"]> {
+  const permissions = getDenoRuntime()?.permissions;
+  if (!isDeno || !permissions) return "granted";
+  const status = await permissions.query(
+    host ? { name: "net", host } : { name: "net" },
+  );
+  return status.state === "granted" ? "granted" : "denied";
+}
+
+async function expectNetMirrorsRuntime(request: PermissionRequest): Promise<void> {
+  const result = await requestPermission(request);
+  assertEquals(result.state, await expectedNetState(request.host || undefined));
 }
 
 describe("Permission System", () => {
@@ -55,8 +78,8 @@ describe("Permission System", () => {
   });
 
   describe("Permission Requests with Host", () => {
-    it("should handle net permission with host", async () => {
-      await expectGranted({ name: "net", host: "example.com" });
+    it("should mirror the runtime for an external host", async () => {
+      await expectNetMirrorsRuntime({ name: "net", host: "example.com" });
     });
 
     it("should handle net permission with localhost", async () => {
@@ -67,8 +90,8 @@ describe("Permission System", () => {
       await expectGranted({ name: "net", host: "127.0.0.1" });
     });
 
-    it("should handle net permission with port", async () => {
-      await expectGranted({ name: "net", host: "example.com:8080" });
+    it("should mirror the runtime for an external host with port", async () => {
+      await expectNetMirrorsRuntime({ name: "net", host: "example.com:8080" });
     });
 
     // Deno validates wildcard domains and returns "denied"; Node.js just returns "granted"
@@ -116,25 +139,22 @@ describe("Permission System", () => {
       assertEquals(typeof result.state, "string");
     });
 
-    it("should return granted state for all permissions in current implementation", async () => {
-      const permissions: Permission[] = ["net", "fs", "env", "run", "read", "write"];
+    it("should grant non-net permissions and mirror the runtime for blanket net", async () => {
+      const permissions: Permission[] = ["fs", "env", "run", "read", "write"];
 
       for (const permission of permissions) {
         const result = await requestPermission({ name: permission });
         assertEquals(result.state, "granted", `Permission ${permission} should be granted`);
       }
+      // Blanket net includes external destinations, so its answer depends on
+      // the lane's --allow-net and must match the runtime's own decision.
+      await expectNetMirrorsRuntime({ name: "net" });
     });
 
     it("should handle multiple permission requests sequentially", async () => {
-      const requests: PermissionRequest[] = [
-        { name: "net", host: "example.com" },
-        { name: "read", path: "/tmp/file.txt" },
-        { name: "env" },
-      ];
-
-      for (const request of requests) {
-        await expectGranted(request);
-      }
+      await expectNetMirrorsRuntime({ name: "net", host: "example.com" });
+      await expectGranted({ name: "read", path: "/tmp/file.txt" });
+      await expectGranted({ name: "env" });
     });
 
     it("should handle concurrent permission requests", async () => {
@@ -148,7 +168,8 @@ describe("Permission System", () => {
       const results = await Promise.all(requests.map((request) => requestPermission(request)));
 
       assertEquals(results.length, 4);
-      for (const result of results) {
+      assertEquals(results[0]?.state, await expectedNetState());
+      for (const result of results.slice(1)) {
         assertEquals(result.state, "granted");
       }
     });
@@ -159,11 +180,11 @@ describe("Permission System", () => {
       const result = await requestPermission({ name: "net" });
 
       assertExists(result);
-      assertEquals(result.state, "granted");
+      assertEquals(result.state, await expectedNetState());
     });
 
     it("should handle permission request with undefined host", async () => {
-      await expectGranted({ name: "net", host: undefined });
+      await expectNetMirrorsRuntime({ name: "net", host: undefined });
     });
 
     it("should handle permission request with undefined path", async () => {
@@ -171,7 +192,7 @@ describe("Permission System", () => {
     });
 
     it("should handle permission request with both host and path", async () => {
-      await expectGranted({ name: "net", host: "example.com", path: "/some/path" });
+      await expectNetMirrorsRuntime({ name: "net", host: "example.com", path: "/some/path" });
     });
 
     it("should not mutate the input request object", async () => {
@@ -219,7 +240,7 @@ describe("Permission System", () => {
     });
 
     it("should handle IPv6 with brackets", async () => {
-      await expectGranted({ name: "net", host: "[2001:db8::1]" });
+      await expectNetMirrorsRuntime({ name: "net", host: "[2001:db8::1]" });
     });
 
     it("should handle empty string path", async () => {
@@ -227,7 +248,8 @@ describe("Permission System", () => {
     });
 
     it("should handle empty string host", async () => {
-      await expectGranted({ name: "net", host: "" });
+      // An empty host is falsy, so the descriptor degrades to blanket net.
+      await expectNetMirrorsRuntime({ name: "net", host: "" });
     });
   });
 
@@ -245,6 +267,7 @@ describe("Permission System", () => {
     });
 
     it("should handle rapid successive requests", async () => {
+      const expected = await expectedNetState();
       const promises: Promise<PermissionResult>[] = [];
 
       for (let i = 0; i < 100; i++) {
@@ -255,7 +278,7 @@ describe("Permission System", () => {
       assertEquals(results.length, 100);
 
       for (const result of results) {
-        assertEquals(result.state, "granted");
+        assertEquals(result.state, expected);
       }
     });
 
@@ -310,13 +333,13 @@ describe("Permission System", () => {
       };
 
       const result = await requestPermission(request);
-      assertEquals(result.state, "granted");
+      assertEquals(result.state, await expectedNetState("example.com"));
     });
   });
 
   describe("Sandbox Enforcement Documentation", () => {
-    it("should document current permission model as facade", async () => {
-      await expectGranted({ name: "net" });
+    it("should enforce through the runtime under Deno and auto-grant elsewhere", async () => {
+      await expectNetMirrorsRuntime({ name: "net" });
     });
 
     it("should always resolve (never reject)", async () => {

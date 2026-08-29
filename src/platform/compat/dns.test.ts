@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __resetHostAddressCacheForTests,
   createHostAddressResolver,
+  DnsPermissionError,
   HOST_ADDRESS_CACHE_MAX_ENTRIES,
   HOST_ADDRESS_CACHE_TTL_MS,
   resolveHostAddresses,
@@ -281,10 +282,24 @@ describe("platform/compat/dns loopback names", () => {
     // The refuted fix switched Node to dns.lookup, which reads /etc/hosts and
     // would resolve this on macOS while Deno returns nothing — inverting the
     // divergence instead of closing it. Loopback names are special-cased; the
-    // hosts file is not consulted.
+    // hosts file is not consulted. A hosts-file answer needs no network at
+    // all, so an address here would prove the hosts file was consulted under
+    // ANY permission set. The two honest outcomes are an empty answer from a
+    // real nameserver query, or DnsPermissionError when the lane cannot reach
+    // a nameserver (the loopback-only unit lane of veryfront-issue-inbox#714,
+    // where Deno checks --allow-net against the nameserver itself).
     __resetHostAddressCacheForTests();
-    const addresses = await resolveHostAddresses("broadcasthost", { recordTypes: ["A"] });
-    assertEquals(addresses, [], `got ${JSON.stringify(addresses)}`);
-    __resetHostAddressCacheForTests();
+    try {
+      const addresses = await resolveHostAddresses("broadcasthost", { recordTypes: ["A"] });
+      assertEquals(addresses, [], `got ${JSON.stringify(addresses)}`);
+    } catch (error) {
+      assertEquals(
+        error instanceof DnsPermissionError,
+        true,
+        `expected DnsPermissionError, got ${String(error)}`,
+      );
+    } finally {
+      __resetHostAddressCacheForTests();
+    }
   });
 });

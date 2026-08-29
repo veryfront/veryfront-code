@@ -579,13 +579,20 @@ describe("worker-egress-guard admission and shutdown", () => {
 
   it("aborts and drains a broker request stalled during SOCKS resolution", async () => {
     const resolutionStarted = Promise.withResolvers<void>();
+    // The target must be a loopback name: `fetch` checks --allow-net against
+    // the URL host even when the connection only ever reaches the loopback
+    // SOCKS proxy, so a non-loopback name cannot run on the loopback-only
+    // unit lane (veryfront-issue-inbox#714). `localhost` still resolves
+    // through the injected (stalled) resolver; allowInternalEgress lets it
+    // past the internal-host gate so the stall is reached at all.
     const broker = startWorkerEgressBroker({
+      allowInternalEgress: true,
       resolveHost: () => {
         resolutionStarted.resolve();
         return new Promise<string[]>(() => {});
       },
     });
-    const pending = guardedEgressFetch("http://stalled.invalid/", undefined, {
+    const pending = guardedEgressFetch("http://localhost/", undefined, {
       options: { httpBroker: broker.config.httpBroker },
     }).then(
       () => null,
@@ -737,18 +744,29 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
     if (address.transport !== "tcp") throw new Error("expected TCP test server");
 
     try {
+      // The URL host must be a loopback name: `fetch` checks --allow-net
+      // against it even though the connection goes through the pinned SOCKS
+      // tunnel on 127.0.0.1, so a non-loopback name cannot run on the
+      // loopback-only unit lane (veryfront-issue-inbox#714). The resolver
+      // call count keeps the pinned path observable: the tunnel must be built
+      // from the injected resolution, not from a direct system lookup.
+      let resolveHostCalls = 0;
       const response = await guardedEgressFetch(
-        `http://stream.invalid:${address.port}/data`,
+        `http://localhost:${address.port}/data`,
         undefined,
         {
           fetchImpl: globalThis.fetch.bind(globalThis),
           options: {
             allowInternalEgress: true,
-            resolveHost: () => Promise.resolve(["127.0.0.1"]),
+            resolveHost: () => {
+              resolveHostCalls++;
+              return Promise.resolve(["127.0.0.1"]);
+            },
           },
         },
       );
       assertEquals(await response.text(), "ab");
+      assertEquals(resolveHostCalls, 1, "the guard must pin through the injected resolver");
     } finally {
       await server.shutdown();
     }
