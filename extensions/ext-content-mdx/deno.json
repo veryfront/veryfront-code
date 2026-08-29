@@ -1,7 +1,10 @@
 {
   "name": "@veryfront/ext-content-mdx",
   "version": "0.1.0",
-  "exports": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./analysis": "./src/analysis/index.ts"
+  },
   "veryfront": {
     "extension": true,
     "contracts": {
