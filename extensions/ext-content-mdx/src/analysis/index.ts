@@ -30,6 +30,5 @@ export function analyzeContent(
       filePath: options.filePath,
     });
   }
-  const document = analyzeMarkdown(options.value, options.frontmatter === true);
-  return Promise.resolve({ kind: "document", ...document });
+  return Promise.resolve(analyzeMarkdown(options.value, options.frontmatter === true));
 }

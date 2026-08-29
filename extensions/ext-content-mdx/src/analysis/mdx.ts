@@ -22,6 +22,7 @@ import { unified } from "unified";
 import type { Position } from "unist";
 
 import { analyzeEmbeddedExpression } from "./embedded-code.ts";
+import { yamlFrontmatterDiagnostic } from "./frontmatter.ts";
 import { analyzeMarkdownTree } from "./markdown.ts";
 import { createSourceLocator, type SourceLocator } from "./source.ts";
 import type {
@@ -443,6 +444,15 @@ export async function analyzeMdx(options: {
     return { kind: "syntax-error", diagnostic };
   } finally {
     lexicalCache = undefined;
+  }
+
+  const frontmatterDiagnostic = yamlFrontmatterDiagnostic(
+    options.value,
+    root,
+    locator,
+  );
+  if (frontmatterDiagnostic !== undefined) {
+    return { kind: "syntax-error", diagnostic: frontmatterDiagnostic };
   }
 
   const markdown = analyzeMarkdownTree(options.value, root, {

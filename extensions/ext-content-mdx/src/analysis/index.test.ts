@@ -91,6 +91,41 @@ describe("analyzeContent Markdown", () => {
     });
   });
 
+  it("preserves authored email and www autolinks with parser-normalized URLs", async () => {
+    const value = "<user@example.com> user@example.com www.example.com";
+
+    const result = await analyzeContent({ value, syntax: "markdown" });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => ({
+        rawValue: destination.rawValue,
+        normalizedValue: Reflect.get(destination, "normalizedValue"),
+        source: value.slice(
+          destination.range.start.offset,
+          destination.range.end.offset,
+        ),
+      })),
+      [
+        {
+          rawValue: "user@example.com",
+          normalizedValue: "mailto:user@example.com",
+          source: "user@example.com",
+        },
+        {
+          rawValue: "user@example.com",
+          normalizedValue: "mailto:user@example.com",
+          source: "user@example.com",
+        },
+        {
+          rawValue: "www.example.com",
+          normalizedValue: "http://www.example.com",
+          source: "www.example.com",
+        },
+      ],
+    );
+  });
+
   it("excludes frontmatter and code from destinations", async () => {
     const value = "---\ntitle: https://frontmatter.invalid\n---\n\n" +
       "Visible `https://inline.invalid`\n\n" +
@@ -105,6 +140,22 @@ describe("analyzeContent Markdown", () => {
     assertEquals(summarize(value, result), {
       destinations: [],
     });
+  });
+
+  it("returns a syntax diagnostic for malformed YAML frontmatter", async () => {
+    const result = await analyzeContent({
+      value: "---\ntitle: [unterminated\n---\n",
+      syntax: "markdown",
+      frontmatter: true,
+    });
+
+    assert(result.kind === "syntax-error");
+    assertEquals(result.diagnostic.range.start, {
+      offset: 4,
+      line: 2,
+      column: 1,
+    });
+    assertStringIncludes(result.diagnostic.message, "Invalid YAML frontmatter");
   });
 
   it("reads destination attributes only inside parser-reported raw HTML", async () => {
@@ -516,6 +567,56 @@ describe("analyzeContent MDX", () => {
       contextualResult.destinations.map((destination) => destination.rawValue),
       ["../contextual.md"],
     );
+  });
+
+  it("rejects unexpected tokens in nested JSX tags", async () => {
+    const value = '{<Card href=="../guide.md" />}';
+
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assert(result.kind === "syntax-error");
+    assertEquals(result.diagnostic.range.start.offset, value.indexOf("=="));
+  });
+
+  it("accepts nested JSX spread attributes", async () => {
+    const value = '{<Card {...props} href="../guide.md" />}';
+
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => destination.rawValue),
+      ["../guide.md"],
+    );
+  });
+
+  it("validates nested JSX expressions in their enclosing JavaScript context", async () => {
+    const generator = "{(function* () { return <Card value={yield source} /> })}";
+    const classBody = "{(class Child extends Parent { " +
+      "#source = source; render() { return " +
+      "<Card first={this.#source} second={super.source} />; } })}";
+
+    const generatorResult = await analyzeContent({ value: generator, syntax: "mdx" });
+    const classResult = await analyzeContent({ value: classBody, syntax: "mdx" });
+
+    assert(generatorResult.kind === "document");
+    assert(classResult.kind === "document");
+  });
+
+  it("returns a syntax diagnostic for malformed MDX YAML frontmatter", async () => {
+    const result = await analyzeContent({
+      value: "---\ntitle: [unterminated\n---\n<Card />",
+      syntax: "mdx",
+      frontmatter: true,
+    });
+
+    assert(result.kind === "syntax-error");
+    assertEquals(result.diagnostic.range.start, {
+      offset: 4,
+      line: 2,
+      column: 1,
+    });
+    assertStringIncludes(result.diagnostic.message, "Invalid YAML frontmatter");
   });
 
   it("uses Acorn token boundaries for regexes, templates, and JSX attributes", async () => {

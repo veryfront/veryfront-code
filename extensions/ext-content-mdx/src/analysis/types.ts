@@ -27,6 +27,7 @@ export type ContentDestination =
   | (DestinationBase & {
     readonly kind: "autolink";
     readonly syntax: "autolink";
+    readonly normalizedValue?: string;
   })
   | (DestinationBase & {
     readonly kind: "html-attribute";

@@ -8,8 +8,9 @@ import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 
+import { yamlFrontmatterDiagnostic } from "./frontmatter.ts";
 import { createSourceLocator, type SourceLocator } from "./source.ts";
-import type { ContentDestination, SourceRange } from "./types.ts";
+import type { ContentAnalysisResult, ContentDestination, SourceRange } from "./types.ts";
 
 interface OffsetSpan {
   readonly start: number;
@@ -96,21 +97,28 @@ function linkDestination(
   const offsets = positionOffsets(node.position);
   if (offsets === undefined) return undefined;
   const authored = value.slice(offsets.start, offsets.end);
-  const autolink = node.type === "link" &&
-    (authored === node.url || authored === `<${node.url}>`);
-  if (autolink) {
+  const angleDelimited = authored.startsWith("<") && authored.endsWith(">");
+  const autolinkValue = angleDelimited ? authored.slice(1, -1) : authored;
+  const normalizedAutolink = node.type === "link" &&
+    (
+      autolinkValue === node.url ||
+      `mailto:${autolinkValue}` === node.url ||
+      `http://${autolinkValue}` === node.url
+    );
+  if (normalizedAutolink) {
     if (
-      authored === node.url && value[offsets.start - 1] === "<" &&
+      !angleDelimited && authored === node.url && value[offsets.start - 1] === "<" &&
       value[offsets.start - 2] === "\\"
     ) return undefined;
-    const start = authored[0] === "<" ? offsets.start + 1 : offsets.start;
-    const end = authored[0] === "<" ? offsets.end - 1 : offsets.end;
-    return {
+    const start = angleDelimited ? offsets.start + 1 : offsets.start;
+    const end = angleDelimited ? offsets.end - 1 : offsets.end;
+    const destination: ContentDestination = {
       kind: "autolink",
       rawValue: value.slice(start, end),
       range: locator.range(start, end),
       syntax: "autolink",
     };
+    return autolinkValue === node.url ? destination : { ...destination, normalizedValue: node.url };
   }
   const destination = lastContainedSpan(tokens.resourceDestinations, {
     start: offsets.start - tokenBase,
@@ -289,13 +297,18 @@ function rawHtmlAnalysis(
   return destinations;
 }
 
-export function analyzeMarkdown(value: string, frontmatter: boolean): {
-  readonly destinations: readonly ContentDestination[];
-} {
+export function analyzeMarkdown(
+  value: string,
+  frontmatter: boolean,
+): ContentAnalysisResult {
   const processor = unified().use(remarkParse).use(remarkGfm);
   if (frontmatter) processor.use(remarkFrontmatter, ["yaml"]);
   const root = processor.parse(value);
-  return analyzeMarkdownTree(value, root);
+  const locator = createSourceLocator(value);
+  const diagnostic = yamlFrontmatterDiagnostic(value, root, locator);
+  return diagnostic === undefined
+    ? { kind: "document", ...analyzeMarkdownTree(value, root) }
+    : { kind: "syntax-error", diagnostic };
 }
 
 export function analyzeMarkdownTree(

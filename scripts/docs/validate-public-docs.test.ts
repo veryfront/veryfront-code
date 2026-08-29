@@ -2597,6 +2597,27 @@ describe("public docs validation", () => {
     ]);
   });
 
+  it("uses parser grammar for nested JSX attributes and their JavaScript context", async () => {
+    assertEquals(
+      await mdxDestinations(
+        '{<Card {...props} href="../architecture/nested-spread.md" />}',
+      ),
+      ["../architecture/nested-spread.md"],
+    );
+    assertEquals(
+      await mdxDestinations(
+        "{(function* () { return <Card value={yield source} /> })}",
+      ),
+      [],
+    );
+    const invalid = await collectIssues(
+      "docs/guides/example.mdx",
+      '{<Card href=="../architecture/not-rendered.md" />}',
+    );
+    assertEquals(invalid.length, 1);
+    assertStringIncludes(invalid[0]?.message ?? "", "Fix invalid MDX syntax");
+  });
+
   it("scans multiline MDX ESM block comments in linear time", async () => {
     const comment = Array.from(
       { length: 80_001 },
@@ -2648,6 +2669,22 @@ describe("public docs validation", () => {
     );
   });
 
+  it("reports malformed YAML frontmatter through positioned syntax diagnostics", async () => {
+    for (const extension of ["md", "mdx"] as const) {
+      const issues = await collectIssues(
+        `docs/guides/example.${extension}`,
+        "---\ntitle: [unterminated\n---\n",
+      );
+      assertEquals(issues.length, 1);
+      assertEquals(issues[0]?.line, 2);
+      assertStringIncludes(
+        issues[0]?.message ?? "",
+        `Fix invalid ${extension === "mdx" ? "MDX" : "Markdown"} syntax`,
+      );
+      assertStringIncludes(issues[0]?.message ?? "", "Invalid YAML frontmatter");
+    }
+  });
+
   it("keeps multiline MDX expressions from opening false comments", async () => {
     assertEquals(
       await mdxDestinations(
@@ -2669,6 +2706,16 @@ describe("public docs validation", () => {
     );
 
     assertEquals(issues.length, 4);
+    assertEquals(
+      await destinations(
+        "<user@example.com> user@example.com www.example.com",
+      ),
+      [
+        "mailto:user@example.com",
+        "mailto:user@example.com",
+        "http://www.example.com",
+      ],
+    );
     assertEquals(
       await mdxDestinations(
         String.raw`\<https://veryfront.com/docs/code/guides/does-not-exist>`,

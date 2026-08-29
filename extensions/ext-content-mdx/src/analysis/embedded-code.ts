@@ -39,8 +39,8 @@ interface ExpressionRecord {
   end: number | undefined;
   readonly root: boolean;
   readonly attributeName: string | undefined;
+  readonly fragmentKind: "expression" | "jsx-spread-attribute";
   braceDepth: number;
-  readonly jsxRanges: Span[];
   readonly tokens: TokenSpan[];
 }
 
@@ -56,23 +56,32 @@ interface JsxChildrenMode {
 interface JsxTagMode {
   readonly kind: "jsx-tag";
   readonly start: number;
-  readonly containerExpressionId: number;
   expectedNameOffset: number;
   name: string;
   nameComplete: boolean;
   closing: boolean;
   selfClosing: boolean;
+  readonly ownsReductionGroup: boolean;
+  reductionOpened: boolean;
   pendingAttributeName: string | undefined;
   awaitingAttributeName: string | undefined;
+  readonly expressionIds: number[];
 }
 
 type ParseMode = ExpressionMode | JsxChildrenMode | JsxTagMode;
 
 interface ElementFrame {
-  readonly start: number;
   readonly name: string;
-  readonly containerExpressionId: number;
-  readonly direct: boolean;
+  readonly ownsReductionGroup: boolean;
+}
+
+interface JsxTagRecord {
+  readonly start: number;
+  readonly end: number;
+  readonly name: string;
+  readonly closing: boolean;
+  readonly selfClosing: boolean;
+  readonly expressionIds: readonly number[];
 }
 
 export type EmbeddedCodeAnalysis =
@@ -124,6 +133,7 @@ function beginExpression(
   activeExpressionId: number,
   start: number,
   attributeName: string | undefined,
+  fragmentKind: "expression" | "jsx-spread-attribute",
 ): number {
   const id = expressions.length;
   expressions.push({
@@ -133,64 +143,83 @@ function beginExpression(
     end: undefined,
     root: false,
     attributeName,
+    fragmentKind,
     braceDepth: 0,
-    jsxRanges: [],
     tokens: [],
   });
   modes.push({ kind: "expression", expressionId: id });
   return id;
 }
 
-function reducedFragment(
-  source: string,
-  expression: ExpressionRecord,
-): ReducedFragment {
-  const ranges = [...expression.jsxRanges].sort((left, right) => left.start - right.start);
-  const end = expression.end ?? expression.start;
+function reducedSourceBuilder(source: string): {
+  readonly authored: (start: number, end: number) => void;
+  readonly generated: (value: string, sourceStart: number) => void;
+  readonly result: () => ReducedFragment;
+} {
   const parts: string[] = [];
   const segments: ReducedSegment[] = [];
-  let cursor = expression.start;
   let reducedOffset = 0;
-  for (const range of ranges) {
-    if (range.start < cursor || range.end > end) continue;
-    const authored = source.slice(cursor, range.start);
-    parts.push(authored);
-    if (authored.length > 0) {
-      segments.push({
-        reducedStart: reducedOffset,
-        reducedEnd: reducedOffset + authored.length,
-        sourceStart: cursor,
-        replacement: false,
-      });
-      reducedOffset += authored.length;
+
+  function append(value: string, sourceStart: number, replacement: boolean): void {
+    if (value.length === 0) return;
+    parts.push(value);
+    segments.push({
+      reducedStart: reducedOffset,
+      reducedEnd: reducedOffset + value.length,
+      sourceStart,
+      replacement,
+    });
+    reducedOffset += value.length;
+  }
+
+  return {
+    authored(start, end) {
+      if (end > start) append(source.slice(start, end), start, false);
+    },
+    generated(value, sourceStart) {
+      append(value, sourceStart, true);
+    },
+    result() {
+      return { value: parts.join(""), segments };
+    },
+  };
+}
+
+function tagValidationFragment(
+  source: string,
+  expressions: readonly ExpressionRecord[],
+  tags: readonly JsxTagRecord[],
+): ReducedFragment {
+  const builder = reducedSourceBuilder(source);
+  for (const tag of tags) {
+    if (tag.closing) {
+      builder.generated(tag.name === "" ? "<>" : `<${tag.name}>`, tag.start);
     }
-    parts.push("null");
-    segments.push({
-      reducedStart: reducedOffset,
-      reducedEnd: reducedOffset + 4,
-      sourceStart: range.start,
-      replacement: true,
-    });
-    reducedOffset += 4;
-    cursor = range.end;
+    let cursor = tag.start;
+    for (const expressionId of tag.expressionIds) {
+      const expression = expressionAt(expressions, expressionId);
+      if (expression?.end === undefined) continue;
+      const braceStart = expression.start - 1;
+      const braceEnd = expression.end + 1;
+      builder.authored(cursor, braceStart);
+      const spread = expression.fragmentKind === "jsx-spread-attribute" &&
+        expression.tokens[0]?.label === "...";
+      builder.generated(spread ? "{...{}}" : "{null}", braceStart);
+      cursor = braceEnd;
+    }
+    builder.authored(cursor, tag.end);
+    if (!tag.closing && !tag.selfClosing) {
+      builder.generated(tag.name === "" ? "</>" : `</${tag.name}>`, tag.end);
+    }
+    builder.generated(",", tag.end);
   }
-  const tail = source.slice(cursor, end);
-  parts.push(tail);
-  if (tail.length > 0) {
-    segments.push({
-      reducedStart: reducedOffset,
-      reducedEnd: reducedOffset + tail.length,
-      sourceStart: cursor,
-      replacement: false,
-    });
-  }
-  return { value: parts.join(""), segments };
+  return builder.result();
 }
 
 function authoredOffsetAt(
   fragment: ReducedFragment,
   reducedOffset: number,
-  expression: ExpressionRecord,
+  fallbackOffset: number,
 ): number {
   const offset = Math.max(0, Math.min(reducedOffset, fragment.value.length));
   for (const segment of fragment.segments) {
@@ -199,7 +228,51 @@ function authoredOffsetAt(
     if (segment.replacement) return segment.sourceStart;
     return segment.sourceStart + offset - segment.reducedStart;
   }
-  return expression.end ?? expression.start;
+  return fallbackOffset;
+}
+
+function appendAuthoredThrough(
+  builder: ReturnType<typeof reducedSourceBuilder>,
+  cursor: { value: number },
+  end: number,
+): void {
+  if (end > cursor.value) {
+    builder.authored(cursor.value, end);
+  }
+  cursor.value = Math.max(cursor.value, end);
+}
+
+function discardThrough(cursor: { value: number }, end: number): void {
+  cursor.value = Math.max(cursor.value, end);
+}
+
+function staticLiteralCandidate(expression: ExpressionRecord): boolean {
+  const labels = expression.tokens.map((token) => token.label);
+  let start = 0;
+  let end = labels.length;
+  while (labels[start] === "(" && labels[end - 1] === ")") {
+    start++;
+    end--;
+  }
+  const literalLabels = labels.slice(start, end);
+  if (literalLabels.length === 1) return literalLabels[0] === "string";
+  return literalLabels[0] === "`" &&
+    literalLabels[literalLabels.length - 1] === "`" &&
+    !literalLabels.includes("${");
+}
+
+function expressionFragment(source: string, expression: ExpressionRecord): ReducedFragment {
+  const end = expression.end ?? expression.start;
+  const builder = reducedSourceBuilder(source);
+  let start = expression.start;
+  if (
+    expression.fragmentKind === "jsx-spread-attribute" &&
+    expression.tokens[0]?.label === "..."
+  ) {
+    start = expression.tokens[0].end;
+  }
+  builder.authored(start, end);
+  return builder.result();
 }
 
 function own(value: unknown, key: string): unknown {
@@ -324,64 +397,39 @@ function grammarTokens(source: string): TokenSpan[] {
   return tokens;
 }
 
-async function validateRecord(
-  source: string,
-  expression: ExpressionRecord,
+async function validateFragment(
+  fragment: ReducedFragment,
+  prefix: string,
+  suffix: string,
+  fallbackOffset: number,
   absoluteStart: number,
   locator: SourceLocator,
   filePath: string | undefined,
-  fragmentKind: "expression" | "jsx-spread-attribute",
 ): Promise<
-  | {
-    readonly kind: "valid";
-    readonly literal:
-      | {
-        readonly span: Span;
-        readonly syntax: "javascript-string" | "javascript-template";
-        readonly cookedValue: string;
-      }
-      | undefined;
-  }
+  | { readonly kind: "valid"; readonly ast: ASTNode | undefined }
   | { readonly kind: "syntax-error"; readonly diagnostic: ContentSyntaxDiagnostic }
 > {
-  const fragment = reducedFragment(source, expression);
   if (fragment.value.length > MAX_EMBEDDED_CODE_UNITS) {
     return {
       kind: "syntax-error",
       diagnostic: diagnostic(
         locator,
         absoluteStart,
-        expression.start,
+        fallbackOffset,
         `Embedded code exceeds the ${MAX_EMBEDDED_CODE_UNITS}-unit parser limit`,
       ),
     };
   }
 
-  const spreadRoot = expression.root && fragmentKind === "jsx-spread-attribute";
-  const prefix = spreadRoot ? "const __veryfront_value = ({" : "const __veryfront_value = (";
-  const suffix = spreadRoot ? "\n});" : "\n);";
   try {
-    if (!hasTokens(fragment.value)) return { kind: "valid", literal: undefined };
+    if (!hasTokens(fragment.value)) return { kind: "valid", ast: undefined };
     const ast = await babelParser.parse({
       code: `${prefix}${fragment.value}${suffix}`,
       filePath: filePath ?? "content.mdx",
       decoratorMode: "current",
       syntax: "javascript",
     });
-    const literal = staticLiteral(ast);
-    if (literal === undefined) return { kind: "valid", literal: undefined };
-    const span = literalRange(expression, literal.kind);
-    if (span === undefined) {
-      throw new TypeError("Acorn did not locate the Babel static literal");
-    }
-    return {
-      kind: "valid",
-      literal: {
-        span,
-        syntax: literal.kind === "string" ? "javascript-string" : "javascript-template",
-        cookedValue: literal.cookedValue,
-      },
-    };
+    return { kind: "valid", ast };
   } catch (error) {
     if (!(error instanceof SyntaxError) && !(error instanceof RangeError)) {
       throw error;
@@ -395,15 +443,48 @@ async function validateRecord(
           ? authoredOffsetAt(
             fragment,
             (parserErrorIndex(error) ?? prefix.length) - prefix.length,
-            expression,
+            fallbackOffset,
           )
-          : expression.start,
+          : fallbackOffset,
         error instanceof RangeError
           ? "Parser capacity exceeded for embedded code"
           : parserMessage(error),
       ),
     };
   }
+}
+
+async function decodeStaticLiteral(
+  source: string,
+  expression: ExpressionRecord,
+  filePath: string | undefined,
+): Promise<
+  | {
+    readonly span: Span;
+    readonly syntax: "javascript-string" | "javascript-template";
+    readonly cookedValue: string;
+  }
+  | undefined
+> {
+  if (!staticLiteralCandidate(expression)) return undefined;
+  const fragment = expressionFragment(source, expression);
+  const ast = await babelParser.parse({
+    code: `const __veryfront_value = (${fragment.value}\n);`,
+    filePath: filePath ?? "content.mdx",
+    decoratorMode: "current",
+    syntax: "javascript",
+  });
+  const literal = staticLiteral(ast);
+  if (literal === undefined) return undefined;
+  const span = literalRange(expression, literal.kind);
+  if (span === undefined) {
+    throw new TypeError("Acorn did not locate the Babel static literal");
+  }
+  return {
+    span,
+    syntax: literal.kind === "string" ? "javascript-string" : "javascript-template",
+    cookedValue: literal.cookedValue,
+  };
 }
 
 function jsxLiteralDestination(
@@ -458,16 +539,18 @@ export async function analyzeEmbeddedExpression(options: {
     end: undefined,
     root: true,
     attributeName: options.attributeName,
+    fragmentKind: options.fragmentKind ?? "expression",
     braceDepth: 0,
-    jsxRanges: [],
     tokens: [],
   }];
   const modes: ParseMode[] = [{ kind: "expression", expressionId: 0 }];
   const elements: ElementFrame[] = [];
-  const elementDepth = new Map<number, number>();
-  const closedExpressions: number[] = [];
+  const tags: JsxTagRecord[] = [];
   const destinations: ContentDestination[] = [];
+  const reducedBuilder = reducedSourceBuilder(options.source);
+  const sourceCursor = { value: 0 };
   let activeExpressionId = 0;
+  let reductionGroupDepth = 0;
 
   try {
     const profile = embeddedLexicalProfile(options.source);
@@ -514,37 +597,54 @@ export async function analyzeEmbeddedExpression(options: {
           };
         }
         root.end = token.start;
-        closedExpressions.push(root.id);
+        appendAuthoredThrough(reducedBuilder, sourceCursor, token.start);
         break;
       }
 
       if (mode.kind === "expression") {
         const expression = expressionAt(expressions, mode.expressionId);
         if (expression === undefined) throw new TypeError("Missing expression state");
+        if (
+          expression.fragmentKind === "jsx-spread-attribute" &&
+          expression.tokens.length === 0 && label === "..."
+        ) {
+          appendAuthoredThrough(reducedBuilder, sourceCursor, token.start);
+          discardThrough(sourceCursor, token.end);
+          expression.tokens.push({ label, start: token.start, end: token.end });
+          continue;
+        }
         if (label === "jsxTagStart") {
+          const ownsReductionGroup = reductionGroupDepth === 0 || expression.tokens.length > 0;
+          if (ownsReductionGroup) reductionGroupDepth++;
+          appendAuthoredThrough(reducedBuilder, sourceCursor, token.start);
+          discardThrough(sourceCursor, token.end);
           modes.push({
             kind: "jsx-tag",
             start: token.start,
-            containerExpressionId: activeExpressionId,
             expectedNameOffset: token.end,
             name: "",
             nameComplete: false,
             closing: false,
             selfClosing: false,
+            ownsReductionGroup,
+            reductionOpened: false,
             pendingAttributeName: undefined,
             awaitingAttributeName: undefined,
+            expressionIds: [],
           });
           continue;
         }
         if (label === "{" || label === "${") {
           expression.braceDepth++;
           expression.tokens.push({ label, start: token.start, end: token.end });
+          appendAuthoredThrough(reducedBuilder, sourceCursor, token.end);
           continue;
         }
         if (label === "}") {
           if (expression.braceDepth > 0) {
             expression.braceDepth--;
             expression.tokens.push({ label, start: token.start, end: token.end });
+            appendAuthoredThrough(reducedBuilder, sourceCursor, token.end);
             continue;
           }
           if (expression.root) {
@@ -558,42 +658,53 @@ export async function analyzeEmbeddedExpression(options: {
               ),
             };
           }
+          appendAuthoredThrough(reducedBuilder, sourceCursor, token.start);
+          reducedBuilder.generated(",", token.start);
+          discardThrough(sourceCursor, token.end);
           expression.end = token.start;
-          closedExpressions.push(expression.id);
           modes.pop();
           activeExpressionId = expression.parentId ?? 0;
           continue;
         }
         expression.tokens.push({ label, start: token.start, end: token.end });
+        appendAuthoredThrough(reducedBuilder, sourceCursor, token.end);
         continue;
       }
 
       if (mode.kind === "jsx-children") {
         if (label === "jsxTagStart") {
+          discardThrough(sourceCursor, token.end);
           modes.push({
             kind: "jsx-tag",
             start: token.start,
-            containerExpressionId: activeExpressionId,
             expectedNameOffset: token.end,
             name: "",
             nameComplete: false,
             closing: false,
             selfClosing: false,
+            ownsReductionGroup: false,
+            reductionOpened: false,
             pendingAttributeName: undefined,
             awaitingAttributeName: undefined,
+            expressionIds: [],
           });
         } else if (label === "{") {
+          discardThrough(sourceCursor, token.end);
           activeExpressionId = beginExpression(
             expressions,
             modes,
             activeExpressionId,
             token.end,
             undefined,
+            "expression",
           );
+        } else {
+          discardThrough(sourceCursor, token.end);
         }
         continue;
       }
 
+      discardThrough(sourceCursor, token.end);
       if (!mode.nameComplete && token.start > mode.expectedNameOffset) {
         mode.nameComplete = true;
       }
@@ -612,6 +723,10 @@ export async function analyzeEmbeddedExpression(options: {
         mode.name += options.source.slice(token.start, token.end);
         mode.expectedNameOffset = token.end;
         continue;
+      }
+      if (!mode.closing && mode.ownsReductionGroup && !mode.reductionOpened) {
+        reducedBuilder.generated("(", mode.start);
+        mode.reductionOpened = true;
       }
       mode.nameComplete = true;
       if (label === "jsxName") {
@@ -641,13 +756,16 @@ export async function analyzeEmbeddedExpression(options: {
       if (label === "{") {
         const attributeName = mode.awaitingAttributeName;
         mode.awaitingAttributeName = undefined;
-        activeExpressionId = beginExpression(
+        const expressionId = beginExpression(
           expressions,
           modes,
           activeExpressionId,
           token.end,
           attributeName,
+          attributeName === undefined ? "jsx-spread-attribute" : "expression",
         );
+        mode.expressionIds.push(expressionId);
+        activeExpressionId = expressionId;
         continue;
       }
       if (label === "/") {
@@ -656,6 +774,14 @@ export async function analyzeEmbeddedExpression(options: {
       }
       if (label !== "jsxTagEnd") continue;
 
+      tags.push({
+        start: mode.start,
+        end: token.end,
+        name: mode.name,
+        closing: mode.closing,
+        selfClosing: mode.selfClosing,
+        expressionIds: mode.expressionIds,
+      });
       modes.pop();
       if (mode.closing) {
         const element = elements.pop();
@@ -675,35 +801,31 @@ export async function analyzeEmbeddedExpression(options: {
           };
         }
         modes.pop();
-        const depth = Math.max(
-          0,
-          (elementDepth.get(element.containerExpressionId) ?? 1) - 1,
+        reducedBuilder.generated(
+          element.ownsReductionGroup
+            ? "null)"
+            : currentMode(modes)?.kind === "jsx-children"
+            ? "null,"
+            : "null",
+          token.start,
         );
-        elementDepth.set(element.containerExpressionId, depth);
-        if (element.direct) {
-          expressionAt(expressions, element.containerExpressionId)?.jsxRanges
-            .push({ start: element.start, end: token.end });
-        }
+        if (element.ownsReductionGroup) reductionGroupDepth--;
         continue;
       }
 
-      const depth = elementDepth.get(mode.containerExpressionId) ?? 0;
       if (mode.selfClosing) {
-        if (depth === 0) {
-          expressionAt(expressions, mode.containerExpressionId)?.jsxRanges.push({
-            start: mode.start,
-            end: token.end,
-          });
-        }
+        reducedBuilder.generated(
+          mode.ownsReductionGroup
+            ? "null)"
+            : currentMode(modes)?.kind === "jsx-children"
+            ? "null,"
+            : "null",
+          token.start,
+        );
+        if (mode.ownsReductionGroup) reductionGroupDepth--;
         continue;
       }
-      elements.push({
-        start: mode.start,
-        name: mode.name,
-        containerExpressionId: mode.containerExpressionId,
-        direct: depth === 0,
-      });
-      elementDepth.set(mode.containerExpressionId, depth + 1);
+      elements.push({ name: mode.name, ownsReductionGroup: mode.ownsReductionGroup });
       modes.push({ kind: "jsx-children" });
     }
   } catch (error) {
@@ -724,30 +846,51 @@ export async function analyzeEmbeddedExpression(options: {
     };
   }
 
-  let staticDestination: ContentDestination | undefined;
-  for (const id of closedExpressions) {
-    const expression = expressionAt(expressions, id);
-    if (expression === undefined) throw new TypeError("Missing closed expression");
-    const validation = await validateRecord(
-      options.source,
-      expression,
+  const tagBatchSize = 512;
+  for (let start = 0; start < tags.length; start += tagBatchSize) {
+    const batch = tags.slice(start, start + tagBatchSize);
+    const tagFragment = tagValidationFragment(options.source, expressions, batch);
+    const tagValidation = await validateFragment(
+      tagFragment,
+      "const __veryfront_tags = [",
+      "\n];",
+      batch[0]?.start ?? 0,
       options.absoluteStart,
       options.locator,
       options.filePath,
-      options.fragmentKind ?? "expression",
     );
-    if (validation.kind === "syntax-error") return validation;
+    if (tagValidation.kind === "syntax-error") return tagValidation;
+  }
+
+  const rootValidation = await validateFragment(
+    reducedBuilder.result(),
+    "const __veryfront_value = (",
+    "\n);",
+    expressionAt(expressions, 0)?.end ?? 0,
+    options.absoluteStart,
+    options.locator,
+    options.filePath,
+  );
+  if (rootValidation.kind === "syntax-error") return rootValidation;
+
+  let staticDestination: ContentDestination | undefined;
+  for (const expression of expressions) {
+    const literal = await decodeStaticLiteral(
+      options.source,
+      expression,
+      options.filePath,
+    );
     if (
-      validation.literal !== undefined &&
+      literal !== undefined &&
       isDestinationAttribute(expression.attributeName)
     ) {
       const destination = jsxLiteralDestination(
         options.source,
-        validation.literal.span,
+        literal.span,
         options.absoluteStart,
         options.locator,
-        validation.literal.syntax,
-        validation.literal.cookedValue,
+        literal.syntax,
+        literal.cookedValue,
       );
       if (expression.id === 0) staticDestination = destination;
       else destinations.push(destination);
