@@ -887,6 +887,7 @@ export function collectSemanticMarkers(
       nextScopes,
       allowAssignmentClearing,
     );
+    clearTruthinessForUnmodeledMutation(node, nextScopes);
     bindRuntimeDeleteMutation(
       node,
       bindings,
@@ -4143,6 +4144,7 @@ function visitRuntimeBindingSummary(
   }
   bindRuntimeClassDeclaration(node, nextScopes);
   bindRuntimeAssignment(node, imports, nextScopes, allowClearing);
+  clearTruthinessForUnmodeledMutation(node, nextScopes);
   bindRuntimeDeleteMutation(node, imports, nextScopes, allowClearing);
   for (const key of Object.keys(node)) {
     if (
@@ -7421,6 +7423,38 @@ function assignmentTargetScope(
   return undefined;
 }
 
+// Writes that bindRuntimeAssignment does not model (update expressions,
+// arithmetic compound assignments, bare loop targets) can make a previously
+// truthy binding falsy, so they must drop both truthiness facts.
+function clearTruthinessForUnmodeledMutation(
+  node: Node,
+  scopes: readonly Scope[],
+): void {
+  let target: Node | undefined;
+  if (
+    node.type === "AssignmentExpression" && isNode(node.left) &&
+    !["=", "&&=", "||=", "??="].includes(String(node.operator))
+  ) {
+    target = node.left;
+  } else if (node.type === "UpdateExpression" && isNode(node.argument)) {
+    target = node.argument;
+  } else if (
+    (node.type === "ForOfStatement" || node.type === "ForInStatement") &&
+    isNode(node.left) && node.left.type !== "VariableDeclaration"
+  ) {
+    target = node.left;
+  }
+  if (!target) return;
+  const names = new Set<string>();
+  collectPatternNames(target, names);
+  for (const name of names) {
+    const scope = declaringScopeForName(name, scopes);
+    if (!scope) continue;
+    scope.definitelyTruthyNames.delete(name);
+    scope.definitelyNonNullishNames.delete(name);
+  }
+}
+
 function bindDefinitelyNonUndefinedPattern(
   pattern: Node,
   binding: RuntimeBinding | undefined,
@@ -8154,7 +8188,12 @@ function isConditionalBranch(parent: Node, key: string): boolean {
     return true;
   }
   if (parent.type === "LogicalExpression" && key === "right") return true;
-  if (parent.type === "SwitchCase" && key === "consequent") return true;
+  // A case test only runs when no earlier case matched.
+  if (
+    parent.type === "SwitchCase" && (key === "consequent" || key === "test")
+  ) {
+    return true;
+  }
   if (
     (parent.type === "WhileStatement" ||
       parent.type === "DoWhileStatement" ||
@@ -8926,21 +8965,65 @@ function expressionMayBeUndefined(
   );
 }
 
+// Syntactic writes inside the expression being proven run after the proof is
+// computed, so identifier evidence read alongside them may be stale.
+function expressionSubtreeContainsWrite(node: unknown): boolean {
+  if (!isNode(node)) return false;
+  if (
+    node.type === "AssignmentExpression" || node.type === "UpdateExpression"
+  ) {
+    return true;
+  }
+  for (const key of Object.keys(node)) {
+    if (key === "loc" || COMMENT_KEYS.has(key)) continue;
+    const value = node[key];
+    if (Array.isArray(value)) {
+      if (value.some((item) => expressionSubtreeContainsWrite(item))) {
+        return true;
+      }
+    } else if (expressionSubtreeContainsWrite(value)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Recorded evidence is unusable across function boundaries (interleaved calls
+// can reassign the outer binding before the function body runs).
+function identifierTruthinessEvidence(
+  name: string,
+  scopes: readonly Scope[],
+): {
+  readonly definitelyTruthy: boolean;
+  readonly definitelyNonNullish: boolean;
+} {
+  const resolved = resolveLocalBinding(name, scopes);
+  if (!resolved.declared || resolved.crossesFunctionBoundary === true) {
+    return { definitelyTruthy: false, definitelyNonNullish: false };
+  }
+  return {
+    definitelyTruthy: resolved.definitelyTruthy === true,
+    definitelyNonNullish: resolved.definitelyNonNullish === true,
+  };
+}
+
 // Intentionally separate from expressionMayBeUndefined: definitely-non-undefined
 // is not truthiness proof (`maybe ? ClassA : null` is non-undefined but nullish).
 function expressionIsDefinitelyTruthy(
   expression: unknown,
   scopes: readonly Scope[],
+  identifierEvidenceUsable?: boolean,
 ): boolean {
   const value = unwrapExpression(expression);
   if (!value) return false;
+  const identifierEvidence = identifierEvidenceUsable ??
+    !expressionSubtreeContainsWrite(value);
   switch (value.type) {
+    // JSX is absent: a custom jsxFactory may legally return null or false.
     case "ArrayExpression":
     case "ArrowFunctionExpression":
     case "ClassExpression":
     case "FunctionExpression":
-    case "JSXElement":
-    case "JSXFragment":
     case "NewExpression":
     case "ObjectExpression":
     case "RegExpLiteral":
@@ -8952,15 +9035,29 @@ function expressionIsDefinitelyTruthy(
     case "StringLiteral":
       return value.value !== "";
     case "ConditionalExpression":
-      return expressionIsDefinitelyTruthy(value.consequent, scopes) &&
-        expressionIsDefinitelyTruthy(value.alternate, scopes);
+      return expressionIsDefinitelyTruthy(
+        value.consequent,
+        scopes,
+        identifierEvidence,
+      ) &&
+        expressionIsDefinitelyTruthy(
+          value.alternate,
+          scopes,
+          identifierEvidence,
+        );
     case "LogicalExpression": {
-      const left = expressionIsDefinitelyTruthy(value.left, scopes);
+      const left = expressionIsDefinitelyTruthy(
+        value.left,
+        scopes,
+        identifierEvidence,
+      );
       if (value.operator === "&&") {
-        return left && expressionIsDefinitelyTruthy(value.right, scopes);
+        return left &&
+          expressionIsDefinitelyTruthy(value.right, scopes, identifierEvidence);
       }
       if (value.operator === "||") {
-        return left || expressionIsDefinitelyTruthy(value.right, scopes);
+        return left ||
+          expressionIsDefinitelyTruthy(value.right, scopes, identifierEvidence);
       }
       return left;
     }
@@ -8968,14 +9065,19 @@ function expressionIsDefinitelyTruthy(
       const expressions = Array.isArray(value.expressions)
         ? value.expressions
         : [];
-      return expressionIsDefinitelyTruthy(expressions.at(-1), scopes);
+      return expressionIsDefinitelyTruthy(
+        expressions.at(-1),
+        scopes,
+        identifierEvidence,
+      );
     }
     case "AssignmentExpression":
       return value.operator === "=" &&
-        expressionIsDefinitelyTruthy(value.right, scopes);
+        expressionIsDefinitelyTruthy(value.right, scopes, identifierEvidence);
     case "Identifier":
-      return resolveLocalBinding(value.name as string, scopes)
-        .definitelyTruthy === true;
+      return identifierEvidence &&
+        identifierTruthinessEvidence(value.name as string, scopes)
+          .definitelyTruthy;
     default:
       return false;
   }
@@ -8984,9 +9086,12 @@ function expressionIsDefinitelyTruthy(
 function expressionIsDefinitelyNonNullish(
   expression: unknown,
   scopes: readonly Scope[],
+  identifierEvidenceUsable?: boolean,
 ): boolean {
   const value = unwrapExpression(expression);
   if (!value) return false;
+  const identifierEvidence = identifierEvidenceUsable ??
+    !expressionSubtreeContainsWrite(value);
   switch (value.type) {
     case "ArrayExpression":
     case "ArrowFunctionExpression":
@@ -8994,8 +9099,6 @@ function expressionIsDefinitelyNonNullish(
     case "BooleanLiteral":
     case "ClassExpression":
     case "FunctionExpression":
-    case "JSXElement":
-    case "JSXFragment":
     case "NewExpression":
     case "NumericLiteral":
     case "ObjectExpression":
@@ -9004,32 +9107,73 @@ function expressionIsDefinitelyNonNullish(
     case "TemplateLiteral":
       return true;
     case "ConditionalExpression":
-      return expressionIsDefinitelyNonNullish(value.consequent, scopes) &&
-        expressionIsDefinitelyNonNullish(value.alternate, scopes);
+      return expressionIsDefinitelyNonNullish(
+        value.consequent,
+        scopes,
+        identifierEvidence,
+      ) &&
+        expressionIsDefinitelyNonNullish(
+          value.alternate,
+          scopes,
+          identifierEvidence,
+        );
     case "LogicalExpression": {
       if (value.operator === "&&") {
-        return expressionIsDefinitelyNonNullish(value.left, scopes) &&
-          expressionIsDefinitelyNonNullish(value.right, scopes);
+        return expressionIsDefinitelyNonNullish(
+          value.left,
+          scopes,
+          identifierEvidence,
+        ) &&
+          expressionIsDefinitelyNonNullish(
+            value.right,
+            scopes,
+            identifierEvidence,
+          );
       }
       if (value.operator === "||") {
-        return expressionIsDefinitelyTruthy(value.left, scopes) ||
-          expressionIsDefinitelyNonNullish(value.right, scopes);
+        return expressionIsDefinitelyTruthy(
+          value.left,
+          scopes,
+          identifierEvidence,
+        ) ||
+          expressionIsDefinitelyNonNullish(
+            value.right,
+            scopes,
+            identifierEvidence,
+          );
       }
-      return expressionIsDefinitelyNonNullish(value.left, scopes) ||
-        expressionIsDefinitelyNonNullish(value.right, scopes);
+      return expressionIsDefinitelyNonNullish(
+        value.left,
+        scopes,
+        identifierEvidence,
+      ) ||
+        expressionIsDefinitelyNonNullish(
+          value.right,
+          scopes,
+          identifierEvidence,
+        );
     }
     case "SequenceExpression": {
       const expressions = Array.isArray(value.expressions)
         ? value.expressions
         : [];
-      return expressionIsDefinitelyNonNullish(expressions.at(-1), scopes);
+      return expressionIsDefinitelyNonNullish(
+        expressions.at(-1),
+        scopes,
+        identifierEvidence,
+      );
     }
     case "AssignmentExpression":
       return value.operator === "=" &&
-        expressionIsDefinitelyNonNullish(value.right, scopes);
+        expressionIsDefinitelyNonNullish(
+          value.right,
+          scopes,
+          identifierEvidence,
+        );
     case "Identifier":
-      return resolveLocalBinding(value.name as string, scopes)
-        .definitelyNonNullish === true;
+      return identifierEvidence &&
+        identifierTruthinessEvidence(value.name as string, scopes)
+          .definitelyNonNullish;
     default:
       return false;
   }

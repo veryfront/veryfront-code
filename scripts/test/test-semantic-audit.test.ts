@@ -4964,6 +4964,107 @@ AndKeepLeft.write("and-keep-left.txt", "x");
     );
   });
 
+  it("retains logical receivers when truthiness evidence is invalidated", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class BoundaryOriginal {}
+class BoundaryFallback {}
+let boundaryReceiver = BoundaryOriginal;
+const useBoundary = () => {
+  const BoundaryAlias = boundaryReceiver || BoundaryFallback;
+  BoundaryAlias.write = Deno.writeTextFile;
+};
+boundaryReceiver = null;
+useBoundary();
+BoundaryFallback.write("boundary.txt", "x");
+`,
+        "src/logical-receiver-function-boundary.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "BoundaryFallback.write"]],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class JsxFallback {}
+const Component = () => null;
+const JsxAlias = (<Component />) || JsxFallback;
+JsxAlias.write = Deno.writeTextFile;
+JsxFallback.write("jsx.txt", "x");
+`,
+        "src/logical-receiver-jsx-factory.test.tsx",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "JsxFallback.write"]],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class DecrementFallback {}
+let counter = 1;
+counter--;
+const CounterAlias = counter || DecrementFallback;
+CounterAlias.write = Deno.writeTextFile;
+DecrementFallback.write("decrement.txt", "x");
+
+class CompoundFallback {}
+let compound = 1;
+compound *= 0;
+const CompoundAlias = compound || CompoundFallback;
+CompoundAlias.write = Deno.writeTextFile;
+CompoundFallback.write("compound.txt", "x");
+
+class LoopOriginal {}
+class LoopFallback {}
+let looped = LoopOriginal;
+for (looped of [null]) {}
+const LoopAlias = looped || LoopFallback;
+LoopAlias.write = Deno.writeTextFile;
+LoopFallback.write("loop.txt", "x");
+`,
+        "src/logical-receiver-unmodeled-mutations.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "DecrementFallback.write"],
+        ["filesystem-write", "CompoundFallback.write"],
+        ["filesystem-write", "LoopFallback.write"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class SwitchOriginal {}
+class SwitchFallback {}
+let switched = null;
+switch (Math.random()) {
+  case 0.1:
+    break;
+  case (switched = SwitchOriginal, 0.2):
+    break;
+}
+const SwitchAlias = switched || SwitchFallback;
+SwitchAlias.write = Deno.writeTextFile;
+SwitchFallback.write("switch.txt", "x");
+`,
+        "src/logical-receiver-switch-case-test.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "SwitchFallback.write"]],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class SequenceOriginal {}
+class SequenceFallback {}
+let sequenced = SequenceOriginal;
+const SequenceAlias = (sequenced = null, sequenced) || SequenceFallback;
+SequenceAlias.write = Deno.writeTextFile;
+SequenceFallback.write("sequence.txt", "x");
+`,
+        "src/logical-receiver-intra-expression-write.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "SequenceFallback.write"]],
+    );
+  });
+
   it("uses JavaScript array-index bounds for sparse writes", () => {
     assertEquals(
       collectSemanticMarkers(
