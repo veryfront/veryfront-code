@@ -181,6 +181,48 @@ jobs:
           duration_seconds=$(($(date +%s) - STARTED_AT))
           echo "Node shard ${SHARD}: ${duration_seconds}s" >> "$GITHUB_STEP_SUMMARY"
 
+  # Sandbox worker generation and prepared-module encoding on the minimum
+  # supported Node. Only Node 22/24 lack the Uint8Array proposal methods
+  # (toHex/toBase64) whose use shipped the #732 defect class; the full node
+  # suite above covers Node 24, this leg pins the floor
+  # (veryfront-issue-inbox#751).
+  tests-node-sandbox:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [npm-compatibility-artifact]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    name: tests (node sandbox, minimum Node)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+        with:
+          warm-cache: "true"
+      - name: Read minimum supported Node version
+        id: node-version
+        run: |
+          deno eval '
+            import { MINIMUM_NODE_VERSION } from "./scripts/build/runtime-support.ts";
+            console.log(`version=${MINIMUM_NODE_VERSION}`);
+          ' >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: ${{ steps.node-version.outputs.version }}
+          package-manager-cache: false
+      - name: Download npm runtime workspace
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: npm-runtime-workspace-${{ github.sha }}
+          path: dist/npm-runtime-workspace
+      - name: Restore npm runtime workspace
+        run: tar -xzf dist/npm-runtime-workspace/npm-runtime-workspace.tar.gz
+      - name: Materialize locked test dependencies
+        run: deno install --frozen
+      - name: Run sandbox worker tests
+        run: node ./tests/node/run-tests.mjs --suite=runtime:node 'src/security/sandbox/'
+
   tests-bun:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     needs: [npm-compatibility-artifact]
@@ -743,6 +785,7 @@ jobs:
       - coverage
       - tests
       - tests-node
+      - tests-node-sandbox
       - tests-bun
       - tests-binary-e2e
       - tests-e2e-rsc-browser
@@ -760,6 +803,7 @@ jobs:
           SONAR_RESULT: ${{ needs.sonar.result }}
           INTEGRATION_TESTS_RESULT: ${{ needs.tests.result }}
           NODE_RUNTIME_TESTS_RESULT: ${{ needs.tests-node.result }}
+          NODE_SANDBOX_TESTS_RESULT: ${{ needs.tests-node-sandbox.result }}
           BUN_RUNTIME_TESTS_RESULT: ${{ needs.tests-bun.result }}
           BINARY_E2E_RESULT: ${{ needs.tests-binary-e2e.result }}
           RSC_BROWSER_E2E_RESULT: ${{ needs.tests-e2e-rsc-browser.result }}
@@ -772,6 +816,7 @@ jobs:
             SONAR_RESULT \
             INTEGRATION_TESTS_RESULT \
             NODE_RUNTIME_TESTS_RESULT \
+            NODE_SANDBOX_TESTS_RESULT \
             BUN_RUNTIME_TESTS_RESULT \
             BINARY_E2E_RESULT \
             RSC_BROWSER_E2E_RESULT
