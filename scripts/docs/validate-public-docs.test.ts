@@ -519,6 +519,8 @@ describe("public docs validation", () => {
           '<a data-ok={value </foo>/.source} href="../architecture/less-than-regex.md">ok</a>\n' +
           '<a data-ok={<Foo>{value </foo>/.source}</Foo>} href="../architecture/jsx-child-less-than-regex.md">ok</a>\n' +
           '<a data-ok={(() => { for (const x of /[}>]/.source) {} return true })()} href="../architecture/for-of-regex.md">ok</a>\n' +
+          '<a data-ok={(() => { for (let x of values\n/ ({ marker: ">/" }).length) {} return true })()} href="../architecture/for-of-rhs-division.md">ok</a>\n' +
+          '<a data-ok={(() => { for (var x in values\n/ ({ marker: ">/" }).length) {} return true })()} href="../architecture/for-in-rhs-division.md">ok</a>\n' +
           '<a data-ok={(() => { for (using of /[}>]/.source) {} return true })()} href="../architecture/for-using-of-regex.md">ok</a>\n' +
           '<a data-ok={(async () => { for await (const x of /[}>]/.source) {} return true })()} href="../architecture/for-await-of-regex.md">ok</a>\n' +
           '<a data-ok={(() => { for (item1 of /[}>]/.source) {} return true })()} href="../architecture/for-digit-identifier-of-regex.md">ok</a>\n' +
@@ -540,6 +542,7 @@ describe("public docs validation", () => {
           '<a data-ok={<Foo>child</Foo>} href="../architecture/paired-jsx-text.md">ok</a>\n' +
           '<a data-ok={<Foo/> / ({ marker: ">/" }).length} href="../architecture/jsx-division.md">ok</a>\n' +
           '<Comp value={<a href="../architecture/nested-jsx-link.md">x</a>} />\n' +
+          "<Comp title=\"<a href='../architecture/quoted-jsx-link.md'>\" value={true} />\n" +
           '<a data-ok={(() => { let value\n/[}>]/.test(input); var other\n/[}>]/.test(input) })()} href="../architecture/declaration-asi-regex.md">ok</a>\n' +
           '<a data-ok={(() => { let first, second\n/[}>]/.test(input); var third, fourth\n/[}>]/.test(input) })()} href="../architecture/declaration-list-asi-regex.md">ok</a>\n' +
           '<a data-ok={(() => { breakfast\n/ ({ marker: ">/" }).length; continueValue\n/ ({ marker: ">/" }).length; debuggerValue\n/ ({ marker: ">/" }).length; return true })()} href="../architecture/asi-prefix-division.md">ok</a>\n' +
@@ -600,6 +603,8 @@ describe("public docs validation", () => {
         "../architecture/less-than-regex.md",
         "../architecture/jsx-child-less-than-regex.md",
         "../architecture/for-of-regex.md",
+        "../architecture/for-of-rhs-division.md",
+        "../architecture/for-in-rhs-division.md",
         "../architecture/for-using-of-regex.md",
         "../architecture/for-await-of-regex.md",
         "../architecture/for-digit-identifier-of-regex.md",
@@ -2160,6 +2165,23 @@ describe("public docs validation", () => {
       performance.now() - startedAt,
       2_000,
       "malformed nested JSX scanning must stay linear",
+    );
+  });
+
+  it("scans deeply nested valid JSX without overflowing the call stack", () => {
+    const depth = 4_000;
+    const source = "<a data-ok={" +
+      "<A>{".repeat(depth) +
+      "value" +
+      "}</A>".repeat(depth) +
+      '} href="../architecture/deep-jsx.md">ok</a>';
+    const startedAt = performance.now();
+
+    assertEquals(destinations(source), ["../architecture/deep-jsx.md"]);
+    assertLess(
+      performance.now() - startedAt,
+      2_000,
+      "deep valid JSX scanning must stay iterative",
     );
   });
 

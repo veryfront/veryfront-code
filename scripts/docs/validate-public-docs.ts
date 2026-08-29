@@ -2670,18 +2670,24 @@ function htmlTagRanges(
 ): Range[] {
   const ranges: Range[] = [];
   const jsxScanCache: JavaScriptJsxScanCache = new Map();
+  const containingTagEnds: number[] = [];
   let expressionIndex = 0;
   for (let start = 0; start < text.length;) {
     start = text.indexOf("<", start);
     if (start === -1) break;
     while (
+      containingTagEnds.length > 0 && containingTagEnds.at(-1)! <= start
+    ) containingTagEnds.pop();
+    while (
       expressionIndex < expressionRanges.length &&
       expressionRanges[expressionIndex]!.start <= start
     ) expressionIndex++;
+    const insideExpression = isInsideRange(expressionRanges, start);
     if (
+      (containingTagEnds.length > 0 && !insideExpression) ||
       isInsideRange(stringRanges, start) ||
       (isInsideRange(ignoredRanges, start) &&
-        !isInsideRange(expressionRanges, start)) ||
+        !insideExpression) ||
       isBackslashEscaped(text, start) ||
       !/[A-Za-z]/.test(text[start + 1] ?? "") ||
       /^[A-Za-z][A-Za-z0-9+.-]{1,31}:/.test(text.slice(start + 1))
@@ -2701,7 +2707,10 @@ function htmlTagRanges(
       ranges.push({ start, end: tagEnd });
       const containsExpression =
         (expressionRanges[expressionIndex]?.start ?? tagEnd) < tagEnd;
-      start = containsExpression ? start + 1 : tagEnd;
+      if (containsExpression) {
+        containingTagEnds.push(tagEnd);
+        start = expressionRanges[expressionIndex]!.start;
+      } else start = tagEnd;
     } else start++;
   }
   return ranges;
