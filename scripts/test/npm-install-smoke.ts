@@ -63,8 +63,9 @@ class SmokeFailure extends Error {
   }
 }
 
-/** Mirrors the Bash harness's SMOKE_FAILURE_STATUS: 1 outside registry mode,
- * 22 while validating registry configuration, 21 once artifacts install. */
+/** 1 outside registry mode, 22 while validating registry configuration, 21
+ * once artifacts install — the exit codes
+ * scripts/ci/registry-release-smoke.sh classifies. */
 let smokeFailureStatus = 1;
 
 function fail(message: string, devLog?: string): never {
@@ -105,16 +106,14 @@ async function run(
       stderr: "piped",
       signal: controller.signal,
     }).output();
-    const stdout = decoder.decode(output.stdout);
-    const stderr = decoder.decode(output.stderr);
-    return { code: output.code, stdout, stderr, combined: stdout + stderr };
-  } catch (error) {
     if (controller.signal.aborted) {
       throw new Error(
         `${command} ${args.join(" ")} timed out after ${options.timeoutMs}ms`,
       );
     }
-    throw error;
+    const stdout = decoder.decode(output.stdout);
+    const stderr = decoder.decode(output.stderr);
+    return { code: output.code, stdout, stderr, combined: stdout + stderr };
   } finally {
     clearTimeout(timeout);
   }
@@ -147,11 +146,6 @@ function sanitizeDiagnostics(text: string): string {
   return sanitized;
 }
 
-/** Deterministic ordinal ordering, matching the Bash glob expansion order. */
-function compareOrdinal(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
 async function listTarballs(
   directory: string,
   pattern: RegExp,
@@ -164,7 +158,7 @@ async function listTarballs(
     }
   }
   if (matches.length === 0) fail(`no packed tarball matched ${description}`);
-  return matches.sort(compareOrdinal);
+  return matches.sort();
 }
 
 interface InstallPlan {
@@ -278,9 +272,11 @@ async function prepareArtifacts(workDir: string): Promise<InstallPlan> {
     }
   }
 
-  const rootInstallSpecs = [
-    ...await listTarballs(workDir, /^veryfront-\d.*\.tgz$/, "veryfront"),
-  ];
+  const rootInstallSpecs = await listTarballs(
+    workDir,
+    /^veryfront-\d.*\.tgz$/,
+    "veryfront",
+  );
   for (const extension of AUTO_LOADED_EXTENSIONS) {
     rootInstallSpecs.push(
       ...await listTarballs(
@@ -1081,7 +1077,7 @@ async function checkStarterDevServer(
   if (!csrfToken) {
     fail(
       "packed ai-agent starter served no __Host-vf_csrf cookie on its HTML document",
-      server.log(),
+      page.headers.getSetCookie().join("\n"),
     );
   }
   return { csrfToken };
@@ -1197,7 +1193,6 @@ async function runSmoke(workDir: string): Promise<void> {
 
   try {
     const plan = await prepareArtifacts(workDir);
-    if (plan.registryMode) smokeFailureStatus = 21;
 
     await runChecked("npm init", "npm", ["init", "-y"], {
       cwd: workDir,
