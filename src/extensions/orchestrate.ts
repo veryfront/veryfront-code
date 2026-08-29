@@ -97,13 +97,19 @@ const FIRST_PARTY_EXTENSION_NAMES = new Set(
  * imported extension factory call (veryfront-issue-inbox#688). The runtime
  * provides the capability itself, so the declaration activates nothing.
  */
-function isFirstPartyDeclarationMarker(
+/** @internal Exported for direct accessor-safety coverage. */
+export function isFirstPartyDeclarationMarker(
   entry: ExtensionConfigEntry,
 ): entry is { name: string } {
   if (typeof entry !== "object" || entry === null) return false;
   const keys = Object.keys(entry);
-  return keys.length === 1 && keys[0] === "name" &&
-    FIRST_PARTY_EXTENSION_NAMES.has((entry as { name: unknown }).name as string);
+  if (keys.length !== 1 || keys[0] !== "name") return false;
+  // Descriptor inspection, like validateExtension: an accessor-backed `name`
+  // must neither run user code here nor classify as an inert marker.
+  const descriptor = Object.getOwnPropertyDescriptor(entry, "name");
+  return descriptor !== undefined && "value" in descriptor &&
+    typeof descriptor.value === "string" &&
+    FIRST_PARTY_EXTENSION_NAMES.has(descriptor.value);
 }
 
 function isDisableDirective(

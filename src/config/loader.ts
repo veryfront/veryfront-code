@@ -1416,6 +1416,39 @@ function isDeterministicHostedConfigRejection(
     error.phase !== "worker";
 }
 
+/**
+ * Warn when an evaluated hosted snapshot carries extension declarations.
+ *
+ * The evaluator accepts a first-party declaration as an inert `{ name }`
+ * marker (veryfront-issue-inbox#688); the hosted runtime provides the
+ * capability itself and never activates the extension. Emitted here, on a
+ * fresh evaluation only, because per-project hosted configs never reach
+ * extension orchestration -- this is the one hosted-path boundary that sees
+ * every accepted declaration.
+ */
+function warnIgnoredExtensionDeclarations(
+  snapshot: Record<string, unknown>,
+  configFile: string,
+): void {
+  const extensions = snapshot.extensions;
+  if (!ArrayIsArray(extensions)) return;
+  const declared: string[] = [];
+  for (const entry of extensions) {
+    if (
+      typeof entry === "object" && entry !== null &&
+      ownKeys(entry).length === 1 &&
+      typeof (entry as { name?: unknown }).name === "string"
+    ) {
+      declared.push((entry as { name: string }).name);
+    }
+  }
+  if (declared.length === 0) return;
+  logger.warn(
+    "Extension declarations are ignored on the hosted runtime; the platform provides the capability itself",
+    { configFile, extensions: declared },
+  );
+}
+
 function createHostedConfigFlight(
   flightKey: string,
   hostedCacheKey: string,
@@ -1439,6 +1472,7 @@ function createHostedConfigFlight(
       signal: controllerSignal,
     });
     throwIfHostedConfigAborted(controllerSignal);
+    warnIgnoredExtensionDeclarations(snapshot, payload.evaluationOptions.fileName);
     const validate = () => deepFreezeHostedConfig(validateAndMergeConfig(snapshot));
     const merged = validationBoundary ? validationBoundary(validate) : validate();
     throwIfHostedConfigAborted(controllerSignal);

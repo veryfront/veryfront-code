@@ -12,6 +12,7 @@ import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { mkdir, symlink, writeTextFile } from "#veryfront/platform/compat/fs.ts";
 import { dirname, toFileUrl } from "#veryfront/compat/path/index.ts";
 import { makeTempDir, waitFor, withTempDir } from "#veryfront/testing/deno-compat.ts";
+import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
 
 /** Repeated across the config-load classification tests below. */
 const CONFIG_FILE_NAME = "veryfront.config.js";
@@ -7320,6 +7321,51 @@ export default config as const;
         // The sentences after it are for the developer whose project this is.
         assertStringIncludes(error.detail ?? "", "never imports project modules");
         assertStringIncludes(error.detail ?? "", "Remove the import");
+      });
+
+      it("warns that an accepted extension declaration is ignored", async () => {
+        clearConfigCache();
+        const warnings: Array<{ message: string; extensions: unknown }> = [];
+        const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+          if (entry.level === "warn") {
+            warnings.push({ message: entry.message, extensions: entry.context?.extensions });
+          }
+        });
+
+        try {
+          const config = await evaluateHostedConfigSource({
+            cacheKey: "exact-declared-extension-warning",
+            source: {
+              fileName: "veryfront.config.ts",
+              source: `import extRedis from "@veryfront/ext-redis";\n` +
+                `export default { extensions: [extRedis(), { name: "ext-db-sqlite", enabled: false }] };\n`,
+            },
+            environmentName: "release",
+            environment: {},
+          });
+
+          assertEquals(config.extensions, [
+            { name: "ext-redis" },
+            { name: "ext-db-sqlite", enabled: false },
+          ]);
+          const declarationWarnings = warnings.filter((entry) =>
+            entry.message.includes("declarations are ignored")
+          );
+          assertEquals(
+            declarationWarnings.length,
+            1,
+            `the ignored declaration must be warned about exactly once, got: ${
+              JSON.stringify(warnings)
+            }`,
+          );
+          assertEquals(
+            declarationWarnings[0]!.extensions,
+            ["ext-redis"],
+            "the warning names the ignored declaration, never the honored disable directive",
+          );
+        } finally {
+          unsubscribe();
+        }
       });
 
       it("binds exact release evaluation to an empty tenant environment", async () => {

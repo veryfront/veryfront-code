@@ -248,6 +248,28 @@ export default defineConfig({
 HTTP serving does not require the provider. Without it, Node.js WebSocket
 upgrades fail closed with an error that names the required package.
 
+## Deploying a config that declares extensions
+
+A project that targets both self-hosting and Veryfront Cloud can keep one
+configuration file. Self-hosted, an imported first-party factory activates the
+extension:
+
+```ts
+import { defineConfig } from "veryfront";
+import extRedis from "@veryfront/ext-redis";
+
+export default defineConfig({
+  extensions: [extRedis()],
+});
+```
+
+On Veryfront Cloud the same file evaluates as data: a first-party
+`@veryfront/ext-*` factory call becomes an inert `{ name }` declaration that
+the platform accepts and ignores with a warning, because it provides its own
+capabilities. The extension itself runs only where you run the project.
+Imports of packages outside the first-party set are still rejected at deploy
+time, as are declarations naming unknown extensions.
+
 ## First-party extension areas
 
 | Area          | Example package                              | Contract family   |

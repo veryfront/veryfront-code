@@ -128,9 +128,11 @@ export interface DeclarativeConfigLimits {
 export const DECLARATIVE_CONFIG_LIMITS: Readonly<DeclarativeConfigLimits> = ObjectFreeze({
   maxSourceBytes: 65_536,
   maxTopLevelStatements: 256,
-  // One "veryfront" helper import plus room for first-party extension
-  // declarations (veryfront-issue-inbox#688).
-  maxImports: 8,
+  // One "veryfront" helper import plus a first-party extension declaration
+  // import for every package in FIRST_PARTY_EXTENSION_POLICIES
+  // (veryfront-issue-inbox#688) -- sized above the inventory so declaring
+  // every supported extension never hits the bound.
+  maxImports: 32,
   maxImportSpecifiers: 8,
   maxBindings: 128,
   maxAstNodes: 4_096,

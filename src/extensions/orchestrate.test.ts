@@ -7,7 +7,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { orchestrateExtensions } from "./orchestrate.ts";
+import { isFirstPartyDeclarationMarker, orchestrateExtensions } from "./orchestrate.ts";
 import { mergeExtensions } from "./discovery.ts";
 import { reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
 import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
@@ -605,6 +605,35 @@ describe("orchestrateExtensions()", () => {
     assertEquals(warnings.length, 1);
     assertStringIncludes(warnings[0]!, "ext-redis");
     await loader.teardownAll();
+  });
+
+  it("does not invoke an accessor while classifying a declaration marker", async () => {
+    // A hostile config entry whose sole property is a `name` getter must not
+    // execute user code during the marker precheck, and a getter-returned
+    // first-party name must not classify as an inert marker.
+    let invoked = 0;
+    const hostile = Object.defineProperty({}, "name", {
+      get() {
+        invoked += 1;
+        return "ext-redis";
+      },
+      enumerable: true,
+      configurable: true,
+    });
+
+    assertEquals(isFirstPartyDeclarationMarker(hostile as { name: string }), false);
+    assertEquals(invoked, 0, "the marker precheck must not invoke the accessor");
+
+    // The hostile entry falls through to ordinary extension validation, which
+    // rejects it instead of skipping it as an inert declaration.
+    await assertRejects(() =>
+      orchestrateExtensions({
+        projectDir: "/fake",
+        config: { extensions: [hostile as { name: string }] },
+        logger: noopLogger,
+        discovery: emptyDiscovery(),
+      })
+    );
   });
 
   it("keeps rejecting a bare name that is not a first-party extension", async () => {
