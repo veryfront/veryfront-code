@@ -246,8 +246,10 @@ function responsePath(url: URL): string | undefined {
 }
 
 /** Return whether the URL is backed by the offline React module graph. */
-export function isOfflineReactModuleUrlForTests(url: URL): boolean {
-  return responsePath(url) !== undefined;
+export function isOfflineUnitModuleUrlForTests(url: URL): boolean {
+  return (url.origin === OFFLINE_REACT_ORIGIN &&
+    Object.hasOwn(OFFLINE_UNIT_MODULE_FIXTURES, url.pathname)) ||
+    responsePath(url) !== undefined;
 }
 
 /**

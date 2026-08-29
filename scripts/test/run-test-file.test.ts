@@ -54,6 +54,18 @@ describe("test:file task command", () => {
     assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), true);
     assertEquals(args.includes(LOOPBACK_ALLOW_NET), false);
   });
+
+  it("does not classify option values as integration targets", () => {
+    const args = buildTestFileCommandArgs([
+      "src/foo.test.ts",
+      "--filter",
+      "tests/integration",
+    ]);
+
+    assertEquals(args.includes("--allow-all"), false);
+    assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), false);
+    assertEquals(args.includes(LOOPBACK_ALLOW_NET), true);
+  });
 });
 
 describe("buildTestFileCommandArgs leak tracing", () => {

@@ -13,7 +13,7 @@ import "../schemas/_test-setup.ts";
 import { __installUnpinnedHostTransportForTests } from "../security/http/outbound-fetch.ts";
 import {
   installOfflineReactTransportForTests,
-  isOfflineReactModuleUrlForTests,
+  isOfflineUnitModuleUrlForTests,
   OFFLINE_REACT_TEST_ENV,
   prepareOfflineReactModulesForTests,
 } from "./offline-react-transport.ts";
@@ -28,7 +28,7 @@ if (Deno.env.get(OFFLINE_REACT_TEST_ENV) === "1") {
   const cacheDir = Deno.makeTempDirSync({ prefix: "veryfront-unit-cache-" });
   __setHttpModuleCacheDirResolverForTests((url, requestedCacheDir) =>
     requestedCacheDir === getHttpBundleCacheDir() &&
-      isOfflineReactModuleUrlForTests(new URL(url))
+      isOfflineUnitModuleUrlForTests(new URL(url))
       ? cacheDir
       : undefined
   );

@@ -3,8 +3,10 @@ import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/a
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import {
   createOfflineReactModuleResponseForTests,
-  isOfflineReactModuleUrlForTests,
+  installOfflineReactTransportForTests,
+  isOfflineUnitModuleUrlForTests,
 } from "./offline-react-transport.ts";
+import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 
 Deno.test("offline React transport serves the pinned module graph and nothing else", async () => {
   const entryUrls = [
@@ -22,8 +24,8 @@ Deno.test("offline React transport serves the pinned module graph and nothing el
   for (const url of entryUrls) {
     const moduleUrl = new URL(url);
     assertEquals(
-      isOfflineReactModuleUrlForTests(moduleUrl),
-      !moduleUrl.pathname.startsWith("/lodash"),
+      isOfflineUnitModuleUrlForTests(moduleUrl),
+      true,
     );
     const response = await createOfflineReactModuleResponseForTests(moduleUrl);
     assert(response !== undefined, url);
@@ -39,7 +41,7 @@ Deno.test("offline React transport serves the pinned module graph and nothing el
     undefined,
   );
   assertEquals(
-    isOfflineReactModuleUrlForTests(new URL("https://esm.sh/date-fns@4.1.0")),
+    isOfflineUnitModuleUrlForTests(new URL("https://esm.sh/date-fns@4.1.0")),
     false,
   );
   assertEquals(
@@ -48,4 +50,22 @@ Deno.test("offline React transport serves the pinned module graph and nothing el
     ),
     undefined,
   );
+});
+
+Deno.test("offline module transport passes its sentinel through the egress guard", async () => {
+  const restore = installOfflineReactTransportForTests();
+  try {
+    for (
+      const url of [
+        `https://esm.sh/react@${REACT_DEFAULT_VERSION}?target=es2022`,
+        "https://esm.sh/lodash",
+      ]
+    ) {
+      const response = await guardedOutboundFetch(url);
+      assertEquals(response.status, 200);
+      assertStringIncludes(await response.text(), "export");
+    }
+  } finally {
+    restore();
+  }
 });
