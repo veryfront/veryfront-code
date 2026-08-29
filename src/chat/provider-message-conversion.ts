@@ -159,7 +159,14 @@ function convertAssistantMessage(
     | { type: "text"; text: string }
     | { type: "reasoning"; text?: string; signature?: string; redactedData?: string }
     | { type: "file" | "image"; mediaType: string; data: string; filename?: string }
-    | { type: "tool-call"; toolCallId: string; toolName: string; input: Record<string, unknown> }
+    | {
+      type: "tool-call";
+      toolCallId: string;
+      toolName: string;
+      input: Record<string, unknown>;
+      providerExecuted?: boolean;
+    }
+    | ProviderToolResultContent
   > = [];
   const deferredAssistantContent: typeof assistantContent = [];
   const toolResults: ProviderToolResultContent[] = [];
@@ -195,7 +202,13 @@ function convertAssistantMessage(
       | { type: "text"; text: string }
       | { type: "reasoning"; text?: string; signature?: string; redactedData?: string }
       | { type: "file" | "image"; mediaType: string; data: string; filename?: string }
-      | { type: "tool-call"; toolCallId: string; toolName: string; input: Record<string, unknown> },
+      | {
+        type: "tool-call";
+        toolCallId: string;
+        toolName: string;
+        input: Record<string, unknown>;
+        providerExecuted?: boolean;
+      },
   ) => {
     if (part.type === "tool-call") {
       if (deferredAssistantContent.length > 0) {
@@ -252,20 +265,30 @@ function convertAssistantMessage(
       flushAssistantMessage(deferredAssistantContent);
     }
 
+    const providerExecuted = isRecord(part) && part.providerExecuted === true;
     pushAssistantPart({
       type: "tool-call",
       toolCallId: toolCall.toolCallId,
       toolName: toolCall.toolName,
       input: toolCall.input,
+      ...(providerExecuted ? { providerExecuted: true } : {}),
     });
 
     if (resultOutput) {
-      pushToolResult({
+      const toolResult: ProviderToolResultContent = {
         type: "tool-result",
         toolCallId: toolCall.toolCallId,
         toolName: toolCall.toolName,
         output: resultOutput,
-      });
+      };
+      // A provider-executed result is a block of the same assistant turn on the
+      // wire, so it stays inline instead of moving into a tool message.
+      if (providerExecuted) {
+        assistantContent.push(toolResult);
+        pendingToolCallIds.delete(toolCall.toolCallId);
+      } else {
+        pushToolResult(toolResult);
+      }
     }
   };
 

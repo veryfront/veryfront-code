@@ -1940,12 +1940,8 @@ Deno.test("prepareProviderModelMessagesFromUiMessages prefers completed tool out
           toolCallId: "toolu_01Search",
           toolName: "notion__search_notion",
           input: { query: "research notes" },
+          providerExecuted: true,
         },
-      ],
-    },
-    {
-      role: "tool",
-      content: [
         {
           type: "tool-result",
           toolCallId: "toolu_01Search",

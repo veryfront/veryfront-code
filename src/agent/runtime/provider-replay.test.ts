@@ -3,6 +3,7 @@ import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import type { Message } from "../types.ts";
+import { prepareHostedChatRuntimeMessages } from "../hosted/chat-preparation.ts";
 import {
   applyProviderReplayCheckpointsToMessages,
   parseProviderReplayCheckpoint,
@@ -904,6 +905,84 @@ describe("agent/runtime/provider-replay", () => {
       } as Message;
       assertProviderReplayError(() =>
         applyProviderReplayCheckpointsToMessages([target], [createValidCheckpoint()])
+      );
+    });
+
+    it("should accept a prepared provider-executed turn end to end", async () => {
+      const messages = await prepareHostedChatRuntimeMessages(
+        [
+          {
+            id: "user-1",
+            role: "user",
+            parts: [{ type: "text", text: "Search the official documentation." }],
+          },
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [
+              { type: "text", text: "Looking it up." },
+              {
+                type: "dynamic-tool",
+                toolName: "web_search",
+                toolCallId: "srvtool-web-search",
+                input: { query: "provider replay" },
+                state: "output-available",
+                providerExecuted: true,
+                output: [],
+              },
+            ],
+          },
+          {
+            id: "user-2",
+            role: "user",
+            parts: [{ type: "text", text: "Summarize the result." }],
+          },
+        ],
+        {
+          providerOwnedToolNames: ["web_search"],
+          providerReplayCheckpointMessageIds: ["assistant-1"],
+        },
+      );
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: "assistant-1",
+        provider: "anthropic",
+        providerBlocks: [
+          { type: "text", text: "Looking it up." },
+          {
+            type: "server_tool_use",
+            id: "srvtool-web-search",
+            name: "web_search",
+            input: { query: "provider replay" },
+            caller: { type: "direct" },
+          },
+          {
+            type: "web_search_tool_result",
+            tool_use_id: "srvtool-web-search",
+            caller: { type: "direct" },
+            content: [],
+          },
+        ].map((block) => ({
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block,
+        })),
+        providerBlockPositions: [0, 1, 2],
+        totalPartCount: 3,
+      };
+
+      applyProviderReplayCheckpointsToMessages(messages, [checkpoint]);
+
+      assertEquals(
+        readAttachedProviderMetadata(
+          messages.find((message) => message.id === "assistant-1") as Message,
+        ),
+        {
+          anthropic: {
+            rawAssistantMessages: [checkpoint.providerBlocks.map((block) => block.block)],
+          },
+        },
+        "the prepared provider-executed turn anchors its checkpoint",
       );
     });
 

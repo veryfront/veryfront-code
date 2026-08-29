@@ -92,6 +92,7 @@ export type AgentRuntimeMessagePart =
     toolCallId: string;
     toolName: string;
     args: Record<string, unknown>;
+    providerExecuted?: boolean;
   }
   | {
     type: "tool-result";
@@ -212,6 +213,7 @@ function convertStructuredPart(part: StructuredProviderPart): AgentRuntimeMessag
         toolCallId: part.toolCallId,
         toolName: part.toolName,
         args: "input" in part ? toChildRunToolInputRecord(part.input) : {},
+        ...(part.providerExecuted === true ? { providerExecuted: true } : {}),
       };
 
     case "tool-result":
