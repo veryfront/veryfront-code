@@ -838,7 +838,7 @@ jobs:
 
   # Clean-room install of the generated npm packages under Node: bare-install
   # CLI startup, optional-peer metadata, extension package loading, and a real
-  # starter dev-server render (see scripts/test/npm-install-smoke.sh).
+  # starter dev-server render (see scripts/test/npm-install-smoke.ts).
   npm-smoke-node-versions:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
@@ -902,7 +902,7 @@ jobs:
       - name: Clean-room install/import smoke
         env:
           VF_NPM_PACK_DIR: ${{ github.workspace }}/dist/npm-compatibility
-        run: bash scripts/test/npm-install-smoke.sh
+        run: deno run -A scripts/test/npm-install-smoke.ts
 
   quality-gate-artifact:
     name: quality gate (artifact)

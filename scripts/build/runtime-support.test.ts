@@ -95,7 +95,7 @@ describe("npm smoke Node support contract", () => {
     assert(
       smokeSteps.some((step) =>
         step.name === "Clean-room install/import smoke" &&
-        step.run === "bash scripts/test/npm-install-smoke.sh"
+        step.run === "deno run -A scripts/test/npm-install-smoke.ts"
       ),
       "Every matrix leg must run the existing packed clean-room smoke",
     );
