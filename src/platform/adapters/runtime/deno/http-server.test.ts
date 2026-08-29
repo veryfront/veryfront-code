@@ -344,6 +344,69 @@ describe("Deno HTTP server lifecycle", () => {
     assertEquals(error.message.toLowerCase().includes("already in use"), false);
   });
 
+  it("classifies a bind hostname that fails DNS resolution", async () => {
+    // A deployment bound through a DNS name that does not resolve made
+    // Deno.serve() throw the raw getaddrinfo error, which reached Sentry as an
+    // unhandled `Error: failed to lookup address information: Name or service
+    // not known` with no port and no classification
+    // (veryfront-issue-inbox#810, Sentry VERYFRONT-STUDIO-5J).
+    const lookupFailure = new Error(
+      "failed to lookup address information: Name or service not known",
+    );
+
+    const error = await assertRejects(
+      () =>
+        createDenoServerWithRuntime(
+          {
+            serve() {
+              throw lookupFailure;
+            },
+          },
+          () => new Response("ok"),
+          { hostname: "registry.internal", port: 4321 },
+        ),
+      Error,
+      "4321",
+    ) as Error & { slug?: string; cause?: unknown };
+
+    assertEquals(error.slug, "initialization-error");
+    // The bind host can be an internal DNS name, which must never reach an
+    // error message (AGENTS.md); the port is the reportable half.
+    assertEquals(error.message.includes("registry.internal"), false);
+    assertStringIncludes(error.message.toLowerCase(), "could not be resolved");
+    // The raw OS-level signature is preserved for Sentry correlation rather
+    // than swallowed.
+    assertStrictEquals(error.cause, lookupFailure);
+  });
+
+  it("names a loopback bind host that fails DNS resolution", async () => {
+    // `localhost` itself can fail to resolve on a broken NSS setup. It is on
+    // the loopback allowlist, so unlike an infrastructure hostname it is safe
+    // to name -- and naming it is what makes the fault actionable.
+    const lookupFailure = new Error(
+      "failed to lookup address information: nodename nor servname provided, or not known",
+    );
+
+    const error = await assertRejects(
+      () =>
+        createDenoServerWithRuntime(
+          {
+            serve() {
+              throw lookupFailure;
+            },
+          },
+          () => new Response("ok"),
+          { hostname: "localhost", port: 4321 },
+        ),
+      Error,
+      "localhost:4321",
+    ) as Error & { slug?: string; cause?: unknown };
+
+    assertEquals(error.slug, "initialization-error");
+    assertStringIncludes(error.message.toLowerCase(), "could not be resolved");
+    assertStrictEquals(error.cause, lookupFailure);
+  });
+
   it("treats a DNS name that merely starts with 127. as private", async () => {
     // `127.api.prod.internal` is a hostname, not a loopback literal. A `127.`
     // prefix check exposed it -- the same leak the redaction exists to prevent,

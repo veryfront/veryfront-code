@@ -40,6 +40,21 @@ function isAddressInUseError(error: unknown): boolean {
 }
 
 /**
+ * Whether `error` is a failure to resolve the bind hostname.
+ *
+ * Matched on the getaddrinfo message prefix that Deno surfaces on every
+ * platform ("Name or service not known" on Linux, "nodename nor servname
+ * provided, or not known" on macOS) because the error arrives as a plain
+ * `Error` with no name or code to key on. Deliberately narrow, like
+ * `isAddressInUseError` above: only the lookup signature is claimed, so an
+ * unrelated startup fault keeps its own identity.
+ */
+function isAddressResolutionError(error: unknown): boolean {
+  if (!isErrorAcrossRealms(error)) return false;
+  return error.message.toLowerCase().includes("failed to lookup address");
+}
+
+/**
  * The bind host rendered for an error message, or `undefined` to omit it.
  *
  * A deployment can bind through an internal DNS name, and AGENTS.md:124 lists
@@ -256,6 +271,27 @@ export async function createDenoServerWithRuntime(
     // hostname or port -- so an operator saw which process died but not which
     // address collided (veryfront-issue-inbox#806).
     //
+    // A bind hostname that fails DNS resolution throws the same way, and the
+    // raw `failed to lookup address information: ...` reached Sentry as an
+    // unhandled error with no port and no classification
+    // (veryfront-issue-inbox#810). The message deliberately does not contain
+    // the canonical in-use phrase: retrying other ports cannot fix a
+    // resolution fault, so the dev server's port fallback must not trigger.
+    if (isAddressResolutionError(error)) {
+      const safeHost = describeBindHost(hostname);
+      throw INITIALIZATION_ERROR.create({
+        detail: safeHost === undefined
+          ? `Bind hostname could not be resolved: port ${port}`
+          : `Bind hostname could not be resolved: ${safeHost}:${port}`,
+        context: {
+          platform: "deno",
+          operation: "serve",
+          port,
+          ...(safeHost === undefined ? {} : { hostname: safeHost }),
+        },
+        cause: error,
+      });
+    }
     // Only a bind failure is relabelled. Catching everything here would report
     // an unrelated startup fault as an address collision, which is worse than
     // the raw error it replaces, so anything else is rethrown untouched.
