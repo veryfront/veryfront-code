@@ -5,7 +5,7 @@ import {
   __installOutboundFetchTransportForTests,
 } from "#veryfront/security/http/outbound-fetch.ts";
 import { resolveHostAddresses } from "#veryfront/platform/compat/dns.ts";
-import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import { REACT_DEFAULT_VERSION, REACT_VERSION_18_3 } from "#veryfront/utils/constants/cdn.ts";
 import { EsbuildBundler } from "@veryfront/ext-bundler-esbuild";
 
 const OFFLINE_REACT_ORIGIN = "https://esm.sh";
@@ -19,18 +19,35 @@ const OFFLINE_UNIT_MODULE_FIXTURES: Readonly<Record<string, string>> = Object.fr
 
 export const OFFLINE_REACT_TEST_ENV = "VERYFRONT_TEST_OFFLINE_REACT";
 
+const OFFLINE_REACT_PACKAGE_URLS = Object.freeze({
+  [REACT_VERSION_18_3]: Object.freeze({
+    react: import.meta.resolve("npm:react@18.3.1"),
+    "react-dom": import.meta.resolve("npm:react-dom@18.3.1"),
+  }),
+  [REACT_DEFAULT_VERSION]: Object.freeze({
+    react: import.meta.resolve("npm:react@19.2.4"),
+    "react-dom": import.meta.resolve("npm:react-dom@19.2.4"),
+  }),
+});
+
+type OfflineReactVersion = keyof typeof OFFLINE_REACT_PACKAGE_URLS;
+
 type OfflineReactEntry = {
   readonly outputName: string;
-  readonly packageSpecifier: string;
+  readonly packageName: "react" | "react-dom";
   readonly exportNames: readonly string[];
   readonly sourceFileName?: string;
 };
+
+function isOfflineReactVersion(value: string): value is OfflineReactVersion {
+  return Object.hasOwn(OFFLINE_REACT_PACKAGE_URLS, value);
+}
 
 const OFFLINE_REACT_ENTRIES = Object.freeze(
   {
     react: {
       outputName: "react",
-      packageSpecifier: `npm:react@${REACT_DEFAULT_VERSION}`,
+      packageName: "react",
       exportNames: [
         "Activity",
         "Children",
@@ -80,17 +97,19 @@ const OFFLINE_REACT_ENTRIES = Object.freeze(
     },
     "react-jsx-runtime": {
       outputName: "react-jsx-runtime",
-      packageSpecifier: `npm:react@${REACT_DEFAULT_VERSION}/jsx-runtime`,
+      packageName: "react",
+      sourceFileName: "jsx-runtime.js",
       exportNames: ["Fragment", "jsx", "jsxs"],
     },
     "react-jsx-dev-runtime": {
       outputName: "react-jsx-dev-runtime",
-      packageSpecifier: `npm:react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime`,
+      packageName: "react",
+      sourceFileName: "jsx-dev-runtime.js",
       exportNames: ["Fragment", "jsxDEV"],
     },
     "react-dom": {
       outputName: "react-dom",
-      packageSpecifier: `npm:react-dom@${REACT_DEFAULT_VERSION}`,
+      packageName: "react-dom",
       exportNames: [
         "__DOM_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE",
         "createPortal",
@@ -110,12 +129,13 @@ const OFFLINE_REACT_ENTRIES = Object.freeze(
     },
     "react-dom-client": {
       outputName: "react-dom-client",
-      packageSpecifier: `npm:react-dom@${REACT_DEFAULT_VERSION}/client`,
+      packageName: "react-dom",
+      sourceFileName: "client.js",
       exportNames: ["createRoot", "hydrateRoot", "version"],
     },
     "react-dom-server": {
       outputName: "react-dom-server",
-      packageSpecifier: `npm:react-dom@${REACT_DEFAULT_VERSION}/server`,
+      packageName: "react-dom",
       sourceFileName: "server.edge.js",
       exportNames: [
         "renderToReadableStream",
@@ -132,10 +152,17 @@ type OfflineReactEntryKey = keyof typeof OFFLINE_REACT_ENTRIES;
 
 let bundledModules: Promise<ReadonlyMap<string, string>> | undefined;
 
-function createEntrySource(entry: OfflineReactEntry): string {
-  const resolvedUrl = new URL(import.meta.resolve(entry.packageSpecifier));
+function createEntrySource(
+  entry: OfflineReactEntry,
+  version: OfflineReactVersion,
+): string {
+  const resolvedUrl = new URL(OFFLINE_REACT_PACKAGE_URLS[version][entry.packageName]);
+  const sourceFileName = entry.outputName === "react-dom-server" &&
+      version === REACT_VERSION_18_3
+    ? "server.browser.js"
+    : entry.sourceFileName;
   const packagePath = fileURLToPath(
-    entry.sourceFileName === undefined ? resolvedUrl : new URL(entry.sourceFileName, resolvedUrl),
+    sourceFileName === undefined ? resolvedUrl : new URL(sourceFileName, resolvedUrl),
   );
   // The export list is maintained by hand and mirrors the esm.sh export
   // surface, which includes development-only names such as `act`; those
@@ -151,11 +178,19 @@ function createEntrySource(entry: OfflineReactEntry): string {
 async function buildOfflineReactModules(): Promise<ReadonlyMap<string, string>> {
   const bundler = new EsbuildBundler();
   try {
+    const react18Path = fileURLToPath(
+      new URL(OFFLINE_REACT_PACKAGE_URLS[REACT_VERSION_18_3].react),
+    );
+    const reactDom18Directory = fileURLToPath(
+      new URL(".", OFFLINE_REACT_PACKAGE_URLS[REACT_VERSION_18_3]["react-dom"]),
+    );
     const entryPoints = Object.fromEntries(
-      Object.entries(OFFLINE_REACT_ENTRIES).map(([key, entry]) => [
-        entry.outputName,
-        `offline-react:${key}`,
-      ]),
+      Object.keys(OFFLINE_REACT_PACKAGE_URLS).flatMap((version) =>
+        Object.entries(OFFLINE_REACT_ENTRIES).map(([key, entry]) => [
+          `${version}/${entry.outputName}`,
+          `offline-react:${version}:${key}`,
+        ])
+      ),
     );
     const result = await bundler.bundle({
       entryPoints,
@@ -166,13 +201,17 @@ async function buildOfflineReactModules(): Promise<ReadonlyMap<string, string>> 
       target: "es2022",
       write: false,
       outdir: "offline-react",
-      entryNames: "[name]",
+      entryNames: "[dir]/[name]",
       chunkNames: "chunks/[name]-[hash]",
       publicPath: `${OFFLINE_REACT_ORIGIN}${OFFLINE_REACT_MODULE_PREFIX.slice(0, -1)}`,
       define: { "process.env.NODE_ENV": '"production"' },
       plugins: [{
         name: "veryfront-offline-react-entries",
         setup(build) {
+          build.onResolve(
+            { filter: /^react$/ },
+            (args) => args.importer.startsWith(reactDom18Directory) ? { path: react18Path } : null,
+          );
           build.onResolve({ filter: /^offline-react:/ }, (args) => ({
             path: args.path.slice("offline-react:".length),
             namespace: "veryfront-offline-react",
@@ -180,10 +219,12 @@ async function buildOfflineReactModules(): Promise<ReadonlyMap<string, string>> 
           build.onLoad(
             { filter: /.*/, namespace: "veryfront-offline-react" },
             (args) => {
-              const entry = OFFLINE_REACT_ENTRIES[args.path as OfflineReactEntryKey];
+              const [version, key] = args.path.split(":", 2);
+              if (!version || !isOfflineReactVersion(version) || !key) return null;
+              const entry = OFFLINE_REACT_ENTRIES[key as OfflineReactEntryKey];
               if (!entry) return null;
               return {
-                contents: createEntrySource(entry),
+                contents: createEntrySource(entry, version),
                 loader: "js",
                 resolveDir: Deno.cwd(),
               };
@@ -221,14 +262,14 @@ export async function prepareOfflineReactModulesForTests(): Promise<void> {
 function responsePath(url: URL): string | undefined {
   if (url.origin !== OFFLINE_REACT_ORIGIN) return undefined;
   if (url.pathname.startsWith(OFFLINE_REACT_MODULE_PREFIX)) return url.pathname;
-  const match = /^\/(react|react-dom)@[^/]+(?:\/(jsx-runtime|jsx-dev-runtime|client|server))?$/
+  const match = /^\/(react|react-dom)@([^/]+)(?:\/(jsx-runtime|jsx-dev-runtime|client|server))?$/
     .exec(
       url.pathname,
     );
   if (!match) return undefined;
   const entryKey = (() => {
     const packageName = match[1];
-    const subpath = match[2];
+    const subpath = match[3];
     if (packageName === "react") {
       if (subpath === undefined) return "react";
       if (subpath === "jsx-runtime") return "react-jsx-runtime";
@@ -240,9 +281,10 @@ function responsePath(url: URL): string | undefined {
     if (subpath === "server") return "react-dom-server";
     return undefined;
   })() satisfies OfflineReactEntryKey | undefined;
-  return entryKey === undefined
+  const version = match[2];
+  return entryKey === undefined || !version || !isOfflineReactVersion(version)
     ? undefined
-    : `${OFFLINE_REACT_MODULE_PREFIX}${OFFLINE_REACT_ENTRIES[entryKey].outputName}.js`;
+    : `${OFFLINE_REACT_MODULE_PREFIX}${version}/${OFFLINE_REACT_ENTRIES[entryKey].outputName}.js`;
 }
 
 /** Return whether the URL is backed by the offline React module graph. */

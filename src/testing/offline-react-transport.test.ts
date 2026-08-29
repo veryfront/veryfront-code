@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import { REACT_DEFAULT_VERSION, REACT_VERSION_18_3 } from "#veryfront/utils/constants/cdn.ts";
+import {
+  getProjectReact,
+  resetReactCache,
+} from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 import {
   createOfflineReactModuleResponseForTests,
   installOfflineReactTransportForTests,
@@ -18,8 +22,8 @@ describe("offline React transport", () => {
       `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}?external=react`,
       `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/client?external=react`,
       `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/server?external=react`,
-      "https://esm.sh/react@18.3.1?target=es2022",
-      "https://esm.sh/react-dom@19.1.1/server?external=react",
+      `https://esm.sh/react@${REACT_VERSION_18_3}?target=es2022`,
+      `https://esm.sh/react-dom@${REACT_VERSION_18_3}/server?external=react`,
       "https://esm.sh/lodash",
     ];
 
@@ -52,6 +56,26 @@ describe("offline React transport", () => {
       ),
       undefined,
     );
+    assertEquals(
+      isOfflineUnitModuleUrlForTests(
+        new URL("https://esm.sh/react@19.1.1?target=es2022"),
+      ),
+      false,
+    );
+  });
+
+  it("serves the React version requested by the unit runtime", async () => {
+    resetReactCache();
+    try {
+      const react18 = await getProjectReact(REACT_VERSION_18_3);
+      const defaultReact = await getProjectReact(REACT_DEFAULT_VERSION);
+
+      assertEquals(react18.version, REACT_VERSION_18_3);
+      assertEquals(defaultReact.version, REACT_DEFAULT_VERSION);
+      assert(react18 !== defaultReact);
+    } finally {
+      resetReactCache();
+    }
   });
 
   it("passes its sentinel through the egress guard", async () => {
