@@ -5,9 +5,9 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module extensions/orchestrate.test
  */
 
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { firstPartyDeclarationName, orchestrateExtensions } from "./orchestrate.ts";
+import { orchestrateExtensions } from "./orchestrate.ts";
 import { mergeExtensions } from "./discovery.ts";
 import { reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
 import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
@@ -583,119 +583,18 @@ describe("orchestrateExtensions()", () => {
     await loader.teardownAll();
   });
 
-  it("ignores a first-party extension declaration with a warning", async () => {
-    // A dual-target config declares `extRedis()`; hosted evaluation reduces it
-    // to `{ name: "ext-redis" }`. The runtime provides the capability itself,
-    // so the declaration activates nothing (veryfront-issue-inbox#688).
-    const warnings: string[] = [];
-    const loader = await orchestrateExtensions({
-      projectDir: "/fake",
-      config: {
-        extensions: [{ name: "ext-redis" }],
-      },
-      logger: {
-        ...noopLogger,
-        warn: (message: string) => {
-          warnings.push(message);
-        },
-      },
-      discovery: emptyDiscovery(),
-    });
-
-    assertEquals(warnings.length, 1);
-    assertStringIncludes(warnings[0]!, "ext-redis");
-    await loader.teardownAll();
-  });
-
-  it("does not invoke an accessor while classifying a declaration marker", async () => {
-    // A hostile config entry whose sole property is a `name` getter must not
-    // execute user code during the marker precheck, and a getter-returned
-    // first-party name must not classify as an inert marker.
-    let invoked = 0;
-    const hostile = Object.defineProperty({}, "name", {
-      get() {
-        invoked += 1;
-        return "ext-redis";
-      },
-      enumerable: true,
-      configurable: true,
-    });
-
-    assertEquals(firstPartyDeclarationName(hostile as { name: string }), undefined);
-    assertEquals(invoked, 0, "the marker precheck must not invoke the accessor");
-
-    // The hostile entry falls through to ordinary extension validation, which
-    // rejects it instead of skipping it as an inert declaration.
+  it("rejects a bare first-party extension declaration", async () => {
+    // A self-hosted config can name a first-party extension without importing
+    // its factory. Orchestration must not silently drop the entry -- the
+    // project would boot without the capability it asked for.
     await assertRejects(() =>
       orchestrateExtensions({
         projectDir: "/fake",
-        config: { extensions: [hostile as { name: string }] },
+        config: { extensions: [{ name: "ext-redis" }] },
         logger: noopLogger,
         discovery: emptyDiscovery(),
       })
     );
-  });
-
-  it("does not classify an entry with hidden keys as a declaration marker", async () => {
-    // Non-enumerable fields and symbol keys are invisible to Object.keys, so a
-    // malformed materialized extension could otherwise be silently ignored as
-    // an inert declaration instead of failing validation.
-    const symbolKeyed = Object.defineProperty(
-      { name: "ext-redis" },
-      Symbol("hidden"),
-      { value: () => {}, enumerable: false },
-    );
-    const hiddenField = Object.defineProperty(
-      { name: "ext-redis" },
-      "setup",
-      { value: () => {}, enumerable: false },
-    );
-
-    assertEquals(firstPartyDeclarationName(symbolKeyed as { name: string }), undefined);
-    assertEquals(firstPartyDeclarationName(hiddenField as { name: string }), undefined);
-  });
-
-  it("classifies a revoked proxy as a non-marker instead of throwing", () => {
-    // A throwing ownKeys trap or a revoked proxy must fall through to
-    // ordinary extension validation, which owns the typed error, rather than
-    // escaping as a raw trap error from the precheck.
-    const { proxy, revoke } = Proxy.revocable({ name: "ext-redis" }, {});
-    revoke();
-    assertEquals(firstPartyDeclarationName(proxy as { name: string }), undefined);
-
-    const throwingTrap = new Proxy({ name: "ext-redis" }, {
-      ownKeys() {
-        throw new Error("trap error must not escape the precheck");
-      },
-    });
-    assertEquals(firstPartyDeclarationName(throwingTrap as { name: string }), undefined);
-  });
-
-  it("warns using the validated name, never re-reading the entry", async () => {
-    // A proxy can report an honest data-property descriptor while its get
-    // trap throws; the warning must use the descriptor value captured during
-    // classification instead of reading `entry.name` again.
-    const twoFaced = new Proxy({ name: "ext-redis" }, {
-      get() {
-        throw new Error("get trap must not run after classification");
-      },
-    });
-    const warnings: string[] = [];
-    const loader = await orchestrateExtensions({
-      projectDir: "/fake",
-      config: { extensions: [twoFaced as { name: string }] },
-      logger: {
-        ...noopLogger,
-        warn: (message: string) => {
-          warnings.push(message);
-        },
-      },
-      discovery: emptyDiscovery(),
-    });
-
-    assertEquals(warnings.length, 1);
-    assertStringIncludes(warnings[0]!, "ext-redis");
-    await loader.teardownAll();
   });
 
   it("keeps rejecting a bare name that is not a first-party extension", async () => {

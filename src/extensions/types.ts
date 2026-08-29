@@ -66,9 +66,10 @@ export type ExtensionConfigEntry =
   | Extension
   | { name: string; enabled: false }
   /**
-   * First-party extension declaration: the capability is provided by the
-   * runtime itself, so the entry is accepted and ignored with a warning
-   * (veryfront-issue-inbox#688).
+   * Declaration marker produced by hosted declarative evaluation, where the
+   * platform provides the capability itself and the entry is ignored with a
+   * warning (veryfront-issue-inbox#688). Self-hosted orchestration rejects it:
+   * a project that names an extension must supply its factory.
    */
   | { name: string };
 

@@ -13,10 +13,7 @@ import { getDeferredExtensionState } from "./deferred-extension.ts";
 import * as defaultDiscovery from "./discovery.ts";
 import type { BoundExtensionEntrypoint } from "./entrypoint-identity.ts";
 import { loadExtensionFactory as defaultLoadFactory } from "./factory-loader.ts";
-import {
-  FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES,
-  FIRST_PARTY_EXTENSION_POLICIES,
-} from "./first-party-defaults.ts";
+import { FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES } from "./first-party-defaults.ts";
 import { ExtensionLoader } from "./loader.ts";
 import type {
   Extension,
@@ -86,45 +83,6 @@ const FIRST_PARTY_BUILTIN_EXTENSION_TO_PACKAGE = new Map(
     `@veryfront/${policy.sourceDirectory}`,
   ]),
 );
-
-const FIRST_PARTY_EXTENSION_NAMES = new Set(
-  FIRST_PARTY_EXTENSION_POLICIES.map((policy) => policy.name),
-);
-
-/**
- * A first-party extension declaration, `{ name: "ext-..." }` and nothing
- * else, the inert marker a hosted declarative config produces for an
- * imported extension factory call (veryfront-issue-inbox#688). The runtime
- * provides the capability itself, so the declaration activates nothing.
- *
- * @internal Exported for direct accessor-safety coverage.
- */
-export function firstPartyDeclarationName(
-  entry: ExtensionConfigEntry,
-): string | undefined {
-  if (typeof entry !== "object" || entry === null) return undefined;
-  try {
-    // Reflect.ownKeys sees non-enumerable and symbol keys that Object.keys
-    // misses: a malformed materialized extension carrying hidden fields must
-    // fail validation, not vanish as an inert declaration.
-    const keys = Reflect.ownKeys(entry);
-    if (keys.length !== 1 || keys[0] !== "name") return undefined;
-    // Descriptor inspection, like validateExtension: an accessor-backed `name`
-    // must neither run user code here nor classify as an inert marker. The
-    // validated descriptor value is returned so callers never read the entry
-    // again -- a proxy can pair an honest descriptor with a throwing get trap.
-    const descriptor = Object.getOwnPropertyDescriptor(entry, "name");
-    return descriptor !== undefined && "value" in descriptor &&
-        typeof descriptor.value === "string" &&
-        FIRST_PARTY_EXTENSION_NAMES.has(descriptor.value)
-      ? descriptor.value
-      : undefined;
-  } catch {
-    // A revoked proxy or throwing trap is not a marker; ordinary extension
-    // validation owns the typed error for it.
-    return undefined;
-  }
-}
 
 function isDisableDirective(
   entry: ExtensionConfigEntry,
@@ -238,16 +196,8 @@ async function orchestrateExtensionGeneration(
   const configResolved: ResolvedExtension[] = [];
 
   for (const entry of configEntries) {
-    const declarationName = isDisableDirective(entry)
-      ? undefined
-      : firstPartyDeclarationName(entry);
     if (isDisableDirective(entry)) {
       disables.push(entry);
-    } else if (declarationName !== undefined) {
-      logger.warn(
-        `Extension "${declarationName}" is declared in the project config, but this runtime ` +
-          `provides the capability itself; the declaration is ignored.`,
-      );
     } else {
       configResolved.push({
         extension: entry as Extension,
