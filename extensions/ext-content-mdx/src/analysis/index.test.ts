@@ -2,6 +2,7 @@ import {
   assert,
   assertEquals,
   assertLess,
+  assertRejects,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -1023,5 +1024,15 @@ describe("analyzeContent MDX", () => {
 
     assert(result.kind === "syntax-error");
     assertLess(performance.now() - startedAt, 2_000);
+  });
+
+  it("propagates unpositioned parser recursion failures", async () => {
+    const depth = 12_000;
+    const value = "<A>".repeat(depth) + "text" + "</A>".repeat(depth);
+
+    await assertRejects(
+      () => analyzeContent({ value, syntax: "mdx" }),
+      RangeError,
+    );
   });
 });
