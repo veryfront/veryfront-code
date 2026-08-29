@@ -1,6 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertMatch, assertStringIncludes, assertThrows } from "#std/assert";
-import type { ChatUiMessage, ProviderModelMessage } from "./types.ts";
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertStrictEquals,
+  assertStringIncludes,
+  assertThrows,
+} from "#std/assert";
+import type { ChatToolResultPart, ChatUiMessage, ProviderModelMessage } from "./types.ts";
 import { withProviderModelMessageSourceId } from "./conversation.ts";
 import type { HistoricalToolInputCompactionDiagnostic } from "./message-prep.ts";
 import {
@@ -216,6 +223,205 @@ Deno.test("repairToolPairs never steals a matching result from a later user turn
     },
     messages[1]!,
     messages[2]!,
+  ]);
+});
+
+Deno.test("repairToolPairs leaves a provider-executed call whose result is the next tool message", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "srv-search",
+        toolName: "web_search",
+        input: { query: "veryfront" },
+        providerExecuted: true,
+      }],
+    },
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "srv-search",
+        toolName: "web_search",
+        output: { type: "json", value: { results: [] } },
+      }],
+    },
+  ] satisfies ProviderModelMessage[];
+
+  const repaired = repairToolPairs(messages);
+
+  assertStrictEquals(repaired, messages, "an already-paired turn must not be rewritten");
+  assertEquals(
+    JSON.stringify(repaired).match(/\[tool result unavailable\]/g),
+    null,
+    "the provider result that follows the call must not be shadowed by a placeholder",
+  );
+});
+
+Deno.test("repairToolPairs appends an inline placeholder for an unanswered provider-executed call", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "srv-fetch",
+        toolName: "web_fetch",
+        input: { url: "https://example.com" },
+        providerExecuted: true,
+      }],
+    },
+  ] satisfies ProviderModelMessage[];
+
+  assertEquals(repairToolPairs(messages), [
+    {
+      role: "assistant",
+      content: [
+        messages[0]!.content[0]!,
+        {
+          type: "tool-result",
+          toolCallId: "srv-fetch",
+          toolName: "web_fetch",
+          output: { type: "text", value: "[tool result unavailable]" },
+        },
+      ],
+    },
+  ]);
+});
+
+Deno.test("repairToolPairs leaves a provider-executed call whose result is already inline", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "srv-exec",
+          toolName: "code_execution",
+          input: { code: "1 + 1" },
+          providerExecuted: true,
+        },
+        {
+          type: "tool-result",
+          toolCallId: "srv-exec",
+          toolName: "code_execution",
+          output: { type: "json", value: { stdout: "2" } },
+        },
+      ],
+    },
+  ] satisfies ProviderModelMessage[];
+
+  const repaired = repairToolPairs(messages);
+
+  assertStrictEquals(repaired, messages, "an inline provider result must not be rewritten");
+  assertEquals(
+    JSON.stringify(repaired).match(/\[tool result unavailable\]/g),
+    null,
+    "the inline provider result must not be duplicated by a placeholder",
+  );
+});
+
+Deno.test("repairToolPairs keeps unrelated results when pulling one out of a later tool message", () => {
+  const unrelatedResult = {
+    type: "tool-result",
+    toolCallId: "call-z",
+    toolName: "lookup",
+    output: { type: "json", value: { from: "unrelated call" } },
+  } satisfies ChatToolResultPart;
+  const otherPendingResult = {
+    type: "tool-result",
+    toolCallId: "call-b",
+    toolName: "lookup",
+    output: { type: "json", value: { from: "other pending call" } },
+  } satisfies ChatToolResultPart;
+  const matchingResult = {
+    type: "tool-result",
+    toolCallId: "call-a",
+    toolName: "lookup",
+    output: { type: "json", value: { from: "matching call" } },
+  } satisfies ChatToolResultPart;
+  const messages = [
+    {
+      role: "assistant",
+      content: [{ type: "tool-call", toolCallId: "call-a", toolName: "lookup", input: {} }],
+    },
+    { role: "assistant", content: [{ type: "text", text: "Still working." }] },
+    { role: "tool", content: [unrelatedResult] },
+    { role: "tool", content: [otherPendingResult, matchingResult] },
+  ] satisfies ProviderModelMessage[];
+
+  assertEquals(repairToolPairs(messages), [
+    messages[0]!,
+    { role: "tool", content: [matchingResult] },
+    messages[1]!,
+    messages[2]!,
+    { role: "tool", content: [otherPendingResult] },
+  ]);
+});
+
+Deno.test("repairToolPairs prepends a recovered result into the adjacent tool message", () => {
+  const adjacentResult = {
+    type: "tool-result",
+    toolCallId: "call-c",
+    toolName: "lookup",
+    output: { type: "json", value: { from: "already adjacent" } },
+  } satisfies ChatToolResultPart;
+  const strandedResult = {
+    type: "tool-result",
+    toolCallId: "call-a",
+    toolName: "lookup",
+    output: { type: "json", value: { from: "stranded result" } },
+  } satisfies ChatToolResultPart;
+  const messages = [
+    {
+      role: "assistant",
+      content: [{ type: "tool-call", toolCallId: "call-a", toolName: "lookup", input: {} }],
+    },
+    { role: "tool", content: [adjacentResult] },
+    { role: "assistant", content: [{ type: "text", text: "Still working." }] },
+    { role: "tool", content: [strandedResult] },
+  ] satisfies ProviderModelMessage[];
+
+  assertEquals(repairToolPairs(messages), [
+    messages[0]!,
+    { role: "tool", content: [strandedResult, adjacentResult] },
+    messages[2]!,
+  ]);
+});
+
+Deno.test("repairToolPairs stops scanning for a stranded result at the next user turn", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: [{ type: "tool-call", toolCallId: "call-a", toolName: "lookup", input: {} }],
+    },
+    { role: "assistant", content: [{ type: "text", text: "Still working." }] },
+    { role: "user", content: "Start a new turn." },
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "call-a",
+        toolName: "lookup",
+        output: { type: "json", value: { from: "later turn" } },
+      }],
+    },
+  ] satisfies ProviderModelMessage[];
+
+  assertEquals(repairToolPairs(messages), [
+    messages[0]!,
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "call-a",
+        toolName: "lookup",
+        output: { type: "text", value: "[tool result unavailable]" },
+      }],
+    },
+    messages[1]!,
+    messages[2]!,
+    messages[3]!,
   ]);
 });
 

@@ -545,6 +545,54 @@ describe("text-generation-runtime-message-converter", () => {
       );
     });
 
+    it("splits anthropic raw assistant messages across the split assistant turns", () => {
+      const rawToolUse = {
+        type: "tool_use",
+        id: "call-1",
+        name: "lookup",
+        input: { query: "veryfront" },
+      };
+      const rawText = { type: "text", text: "Found it." };
+      const message = attachProviderMetadata({
+        id: "a-split",
+        role: "assistant",
+        parts: [
+          { type: "tool-lookup", toolCallId: "call-1", toolName: "lookup", args: rawToolUse.input },
+          { type: "tool-result", toolCallId: "call-1", toolName: "lookup", result: { matches: 1 } },
+          { type: "text", text: "Found it." },
+        ],
+      } as unknown as Message, { anthropic: { rawAssistantMessages: [[rawToolUse], [rawText]] } });
+
+      const converted = convertToTextGenerationRuntimeMessages([message]);
+      const assistantMetadata = converted
+        .filter((entry) => entry.role === "assistant")
+        .map((entry) => entry.providerMetadata);
+
+      assertEquals(assistantMetadata, [
+        { anthropic: { rawAssistantMessages: [[rawToolUse]] } },
+        { anthropic: { rawAssistantMessages: [[rawText]] } },
+      ]);
+    });
+
+    it("rejects anthropic raw assistant messages that do not match the split segments", () => {
+      const message = attachProviderMetadata({
+        id: "a-split",
+        role: "assistant",
+        parts: [
+          { type: "tool-lookup", toolCallId: "call-1", toolName: "lookup", args: { q: "vf" } },
+          { type: "tool-result", toolCallId: "call-1", toolName: "lookup", result: { matches: 1 } },
+          { type: "text", text: "Found it." },
+        ],
+      } as unknown as Message, {
+        anthropic: { rawAssistantMessages: [[{ type: "text", text: "Found it." }]] },
+      });
+
+      const error = assertThrows(() => convertToTextGenerationRuntimeMessages([message]));
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "provider-metadata-split-unsupported");
+      assertEquals(error.context, { assistantSegmentCount: 2 });
+    });
+
     it("omits provider-executed tool-only assistant messages from replay", () => {
       const messages = [
         { id: "u1", role: "user", parts: [{ type: "text", text: "search tax guidance" }] },
