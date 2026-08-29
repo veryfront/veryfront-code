@@ -188,9 +188,15 @@ async function withVerifiedRunEventAppendToken(
 ): Promise<ParsedHostedChatRequest | Response> {
   const token = request.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER)?.trim();
   if (!token) {
+    const hasLegacyReplayState = isRecord(parsedRequest.forwardedProps) &&
+      Object.hasOwn(
+        parsedRequest.forwardedProps,
+        "serverResolvedProviderReplayCheckpoints",
+      );
     if (
       trustServerEnvelope &&
-      Object.hasOwn(parsedRequest, "serverResolvedProviderReplayCheckpoints")
+      (Object.hasOwn(parsedRequest, "serverResolvedProviderReplayCheckpoints") ||
+        hasLegacyReplayState)
     ) {
       return Response.json(
         { errorCode: "INVALID_RUN_EVENT_APPEND_TOKEN" },

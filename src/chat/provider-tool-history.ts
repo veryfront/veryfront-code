@@ -38,21 +38,12 @@ export function stripProviderOwnedToolParts(
   const providerOwnedNames = new Set(providerOwnedToolNames);
   const preservedMessageIds = new Set(preserveSourceMessageIds ?? []);
   const preservedToolCallIds = new Set<string>();
-  for (const message of messages) {
-    if (!preservedMessageIds.has(message.id)) continue;
-    for (const part of message.parts) {
-      const toolName = getMessagePartToolName(part);
-      const toolCallId = getMessagePartToolCallId(part);
-      if (toolCallId && toolName && providerOwnedNames.has(toolName)) {
-        preservedToolCallIds.add(toolCallId);
-      }
-    }
-  }
   const providerOwnedToolCallIds = new Set<string>();
 
   return messages.map((message) => {
     if (message.role === "user" || message.role === "system") {
       providerOwnedToolCallIds.clear();
+      preservedToolCallIds.clear();
       return message;
     }
 
@@ -63,6 +54,14 @@ export function stripProviderOwnedToolParts(
       const ownedByName = toolName ? providerOwnedNames.has(toolName) : false;
       const ownedByCallId = toolCallId ? providerOwnedToolCallIds.has(toolCallId) : false;
 
+      if (
+        preservedMessageIds.has(message.id) &&
+        toolCallId &&
+        (ownedByName || ownedByCallId)
+      ) {
+        preservedToolCallIds.add(toolCallId);
+        return true;
+      }
       if (toolCallId && preservedToolCallIds.has(toolCallId)) {
         return true;
       }

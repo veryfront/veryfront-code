@@ -1,5 +1,6 @@
 import {
   copyProviderModelMessageSourceId,
+  getProviderModelMessageSourceId,
   isToolCallPart,
   isToolResultPart,
 } from "./conversation.ts";
@@ -20,9 +21,15 @@ function createSyntheticToolResult(toolCallId: string, toolName: string): ChatTo
 }
 
 /** Repair tool pairs. */
-export function repairToolPairs(messages: ProviderModelMessage[]): ProviderModelMessage[] {
+function repairToolPairsWithOptions(
+  messages: ProviderModelMessage[],
+  options: { preserveUnresolvedProviderCallSourceMessageIds?: readonly string[] } = {},
+): ProviderModelMessage[] {
   const result = [...messages];
   let mutated = false;
+  const preservedUnresolvedCallSourceIds = new Set(
+    options.preserveUnresolvedProviderCallSourceMessageIds ?? [],
+  );
 
   for (let index = 0; index < result.length; index++) {
     const message = result[index];
@@ -54,9 +61,11 @@ export function repairToolPairs(messages: ProviderModelMessage[]): ProviderModel
       const toolName = part.toolName ?? "unknown";
 
       if (part.providerExecuted) {
+        const sourceId = getProviderModelMessageSourceId(message);
         if (
           !inlineResultIds.has(part.toolCallId) &&
-          !hasImmediateToolResult(nextMessage, part.toolCallId)
+          !hasImmediateToolResult(nextMessage, part.toolCallId) &&
+          (sourceId === undefined || !preservedUnresolvedCallSourceIds.has(sourceId))
         ) {
           repairedContent.push(createSyntheticToolResult(part.toolCallId, toolName));
           mutated = true;
@@ -159,4 +168,19 @@ export function repairToolPairs(messages: ProviderModelMessage[]): ProviderModel
   }
 
   return mutated ? result : messages;
+}
+
+/** Repair tool pairs. */
+export function repairToolPairs(messages: ProviderModelMessage[]): ProviderModelMessage[] {
+  return repairToolPairsWithOptions(messages);
+}
+
+/** Repair tool pairs while retaining unresolved calls backed by replay checkpoints. */
+export function repairToolPairsForPreparation(
+  messages: ProviderModelMessage[],
+  preserveUnresolvedProviderCallSourceMessageIds: readonly string[] | undefined,
+): ProviderModelMessage[] {
+  return repairToolPairsWithOptions(messages, {
+    preserveUnresolvedProviderCallSourceMessageIds,
+  });
 }

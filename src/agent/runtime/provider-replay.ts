@@ -5,6 +5,7 @@ import {
 } from "#veryfront/agent/runtime/provider-metadata.ts";
 import { stringifyChatJson } from "#veryfront/chat/json-value.ts";
 import { snapshotProviderJsonValue } from "#veryfront/provider/runtime-loader.ts";
+import { safeJsonParse } from "#veryfront/utils/json.ts";
 import type { Message } from "../types.ts";
 import { convertAgentRuntimeMessagesToProviderMessages } from "./message-adapter.ts";
 import {
@@ -13,7 +14,10 @@ import {
   MAX_PROVIDER_REPLAY_RAW_METADATA_NODES,
   MAX_PROVIDER_REPLAY_RAW_METADATA_STRING_CHARS,
 } from "./provider-replay-limits.ts";
-import { isAnthropicProviderToolResultBlock } from "./anthropic-provider-replay-block.ts";
+import {
+  groupAnthropicRawAssistantMessagesByAnchor,
+  isAnthropicProviderToolResultBlock,
+} from "./anthropic-provider-replay-block.ts";
 
 const MAX_PROVIDER_REPLAY_BLOCKS = 100;
 const MAX_PROVIDER_REPLAY_CHECKPOINTS = 100;
@@ -936,12 +940,13 @@ function toTranscriptVisibleProviderPart(
       }
       const hasResult = "result" in part || "output" in part;
       const rawResult = "result" in part ? part.result : part.output;
+      const isPreparedError = isRecord(rawResult) && rawResult.type === "error-text";
       return {
         type: "tool-result",
         toolCallId: part.toolCallId,
         ...(providerExecutedToolCallIds.has(part.toolCallId) ? { providerExecuted: true } : {}),
         ...(hasResult ? { result: unwrapPreparedProviderResult(rawResult) } : {}),
-        ...(part.isError === true ? { isError: true } : {}),
+        ...(part.isError === true || isPreparedError ? { isError: true } : {}),
       };
     }
     default:
@@ -950,9 +955,11 @@ function toTranscriptVisibleProviderPart(
 }
 
 function unwrapPreparedProviderResult(value: unknown): unknown {
-  return isRecord(value) && value.type === "json" && Object.hasOwn(value, "value")
-    ? value.value
-    : value;
+  if (!isRecord(value) || !Object.hasOwn(value, "value")) return value;
+  if (value.type === "json") return value.value;
+  if (value.type !== "error-text" || typeof value.value !== "string") return value;
+  const parsed = safeJsonParse(value.value);
+  return parsed.ok ? parsed.value : value.value;
 }
 
 // A persisted assistant turn carries at most one leading text part, so provider
@@ -1147,9 +1154,17 @@ function getRawAssistantMessagesForCheckpoint(
 
 function splitAnthropicAssistantReplayBlocks(
   checkpoint: ProviderReplayCheckpoint,
-): Record<string, unknown>[][] {
+  anchorCount: number,
+): Record<string, unknown>[][][] {
   if (checkpoint.providerMessageBlockCounts !== undefined) {
-    return getRawAssistantMessagesForCheckpoint(checkpoint);
+    const grouped = groupAnthropicRawAssistantMessagesByAnchor(
+      getRawAssistantMessagesForCheckpoint(checkpoint),
+      anchorCount,
+    );
+    if (grouped === undefined) {
+      invalidCheckpoint("checkpoint split assistant segment count does not match its anchor");
+    }
+    return grouped;
   }
   const segments: Record<string, unknown>[][] = [];
   let current: Record<string, unknown>[] = [];
@@ -1167,14 +1182,14 @@ function splitAnthropicAssistantReplayBlocks(
   if (current.length > 0) {
     segments.push(current);
   }
-  return segments;
+  return segments.map((segment) => [segment]);
 }
 
 function assertCheckpointMatchesSplitAssistantTurns(
   sameSourceMessages: readonly Message[],
   assistantMatches: readonly Message[],
   checkpoint: ProviderReplayCheckpoint,
-): Record<string, unknown>[][] {
+): Record<string, unknown>[][][] {
   const providerExecutedToolCallIds = getProviderExecutedToolCallIdsFromMessages(
     sameSourceMessages,
   );
@@ -1190,13 +1205,13 @@ function assertCheckpointMatchesSplitAssistantTurns(
     projectProviderToolResults(sameSourceMessages, providerExecutedToolCallIds),
   );
 
-  const rawSegments = splitAnthropicAssistantReplayBlocks(checkpoint);
+  const rawSegments = splitAnthropicAssistantReplayBlocks(checkpoint, assistantMatches.length);
   if (rawSegments.length !== assistantMatches.length) {
     invalidCheckpoint("checkpoint split assistant segment count does not match its anchor");
   }
   for (const [index, rawSegment] of rawSegments.entries()) {
     const rawSegmentProjection = projectCheckpointVisibleParts(
-      createCheckpointForRawBlocks(checkpoint, rawSegment),
+      createCheckpointForRawBlocks(checkpoint, rawSegment.flat()),
     );
     const rawSegmentAssistantProjection = normalizeTranscriptVisibleProjection(
       rawSegmentProjection.filter((part) => part.type !== "tool-result"),
@@ -1533,7 +1548,7 @@ export function applyProviderReplayCheckpointsToMessages(
       checkpoint,
     );
     for (const [index, rawBlocks] of rawSegments.entries()) {
-      attachmentPlan.push({ target: assistantMatches[index]!, rawAssistantMessages: [rawBlocks] });
+      attachmentPlan.push({ target: assistantMatches[index]!, rawAssistantMessages: rawBlocks });
     }
   }
   for (const { target, rawAssistantMessages } of attachmentPlan) {

@@ -11,6 +11,9 @@ import {
 } from "./provider-replay.ts";
 import { attachProviderMetadata, readAttachedProviderMetadata } from "./provider-metadata.ts";
 import { convertToTextGenerationRuntimeMessages } from "./text-generation-runtime-message-converter.ts";
+import { convertProviderMessagesToAgentRuntimeMessages } from "./message-adapter.ts";
+import { buildToolResultOutput } from "#veryfront/chat/message-part-parsing.ts";
+import { withProviderModelMessageSourceId } from "#veryfront/chat/conversation.ts";
 
 const SIGNATURE = "sig-secret-9f8e7d6c5b4a";
 const REDACTED_DATA = "redacted-secret-0a1b2c3d";
@@ -1462,6 +1465,77 @@ describe("agent/runtime/provider-replay", () => {
       );
     });
 
+    it("should preserve prepared provider errors through runtime conversion", () => {
+      const providerCall = {
+        type: "server_tool_use",
+        id: "srvtool-prepared-error",
+        name: "web_search",
+        input: { query: "provider replay" },
+        caller: { type: "direct" },
+      };
+      const providerResult = {
+        type: "web_search_tool_result",
+        tool_use_id: providerCall.id,
+        caller: { type: "direct" },
+        content: {
+          type: "web_search_tool_result_error",
+          error_code: "max_uses_exceeded",
+        },
+      };
+      const canonicalError = {
+        name: "AnthropicServerToolResultError",
+        provider: "anthropic",
+        code: "max_uses_exceeded",
+        toolCallId: providerCall.id,
+        toolName: providerCall.name,
+      };
+      const sourceId = "assistant-prepared-error";
+      const preparedError = buildToolResultOutput({
+        state: "output-error",
+        output: canonicalError,
+      });
+      const runtimeMessages = convertProviderMessagesToAgentRuntimeMessages([
+        withProviderModelMessageSourceId({
+          role: "assistant",
+          content: [{
+            type: "tool-call",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            input: providerCall.input,
+            providerExecuted: true,
+          }],
+        }, sourceId),
+        withProviderModelMessageSourceId({
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: providerCall.id,
+            toolName: providerCall.name,
+            output: preparedError!,
+            providerExecuted: true,
+          }],
+        }, sourceId),
+      ]);
+      const checkpoint: ProviderReplayCheckpoint = {
+        version: 1,
+        messageId: sourceId,
+        provider: "anthropic",
+        providerBlocks: [providerCall, providerResult].map((block) => ({
+          type: "provider-block" as const,
+          provider: "anthropic" as const,
+          block,
+        })),
+        providerBlockPositions: [0, 1],
+        totalPartCount: 2,
+      };
+
+      applyProviderReplayCheckpointsToMessages(runtimeMessages, [checkpoint]);
+
+      assertEquals(readAttachedProviderMetadata(runtimeMessages[0]!), {
+        anthropic: { rawAssistantMessages: [[providerCall, providerResult]] },
+      });
+    });
+
     it("should reject outer provider tool-result error block types", () => {
       const variants: ReadonlyArray<{
         readonly toolName: string;
@@ -2381,7 +2455,7 @@ describe("agent/runtime/provider-replay", () => {
           block,
         })),
         providerBlockPositions: [0, 1, 2],
-        providerMessageBlockCounts: [2, 1],
+        providerMessageBlockCounts: [1, 1, 1],
         totalPartCount: 3,
       };
 
@@ -2392,13 +2466,13 @@ describe("agent/runtime/provider-replay", () => {
 
       assertEquals(
         readAttachedProviderMetadata(leadingAssistant),
-        { anthropic: { rawAssistantMessages: [[providerCall, providerResult]] } },
-        "the first same-source assistant keeps its declared raw provider-result sibling",
+        { anthropic: { rawAssistantMessages: [[providerCall]] } },
+        "the first same-source assistant keeps its declared provider call",
       );
       assertEquals(
         readAttachedProviderMetadata(trailingAssistant),
-        { anthropic: { rawAssistantMessages: [[trailingText]] } },
-        "the second same-source assistant keeps the declared trailing raw text group",
+        { anthropic: { rawAssistantMessages: [[providerResult], [trailingText]] } },
+        "the result-only response is coalesced with the following assistant anchor",
       );
       assertEquals(readAttachedProviderMetadata(toolSibling), undefined);
     });

@@ -12,7 +12,10 @@ import {
   type ProviderMessageSanitizationOptions,
   shouldPreserveEmptyAssistantMessage,
 } from "./provider-message-anchor-preservation.ts";
-import { repairToolPairs } from "./provider-message-tool-pair-repair.ts";
+import {
+  repairToolPairs,
+  repairToolPairsForPreparation,
+} from "./provider-message-tool-pair-repair.ts";
 import { findProviderVisibleToolReplayMatches } from "./tool-replay-reconciliation.ts";
 import {
   buildDataFileAnnotation,
@@ -1097,7 +1100,10 @@ export function prepareProviderModelMessagesFromUiMessages(
   const compactedInputs = compactOldToolInputs(masked, historicalToolInputRetention);
   const compacted = enforceTokenBudget(compactedInputs);
   const filtered = filterValidMessages(compacted, preserveOptions);
-  return repairToolPairs(filtered);
+  return repairToolPairsForPreparation(
+    filtered,
+    options.preserveProviderOwnedToolSourceMessageIds,
+  );
 }
 
 function buildToolCallMap(messages: ProviderModelMessage[]): Map<string, ToolCallInfo> {

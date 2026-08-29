@@ -9,6 +9,7 @@ import {
 } from "#std/assert";
 import type { ChatToolResultPart, ChatUiMessage, ProviderModelMessage } from "./types.ts";
 import { withProviderModelMessageSourceId } from "./conversation.ts";
+import { repairToolPairsForPreparation } from "./provider-message-tool-pair-repair.ts";
 import type { HistoricalToolInputCompactionDiagnostic } from "./message-prep.ts";
 import {
   compactForStep,
@@ -287,6 +288,25 @@ Deno.test("repairToolPairs appends an inline placeholder for an unanswered provi
       ],
     },
   ]);
+});
+
+Deno.test("repairToolPairs leaves checkpoint-preserved provider calls unresolved", () => {
+  const sourceId = "assistant-checkpoint";
+  const message = withProviderModelMessageSourceId({
+    role: "assistant",
+    content: [{
+      type: "tool-call",
+      toolCallId: "srv-deferred",
+      toolName: "mcp_deferred",
+      input: { query: "later" },
+      providerExecuted: true,
+    }],
+  }, sourceId);
+
+  assertEquals(
+    repairToolPairsForPreparation([message], [sourceId]),
+    [message],
+  );
 });
 
 Deno.test("repairToolPairs leaves a provider-executed call whose result is already inline", () => {
