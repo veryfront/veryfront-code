@@ -1,7 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { VeryfrontError } from "#veryfront/errors";
 import type { AgentConfig } from "../types.ts";
 import type { ProviderReplayCheckpoint } from "./provider-replay.ts";
 import {
@@ -234,7 +233,7 @@ describe("agent/runtime-tool-config", () => {
       assertEquals(getRuntimeProviderReplayCheckpoints(runtimeConfig()), undefined);
     });
 
-    it("returns validated checkpoints from trusted host state", () => {
+    it("returns the checkpoints resolved by the trusted host", () => {
       const checkpoint: ProviderReplayCheckpoint = {
         version: 1,
         messageId: "assistant-message-1",
@@ -255,14 +254,13 @@ describe("agent/runtime-tool-config", () => {
       );
     });
 
-    it("fails explicitly on malformed trusted state instead of degrading replay", () => {
-      const error = assertThrows(() =>
+    it("passes host-resolved state through without re-parsing it", () => {
+      assertEquals(
         getRuntimeProviderReplayCheckpoints(runtimeConfig({
           __vfProviderReplayCheckpoints: [{ version: 1 }],
-        }))
+        })),
+        [{ version: 1 }] as unknown as readonly ProviderReplayCheckpoint[],
       );
-      assertInstanceOf(error, VeryfrontError);
-      assertEquals(error.slug, "provider-replay-checkpoint-invalid");
     });
   });
 });
