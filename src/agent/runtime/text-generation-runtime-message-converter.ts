@@ -575,7 +575,10 @@ export function convertToTextGenerationRuntimeRequestMessages(
 ): TextGenerationRuntimeMessage[] {
   const requestMessages = convertToTextGenerationRuntimeMessages(messages, options);
 
-  while (requestMessages.at(-1)?.role === "assistant") {
+  while (
+    requestMessages.at(-1)?.role === "assistant" &&
+    !(requestMessages.at(-1) as TextGenerationRuntimeAssistantMessage).providerMetadata
+  ) {
     requestMessages.pop();
   }
 

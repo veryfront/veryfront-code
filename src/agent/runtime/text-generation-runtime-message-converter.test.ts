@@ -1038,6 +1038,35 @@ describe("text-generation-runtime-message-converter", () => {
         "every trailing assistant message must be stripped so the request never ends on an unanswered tool call",
       );
     });
+
+    it("keeps a trailing assistant that carries exact provider replay metadata", () => {
+      const providerMetadata = {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "thinking",
+            thinking: "",
+            signature: "sig-trailing-replay",
+          }]],
+        },
+      };
+      const trailing = attachProviderMetadata({
+        id: "a-replay",
+        role: "assistant",
+        parts: [{ type: "reasoning", signature: "sig-trailing-replay" }],
+      } as Message, providerMetadata);
+
+      assertEquals(
+        convertToTextGenerationRuntimeRequestMessages([
+          { id: "u1", role: "user", parts: [{ type: "text", text: "continue" }] },
+          trailing,
+        ]),
+        [{ role: "user", content: "continue" }, {
+          role: "assistant",
+          content: [{ type: "text", text: "" }],
+          providerMetadata,
+        }],
+      );
+    });
   });
 
   describe("attachment reachability across the conversion entry points", () => {
