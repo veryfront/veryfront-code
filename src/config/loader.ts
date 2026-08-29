@@ -2084,6 +2084,13 @@ const URI_PAREN_INTERIOR_SOURCE = String.raw`[A-Za-z0-9\-._~:/?#\[\]@!$&()*+,;=%
 const URL_BALANCED_PAREN_SEGMENT_SOURCE = String.raw`\([^\s"']{0,512}\)`;
 const URL_TOKEN_TAIL_SOURCE = String
   .raw`(?:${URI_TOKEN_CHARACTER_SOURCE}|${URL_BALANCED_PAREN_SEGMENT_SOURCE}|\((?=(?:${URI_PAREN_INTERIOR_SOURCE}|\P{ASCII}))|\)(?=${URI_PAREN_INTERIOR_SOURCE})(?![\p{P}\p{S}\p{M}\p{Cf}]{0,16}(?:[\s"']|$)))+`;
+// Documented limit (inbox#852): prose glued to a drive path that also has a
+// redundant double separator -- `Failed atC://Users` -- lengthens the apparent
+// scheme to the RFC-legal `atC` and is labeled [url]. That token is
+// structurally identical to `...s://host`, so a drive-letter rescue here
+// re-opens the http[path] regression #4236 fixed, and a known-scheme whitelist
+// would under-redact real URLs. Redaction stays complete either way; only the
+// label is off. Pinned in loader.test.ts.
 const SCHEME_URL = new RegExp(
   String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
   "gu",
