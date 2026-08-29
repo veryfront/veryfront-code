@@ -133,7 +133,7 @@ pass-through tool.
 // evals/support-reply-quality.eval.ts
 import { datasets, evalDataset, judges, metrics } from "veryfront/eval";
 
-export default evalDataset({
+export const supportReplyQuality = evalDataset({
   id: "eval:support-reply-quality",
   dataset: datasets.inline([
     {
@@ -150,6 +150,8 @@ export default evalDataset({
     }),
   ],
 });
+
+export default supportReplyQuality;
 ```
 
 At least one of `id` or `name` is required; the report identity is derived from
@@ -157,7 +159,11 @@ the stable `id` (falling back to `name`), so renaming the eval keeps saved
 baselines comparable. Running one needs no adapters because nothing executes:
 
 ```ts
-const report = await runEval(definition, { adapters: {} });
+import { runEval } from "veryfront/eval";
+import { supportReplyQuality } from "./evals/support-reply-quality.eval.ts";
+
+const report = await runEval(supportReplyQuality, { adapters: {} });
+console.log(report.summary.passRate);
 ```
 
 ## Studio integration
