@@ -18,6 +18,7 @@ import type {
 } from "./text-generation-runtime-message-types.ts";
 import { assertProviderReachableAttachment } from "./attachment-reachability.ts";
 import { buildDataFileAnnotation } from "#veryfront/chat/types.ts";
+import { PROVIDER_REPLAY_CHECKPOINT_INVALID } from "#veryfront/errors";
 import { getTextFromParts, getToolArguments, type Message, type ToolCallPart } from "../types.ts";
 import { readAttachedProviderMetadata } from "./provider-metadata.ts";
 
@@ -475,7 +476,9 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
   const providerMetadata = readAttachedProviderMetadata(message);
   const assistantMessages = messages.filter((entry) => entry.role === "assistant");
   // Exact replay metadata describes one provider response. Attaching it after
-  // conversion split that response would pair it with an incomplete projection.
+  // conversion split that response would pair it with an incomplete
+  // projection, and dropping it would silently send the provider an unsigned
+  // canonical rebuild -- the failure replay state exists to prevent.
   if (providerMetadata !== undefined && assistantMessages.length === 1) {
     assistantMessages[0]!.providerMetadata = providerMetadata;
   } else if (providerMetadata !== undefined && messages.length === 0) {
@@ -483,6 +486,12 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
       role: "assistant",
       content: [{ type: "text", text: "" }],
       providerMetadata,
+    });
+  } else if (providerMetadata !== undefined) {
+    throw PROVIDER_REPLAY_CHECKPOINT_INVALID.create({
+      detail:
+        "exact provider replay metadata cannot survive an assistant turn conversion that splits the turn",
+      context: { assistantSegmentCount: assistantMessages.length },
     });
   }
 

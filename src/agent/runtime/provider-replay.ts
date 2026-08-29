@@ -90,9 +90,11 @@ function parseProviderReplayBlock(
   if (!isRecord(value)) {
     invalidCheckpoint("provider block must be an object", { index });
   }
+  // Unknown key NAMES are attacker-controlled text and may smuggle signed
+  // material, so rejections report the index only, never the key.
   for (const key of Object.keys(value)) {
     if (!BLOCK_KEYS.has(key)) {
-      invalidCheckpoint("provider block carries an unknown key", { index, key });
+      invalidCheckpoint("provider block carries an unknown key", { index });
     }
   }
   if (value.type !== "provider-block") {
@@ -112,9 +114,10 @@ export function parseProviderReplayCheckpoint(value: unknown): ProviderReplayChe
   if (!isRecord(value)) {
     invalidCheckpoint("checkpoint must be an object");
   }
+  // As with block keys: never echo an unknown key name.
   for (const key of Object.keys(value)) {
     if (!CHECKPOINT_KEYS.has(key)) {
-      invalidCheckpoint("checkpoint carries an unknown key", { key });
+      invalidCheckpoint("checkpoint carries an unknown key");
     }
   }
   if (value.version !== 1) {
@@ -217,7 +220,49 @@ export function parseServerResolvedProviderReplayCheckpoints(
   if (!Array.isArray(value)) {
     invalidCheckpoint("server-resolved provider replay checkpoints must be an array");
   }
-  return value.map((entry) => parseProviderReplayCheckpoint(entry));
+  const checkpoints = value.map((entry) => parseProviderReplayCheckpoint(entry));
+  // The server resolves at most one checkpoint per assistant turn. Duplicates
+  // would make replay state depend on array order, so they fail closed.
+  const messageIds = new Set<string>();
+  for (const checkpoint of checkpoints) {
+    if (messageIds.has(checkpoint.messageId)) {
+      invalidCheckpoint("delivery carries more than one checkpoint for one message anchor");
+    }
+    messageIds.add(checkpoint.messageId);
+  }
+  return checkpoints;
+}
+
+/**
+ * Assert this runtime version can reconstruct the checkpoint's assistant turn.
+ *
+ * Two contract-valid shapes are rejected until their reconstruction exists,
+ * because accepting them and replaying anything else would silently alter the
+ * assistant turn: non-anthropic providers (stage 1 reconstructs anthropic
+ * replay only) and sparse checkpoints (blocks at unrepresented positions are
+ * unknown to this runtime).
+ */
+export function assertReconstructibleProviderReplayCheckpoint(
+  checkpoint: ProviderReplayCheckpoint,
+): void {
+  if (checkpoint.provider !== "anthropic") {
+    invalidCheckpoint(
+      "this runtime version reconstructs anthropic provider replay only",
+      { provider: checkpoint.provider },
+    );
+  }
+  if (
+    checkpoint.totalPartCount !== checkpoint.providerBlocks.length ||
+    checkpoint.providerBlockPositions.some((position, index) => position !== index)
+  ) {
+    invalidCheckpoint(
+      "sparse provider replay checkpoints are not reconstructible by this runtime version",
+      {
+        blockCount: checkpoint.providerBlocks.length,
+        totalPartCount: checkpoint.totalPartCount,
+      },
+    );
+  }
 }
 
 /** Convert a validated checkpoint into its durable root-run event. */
@@ -275,20 +320,26 @@ export function createAnthropicProviderReplayCheckpoint(input: {
   if (!Array.isArray(rawAssistantMessages) || rawAssistantMessages.length === 0) {
     invalidCheckpoint("anthropic raw assistant messages must be a non-empty array");
   }
+  // pause_turn continuations carry one content array per provider response and
+  // the request builder replays each as its own assistant message. The v1 wire
+  // schema has no boundary field, so a multi-message turn cannot be
+  // represented; flattening it would silently change the replayed sequence.
+  if (rawAssistantMessages.length > 1) {
+    invalidCheckpoint(
+      "anthropic raw assistant turns with continuation boundaries are not representable in a v1 checkpoint",
+      { rawMessageCount: rawAssistantMessages.length },
+    );
+  }
+  const rawContent = rawAssistantMessages[0];
+  if (!Array.isArray(rawContent)) {
+    invalidCheckpoint("anthropic raw assistant content must be an array");
+  }
   const blocks: Record<string, unknown>[] = [];
-  for (const [messageIndex, rawContent] of rawAssistantMessages.entries()) {
-    if (!Array.isArray(rawContent)) {
-      invalidCheckpoint("anthropic raw assistant content must be an array", { messageIndex });
+  for (const [blockIndex, block] of rawContent.entries()) {
+    if (!isRecord(block) || typeof block.type !== "string") {
+      invalidCheckpoint("anthropic raw assistant block must be a typed object", { blockIndex });
     }
-    for (const [blockIndex, block] of rawContent.entries()) {
-      if (!isRecord(block) || typeof block.type !== "string") {
-        invalidCheckpoint("anthropic raw assistant block must be a typed object", {
-          messageIndex,
-          blockIndex,
-        });
-      }
-      blocks.push(block);
-    }
+    blocks.push(block);
   }
   if (blocks.length === 0 || blocks.length > MAX_PROVIDER_REPLAY_BLOCKS) {
     invalidCheckpoint(
@@ -325,24 +376,22 @@ export function applyProviderReplayCheckpointsToMessages(
   checkpoints: readonly ProviderReplayCheckpoint[] | undefined,
 ): void {
   if (checkpoints === undefined || checkpoints.length === 0) return;
+  // Runtime support is a property of the delivery, not of which turns are
+  // still in context: an unsupported checkpoint fails the run even when its
+  // turn is absent, so deployment skew surfaces immediately.
+  for (const checkpoint of checkpoints) {
+    assertReconstructibleProviderReplayCheckpoint(checkpoint);
+  }
   for (const checkpoint of checkpoints) {
     const matches = messages.filter((message) => message.id === checkpoint.messageId);
     if (matches.length === 0) continue;
     if (matches.length > 1) {
-      invalidCheckpoint("checkpoint messageId matches more than one message", {
-        messageId: checkpoint.messageId,
-      });
+      invalidCheckpoint("checkpoint messageId matches more than one message");
     }
     const target = matches[0]!;
     if (target.role !== "assistant") {
       invalidCheckpoint("checkpoint messageId must anchor to an assistant message", {
-        messageId: checkpoint.messageId,
         role: target.role,
-      });
-    }
-    if (checkpoint.provider !== "anthropic") {
-      invalidCheckpoint("this runtime has no replay reconstruction for the checkpoint provider", {
-        provider: checkpoint.provider,
       });
     }
     // In-process metadata attached during this run is the same replay state at

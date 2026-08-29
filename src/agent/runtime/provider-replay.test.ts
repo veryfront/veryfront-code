@@ -149,6 +149,33 @@ describe("agent/runtime/provider-replay", () => {
       });
     });
 
+    it("should keep smuggled key names out of rejection text and context", () => {
+      const smuggledKey = "sig-material-smuggled-as-key";
+      const checkpoint = createValidCheckpoint() as unknown as Record<string, unknown>;
+      checkpoint[smuggledKey] = true;
+      const error = assertProviderReplayError(() => parseProviderReplayCheckpoint(checkpoint));
+      const serialized = JSON.stringify({
+        message: error.message,
+        detail: error.detail,
+        context: error.context,
+      });
+      assertEquals(serialized.includes(smuggledKey), false, "unknown checkpoint key not echoed");
+
+      const blockSmuggled = createValidCheckpoint() as unknown as {
+        providerBlocks: Array<Record<string, unknown>>;
+      };
+      blockSmuggled.providerBlocks[0]![smuggledKey] = true;
+      const blockError = assertProviderReplayError(() =>
+        parseProviderReplayCheckpoint(blockSmuggled)
+      );
+      const blockSerialized = JSON.stringify({
+        message: blockError.message,
+        detail: blockError.detail,
+        context: blockError.context,
+      });
+      assertEquals(blockSerialized.includes(smuggledKey), false, "unknown block key not echoed");
+    });
+
     it("should reject empty, oversized, and malformed provider block lists", () => {
       assertInvalidCheckpoint((checkpoint) => {
         checkpoint.providerBlocks = [];
@@ -238,6 +265,21 @@ describe("agent/runtime/provider-replay", () => {
     it("should reject a non-array delivery", () => {
       assertProviderReplayError(() =>
         parseServerResolvedProviderReplayCheckpoints(createValidCheckpoint())
+      );
+    });
+
+    it("should reject duplicate checkpoints for one message anchor", () => {
+      const error = assertProviderReplayError(() =>
+        parseServerResolvedProviderReplayCheckpoints([
+          createValidCheckpoint(),
+          createValidCheckpoint(),
+        ])
+      );
+      assertEquals(
+        JSON.stringify({ message: error.message, context: error.context })
+          .includes(SIGNATURE),
+        false,
+        "duplicate rejection never echoes signed block material",
       );
     });
 
@@ -345,14 +387,12 @@ describe("agent/runtime/provider-replay", () => {
       );
     });
 
-    it("should build a checkpoint from raw assistant messages preserving order", () => {
+    it("should build a checkpoint from a single raw assistant message preserving order", () => {
       const rawAssistantMessages = [
         [
           { type: "thinking", thinking: "", signature: SIGNATURE },
           { type: "tool_use", id: "call-1", name: "lookup", input: { query: "veryfront" } },
-        ],
-        [
-          { type: "text", text: "continued" },
+          { type: "text", text: "Looking that up." },
         ],
       ];
       const checkpoint = createAnthropicProviderReplayCheckpoint({
@@ -362,11 +402,15 @@ describe("agent/runtime/provider-replay", () => {
       assertEquals(checkpoint?.provider, "anthropic", "provider");
       assertEquals(checkpoint?.messageId, "assistant-message-1", "message anchor");
       assertEquals(checkpoint?.totalPartCount, 3, "total part count");
-      assertEquals(checkpoint?.providerBlockPositions, [0, 1, 2], "positions");
+      assertEquals(
+        checkpoint?.providerBlockPositions,
+        [0, 1, 2],
+        "positions dense by construction",
+      );
       assertEquals(
         checkpoint?.providerBlocks.map((block) => block.block),
-        [...rawAssistantMessages[0]!, ...rawAssistantMessages[1]!],
-        "blocks flattened in original order",
+        rawAssistantMessages[0]!,
+        "blocks carried in original order",
       );
       assertEquals(
         checkpoint?.providerBlocks[0]?.block.signature,
@@ -378,6 +422,25 @@ describe("agent/runtime/provider-replay", () => {
         parseProviderReplayCheckpoint(checkpoint),
         checkpoint,
         "emitted checkpoint satisfies the wire contract",
+      );
+    });
+
+    it("should fail explicitly on continuation boundaries a v1 checkpoint cannot represent", () => {
+      // pause_turn continuations produce one raw content array per provider
+      // response; the wire schema has no boundary field, so flattening would
+      // silently change the replayed assistant-message sequence.
+      assertProviderReplayError(() =>
+        createAnthropicProviderReplayCheckpoint({
+          messageId: "assistant-message-1",
+          providerMetadata: {
+            anthropic: {
+              rawAssistantMessages: [
+                [{ type: "text", text: "first response" }],
+                [{ type: "text", text: "continued response" }],
+              ],
+            },
+          },
+        })
       );
     });
 
@@ -521,6 +584,57 @@ describe("agent/runtime/provider-replay", () => {
         inProcess,
         "in-process metadata wins over the durable copy of the same turn",
       );
+    });
+
+    it("should fail explicitly on sparse checkpoints this runtime cannot reconstruct", () => {
+      // Contract-valid but sparse: blocks at positions [0, 2] of a 3-part turn.
+      // The blocks at the missing positions are unknown to this runtime, so a
+      // wholesale raw replay would silently alter the assistant turn.
+      const sparse: ProviderReplayCheckpoint = {
+        ...createValidCheckpoint(),
+        providerBlocks: createValidCheckpoint().providerBlocks.slice(0, 2),
+        providerBlockPositions: [0, 2],
+        totalPartCount: 3,
+      };
+      assertEquals(
+        parseProviderReplayCheckpoint(sparse),
+        sparse,
+        "sparse checkpoints stay wire-contract valid",
+      );
+      assertProviderReplayError(() =>
+        applyProviderReplayCheckpointsToMessages(
+          [createAssistantMessage("assistant-message-1")],
+          [sparse],
+        )
+      );
+    });
+
+    it("should fail explicitly when conversion cannot carry the attached replay state", () => {
+      // An assistant turn with an inline tool result followed by more content
+      // splits into multiple assistant segments during conversion; exact
+      // replay metadata cannot be paired with either fragment.
+      const target = {
+        id: "assistant-message-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-lookup",
+            toolCallId: "call-1",
+            toolName: "lookup",
+            args: { query: "veryfront" },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "lookup",
+            result: { matches: 1 },
+          },
+          { type: "text", text: "Found it." },
+        ],
+        timestamp: 1,
+      } as Message;
+      applyProviderReplayCheckpointsToMessages([target], [createValidCheckpoint()]);
+      assertProviderReplayError(() => convertToTextGenerationRuntimeMessages([target]));
     });
 
     it("should reconstruct the provider request assistant turn through the runtime converter", () => {

@@ -14,6 +14,7 @@ import {
   type ToolExposureCheckpoint,
 } from "../runtime/tool-exposure.ts";
 import {
+  assertReconstructibleProviderReplayCheckpoint,
   parseServerResolvedProviderReplayCheckpoints,
   type ProviderReplayCheckpoint,
 } from "../runtime/provider-replay.ts";
@@ -104,7 +105,14 @@ export function getServerResolvedProviderReplayCheckpoints(
   if (!serverEnvelopeVerified) return undefined;
   const value = forwardedProps?.serverResolvedProviderReplayCheckpoints;
   if (value === undefined) return undefined;
-  return parseServerResolvedProviderReplayCheckpoints(value);
+  const checkpoints = parseServerResolvedProviderReplayCheckpoints(value);
+  // Contract-valid state this runtime version cannot reconstruct (another
+  // provider, sparse blocks) is deployment skew; it fails here at request
+  // preparation rather than skipping into a silently degraded replay.
+  for (const checkpoint of checkpoints) {
+    assertReconstructibleProviderReplayCheckpoint(checkpoint);
+  }
+  return checkpoints;
 }
 
 /** Return forwarded hosted model ID. */

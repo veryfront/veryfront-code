@@ -99,6 +99,51 @@ it("server-resolved provider replay checkpoints require a verified envelope and 
   );
 });
 
+it("server-resolved provider replay checkpoints reject providers this runtime cannot replay", () => {
+  // Contract-valid on the wire, but stage 1 only reconstructs anthropic
+  // replay: accepting it and skipping later would be silent degraded replay,
+  // so deployment skew fails loudly at request preparation instead.
+  const error = assertThrows(() =>
+    getServerResolvedProviderReplayCheckpoints({
+      serverResolvedProviderReplayCheckpoints: [{
+        version: 1,
+        messageId: "assistant-message-1",
+        provider: "openai-responses",
+        providerBlocks: [{
+          type: "provider-block",
+          provider: "openai-responses",
+          block: { type: "reasoning", id: "rs-1" },
+        }],
+        providerBlockPositions: [0],
+        totalPartCount: 1,
+      }],
+    }, true)
+  );
+  assertInstanceOf(error, VeryfrontError);
+  assertEquals(error.slug, "provider-replay-checkpoint-invalid", "registry slug");
+});
+
+it("server-resolved provider replay checkpoints reject sparse deliveries", () => {
+  const error = assertThrows(() =>
+    getServerResolvedProviderReplayCheckpoints({
+      serverResolvedProviderReplayCheckpoints: [{
+        version: 1,
+        messageId: "assistant-message-1",
+        provider: "anthropic",
+        providerBlocks: [{
+          type: "provider-block",
+          provider: "anthropic",
+          block: { type: "thinking", thinking: "", signature: "sig-sparse" },
+        }],
+        providerBlockPositions: [1],
+        totalPartCount: 2,
+      }],
+    }, true)
+  );
+  assertInstanceOf(error, VeryfrontError);
+  assertEquals(error.slug, "provider-replay-checkpoint-invalid", "registry slug");
+});
+
 it("server-resolved provider replay checkpoints fail explicitly on forgery-shaped state", () => {
   const validBlock = {
     type: "provider-block" as const,
