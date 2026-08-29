@@ -751,6 +751,44 @@ describe("public docs validation", () => {
     );
   });
 
+  it("keeps switch clause blocks in statement context", () => {
+    assertEquals(
+      destinations(
+        "<a data-ok={(() => { switch (x) { case 1: {} " +
+          '/[}>]/.test(x) } })()} href="../architecture/switch-case-regex.md">ok</a>\n' +
+          "<a data-ok={(() => { switch (x) { case condition ? 1 : 2: {} " +
+          '/[}>]/.test(x) } })()} href="../architecture/switch-ternary-case-regex.md">ok</a>\n' +
+          "<a data-ok={(() => { switch (x) { case 1: value " +
+          '/ ({ marker: ">/" }).length } })()} ' +
+          'href="../architecture/switch-case-division.md">ok</a>\n' +
+          "<a data-ok={(() => { switch (x) { default: {} " +
+          '/[}>]/.test(x) } })()} href="../architecture/switch-default-regex.md">ok</a>',
+      ),
+      [
+        "../architecture/switch-case-regex.md",
+        "../architecture/switch-ternary-case-regex.md",
+        "../architecture/switch-case-division.md",
+        "../architecture/switch-default-regex.md",
+      ],
+    );
+  });
+
+  it("does not treat newline-separated blocks as method bodies", () => {
+    assertEquals(
+      destinations(
+        "<a data-ok={(() => { foo()\n{}\n/[}>]/.test(x) })()} " +
+          'href="../architecture/newline-call-block-regex.md">ok</a>\n' +
+          "<a data-ok={(() => { foo()\n" +
+          '/ ({ marker: ">/" }).length })()} ' +
+          'href="../architecture/newline-call-division.md">ok</a>',
+      ),
+      [
+        "../architecture/newline-call-block-regex.md",
+        "../architecture/newline-call-division.md",
+      ],
+    );
+  });
+
   it("ignores escaped Markdown link openers", () => {
     assertEquals(
       destinations(String.raw`\[example](../architecture/private.md)`),
@@ -2264,6 +2302,72 @@ describe("public docs validation", () => {
       ),
       ["../architecture/real.md"],
     );
+    assertEquals(
+      destinations(
+        "import sample\n" +
+          'from "sample"\n' +
+          "/[}]/.test(sample)\n" +
+          'export const hidden = "[old](../architecture/multiline-import-regex.md)"\n\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        "export { sample }\n" +
+          'from "sample"\n' +
+          "/[}]/.test(sample)\n" +
+          'export const hidden = "[old](../architecture/multiline-export-regex.md)"\n\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        'import data from "sample"\n' +
+          'with { type: "json" }\n' +
+          "/[}]/.test(data)\n" +
+          'export const hidden = "[old](../architecture/import-attributes-regex.md)"\n\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        'export const sample = import("sample");\n' +
+          "/[}]/.test(sample)\n" +
+          'export const hidden = "[old](../architecture/dynamic-import-regex.md)"\n\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        'export const sample = import("sample")\n' +
+          '/ ({ marker: "}/" }).length\n' +
+          'export const hidden = "[old](../architecture/dynamic-import-division.md)"\n\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        "export const sample = import.meta.url;\n" +
+          "/[}]/.test(sample)\n" +
+          'export const hidden = "[old](../architecture/import-meta-regex.md)"\n\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        "export const sample = import.meta.url\n" +
+          '/ ({ marker: "}/" }).length\n' +
+          'export const hidden = "[old](../architecture/import-meta-division.md)"\n\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
   });
 
   it("keeps labeled blocks in statement context in MDX ESM", () => {
@@ -2282,6 +2386,23 @@ describe("public docs validation", () => {
         "export function sample(value) {\n" +
           'label: { value / ({ marker: "}/" }).length; }\n' +
           'return "[old](../architecture/labeled-block-division.md)";\n' +
+          "}\n\n" +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+  });
+
+  it("keeps switch clause blocks in statement context in MDX ESM", () => {
+    assertEquals(
+      destinations(
+        "export function sample(x, condition, value) {\n" +
+          "switch (x) {\n" +
+          "case 1: { {} /[}]/.test(x); }\n" +
+          "case condition ? 2 : 3: { {} /[}]/.test(x); }\n" +
+          'default: { value / ({ marker: "}/" }).length; }\n' +
+          "}\n" +
+          'return "[old](../architecture/switch-clause-regex.md)";\n' +
           "}\n\n" +
           "[real](../architecture/real.md)",
       ),

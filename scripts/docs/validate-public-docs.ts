@@ -786,7 +786,8 @@ type JavaScriptSignificantTokenKind =
   | "prefix-update"
   | "regex"
   | "statement-label"
-  | "statement-block";
+  | "statement-block"
+  | "switch-header";
 
 type JavaScriptPrecedingIdentifierKeyword =
   | "break"
@@ -803,7 +804,14 @@ type JavaScriptDelimiterContext =
   | "function-expression"
   | "method"
   | "nested"
+  | "switch-block"
+  | "switch-control"
   | undefined;
+
+interface JavaScriptSwitchLabelContext {
+  readonly depth: number;
+  readonly ternaryDepth: number;
+}
 
 interface JavaScriptSignificantToken {
   readonly classDeclarationDepth?: number;
@@ -819,6 +827,7 @@ interface JavaScriptSignificantToken {
   readonly labelCandidate?: true;
   readonly followsForOfLeftOperand?: true;
   readonly precedingIdentifierKeyword?: JavaScriptPrecedingIdentifierKeyword;
+  readonly switchLabel?: JavaScriptSwitchLabelContext;
   readonly uninitializedDeclaration?: true;
   readonly variableDeclarationDepth?: number;
   readonly variableDeclarationPhase?: JavaScriptVariableDeclarationPhase;
@@ -838,6 +847,25 @@ type JavaScriptJsxScanCache = Map<number, number | undefined>;
 interface JavaScriptVariableDeclarationContext {
   readonly depth: number;
   readonly phase: JavaScriptVariableDeclarationPhase;
+}
+
+function javaScriptSwitchLabelContext(
+  previousSignificantToken: JavaScriptSignificantToken | undefined,
+  delimiterContexts: readonly JavaScriptDelimiterContext[],
+): JavaScriptSwitchLabelContext | undefined {
+  const context = previousSignificantToken?.switchLabel;
+  if (context === undefined || delimiterContexts.length < context.depth) {
+    return undefined;
+  }
+  return context;
+}
+
+function javaScriptQuestionStartsConditional(
+  text: string,
+  start: number,
+): boolean {
+  return text[start] === "?" && text[start - 1] !== "?" &&
+    text[start + 1] !== "?" && text[start + 1] !== ".";
 }
 
 function javaScriptVariableDeclarationContext(
@@ -869,10 +897,12 @@ function javaScriptTokenWithPersistentContext(
     ?.variableDeclarationDepth;
   const variableDeclarationPhase = previousSignificantToken
     ?.variableDeclarationPhase;
+  const switchLabel = previousSignificantToken?.switchLabel;
   return {
     end,
     ...(classDeclarationDepth === undefined ? {} : { classDeclarationDepth }),
     kind,
+    ...(switchLabel === undefined ? {} : { switchLabel }),
     ...(variableDeclarationDepth === undefined ||
         variableDeclarationPhase === undefined
       ? {}
@@ -897,6 +927,25 @@ function javaScriptTokenWithIdentifierContext(
       previousSignificantToken,
       delimiterContexts,
     );
+    let switchLabel = javaScriptSwitchLabelContext(
+      previousSignificantToken,
+      delimiterContexts,
+    );
+    if (
+      switchLabel !== undefined &&
+      delimiterContexts.length === switchLabel.depth
+    ) {
+      if (javaScriptQuestionStartsConditional(text, start)) {
+        switchLabel = {
+          ...switchLabel,
+          ternaryDepth: switchLabel.ternaryDepth + 1,
+        };
+      } else if (text[start] === ":") {
+        switchLabel = switchLabel.ternaryDepth === 0
+          ? undefined
+          : { ...switchLabel, ternaryDepth: switchLabel.ternaryDepth - 1 };
+      }
+    }
     const startsClassDeclarationBody = text[start] === "{" &&
       classDeclarationDepth !== undefined &&
       delimiterContexts.length === classDeclarationDepth + 1 &&
@@ -919,6 +968,7 @@ function javaScriptTokenWithIdentifierContext(
         ? { functionExpression: true }
         : {}),
       kind,
+      ...(switchLabel === undefined ? {} : { switchLabel }),
       ...(uninitializedDeclaration ? { uninitializedDeclaration: true } : {}),
       ...(variableDeclaration === undefined ? {} : {
         variableDeclarationDepth: variableDeclaration.depth,
@@ -955,6 +1005,19 @@ function javaScriptTokenWithIdentifierContext(
   const identifierWord = completeIdentifier && identifierStart !== undefined
     ? text.slice(identifierStart, end)
     : undefined;
+  let switchLabel = javaScriptSwitchLabelContext(
+    previousSignificantToken,
+    delimiterContexts,
+  );
+  if (
+    completeIdentifier && delimiterContexts.at(-1) === "switch-block" &&
+    (identifierWord === "case" || identifierWord === "default")
+  ) {
+    switchLabel = {
+      depth: delimiterContexts.length,
+      ternaryDepth: 0,
+    };
+  }
   const declarationPrefix = completeIdentifier &&
     ((identifierWord === "export" || identifierWord === "async") &&
         declarationCandidate ||
@@ -1032,6 +1095,7 @@ function javaScriptTokenWithIdentifierContext(
     ...(precedingIdentifierKeyword === undefined
       ? {}
       : { precedingIdentifierKeyword }),
+    ...(switchLabel === undefined ? {} : { switchLabel }),
     ...(uninitializedDeclaration ? { uninitializedDeclaration: true } : {}),
     ...(variableDeclaration === undefined ? {} : {
       variableDeclarationDepth: variableDeclaration.depth,
@@ -1543,7 +1607,8 @@ function javaScriptMayStartDeclaration(
   if (
     delimiterContexts.length > 0 &&
     delimiterContexts.at(-1) !== "block" &&
-    delimiterContexts.at(-1) !== "expression-block"
+    delimiterContexts.at(-1) !== "expression-block" &&
+    delimiterContexts.at(-1) !== "switch-block"
   ) return false;
   if (token === undefined) return true;
   if (token.kind === "statement-label") return true;
@@ -1613,6 +1678,8 @@ function javaScriptDelimiterTokenKind(
       context = "function-declaration";
     } else if (previousSignificantToken?.functionExpression === true) {
       context = "function-expression";
+    } else if (keyword === "switch") {
+      context = "switch-control";
     } else if (
       keyword === "for" ||
       (keyword === "await" &&
@@ -1636,10 +1703,20 @@ function javaScriptDelimiterTokenKind(
     const keyword = previousSignificantToken?.identifierWord;
     const statementPosition = delimiterContexts.length === 0 ||
       delimiterContexts.at(-1) === "block" ||
-      delimiterContexts.at(-1) === "expression-block";
+      delimiterContexts.at(-1) === "expression-block" ||
+      delimiterContexts.at(-1) === "switch-block";
     const previousCharacter = previousSignificantToken === undefined
       ? undefined
       : text[previousSignificantToken.end - 1];
+    const lineTerminatedExpression = previousSignificantToken !== undefined &&
+      /[\n\r\u2028\u2029]/.test(
+        text.slice(previousSignificantToken.end, start),
+      ) &&
+      !javaScriptRegexMayStart(
+        text,
+        previousSignificantToken,
+        delimiterContexts,
+      );
     const classDeclarationBody =
       previousSignificantToken?.classDeclarationDepth ===
         delimiterContexts.length;
@@ -1650,41 +1727,47 @@ function javaScriptDelimiterTokenKind(
             previousSignificantToken.end - 2,
             previousSignificantToken.end,
           ) === "=>");
+    const switchBlock = previousSignificantToken?.kind === "switch-header";
     const statementBlock = !expressionBlock && (classDeclarationBody ||
       previousSignificantToken?.kind === "control-header" ||
       previousSignificantToken?.kind === "declaration-header" ||
       previousSignificantToken?.kind === "statement-label" ||
+      switchBlock ||
       keyword === "static" ||
       (keyword !== undefined &&
         JAVASCRIPT_BLOCK_PREFIX_KEYWORDS.has(keyword)) ||
       (statementPosition &&
-        (previousSignificantToken === undefined ||
+        (lineTerminatedExpression || previousSignificantToken === undefined ||
           previousCharacter !== undefined &&
             ";{}".includes(previousCharacter))));
     delimiterContexts.push(
       expressionBlock
         ? "expression-block"
+        : switchBlock
+        ? "switch-block"
         : statementBlock
         ? "block"
         : "nested",
     );
   } else if (
-    character === ":" && previousSignificantToken?.labelCandidate === true
+    character === ":" &&
+    (previousSignificantToken?.labelCandidate === true ||
+      previousSignificantToken?.switchLabel?.depth ===
+            delimiterContexts.length &&
+        previousSignificantToken.switchLabel.ternaryDepth === 0)
   ) {
     return "statement-label";
   } else if (character === ")" || character === "]" || character === "}") {
     const context = delimiterContexts.pop();
     if (context === "control" || context === "for") return "control-header";
+    if (context === "switch-control") return "switch-header";
     if (context === "function-declaration" || context === "method") {
       return "declaration-header";
     }
     if (context === "function-expression") return "expression-header";
-    if (
-      character === ")" && context === undefined &&
-      previousSignificantToken?.classDeclarationDepth === undefined &&
-      text[skipJavaScriptTrivia(text, start + 1)] === "{"
-    ) return "expression-header";
-    if (context === "block") return "statement-block";
+    if (context === "block" || context === "switch-block") {
+      return "statement-block";
+    }
   }
   return "other";
 }
