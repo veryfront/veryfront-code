@@ -1,12 +1,11 @@
 import { walk } from "#std/fs/walk";
 import {
   buildTestProcessEnv,
-  LOOPBACK_ALLOW_NET,
   LOOPBACK_TEST_PERMISSIONS,
   UNIT_DENO_TEST_ENV,
 } from "./suites.ts";
 
-export { LOOPBACK_ALLOW_NET };
+export { LOOPBACK_ALLOW_NET } from "./suites.ts";
 
 export interface ShardSpec {
   index: number;

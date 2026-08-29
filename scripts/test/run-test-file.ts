@@ -1,15 +1,16 @@
 import {
   buildTestProcessEnv,
   DENO_TEST_ENV,
-  LOOPBACK_ALLOW_NET,
   LOOPBACK_TEST_PERMISSIONS,
   PROVIDER_EGRESS_DENY_NET,
   UNIT_DENO_TEST_ENV,
 } from "./suites.ts";
 
-export { LOOPBACK_ALLOW_NET, PROVIDER_EGRESS_DENY_NET };
-
-export const TEST_FILE_ENV = UNIT_DENO_TEST_ENV;
+export {
+  LOOPBACK_ALLOW_NET,
+  PROVIDER_EGRESS_DENY_NET,
+  UNIT_DENO_TEST_ENV as TEST_FILE_ENV,
+} from "./suites.ts";
 
 export function buildTestFileCommandArgs(rawArgs: string[]): string[] {
   const usesScriptsConfig = rawArgs.some(isScriptsPath);

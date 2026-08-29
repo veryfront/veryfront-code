@@ -3,13 +3,12 @@ import { planSuiteFiles, type SuitePlanId } from "./run-suite.ts";
 import {
   buildTestProcessEnv,
   DENO_TEST_ENV,
-  LOOPBACK_ALLOW_NET,
   LOOPBACK_TEST_PERMISSIONS,
   PROVIDER_EGRESS_DENY_NET,
   UNIT_DENO_TEST_ENV,
 } from "./suites.ts";
 
-export { LOOPBACK_ALLOW_NET };
+export { LOOPBACK_ALLOW_NET } from "./suites.ts";
 
 type DenoSuitePlanId = Exclude<
   SuitePlanId,

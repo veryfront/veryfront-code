@@ -10,7 +10,9 @@ import { EsbuildBundler } from "@veryfront/ext-bundler-esbuild";
 
 const OFFLINE_REACT_ORIGIN = "https://esm.sh";
 const OFFLINE_REACT_MODULE_PREFIX = "/__veryfront_test_react__/";
-const OFFLINE_REACT_RESOLVED_ADDRESS = "93.184.216.34";
+// RFC 5737 TEST-NET-1 address: the offline transport answers esm.sh requests
+// in-process, so this resolution result is never dialed.
+const OFFLINE_REACT_RESOLVED_ADDRESS = "192.0.2.1";
 const OFFLINE_UNIT_MODULE_FIXTURES: Readonly<Record<string, string>> = Object.freeze({
   "/lodash": "export function merge(left, right) { return { ...left, ...right }; }\n",
 });
@@ -137,9 +139,16 @@ function createEntrySource(entry: OfflineReactEntry): string {
   );
   const exports = entry.exportNames.map((name) => `export const ${name} = moduleValue.${name};`)
     .join("\n");
+  // The export list is maintained by hand, so a React bump that renames or
+  // drops one must fail the importing test instead of re-exporting undefined.
+  const guard = `for (const name of ${JSON.stringify(entry.exportNames)}) {
+  if (!(name in moduleValue)) {
+    throw new Error("offline React entry ${entry.outputName} lost export " + name);
+  }
+}`;
   return `import moduleValue from ${
     JSON.stringify(packagePath)
-  };\n${exports}\nexport default moduleValue;\n`;
+  };\n${guard}\n${exports}\nexport default moduleValue;\n`;
 }
 
 async function buildOfflineReactModules(): Promise<ReadonlyMap<string, string>> {
@@ -203,7 +212,8 @@ async function buildOfflineReactModules(): Promise<ReadonlyMap<string, string>> 
 }
 
 function getBundledModules(): Promise<ReadonlyMap<string, string>> {
-  return bundledModules ??= buildOfflineReactModules();
+  bundledModules ??= buildOfflineReactModules();
+  return bundledModules;
 }
 
 /** Build and stop the test-only ESM bundler before per-test sanitizers start. */
@@ -280,15 +290,17 @@ async function resolveTestHost(hostname: string): Promise<string[]> {
   return await resolveHostAddresses(hostname);
 }
 
+function toRequestUrl(input: RequestInfo | URL): URL {
+  if (input instanceof Request) return new URL(input.url);
+  if (input instanceof URL) return input;
+  return new URL(input);
+}
+
 /** Install the unit-suite-only React ESM transport until the returned cleanup runs. */
 export function installOfflineReactTransportForTests(): () => void {
   const hostFetch = __getCapturedHostFetchForTests();
   const fetchWithOfflineReact: typeof globalThis.fetch = async (input, init) => {
-    const url = input instanceof Request
-      ? new URL(input.url)
-      : input instanceof URL
-      ? input
-      : new URL(input);
+    const url = toRequestUrl(input);
     return await createOfflineReactModuleResponseForTests(url) ?? await hostFetch(input, init);
   };
   return __installOutboundFetchTransportForTests({
