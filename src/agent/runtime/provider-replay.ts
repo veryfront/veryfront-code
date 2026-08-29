@@ -1,6 +1,7 @@
 import { PROVIDER_REPLAY_CHECKPOINT_INVALID } from "#veryfront/errors";
 import {
   attachProviderMetadata,
+  markProviderReplayDelivered,
   readAttachedProviderMetadata,
 } from "#veryfront/agent/runtime/provider-metadata.ts";
 import { stringifyChatJson } from "#veryfront/chat/json-value.ts";
@@ -1575,10 +1576,10 @@ export function applyProviderReplayCheckpointsToMessages(
     // In-process metadata attached during this run is the same replay state at
     // first hand; the durable checkpoint never overrides it.
     if (readAttachedProviderMetadata(target) !== undefined) continue;
-    attachProviderMetadata(target, {
+    markProviderReplayDelivered(attachProviderMetadata(target, {
       anthropic: {
         rawAssistantMessages,
       },
-    });
+    }));
   }
 }
