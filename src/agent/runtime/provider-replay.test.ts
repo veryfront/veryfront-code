@@ -360,6 +360,28 @@ describe("agent/runtime/provider-replay", () => {
         })
       );
     });
+
+    it("should reject malformed nested provider-result content without a transcript", () => {
+      assertProviderReplayError(() =>
+        parseProviderReplayCheckpoint({
+          version: 1,
+          messageId: "assistant-compacted-out",
+          provider: "anthropic",
+          providerBlocks: [{
+            type: "provider-block",
+            provider: "anthropic",
+            block: {
+              type: "mcp_tool_result",
+              tool_use_id: "srvtool-mcp",
+              is_error: false,
+              content: [{ type: "text", text: 123 }],
+            },
+          }],
+          providerBlockPositions: [0],
+          totalPartCount: 1,
+        })
+      );
+    });
   });
 
   describe("parseServerResolvedProviderReplayCheckpoints", () => {

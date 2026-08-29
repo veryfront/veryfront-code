@@ -233,6 +233,19 @@ function validateAnthropicProviderToolResultBlock(
   if (block.type === "mcp_tool_result" && typeof block.is_error !== "boolean") {
     invalidCheckpoint("checkpoint provider tool-result block is malformed", context);
   }
+  if (block.type === "mcp_tool_result") {
+    if (!hasValidAnthropicMcpContent(block.content)) {
+      invalidCheckpoint("checkpoint MCP tool-result content is malformed", context);
+    }
+    return;
+  }
+  const toolName = getAnthropicToolNameForResultBlock(block);
+  if (
+    toolName === undefined ||
+    !hasValidAnthropicProviderToolResultContentForTool(block, toolName)
+  ) {
+    invalidCheckpoint("checkpoint provider tool-result content is malformed", context);
+  }
 }
 
 function isAnthropicProviderToolResultBlock(block: Record<string, unknown>): boolean {
