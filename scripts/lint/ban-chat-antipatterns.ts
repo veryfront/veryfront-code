@@ -117,7 +117,7 @@ const FILE_SIZE_CEILINGS: Record<string, number> = {
   "src/chat/message-part-parsing.ts": 264,
   "src/chat/part-field-access.ts": 65,
   "src/chat/provider-input-types.ts": 34,
-  "src/chat/provider-message-conversion.ts": 470,
+  "src/chat/provider-message-conversion.ts": 447,
 };
 
 function checkFileSizes(): boolean {
