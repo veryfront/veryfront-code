@@ -469,7 +469,6 @@ function parserDiagnostic(
     const point = locator.point(offset);
     return { message: parserMessage(error), range: { start: point, end: point } };
   }
-  if (error instanceof RangeError) return capacityDiagnostic(locator, 0);
   return undefined;
 }
 
