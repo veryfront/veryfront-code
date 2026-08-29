@@ -9,6 +9,7 @@ type SafeParseResult<T> = { success: true; data: T } | {
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { INVALID_ARGUMENT } from "veryfront/errors";
 import { cliLogger, confirmPrompt } from "#cli/utils";
+import { parseArgsOrThrow } from "#cli/shared/args";
 import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
 import { createSuccessEnvelope, outputJson } from "../../shared/json-output.ts";
@@ -56,7 +57,9 @@ export function parseProjectDeleteArgs(
 export function buildProjectDeleteUrl(projectReference: string): string {
   const reference = projectReference.trim();
   if (!reference) {
-    throw new Error("Invalid project reference: a project slug or id is required");
+    throw INVALID_ARGUMENT.create({
+      detail: "Invalid project reference: a project slug or id is required",
+    });
   }
   return `/projects/${encodeURIComponent(reference)}`;
 }
@@ -80,12 +83,7 @@ export async function projectCommand(args: ParsedArgs): Promise<void> {
     switch (subcommand) {
       case "delete":
       case "rm": {
-        const parsed = parseProjectDeleteArgs(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid project delete arguments: ${parsed.error.message}`);
-        }
-
-        const options = parsed.data;
+        const options = parseArgsOrThrow(parseProjectDeleteArgs, "project delete", args);
         const config = await resolveConfigWithAuth(options.projectDir);
         const projectSlug = options.projectSlug ?? config.projectSlug;
 

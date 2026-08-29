@@ -1,6 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "veryfront/errors";
 import type { ApiClient } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
 import {
@@ -57,6 +64,16 @@ describe("cli/commands/project", () => {
 
     it("encodes the project reference", () => {
       assertEquals(buildProjectDeleteUrl("my app/2"), "/projects/my%20app%2F2");
+    });
+
+    it("rejects an empty reference as an invalid-argument usage error", () => {
+      const error = assertThrows(
+        () => buildProjectDeleteUrl("  "),
+        VeryfrontError,
+        "Invalid project reference: a project slug or id is required",
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "invalid-argument");
     });
   });
 

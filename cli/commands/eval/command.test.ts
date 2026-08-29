@@ -1,6 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
+import { VeryfrontError } from "veryfront/errors";
 import { type Agent, agent as createAgent, type AgentResponse } from "veryfront/agent";
 import { defineSchema } from "veryfront/schemas";
 import {
@@ -2116,16 +2123,80 @@ describe("eval CLI command helpers", () => {
   it("reports missing model comparison policy files as usage errors", async () => {
     const projectDir = await Deno.makeTempDir();
     try {
-      const error = await assertRejects(() =>
-        loadEvalModelComparisonPolicy(projectDir, "missing-policy.json")
-      );
-      assertEquals(
-        error instanceof Error ? error.message : String(error),
+      const error = await assertRejects(
+        () => loadEvalModelComparisonPolicy(projectDir, "missing-policy.json"),
+        VeryfrontError,
         "Invalid --comparison-policy: file not found.",
       );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "invalid-argument");
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }
+  });
+
+  it("rejects every malformed comparison policy shape as an invalid-argument usage error", async () => {
+    const cases: Array<[string, string]> = [
+      ["[]", "Invalid --comparison-policy: root value must be an object."],
+      [
+        JSON.stringify({ minGroundedness: "high" }),
+        "Invalid --comparison-policy: root.minGroundedness must be a finite number.",
+      ],
+      [
+        JSON.stringify({ constraints: "latency" }),
+        "Invalid --comparison-policy: constraints must be an object.",
+      ],
+      [
+        JSON.stringify({ constraints: { bogus: {} } }),
+        'Invalid --comparison-policy: constraints.bogus uses unknown metric "bogus".',
+      ],
+      [
+        JSON.stringify({ constraints: { p95Ms: 5 } }),
+        "Invalid --comparison-policy: constraints.p95Ms must be an object.",
+      ],
+      [
+        JSON.stringify({ constraints: { p95Ms: { min: "fast" } } }),
+        "Invalid --comparison-policy: constraints.p95Ms.min must be a finite number.",
+      ],
+      [
+        JSON.stringify({ constraints: { p95Ms: { maxRegressionPct: -1 } } }),
+        "Invalid --comparison-policy: constraints.p95Ms.maxRegressionPct must be at least 0.",
+      ],
+      [
+        JSON.stringify({ objectives: "latency" }),
+        "Invalid --comparison-policy: objectives must be an object.",
+      ],
+      [
+        JSON.stringify({ objectives: { p95Ms: 5 } }),
+        "Invalid --comparison-policy: objectives.p95Ms must be an object.",
+      ],
+      [
+        JSON.stringify({ objectives: { p95Ms: { direction: "minimize" } } }),
+        "Invalid --comparison-policy: objectives.p95Ms.weight is required.",
+      ],
+      [
+        JSON.stringify({ objectives: { p95Ms: { weight: 0, direction: "minimize" } } }),
+        "Invalid --comparison-policy: objectives.p95Ms.weight must be greater than 0.",
+      ],
+      [
+        JSON.stringify({ objectives: { p95Ms: { weight: 1, direction: "sideways" } } }),
+        'Invalid --comparison-policy: objectives.p95Ms.direction must be "minimize" or "maximize".',
+      ],
+    ];
+
+    await withTempDir(async (projectDir) => {
+      for (const [payload, expectedDetail] of cases) {
+        await Deno.writeTextFile(`${projectDir}/policy.json`, payload);
+        const error = await assertRejects(
+          () => loadEvalModelComparisonPolicy(projectDir, "policy.json"),
+          VeryfrontError,
+          expectedDetail,
+        );
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(error.slug, "invalid-argument");
+        assertEquals(error.message, expectedDetail);
+      }
+    }, { prefix: "vf-eval-policy-shapes-" });
   });
 
   it("reports malformed model comparison policy JSON as a usage error", async () => {
@@ -2133,11 +2204,15 @@ describe("eval CLI command helpers", () => {
     try {
       await Deno.writeTextFile(`${projectDir}/policy.json`, "{not-json");
 
-      const error = await assertRejects(() =>
-        loadEvalModelComparisonPolicy(projectDir, "policy.json")
+      const error = await assertRejects(
+        () => loadEvalModelComparisonPolicy(projectDir, "policy.json"),
+        VeryfrontError,
+        "Invalid --comparison-policy: file must contain valid JSON.",
       );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "invalid-argument");
       assertEquals(
-        error instanceof Error ? error.message : String(error),
+        error.message,
         "Invalid --comparison-policy: file must contain valid JSON.",
       );
     } finally {

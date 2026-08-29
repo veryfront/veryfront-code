@@ -7,7 +7,9 @@ type SafeParseResult<T> = { success: true; data: T } | {
 import { createFileSystem } from "veryfront/platform";
 import { dirname, normalize } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
+import { INVALID_ARGUMENT } from "veryfront/errors";
 import { cliLogger } from "#cli/utils";
+import { parseArgsOrThrow } from "#cli/shared/args";
 import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
 import { printJson } from "../../shared/json-output.ts";
@@ -94,7 +96,7 @@ Subcommands:
 function normalizeProjectFilePath(remotePath: string): string {
   const normalizedPath = normalize(remotePath).replace(/^\/+/, "");
   if (!normalizedPath || normalizedPath.startsWith("..") || normalizedPath.startsWith("/")) {
-    throw new Error(`Invalid remote file path: ${remotePath}`);
+    throw INVALID_ARGUMENT.create({ detail: `Invalid remote file path: ${remotePath}` });
   }
   return normalizedPath;
 }
@@ -205,12 +207,7 @@ export async function filesCommand(args: ParsedArgs): Promise<void> {
   await withSpan("cli.command.files", async () => {
     switch (subcommand) {
       case "list": {
-        const parsed = parseFilesListArgs(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid files list arguments: ${parsed.error.message}`);
-        }
-
-        const options = parsed.data;
+        const options = parseArgsOrThrow(parseFilesListArgs, "files list", args);
         let config = await resolveConfigWithAuth(options.projectDir);
         if (options.projectSlug) config = { ...config, projectSlug: options.projectSlug };
 
@@ -235,12 +232,7 @@ export async function filesCommand(args: ParsedArgs): Promise<void> {
       }
 
       case "get": {
-        const parsed = parseFilesGetArgs(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid files get arguments: ${parsed.error.message}`);
-        }
-
-        const options = parsed.data;
+        const options = parseArgsOrThrow(parseFilesGetArgs, "files get", args);
         let config = await resolveConfigWithAuth(options.projectDir);
         if (options.projectSlug) config = { ...config, projectSlug: options.projectSlug };
 
@@ -276,12 +268,7 @@ export async function filesCommand(args: ParsedArgs): Promise<void> {
       }
 
       case "put": {
-        const parsed = parseFilesPutArgs(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid files put arguments: ${parsed.error.message}`);
-        }
-
-        const options = parsed.data;
+        const options = parseArgsOrThrow(parseFilesPutArgs, "files put", args);
         let config = await resolveConfigWithAuth(options.projectDir);
         if (options.projectSlug) config = { ...config, projectSlug: options.projectSlug };
 
@@ -306,12 +293,7 @@ export async function filesCommand(args: ParsedArgs): Promise<void> {
 
       case "delete":
       case "rm": {
-        const parsed = parseFilesDeleteArgs(args);
-        if (!parsed.success) {
-          throw new Error(`Invalid files delete arguments: ${parsed.error.message}`);
-        }
-
-        const options = parsed.data;
+        const options = parseArgsOrThrow(parseFilesDeleteArgs, "files delete", args);
         let config = await resolveConfigWithAuth(options.projectDir);
         if (options.projectSlug) config = { ...config, projectSlug: options.projectSlug };
 
