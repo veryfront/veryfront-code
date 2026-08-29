@@ -53,18 +53,16 @@ export interface DAGExecutorConfig {
   onNodeStart?: (nodeId: string) => void;
   onNodeComplete?: (nodeId: string, state: NodeState) => void;
   onWaiting?: (nodeId: string, waitConfig: WaitNodeConfig) => void;
-  onRecoveryScheduled?: (input: {
-    runId: string;
-    nodeId: string;
-    nodeStates: Record<string, NodeState>;
-    ownership?: CheckpointOwnership;
-  }) => Promise<boolean | void> | boolean | void;
   /**
    * Persist one root-run node-state boundary before execution can advance.
    *
    * `currentNodes` names the top-level nodes the run is occupied with at that
    * boundary: the whole batch as it enters, and only the nodes still running
    * (a parked wait, or a composite enclosing one) or failed once it settles.
+   *
+   * The batch-entry boundary is also the sole durable commit for crash
+   * recovery: a recovered node's raised attempt is only in this write, so
+   * returning `false` (ownership lost) must leave nothing durably spent.
    */
   onNodeStatesChanged?: (input: {
     runId: string;
