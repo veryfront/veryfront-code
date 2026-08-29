@@ -225,7 +225,7 @@ describe("cicd coverage workflow", () => {
     const preload = await readRepoFile("src/testing/preload.ts");
     const runtimePrefix = ["De", "no", "."].join("");
     assertStringIncludes(preload, `${runtimePrefix}makeTempDirSync`);
-    assertStringIncludes(preload, "__setReactHttpBundleCacheDirForTests(cacheDir)");
+    assertStringIncludes(preload, "__setHttpModuleCacheDirResolverForTests");
     assertStringIncludes(preload, "await prepareOfflineReactModulesForTests()");
     assertStringIncludes(preload, `${runtimePrefix}removeSync`);
     assertStringIncludes(

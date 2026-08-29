@@ -20,6 +20,7 @@ import {
 import {
   __clearInFlightHttpFetches,
   __injectCachesForTests,
+  __setHttpModuleCacheDirResolverForTests,
   __test_extractBundleDeps,
   cacheHttpImportsToLocal,
   cacheModuleToLocal,
@@ -278,6 +279,33 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       assert(cachedUrl.startsWith("file://"));
       assertEquals(fetchCount, 2);
     });
+  });
+
+  it("scopes a test cache override to the matching module URL", async () => {
+    const moduleUrl = "https://esm.sh/react@19.0.0?target=es2022";
+    const isolatedDir = await makeTempDir({ prefix: "vf-esm-url-cache-" });
+    const mockFetch = (() =>
+      Promise.resolve(
+        new Response("export default {};", {
+          headers: { "content-type": "application/javascript" },
+        }),
+      )) as typeof fetch;
+
+    try {
+      await withIsolatedHttpCache("vf-esm-request-cache-", mockFetch, async (requestedDir) => {
+        const restore = __setHttpModuleCacheDirResolverForTests((url, cacheDir) =>
+          url === moduleUrl && cacheDir === requestedDir ? isolatedDir : undefined
+        );
+        try {
+          const cachedUrl = await cacheModuleToLocal(moduleUrl, requestedDir, "19.0.0");
+          assert(cachedUrl.startsWith(`file://${isolatedDir}/`));
+        } finally {
+          restore();
+        }
+      });
+    } finally {
+      await remove(isolatedDir, { recursive: true });
+    }
   });
 
   it("allows a cold HTTP module response to exceed five seconds", async () => {

@@ -1,7 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
-import { createOfflineReactModuleResponseForTests } from "./offline-react-transport.ts";
+import {
+  createOfflineReactModuleResponseForTests,
+  isOfflineReactModuleUrlForTests,
+} from "./offline-react-transport.ts";
 
 Deno.test("offline React transport serves the pinned module graph and nothing else", async () => {
   const entryUrls = [
@@ -17,7 +20,12 @@ Deno.test("offline React transport serves the pinned module graph and nothing el
   ];
 
   for (const url of entryUrls) {
-    const response = await createOfflineReactModuleResponseForTests(new URL(url));
+    const moduleUrl = new URL(url);
+    assertEquals(
+      isOfflineReactModuleUrlForTests(moduleUrl),
+      !moduleUrl.pathname.startsWith("/lodash"),
+    );
+    const response = await createOfflineReactModuleResponseForTests(moduleUrl);
     assert(response !== undefined, url);
     assertEquals(response.status, 200);
     assertStringIncludes(response.headers.get("content-type") ?? "", "javascript");
@@ -29,6 +37,10 @@ Deno.test("offline React transport serves the pinned module graph and nothing el
       new URL("https://esm.sh/date-fns@4.1.0"),
     ),
     undefined,
+  );
+  assertEquals(
+    isOfflineReactModuleUrlForTests(new URL("https://esm.sh/date-fns@4.1.0")),
+    false,
   );
   assertEquals(
     await createOfflineReactModuleResponseForTests(

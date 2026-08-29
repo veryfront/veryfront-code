@@ -238,6 +238,11 @@ function responsePath(url: URL): string | undefined {
     : `${OFFLINE_REACT_MODULE_PREFIX}${OFFLINE_REACT_ENTRIES[entryKey].outputName}.js`;
 }
 
+/** Return whether the URL is backed by the offline React module graph. */
+export function isOfflineReactModuleUrlForTests(url: URL): boolean {
+  return responsePath(url) !== undefined;
+}
+
 /**
  * Return one test-only React ESM response, or undefined for every unrelated URL.
  *

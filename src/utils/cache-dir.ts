@@ -13,7 +13,6 @@ import { serverLogger } from "./logger/index.ts";
 const logger = serverLogger.component("cache-dir");
 
 const cacheStorage = new AsyncLocalStorage<string>();
-let testReactHttpBundleCacheDir: string | undefined;
 const nodeModulesLinkOperations = new Map<string, Promise<string | undefined>>();
 
 // Bounded memo of cache roots and their expected framework dependency root.
@@ -121,23 +120,6 @@ export function getMdxEsmCacheDir(): string {
 
 export function getHttpBundleCacheDir(): string {
   return join(getCacheBaseDir(), "veryfront-http-bundle");
-}
-
-/** Return the standard HTTP cache, or the disposable React test cache. */
-export function getReactHttpBundleCacheDir(): string {
-  return testReactHttpBundleCacheDir ?? getHttpBundleCacheDir();
-}
-
-/** Override only React's HTTP bundle cache in a DENO_TESTING process. */
-export function __setReactHttpBundleCacheDirForTests(path: string | undefined): () => void {
-  if (getHostEnv("DENO_TESTING") !== "1") {
-    throw new Error("The React HTTP bundle cache test override requires DENO_TESTING=1");
-  }
-  const previous = testReactHttpBundleCacheDir;
-  testReactHttpBundleCacheDir = path;
-  return () => {
-    if (testReactHttpBundleCacheDir === path) testReactHttpBundleCacheDir = previous;
-  };
 }
 
 const CACHE_DIR_IGNORE_CONTENT = [

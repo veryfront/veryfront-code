@@ -23,14 +23,12 @@ import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __cacheDirInternals,
-  __setReactHttpBundleCacheDirForTests,
   ensureCacheDirIgnored,
   ensureCacheNodeModules,
   getCacheBaseDir,
   getCacheDirFromContext,
   getHttpBundleCacheDir,
   getMdxEsmCacheDir,
-  getReactHttpBundleCacheDir,
   runWithCacheDir,
 } from "./cache-dir.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
@@ -263,19 +261,6 @@ describe("cache-dir", () => {
       const result = runWithCacheDir("/tmp/test", getHttpBundleCacheDir);
       assert(result.startsWith("/tmp/test"));
       assert(result.endsWith("veryfront-http-bundle"));
-    });
-  });
-
-  describe("getReactHttpBundleCacheDir", () => {
-    it("isolates React without changing the general HTTP bundle cache", () => {
-      const override = join(tmpdir(), "veryfront-react-cache-test");
-      const restore = __setReactHttpBundleCacheDirForTests(override);
-      try {
-        assertEquals(getReactHttpBundleCacheDir(), override);
-        assert(getHttpBundleCacheDir() !== override);
-      } finally {
-        restore();
-      }
     });
   });
 
