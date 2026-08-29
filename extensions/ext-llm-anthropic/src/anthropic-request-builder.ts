@@ -804,6 +804,10 @@ function planAnthropicRawAssistantReplay(
         const value = rawContent[rawBlockIndex];
         const block = readRecord(value);
         if (!block || typeof block.type !== "string") continue;
+        if (block.type === "thinking" || block.type === "redacted_thinking") {
+          replayIndices.add(index);
+          continue;
+        }
         if (
           (block.type === "server_tool_use" || block.type === "mcp_tool_use") &&
           typeof block.id === "string" &&

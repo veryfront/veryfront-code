@@ -2988,6 +2988,40 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     }]);
   });
 
+  it("replays hidden signed thinking from raw assistant metadata on resume", () => {
+    const rawAssistantContent = [{
+      type: "thinking",
+      thinking: "",
+      signature: "sig_hidden_resume",
+    }, {
+      type: "text",
+      text: "My answer.",
+    }];
+    const prompt = [{
+      role: "assistant",
+      content: [{ type: "text", text: "My answer." }],
+      providerMetadata: {
+        anthropic: { rawAssistantMessages: [rawAssistantContent] },
+      },
+    }, {
+      role: "user",
+      content: [{ type: "text", text: "Continue" }],
+    }] as unknown as RuntimePromptMessage[];
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      { prompt },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.messages[0], {
+      role: "assistant",
+      content: rawAssistantContent,
+    });
+  });
+
   it("rejects raw client tool tampering when canonical content survives", () => {
     const canonicalCall = {
       type: "tool-call" as const,
