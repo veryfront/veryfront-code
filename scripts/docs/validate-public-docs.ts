@@ -1043,6 +1043,197 @@ function javaScriptIdentifierContinuationContext(
   };
 }
 
+interface JavaScriptIdentifierLexeme {
+  readonly complete: boolean;
+  readonly continues: boolean;
+  readonly identifier: boolean;
+  readonly start?: number;
+  readonly word?: string;
+}
+
+function javaScriptIdentifierContinuesAt(
+  text: string,
+  start: number,
+): boolean {
+  if (start === 0) return false;
+  if (javaScriptIdentifierContinueBefore(text, start)) return true;
+  const escapeRange = javaScriptIdentifierEscapeRangeAt(text, start);
+  if (escapeRange !== undefined && escapeRange.start < start) return true;
+  const codePoint = text.codePointAt(start);
+  return codePoint !== undefined && codePoint >= 0xdc00 &&
+    codePoint <= 0xdfff &&
+    javaScriptIdentifierContinueBefore(text, start + 1);
+}
+
+function javaScriptIdentifierLexemeAt(
+  text: string,
+  start: number,
+  end: number,
+  previousSignificantToken: JavaScriptSignificantToken | undefined,
+): JavaScriptIdentifierLexeme {
+  const continues = javaScriptIdentifierContinuesAt(text, start);
+  const identifier = continues
+    ? previousSignificantToken?.identifier === true
+    : javaScriptIdentifierStartsAt(text, start);
+  const identifierStart = javaScriptIdentifierStart(
+    text,
+    start,
+    identifier,
+    continues,
+    previousSignificantToken,
+  );
+  const complete = identifier && !javaScriptIdentifierCodeUnitAt(text, end);
+  return {
+    complete,
+    continues,
+    identifier,
+    start: identifierStart,
+    word: complete && identifierStart !== undefined
+      ? text.slice(identifierStart, end)
+      : undefined,
+  };
+}
+
+interface JavaScriptIdentifierDeclarationContext {
+  readonly candidate: boolean;
+  readonly classDeclarationDepth?: number;
+  readonly functionDeclaration: boolean;
+  readonly functionExpression: boolean;
+  readonly labelCandidate: boolean;
+  readonly prefix: boolean;
+}
+
+function javaScriptIdentifierDeclarationContext(
+  text: string,
+  lexeme: JavaScriptIdentifierLexeme,
+  previousSignificantToken: JavaScriptSignificantToken | undefined,
+  delimiterContexts: readonly JavaScriptDelimiterContext[],
+): JavaScriptIdentifierDeclarationContext {
+  const candidate = lexeme.continues
+    ? previousSignificantToken?.declarationCandidate === true
+    : javaScriptMayStartDeclaration(
+      text,
+      previousSignificantToken,
+      delimiterContexts,
+    );
+  const functionKeyword = lexeme.complete && lexeme.word === "function";
+  let classDeclarationDepth = previousSignificantToken
+    ?.classDeclarationDepth;
+  if (
+    classDeclarationDepth === undefined && lexeme.complete &&
+    lexeme.word === "class" && candidate
+  ) classDeclarationDepth = delimiterContexts.length;
+  return {
+    candidate,
+    classDeclarationDepth,
+    functionDeclaration:
+      previousSignificantToken?.functionDeclaration === true ||
+      (functionKeyword && candidate),
+    functionExpression: previousSignificantToken?.functionExpression === true ||
+      (functionKeyword && !candidate),
+    labelCandidate: lexeme.complete && candidate,
+    prefix: lexeme.complete &&
+      (((lexeme.word === "export" || lexeme.word === "async") && candidate) ||
+        (lexeme.word === "default" &&
+          previousSignificantToken?.declarationPrefix === true)),
+  };
+}
+
+function javaScriptSwitchLabelAfterIdentifier(
+  lexeme: JavaScriptIdentifierLexeme,
+  previousSignificantToken: JavaScriptSignificantToken | undefined,
+  delimiterContexts: readonly JavaScriptDelimiterContext[],
+): JavaScriptSwitchLabelContext | undefined {
+  if (
+    lexeme.complete && delimiterContexts.at(-1) === "switch-block" &&
+    (lexeme.word === "case" || lexeme.word === "default")
+  ) {
+    return { depth: delimiterContexts.length, ternaryDepth: 0 };
+  }
+  return javaScriptSwitchLabelContext(
+    previousSignificantToken,
+    delimiterContexts,
+  );
+}
+
+interface JavaScriptIdentifierVariableContext {
+  readonly declaration?: JavaScriptVariableDeclarationContext;
+  readonly uninitialized: boolean;
+}
+
+function javaScriptIdentifierVariableContext(
+  text: string,
+  start: number,
+  lexeme: JavaScriptIdentifierLexeme,
+  declarationCandidate: boolean,
+  continuationContext: JavaScriptIdentifierContinuationContext,
+  previousSignificantToken: JavaScriptSignificantToken | undefined,
+  delimiterContexts: readonly JavaScriptDelimiterContext[],
+): JavaScriptIdentifierVariableContext {
+  let declaration = javaScriptVariableDeclarationContext(
+    text,
+    start,
+    previousSignificantToken,
+    delimiterContexts,
+  );
+  const startsDeclaration = lexeme.complete &&
+    (lexeme.word === "let" || lexeme.word === "var") && declarationCandidate;
+  if (startsDeclaration) {
+    declaration = { depth: delimiterContexts.length, phase: "binding" };
+  }
+  const endsForIterationBinding = lexeme.complete &&
+    (lexeme.word === "in" || lexeme.word === "of") &&
+    delimiterContexts.at(-1) === "for" &&
+    continuationContext.followsForOfLeftOperand;
+  if (endsForIterationBinding) declaration = undefined;
+  return {
+    declaration,
+    uninitialized: lexeme.complete && !startsDeclaration &&
+      declaration?.phase === "binding" &&
+      delimiterContexts.length === declaration.depth,
+  };
+}
+
+function javaScriptIdentifierToken(
+  end: number,
+  kind: JavaScriptSignificantTokenKind,
+  lexeme: JavaScriptIdentifierLexeme,
+  declaration: JavaScriptIdentifierDeclarationContext,
+  continuation: JavaScriptIdentifierContinuationContext,
+  switchLabel: JavaScriptSwitchLabelContext | undefined,
+  variable: JavaScriptIdentifierVariableContext,
+): JavaScriptSignificantToken {
+  return {
+    ...(declaration.classDeclarationDepth === undefined ? {} : {
+      classDeclarationDepth: declaration.classDeclarationDepth,
+    }),
+    ...(declaration.candidate && !lexeme.complete
+      ? { declarationCandidate: true }
+      : {}),
+    ...(declaration.prefix ? { declarationPrefix: true } : {}),
+    end,
+    ...(declaration.functionDeclaration ? { functionDeclaration: true } : {}),
+    ...(declaration.functionExpression ? { functionExpression: true } : {}),
+    ...(lexeme.identifier ? { identifier: true } : {}),
+    ...(lexeme.start === undefined ? {} : { identifierStart: lexeme.start }),
+    ...(lexeme.word === undefined ? {} : { identifierWord: lexeme.word }),
+    kind,
+    ...(declaration.labelCandidate ? { labelCandidate: true } : {}),
+    ...(continuation.followsForOfLeftOperand
+      ? { followsForOfLeftOperand: true }
+      : {}),
+    ...(continuation.precedingIdentifierKeyword === undefined ? {} : {
+      precedingIdentifierKeyword: continuation.precedingIdentifierKeyword,
+    }),
+    ...(switchLabel === undefined ? {} : { switchLabel }),
+    ...(variable.uninitialized ? { uninitializedDeclaration: true } : {}),
+    ...(variable.declaration === undefined ? {} : {
+      variableDeclarationDepth: variable.declaration.depth,
+      variableDeclarationPhase: variable.declaration.phase,
+    }),
+  };
+}
+
 function javaScriptTokenWithIdentifierContext(
   text: string,
   start: number,
@@ -1062,124 +1253,46 @@ function javaScriptTokenWithIdentifierContext(
     );
   }
 
-  const escapeRange = javaScriptIdentifierEscapeRangeAt(text, start);
-  const codePoint = text.codePointAt(start);
-  const continuesIdentifierWord = start > 0 &&
-    (javaScriptIdentifierContinueBefore(text, start) ||
-      (escapeRange !== undefined && escapeRange.start < start) ||
-      (codePoint !== undefined && codePoint >= 0xdc00 && codePoint <= 0xdfff &&
-        javaScriptIdentifierContinueBefore(text, start + 1)));
-  const identifier = continuesIdentifierWord
-    ? previousSignificantToken?.identifier === true
-    : javaScriptIdentifierStartsAt(text, start);
-  const identifierStart = javaScriptIdentifierStart(
+  const lexeme = javaScriptIdentifierLexemeAt(
     text,
     start,
-    identifier,
-    continuesIdentifierWord,
+    end,
     previousSignificantToken,
   );
-  const declarationCandidate = continuesIdentifierWord
-    ? previousSignificantToken?.declarationCandidate === true
-    : javaScriptMayStartDeclaration(
-      text,
-      previousSignificantToken,
-      delimiterContexts,
-    );
-  const completeIdentifier = identifier &&
-    !javaScriptIdentifierCodeUnitAt(text, end);
-  const identifierWord = completeIdentifier && identifierStart !== undefined
-    ? text.slice(identifierStart, end)
-    : undefined;
-  let switchLabel = javaScriptSwitchLabelContext(
+  const declaration = javaScriptIdentifierDeclarationContext(
+    text,
+    lexeme,
     previousSignificantToken,
     delimiterContexts,
   );
-  if (
-    completeIdentifier && delimiterContexts.at(-1) === "switch-block" &&
-    (identifierWord === "case" || identifierWord === "default")
-  ) {
-    switchLabel = {
-      depth: delimiterContexts.length,
-      ternaryDepth: 0,
-    };
-  }
-  const declarationPrefix = completeIdentifier &&
-    ((identifierWord === "export" || identifierWord === "async") &&
-        declarationCandidate ||
-      identifierWord === "default" &&
-        previousSignificantToken?.declarationPrefix === true);
-  const labelCandidate = completeIdentifier && declarationCandidate;
-  const functionDeclaration =
-    previousSignificantToken?.functionDeclaration === true ||
-    (completeIdentifier && identifierWord === "function" &&
-      declarationCandidate);
-  const functionExpression =
-    previousSignificantToken?.functionExpression === true ||
-    (completeIdentifier && identifierWord === "function" &&
-      !declarationCandidate);
-  const classDeclarationDepth = previousSignificantToken
-    ?.classDeclarationDepth ??
-    (completeIdentifier && identifierWord === "class" && declarationCandidate
-      ? delimiterContexts.length
-      : undefined);
-  let variableDeclaration = javaScriptVariableDeclarationContext(
-    text,
-    start,
-    previousSignificantToken,
-    delimiterContexts,
-  );
-  const startsVariableDeclaration = completeIdentifier &&
-    (identifierWord === "let" || identifierWord === "var") &&
-    declarationCandidate;
-  if (startsVariableDeclaration) {
-    variableDeclaration = {
-      depth: delimiterContexts.length,
-      phase: "binding",
-    };
-  }
   const continuationContext = javaScriptIdentifierContinuationContext(
     text,
-    continuesIdentifierWord,
+    lexeme.continues,
     previousSignificantToken,
     delimiterContexts,
   );
-  const endsForIterationBinding = completeIdentifier &&
-    (identifierWord === "in" || identifierWord === "of") &&
-    delimiterContexts.at(-1) === "for" &&
-    continuationContext.followsForOfLeftOperand;
-  if (endsForIterationBinding) variableDeclaration = undefined;
-  const uninitializedDeclaration = completeIdentifier &&
-    !startsVariableDeclaration && variableDeclaration?.phase === "binding" &&
-    delimiterContexts.length === variableDeclaration.depth;
-  return {
-    ...(classDeclarationDepth === undefined ? {} : { classDeclarationDepth }),
-    ...(declarationCandidate && !completeIdentifier
-      ? { declarationCandidate: true }
-      : {}),
-    ...(declarationPrefix ? { declarationPrefix: true } : {}),
+  const variableContext = javaScriptIdentifierVariableContext(
+    text,
+    start,
+    lexeme,
+    declaration.candidate,
+    continuationContext,
+    previousSignificantToken,
+    delimiterContexts,
+  );
+  return javaScriptIdentifierToken(
     end,
-    ...(functionDeclaration ? { functionDeclaration: true } : {}),
-    ...(functionExpression ? { functionExpression: true } : {}),
-    ...(identifier ? { identifier: true } : {}),
-    ...(identifierStart === undefined ? {} : { identifierStart }),
-    ...(identifierWord === undefined ? {} : { identifierWord }),
     kind,
-    ...(labelCandidate ? { labelCandidate: true } : {}),
-    ...(continuationContext.followsForOfLeftOperand
-      ? { followsForOfLeftOperand: true }
-      : {}),
-    ...(continuationContext.precedingIdentifierKeyword === undefined ? {} : {
-      precedingIdentifierKeyword:
-        continuationContext.precedingIdentifierKeyword,
-    }),
-    ...(switchLabel === undefined ? {} : { switchLabel }),
-    ...(uninitializedDeclaration ? { uninitializedDeclaration: true } : {}),
-    ...(variableDeclaration === undefined ? {} : {
-      variableDeclarationDepth: variableDeclaration.depth,
-      variableDeclarationPhase: variableDeclaration.phase,
-    }),
-  };
+    lexeme,
+    declaration,
+    continuationContext,
+    javaScriptSwitchLabelAfterIdentifier(
+      lexeme,
+      previousSignificantToken,
+      delimiterContexts,
+    ),
+    variableContext,
+  );
 }
 
 function significantJavaScriptToken(
@@ -1769,53 +1882,96 @@ function javaScriptOpeningParenDelimiterContext(
   return undefined;
 }
 
+function javaScriptDelimiterContextIsStatementPosition(
+  delimiterContexts: readonly JavaScriptDelimiterContext[],
+): boolean {
+  const context = delimiterContexts.at(-1);
+  return delimiterContexts.length === 0 || context === "block" ||
+    context === "expression-block" || context === "switch-block";
+}
+
+function javaScriptLineTerminatedExpressionBefore(
+  text: string,
+  start: number,
+  previousSignificantToken: JavaScriptSignificantToken | undefined,
+  delimiterContexts: readonly JavaScriptDelimiterContext[],
+): boolean {
+  if (previousSignificantToken === undefined) return false;
+  if (
+    !/[\n\r\u2028\u2029]/.test(
+      text.slice(previousSignificantToken.end, start),
+    )
+  ) return false;
+  return !javaScriptRegexMayStart(
+    text,
+    previousSignificantToken,
+    delimiterContexts,
+  );
+}
+
+function javaScriptSignificantTokenEndsWithArrow(
+  text: string,
+  token: JavaScriptSignificantToken | undefined,
+): boolean {
+  return token !== undefined &&
+    text.slice(token.end - 2, token.end) === "=>";
+}
+
+function javaScriptOpeningBraceStartsStatementBlock(
+  text: string,
+  start: number,
+  previousSignificantToken: JavaScriptSignificantToken | undefined,
+  delimiterContexts: readonly JavaScriptDelimiterContext[],
+): boolean {
+  if (
+    previousSignificantToken?.classDeclarationDepth ===
+      delimiterContexts.length
+  ) return true;
+  const kind = previousSignificantToken?.kind;
+  if (
+    kind === "control-header" || kind === "declaration-header" ||
+    kind === "statement-label"
+  ) return true;
+  const keyword = previousSignificantToken?.identifierWord;
+  if (
+    keyword === "static" ||
+    keyword !== undefined && JAVASCRIPT_BLOCK_PREFIX_KEYWORDS.has(keyword)
+  ) return true;
+  if (!javaScriptDelimiterContextIsStatementPosition(delimiterContexts)) {
+    return false;
+  }
+  if (previousSignificantToken === undefined) return true;
+  if (
+    javaScriptLineTerminatedExpressionBefore(
+      text,
+      start,
+      previousSignificantToken,
+      delimiterContexts,
+    )
+  ) return true;
+  return ";{}".includes(text[previousSignificantToken.end - 1]!);
+}
+
 function javaScriptOpeningBraceDelimiterContext(
   text: string,
   start: number,
   previousSignificantToken: JavaScriptSignificantToken | undefined,
   delimiterContexts: readonly JavaScriptDelimiterContext[],
 ): JavaScriptDelimiterContext {
-  const keyword = previousSignificantToken?.identifierWord;
-  const statementPosition = delimiterContexts.length === 0 ||
-    delimiterContexts.at(-1) === "block" ||
-    delimiterContexts.at(-1) === "expression-block" ||
-    delimiterContexts.at(-1) === "switch-block";
-  const previousCharacter = previousSignificantToken === undefined
-    ? undefined
-    : text[previousSignificantToken.end - 1];
-  const lineTerminatedExpression = previousSignificantToken !== undefined &&
-    /[\n\r\u2028\u2029]/.test(
-      text.slice(previousSignificantToken.end, start),
-    ) &&
-    !javaScriptRegexMayStart(
-      text,
-      previousSignificantToken,
-      delimiterContexts,
-    );
-  const classDeclarationBody =
-    previousSignificantToken?.classDeclarationDepth ===
-      delimiterContexts.length;
   const expressionBlock = previousSignificantToken?.kind ===
       "expression-header" ||
-    (previousSignificantToken !== undefined &&
-      text.slice(
-          previousSignificantToken.end - 2,
-          previousSignificantToken.end,
-        ) === "=>");
+    javaScriptSignificantTokenEndsWithArrow(text, previousSignificantToken);
   if (expressionBlock) return "expression-block";
   if (previousSignificantToken?.kind === "switch-header") {
     return "switch-block";
   }
   if (
-    classDeclarationBody ||
-    previousSignificantToken?.kind === "control-header" ||
-    previousSignificantToken?.kind === "declaration-header" ||
-    previousSignificantToken?.kind === "statement-label" ||
-    keyword === "static" ||
-    (keyword !== undefined && JAVASCRIPT_BLOCK_PREFIX_KEYWORDS.has(keyword)) ||
-    (statementPosition &&
-      (lineTerminatedExpression || previousSignificantToken === undefined ||
-        previousCharacter !== undefined && ";{}".includes(previousCharacter)))
+    javaScriptOpeningBraceStartsStatementBlock(
+      text,
+      start,
+      previousSignificantToken,
+      delimiterContexts,
+    )
   ) return "block";
   return "nested";
 }
