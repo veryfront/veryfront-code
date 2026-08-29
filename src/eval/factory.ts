@@ -116,18 +116,12 @@ export function evalTool(input: EvalToolInput): EvalDefinition {
   return createEvalDefinition("tool", input);
 }
 
-/**
- * Define a target-free eval that grades each stored dataset example directly.
- * The definition's `target` identity is derived from the stable `id`, falling
- * back to `name`, so renaming the eval keeps saved baselines comparable.
- */
+/** Define a target-free eval that grades each stored dataset example directly. */
 export function evalDataset(input: EvalDatasetInput): EvalDefinition {
-  const target = normalizeOptionalLabel(input.id, "Eval id") ??
-    normalizeOptionalLabel(input.name, "Eval name");
-  if (!target) {
-    throw createEvalValidationError("Eval dataset definitions require an id or name");
-  }
-  return createEvalDefinition("dataset", { ...input, target });
+  return createEvalDefinition("dataset", {
+    ...input,
+    target: normalizeEvalString(input.id, "Eval id"),
+  });
 }
 
 /** Check whether a value is a normalized eval definition. */

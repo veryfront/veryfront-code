@@ -154,8 +154,7 @@ export const supportReplyQuality = evalDataset({
 export default supportReplyQuality;
 ```
 
-At least one of `id` or `name` is required; the report identity is derived from
-the stable `id` (falling back to `name`), so renaming the eval keeps saved
+`id` is required and is the report identity, so renaming `name` keeps saved
 baselines comparable. Running one needs no adapters because nothing executes:
 
 ```ts

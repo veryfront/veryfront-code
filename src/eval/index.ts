@@ -1,5 +1,5 @@
 /**
- * First-class eval primitives for agent quality checks.
+ * First-class eval primitives for agent, tool, and stored dataset quality checks.
  *
  * @module eval
  *

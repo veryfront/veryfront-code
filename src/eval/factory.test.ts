@@ -174,7 +174,7 @@ describe("eval/factory", () => {
     assertEquals(Object.hasOwn(definition, "mockTools"), false);
   });
 
-  it("derives dataset eval identity from the id, falling back to the name", () => {
+  it("derives dataset eval identity from the id", () => {
     const fromId = evalDataset({
       id: "eval:judge-corpus",
       dataset: datasets.inline([{ id: "case-1", input: "text" }]),
@@ -182,22 +182,14 @@ describe("eval/factory", () => {
     assertEquals(fromId.target, "eval:judge-corpus");
     assertEquals(fromId.name, "eval:judge-corpus");
     assertEquals(isEvalDefinition(fromId), true);
-
-    const fromName = evalDataset({
-      name: "Judge corpus",
-      dataset: datasets.inline([{ id: "case-1", input: "text" }]),
-    });
-    assertEquals(fromName.target, "Judge corpus");
-    assertEquals(fromName.name, "Judge corpus");
-    assertEquals(isEvalDefinition(fromName), true);
   });
 
-  it("rejects dataset evals without an id or name", () => {
-    // The input type requires id or name; the cast mirrors an untyped JS caller.
+  it("rejects dataset evals without an id", () => {
+    // The input type requires id; the cast mirrors an untyped JS caller.
     const targetless = {
       dataset: datasets.inline([{ id: "case-1", input: "text" }]),
     } as unknown as Parameters<typeof evalDataset>[0];
-    assertThrows(() => evalDataset(targetless), Error, "id or name");
+    assertThrows(() => evalDataset(targetless), Error, "non-empty string");
     assertThrows(
       () =>
         evalDataset({
