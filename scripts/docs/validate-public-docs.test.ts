@@ -514,6 +514,9 @@ describe("public docs validation", () => {
           '<a data-ok={(() => { class Sample {} /[}>]/.test(value); return true })()} href="../architecture/class-block-regex.md">ok</a>\n' +
           '<a data-ok={(() => { {} /[}>]/.test(value); return true })()} href="../architecture/bare-block-regex.md">ok</a>\n' +
           '<a data-ok={(function () { class Sample {} /[}>]/.test(value); return true })()} href="../architecture/function-body-regex.md">ok</a>\n' +
+          '<a data-ok={({ method() { {} /[}>]/.test(value) } })} href="../architecture/method-body-regex.md">ok</a>\n' +
+          '<a data-ok={(class { method() { {} /[}>]/.test(value) } })} href="../architecture/class-method-body-regex.md">ok</a>\n' +
+          '<a data-ok={(() => { return\n{} /[}>]/.test(value) })()} href="../architecture/return-asi-regex.md">ok</a>\n' +
           '<a data-ok={<Foo></Foo>} href="../architecture/paired-jsx.md">ok</a>\n' +
           '<a data-ok={<Foo>child</Foo>} href="../architecture/jsx-child-text.md">ok</a>\n' +
           '<a data-ok={value </foo>/.source} href="../architecture/less-than-regex.md">ok</a>\n' +
@@ -598,6 +601,9 @@ describe("public docs validation", () => {
         "../architecture/class-block-regex.md",
         "../architecture/bare-block-regex.md",
         "../architecture/function-body-regex.md",
+        "../architecture/method-body-regex.md",
+        "../architecture/class-method-body-regex.md",
+        "../architecture/return-asi-regex.md",
         "../architecture/paired-jsx.md",
         "../architecture/jsx-child-text.md",
         "../architecture/less-than-regex.md",
@@ -1856,6 +1862,24 @@ describe("public docs validation", () => {
   });
 
   it("ignores Markdown syntax inside MDX ESM blocks", () => {
+    assertEquals(
+      destinations(
+        'import value from "example"\n' +
+          "/[}]/.test(value)\n" +
+          'export const hidden = "[old](../architecture/import-regex.md)"\n\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
+    assertEquals(
+      destinations(
+        'export { value } from "example"\n' +
+          "/[}]/.test(value)\n" +
+          'export const hidden = "[old](../architecture/export-regex.md)"\n\n' +
+          "[real](../architecture/real.md)",
+      ),
+      ["../architecture/real.md"],
+    );
     assertEquals(
       destinations(
         "export function sample() {}\n" +

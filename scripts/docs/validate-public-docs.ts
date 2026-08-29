@@ -1046,6 +1046,7 @@ function significantJavaScriptToken(
   if (token.kind === "other") {
     kind = javaScriptDelimiterTokenKind(
       text,
+      start,
       text[start]!,
       previousSignificantToken,
       delimiterContexts,
@@ -1349,6 +1350,7 @@ interface JavaScriptBalance {
   readonly delimiterContexts: JavaScriptDelimiterContext[];
   quote: JavaScriptQuote | undefined;
   blockComment: boolean;
+  moduleDeclaration: boolean;
   templateEnd: number;
   previousSignificantToken: JavaScriptSignificantToken | undefined;
   valid: boolean;
@@ -1536,7 +1538,7 @@ function javaScriptLineTerminatesStatement(
   const finalWord = token.identifierWord;
   if (
     finalWord === "break" || finalWord === "continue" ||
-    finalWord === "debugger"
+    finalWord === "debugger" || finalWord === "return"
   ) return true;
   return token.precedingIdentifierKeyword === "break" ||
     token.precedingIdentifierKeyword === "continue";
@@ -1572,6 +1574,7 @@ function javaScriptTokenMayEndForOfLeftOperand(
 
 function javaScriptDelimiterTokenKind(
   text: string,
+  start: number,
   character: string,
   previousSignificantToken: JavaScriptSignificantToken | undefined,
   delimiterContexts: JavaScriptDelimiterContext[],
@@ -1636,6 +1639,11 @@ function javaScriptDelimiterTokenKind(
     if (context === "control" || context === "for") return "control-header";
     if (context === "function-declaration") return "declaration-header";
     if (context === "function-expression") return "expression-header";
+    if (
+      character === ")" && context === undefined &&
+      previousSignificantToken?.classDeclarationDepth === undefined &&
+      text[skipJavaScriptTrivia(text, start + 1)] === "{"
+    ) return "expression-header";
     if (context === "block") return "statement-block";
   }
   return "other";
@@ -1884,6 +1892,7 @@ const JAVASCRIPT_DELIMITER_CLOSERS: Readonly<Record<string, string>> = {
 
 function recordJavaScriptDelimiter(
   text: string,
+  start: number,
   character: string,
   previousSignificantToken: JavaScriptSignificantToken | undefined,
   state: JavaScriptBalance,
@@ -1892,6 +1901,7 @@ function recordJavaScriptDelimiter(
     state.delimiters.push(character);
     return javaScriptDelimiterTokenKind(
       text,
+      start,
       character,
       previousSignificantToken,
       state.delimiterContexts,
@@ -1906,6 +1916,7 @@ function recordJavaScriptDelimiter(
   state.delimiters.pop();
   return javaScriptDelimiterTokenKind(
     text,
+    start,
     character,
     previousSignificantToken,
     state.delimiterContexts,
@@ -1918,6 +1929,13 @@ function scanJavaScriptLine(
   lineEnd: number,
   state: JavaScriptBalance,
 ): void {
+  if (
+    state.delimiters.length === 0 && state.quote === undefined &&
+    !state.blockComment &&
+    /^(?:import\b(?!\s*[.(])|export\b\s*(?:\{|\*))/.test(
+      text.slice(lineStart, lineEnd),
+    )
+  ) state.moduleDeclaration = true;
   let cursor = Math.max(lineStart, state.templateEnd);
   while (cursor < lineEnd) {
     const commentEnd = javaScriptLineCommentEnd(text, cursor, lineEnd, state);
@@ -1939,6 +1957,7 @@ function scanJavaScriptLine(
     if (!/\s/.test(character)) {
       const kind = recordJavaScriptDelimiter(
         text,
+        cursor,
         character,
         state.previousSignificantToken,
         state,
@@ -1955,9 +1974,14 @@ function scanJavaScriptLine(
     }
     cursor++;
   }
+  const moduleDeclarationEnded = state.moduleDeclaration &&
+    state.delimiters.length === 0 && state.quote === undefined &&
+    !state.blockComment && state.templateEnd <= lineEnd;
   if (
+    moduleDeclarationEnded ||
     javaScriptLineTerminatesStatement(state.previousSignificantToken)
   ) state.previousSignificantToken = undefined;
+  if (moduleDeclarationEnded) state.moduleDeclaration = false;
 }
 
 function mdxEsmRangeEnd(text: string, start: number): number | undefined {
@@ -1966,6 +1990,7 @@ function mdxEsmRangeEnd(text: string, start: number): number | undefined {
     delimiterContexts: [],
     quote: undefined,
     blockComment: false,
+    moduleDeclaration: false,
     templateEnd: start,
     previousSignificantToken: undefined,
     valid: true,
@@ -2563,6 +2588,7 @@ function scanTagSyntax(
     if (expressionDepth > 0) {
       const kind = javaScriptDelimiterTokenKind(
         text,
+        cursor,
         character,
         previousSignificantToken,
         delimiterContexts,
