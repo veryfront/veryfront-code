@@ -1700,6 +1700,57 @@ Deno.test("prepareHostedChatRuntimeMessages reports historical tool input compac
   assertEquals((diagnostics[0] as { toolCallId?: string }).toolCallId, "tool-render-widget");
 });
 
+Deno.test("prepareHostedChatRuntimeMessages preserves checkpointed historical tool inputs", async () => {
+  const diagnostics: HistoricalToolInputCompactionDiagnostic[] = [];
+  const marker = "CHECKPOINTED_TOOL_INPUT_MARKER";
+  const messages = await prepareHostedChatRuntimeMessages(
+    [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Render the widget." }],
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "dynamic-tool",
+          toolName: "render_widget",
+          toolCallId: "tool-render-widget",
+          input: {
+            targetPath: "components/Widget.tsx",
+            source: `${marker}:${"export const widget = true;\n".repeat(2000)}`,
+          },
+          state: "output-available",
+          output: { ok: true },
+        }],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Update the widget." }],
+      },
+    ],
+    {
+      providerReplayCheckpointMessageIds: ["assistant-1"],
+      historicalToolInputRetention: {
+        diagnostics,
+        resolvePolicy: (toolName) =>
+          toolName === "render_widget"
+            ? {
+              compactCompletedInput: true,
+              compactAfterChars: 100,
+            }
+            : undefined,
+      },
+    },
+  );
+
+  const serialized = JSON.stringify(messages);
+  assertEquals(serialized.includes(marker), true);
+  assertEquals(diagnostics, []);
+});
+
 Deno.test("prepareHostedChatRuntimeCreationOptions applies the skill selector and owner scope", async () => {
   const skills = [
     {

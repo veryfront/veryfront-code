@@ -1,5 +1,6 @@
 import {
   copyProviderModelMessageSourceId,
+  getProviderModelMessageSourceId,
   getStringField,
   isReasoningPart,
   isToolCallPart,
@@ -88,6 +89,7 @@ export type HistoricalToolInputRetentionOptions = {
   resolvePolicy?: HistoricalToolInputRetentionPolicyResolver;
   diagnostics?: HistoricalToolInputCompactionDiagnostic[];
   limits?: Partial<MessagePrepLimits>;
+  preserveSourceMessageIds?: readonly string[];
 };
 
 /** Options accepted by prepare provider model messages from UI messages. */
@@ -1559,10 +1561,15 @@ export function compactOldToolInputs(
 
   const historicalResultIds = collectHistoricalToolResultIds(messages, lastUserIdx);
   const limits = resolveMessagePrepLimits(options.limits);
+  const preservedSourceMessageIds = new Set(options.preserveSourceMessageIds ?? []);
   let mutated = false;
 
   const result = messages.map((msg, idx) => {
     if (idx >= lastUserIdx || msg.role !== "assistant" || !Array.isArray(msg.content)) {
+      return msg;
+    }
+    const sourceMessageId = getProviderModelMessageSourceId(msg);
+    if (sourceMessageId && preservedSourceMessageIds.has(sourceMessageId)) {
       return msg;
     }
 
@@ -1646,10 +1653,14 @@ export function compactHistoricalUiMessageToolInputs(
 
   const historicalResultIds = collectHistoricalUiToolResultIds(messages, lastUserIdx);
   const limits = resolveMessagePrepLimits(options.limits);
+  const preservedSourceMessageIds = new Set(options.preserveSourceMessageIds ?? []);
   let mutated = false;
 
   const result = messages.map((message, index) => {
     if (index >= lastUserIdx || message.role !== "assistant") {
+      return message;
+    }
+    if (preservedSourceMessageIds.has(message.id)) {
       return message;
     }
 

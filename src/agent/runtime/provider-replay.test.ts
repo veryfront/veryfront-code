@@ -47,6 +47,23 @@ function createValidCheckpoint(): ProviderReplayCheckpoint {
   };
 }
 
+function createTextCheckpoint(text: string): ProviderReplayCheckpoint {
+  return {
+    version: 1,
+    messageId: "assistant-message-1",
+    provider: "anthropic",
+    providerBlocks: [
+      {
+        type: "provider-block",
+        provider: "anthropic",
+        block: { type: "text", text },
+      },
+    ],
+    providerBlockPositions: [0],
+    totalPartCount: 1,
+  };
+}
+
 function assertProviderReplayError(operation: () => unknown): VeryfrontError {
   const error = assertThrows(operation);
   assertInstanceOf(error, VeryfrontError);
@@ -82,6 +99,24 @@ function createAssistantMessage(id: string): Message {
     parts: [
       { type: "reasoning", text: "" },
       { type: "text", text: "Looking that up." },
+    ],
+    timestamp: 1,
+  } as Message;
+}
+
+function createCheckpointedAssistantMessage(id = "assistant-message-1"): Message {
+  return {
+    id,
+    role: "assistant",
+    parts: [
+      { type: "reasoning", signature: SIGNATURE },
+      { type: "reasoning", redactedData: REDACTED_DATA },
+      {
+        type: "tool-call",
+        toolCallId: "call-1",
+        toolName: "lookup",
+        args: { query: "veryfront" },
+      },
     ],
     timestamp: 1,
   } as Message;
@@ -297,7 +332,7 @@ describe("agent/runtime/provider-replay", () => {
 
   describe("applyProviderReplayCheckpointsToMessages", () => {
     it("should attach opaque replay metadata to the matching assistant turn", () => {
-      const target = createAssistantMessage("assistant-message-1");
+      const target = createCheckpointedAssistantMessage("assistant-message-1");
       const untouched = createAssistantMessage("assistant-message-2");
       const messages = [
         { id: "user-1", role: "user", parts: [{ type: "text", text: "hi" }], timestamp: 0 },
@@ -323,9 +358,9 @@ describe("agent/runtime/provider-replay", () => {
         "turns without replay state stay untouched",
       );
       assertEquals(
-        JSON.stringify(messages).includes(SIGNATURE),
+        JSON.stringify(messages).includes("rawAssistantMessages"),
         false,
-        "signed material never lands on the public message objects",
+        "raw replay metadata never lands on the public message objects",
       );
     });
 
@@ -363,14 +398,13 @@ describe("agent/runtime/provider-replay", () => {
     it("should not treat matching ID prefixes as split-turn provenance", () => {
       const target = createAssistantMessage("assistant-message-1");
       const unrelated = createAssistantMessage("assistant-message-1-1");
-      applyProviderReplayCheckpointsToMessages([target, unrelated], [createValidCheckpoint()]);
+      const checkpoint = createTextCheckpoint("Looking that up.");
+      applyProviderReplayCheckpointsToMessages([target, unrelated], [checkpoint]);
       assertEquals(
         readAttachedProviderMetadata(target),
         {
           anthropic: {
-            rawAssistantMessages: [
-              createValidCheckpoint().providerBlocks.map((block) => block.block),
-            ],
+            rawAssistantMessages: [[{ type: "text", text: "Looking that up." }]],
           },
         },
         "the exact checkpoint target receives replay metadata",
@@ -389,6 +423,47 @@ describe("agent/runtime/provider-replay", () => {
       ];
       assertProviderReplayError(() =>
         applyProviderReplayCheckpointsToMessages(messages, [createValidCheckpoint()])
+      );
+    });
+
+    it("should allow a matching tool message sibling for one assistant anchor", () => {
+      const target = createAssistantMessage("assistant-message-1");
+      const toolSibling = {
+        id: "assistant-message-1",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "lookup",
+          result: { matches: 1 },
+        }],
+        timestamp: 2,
+      } as Message;
+      const checkpoint = createTextCheckpoint("Looking that up.");
+
+      applyProviderReplayCheckpointsToMessages([target, toolSibling], [checkpoint]);
+
+      assertEquals(
+        readAttachedProviderMetadata(target),
+        {
+          anthropic: {
+            rawAssistantMessages: [[{ type: "text", text: "Looking that up." }]],
+          },
+        },
+        "the assistant anchor receives replay metadata despite a same-source tool sibling",
+      );
+      assertEquals(
+        readAttachedProviderMetadata(toolSibling),
+        undefined,
+        "tool siblings with the same source id are not replay anchors",
+      );
+    });
+
+    it("should fail explicitly when dense checkpoint blocks do not match the anchor", () => {
+      const textOnlyTurn = createAssistantMessage("assistant-message-1");
+
+      assertProviderReplayError(() =>
+        applyProviderReplayCheckpointsToMessages([textOnlyTurn], [createValidCheckpoint()])
       );
     });
 
@@ -413,7 +488,7 @@ describe("agent/runtime/provider-replay", () => {
     });
 
     it("should keep fresher in-process replay metadata over a delivered checkpoint", () => {
-      const target = createAssistantMessage("assistant-message-1");
+      const target = createCheckpointedAssistantMessage("assistant-message-1");
       const inProcess = { anthropic: { rawAssistantMessages: [[{ type: "text", text: "live" }]] } };
       // Simulate the in-process attach that happens right after a streamed step.
       attachProviderMetadata(target, inProcess);
@@ -448,7 +523,7 @@ describe("agent/runtime/provider-replay", () => {
       );
     });
 
-    it("should fail explicitly when conversion cannot carry the attached replay state", () => {
+    it("should fail explicitly when a split turn cannot carry replay state", () => {
       // An assistant turn with an inline tool result followed by more content
       // splits into multiple assistant segments during conversion; exact
       // replay metadata cannot be paired with either fragment.
@@ -472,12 +547,13 @@ describe("agent/runtime/provider-replay", () => {
         ],
         timestamp: 1,
       } as Message;
-      applyProviderReplayCheckpointsToMessages([target], [createValidCheckpoint()]);
-      assertProviderReplayError(() => convertToTextGenerationRuntimeMessages([target]));
+      assertProviderReplayError(() =>
+        applyProviderReplayCheckpointsToMessages([target], [createValidCheckpoint()])
+      );
     });
 
     it("should reconstruct the provider request assistant turn through the runtime converter", () => {
-      const target = createAssistantMessage("assistant-message-1");
+      const target = createCheckpointedAssistantMessage("assistant-message-1");
       const checkpoint = createValidCheckpoint();
       applyProviderReplayCheckpointsToMessages([target], [checkpoint]);
 

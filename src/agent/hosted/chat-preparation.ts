@@ -74,6 +74,7 @@ export type PrepareHostedChatRuntimeMessagesOptions =
     authToken?: string;
     apiUrl?: string | URL;
     projectId?: string | null;
+    providerReplayCheckpointMessageIds?: readonly string[];
   };
 
 /** Context for hosted chat runtime preparation root run. */
@@ -584,6 +585,9 @@ export async function prepareHostedChatExecution<
       abortSignal: input.abortSignal,
       historicalToolInputRetention: {
         diagnostics: historicalToolInputCompactions,
+        preserveSourceMessageIds: input.serverResolvedProviderReplayCheckpoints?.map(
+          (checkpoint) => checkpoint.messageId,
+        ),
       },
     },
   );
@@ -649,7 +653,11 @@ export async function prepareHostedChatRuntimeMessages(
       providerOwnedToolNames: options.providerOwnedToolNames,
       abortSignal: options.abortSignal,
       fileContentFetchTimeoutMs: options.fileContentFetchTimeoutMs,
-      historicalToolInputRetention: options.historicalToolInputRetention,
+      historicalToolInputRetention: {
+        ...options.historicalToolInputRetention,
+        preserveSourceMessageIds: options.providerReplayCheckpointMessageIds ??
+          options.historicalToolInputRetention?.preserveSourceMessageIds,
+      },
     });
   }
   const authToken = options.authToken;
@@ -661,7 +669,11 @@ export async function prepareHostedChatRuntimeMessages(
     providerOwnedToolNames: options.providerOwnedToolNames,
     abortSignal: options.abortSignal,
     fileContentFetchTimeoutMs: options.fileContentFetchTimeoutMs,
-    historicalToolInputRetention: options.historicalToolInputRetention,
+    historicalToolInputRetention: {
+      ...options.historicalToolInputRetention,
+      preserveSourceMessageIds: options.providerReplayCheckpointMessageIds ??
+        options.historicalToolInputRetention?.preserveSourceMessageIds,
+    },
     resolveFileUrl: ({ uploadId }) =>
       getRuntimeUploadUrl({
         apiUrl,

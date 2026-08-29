@@ -3,7 +3,9 @@ import {
   attachProviderMetadata,
   readAttachedProviderMetadata,
 } from "#veryfront/agent/runtime/provider-metadata.ts";
+import { stringifyChatJson } from "#veryfront/chat/json-value.ts";
 import type { Message } from "../types.ts";
+import { convertAgentRuntimeMessagesToProviderMessages } from "./message-adapter.ts";
 
 const MAX_PROVIDER_REPLAY_BLOCKS = 100;
 const MAX_PROVIDER_REPLAY_CHECKPOINTS = 100;
@@ -64,6 +66,58 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isProviderReplayProvider(value: unknown): value is ProviderReplayProvider {
   return value === "anthropic" || value === "openai-responses";
+}
+
+function toCanonicalAnthropicReplayPart(block: Record<string, unknown>): Record<string, unknown> {
+  switch (block.type) {
+    case "text":
+      return { type: "text", text: block.text };
+    case "thinking":
+      return {
+        type: "reasoning",
+        ...(typeof block.thinking === "string" && block.thinking.length > 0
+          ? { text: block.thinking }
+          : {}),
+        ...(typeof block.signature === "string" ? { signature: block.signature } : {}),
+      };
+    case "redacted_thinking":
+      return {
+        type: "reasoning",
+        ...(typeof block.data === "string" ? { redactedData: block.data } : {}),
+      };
+    case "tool_use":
+      return {
+        type: "tool-call",
+        toolCallId: block.id,
+        toolName: block.name,
+        input: block.input,
+      };
+    default:
+      invalidCheckpoint("checkpoint provider block cannot be projected for validation");
+  }
+}
+
+function assertCheckpointMatchesAssistantTurn(
+  target: Message,
+  checkpoint: ProviderReplayCheckpoint,
+): void {
+  const providerProjection = convertAgentRuntimeMessagesToProviderMessages([target])
+    .filter((message) => message.role === "assistant");
+  if (providerProjection.length !== 1) {
+    invalidCheckpoint("checkpoint anchor does not project to one assistant message", {
+      assistantSegmentCount: providerProjection.length,
+    });
+  }
+  const checkpointProjection = checkpoint.providerBlocks.map((block) =>
+    toCanonicalAnthropicReplayPart(block.block)
+  );
+  const targetProjection = providerProjection[0]!.content;
+  if (
+    !Array.isArray(targetProjection) ||
+    stringifyChatJson(checkpointProjection) !== stringifyChatJson(targetProjection)
+  ) {
+    invalidCheckpoint("checkpoint provider blocks do not match the anchored assistant turn");
+  }
 }
 
 function parseProviderReplayBlock(
@@ -278,15 +332,18 @@ export function applyProviderReplayCheckpointsToMessages(
   for (const checkpoint of checkpoints) {
     const matches = messages.filter((message) => message.id === checkpoint.messageId);
     if (matches.length === 0) continue;
-    if (matches.length > 1) {
-      invalidCheckpoint("checkpoint messageId matches more than one message");
+    const assistantMatches = matches.filter((message) => message.role === "assistant");
+    if (assistantMatches.length > 1) {
+      invalidCheckpoint("checkpoint messageId matches more than one assistant message");
     }
-    const target = matches[0]!;
-    if (target.role !== "assistant") {
+    const target = assistantMatches[0];
+    if (!target) {
+      const role = matches[0]?.role;
       invalidCheckpoint("checkpoint messageId must anchor to an assistant message", {
-        role: target.role,
+        ...(role ? { role } : {}),
       });
     }
+    assertCheckpointMatchesAssistantTurn(target, checkpoint);
     // In-process metadata attached during this run is the same replay state at
     // first hand; the durable checkpoint never overrides it.
     if (readAttachedProviderMetadata(target) !== undefined) continue;
