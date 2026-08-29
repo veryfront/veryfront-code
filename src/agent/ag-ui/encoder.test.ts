@@ -1075,4 +1075,56 @@ describe("agent/ag-ui-encoder tool-input lifecycle", () => {
     // emitted it, so a normal tool failure must not emit a second.
     assertEquals(events.map((entry) => entry.event), ["ToolCallResult"]);
   });
+
+  it("never carries reasoning signatures or redacted data into AG-UI payloads", () => {
+    // Signed reasoning blocks are replayed through the private provider replay
+    // channel (veryfront-issue-inbox#522); the AG-UI transcript boundary must
+    // stay signature-free so signed material cannot reach display text.
+    const state = createAgUiEncoderState({ nowMs: null, epochMs: null });
+    const signature = "sig-secret-3c2b1a";
+    const redactedData = "redacted-secret-4d5e6f";
+
+    const events = [
+      ...mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "message-start",
+        messageId: "assistant-signed",
+      }),
+      ...mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "reasoning-start",
+        id: "reasoning-signed",
+      }),
+      ...mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "reasoning-delta",
+        id: "reasoning-signed",
+        delta: "",
+      }),
+      ...mapRuntimeStreamEventToAgUiEvents(state, {
+        type: "reasoning-end",
+        id: "reasoning-signed",
+        signature,
+        redactedData,
+      }),
+    ];
+
+    assertEquals(
+      events.map((entry) => entry.event),
+      ["ReasoningMessageStart", "ReasoningMessageContent", "ReasoningMessageEnd"],
+      "reasoning lifecycle only",
+    );
+    const serialized = JSON.stringify(events);
+    assertEquals(serialized.includes(signature), false, "signature never leaves the runtime");
+    assertEquals(
+      serialized.includes(redactedData),
+      false,
+      "redacted data never leaves the runtime",
+    );
+    assertEquals(
+      events.at(-1),
+      {
+        event: "ReasoningMessageEnd",
+        payload: { messageId: "assistant-signed:reasoning:0" },
+      },
+      "reasoning end carries only its message anchor",
+    );
+  });
 });

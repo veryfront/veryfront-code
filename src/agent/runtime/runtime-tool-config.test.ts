@@ -1,10 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import type { AgentConfig } from "../types.ts";
 import {
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
+  getRuntimeProviderReplayCheckpoints,
   getRuntimeProviderTools,
   getRuntimeSourceIntegrationPolicy,
   getRuntimeSourceIntegrationPolicyFromContext,
@@ -223,6 +225,43 @@ describe("agent/runtime-tool-config", () => {
         })),
         undefined,
       );
+    });
+  });
+
+  describe("getRuntimeProviderReplayCheckpoints", () => {
+    it("returns undefined when the trusted host resolved no replay state", () => {
+      assertEquals(getRuntimeProviderReplayCheckpoints(runtimeConfig()), undefined);
+    });
+
+    it("returns validated checkpoints from trusted host state", () => {
+      const checkpoint = {
+        version: 1,
+        messageId: "assistant-message-1",
+        provider: "anthropic",
+        providerBlocks: [{
+          type: "provider-block",
+          provider: "anthropic",
+          block: { type: "thinking", thinking: "", signature: "sig-config" },
+        }],
+        providerBlockPositions: [0],
+        totalPartCount: 1,
+      };
+      assertEquals(
+        getRuntimeProviderReplayCheckpoints(runtimeConfig({
+          __vfProviderReplayCheckpoints: [checkpoint],
+        })),
+        [checkpoint],
+      );
+    });
+
+    it("fails explicitly on malformed trusted state instead of degrading replay", () => {
+      const error = assertThrows(() =>
+        getRuntimeProviderReplayCheckpoints(runtimeConfig({
+          __vfProviderReplayCheckpoints: [{ version: 1 }],
+        }))
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "provider-replay-checkpoint-invalid");
     });
   });
 });

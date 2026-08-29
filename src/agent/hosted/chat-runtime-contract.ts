@@ -9,6 +9,7 @@ import type { AgentRuntimeMessage } from "../runtime/message-adapter.ts";
 import type { ConversationRunEvent } from "../conversation/run-events.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
 import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
+import type { ProviderReplayCheckpoint } from "../runtime/provider-replay.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
 import type { ResolvedSkillSelectorPolicy } from "#veryfront/skill/selector.ts";
 
@@ -164,6 +165,8 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   submittedFormInputResult?: HostedSubmittedFormInputResult;
   /** @internal Latest private checkpoint loaded from trusted run state. */
   serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
+  /** @internal Verified provider replay state for persisted assistant turns. */
+  serverResolvedProviderReplayCheckpoints?: readonly ProviderReplayCheckpoint[];
   /** @internal Persists private checkpoint state outside model messages. */
   persistToolExposureCheckpoint?: (
     checkpoint: ToolExposureCheckpoint,

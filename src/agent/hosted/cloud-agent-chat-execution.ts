@@ -68,7 +68,10 @@ import {
   resolveMcpServers,
   setFilteredTraceAttributes,
 } from "./cloud-agent-child-tools.ts";
-import { getServerResolvedToolExposureCheckpoint } from "./runtime-request-config.ts";
+import {
+  getServerResolvedProviderReplayCheckpoints,
+  getServerResolvedToolExposureCheckpoint,
+} from "./runtime-request-config.ts";
 import { resolveHostedRequestPreparationSignal } from "../service/request-preparation-context.ts";
 
 const DEFAULT_FORWARDED_CONFIG_NAMESPACE = "veryfront";
@@ -326,6 +329,10 @@ export async function prepareChatExecutionWithinProjectRuntime(
     request: req,
     hostToolPolicy: context.options.hostToolPolicy,
     serverResolvedToolExposureCheckpoint: getServerResolvedToolExposureCheckpoint(
+      req.forwardedProps,
+      req.serverEnvelopeVerified === true,
+    ),
+    serverResolvedProviderReplayCheckpoints: getServerResolvedProviderReplayCheckpoints(
       req.forwardedProps,
       req.serverEnvelopeVerified === true,
     ),

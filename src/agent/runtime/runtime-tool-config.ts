@@ -8,6 +8,10 @@ import {
   isValidToolExposureCheckpointName,
   type ToolExposureCheckpoint,
 } from "./tool-exposure.ts";
+import {
+  parseServerResolvedProviderReplayCheckpoints,
+  type ProviderReplayCheckpoint,
+} from "./provider-replay.ts";
 
 /** Internal schema-loading mode derived from the authored tools selector. */
 export type RuntimeToolLoadingMode = "eager" | "deferred";
@@ -19,6 +23,7 @@ export type RuntimeToolFilterConfig = AgentConfig & {
     { name: string; description: string; parameters: Record<string, unknown> }
   >;
   __vfToolExposureCheckpoint?: ToolExposureCheckpoint;
+  __vfProviderReplayCheckpoints?: readonly ProviderReplayCheckpoint[];
   __vfPersistToolExposureCheckpoint?: (
     checkpoint: ToolExposureCheckpoint,
   ) => void | Promise<void>;
@@ -110,6 +115,20 @@ export function getRuntimeToolExposureCheckpoint(
     return undefined;
   }
   return value;
+}
+
+/**
+ * Return the verified provider replay checkpoints for this run.
+ *
+ * Malformed internal state fails explicitly: replay state guards provider
+ * protocol correctness, so it never degrades into an unsigned replay.
+ */
+export function getRuntimeProviderReplayCheckpoints(
+  config: AgentConfig,
+): ProviderReplayCheckpoint[] | undefined {
+  const value = (config as RuntimeToolFilterConfig).__vfProviderReplayCheckpoints;
+  if (value === undefined) return undefined;
+  return parseServerResolvedProviderReplayCheckpoints(value);
 }
 
 /** Return whether the trusted host requires checkpoint durability before continuation. */

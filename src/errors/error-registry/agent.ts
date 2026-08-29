@@ -78,6 +78,22 @@ export const DEFAULT_MODEL_CREDENTIAL_MISMATCH = defineError({
   suggestion: 'Set the agent\'s model to a provider you have a key for, or use model: "auto"',
 });
 
+/**
+ * Provider replay checkpoint state failed validation at a consumer boundary.
+ * Replay state guards provider protocol correctness on resume, so malformed
+ * or unappliable state fails closed instead of degrading into an unsigned
+ * replay. Details never include checkpoint contents: provider blocks carry
+ * signed reasoning material that must stay out of logs and error text.
+ */
+export const PROVIDER_REPLAY_CHECKPOINT_INVALID = defineError({
+  slug: "provider-replay-checkpoint-invalid",
+  category: "AGENT",
+  status: 500,
+  title: "Provider replay checkpoint is invalid",
+  suggestion:
+    "Verify the trusted source that resolved the run's provider replay checkpoints; do not retry with the same replay state",
+});
+
 /** Registry fragment for AGENT errors (slug → definition). */
 export const AGENT_REGISTRY = {
   "agent-error": AGENT_ERROR,
@@ -89,4 +105,5 @@ export const AGENT_REGISTRY = {
   "tool-id-conflict": TOOL_ID_CONFLICT,
   "durable-run-event-persistence-failed": DURABLE_RUN_EVENT_PERSISTENCE_FAILED,
   "default-model-credential-mismatch": DEFAULT_MODEL_CREDENTIAL_MISMATCH,
+  "provider-replay-checkpoint-invalid": PROVIDER_REPLAY_CHECKPOINT_INVALID,
 } as const;

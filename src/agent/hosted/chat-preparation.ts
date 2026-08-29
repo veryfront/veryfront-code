@@ -40,6 +40,7 @@ import {
 } from "./context-budget-manager.ts";
 import { findSubmittedFormInputResult } from "./form-input-tool.ts";
 import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
+import type { ProviderReplayCheckpoint } from "../runtime/provider-replay.ts";
 import {
   createToolExposureCheckpointEvent,
   TOOL_SEARCH_TOOL_NAME,
@@ -126,6 +127,8 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
   rootRunContext?: HostedChatRuntimePreparationRootRunContext;
   /** Trusted checkpoint resolved after hosted service authentication. */
   serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
+  /** Verified provider replay state resolved by the authenticated server. */
+  serverResolvedProviderReplayCheckpoints?: readonly ProviderReplayCheckpoint[];
   /** Verified integration tool grant for this run, resolved by the control plane. */
   serverResolvedIntegrationToolNames?: readonly string[];
   /** Service-owned authorization ceiling for Framework host tools. */
@@ -273,6 +276,8 @@ export type HostedChatExecutionPreparationInput<
   contextBudget?: HostedChatContextBudgetOptions;
   /** Trusted checkpoint resolved by the authenticated hosted service. */
   serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
+  /** Verified provider replay state resolved by the authenticated server. */
+  serverResolvedProviderReplayCheckpoints?: readonly ProviderReplayCheckpoint[];
   /** Verified integration tool grant for this run, resolved by the control plane. */
   serverResolvedIntegrationToolNames?: readonly string[];
   /** Service-owned authorization ceiling for Framework host tools. */
@@ -438,6 +443,11 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(input.serverResolvedToolExposureCheckpoint
         ? { serverResolvedToolExposureCheckpoint: input.serverResolvedToolExposureCheckpoint }
         : {}),
+      ...(input.serverResolvedProviderReplayCheckpoints?.length
+        ? {
+          serverResolvedProviderReplayCheckpoints: input.serverResolvedProviderReplayCheckpoints,
+        }
+        : {}),
       ...(input.serverResolvedIntegrationToolNames?.length
         ? { serverResolvedIntegrationToolNames: input.serverResolvedIntegrationToolNames }
         : {}),
@@ -555,6 +565,7 @@ export async function prepareHostedChatExecution<
     fetchSteering: input.fetchSteering,
     buildInstructions: input.buildInstructions,
     serverResolvedToolExposureCheckpoint: input.serverResolvedToolExposureCheckpoint,
+    serverResolvedProviderReplayCheckpoints: input.serverResolvedProviderReplayCheckpoints,
     serverResolvedIntegrationToolNames: input.serverResolvedIntegrationToolNames,
     hostToolPolicy: input.hostToolPolicy,
   });

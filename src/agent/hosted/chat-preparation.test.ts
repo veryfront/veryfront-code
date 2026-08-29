@@ -301,6 +301,18 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
       version: 1,
       loadedToolNames: ["get_release"],
     },
+    serverResolvedProviderReplayCheckpoints: [{
+      version: 1,
+      messageId: "assistant-message-1",
+      provider: "anthropic",
+      providerBlocks: [{
+        type: "provider-block",
+        provider: "anthropic",
+        block: { type: "thinking", thinking: "", signature: "sig-threading" },
+      }],
+      providerBlockPositions: [0],
+      totalPartCount: 1,
+    }],
     resolveModelId: (modelId) => modelId ? `resolved:${modelId}` : undefined,
     resolveModelThinking: (modelId) => modelId ? { enabled: true, budgetTokens: 1234 } : undefined,
     fetchSteering: (input) => {
@@ -369,6 +381,18 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
       version: 1,
       loadedToolNames: ["get_release"],
     },
+    serverResolvedProviderReplayCheckpoints: [{
+      version: 1,
+      messageId: "assistant-message-1",
+      provider: "anthropic",
+      providerBlocks: [{
+        type: "provider-block",
+        provider: "anthropic",
+        block: { type: "thinking", thinking: "", signature: "sig-threading" },
+      }],
+      providerBlockPositions: [0],
+      totalPartCount: 1,
+    }],
     liveProjectSteering: {
       agent: {
         id: "agent-1",

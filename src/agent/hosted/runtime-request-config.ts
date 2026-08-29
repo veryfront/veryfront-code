@@ -13,6 +13,10 @@ import {
   isSupportedToolExposureCheckpointVersion,
   type ToolExposureCheckpoint,
 } from "../runtime/tool-exposure.ts";
+import {
+  parseServerResolvedProviderReplayCheckpoints,
+  type ProviderReplayCheckpoint,
+} from "../runtime/provider-replay.ts";
 
 /** Request payload for hosted runtime request config. */
 export type HostedRuntimeRequestConfigRequest = Pick<
@@ -84,6 +88,23 @@ export function getServerResolvedToolExposureCheckpoint(
     version: value.version,
     loadedToolNames: [...value.loadedToolNames],
   };
+}
+
+/**
+ * Read the provider replay checkpoints resolved by the authenticated server.
+ *
+ * Unverified envelopes never yield replay state. A verified envelope carrying
+ * malformed state fails explicitly instead of degrading into an unsigned
+ * replay, unlike the tool exposure checkpoint above whose absence is safe.
+ */
+export function getServerResolvedProviderReplayCheckpoints(
+  forwardedProps: Record<string, unknown> | undefined,
+  serverEnvelopeVerified: boolean,
+): ProviderReplayCheckpoint[] | undefined {
+  if (!serverEnvelopeVerified) return undefined;
+  const value = forwardedProps?.serverResolvedProviderReplayCheckpoints;
+  if (value === undefined) return undefined;
+  return parseServerResolvedProviderReplayCheckpoints(value);
 }
 
 /** Return forwarded hosted model ID. */

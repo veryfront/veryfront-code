@@ -101,6 +101,7 @@ import { markRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
 import {
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
+  getRuntimeProviderReplayCheckpoints,
   getRuntimeProviderTools,
   getRuntimeSourceIntegrationPolicy,
   getRuntimeToolExposureCheckpoint,
@@ -109,6 +110,7 @@ import {
   resolveRuntimeToolLoading,
   type RuntimeToolFilterConfig,
 } from "./runtime-tool-config.ts";
+import { applyProviderReplayCheckpointsToMessages } from "./provider-replay.ts";
 import {
   applySourceIntegrationPolicy,
   type SourceIntegrationPolicyManifest,
@@ -1496,6 +1498,10 @@ export class AgentRuntime {
 
       const toolCalls: ToolCall[] = [];
       const currentMessages = [...messages];
+      applyProviderReplayCheckpointsToMessages(
+        currentMessages,
+        getRuntimeProviderReplayCheckpoints(this.config),
+      );
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
       if (!supportsToolCalling && this.config.tools) {
@@ -2159,6 +2165,10 @@ export class AgentRuntime {
 
     const toolCalls: ToolCall[] = [];
     const currentMessages = [...messages];
+    applyProviderReplayCheckpointsToMessages(
+      currentMessages,
+      getRuntimeProviderReplayCheckpoints(this.config),
+    );
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
     if (!supportsToolCalling && this.config.tools) {

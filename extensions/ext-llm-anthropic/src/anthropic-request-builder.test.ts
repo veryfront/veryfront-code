@@ -2988,6 +2988,73 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     }]);
   });
 
+  it("replays checkpoint-shaped signed thinking blocks byte-exact on the resume turn", () => {
+    // Shape delivered by a provider replay checkpoint (veryfront-issue-inbox#522):
+    // on Opus 4.7+/Sonnet 5/Fable 5 the thinking text comes back empty and the
+    // signature is the only carrier, so the rebuilt turn must echo the raw
+    // blocks unchanged beside the tool_use they accompanied.
+    const rawAssistantContent = [{
+      type: "thinking",
+      thinking: "",
+      signature: "sig-checkpoint-secret",
+    }, {
+      type: "redacted_thinking",
+      data: "redacted-checkpoint-secret",
+    }, {
+      type: "tool_use",
+      id: "local_lookup_2",
+      name: "local_lookup",
+      input: { query: "resume" },
+    }];
+    const prompt = [{
+      role: "user",
+      content: [{ type: "text", text: "Look this up" }],
+    }, {
+      role: "assistant",
+      content: [{
+        type: "reasoning",
+        text: "",
+      }, {
+        type: "tool-call",
+        toolCallId: "local_lookup_2",
+        toolName: "local_lookup",
+        input: { query: "resume" },
+      }],
+      providerMetadata: { anthropic: { rawAssistantMessages: [rawAssistantContent] } },
+    }, {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "local_lookup_2",
+        toolName: "local_lookup",
+        output: { type: "json", value: { matches: 2 } },
+      }],
+    }] as unknown as RuntimePromptMessage[];
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      { prompt, maxOutputTokens: 64 },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.messages, [{
+      role: "user",
+      content: [{ type: "text", text: "Look this up" }],
+    }, {
+      role: "assistant",
+      content: rawAssistantContent,
+    }, {
+      role: "user",
+      content: [{
+        type: "tool_result",
+        tool_use_id: "local_lookup_2",
+        content: '{"matches":2}',
+      }],
+    }]);
+  });
+
   it("rejects raw client tool tampering when canonical content survives", () => {
     const canonicalCall = {
       type: "tool-call" as const,
