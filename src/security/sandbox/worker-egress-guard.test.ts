@@ -762,7 +762,7 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
           fetchImpl: globalThis.fetch.bind(globalThis),
           runtime: {
             connect: (options) => {
-              pinnedDials.push(`${options.hostname ?? "127.0.0.1"}:${options.port}`);
+              pinnedDials.push(`${options.hostname}:${options.port}`);
               return Deno.connect(options);
             },
           },
