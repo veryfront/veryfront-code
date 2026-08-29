@@ -13,7 +13,7 @@ import type {
   TextGenerationRuntimeUserMessage,
 } from "./text-generation-runtime-message-types.ts";
 import type { Message } from "../types.ts";
-import { attachProviderMetadata } from "./provider-metadata.ts";
+import { attachProviderMetadata, markProviderReplayDelivered } from "./provider-metadata.ts";
 
 describe("text-generation-runtime-message-converter", () => {
   describe("convertToTextGenerationRuntimeMessage", () => {
@@ -1079,7 +1079,7 @@ describe("text-generation-runtime-message-converter", () => {
       );
     });
 
-    it("keeps a trailing assistant that carries exact provider replay metadata", () => {
+    it("keeps a trailing assistant whose metadata came from a delivered replay checkpoint", () => {
       const providerMetadata = {
         anthropic: {
           rawAssistantMessages: [[{
@@ -1089,11 +1089,11 @@ describe("text-generation-runtime-message-converter", () => {
           }]],
         },
       };
-      const trailing = attachProviderMetadata({
+      const trailing = markProviderReplayDelivered(attachProviderMetadata({
         id: "a-replay",
         role: "assistant",
         parts: [{ type: "reasoning", signature: "sig-trailing-replay" }],
-      } as Message, providerMetadata);
+      } as Message, providerMetadata));
 
       assertEquals(
         convertToTextGenerationRuntimeRequestMessages([
@@ -1105,6 +1105,31 @@ describe("text-generation-runtime-message-converter", () => {
           content: [{ type: "text", text: "" }],
           providerMetadata,
         }],
+      );
+    });
+
+    it("still trims a trailing assistant whose metadata was attached during the run", () => {
+      const trailing = attachProviderMetadata({
+        id: "a-live",
+        role: "assistant",
+        parts: [{ type: "text", text: "streamed continuation" }],
+      } as Message, {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "thinking",
+            thinking: "",
+            signature: "sig-live-turn",
+          }]],
+        },
+      });
+
+      assertEquals(
+        convertToTextGenerationRuntimeRequestMessages([
+          { id: "u1", role: "user", parts: [{ type: "text", text: "continue" }] },
+          trailing,
+        ]),
+        [{ role: "user", content: "continue" }],
+        "live in-run metadata must not turn a resume into an assistant prefill",
       );
     });
   });

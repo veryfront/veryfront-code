@@ -19,7 +19,11 @@ import type {
 import { assertProviderReachableAttachment } from "./attachment-reachability.ts";
 import { buildDataFileAnnotation } from "#veryfront/chat/types.ts";
 import { getTextFromParts, getToolArguments, type Message, type ToolCallPart } from "../types.ts";
-import { readAttachedProviderMetadata } from "./provider-metadata.ts";
+import {
+  isProviderReplayDelivered,
+  markProviderReplayDelivered,
+  readAttachedProviderMetadata,
+} from "./provider-metadata.ts";
 import {
   collectAnthropicProviderToolCallIds,
   groupAnthropicRawAssistantMessagesByAnchor,
@@ -514,12 +518,19 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
   const assistantMessages = messages.filter((entry) => entry.role === "assistant");
   if (providerMetadata !== undefined && assistantMessages.length === 1) {
     assistantMessages[0]!.providerMetadata = providerMetadata;
+    if (isProviderReplayDelivered(message)) {
+      markProviderReplayDelivered(assistantMessages[0]!);
+    }
   } else if (providerMetadata !== undefined && messages.length === 0) {
-    messages.push({
+    const anchorMessage: TextGenerationRuntimeMessage = {
       role: "assistant",
       content: [{ type: "text", text: "" }],
       providerMetadata,
-    });
+    };
+    if (isProviderReplayDelivered(message)) {
+      markProviderReplayDelivered(anchorMessage);
+    }
+    messages.push(anchorMessage);
   } else if (providerMetadata !== undefined) {
     const splitMetadata = splitAnthropicProviderMetadata(
       providerMetadata,
@@ -530,6 +541,9 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
     }
     for (const [index, assistantMessage] of assistantMessages.entries()) {
       assistantMessage.providerMetadata = splitMetadata[index];
+      if (isProviderReplayDelivered(message)) {
+        markProviderReplayDelivered(assistantMessage);
+      }
     }
   }
 
@@ -603,9 +617,12 @@ export function convertToTextGenerationRuntimeRequestMessages(
 ): TextGenerationRuntimeMessage[] {
   const requestMessages = convertToTextGenerationRuntimeMessages(messages, options);
 
+  // Only a delivered replay checkpoint may keep a trailing assistant message:
+  // live in-run metadata also reaches converted messages, and providers reject
+  // or misread an unexpected trailing prefill on ordinary resumes.
   while (
     requestMessages.at(-1)?.role === "assistant" &&
-    !(requestMessages.at(-1) as TextGenerationRuntimeAssistantMessage).providerMetadata
+    !isProviderReplayDelivered(requestMessages.at(-1))
   ) {
     requestMessages.pop();
   }

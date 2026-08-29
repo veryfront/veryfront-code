@@ -759,13 +759,36 @@ function connectAnthropicReplayIndices(
   dependencies.set(right, rightDependencies);
 }
 
+function collectConnectedAnthropicReplayIndices(
+  index: number,
+  dependencies: ReadonlyMap<number, ReadonlySet<number>>,
+): Set<number> {
+  const pending = [index];
+  const visited = new Set<number>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === undefined || visited.has(current)) continue;
+    visited.add(current);
+    pending.push(...dependencies.get(current) ?? []);
+  }
+  return visited;
+}
+
 function planAnthropicRawAssistantReplay(
   prompt: readonly ModelRuntimePromptMessage[],
   rawAssistantMessagesByIndex: ReadonlyMap<number, unknown[]>,
   lastUserIndex: number,
   lastHistoricalAssistantTextIndex: number,
-): Set<number> {
+): {
+  exactReplayIndices: Set<number>;
+  thinkingOnlyReplayIndices: Set<number>;
+  validationOnlyReplayIndices: Set<number>;
+} {
   const replayIndices = new Set<number>();
+  const thinkingOnlyReplayIndices = new Set<number>();
+  const validationOnlyReplayIndices = new Set<number>();
+  const thinkingReplayCandidates = new Set<number>();
+  const compactedToolRoundIndices = new Set<number>();
   const dependencies = new Map<number, Set<number>>();
   const pendingProviderCallIndexById = new Map<string, number>();
 
@@ -783,6 +806,7 @@ function planAnthropicRawAssistantReplay(
       index,
       lastHistoricalAssistantTextIndex,
     );
+    if (shouldCompactCompletedToolRound) compactedToolRoundIndices.add(index);
     if (
       requiresExactAnthropicProviderReplay(message) ||
       !shouldCompactCompletedToolRound && index >= lastUserIndex
@@ -804,6 +828,10 @@ function planAnthropicRawAssistantReplay(
         const value = rawContent[rawBlockIndex];
         const block = readRecord(value);
         if (!block || typeof block.type !== "string") continue;
+        if (block.type === "thinking" || block.type === "redacted_thinking") {
+          thinkingReplayCandidates.add(index);
+          continue;
+        }
         if (
           (block.type === "server_tool_use" || block.type === "mcp_tool_use") &&
           typeof block.id === "string" &&
@@ -829,6 +857,19 @@ function planAnthropicRawAssistantReplay(
     }
   }
 
+  for (const index of thinkingReplayCandidates) {
+    if (compactedToolRoundIndices.has(index)) continue;
+    const connectedIndices = collectConnectedAnthropicReplayIndices(index, dependencies);
+    const connectsCompactedToolRound = [...connectedIndices].some((candidate) =>
+      compactedToolRoundIndices.has(candidate)
+    );
+    if (!connectsCompactedToolRound && replayIndices.has(index)) continue;
+    thinkingOnlyReplayIndices.add(index);
+    for (const connectedIndex of connectedIndices) {
+      if (connectedIndex !== index) validationOnlyReplayIndices.add(connectedIndex);
+    }
+  }
+
   const pendingReplayIndices = [...replayIndices];
   for (let cursor = 0; cursor < pendingReplayIndices.length; cursor++) {
     const index = pendingReplayIndices[cursor];
@@ -840,7 +881,11 @@ function planAnthropicRawAssistantReplay(
     }
   }
 
-  return replayIndices;
+  return {
+    exactReplayIndices: replayIndices,
+    thinkingOnlyReplayIndices,
+    validationOnlyReplayIndices,
+  };
 }
 
 function toAnthropicUserContent(
@@ -1012,7 +1057,7 @@ function toAnthropicMessages(
       rawAssistantMessagesByIndex.set(index, rawAssistantMessages);
     }
   }
-  const rawReplayIndices = planAnthropicRawAssistantReplay(
+  const rawReplayPlan = planAnthropicRawAssistantReplay(
     prompt,
     rawAssistantMessagesByIndex,
     lastUserIndex,
@@ -1053,7 +1098,7 @@ function toAnthropicMessages(
           lastHistoricalAssistantTextIndex,
         );
         const rawAssistantMessages = rawAssistantMessagesByIndex.get(index);
-        if (rawAssistantMessages && rawReplayIndices.has(index)) {
+        if (rawAssistantMessages && rawReplayPlan.exactReplayIndices.has(index)) {
           const replay = validateAnthropicProviderReplay(
             message,
             rawAssistantMessages,
@@ -1072,6 +1117,89 @@ function toAnthropicMessages(
             }
           }
           break;
+        }
+        if (rawAssistantMessages && rawReplayPlan.thinkingOnlyReplayIndices.has(index)) {
+          const replay = validateAnthropicProviderReplay(
+            message,
+            rawAssistantMessages,
+            rawProviderToolNamesById,
+            canonicalProviderToolNamesById,
+          );
+          rawProviderToolNamesById = replay.nextProviderToolNamesById;
+          canonicalProviderToolNamesById = replay.nextCanonicalProviderToolNamesById;
+          const rawClientToolInputById = new Map<string, unknown>();
+          for (const rawContent of replay.messages) {
+            for (const block of rawContent) {
+              if (block.type === "tool_use" && typeof block.id === "string") {
+                rawClientToolInputById.set(block.id, block.input);
+              }
+            }
+          }
+          const canonicalContent: Array<Record<string, unknown>> = [];
+          for (const part of message.content) {
+            if (part.type === "text") {
+              canonicalContent.push({ type: "text", text: part.text });
+              continue;
+            }
+            if (part.type === "tool-call" && part.providerExecuted !== true) {
+              if (!rawClientToolInputById.has(part.toolCallId)) {
+                throw invalidAnthropicClientCallHistory();
+              }
+              canonicalContent.push({
+                type: "tool_use",
+                id: part.toolCallId,
+                name: part.toolName,
+                input: rawClientToolInputById.get(part.toolCallId),
+              });
+            }
+          }
+          pendingToolUseIds = new Set();
+          const compactedMessages: Array<Array<Record<string, unknown>>> = [];
+          let canonicalContentIndex = 0;
+          for (const rawContent of replay.messages) {
+            const compactedContent: Array<Record<string, unknown>> = [];
+            for (const block of rawContent) {
+              if (block.type === "thinking" || block.type === "redacted_thinking") {
+                compactedContent.push({ ...block });
+                continue;
+              }
+              const canonicalBlock = canonicalContent[canonicalContentIndex];
+              if (
+                canonicalBlock &&
+                (block.type === "text" && canonicalBlock.type === "text" ||
+                  block.type === "tool_use" &&
+                    canonicalBlock.type === "tool_use" &&
+                    block.id === canonicalBlock.id)
+              ) {
+                compactedContent.push(canonicalBlock);
+                canonicalContentIndex += 1;
+              }
+            }
+            if (compactedContent.length > 0) compactedMessages.push(compactedContent);
+          }
+          if (canonicalContentIndex < canonicalContent.length) {
+            compactedMessages.push(canonicalContent.slice(canonicalContentIndex));
+          }
+          for (const compactedContent of compactedMessages) {
+            messages.push({ role: "assistant", content: compactedContent });
+            for (const block of compactedContent) {
+              if (block.type === "tool_use" && typeof block.id === "string") {
+                pendingToolUseIds.add(block.id);
+              }
+            }
+          }
+          skippingHistoricalToolResults = shouldCompactCompletedToolRound;
+          break;
+        }
+        if (rawAssistantMessages && rawReplayPlan.validationOnlyReplayIndices.has(index)) {
+          const replay = validateAnthropicProviderReplay(
+            message,
+            rawAssistantMessages,
+            rawProviderToolNamesById,
+            canonicalProviderToolNamesById,
+          );
+          rawProviderToolNamesById = replay.nextProviderToolNamesById;
+          canonicalProviderToolNamesById = replay.nextCanonicalProviderToolNamesById;
         }
         const assistantContent = shouldCompactCompletedToolRound
           ? message.content.filter((part) => part.type === "text" && part.text.length > 0)

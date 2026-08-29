@@ -3055,6 +3055,115 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     }]);
   });
 
+  it("replays hidden signed thinking with canonical assistant content on resume", () => {
+    const rawAssistantContent = [{
+      type: "thinking",
+      thinking: "",
+      signature: "sig_hidden_resume",
+    }, {
+      type: "text",
+      text: "Stale raw answer.",
+    }, {
+      type: "tool_use",
+      id: "stale_raw_call",
+      name: "stale_raw_tool",
+      input: { stale: true },
+    }];
+    const prompt = [{
+      role: "assistant",
+      content: [{ type: "text", text: "My answer." }],
+      providerMetadata: {
+        anthropic: { rawAssistantMessages: [rawAssistantContent] },
+      },
+    }, {
+      role: "user",
+      content: [{ type: "text", text: "Continue" }],
+    }] as unknown as RuntimePromptMessage[];
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      { prompt },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.messages[0], {
+      role: "assistant",
+      content: [{
+        type: "thinking",
+        thinking: "",
+        signature: "sig_hidden_resume",
+      }, {
+        type: "text",
+        text: "My answer.",
+      }],
+    });
+  });
+
+  it("preserves pause-turn thinking boundaries around canonical content", () => {
+    const prompt = [{
+      role: "assistant",
+      content: [{ type: "text", text: "First answer." }, {
+        type: "text",
+        text: "Second answer.",
+      }],
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "thinking",
+            thinking: "",
+            signature: "sig_first_pause",
+          }, {
+            type: "text",
+            text: "Stale first answer.",
+          }], [{
+            type: "redacted_thinking",
+            data: "redacted-second-pause",
+          }, {
+            type: "text",
+            text: "Stale second answer.",
+          }]],
+        },
+      },
+    }, {
+      role: "user",
+      content: [{ type: "text", text: "Continue" }],
+    }] as unknown as RuntimePromptMessage[];
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      { prompt },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.messages, [{
+      role: "assistant",
+      content: [{
+        type: "thinking",
+        thinking: "",
+        signature: "sig_first_pause",
+      }, {
+        type: "text",
+        text: "First answer.",
+      }],
+    }, {
+      role: "assistant",
+      content: [{
+        type: "redacted_thinking",
+        data: "redacted-second-pause",
+      }, {
+        type: "text",
+        text: "Second answer.",
+      }],
+    }, {
+      role: "user",
+      content: [{ type: "text", text: "Continue" }],
+    }]);
+  });
+
   it("rejects raw client tool tampering when canonical content survives", () => {
     const canonicalCall = {
       type: "tool-call" as const,
@@ -4250,7 +4359,7 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       content: [{ type: "text", text: "Search and inspect" }],
     }, {
       role: "assistant",
-      content: [{
+      content: [{ type: "text", text: "I will search for that." }, {
         type: "tool-call",
         toolCallId: "local_lookup_1",
         toolName: "local_lookup",
@@ -4265,6 +4374,9 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       providerMetadata: {
         anthropic: {
           rawAssistantMessages: [[{
+            type: "text",
+            text: "I will search for that.",
+          }, {
             type: "server_tool_use",
             id: "server_search_1",
             name: "web_search",
@@ -4287,10 +4399,18 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       }],
     }, {
       role: "assistant",
-      content: [{ type: "text", text: "Combined both results." }],
+      content: [{ type: "text", text: "Combined both results." }, {
+        type: "tool-call",
+        toolCallId: "local_followup_1",
+        toolName: "local_followup",
+        input: '{"id":1}',
+      }],
       providerMetadata: {
         anthropic: {
           rawAssistantMessages: [[{
+            type: "redacted_thinking",
+            data: "redacted-compacted-tool-result",
+          }, {
             type: "web_search_tool_result",
             tool_use_id: "server_search_1",
             content: [{
@@ -4303,9 +4423,22 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
           }, {
             type: "text",
             text: "Combined both results.",
+          }, {
+            type: "tool_use",
+            id: "local_followup_1",
+            name: "local_followup",
+            input: { id: 1 },
           }]],
         },
       },
+    }, {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "local_followup_1",
+        toolName: "local_followup",
+        output: { type: "json", value: { ok: true } },
+      }],
     }, {
       role: "user",
       content: [{ type: "text", text: "Summarize that" }],
@@ -4319,15 +4452,111 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       createWarningCollector(),
     );
 
-    assertEquals(body.messages, [{
+    assertEquals(JSON.parse(JSON.stringify(body.messages)), [{
       role: "user",
       content: [{ type: "text", text: "Search and inspect" }],
     }, {
       role: "assistant",
-      content: [{ type: "text", text: "Combined both results." }],
+      content: [{ type: "text", text: "I will search for that." }],
+    }, {
+      role: "assistant",
+      content: [{
+        type: "redacted_thinking",
+        data: "redacted-compacted-tool-result",
+      }, {
+        type: "text",
+        text: "Combined both results.",
+      }, {
+        type: "tool_use",
+        id: "local_followup_1",
+        name: "local_followup",
+        input: { id: 1 },
+      }],
     }, {
       role: "user",
-      content: [{ type: "text", text: "Summarize that" }],
+      content: [{
+        type: "tool_result",
+        tool_use_id: "local_followup_1",
+        content: '{"ok":true}',
+      }, {
+        type: "text",
+        text: "Summarize that",
+      }],
+    }]);
+  });
+
+  it("validates split compacted provider history before replaying result thinking", () => {
+    const prompt: RuntimePromptMessage[] = [{
+      role: "user",
+      content: [{ type: "text", text: "Search" }],
+    }, {
+      role: "assistant",
+      content: [{ type: "text", text: "Searching." }],
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "server_tool_use",
+            id: "server_search_split",
+            name: "web_search",
+            input: { query: "Veryfront" },
+          }]],
+        },
+      },
+    }, {
+      role: "assistant",
+      content: [{ type: "text", text: "Search complete." }],
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "redacted_thinking",
+            data: "redacted-split-result",
+          }, {
+            type: "web_search_tool_result",
+            tool_use_id: "server_search_split",
+            content: [{
+              type: "web_search_result",
+              url: "https://veryfront.com",
+              title: "Veryfront",
+              encrypted_content: "encrypted-result",
+              page_age: null,
+            }],
+          }, {
+            type: "text",
+            text: "Stale raw result text.",
+          }]],
+        },
+      },
+    }, {
+      role: "user",
+      content: [{ type: "text", text: "Continue" }],
+    }];
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      { prompt },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.messages, [{
+      role: "user",
+      content: [{ type: "text", text: "Search" }],
+    }, {
+      role: "assistant",
+      content: [{ type: "text", text: "Searching." }],
+    }, {
+      role: "assistant",
+      content: [{
+        type: "redacted_thinking",
+        data: "redacted-split-result",
+      }, {
+        type: "text",
+        text: "Search complete.",
+      }],
+    }, {
+      role: "user",
+      content: [{ type: "text", text: "Continue" }],
     }]);
   });
 
