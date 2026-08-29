@@ -751,6 +751,8 @@ interface Scope {
   readonly names: Set<string>;
   readonly definitelyInitializedNames: Set<string>;
   readonly definitelyNonUndefinedNames: Set<string>;
+  readonly definitelyTruthyNames: Set<string>;
+  readonly definitelyNonNullishNames: Set<string>;
   readonly functionBoundary: boolean;
   readonly playwrightFixtures: Set<string>;
   readonly runtimeBindings: Map<string, RuntimeBinding>;
@@ -3550,12 +3552,16 @@ function createScope(
   const names = new Set<string>();
   const definitelyInitializedNames = new Set<string>();
   const definitelyNonUndefinedNames = new Set<string>();
+  const definitelyTruthyNames = new Set<string>();
+  const definitelyNonNullishNames = new Set<string>();
   const playwrightFixtures = new Set<string>();
   collectLocalDeclaredNames(
     node,
     names,
     definitelyInitializedNames,
     definitelyNonUndefinedNames,
+    definitelyTruthyNames,
+    definitelyNonNullishNames,
     playwrightFixtures,
   );
   if (hasOwnThisRuntimeBinding(node)) {
@@ -3569,6 +3575,8 @@ function createScope(
     names,
     definitelyInitializedNames,
     definitelyNonUndefinedNames,
+    definitelyTruthyNames,
+    definitelyNonNullishNames,
     functionBoundary: isFunctionScopeNode(node),
     playwrightFixtures,
     runtimeBindings: new Map(),
@@ -3622,6 +3630,8 @@ function collectLocalDeclaredNames(
   names: Set<string>,
   definitelyInitializedNames: Set<string>,
   definitelyNonUndefinedNames: Set<string>,
+  definitelyTruthyNames: Set<string>,
+  definitelyNonNullishNames: Set<string>,
   playwrightFixtures: Set<string>,
 ): void {
   const statements = lexicalScopeStatements(node);
@@ -3636,6 +3646,8 @@ function collectLocalDeclaredNames(
         const name = statement.id.name as string;
         names.add(name);
         definitelyNonUndefinedNames.add(name);
+        definitelyTruthyNames.add(name);
+        definitelyNonNullishNames.add(name);
         if (statement.type === "FunctionDeclaration") {
           definitelyInitializedNames.add(name);
         }
@@ -3679,6 +3691,8 @@ function collectLocalDeclaredNames(
       names.add(name);
       definitelyInitializedNames.add(name);
       definitelyNonUndefinedNames.add(name);
+      definitelyTruthyNames.add(name);
+      definitelyNonNullishNames.add(name);
     }
     for (const param of Array.isArray(node.params) ? node.params : []) {
       collectPatternNames(param, names);
@@ -3694,6 +3708,8 @@ function collectLocalDeclaredNames(
     names.add(name);
     definitelyInitializedNames.add(name);
     definitelyNonUndefinedNames.add(name);
+    definitelyTruthyNames.add(name);
+    definitelyNonNullishNames.add(name);
     return;
   }
   if (
@@ -3807,6 +3823,8 @@ function runtimeReceiverScope(
     names: new Set([THIS_RUNTIME_ROOT]),
     definitelyInitializedNames: new Set([THIS_RUNTIME_ROOT]),
     definitelyNonUndefinedNames: new Set([THIS_RUNTIME_ROOT]),
+    definitelyTruthyNames: new Set(),
+    definitelyNonNullishNames: new Set(),
     functionBoundary: false,
     playwrightFixtures: new Set(),
     runtimeBindings: new Map([
@@ -4647,6 +4665,10 @@ function bindRuntimeAssignment(
     canClearPrevious,
     (name) => declaringScopeForName(name, scopes),
   );
+  const assignedDefinitelyTruthy = expressionIsDefinitelyTruthy(
+    node.right,
+    scopes,
+  );
   bindDefinitelyNonUndefinedPattern(
     node.left,
     binding,
@@ -4655,6 +4677,9 @@ function bindRuntimeAssignment(
     scopes,
     canClearPrevious,
     (name) => declaringScopeForName(name, scopes),
+    assignedDefinitelyTruthy,
+    assignedDefinitelyTruthy ||
+      expressionIsDefinitelyNonNullish(node.right, scopes),
   );
   if (
     bindRuntimeMemberAssignment(
@@ -7218,14 +7243,36 @@ function runtimeNamespaceAliasTargetsForExpression(
       ),
     ]);
   } else if (value.type === "LogicalExpression") {
-    targets = uniqueRuntimeAliasTargets([
-      ...runtimeNamespaceAliasTargetsForExpression(value.left, imports, scopes),
-      ...runtimeNamespaceAliasTargetsForExpression(
-        value.right,
-        imports,
-        scopes,
-      ),
-    ]);
+    const leftTargets = runtimeNamespaceAliasTargetsForExpression(
+      value.left,
+      imports,
+      scopes,
+    );
+    const rightTargets = runtimeNamespaceAliasTargetsForExpression(
+      value.right,
+      imports,
+      scopes,
+    );
+    // Prune an operand only with operator-specific proof; otherwise fail
+    // closed to the union of both receivers.
+    if (
+      value.operator === "||" &&
+      expressionIsDefinitelyTruthy(value.left, scopes)
+    ) {
+      targets = leftTargets;
+    } else if (
+      value.operator === "&&" &&
+      expressionIsDefinitelyTruthy(value.left, scopes)
+    ) {
+      targets = rightTargets;
+    } else if (
+      value.operator === "??" &&
+      expressionIsDefinitelyNonNullish(value.left, scopes)
+    ) {
+      targets = leftTargets;
+    } else {
+      targets = uniqueRuntimeAliasTargets([...leftTargets, ...rightTargets]);
+    }
   } else if (value.type === "SequenceExpression") {
     const expressions = Array.isArray(value.expressions)
       ? value.expressions
@@ -7382,6 +7429,8 @@ function bindDefinitelyNonUndefinedPattern(
   scopes: readonly Scope[],
   unconditional: boolean,
   scopeForName: (name: string) => Scope | undefined,
+  definitelyTruthy = false,
+  definitelyNonNullish = false,
 ): void {
   if (pattern.type === "Identifier") {
     const name = pattern.name as string;
@@ -7391,6 +7440,16 @@ function bindDefinitelyNonUndefinedPattern(
       scope.definitelyNonUndefinedNames.delete(name);
     } else if (unconditional) {
       scope.definitelyNonUndefinedNames.add(name);
+    }
+    if (!definitelyTruthy) {
+      scope.definitelyTruthyNames.delete(name);
+    } else if (unconditional) {
+      scope.definitelyTruthyNames.add(name);
+    }
+    if (!definitelyNonNullish) {
+      scope.definitelyNonNullishNames.delete(name);
+    } else if (unconditional) {
+      scope.definitelyNonNullishNames.add(name);
     }
     return;
   }
@@ -8149,6 +8208,10 @@ function bindRuntimeDeclaration(
     imports,
     scopes,
   );
+  const initDefinitelyTruthy = expressionIsDefinitelyTruthy(
+    declaration.init,
+    scopes,
+  );
   bindDefinitelyNonUndefinedPattern(
     declaration.id,
     binding,
@@ -8157,6 +8220,9 @@ function bindRuntimeDeclaration(
     scopes,
     !merge,
     (name) => scope.names.has(name) ? scope : undefined,
+    initDefinitelyTruthy,
+    initDefinitelyTruthy ||
+      expressionIsDefinitelyNonNullish(declaration.init, scopes),
   );
   bindRuntimeAlias(
     declaration.id,
@@ -8858,6 +8924,115 @@ function expressionMayBeUndefined(
     value.type === "StringLiteral" ||
     value.type === "TemplateLiteral"
   );
+}
+
+// Intentionally separate from expressionMayBeUndefined: definitely-non-undefined
+// is not truthiness proof (`maybe ? ClassA : null` is non-undefined but nullish).
+function expressionIsDefinitelyTruthy(
+  expression: unknown,
+  scopes: readonly Scope[],
+): boolean {
+  const value = unwrapExpression(expression);
+  if (!value) return false;
+  switch (value.type) {
+    case "ArrayExpression":
+    case "ArrowFunctionExpression":
+    case "ClassExpression":
+    case "FunctionExpression":
+    case "JSXElement":
+    case "JSXFragment":
+    case "NewExpression":
+    case "ObjectExpression":
+    case "RegExpLiteral":
+      return true;
+    case "BooleanLiteral":
+      return value.value === true;
+    case "NumericLiteral":
+      return value.value !== 0;
+    case "StringLiteral":
+      return value.value !== "";
+    case "ConditionalExpression":
+      return expressionIsDefinitelyTruthy(value.consequent, scopes) &&
+        expressionIsDefinitelyTruthy(value.alternate, scopes);
+    case "LogicalExpression": {
+      const left = expressionIsDefinitelyTruthy(value.left, scopes);
+      if (value.operator === "&&") {
+        return left && expressionIsDefinitelyTruthy(value.right, scopes);
+      }
+      if (value.operator === "||") {
+        return left || expressionIsDefinitelyTruthy(value.right, scopes);
+      }
+      return left;
+    }
+    case "SequenceExpression": {
+      const expressions = Array.isArray(value.expressions)
+        ? value.expressions
+        : [];
+      return expressionIsDefinitelyTruthy(expressions.at(-1), scopes);
+    }
+    case "AssignmentExpression":
+      return value.operator === "=" &&
+        expressionIsDefinitelyTruthy(value.right, scopes);
+    case "Identifier":
+      return resolveLocalBinding(value.name as string, scopes)
+        .definitelyTruthy === true;
+    default:
+      return false;
+  }
+}
+
+function expressionIsDefinitelyNonNullish(
+  expression: unknown,
+  scopes: readonly Scope[],
+): boolean {
+  const value = unwrapExpression(expression);
+  if (!value) return false;
+  switch (value.type) {
+    case "ArrayExpression":
+    case "ArrowFunctionExpression":
+    case "BigIntLiteral":
+    case "BooleanLiteral":
+    case "ClassExpression":
+    case "FunctionExpression":
+    case "JSXElement":
+    case "JSXFragment":
+    case "NewExpression":
+    case "NumericLiteral":
+    case "ObjectExpression":
+    case "RegExpLiteral":
+    case "StringLiteral":
+    case "TemplateLiteral":
+      return true;
+    case "ConditionalExpression":
+      return expressionIsDefinitelyNonNullish(value.consequent, scopes) &&
+        expressionIsDefinitelyNonNullish(value.alternate, scopes);
+    case "LogicalExpression": {
+      if (value.operator === "&&") {
+        return expressionIsDefinitelyNonNullish(value.left, scopes) &&
+          expressionIsDefinitelyNonNullish(value.right, scopes);
+      }
+      if (value.operator === "||") {
+        return expressionIsDefinitelyTruthy(value.left, scopes) ||
+          expressionIsDefinitelyNonNullish(value.right, scopes);
+      }
+      return expressionIsDefinitelyNonNullish(value.left, scopes) ||
+        expressionIsDefinitelyNonNullish(value.right, scopes);
+    }
+    case "SequenceExpression": {
+      const expressions = Array.isArray(value.expressions)
+        ? value.expressions
+        : [];
+      return expressionIsDefinitelyNonNullish(expressions.at(-1), scopes);
+    }
+    case "AssignmentExpression":
+      return value.operator === "=" &&
+        expressionIsDefinitelyNonNullish(value.right, scopes);
+    case "Identifier":
+      return resolveLocalBinding(value.name as string, scopes)
+        .definitelyNonNullish === true;
+    default:
+      return false;
+  }
 }
 
 function constructedRuntimeBinding(
@@ -10524,6 +10699,8 @@ function resolveLocalBinding(
   readonly declared: boolean;
   readonly definitelyInitialized?: boolean;
   readonly definitelyNonUndefined?: boolean;
+  readonly definitelyTruthy?: boolean;
+  readonly definitelyNonNullish?: boolean;
   readonly crossesFunctionBoundary?: boolean;
   readonly binding?: RuntimeBinding;
 } {
@@ -10535,6 +10712,8 @@ function resolveLocalBinding(
         declared: true,
         definitelyInitialized: scope.definitelyInitializedNames.has(name),
         definitelyNonUndefined: scope.definitelyNonUndefinedNames.has(name),
+        definitelyTruthy: scope.definitelyTruthyNames.has(name),
+        definitelyNonNullish: scope.definitelyNonNullishNames.has(name),
         crossesFunctionBoundary,
         binding: scope.runtimeBindings.get(name),
       };

@@ -4840,6 +4840,130 @@ conjoinedResult();
     );
   });
 
+  it("prunes unreachable logical receivers with truthiness proof", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class OrLeft {}
+class OrRight {}
+const OrAlias = OrLeft || OrRight;
+OrAlias.write = Deno.writeTextFile;
+OrLeft.write("or-left.txt", "x");
+OrRight.write("or-right.txt", "x");
+
+class AndLeft {}
+class AndRight {}
+const AndAlias = AndLeft && AndRight;
+AndAlias.write = Deno.writeTextFile;
+AndLeft.write("and-left.txt", "x");
+AndRight.write("and-right.txt", "x");
+
+class NullishLeft {}
+class NullishRight {}
+const NullishAlias = NullishLeft ?? NullishRight;
+NullishAlias.write = Deno.writeTextFile;
+NullishLeft.write("nullish-left.txt", "x");
+NullishRight.write("nullish-right.txt", "x");
+
+class GateSource {}
+class GateFallback {}
+const Gate = GateSource;
+const GateAlias = Gate || GateFallback;
+GateAlias.write = Deno.writeTextFile;
+GateSource.write("gate-source.txt", "x");
+GateFallback.write("gate-fallback.txt", "x");
+
+class NestedInner {}
+class NestedFallback {}
+const nestedMaybe = Math.random() > 0.5 ? NestedInner : undefined;
+const NestedAlias = (nestedMaybe || NestedInner) || NestedFallback;
+NestedAlias.write = Deno.writeTextFile;
+NestedInner.write("nested-inner.txt", "x");
+NestedFallback.write("nested-fallback.txt", "x");
+
+class FalsyGateClass {}
+class FalsyGateFallback {}
+const falsyGate = Math.random() > 0.5 ? FalsyGateClass : false;
+const FalsyGateAlias = falsyGate ?? FalsyGateFallback;
+FalsyGateAlias.write = Deno.writeTextFile;
+FalsyGateClass.write("falsy-gate.txt", "x");
+FalsyGateFallback.write("falsy-gate-fallback.txt", "x");
+`,
+        "src/logical-receiver-truthiness-pruning.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "OrLeft.write"],
+        ["filesystem-write", "AndRight.write"],
+        ["filesystem-write", "NullishLeft.write"],
+        ["filesystem-write", "GateSource.write"],
+        ["filesystem-write", "NestedInner.write"],
+        ["filesystem-write", "FalsyGateClass.write"],
+      ],
+    );
+  });
+
+  it("retains logical receivers without operator-specific truthiness proof", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class NullGateClass {}
+class NullGateOrFallback {}
+class NullGateNullishFallback {}
+const nullGate = Math.random() > 0.5 ? NullGateClass : null;
+const NullGateOrAlias = nullGate || NullGateOrFallback;
+NullGateOrAlias.write = Deno.writeTextFile;
+NullGateOrFallback.write("null-gate-or.txt", "x");
+const NullGateNullishAlias = nullGate ?? NullGateNullishFallback;
+NullGateNullishAlias.write = Deno.writeTextFile;
+NullGateNullishFallback.write("null-gate-nullish.txt", "x");
+
+class FalseGateClass {}
+class FalseGateOrFallback {}
+const falseGate = Math.random() > 0.5 ? FalseGateClass : false;
+const FalseGateOrAlias = falseGate || FalseGateOrFallback;
+FalseGateOrAlias.write = Deno.writeTextFile;
+FalseGateOrFallback.write("false-gate-or.txt", "x");
+
+class UncertainClass {}
+class UncertainFallback {}
+const uncertain = Math.random() > 0.5 ? UncertainClass : undefined;
+const UncertainAlias = uncertain || UncertainFallback;
+UncertainAlias.write = Deno.writeTextFile;
+UncertainFallback.write("uncertain-or.txt", "x");
+
+class MemberFallback {}
+const memberHolder = { Receiver: class {} };
+const MemberAlias = memberHolder.Receiver || MemberFallback;
+MemberAlias.write = Deno.writeTextFile;
+MemberFallback.write("member-or.txt", "x");
+
+class OptionalFallback {}
+const optionalHolder = { Receiver: class {} };
+const OptionalAlias = optionalHolder?.Receiver || OptionalFallback;
+OptionalAlias.write = Deno.writeTextFile;
+OptionalFallback.write("optional-or.txt", "x");
+
+class AndKeepLeft {}
+class AndKeepRight {}
+const andUncertain = Math.random() > 0.5 ? AndKeepLeft : undefined;
+const AndKeepAlias = andUncertain && AndKeepRight;
+AndKeepAlias.write = Deno.writeTextFile;
+AndKeepLeft.write("and-keep-left.txt", "x");
+`,
+        "src/logical-receiver-fail-closed.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "NullGateOrFallback.write"],
+        ["filesystem-write", "NullGateNullishFallback.write"],
+        ["filesystem-write", "FalseGateOrFallback.write"],
+        ["filesystem-write", "UncertainFallback.write"],
+        ["filesystem-write", "MemberFallback.write"],
+        ["filesystem-write", "OptionalFallback.write"],
+        ["filesystem-write", "AndKeepLeft.write"],
+      ],
+    );
+  });
+
   it("uses JavaScript array-index bounds for sparse writes", () => {
     assertEquals(
       collectSemanticMarkers(
