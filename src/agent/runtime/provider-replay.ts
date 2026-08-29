@@ -11,6 +11,9 @@ const MAX_PROVIDER_REPLAY_BLOCKS = 100;
 const MAX_PROVIDER_REPLAY_CHECKPOINTS = 100;
 const MAX_PROVIDER_REPLAY_TOTAL_PARTS = 10_000;
 const MAX_PROVIDER_REPLAY_MESSAGE_ID_LENGTH = 256;
+// Mirrors MAX_ANTHROPIC_RAW_ASSISTANT_MESSAGES in the anthropic extension,
+// which src cannot import from.
+const MAX_PROVIDER_REPLAY_MESSAGE_GROUPS = 6;
 
 const CHECKPOINT_KEYS = new Set([
   "version",
@@ -206,6 +209,12 @@ function validateAnthropicProviderToolResultBlock(
   }
   if (block.type === "mcp_tool_result" && typeof block.is_error !== "boolean") {
     invalidCheckpoint("checkpoint provider tool-result block is malformed", context);
+  }
+  if (
+    (block.type === "web_search_tool_result" || block.type === "web_fetch_tool_result") &&
+    !isSupportedAnthropicServerToolCaller(block.caller)
+  ) {
+    invalidCheckpoint("checkpoint provider tool-result caller is malformed", context);
   }
 }
 
@@ -959,9 +968,12 @@ export function parseProviderReplayCheckpoint(value: unknown): ProviderReplayChe
   if (value.providerMessageBlockCounts !== undefined) {
     if (
       !Array.isArray(value.providerMessageBlockCounts) ||
-      value.providerMessageBlockCounts.length === 0
+      value.providerMessageBlockCounts.length === 0 ||
+      value.providerMessageBlockCounts.length > MAX_PROVIDER_REPLAY_MESSAGE_GROUPS
     ) {
-      invalidCheckpoint("checkpoint providerMessageBlockCounts must be a non-empty array");
+      invalidCheckpoint(
+        `checkpoint providerMessageBlockCounts must contain 1-${MAX_PROVIDER_REPLAY_MESSAGE_GROUPS} entries`,
+      );
     }
     providerMessageBlockCounts = [];
     let groupedBlockCount = 0;

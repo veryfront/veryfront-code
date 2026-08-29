@@ -339,6 +339,46 @@ describe("agent/runtime/provider-replay", () => {
       }
     });
 
+    it("should reject a malformed caller on a web provider result", () => {
+      assertProviderReplayError(() =>
+        parseProviderReplayCheckpoint({
+          version: 1,
+          messageId: "assistant-1",
+          provider: "anthropic",
+          providerBlocks: [{
+            type: "provider-block",
+            provider: "anthropic",
+            block: {
+              type: "web_search_tool_result",
+              tool_use_id: "srvtool-1",
+              caller: { type: "code_execution_20250825" },
+              content: [],
+            },
+          }],
+          providerBlockPositions: [0],
+          totalPartCount: 1,
+        })
+      );
+    });
+
+    it("should reject more raw assistant message groups than the provider accepts", () => {
+      assertProviderReplayError(() =>
+        parseProviderReplayCheckpoint({
+          version: 1,
+          messageId: "assistant-1",
+          provider: "anthropic",
+          providerBlocks: Array.from({ length: 7 }, () => ({
+            type: "provider-block",
+            provider: "anthropic",
+            block: { type: "text", text: "hi" },
+          })),
+          providerBlockPositions: [0, 1, 2, 3, 4, 5, 6],
+          providerMessageBlockCounts: [1, 1, 1, 1, 1, 1, 1],
+          totalPartCount: 7,
+        })
+      );
+    });
+
     it("should reject a provider-result content primitive", () => {
       assertProviderReplayError(() =>
         parseProviderReplayCheckpoint({
