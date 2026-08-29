@@ -929,7 +929,38 @@ describe("analyzeContent MDX", () => {
     });
   });
 
-  it("analyzes 4,000 nested JSX children without recursive parsing", async () => {
+  it("accepts expression nesting at the parser capacity", async () => {
+    const depth = 64;
+    const value = "<a data-ok={" +
+      "<A>{".repeat(depth) +
+      "value" +
+      "}</A>".repeat(depth) +
+      '} href="../architecture/deep-jsx.md">ok</a>';
+
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => destination.rawValue),
+      ["../architecture/deep-jsx.md"],
+    );
+  });
+
+  it("ignores non-token braces when enforcing expression capacity", async () => {
+    const braces = "{".repeat(128);
+    const value = "```js\n" + braces + "\n```\n" +
+      `<a data-ok={"${braces}"} href="../architecture/braces.md">ok</a>`;
+
+    const result = await analyzeContent({ value, syntax: "mdx" });
+
+    assert(result.kind === "document");
+    assertEquals(
+      result.destinations.map((destination) => destination.rawValue),
+      ["../architecture/braces.md"],
+    );
+  });
+
+  it("bounds 4,000 nested JSX child expressions in the lexer", async () => {
     const depth = 4_000;
     const value = "<a data-ok={" +
       "<A>{".repeat(depth) +
@@ -941,10 +972,14 @@ describe("analyzeContent MDX", () => {
     const result = await analyzeContent({ value, syntax: "mdx" });
 
     assert(result.kind === "syntax-error");
+    assertEquals(
+      result.diagnostic.message,
+      "Parser capacity exceeded for MDX structure",
+    );
     assertLess(performance.now() - startedAt, 2_000);
   });
 
-  it("analyzes 1,600 nested JSX attribute expressions without fallback", async () => {
+  it("bounds 1,600 nested JSX attribute expressions in the lexer", async () => {
     const depth = 1_600;
     const value = "<a data-ok={" +
       "<A value={".repeat(depth) +
@@ -956,6 +991,10 @@ describe("analyzeContent MDX", () => {
     const result = await analyzeContent({ value, syntax: "mdx" });
 
     assert(result.kind === "syntax-error");
+    assertEquals(
+      result.diagnostic.message,
+      "Parser capacity exceeded for MDX structure",
+    );
     assertLess(performance.now() - startedAt, 2_000);
   });
 

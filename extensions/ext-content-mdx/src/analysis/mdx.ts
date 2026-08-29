@@ -39,6 +39,7 @@ import type {
 const AcornJsxParser = Parser.extend(acornJsx());
 // micromark's acorn bridge rescans every still-open expression, so unbounded nesting is quadratic.
 const MAX_MDX_EXPRESSION_DEPTH = 64;
+const MDX_STRUCTURE_LIMIT_MESSAGE = "Parser capacity exceeded for MDX structure";
 
 function incompleteExpression(position: number): SyntaxError {
   const error = new SyntaxError("Incomplete embedded expression") as SyntaxError & {
@@ -54,6 +55,18 @@ function incompleteExpression(position: number): SyntaxError {
 
 function embeddedCodeLimitError(position: number): SyntaxError {
   const error = new SyntaxError(EMBEDDED_CODE_LIMIT_MESSAGE) as SyntaxError & {
+    pos: number;
+    raisedAt: number;
+    loc: { line: number; column: number };
+  };
+  error.pos = position;
+  error.raisedAt = position;
+  error.loc = { line: 1, column: position };
+  return error;
+}
+
+function mdxStructureLimitError(position: number): SyntaxError {
+  const error = new SyntaxError(MDX_STRUCTURE_LIMIT_MESSAGE) as SyntaxError & {
     pos: number;
     raisedAt: number;
     loc: { line: number; column: number };
@@ -213,6 +226,9 @@ function lexicalBoundaryState(
     while (true) {
       const token = cache.tokenizer.getToken();
       consumeLexicalToken(cache.state, token.type.label);
+      if (cache.state.braceDepth > MAX_MDX_EXPRESSION_DEPTH) {
+        throw mdxStructureLimitError(cache.position + token.start);
+      }
       if (cache.state.contextualSlash) {
         cache.grammarRequired = true;
         return cache.state;
@@ -397,7 +413,12 @@ function own(value: unknown, key: string): unknown {
 
 function parserMessage(error: Error): string {
   const causeMessage = own(own(error, "cause"), "message");
-  if (causeMessage === EMBEDDED_CODE_LIMIT_MESSAGE) return causeMessage;
+  if (
+    causeMessage === EMBEDDED_CODE_LIMIT_MESSAGE ||
+    causeMessage === MDX_STRUCTURE_LIMIT_MESSAGE
+  ) {
+    return causeMessage;
+  }
   const reason = own(error, "reason");
   const message = typeof reason === "string" ? reason : error.message;
   const firstLine = message.split("\n", 1)[0]?.trim() || error.name;
@@ -410,7 +431,7 @@ function capacityDiagnostic(
 ): ContentSyntaxDiagnostic {
   const point = locator.point(offset);
   return {
-    message: "Parser capacity exceeded for MDX structure",
+    message: MDX_STRUCTURE_LIMIT_MESSAGE,
     range: { start: point, end: point },
   };
 }
@@ -630,19 +651,6 @@ export async function analyzeMdx(options: {
   readonly filePath: string | undefined;
 }): Promise<ContentAnalysisResult> {
   const locator = createSourceLocator(options.value);
-  let depth = 0;
-  for (let index = 0; index < options.value.length; index++) {
-    const code = options.value.charCodeAt(index);
-    if (code === 0x7b) depth++;
-    else if (code === 0x7d) depth--;
-    if (depth > MAX_MDX_EXPRESSION_DEPTH) {
-      return {
-        kind: "syntax-error",
-        diagnostic: capacityDiagnostic(locator, index),
-      };
-    }
-  }
-
   const parsed = parseMdxRoot(options.value, options.frontmatter, locator);
   if (parsed.kind !== "root") return parsed;
 
