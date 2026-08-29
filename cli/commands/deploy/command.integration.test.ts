@@ -628,7 +628,7 @@ it("bootstraps exactly one quiet push when no verified push receipt exists", asy
         }),
     );
 
-    assertEquals(uploadedPaths, ["app.ts", "veryfront.json"]);
+    assertEquals(uploadedPaths.toSorted(), ["app.ts", "veryfront.json"]);
     assertEquals(
       requests.filter((request) => request.endsWith("/files/app.ts")).length,
       1,
