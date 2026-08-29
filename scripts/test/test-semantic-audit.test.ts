@@ -5288,6 +5288,64 @@ VarOfFallback.write("var-of.txt", "x");
       ).map((marker) => [marker.effect, marker.symbol]),
       [["filesystem-write", "VarOfFallback.write"]],
     );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class EvalFallback {}
+class EvalReceiver {}
+eval("EvalReceiver = null");
+const EvalAlias = EvalReceiver || EvalFallback;
+EvalAlias.write = Deno.writeTextFile;
+EvalFallback.write("eval.txt", "x");
+`,
+        "src/logical-receiver-direct-eval.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "EvalFallback.write"]],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class ArgumentsFallback {}
+function outer(ArgumentsReceiver) {
+  function ArgumentsReceiver() {}
+  arguments[0] = null;
+  const ArgumentsAlias = ArgumentsReceiver || ArgumentsFallback;
+  ArgumentsAlias.write = Deno.writeTextFile;
+}
+void outer;
+ArgumentsFallback.write("arguments.txt", "x");
+`,
+        "src/logical-receiver-mapped-arguments.test.cjs",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "ArgumentsFallback.write"]],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class TsCastFallback {}
+class TsCastReceiver {}
+(TsCastReceiver as unknown as null) = null;
+const TsCastAlias = TsCastReceiver || TsCastFallback;
+TsCastAlias.write = Deno.writeTextFile;
+TsCastFallback.write("ts-cast.txt", "x");
+`,
+        "src/logical-receiver-ts-cast-target.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "TsCastFallback.write"]],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class NewFallback {}
+class NewExotic {}
+const NewAlias = new NewExotic() || NewFallback;
+NewAlias.write = Deno.writeTextFile;
+NewFallback.write("new.txt", "x");
+`,
+        "src/logical-receiver-new-expression.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "NewFallback.write"]],
+    );
   });
 
   it("uses JavaScript array-index bounds for sparse writes", () => {

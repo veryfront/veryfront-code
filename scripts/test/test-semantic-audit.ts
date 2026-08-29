@@ -3545,6 +3545,26 @@ function canonicalCompatSource(source: string): string {
   return normalized;
 }
 
+// Direct `eval` can rebind any binding visible to it, and a write through a
+// mapped `arguments` rebinds the matching parameter. Neither names its target
+// syntactically, so both retract every mutable declaration fact in the file.
+const OPAQUE_BINDING_WRITE = "\u0000opaque-binding-write";
+
+function isOpaqueBindingWrite(node: Node): boolean {
+  if (node.type === "CallExpression") {
+    return isNode(node.callee) && node.callee.type === "Identifier" &&
+      node.callee.name === "eval";
+  }
+  const target = node.type === "AssignmentExpression"
+    ? node.left
+    : node.type === "UpdateExpression"
+    ? node.argument
+    : undefined;
+  return isNode(target) && target.type === "MemberExpression" &&
+    isNode(target.object) && target.object.type === "Identifier" &&
+    target.object.name === "arguments";
+}
+
 // Names any syntactic write in the subtree can rebind. Truthiness facts are
 // granted only to bindings with no such writer, which keeps them valid
 // regardless of traversal order (hoisted calls, deferred function bodies,
@@ -3554,6 +3574,7 @@ function collectAssignedIdentifierNames(
   names: Set<string>,
 ): void {
   if (!isNode(node)) return;
+  if (isOpaqueBindingWrite(node)) names.add(OPAQUE_BINDING_WRITE);
   if (node.type === "AssignmentExpression") {
     collectPatternNames(node.left, names);
   } else if (node.type === "UpdateExpression") {
@@ -3712,7 +3733,10 @@ function collectLocalDeclaredNames(
         definitelyNonUndefinedNames.add(name);
         // `declare` bindings are erased at runtime; reassigned names lose
         // their declaration-form truthiness.
-        if (statement.declare !== true && !assignedNames.has(name)) {
+        if (
+          statement.declare !== true && !assignedNames.has(name) &&
+          !assignedNames.has(OPAQUE_BINDING_WRITE)
+        ) {
           definitelyTruthyNames.add(name);
           definitelyNonNullishNames.add(name);
         }
@@ -9019,11 +9043,11 @@ function expressionIsDefinitelyTruthy(
   if (!value) return false;
   switch (value.type) {
     // JSX is absent: a custom jsxFactory may legally return null or false.
+    // `new` is absent: a constructor may return the falsy host `document.all`.
     case "ArrayExpression":
     case "ArrowFunctionExpression":
     case "ClassExpression":
     case "FunctionExpression":
-    case "NewExpression":
     case "ObjectExpression":
     case "RegExpLiteral":
       return true;
@@ -10718,8 +10742,10 @@ function unwrapTruthinessProofExpression(value: unknown): Node | undefined {
   return current;
 }
 
-function collectPatternNames(value: unknown, names: Set<string>): void {
-  if (!isNode(value)) return;
+function collectPatternNames(target: unknown, names: Set<string>): void {
+  // `(X as any) = null` and `X! = null` keep X as the runtime write target.
+  const value = unwrapTruthinessProofExpression(target);
+  if (!value) return;
   if (value.type === "TSParameterProperty") {
     collectPatternNames(value.parameter, names);
     return;
