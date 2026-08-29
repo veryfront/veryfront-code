@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { useApproval, type UseApprovalResult } from "./use-approval.ts";
 import { useWorkflow, type UseWorkflowResult } from "./use-workflow.ts";
@@ -126,7 +127,9 @@ describe("useWorkflowStart", () => {
 
       secondResponse.resolve(Response.json({ runId: "run-second" }));
       assertEquals(await secondStart, "run-second");
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await waitFor(() => hook!.isStarting === false, {
+        message: "second start should leave the hook idle",
+      });
       assertEquals(hook!.isStarting, false);
       assertEquals(hook!.lastRunId, "run-second");
       assertEquals(startedRunIds, ["run-first", "run-second"]);

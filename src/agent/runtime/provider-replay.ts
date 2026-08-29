@@ -18,6 +18,7 @@ const CHECKPOINT_KEYS = new Set([
   "provider",
   "providerBlocks",
   "providerBlockPositions",
+  "providerMessageBlockCounts",
   "totalPartCount",
   "elapsedMs",
   "emittedAt",
@@ -30,6 +31,39 @@ const ANTHROPIC_PROVIDER_TOOL_RESULT_TYPES = new Set([
   "bash_code_execution_tool_result",
   "text_editor_code_execution_tool_result",
   "mcp_tool_result",
+]);
+const WEB_SEARCH_ERROR_CODES = new Set([
+  "invalid_tool_input",
+  "unavailable",
+  "max_uses_exceeded",
+  "too_many_requests",
+  "query_too_long",
+  "request_too_large",
+]);
+const WEB_FETCH_ERROR_CODES = new Set([
+  "invalid_tool_input",
+  "url_too_long",
+  "url_not_allowed",
+  "url_not_in_prior_context",
+  "url_not_accessible",
+  "unsupported_content_type",
+  "too_many_requests",
+  "max_uses_exceeded",
+  "unavailable",
+]);
+const CODE_EXECUTION_ERROR_CODES = new Set([
+  "invalid_tool_input",
+  "unavailable",
+  "too_many_requests",
+  "execution_time_exceeded",
+]);
+const BASH_CODE_EXECUTION_ERROR_CODES = new Set([
+  ...CODE_EXECUTION_ERROR_CODES,
+  "output_file_too_large",
+]);
+const TEXT_EDITOR_CODE_EXECUTION_ERROR_CODES = new Set([
+  ...CODE_EXECUTION_ERROR_CODES,
+  "file_not_found",
 ]);
 
 /** Providers whose continuation contract can require opaque block replay. */
@@ -55,6 +89,11 @@ export type ProviderReplayCheckpoint = {
   provider: ProviderReplayProvider;
   providerBlocks: ProviderReplayBlock[];
   providerBlockPositions: number[];
+  /**
+   * Optional raw Anthropic assistant-message grouping. Absent means the
+   * historical stage-1 shape: all blocks came from one raw assistant message.
+   */
+  providerMessageBlockCounts?: number[];
   totalPartCount: number;
   elapsedMs?: number;
   emittedAt?: number;
@@ -82,6 +121,15 @@ function isProviderReplayProvider(value: unknown): value is ProviderReplayProvid
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
+}
+
+function isSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value);
+}
+
+function isNullableNonNegativeSafeInteger(value: unknown): value is number | null {
+  return value === null ||
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 function isSupportedAnthropicServerToolCaller(value: unknown): boolean {
@@ -161,11 +209,52 @@ function validateAnthropicProviderToolResultBlock(
   }
 }
 
+function isAnthropicProviderToolResultBlock(block: Record<string, unknown>): boolean {
+  return typeof block.type === "string" && ANTHROPIC_PROVIDER_TOOL_RESULT_TYPES.has(block.type);
+}
+
+function validateAnthropicReplayBlock(
+  block: Record<string, unknown>,
+  context?: Record<string, unknown>,
+): void {
+  switch (block.type) {
+    case "text":
+      if (typeof block.text !== "string") {
+        invalidCheckpoint("checkpoint text block is malformed", context);
+      }
+      return;
+    case "thinking":
+      validateAnthropicThinkingReplayBlock(block, context);
+      return;
+    case "redacted_thinking":
+      if (!isNonEmptyString(block.data)) {
+        invalidCheckpoint("checkpoint redacted thinking block is malformed", context);
+      }
+      return;
+    case "tool_use":
+      toCanonicalAnthropicToolCall(block, false);
+      return;
+    case "server_tool_use":
+    case "mcp_tool_use":
+      toCanonicalAnthropicToolCall(block, true);
+      return;
+    default:
+      if (isAnthropicProviderToolResultBlock(block)) {
+        validateAnthropicProviderToolResultBlock(block, context);
+        return;
+      }
+      invalidCheckpoint("checkpoint provider block cannot be projected for validation", context);
+  }
+}
+
 function hasValidAnthropicErrorContent(
   content: Record<string, unknown>,
   type: string,
+  allowedCodes?: ReadonlySet<string>,
 ): boolean {
-  return content.type === type && isNonEmptyString(content.error_code);
+  return content.type === type &&
+    isNonEmptyString(content.error_code) &&
+    (allowedCodes === undefined || allowedCodes.has(content.error_code));
 }
 
 function hasValidAnthropicMcpContent(value: unknown): boolean {
@@ -178,6 +267,187 @@ function hasValidAnthropicMcpContent(value: unknown): boolean {
       Array.isArray(citations) &&
         citations.every((citation) => isRecord(citation) && isNonEmptyString(citation.type));
   });
+}
+
+function hasValidAnthropicFileOutputs(
+  value: unknown,
+  expectedType: "code_execution_output" | "bash_code_execution_output",
+): boolean {
+  return Array.isArray(value) &&
+    value.every((item) =>
+      isRecord(item) && item.type === expectedType && isNonEmptyString(item.file_id)
+    );
+}
+
+function hasValidAnthropicCodeExecutionContent(content: Record<string, unknown>): boolean {
+  if (
+    hasValidAnthropicErrorContent(
+      content,
+      "code_execution_tool_result_error",
+      CODE_EXECUTION_ERROR_CODES,
+    )
+  ) {
+    return true;
+  }
+  if (content.type === "code_execution_result") {
+    return typeof content.stdout === "string" &&
+      typeof content.stderr === "string" &&
+      isSafeInteger(content.return_code) &&
+      hasValidAnthropicFileOutputs(content.content, "code_execution_output");
+  }
+  if (content.type === "encrypted_code_execution_result") {
+    return typeof content.encrypted_stdout === "string" &&
+      typeof content.stderr === "string" &&
+      isSafeInteger(content.return_code) &&
+      hasValidAnthropicFileOutputs(content.content, "code_execution_output");
+  }
+  return false;
+}
+
+function hasValidAnthropicBashCodeExecutionContent(content: Record<string, unknown>): boolean {
+  if (
+    hasValidAnthropicErrorContent(
+      content,
+      "bash_code_execution_tool_result_error",
+      BASH_CODE_EXECUTION_ERROR_CODES,
+    )
+  ) {
+    return true;
+  }
+  return content.type === "bash_code_execution_result" &&
+    typeof content.stdout === "string" &&
+    typeof content.stderr === "string" &&
+    isSafeInteger(content.return_code) &&
+    hasValidAnthropicFileOutputs(content.content, "bash_code_execution_output");
+}
+
+function hasValidAnthropicTextEditorCodeExecutionContent(
+  content: Record<string, unknown>,
+): boolean {
+  if (
+    hasValidAnthropicErrorContent(
+      content,
+      "text_editor_code_execution_tool_result_error",
+      TEXT_EDITOR_CODE_EXECUTION_ERROR_CODES,
+    )
+  ) {
+    return !("error_message" in content) ||
+      content.error_message === null ||
+      typeof content.error_message === "string";
+  }
+  if (content.type === "text_editor_code_execution_view_result") {
+    return typeof content.content === "string" &&
+      (content.file_type === "text" ||
+        content.file_type === "image" ||
+        content.file_type === "pdf") &&
+      "num_lines" in content &&
+      isNullableNonNegativeSafeInteger(content.num_lines) &&
+      "start_line" in content &&
+      isNullableNonNegativeSafeInteger(content.start_line) &&
+      "total_lines" in content &&
+      isNullableNonNegativeSafeInteger(content.total_lines);
+  }
+  if (content.type === "text_editor_code_execution_create_result") {
+    return typeof content.is_file_update === "boolean";
+  }
+  if (content.type === "text_editor_code_execution_str_replace_result") {
+    return "lines" in content &&
+      (content.lines === null ||
+        Array.isArray(content.lines) &&
+          content.lines.every((line) => typeof line === "string")) &&
+      "old_start" in content &&
+      isNullableNonNegativeSafeInteger(content.old_start) &&
+      "old_lines" in content &&
+      isNullableNonNegativeSafeInteger(content.old_lines) &&
+      "new_start" in content &&
+      isNullableNonNegativeSafeInteger(content.new_start) &&
+      "new_lines" in content &&
+      isNullableNonNegativeSafeInteger(content.new_lines);
+  }
+  return false;
+}
+
+function hasValidAnthropicWebSearchContent(content: unknown): boolean {
+  if (isRecord(content)) {
+    return hasValidAnthropicErrorContent(
+      content,
+      "web_search_tool_result_error",
+      WEB_SEARCH_ERROR_CODES,
+    );
+  }
+  return Array.isArray(content) &&
+    content.every((item) =>
+      isRecord(item) &&
+      item.type === "web_search_result" &&
+      isNonEmptyString(item.url) &&
+      typeof item.title === "string" &&
+      typeof item.encrypted_content === "string" &&
+      "page_age" in item &&
+      (item.page_age === null || typeof item.page_age === "string")
+    );
+}
+
+function hasValidAnthropicWebFetchSource(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.data !== "string") return false;
+  return value.type === "text" && value.media_type === "text/plain" ||
+    value.type === "base64" && value.media_type === "application/pdf";
+}
+
+function hasValidAnthropicWebFetchContent(content: Record<string, unknown>): boolean {
+  if (
+    hasValidAnthropicErrorContent(
+      content,
+      "web_fetch_tool_result_error",
+      WEB_FETCH_ERROR_CODES,
+    )
+  ) {
+    return true;
+  }
+  const document = isRecord(content.content) ? content.content : undefined;
+  const citations = document?.citations;
+  return content.type === "web_fetch_result" &&
+    isNonEmptyString(content.url) &&
+    "retrieved_at" in content &&
+    (content.retrieved_at === null || typeof content.retrieved_at === "string") &&
+    document?.type === "document" &&
+    hasValidAnthropicWebFetchSource(document.source) &&
+    (document.title === undefined ||
+      document.title === null ||
+      typeof document.title === "string") &&
+    (citations === undefined ||
+      citations === null ||
+      (isRecord(citations) && typeof citations.enabled === "boolean"));
+}
+
+function hasValidAnthropicProviderToolResultContentForTool(
+  block: Record<string, unknown>,
+  toolName: string,
+): boolean {
+  if (block.type === "mcp_tool_result") {
+    return hasValidAnthropicMcpContent(block.content);
+  }
+  if (toolName === "web_search") {
+    return block.type === "web_search_tool_result" &&
+      hasValidAnthropicWebSearchContent(block.content);
+  }
+  const content = isRecord(block.content) ? block.content : undefined;
+  if (!content) return false;
+  switch (toolName) {
+    case "web_fetch":
+      return block.type === "web_fetch_tool_result" &&
+        hasValidAnthropicWebFetchContent(content);
+    case "code_execution":
+      return block.type === "code_execution_tool_result" &&
+        hasValidAnthropicCodeExecutionContent(content);
+    case "bash_code_execution":
+      return block.type === "bash_code_execution_tool_result" &&
+        hasValidAnthropicBashCodeExecutionContent(content);
+    case "text_editor_code_execution":
+      return block.type === "text_editor_code_execution_tool_result" &&
+        hasValidAnthropicTextEditorCodeExecutionContent(content);
+    default:
+      return false;
+  }
 }
 
 function expectedAnthropicResultTypeForTool(toolName: string): string | undefined {
@@ -198,68 +468,62 @@ function expectedAnthropicResultTypeForTool(toolName: string): string | undefine
 }
 
 function assertAnthropicProviderToolResultsMatchUses(
-  checkpoint: ProviderReplayCheckpoint,
+  checkpoints: readonly ProviderReplayCheckpoint[],
 ): void {
-  const providerToolNames = new Map<string, string>();
+  const pendingProviderTools = new Map<
+    string,
+    { readonly name: string; readonly type: "server_tool_use" | "mcp_tool_use" }
+  >();
+  const providerToolUseIds = new Set<string>();
 
-  for (const replayBlock of checkpoint.providerBlocks) {
-    const block = replayBlock.block;
-    if (block.type !== "server_tool_use" && block.type !== "mcp_tool_use") continue;
-    const toolUse = toCanonicalAnthropicToolCall(block, true);
-    const toolCallId = String(toolUse.toolCallId);
-    if (providerToolNames.has(toolCallId)) {
-      invalidCheckpoint("checkpoint provider tool-use id is duplicated");
-    }
-    providerToolNames.set(toolCallId, String(toolUse.toolName));
-  }
-
-  for (const replayBlock of checkpoint.providerBlocks) {
-    const block = replayBlock.block;
-    if (
-      typeof block.type !== "string" ||
-      !ANTHROPIC_PROVIDER_TOOL_RESULT_TYPES.has(block.type)
-    ) {
-      continue;
-    }
-    validateAnthropicProviderToolResultBlock(block);
-    const toolCallId = String(block.tool_use_id);
-    const toolName = providerToolNames.get(toolCallId);
-    if (!toolName) {
-      invalidCheckpoint("checkpoint provider tool-result has no matching provider tool-use");
-    }
-    if (block.type === "mcp_tool_result") {
-      if (!hasValidAnthropicMcpContent(block.content)) {
-        invalidCheckpoint("checkpoint MCP tool-result content is malformed");
+  for (const checkpoint of checkpoints) {
+    for (const replayBlock of checkpoint.providerBlocks) {
+      const block = replayBlock.block;
+      if (block.type === "server_tool_use" || block.type === "mcp_tool_use") {
+        const toolUse = toCanonicalAnthropicToolCall(block, true);
+        const toolCallId = String(toolUse.toolCallId);
+        if (providerToolUseIds.has(toolCallId)) {
+          invalidCheckpoint("checkpoint provider tool-use id is duplicated");
+        }
+        providerToolUseIds.add(toolCallId);
+        pendingProviderTools.set(toolCallId, {
+          name: String(toolUse.toolName),
+          type: block.type,
+        });
+        continue;
       }
-      continue;
-    }
-    const expectedType = expectedAnthropicResultTypeForTool(toolName);
-    if (block.type !== expectedType) {
-      invalidCheckpoint("checkpoint provider tool-result type does not match its tool-use");
-    }
-    const content = isRecord(block.content) ? block.content : undefined;
-    if (
-      (block.type === "web_search_tool_result" && isRecord(block.content) &&
-        !hasValidAnthropicErrorContent(block.content, "web_search_tool_result_error")) ||
-      (block.type === "web_fetch_tool_result" && content?.type !== "web_fetch_result" &&
-        !hasValidAnthropicErrorContent(content ?? {}, "web_fetch_tool_result_error")) ||
-      (block.type === "code_execution_tool_result" &&
-        content?.type !== "code_execution_result" &&
-        content?.type !== "encrypted_code_execution_result" &&
-        !hasValidAnthropicErrorContent(content ?? {}, "code_execution_tool_result_error")) ||
-      (block.type === "bash_code_execution_tool_result" &&
-        content?.type !== "bash_code_execution_result" &&
-        !hasValidAnthropicErrorContent(content ?? {}, "bash_code_execution_tool_result_error")) ||
-      (block.type === "text_editor_code_execution_tool_result" &&
-        content?.type !== "text_editor_code_execution_view_result" &&
-        content?.type !== "text_editor_code_execution_create_result" &&
-        content?.type !== "text_editor_code_execution_str_replace_result" &&
-        !hasValidAnthropicErrorContent(
-          content ?? {},
-          "text_editor_code_execution_tool_result_error",
-        ))
-    ) {
-      invalidCheckpoint("checkpoint provider tool-result content is malformed");
+      if (
+        !isAnthropicProviderToolResultBlock(block)
+      ) {
+        continue;
+      }
+      validateAnthropicProviderToolResultBlock(block);
+      const toolCallId = String(block.tool_use_id);
+      const pendingProviderTool = pendingProviderTools.get(toolCallId);
+      if (!pendingProviderTool) {
+        invalidCheckpoint(
+          "checkpoint provider tool-result has no matching preceding provider tool-use",
+        );
+      }
+      if (block.type === "mcp_tool_result") {
+        if (pendingProviderTool.type !== "mcp_tool_use") {
+          invalidCheckpoint("checkpoint MCP tool-result type does not match its tool-use");
+        }
+        if (!hasValidAnthropicMcpContent(block.content)) {
+          invalidCheckpoint("checkpoint MCP tool-result content is malformed");
+        }
+        pendingProviderTools.delete(toolCallId);
+        continue;
+      }
+      const toolName = pendingProviderTool.name;
+      const expectedType = expectedAnthropicResultTypeForTool(toolName);
+      if (block.type !== expectedType) {
+        invalidCheckpoint("checkpoint provider tool-result type does not match its tool-use");
+      }
+      if (!hasValidAnthropicProviderToolResultContentForTool(block, toolName)) {
+        invalidCheckpoint("checkpoint provider tool-result content is malformed");
+      }
+      pendingProviderTools.delete(toolCallId);
     }
   }
 }
@@ -267,23 +531,17 @@ function assertAnthropicProviderToolResultsMatchUses(
 function toTranscriptVisibleAnthropicReplayPart(
   block: Record<string, unknown>,
 ): Record<string, unknown> | undefined {
+  validateAnthropicReplayBlock(block);
   switch (block.type) {
     case "text": {
-      if (typeof block.text !== "string") {
-        invalidCheckpoint("checkpoint text block is malformed");
-      }
       return { type: "text", text: block.text };
     }
     case "thinking": {
-      validateAnthropicThinkingReplayBlock(block);
       return isNonEmptyString(block.thinking)
         ? { type: "reasoning", text: block.thinking }
         : undefined;
     }
     case "redacted_thinking":
-      if (!isNonEmptyString(block.data)) {
-        invalidCheckpoint("checkpoint redacted thinking block is malformed");
-      }
       return undefined;
     case "tool_use":
       return toCanonicalAnthropicToolCall(block, false);
@@ -291,11 +549,7 @@ function toTranscriptVisibleAnthropicReplayPart(
     case "mcp_tool_use":
       return toCanonicalAnthropicToolCall(block, true);
     default: {
-      if (
-        typeof block.type === "string" &&
-        ANTHROPIC_PROVIDER_TOOL_RESULT_TYPES.has(block.type)
-      ) {
-        validateAnthropicProviderToolResultBlock(block);
+      if (isAnthropicProviderToolResultBlock(block)) {
         return {
           type: "tool-result",
           toolCallId: block.tool_use_id,
@@ -337,7 +591,7 @@ function toTranscriptVisibleProviderPart(
         type: "tool-call",
         toolCallId: part.toolCallId,
         toolName: part.toolName,
-        input: part.input,
+        input: part.input ?? part.args,
         ...(typeof part.toolCallId === "string" &&
             providerExecutedToolCallIds.has(part.toolCallId)
           ? { providerExecuted: true }
@@ -383,39 +637,32 @@ function normalizeTranscriptVisibleProjection(
   return normalized;
 }
 
-function assertCheckpointMatchesAssistantTurn(
-  target: Message,
+function projectCheckpointVisibleParts(
   checkpoint: ProviderReplayCheckpoint,
-  toolSiblings: readonly Message[] = [],
-): void {
-  const providerProjection = convertAgentRuntimeMessagesToProviderMessages([target])
-    .filter((message) => message.role === "assistant");
-  if (providerProjection.length > 1) {
-    invalidCheckpoint("checkpoint anchor projects to more than one assistant message", {
-      assistantSegmentCount: providerProjection.length,
-    });
-  }
-  const checkpointProjection = checkpoint.providerBlocks.flatMap((block) => {
+): Record<string, unknown>[] {
+  return checkpoint.providerBlocks.flatMap((block) => {
     const part = toTranscriptVisibleAnthropicReplayPart(block.block);
     return part ? [part] : [];
   });
-  const providerExecutedToolCallIds = getProviderExecutedToolCallIds(target);
-  const targetContent = providerProjection[0]?.content ?? [];
-  if (!Array.isArray(targetContent)) {
-    invalidCheckpoint("checkpoint anchor does not carry structured assistant content");
+}
+
+function getProviderExecutedToolCallIdsFromMessages(
+  messages: readonly Message[],
+): Set<string> {
+  const ids = new Set<string>();
+  for (const message of messages) {
+    for (const id of getProviderExecutedToolCallIds(message)) {
+      ids.add(id);
+    }
   }
-  const targetProjection = targetContent.flatMap((part) => {
-    const projected = toTranscriptVisibleProviderPart(part, providerExecutedToolCallIds);
-    return projected ? [projected] : [];
-  });
-  const checkpointProviderToolResults = checkpointProjection.filter((part) =>
-    part.type === "tool-result"
-  );
-  const checkpointVisibleProjection = normalizeTranscriptVisibleProjection(
-    checkpointProjection.filter((part) => part.type !== "tool-result"),
-  );
-  const normalizedTargetProjection = normalizeTranscriptVisibleProjection(targetProjection);
-  const targetProviderToolResults = [target, ...toolSiblings].flatMap((message) =>
+  return ids;
+}
+
+function projectProviderToolResults(
+  messages: readonly Message[],
+  providerExecutedToolCallIds: ReadonlySet<string>,
+): Record<string, unknown>[] {
+  return messages.flatMap((message) =>
     message.parts.flatMap((part) => {
       const value: unknown = part;
       if (!isRecord(value) || value.type !== "tool-result") return [];
@@ -423,6 +670,21 @@ function assertCheckpointMatchesAssistantTurn(
       return projected?.providerExecuted === true ? [projected] : [];
     })
   );
+}
+
+function assertCheckpointMatchesProjection(
+  checkpoint: ProviderReplayCheckpoint,
+  targetProjection: readonly Record<string, unknown>[],
+  targetProviderToolResults: readonly Record<string, unknown>[],
+): void {
+  const checkpointProjection = projectCheckpointVisibleParts(checkpoint);
+  const checkpointProviderToolResults = checkpointProjection.filter((part) =>
+    part.type === "tool-result"
+  );
+  const checkpointVisibleProjection = normalizeTranscriptVisibleProjection(
+    checkpointProjection.filter((part) => part.type !== "tool-result"),
+  );
+  const normalizedTargetProjection = normalizeTranscriptVisibleProjection(targetProjection);
   if (
     stringifyChatJson(checkpointVisibleProjection) !==
       stringifyChatJson(normalizedTargetProjection) ||
@@ -431,6 +693,153 @@ function assertCheckpointMatchesAssistantTurn(
   ) {
     invalidCheckpoint("checkpoint provider blocks do not match the anchored assistant turn");
   }
+}
+
+function assertCheckpointMatchesAssistantTurn(
+  target: Message,
+  checkpoint: ProviderReplayCheckpoint,
+  toolSiblings: readonly Message[] = [],
+  providerExecutedToolCallIds = getProviderExecutedToolCallIds(target),
+): void {
+  const providerProjection = convertAgentRuntimeMessagesToProviderMessages([target])
+    .filter((message) => message.role === "assistant");
+  if (providerProjection.length > 1) {
+    if (checkpoint.providerMessageBlockCounts?.length !== providerProjection.length) {
+      invalidCheckpoint("checkpoint anchor projects to more than one assistant message", {
+        assistantSegmentCount: providerProjection.length,
+      });
+    }
+    const splitTargetProjection = providerProjection.flatMap((message) => {
+      if (!Array.isArray(message.content)) {
+        invalidCheckpoint("checkpoint anchor does not carry structured assistant content");
+      }
+      return message.content.flatMap((part) => {
+        const projected = toTranscriptVisibleProviderPart(part, providerExecutedToolCallIds);
+        return projected ? [projected] : [];
+      });
+    });
+    assertCheckpointMatchesProjection(
+      checkpoint,
+      splitTargetProjection,
+      projectProviderToolResults([target, ...toolSiblings], providerExecutedToolCallIds),
+    );
+    return;
+  }
+  const targetContent = providerProjection[0]?.content ?? [];
+  if (!Array.isArray(targetContent)) {
+    invalidCheckpoint("checkpoint anchor does not carry structured assistant content");
+  }
+  const targetProjection = targetContent.flatMap((part) => {
+    const projected = toTranscriptVisibleProviderPart(part, providerExecutedToolCallIds);
+    return projected ? [projected] : [];
+  });
+  assertCheckpointMatchesProjection(
+    checkpoint,
+    targetProjection,
+    projectProviderToolResults([target, ...toolSiblings], providerExecutedToolCallIds),
+  );
+}
+
+function createCheckpointForRawBlocks(
+  source: ProviderReplayCheckpoint,
+  rawBlocks: readonly Record<string, unknown>[],
+): ProviderReplayCheckpoint {
+  return {
+    ...source,
+    providerBlocks: rawBlocks.map((block) => ({
+      type: "provider-block",
+      provider: source.provider,
+      block,
+    })),
+    providerBlockPositions: rawBlocks.map((_, index) => index),
+    totalPartCount: rawBlocks.length,
+  };
+}
+
+function getRawAssistantMessagesForCheckpoint(
+  checkpoint: ProviderReplayCheckpoint,
+): Record<string, unknown>[][] {
+  if (checkpoint.providerMessageBlockCounts === undefined) {
+    return [checkpoint.providerBlocks.map((block) => block.block)];
+  }
+  const rawAssistantMessages: Record<string, unknown>[][] = [];
+  let offset = 0;
+  for (const count of checkpoint.providerMessageBlockCounts) {
+    rawAssistantMessages.push(
+      checkpoint.providerBlocks.slice(offset, offset + count).map((block) => block.block),
+    );
+    offset += count;
+  }
+  return rawAssistantMessages;
+}
+
+function splitAnthropicAssistantReplayBlocks(
+  checkpoint: ProviderReplayCheckpoint,
+): Record<string, unknown>[][] {
+  const segments: Record<string, unknown>[][] = [];
+  let current: Record<string, unknown>[] = [];
+  for (const replayBlock of checkpoint.providerBlocks) {
+    if (isAnthropicProviderToolResultBlock(replayBlock.block)) {
+      if (current.length > 0) {
+        segments.push(current);
+        current = [];
+      }
+      current.push(replayBlock.block);
+      continue;
+    }
+    current.push(replayBlock.block);
+  }
+  if (current.length > 0) {
+    segments.push(current);
+  }
+  return segments;
+}
+
+function assertCheckpointMatchesSplitAssistantTurns(
+  sameSourceMessages: readonly Message[],
+  assistantMatches: readonly Message[],
+  checkpoint: ProviderReplayCheckpoint,
+): Record<string, unknown>[][] {
+  const providerExecutedToolCallIds = getProviderExecutedToolCallIdsFromMessages(
+    sameSourceMessages,
+  );
+  const targetProjection = assistantMatches.flatMap((message) =>
+    message.parts.flatMap((part) => {
+      const projected = toTranscriptVisibleProviderPart(part, providerExecutedToolCallIds);
+      return projected ? [projected] : [];
+    })
+  );
+  assertCheckpointMatchesProjection(
+    checkpoint,
+    targetProjection,
+    projectProviderToolResults(sameSourceMessages, providerExecutedToolCallIds),
+  );
+
+  const rawSegments = splitAnthropicAssistantReplayBlocks(checkpoint);
+  if (rawSegments.length !== assistantMatches.length) {
+    invalidCheckpoint("checkpoint split assistant segment count does not match its anchor");
+  }
+  for (const [index, rawSegment] of rawSegments.entries()) {
+    const rawSegmentProjection = projectCheckpointVisibleParts(
+      createCheckpointForRawBlocks(checkpoint, rawSegment),
+    );
+    const rawSegmentAssistantProjection = normalizeTranscriptVisibleProjection(
+      rawSegmentProjection.filter((part) => part.type !== "tool-result"),
+    );
+    const assistantProjection = normalizeTranscriptVisibleProjection(
+      assistantMatches[index]!.parts.flatMap((part) => {
+        const projected = toTranscriptVisibleProviderPart(part, providerExecutedToolCallIds);
+        return projected ? [projected] : [];
+      }),
+    );
+    if (
+      stringifyChatJson(rawSegmentAssistantProjection) !==
+        stringifyChatJson(assistantProjection)
+    ) {
+      invalidCheckpoint("checkpoint split assistant segment does not match its anchor");
+    }
+  }
+  return rawSegments;
 }
 
 function parseProviderReplayBlock(
@@ -462,10 +871,12 @@ function parseProviderReplayBlock(
   }
   if (
     provider === "anthropic" &&
-    typeof value.block.type === "string" &&
-    ANTHROPIC_PROVIDER_TOOL_RESULT_TYPES.has(value.block.type)
+    isAnthropicProviderToolResultBlock(value.block)
   ) {
     validateAnthropicProviderToolResultBlock(value.block, { index });
+  }
+  if (provider === "anthropic") {
+    validateAnthropicReplayBlock(value.block, { index });
   }
   return { type: "provider-block", provider, block: value.block };
 }
@@ -544,6 +955,33 @@ export function parseProviderReplayCheckpoint(value: unknown): ProviderReplayChe
     }
     positions.push(position);
   }
+  let providerMessageBlockCounts: number[] | undefined;
+  if (value.providerMessageBlockCounts !== undefined) {
+    if (
+      !Array.isArray(value.providerMessageBlockCounts) ||
+      value.providerMessageBlockCounts.length === 0
+    ) {
+      invalidCheckpoint("checkpoint providerMessageBlockCounts must be a non-empty array");
+    }
+    providerMessageBlockCounts = [];
+    let groupedBlockCount = 0;
+    for (const [index, count] of value.providerMessageBlockCounts.entries()) {
+      if (
+        typeof count !== "number" ||
+        !Number.isSafeInteger(count) ||
+        count <= 0
+      ) {
+        invalidCheckpoint("checkpoint providerMessageBlockCounts entries must be positive", {
+          index,
+        });
+      }
+      groupedBlockCount += count;
+      providerMessageBlockCounts.push(count);
+    }
+    if (groupedBlockCount !== providerBlocks.length) {
+      invalidCheckpoint("checkpoint providerMessageBlockCounts must cover every block");
+    }
+  }
   if (
     value.elapsedMs !== undefined &&
     (typeof value.elapsedMs !== "number" || !Number.isFinite(value.elapsedMs) ||
@@ -564,6 +1002,7 @@ export function parseProviderReplayCheckpoint(value: unknown): ProviderReplayChe
     provider,
     providerBlocks,
     providerBlockPositions: positions,
+    ...(providerMessageBlockCounts ? { providerMessageBlockCounts } : {}),
     totalPartCount: value.totalPartCount,
     ...(value.elapsedMs !== undefined ? { elapsedMs: value.elapsedMs } : {}),
     ...(value.emittedAt !== undefined ? { emittedAt: value.emittedAt } : {}),
@@ -647,6 +1086,11 @@ export function applyProviderReplayCheckpointsToMessages(
   options: ApplyProviderReplayCheckpointsOptions = {},
 ): void {
   if (checkpoints === undefined || checkpoints.length === 0) return;
+  const attachmentPlan: Array<{
+    target: Message;
+    rawAssistantMessages: Record<string, unknown>[][];
+  }> = [];
+  const providerExecutedToolCallIds = getProviderExecutedToolCallIdsFromMessages(messages);
   // Runtime support is a property of the delivery, not of which turns are
   // still in context: an unsupported checkpoint fails the run even when its
   // turn is absent, so deployment skew surfaces immediately.
@@ -661,15 +1105,13 @@ export function applyProviderReplayCheckpointsToMessages(
         activeProvider: options.activeProvider,
       });
     }
-    assertAnthropicProviderToolResultsMatchUses(checkpoint);
   }
+  assertAnthropicProviderToolResultsMatchUses(checkpoints);
   for (const checkpoint of checkpoints) {
     const matches = messages.filter((message) => message.id === checkpoint.messageId);
     if (matches.length === 0) continue;
     const assistantMatches = matches.filter((message) => message.role === "assistant");
-    if (assistantMatches.length > 1) {
-      invalidCheckpoint("checkpoint messageId matches more than one assistant message");
-    }
+    const toolSiblings = matches.filter((message) => message.role === "tool");
     const target = assistantMatches[0];
     if (!target) {
       const role = matches[0]?.role;
@@ -677,17 +1119,35 @@ export function applyProviderReplayCheckpointsToMessages(
         ...(role ? { role } : {}),
       });
     }
-    assertCheckpointMatchesAssistantTurn(
-      target,
+    if (assistantMatches.length === 1) {
+      assertCheckpointMatchesAssistantTurn(
+        target,
+        checkpoint,
+        toolSiblings,
+        providerExecutedToolCallIds,
+      );
+      attachmentPlan.push({
+        target,
+        rawAssistantMessages: getRawAssistantMessagesForCheckpoint(checkpoint),
+      });
+      continue;
+    }
+    const rawSegments = assertCheckpointMatchesSplitAssistantTurns(
+      matches,
+      assistantMatches,
       checkpoint,
-      matches.filter((message) => message.role === "tool"),
     );
+    for (const [index, rawBlocks] of rawSegments.entries()) {
+      attachmentPlan.push({ target: assistantMatches[index]!, rawAssistantMessages: [rawBlocks] });
+    }
+  }
+  for (const { target, rawAssistantMessages } of attachmentPlan) {
     // In-process metadata attached during this run is the same replay state at
     // first hand; the durable checkpoint never overrides it.
     if (readAttachedProviderMetadata(target) !== undefined) continue;
     attachProviderMetadata(target, {
       anthropic: {
-        rawAssistantMessages: [checkpoint.providerBlocks.map((block) => block.block)],
+        rawAssistantMessages,
       },
     });
   }

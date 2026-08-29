@@ -99,6 +99,53 @@ it("server-resolved provider replay checkpoints require a verified envelope and 
   );
 });
 
+it("server-resolved provider replay checkpoints prefer verified private request state outside forwarded props", () => {
+  const forwardedCheckpoint = {
+    version: 1 as const,
+    messageId: "assistant-message-forwarded",
+    provider: "anthropic" as const,
+    providerBlocks: [{
+      type: "provider-block" as const,
+      provider: "anthropic" as const,
+      block: { type: "thinking", thinking: "", signature: "sig-forwarded" },
+    }],
+    providerBlockPositions: [0],
+    totalPartCount: 1,
+  };
+  const privateCheckpoint = {
+    ...forwardedCheckpoint,
+    messageId: "assistant-message-private",
+    providerBlocks: [{
+      type: "provider-block" as const,
+      provider: "anthropic" as const,
+      block: { type: "thinking", thinking: "", signature: "sig-private" },
+    }],
+  };
+
+  assertEquals(
+    getServerResolvedProviderReplayCheckpoints({
+      forwardedProps: {
+        serverResolvedProviderReplayCheckpoints: [forwardedCheckpoint],
+      },
+      serverResolvedProviderReplayCheckpoints: [privateCheckpoint],
+      serverEnvelopeVerified: true,
+    }),
+    [privateCheckpoint],
+    "verified top-level state carries replay without consuming forwardedProps budget",
+  );
+  assertEquals(
+    getServerResolvedProviderReplayCheckpoints({
+      forwardedProps: {
+        serverResolvedProviderReplayCheckpoints: [forwardedCheckpoint],
+      },
+      serverResolvedProviderReplayCheckpoints: [privateCheckpoint],
+      serverEnvelopeVerified: false,
+    }),
+    undefined,
+    "unverified top-level state is ignored",
+  );
+});
+
 it("server-resolved provider replay checkpoints reject providers this runtime cannot replay", () => {
   // Contract-valid on the wire, but stage 1 only reconstructs anthropic
   // replay: accepting it and skipping later would be silent degraded replay,

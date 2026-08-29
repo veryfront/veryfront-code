@@ -98,12 +98,41 @@ export function getServerResolvedToolExposureCheckpoint(
  * malformed state fails explicitly instead of degrading into an unsigned
  * replay, unlike the tool exposure checkpoint above whose absence is safe.
  */
+type ServerResolvedProviderReplayCheckpointInput = {
+  forwardedProps?: Record<string, unknown>;
+  serverResolvedProviderReplayCheckpoints?: unknown;
+  serverEnvelopeVerified: boolean;
+};
+
+/** Read the provider replay checkpoints resolved by the authenticated server. */
+export function getServerResolvedProviderReplayCheckpoints(
+  input: ServerResolvedProviderReplayCheckpointInput,
+): ProviderReplayCheckpoint[] | undefined;
 export function getServerResolvedProviderReplayCheckpoints(
   forwardedProps: Record<string, unknown> | undefined,
   serverEnvelopeVerified: boolean,
+): ProviderReplayCheckpoint[] | undefined;
+export function getServerResolvedProviderReplayCheckpoints(
+  inputOrForwardedProps:
+    | ServerResolvedProviderReplayCheckpointInput
+    | Record<string, unknown>
+    | undefined,
+  maybeServerEnvelopeVerified?: boolean,
 ): ProviderReplayCheckpoint[] | undefined {
+  const input = typeof maybeServerEnvelopeVerified === "boolean"
+    ? {
+      forwardedProps: inputOrForwardedProps as Record<string, unknown> | undefined,
+      serverEnvelopeVerified: maybeServerEnvelopeVerified,
+    }
+    : inputOrForwardedProps as ServerResolvedProviderReplayCheckpointInput;
+  const {
+    forwardedProps,
+    serverResolvedProviderReplayCheckpoints,
+    serverEnvelopeVerified,
+  } = input;
   if (!serverEnvelopeVerified) return undefined;
-  const value = forwardedProps?.serverResolvedProviderReplayCheckpoints;
+  const value = serverResolvedProviderReplayCheckpoints ??
+    forwardedProps?.serverResolvedProviderReplayCheckpoints;
   if (value === undefined) return undefined;
   const checkpoints = parseServerResolvedProviderReplayCheckpoints(value);
   // Contract-valid state this runtime version cannot reconstruct (another

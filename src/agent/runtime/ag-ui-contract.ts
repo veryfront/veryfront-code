@@ -205,6 +205,7 @@ export const getAgUiRuntimeRequestSchema = defineSchema((v) =>
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
       { message: "forwardedProps must be less than 192 KB" },
     ),
+    serverResolvedProviderReplayCheckpoints: v.unknown().optional(),
   })
 );
 

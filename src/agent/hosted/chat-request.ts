@@ -454,6 +454,7 @@ export const getHostedChatRequestSchema = defineSchema((v) =>
     model: v.string().optional(),
     allowDelegation: v.boolean().optional(),
     forwardedProps: v.record(v.string(), v.unknown()).optional(),
+    serverResolvedProviderReplayCheckpoints: v.unknown().optional(),
     runtimeOverrides: getHostedChatRuntimeOverridesSchema().optional(),
     durableRootRun: getHostedDurableRootRunDescriptorSchema().optional(),
   })
@@ -473,6 +474,7 @@ export type HostedChatRequestInput = {
   model?: string;
   allowDelegation?: boolean;
   forwardedProps?: Record<string, unknown>;
+  serverResolvedProviderReplayCheckpoints?: unknown;
   runtimeOverrides?: ChatRuntimeOverrides;
   durableRootRun?: DurableRootRunDescriptor;
 };
@@ -594,6 +596,9 @@ export function buildHostedChatRequestInputFromRuntimeAgentInvocation(
       ...(environmentContext ? { environmentContext } : {}),
     },
     forwardedProps: buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation(input),
+    ...(input.serverResolvedProviderReplayCheckpoints !== undefined
+      ? { serverResolvedProviderReplayCheckpoints: input.serverResolvedProviderReplayCheckpoints }
+      : {}),
     durableRootRun: {
       runId: input.run.runId,
       messageId: input.run.messageId,

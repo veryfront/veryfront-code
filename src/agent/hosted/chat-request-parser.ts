@@ -74,6 +74,12 @@ export type ParsedHostedChatRequest = {
   /** True only after a server envelope credential is verified and bound to this run. */
   serverEnvelopeVerified?: true;
   /**
+   * Provider-native replay state resolved by the server outside forwardedProps
+   * so large opaque provider blocks do not consume the public forwardedProps budget.
+   * Ignored unless `serverEnvelopeVerified` is true.
+   */
+  serverResolvedProviderReplayCheckpoints?: unknown;
+  /**
    * Integration tools the control plane resolved for this run, taken from the
    * verified run-event token rather than the request body. Absent unless a
    * token verified, so a forged body can never introduce it.
@@ -179,7 +185,7 @@ async function withVerifiedRunEventAppendToken(
   const token = request.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER)?.trim();
   if (!token) {
     return {
-      ...parsedRequest,
+      ...stripUnverifiedServerResolvedRequestState(parsedRequest),
       forwardedProps: stripUnverifiedServerResolvedForwardedProps(
         parsedRequest.forwardedProps,
       ),
@@ -207,7 +213,9 @@ async function withVerifiedRunEventAppendToken(
   );
 
   const verifiedRequest: ParsedHostedChatRequest = {
-    ...parsedRequest,
+    ...(trustServerEnvelope
+      ? parsedRequest
+      : stripUnverifiedServerResolvedRequestState(parsedRequest)),
     ...(trustServerEnvelope ? { serverEnvelopeVerified: true as const } : {}),
     ...(verifiedContext
       ? { validatedContext: { ...parsedRequest.validatedContext, ...verifiedContext } }
@@ -228,6 +236,16 @@ async function withVerifiedRunEventAppendToken(
     },
   );
   return verifiedRequest;
+}
+
+function stripUnverifiedServerResolvedRequestState(
+  parsedRequest: ParsedHostedChatRequest,
+): ParsedHostedChatRequest {
+  const {
+    serverResolvedProviderReplayCheckpoints: _serverResolvedProviderReplayCheckpoints,
+    ...publicParsedRequest
+  } = parsedRequest;
+  return publicParsedRequest;
 }
 
 /**
@@ -469,6 +487,7 @@ async function buildParsedHostedChatRequestInternal(
     model,
     allowDelegation,
     forwardedProps,
+    serverResolvedProviderReplayCheckpoints,
     runtimeOverrides,
     durableRootRun,
   } = input.chatRequest;
@@ -533,6 +552,7 @@ async function buildParsedHostedChatRequestInternal(
     model,
     allowDelegation,
     forwardedProps,
+    serverResolvedProviderReplayCheckpoints,
     runtimeOverrides,
     durableRootRun,
     persistLatestUserMessageBeforeDurableRun: false,

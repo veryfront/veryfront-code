@@ -46,6 +46,18 @@ const rawReplayToolResultPart = {
   is_error: false,
 } as const;
 const rawReplayParts = [rawReplayToolCallPart, rawReplayToolResultPart] as const;
+const serverResolvedProviderReplayCheckpoint = {
+  version: 1,
+  messageId: "assistant-message-1",
+  provider: "anthropic",
+  providerBlocks: [{
+    type: "provider-block",
+    provider: "anthropic",
+    block: { type: "thinking", thinking: "", signature: "sig-private-replay" },
+  }],
+  providerBlockPositions: [0],
+  totalPartCount: 1,
+} as const;
 
 type ParsedHostedChatRequestMessagePart = ParsedHostedChatRequest["messages"][number]["parts"][
   number
@@ -1921,7 +1933,10 @@ describe("agent/hosted-chat-request", () => {
         headers: {
           "X-Veryfront-Run-Event-Token": "run-event-service-token",
         },
-        body: JSON.stringify(createRuntimeInvocation()),
+        body: JSON.stringify({
+          ...createRuntimeInvocation(),
+          serverResolvedProviderReplayCheckpoints: [serverResolvedProviderReplayCheckpoint],
+        }),
       }),
       {
         authenticate: () => Promise.resolve({ userId, authToken: "user-api-token" }),
@@ -1943,6 +1958,9 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(Object.keys(parsed).includes("runEventAppendToken"), false);
     assertEquals(JSON.stringify(parsed).includes("run-event-service-token"), false);
     assertEquals(parsed.serverEnvelopeVerified, true);
+    assertEquals(parsed.serverResolvedProviderReplayCheckpoints, [
+      serverResolvedProviderReplayCheckpoint,
+    ]);
     assertEquals(verifiedRunEventTokens, [{
       token: "run-event-service-token",
       projectId,
@@ -1961,6 +1979,7 @@ describe("agent/hosted-chat-request", () => {
           messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
           context: { conversationId, projectId, branchId },
           durableRootRun: { runId: "run_root_1", messageId },
+          serverResolvedProviderReplayCheckpoints: [serverResolvedProviderReplayCheckpoint],
           serverResolvedToolExposureCheckpoint: {
             version: 1,
             loadedToolNames: ["delete_project"],
@@ -1986,6 +2005,7 @@ describe("agent/hosted-chat-request", () => {
     assertEquals("runEventAppendToken" in parsed, false);
     assertEquals(JSON.stringify(parsed).includes("run-event-service-token"), false);
     assertEquals(parsed.serverEnvelopeVerified, undefined);
+    assertEquals(parsed.serverResolvedProviderReplayCheckpoints, undefined);
     assertEquals(parsed.forwardedProps, { harmless: "preserved" });
   });
 

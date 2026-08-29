@@ -167,6 +167,48 @@ describe("agent/ag-ui-host-support", () => {
     );
   });
 
+  it("accepts private provider replay state outside the forwarded props budget", async () => {
+    const request = new Request("http://localhost/api/ag-ui", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [{
+          id: "msg-1",
+          role: "user",
+          parts: [{ type: "text", text: "hello" }],
+        }],
+        forwardedProps: {
+          traceId: "trace-1",
+        },
+        serverResolvedProviderReplayCheckpoints: [{
+          version: 1,
+          messageId: "assistant-message-1",
+          provider: "anthropic",
+          providerBlocks: [{
+            type: "provider-block",
+            provider: "anthropic",
+            block: {
+              type: "thinking",
+              thinking: "x".repeat(220_000),
+              signature: "sig-private-large",
+            },
+          }],
+          providerBlockPositions: [0],
+          totalPartCount: 1,
+        }],
+      }),
+    });
+
+    const parsed = await parseAgUiRequest(request);
+
+    assertEquals(parsed.forwardedProps, { traceId: "trace-1" });
+    assertEquals(
+      Array.isArray(parsed.serverResolvedProviderReplayCheckpoints),
+      true,
+      "large replay payload must not be counted against forwardedProps",
+    );
+  });
+
   it("returns a 400 Response from parseAgUiRequestOrError for malformed JSON bodies", async () => {
     const request = new Request("http://localhost/api/ag-ui", {
       method: "POST",

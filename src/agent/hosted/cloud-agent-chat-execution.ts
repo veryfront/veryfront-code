@@ -332,10 +332,11 @@ export async function prepareChatExecutionWithinProjectRuntime(
       req.forwardedProps,
       req.serverEnvelopeVerified === true,
     ),
-    serverResolvedProviderReplayCheckpoints: getServerResolvedProviderReplayCheckpoints(
-      req.forwardedProps,
-      req.serverEnvelopeVerified === true,
-    ),
+    serverResolvedProviderReplayCheckpoints: getServerResolvedProviderReplayCheckpoints({
+      forwardedProps: req.forwardedProps,
+      serverResolvedProviderReplayCheckpoints: req.serverResolvedProviderReplayCheckpoints,
+      serverEnvelopeVerified: req.serverEnvelopeVerified === true,
+    }),
     // Sourced from the verified run-event token, never from forwardedProps, so
     // it is trusted on the durable-chat path without trusting that body.
     ...(req.serverResolvedIntegrationToolNames?.length

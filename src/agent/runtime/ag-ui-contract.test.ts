@@ -77,6 +77,46 @@ describe("agent/runtime-ag-ui-contract", () => {
     assertEquals(parsed.messages.length, 1);
   });
 
+  it("accepts private provider replay state outside forwarded props", () => {
+    const parsed = getAgUiRuntimeRequestSchema().parse({
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [{
+        id: "user_1",
+        role: "user",
+        content: "Hello",
+      }],
+      context: [],
+      tools: [],
+      forwardedProps: {
+        traceId: "trace-1",
+      },
+      serverResolvedProviderReplayCheckpoints: [{
+        version: 1,
+        messageId: "assistant-message-1",
+        provider: "anthropic",
+        providerBlocks: [{
+          type: "provider-block",
+          provider: "anthropic",
+          block: {
+            type: "thinking",
+            thinking: "x".repeat(220_000),
+            signature: "sig-private-large",
+          },
+        }],
+        providerBlockPositions: [0],
+        totalPartCount: 1,
+      }],
+    });
+
+    assertEquals(parsed.forwardedProps, { traceId: "trace-1" });
+    assertEquals(
+      Array.isArray(parsed.serverResolvedProviderReplayCheckpoints),
+      true,
+      "large replay payload must not be counted against forwardedProps",
+    );
+  });
+
   it("normalizes runtime request defaults without leaking non-object state", () => {
     const normalized = normalizeAgUiRuntimeRequest(
       getAgUiRuntimeRequestSchema().parse({

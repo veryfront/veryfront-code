@@ -372,6 +372,25 @@ function hasProviderSendableAssistantContent(message: Message): boolean {
   });
 }
 
+function createSplitAnthropicRawAssistantMetadata(
+  providerMetadata: Record<string, unknown>,
+  segmentCount: number,
+): Record<string, unknown>[] | undefined {
+  const anthropic = providerMetadata.anthropic;
+  if (!isRecord(anthropic)) return undefined;
+  const rawAssistantMessages = anthropic.rawAssistantMessages;
+  if (!Array.isArray(rawAssistantMessages) || rawAssistantMessages.length !== segmentCount) {
+    return undefined;
+  }
+  return rawAssistantMessages.map((rawAssistantMessage) => ({
+    ...providerMetadata,
+    anthropic: {
+      ...anthropic,
+      rawAssistantMessages: [rawAssistantMessage],
+    },
+  }));
+}
+
 function convertAssistantMessageToTextGenerationRuntimeMessages(
   message: Message,
   providerExecutedToolCallIds: Set<string>,
@@ -488,6 +507,16 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
       providerMetadata,
     });
   } else if (providerMetadata !== undefined) {
+    const splitMetadata = createSplitAnthropicRawAssistantMetadata(
+      providerMetadata,
+      assistantMessages.length,
+    );
+    if (splitMetadata !== undefined) {
+      for (const [index, assistantMessage] of assistantMessages.entries()) {
+        assistantMessage.providerMetadata = splitMetadata[index];
+      }
+      return messages;
+    }
     throw PROVIDER_METADATA_SPLIT_UNSUPPORTED.create({
       detail: "provider metadata cannot be attached after assistant turn splitting",
       context: { assistantSegmentCount: assistantMessages.length },
