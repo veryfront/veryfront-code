@@ -4,7 +4,8 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { COMMANDS } from "./help/command-definitions.ts";
 import { parseLoginMethod } from "./auth/utils.ts";
-import { routeCommand } from "./router.ts";
+import { classifyCliError, routeCommand } from "./router.ts";
+import { INVALID_ARGUMENT, UNKNOWN_ERROR } from "veryfront/errors";
 import { cliLogger, VERSION } from "./utils/index.ts";
 import { setJsonMode } from "./shared/json-output.ts";
 import { isInteractive, resetInteractiveMode } from "./shared/interactive.ts";
@@ -136,6 +137,27 @@ describe("cli/command-definitions integrity", () => {
 });
 
 describe("cli/router helpers", () => {
+  describe("classifyCliError", () => {
+    it("uses typed exit metadata instead of message prefixes", () => {
+      assertEquals(
+        classifyCliError(UNKNOWN_ERROR.create({ detail: "Invalid runtime response" })),
+        {
+          code: "RUNTIME_ERROR",
+          slug: "command-failed",
+          exitCode: 1,
+        },
+      );
+      assertEquals(
+        classifyCliError(INVALID_ARGUMENT.create({ detail: "Check the supplied value" })),
+        {
+          code: "USAGE_ERROR",
+          slug: "invalid-arguments",
+          exitCode: 2,
+        },
+      );
+    });
+  });
+
   describe("resolveProjectDir pattern", () => {
     it("should return cwd when no matching key found", () => {
       assertEquals(resolveProjectDir({}, ["dir", "d"], "/home/user"), "/home/user");

@@ -10,6 +10,7 @@ import { showHeader } from "#cli/utils";
 import type { ParsedArgs } from "#cli/shared/types";
 import { ensureBuiltinContentProcessor } from "../../shared/ensure-content-processor.ts";
 import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
+import { INVALID_ARGUMENT } from "veryfront/errors";
 
 /**
  * Schema factory for build command arguments
@@ -92,8 +93,8 @@ const UNSUPPORTED_EMBEDDED_FLAGS = [
  * object cannot tell a typed flag from a default — keying off it would reject
  * every embedded build, including a bare one.
  *
- * The message starts with `Invalid ` so the router maps it to exit code 2 as a
- * usage error, matching `parseArgsOrThrow`.
+ * Uses the registered invalid-argument contract so the router returns usage
+ * exit code 2 without depending on message wording.
  *
  * @param args raw parsed argv, carrying `__explicit`
  * @param preset the lowercased `--preset` value, if any
@@ -111,9 +112,11 @@ export function assertEmbeddedPresetFlags(
     .map((flag) => `--${flag}`);
   if (unsupported.length === 0) return;
 
-  throw new Error(
-    `Invalid build arguments: the embedded preset does not support ${unsupported.join(", ")}`,
-  );
+  throw INVALID_ARGUMENT.create({
+    detail: `Invalid build arguments: the embedded preset does not support ${
+      unsupported.join(", ")
+    }`,
+  });
 }
 
 export async function handleBuildCommand(args: ParsedArgs): Promise<void> {

@@ -4,7 +4,7 @@
  * @module cli/router
  */
 
-import { cliErrorBoundary } from "veryfront/errors";
+import { cliErrorBoundary, type VeryfrontError } from "veryfront/errors";
 import { cliLogger, isVerbose, VERSION } from "#cli/utils";
 import { showCommandHelp, showMainHelp } from "./help/index.ts";
 import { setColorOverride, shouldUseColor } from "./ui/colors.ts";
@@ -140,6 +140,22 @@ async function outputCliJsonError(
   error: ErrorEnvelope["error"],
 ): Promise<void> {
   await outputJson(createErrorEnvelope(command, error));
+}
+
+/** Classify a CLI failure from its registered exit-code contract. */
+export function classifyCliError(
+  error: Pick<VeryfrontError, "exitCode">,
+): {
+  code: "USAGE_ERROR" | "RUNTIME_ERROR";
+  slug: "invalid-arguments" | "command-failed";
+  exitCode: number;
+} {
+  const usageError = error.exitCode === 2;
+  return {
+    code: usageError ? "USAGE_ERROR" : "RUNTIME_ERROR",
+    slug: usageError ? "invalid-arguments" : "command-failed",
+    exitCode: error.exitCode ?? 1,
+  };
 }
 
 /**
@@ -279,16 +295,15 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
       }
 
       const message = vfError.detail ?? vfError.message;
-      const isUsageError = vfError.exitCode === 2 || message.startsWith("Invalid ");
+      const classification = classifyCliError(vfError);
       await outputCliJsonError(commandNameForJson(args), {
-        code: isUsageError ? "USAGE_ERROR" : "RUNTIME_ERROR",
-        slug: isUsageError ? "invalid-arguments" : "command-failed",
+        code: classification.code,
+        slug: classification.slug,
         registrySlug: vfError.slug,
         message: vfError.detail ?? message,
       });
     },
-    getExitCode: (_error, vfError) =>
-      vfError.exitCode ?? ((vfError.detail ?? vfError.message).startsWith("Invalid ") ? 2 : 1),
+    getExitCode: (_error, vfError) => classifyCliError(vfError).exitCode,
   });
 
   // Wait for update check to finish (with timeout to avoid hanging)

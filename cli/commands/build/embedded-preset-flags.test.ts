@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { withCwd } from "#veryfront/testing/cwd.ts";
 import { parseCliArgs } from "#cli/shared/args";
+import { VeryfrontError } from "veryfront/errors";
 import { setJsonMode } from "../../shared/json-output.ts";
 import {
   assertEmbeddedPresetFlags,
@@ -185,13 +186,11 @@ describe("commands/build/handler embedded preset flags", () => {
           thrown = error;
         }
 
-        assertEquals(thrown instanceof Error, true, `${flag} must be rejected`);
-        const message = (thrown as Error).message;
-        assertEquals(
-          message.startsWith("Invalid "),
-          true,
-          `usage errors must start with "Invalid " so the router exits 2: ${message}`,
-        );
+        assertEquals(thrown instanceof VeryfrontError, true, `${flag} must be a typed error`);
+        const usageError = thrown as VeryfrontError;
+        assertEquals(usageError.slug, "invalid-argument", `${flag} must be a usage error`);
+        assertEquals(usageError.exitCode, 2, `${flag} must exit with the usage code`);
+        const message = usageError.message;
         assertEquals(
           message.includes(flag),
           true,
