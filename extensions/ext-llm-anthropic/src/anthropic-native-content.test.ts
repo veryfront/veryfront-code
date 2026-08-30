@@ -1,9 +1,10 @@
-import { assertEquals, assertInstanceOf, assertThrows } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 
 import {
   AnthropicServerToolResultError,
   MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_BYTES,
+  MAX_ANTHROPIC_REPLAY_ASSISTANT_MESSAGES,
   parseAnthropicProviderToolUse,
   parseAnthropicServerToolResult,
   validateAnthropicRawAssistantMessages,
@@ -22,6 +23,27 @@ async function runNoBrandEval(script: string): Promise<unknown> {
 }
 
 describe("Anthropic provider-native content normalization", () => {
+  it("keeps the provider response cap separate from cumulative durable replay", () => {
+    const messages = Array.from(
+      { length: 7 },
+      (_, index) => [{ type: "text", text: `step ${index}` }],
+    );
+
+    assertThrows(
+      () => validateAnthropicRawAssistantMessages(messages),
+      TypeError,
+      "between 1 and 6 messages",
+    );
+    assertEquals(
+      validateAnthropicRawAssistantMessages(
+        messages,
+        new Map(),
+        MAX_ANTHROPIC_REPLAY_ASSISTANT_MESSAGES,
+      ),
+      messages,
+    );
+  });
+
   it("owns exact replay metadata and rejects executable object behavior", () => {
     const rawMessages = [[{
       type: "tool_use",

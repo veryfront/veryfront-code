@@ -1,5 +1,5 @@
-import { assertEquals, assertRejects } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 
 import { ProviderOverloadedError, ProviderRequestError } from "veryfront/provider/shared";
@@ -195,6 +195,16 @@ describe("anthropic-provider", () => {
         inputTokens: 8,
         outputTokens: 2,
         totalTokens: 10,
+      },
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "tool_use",
+            id: "tool_weather",
+            name: "weather",
+            input: { city: "Tokyo" },
+          }]],
+        },
       },
     });
   });
@@ -2006,6 +2016,16 @@ describe("anthropic-provider", () => {
         inputTokens: 1,
         outputTokens: 4,
         totalTokens: 5,
+      },
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "tool_use",
+            id: "toolu_1",
+            name: "bash",
+            input: { command: "pwd" },
+          }]],
+        },
       },
     });
   });

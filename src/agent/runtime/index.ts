@@ -28,6 +28,7 @@ import {
   type ToolResultPart,
 } from "../types.ts";
 import { ensureModelReady, type ModelRuntime, resolveModel } from "#veryfront/provider";
+import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
 import { generateId } from "#veryfront/utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "#veryfront/platform/core-platform.ts";
 import {
@@ -716,7 +717,9 @@ async function persistProviderReplayCheckpointAfterTurn(input: {
 }): Promise<void> {
   if (!input.emission.state) {
     if (input.emission.required) {
-      throw new Error("provider replay checkpoint message identity is required");
+      throw DURABLE_RUN_EVENT_PERSISTENCE_FAILED.create({
+        detail: "provider replay checkpoint message identity is required",
+      });
     }
     return;
   }
@@ -727,9 +730,9 @@ async function persistProviderReplayCheckpointAfterTurn(input: {
   if (!checkpoint) return;
   if (!input.emission.persist) {
     if (input.emission.required) {
-      throw new Error(
-        "provider replay checkpoint persistence is required before continuation",
-      );
+      throw DURABLE_RUN_EVENT_PERSISTENCE_FAILED.create({
+        detail: "provider replay checkpoint persistence is required before continuation",
+      });
     }
     return;
   }

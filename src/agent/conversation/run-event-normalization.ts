@@ -4,6 +4,7 @@ import {
   hasPrivateConversationRunEventType,
   isPrivateConversationRunEvent,
 } from "./private-run-event.ts";
+import { AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE } from "#veryfront/agent/runtime/provider-replay.ts";
 
 export { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "./run-event-limits.ts";
 const OMITTED_CONVERSATION_RUN_EVENT_TYPE = "CUSTOM";
@@ -39,6 +40,14 @@ export function normalizeConversationRunEvent(
   if (hasPrivateConversationRunEventType(event)) {
     if (!isPrivateConversationRunEvent(event)) {
       throw new DurableRunEventPersistenceError("Invalid private run event shape");
+    }
+    if (
+      event.type === AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE &&
+      getConversationRunEventJsonByteLength(event) > MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES
+    ) {
+      throw new DurableRunEventPersistenceError(
+        "Provider replay checkpoint event exceeded the durable payload limit",
+      );
     }
     return [event];
   }

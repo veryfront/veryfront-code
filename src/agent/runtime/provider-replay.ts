@@ -10,11 +10,11 @@ import { safeJsonParse } from "#veryfront/utils/json.ts";
 import type { Message } from "../types.ts";
 import { convertAgentRuntimeMessagesToProviderMessages } from "./message-adapter.ts";
 import {
-  MAX_ANTHROPIC_RAW_ASSISTANT_MESSAGES,
   MAX_PROVIDER_REPLAY_RAW_METADATA_DEPTH,
   MAX_PROVIDER_REPLAY_RAW_METADATA_NODES,
   MAX_PROVIDER_REPLAY_RAW_METADATA_STRING_CHARS,
 } from "./provider-replay-limits.ts";
+import { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "#veryfront/agent/conversation/run-event-limits.ts";
 import {
   collectAnthropicProviderToolCallIds,
   groupAnthropicRawAssistantMessagesByAnchor,
@@ -26,7 +26,6 @@ const MAX_PROVIDER_REPLAY_BLOCKS = 100;
 const MAX_PROVIDER_REPLAY_CHECKPOINTS = 100;
 const MAX_PROVIDER_REPLAY_TOTAL_PARTS = 10_000;
 const MAX_PROVIDER_REPLAY_MESSAGE_ID_LENGTH = 256;
-const MAX_PROVIDER_REPLAY_CHECKPOINT_EVENT_BYTES = 256 * 1024;
 const UTF8_ENCODER = new TextEncoder();
 
 const CHECKPOINT_KEYS = new Set([
@@ -107,6 +106,7 @@ export type ProviderReplayCheckpoint = {
   emittedAt?: number;
 };
 
+/** Private durable event discriminator for provider-native replay state. */
 export const AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE =
   "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT" as const;
 
@@ -241,12 +241,6 @@ export function captureProviderReplayCheckpoint(
 ): ProviderReplayCheckpoint | undefined {
   const rawAssistantMessages = snapshotAnthropicRawAssistantMessagesForEmission(providerMetadata);
   if (rawAssistantMessages === undefined) return undefined;
-  if (
-    state.rawAssistantMessages.length + rawAssistantMessages.length >
-      MAX_ANTHROPIC_RAW_ASSISTANT_MESSAGES
-  ) {
-    invalidCheckpoint("provider replay emission exceeds the Anthropic provider message limit");
-  }
   state.rawAssistantMessages.push(...rawAssistantMessages);
   state.replayRequired ||= rawAssistantMessages.some((blocks) =>
     blocks.some(isReplayRequiredAnthropicBlock)
@@ -267,9 +261,17 @@ export function captureProviderReplayCheckpoint(
     providerMessageBlockCounts: state.rawAssistantMessages.map((group) => group.length),
     totalPartCount: blocks.length,
   });
+  const eventForSizeCheck = {
+    ...createProviderReplayCheckpointEvent(checkpoint),
+    elapsedMs: Number.MAX_SAFE_INTEGER,
+    emittedAt: Number.MAX_SAFE_INTEGER,
+  };
+  // The checkpoint is cumulative across the durable assistant turn. Exceeding
+  // the mirror's event budget fails the run rather than silently dropping the
+  // replay state. Monitor checkpoint sizes before enabling the host gate.
   if (
-    UTF8_ENCODER.encode(stringifyChatJson(createProviderReplayCheckpointEvent(checkpoint)))
-      .byteLength > MAX_PROVIDER_REPLAY_CHECKPOINT_EVENT_BYTES
+    UTF8_ENCODER.encode(stringifyChatJson(eventForSizeCheck)).byteLength >
+      MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES
   ) {
     invalidCheckpoint("provider replay checkpoint event exceeds the durable event limit");
   }
@@ -283,6 +285,33 @@ export function createProviderReplayCheckpointEvent(
   return {
     type: AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE,
     ...checkpoint,
+  };
+}
+
+/** Parse a private durable provider replay event without exposing its opaque contents. */
+export function parseProviderReplayCheckpointEvent(
+  value: unknown,
+): ProviderReplayCheckpointEvent {
+  let snapshot: unknown;
+  try {
+    snapshot = snapshotProviderJsonValue(value, {
+      maxDepth: MAX_PROVIDER_REPLAY_RAW_METADATA_DEPTH,
+      maxNodes: MAX_PROVIDER_REPLAY_RAW_METADATA_NODES,
+      maxBytes: MAX_PROVIDER_REPLAY_RAW_METADATA_STRING_CHARS,
+    });
+  } catch {
+    invalidCheckpoint("provider replay checkpoint event exceeds raw metadata bounds");
+  }
+  if (!isRecord(snapshot) || snapshot.type !== AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE) {
+    invalidCheckpoint("provider replay checkpoint event type is invalid");
+  }
+  const checkpointValue: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(snapshot)) {
+    if (key !== "type") checkpointValue[key] = entry;
+  }
+  return {
+    type: AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE,
+    ...parseProviderReplayCheckpoint(checkpointValue),
   };
 }
 
@@ -1546,12 +1575,6 @@ export function parseProviderReplayCheckpoint(value: unknown): ProviderReplayChe
       value.providerMessageBlockCounts.length === 0
     ) {
       invalidCheckpoint("checkpoint providerMessageBlockCounts must be a non-empty array");
-    }
-    if (
-      provider === "anthropic" &&
-      value.providerMessageBlockCounts.length > MAX_ANTHROPIC_RAW_ASSISTANT_MESSAGES
-    ) {
-      invalidCheckpoint("checkpoint providerMessageBlockCounts exceeds provider message limit");
     }
     providerMessageBlockCounts = [];
     let groupedBlockCount = 0;

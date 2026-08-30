@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { it } from "#veryfront/testing/bdd.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import { convertToTextGenerationRuntimeRequestMessages } from "#veryfront/agent/runtime/text-generation-runtime-message-converter.ts";
@@ -232,56 +232,65 @@ Deno.test("normalizeParsedHostedChatRequest falls back to top-level context valu
   });
 });
 
-Deno.test("provider replay checkpoint emission is disabled unless the host opts in", () => {
-  assertEquals(isProviderReplayCheckpointEmissionEnabled(undefined), false);
-  assertEquals(isProviderReplayCheckpointEmissionEnabled("0"), false);
-  assertEquals(isProviderReplayCheckpointEmissionEnabled("1"), true);
-});
+describe("provider replay checkpoint emission", () => {
+  it("is disabled unless the host opts in", () => {
+    assertEquals(isProviderReplayCheckpointEmissionEnabled(undefined), false);
+    assertEquals(isProviderReplayCheckpointEmissionEnabled("0"), false);
+    assertEquals(isProviderReplayCheckpointEmissionEnabled("1"), true);
+  });
 
-Deno.test("provider replay creation options are default-off and use the private mirror", async () => {
-  const operations: string[] = [];
-  const rootRunContext = {
-    durableRootRun: {
-      runId: "run-1",
-      conversationId: "conversation-1",
-      messageId: "message-1",
-      latestEventId: 1,
-      latestExternalEventSequence: 1,
-    },
-    privateDurableRunMirror: createSuccessfulPrivateCheckpointMirror(operations),
-  };
+  it("is default-off and uses the private mirror when enabled", async () => {
+    const operations: string[] = [];
+    const rootRunContext = {
+      durableRootRun: {
+        runId: "run-1",
+        conversationId: "conversation-1",
+        messageId: "message-1",
+        latestEventId: 1,
+        latestExternalEventSequence: 1,
+      },
+      privateDurableRunMirror: createSuccessfulPrivateCheckpointMirror(operations),
+    };
 
-  assertEquals(createProviderReplayCheckpointCreationOptions(rootRunContext, false), {});
-  const options = createProviderReplayCheckpointCreationOptions(rootRunContext, true);
-  assertEquals(options.providerReplayCheckpointMessageId, "message-1");
-  assertEquals(options.requireProviderReplayCheckpointPersistence, true);
-  await options.persistProviderReplayCheckpoint?.(replayCheckpoint());
-  assertEquals(operations, [
-    "append:AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT",
-    "flush",
-  ]);
-});
+    assertEquals(createProviderReplayCheckpointCreationOptions(rootRunContext, false), {});
+    const continuingOptions = createProviderReplayCheckpointCreationOptions(
+      rootRunContext,
+      false,
+      [replayCheckpoint()],
+    );
+    assertEquals(continuingOptions.providerReplayCheckpointMessageId, "message-1");
+    assertEquals(continuingOptions.requireProviderReplayCheckpointPersistence, true);
+    const options = createProviderReplayCheckpointCreationOptions(rootRunContext, true);
+    assertEquals(options.providerReplayCheckpointMessageId, "message-1");
+    assertEquals(options.requireProviderReplayCheckpointPersistence, true);
+    await options.persistProviderReplayCheckpoint?.(replayCheckpoint());
+    assertEquals(operations, [
+      "append:AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT",
+      "flush",
+    ]);
+  });
 
-Deno.test("enabled provider replay emission fails closed without a private mirror", async () => {
-  const options = createProviderReplayCheckpointCreationOptions({
-    durableRootRun: {
-      runId: "run-1",
-      conversationId: "conversation-1",
-      messageId: "message-1",
-      latestEventId: 1,
-      latestExternalEventSequence: 1,
-    },
-    privateDurableRunMirror: null,
-  }, true);
+  it("fails closed without a private mirror", async () => {
+    const options = createProviderReplayCheckpointCreationOptions({
+      durableRootRun: {
+        runId: "run-1",
+        conversationId: "conversation-1",
+        messageId: "message-1",
+        latestEventId: 1,
+        latestExternalEventSequence: 1,
+      },
+      privateDurableRunMirror: null,
+    }, true);
 
-  await assertRejects(
-    () =>
-      options.persistProviderReplayCheckpoint?.(replayCheckpoint()) ??
-        Promise.resolve(),
-    Error,
-    "trusted run-event append token",
-  );
-  assertEquals(options.requireProviderReplayCheckpointPersistence, true);
+    await assertRejects(
+      () =>
+        options.persistProviderReplayCheckpoint?.(replayCheckpoint()) ??
+          Promise.resolve(),
+      Error,
+      "trusted run-event append token",
+    );
+    assertEquals(options.requireProviderReplayCheckpointPersistence, true);
+  });
 });
 
 Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from request, steering, and root context", async () => {

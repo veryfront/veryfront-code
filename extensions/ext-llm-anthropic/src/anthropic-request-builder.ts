@@ -26,7 +26,7 @@ import {
   type AnthropicServerToolResult,
   isAnthropicProviderToolResultBlockType,
   MAX_ANTHROPIC_RAW_ASSISTANT_BLOCKS,
-  MAX_ANTHROPIC_RAW_ASSISTANT_MESSAGES,
+  MAX_ANTHROPIC_REPLAY_ASSISTANT_MESSAGES,
   parseAnthropicProviderToolUse,
   parseAnthropicServerToolResult,
   snapshotAnthropicRawAssistantMetadata,
@@ -480,6 +480,7 @@ function validateAnthropicProviderReplay(
   const messages = validateAnthropicRawAssistantMessages(
     rawAssistantMessages,
     nextProviderToolNamesById,
+    MAX_ANTHROPIC_REPLAY_ASSISTANT_MESSAGES,
   );
   assertBoundedAnthropicProviderToolState(nextProviderToolNamesById);
   const replayProviderToolNamesById = new Map(currentProviderToolNamesById);
@@ -817,7 +818,7 @@ function planAnthropicRawAssistantReplay(
     let remainingBlockCount = MAX_ANTHROPIC_RAW_ASSISTANT_BLOCKS;
     const rawMessageCount = Math.min(
       rawAssistantMessages.length,
-      MAX_ANTHROPIC_RAW_ASSISTANT_MESSAGES,
+      MAX_ANTHROPIC_REPLAY_ASSISTANT_MESSAGES,
     );
     for (let rawMessageIndex = 0; rawMessageIndex < rawMessageCount; rawMessageIndex++) {
       const rawContent = rawAssistantMessages[rawMessageIndex];

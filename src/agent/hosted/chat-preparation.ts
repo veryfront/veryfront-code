@@ -43,7 +43,7 @@ import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
 import {
   createProviderReplayCheckpointEvent,
   type ProviderReplayCheckpoint,
-} from "../runtime/provider-replay.ts";
+} from "#veryfront/agent/runtime/provider-replay.ts";
 import {
   createToolExposureCheckpointEvent,
   TOOL_SEARCH_TOOL_NAME,
@@ -56,7 +56,9 @@ import {
 } from "./child-run-event-writer-token.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
 
+/** Host-owned opt-in for new provider replay checkpoint emission. */
 export const PROVIDER_REPLAY_CHECKPOINT_EMISSION_ENV =
   "VERYFRONT_ENABLE_PROVIDER_REPLAY_CHECKPOINT_EMISSION";
 
@@ -225,7 +227,9 @@ function createDurablePrivateCheckpointPersister<T>(input: {
   const privateDurableRunMirror = input.rootRunContext?.privateDurableRunMirror;
   if (input.rootRunContext?.durableRootRun && !privateDurableRunMirror) {
     return async () => {
-      throw new Error(input.missingWriterMessage);
+      throw DURABLE_RUN_EVENT_PERSISTENCE_FAILED.create({
+        detail: input.missingWriterMessage,
+      });
     };
   }
   if (!privateDurableRunMirror) return undefined;
@@ -234,7 +238,9 @@ function createDurablePrivateCheckpointPersister<T>(input: {
     const snapshot = await privateDurableRunMirror.flush();
     if (snapshot.disabled || snapshot.pendingEventCount > 0 || snapshot.inFlight) {
       privateDurableRunMirror.dispose();
-      throw new Error(input.incompleteFlushMessage);
+      throw DURABLE_RUN_EVENT_PERSISTENCE_FAILED.create({
+        detail: input.incompleteFlushMessage,
+      });
     }
   };
 }
@@ -269,6 +275,7 @@ function createDurableProviderReplayCheckpointPersister(
 export function createProviderReplayCheckpointCreationOptions(
   rootRunContext: HostedChatRuntimePreparationRootRunContext | undefined,
   enabled = isProviderReplayCheckpointEmissionEnabled(),
+  existingCheckpoints: readonly ProviderReplayCheckpoint[] = [],
 ): {
   providerReplayCheckpointMessageId?: string;
   persistProviderReplayCheckpoint?: (
@@ -276,9 +283,14 @@ export function createProviderReplayCheckpointCreationOptions(
   ) => void | Promise<void>;
   requireProviderReplayCheckpointPersistence?: true;
 } {
-  if (!enabled || !rootRunContext?.durableRootRun) return {};
+  if (!rootRunContext?.durableRootRun) return {};
+  const messageId = rootRunContext.durableRootRun.messageId;
+  const mustContinueExistingCheckpoint = existingCheckpoints.some((checkpoint) =>
+    checkpoint.messageId === messageId
+  );
+  if (!enabled && !mustContinueExistingCheckpoint) return {};
   return {
-    providerReplayCheckpointMessageId: rootRunContext.durableRootRun.messageId,
+    providerReplayCheckpointMessageId: messageId,
     persistProviderReplayCheckpoint: createDurableProviderReplayCheckpointPersister(
       rootRunContext,
     ),
@@ -556,7 +568,11 @@ export async function prepareHostedChatRuntimeCreationOptions<
             : {}),
         }
         : {}),
-      ...createProviderReplayCheckpointCreationOptions(input.rootRunContext),
+      ...createProviderReplayCheckpointCreationOptions(
+        input.rootRunContext,
+        isProviderReplayCheckpointEmissionEnabled(),
+        input.serverResolvedProviderReplayCheckpoints,
+      ),
       clientProfile: runtimeConfig.clientProfile,
       liveProjectSteering: buildHostedChatRuntimeProjectSteering({
         agentConfig: input.agentConfig,
