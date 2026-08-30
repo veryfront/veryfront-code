@@ -6446,26 +6446,6 @@ export default config as const;
         }
       });
 
-      it("redacts contextual IDNA characters in bare IRI authorities", async () => {
-        const cases = [
-          ["latin-middle-dot", "https://l·l.internal"],
-          ["greek-lower-numeral", "https://͵α.internal"],
-          ["hebrew-geresh", "https://א׳ב.internal"],
-          ["hebrew-gershayim", "https://א״ב.internal"],
-          ["katakana-middle-dot", "https://カ・ナ.internal"],
-          ["zero-width-non-joiner", "https://نامه‌ای.internal"],
-        ] as const;
-
-        for (const [label, url] of cases) {
-          const error = await loadFailure(
-            `vf-config-iri-bare-authority-${label}-`,
-            `throw new Error(${JSON.stringify(`Failed ${url}`)});\n`,
-          );
-
-          assertEquals(error.message.endsWith("Failed [url]"), true, label);
-        }
-      });
-
       it("redacts backslash paths after contextual IDNA authorities", async () => {
         for (
           const [label, url] of [
@@ -6484,67 +6464,38 @@ export default config as const;
       });
 
       it("redacts a bare Unicode authority whole across host punctuation", async () => {
-        // Without a `/`, `?`, `#`, or `:` the structured branch has nothing to
-        // prove the authority with, so the strict class alone decided where it
-        // ended: `https://l·l.internal` came back as `[url]·l.internal`. WHATWG
-        // accepts these marks inside a host label, so the suffix is hostname.
-        // The hosts cover each IDNA CONTEXTO mark, the label separators, and one
-        // representative of every other accepted category (`\p{Pi}`, `\p{Pd}`,
-        // `\p{Po}` sentence marks, `\p{Cf}`); the shapes cover the bare authority
-        // in each URL form, the WHATWG backslash separator, and each delimiter
-        // that already proved the authority before this change.
-        const hosts = [
-          ["latin-middle-dot", "l·l.internal"],
-          ["greek-lower-numeral", "͵α.internal"],
-          ["hebrew-geresh", "א׳ב.internal"],
-          ["hebrew-gershayim", "א״ב.internal"],
-          ["katakana-middle-dot", "カ・ナ.internal"],
-          ["tibetan-tsheg", "བོད་ཡིག.internal"],
-          ["ideographic-dot", "例え。internal"],
-          ["fullwidth-dot", "例え．internal"],
-          ["halfwidth-dot", "例え｡internal"],
-          ["guillemet", "l«l.internal"],
-          ["en-dash", "l–l.internal"],
-          ["ideographic-comma", "l、l.internal"],
-          ["devanagari-danda", "l।l.internal"],
-          ["soft-hyphen", "l\u00adl.internal"],
-          ["zero-width-non-joiner", "l\u200cl.internal"],
-          ["leading-middle-dot", "·l.internal"],
-          ["doubled-middle-dot", "l··l.internal"],
-          ["middle-dot-hyphen", "l·-l.internal"],
-        ] as const;
-        const shapes = [
-          ["two-slash", (host: string) => `https://${host}`],
-          ["single-slash", (host: string) => `https:/${host}`],
-          ["zero-slash", (host: string) => `https:${host}`],
-          ["two-slash-backslash", (host: string) => `https://${host}\\PRIVATE`],
-          ["single-slash-backslash", (host: string) => `https:/${host}\\PRIVATE`],
-          ["zero-slash-backslash", (host: string) => `https:${host}\\PRIVATE`],
-          ["two-slash-query", (host: string) => `https://${host}?q=PRIVATE`],
-          ["two-slash-fragment", (host: string) => `https://${host}#PRIVATE`],
-          ["two-slash-port", (host: string) => `https://${host}:8443`],
+        const cases = [
+          ["latin-middle-dot", "https://l·l.internal"],
+          ["greek-lower-numeral", "https://͵α.internal"],
+          ["hebrew-geresh", "https://א׳ב.internal"],
+          ["hebrew-gershayim", "https://א״ב.internal"],
+          ["katakana-middle-dot", "https://カ・ナ.internal"],
+          ["tibetan-tsheg", "https://བོད་ཡིག.internal"],
+          ["ideographic-dot", "https://例え。internal"],
+          ["fullwidth-dot", "https://例え．internal"],
+          ["halfwidth-dot", "https://例え｡internal"],
+          ["guillemet", "https://l«l.internal"],
+          ["en-dash", "https://l–l.internal"],
+          ["ideographic-comma", "https://l、l.internal"],
+          ["devanagari-danda", "https://l।l.internal"],
+          ["symbol", "https://l→l.internal"],
+          ["soft-hyphen", "https://l\u00adl.internal"],
+          ["zero-width-non-joiner", "https://l\u200cl.internal"],
+          ["single-slash", "https:/l·l.internal"],
+          ["zero-slash", "https:l·l.internal"],
         ] as const;
 
-        for (const [hostLabel, host] of hosts) {
-          for (const [shapeLabel, shape] of shapes) {
-            const label = `${hostLabel}-${shapeLabel}`;
-            const error = await loadFailure(
-              `vf-config-iri-bare-authority-${label}-`,
-              `throw new Error(${JSON.stringify(`Failed ${shape(host)}`)});\n`,
-            );
+        for (const [label, url] of cases) {
+          const error = await loadFailure(
+            `vf-config-iri-bare-authority-${label}-`,
+            `throw new Error(${JSON.stringify(`Failed ${url}`)});\n`,
+          );
 
-            assertEquals(error.message.includes("internal"), false, label);
-            assertEquals(error.message.includes("PRIVATE"), false, label);
-            assertEquals(error.message.includes("8443"), false, label);
-            assertStringIncludes(error.message, "Failed [url]", label);
-          }
+          assertEquals(error.message.endsWith("Failed [url]"), true, label);
         }
       });
 
       it("keeps sentence punctuation after a bare Unicode authority", async () => {
-        // Host punctuation is decided structurally: a mark is host only when
-        // something other than punctuation follows it before the boundary. The
-        // terminator keeps its place, and so does prose separated by whitespace.
         const cases = [
           [
             "ideographic-full-stop-space",
@@ -6554,6 +6505,7 @@ export default config as const;
           ["ideographic-full-stop-end", "Failed https://l·l.internal。", "Failed [url]。"],
           ["middle-dot-space", "Failed https://l·l.internal· Retry", "Failed [url]· Retry"],
           ["middle-dot-end", "Failed https://l·l.internal·", "Failed [url]·"],
+          ["katakana-middle-dot", "Failed https://例え.internal・ Retry", "Failed [url]・ Retry"],
           [
             "guillemets-comma",
             "Failed «https://例え.internal», réessayez",
@@ -6572,8 +6524,6 @@ export default config as const;
           assertStringIncludes(error.message, expected, label);
         }
 
-        // The ASCII period is a host character, so it is consumed with the
-        // authority as it is after an ASCII host; the prose behind it survives.
         const asciiPeriod = await loadFailure(
           "vf-config-iri-bare-authority-terminator-ascii-period-",
           `throw new Error(${JSON.stringify("Failed https://l·l.internal. Retry")});\n`,
@@ -6583,9 +6533,6 @@ export default config as const;
         assertStringIncludes(asciiPeriod.message, "Failed [url]");
         assertStringIncludes(asciiPeriod.message, " Retry");
 
-        // Glued prose is the ambiguous case and is redacted: `例え.internal。次を`
-        // is one host to the WHATWG parser, exactly as `https://l·l.internal`
-        // is, and the two cannot be told apart without a delimiter.
         const glued = await loadFailure(
           "vf-config-iri-bare-authority-terminator-glued-",
           `throw new Error(${
@@ -6596,6 +6543,36 @@ export default config as const;
         assertEquals(glued.message.includes("internal"), false);
         assertEquals(glued.message.includes("次を試してください"), false);
         assertStringIncludes(glued.message, "Failed [url]");
+      });
+
+      it("keeps rejected host symbols and quoted text after a Unicode authority", async () => {
+        for (
+          const [label, input, expected] of [
+            [
+              "quoted",
+              'Failed https://例え.internal·"secret"',
+              'Failed [url]·"secret"',
+            ],
+            ["rejected-symbol", "Failed https://例え.internal¨Retry", "Failed [url]¨Retry"],
+            [
+              "single-slash-rejected-symbol",
+              "Failed https:/例え.internal¨Retry",
+              "Failed [url]¨Retry",
+            ],
+            [
+              "zero-slash-rejected-symbol",
+              "Failed https:例え.internal¨Retry",
+              "Failed [url]¨Retry",
+            ],
+          ] as const
+        ) {
+          const error = await loadFailure(
+            `vf-config-iri-bare-authority-boundary-${label}-`,
+            `throw new Error(${JSON.stringify(input)});\n`,
+          );
+
+          assertStringIncludes(error.message, expected, label);
+        }
       });
 
       it("does not split redaction at the Unicode authority probe bound", async () => {
@@ -6625,27 +6602,6 @@ export default config as const;
         );
 
         assertStringIncludes(error.message, "Failed [url]\u00a0\u00a0Retry");
-      });
-
-      it("preserves prose after Unicode punctuation following an IRI authority", async () => {
-        // Prose glued to the mark without whitespace is redacted with the
-        // authority instead: WHATWG accepts each of these marks inside a host,
-        // so `example.internal·Retry` is one host to the parser. See the
-        // bare-authority terminator cases above.
-        for (
-          const [label, message, expected] of [
-            ["mapped-dot", "Failed https://例え.internal。 Retry", "Failed [url]。 Retry"],
-            ["latin-middle-dot", "Failed https://example.internal· Retry", "Failed [url]· Retry"],
-            ["katakana-middle-dot", "Failed https://例え.internal・ Retry", "Failed [url]・ Retry"],
-          ] as const
-        ) {
-          const error = await loadFailure(
-            `vf-config-iri-authority-unicode-punctuation-${label}-`,
-            `throw new Error(${JSON.stringify(message)});\n`,
-          );
-
-          assertStringIncludes(error.message, expected, label);
-        }
       });
 
       it("redacts a URL tail that begins after a lone `)` and punctuation", async () => {

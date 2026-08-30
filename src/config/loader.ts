@@ -128,6 +128,7 @@ const ReflectSet = Reflect.set;
 const StringPrototypeIncludes = String.prototype.includes;
 const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeEndsWith = String.prototype.endsWith;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypeReplaceAll = String.prototype.replaceAll;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeSplit = String.prototype.split;
@@ -2103,50 +2104,16 @@ const SCHEME_URL = new RegExp(
 // across other host punctuation instead of enumerating IDNA context rules.
 // The bounded Unicode probe keeps scans linear; the second branch handles
 // authorities whose first Unicode code point occurs after that probe.
-//
-// Backslash is a structural delimiter too. WHATWG special-scheme parsing reads
-// `\` as a path separator, so `https://l\u00B7l.internal\PRIVATE` has the path
-// `/PRIVATE`; without `\` in the lookahead the structured branch could not
-// prove that authority continued, the strict class stopped at `\u00B7`, and
-// `\u00B7l.internal\PRIVATE` reached the caller. The generic-scheme redactor shares
-// this source: a non-special scheme cannot carry `\` in its host either, so
-// claiming the authority there over-redacts at worst.
-//
-// A bare authority has no delimiter to prove itself with, so the strict class
-// alone decided where it ended -- and it ended at the first character it did
-// not list. WHATWG accepts nearly every non-ASCII punctuation and format code
-// point inside a host label (UTS #46 keeps the IDNA2003 set), not only the
-// CONTEXTO marks: measured against `new URL`, every accepted code point outside
-// the strict class falls in `\p{P}` or `\p{Cf}`, and everything in `\p{Z}`,
-// `\p{Cc}`, `\p{Co}`, and `\p{Cn}` is rejected. Enumerating the accepted marks
-// would drift; the class is the superset, which fails closed. Whether such a
-// character is host or sentence punctuation is decided structurally, the way
-// the lone `)` in URL_TOKEN_TAIL_SOURCE is: a bounded run of them is host
-// unless the token ends in punctuation right after it. `https://l\u00B7l.internal`
-// is redacted whole because `l` follows the dot, while `Failed [url]\u00B7`,
-// `[url]\u00B7 Retry`, and `\u00AB[url]\u00BB, r\u00E9essayez` keep their marks because nothing but
-// punctuation stands between the run and the boundary. The label separators
-// `\u3002\uFF0E\uFF61` take the same rule: `\u4F8B\u3048.internal\u3002Retry` is one host to the parser,
-// so the glued prose is redacted with it, whereas `\u4F8B\u3048.internal\u3002 Retry` keeps
-// its terminator. Over-redacting glued prose is the accepted cost; a hostname
-// suffix in a caller-visible detail is not.
-//
-// The run excludes the joiner and tag code points the strict class already
-// lists, so the two alternatives are disjoint and no position can match both.
-// The `{1,16}` bounds mirror the closing-paren rule: a longer run is consumed
-// as host rather than rescanned. Once the run has matched one character the
-// whole pattern succeeds -- only optional groups follow -- so the engine never
-// backtracks into it. Measured through redactMachinePaths on `https://` + `l\u00B7`
-// \u00D7 n for n of 500/1000/2000/4000: 0.008/0.013/0.023/0.043ms; on a bare run of
-// 500..4000 middle dots ending in a space, which fails the trailing check at
-// every length of its final run, 0.008/0.010/0.020/0.036ms. Both 2x per
-// doubling.
+// Backslash also proves a structured special-scheme authority because WHATWG
+// treats it as a path separator. Bare authorities admit bounded Unicode
+// punctuation runs only when non-punctuation follows before the token boundary;
+// rejected symbol suffixes are restored after validating the matched candidate.
 const NON_ASCII_HOST_CHARACTER_SOURCE = String
   .raw`[\p{L}\p{N}\p{M}\p{S}\u200D\u{E0020}-\u{E007E}.\-_$!&*+,;=%~]`;
 const NON_ASCII_HOST_PUNCTUATION_SOURCE = String
   .raw`(?![\x00-\x7F\u200D\u{E0020}-\u{E007E}])[\p{P}\p{Cf}]`;
 const NON_ASCII_HOST_PUNCTUATION_RUN_SOURCE = String
-  .raw`${NON_ASCII_HOST_PUNCTUATION_SOURCE}{1,16}(?![\p{P}\p{Cf}]{0,16}(?:[\s"']|$))`;
+  .raw`(?:${NON_ASCII_HOST_PUNCTUATION_SOURCE}){1,16}(?![\p{P}\p{Cf}]{0,16}(?:[\s"']|$))`;
 const NON_ASCII_STRICT_HOST_SOURCE =
   `(?:${NON_ASCII_HOST_CHARACTER_SOURCE}|${NON_ASCII_HOST_PUNCTUATION_RUN_SOURCE})+`;
 const NON_ASCII_STRUCTURED_HOST_SOURCE = String.raw`[^\s"'\\/:?#@]+(?=[:/?#\\])`;
@@ -2174,6 +2141,8 @@ const RAW_IRI_REMAINDER = /\P{ASCII}[^\s"']*/uy;
 // a delimiter-only `>` in `<https://host/x>` remains visible.
 const RAW_ACCEPTED_URL_REMAINDER = /[\\<>{}\x60^|][^\s"']*/uy;
 const RAW_ACCEPTED_URL_PAYLOAD = /[\p{L}\p{N}\p{M}]/u;
+const URL_HOST_SYMBOL = /\p{S}/uy;
+const MAX_URL_HOST_SYMBOL_BOUNDARY_ATTEMPTS = 16;
 
 // Userinfo and parenthesized segments are bounded to keep failed scans linear.
 // Userinfo stops at `/` but permits RFC sub-delimiters and parentheses before
@@ -2280,11 +2249,46 @@ function rawUrlMatchEnd(value: string, matched: string, offset: number): number 
   return structurallyDelimited ? acceptedEnd : offset;
 }
 
+function acceptedUnicodeHostMatchEnd(matched: string, matchIndex: number): number {
+  try {
+    new IntrinsicURL(matched);
+    return matchIndex + matched.length;
+  } catch {
+    // A rejected symbol can terminate an otherwise valid bare authority. Work
+    // backward over a bounded number of symbol boundaries to retain its suffix.
+  }
+
+  try {
+    let attempts = MAX_URL_HOST_SYMBOL_BOUNDARY_ATTEMPTS;
+    for (let index = matched.length - 1; index >= 0 && attempts > 0; index--) {
+      URL_HOST_SYMBOL.lastIndex = index;
+      const symbol = ReflectApply(RegExpPrototypeExec, URL_HOST_SYMBOL, [matched]) as
+        | RegExpExecArray
+        | null;
+      if (symbol === null || symbol.index !== index) continue;
+      const codeUnit = ReflectApply(StringPrototypeCharCodeAt, matched, [index]) as number;
+      if (codeUnit < 0x80) continue;
+      attempts -= 1;
+      const prefix = ReflectApply(StringPrototypeSlice, matched, [0, index]) as string;
+      try {
+        new IntrinsicURL(prefix);
+        return matchIndex + index;
+      } catch {
+        // Try the preceding symbol boundary.
+      }
+    }
+    return matchIndex + matched.length;
+  } finally {
+    URL_HOST_SYMBOL.lastIndex = 0;
+  }
+}
+
 function replaceMatchesWithCapturedExec(
   value: string,
   pattern: RegExp,
   replacement: string,
   extendRawUrl = false,
+  validateUnicodeHostSymbols = false,
 ): string {
   pattern.lastIndex = 0;
   let output = "";
@@ -2297,7 +2301,12 @@ function replaceMatchesWithCapturedExec(
       if (match === null) break;
       const matched = match[0];
       if (matched.length === 0) throw new TypeError("Diagnostic pattern must make progress");
-      if (extendRawUrl) pattern.lastIndex = rawUrlMatchEnd(value, matched, pattern.lastIndex);
+      const acceptedMatchEnd = validateUnicodeHostSymbols
+        ? acceptedUnicodeHostMatchEnd(matched, match.index)
+        : pattern.lastIndex;
+      pattern.lastIndex = acceptedMatchEnd === pattern.lastIndex && extendRawUrl
+        ? rawUrlMatchEnd(value, matched, pattern.lastIndex)
+        : acceptedMatchEnd;
       output += ReflectApply(StringPrototypeSlice, value, [offset, match.index]) as string;
       output += replacement;
       offset = pattern.lastIndex;
@@ -2353,6 +2362,7 @@ function redactMachinePaths(value: string): string {
       NON_ASCII_AUTHORITY_URL,
       "[url]",
       true,
+      true,
     );
     redacted = replaceMatchesWithCapturedExec(redacted, NON_ASCII_URL_PATH, "[url]");
     redacted = replaceMatchesWithCapturedExec(
@@ -2360,12 +2370,14 @@ function redactMachinePaths(value: string): string {
       NON_ASCII_MALFORMED_AUTHORITY_URL,
       "[url]",
       true,
+      true,
     );
     redacted = replaceMatchesWithCapturedExec(redacted, NON_ASCII_MALFORMED_URL_PATH, "[url]");
     redacted = replaceMatchesWithCapturedExec(
       redacted,
       NON_ASCII_ZERO_SLASH_AUTHORITY_URL,
       "[url]",
+      true,
       true,
     );
     redacted = replaceMatchesWithCapturedExec(redacted, NON_ASCII_ZERO_SLASH_URL_PATH, "[url]");
