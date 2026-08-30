@@ -6,7 +6,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { withTempDir } from "#veryfront/testing/deno-compat.ts";
+import { deleteEnv, makeTempDir, setEnv, withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { VeryfrontError } from "veryfront/errors";
 import { type Agent, agent as createAgent, type AgentResponse } from "veryfront/agent";
 import { defineSchema } from "veryfront/schemas";
@@ -33,7 +33,6 @@ import {
   normalizeSourceIntegrationPolicy,
   type SourceIntegrationPolicyManifest,
 } from "../../../src/integrations/source-policy.ts";
-import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { saveToken } from "../../auth/token-store.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
 import { setQuietMode } from "../../utils/index.ts";
@@ -552,79 +551,81 @@ describe("eval CLI command helpers", () => {
   });
 
   it("includes target kinds in structured eval list output", async () => {
-    const projectDir = await makeTempDir({ prefix: "vf-eval-list-json-" });
-    const configHome = await makeTempDir({ prefix: "vf-eval-list-json-auth-" });
-    const agentDefinition = evalAgent({
-      id: "eval:agent-target",
-      name: "Agent target",
-      target: "agent:fixture",
-      dataset: [{ id: "agent-case", input: "agent" }],
-    });
-    const datasetDefinition = evalDataset({
-      id: "eval:dataset-target",
-      name: "Dataset target",
-      dataset: [{ id: "dataset-case", input: "dataset" }],
-    });
-    agentDefinition.source = {
-      filePath: `${projectDir}/evals/agent-target.eval.ts`,
-      exportName: "default",
-    };
-    datasetDefinition.source = {
-      filePath: `${projectDir}/evals/dataset-target.eval.ts`,
-      exportName: "default",
-    };
-    const runtime = createProjectRuntimeDiscovery(normalizeSourceIntegrationPolicy({ allow: {} }));
-    runtime.evals.set(agentDefinition.id, agentDefinition);
-    runtime.evals.set(datasetDefinition.id, datasetDefinition);
-
-    try {
-      Deno.env.delete("VERYFRONT_API_TOKEN");
-      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
-      Deno.env.delete("VERYFRONT_EVAL_EXPORT");
-      Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
-      Deno.env.set("XDG_CONFIG_HOME", configHome);
-      setJsonMode(true);
-
-      const output = await captureConsoleOutput(async () => {
-        await runEvalCommand(
-          {
-            list: true,
-            exporters: [],
-            debug: false,
-            candidateModels: [],
-            projectDir,
-          },
-          { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
-        );
-      });
-
-      assertEquals(parseLastJsonEnvelope(output).data.evals, [
-        {
+    await withTempDir(async (projectDir) => {
+      await withTempDir(async (configHome) => {
+        const agentDefinition = evalAgent({
           id: "eval:agent-target",
           name: "Agent target",
-          targetKind: "agent",
           target: "agent:fixture",
-          source: {
-            filePath: "evals/agent-target.eval.ts",
-            exportName: "default",
-          },
-        },
-        {
+          dataset: [{ id: "agent-case", input: "agent" }],
+        });
+        const datasetDefinition = evalDataset({
           id: "eval:dataset-target",
           name: "Dataset target",
-          targetKind: "dataset",
-          target: "eval:dataset-target",
-          source: {
-            filePath: "evals/dataset-target.eval.ts",
-            exportName: "default",
-          },
-        },
-      ]);
-    } finally {
-      setJsonMode(false);
-      await Deno.remove(projectDir, { recursive: true });
-      await Deno.remove(configHome, { recursive: true });
-    }
+          dataset: [{ id: "dataset-case", input: "dataset" }],
+        });
+        agentDefinition.source = {
+          filePath: `${projectDir}/evals/agent-target.eval.ts`,
+          exportName: "default",
+        };
+        datasetDefinition.source = {
+          filePath: `${projectDir}/evals/dataset-target.eval.ts`,
+          exportName: "default",
+        };
+        const runtime = createProjectRuntimeDiscovery(
+          normalizeSourceIntegrationPolicy({ allow: {} }),
+        );
+        runtime.evals.set(agentDefinition.id, agentDefinition);
+        runtime.evals.set(datasetDefinition.id, datasetDefinition);
+
+        deleteEnv("VERYFRONT_API_TOKEN");
+        deleteEnv("VERYFRONT_PROJECT_SLUG");
+        deleteEnv("VERYFRONT_EVAL_EXPORT");
+        deleteEnv("VERYFRONT_EVAL_EXPORTERS");
+        setEnv("XDG_CONFIG_HOME", configHome);
+        setJsonMode(true);
+
+        try {
+          const output = await captureConsoleOutput(async () => {
+            await runEvalCommand(
+              {
+                list: true,
+                exporters: [],
+                debug: false,
+                candidateModels: [],
+                projectDir,
+              },
+              { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
+            );
+          });
+
+          assertEquals(parseLastJsonEnvelope(output).data.evals, [
+            {
+              id: "eval:agent-target",
+              name: "Agent target",
+              targetKind: "agent",
+              target: "agent:fixture",
+              source: {
+                filePath: "evals/agent-target.eval.ts",
+                exportName: "default",
+              },
+            },
+            {
+              id: "eval:dataset-target",
+              name: "Dataset target",
+              targetKind: "dataset",
+              target: "eval:dataset-target",
+              source: {
+                filePath: "evals/dataset-target.eval.ts",
+                exportName: "default",
+              },
+            },
+          ]);
+        } finally {
+          setJsonMode(false);
+        }
+      }, { prefix: "vf-eval-list-json-auth-" });
+    }, { prefix: "vf-eval-list-json-" });
   });
 
   it("resolves eval export redaction from exact global env toggles", () => {
