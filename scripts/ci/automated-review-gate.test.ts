@@ -1060,7 +1060,6 @@ function githubFixture(options: {
   statusIds?: unknown[];
 } = {}) {
   const endpoints = {
-    openPulls: () => undefined,
     reviews: () => undefined,
     comments: () => undefined,
     events: () => undefined,
@@ -1109,7 +1108,6 @@ function githubFixture(options: {
     },
     rest: {
       pulls: {
-        list: endpoints.openPulls,
         listReviews: endpoints.reviews,
         get: () => {
           if (options.pullError) return Promise.reject(options.pullError);
@@ -2071,57 +2069,91 @@ describe("automated review publication", () => {
 });
 
 describe("automated review timeout watchdog", () => {
-  it("discovers only expired pending reviews for open non-draft heads", async () => {
-    const fixture = githubFixture({
-      pages: {
-        openPulls: [[
-          associatedPull({ number: 1, state: "open", draft: false }),
-          associatedPull({
-            number: 2,
-            state: "open",
-            draft: true,
-            head: { sha: OTHER_HEAD },
-          }),
-        ]],
-        statuses: [[pendingAutomatedReviewStatus()]],
+  const timeoutPull = (
+    pullNumber: number,
+    createdAt?: string,
+    overrides: Record<string, unknown> = {},
+  ) => ({
+    number: pullNumber,
+    isDraft: false,
+    headRefOid: HEAD,
+    commits: {
+      nodes: [{
+        commit: {
+          statusCheckRollup: {
+            contexts: {
+              nodes: createdAt === undefined
+                ? []
+                : [{
+                  __typename: "StatusContext",
+                  context: "Automated review",
+                  state: "PENDING",
+                  description: `PR#${pullNumber} waits for review ${
+                    HEAD.slice(0, 12)
+                  }`,
+                  createdAt,
+                }],
+            },
+          },
+        },
+      }],
+    },
+    ...overrides,
+  });
+
+  const timeoutDiscoveryFixture = (
+    pages: Array<Record<string, unknown>[]>,
+  ) => {
+    let read = 0;
+    return {
+      graphql: (query: unknown, variables: Record<string, unknown>) => {
+        assert(String(query).includes("TimedOutAutomatedReviews"));
+        const nodes = pages[read] ?? [];
+        const hasNextPage = read < pages.length - 1;
+        read += 1;
+        return Promise.resolve({
+          repository: {
+            pullRequests: {
+              nodes,
+              pageInfo: {
+                hasNextPage,
+                endCursor: hasNextPage ? `cursor-${read}` : null,
+              },
+            },
+          },
+          variables,
+        });
       },
-    });
+    };
+  };
+
+  it("discovers only expired pending reviews for open non-draft heads", async () => {
+    const github = timeoutDiscoveryFixture([[
+      timeoutPull(1, "2026-08-25T08:00:00Z"),
+      timeoutPull(2, "2026-08-25T08:00:00Z", { isDraft: true }),
+    ]]);
 
     assertEquals(
       await findTimedOutAutomatedReviews({
-        github: fixture.github,
+        github,
         owner: "veryfront",
         repo: "veryfront-code",
         now: Date.parse("2026-08-25T08:30:00Z"),
         reviewTimeoutMs: 1_800_000,
       }),
-      [{ pullNumber: 1, headSha: HEAD, pendingStatusId: 100 }],
+      [{ pullNumber: 1, headSha: HEAD }],
     );
   });
 
   it("does not discover a younger pending status or a completed status", async () => {
-    const pulls = [[
-      associatedPull({ number: 1, state: "open", draft: false }),
-      associatedPull({
-        number: 2,
-        state: "open",
-        draft: false,
-        head: { sha: OTHER_HEAD },
-      }),
-    ]];
-    const fixture = githubFixture({
-      pages: { openPulls: pulls },
-      pageResponses: {
-        statuses: [
-          [[pendingAutomatedReviewStatus("2026-08-25T08:00:01Z")]],
-          [[automatedReviewStatus({ id: 101 })]],
-        ],
-      },
-    });
+    const github = timeoutDiscoveryFixture([[
+      timeoutPull(1, "2026-08-25T08:00:01Z"),
+      timeoutPull(2, undefined),
+    ]]);
 
     assertEquals(
       await findTimedOutAutomatedReviews({
-        github: fixture.github,
+        github,
         owner: "veryfront",
         repo: "veryfront-code",
         now: Date.parse("2026-08-25T08:30:00Z"),
@@ -2133,25 +2165,12 @@ describe("automated review timeout watchdog", () => {
 
   it("bounds scheduled fan-out when many reviews time out together", async () => {
     const pulls = Array.from({ length: 26 }, (_, index) =>
-      associatedPull({
-        number: index + 1,
-        state: "open",
-        draft: false,
-      })
+      timeoutPull(index + 1, "2026-08-25T08:00:00Z")
     );
-    const fixture = githubFixture({
-      pages: { openPulls: [pulls] },
-      pageResponses: {
-        statuses: pulls.map((pull) => [[pendingAutomatedReviewStatus(
-          "2026-08-25T08:00:00Z",
-          Number(pull.number),
-          100 + Number(pull.number),
-        )]]),
-      },
-    });
+    const github = timeoutDiscoveryFixture([pulls]);
 
     const targets = await findTimedOutAutomatedReviews({
-      github: fixture.github,
+      github,
       owner: "veryfront",
       repo: "veryfront-code",
       now: Date.parse("2026-08-25T08:30:00Z"),
@@ -2159,6 +2178,30 @@ describe("automated review timeout watchdog", () => {
     });
     assertEquals(targets.length, 25);
     assertEquals(targets.at(-1)?.pullNumber, 25);
+  });
+
+  it("continues bounded discovery beyond 500 open pull requests", async () => {
+    const pages = Array.from({ length: 11 }, (_, pageIndex) =>
+      Array.from({ length: 50 }, (_, itemIndex) => {
+        const pullNumber = pageIndex * 50 + itemIndex + 1;
+        return timeoutPull(
+          pullNumber,
+          pullNumber === 550 ? "2026-08-25T08:00:00Z" : undefined,
+        );
+      })
+    );
+    const github = timeoutDiscoveryFixture(pages);
+
+    assertEquals(
+      await findTimedOutAutomatedReviews({
+        github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        now: Date.parse("2026-08-25T08:30:00Z"),
+        reviewTimeoutMs: 1_800_000,
+      }),
+      [{ pullNumber: 550, headSha: HEAD }],
+    );
   });
 
   it("revalidates and expires the same pending status under the publisher", async () => {
@@ -2175,7 +2218,6 @@ describe("automated review timeout watchdog", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       headSha: HEAD,
-      pendingStatusId: 100,
       now: Date.parse("2026-08-25T08:30:00Z"),
       reviewTimeoutMs: 1_800_000,
     });
@@ -2205,7 +2247,6 @@ describe("automated review timeout watchdog", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       headSha: HEAD,
-      pendingStatusId: 100,
       now: Date.parse("2026-08-25T08:30:00Z"),
       reviewTimeoutMs: 1_800_000,
     });
@@ -2229,7 +2270,6 @@ describe("automated review timeout watchdog", () => {
         repo: "veryfront-code",
         pullNumber: 1,
         headSha: HEAD,
-        pendingStatusId: 100,
         now: Date.parse("2026-08-25T08:30:00Z"),
         reviewTimeoutMs: 1_800_000,
       }),
@@ -2245,7 +2285,6 @@ describe("automated review timeout watchdog", () => {
         repo: "veryfront-code",
         pullNumber: 1,
         headSha: HEAD,
-        pendingStatusId: 100,
         now: Date.parse("2026-08-25T08:30:00Z"),
         reviewTimeoutMs: 1_800_000,
       }),
@@ -3618,7 +3657,7 @@ describe("automated review workflow", () => {
     );
     assertEquals(
       triggers.schedule,
-      [{ cron: "*/5 * * * *" }],
+      [{ cron: "*/10 * * * *" }],
       "the timeout watchdog must revisit silent pending reviews",
     );
     assertEquals("status" in triggers, false);

@@ -16,6 +16,7 @@ const FULL_SHA = /^[0-9a-f]{40}$/i;
 const REQUEST_KEY = /^[a-z0-9-]{1,64}$/i;
 const MAX_ITEMS_PER_SOURCE = 500;
 const MAX_TIMEOUT_TARGETS_PER_RUN = 25;
+const MAX_TIMEOUT_DISCOVERY_PAGES = 20;
 const TRUSTED_PERMISSIONS = new Set(["admin", "maintain", "write"]);
 /** @type {(ref: string) => Promise<string | undefined>} */
 const NO_COMMIT = () => Promise.resolve(undefined);
@@ -1016,6 +1017,73 @@ function requireReviewTimeoutInputs(now, reviewTimeoutMs) {
 }
 
 /** Discover current non-draft pull request heads whose review status expired. */
+const TIMED_OUT_AUTOMATED_REVIEWS_QUERY = `
+  query TimedOutAutomatedReviews(
+    $owner: String!
+    $repo: String!
+    $cursor: String
+  ) {
+    repository(owner: $owner, name: $repo) {
+      pullRequests(
+        first: 50
+        after: $cursor
+        states: OPEN
+        orderBy: { field: UPDATED_AT, direction: DESC }
+      ) {
+        nodes {
+          number
+          isDraft
+          headRefOid
+          commits(last: 1) {
+            nodes {
+              commit {
+                statusCheckRollup {
+                  contexts(first: 100) {
+                    nodes {
+                      __typename
+                      ... on StatusContext {
+                        context
+                        state
+                        description
+                        createdAt
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+`;
+
+function pendingReviewContext(pull, pullNumber) {
+  const commitNodes = pull?.commits?.nodes;
+  if (!Array.isArray(commitNodes)) {
+    throw new Error(`PR #${pullNumber} commit rollup is malformed`);
+  }
+  const rollup = commitNodes[0]?.commit?.statusCheckRollup;
+  if (rollup == null) return undefined;
+  const contexts = rollup?.contexts?.nodes;
+  if (!Array.isArray(contexts)) {
+    throw new Error(`PR #${pullNumber} status rollup is malformed`);
+  }
+  const descriptionPrefix = `PR#${pullNumber} `;
+  return contexts.find((context) =>
+    context?.__typename === "StatusContext" &&
+    context?.context === AUTOMATED_REVIEW_STATUS_CONTEXT &&
+    context?.state === "PENDING" &&
+    typeof context?.description === "string" &&
+    context.description.startsWith(descriptionPrefix)
+  );
+}
+
 export async function findTimedOutAutomatedReviews({
   github,
   owner,
@@ -1024,41 +1092,43 @@ export async function findTimedOutAutomatedReviews({
   reviewTimeoutMs = AUTOMATED_REVIEW_TIMEOUT_MS,
 }) {
   requireReviewTimeoutInputs(now, reviewTimeoutMs);
-  const pulls = await collectAll(
-    github,
-    github.rest.pulls.list,
-    { owner, repo, state: "open", sort: "created", direction: "asc" },
-    "open pull requests",
-  );
   const targets = [];
-  for (const pull of pulls) {
-    if (pull?.state !== "open" || pull?.draft === true) continue;
-    const pullNumber = pull?.number;
-    const headSha = pull?.head?.sha;
-    if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
-      throw new Error("Open pull request number is invalid");
-    }
-    if (typeof headSha !== "string" || !FULL_SHA.test(headSha)) {
-      throw new Error(`PR #${pullNumber} head commit is invalid`);
-    }
-    const statuses = await collectAll(
-      github,
-      github.rest.repos.listCommitStatusesForRef,
-      { owner, repo, ref: headSha },
-      `PR #${pullNumber} review statuses`,
-    );
-    const pendingStatus = latestPendingReviewStatus(statuses, pullNumber);
-    if (
-      !pendingStatus ||
-      !isPositiveStatusId(pendingStatus.id) ||
-      pendingReviewAge(pendingStatus, now) < reviewTimeoutMs
-    ) continue;
-    targets.push({
-      pullNumber,
-      headSha: headSha.toLowerCase(),
-      pendingStatusId: pendingStatus.id,
+  let cursor;
+  for (let page = 0; page < MAX_TIMEOUT_DISCOVERY_PAGES; page += 1) {
+    const response = await github.graphql(TIMED_OUT_AUTOMATED_REVIEWS_QUERY, {
+      owner,
+      repo,
+      cursor,
     });
-    if (targets.length >= MAX_TIMEOUT_TARGETS_PER_RUN) break;
+    const pullRequests = response?.repository?.pullRequests;
+    if (!Array.isArray(pullRequests?.nodes)) {
+      throw new Error("Open pull request rollup is malformed");
+    }
+    for (const pull of pullRequests.nodes) {
+      if (pull?.isDraft === true) continue;
+      const pullNumber = pull?.number;
+      const headSha = pull?.headRefOid;
+      if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+        throw new Error("Open pull request number is invalid");
+      }
+      if (typeof headSha !== "string" || !FULL_SHA.test(headSha)) {
+        throw new Error(`PR #${pullNumber} head commit is invalid`);
+      }
+      const pendingStatus = pendingReviewContext(pull, pullNumber);
+      if (!pendingStatus) continue;
+      const createdAt = Date.parse(pendingStatus?.createdAt ?? "");
+      if (Number.isFinite(createdAt) && now - createdAt < reviewTimeoutMs) {
+        continue;
+      }
+      targets.push({ pullNumber, headSha: headSha.toLowerCase() });
+      if (targets.length >= MAX_TIMEOUT_TARGETS_PER_RUN) return targets;
+    }
+    const pageInfo = pullRequests?.pageInfo;
+    if (pageInfo?.hasNextPage !== true) return targets;
+    if (typeof pageInfo?.endCursor !== "string" || !pageInfo.endCursor) {
+      throw new Error("Open pull request cursor is malformed");
+    }
+    cursor = pageInfo.endCursor;
   }
   return targets;
 }
@@ -1070,7 +1140,6 @@ export async function expireTimedOutAutomatedReview({
   repo,
   pullNumber,
   headSha,
-  pendingStatusId,
   now = Date.now(),
   reviewTimeoutMs = AUTOMATED_REVIEW_TIMEOUT_MS,
 }) {
@@ -1081,10 +1150,6 @@ export async function expireTimedOutAutomatedReview({
   if (typeof headSha !== "string" || !FULL_SHA.test(headSha)) {
     throw new Error("Timed-out pull request head is invalid");
   }
-  if (!isPositiveStatusId(pendingStatusId)) {
-    throw new Error("Timed-out review status identity is invalid");
-  }
-
   const response = await github.rest.pulls.get({
     owner,
     repo,
@@ -1105,7 +1170,7 @@ export async function expireTimedOutAutomatedReview({
     "timeout review statuses",
   );
   const pendingStatus = latestPendingReviewStatus(statuses, pullNumber);
-  if (pendingStatus?.id !== pendingStatusId) {
+  if (!pendingStatus) {
     return { expired: false, reason: "status-changed" };
   }
   if (pendingReviewAge(pendingStatus, now) < reviewTimeoutMs) {

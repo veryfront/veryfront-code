@@ -18,7 +18,7 @@ on:
   merge_group:
     types: [checks_requested]
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "*/10 * * * *"
 
 permissions: {}
 
@@ -95,7 +95,6 @@ jobs:
         env:
           PULL_NUMBER: ${{ matrix.target.pullNumber }}
           HEAD_SHA: ${{ matrix.target.headSha }}
-          PENDING_STATUS_ID: ${{ matrix.target.pendingStatusId }}
         with:
           retries: 3
           script: |
@@ -124,7 +123,6 @@ jobs:
               repo: context.repo.repo,
               pullNumber: Number(process.env.PULL_NUMBER),
               headSha: process.env.HEAD_SHA,
-              pendingStatusId: Number(process.env.PENDING_STATUS_ID),
               now: Date.now(),
               reviewTimeoutMs: AUTOMATED_REVIEW_TIMEOUT_MS,
             });
