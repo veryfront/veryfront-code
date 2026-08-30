@@ -6,7 +6,7 @@ import {
   PROVIDER_EGRESS_DENY_NET,
   UNIT_DENO_TEST_ENV,
 } from "./suites.ts";
-import { isAbsolute, relative } from "node:path";
+import { relative, resolve } from "node:path";
 
 export {
   LOOPBACK_ALLOW_NET,
@@ -119,7 +119,7 @@ function isIntegrationPath(arg: string): boolean {
 }
 
 function normalizeTestTarget(arg: string): string {
-  const projectRelative = isAbsolute(arg) ? relative(Deno.cwd(), arg) : arg;
+  const projectRelative = relative(Deno.cwd(), resolve(Deno.cwd(), arg));
   return projectRelative.replaceAll("\\", "/").replace(/^\.\//, "");
 }
 

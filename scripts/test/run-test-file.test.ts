@@ -218,6 +218,25 @@ describe("test:file task command", () => {
     assertEquals(scriptArgs.includes("--config=scripts/test.deno.json"), true);
   });
 
+  it("canonicalizes relative dot segments before classifying targets", () => {
+    for (
+      const target of [
+        "src/../tests/integration/routes.test.ts",
+        "cli/../src/discovery/auto-discovery.integration.test.ts",
+      ]
+    ) {
+      const args = buildTestFileCommandArgs([target]);
+      assertEquals(args.includes("--allow-all"), true, target);
+      assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), true, target);
+      assertEquals(args.includes(LOOPBACK_ALLOW_NET), false, target);
+    }
+
+    const scriptArgs = buildTestFileCommandArgs([
+      "src/../scripts/test/run-test-file.test.ts",
+    ]);
+    assertEquals(scriptArgs.includes("--config=scripts/test.deno.json"), true);
+  });
+
   it("uses integration permissions when a target directory contains integration tests", () => {
     const args = buildTestFileCommandArgs(["src/server/dev-server"]);
 
