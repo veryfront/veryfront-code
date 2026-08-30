@@ -57,6 +57,7 @@ export interface WorkflowHandlers {
 }
 
 const DEFAULT_BASE_PATH = "/api/workflows";
+const MAX_EVENT_STREAMS = 64;
 const logger = baseLogger.component("workflow-http");
 
 class WorkflowRequestError extends Error {}
@@ -221,6 +222,7 @@ function runEventStream(
   observation: WorkflowRunEventObservation,
   signal: AbortSignal,
   runId: string,
+  release: () => void,
 ): Response {
   const encoder = new TextEncoder();
   const iterator = observation.events[Symbol.asyncIterator]();
@@ -230,6 +232,7 @@ function runEventStream(
 
   const cleanup = (): Promise<void> => {
     if (cleanupPromise) return cleanupPromise;
+    release();
     signal.removeEventListener("abort", abort);
     const returnIterator = (() => {
       try {
@@ -377,6 +380,18 @@ export function createWorkflowHandler(
   options: WorkflowHandlerOptions,
 ): WorkflowHandlers {
   const basePath = (options.basePath ?? DEFAULT_BASE_PATH).replace(/\/+$/, "") || "/";
+  let activeEventStreams = 0;
+
+  const reserveEventStream = (): (() => void) | undefined => {
+    if (activeEventStreams >= MAX_EVENT_STREAMS) return undefined;
+    activeEventStreams++;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      activeEventStreams--;
+    };
+  };
 
   function GET(request: Request): Promise<Response> {
     return answering(async () => {
@@ -409,12 +424,23 @@ export function createWorkflowHandler(
       }
 
       if (segments.length === 3 && first === "runs" && runId && third === "events") {
-        const observation = await client.observeRunEvents(runId, { signal: request.signal });
-        if (!observation) return problem(`No workflow run ${runId}`, 404);
-        if (!observation.supported) {
-          return problem("Workflow event observation is not supported", 501);
+        const release = reserveEventStream();
+        if (!release) return problem("Too many workflow event streams", 429);
+        try {
+          const observation = await client.observeRunEvents(runId, { signal: request.signal });
+          if (!observation) {
+            release();
+            return problem(`No workflow run ${runId}`, 404);
+          }
+          if (!observation.supported) {
+            release();
+            return problem("Workflow event observation is not supported", 501);
+          }
+          return runEventStream(observation, request.signal, runId, release);
+        } catch (error) {
+          release();
+          throw error;
         }
-        return runEventStream(observation, request.signal, runId);
       }
 
       if (

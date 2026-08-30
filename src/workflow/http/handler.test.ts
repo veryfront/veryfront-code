@@ -699,6 +699,62 @@ describe("createWorkflowHandler", () => {
       return [name, JSON.parse(data) as Record<string, unknown>];
     }
 
+    it("bounds the number of active event streams and releases cancelled streams", async () => {
+      const closeCalls: number[] = [];
+      let observationCalls = 0;
+      Object.defineProperty(client, "observeRunEvents", {
+        configurable: true,
+        value: () => {
+          observationCalls++;
+          const call = observationCalls;
+          return Promise.resolve({
+            supported: true,
+            initial: {
+              id: "bounded-run",
+              workflowId: "pipeline",
+              status: "running",
+              input: {},
+              context: {},
+              nodeStates: {},
+              pendingApprovals: [],
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+            events: {
+              async *[Symbol.asyncIterator]() {
+                await Promise.withResolvers<void>().promise;
+              },
+            },
+            close: () => closeCalls.push(call),
+          });
+        },
+      });
+
+      const responses = await Promise.all(
+        Array.from(
+          { length: 64 },
+          () => handlers.GET(get("/api/workflows/runs/bounded-run/events")),
+        ),
+      );
+      expect(responses.every((response) => response.status === 200)).toBe(true);
+
+      const rejected = await handlers.GET(get("/api/workflows/runs/bounded-run/events"));
+      expect(rejected.status).toBe(429);
+      expect(observationCalls).toBe(64);
+
+      await responses[0]?.body?.cancel();
+      expect(closeCalls).toEqual([1]);
+
+      const replacement = await handlers.GET(get("/api/workflows/runs/bounded-run/events"));
+      expect(replacement.status).toBe(200);
+      expect(observationCalls).toBe(65);
+
+      await Promise.all([
+        ...responses.slice(1).map((response) => response.body?.cancel()),
+        replacement.body?.cancel(),
+      ]);
+    });
+
     it("streams each sequential step boundary before the next side effect runs", async () => {
       await client.destroy();
       const backend = new GatedActivationMemoryBackend({ debug: false });
