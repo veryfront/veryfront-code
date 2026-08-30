@@ -465,6 +465,79 @@ describe("agent/hosted/durable-run-event-sink", () => {
     }
   });
 
+  it("treats a mirror already stopped by a terminal run as cancellation, not a failure", async () => {
+    // veryfront-issue-inbox#872 (Sentry VERYFRONT-AGENT-7): `run_terminal` means
+    // the API already told the mirror the run is finished server-side (a project
+    // delete cancels its in-flight runs first, see veryfront-issue-inbox#743).
+    // Nothing the runtime can still write is lost, so every other consumer of the
+    // reason treats it as a clean stop. The sink must do the same: the model
+    // dispatch is still refused, but as the runtime's abort shape rather than the
+    // DurableRunEventPersistenceError that pages an operator for a run that
+    // simply no longer exists.
+    const target = mirror();
+    const error = await assertRejects(
+      async () =>
+        await createDurableRunEventSink({
+          mirror: {
+            ...target.result,
+            getSnapshot: () => snapshot({ disabled: true, disableReason: "run_terminal" }),
+          },
+        })({
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [],
+        }),
+      DOMException,
+      undefined,
+      "a terminal-run stop must refuse the dispatch as a cancellation, not a persistence failure",
+    );
+
+    assertInstanceOf(error, DOMException);
+    assertEquals(
+      error.name,
+      "AbortError",
+      "the runtime recognizes DOMException AbortError as a clean cancellation",
+    );
+    assertEquals(
+      target.appended.length,
+      0,
+      "nothing can be appended to a run that is already terminal",
+    );
+  });
+
+  it("treats a run turning terminal during persistence as cancellation, not a failure", async () => {
+    // The production path behind the Sentry group: the append attempt is rejected
+    // with a terminal-run error, recovery disables the mirror with reason
+    // `run_terminal`, and the post-append flush hands that snapshot back to the
+    // sink. The persisted context is not lost and the run is finished, so the
+    // sink must wind down as a cancellation instead of raising
+    // "Required durable run event mirror is disabled: run_terminal".
+    const target = mirror({
+      flush: async () => snapshot({ disabled: true, disableReason: "run_terminal" }),
+    });
+    const error = await assertRejects(
+      async () =>
+        await createDurableRunEventSink({ mirror: target.result })({
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [],
+        }),
+      DOMException,
+      undefined,
+      "a run that turns terminal mid-persistence must reject as a cancellation",
+    );
+
+    assertInstanceOf(error, DOMException);
+    assertEquals(
+      error.name,
+      "AbortError",
+      "the runtime recognizes DOMException AbortError as a clean cancellation",
+    );
+    assertEquals(
+      target.appended.length,
+      1,
+      "the context was appended before the run was discovered to be terminal",
+    );
+  });
+
   it("does not mask later persistence failures with a rejected tail", async () => {
     const firstAppendStarted = Promise.withResolvers<void>();
     const releaseFirstAppend = Promise.withResolvers<void>();
