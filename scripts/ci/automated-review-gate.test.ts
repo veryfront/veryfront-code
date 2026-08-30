@@ -7,6 +7,7 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 import {
+  completeReviewFailurePropagation,
   expireTimedOutAutomatedReview,
   findAutomatedReview,
   findTimedOutAutomatedReviews,
@@ -2532,6 +2533,32 @@ describe("automated review publication", () => {
       supersededBase.published[0]?.description,
       `PR#1 waits for review ${HEAD.slice(0, 12)}`,
     );
+
+    const notVisible = githubFixture({
+      pages: {
+        events: [[{
+          event: "reopened",
+          id: 41,
+          created_at: "2026-08-25T08:00:00Z",
+        }]],
+        statuses: [[pendingAutomatedReviewStatus()]],
+      },
+    });
+    const notVisibleResult = await publishAutomatedReviewStatus({
+      github: notVisible.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      reviewResetKey: "reopen",
+      reviewEpochNotBefore: "2026-08-25T09:00:00Z",
+    });
+    assertEquals(notVisibleResult.state, "failure");
+    assertEquals(
+      notVisibleResult.description,
+      "PR#1 review status unavailable",
+    );
   });
 
   it("fails when exact-ref lookup is operationally unavailable", async () => {
@@ -3162,10 +3189,10 @@ describe("automated review timeout watchdog", () => {
   });
 
   it("revalidates and expires the same pending status under the publisher", async () => {
-    const preservedTimeoutStatus = automatedReviewStatus({
+    const retryTimeoutStatus = automatedReviewStatus({
       id: 1001,
       state: "failure",
-      description: "PR#1 automated review timed out",
+      description: "PR#1 automated review timed out; queue retry pending",
     });
     const fixture = githubFixture({
       pages: {
@@ -3175,7 +3202,8 @@ describe("automated review timeout watchdog", () => {
         statuses: [
           [[pendingAutomatedReviewStatus()]],
           [[pendingAutomatedReviewStatus()]],
-          [[preservedTimeoutStatus]],
+          [[retryTimeoutStatus]],
+          [[retryTimeoutStatus]],
         ],
       },
       commit: HEAD,
@@ -3313,6 +3341,7 @@ describe("automated review timeout watchdog", () => {
           [[retryStatus]],
           [[retryStatus]],
           [[retryStatus]],
+          [[retryStatus]],
         ],
       },
       pages: { refs: [[]] },
@@ -3349,6 +3378,7 @@ describe("automated review timeout watchdog", () => {
         statuses: [
           [[retryStatus]],
           [[], []],
+          [[unavailableRetryStatus]],
           [[unavailableRetryStatus]],
         ],
       },
@@ -3484,6 +3514,49 @@ describe("automated review timeout watchdog", () => {
     assert("state" in result);
     assertEquals(result.state, "pending");
     assertEquals(fixture.published[0]?.state, "pending");
+  });
+
+  it("does not finalize a retry after a newer lifecycle epoch", async () => {
+    const retryStatus = automatedReviewStatus({
+      id: 1001,
+      state: "failure",
+      description: "PR#1 automated review timed out; queue retry pending",
+      target_url: "https://example.test/pr/1",
+      created_at: "2026-08-25T08:00:00Z",
+    });
+    const fixture = githubFixture({
+      pageResponses: {
+        statuses: [
+          [[retryStatus]],
+          [[retryStatus]],
+        ],
+      },
+      pages: {
+        comments: [[]],
+        events: [[{
+          event: "base_ref_changed",
+          id: 102,
+          created_at: "2026-08-25T09:00:00Z",
+        }]],
+        refs: [[]],
+        timeline: [[]],
+      },
+      commit: HEAD,
+    });
+
+    const result = await completeReviewFailurePropagation({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      sourceStatusId: 1001,
+      description: retryStatus.description,
+      targetUrl: retryStatus.target_url,
+    });
+    assertEquals(result.finalized, false);
+    assertEquals(result.statusId, 1001);
+    assertEquals(fixture.published, []);
   });
 
   it("publishes review proof that arrives before timeout revalidation", async () => {
@@ -4566,6 +4639,29 @@ describe("automated review request", () => {
     assertEquals(supersededBaseResult.requested, false);
     assertEquals(supersededBaseResult.reason, "stale-epoch");
     assertEquals(supersededBase.posted, []);
+
+    const notVisible = requestFixture({
+      events: [{
+        event: "reopened",
+        id: 41,
+        created_at: "2026-08-25T08:00:00Z",
+      }],
+    });
+    await assertRejects(
+      () =>
+        requestAutomatedReview({
+          github: notVisible.github,
+          owner: "veryfront",
+          repo: "veryfront-code",
+          pullNumber: 1,
+          headSha: HEAD,
+          requestKey: "reopen",
+          reviewEpochNotBefore: "2026-08-25T09:00:00Z",
+        }),
+      Error,
+      "current review epoch event is not visible",
+    );
+    assertEquals(notVisible.posted, []);
   });
 
   it("refuses to request a review of a malformed head commit", async () => {
@@ -5405,6 +5501,11 @@ describe("automated review workflow", () => {
     assert(script.includes("completeReviewFailurePropagation"));
     assert(script.includes("publishReviewPropagationRetryStatus"));
     assert(script.includes("queuePropagationPending: true"));
+    assert(
+      script.includes("reviewEpochNotBefore") &&
+        script.includes("context.payload.pull_request?.updated_at"),
+      "lifecycle publishers must wait for the triggering durable event",
+    );
     assert(script.includes("sourceStatusId: result.statusId"));
     assert(script.includes("reconcileActiveMergeGroupReviewStatuses"));
     assert(!script.includes("github.rest.pulls.get"));
@@ -5498,6 +5599,11 @@ describe("automated review workflow", () => {
       "the workflow must post review requests through the tested gate helper",
     );
     assert(requestScript.includes("requestKey"));
+    assert(
+      requestScript.includes("reviewEpochNotBefore") &&
+        requestScript.includes("context.payload.pull_request?.updated_at"),
+      "lifecycle requests must wait for the triggering durable event",
+    );
     assert(
       requestScript.includes('context.payload.action === "edited"') &&
         requestScript.includes('? "base"'),

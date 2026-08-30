@@ -205,12 +205,21 @@ function hasReviewRequest(comments, headSha, requestKey) {
   });
 }
 
-function durableReviewRequestKey(events, requestKey) {
+function durableReviewRequestKey(events, requestKey, reviewEpochNotBefore) {
   const eventKind = REVIEW_REQUEST_EVENT_KINDS.get(requestKey);
   if (eventKind === undefined) return requestKey;
+  const notBefore = reviewEpochNotBefore === undefined
+    ? undefined
+    : Date.parse(reviewEpochNotBefore);
+  if (notBefore !== undefined && !Number.isFinite(notBefore)) {
+    throw new Error("Review epoch timestamp is malformed");
+  }
   const latestEpoch = latestReviewEpochChange(events);
   if (latestEpoch === undefined) {
     throw new Error("Could not resolve the current review epoch event");
+  }
+  if (notBefore !== undefined && latestEpoch.time < notBefore) {
+    throw new Error("The current review epoch event is not visible");
   }
   if (latestEpoch.kind !== eventKind) return undefined;
   if (!Number.isSafeInteger(latestEpoch.id) || latestEpoch.id < 1) {
@@ -1021,6 +1030,7 @@ export async function publishAutomatedReviewStatus({
   now = Date.now(),
   reviewTimeoutMs = /** @type {number | undefined} */ (undefined),
   queuePropagationPending = false,
+  reviewEpochNotBefore = /** @type {string | undefined} */ (undefined),
 }) {
   let review;
   let failure;
@@ -1119,6 +1129,7 @@ export async function publishAutomatedReviewStatus({
       effectiveReviewResetKey = durableReviewRequestKey(
         events,
         reviewResetKey,
+        reviewEpochNotBefore,
       );
       resetPending = effectiveReviewResetKey !== undefined &&
         !hasReviewRequest(comments, headSha, effectiveReviewResetKey) &&
@@ -1640,6 +1651,50 @@ async function finalizeReviewFailureStatus({
   return { description, statusId };
 }
 
+async function currentReviewPropagationRetry({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  headSha,
+}) {
+  const common = { owner, repo };
+  const [statuses, comments, events, timeline] = await Promise.all([
+    collectAll(
+      github,
+      github.rest.repos.listCommitStatusesForRef,
+      { ...common, ref: headSha },
+      "final review statuses",
+    ),
+    collectAll(
+      github,
+      github.rest.issues.listComments,
+      { ...common, issue_number: pullNumber },
+      "final review comments",
+    ),
+    collectAll(
+      github,
+      github.rest.issues.listEvents,
+      { ...common, issue_number: pullNumber },
+      "final review events",
+    ),
+    collectAll(
+      github,
+      github.rest.issues.listEventsForTimeline,
+      { ...common, issue_number: pullNumber },
+      "final review timeline",
+    ),
+  ]);
+  return latestReviewPropagationRetryStatus(
+    statuses,
+    pullNumber,
+    latestReviewEpochChange(events),
+    comments,
+    timeline,
+    headSha,
+  );
+}
+
 export async function publishReviewPropagationRetryStatus({
   github,
   owner,
@@ -1688,6 +1743,21 @@ async function propagateAndFinalizeReviewFailure({
     sourceHeadSha: headSha,
     sourceStatusId,
   });
+  const currentRetry = await currentReviewPropagationRetry({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    headSha,
+  });
+  if (currentRetry?.status?.id !== sourceStatusId) {
+    return {
+      resolution,
+      description: reviewFailureDescription(pullNumber, failureKind, true),
+      statusId: sourceStatusId,
+      finalized: false,
+    };
+  }
   const finalStatus = await finalizeReviewFailureStatus({
     github,
     owner,
@@ -1697,7 +1767,7 @@ async function propagateAndFinalizeReviewFailure({
     failureKind,
     targetUrl,
   });
-  return { resolution, ...finalStatus };
+  return { resolution, ...finalStatus, finalized: true };
 }
 
 /** Propagate one published retry marker, then restore its terminal diagnosis. */
@@ -2585,6 +2655,7 @@ export async function requestAutomatedReview({
   pullNumber,
   headSha,
   requestKey = /** @type {string | undefined} */ (undefined),
+  reviewEpochNotBefore = /** @type {string | undefined} */ (undefined),
 }) {
   // The comment body must stay a fixed instruction plus a verified commit
   // SHA. Never interpolate pull request controlled content here: this runs
@@ -2608,7 +2679,11 @@ export async function requestAutomatedReview({
       { owner, repo, issue_number: pullNumber },
       "review epoch events",
     );
-    effectiveRequestKey = durableReviewRequestKey(events, requestKey);
+    effectiveRequestKey = durableReviewRequestKey(
+      events,
+      requestKey,
+      reviewEpochNotBefore,
+    );
     if (effectiveRequestKey === undefined) {
       return { requested: false, reason: "stale-epoch" };
     }

@@ -682,6 +682,8 @@ jobs:
                   ? context.payload.comment?.id
                   : undefined,
               queuePropagationPending: true,
+              reviewEpochNotBefore:
+                context.payload.pull_request?.updated_at,
             });
             if (Number.isSafeInteger(result.statusId)) {
               core.setOutput("source-status-id", String(result.statusId));
@@ -845,6 +847,8 @@ jobs:
                 : context.payload.action === "reopened"
                 ? "reopen"
                 : undefined,
+              reviewEpochNotBefore:
+                context.payload.pull_request?.updated_at,
             });
             core.notice(
               result.requested
