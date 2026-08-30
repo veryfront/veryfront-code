@@ -6408,10 +6408,27 @@ export default config as const;
       it("redacts raw IRI remainders after Unicode authorities", async () => {
         const cases = [
           ["two-slash-path", "https://例え.internal/秘密"],
+          ["two-slash-ascii-symbol-host", "https://a$秘密.internal/private"],
+          ["two-slash-ideographic-dot-host", "https://例え。internal/private"],
+          ["two-slash-fullwidth-dot-host", "https://例え．internal/private"],
+          ["two-slash-halfwidth-dot-host", "https://例え｡internal/private"],
+          ["two-slash-latin-middle-dot-host", "https://l·l.internal/private"],
+          ["two-slash-greek-lower-numeral-host", "https://͵α.internal/private"],
+          ["two-slash-hebrew-geresh-host", "https://א׳ב.internal/private"],
+          ["two-slash-hebrew-gershayim-host", "https://א״ב.internal/private"],
+          ["two-slash-katakana-middle-dot-host", "https://カ・ナ.internal/private"],
+          ["two-slash-joined-symbol-host", "https://👩‍💻.internal/private"],
+          ["two-slash-symbol-host", "https://🙂🙂.internal/private"],
           ["two-slash-query", "https://例え.internal?q=秘密"],
+          ["single-slash-ideographic-dot-host", "https:/例え。internal/private"],
+          ["single-slash-latin-middle-dot-host", "https:/l·l.internal/private"],
           ["single-slash-path", "https:/例え.internal/秘密"],
+          ["single-slash-symbol-host", "https:/🙂🙂.internal/private"],
           ["single-slash-query", "https:/例え.internal?q=秘密"],
+          ["zero-slash-ideographic-dot-host", "https:例え。internal/private"],
+          ["zero-slash-latin-middle-dot-host", "https:l·l.internal/private"],
           ["zero-slash-path", "https:例え.internal/秘密"],
+          ["zero-slash-symbol-host", "https:🙂🙂.internal/private"],
           ["zero-slash-query", "https:例え.internal?q=秘密"],
         ] as const;
 
@@ -6422,16 +6439,268 @@ export default config as const;
           );
 
           assertEquals(error.message.includes("例え.internal"), false, label);
+          assertEquals(error.message.includes("🙂.internal"), false, label);
+          assertEquals(error.message.includes("/private"), false, label);
           assertEquals(error.message.includes("秘密"), false, label);
           assertStringIncludes(error.message, "Failed [url]", label);
         }
       });
 
+      it("redacts backslash paths after contextual IDNA authorities", async () => {
+        for (
+          const [label, url] of [
+            ["two-slash", "https://l·l.internal\\PRIVATE"],
+            ["single-slash", "https:/l·l.internal\\PRIVATE"],
+            ["zero-slash", "https:l·l.internal\\PRIVATE"],
+          ] as const
+        ) {
+          const error = await loadFailure(
+            `vf-config-iri-backslash-authority-${label}-`,
+            `throw new Error(${JSON.stringify(`Failed ${url}`)});\n`,
+          );
+
+          assertEquals(error.message.endsWith("Failed [url]"), true, label);
+        }
+      });
+
+      it("redacts a bare Unicode authority whole across host punctuation", async () => {
+        const cases = [
+          ["latin-middle-dot", "https://l·l.internal"],
+          ["greek-lower-numeral", "https://͵α.internal"],
+          ["hebrew-geresh", "https://א׳ב.internal"],
+          ["hebrew-gershayim", "https://א״ב.internal"],
+          ["katakana-middle-dot", "https://カ・ナ.internal"],
+          ["tibetan-tsheg", "https://བོད་ཡིག.internal"],
+          ["ideographic-dot", "https://例え。internal"],
+          ["fullwidth-dot", "https://例え．internal"],
+          ["halfwidth-dot", "https://例え｡internal"],
+          ["guillemet", "https://l«l.internal"],
+          ["en-dash", "https://l–l.internal"],
+          ["ideographic-comma", "https://l、l.internal"],
+          ["devanagari-danda", "https://l।l.internal"],
+          ["symbol", "https://l→l.internal"],
+          ["soft-hyphen", "https://l\u00adl.internal"],
+          ["zero-width-non-joiner", "https://l\u200cl.internal"],
+          ["single-slash", "https:/l·l.internal"],
+          ["zero-slash", "https:l·l.internal"],
+        ] as const;
+
+        for (const [label, url] of cases) {
+          const error = await loadFailure(
+            `vf-config-iri-bare-authority-${label}-`,
+            `throw new Error(${JSON.stringify(`Failed ${url}`)});\n`,
+          );
+
+          assertEquals(error.message.endsWith("Failed [url]"), true, label);
+        }
+      });
+
+      it("keeps sentence punctuation after a bare Unicode authority", async () => {
+        const cases = [
+          [
+            "ideographic-full-stop-space",
+            "Failed https://l·l.internal。 Retry",
+            "Failed [url]。 Retry",
+          ],
+          ["ideographic-full-stop-end", "Failed https://l·l.internal。", "Failed [url]。"],
+          ["middle-dot-space", "Failed https://l·l.internal· Retry", "Failed [url]· Retry"],
+          ["middle-dot-end", "Failed https://l·l.internal·", "Failed [url]·"],
+          ["katakana-middle-dot", "Failed https://例え.internal・ Retry", "Failed [url]・ Retry"],
+          [
+            "guillemets-comma",
+            "Failed «https://例え.internal», réessayez",
+            "Failed «[url]», réessayez",
+          ],
+          ["guillemets-period", "Failed «https://例え.internal».", "Failed «[url]»."],
+        ] as const;
+
+        for (const [label, input, expected] of cases) {
+          const error = await loadFailure(
+            `vf-config-iri-bare-authority-terminator-${label}-`,
+            `throw new Error(${JSON.stringify(input)});\n`,
+          );
+
+          assertEquals(error.message.includes("internal"), false, label);
+          assertStringIncludes(error.message, expected, label);
+        }
+
+        const asciiPeriod = await loadFailure(
+          "vf-config-iri-bare-authority-terminator-ascii-period-",
+          `throw new Error(${JSON.stringify("Failed https://l·l.internal. Retry")});\n`,
+        );
+
+        assertEquals(asciiPeriod.message.includes("internal"), false);
+        assertStringIncludes(asciiPeriod.message, "Failed [url]");
+        assertStringIncludes(asciiPeriod.message, " Retry");
+
+        const glued = await loadFailure(
+          "vf-config-iri-bare-authority-terminator-glued-",
+          `throw new Error(${
+            JSON.stringify("Failed https://例え.internal。次を試してください")
+          });\n`,
+        );
+
+        assertEquals(glued.message.includes("internal"), false);
+        assertEquals(glued.message.includes("次を試してください"), false);
+        assertStringIncludes(glued.message, "Failed [url]");
+      });
+
+      it("keeps rejected host characters and quoted text after a Unicode authority", async () => {
+        for (
+          const [label, input, expected] of [
+            [
+              "quoted",
+              'Failed https://例え.internal·"secret"',
+              'Failed [url]·"secret"',
+            ],
+            ["rejected-symbol", "Failed https://例え.internal¨Retry", "Failed [url]¨Retry"],
+            ["rejected-punctuation", "Failed https://例え.internal…Retry", "Failed [url]…Retry"],
+            [
+              "rejected-format-character",
+              "Failed https://例え.internal\u200eRetry",
+              "Failed [url]\u200eRetry",
+            ],
+            [
+              "single-slash-rejected-symbol",
+              "Failed https:/例え.internal¨Retry",
+              "Failed [url]¨Retry",
+            ],
+            [
+              "zero-slash-rejected-symbol",
+              "Failed https:例え.internal¨Retry",
+              "Failed [url]¨Retry",
+            ],
+            [
+              "single-slash-rejected-punctuation",
+              "Failed https:/例え.internal…Retry",
+              "Failed [url]…Retry",
+            ],
+            [
+              "zero-slash-rejected-punctuation",
+              "Failed https:例え.internal…Retry",
+              "Failed [url]…Retry",
+            ],
+            [
+              "single-slash-rejected-format-character",
+              "Failed https:/例え.internal\u200eRetry",
+              "Failed [url]\u200eRetry",
+            ],
+            [
+              "zero-slash-rejected-format-character",
+              "Failed https:例え.internal\u200eRetry",
+              "Failed [url]\u200eRetry",
+            ],
+            [
+              "invalid-port-after-accepted-symbol",
+              "Failed https://a🙂.internal:99999/private",
+              "Failed [url]",
+            ],
+            [
+              "invalid-port-after-userinfo-symbol",
+              "Failed https://a¨value@例え.internal:99999/private",
+              "Failed [url]",
+            ],
+            [
+              "single-slash-invalid-port-after-userinfo-symbol",
+              "Failed https:/a¨value@例え.internal:99999/private",
+              "Failed [url]",
+            ],
+            [
+              "zero-slash-invalid-port-after-userinfo-symbol",
+              "Failed https:a¨value@例え.internal:99999/private",
+              "Failed [url]",
+            ],
+            [
+              "valid-port-after-userinfo-symbol",
+              "Failed https://a¨value@例え.internal:8080/private",
+              "Failed [url]",
+            ],
+          ] as const
+        ) {
+          const error = await loadFailure(
+            `vf-config-iri-bare-authority-boundary-${label}-`,
+            `throw new Error(${JSON.stringify(input)});\n`,
+          );
+
+          assertStringIncludes(error.message, expected, label);
+          assertEquals(error.message.includes("internal"), false, label);
+        }
+      });
+
+      it("fails closed for rejected or unclassified host data", async () => {
+        const schemes = ["https://", "https:/", "https:"] as const;
+        const authorities = [
+          ["rejected", "a¨b.internal\\private"],
+          ["contextual", "א¡ב.internal:99999/private"],
+          ["contextual-prose", "x.א¡ב;Retry"],
+          ["private-use", "a\ue000b.internal"],
+          ["surrogate", "a\ud800b.internal"],
+        ] as const;
+
+        for (const scheme of schemes) {
+          for (const [label, authority] of authorities) {
+            const error = await loadFailure(
+              `vf-config-iri-unclassified-host-${label}-`,
+              `throw new Error(${JSON.stringify(`Failed ${scheme}${authority}`)});\n`,
+            );
+
+            assertEquals(error.message.endsWith("Failed [url]"), true, `${scheme}${label}`);
+          }
+        }
+      });
+
+      it("keeps URL-shaped authority suffixes redacted", async () => {
+        for (
+          const [label, input] of [
+            ["file-special-scheme", "Failed file://例え.internal。Retry"],
+            ["opaque-undotted-prefix", "Failed foo://例え。internal"],
+            ["opaque-glued-label", "Failed foo://public.example。privatehost"],
+            ["opaque-glued-prose", "Failed foo://例え.internal。Retry"],
+            ["opaque-contextual-host", "Failed foo://l·l.internal。Retry"],
+            ["opaque-host-shaped-remainder", "Failed foo://a.b。c.d"],
+            ["opaque-structured-remainder", "Failed foo://例え。internal/private"],
+          ] as const
+        ) {
+          const error = await loadFailure(
+            `vf-config-iri-authority-shaped-suffix-${label}-`,
+            `throw new Error(${JSON.stringify(input)});\n`,
+          );
+
+          assertEquals(error.message.endsWith("Failed [url]"), true, label);
+        }
+      });
+
+      it("does not split redaction at the Unicode authority probe bound", async () => {
+        const cases = [
+          ["split-run", `${"a".repeat(511)}秘密.internal`],
+          ["overlong-prefix", `${"a".repeat(512)}秘密.internal`],
+          ["overlong-prefix-mapped-dot", `${"a".repeat(512)}秘密。internal`],
+          ["overlong-prefix-contextual-punctuation", `${"a".repeat(512)}l·l.internal`],
+        ] as const;
+
+        for (const [label, host] of cases) {
+          const error = await loadFailure(
+            `vf-config-iri-authority-bound-${label}-`,
+            `throw new Error(${JSON.stringify(`Failed https://${host}/private`)});\n`,
+          );
+
+          assertEquals(error.message.includes("密.internal"), false, label);
+          assertEquals(error.message.includes("/private"), false, label);
+          assertStringIncludes(error.message, "Failed [url]", label);
+        }
+      });
+
+      it("preserves prose after Unicode whitespace following an IRI authority", async () => {
+        const error = await loadFailure(
+          "vf-config-iri-authority-unicode-whitespace-",
+          `throw new Error(${JSON.stringify("Failed https://例え.internal\u00a0\u00a0Retry")});\n`,
+        );
+
+        assertStringIncludes(error.message, "Failed [url]\u00a0\u00a0Retry");
+      });
+
       it("redacts a URL tail that begins after a lone `)` and punctuation", async () => {
-        // The other half of the structural rule, and the reason it is not a list
-        // of characters prose may end with. Punctuation after a `)` does not make
-        // the rest of the token prose -- what matters is whether anything follows
-        // it. Here something does, so the tail is still URL and must be redacted.
+        // A URL-like payload after `)` remains part of the token.
         const period = await loadFailure(
           "vf-config-paren-tail-period-",
           `throw new Error("https://registry.internal/a).SUPERSECRET/c.ts");\n`,
@@ -6441,10 +6710,7 @@ export default config as const;
         assertEquals(period.message.includes("registry.internal"), false);
         assertStringIncludes(period.message, "[url]");
 
-        // `?` is why the exclusion-list spelling could not have worked. Excluding
-        // it to protect `(see .../x)? Retry` would have stranded this query
-        // string; including it would have mangled that sentence. The structural
-        // question answers both -- `t=SUPERSECRET` follows, so this is URL.
+        // `?` introduces a query when payload follows it.
         const query = await loadFailure(
           "vf-config-paren-tail-query-",
           `throw new Error("https://registry.internal/a)?t=SUPERSECRET");\n`,
