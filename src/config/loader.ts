@@ -2095,16 +2095,8 @@ const SCHEME_URL = new RegExp(
   String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
   "gu",
 );
-// The ASCII-tail rule above deliberately ends before raw IRI characters. If
-// the authority itself contains one, however, the completed ASCII prefix is
-// not the complete host. Fail closed on the whitespace-delimited token so an
-// internationalized hostname cannot fall through to the path passes and reach
-// the diagnostic. This runs after the file-URL pass, which keeps local file
-// URLs classified as paths.
-//
-// Group the optional ASCII tail. Writing `${URL_TOKEN_TAIL_SOURCE}?` directly
-// would turn the tail's final `+` lazy, stop after one delimiter, and strand an
-// ASCII query prefix before a later raw-IRI remainder.
+// Redact raw IRI authorities after the file-URL pass. Keep the optional tail
+// grouped: `${URL_TOKEN_TAIL_SOURCE}?` would make its final `+` lazy.
 // Keep the host unit in one character class so completing a long run cannot
 // introduce ambiguous backtracking. Unicode letters, numbers, marks, and
 // symbols cover internationalized labels and emoji while punctuation and
@@ -2117,106 +2109,52 @@ const SCHEME_URL = new RegExp(
 // rather than exposing the suffix of an overlong authority.
 const NON_ASCII_HOST_CHARACTER_SOURCE = String
   .raw`[\p{L}\p{N}\p{M}\p{S}\u200D\u{E0020}-\u{E007E}.\-_$!&*+,;=%~]`;
+const IDNA_DOT_EQUIVALENT_SOURCE = String.raw`[。．｡]`;
+// A component delimiter distinguishes an IDNA dot inside the authority from
+// sentence punctuation after it, as in `例え.internal。Retry`.
+const NON_ASCII_STRUCTURED_HOST_SOURCE = String
+  .raw`${NON_ASCII_HOST_CHARACTER_SOURCE}+(?:${IDNA_DOT_EQUIVALENT_SOURCE}${NON_ASCII_HOST_CHARACTER_SOURCE}+)+(?=[:/?#])`;
+const NON_ASCII_HOST_BODY_SOURCE = String
+  .raw`(?:${NON_ASCII_STRUCTURED_HOST_SOURCE}|${NON_ASCII_HOST_CHARACTER_SOURCE}+)`;
 const NON_ASCII_HOST_SOURCE = String
-  .raw`(?:(?=[^\s"/]{0,511}[\u0080-\u{10FFFF}])${NON_ASCII_HOST_CHARACTER_SOURCE}+|${NON_ASCII_HOST_CHARACTER_SOURCE}{513,})`;
+  .raw`(?:(?=[^\s"/]{0,511}[\u0080-\u{10FFFF}])${NON_ASCII_HOST_BODY_SOURCE}|(?=[^\s"/]{513})${NON_ASCII_HOST_BODY_SOURCE})`;
 const NON_ASCII_AUTHORITY_URL = new RegExp(
   String
     .raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}(?:${URL_TOKEN_TAIL_SOURCE})?`,
   "gu",
 );
-// Raw Unicode at the start of a slash-delimited path segment is part of an IRI,
-// rather than prose glued to the preceding ASCII segment. Match the complete
-// whitespace-delimited token in that unambiguous case. Requiring the segment
-// boundary preserves `https://host/x次を試す` as `[url]次を試す`.
+// At a slash boundary raw Unicode is IRI path data. The boundary leaves Unicode
+// prose glued to a completed ASCII segment visible.
 const NON_ASCII_URL_PATH = new RegExp(
   String
     .raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?[^\s"/]{1,512}(?:/${URI_TOKEN_CHARACTER_SOURCE}{0,2048})?/(?=[^\x00-\x7F])[^\s"']*`,
   "gu",
 );
-// Avoid a second generic scheme scan for ordinary ASCII diagnostics. Without
-// this gate, the long-alphabetic quadratic guard reached its unchanged 20x
-// limit even though the fallback could not match.
+// Avoid a second generic scheme scan for ordinary ASCII diagnostics.
 const NON_ASCII_CHARACTER = /[\u0080-\u{10FFFF}]/u;
-// A sticky continuation used only when an ASCII URL match ends on a structural
-// component delimiter. In that position a following non-ASCII character is a
-// raw IRI path, query, or fragment rather than prose glued after a completed
-// path segment. The continuation consumes the rest of that token fail-closed.
+// After a component delimiter, raw Unicode is IRI path, query, or fragment data.
 const RAW_IRI_REMAINDER = /\P{ASCII}[^\s"']*/uy;
-// WHATWG URL parsing accepts these raw path characters and backslash separators,
-// percent-encoding or normalizing them. Extend from a component boundary,
-// through a later slash, or when the accepted delimiter introduces an actual
-// letter/number payload. A delimiter-only closing `>` in `<https://host/x>`
-// therefore stays visible while `{PRIVATE}` and `\\PRIVATE` remain redacted.
+// WHATWG accepts these raw path characters. Require a later slash or payload so
+// a delimiter-only `>` in `<https://host/x>` remains visible.
 const RAW_ACCEPTED_URL_REMAINDER = /[\\<>{}\x60^|][^\s"']*/uy;
 const RAW_ACCEPTED_URL_PAYLOAD = /[\p{L}\p{N}\p{M}]/u;
 
-// Both the userinfo run and the parenthesised interior are length-bounded, and
-// the userinfo run also stops at `/`. Neither bound is cosmetic. An unbounded
-// greedy interior rescans the rest of the message from every `(` that never
-// finds a `)`, so `"a://(".repeat(20_000)` cost 2.6s and grew 4x per doubling --
-// quadratic, and reachable from a project-authored error because
-// summarizeConfigLoadCause runs this before the 200-character cap. Bounded, the
-// same input is 42ms and grows 2x per doubling. `/` cannot appear unencoded in
-// userinfo (it terminates the authority), so excluding it costs nothing and
-// keeps that run inside the authority rather than the whole message.
-//
-// The interior of a parenthesised segment is `[^\s"']*`, not `[^\s"'()]*`: a
-// flat interior matches one nesting level, so `/a((TOKEN))` ended the token at
-// the first `(` and left `((TOKEN))` in the caller-visible detail -- a URL path
-// or query fragment, which can carry the value it was redacting. A greedy
-// interior backtracks to the last `)` in the run, so any nesting depth is
-// consumed in one pass. A token with no `(` at all is unaffected, which is what
-// still leaves a trailing prose `)` outside the match.
-// The userinfo run excludes only whitespace and a double quote, not an
-// apostrophe: RFC 3986 puts `'` in sub-delims, so `user'name@registry.internal`
-// is a legal authority, and stopping at the apostrophe left the hostname in the
-// caller-visible detail. The tail still excludes `'`, so a quoted config
-// message such as `Cannot find module 'some-pkg'` is unaffected and the quoted
-// path and quoted URL regressions keep their delimiters.
-// Userinfo gets its own permissive run up to `@`, rather than relying on the
-// balanced-parentheses alternative that covers the rest of the token. That
-// alternative matches one flat `(...)` pair, so a legal nested userinfo such as
-// `u((x))y@registry.internal` ended the match at the first `(` and left the
-// hostname in the caller-visible detail. RFC 3986 puts `(` and `)` in
-// sub-delims, so nesting there is valid rather than exotic. `[^\s"']*` cannot
-// cross whitespace or a quote, so the run stays inside one URL token and a
-// trailing prose `)` is still left behind.
-// The malformed single-slash form, kept separate from SCHEME_URL rather than
-// folded in as an alternation: two plain patterns read more clearly than one
-// branching expression, and each stays independently checkable.
-//
-// Restricted to the WHATWG special schemes, like the zero-slash form below and
-// for a sharper version of the same reason. A generic `[A-Za-z][...]{1,31}:`
-// shape claimed `atC` in `Failed atC:/Users/alice/x` -- reporting `Failed [url]`,
-// which both mislabels a local path and eats the word `at`. A two-character
-// minimum is not enough to separate a scheme from prose glued to a drive letter.
-// A glued *URL* still redacts: the match simply starts later in the token, so
-// `Failed athttps:/registry.internal/x` gives `Failed at[url]` and keeps `at`.
+// Userinfo and parenthesized segments are bounded to keep failed scans linear.
+// Userinfo stops at `/` but permits RFC sub-delimiters and parentheses before
+// `@`; the URL tail still stops at quotes.
+// Restrict malformed forms to WHATWG special schemes so drive-path prose is not
+// claimed as a URL.
 const ASCII_SPECIAL_SCHEME_SOURCE = "(?:[hH][tT][tT][pP][sS]?|[wW][sS][sS]?|[fF][tT][pP])";
 const MALFORMED_SCHEME_URL = new RegExp(
   String.raw`${ASCII_SPECIAL_SCHEME_SOURCE}:/(?!/)(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
   "gu",
 );
-// The zero-slash form of a WHATWG special scheme. `https:registry.internal/x`
-// parses to `https://registry.internal/x`, so the hostname is just as real as in
-// the two-slash form, but neither pattern above matches it -- both require at
-// least one slash -- and POSIX_ABSOLUTE_PATH refuses `/x` because it follows an
-// alphanumeric. Restricted to the special schemes rather than the generic
-// `[A-Za-z][A-Za-z0-9+.-]+:` shape, because that would claim ordinary prose
-// (`warning:something`) and, at one character, drive letters.
-//
-// Scheme matching is ASCII-case-insensitive by construction. The Unicode `iu`
-// combination folds `ſ` to `s`, which would make ordinary `httpſ:failure` prose
-// look like a special-scheme URL even though URL schemes are ASCII-only.
+// Spell ASCII casing explicitly: Unicode case folding maps `ſ` to `s`.
 const ZERO_SLASH_SCHEME_URL = new RegExp(
   String.raw`${ASCII_SPECIAL_SCHEME_SOURCE}:(?![/\s])(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
   "gu",
 );
-// The IRI fallbacks mirror the malformed single-slash and zero-slash forms
-// above. Each authority matcher catches a raw Unicode hostname, while each path
-// matcher catches a raw Unicode segment after a complete ASCII authority. All
-// are bounded before the first non-ASCII character so hostile diagnostics
-// remain linear-time.
+// Mirror the single-slash and zero-slash forms for raw IRI hosts and paths.
 const NON_ASCII_MALFORMED_AUTHORITY_URL = new RegExp(
   String
     .raw`${ASCII_SPECIAL_SCHEME_SOURCE}:/(?!/)(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}(?:${URL_TOKEN_TAIL_SOURCE})?`,

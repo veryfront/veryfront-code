@@ -6409,12 +6409,17 @@ export default config as const;
         const cases = [
           ["two-slash-path", "https://例え.internal/秘密"],
           ["two-slash-ascii-symbol-host", "https://a$秘密.internal/private"],
+          ["two-slash-ideographic-dot-host", "https://例え。internal/private"],
+          ["two-slash-fullwidth-dot-host", "https://例え．internal/private"],
+          ["two-slash-halfwidth-dot-host", "https://例え｡internal/private"],
           ["two-slash-joined-symbol-host", "https://👩‍💻.internal/private"],
           ["two-slash-symbol-host", "https://🙂🙂.internal/private"],
           ["two-slash-query", "https://例え.internal?q=秘密"],
+          ["single-slash-ideographic-dot-host", "https:/例え。internal/private"],
           ["single-slash-path", "https:/例え.internal/秘密"],
           ["single-slash-symbol-host", "https:/🙂🙂.internal/private"],
           ["single-slash-query", "https:/例え.internal?q=秘密"],
+          ["zero-slash-ideographic-dot-host", "https:例え。internal/private"],
           ["zero-slash-path", "https:例え.internal/秘密"],
           ["zero-slash-symbol-host", "https:🙂🙂.internal/private"],
           ["zero-slash-query", "https:例え.internal?q=秘密"],
@@ -6438,6 +6443,7 @@ export default config as const;
         const cases = [
           ["split-run", `${"a".repeat(511)}秘密.internal`],
           ["overlong-prefix", `${"a".repeat(512)}秘密.internal`],
+          ["overlong-prefix-mapped-dot", `${"a".repeat(512)}秘密。internal`],
         ] as const;
 
         for (const [label, host] of cases) {
@@ -6471,10 +6477,7 @@ export default config as const;
       });
 
       it("redacts a URL tail that begins after a lone `)` and punctuation", async () => {
-        // The other half of the structural rule, and the reason it is not a list
-        // of characters prose may end with. Punctuation after a `)` does not make
-        // the rest of the token prose -- what matters is whether anything follows
-        // it. Here something does, so the tail is still URL and must be redacted.
+        // A URL-like payload after `)` remains part of the token.
         const period = await loadFailure(
           "vf-config-paren-tail-period-",
           `throw new Error("https://registry.internal/a).SUPERSECRET/c.ts");\n`,
@@ -6484,10 +6487,7 @@ export default config as const;
         assertEquals(period.message.includes("registry.internal"), false);
         assertStringIncludes(period.message, "[url]");
 
-        // `?` is why the exclusion-list spelling could not have worked. Excluding
-        // it to protect `(see .../x)? Retry` would have stranded this query
-        // string; including it would have mangled that sentence. The structural
-        // question answers both -- `t=SUPERSECRET` follows, so this is URL.
+        // `?` introduces a query when payload follows it.
         const query = await loadFailure(
           "vf-config-paren-tail-query-",
           `throw new Error("https://registry.internal/a)?t=SUPERSECRET");\n`,
