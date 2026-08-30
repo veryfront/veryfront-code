@@ -270,9 +270,12 @@ async function runHostedChunkMirrorTrace<T>(
 
 // Retries are self-healing and back off to only a few seconds, so logging
 // every attempt at error level turns one degraded append window into a Sentry
-// error every few seconds per active run (VERYFRONT-AGENT-3). Escalate only
-// once the failure streak suggests the outage is persistent; terminal
-// stop/disable paths report at error level separately.
+// error every few seconds per active run (VERYFRONT-AGENT-3). Escalate
+// exactly once per failure streak, at the attempt where the streak first
+// reaches this threshold: the counter increments by one per scheduled retry
+// and resets to zero on a successful flush, so strict equality fires once
+// and re-arms after recovery. Terminal stop/disable paths report at error
+// level separately.
 const HOSTED_CHUNK_MIRROR_RETRY_ERROR_THRESHOLD = 5;
 
 function recordHostedChunkMirrorRetryScheduled(input: {
@@ -290,7 +293,7 @@ function recordHostedChunkMirrorRetryScheduled(input: {
     consecutiveFailures: input.flushAttempt.consecutiveFailures,
   });
   const message = "Durable run mirror flush failed; queued for retry";
-  if (input.flushAttempt.consecutiveFailures >= HOSTED_CHUNK_MIRROR_RETRY_ERROR_THRESHOLD) {
+  if (input.flushAttempt.consecutiveFailures === HOSTED_CHUNK_MIRROR_RETRY_ERROR_THRESHOLD) {
     input.instrumentation?.error?.(message, metadata);
     return;
   }
