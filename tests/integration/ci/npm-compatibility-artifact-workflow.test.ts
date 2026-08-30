@@ -248,9 +248,7 @@ describe("canonical npm artifact workflow", () => {
       asRecord(download.with, "action artifact download").path,
       "dist/npm-runtime-workspace",
     );
-    const restore = actionSteps.find((step) =>
-      step.name === "Restore npm runtime workspace"
-    );
+    const restore = actionSteps.find((step) => step.name === "Restore npm runtime workspace");
     const install = actionSteps.find((step) =>
       step.name === "Materialize locked test dependencies"
     );
@@ -318,9 +316,7 @@ describe("canonical npm artifact workflow", () => {
     assertEquals(strategy["fail-fast"], false);
     assertEquals(matrix.shard, [1, 2]);
     assert(
-      jobSteps(node, "Node sharding job").some((step) =>
-        step.uses === RESTORE_ACTION
-      ),
+      jobSteps(node, "Node sharding job").some((step) => step.uses === RESTORE_ACTION),
       "Node shards must restore the runtime workspace via the shared action",
     );
     const run = namedStep(node, "Run Node runtime shard");
@@ -421,5 +417,4 @@ describe("canonical npm artifact workflow", () => {
       }
     }
   });
-
 });
