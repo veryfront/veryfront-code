@@ -2610,8 +2610,46 @@ describe("automated review publication", () => {
       fixture.published[0]?.description,
       `PR#1 reset base:${
         reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-      } key:ready-run-9001-at-1787648400000`,
+      } key:ready-run-9001-at-1787648400000-event-41`,
     );
+  });
+
+  it("keeps a published run-bound reset as the active proof boundary", async () => {
+    const fixture = githubFixture({
+      commit: HEAD,
+      pages: {
+        comments: [[codexComment(HEAD.slice(0, 10), {
+          id: 103,
+          created_at: "2026-08-25T09:00:00Z",
+          updated_at: "2026-08-25T09:00:00Z",
+        })]],
+        events: [[{
+          event: "ready_for_review",
+          id: 41,
+          created_at: "2026-08-25T08:00:00Z",
+        }]],
+        statuses: [[automatedReviewStatus({
+          id: 104,
+          state: "pending",
+          description: `PR#1 reset base:${
+            reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+          } key:ready-run-9001-at-1787644800000-event-41`,
+          created_at: "2026-08-25T10:00:00Z",
+        })]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(result.review, undefined);
+    assertEquals(fixture.published, []);
   });
 
   it("starts a fresh pending epoch when a pull request reopens", async () => {
@@ -2784,7 +2822,7 @@ describe("automated review publication", () => {
       tiedFixture.published[0]?.description,
       `PR#1 reset base:${
         reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-      } key:reopen-run-9001-at-1787648400000`,
+      } key:reopen-run-9001-at-1787648400000-event-41`,
     );
 
     const runReset = automatedReviewResetStatus(
@@ -2793,7 +2831,7 @@ describe("automated review publication", () => {
         id: 101,
         description: `PR#1 reset base:${
           reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-        } key:reopen-run-9001-at-1787648400000`,
+        } key:reopen-run-9001-at-1787648400000-event-41`,
       },
     );
 
@@ -3796,7 +3834,7 @@ describe("automated review timeout watchdog", () => {
         id: 100,
         description: `PR#1 reset base:${
           reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-        } key:base-run-9001-at-1787644800000`,
+        } key:base-run-9001-at-1787644800000-event-42`,
       },
     );
     const runRecovery = githubFixture({
@@ -3831,7 +3869,7 @@ describe("automated review timeout watchdog", () => {
     assertEquals(runRecoveryResult.reason, "revalidated");
     assertEquals(
       runRecovery.commentsPosted[0]?.body,
-      `<!-- automated-review-request: ${HEAD} base-run-9001-at-1787644800000 -->\n@codex review`,
+      `<!-- automated-review-request: ${HEAD} base-run-9001-at-1787644800000-event-42 -->\n@codex review`,
     );
 
     const queueOutage = githubFixture({
@@ -5263,13 +5301,41 @@ describe("automated review request", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       headSha: HEAD,
-      requestKey: "base-run-9001-at-1787644800000",
+      requestKey: "base-run-9001-at-1787644800000-event-42",
       validateRequestEpoch: true,
       reviewEpochNotAfter: "2026-08-25T08:00:00Z",
     });
     assertEquals(staleRunResult.requested, false);
     assertEquals(staleRunResult.reason, "stale-epoch");
     assertEquals(staleRunBound.posted, []);
+
+    const tiedRunBound = requestFixture({
+      events: [
+        {
+          event: "base_ref_changed",
+          id: 42,
+          created_at: "2026-08-25T08:00:00Z",
+        },
+        {
+          event: "base_ref_changed",
+          id: 43,
+          created_at: "2026-08-25T08:00:00Z",
+        },
+      ],
+    });
+    const tiedRunResult = await requestAutomatedReview({
+      github: tiedRunBound.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      requestKey: "base-run-9001-at-1787644800000-event-42",
+      validateRequestEpoch: true,
+      reviewEpochNotAfter: "2026-08-25T08:00:00Z",
+    });
+    assertEquals(tiedRunResult.requested, false);
+    assertEquals(tiedRunResult.reason, "stale-epoch");
+    assertEquals(tiedRunBound.posted, []);
   });
 
   it("refuses to request a review of a malformed head commit", async () => {
@@ -6199,6 +6265,12 @@ describe("automated review workflow", () => {
       !requestCondition.includes("github.event.action == 'opened'"),
       "open events are already handled by the connector",
     );
+    assert(
+      requestCondition.includes(
+        "steps.publish.outputs.explicit-ready-request == 'true'",
+      ),
+      "ready events must request explicitly only when an ambiguous reset needs replacement proof",
+    );
     const requestScript = String(
       record(request.with, "request inputs").script,
     );
@@ -6254,6 +6326,10 @@ describe("automated review workflow", () => {
         script.includes('? "ready"'),
       "ready publishers must establish a visible lifecycle epoch",
     );
+    assert(
+      script.includes('core.setOutput("explicit-ready-request", "true")'),
+      "the publisher must expose only a run-bound ready reset to the request step",
+    );
     assert(!script.includes("`reopen-${context.runId}`"));
     assert(
       script.includes('context.payload.action === "edited"') &&
@@ -6275,6 +6351,7 @@ describe("automated review workflow", () => {
         "github.event_name == 'issue_comment'",
         "github.event_name == 'workflow_run'",
         "github.event_name == 'pull_request_target'",
+        "github.event.action == 'synchronize'",
         "github.event.action == 'edited'",
         "github.event.action == 'reopened'",
         "github.event.action == 'ready_for_review'",
