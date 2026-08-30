@@ -16,11 +16,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow, github.ref) || format('{0}-{1}-{2}', github.workflow, github.ref, github.sha) }}
-  # Only cancel superseded pull_request runs: a new push to the same PR makes
-  # the in-flight analysis moot. Push, schedule, and merge_group runs get
-  # unique groups (sha-suffixed) so none of them cancel or replace each other —
-  # same pattern as cicd.yml.
+  # Cancel superseded PR runs; every other event gets a run-unique group so a
+  # pending run is never cancelled or replaced (see cicd.yml, studio#5544).
+  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow, github.ref) || format('{0}-{1}', github.workflow, github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
