@@ -39,3 +39,7 @@ export {
   stripSnapshotQuery,
   withSnapshotResponseHeaders,
 } from "./dependency-snapshot-protocol.ts";
+export {
+  buildProjectExecutionUnavailableResponse,
+  type ProjectExecutionUnavailableOptions,
+} from "./project-execution-unavailable.ts";

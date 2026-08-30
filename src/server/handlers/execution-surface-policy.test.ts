@@ -35,6 +35,8 @@ const CAPABILITY_GATED_SURFACES = [
   "request/api/app-router-handler.ts",
   "request/api/project-discovery.ts",
   "request/module/module.handler.ts",
+  "request/public-agent-metadata.handler.ts",
+  "request/public-agents-list.handler.ts",
   "request/snippet.handler.ts",
   "request/ssr/ssr.handler.ts",
 ].toSorted();

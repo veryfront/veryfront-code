@@ -4,9 +4,11 @@ import {
   type RuntimeAgentPublicMetadata,
 } from "#veryfront/channels/control-plane.ts";
 import { defaultChannelInvokeDeps } from "#veryfront/channels/invoke.ts";
+import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
+import { buildProjectExecutionUnavailableResponse } from "../utils/project-execution-unavailable.ts";
 
 const PUBLIC_AGENTS_LIST_PATH = "/api/agents";
 
@@ -34,6 +36,16 @@ export class PublicAgentsListHandler extends BaseHandler {
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (!this.shouldHandle(req, ctx)) {
       return this.continue();
+    }
+
+    if (requiresIsolatedProjectRuntime(ctx)) {
+      return this.respond(
+        buildProjectExecutionUnavailableResponse(this.helpers, req, ctx, {
+          detail:
+            "Shared runtimes require a dedicated isolated project runtime for agent discovery",
+          instance: PUBLIC_AGENTS_LIST_PATH,
+        }),
+      );
     }
 
     return this.withProxyContext(ctx, async () => {

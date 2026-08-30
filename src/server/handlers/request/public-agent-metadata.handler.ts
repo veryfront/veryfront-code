@@ -3,9 +3,11 @@ import {
   type RuntimeAgentDiscoveryDeps,
 } from "#veryfront/channels/control-plane.ts";
 import { defaultChannelInvokeDeps } from "#veryfront/channels/invoke.ts";
+import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
+import { buildProjectExecutionUnavailableResponse } from "../utils/project-execution-unavailable.ts";
 
 const PUBLIC_AGENT_METADATA_PATH = /^\/api\/agents\/([^/]+)$/;
 
@@ -39,17 +41,30 @@ export class PublicAgentMetadataHandler extends BaseHandler {
       return this.continue();
     }
 
+    const builder = this.createResponseBuilder(ctx)
+      .withCORS(req, ctx.securityConfig?.cors)
+      .withSecurity(ctx.securityConfig ?? undefined, req);
+
+    // Validate input before the runtime gate: a malformed id needs neither
+    // discovery nor project-code execution, so it keeps its 400 contract on
+    // every topology instead of turning into a retryable 503.
+    const { pathname } = new URL(req.url);
+    const agentId = getAgentIdFromPath(pathname);
+    if (!agentId) {
+      return this.respond(builder.json({ error: "Invalid agent id" }, 400));
+    }
+
+    if (requiresIsolatedProjectRuntime(ctx)) {
+      return this.respond(
+        buildProjectExecutionUnavailableResponse(this.helpers, req, ctx, {
+          detail:
+            "Shared runtimes require a dedicated isolated project runtime for agent discovery",
+          instance: pathname,
+        }),
+      );
+    }
+
     return this.withProxyContext(ctx, async () => {
-      const builder = this.createResponseBuilder(ctx)
-        .withCORS(req, ctx.securityConfig?.cors)
-        .withSecurity(ctx.securityConfig ?? undefined, req);
-
-      const { pathname } = new URL(req.url);
-      const agentId = getAgentIdFromPath(pathname);
-      if (!agentId) {
-        return this.respond(builder.json({ error: "Invalid agent id" }, 400));
-      }
-
       await this.deps.ensureProjectDiscovery(ctx);
       const agent = this.deps.getAgent(agentId);
       if (!agent) {
