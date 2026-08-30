@@ -1,0 +1,108 @@
+name: Install Chromium
+description: >
+  Configure apt for reliable browser provisioning, then run a bounded, retried
+  Playwright Chromium install. Shared by every browser job; callers keep a
+  step-level `timeout-minutes: 20` on the invoking step, matching the retry
+  loop's ~17 minute worst case (two full attempts plus lock waits and backoff).
+
+inputs:
+  install-command:
+    description: Command that performs the Playwright Chromium install
+    required: false
+    default: deno run -A npm:playwright install --with-deps chromium
+
+runs:
+  using: composite
+  steps:
+    - name: Configure apt sources, retries, and mirrors
+      shell: bash
+      run: |
+        sudo sed -i \
+          -e 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
+          -e 's|http://security.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
+          /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
+        {
+          echo 'Acquire::ForceIPv4 "true";'
+          echo 'Acquire::Retries "5";'
+          echo 'Acquire::http::Timeout "30";'
+          echo 'Acquire::https::Timeout "30";'
+        } | sudo tee /etc/apt/apt.conf.d/99veryfront-ci-retries
+
+        # `playwright install --with-deps` shells out to `apt-get update`, which
+        # consults every repository configured on the runner image and fails the
+        # whole install when any single one of them is unreachable. The image
+        # ships third-party repositories (packages.microsoft.com/repos/azure-cli,
+        # packages.microsoft.com/ubuntu/24.04/prod, dl.google.com, ...) that
+        # Chromium's system libraries never come from, so an outage there is pure
+        # noise -- and because it is a persistent 403 rather than a blip, retrying
+        # cannot clear it. Park every non-Ubuntu source for the life of this job so
+        # only the archive that actually serves the dependencies can gate us.
+        if grep -rqE '\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
+          sudo mkdir -p /etc/apt/sources.list.d.disabled
+          for source_file in /etc/apt/sources.list.d/*; do
+            [ -f "${source_file}" ] || continue
+            if grep -qE '\.ubuntu\.com' "${source_file}"; then
+              continue
+            fi
+            sudo mv "${source_file}" /etc/apt/sources.list.d.disabled/
+            echo "Disabled apt source unrelated to Chromium deps: ${source_file}"
+          done
+        else
+          echo "::warning::No Ubuntu archive apt source detected; leaving apt sources untouched"
+        fi
+
+    - name: Install Chromium
+      shell: bash
+      run: |
+        readonly install_attempts=2
+        readonly install_timeout_minutes=7
+        readonly install_kill_grace_seconds=15
+        readonly apt_lock_attempts=12
+        readonly apt_lock_sleep_seconds=5
+        readonly retry_backoff_seconds=20
+        readonly apt_lock_files="/var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock /var/lib/apt/lists/lock"
+
+        # Playwright shells out to apt-get itself, so a lock held by the
+        # runner image's own apt activity used to surface inside the install
+        # as an instant "Could not get lock" failure. A global lock timeout
+        # makes every apt invocation wait for the holder instead.
+        echo 'DPkg::Lock::Timeout "300";' | sudo tee /etc/apt/apt.conf.d/99vf-lock-timeout >/dev/null
+
+        wait_for_apt_locks() {
+          for _ in $(seq 1 "${apt_lock_attempts}"); do
+            if ! sudo fuser ${apt_lock_files} >/dev/null 2>&1; then
+              return 0
+            fi
+            sleep "${apt_lock_sleep_seconds}"
+          done
+          return 1
+        }
+
+        # `timeout` signals only the wrapper process, so a timed-out attempt
+        # orphans the sudo apt-get underneath it. That orphan keeps holding
+        # the dpkg locks and starved every later attempt on this VM. Reap
+        # the lock holders and repair any half-configured packages before
+        # trying again.
+        reap_apt_lock_holders() {
+          sudo fuser -k -TERM ${apt_lock_files} >/dev/null 2>&1 || true
+          sleep 5
+          sudo fuser -k -KILL ${apt_lock_files} >/dev/null 2>&1 || true
+          sudo dpkg --configure -a >/dev/null 2>&1 || true
+        }
+
+        for attempt in $(seq 1 "${install_attempts}"); do
+          if ! wait_for_apt_locks; then
+            echo "::warning::apt/dpkg locks still held; reaping the holders"
+            reap_apt_lock_holders
+          fi
+          timeout --signal=TERM --kill-after="${install_kill_grace_seconds}s" "${install_timeout_minutes}m" \
+            ${{ inputs.install-command }} && exit 0
+          status=$?
+
+          if [ "$attempt" -eq "${install_attempts}" ]; then
+            exit "$status"
+          fi
+
+          reap_apt_lock_holders
+          sleep "${retry_backoff_seconds}"
+        done

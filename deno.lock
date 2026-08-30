@@ -17,6 +17,7 @@
     "jsr:@std/path@1.1.4": "1.1.4",
     "jsr:@std/path@^1.1.4": "1.1.4",
     "jsr:@std/testing@1.0.17": "1.0.17",
+    "jsr:@std/yaml@*": "1.1.0",
     "jsr:@std/yaml@1.1.0": "1.1.0",
     "npm:@aws-sdk/client-s3@3.980.0": "3.980.0",
     "npm:@aws-sdk/lib-storage@3.980.0": "3.980.0_@aws-sdk+client-s3@3.980.0",
