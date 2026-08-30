@@ -6637,6 +6637,27 @@ export default config as const;
         }
       });
 
+      it("fails closed for rejected or unclassified host data", async () => {
+        const schemes = ["https://", "https:/", "https:"] as const;
+        const authorities = [
+          ["rejected", "a¨b.internal\\private"],
+          ["contextual", "א¡ב.internal:99999/private"],
+          ["private-use", "a\ue000b.internal"],
+          ["surrogate", "a\ud800b.internal"],
+        ] as const;
+
+        for (const scheme of schemes) {
+          for (const [label, authority] of authorities) {
+            const error = await loadFailure(
+              `vf-config-iri-unclassified-host-${label}-`,
+              `throw new Error(${JSON.stringify(`Failed ${scheme}${authority}`)});\n`,
+            );
+
+            assertEquals(error.message.endsWith("Failed [url]"), true, `${scheme}${label}`);
+          }
+        }
+      });
+
       it("keeps URL-shaped authority suffixes redacted", async () => {
         for (
           const [label, input] of [

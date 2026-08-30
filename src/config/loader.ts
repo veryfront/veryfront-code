@@ -1941,7 +1941,7 @@ const SCHEME_URL = new RegExp(
 // bare authorities retain terminal punctuation. Bounded probes keep scans linear.
 // Keep the optional tail grouped: a direct `?` would make its final `+` lazy.
 const NON_ASCII_HOST_CHARACTER_SOURCE = String
-  .raw`[\p{L}\p{N}\p{M}\p{S}\u200D\u{E0020}-\u{E007E}.\-_$!&*+,;=%~]`;
+  .raw`[\p{L}\p{N}\p{M}\p{S}\p{Co}\p{Cs}\p{Cn}\u200D\u{E0020}-\u{E007E}.\-_$!&*+,;=%~]`;
 const NON_ASCII_HOST_PUNCTUATION_SOURCE = String
   .raw`(?![\x00-\x7F\u200D\u{E0020}-\u{E007E}])[\p{P}\p{Cf}]`;
 const NON_ASCII_HOST_PUNCTUATION_RUN_SOURCE = String
@@ -2081,7 +2081,7 @@ const OPAQUE_AUTHORITY_SENTENCE_PUNCTUATION = new RegExp(
   NON_ASCII_HOST_PUNCTUATION_SOURCE,
   "gu",
 );
-const OPAQUE_AUTHORITY_PROSE_REMAINDER = new RegExp(
+const URL_BOUNDARY_PROSE_REMAINDER = new RegExp(
   String.raw`^(?:[A-Za-z0-9!(),;-]|(?!\s)[^\x00-\x7F])+$`,
   "u",
 );
@@ -2142,7 +2142,7 @@ function acceptedOpaqueAuthorityMatchEnd(
       if (cut <= span.userinfoBoundary) continue;
       const remainder = ReflectApply(StringPrototypeSlice, matched, [cut]) as string;
       if (
-        ReflectApply(RegExpPrototypeExec, OPAQUE_AUTHORITY_PROSE_REMAINDER, [remainder]) === null
+        ReflectApply(RegExpPrototypeExec, URL_BOUNDARY_PROSE_REMAINDER, [remainder]) === null
       ) {
         continue;
       }
@@ -2185,6 +2185,10 @@ function acceptedUnicodeHostMatchEnd(matched: string, matchIndex: number): numbe
       // Never reinterpret userinfo as host data by cutting before its `@`.
       const followingAt = ReflectApply(StringPrototypeIndexOf, matched, ["@", index]) as number;
       if (followingAt !== -1) continue;
+      const remainder = ReflectApply(StringPrototypeSlice, matched, [index]) as string;
+      if (ReflectApply(RegExpPrototypeExec, URL_BOUNDARY_PROSE_REMAINDER, [remainder]) === null) {
+        continue;
+      }
       const prefix = ReflectApply(StringPrototypeSlice, matched, [0, index]) as string;
       try {
         new IntrinsicURL(prefix);
@@ -2290,13 +2294,8 @@ function redactMachinePaths(value: string): string {
 }
 
 /**
- * Return the one-line summary of `error`, or `undefined` when it has none.
- *
- * Redaction runs over the complete message before anything is cut away, the
- * order `sanitizeBoundedDiagnosticText` documents: taking the first line or the
- * first 200 characters can split `scheme://user:password@host` before the
- * trailing `@host` the redactor matches on, which would leave the password
- * prefix in a status-400 detail.
+ * Return one bounded, redacted line, or `undefined` when the error has no message.
+ * Redaction precedes truncation so credentials cannot be split before matching.
  */
 function summarizeConfigLoadCause(error: unknown): string | undefined {
   const message = typeof error === "string"
@@ -2305,31 +2304,10 @@ function summarizeConfigLoadCause(error: unknown): string | undefined {
     ? readOwnDataString(error, "message")
     : undefined;
   if (message === undefined) return undefined;
-  // Sanitize on both sides of de-colorization. A sequence inside a credential
-  // can make it noncontiguous before removal, while a CSI final byte can also
-  // consume the first character of a key such as API_KEY. Either ordering alone
-  // can therefore expose a usable value after the transformation.
+  // Sanitize on both sides because stripping CSI can join or consume credential bytes.
   const initiallyRedacted = sanitizeUrlCredentials(message);
-  // Drop a CSI introducer that is glued to the start of a path, before the CSI
-  // pass can eat into the path itself. `/` is a valid intermediate byte and `h`
-  // a valid final, so `ESC[/home/alice/x` would lose `ESC[/h` and leave
-  // `ome/alice/x`, which no later path pattern recognises; `ESC[C:\\Users` would
-  // lose the drive letter the same way. Both are legal CSI sequences, so no
-  // tightening of the grammar separates them from a path.
-  //
-  // Replaced with a space, not with nothing. `Failed at` + `ESC[` + `/home/alice`
-  // would otherwise become `Failed at/home/alice`, and POSIX_ABSOLUTE_PATH's
-  // lookbehind refuses a slash that follows an alphanumeric -- so removing the
-  // introducer cleanly would manufacture the one adjacency that defeats the very
-  // pass meant to catch it. A doubled space when the text already ended in one is
-  // the whole cost.
-  //
-  // Only the introducer is removed, not the path: redacting here instead would
-  // produce `ESC[[path]`, and `[` is itself a valid CSI final byte, so the pass
-  // below would eat the marker's opening bracket and emit `path]`. Removing just
-  // the introducer leaves the path intact for the single redaction pass at the
-  // end, which keeps `redactMachinePaths` running exactly once and after
-  // de-colorization -- the precondition its own docstring states.
+  // Replacing a glued CSI introducer with space preserves the path or scheme start
+  // without joining it to preceding prose. Machine paths are redacted afterward.
   const unglued = replaceMatchesWithCapturedExec(initiallyRedacted, CSI_GLUED_PATH, " ");
   const ungluedUrl = replaceMatchesWithCapturedExec(unglued, CSI_GLUED_URL, " ");
   const deColorized = replaceMatchesWithCapturedExec(
@@ -2351,16 +2329,6 @@ function summarizeConfigLoadCause(error: unknown): string | undefined {
     : clean;
 }
 
-/**
- * Report why the config module failed, not only which file did.
- *
- * `cause` is attached to the error, but nothing between here and the terminal
- * reads it, at any log level. A reader whose config imports a subpath the
- * package does not export got "Failed to load veryfront.config.ts" and a
- * suggestion to check their syntax -- while the runtime had already said
- * "Package subpath './config' is not defined by exports". Repeating that line
- * is the difference between a build the reader can fix and one they cannot.
- */
 function configLoadFailureDetail(configFile: string, error: unknown): string {
   const summary = summarizeConfigLoadCause(error);
   return summary === undefined
@@ -2369,33 +2337,9 @@ function configLoadFailureDetail(configFile: string, error: unknown): string {
 }
 
 /**
- * The installable package a resolution failure names, or `undefined`.
- *
- * Only a bare specifier is fixable by installing dependencies. Every runtime
- * reports a missing relative *file* through the same phrasing as a missing
- * package, so telling that reader to run `npm install` for a file they have
- * not written yet would be the same misdirection this classification exists to
- * remove. The shape of the specifier, not the error code, is what separates
- * them.
- *
- * Rejected here, each for a reader an install would not help:
- * - `./x`, `/x`, `\\x`, and UNC paths are files, on either path separator;
- * - `#x` is a package-internal subpath import;
- * - any URI scheme, which also covers `C:\\...` since a drive letter parses as
- *   one;
- * - `@/x`, Veryfront's own project-module alias, which `parseBarePackageSpecifier`
- *   already rejects: no package named `@/lib/config` exists to install.
- * - Node built-in roots, where an invalid subpath cannot be fixed by installing
- *   a package with the same name;
- * - npm-reserved roots, which package managers reject even though their lexical
- *   shape resembles a package name.
- *
- * Returns the package name rather than the whole specifier. That is the part
- * the reader installs -- `pkg` for `pkg/deep/path` -- and it drops the subpath,
- * which is the only part of a bare specifier that can carry arbitrary
- * author-written text. The result is bounded and stripped of control characters
- * for the same reason `summarizeConfigLoadCause` does it: this string reaches
- * `VeryfrontError.message` and its context, which callers log.
+ * Return an installable package root from a resolution failure.
+ * Files, aliases, URI schemes, built-ins, reserved names, and subpaths are not
+ * actionable installation targets and return `undefined`.
  */
 function missingPackageName(specifier: string): string | undefined {
   const hasNpmPrefix = ReflectApply(StringPrototypeStartsWith, specifier, ["npm:"]) as boolean;
@@ -2414,18 +2358,10 @@ function missingPackageName(specifier: string): string | undefined {
   const parsed = parseBarePackageSpecifier(bare);
   if (parsed === null) return undefined;
 
-  // Only `npm:`/`jsr:` specifiers carry a version. Node and Bun cannot resolve a
-  // plain `left-pad@1.3.0` at all, so installing `left-pad` would not help --
-  // that is invalid import syntax, not an absent package.
+  // Plain specifiers with versions are invalid Node and Bun import syntax.
   if (!hasRuntimePrefix && parsed.version !== null) return undefined;
 
-  // A specifier with a subpath cannot be classified from the message alone.
-  // Node reports `require("installed-pkg/missing")` for an *installed* package
-  // as `Cannot find module 'installed-pkg/missing'`, identical in shape to a
-  // package that is genuinely absent -- so naming the package root would tell
-  // a reader to install something they already have, and the subpath, which is
-  // the real fault, is not installable at all. Falling through to the parse
-  // error keeps the runtime's own message, which names the whole specifier.
+  // A missing subpath does not prove that the package root is absent.
   if (parsed.subpath !== null) return undefined;
   if (
     !hasRuntimePrefix &&
@@ -2473,13 +2409,7 @@ function isInstallableLegacyNpmPackageName(packageName: string): boolean {
       ) !== null;
 }
 
-/**
- * How far to walk `cause` when looking for the runtime's resolution error.
- *
- * The loader wraps import failures on its way out, so the runtime's own error
- * is rarely the outermost one. The bound keeps a self-referential chain from
- * spinning.
- */
+/** Bound wrapped and cyclic cause traversal. */
 const MAX_CONFIG_LOAD_CAUSE_DEPTH = 8;
 const BUN_RESOLVE_MESSAGE_MODULE_NOT_FOUND_CODE = "ERR_MODULE_NOT_FOUND";
 
