@@ -1703,6 +1703,70 @@ describe("automated review publication", () => {
     assertEquals(fixture.published, []);
   });
 
+  it("orders same-second limit replies after lifecycle events", async () => {
+    for (
+      const event of ["base_ref_changed", "reopened", "ready_for_review"]
+    ) {
+      const fixture = githubFixture({
+        pages: {
+          comments: [[codexRateLimitComment("2026-08-25T08:00:00Z")]],
+          events: [[{
+            event,
+            id: 102,
+            created_at: "2026-08-25T08:00:00Z",
+          }]],
+          timeline: [[
+            { event: "committed", sha: HEAD },
+            { event, id: 102 },
+            { event: "commented", id: 103 },
+          ]],
+        },
+      });
+      const result = await publishAutomatedReviewStatus({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha: HEAD,
+        pullUrl: "https://example.test/pr/1",
+        reviewFailureCommentId: 103,
+      });
+
+      assertEquals(result.state, "failure", event);
+      assertEquals(
+        result.description,
+        "PR#1 automated review rate limited",
+        event,
+      );
+
+      const staleFixture = githubFixture({
+        pages: {
+          comments: [[codexRateLimitComment("2026-08-25T08:00:00Z")]],
+          events: [[{
+            event,
+            id: 102,
+            created_at: "2026-08-25T08:00:00Z",
+          }]],
+          timeline: [[
+            { event: "committed", sha: HEAD },
+            { event: "commented", id: 103 },
+            { event, id: 102 },
+          ]],
+        },
+      });
+      const staleResult = await publishAutomatedReviewStatus({
+        github: staleFixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha: HEAD,
+        pullUrl: "https://example.test/pr/1",
+        reviewFailureCommentId: 103,
+      });
+      assertEquals(staleResult.state, "pending", event);
+    }
+  });
+
   it("does not treat two missing comment ids as a triggering limit reply", async () => {
     const comment = {
       ...codexRateLimitComment("2026-08-25T07:59:59Z"),
@@ -1870,6 +1934,32 @@ describe("automated review publication", () => {
     assertEquals(fixture.published, []);
   });
 
+  it("ignores terminal descriptions from another status context", async () => {
+    const fixture = githubFixture({
+      pages: {
+        statuses: [[automatedReviewStatus({
+          id: 105,
+          context: "Unrelated check",
+          state: "failure",
+          description: "PR#1 automated review timed out",
+          created_at: "2026-08-25T08:00:00Z",
+        })]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(fixture.published.length, 1);
+    assertEquals(fixture.published[0]?.state, "pending");
+  });
+
   it("republishes terminal evidence hidden behind a later generic failure", async () => {
     const republishedTerminalStatus = automatedReviewStatus({
       id: 1001,
@@ -1996,6 +2086,49 @@ describe("automated review publication", () => {
     assertEquals(result.state, "pending");
     assertEquals(result.statusId, 100);
     assertEquals(fixture.published, []);
+  });
+
+  it("preserves fresh proof that wins the reopen publisher race", async () => {
+    const verdict = codexComment(HEAD.slice(0, 10), {
+      id: 103,
+      created_at: "2026-08-25T09:00:01Z",
+      updated_at: "2026-08-25T09:00:01Z",
+    });
+    const fixture = githubFixture({
+      pages: {
+        comments: [[verdict]],
+        events: [[{
+          event: "reopened",
+          id: 102,
+          created_at: "2026-08-25T09:00:00Z",
+        }]],
+        timeline: [[
+          { event: "reopened", id: 102 },
+          { event: "commented", id: 103 },
+        ]],
+      },
+      commit: HEAD,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      reviewResetKey: "reopen-42",
+    });
+
+    assertEquals(result.state, "success");
+    assertEquals(result.review?.source, "codex-comment");
+    assertEquals(fixture.published.length, 1);
+    assertEquals(fixture.published[0]?.state, "success");
+    assertEquals(
+      fixture.published[0]?.description,
+      `PR#1 base:${
+        reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+      } by:chatgpt-codex-connector[bot]`,
+    );
   });
 
   it("clears terminal evidence when a pull request becomes ready", async () => {

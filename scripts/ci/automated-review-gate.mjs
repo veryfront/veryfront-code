@@ -215,8 +215,15 @@ function latestReviewEpochChange(events) {
     if (!Number.isFinite(time)) {
       return { time: Number.POSITIVE_INFINITY, kind };
     }
-    if (latest === undefined || time > latest.time) {
-      latest = { time, kind };
+    const id = Number.isSafeInteger(item?.id) && item.id > 0
+      ? item.id
+      : undefined;
+    const laterAtSameTime = time === latest?.time && id !== undefined &&
+      (!Number.isSafeInteger(latest?.id) || id > latest.id);
+    if (latest === undefined || time > latest.time || laterAtSameTime) {
+      latest = id === undefined
+        ? { time, kind }
+        : { time, kind, id, timelineEvent: kind };
     }
   }
   return latest;
@@ -454,6 +461,7 @@ function latestTerminalReviewStatus(statuses, pullNumber, boundary) {
   const timedOut = `PR#${pullNumber} automated review timed out`;
   for (const status of statuses) {
     if (
+      status?.context !== AUTOMATED_REVIEW_STATUS_CONTEXT ||
       status?.state !== "failure" ||
       !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN) ||
       (status?.description !== rateLimited &&
@@ -1029,7 +1037,10 @@ export async function publishAutomatedReviewStatus({
       );
       existingTerminalStatusIsLatest = existingTerminalStatus?.id ===
         latestReviewGateStatusForPull(statuses, pullNumber)?.id;
-      if (!resetPending && !isDraft) {
+      if (
+        !isDraft &&
+        (!resetPending || REVIEW_EPOCH_EVENTS.has(reviewBoundary?.kind))
+      ) {
         review = await findAutomatedReview(
           { reviews, comments, events, timeline },
           headSha,
@@ -1129,14 +1140,14 @@ export async function publishAutomatedReviewStatus({
     description = `PR#${pullNumber} automated review timed out`;
   } else if (failure) {
     description = `PR#${pullNumber} review status unavailable`;
+  } else if (review) {
+    description = `PR#${pullNumber} base:${baseBinding} by:${review.reviewer}`;
   } else if (resetPending) {
     description = reviewResetDescription(
       pullNumber,
       baseBinding,
       reviewResetKey,
     );
-  } else if (review) {
-    description = `PR#${pullNumber} base:${baseBinding} by:${review.reviewer}`;
   } else if (isDraft) description = `PR#${pullNumber} draft waits for review`;
   else {
     description = `PR#${pullNumber} waits for review ${headSha.slice(0, 12)}`;
