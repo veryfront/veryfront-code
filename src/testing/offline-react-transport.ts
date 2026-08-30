@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -18,6 +18,62 @@ const OFFLINE_REACT_RESOLVED_ADDRESS = "192.0.2.1";
 const REACT_VERSION_19_1 = "19.1.1";
 const MAX_OFFLINE_REACT_CACHE_BYTES = 16 * 1024 * 1024;
 const MAX_OFFLINE_REACT_CACHE_ENTRIES = 128;
+const OFFLINE_REACT_CACHE_DIR = join(
+  homedir(),
+  ".cache",
+  "veryfront",
+  "tests",
+  "offline-react",
+);
+const OFFLINE_REACT_CACHE_INPUTS = [
+  ["offline-react-transport", new URL(import.meta.url)],
+  ["root-config", new URL("../../deno.json", import.meta.url)],
+  ["root-lock", new URL("../../deno.lock", import.meta.url)],
+  [
+    "bundler-config",
+    new URL("../../extensions/ext-bundler-esbuild/deno.json", import.meta.url),
+  ],
+  [
+    "bundler-binary",
+    new URL("../../extensions/ext-bundler-esbuild/src/binary.ts", import.meta.url),
+  ],
+  [
+    "bundler-context-lifecycle",
+    new URL(
+      "../../extensions/ext-bundler-esbuild/src/context-build-lifecycle.ts",
+      import.meta.url,
+    ),
+  ],
+  [
+    "bundler-module-lexer",
+    new URL(
+      "../../extensions/ext-bundler-esbuild/src/es-module-lexer.ts",
+      import.meta.url,
+    ),
+  ],
+  [
+    "bundler-implementation",
+    new URL(
+      "../../extensions/ext-bundler-esbuild/src/esbuild-bundler.ts",
+      import.meta.url,
+    ),
+  ],
+  [
+    "bundler-index",
+    new URL("../../extensions/ext-bundler-esbuild/src/index.ts", import.meta.url),
+  ],
+  [
+    "bundler-plugin-adapter",
+    new URL(
+      "../../extensions/ext-bundler-esbuild/src/plugin-adapter.ts",
+      import.meta.url,
+    ),
+  ],
+  [
+    "bundler-runtime",
+    new URL("../../extensions/ext-bundler-esbuild/src/runtime.ts", import.meta.url),
+  ],
+] as const;
 const OFFLINE_UNIT_MODULE_FIXTURES: Readonly<Record<string, string>> = Object.freeze({
   "/lodash": "export function merge(left, right) { return { ...left, ...right }; }\n",
 });
@@ -307,21 +363,65 @@ type OfflineReactEntryKey = keyof typeof OFFLINE_REACT_ENTRIES;
 let bundledModules: Promise<ReadonlyMap<string, string>> | undefined;
 let cachePaths: Promise<{ cache: string; lock: string }> | undefined;
 
+function assertPrivateCacheEntry(
+  info: Deno.FileInfo,
+  kind: "directory" | "file",
+): void {
+  const correctKind = kind === "directory" ? info.isDirectory : info.isFile;
+  const currentUid = typeof Deno.uid === "function" ? Deno.uid() : null;
+  if (
+    !correctKind ||
+    info.isSymlink ||
+    (currentUid !== null && info.uid !== null && info.uid !== currentUid) ||
+    (info.mode !== null && (info.mode & 0o077) !== 0)
+  ) {
+    throw new Error("Offline React cache storage is not private");
+  }
+}
+
+async function ensurePrivateCacheDirectory(): Promise<void> {
+  await Deno.mkdir(OFFLINE_REACT_CACHE_DIR, { recursive: true, mode: 0o700 });
+  let info = await Deno.lstat(OFFLINE_REACT_CACHE_DIR);
+  const currentUid = typeof Deno.uid === "function" ? Deno.uid() : null;
+  if (
+    info.isDirectory &&
+    !info.isSymlink &&
+    (currentUid === null || info.uid === null || info.uid === currentUid) &&
+    info.mode !== null &&
+    (info.mode & 0o077) !== 0
+  ) {
+    await Deno.chmod(OFFLINE_REACT_CACHE_DIR, 0o700);
+    info = await Deno.lstat(OFFLINE_REACT_CACHE_DIR);
+  }
+  assertPrivateCacheEntry(info, "directory");
+}
+
+async function assertPrivateCacheFile(path: string): Promise<boolean> {
+  try {
+    assertPrivateCacheEntry(await Deno.lstat(path), "file");
+    return true;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return false;
+    throw error;
+  }
+}
+
 async function getOfflineReactCachePaths(): Promise<{ cache: string; lock: string }> {
   cachePaths ??= (async () => {
+    await ensurePrivateCacheDirectory();
     const identity = JSON.stringify({
-      versions: Object.keys(OFFLINE_REACT_PACKAGE_URLS),
-      entries: OFFLINE_REACT_ENTRIES,
-      generation: [
-        createEntrySource.toString(),
-        buildOfflineReactModules.toString(),
-      ],
+      inputs: await Promise.all(
+        OFFLINE_REACT_CACHE_INPUTS.map(async ([name, url]) => [
+          name,
+          await Deno.readTextFile(url),
+        ]),
+      ),
     });
     const digest = new Uint8Array(
       await crypto.subtle.digest("SHA-256", new TextEncoder().encode(identity)),
     );
     const key = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
-    const cache = join(tmpdir(), `veryfront-offline-react-${key}.json`);
+    const cache = join(OFFLINE_REACT_CACHE_DIR, `${key}.json`);
     return { cache, lock: `${cache}.lock` };
   })();
   return await cachePaths;
@@ -360,6 +460,7 @@ async function readBundledModuleCache(
   cachePath: string,
 ): Promise<ReadonlyMap<string, string> | undefined> {
   try {
+    if (!(await assertPrivateCacheFile(cachePath))) return undefined;
     return parseBundledModuleCache(await Deno.readTextFile(cachePath));
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) return undefined;
@@ -369,6 +470,7 @@ async function readBundledModuleCache(
 
 async function buildOrReadOfflineReactModules(): Promise<ReadonlyMap<string, string>> {
   const paths = await getOfflineReactCachePaths();
+  await assertPrivateCacheFile(paths.lock);
   const lockFile = await Deno.open(paths.lock, {
     create: true,
     read: true,
@@ -376,6 +478,7 @@ async function buildOrReadOfflineReactModules(): Promise<ReadonlyMap<string, str
     mode: 0o600,
   });
   try {
+    assertPrivateCacheEntry(await lockFile.stat(), "file");
     await lockFile.lock(true);
     const cached = await readBundledModuleCache(paths.cache);
     if (cached) return cached;
@@ -390,6 +493,7 @@ async function buildOrReadOfflineReactModules(): Promise<ReadonlyMap<string, str
     await Deno.writeTextFile(paths.cache, serialized, {
       mode: 0o600,
     });
+    await assertPrivateCacheFile(paths.cache);
     return modules;
   } finally {
     try {
