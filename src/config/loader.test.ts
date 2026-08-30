@@ -6408,6 +6408,8 @@ export default config as const;
       it("redacts raw IRI remainders after Unicode authorities", async () => {
         const cases = [
           ["two-slash-path", "https://例え.internal/秘密"],
+          ["two-slash-ascii-symbol-host", "https://a$秘密.internal/private"],
+          ["two-slash-joined-symbol-host", "https://👩‍💻.internal/private"],
           ["two-slash-symbol-host", "https://🙂🙂.internal/private"],
           ["two-slash-query", "https://例え.internal?q=秘密"],
           ["single-slash-path", "https:/例え.internal/秘密"],
@@ -6457,6 +6459,15 @@ export default config as const;
         );
 
         assertStringIncludes(error.message, "Failed [url]\u00a0\u00a0Retry");
+      });
+
+      it("preserves prose after Unicode punctuation following an IRI authority", async () => {
+        const error = await loadFailure(
+          "vf-config-iri-authority-unicode-punctuation-",
+          `throw new Error(${JSON.stringify("Failed https://例え.internal。Retry")});\n`,
+        );
+
+        assertStringIncludes(error.message, "Failed [url]。Retry");
       });
 
       it("redacts a URL tail that begins after a lone `)` and punctuation", async () => {
