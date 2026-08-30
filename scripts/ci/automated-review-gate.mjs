@@ -2968,10 +2968,29 @@ export async function requestAutomatedReview({
         "final request timeline",
       ),
     ]);
+    if (sentinelEpoch || validateRequestEpoch) {
+      const currentKey = resolveEpochKey(events);
+      if (currentKey !== effectiveRequestKey) {
+        return { requested: false, marker, reason: "stale-epoch" };
+      }
+    }
+    const refreshed = await github.rest.pulls.get({
+      owner,
+      repo,
+      pull_number: pullNumber,
+    });
+    const refreshedHead = refreshed?.data?.head?.sha;
+    if (
+      typeof refreshedHead !== "string" || !FULL_SHA.test(refreshedHead) ||
+      refreshedHead.toLowerCase() !== headSha.toLowerCase()
+    ) return { requested: false, marker, reason: "stale-head" };
+    if (refreshed?.data?.state !== "open" || refreshed?.data?.draft !== false) {
+      return { requested: false, marker, reason: "ineligible-pull" };
+    }
     if (hasReviewRequest(comments, headSha, effectiveRequestKey)) {
       return { requested: false, marker };
     }
-    const baseBinding = pullRequestBaseBinding(response?.data);
+    const baseBinding = pullRequestBaseBinding(refreshed?.data);
     const review = await findAutomatedReview(
       { reviews, comments, events, timeline },
       headSha,
@@ -2980,7 +2999,7 @@ export async function requestAutomatedReview({
         isCurrentlyTrustedHuman(github, {
           ...common,
           login,
-          pullAuthor: response?.data?.user?.login,
+          pullAuthor: refreshed?.data?.user?.login,
         }),
       latestReviewResetTime(statuses, pullNumber, baseBinding),
     );

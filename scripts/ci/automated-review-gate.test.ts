@@ -4779,6 +4779,7 @@ function requestFixture(options: {
   eventResponses?: Record<string, unknown>[][];
   reviews?: Record<string, unknown>[];
   currentHead?: string;
+  headResponses?: string[];
   currentState?: string;
   draft?: boolean;
 } = {}) {
@@ -4797,6 +4798,7 @@ function requestFixture(options: {
   const listStatuses = () => undefined;
   const listTimeline = () => undefined;
   let eventRead = 0;
+  let pullRead = 0;
   const github = {
     paginate: {
       async *iterator(endpoint: unknown) {
@@ -4828,7 +4830,11 @@ function requestFixture(options: {
         get: () =>
           Promise.resolve({
             data: {
-              head: { sha: state.currentHead },
+              head: {
+                sha: options.headResponses?.[
+                  Math.min(pullRead++, options.headResponses.length - 1)
+                ] ?? state.currentHead,
+              },
               base: { ref: BASE_REF, repo: { id: BASE_REPOSITORY_ID } },
               user: { login: "pull-author" },
               state: state.currentState,
@@ -4933,6 +4939,59 @@ describe("automated review request", () => {
     assertEquals(result.requested, false);
     assertEquals(result.reason, "reviewed");
     assertEquals(fixture.posted, []);
+
+    const changedHead = requestFixture({ headResponses: [HEAD, OTHER_HEAD] });
+    const changedHeadResult = await requestAutomatedReview({
+      github: changedHead.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      revalidateReviewEvidence: true,
+    });
+    assertEquals(changedHeadResult.requested, false);
+    assertEquals(changedHeadResult.reason, "stale-head");
+    assertEquals(changedHead.posted, []);
+
+    const changedEpoch = requestFixture({
+      eventResponses: [
+        [{
+          event: "base_ref_changed",
+          id: 42,
+          created_at: "2026-08-25T09:00:00Z",
+        }],
+        [{
+          event: "base_ref_changed",
+          id: 42,
+          created_at: "2026-08-25T09:00:00Z",
+        }],
+        [
+          {
+            event: "base_ref_changed",
+            id: 42,
+            created_at: "2026-08-25T09:00:00Z",
+          },
+          {
+            event: "reopened",
+            id: 43,
+            created_at: "2026-08-25T10:00:00Z",
+          },
+        ],
+      ],
+    });
+    const changedEpochResult = await requestAutomatedReview({
+      github: changedEpoch.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      requestKey: "base-42",
+      validateRequestEpoch: true,
+      revalidateReviewEvidence: true,
+    });
+    assertEquals(changedEpochResult.requested, false);
+    assertEquals(changedEpochResult.reason, "stale-epoch");
+    assertEquals(changedEpoch.posted, []);
   });
 
   it("does not post when the pull request is closed or draft", async () => {
