@@ -1582,6 +1582,25 @@ describe("automated review publication", () => {
     );
   });
 
+  it("fails a triggering usage-limit reply that beats the first pending status", async () => {
+    const fixture = githubFixture({
+      pages: { comments: [[codexRateLimitComment()]] },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      reviewFailureCommentId: 103,
+    });
+
+    assertEquals(result.state, "failure");
+    assertEquals(result.description, "PR#1 automated review rate limited");
+    assertEquals(fixture.published[0]?.state, "failure");
+  });
+
   it("does not apply an old-head usage-limit reply to a newer pending epoch", async () => {
     const fixture = githubFixture({
       pages: {
@@ -1601,7 +1620,8 @@ describe("automated review publication", () => {
     });
 
     assertEquals(result.state, "pending");
-    assertEquals(fixture.published[0]?.state, "pending");
+    assertEquals(result.statusId, 100);
+    assertEquals(fixture.published, []);
   });
 
   it("lets later exact-head proof recover a rate-limited review", async () => {
@@ -1670,7 +1690,26 @@ describe("automated review publication", () => {
     });
 
     assertEquals(result.state, "pending");
-    assertEquals(fixture.published[0]?.state, "pending");
+    assertEquals(result.statusId, 100);
+    assertEquals(fixture.published, []);
+  });
+
+  it("reuses the first pending status instead of refreshing its timeout", async () => {
+    const fixture = githubFixture({
+      pages: { statuses: [[pendingAutomatedReviewStatus()]] },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(result.statusId, 100);
+    assertEquals(fixture.published, []);
   });
 
   it("fails when exact-ref lookup is operationally unavailable", async () => {
@@ -2205,10 +2244,21 @@ describe("automated review timeout watchdog", () => {
   });
 
   it("revalidates and expires the same pending status under the publisher", async () => {
+    const preservedTimeoutStatus = automatedReviewStatus({
+      id: 1001,
+      state: "failure",
+      description: "PR#1 automated review timed out",
+    });
     const fixture = githubFixture({
       pages: {
-        statuses: [[pendingAutomatedReviewStatus()]],
         refs: [[]],
+      },
+      pageResponses: {
+        statuses: [
+          [[pendingAutomatedReviewStatus()]],
+          [[pendingAutomatedReviewStatus()]],
+          [[preservedTimeoutStatus]],
+        ],
       },
       commit: HEAD,
     });
@@ -2229,6 +2279,11 @@ describe("automated review timeout watchdog", () => {
     assertEquals(
       fixture.published.every((status) => status.state === "failure"),
       true,
+    );
+    assertEquals(
+      fixture.published.at(-1)?.description,
+      "PR#1 automated review timed out",
+      "queue propagation must preserve the terminal source diagnosis",
     );
   });
 
@@ -3991,6 +4046,7 @@ describe("automated review workflow", () => {
     );
     assert(script.includes("publishAutomatedReviewStatus"));
     assert(script.includes("publishReviewResolutionFailure"));
+    assert(script.includes("sourceStatusId: result.statusId"));
     assert(script.includes("reconcileActiveMergeGroupReviewStatuses"));
     assert(!script.includes("github.rest.pulls.get"));
     assert(script.includes("process.env.TARGET_SHA"));
@@ -4031,8 +4087,13 @@ describe("automated review workflow", () => {
     assert(!script.includes("listPullRequestsAssociatedWithCommit"));
     assert(!script.includes("allowPullRequestReviews"));
     assert(
-      !script.includes("context.payload.comment"),
-      "deleted comments must reconcile from current API evidence, not comment payload data",
+      script.includes("reviewFailureCommentId") &&
+        script.includes("context.payload.comment?.id"),
+      "the pinned triggering comment id must cover a limit reply that beats pending publication",
+    );
+    assert(
+      !script.includes("context.payload.comment?.body"),
+      "comment content must reconcile from current API evidence, not payload data",
     );
     assert(script.includes("Review gate is unavailable on the default branch"));
     assertEquals(

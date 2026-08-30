@@ -669,6 +669,11 @@ jobs:
                 context.payload.changes?.base !== undefined
                   ? `base-${context.runId}`
                   : undefined,
+              reviewFailureCommentId:
+                context.eventName === "issue_comment" &&
+                  context.payload.action !== "deleted"
+                  ? context.payload.comment?.id
+                  : undefined,
             });
             if (Number.isSafeInteger(result.statusId)) {
               core.setOutput("source-status-id", String(result.statusId));
@@ -703,6 +708,7 @@ jobs:
                 repo: context.repo.repo,
                 pullNumber,
                 sourceHeadSha: headSha,
+                sourceStatusId: result.statusId,
               });
               queueResultCount = queueFailures;
             } else {
