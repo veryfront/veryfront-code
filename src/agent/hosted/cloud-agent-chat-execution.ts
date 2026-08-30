@@ -337,6 +337,7 @@ export async function prepareChatExecutionWithinProjectRuntime(
       serverResolvedProviderReplayCheckpoints: req.serverResolvedProviderReplayCheckpoints,
       serverEnvelopeVerified: req.serverEnvelopeVerified === true,
     }),
+    providerReplayCheckpointEmissionEnabled: context.providerReplayCheckpointEmissionEnabled,
     // Sourced from the verified run-event token, never from forwardedProps, so
     // it is trusted on the durable-chat path without trusting that body.
     ...(req.serverResolvedIntegrationToolNames?.length
