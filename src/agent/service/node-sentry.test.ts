@@ -296,6 +296,41 @@ describe("agent/service/node-sentry", () => {
     }
   });
 
+  it("filters provider rate-limit error logs as expected upstream throttling", () => {
+    // Sentry group VERYFRONT-AGENT-G (veryfront-issue-inbox#829): a provider
+    // 429 thrown as ProviderRateLimitError reaches the agent error log without
+    // a context statusCode, so the emitter reports expected upstream
+    // throttling as an application error.
+    const reporter = createReporter();
+    const emitter = createNodeAgentServiceLogApplicationErrorEmitter();
+
+    try {
+      setApplicationErrorReporter(reporter);
+      emitter({
+        timestamp: "2026-08-30T00:00:00.000Z",
+        level: "error",
+        service: "agent",
+        component: "runtime",
+        veryfrontVersion: "0.0.0",
+        message: "Chat stream failed",
+        error: {
+          name: "ProviderRateLimitError",
+          message: "veryfront-cloud request failed: Provider request failed with status 429",
+          stack: "ProviderRateLimitError: veryfront-cloud request failed: " +
+            "Provider request failed with status 429\n    at buildProviderError",
+        },
+      });
+
+      assertEquals(
+        reporter.captured,
+        [],
+        "a provider rate-limit error log must not reach Sentry",
+      );
+    } finally {
+      setApplicationErrorReporter(undefined);
+    }
+  });
+
   it("reports message-only Agent error logs under their own log message", () => {
     const reporter = createReporter();
     const emitter = createNodeAgentServiceLogApplicationErrorEmitter();
