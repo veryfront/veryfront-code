@@ -877,6 +877,16 @@ jobs:
       "the lint shard must execute the npm publish script regression tests",
     );
     assertStringIncludes(
+      String(tasks["lint:ci"]),
+      "deno task build:proxy-lock",
+      "the lint shard must regenerate the committed proxy dependency lock",
+    );
+    assertStringIncludes(
+      String(tasks["lint:ci"]),
+      "git diff --exit-code -- scripts/build/proxy-deno.lock",
+      "the lint shard must fail when the committed proxy dependency lock is stale",
+    );
+    assertStringIncludes(
       String(tasks["test:ci:npm-compatibility-artifact"]),
       "--allow-run=npm,tar,bash,deno",
       "the dedicated artifact task must allow the artifact test to launch pinned Deno from PATH",
