@@ -418,11 +418,13 @@ function buildRegistrationRequest(
 async function registerAgentPushRuntimeService(
   input: ResolvedAgentServiceRegistrationInput,
   fetchImpl: typeof globalThis.fetch,
+  abortSignal?: AbortSignal,
 ): Promise<AgentPushRuntimeServiceRest> {
   const response = await fetchImpl(getRegistrationEndpoint(input.apiUrl), {
     method: "POST",
     headers: createHeaders(input.authToken),
     body: JSON.stringify(buildRegistrationRequest(input)),
+    signal: abortSignal,
   });
   return await readAgentPushRuntimeServiceResponse(response);
 }
@@ -485,6 +487,17 @@ function isRetryableHeartbeatFailure(error: unknown): boolean {
   return httpStatus === undefined || (httpStatus >= 500 && httpStatus <= 599);
 }
 
+/**
+ * A heartbeat 404 means the control plane no longer knows this service id: the
+ * registry row was evicted, the environment was reset, or a redeploy wiped it.
+ * Repeating the heartbeat can never succeed, so the lifecycle registers again
+ * instead of counting the tick toward the persistent-failure escalation.
+ */
+function isLostRegistrationHeartbeatFailure(error: unknown): boolean {
+  if (!isVeryfrontError(error) || error.slug !== NETWORK_ERROR.slug) return false;
+  return readUpstreamHttpStatus(error.context) === 404;
+}
+
 async function heartbeatAgentPushRuntimeService(
   input: HeartbeatRequest,
   fetchImpl: typeof globalThis.fetch,
@@ -522,16 +535,18 @@ export async function createAgentServiceRegistrationLifecycle(
 ): Promise<AgentServiceRegistrationLifecycle> {
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const input = resolvedAgentServiceRegistrationInputSchema.parse(options);
-  const service = await registerAgentPushRuntimeService(input, fetchImpl);
+  let service = await registerAgentPushRuntimeService(input, fetchImpl);
   let stopped = false;
   const teardown = new AbortController();
   let heartbeatInFlight: Promise<void> | undefined;
   let heartbeatSkipLogged = false;
+  let reRegisteredAfterLostRegistration = false;
 
   const heartbeat = () => {
     if (heartbeatInFlight) return heartbeatInFlight;
 
     heartbeatSkipLogged = false;
+    reRegisteredAfterLostRegistration = false;
     heartbeatInFlight = (async () => {
       if (stopped) {
         return;
@@ -552,6 +567,33 @@ export async function createAgentServiceRegistrationLifecycle(
         // teardown, not a heartbeat failure, so it must not reach the counter.
         if (stopped) {
           return;
+        }
+        if (isLostRegistrationHeartbeatFailure(error)) {
+          // The service_key upsert makes registering again idempotent, and the
+          // next tick heartbeats against the adopted id. The original error
+          // still rejects this call so a direct caller sees the failed beat; a
+          // successful re-registration keeps it out of the failure counter.
+          try {
+            service = await registerAgentPushRuntimeService(input, fetchImpl, teardown.signal);
+            reRegisteredAfterLostRegistration = true;
+            options.logger?.info?.(
+              "Agent service re-registered after the control plane lost its registration",
+              { serviceId: service.id },
+            );
+          } catch (registrationError) {
+            if (stopped) {
+              return;
+            }
+            // A failed re-registration keeps counting toward the escalation, so
+            // a genuinely dead control plane still surfaces persistently.
+            options.logger?.warn?.("Agent service re-registration failed", {
+              serviceId: service.id,
+              error: getErrorMessage(registrationError),
+            });
+          }
+          if (stopped) {
+            return;
+          }
         }
         throw error;
       }
@@ -581,6 +623,14 @@ export async function createAgentServiceRegistrationLifecycle(
     void heartbeat().then(() => {
       consecutiveHeartbeatFailures = 0;
     }).catch((error: unknown) => {
+      // A lost registration that was registered again is a recovery, not a
+      // failure: the next tick heartbeats against the adopted id, so the tick
+      // must not advance the escalation counter.
+      if (reRegisteredAfterLostRegistration) {
+        reRegisteredAfterLostRegistration = false;
+        consecutiveHeartbeatFailures = 0;
+        return;
+      }
       consecutiveHeartbeatFailures++;
       // Escalate from warn to error after repeated failures — persistent heartbeat
       // loss means the control plane considers this service dead while it keeps running.
