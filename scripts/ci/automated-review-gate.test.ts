@@ -2610,7 +2610,7 @@ describe("automated review publication", () => {
       fixture.published[0]?.description,
       `PR#1 reset base:${
         reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-      } key:ready-run-9001`,
+      } key:ready-run-9001-at-1787648400000`,
     );
   });
 
@@ -2784,7 +2784,7 @@ describe("automated review publication", () => {
       tiedFixture.published[0]?.description,
       `PR#1 reset base:${
         reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-      } key:reopen-run-9001`,
+      } key:reopen-run-9001-at-1787648400000`,
     );
 
     const runReset = automatedReviewResetStatus(
@@ -2793,7 +2793,7 @@ describe("automated review publication", () => {
         id: 101,
         description: `PR#1 reset base:${
           reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-        } key:reopen-run-9001`,
+        } key:reopen-run-9001-at-1787648400000`,
       },
     );
 
@@ -3796,7 +3796,7 @@ describe("automated review timeout watchdog", () => {
         id: 100,
         description: `PR#1 reset base:${
           reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-        } key:base-run-9001`,
+        } key:base-run-9001-at-1787644800000`,
       },
     );
     const runRecovery = githubFixture({
@@ -3831,7 +3831,7 @@ describe("automated review timeout watchdog", () => {
     assertEquals(runRecoveryResult.reason, "revalidated");
     assertEquals(
       runRecovery.commentsPosted[0]?.body,
-      `<!-- automated-review-request: ${HEAD} base-run-9001 -->\n@codex review`,
+      `<!-- automated-review-request: ${HEAD} base-run-9001-at-1787644800000 -->\n@codex review`,
     );
 
     const queueOutage = githubFixture({
@@ -4777,6 +4777,7 @@ function requestFixture(options: {
   comments?: Record<string, unknown>[];
   events?: Record<string, unknown>[];
   eventResponses?: Record<string, unknown>[][];
+  reviews?: Record<string, unknown>[];
   currentHead?: string;
   currentState?: string;
   draft?: boolean;
@@ -4785,12 +4786,16 @@ function requestFixture(options: {
   const state = {
     comments: options.comments ?? [],
     events: options.events ?? [],
+    reviews: options.reviews ?? [],
     currentHead: options.currentHead ?? HEAD,
     currentState: options.currentState ?? "open",
     draft: options.draft ?? false,
   };
   const listComments = () => undefined;
   const listEvents = () => undefined;
+  const listReviews = () => undefined;
+  const listStatuses = () => undefined;
+  const listTimeline = () => undefined;
   let eventRead = 0;
   const github = {
     paginate: {
@@ -4801,6 +4806,9 @@ function requestFixture(options: {
             Math.min(eventRead++, options.eventResponses.length - 1)
           ] ?? state.events;
           yield { data: events };
+        } else if (endpoint === listReviews) yield { data: state.reviews };
+        else if (endpoint === listStatuses || endpoint === listTimeline) {
+          yield { data: [] };
         }
         else throw new Error("unknown endpoint");
       },
@@ -4809,20 +4817,28 @@ function requestFixture(options: {
       issues: {
         listComments,
         listEvents,
+        listEventsForTimeline: listTimeline,
         createComment: (comment: Record<string, unknown>) => {
           posted.push(comment);
           return Promise.resolve();
         },
       },
       pulls: {
+        listReviews,
         get: () =>
           Promise.resolve({
             data: {
               head: { sha: state.currentHead },
+              base: { ref: BASE_REF, repo: { id: BASE_REPOSITORY_ID } },
+              user: { login: "pull-author" },
               state: state.currentState,
               draft: state.draft,
             },
           }),
+      },
+      repos: {
+        listCommitStatusesForRef: listStatuses,
+        getCommit: () => Promise.resolve({ data: { sha: HEAD } }),
       },
     },
   };
@@ -4900,6 +4916,23 @@ describe("automated review request", () => {
     assertEquals(result.requested, false);
     assertEquals(result.reason, "stale-head");
     assertEquals(fixture.posted.length, 0);
+  });
+
+  it("does not request after exact-head proof arrives", async () => {
+    const fixture = requestFixture({
+      reviews: [review({ state: "APPROVED" })],
+    });
+    const result = await requestAutomatedReview({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      revalidateReviewEvidence: true,
+    });
+    assertEquals(result.requested, false);
+    assertEquals(result.reason, "reviewed");
+    assertEquals(fixture.posted, []);
   });
 
   it("does not post when the pull request is closed or draft", async () => {
@@ -5171,9 +5204,9 @@ describe("automated review request", () => {
       repo: "veryfront-code",
       pullNumber: 1,
       headSha: HEAD,
-      requestKey: "base-run-9001",
+      requestKey: "base-run-9001-at-1787644800000",
       validateRequestEpoch: true,
-      reviewEpochNotAfter: "2026-08-25T09:00:00Z",
+      reviewEpochNotAfter: "2026-08-25T08:00:00Z",
     });
     assertEquals(staleRunResult.requested, false);
     assertEquals(staleRunResult.reason, "stale-epoch");
@@ -6092,6 +6125,7 @@ describe("automated review workflow", () => {
         "github.event.pull_request.draft == false",
         "github.event.action == 'synchronize'",
         "github.event.action == 'reopened'",
+        "github.event.action == 'ready_for_review'",
         "github.event.action == 'edited'",
         "github.event.changes.base",
         "steps.publish.outputs.result == 'pending'",
@@ -6103,9 +6137,8 @@ describe("automated review workflow", () => {
       );
     }
     assert(
-      !requestCondition.includes("github.event.action == 'ready_for_review'") &&
-        !requestCondition.includes("github.event.action == 'opened'"),
-      "open and ready-for-review events are already handled by the connector",
+      !requestCondition.includes("github.event.action == 'opened'"),
+      "open events are already handled by the connector",
     );
     const requestScript = String(
       record(request.with, "request inputs").script,
@@ -6123,6 +6156,10 @@ describe("automated review workflow", () => {
       "lifecycle requests must wait for the triggering durable event",
     );
     assert(
+      requestScript.includes("revalidateReviewEvidence: true"),
+      "request posting must recheck exact-head proof at the final boundary",
+    );
+    assert(
       requestScript.includes('context.payload.action === "edited"') &&
         requestScript.includes('? "base"'),
       "base-edit requests must derive their key from the durable epoch",
@@ -6134,6 +6171,11 @@ describe("automated review workflow", () => {
       "reopened requests must derive their key from the durable epoch",
     );
     assert(!requestScript.includes("`reopen-${context.runId}`"));
+    assert(
+      requestScript.includes('context.payload.action === "ready_for_review"') &&
+        requestScript.includes('? "ready"'),
+      "ready resets must explicitly request replacement proof",
+    );
     assert(
       requestScript.includes('result.reason === "ineligible-pull"'),
       "a delayed request must report that the pull request is no longer eligible",

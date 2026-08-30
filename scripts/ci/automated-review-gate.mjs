@@ -243,7 +243,7 @@ function durableReviewRequestKey(
       typeof reviewEpochRunKey !== "string" ||
       !/^[1-9]\d*$/.test(reviewEpochRunKey)
     ) throw new Error("Review epoch run key is malformed");
-    return `${requestKey}-run-${reviewEpochRunKey}`;
+    return `${requestKey}-run-${reviewEpochRunKey}-at-${notBefore}`;
   }
   if (!Number.isSafeInteger(latestEpoch.id) || latestEpoch.id < 1) {
     throw new Error("Review epoch event identity is malformed");
@@ -399,7 +399,9 @@ function isEvidenceProvablyLater(candidate, current, timeline) {
 function reviewResetDescription(pullNumber, baseBinding, requestKey) {
   const prefix = `PR#${pullNumber} reset base:${baseBinding}`;
   if (requestKey === undefined) return prefix;
-  const encodedKey = /^(?:base|ready|reopen)-run-[1-9]\d*$/.test(requestKey)
+  const encodedKey = /^(?:base|ready|reopen)-run-[1-9]\d*-at-\d{13}$/.test(
+      requestKey,
+    )
     ? requestKey
     : createHash("sha256").update(requestKey).digest("hex").slice(0, 12);
   return `${prefix} key:${encodedKey}`;
@@ -455,12 +457,15 @@ function latestRunBoundReviewRequestKey(
       !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
     ) continue;
     const requestKey = status.description.slice(prefix.length);
-    if (!/^(?:base|ready|reopen)-run-[1-9]\d*$/.test(requestKey)) continue;
+    const runBound = /^(?:base|ready|reopen)-run-[1-9]\d*-at-(\d{13})$/
+      .exec(requestKey);
+    if (!runBound) continue;
+    const epochTime = Number(runBound[1]);
     const createdAt = Date.parse(status?.created_at ?? "");
     if (!Number.isFinite(createdAt)) continue;
     if (boundary !== undefined && createdAt < boundary.time) continue;
     if (latest === undefined || createdAt > latest.createdAt) {
-      latest = { requestKey, createdAt };
+      latest = { requestKey, createdAt, epochTime };
     }
   }
   return latest;
@@ -1259,7 +1264,7 @@ export async function publishAutomatedReviewStatus({
       reviewRequestKey = effectiveReviewResetKey ??
         runBoundRequest?.requestKey ??
         reviewRequestKeyFromBoundary(reviewBoundary);
-      reviewRequestEpochTime = runBoundRequest?.createdAt;
+      reviewRequestEpochTime = runBoundRequest?.epochTime;
       if (
         !pendingStatusBelongsToReviewEpoch(
           existingPendingStatus,
@@ -2077,6 +2082,7 @@ export async function expireTimedOutAutomatedReview({
             ? new Date(result.reviewRequestEpochTime).toISOString()
             : undefined,
           validateRequestEpoch: result.reviewRequestKey !== undefined,
+          revalidateReviewEvidence: true,
         });
       } catch (error) {
         await publishReviewPropagationRetryStatus({
@@ -2815,6 +2821,7 @@ export async function requestAutomatedReview({
   reviewEpochNotAfter = /** @type {string | undefined} */ (undefined),
   reviewEpochRunKey = /** @type {string | undefined} */ (undefined),
   validateRequestEpoch = false,
+  revalidateReviewEvidence = false,
 }) {
   // The comment body must stay a fixed instruction plus a verified commit
   // SHA. Never interpolate pull request controlled content here: this runs
@@ -2835,7 +2842,9 @@ export async function requestAutomatedReview({
     ? /^(base|ready|reopen)-([1-9]\d*)$/.exec(requestKey)
     : null;
   const runBoundEpoch = typeof requestKey === "string"
-    ? /^(base|ready|reopen)-run-([1-9]\d*)$/.exec(requestKey)
+    ? /^(base|ready|reopen)-run-([1-9]\d*)-at-(\d{13})$/.exec(
+      requestKey,
+    )
     : null;
   const sentinelEpoch = REVIEW_REQUEST_EVENT_KINDS.has(requestKey);
   const resolveEpochKey = (events) => {
@@ -2849,7 +2858,9 @@ export async function requestAutomatedReview({
     }
     if (runBoundEpoch) {
       const notAfter = Date.parse(reviewEpochNotAfter ?? "");
-      if (!Number.isFinite(notAfter)) {
+      if (
+        !Number.isFinite(notAfter) || notAfter !== Number(runBoundEpoch[3])
+      ) {
         throw new Error("Run-bound review epoch timestamp is malformed");
       }
       const latestEpoch = latestReviewEpochChange(events);
@@ -2922,6 +2933,58 @@ export async function requestAutomatedReview({
     if (currentKey !== effectiveRequestKey) {
       return { requested: false, marker, reason: "stale-epoch" };
     }
+  }
+  if (revalidateReviewEvidence) {
+    const common = { owner, repo };
+    const [reviews, comments, events, statuses, timeline] = await Promise.all([
+      collectAll(
+        github,
+        github.rest.pulls.listReviews,
+        { ...common, pull_number: pullNumber },
+        "final request reviews",
+      ),
+      collectAll(
+        github,
+        github.rest.issues.listComments,
+        { ...common, issue_number: pullNumber },
+        "final request comments",
+      ),
+      collectAll(
+        github,
+        github.rest.issues.listEvents,
+        { ...common, issue_number: pullNumber },
+        "final request events",
+      ),
+      collectAll(
+        github,
+        github.rest.repos.listCommitStatusesForRef,
+        { ...common, ref: headSha },
+        "final request statuses",
+      ),
+      collectAll(
+        github,
+        github.rest.issues.listEventsForTimeline,
+        { ...common, issue_number: pullNumber },
+        "final request timeline",
+      ),
+    ]);
+    if (hasReviewRequest(comments, headSha, effectiveRequestKey)) {
+      return { requested: false, marker };
+    }
+    const baseBinding = pullRequestBaseBinding(response?.data);
+    const review = await findAutomatedReview(
+      { reviews, comments, events, timeline },
+      headSha,
+      (ref) => resolveCommitRef(github, common, ref),
+      (login) =>
+        isCurrentlyTrustedHuman(github, {
+          ...common,
+          login,
+          pullAuthor: response?.data?.user?.login,
+        }),
+      latestReviewResetTime(statuses, pullNumber, baseBinding),
+    );
+    if (review) return { requested: false, marker, reason: "reviewed" };
   }
   await github.rest.issues.createComment({
     owner,
