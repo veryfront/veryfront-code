@@ -33,7 +33,7 @@ permissions:
 concurrency:
   # Cancel superseded first-attempt PR runs. Non-PR runs and manual reruns get
   # run-unique groups so a pending or newer run is never cancelled or replaced.
-  # Pinned by scripts/ci/workflow-concurrency.test.ts; see cicd.yml and
+  # Pinned by tests/integration/ci/workflow-concurrency.test.ts; see cicd.yml and
   # veryfront-studio#5544.
   group: ${{ github.event_name == 'pull_request' && github.run_attempt == '1' && format('{0}-{1}', github.workflow, github.ref) || format('{0}-{1}', github.workflow, github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

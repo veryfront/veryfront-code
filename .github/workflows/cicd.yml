@@ -18,7 +18,7 @@ concurrency:
   # can be mid-publish) nor replaced while pending, since GitHub keeps one
   # pending run per group, and a manual rerun of an older attempt keeps its
   # ref and must not cancel the current head's run. The contract is pinned by
-  # scripts/ci/workflow-concurrency.test.ts. See veryfront-studio#5544.
+  # tests/integration/ci/workflow-concurrency.test.ts. See veryfront-studio#5544.
   group: ${{ github.event_name == 'pull_request' && github.run_attempt == '1' && format('{0}-{1}', github.workflow, github.ref) || format('{0}-{1}', github.workflow, github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 

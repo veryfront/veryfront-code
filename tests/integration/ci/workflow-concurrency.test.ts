@@ -1,5 +1,5 @@
-import { assertEquals } from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 
 // The workflows that cancel superseded pull_request runs share one
@@ -20,9 +20,9 @@ const CONCURRENCY_GROUP =
 const CANCEL_IN_PROGRESS = "${{ github.event_name == 'pull_request' }}";
 
 const WORKFLOWS = [
-  ".github/workflows/cicd.yml",
-  ".github/workflows/codeql.yml",
-  ".github/workflows/security-audit.yml",
+  "cicd.yml",
+  "codeql.yml",
+  "security-audit.yml",
 ];
 
 function asRecord(value: unknown, context: string): Record<string, unknown> {
@@ -33,25 +33,29 @@ function asRecord(value: unknown, context: string): Record<string, unknown> {
 }
 
 describe("superseded-run cancellation contract", () => {
-  for (const path of WORKFLOWS) {
-    it(`${path} cancels superseded PR runs and nothing else`, async () => {
+  for (const name of WORKFLOWS) {
+    it(`${name} cancels superseded PR runs and nothing else`, async () => {
+      const url = new URL(
+        `../../../.github/workflows/${name}`,
+        import.meta.url,
+      );
       const workflow = asRecord(
-        parse(await Deno.readTextFile(path)),
-        path,
+        parse(await Deno.readTextFile(url)),
+        name,
       );
       const concurrency = asRecord(
         workflow.concurrency,
-        `${path} concurrency`,
+        `${name} concurrency`,
       );
       assertEquals(
         concurrency.group,
         CONCURRENCY_GROUP,
-        `${path} concurrency group must scope first-attempt PR runs by ref and everything else by run id`,
+        `${name} concurrency group must scope first-attempt PR runs by ref and everything else by run id`,
       );
       assertEquals(
         concurrency["cancel-in-progress"],
         CANCEL_IN_PROGRESS,
-        `${path} must cancel superseded pull_request runs only`,
+        `${name} must cancel superseded pull_request runs only`,
       );
     });
   }
