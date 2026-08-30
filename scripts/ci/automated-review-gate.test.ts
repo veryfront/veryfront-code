@@ -2226,6 +2226,35 @@ describe("automated review publication", () => {
       hiddenFixture.published[0]?.description,
       retryStatus.description,
     );
+
+    const sameSecondRetry = automatedReviewStatus({
+      id: 107,
+      state: "failure",
+      description: "PR#1 review status unavailable; queue retry pending",
+      created_at: "2026-08-25T09:00:00Z",
+    });
+    const sameSecondFixture = githubFixture({
+      pages: {
+        events: [[{
+          event: "ready_for_review",
+          id: 108,
+          created_at: "2026-08-25T09:00:00Z",
+        }]],
+        statuses: [[sameSecondRetry]],
+      },
+    });
+    const sameSecondResult = await publishAutomatedReviewStatus({
+      github: sameSecondFixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(sameSecondResult.state, "failure");
+    assertEquals(sameSecondResult.statusId, 107);
+    assertEquals(sameSecondResult.description, sameSecondRetry.description);
+    assertEquals(sameSecondFixture.published, []);
   });
 
   it("does not time out a pending status from before a base reset", async () => {

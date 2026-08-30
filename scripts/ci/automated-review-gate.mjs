@@ -1601,6 +1601,7 @@ function latestReviewPropagationRetryStatus(
     }
     if (
       createdAt === boundary.time &&
+      failureKind !== "unavailable" &&
       !terminalStatusHasBoundaryProof(
         status,
         comments,
