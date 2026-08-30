@@ -43,6 +43,10 @@ export interface WorkflowHandlerOptions {
    * for approval decisions instead of trusting the request body.
    */
   authorize: (request: Request) => string | null | Promise<string | null>;
+  /** Maximum number of active event streams for this handler instance. */
+  maxEventStreams?: number;
+  /** Maximum number of active event streams for one authorized identity. */
+  maxEventStreamsPerIdentity?: number;
   /**
    * Path this handler is mounted at. It has to match the `apiBase` the hooks
    * use, because the handler resolves a route by what follows it.
@@ -57,10 +61,19 @@ export interface WorkflowHandlers {
 }
 
 const DEFAULT_BASE_PATH = "/api/workflows";
-const MAX_EVENT_STREAMS = 64;
+const DEFAULT_MAX_EVENT_STREAMS = 64;
+const DEFAULT_MAX_EVENT_STREAMS_PER_IDENTITY = 8;
 const logger = baseLogger.component("workflow-http");
 
 class WorkflowRequestError extends Error {}
+
+function readPositiveLimit(value: number | undefined, fallback: number, name: string): number {
+  const limit = value ?? fallback;
+  if (!Number.isSafeInteger(limit) || limit < 1) {
+    throw new TypeError(`${name} must be a positive safe integer`);
+  }
+  return limit;
+}
 
 function readDecimalInteger(value: string): number {
   if (!/^[0-9]+$/.test(value)) {
@@ -232,7 +245,6 @@ function runEventStream(
 
   const cleanup = (): Promise<void> => {
     if (cleanupPromise) return cleanupPromise;
-    release();
     signal.removeEventListener("abort", abort);
     const returnIterator = (() => {
       try {
@@ -251,7 +263,9 @@ function runEventStream(
     cleanupPromise = Promise.allSettled([
       returnIterator,
       closeObservation,
-    ]).then(() => {});
+    ]).then(() => {
+      release();
+    });
     return cleanupPromise;
   };
 
@@ -372,6 +386,9 @@ function runEventStream(
  * run-status events, and closes on a terminal run. Missing runs return 404.
  * Custom backends without atomic run observation return 501. Observation
  * failures send one sanitized `error` event with `retryable: true`, then close.
+ * When the active stream limit is reached, the route returns 429 before opening
+ * a backend observation. The default limits are 64 streams per handler and 8
+ * streams per authorized identity; both limits can be configured below.
  * A snapshot that cannot be serialized fails the same way on every reconnect,
  * so that error event carries `retryable: false` instead.
  */
@@ -380,16 +397,35 @@ export function createWorkflowHandler(
   options: WorkflowHandlerOptions,
 ): WorkflowHandlers {
   const basePath = (options.basePath ?? DEFAULT_BASE_PATH).replace(/\/+$/, "") || "/";
+  const maxEventStreams = readPositiveLimit(
+    options.maxEventStreams,
+    DEFAULT_MAX_EVENT_STREAMS,
+    "maxEventStreams",
+  );
+  const maxEventStreamsPerIdentity = readPositiveLimit(
+    options.maxEventStreamsPerIdentity,
+    DEFAULT_MAX_EVENT_STREAMS_PER_IDENTITY,
+    "maxEventStreamsPerIdentity",
+  );
   let activeEventStreams = 0;
+  const activeEventStreamsByIdentity = new Map<string, number>();
 
-  const reserveEventStream = (): (() => void) | undefined => {
-    if (activeEventStreams >= MAX_EVENT_STREAMS) return undefined;
+  const reserveEventStream = (identity: string): (() => void) | undefined => {
+    const activeForIdentity = activeEventStreamsByIdentity.get(identity) ?? 0;
+    if (
+      activeEventStreams >= maxEventStreams ||
+      activeForIdentity >= maxEventStreamsPerIdentity
+    ) return undefined;
     activeEventStreams++;
+    activeEventStreamsByIdentity.set(identity, activeForIdentity + 1);
     let released = false;
     return () => {
       if (released) return;
       released = true;
       activeEventStreams--;
+      const remainingForIdentity = (activeEventStreamsByIdentity.get(identity) ?? 1) - 1;
+      if (remainingForIdentity === 0) activeEventStreamsByIdentity.delete(identity);
+      else activeEventStreamsByIdentity.set(identity, remainingForIdentity);
     };
   };
 
@@ -401,7 +437,8 @@ export function createWorkflowHandler(
       if (url.pathname !== canonicalWorkflowPath(basePath, segments)) {
         return problem("Workflow route must use its canonical path", 400);
       }
-      if (await options.authorize(request) === null) {
+      const authorizedIdentity = await options.authorize(request);
+      if (authorizedIdentity === null) {
         return problem("Workflow request is not authorized", 403);
       }
 
@@ -424,7 +461,7 @@ export function createWorkflowHandler(
       }
 
       if (segments.length === 3 && first === "runs" && runId && third === "events") {
-        const release = reserveEventStream();
+        const release = reserveEventStream(authorizedIdentity);
         if (!release) return problem("Too many workflow event streams", 429);
         try {
           const observation = await client.observeRunEvents(runId, { signal: request.signal });

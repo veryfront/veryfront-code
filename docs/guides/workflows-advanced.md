@@ -324,6 +324,24 @@ transition frame. Cancelling the response or aborting the request releases the
 backend observation. An observation failure sends the sanitized `error` frame and
 then closes.
 
+The handler admits at most 64 active event streams by default, and at most 8
+streams for one authorized identity. These limits are local to the handler
+instance. Configure them when mounting the handler if the deployment needs a
+different budget:
+
+```ts
+export const { GET, POST } = createWorkflowHandler(workflows, {
+  authorize: async (request) => (await getSession(request))?.user.id ?? null,
+  maxEventStreams: 64,
+  maxEventStreamsPerIdentity: 8,
+});
+```
+
+When either limit is reached, the endpoint returns `429` with a JSON `message`
+before opening a backend observation. Treat this as a transient admission
+failure and retry with backoff after an existing stream closes. In a deployment
+with multiple handler processes, each process enforces its own limits.
+
 Native `EventSource` reconnects automatically when a transport disconnects or a
 successful SSE response reaches EOF. The helper calls `close()` for terminal runs
 to avoid reconnecting to an already-finished run. A transport failure dispatches
