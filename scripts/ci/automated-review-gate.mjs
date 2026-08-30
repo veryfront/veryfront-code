@@ -995,6 +995,8 @@ export async function publishAutomatedReviewStatus({
   let existingPendingStatus;
   let existingTerminalStatus;
   let existingTerminalStatusIsLatest = false;
+  let existingPropagationRetryStatus;
+  let existingPropagationRetryKind;
   let reviewBoundary;
   let failureKind;
   let failureUrl;
@@ -1115,6 +1117,16 @@ export async function publishAutomatedReviewStatus({
       );
       existingTerminalStatusIsLatest = existingTerminalStatus?.id ===
         latestReviewGateStatusForPull(statuses, pullNumber)?.id;
+      const propagationRetry = latestReviewPropagationRetryStatus(
+        statuses,
+        pullNumber,
+        reviewBoundary,
+        comments,
+        timeline,
+        headSha,
+      );
+      existingPropagationRetryStatus = propagationRetry?.status;
+      existingPropagationRetryKind = propagationRetry?.failureKind;
       if (
         !isDraft &&
         (!resetPending || REVIEW_EPOCH_EVENTS.has(reviewBoundary?.kind))
@@ -1132,41 +1144,51 @@ export async function publishAutomatedReviewStatus({
           reviewNotBefore,
         );
         if (!review) {
-          const usageLimit = latestCodexUsageLimit(
-            comments,
-            reviewBoundary,
-            reviewFailureCommentId,
-            timeline,
-            headSha,
-          );
-          if (usageLimit) {
-            failure = new Error("Automated review was rate limited");
-            failureKind = "rate-limited";
-            failureUrl = typeof usageLimit.html_url === "string"
-              ? usageLimit.html_url
+          if (existingPropagationRetryStatus) {
+            failure = new Error("Automated review queue propagation is pending");
+            failureKind = existingPropagationRetryKind;
+            failureUrl = typeof existingPropagationRetryStatus.target_url ===
+                "string"
+              ? existingPropagationRetryStatus.target_url
               : undefined;
-          } else if (
-            existingPendingStatus &&
-            reviewTimeoutMs !== undefined &&
-            pendingReviewAge(existingPendingStatus, now) >= reviewTimeoutMs
-          ) {
-            failure = new Error("Automated review timed out");
-            failureKind = "timed-out";
-          }
-          if (!failure && existingTerminalStatus) {
-            failureKind = existingTerminalStatus.description.endsWith(
-                "rate limited",
-              )
-              ? "rate-limited"
-              : "timed-out";
-            failure = new Error(
-              failureKind === "rate-limited"
-                ? "Automated review remains rate limited"
-                : "Automated review remains timed out",
+          } else {
+            const usageLimit = latestCodexUsageLimit(
+              comments,
+              reviewBoundary,
+              reviewFailureCommentId,
+              timeline,
+              headSha,
             );
-            failureUrl = typeof existingTerminalStatus.target_url === "string"
-              ? existingTerminalStatus.target_url
-              : undefined;
+            if (usageLimit) {
+              failure = new Error("Automated review was rate limited");
+              failureKind = "rate-limited";
+              failureUrl = typeof usageLimit.html_url === "string"
+                ? usageLimit.html_url
+                : undefined;
+            } else if (
+              existingPendingStatus &&
+              reviewTimeoutMs !== undefined &&
+              pendingReviewAge(existingPendingStatus, now) >= reviewTimeoutMs
+            ) {
+              failure = new Error("Automated review timed out");
+              failureKind = "timed-out";
+            }
+            if (!failure && existingTerminalStatus) {
+              failureKind = existingTerminalStatus.description.endsWith(
+                  "rate limited",
+                )
+                ? "rate-limited"
+                : "timed-out";
+              failure = new Error(
+                failureKind === "rate-limited"
+                  ? "Automated review remains rate limited"
+                  : "Automated review remains timed out",
+              );
+              failureUrl = typeof existingTerminalStatus.target_url ===
+                  "string"
+                ? existingTerminalStatus.target_url
+                : undefined;
+            }
           }
         }
       }
@@ -1212,7 +1234,9 @@ export async function publishAutomatedReviewStatus({
   else if (review) state = "success";
 
   let description;
-  if (failure) {
+  if (failure && existingPropagationRetryStatus) {
+    description = existingPropagationRetryStatus.description;
+  } else if (failure) {
     description = reviewFailureDescription(
       pullNumber,
       failureKind ?? "unavailable",
@@ -1229,6 +1253,21 @@ export async function publishAutomatedReviewStatus({
   } else if (isDraft) description = `PR#${pullNumber} draft waits for review`;
   else {
     description = `PR#${pullNumber} waits for review ${headSha.slice(0, 12)}`;
+  }
+  if (
+    state === "failure" &&
+    existingPropagationRetryStatus?.description === description &&
+    isPositiveStatusId(existingPropagationRetryStatus.id)
+  ) {
+    return {
+      state,
+      review,
+      failure,
+      description,
+      baseRef,
+      statusId: existingPropagationRetryStatus.id,
+      targetUrl: existingPropagationRetryStatus.target_url,
+    };
   }
   if (
     state === "failure" &&
@@ -1466,7 +1505,14 @@ export async function findTimedOutAutomatedReviews({
   throw new Error("Timeout discovery exceeded 1,000 open pull requests");
 }
 
-function latestReviewPropagationRetryStatus(statuses, pullNumber) {
+function latestReviewPropagationRetryStatus(
+  statuses,
+  pullNumber,
+  boundary,
+  comments = [],
+  timeline = [],
+  headSha = "",
+) {
   const status = latestReviewGateStatusForPull(statuses, pullNumber);
   if (
     status?.state !== "failure" ||
@@ -1478,7 +1524,24 @@ function latestReviewPropagationRetryStatus(statuses, pullNumber) {
     pullNumber,
     true,
   );
-  return failureKind === undefined ? undefined : { status, failureKind };
+  if (failureKind === undefined) return undefined;
+  if (boundary !== undefined) {
+    const createdAt = Date.parse(status?.created_at ?? "");
+    if (!Number.isFinite(createdAt) || createdAt < boundary.time) {
+      return undefined;
+    }
+    if (
+      createdAt === boundary.time &&
+      !terminalStatusHasBoundaryProof(
+        status,
+        comments,
+        boundary,
+        timeline,
+        headSha,
+      )
+    ) return undefined;
+  }
+  return { status, failureKind };
 }
 
 async function finalizeReviewFailureStatus({

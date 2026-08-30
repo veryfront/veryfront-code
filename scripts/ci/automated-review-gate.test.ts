@@ -2124,6 +2124,52 @@ describe("automated review publication", () => {
     );
   });
 
+  it("preserves queue-retry failures until propagation completes", async () => {
+    const retryStatus = automatedReviewStatus({
+      id: 105,
+      state: "failure",
+      description: "PR#1 automated review timed out; queue retry pending",
+      target_url: "https://example.test/pr/1",
+      created_at: "2026-08-25T08:00:00Z",
+    });
+    const fixture = githubFixture({
+      pages: { statuses: [[retryStatus]] },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+
+    assertEquals(result.state, "failure");
+    assertEquals(result.statusId, 105);
+    assertEquals(result.description, retryStatus.description);
+    assertEquals(fixture.published, []);
+
+    const resetFixture = githubFixture({
+      pages: {
+        events: [[{
+          event: "ready_for_review",
+          created_at: "2026-08-25T09:00:00Z",
+        }]],
+        statuses: [[retryStatus]],
+      },
+    });
+    const resetResult = await publishAutomatedReviewStatus({
+      github: resetFixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(resetResult.state, "pending");
+    assertEquals(resetFixture.published[0]?.state, "pending");
+  });
+
   it("does not time out a pending status from before a base reset", async () => {
     const fixture = githubFixture({
       pages: {
