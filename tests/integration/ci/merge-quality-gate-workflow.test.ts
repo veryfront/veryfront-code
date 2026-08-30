@@ -189,7 +189,7 @@ describe("merge quality gate workflow", () => {
     const unitTests = asRecord(jobs["unit-tests"], "unit sentinel job");
     const coverage = asRecord(jobs.coverage, "coverage gate job");
 
-    assertEquals(matrix.shard, [1, 2, 3, 4, 5, 6, 7, 8]);
+    assertEquals(matrix.shard, [1, 2, 3, 4]);
     assertEquals(unitTests.name, "tests (unit)");
     assertEquals(unitTests.needs, ["coverage-shards"]);
     assertEquals(coverage.name, "coverage gate");

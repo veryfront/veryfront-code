@@ -2,7 +2,7 @@
 # Docs: https://docs.codecov.com/docs/codecov-yaml
 #
 # Coverage is uploaded by the `codecov upload` job in
-# .github/workflows/cicd.yml, which sends all 8 shard lcov files in one call.
+# .github/workflows/cicd.yml, which sends all 4 shard lcov files in one call.
 #
 # Codecov is ADVISORY here. The blocking threshold is still enforced in CI by
 # `deno task coverage:gate` (scripts/lint/check-coverage.ts, 80% line coverage).
@@ -12,7 +12,7 @@
 codecov:
   require_ci_to_pass: true
   notify:
-    # The `codecov upload` job sends all 8 shard lcov files in one call, so
+    # The `codecov upload` job sends all 4 shard lcov files in one call, so
     # there is exactly one upload per commit and reporting must not wait for
     # more. Raise this if uploads are ever split back out per shard.
     after_n_builds: 1
