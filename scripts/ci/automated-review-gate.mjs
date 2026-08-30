@@ -1128,7 +1128,7 @@ export async function publishAutomatedReviewStatus({
   });
   let statusId = statusResponse?.data?.id;
   if (state === "success" && !isPositiveStatusId(statusId)) {
-    failure = new Error("Published review status identity is malformed");
+    failure = new TypeError("Published review status identity is malformed");
     state = "failure";
     review = undefined;
     description = `PR#${pullNumber} review status unavailable`;
@@ -1147,17 +1147,17 @@ export async function publishAutomatedReviewStatus({
     }
   }
   if (statusId !== undefined && !isPositiveStatusId(statusId)) {
-    throw new Error("Published review status identity is malformed");
+    throw new TypeError("Published review status identity is malformed");
   }
   return { state, review, failure, description, baseRef, statusId };
 }
 
 function requireReviewTimeoutInputs(now, reviewTimeoutMs) {
   if (!Number.isFinite(now)) {
-    throw new Error("Review timeout discovery time is invalid");
+    throw new TypeError("Review timeout discovery time is invalid");
   }
   if (!Number.isSafeInteger(reviewTimeoutMs) || reviewTimeoutMs < 1) {
-    throw new Error("Review timeout is invalid");
+    throw new TypeError("Review timeout is invalid");
   }
 }
 
@@ -1206,13 +1206,13 @@ const TIMED_OUT_AUTOMATED_REVIEWS_QUERY = `
 function pendingReviewContext(pull, pullNumber) {
   const commitNodes = pull?.commits?.nodes;
   if (!Array.isArray(commitNodes)) {
-    throw new Error(`PR #${pullNumber} commit rollup is malformed`);
+    throw new TypeError(`PR #${pullNumber} commit rollup is malformed`);
   }
   const status = commitNodes[0]?.commit?.status;
   if (status == null) return undefined;
   const contexts = status?.contexts;
   if (!Array.isArray(contexts)) {
-    throw new Error(`PR #${pullNumber} status rollup is malformed`);
+    throw new TypeError(`PR #${pullNumber} status rollup is malformed`);
   }
   const descriptionPrefix = `PR#${pullNumber} `;
   return contexts.find((context) =>
@@ -1221,6 +1221,40 @@ function pendingReviewContext(pull, pullNumber) {
     typeof context?.description === "string" &&
     context.description.startsWith(descriptionPrefix)
   );
+}
+
+function timeoutDiscoveryPage(response) {
+  const pullRequests = response?.repository?.pullRequests;
+  if (!Array.isArray(pullRequests?.nodes)) {
+    throw new TypeError("Open pull request rollup is malformed");
+  }
+  const pageInfo = pullRequests?.pageInfo;
+  if (pageInfo?.hasNextPage !== true) {
+    return { nodes: pullRequests.nodes, cursor: undefined };
+  }
+  if (typeof pageInfo?.endCursor !== "string" || !pageInfo.endCursor) {
+    throw new TypeError("Open pull request cursor is malformed");
+  }
+  return { nodes: pullRequests.nodes, cursor: pageInfo.endCursor };
+}
+
+function timedOutReviewTarget(pull, now, reviewTimeoutMs) {
+  if (pull?.isDraft === true) return undefined;
+  const pullNumber = pull?.number;
+  const headSha = pull?.headRefOid;
+  if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+    throw new TypeError("Open pull request number is invalid");
+  }
+  if (typeof headSha !== "string" || !FULL_SHA.test(headSha)) {
+    throw new TypeError(`PR #${pullNumber} head commit is invalid`);
+  }
+  const pendingStatus = pendingReviewContext(pull, pullNumber);
+  if (!pendingStatus) return undefined;
+  const createdAt = Date.parse(pendingStatus?.createdAt ?? "");
+  if (Number.isFinite(createdAt) && now - createdAt < reviewTimeoutMs) {
+    return undefined;
+  }
+  return { pullNumber, headSha: headSha.toLowerCase() };
 }
 
 export async function findTimedOutAutomatedReviews({
@@ -1239,35 +1273,15 @@ export async function findTimedOutAutomatedReviews({
       repo,
       cursor,
     });
-    const pullRequests = response?.repository?.pullRequests;
-    if (!Array.isArray(pullRequests?.nodes)) {
-      throw new Error("Open pull request rollup is malformed");
-    }
-    for (const pull of pullRequests.nodes) {
-      if (pull?.isDraft === true) continue;
-      const pullNumber = pull?.number;
-      const headSha = pull?.headRefOid;
-      if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
-        throw new Error("Open pull request number is invalid");
-      }
-      if (typeof headSha !== "string" || !FULL_SHA.test(headSha)) {
-        throw new Error(`PR #${pullNumber} head commit is invalid`);
-      }
-      const pendingStatus = pendingReviewContext(pull, pullNumber);
-      if (!pendingStatus) continue;
-      const createdAt = Date.parse(pendingStatus?.createdAt ?? "");
-      if (Number.isFinite(createdAt) && now - createdAt < reviewTimeoutMs) {
-        continue;
-      }
-      targets.push({ pullNumber, headSha: headSha.toLowerCase() });
+    const pageResult = timeoutDiscoveryPage(response);
+    for (const pull of pageResult.nodes) {
+      const target = timedOutReviewTarget(pull, now, reviewTimeoutMs);
+      if (!target) continue;
+      targets.push(target);
       if (targets.length >= MAX_TIMEOUT_TARGETS_PER_RUN) return targets;
     }
-    const pageInfo = pullRequests?.pageInfo;
-    if (pageInfo?.hasNextPage !== true) return targets;
-    if (typeof pageInfo?.endCursor !== "string" || !pageInfo.endCursor) {
-      throw new Error("Open pull request cursor is malformed");
-    }
-    cursor = pageInfo.endCursor;
+    if (pageResult.cursor === undefined) return targets;
+    cursor = pageResult.cursor;
   }
   throw new Error("Timeout discovery exceeded 1,000 open pull requests");
 }
@@ -1284,10 +1298,10 @@ export async function expireTimedOutAutomatedReview({
 }) {
   requireReviewTimeoutInputs(now, reviewTimeoutMs);
   if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
-    throw new Error("Timed-out pull request number is invalid");
+    throw new TypeError("Timed-out pull request number is invalid");
   }
   if (typeof headSha !== "string" || !FULL_SHA.test(headSha)) {
-    throw new Error("Timed-out pull request head is invalid");
+    throw new TypeError("Timed-out pull request head is invalid");
   }
   const response = await github.rest.pulls.get({
     owner,
