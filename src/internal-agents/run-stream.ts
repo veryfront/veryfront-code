@@ -73,6 +73,9 @@ import { composeInternalAgentRunSystemPrompt } from "./run-system-prompt.ts";
 import type { RuntimeRunAgentInput } from "./schema.ts";
 import { serverLogger } from "#veryfront/utils";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import { type ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
+import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
+import type { ProviderReplayCheckpointPersister } from "./provider-replay-checkpoint-persister.ts";
 
 const getAnyObjectSchema = defineSchema((v) => v.record(v.string(), v.unknown()));
 const anyObjectSchema = lazySchema(getAnyObjectSchema) as Schema<Record<string, unknown>>;
@@ -88,6 +91,8 @@ const INTERNAL_AGENT_RUNTIME_HEARTBEAT_FRAME = new TextEncoder().encode(
  * folding it into the run's public event sequence.
  */
 export const MODEL_CALL_CONTEXT_SSE_EVENT_NAME = "AgentRunModelCallContext";
+export const PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME = "AgentRunProviderReplayTurnComplete";
+export const PROVIDER_REPLAY_PROTOCOL_HEADER = "X-Veryfront-Provider-Replay-Protocol";
 
 type RuntimeFilteredAgent = Agent & {
   config: Agent["config"] & {
@@ -180,6 +185,9 @@ export interface RuntimeAgentStreamExecutionDeps {
       abortSignal?: AbortSignal,
     ) => Promise<ReadableStream<Uint8Array>>;
   };
+  providerReplayCheckpointEmissionEnabled?: boolean;
+  providerReplayCheckpoints?: readonly ProviderReplayCheckpoint[];
+  persistProviderReplayCheckpoint?: ProviderReplayCheckpointPersister;
 }
 
 function createInjectedStudioTool(
@@ -779,6 +787,77 @@ function createModelCallContextRelay(
   };
 }
 
+type ProviderReplayPrivateFrame = {
+  event: string;
+  payload: Record<string, unknown>;
+};
+
+function createProviderReplayCheckpointRelay(): {
+  complete: (messageId: string) => Promise<void>;
+  fail: () => Promise<void>;
+  takeCompletedTurn: () => Promise<ProviderReplayPrivateFrame[]>;
+  hasCompletedTurn: () => boolean;
+} {
+  const buffered: ProviderReplayPrivateFrame[] = [];
+  let resolvePending:
+    | ((frames: ProviderReplayPrivateFrame[]) => void)
+    | undefined;
+  let rejectPending: ((error: Error) => void) | undefined;
+  let terminalError: Error | undefined;
+
+  const takeReadyTurn = (): ProviderReplayPrivateFrame[] | undefined => {
+    const boundaryIndex = buffered.findIndex((frame) =>
+      frame.event === PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME
+    );
+    return boundaryIndex >= 0 ? buffered.splice(0, boundaryIndex + 1) : undefined;
+  };
+  const resolveIfReady = () => {
+    if (!resolvePending) return;
+    const frames = takeReadyTurn();
+    if (!frames) return;
+    const resolve = resolvePending;
+    resolvePending = undefined;
+    rejectPending = undefined;
+    resolve(frames);
+  };
+
+  return {
+    complete: async (messageId) => {
+      buffered.push({
+        event: PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME,
+        payload: {
+          type: "AGENT_RUN_PROVIDER_REPLAY_TURN_COMPLETE",
+          messageId,
+        },
+      });
+      resolveIfReady();
+    },
+    fail: async () => {
+      if (terminalError) return;
+      terminalError = new Error("Provider replay turn failed before its boundary");
+      buffered.splice(0);
+      const reject = rejectPending;
+      resolvePending = undefined;
+      rejectPending = undefined;
+      reject?.(terminalError);
+    },
+    takeCompletedTurn: () => {
+      if (terminalError) return Promise.reject(terminalError);
+      const frames = takeReadyTurn();
+      if (frames) return Promise.resolve(frames);
+      if (resolvePending) {
+        return Promise.reject(new Error("Provider replay turn boundary already has a waiter"));
+      }
+      return new Promise((resolve, reject) => {
+        resolvePending = resolve;
+        rejectPending = reject;
+      });
+    },
+    hasCompletedTurn: () =>
+      buffered.some((frame) => frame.event === PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME),
+  };
+}
+
 export async function createRuntimeAgentStreamResponse(
   input: RuntimeRunAgentInput,
   agent: Agent,
@@ -802,6 +881,8 @@ export async function createRuntimeAgentStreamResponse(
   let closeSandbox = createIdempotentAsyncCleanup();
   const timing = createAgentRunEventTimingAnchor();
   const modelCallContextRelay = createModelCallContextRelay(timing);
+  const providerReplayCheckpointRelay = createProviderReplayCheckpointRelay();
+  let shouldEmitProviderReplayCheckpoints = false;
   try {
     const forwardedAllowedRemoteToolNames = getAllowedRemoteToolNames(input.forwardedProps);
     const sourceAllowedRemoteToolNames = getAgentAllowedRemoteToolNames(agent);
@@ -953,6 +1034,23 @@ export async function createRuntimeAgentStreamResponse(
       });
     };
     const systemPrompt = await resolveSystemPrompt();
+    const providerReplayCheckpoints = deps.providerReplayCheckpoints ?? [];
+    if (deps.providerReplayCheckpointEmissionEnabled === true && !input.messageId) {
+      throw new Error(
+        "Provider replay checkpoint emission requires a runtime message identity",
+      );
+    }
+    shouldEmitProviderReplayCheckpoints = Boolean(
+      input.messageId &&
+        (deps.providerReplayCheckpointEmissionEnabled === true ||
+          providerReplayCheckpoints.some((checkpoint) => checkpoint.messageId === input.messageId)),
+    );
+    if (shouldEmitProviderReplayCheckpoints && !deps.persistProviderReplayCheckpoint) {
+      throw DURABLE_RUN_EVENT_PERSISTENCE_FAILED.create({
+        detail:
+          "A trusted run-event append token is required to persist a private provider replay checkpoint",
+      });
+    }
     const runtimeAgent: RuntimeFilteredAgent = {
       ...agent,
       config: {
@@ -965,6 +1063,24 @@ export async function createRuntimeAgentStreamResponse(
           : {}),
         ...(forwardedIntegrationToolDefs !== undefined
           ? { __vfForwardedIntegrationToolDefs: forwardedIntegrationToolDefs }
+          : {}),
+        ...(providerReplayCheckpoints.length > 0
+          ? { __vfProviderReplayCheckpoints: providerReplayCheckpoints }
+          : {}),
+        ...(shouldEmitProviderReplayCheckpoints
+          ? {
+            __vfProviderReplayCheckpointMessageId: input.messageId,
+            __vfPersistProviderReplayCheckpoint: (checkpoint: ProviderReplayCheckpoint) =>
+              deps.persistProviderReplayCheckpoint!(checkpoint, abortSignal),
+            __vfProviderReplayCheckpointPersistenceRequired: true,
+          }
+          : {}),
+        ...(shouldEmitProviderReplayCheckpoints
+          ? {
+            __vfProviderReplayCheckpointTurnComplete: () =>
+              providerReplayCheckpointRelay.complete(input.messageId!),
+            __vfProviderReplayCheckpointTurnFailed: providerReplayCheckpointRelay.fail,
+          }
           : {}),
       },
     };
@@ -1133,6 +1249,7 @@ export async function createRuntimeAgentStreamResponse(
               threadId: input.threadId,
               agentId: agent.id,
             });
+            void providerReplayCheckpointRelay.fail();
             void cancelReaderOnce(cancellationError);
           };
 
@@ -1151,6 +1268,49 @@ export async function createRuntimeAgentStreamResponse(
             modelCallContextRelay.attach((event) =>
               enqueueIfAttached(MODEL_CALL_CONTEXT_SSE_EVENT_NAME, event)
             );
+            const enqueueProviderReplayFrame = (frame: ProviderReplayPrivateFrame) => {
+              if (!clientAttached) {
+                throw new Error(
+                  "Provider replay checkpoint stream detached before persistence",
+                );
+              }
+              try {
+                controller.enqueue(
+                  formatAgUiEvent(frame.event, frame.payload),
+                );
+              } catch {
+                clientAttached = false;
+                throw new Error(
+                  "Provider replay checkpoint stream detached before persistence",
+                );
+              }
+            };
+            let providerReplayStepOpen = false;
+            const flushProviderReplayTurn = async () => {
+              if (!providerReplayStepOpen) return;
+              for (const frame of await providerReplayCheckpointRelay.takeCompletedTurn()) {
+                enqueueProviderReplayFrame(frame);
+              }
+              providerReplayStepOpen = false;
+            };
+            const emitMappedEvent = async (mappedEvent: {
+              event: string;
+              payload: Record<string, unknown>;
+            }) => {
+              if (mappedEvent.event === "StepStarted") {
+                await flushProviderReplayTurn();
+                providerReplayStepOpen = shouldEmitProviderReplayCheckpoints;
+              }
+              if (mappedEvent.event === "ToolCallEnd") {
+                await flushProviderReplayTurn();
+              }
+              if (mappedEvent.event === "RunError" && providerReplayStepOpen) {
+                await providerReplayCheckpointRelay.fail();
+                providerReplayStepOpen = false;
+              }
+              prepareToolResultIfNeeded(mappedEvent.event, mappedEvent.payload);
+              enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
+            };
             heartbeatTimer = setInterval(
               enqueueHeartbeatIfAttached,
               INTERNAL_AGENT_RUNTIME_HEARTBEAT_INTERVAL_MS,
@@ -1184,8 +1344,7 @@ export async function createRuntimeAgentStreamResponse(
 
               for (const event of parsed.events) {
                 for (const mappedEvent of mapRuntimeEventToAgUi(state, event)) {
-                  prepareToolResultIfNeeded(mappedEvent.event, mappedEvent.payload);
-                  enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
+                  await emitMappedEvent(mappedEvent);
                 }
               }
             }
@@ -1195,12 +1354,17 @@ export async function createRuntimeAgentStreamResponse(
             const trailingEvents = parseSseJsonEvents(`${remainder}\n\n`);
             for (const event of trailingEvents.events) {
               for (const mappedEvent of mapRuntimeEventToAgUi(state, event)) {
-                prepareToolResultIfNeeded(mappedEvent.event, mappedEvent.payload);
-                enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
+                await emitMappedEvent(mappedEvent);
               }
             }
 
             throwIfAborted();
+            await flushProviderReplayTurn();
+            while (providerReplayCheckpointRelay.hasCompletedTurn()) {
+              for (const frame of await providerReplayCheckpointRelay.takeCompletedTurn()) {
+                enqueueProviderReplayFrame(frame);
+              }
+            }
 
             for (const mappedEvent of finalizeRunEvents(state, completedResponse)) {
               enqueueIfAttached(mappedEvent.event, mappedEvent.payload);
@@ -1369,6 +1533,7 @@ export async function createRuntimeAgentStreamResponse(
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
+      ...(shouldEmitProviderReplayCheckpoints ? { [PROVIDER_REPLAY_PROTOCOL_HEADER]: "1" } : {}),
     },
   });
 }

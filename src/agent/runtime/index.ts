@@ -107,6 +107,8 @@ import {
   getRuntimeProviderReplayCheckpointMessageId,
   getRuntimeProviderReplayCheckpointPersister,
   getRuntimeProviderReplayCheckpoints,
+  getRuntimeProviderReplayCheckpointTurnComplete,
+  getRuntimeProviderReplayCheckpointTurnFailed,
   getRuntimeProviderTools,
   getRuntimeSourceIntegrationPolicy,
   getRuntimeToolExposureCheckpoint,
@@ -690,6 +692,9 @@ async function persistToolExposureCheckpointBeforeContinuation(input: {
 type RuntimeProviderReplayCheckpointEmission = {
   state: ProviderReplayCheckpointEmissionState | undefined;
   persist: ((checkpoint: ProviderReplayCheckpoint) => void | Promise<void>) | undefined;
+  complete: (() => void | Promise<void>) | undefined;
+  fail: (() => void | Promise<void>) | undefined;
+  failed: boolean;
   required: boolean;
 };
 
@@ -707,11 +712,34 @@ function resolveRuntimeProviderReplayCheckpointEmission(
       ? createProviderReplayCheckpointEmissionState({ messageId, existingCheckpoint })
       : undefined,
     persist: getRuntimeProviderReplayCheckpointPersister(config),
+    complete: getRuntimeProviderReplayCheckpointTurnComplete(config),
+    fail: getRuntimeProviderReplayCheckpointTurnFailed(config),
+    failed: false,
     required: isRuntimeProviderReplayCheckpointPersistenceRequired(config),
   };
 }
 
+async function failProviderReplayCheckpointTurn(
+  emission: RuntimeProviderReplayCheckpointEmission,
+): Promise<void> {
+  if (emission.failed) return;
+  emission.failed = true;
+  await emission.fail?.();
+}
+
 async function persistProviderReplayCheckpointAfterTurn(input: {
+  emission: RuntimeProviderReplayCheckpointEmission;
+  providerMetadata: Record<string, unknown> | undefined;
+}): Promise<void> {
+  try {
+    await persistProviderReplayCheckpointAfterTurnUnsafe(input);
+  } catch (error) {
+    await failProviderReplayCheckpointTurn(input.emission);
+    throw error;
+  }
+}
+
+async function persistProviderReplayCheckpointAfterTurnUnsafe(input: {
   emission: RuntimeProviderReplayCheckpointEmission;
   providerMetadata: Record<string, unknown> | undefined;
 }): Promise<void> {
@@ -721,13 +749,17 @@ async function persistProviderReplayCheckpointAfterTurn(input: {
         detail: "provider replay checkpoint message identity is required",
       });
     }
+    await input.emission.complete?.();
     return;
   }
   const checkpoint = captureProviderReplayCheckpoint(
     input.emission.state,
     input.providerMetadata,
   );
-  if (!checkpoint) return;
+  if (!checkpoint) {
+    await input.emission.complete?.();
+    return;
+  }
   if (!input.emission.persist) {
     if (input.emission.required) {
       throw DURABLE_RUN_EVENT_PERSISTENCE_FAILED.create({
@@ -737,6 +769,7 @@ async function persistProviderReplayCheckpointAfterTurn(input: {
     return;
   }
   await input.emission.persist(checkpoint);
+  await input.emission.complete?.();
 }
 
 function isToolVisibleForStep(toolName: string, plan: ToolExposurePlan): boolean {
@@ -1306,6 +1339,9 @@ export class AgentRuntime {
     const requestedModel = transport.requestedModel;
     const resolvedModelString = transport.resolvedModelString;
     const supportsToolCalling = supportsModelRuntimeToolCalling(transport.languageModel);
+    const providerReplayCheckpointEmission = resolveRuntimeProviderReplayCheckpointEmission(
+      this.config,
+    );
     debugRuntimeModelRemap(requestedModel, resolvedModelString);
 
     return withSpan("agent.generate", async (span) => {
@@ -1344,6 +1380,7 @@ export class AgentRuntime {
               context,
               runRuntimeContext,
               supportsToolCalling,
+              providerReplayCheckpointEmission,
               resolvedModelString,
               transport.languageModel,
               transport.headers,
@@ -1360,6 +1397,9 @@ export class AgentRuntime {
             )
           ),
       );
+    }).catch(async (error) => {
+      await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission);
+      throw error;
     });
   }
 
@@ -1426,6 +1466,9 @@ export class AgentRuntime {
     // Determine inference mode from the resolved model object, not the string.
     const isLocal = isLocalModelRuntime(languageModel);
     const supportsToolCalling = supportsModelRuntimeToolCalling(languageModel);
+    const providerReplayCheckpointEmission = resolveRuntimeProviderReplayCheckpointEmission(
+      this.config,
+    );
 
     // Eagerly verify the model runtime is available. For local models this
     // checks that @huggingface/transformers can be imported. Must happen
@@ -1487,6 +1530,7 @@ export class AgentRuntime {
                   context,
                   runRuntimeContext,
                   supportsToolCalling,
+                  providerReplayCheckpointEmission,
                   resolvedModelString,
                   languageModel,
                   transport.headers,
@@ -1516,6 +1560,13 @@ export class AgentRuntime {
           });
           closeSSEStream(controller);
         } catch (error) {
+          try {
+            await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission);
+          } catch (failureHookError) {
+            logger.debug("Provider replay failure hook rejected", {
+              error: failureHookError,
+            });
+          }
           if (isAbortError(error, streamAbortSignal)) {
             closeSSEStream(controller);
             return;
@@ -1559,6 +1610,7 @@ export class AgentRuntime {
     runtimeContext: Record<string, unknown> | undefined,
     runRuntimeContext: AgentRunRuntimeContext,
     supportsToolCalling: boolean,
+    providerReplayCheckpointEmission: RuntimeProviderReplayCheckpointEmission,
     modelString?: string,
     resolvedModel?: ModelRuntime,
     headers?: HeadersInit,
@@ -1582,9 +1634,6 @@ export class AgentRuntime {
         currentMessages,
         getRuntimeProviderReplayCheckpoints(this.config),
         { activeProvider: getActiveProviderReplayProvider(languageModel) },
-      );
-      const providerReplayCheckpointEmission = resolveRuntimeProviderReplayCheckpointEmission(
-        this.config,
       );
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
@@ -2236,6 +2285,7 @@ export class AgentRuntime {
     runtimeContext: Record<string, unknown> | undefined,
     runRuntimeContext: AgentRunRuntimeContext,
     supportsToolCalling: boolean,
+    providerReplayCheckpointEmission: RuntimeProviderReplayCheckpointEmission,
     modelString?: string,
     resolvedModel?: ModelRuntime,
     headers?: HeadersInit,
@@ -2257,9 +2307,6 @@ export class AgentRuntime {
       currentMessages,
       getRuntimeProviderReplayCheckpoints(this.config),
       { activeProvider: getActiveProviderReplayProvider(languageModel) },
-    );
-    const providerReplayCheckpointEmission = resolveRuntimeProviderReplayCheckpointEmission(
-      this.config,
     );
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 

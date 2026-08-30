@@ -175,6 +175,9 @@ describe("provider replay checkpoint emission", () => {
           checkpoints.push(checkpoint);
           operations.push("persist:done");
         },
+        __vfProviderReplayCheckpointTurnComplete: () => {
+          operations.push("turn:complete");
+        },
       } as AgentConfig & RuntimeToolFilterConfig;
 
       const assistant = agent(config);
@@ -185,6 +188,9 @@ describe("provider replay checkpoint emission", () => {
       }
 
       assertEquals(operations.indexOf("persist:done") < operations.indexOf("model:2"), true);
+      const completionIndex = operations.indexOf("turn:complete");
+      assertEquals(completionIndex >= 0, true);
+      assertEquals(completionIndex < operations.indexOf("model:2"), true);
       assertEquals(checkpoints.length, 2);
       assertEquals(checkpoints[0]?.providerMessageBlockCounts, [2]);
       assertEquals(checkpoints[1]?.providerMessageBlockCounts, [2, 1]);
@@ -228,6 +234,104 @@ describe("provider replay checkpoint emission", () => {
     assertInstanceOf(error, VeryfrontError);
     assertEquals(error.slug, "durable-run-event-persistence-failed");
     assertEquals(model.callCount, 1);
+  });
+
+  it("closes the provider turn when no replay checkpoint is required", async () => {
+    let completedTurns = 0;
+    const model = scriptedModel([{
+      text: "done",
+      providerMetadata: metadata([{ type: "text", text: "done" }]),
+    }], {
+      modelId: "anthropic/provider-replay-turn-boundary",
+      provider: "anthropic",
+      only: "generate",
+    });
+    const config = {
+      id: "provider-replay-turn-boundary",
+      model: "anthropic/provider-replay-turn-boundary",
+      system: "Answer.",
+      skills: false,
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointTurnComplete: () => {
+        completedTurns++;
+      },
+      __vfPersistProviderReplayCheckpoint: () => {
+        throw new Error("checkpoint persister must stay unused");
+      },
+    } as AgentConfig & RuntimeToolFilterConfig;
+
+    await agent(config).generate({ input: "Answer" });
+
+    assertEquals(completedTurns, 1);
+    assertEquals(model.callCount, 1);
+  });
+
+  it("stops execution when the checkpoint persister rejects", async () => {
+    let failedTurns = 0;
+    const model = scriptedModel([{
+      text: "done",
+      providerMetadata: metadata([{
+        type: "thinking",
+        thinking: "",
+        signature: SIGNATURE,
+      }, { type: "text", text: "done" }]),
+    }], {
+      modelId: "anthropic/rejected-provider-replay-persister",
+      provider: "anthropic",
+      only: "generate",
+    });
+    const config = {
+      id: "rejected-provider-replay-persister",
+      model: "anthropic/rejected-provider-replay-persister",
+      system: "Answer.",
+      skills: false,
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfPersistProviderReplayCheckpoint: () =>
+        Promise.reject(new Error("checkpoint sink rejected")),
+      __vfProviderReplayCheckpointTurnFailed: () => {
+        failedTurns++;
+      },
+    } as AgentConfig & RuntimeToolFilterConfig;
+
+    await assertRejects(
+      () => agent(config).generate({ input: "Answer" }),
+      Error,
+      "checkpoint sink rejected",
+    );
+    assertEquals(model.callCount, 1);
+    assertEquals(failedTurns, 1);
+  });
+
+  it("fails the provider turn when streaming aborts before checkpoint capture", async () => {
+    let failedTurns = 0;
+    const model = scriptedModel([() => {
+      throw new Error("provider stream failed");
+    }], {
+      modelId: "anthropic/failed-provider-replay-stream",
+      provider: "anthropic",
+      only: "stream",
+    });
+    const config = {
+      id: "failed-provider-replay-stream",
+      model: "anthropic/failed-provider-replay-stream",
+      system: "Answer.",
+      skills: false,
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayCheckpointTurnFailed: () => {
+        failedTurns++;
+      },
+    } as AgentConfig & RuntimeToolFilterConfig;
+
+    const stream = await agent(config).stream({ input: "Answer" });
+    const body = await stream.toDataStreamResponse().text();
+
+    assertEquals(body.includes("provider stream failed"), true);
+    assertEquals(failedTurns, 1);
   });
 
   it("required replay checkpoint persistence rejects a missing durable message identity", async () => {

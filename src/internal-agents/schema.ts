@@ -71,6 +71,7 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
     agentId: getAgentIdSchema(),
     threadId: v.string().uuid(),
     runId: getRunIdSchema(),
+    messageId: v.string().uuid().optional(),
     taskId: getRuntimeAgentTaskIdSchema().optional(),
     parentRunId: getRunIdSchema().optional(),
     state: v.unknown().optional(),
@@ -96,6 +97,7 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
       { message: "forwardedProps must be less than 192 KB" },
     ),
+    serverResolvedProviderReplayCheckpoints: v.unknown().optional(),
   }).strict().superRefine((input, ctx) => {
     validateRuntimeAgentTargetSelection(input, ctx);
     validateRuntimeAgentSourceTargetBinding(input, ctx);
@@ -404,6 +406,7 @@ export function toRuntimeRunAgentInput(
   return {
     threadId: input.threadId,
     runId: input.runId,
+    ...(input.messageId ? { messageId: input.messageId } : {}),
     ...(input.taskId ? { taskId: input.taskId } : {}),
     ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
     ...(input.state !== undefined ? { state: input.state } : {}),
@@ -412,6 +415,11 @@ export function toRuntimeRunAgentInput(
     tools: input.tools,
     context: input.context,
     ...(input.forwardedProps ? { forwardedProps: input.forwardedProps } : {}),
+    ...(input.serverResolvedProviderReplayCheckpoints !== undefined
+      ? {
+        serverResolvedProviderReplayCheckpoints: input.serverResolvedProviderReplayCheckpoints,
+      }
+      : {}),
   } as RuntimeRunAgentInput;
 }
 
@@ -436,6 +444,8 @@ export type RuntimeContextItem = AgUiRuntimeContextItem;
 export type RuntimeRunAgentInput = AgUiRuntimeRequest & {
   taskId?: string;
   allowDelegation?: boolean;
+  messageId?: string;
+  serverResolvedProviderReplayCheckpoints?: unknown;
 };
 export type InternalAgentStreamRequest = InferSchema<
   ReturnType<typeof getInternalAgentStreamRequestSchema>

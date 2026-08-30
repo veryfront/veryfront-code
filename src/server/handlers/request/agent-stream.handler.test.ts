@@ -16,6 +16,7 @@ import {
   type RuntimeRemoteToolConfig,
 } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { getRuntimeSourceIntegrationPolicy } from "#veryfront/agent/runtime/runtime-tool-config.ts";
+import type { ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
 import { dynamicTool } from "#veryfront/tool";
 import { markRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
@@ -467,6 +468,106 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertStringIncludes(text, "event: RunStarted");
     assertStringIncludes(text, "event: TextMessageContent");
     assertStringIncludes(text, "event: RunFinished");
+  });
+
+  it("binds the exact-run credential to acknowledged checkpoint persistence", async () => {
+    const messageId = "10000000-1000-4000-8000-100000000002";
+    const checkpoint: ProviderReplayCheckpoint = {
+      version: 1,
+      messageId,
+      provider: "anthropic",
+      providerBlocks: [{
+        type: "provider-block",
+        provider: "anthropic",
+        block: { type: "thinking", thinking: "", signature: "<REDACTED>" },
+      }],
+      providerBlockPositions: [0],
+      providerMessageBlockCounts: [1],
+      totalPartCount: 1,
+    };
+    let factoryInput:
+      | {
+        runId: string;
+        runEventAppendToken: string | null | undefined;
+      }
+      | undefined;
+    const operations: string[] = [];
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: () => Promise.resolve(createEmptyDiscoveryResult()),
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      providerReplayCheckpointEmissionEnabled: true,
+      createRunScopedProviderReplayCheckpointPersister: (input) => {
+        factoryInput = input;
+        return async (value) => {
+          operations.push("append:start");
+          await Promise.resolve();
+          assertEquals(value, checkpoint);
+          operations.push("append:acknowledged");
+        };
+      },
+      createRuntime: (runtimeAgent) => ({
+        stream: async (_messages, _context, callbacks) => {
+          const config = runtimeAgent.config as Agent["config"] & {
+            __vfPersistProviderReplayCheckpoint?: (
+              value: ProviderReplayCheckpoint,
+            ) => void | Promise<void>;
+            __vfProviderReplayCheckpointTurnComplete?: () => void | Promise<void>;
+          };
+          operations.push("runtime:before-persist");
+          await config.__vfPersistProviderReplayCheckpoint?.(checkpoint);
+          operations.push("runtime:after-persist");
+          await config.__vfProviderReplayCheckpointTurnComplete?.();
+          callbacks?.onFinish?.({
+            text: "",
+            messages: [],
+            toolCalls: [],
+            status: "completed",
+            usage: undefined,
+            metadata: { finishReason: "stop" },
+          });
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(encodeDataStreamEvent({ type: "step-start" }));
+              controller.enqueue(encodeDataStreamEvent({ type: "step-end" }));
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+    const body = createAgentStreamRequestBody({
+      serverResolvedProviderReplayCheckpoints: [checkpoint],
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+          "x-veryfront-run-event-token": "<TOKEN>",
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    await result.response.text();
+    assertEquals(factoryInput?.runId, "run_1");
+    assertEquals(factoryInput?.runEventAppendToken, "<TOKEN>");
+    assertEquals(operations, [
+      "runtime:before-persist",
+      "append:start",
+      "append:acknowledged",
+      "runtime:after-persist",
+    ]);
   });
 
   it("accepts the public control-plane stream route", async () => {

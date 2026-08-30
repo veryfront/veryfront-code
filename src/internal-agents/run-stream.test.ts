@@ -32,12 +32,15 @@ import type { RemoteToolSource, Tool } from "#veryfront/tool";
 import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
 import { getActiveRunEventSinks } from "#veryfront/runtime/run-event-sink-context.ts";
+import type { ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
 import {
   buildMergedTools,
   createRuntimeAgentStreamResponse,
   getExplicitlyDeniedToolNames,
   MODEL_CALL_CONTEXT_SSE_EVENT_NAME,
+  PROVIDER_REPLAY_PROTOCOL_HEADER,
+  PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME,
 } from "./run-stream.ts";
 
 function parseSseFrames(body: string): Array<{ event: string; data: unknown }> {
@@ -534,6 +537,489 @@ describe("internal-agents/run-stream", () => {
     });
 
     assertEquals(capturedMaxOutputTokens, 1200);
+  });
+
+  it("persists replay checkpoints before emitting the private turn boundary", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const messageId = crypto.randomUUID();
+    const checkpoint: ProviderReplayCheckpoint = {
+      version: 1,
+      messageId,
+      provider: "anthropic",
+      providerBlocks: [{
+        type: "provider-block",
+        provider: "anthropic",
+        block: { type: "thinking", thinking: "", signature: "signed-private-block" },
+      }],
+      providerBlockPositions: [0],
+      providerMessageBlockCounts: [1],
+      totalPartCount: 2,
+    };
+    let capturedConfig:
+      | (Agent["config"] & {
+        __vfProviderReplayCheckpoints?: readonly ProviderReplayCheckpoint[];
+        __vfProviderReplayCheckpointMessageId?: string;
+        __vfPersistProviderReplayCheckpoint?: (
+          value: ProviderReplayCheckpoint,
+        ) => void | Promise<void>;
+        __vfProviderReplayCheckpointTurnComplete?: () => void | Promise<void>;
+      })
+      | undefined;
+    const persistedCheckpoints: ProviderReplayCheckpoint[] = [];
+    const agent = {
+      id: "test",
+      config: {
+        id: "test",
+        model: "anthropic/claude-opus-4-8",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const input = {
+      agentId: "test",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messageId,
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    const response = await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      providerReplayCheckpointEmissionEnabled: true,
+      providerReplayCheckpoints: [],
+      persistProviderReplayCheckpoint: (value) => {
+        persistedCheckpoints.push(value);
+        return Promise.resolve();
+      },
+      createRuntime: (runtimeAgent) => {
+        capturedConfig = runtimeAgent.config as typeof capturedConfig;
+        return {
+          stream: async () => {
+            await capturedConfig?.__vfPersistProviderReplayCheckpoint?.(checkpoint);
+            await capturedConfig?.__vfProviderReplayCheckpointTurnComplete?.();
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            });
+          },
+        };
+      },
+    });
+    const frames = parseSseFrames(await response.text());
+
+    assertEquals(response.headers.get(PROVIDER_REPLAY_PROTOCOL_HEADER), "1");
+    assertEquals(capturedConfig?.__vfProviderReplayCheckpointMessageId, messageId);
+    assertEquals(capturedConfig?.__vfProviderReplayCheckpoints, undefined);
+    assertEquals(persistedCheckpoints, [checkpoint]);
+    assertEquals(JSON.stringify(frames).includes("signed-private-block"), false);
+    assertEquals(
+      frames.some((frame) => frame.event === PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME),
+      true,
+    );
+    assertEquals(
+      frames.findIndex((frame) => frame.event === PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME) <
+        frames.findIndex((frame) => frame.event === "RunError"),
+      true,
+    );
+  });
+
+  it("continues checkpoint emission after the host gate is disabled", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const messageId = crypto.randomUUID();
+    const checkpoint: ProviderReplayCheckpoint = {
+      version: 1,
+      messageId,
+      provider: "anthropic",
+      providerBlocks: [{
+        type: "provider-block",
+        provider: "anthropic",
+        block: { type: "thinking", thinking: "", signature: "existing-signature" },
+      }],
+      providerBlockPositions: [0],
+      providerMessageBlockCounts: [1],
+      totalPartCount: 1,
+    };
+    let persistCheckpoint:
+      | ((value: ProviderReplayCheckpoint) => void | Promise<void>)
+      | undefined;
+    let completeProviderReplayTurn: (() => void | Promise<void>) | undefined;
+    const persistedCheckpoints: ProviderReplayCheckpoint[] = [];
+    const agent = {
+      id: "test",
+      config: {
+        id: "test",
+        model: "anthropic/claude-opus-4-8",
+        system: "test",
+      },
+    } as unknown as Agent;
+
+    const response = await createRuntimeAgentStreamResponse(
+      {
+        threadId: crypto.randomUUID(),
+        runId: "run_1",
+        messageId,
+        messages: [],
+        tools: [],
+        context: [],
+      },
+      agent,
+      {
+        sessionManager,
+        providerReplayCheckpointEmissionEnabled: false,
+        providerReplayCheckpoints: [checkpoint],
+        persistProviderReplayCheckpoint: (value) => {
+          persistedCheckpoints.push(value);
+          return Promise.resolve();
+        },
+        createRuntime: (runtimeAgent) => {
+          persistCheckpoint = (runtimeAgent.config as Agent["config"] & {
+            __vfPersistProviderReplayCheckpoint?: (
+              value: ProviderReplayCheckpoint,
+            ) => void | Promise<void>;
+            __vfProviderReplayCheckpointTurnComplete?: () => void | Promise<void>;
+          }).__vfPersistProviderReplayCheckpoint;
+          completeProviderReplayTurn = (runtimeAgent.config as Agent["config"] & {
+            __vfProviderReplayCheckpointTurnComplete?: () => void | Promise<void>;
+          }).__vfProviderReplayCheckpointTurnComplete;
+          return {
+            stream: async () => {
+              await persistCheckpoint?.(checkpoint);
+              await completeProviderReplayTurn?.();
+              return new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              });
+            },
+          };
+        },
+      },
+    );
+    const frames = parseSseFrames(await response.text());
+
+    assertEquals(typeof persistCheckpoint, "function");
+    assertEquals(typeof completeProviderReplayTurn, "function");
+    assertEquals(persistedCheckpoints, [checkpoint]);
+    assertEquals(JSON.stringify(frames).includes("existing-signature"), false);
+  });
+
+  it("holds tool dispatch until durable persistence and the turn boundary complete", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const messageId = crypto.randomUUID();
+    const checkpoint: ProviderReplayCheckpoint = {
+      version: 1,
+      messageId,
+      provider: "anthropic",
+      providerBlocks: [{
+        type: "provider-block",
+        provider: "anthropic",
+        block: { type: "thinking", thinking: "", signature: "ordered-signature" },
+      }],
+      providerBlockPositions: [0],
+      providerMessageBlockCounts: [1],
+      totalPartCount: 1,
+    };
+    let runtimeConfig:
+      | (Agent["config"] & {
+        __vfPersistProviderReplayCheckpoint?: (
+          value: ProviderReplayCheckpoint,
+        ) => void | Promise<void>;
+        __vfProviderReplayCheckpointTurnComplete?: () => void | Promise<void>;
+      })
+      | undefined;
+    const operations: string[] = [];
+    const agent = {
+      id: "test",
+      config: {
+        id: "test",
+        model: "anthropic/claude-opus-4-8",
+        system: "test",
+      },
+    } as unknown as Agent;
+
+    const response = await createRuntimeAgentStreamResponse(
+      {
+        threadId: crypto.randomUUID(),
+        runId: "run_1",
+        messageId,
+        messages: [],
+        tools: [],
+        context: [],
+      },
+      agent,
+      {
+        sessionManager,
+        providerReplayCheckpointEmissionEnabled: true,
+        persistProviderReplayCheckpoint: async () => {
+          operations.push("persist:start");
+          await Promise.resolve();
+          operations.push("persist:done");
+        },
+        createRuntime: (runtimeAgent) => {
+          runtimeConfig = runtimeAgent.config as typeof runtimeConfig;
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(
+                    new TextEncoder().encode(
+                      'data: {"type":"step-start"}\n\ndata: {"type":"tool-input-start","toolCallId":"tool-1","toolName":"lookup"}\n\ndata: {"type":"tool-input-available","toolCallId":"tool-1","toolName":"lookup","input":{}}\n\n',
+                    ),
+                  );
+                  setTimeout(async () => {
+                    await runtimeConfig?.__vfPersistProviderReplayCheckpoint?.(checkpoint);
+                    await runtimeConfig?.__vfProviderReplayCheckpointTurnComplete?.();
+                    controller.close();
+                  }, 0);
+                },
+              }),
+          };
+        },
+      },
+    );
+    const frames = parseSseFrames(await response.text());
+
+    assertEquals(operations, ["persist:start", "persist:done"]);
+    assertEquals(
+      frames.findIndex((frame) => frame.event === PROVIDER_REPLAY_TURN_COMPLETE_SSE_EVENT_NAME) <
+        frames.findIndex((frame) => frame.event === "ToolCallEnd"),
+      true,
+    );
+    assertEquals(JSON.stringify(frames).includes("ordered-signature"), false);
+  });
+
+  it("fails closed when checkpoint emission has no runtime message identity", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "test",
+      config: {
+        id: "test",
+        model: "anthropic/claude-opus-4-8",
+        system: "test",
+      },
+    } as unknown as Agent;
+
+    await assertRejects(
+      () =>
+        createRuntimeAgentStreamResponse(
+          {
+            threadId: crypto.randomUUID(),
+            runId: "run_1",
+            messages: [],
+            tools: [],
+            context: [],
+          },
+          agent,
+          {
+            sessionManager,
+            providerReplayCheckpointEmissionEnabled: true,
+          },
+        ),
+      Error,
+      "Provider replay checkpoint emission requires a runtime message identity",
+    );
+  });
+
+  it("fails before provider execution when no trusted checkpoint writer is available", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let runtimeCreated = false;
+    const agent = {
+      id: "test",
+      config: {
+        id: "test",
+        model: "anthropic/claude-opus-4-8",
+        system: "test",
+      },
+    } as unknown as Agent;
+
+    await assertRejects(
+      () =>
+        createRuntimeAgentStreamResponse(
+          {
+            threadId: crypto.randomUUID(),
+            runId: "run_1",
+            messageId: crypto.randomUUID(),
+            messages: [],
+            tools: [],
+            context: [],
+          },
+          agent,
+          {
+            sessionManager,
+            providerReplayCheckpointEmissionEnabled: true,
+            createRuntime: () => {
+              runtimeCreated = true;
+              throw new Error("runtime must not be created");
+            },
+          },
+        ),
+      Error,
+      "trusted run-event append token",
+    );
+    assertEquals(runtimeCreated, false);
+  });
+
+  it("settles an open replay turn when the provider stream fails", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const agent = {
+      id: "test",
+      config: {
+        id: "test",
+        model: "anthropic/claude-opus-4-8",
+        system: "test",
+      },
+    } as unknown as Agent;
+
+    const response = await createRuntimeAgentStreamResponse(
+      {
+        threadId: crypto.randomUUID(),
+        runId: "run_1",
+        messageId: crypto.randomUUID(),
+        messages: [],
+        tools: [],
+        context: [],
+      },
+      agent,
+      {
+        sessionManager,
+        providerReplayCheckpointEmissionEnabled: true,
+        persistProviderReplayCheckpoint: () => Promise.resolve(),
+        createRuntime: () => ({
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    'data: {"type":"step-start"}\n\ndata: {"type":"error","error":"provider stream failed"}\n\n',
+                  ),
+                );
+                controller.close();
+              },
+            }),
+        }),
+      },
+    );
+
+    const body = await response.text();
+
+    assertStringIncludes(body, "event: RunError");
+    assertEquals(body.includes("event: RunFinished"), false);
+  });
+
+  it("releases a pending tool boundary when the runtime turn fails", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let failProviderReplayTurn: (() => void | Promise<void>) | undefined;
+    const agent = {
+      id: "test",
+      config: {
+        id: "test",
+        model: "anthropic/claude-opus-4-8",
+        system: "test",
+      },
+    } as unknown as Agent;
+
+    const response = await createRuntimeAgentStreamResponse(
+      {
+        threadId: crypto.randomUUID(),
+        runId: "run_1",
+        messageId: crypto.randomUUID(),
+        messages: [],
+        tools: [],
+        context: [],
+      },
+      agent,
+      {
+        sessionManager,
+        providerReplayCheckpointEmissionEnabled: true,
+        persistProviderReplayCheckpoint: () => Promise.resolve(),
+        createRuntime: (runtimeAgent) => {
+          failProviderReplayTurn = (runtimeAgent.config as Agent["config"] & {
+            __vfProviderReplayCheckpointTurnFailed?: () => void | Promise<void>;
+          }).__vfProviderReplayCheckpointTurnFailed;
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(
+                    new TextEncoder().encode(
+                      'data: {"type":"step-start"}\n\ndata: {"type":"tool-input-start","toolCallId":"tool-1","toolName":"lookup"}\n\ndata: {"type":"tool-input-available","toolCallId":"tool-1","toolName":"lookup","input":{}}\n\n',
+                    ),
+                  );
+                  setTimeout(async () => {
+                    await failProviderReplayTurn?.();
+                    controller.enqueue(
+                      new TextEncoder().encode(
+                        'data: {"type":"error","error":"provider stream failed"}\n\n',
+                      ),
+                    );
+                    controller.close();
+                  }, 0);
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    const body = await response.text();
+
+    assertStringIncludes(body, "event: RunError");
+    assertEquals(body.includes("event: RunFinished"), false);
+  });
+
+  it("aborts a pending replay boundary when the run is cancelled", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let runtimeCancelCalls = 0;
+    const runId = "run_cancel_pending_replay";
+    const agent = {
+      id: "test",
+      config: {
+        id: "test",
+        model: "anthropic/claude-opus-4-8",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const response = await createRuntimeAgentStreamResponse(
+      {
+        threadId: crypto.randomUUID(),
+        runId,
+        messageId: crypto.randomUUID(),
+        messages: [],
+        tools: [],
+        context: [],
+      },
+      agent,
+      {
+        sessionManager,
+        providerReplayCheckpointEmissionEnabled: true,
+        persistProviderReplayCheckpoint: () => Promise.resolve(),
+        createRuntime: () => ({
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    'data: {"type":"step-start"}\n\ndata: {"type":"tool-input-start","toolCallId":"tool-1","toolName":"lookup"}\n\ndata: {"type":"tool-input-available","toolCallId":"tool-1","toolName":"lookup","input":{}}\n\n',
+                  ),
+                );
+              },
+              cancel() {
+                runtimeCancelCalls++;
+              },
+            }),
+        }),
+      },
+    );
+
+    const body = response.text();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    assertEquals(sessionManager.cancelRun(runId), true);
+    await body;
+
+    assertEquals(runtimeCancelCalls, 1);
+    assertEquals(sessionManager.getRunStatus(runId), null);
   });
 
   it("composes the runtime system prompt with project, environment, and tool context", async () => {
