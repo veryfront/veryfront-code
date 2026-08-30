@@ -30,18 +30,18 @@ For runtime markdown string rendering, use `veryfront/markdown` instead.
 
 ### Components
 
-| Name          | Description                                  | Source                                                                                                   |
-| ------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `MDXProvider` | Provide component overrides to compiled MDX. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L20) |
+| Name          | Description                                  | Source                                                                                               |
+| ------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `MDXProvider` | Provide component overrides to compiled MDX. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx) |
 
 ### Functions
 
-| Name               | Description                                  | Source                                                                                                   |
-| ------------------ | -------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `useMDXComponents` | Return the memoized effective component map. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L33) |
+| Name               | Description                                  | Source                                                                                               |
+| ------------------ | -------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `useMDXComponents` | Return the memoized effective component map. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx) |
 
 ### Types
 
-| Name               | Description                      | Source                                                                                                  |
-| ------------------ | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `MDXProviderProps` | Props accepted by `MDXProvider`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L7) |
+| Name               | Description                      | Source                                                                                               |
+| ------------------ | -------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `MDXProviderProps` | Props accepted by `MDXProvider`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx) |

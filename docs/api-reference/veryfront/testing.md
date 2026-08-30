@@ -33,82 +33,82 @@ describe("math", () => {
 
 ### Functions
 
-| Name                     | Description                                                                                     | Source                                                                                                       |
-| ------------------------ | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `afterAll`               | Register a hook after all BDD tests in a group.                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L765)                      |
-| `afterEach`              | Register a hook after each BDD test.                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L740)                      |
-| `assert`                 | Assert that a value is truthy.                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L286)                   |
-| `assertEquals`           | Assert that two values are deeply equal.                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L271)                   |
-| `assertExists`           | Assert that a value is not null or undefined.                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L291)                   |
-| `assertGreater`          | Assert that a number is greater than another number.                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L355)                   |
-| `assertGreaterOrEqual`   | Assert that a number is greater than or equal to another number.                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L360)                   |
-| `assertInstanceOf`       | Assert that a value is an instance of a constructor.                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L326)                   |
-| `assertLess`             | Assert that a number is less than another number.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L365)                   |
-| `assertLessOrEqual`      | Assert that a number is less than or equal to another number.                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L370)                   |
-| `assertMatch`            | Assert that a string matches a regular expression.                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L321)                   |
-| `assertNotEquals`        | Assert that two values are not deeply equal.                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L276)                   |
-| `assertNotStrictEquals`  | Assert that two values are not strictly equal.                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L341)                   |
-| `assertObjectMatch`      | Assert that an object contains matching properties.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L346)                   |
-| `assertRejects`          | Assert that an async function rejects, returning the rejection reason.                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L306)                   |
-| `assertStrictEquals`     | Assert that two values are strictly equal.                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L281)                   |
-| `assertStringIncludes`   | Assert that a string contains another string.                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L316)                   |
-| `assertThrows`           | Assert that a synchronous function throws.                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L296)                   |
-| `beforeAll`              | Register a hook before all BDD tests in a group.                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L750)                      |
-| `beforeEach`             | Register a hook before each BDD test.                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L731)                      |
-| `chmod`                  | Change file permissions, rejecting operational failures.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L602)               |
-| `createFileSystem`       | Create the runtime-native filesystem implementation.                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L449)               |
-| `cwd`                    | Return the current working directory.                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L26) |
-| `deepEquals`             | ********************* Shared utility functions for cross-runtime testing. ********************* | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/utils.ts#L5)                      |
-| `delay`                  | Wait for a duration in milliseconds.                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts#L123)              |
-| `deleteEnv`              | Delete a process environment variable.                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L338)      |
-| `describe`               | Group related BDD tests.                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L617)                      |
-| `env`                    | Read and write process environment variables.                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L62)       |
-| `exists`                 | Return false for a missing path and propagate every other filesystem error.                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L525)               |
-| `exit`                   | Exit the current process.                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts#L128)              |
-| `fail`                   | Fail the current assertion immediately.                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L336)                   |
-| `getArgs`                | Get command-line arguments (cross-runtime: Deno.args or process.argv).                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L10) |
-| `getEnv`                 | Read an environment variable from the active project scope.                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L229)      |
-| `getTestTimeScale`       | Return the current test time scale. Preserved for compatibility.                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/timing.ts#L4)                     |
-| `isAlreadyExistsError`   | Error shape for is already exists.                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L631)               |
-| `isNotFoundError`        |                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/not-found-error.ts#L210)  |
-| `it`                     | Define a BDD test case.                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L673)                      |
-| `makeTempDir`            | Atomically create a unique directory beneath the operating-system temp root.                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L597)               |
-| `makeTempDirWithOptions` | Options accepted by make temp dir with.                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts#L73)               |
-| `makeTempFile`           | Create temp file.                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts#L48)               |
-| `mkdir`                  | Create a directory.                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L575)               |
-| `readDir`                | Read directory entries.                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L585)               |
-| `readFile`               | Read a file as bytes.                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L510)               |
-| `readTextFile`           | Read a file as text.                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L505)               |
-| `registerTestCleanup`    | Registers test cleanup.                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/isolation.ts#L22)                 |
-| `remove`                 | Remove a file or directory, rejecting when the path does not exist.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L580)               |
-| `resetAllTestState`      | Comprehensive reset of ALL test state across the application.                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/isolation.ts#L64)                 |
-| `safeStringify`          | Serialize unknown values safely for test output.                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/utils.ts#L34)                     |
-| `scaleMs`                | Scale a duration for the current test runtime.                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/timing.ts#L9)                     |
-| `setEnv`                 | Sets env.                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L309)      |
-| `stat`                   | Read file metadata.                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L530)               |
-| `testDelay`              | Wait for a test-scaled duration.                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/timing.ts#L15)                    |
-| `waitFor`                | Wait until a condition succeeds.                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts#L99)               |
-| `withEnv`                | Applies env.                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts#L186)              |
-| `withTempDir`            | Applies temp dir.                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts#L138)              |
-| `withTempFile`           | Applies temp file.                                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts#L162)              |
-| `writeFile`              | Write bytes to a file.                                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L520)               |
-| `writeTextFile`          | Write text to a file.                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L515)               |
+| Name                     | Description                                                                                     | Source                                                                                                   |
+| ------------------------ | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `afterAll`               | Register a hook after all BDD tests in a group.                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts)                       |
+| `afterEach`              | Register a hook after each BDD test.                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts)                       |
+| `assert`                 | Assert that a value is truthy.                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts)                    |
+| `assertEquals`           | Assert that two values are deeply equal.                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts)                    |
+| `assertExists`           | Assert that a value is not null or undefined.                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts)                    |
+| `assertGreater`          | Assert that a number is greater than another number.                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts)                    |
+| `assertGreaterOrEqual`   | Assert that a number is greater than or equal to another number.                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts)                    |
+| `assertInstanceOf`       | Assert that a value is an instance of a constructor.                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts)                    |
+| `assertLess`             | Assert that a number is less than another number.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts)                    |
+| `assertLessOrEqual`      | Assert that a number is less than or equal to another number.                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts)                    |
+| `assertMatch`            | Assert that a string matches a regular expression.                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts)                    |
+| `assertNotEquals`        | Assert that two values are not deeply equal.                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts)                    |
+| `assertNotStrictEquals`  | Assert that two values are not strictly equal.                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts)                    |
+| `assertObjectMatch`      | Assert that an object contains matching properties.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts)                    |
+| `assertRejects`          | Assert that an async function rejects, returning the rejection reason.                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts)                    |
+| `assertStrictEquals`     | Assert that two values are strictly equal.                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts)                    |
+| `assertStringIncludes`   | Assert that a string contains another string.                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts)                    |
+| `assertThrows`           | Assert that a synchronous function throws.                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts)                    |
+| `beforeAll`              | Register a hook before all BDD tests in a group.                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts)                       |
+| `beforeEach`             | Register a hook before each BDD test.                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts)                       |
+| `chmod`                  | Change file permissions, rejecting operational failures.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts)                |
+| `createFileSystem`       | Create the runtime-native filesystem implementation.                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts)                |
+| `cwd`                    | Return the current working directory.                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts) |
+| `deepEquals`             | ********************* Shared utility functions for cross-runtime testing. ********************* | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/utils.ts)                     |
+| `delay`                  | Wait for a duration in milliseconds.                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts)               |
+| `deleteEnv`              | Delete a process environment variable.                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts)       |
+| `describe`               | Group related BDD tests.                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts)                       |
+| `env`                    | Read and write process environment variables.                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts)       |
+| `exists`                 | Return false for a missing path and propagate every other filesystem error.                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts)                |
+| `exit`                   | Exit the current process.                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts)               |
+| `fail`                   | Fail the current assertion immediately.                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts)                    |
+| `getArgs`                | Get command-line arguments (cross-runtime: Deno.args or process.argv).                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts) |
+| `getEnv`                 | Read an environment variable from the active project scope.                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts)       |
+| `getTestTimeScale`       | Return the current test time scale. Preserved for compatibility.                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/timing.ts)                    |
+| `isAlreadyExistsError`   | Error shape for is already exists.                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts)                |
+| `isNotFoundError`        |                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/not-found-error.ts)   |
+| `it`                     | Define a BDD test case.                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts)                       |
+| `makeTempDir`            | Atomically create a unique directory beneath the operating-system temp root.                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts)                |
+| `makeTempDirWithOptions` | Options accepted by make temp dir with.                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts)               |
+| `makeTempFile`           | Create temp file.                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts)               |
+| `mkdir`                  | Create a directory.                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts)                |
+| `readDir`                | Read directory entries.                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts)                |
+| `readFile`               | Read a file as bytes.                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts)                |
+| `readTextFile`           | Read a file as text.                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts)                |
+| `registerTestCleanup`    | Registers test cleanup.                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/isolation.ts)                 |
+| `remove`                 | Remove a file or directory, rejecting when the path does not exist.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts)                |
+| `resetAllTestState`      | Comprehensive reset of ALL test state across the application.                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/isolation.ts)                 |
+| `safeStringify`          | Serialize unknown values safely for test output.                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/utils.ts)                     |
+| `scaleMs`                | Scale a duration for the current test runtime.                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/timing.ts)                    |
+| `setEnv`                 | Sets env.                                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts)       |
+| `stat`                   | Read file metadata.                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts)                |
+| `testDelay`              | Wait for a test-scaled duration.                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/timing.ts)                    |
+| `waitFor`                | Wait until a condition succeeds.                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts)               |
+| `withEnv`                | Applies env.                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts)               |
+| `withTempDir`            | Applies temp dir.                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts)               |
+| `withTempFile`           | Applies temp file.                                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts)               |
+| `writeFile`              | Write bytes to a file.                                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts)                |
+| `writeTextFile`          | Write text to a file.                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts)                |
 
 ### Types
 
-| Name             | Description                                            | Source                                                                                 |
-| ---------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------- |
-| `BddTestContext` | Context passed to hooks and tests (BDD-specific)       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L34) |
-| `TestOptions`    | Test options for Deno sanitizers (ignored in Node/Bun) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L23) |
+| Name             | Description                                            | Source                                                                             |
+| ---------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `BddTestContext` | Context passed to hooks and tests (BDD-specific)       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts) |
+| `TestOptions`    | Test options for Deno sanitizers (ignored in Node/Bun) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts) |
 
 ### Constants
 
-| Name     | Description                                                              | Source                                                                                              |
-| -------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
-| `isBun`  | True if running in Bun runtime (Bun also exposes process.versions.node). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/runtime.ts#L94)  |
-| `isDeno` | True if running in the real Deno runtime rather than a dnt shim.         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/runtime.ts#L103) |
-| `isNode` | True if running in Node.js rather than a more specific compatible host.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/runtime.ts#L100) |
-| `test`   | Shared test value.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L780)             |
+| Name     | Description                                                              | Source                                                                                         |
+| -------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `isBun`  | True if running in Bun runtime (Bun also exposes process.versions.node). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/runtime.ts) |
+| `isDeno` | True if running in the real Deno runtime rather than a dnt shim.         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/runtime.ts) |
+| `isNode` | True if running in Node.js rather than a more specific compatible host.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/runtime.ts) |
+| `test`   | Shared test value.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts)             |
 
 ## Deep imports
 
@@ -122,25 +122,25 @@ import { assert, assertEquals, assertExists } from "veryfront/testing/assert";
 
 #### Functions
 
-| Name                    | Description                                                            | Source                                                                                     |
-| ----------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `assert`                | Assert that a value is truthy.                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L286) |
-| `assertEquals`          | Assert that two values are deeply equal.                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L271) |
-| `assertExists`          | Assert that a value is not null or undefined.                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L291) |
-| `assertGreater`         | Assert that a number is greater than another number.                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L355) |
-| `assertGreaterOrEqual`  | Assert that a number is greater than or equal to another number.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L360) |
-| `assertInstanceOf`      | Assert that a value is an instance of a constructor.                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L326) |
-| `assertLess`            | Assert that a number is less than another number.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L365) |
-| `assertLessOrEqual`     | Assert that a number is less than or equal to another number.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L370) |
-| `assertMatch`           | Assert that a string matches a regular expression.                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L321) |
-| `assertNotEquals`       | Assert that two values are not deeply equal.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L276) |
-| `assertNotStrictEquals` | Assert that two values are not strictly equal.                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L341) |
-| `assertObjectMatch`     | Assert that an object contains matching properties.                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L346) |
-| `assertRejects`         | Assert that an async function rejects, returning the rejection reason. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L306) |
-| `assertStrictEquals`    | Assert that two values are strictly equal.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L281) |
-| `assertStringIncludes`  | Assert that a string contains another string.                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L316) |
-| `assertThrows`          | Assert that a synchronous function throws.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L296) |
-| `fail`                  | Fail the current assertion immediately.                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L336) |
+| Name                    | Description                                                            | Source                                                                                |
+| ----------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `assert`                | Assert that a value is truthy.                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts) |
+| `assertEquals`          | Assert that two values are deeply equal.                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts) |
+| `assertExists`          | Assert that a value is not null or undefined.                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts) |
+| `assertGreater`         | Assert that a number is greater than another number.                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts) |
+| `assertGreaterOrEqual`  | Assert that a number is greater than or equal to another number.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts) |
+| `assertInstanceOf`      | Assert that a value is an instance of a constructor.                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts) |
+| `assertLess`            | Assert that a number is less than another number.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts) |
+| `assertLessOrEqual`     | Assert that a number is less than or equal to another number.          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts) |
+| `assertMatch`           | Assert that a string matches a regular expression.                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts) |
+| `assertNotEquals`       | Assert that two values are not deeply equal.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts) |
+| `assertNotStrictEquals` | Assert that two values are not strictly equal.                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts) |
+| `assertObjectMatch`     | Assert that an object contains matching properties.                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts) |
+| `assertRejects`         | Assert that an async function rejects, returning the rejection reason. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts) |
+| `assertStrictEquals`    | Assert that two values are strictly equal.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts) |
+| `assertStringIncludes`  | Assert that a string contains another string.                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts) |
+| `assertThrows`          | Assert that a synchronous function throws.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts) |
+| `fail`                  | Fail the current assertion immediately.                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts) |
 
 ### `veryfront/testing/bdd`
 
@@ -152,25 +152,25 @@ import { afterAll, afterEach, beforeAll } from "veryfront/testing/bdd";
 
 #### Functions
 
-| Name         | Description                                      | Source                                                                                  |
-| ------------ | ------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| `afterAll`   | Register a hook after all BDD tests in a group.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L765) |
-| `afterEach`  | Register a hook after each BDD test.             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L740) |
-| `beforeAll`  | Register a hook before all BDD tests in a group. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L750) |
-| `beforeEach` | Register a hook before each BDD test.            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L731) |
-| `describe`   | Group related BDD tests.                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L617) |
-| `initBdd`    | Initialize the BDD test adapter.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L783) |
-| `it`         | Define a BDD test case.                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L673) |
+| Name         | Description                                      | Source                                                                             |
+| ------------ | ------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `afterAll`   | Register a hook after all BDD tests in a group.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts) |
+| `afterEach`  | Register a hook after each BDD test.             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts) |
+| `beforeAll`  | Register a hook before all BDD tests in a group. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts) |
+| `beforeEach` | Register a hook before each BDD test.            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts) |
+| `describe`   | Group related BDD tests.                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts) |
+| `initBdd`    | Initialize the BDD test adapter.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts) |
+| `it`         | Define a BDD test case.                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts) |
 
 #### Types
 
-| Name             | Description                                            | Source                                                                                 |
-| ---------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------- |
-| `BddTestContext` | Context passed to hooks and tests (BDD-specific)       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L34) |
-| `TestOptions`    | Test options for Deno sanitizers (ignored in Node/Bun) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L23) |
+| Name             | Description                                            | Source                                                                             |
+| ---------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `BddTestContext` | Context passed to hooks and tests (BDD-specific)       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts) |
+| `TestOptions`    | Test options for Deno sanitizers (ignored in Node/Bun) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts) |
 
 #### Constants
 
-| Name   | Description        | Source                                                                                  |
-| ------ | ------------------ | --------------------------------------------------------------------------------------- |
-| `test` | Shared test value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L780) |
+| Name   | Description        | Source                                                                             |
+| ------ | ------------------ | ---------------------------------------------------------------------------------- |
+| `test` | Shared test value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts) |

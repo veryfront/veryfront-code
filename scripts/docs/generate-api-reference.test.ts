@@ -265,7 +265,6 @@ describe("generate-api-reference", () => {
       const providerReference = await Deno.readTextFile(
         `${outputDir}/veryfront/provider.md`,
       );
-      const providerTypes = await Deno.readTextFile("src/provider/types.ts");
       assertEquals(
         rootReference.includes(
           "\nConfiguration, server bootstrap, routing, data fetching, and input validation.\n\n## Import",
@@ -374,33 +373,20 @@ describe("generate-api-reference", () => {
       );
       assertMatch(
         providerReference,
-        /^\|\s*`RuntimeMetadata`\s*\|\s*\|\s*\[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/provider\/types\.ts#L1\)\s*\|$/m,
-        "first-line declarations must keep a source anchor",
-      );
-      const generateResultIndex = providerTypes.split("\n").findIndex((line) =>
-        line.startsWith("export interface ModelRuntimeGenerateResult")
-      );
-      assertEquals(
-        generateResultIndex >= 0,
-        true,
-        "test declaration must exist",
+        /^\|\s*`RuntimeMetadata`\s*\|\s*\|\s*\[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/provider\/types\.ts\)\s*\|$/m,
+        "first-line declarations must keep a file source link",
       );
       assertMatch(
         providerReference,
-        new RegExp(
-          `^\\|\\s*\`ModelRuntimeGenerateResult\`\\s*\\|\\s*\\|\\s*\\[source\\]\\(https:\\/\\/github\\.com\\/veryfront\\/veryfront-code\\/blob\\/main\\/src\\/provider\\/types\\.ts#L${
-            generateResultIndex + 1
-          }\\)\\s*\\|$`,
-          "m",
-        ),
-        "Deno's one-based locations must stay one-based in GitHub anchors",
+        /^\|\s*`ModelRuntimeGenerateResult`\s*\|\s*\|\s*\[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/provider\/types\.ts\)\s*\|$/m,
+        "declarations below the first line must keep a stable file source link",
       );
       // Alias re-exports must resolve to their target's JSDoc description and a
       // source link. Assert the stable leading phrase + link rather than pinning
       // the full prose, which evolves with the JSDoc.
       assertMatch(
         routerReference,
-        /^\|\s*`RouterProvider`\s*\|\s*Provides the router context[^|]*\|\s*\[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/react\/runtime\/core\.ts#L\d+\)/m,
+        /^\|\s*`RouterProvider`\s*\|\s*Provides the router context[^|]*\|\s*\[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/react\/runtime\/core\.ts\)/m,
       );
       assertMatch(
         routerReference,
@@ -408,7 +394,7 @@ describe("generate-api-reference", () => {
       );
       assertMatch(
         routerReference,
-        /^\|\s*`useRouter`\s*\|\s*Reads the router context[^|]*\|\s*\[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/react\/runtime\/core\.ts#L\d+\)/m,
+        /^\|\s*`useRouter`\s*\|\s*Reads the router context[^|]*\|\s*\[source\]\(https:\/\/github\.com\/veryfront\/veryfront-code\/blob\/main\/src\/react\/runtime\/core\.ts\)/m,
       );
       assertMatch(
         routerReference,
@@ -469,7 +455,7 @@ describe("generate-api-reference", () => {
       );
       assertMatch(
         memoryStoreSection,
-        /\[source\]\([^\n)]*src\/middleware\/builtin\/security\/rate-limit\.ts#L\d+\)/,
+        /\[source\]\([^\n)]*src\/middleware\/builtin\/security\/rate-limit\.ts\)/,
         "generated memory-store capacity documentation must retain its source link",
       );
       assertEquals(
@@ -570,9 +556,9 @@ describe("generate-api-reference", () => {
           }
         }
         assertEquals(
-          markdown.includes("#L0"),
+          /#L\d+\b/.test(markdown),
           false,
-          `${entry.name} must not contain invalid source line anchors`,
+          `${entry.name} must not contain absolute source line anchors`,
         );
         assertEquals(
           markdown.includes("{@"),
