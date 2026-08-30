@@ -2097,25 +2097,17 @@ const SCHEME_URL = new RegExp(
 );
 // Redact raw IRI authorities after the file-URL pass. Keep the optional tail
 // grouped: `${URL_TOKEN_TAIL_SOURCE}?` would make its final `+` lazy.
-// Keep the host unit in one character class so completing a long run cannot
-// introduce ambiguous backtracking. Unicode letters, numbers, marks, and
-// symbols cover internationalized labels and emoji while punctuation and
-// whitespace remain sentence boundaries. Include only the joiner and tag format
-// code points that complete emoji sequences, not the whole format category. The
-// non-delimiter ASCII token characters bridge accepted mixed authorities such
-// as `a$秘密.internal`.
-// Once the bounded probe finds a raw code point, consume the complete host run.
-// The second branch fails closed when that code point falls beyond the probe
-// rather than exposing the suffix of an overlong authority.
+// The strict host class covers IRI labels, emoji, and safe ASCII bridges while
+// leaving whitespace and trailing punctuation visible. When a component
+// delimiter proves the authority continues, the structured branch fails closed
+// across other host punctuation instead of enumerating IDNA context rules.
+// The bounded Unicode probe keeps scans linear; the second branch handles
+// authorities whose first Unicode code point occurs after that probe.
 const NON_ASCII_HOST_CHARACTER_SOURCE = String
   .raw`[\p{L}\p{N}\p{M}\p{S}\u200D\u{E0020}-\u{E007E}.\-_$!&*+,;=%~]`;
-const IDNA_DOT_EQUIVALENT_SOURCE = String.raw`[。．｡]`;
-// A component delimiter distinguishes an IDNA dot inside the authority from
-// sentence punctuation after it, as in `例え.internal。Retry`.
-const NON_ASCII_STRUCTURED_HOST_SOURCE = String
-  .raw`${NON_ASCII_HOST_CHARACTER_SOURCE}+(?:${IDNA_DOT_EQUIVALENT_SOURCE}${NON_ASCII_HOST_CHARACTER_SOURCE}+)+(?=[:/?#])`;
-const NON_ASCII_HOST_BODY_SOURCE = String
-  .raw`(?:${NON_ASCII_STRUCTURED_HOST_SOURCE}|${NON_ASCII_HOST_CHARACTER_SOURCE}+)`;
+const NON_ASCII_STRUCTURED_HOST_SOURCE = String.raw`[^\s"'\\/:?#@]+(?=[:/?#])`;
+const NON_ASCII_HOST_BODY_SOURCE =
+  `(?:${NON_ASCII_STRUCTURED_HOST_SOURCE}|${NON_ASCII_HOST_CHARACTER_SOURCE}+)`;
 const NON_ASCII_HOST_SOURCE = String
   .raw`(?:(?=[^\s"/]{0,511}[\u0080-\u{10FFFF}])${NON_ASCII_HOST_BODY_SOURCE}|(?=[^\s"/]{513})${NON_ASCII_HOST_BODY_SOURCE})`;
 const NON_ASCII_AUTHORITY_URL = new RegExp(
