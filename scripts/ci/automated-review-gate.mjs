@@ -371,12 +371,11 @@ function pendingReviewAge(status, now) {
 
 function latestCodexUsageLimit(
   comments,
-  pendingStatus,
+  boundary,
   reviewFailureCommentId,
   timeline,
   headSha,
 ) {
-  const pendingAt = Date.parse(pendingStatus?.created_at ?? "");
   let latest;
   let latestAt = Number.NEGATIVE_INFINITY;
   for (const comment of comments) {
@@ -388,16 +387,13 @@ function latestCodexUsageLimit(
       !CODEX_USAGE_LIMIT.test(comment.body.trim()) ||
       (!isTrigger && !isProvablyUneditedComment(comment))
     ) continue;
+    if (!commentFollowsHeadCommit(timeline, comment.id, headSha)) continue;
     if (
-      isTrigger &&
-      commentFollowsHeadCommit(timeline, comment.id, headSha)
-    ) return comment;
-    const createdAt = Date.parse(comment.created_at ?? "");
-    if (
-      !Number.isFinite(pendingAt) ||
-      !Number.isFinite(createdAt) ||
-      createdAt < pendingAt
+      evidenceFreshness(comment, "commented", boundary, timeline) !== "newer"
     ) continue;
+    if (isTrigger) return comment;
+    const createdAt = Date.parse(comment.created_at ?? "");
+    if (!Number.isFinite(createdAt)) continue;
     if (createdAt >= latestAt) {
       latest = comment;
       latestAt = createdAt;
@@ -421,17 +417,23 @@ function commentFollowsHeadCommit(timeline, commentId, headSha) {
   return headIndex >= 0 && commentIndex > headIndex;
 }
 
-function latestTerminalReviewStatus(statuses, pullNumber) {
-  const status = latestReviewGateStatusForPull(statuses, pullNumber);
-  if (
-    status?.state !== "failure" ||
-    !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
-  ) return undefined;
+function latestTerminalReviewStatus(statuses, pullNumber, boundary) {
   const rateLimited = `PR#${pullNumber} automated review rate limited`;
   const timedOut = `PR#${pullNumber} automated review timed out`;
-  return status?.description === rateLimited || status?.description === timedOut
-    ? status
-    : undefined;
+  for (const status of statuses) {
+    if (
+      status?.state !== "failure" ||
+      !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN) ||
+      (status?.description !== rateLimited &&
+        status?.description !== timedOut)
+    ) continue;
+    if (boundary !== undefined) {
+      const createdAt = Date.parse(status?.created_at ?? "");
+      if (!Number.isFinite(createdAt) || createdAt <= boundary.time) continue;
+    }
+    return status;
+  }
+  return undefined;
 }
 
 function canReusePendingStatus(
@@ -877,6 +879,7 @@ export async function publishAutomatedReviewStatus({
   let resetPending = false;
   let existingPendingStatus;
   let existingTerminalStatus;
+  let reviewBoundary;
   let failureKind;
   let failureUrl;
   if (
@@ -968,9 +971,20 @@ export async function publishAutomatedReviewStatus({
         statuses,
         pullNumber,
       );
+      const reviewNotBefore = latestReviewResetTime(
+        statuses,
+        pullNumber,
+        baseBinding,
+      );
+      reviewBoundary = activeReviewBoundary(
+        latestReviewRequest(comments, headSha),
+        reviewNotBefore,
+        latestBaseRefChange(events),
+      );
       existingTerminalStatus = latestTerminalReviewStatus(
         statuses,
         pullNumber,
+        reviewBoundary,
       );
       if (!resetPending && !isDraft) {
         review = await findAutomatedReview(
@@ -983,12 +997,12 @@ export async function publishAutomatedReviewStatus({
               login,
               pullAuthor,
             }),
-          latestReviewResetTime(statuses, pullNumber, baseBinding),
+          reviewNotBefore,
         );
         if (!review) {
           const usageLimit = latestCodexUsageLimit(
             comments,
-            existingPendingStatus,
+            reviewBoundary,
             reviewFailureCommentId,
             timeline,
             headSha,

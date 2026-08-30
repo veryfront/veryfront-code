@@ -2,6 +2,7 @@ import {
   assert,
   assertEquals,
   assertRejects,
+  assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
@@ -1560,6 +1561,10 @@ describe("automated review publication", () => {
       pages: {
         comments: [[codexRateLimitComment()]],
         statuses: [[pendingAutomatedReviewStatus()]],
+        timeline: [[
+          { event: "committed", sha: HEAD },
+          { event: "commented", id: 103 },
+        ]],
       },
     });
     const result = await publishAutomatedReviewStatus({
@@ -1629,6 +1634,73 @@ describe("automated review publication", () => {
 
     assertEquals(result.state, "pending");
     assertEquals(fixture.published[0]?.state, "pending");
+  });
+
+  it("does not bind a delayed limit reply across a same-head base reset", async () => {
+    const resetStatus = automatedReviewResetStatus(
+      "2026-08-25T08:01:00Z",
+      { id: 100 },
+    );
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexRateLimitComment("2026-08-25T08:00:00Z")]],
+        events: [[{
+          event: "base_ref_changed",
+          created_at: "2026-08-25T08:01:00Z",
+        }]],
+        statuses: [[resetStatus]],
+        timeline: [[
+          { event: "committed", sha: HEAD },
+          { event: "commented", id: 103 },
+        ]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      reviewFailureCommentId: 103,
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(result.statusId, 100);
+    assertEquals(fixture.published, []);
+  });
+
+  it("rejects a same-second old-epoch limit reply as ambiguous", async () => {
+    const resetStatus = automatedReviewResetStatus(
+      "2026-08-25T08:00:00Z",
+      { id: 100 },
+    );
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexRateLimitComment("2026-08-25T08:00:00Z")]],
+        events: [[{
+          event: "base_ref_changed",
+          created_at: "2026-08-25T08:00:00Z",
+        }]],
+        statuses: [[resetStatus]],
+        timeline: [[
+          { event: "committed", sha: HEAD },
+          { event: "commented", id: 103 },
+        ]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(result.statusId, 100);
+    assertEquals(fixture.published, []);
   });
 
   it("does not treat two missing comment ids as a triggering limit reply", async () => {
@@ -1778,6 +1850,7 @@ describe("automated review publication", () => {
       state: "failure",
       description: "PR#1 automated review rate limited",
       target_url: "https://example.test/rate-limit",
+      created_at: "2026-08-25T08:00:00Z",
     });
     const fixture = githubFixture({
       pages: { statuses: [[terminalStatus]] },
@@ -1795,6 +1868,63 @@ describe("automated review publication", () => {
     assertEquals(result.statusId, 105);
     assertEquals(result.description, "PR#1 automated review rate limited");
     assertEquals(fixture.published, []);
+  });
+
+  it("finds terminal evidence behind a later generic failure", async () => {
+    const fixture = githubFixture({
+      pages: {
+        statuses: [[
+          automatedReviewStatus({
+            id: 106,
+            state: "failure",
+            description: "PR#1 review status unavailable",
+            created_at: "2026-08-25T08:01:00Z",
+          }),
+          automatedReviewStatus({
+            id: 105,
+            state: "failure",
+            description: "PR#1 automated review timed out",
+            created_at: "2026-08-25T08:00:00Z",
+          }),
+        ]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+
+    assertEquals(result.state, "failure");
+    assertEquals(result.statusId, 105);
+    assertEquals(result.description, "PR#1 automated review timed out");
+    assertEquals(fixture.published, []);
+  });
+
+  it("starts a fresh pending epoch when a pull request reopens", async () => {
+    const fixture = githubFixture({
+      pages: { statuses: [[pendingAutomatedReviewStatus()]] },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      reviewResetKey: "reopen-42",
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(fixture.published.length, 1);
+    assertEquals(fixture.published[0]?.state, "pending");
+    assertStringIncludes(
+      String(fixture.published[0]?.description),
+      "PR#1 reset base:",
+    );
   });
 
   it("fails when exact-ref lookup is operationally unavailable", async () => {
@@ -4253,6 +4383,10 @@ describe("automated review workflow", () => {
       "a rerun must not create a second reset epoch",
     );
     assert(script.includes("reviewResetKey"));
+    assert(
+      script.includes("`reopen-${context.runId}`"),
+      "reopened pull requests must establish a fresh review epoch",
+    );
 
     const invalidateJob = record(jobs.invalidate, "invalidate job");
     assertEquals(

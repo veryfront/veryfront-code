@@ -664,10 +664,13 @@ jobs:
               headSha,
               pullUrl: `https://github.com/${context.repo.owner}/${context.repo.repo}/pull/${pullNumber}`,
               reviewResetKey:
-                context.eventName === "pull_request_target" &&
-                context.payload.action === "edited" &&
-                context.payload.changes?.base !== undefined
-                  ? `base-${context.runId}`
+                context.eventName === "pull_request_target"
+                  ? context.payload.action === "edited" &&
+                      context.payload.changes?.base !== undefined
+                    ? `base-${context.runId}`
+                    : context.payload.action === "reopened"
+                    ? `reopen-${context.runId}`
+                    : undefined
                   : undefined,
               reviewFailureCommentId:
                 context.eventName === "issue_comment" &&
