@@ -2073,6 +2073,40 @@ describe("automated review publication", () => {
     });
     assertEquals(staleResult.state, "pending");
     assertEquals(staleFixture.published[0]?.state, "pending");
+
+    const lateTerminalStatus = automatedReviewStatus({
+      id: 106,
+      state: "failure",
+      description: "PR#1 automated review rate limited",
+      target_url: limitComment.html_url,
+      created_at: "2026-08-25T10:00:00Z",
+    });
+    const lateFixture = githubFixture({
+      pages: {
+        comments: [[limitComment]],
+        events: [[{
+          event: "reopened",
+          id: 102,
+          created_at: "2026-08-25T09:00:00Z",
+        }]],
+        statuses: [[lateTerminalStatus]],
+        timeline: [[
+          { event: "committed", sha: HEAD },
+          { event: "commented", id: 103 },
+          { event: "reopened", id: 102 },
+        ]],
+      },
+    });
+    const lateResult = await publishAutomatedReviewStatus({
+      github: lateFixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(lateResult.state, "pending");
+    assertEquals(lateFixture.published[0]?.state, "pending");
   });
 
   it("ignores terminal descriptions from another status context", async () => {
@@ -4804,6 +4838,33 @@ describe("automated review request", () => {
       "current review epoch event is not visible",
     );
     assertEquals(notVisible.posted, []);
+
+    const staleConcrete = requestFixture({
+      events: [
+        {
+          event: "base_ref_changed",
+          id: 42,
+          created_at: "2026-08-25T09:00:00Z",
+        },
+        {
+          event: "reopened",
+          id: 43,
+          created_at: "2026-08-25T10:00:00Z",
+        },
+      ],
+    });
+    const staleConcreteResult = await requestAutomatedReview({
+      github: staleConcrete.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      requestKey: "base-42",
+      validateRequestEpoch: true,
+    });
+    assertEquals(staleConcreteResult.requested, false);
+    assertEquals(staleConcreteResult.reason, "stale-epoch");
+    assertEquals(staleConcrete.posted, []);
   });
 
   it("refuses to request a review of a malformed head commit", async () => {

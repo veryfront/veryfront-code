@@ -619,18 +619,19 @@ function latestTerminalReviewStatus(
         status?.description !== timedOut)
     ) continue;
     if (boundary !== undefined) {
-      const createdAt = Date.parse(status?.created_at ?? "");
-      if (!Number.isFinite(createdAt) || createdAt < boundary.time) continue;
-      if (
-        createdAt === boundary.time &&
-        !terminalStatusHasBoundaryProof(
+      if (status.description === rateLimited) {
+        if (!terminalStatusHasBoundaryProof(
           status,
           comments,
           boundary,
           timeline,
           headSha,
-        )
-      ) continue;
+        )) continue;
+      } else if (!pendingHistoryHasBoundaryProof(
+        statuses,
+        pullNumber,
+        boundary,
+      )) continue;
     }
     return status;
   }
@@ -2013,6 +2014,7 @@ export async function expireTimedOutAutomatedReview({
         pullNumber,
         headSha,
         requestKey: result.reviewRequestKey,
+        validateRequestEpoch: result.reviewRequestKey !== undefined,
       })
       : undefined;
     return {
@@ -2736,6 +2738,7 @@ export async function requestAutomatedReview({
   headSha,
   requestKey = /** @type {string | undefined} */ (undefined),
   reviewEpochNotBefore = /** @type {string | undefined} */ (undefined),
+  validateRequestEpoch = false,
 }) {
   // The comment body must stay a fixed instruction plus a verified commit
   // SHA. Never interpolate pull request controlled content here: this runs
@@ -2752,18 +2755,34 @@ export async function requestAutomatedReview({
     throw new Error("Refusing to use a malformed review request key");
   }
   let effectiveRequestKey = requestKey;
-  if (requestKey === "reopen" || requestKey === "base") {
+  const concreteEpoch = typeof requestKey === "string"
+    ? /^(base|reopen)-([1-9]\d*)$/.exec(requestKey)
+    : null;
+  if (
+    requestKey === "reopen" || requestKey === "base" ||
+    validateRequestEpoch
+  ) {
     const events = await collectAll(
       github,
       github.rest.issues.listEvents,
       { owner, repo, issue_number: pullNumber },
       "review epoch events",
     );
-    effectiveRequestKey = durableReviewRequestKey(
-      events,
-      requestKey,
-      reviewEpochNotBefore,
-    );
+    if (requestKey === "reopen" || requestKey === "base") {
+      effectiveRequestKey = durableReviewRequestKey(
+        events,
+        requestKey,
+        reviewEpochNotBefore,
+      );
+    } else {
+      if (!concreteEpoch) {
+        throw new Error("Concrete review epoch key is malformed");
+      }
+      const currentKey = durableReviewRequestKey(events, concreteEpoch[1]);
+      if (currentKey !== requestKey) {
+        return { requested: false, reason: "stale-epoch" };
+      }
+    }
     if (effectiveRequestKey === undefined) {
       return { requested: false, reason: "stale-epoch" };
     }
