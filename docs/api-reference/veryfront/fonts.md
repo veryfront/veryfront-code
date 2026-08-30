@@ -27,13 +27,13 @@ import { GoogleFonts } from "veryfront/fonts";
 
 ### Components
 
-| Name          | Description          | Source                                                                                        |
-| ------------- | -------------------- | --------------------------------------------------------------------------------------------- |
-| `GoogleFonts` | Render Google fonts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts#L251) |
+| Name          | Description          | Source                                                                                   |
+| ------------- | -------------------- | ---------------------------------------------------------------------------------------- |
+| `GoogleFonts` | Render Google fonts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts) |
 
 ### Types
 
-| Name               | Description                     | Source                                                                                       |
-| ------------------ | ------------------------------- | -------------------------------------------------------------------------------------------- |
-| `Font`             | Public API contract for font.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts#L23) |
-| `GoogleFontsProps` | Props accepted by Google fonts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts#L31) |
+| Name               | Description                     | Source                                                                                   |
+| ------------------ | ------------------------------- | ---------------------------------------------------------------------------------------- |
+| `Font`             | Public API contract for font.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts) |
+| `GoogleFontsProps` | Props accepted by Google fonts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts) |

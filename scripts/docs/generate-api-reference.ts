@@ -1336,12 +1336,7 @@ function getSourceHref(location: DenoDocLocation | undefined): string {
   const relativePath = getRelativeSourcePath(location);
   if (!relativePath) return "";
 
-  const lineNumber = location?.line;
-  // `deno doc --json` reports one-based source lines, matching GitHub anchors.
-  const line = typeof lineNumber === "number" && lineNumber >= 1
-    ? `#L${lineNumber}`
-    : "";
-  return `${SOURCE_BASE_URL}/${relativePath}${line}`;
+  return `${SOURCE_BASE_URL}/${relativePath}`;
 }
 
 function getRelativeSourcePath(location: DenoDocLocation | undefined): string {
@@ -1406,11 +1401,7 @@ function pushNodeSummary(
     if (!existing.description && description) {
       existing.description = description;
     }
-    if (
-      sourceHref &&
-      (!existing.sourceHref ||
-        (!existing.sourceHref.includes("#L") && sourceHref.includes("#L")))
-    ) {
+    if (sourceHref && !existing.sourceHref) {
       existing.sourceHref = sourceHref;
     }
     return;
