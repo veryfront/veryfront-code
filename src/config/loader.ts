@@ -2098,23 +2098,60 @@ const SCHEME_URL = new RegExp(
 // Redact raw IRI authorities after the file-URL pass. Keep the optional tail
 // grouped: `${URL_TOKEN_TAIL_SOURCE}?` would make its final `+` lazy.
 // The strict host class covers IRI labels, emoji, and safe ASCII bridges while
-// leaving whitespace and trailing punctuation visible. It admits IDNA context
-// punctuation only beside the characters that make it host data. When a
-// component delimiter proves the authority continues, the structured branch
-// fails closed across other host punctuation.
+// leaving whitespace and trailing punctuation visible. When a component
+// delimiter proves the authority continues, the structured branch fails closed
+// across other host punctuation instead of enumerating IDNA context rules.
 // The bounded Unicode probe keeps scans linear; the second branch handles
 // authorities whose first Unicode code point occurs after that probe.
-const NON_ASCII_HOST_BASE_CHARACTER_SOURCE = String
-  .raw`(?:[\p{L}\p{N}\p{M}\u200C\u200D\u{E0020}-\u{E007E}.\-_$!&*+,;=%~]|(?!\u0375)\p{S})`;
-const JAPANESE_HOST_CHARACTER_SOURCE = String
-  .raw`[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]`;
-const IDNA_CONTEXT_HOST_SOURCE = String
-  .raw`(?:[lL]\u00B7(?=[lL])|\u0375(?=\p{Script=Greek})|\p{Script=Hebrew}[\u05F3\u05F4]|${JAPANESE_HOST_CHARACTER_SOURCE}\u30FB|\u30FB(?=${JAPANESE_HOST_CHARACTER_SOURCE}))`;
-const NON_ASCII_HOST_CHARACTER_SOURCE =
-  `(?:${IDNA_CONTEXT_HOST_SOURCE}|${NON_ASCII_HOST_BASE_CHARACTER_SOURCE})`;
+//
+// Backslash is a structural delimiter too. WHATWG special-scheme parsing reads
+// `\` as a path separator, so `https://l\u00B7l.internal\PRIVATE` has the path
+// `/PRIVATE`; without `\` in the lookahead the structured branch could not
+// prove that authority continued, the strict class stopped at `\u00B7`, and
+// `\u00B7l.internal\PRIVATE` reached the caller. The generic-scheme redactor shares
+// this source: a non-special scheme cannot carry `\` in its host either, so
+// claiming the authority there over-redacts at worst.
+//
+// A bare authority has no delimiter to prove itself with, so the strict class
+// alone decided where it ended -- and it ended at the first character it did
+// not list. WHATWG accepts nearly every non-ASCII punctuation and format code
+// point inside a host label (UTS #46 keeps the IDNA2003 set), not only the
+// CONTEXTO marks: measured against `new URL`, every accepted code point outside
+// the strict class falls in `\p{P}` or `\p{Cf}`, and everything in `\p{Z}`,
+// `\p{Cc}`, `\p{Co}`, and `\p{Cn}` is rejected. Enumerating the accepted marks
+// would drift; the class is the superset, which fails closed. Whether such a
+// character is host or sentence punctuation is decided structurally, the way
+// the lone `)` in URL_TOKEN_TAIL_SOURCE is: a bounded run of them is host
+// unless the token ends in punctuation right after it. `https://l\u00B7l.internal`
+// is redacted whole because `l` follows the dot, while `Failed [url]\u00B7`,
+// `[url]\u00B7 Retry`, and `\u00AB[url]\u00BB, r\u00E9essayez` keep their marks because nothing but
+// punctuation stands between the run and the boundary. The label separators
+// `\u3002\uFF0E\uFF61` take the same rule: `\u4F8B\u3048.internal\u3002Retry` is one host to the parser,
+// so the glued prose is redacted with it, whereas `\u4F8B\u3048.internal\u3002 Retry` keeps
+// its terminator. Over-redacting glued prose is the accepted cost; a hostname
+// suffix in a caller-visible detail is not.
+//
+// The run excludes the joiner and tag code points the strict class already
+// lists, so the two alternatives are disjoint and no position can match both.
+// The `{1,16}` bounds mirror the closing-paren rule: a longer run is consumed
+// as host rather than rescanned. Once the run has matched one character the
+// whole pattern succeeds -- only optional groups follow -- so the engine never
+// backtracks into it. Measured through redactMachinePaths on `https://` + `l\u00B7`
+// \u00D7 n for n of 500/1000/2000/4000: 0.008/0.013/0.023/0.043ms; on a bare run of
+// 500..4000 middle dots ending in a space, which fails the trailing check at
+// every length of its final run, 0.008/0.010/0.020/0.036ms. Both 2x per
+// doubling.
+const NON_ASCII_HOST_CHARACTER_SOURCE = String
+  .raw`[\p{L}\p{N}\p{M}\p{S}\u200D\u{E0020}-\u{E007E}.\-_$!&*+,;=%~]`;
+const NON_ASCII_HOST_PUNCTUATION_SOURCE = String
+  .raw`(?![\x00-\x7F\u200D\u{E0020}-\u{E007E}])[\p{P}\p{Cf}]`;
+const NON_ASCII_HOST_PUNCTUATION_RUN_SOURCE = String
+  .raw`${NON_ASCII_HOST_PUNCTUATION_SOURCE}{1,16}(?![\p{P}\p{Cf}]{0,16}(?:[\s"']|$))`;
+const NON_ASCII_STRICT_HOST_SOURCE =
+  `(?:${NON_ASCII_HOST_CHARACTER_SOURCE}|${NON_ASCII_HOST_PUNCTUATION_RUN_SOURCE})+`;
 const NON_ASCII_STRUCTURED_HOST_SOURCE = String.raw`[^\s"'\\/:?#@]+(?=[:/?#\\])`;
 const NON_ASCII_HOST_BODY_SOURCE =
-  `(?:${NON_ASCII_STRUCTURED_HOST_SOURCE}|${NON_ASCII_HOST_CHARACTER_SOURCE}+)`;
+  `(?:${NON_ASCII_STRUCTURED_HOST_SOURCE}|${NON_ASCII_STRICT_HOST_SOURCE})`;
 const NON_ASCII_HOST_SOURCE = String
   .raw`(?:(?=[^\s"/]{0,511}[\u0080-\u{10FFFF}])${NON_ASCII_HOST_BODY_SOURCE}|(?=[^\s"/]{513})${NON_ASCII_HOST_BODY_SOURCE})`;
 const NON_ASCII_AUTHORITY_URL = new RegExp(
