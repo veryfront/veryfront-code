@@ -228,6 +228,16 @@ function durableReviewRequestKey(events, requestKey, reviewEpochNotBefore) {
   return `${requestKey}-${latestEpoch.id}`;
 }
 
+function reviewEpochTiesTrigger(events, requestKey, reviewEpochNotBefore) {
+  const eventKind = REVIEW_REQUEST_EVENT_KINDS.get(requestKey);
+  if (eventKind === undefined || reviewEpochNotBefore === undefined) {
+    return false;
+  }
+  const latestEpoch = latestReviewEpochChange(events);
+  return latestEpoch?.kind === eventKind &&
+    latestEpoch.time === Date.parse(reviewEpochNotBefore);
+}
+
 function timelinePosition(timeline, event, id) {
   if (!Number.isSafeInteger(id) || id < 1) return undefined;
   let position;
@@ -450,6 +460,25 @@ function pendingStatusBelongsToReviewEpoch(
     description.startsWith(`${resetPrefix} key:`) ||
     (boundary.kind === "ready_for_review" &&
       description.startsWith(`PR#${pullNumber} waits for review `));
+}
+
+function pendingHistoryHasBoundaryProof(statuses, pullNumber, boundary) {
+  const descriptionPrefix = `PR#${pullNumber} `;
+  return statuses.some((status) => {
+    if (
+      status?.context !== AUTOMATED_REVIEW_STATUS_CONTEXT ||
+      status?.state !== "pending" ||
+      typeof status?.description !== "string" ||
+      !status.description.startsWith(descriptionPrefix) ||
+      !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
+    ) return false;
+    const createdAt = Date.parse(status?.created_at ?? "");
+    if (!Number.isFinite(createdAt) || createdAt < boundary.time) return false;
+    if (createdAt > boundary.time) return true;
+    return status.description.startsWith(`PR#${pullNumber} reset base:`) ||
+      (boundary.kind === "ready_for_review" &&
+        status.description.startsWith(`PR#${pullNumber} waits for review `));
+  });
 }
 
 function latestCodexUsageLimit(
@@ -1031,6 +1060,7 @@ export async function publishAutomatedReviewStatus({
   reviewTimeoutMs = /** @type {number | undefined} */ (undefined),
   queuePropagationPending = false,
   reviewEpochNotBefore = /** @type {string | undefined} */ (undefined),
+  reviewEpochRunAttempt = /** @type {number | undefined} */ (undefined),
 }) {
   let review;
   let failure;
@@ -1069,6 +1099,11 @@ export async function publishAutomatedReviewStatus({
     failure = new Error("Review timeout is invalid");
   } else if (!FULL_SHA.test(headSha)) {
     failure = new Error("Captured head is malformed");
+  } else if (
+    reviewEpochRunAttempt !== undefined &&
+    (!Number.isSafeInteger(reviewEpochRunAttempt) || reviewEpochRunAttempt < 1)
+  ) {
+    failure = new Error("Review epoch run attempt is invalid");
   } else {
     try {
       const current = await github.rest.pulls.get({
@@ -1131,14 +1166,28 @@ export async function publishAutomatedReviewStatus({
         reviewResetKey,
         reviewEpochNotBefore,
       );
-      resetPending = effectiveReviewResetKey !== undefined &&
-        !hasReviewRequest(comments, headSha, effectiveReviewResetKey) &&
-        !hasReviewReset(
+      const resetRequested = effectiveReviewResetKey !== undefined &&
+        hasReviewRequest(comments, headSha, effectiveReviewResetKey);
+      const resetPublished = effectiveReviewResetKey !== undefined &&
+        hasReviewReset(
           statuses,
           pullNumber,
           baseBinding,
           effectiveReviewResetKey,
         );
+      if (
+        reviewEpochRunAttempt === 1 &&
+        (resetRequested || resetPublished) &&
+        reviewEpochTiesTrigger(
+          events,
+          reviewResetKey,
+          reviewEpochNotBefore,
+        )
+      ) {
+        throw new Error("The triggering review epoch event is not visible");
+      }
+      resetPending = effectiveReviewResetKey !== undefined &&
+        !resetRequested && !resetPublished;
       existingPendingStatus = latestPendingReviewStatus(
         statuses,
         pullNumber,
@@ -1606,21 +1655,24 @@ function latestReviewPropagationRetryStatus(
   ) return undefined;
   if (failureKind === undefined) return undefined;
   if (boundary !== undefined) {
-    const createdAt = Date.parse(status?.created_at ?? "");
-    if (!Number.isFinite(createdAt) || createdAt < boundary.time) {
-      return undefined;
-    }
-    if (
-      createdAt === boundary.time &&
-      failureKind !== "unavailable" &&
-      !terminalStatusHasBoundaryProof(
+    if (failureKind === "rate-limited") {
+      if (!terminalStatusHasBoundaryProof(
         status,
         comments,
         boundary,
         timeline,
         headSha,
-      )
-    ) return undefined;
+      )) return undefined;
+    } else if (failureKind === "timed-out") {
+      if (!pendingHistoryHasBoundaryProof(statuses, pullNumber, boundary)) {
+        return undefined;
+      }
+    } else {
+      const createdAt = Date.parse(status?.created_at ?? "");
+      if (!Number.isFinite(createdAt) || createdAt < boundary.time) {
+        return undefined;
+      }
+    }
   }
   return { status, failureKind };
 }
@@ -1936,11 +1988,21 @@ export async function expireTimedOutAutomatedReview({
         `${queueFailures} active merge queue review failed`,
       );
     }
+    const reviewRequest = result.state === "pending"
+      ? await requestAutomatedReview({
+        github,
+        owner,
+        repo,
+        pullNumber,
+        headSha,
+      })
+      : undefined;
     return {
       ...result,
       expired: false,
       reason: result.state === "success" ? "reviewed" : "revalidated",
       queueResults,
+      reviewRequest,
     };
   }
   return { ...result, expired: false, reason: "revalidated" };

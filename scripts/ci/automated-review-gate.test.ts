@@ -1070,6 +1070,7 @@ function githubFixture(options: {
     timeline: () => undefined,
   };
   const published: Record<string, unknown>[] = [];
+  const commentsPosted: Record<string, unknown>[] = [];
   const refReads: Record<string, unknown>[] = [];
   const graphqlReads: { query: unknown; variables: unknown }[] = [];
   const pageReads = new Map<string, number>();
@@ -1134,6 +1135,10 @@ function githubFixture(options: {
         listComments: endpoints.comments,
         listEvents: endpoints.events,
         listEventsForTimeline: endpoints.timeline,
+        createComment: (comment: Record<string, unknown>) => {
+          commentsPosted.push(comment);
+          return Promise.resolve();
+        },
       },
       git: {
         listMatchingRefs: endpoints.refs,
@@ -1176,7 +1181,7 @@ function githubFixture(options: {
       },
     },
   };
-  return { github, published, refReads, graphqlReads };
+  return { github, published, commentsPosted, refReads, graphqlReads };
 }
 
 describe("automated review publication", () => {
@@ -2256,6 +2261,72 @@ describe("automated review publication", () => {
     assertEquals(sameSecondResult.statusId, 107);
     assertEquals(sameSecondResult.description, sameSecondRetry.description);
     assertEquals(sameSecondFixture.published, []);
+
+    const oldLimitComment = codexRateLimitComment(
+      "2026-08-25T08:00:00Z",
+    );
+    const lateRateMarker = automatedReviewStatus({
+      id: 109,
+      state: "failure",
+      description:
+        "PR#1 automated review rate limited; queue retry pending",
+      target_url: oldLimitComment.html_url,
+      created_at: "2026-08-25T10:00:00Z",
+    });
+    const staleRateFixture = githubFixture({
+      pages: {
+        comments: [[oldLimitComment]],
+        events: [[{
+          event: "ready_for_review",
+          id: 108,
+          created_at: "2026-08-25T09:00:00Z",
+        }]],
+        statuses: [[lateRateMarker]],
+        timeline: [[
+          { event: "committed", sha: HEAD },
+          { event: "commented", id: 103 },
+          { event: "ready_for_review", id: 108 },
+        ]],
+      },
+    });
+    const staleRateResult = await publishAutomatedReviewStatus({
+      github: staleRateFixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(staleRateResult.state, "pending");
+
+    const lateTimeoutMarker = automatedReviewStatus({
+      id: 110,
+      state: "failure",
+      description: "PR#1 automated review timed out; queue retry pending",
+      created_at: "2026-08-25T10:00:00Z",
+    });
+    const staleTimeoutFixture = githubFixture({
+      pages: {
+        events: [[{
+          event: "ready_for_review",
+          id: 108,
+          created_at: "2026-08-25T09:00:00Z",
+        }]],
+        statuses: [[
+          lateTimeoutMarker,
+          pendingAutomatedReviewStatus("2026-08-25T08:00:00Z"),
+        ]],
+      },
+    });
+    const staleTimeoutResult = await publishAutomatedReviewStatus({
+      github: staleTimeoutFixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(staleTimeoutResult.state, "pending");
   });
 
   it("does not time out a pending status from before a base reset", async () => {
@@ -2559,6 +2630,62 @@ describe("automated review publication", () => {
       notVisibleResult.description,
       "PR#1 review status unavailable",
     );
+
+    const tiedReset = automatedReviewResetStatus(
+      "2026-08-25T09:00:00Z",
+      {
+        id: 100,
+        description: `PR#1 reset base:${
+          reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+        } key:160accde50a8`,
+      },
+    );
+    const tiedFixture = githubFixture({
+      pages: {
+        events: [[{
+          event: "reopened",
+          id: 41,
+          created_at: "2026-08-25T09:00:00Z",
+        }]],
+        statuses: [[tiedReset]],
+      },
+    });
+    const tiedResult = await publishAutomatedReviewStatus({
+      github: tiedFixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      reviewResetKey: "reopen",
+      reviewEpochNotBefore: "2026-08-25T09:00:00Z",
+      reviewEpochRunAttempt: 1,
+    });
+    assertEquals(tiedResult.state, "failure");
+    assertEquals(tiedResult.description, "PR#1 review status unavailable");
+
+    const rerun = await publishAutomatedReviewStatus({
+      github: githubFixture({
+        pages: {
+          events: [[{
+            event: "reopened",
+            id: 41,
+            created_at: "2026-08-25T09:00:00Z",
+          }]],
+          statuses: [[tiedReset]],
+        },
+      }).github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      reviewResetKey: "reopen",
+      reviewEpochNotBefore: "2026-08-25T09:00:00Z",
+      reviewEpochRunAttempt: 2,
+    });
+    assertEquals(rerun.state, "pending");
+    assertEquals(rerun.statusId, 100);
   });
 
   it("fails when exact-ref lookup is operationally unavailable", async () => {
@@ -3514,6 +3641,10 @@ describe("automated review timeout watchdog", () => {
     assert("state" in result);
     assertEquals(result.state, "pending");
     assertEquals(fixture.published[0]?.state, "pending");
+    assertEquals(
+      fixture.commentsPosted[0]?.body,
+      `<!-- automated-review-request: ${HEAD} -->\n@codex review`,
+    );
   });
 
   it("does not finalize a retry after a newer lifecycle epoch", async () => {
@@ -5209,7 +5340,7 @@ describe("automated review workflow", () => {
       record(timeoutJob.permissions, "timeout publisher permissions"),
       {
         contents: "read",
-        "pull-requests": "read",
+        "pull-requests": "write",
         statuses: "write",
       },
     );
@@ -5503,7 +5634,8 @@ describe("automated review workflow", () => {
     assert(script.includes("queuePropagationPending: true"));
     assert(
       script.includes("reviewEpochNotBefore") &&
-        script.includes("context.payload.pull_request?.updated_at"),
+        script.includes("context.payload.pull_request?.updated_at") &&
+        script.includes("reviewEpochRunAttempt: context.runAttempt"),
       "lifecycle publishers must wait for the triggering durable event",
     );
     assert(script.includes("sourceStatusId: result.statusId"));

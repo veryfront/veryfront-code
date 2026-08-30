@@ -82,7 +82,7 @@ jobs:
         target: ${{ fromJSON(needs.timeout_targets.outputs.targets) }}
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write
       statuses: write
     concurrency:
       group: automated-review-pr-${{ matrix.target.pullNumber }}
@@ -684,6 +684,7 @@ jobs:
               queuePropagationPending: true,
               reviewEpochNotBefore:
                 context.payload.pull_request?.updated_at,
+              reviewEpochRunAttempt: context.runAttempt,
             });
             if (Number.isSafeInteger(result.statusId)) {
               core.setOutput("source-status-id", String(result.statusId));
