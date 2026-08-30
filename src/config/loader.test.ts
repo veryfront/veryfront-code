@@ -6507,6 +6507,11 @@ export default config as const;
           ["middle-dot-end", "Failed https://l·l.internal·", "Failed [url]·"],
           ["katakana-middle-dot", "Failed https://例え.internal・ Retry", "Failed [url]・ Retry"],
           [
+            "non-special-scheme",
+            "Failed foo://例え.internal。Retry",
+            "Failed [url]。Retry",
+          ],
+          [
             "guillemets-comma",
             "Failed «https://例え.internal», réessayez",
             "Failed «[url]», réessayez",
@@ -6567,6 +6572,11 @@ export default config as const;
             [
               "invalid-port-after-accepted-symbol",
               "Failed https://a🙂.internal:99999/private",
+              "Failed [url]",
+            ],
+            [
+              "invalid-port-after-userinfo-symbol",
+              "Failed https://a¨value@例え.internal:99999/private",
               "Failed [url]",
             ],
           ] as const

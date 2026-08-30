@@ -2121,9 +2121,21 @@ const NON_ASCII_HOST_BODY_SOURCE =
   `(?:${NON_ASCII_STRUCTURED_HOST_SOURCE}|${NON_ASCII_STRICT_HOST_SOURCE})`;
 const NON_ASCII_HOST_SOURCE = String
   .raw`(?:(?=[^\s"/]{0,511}[\u0080-\u{10FFFF}])${NON_ASCII_HOST_BODY_SOURCE}|(?=[^\s"/]{513})${NON_ASCII_HOST_BODY_SOURCE})`;
+// Opaque hosts keep sentence punctuation, so non-special schemes retain the
+// contextual marks that distinguish punctuation inside a bare hostname.
+const NON_SPECIAL_HOST_BASE_CHARACTER_SOURCE = String
+  .raw`(?:[\p{L}\p{N}\p{M}\u200C\u200D\u{E0020}-\u{E007E}.\-_$!&*+,;=%~]|(?!\u0375)\p{S})`;
+const NON_SPECIAL_JAPANESE_HOST_CHARACTER_SOURCE = String
+  .raw`[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]`;
+const NON_SPECIAL_CONTEXT_HOST_SOURCE = String
+  .raw`(?:[lL]\u00B7(?=[lL])|\u0375(?=\p{Script=Greek})|\p{Script=Hebrew}[\u05F3\u05F4]|${NON_SPECIAL_JAPANESE_HOST_CHARACTER_SOURCE}\u30FB|\u30FB(?=${NON_SPECIAL_JAPANESE_HOST_CHARACTER_SOURCE}))`;
+const NON_SPECIAL_HOST_BODY_SOURCE = String
+  .raw`(?:${NON_ASCII_STRUCTURED_HOST_SOURCE}|(?:${NON_SPECIAL_CONTEXT_HOST_SOURCE}|${NON_SPECIAL_HOST_BASE_CHARACTER_SOURCE})+)`;
+const NON_SPECIAL_HOST_SOURCE = String
+  .raw`(?:(?=[^\s"/]{0,511}[\u0080-\u{10FFFF}])${NON_SPECIAL_HOST_BODY_SOURCE}|(?=[^\s"/]{513})${NON_SPECIAL_HOST_BODY_SOURCE})`;
 const NON_ASCII_AUTHORITY_URL = new RegExp(
   String
-    .raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}(?:${URL_TOKEN_TAIL_SOURCE})?`,
+    .raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${NON_SPECIAL_HOST_SOURCE}(?:${URL_TOKEN_TAIL_SOURCE})?`,
   "gu",
 );
 // At a slash boundary raw Unicode is IRI path data. The boundary leaves Unicode
@@ -2150,6 +2162,11 @@ const MAX_URL_HOST_SYMBOL_BOUNDARY_ATTEMPTS = 16;
 // Restrict malformed forms to WHATWG special schemes so drive-path prose is not
 // claimed as a URL.
 const ASCII_SPECIAL_SCHEME_SOURCE = "(?:[hH][tT][tT][pP][sS]?|[wW][sS][sS]?|[fF][tT][pP])";
+const NON_ASCII_SPECIAL_AUTHORITY_URL = new RegExp(
+  String
+    .raw`${ASCII_SPECIAL_SCHEME_SOURCE}://(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}(?:${URL_TOKEN_TAIL_SOURCE})?`,
+  "gu",
+);
 const MALFORMED_SCHEME_URL = new RegExp(
   String.raw`${ASCII_SPECIAL_SCHEME_SOURCE}:/(?!/)(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
   "gu",
@@ -2269,6 +2286,8 @@ function acceptedUnicodeHostMatchEnd(matched: string, matchIndex: number): numbe
       const codeUnit = ReflectApply(StringPrototypeCharCodeAt, matched, [index]) as number;
       if (codeUnit < 0x80) continue;
       attempts -= 1;
+      const followingAt = ReflectApply(StringPrototypeIndexOf, matched, ["@", index]) as number;
+      if (followingAt !== -1) continue;
       const prefix = ReflectApply(StringPrototypeSlice, matched, [0, index]) as string;
       try {
         new IntrinsicURL(prefix);
@@ -2361,6 +2380,13 @@ function redactMachinePaths(value: string): string {
   }
   redacted = replaceMatchesWithCapturedExec(redacted, FILE_URL_ABSOLUTE_PATH, "[path]", true);
   if (containsNonAscii(redacted)) {
+    redacted = replaceMatchesWithCapturedExec(
+      redacted,
+      NON_ASCII_SPECIAL_AUTHORITY_URL,
+      "[url]",
+      true,
+      true,
+    );
     redacted = replaceMatchesWithCapturedExec(
       redacted,
       NON_ASCII_AUTHORITY_URL,
