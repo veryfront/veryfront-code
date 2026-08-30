@@ -20,7 +20,7 @@ import { fromFileUrl } from "#veryfront/platform/compat/path/index.ts";
  *    It restores in a `finally`, but that only closes the window afterwards — a
  *    concurrent reader inside the window still resolves against the wrong
  *    directory. Which files share a process is decided by the suite planner's
- *    ordinal shard selection (`index % 8` over the sorted file list), so adding
+ *    ordinal shard selection (`index % shard count` over the sorted file list), so adding
  *    any test file anywhere reshuffles the pairing. This module read repo files
  *    by cwd-relative path and failed in CI with `NotFound: readfile
  *    '.github/workflows/cicd.yml'` the moment a shard reshuffle put it beside a
@@ -111,17 +111,17 @@ describe("cicd coverage workflow", () => {
     const workflow = await readWorkflow();
 
     assertStringIncludes(workflow, "coverage-shards:");
-    assertStringIncludes(workflow, "name: coverage shard ${{ matrix.shard }}/8");
+    assertStringIncludes(workflow, "name: coverage shard ${{ matrix.shard }}/4");
     assertEquals(
       jobTimeoutMinutes(workflow, "coverage-shards"),
-      15,
-      "coverage shard job-level timeout must stay at 15 minutes",
+      20,
+      "coverage shard job-level timeout must stay at 20 minutes",
     );
     assertSetupDenoStepTimeout(workflow, "coverage-shards");
-    assertStringIncludes(workflow, "shard: [1, 2, 3, 4, 5, 6, 7, 8]");
+    assertStringIncludes(workflow, "shard: [1, 2, 3, 4]");
     assertStringIncludes(
       workflow,
-      "deno task coverage:ci:shard -- --shard=${{ matrix.shard }}/8 --coverage-dir=coverage-shard-${{ matrix.shard }}",
+      "deno task coverage:ci:shard -- --shard=${{ matrix.shard }}/4 --coverage-dir=coverage-shard-${{ matrix.shard }}",
     );
     assertStringIncludes(workflow, "actions/upload-artifact");
     assertStringIncludes(workflow, "name: coverage-shard-${{ matrix.shard }}");

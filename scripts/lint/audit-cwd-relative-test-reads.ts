@@ -10,7 +10,7 @@
  * directory.
  *
  * Which test files share a process is decided by the suite planner's ordinal
- * shard selection (`index % 8` over the sorted file list), so adding any test
+ * shard selection (`index % shard count` over the sorted file list), so adding any test
  * file anywhere reshuffles the pairings. A test that reads a
  * repo file by cwd-relative path is therefore not stably correct — it is
  * correct until an unrelated file lands beside it.

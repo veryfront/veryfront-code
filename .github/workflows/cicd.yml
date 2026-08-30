@@ -457,7 +457,7 @@ jobs:
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           use_oidc: true
-          # Comma separated, the form the action documents. All 8 files go up
+          # Comma separated, the form the action documents. All 4 files go up
           # in one call, so Codecov records one upload per commit.
           files: coverage-profiles/coverage-shard-1/lcov.info,coverage-profiles/coverage-shard-2/lcov.info,coverage-profiles/coverage-shard-3/lcov.info,coverage-profiles/coverage-shard-4/lcov.info
           disable_search: true

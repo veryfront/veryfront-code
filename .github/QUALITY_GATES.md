@@ -7,7 +7,7 @@ protects a distinct delivery boundary.
 ## 1. Merge correctness
 
 `quality gate (merge)` requires source checks, unit tests, the existing
-eight-shard coverage dependency with its 80 percent floor, integration tests,
+four-shard coverage dependency with its 80 percent floor, integration tests,
 the full Node and Bun runtime suites, binary end-to-end tests, and RSC browser
 end-to-end tests to succeed for pull requests, merge queue runs, and main
 pushes. Sonar analysis is also mandatory for merge queue runs, main pushes,
