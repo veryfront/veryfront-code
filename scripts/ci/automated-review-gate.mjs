@@ -18,6 +18,11 @@ const MAX_ITEMS_PER_SOURCE = 500;
 const MAX_TIMEOUT_TARGETS_PER_RUN = 25;
 const MAX_TIMEOUT_DISCOVERY_PAGES = 20;
 const TRUSTED_PERMISSIONS = new Set(["admin", "maintain", "write"]);
+const REVIEW_EPOCH_EVENTS = new Set([
+  "base_ref_changed",
+  "reopened",
+  "ready_for_review",
+]);
 /** @type {(ref: string) => Promise<string | undefined>} */
 const NO_COMMIT = () => Promise.resolve(undefined);
 /** @type {(login: string) => Promise<boolean>} */
@@ -194,26 +199,27 @@ function timelinePosition(timeline, event, id) {
   return position;
 }
 
-function latestBaseRefChange(events) {
+function latestReviewEpochChange(events) {
   let latest;
   for (const item of events) {
-    if (item?.event !== "base_ref_changed") continue;
+    if (!REVIEW_EPOCH_EVENTS.has(item?.event)) continue;
+    const kind = item.event;
     const time = Date.parse(item?.created_at ?? "");
     if (!Number.isFinite(time)) {
-      return { time: Number.POSITIVE_INFINITY, kind: "base-change" };
+      return { time: Number.POSITIVE_INFINITY, kind };
     }
     if (latest === undefined || time > latest.time) {
-      latest = { time, kind: "base-change" };
+      latest = { time, kind };
     }
   }
   return latest;
 }
 
-function activeReviewBoundary(request, reviewNotBefore, baseChange) {
-  // The issue event is GitHub's durable record of the policy change. The
+function activeReviewBoundary(request, reviewNotBefore, epochChange) {
+  // The issue event is GitHub's durable record of the review-epoch change. The
   // workflow writes its reset status later, so letting that timestamp replace
   // the event would reject valid evidence submitted between the two writes.
-  if (baseChange !== undefined) return baseChange;
+  if (epochChange !== undefined) return epochChange;
   const boundary = reviewNotBefore === undefined
     ? undefined
     : { time: reviewNotBefore, kind: "status" };
@@ -492,7 +498,7 @@ export async function findAutomatedReview(
   const boundary = activeReviewBoundary(
     request,
     validReviewNotBefore,
-    latestBaseRefChange(events),
+    latestReviewEpochChange(events),
   );
   const codexSuccesses = [];
   const codexFindings = [];
@@ -999,7 +1005,7 @@ export async function publishAutomatedReviewStatus({
       reviewBoundary = activeReviewBoundary(
         latestReviewRequest(comments, headSha),
         reviewNotBefore,
-        latestBaseRefChange(events),
+        latestReviewEpochChange(events),
       );
       if (
         !pendingStatusBelongsToReviewEpoch(
@@ -2107,10 +2113,11 @@ export async function reconcileActiveMergeGroupReviewStatuses({
  * that suppress the request would let anyone silence the review nudge for a
  * head commit.
  *
- * Immediately before posting, re-fetch the pull request and require its
- * current head to match the event head. That prevents a queued synchronize
- * run from marking an old SHA while its unqualified request targets a newer
- * current head.
+ * Immediately before posting, re-fetch the pull request and require it to
+ * remain open and non-draft with a current head that matches the event head.
+ * That prevents a queued run from consuming review quota after the pull
+ * request becomes ineligible or marking an old SHA while its unqualified
+ * request targets a newer current head.
  */
 export async function requestAutomatedReview({
   github,
@@ -2161,6 +2168,9 @@ export async function requestAutomatedReview({
   }
   if (currentHeadSha.toLowerCase() !== headSha.toLowerCase()) {
     return { requested: false, marker, reason: "stale-head" };
+  }
+  if (response?.data?.state !== "open" || response?.data?.draft !== false) {
+    return { requested: false, marker, reason: "ineligible-pull" };
   }
   await github.rest.issues.createComment({
     owner,

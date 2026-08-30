@@ -1957,6 +1957,84 @@ describe("automated review publication", () => {
     assertEquals(fixture.published[0]?.state, "pending");
   });
 
+  it("lets a reopen epoch supersede an older base change", async () => {
+    const verdict = codexComment(HEAD.slice(0, 10), {
+      id: 104,
+      created_at: "2026-08-25T08:01:00Z",
+      updated_at: "2026-08-25T08:01:00Z",
+    });
+    const fixture = githubFixture({
+      pages: {
+        comments: [[verdict]],
+        events: [[
+          {
+            event: "base_ref_changed",
+            created_at: "2026-08-25T08:00:00Z",
+          },
+          {
+            event: "reopened",
+            created_at: "2026-08-25T09:00:00Z",
+          },
+        ]],
+        statuses: [[automatedReviewResetStatus(
+          "2026-08-25T09:00:00Z",
+          { id: 100 },
+        )]],
+        timeline: [[{ event: "commented", id: 104 }]],
+      },
+      commit: HEAD,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(result.statusId, 100);
+    assertEquals(fixture.published, []);
+  });
+
+  it("clears terminal evidence when a pull request becomes ready", async () => {
+    const fixture = githubFixture({
+      pages: {
+        events: [[{
+          event: "ready_for_review",
+          created_at: "2026-08-25T09:00:00Z",
+        }]],
+        statuses: [[
+          automatedReviewStatus({
+            id: 106,
+            state: "pending",
+            description: "PR#1 draft waits for review",
+            created_at: "2026-08-25T08:30:00Z",
+          }),
+          automatedReviewStatus({
+            id: 105,
+            state: "failure",
+            description: "PR#1 automated review timed out",
+            created_at: "2026-08-25T08:00:00Z",
+          }),
+        ]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(fixture.published.length, 1);
+    assertEquals(fixture.published[0]?.state, "pending");
+  });
+
   it("starts a fresh pending epoch when a pull request reopens", async () => {
     const fixture = githubFixture({
       pages: { statuses: [[pendingAutomatedReviewStatus()]] },
@@ -3403,11 +3481,15 @@ describe("merge queue review propagation", () => {
 function requestFixture(options: {
   comments?: Record<string, unknown>[];
   currentHead?: string;
+  currentState?: string;
+  draft?: boolean;
 } = {}) {
   const posted: Record<string, unknown>[] = [];
   const state = {
     comments: options.comments ?? [],
     currentHead: options.currentHead ?? HEAD,
+    currentState: options.currentState ?? "open",
+    draft: options.draft ?? false,
   };
   const listComments = () => undefined;
   const github = {
@@ -3427,7 +3509,13 @@ function requestFixture(options: {
       },
       pulls: {
         get: () =>
-          Promise.resolve({ data: { head: { sha: state.currentHead } } }),
+          Promise.resolve({
+            data: {
+              head: { sha: state.currentHead },
+              state: state.currentState,
+              draft: state.draft,
+            },
+          }),
       },
     },
   };
@@ -3505,6 +3593,27 @@ describe("automated review request", () => {
     assertEquals(result.requested, false);
     assertEquals(result.reason, "stale-head");
     assertEquals(fixture.posted.length, 0);
+  });
+
+  it("does not post when the pull request is closed or draft", async () => {
+    for (
+      const fixture of [
+        requestFixture({ currentState: "closed" }),
+        requestFixture({ draft: true }),
+      ]
+    ) {
+      const result = await requestAutomatedReview({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha: HEAD,
+        requestKey: "reopen-42",
+      });
+      assertEquals(result.requested, false);
+      assertEquals(result.reason, "ineligible-pull");
+      assertEquals(fixture.posted, []);
+    }
   });
 
   it("uses an idempotent base-edit request key to create a fresh epoch", async () => {
@@ -4435,6 +4544,10 @@ describe("automated review workflow", () => {
     assert(
       requestScript.includes("`reopen-${context.runId}`"),
       "a reopened pull request must request review in its fresh epoch",
+    );
+    assert(
+      requestScript.includes('result.reason === "ineligible-pull"'),
+      "a delayed request must report that the pull request is no longer eligible",
     );
     assert(
       !("RUN_ATTEMPT" in record(request.env, "request environment")),

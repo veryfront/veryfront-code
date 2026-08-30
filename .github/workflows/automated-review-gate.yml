@@ -823,6 +823,8 @@ jobs:
                 ? `Requested an automated review of ${process.env.TARGET_SHA.slice(0, 12)}.`
                 : result.reason === "stale-head"
                 ? "Skipped an automated review request from a stale synchronize event."
+                : result.reason === "ineligible-pull"
+                ? "Skipped an automated review request because the pull request is no longer open and ready for review."
                 : "An automated review request for this head commit already exists.",
             );
 
