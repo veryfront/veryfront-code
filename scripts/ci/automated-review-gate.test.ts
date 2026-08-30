@@ -2107,6 +2107,37 @@ describe("automated review publication", () => {
     });
     assertEquals(lateResult.state, "pending");
     assertEquals(lateFixture.published[0]?.state, "pending");
+
+    const oldTimeout = automatedReviewStatus({
+      id: 107,
+      state: "failure",
+      description: "PR#1 automated review timed out",
+      created_at: "2026-08-25T08:00:00Z",
+    });
+    const newPending = pendingAutomatedReviewStatus(
+      "2026-08-25T09:01:00Z",
+    );
+    const oldTimeoutFixture = githubFixture({
+      pages: {
+        events: [[{
+          event: "ready_for_review",
+          id: 108,
+          created_at: "2026-08-25T09:00:00Z",
+        }]],
+        statuses: [[newPending, oldTimeout]],
+      },
+    });
+    const oldTimeoutResult = await publishAutomatedReviewStatus({
+      github: oldTimeoutFixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(oldTimeoutResult.state, "pending");
+    assertEquals(oldTimeoutResult.statusId, 100);
+    assertEquals(oldTimeoutFixture.published, []);
   });
 
   it("ignores terminal descriptions from another status context", async () => {
@@ -3715,6 +3746,45 @@ describe("automated review timeout watchdog", () => {
       fixture.commentsPosted[0]?.body,
       `<!-- automated-review-request: ${HEAD} base-42 -->\n@codex review`,
     );
+
+    const queueOutage = githubFixture({
+      pageResponses: {
+        statuses: [
+          [[unavailableStatus]],
+          [[unavailableStatus]],
+        ],
+      },
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${BASE_HEAD}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+      },
+      queueBindingError: Object.assign(
+        new Error("queue binding unavailable"),
+        { status: 503 },
+      ),
+      statusIds: [1001, 1002],
+    });
+    await assertRejects(
+      () =>
+        expireTimedOutAutomatedReview({
+          github: queueOutage.github,
+          owner: "veryfront",
+          repo: "veryfront-code",
+          pullNumber: 1,
+          headSha: HEAD,
+          now: Date.parse("2026-08-25T08:30:01Z"),
+          reviewTimeoutMs: 1_800_000,
+        }),
+      Error,
+      "queue binding unavailable",
+    );
+    assertEquals(queueOutage.published[0]?.state, "pending");
+    assertEquals(
+      queueOutage.published.at(-1)?.description,
+      "PR#1 review status unavailable; queue retry pending",
+    );
   });
 
   it("does not finalize a retry after a newer lifecycle epoch", async () => {
@@ -4588,6 +4658,7 @@ describe("merge queue review propagation", () => {
 function requestFixture(options: {
   comments?: Record<string, unknown>[];
   events?: Record<string, unknown>[];
+  eventResponses?: Record<string, unknown>[][];
   currentHead?: string;
   currentState?: string;
   draft?: boolean;
@@ -4602,11 +4673,17 @@ function requestFixture(options: {
   };
   const listComments = () => undefined;
   const listEvents = () => undefined;
+  let eventRead = 0;
   const github = {
     paginate: {
       async *iterator(endpoint: unknown) {
         if (endpoint === listComments) yield { data: state.comments };
-        else if (endpoint === listEvents) yield { data: state.events };
+        else if (endpoint === listEvents) {
+          const events = options.eventResponses?.[
+            Math.min(eventRead++, options.eventResponses.length - 1)
+          ] ?? state.events;
+          yield { data: events };
+        }
         else throw new Error("unknown endpoint");
       },
     },
@@ -4890,6 +4967,40 @@ describe("automated review request", () => {
     assertEquals(staleConcreteResult.requested, false);
     assertEquals(staleConcreteResult.reason, "stale-epoch");
     assertEquals(staleConcrete.posted, []);
+
+    const changedDuringRequest = requestFixture({
+      eventResponses: [
+        [{
+          event: "base_ref_changed",
+          id: 42,
+          created_at: "2026-08-25T09:00:00Z",
+        }],
+        [
+          {
+            event: "base_ref_changed",
+            id: 42,
+            created_at: "2026-08-25T09:00:00Z",
+          },
+          {
+            event: "reopened",
+            id: 43,
+            created_at: "2026-08-25T10:00:00Z",
+          },
+        ],
+      ],
+    });
+    const changedResult = await requestAutomatedReview({
+      github: changedDuringRequest.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      requestKey: "base-42",
+      validateRequestEpoch: true,
+    });
+    assertEquals(changedResult.requested, false);
+    assertEquals(changedResult.reason, "stale-epoch");
+    assertEquals(changedDuringRequest.posted, []);
   });
 
   it("refuses to request a review of a malformed head commit", async () => {

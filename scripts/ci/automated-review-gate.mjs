@@ -476,8 +476,15 @@ function pendingStatusBelongsToReviewEpoch(
       description.startsWith(`PR#${pullNumber} waits for review `));
 }
 
-function pendingHistoryHasBoundaryProof(statuses, pullNumber, boundary) {
+function pendingHistoryHasBoundaryProof(
+  statuses,
+  pullNumber,
+  boundary,
+  failureStatus,
+) {
   const descriptionPrefix = `PR#${pullNumber} `;
+  const failureAt = Date.parse(failureStatus?.created_at ?? "");
+  if (!Number.isFinite(failureAt)) return false;
   return statuses.some((status) => {
     if (
       status?.context !== AUTOMATED_REVIEW_STATUS_CONTEXT ||
@@ -487,7 +494,10 @@ function pendingHistoryHasBoundaryProof(statuses, pullNumber, boundary) {
       !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
     ) return false;
     const createdAt = Date.parse(status?.created_at ?? "");
-    if (!Number.isFinite(createdAt) || createdAt < boundary.time) return false;
+    if (
+      !Number.isFinite(createdAt) || createdAt < boundary.time ||
+      createdAt >= failureAt
+    ) return false;
     if (createdAt > boundary.time) return true;
     return status.description.startsWith(`PR#${pullNumber} reset base:`) ||
       (boundary.kind === "ready_for_review" &&
@@ -633,6 +643,7 @@ function latestTerminalReviewStatus(
         statuses,
         pullNumber,
         boundary,
+        status,
       )) continue;
     }
     return status;
@@ -1673,7 +1684,12 @@ function latestReviewPropagationRetryStatus(
         headSha,
       )) return undefined;
     } else if (failureKind === "timed-out") {
-      if (!pendingHistoryHasBoundaryProof(statuses, pullNumber, boundary)) {
+      if (!pendingHistoryHasBoundaryProof(
+        statuses,
+        pullNumber,
+        boundary,
+        status,
+      )) {
         return undefined;
       }
     } else {
@@ -1969,7 +1985,9 @@ export async function expireTimedOutAutomatedReview({
         repo,
         pullNumber,
         headSha,
-        failureKind: retryStatus?.failureKind ?? "unavailable",
+        failureKind: result.state === "success"
+          ? retryStatus?.failureKind ?? "unavailable"
+          : "unavailable",
         targetUrl: typeof retryStatus?.status?.target_url === "string"
           ? retryStatus.status.target_url
           : result.targetUrl ?? pullUrl,
@@ -1985,7 +2003,7 @@ export async function expireTimedOutAutomatedReview({
         baseRef: result.baseRef,
       });
     } catch (error) {
-      if (result.state === "success") await preserveQueueRetry();
+      await preserveQueueRetry();
       throw error;
     }
     const queueFailures = queueResults.filter((entry) =>
@@ -2814,6 +2832,28 @@ export async function requestAutomatedReview({
   }
   if (response?.data?.state !== "open" || response?.data?.draft !== false) {
     return { requested: false, marker, reason: "ineligible-pull" };
+  }
+  if (
+    requestKey === "reopen" || requestKey === "base" ||
+    validateRequestEpoch
+  ) {
+    const events = await collectAll(
+      github,
+      github.rest.issues.listEvents,
+      { owner, repo, issue_number: pullNumber },
+      "final review epoch events",
+    );
+    const currentKey = requestKey === "reopen" || requestKey === "base"
+      ? durableReviewRequestKey(
+        events,
+        requestKey,
+        reviewEpochNotBefore,
+        reviewEpochRunKey,
+      )
+      : durableReviewRequestKey(events, concreteEpoch?.[1]);
+    if (currentKey !== effectiveRequestKey) {
+      return { requested: false, marker, reason: "stale-epoch" };
+    }
   }
   await github.rest.issues.createComment({
     owner,
