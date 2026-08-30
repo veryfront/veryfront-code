@@ -2441,6 +2441,40 @@ describe("automated review publication", () => {
       superseded.published[0]?.description,
       `PR#1 waits for review ${HEAD.slice(0, 12)}`,
     );
+
+    const supersededBase = githubFixture({
+      pages: {
+        events: [[
+          {
+            event: "base_ref_changed",
+            id: 42,
+            created_at: "2026-08-25T09:00:00Z",
+          },
+          {
+            event: "reopened",
+            id: 43,
+            created_at: "2026-08-25T10:00:00Z",
+          },
+        ]],
+        statuses: [[pendingAutomatedReviewStatus(
+          "2026-08-25T09:00:00Z",
+        )]],
+      },
+    });
+    const supersededBaseResult = await publishAutomatedReviewStatus({
+      github: supersededBase.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      reviewResetKey: "base",
+    });
+    assertEquals(supersededBaseResult.state, "pending");
+    assertEquals(
+      supersededBase.published[0]?.description,
+      `PR#1 waits for review ${HEAD.slice(0, 12)}`,
+    );
   });
 
   it("fails when exact-ref lookup is operationally unavailable", async () => {
@@ -4378,6 +4412,32 @@ describe("automated review request", () => {
     assertEquals(supersededResult.requested, false);
     assertEquals(supersededResult.reason, "stale-epoch");
     assertEquals(superseded.posted, []);
+
+    const supersededBase = requestFixture({
+      events: [
+        {
+          event: "base_ref_changed",
+          id: 42,
+          created_at: "2026-08-25T09:00:00Z",
+        },
+        {
+          event: "reopened",
+          id: 43,
+          created_at: "2026-08-25T10:00:00Z",
+        },
+      ],
+    });
+    const supersededBaseResult = await requestAutomatedReview({
+      github: supersededBase.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      requestKey: "base",
+    });
+    assertEquals(supersededBaseResult.requested, false);
+    assertEquals(supersededBaseResult.reason, "stale-epoch");
+    assertEquals(supersededBase.posted, []);
   });
 
   it("refuses to request a review of a malformed head commit", async () => {
@@ -5309,11 +5369,12 @@ describe("automated review workflow", () => {
       "the workflow must post review requests through the tested gate helper",
     );
     assert(requestScript.includes("requestKey"));
-    assert(requestScript.includes("context.runId"));
     assert(
-      requestScript.includes("`base-${context.runId}`"),
-      "a base-edit rerun must reuse the original reset epoch",
+      requestScript.includes('context.payload.action === "edited"') &&
+        requestScript.includes('? "base"'),
+      "base-edit requests must derive their key from the durable epoch",
     );
+    assert(!requestScript.includes("`base-${context.runId}`"));
     assert(
       requestScript.includes('context.payload.action === "reopened"') &&
         requestScript.includes('? "reopen"'),
@@ -5335,6 +5396,12 @@ describe("automated review workflow", () => {
       "reopened publishers must derive their key from the durable epoch",
     );
     assert(!script.includes("`reopen-${context.runId}`"));
+    assert(
+      script.includes('context.payload.action === "edited"') &&
+        script.includes('? "base"'),
+      "base-edit publishers must derive their key from the durable epoch",
+    );
+    assert(!script.includes("`base-${context.runId}`"));
 
     const invalidateJob = record(jobs.invalidate, "invalidate job");
     assertEquals(

@@ -667,9 +667,9 @@ jobs:
               pullUrl: `https://github.com/${context.repo.owner}/${context.repo.repo}/pull/${pullNumber}`,
               reviewResetKey:
                 context.eventName === "pull_request_target"
-                  ? context.payload.action === "edited" &&
+                    ? context.payload.action === "edited" &&
                       context.payload.changes?.base !== undefined
-                    ? `base-${context.runId}`
+                    ? "base"
                     : context.payload.action === "reopened"
                     ? "reopen"
                     : undefined
@@ -831,7 +831,7 @@ jobs:
               pullNumber: pullRequest.number,
               headSha: process.env.TARGET_SHA,
               requestKey: context.payload.action === "edited"
-                ? `base-${context.runId}`
+                ? "base"
                 : context.payload.action === "reopened"
                 ? "reopen"
                 : undefined,
@@ -844,7 +844,7 @@ jobs:
                 : result.reason === "ineligible-pull"
                 ? "Skipped an automated review request because the pull request is no longer open and ready for review."
                 : result.reason === "stale-epoch"
-                ? "Skipped an automated review request from a superseded reopen event."
+                ? "Skipped an automated review request from a superseded review epoch."
                 : "An automated review request for this head commit already exists.",
             );
 

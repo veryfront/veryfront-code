@@ -29,6 +29,10 @@ const REVIEW_EPOCH_EVENTS = new Set([
   "reopened",
   "ready_for_review",
 ]);
+const REVIEW_REQUEST_EVENT_KINDS = new Map([
+  ["reopen", "reopened"],
+  ["base", "base_ref_changed"],
+]);
 /** @type {(ref: string) => Promise<string | undefined>} */
 const NO_COMMIT = () => Promise.resolve(undefined);
 /** @type {(login: string) => Promise<boolean>} */
@@ -202,16 +206,17 @@ function hasReviewRequest(comments, headSha, requestKey) {
 }
 
 function durableReviewRequestKey(events, requestKey) {
-  if (requestKey !== "reopen") return requestKey;
+  const eventKind = REVIEW_REQUEST_EVENT_KINDS.get(requestKey);
+  if (eventKind === undefined) return requestKey;
   const latestEpoch = latestReviewEpochChange(events);
   if (latestEpoch === undefined) {
-    throw new Error("Could not resolve the current reopen event");
+    throw new Error("Could not resolve the current review epoch event");
   }
-  if (latestEpoch.kind !== "reopened") return undefined;
+  if (latestEpoch.kind !== eventKind) return undefined;
   if (!Number.isSafeInteger(latestEpoch.id) || latestEpoch.id < 1) {
-    throw new Error("Reopen event identity is malformed");
+    throw new Error("Review epoch event identity is malformed");
   }
-  return `reopen-${latestEpoch.id}`;
+  return `${requestKey}-${latestEpoch.id}`;
 }
 
 function timelinePosition(timeline, event, id) {
@@ -2553,7 +2558,7 @@ export async function requestAutomatedReview({
     throw new Error("Refusing to use a malformed review request key");
   }
   let effectiveRequestKey = requestKey;
-  if (requestKey === "reopen") {
+  if (requestKey === "reopen" || requestKey === "base") {
     const events = await collectAll(
       github,
       github.rest.issues.listEvents,
