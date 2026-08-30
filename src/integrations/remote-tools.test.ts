@@ -7,6 +7,7 @@ import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/sou
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { MAX_INTEGRATION_TOOL_LIST_ATTEMPTS } from "./limits.ts";
 import {
   __subscribeLogRecordEmitter,
   type LogEntry,
@@ -229,16 +230,18 @@ describe("integrations/remote-tools", () => {
     );
   });
 
-  it("caches a transient failure for the current run and retries the next run", async () => {
+  it("caches a persistent failure for the current run and retries the next run", async () => {
     setRemoteToolEnv({
       VERYFRONT_API_BASE_URL: "https://api.test",
       VERYFRONT_API_TOKEN: "env-token",
     });
 
+    // The first run's API outage persists through every bounded retry so the
+    // run degrades; the outage ends before the next run starts.
     let fetchCalls = 0;
     const outcome = await withMockFetch(async () => {
       fetchCalls++;
-      return fetchCalls === 1
+      return fetchCalls <= MAX_INTEGRATION_TOOL_LIST_ATTEMPTS
         ? new Response(undefined, { status: 503, statusText: "Service Unavailable" })
         : Response.json({ tools: [] });
     }, async () => ({
@@ -251,7 +254,11 @@ describe("integrations/remote-tools", () => {
       ),
     }));
 
-    assertEquals(fetchCalls, 2);
+    assertEquals(
+      fetchCalls,
+      MAX_INTEGRATION_TOOL_LIST_ATTEMPTS + 1,
+      "the second discovery in the first run must replay the cached failure, not refetch",
+    );
     assertEquals(outcome.currentRun, [
       { status: "unavailable", reason: "request_failed" },
       { status: "unavailable", reason: "request_failed" },
@@ -1175,6 +1182,16 @@ describe("integrations/remote-tools", () => {
       )
     );
 
-    assertEquals(records.map((entry) => entry.level), ["error"]);
+    // Bounded retries emit debug breadcrumbs before the failure is reported.
+    assertEquals(
+      records.filter((entry) => entry.level === "error").length,
+      1,
+      "a persistent server failure must be reported at error level exactly once",
+    );
+    assertEquals(
+      records.filter((entry) => entry.level !== "error").map((entry) => entry.level),
+      Array.from({ length: MAX_INTEGRATION_TOOL_LIST_ATTEMPTS - 1 }, () => "debug"),
+      "retry attempts must log at debug level only",
+    );
   });
 });
