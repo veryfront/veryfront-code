@@ -1046,3 +1046,63 @@ describe("agent/agent-service-registration heartbeat retry", () => {
     );
   });
 });
+
+describe("agent/agent-service-registration heartbeat recovery", () => {
+  // Sentry VERYFRONT-AGENT-E (issue-inbox#873): the control plane forgets a
+  // registered service (row deleted, environment reset, registry wiped by a
+  // redeploy) and answers every heartbeat for the stale id with HTTP 404. A
+  // 404 is a non-retryable client error, so three ticks later the lifecycle
+  // logs "Agent service heartbeat failing persistently" and then repeats that
+  // forever: nothing ever registers the service again, and the control plane
+  // considers it dead while it keeps running.
+  it("re-registers a service the control plane no longer knows instead of failing persistently", async () => {
+    let registrations = 0;
+    let recoveredHeartbeats = 0;
+    const fetch: typeof globalThis.fetch = (input) => {
+      const url = input.toString();
+      if (url.endsWith("/heartbeat")) {
+        // The stale id stays unknown until the service registers again.
+        if (registrations >= 2) {
+          recoveredHeartbeats++;
+          return Promise.resolve(jsonResponse(serviceResponse));
+        }
+        return Promise.resolve(
+          jsonResponse({ error: "Agent push runtime service not found" }, 404),
+        );
+      }
+      registrations++;
+      return Promise.resolve(jsonResponse(serviceResponse));
+    };
+
+    const log = recordingLogger();
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { heartbeatIntervalMs: 40, logger: log.logger }),
+    );
+
+    try {
+      // Recovery and escalation race here: wait until the lifecycle either
+      // heartbeats successfully again or emits the persistent-failure error.
+      await waitFor(() => recoveredHeartbeats > 0 || log.errors.length > 0, {
+        timeout: 2_000,
+        interval: 10,
+        message: "the lifecycle neither recovered nor escalated after heartbeat 404s",
+      });
+    } finally {
+      lifecycle.stop();
+    }
+
+    assertEquals(
+      log.errors.map((entry) => entry.message),
+      [],
+      "a lost registration must trigger re-registration, not the persistent-failure escalation",
+    );
+    assert(
+      registrations >= 2,
+      "a heartbeat 404 must make the lifecycle register the service again",
+    );
+    assert(
+      recoveredHeartbeats > 0,
+      "heartbeats must succeed again once the service is re-registered",
+    );
+  });
+});
