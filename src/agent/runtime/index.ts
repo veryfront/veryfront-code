@@ -107,6 +107,8 @@ import {
   getRuntimeProviderReplayCheckpointMessageId,
   getRuntimeProviderReplayCheckpointPersister,
   getRuntimeProviderReplayCheckpoints,
+  getRuntimeProviderReplayCheckpointTurnComplete,
+  getRuntimeProviderReplayCheckpointTurnFailed,
   getRuntimeProviderTools,
   getRuntimeSourceIntegrationPolicy,
   getRuntimeToolExposureCheckpoint,
@@ -690,6 +692,8 @@ async function persistToolExposureCheckpointBeforeContinuation(input: {
 type RuntimeProviderReplayCheckpointEmission = {
   state: ProviderReplayCheckpointEmissionState | undefined;
   persist: ((checkpoint: ProviderReplayCheckpoint) => void | Promise<void>) | undefined;
+  complete: (() => void | Promise<void>) | undefined;
+  fail: (() => void | Promise<void>) | undefined;
   required: boolean;
 };
 
@@ -707,11 +711,25 @@ function resolveRuntimeProviderReplayCheckpointEmission(
       ? createProviderReplayCheckpointEmissionState({ messageId, existingCheckpoint })
       : undefined,
     persist: getRuntimeProviderReplayCheckpointPersister(config),
+    complete: getRuntimeProviderReplayCheckpointTurnComplete(config),
+    fail: getRuntimeProviderReplayCheckpointTurnFailed(config),
     required: isRuntimeProviderReplayCheckpointPersistenceRequired(config),
   };
 }
 
 async function persistProviderReplayCheckpointAfterTurn(input: {
+  emission: RuntimeProviderReplayCheckpointEmission;
+  providerMetadata: Record<string, unknown> | undefined;
+}): Promise<void> {
+  try {
+    await persistProviderReplayCheckpointAfterTurnUnsafe(input);
+  } catch (error) {
+    await input.emission.fail?.();
+    throw error;
+  }
+}
+
+async function persistProviderReplayCheckpointAfterTurnUnsafe(input: {
   emission: RuntimeProviderReplayCheckpointEmission;
   providerMetadata: Record<string, unknown> | undefined;
 }): Promise<void> {
@@ -721,13 +739,17 @@ async function persistProviderReplayCheckpointAfterTurn(input: {
         detail: "provider replay checkpoint message identity is required",
       });
     }
+    await input.emission.complete?.();
     return;
   }
   const checkpoint = captureProviderReplayCheckpoint(
     input.emission.state,
     input.providerMetadata,
   );
-  if (!checkpoint) return;
+  if (!checkpoint) {
+    await input.emission.complete?.();
+    return;
+  }
   if (!input.emission.persist) {
     if (input.emission.required) {
       throw DURABLE_RUN_EVENT_PERSISTENCE_FAILED.create({
@@ -737,6 +759,7 @@ async function persistProviderReplayCheckpointAfterTurn(input: {
     return;
   }
   await input.emission.persist(checkpoint);
+  await input.emission.complete?.();
 }
 
 function isToolVisibleForStep(toolName: string, plan: ToolExposurePlan): boolean {

@@ -25,6 +25,8 @@ export type RuntimeToolFilterConfig = AgentConfig & {
   __vfPersistProviderReplayCheckpoint?: (
     checkpoint: ProviderReplayCheckpoint,
   ) => void | Promise<void>;
+  __vfProviderReplayCheckpointTurnComplete?: () => void | Promise<void>;
+  __vfProviderReplayCheckpointTurnFailed?: () => void | Promise<void>;
   __vfProviderReplayCheckpointPersistenceRequired?: boolean;
   __vfPersistToolExposureCheckpoint?: (
     checkpoint: ToolExposureCheckpoint,
@@ -144,6 +146,22 @@ export function getRuntimeProviderReplayCheckpointPersister(
   config: AgentConfig,
 ): ((checkpoint: ProviderReplayCheckpoint) => void | Promise<void>) | undefined {
   const value = (config as RuntimeToolFilterConfig).__vfPersistProviderReplayCheckpoint;
+  return typeof value === "function" ? value : undefined;
+}
+
+/** Return the trusted hook that closes one provider response boundary. */
+export function getRuntimeProviderReplayCheckpointTurnComplete(
+  config: AgentConfig,
+): (() => void | Promise<void>) | undefined {
+  const value = (config as RuntimeToolFilterConfig).__vfProviderReplayCheckpointTurnComplete;
+  return typeof value === "function" ? value : undefined;
+}
+
+/** Return the trusted hook that aborts one provider response boundary. */
+export function getRuntimeProviderReplayCheckpointTurnFailed(
+  config: AgentConfig,
+): (() => void | Promise<void>) | undefined {
+  const value = (config as RuntimeToolFilterConfig).__vfProviderReplayCheckpointTurnFailed;
   return typeof value === "function" ? value : undefined;
 }
 

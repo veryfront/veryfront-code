@@ -430,6 +430,7 @@ export type RuntimeAgentControlPlaneStreamRequest = {
   agentId: RuntimeAgentRunContext["agentId"];
   threadId: RuntimeAgentRunContext["conversationId"];
   runId: RuntimeAgentRunContext["runId"];
+  messageId?: RuntimeAgentRunContext["messageId"];
   taskId?: string;
   parentRunId?: Exclude<RuntimeAgentRunContext["parentRunId"], null | undefined>;
   messages: RuntimeAgentRunInvocation["messages"];
@@ -456,6 +457,7 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
     agentId: input.run.agentId,
     threadId: input.run.conversationId,
     runId: input.run.runId,
+    messageId: input.run.messageId,
     ...(input.taskId ? { taskId: input.taskId } : {}),
     ...(input.run.parentRunId ? { parentRunId: input.run.parentRunId } : {}),
     messages: input.messages,
