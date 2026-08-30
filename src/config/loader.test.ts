@@ -6581,6 +6581,26 @@ export default config as const;
               "Failed [url]¨Retry",
             ],
             [
+              "single-slash-rejected-punctuation",
+              "Failed https:/例え.internal…Retry",
+              "Failed [url]…Retry",
+            ],
+            [
+              "zero-slash-rejected-punctuation",
+              "Failed https:例え.internal…Retry",
+              "Failed [url]…Retry",
+            ],
+            [
+              "single-slash-rejected-format-character",
+              "Failed https:/例え.internal\u200eRetry",
+              "Failed [url]\u200eRetry",
+            ],
+            [
+              "zero-slash-rejected-format-character",
+              "Failed https:例え.internal\u200eRetry",
+              "Failed [url]\u200eRetry",
+            ],
+            [
               "invalid-port-after-accepted-symbol",
               "Failed https://a🙂.internal:99999/private",
               "Failed [url]",
@@ -6588,6 +6608,21 @@ export default config as const;
             [
               "invalid-port-after-userinfo-symbol",
               "Failed https://a¨value@例え.internal:99999/private",
+              "Failed [url]",
+            ],
+            [
+              "single-slash-invalid-port-after-userinfo-symbol",
+              "Failed https:/a¨value@例え.internal:99999/private",
+              "Failed [url]",
+            ],
+            [
+              "zero-slash-invalid-port-after-userinfo-symbol",
+              "Failed https:a¨value@例え.internal:99999/private",
+              "Failed [url]",
+            ],
+            [
+              "valid-port-after-userinfo-symbol",
+              "Failed https://a¨value@例え.internal:8080/private",
               "Failed [url]",
             ],
           ] as const
