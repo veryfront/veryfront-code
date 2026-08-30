@@ -32,10 +32,12 @@ const REVIEW_EPOCH_EVENTS = new Set([
 const REVIEW_REQUEST_EVENT_KINDS = new Map([
   ["reopen", "reopened"],
   ["base", "base_ref_changed"],
+  ["ready", "ready_for_review"],
 ]);
 const REVIEW_BOUNDARY_REQUEST_KEYS = new Map([
   ["reopened", "reopen"],
   ["base_ref_changed", "base"],
+  ["ready_for_review", "ready"],
 ]);
 /** @type {(ref: string) => Promise<string | undefined>} */
 const NO_COMMIT = () => Promise.resolve(undefined);
@@ -1247,7 +1249,9 @@ export async function publishAutomatedReviewStatus({
       existingPropagationRetryIsLatest = propagationRetry?.status?.id ===
         latestReviewGateStatusForPull(statuses, pullNumber)?.id;
       const runBoundResetPending = resetPending &&
-        /^(?:base|reopen)-run-/.test(effectiveReviewResetKey ?? "");
+        /^(?:base|ready|reopen)-run-/.test(
+          effectiveReviewResetKey ?? "",
+        );
       if (
         !isDraft &&
         (!resetPending ||
@@ -2015,17 +2019,31 @@ export async function expireTimedOutAutomatedReview({
         `${queueFailures} active merge queue review failed`,
       );
     }
-    const reviewRequest = result.state === "pending"
-      ? await requestAutomatedReview({
-        github,
-        owner,
-        repo,
-        pullNumber,
-        headSha,
-        requestKey: result.reviewRequestKey,
-        validateRequestEpoch: result.reviewRequestKey !== undefined,
-      })
-      : undefined;
+    let reviewRequest;
+    if (result.state === "pending") {
+      try {
+        reviewRequest = await requestAutomatedReview({
+          github,
+          owner,
+          repo,
+          pullNumber,
+          headSha,
+          requestKey: result.reviewRequestKey,
+          validateRequestEpoch: result.reviewRequestKey !== undefined,
+        });
+      } catch (error) {
+        await publishReviewPropagationRetryStatus({
+          github,
+          owner,
+          repo,
+          pullNumber,
+          headSha,
+          failureKind: "unavailable",
+          targetUrl: result.targetUrl ?? pullUrl,
+        });
+        throw error;
+      }
+    }
     return {
       ...result,
       expired: false,
@@ -2766,19 +2784,17 @@ export async function requestAutomatedReview({
   }
   let effectiveRequestKey = requestKey;
   const concreteEpoch = typeof requestKey === "string"
-    ? /^(base|reopen)-([1-9]\d*)$/.exec(requestKey)
+    ? /^(base|ready|reopen)-([1-9]\d*)$/.exec(requestKey)
     : null;
-  if (
-    requestKey === "reopen" || requestKey === "base" ||
-    validateRequestEpoch
-  ) {
+  const sentinelEpoch = REVIEW_REQUEST_EVENT_KINDS.has(requestKey);
+  if (sentinelEpoch || validateRequestEpoch) {
     const events = await collectAll(
       github,
       github.rest.issues.listEvents,
       { owner, repo, issue_number: pullNumber },
       "review epoch events",
     );
-    if (requestKey === "reopen" || requestKey === "base") {
+    if (sentinelEpoch) {
       effectiveRequestKey = durableReviewRequestKey(
         events,
         requestKey,
@@ -2834,8 +2850,7 @@ export async function requestAutomatedReview({
     return { requested: false, marker, reason: "ineligible-pull" };
   }
   if (
-    requestKey === "reopen" || requestKey === "base" ||
-    validateRequestEpoch
+    sentinelEpoch || validateRequestEpoch
   ) {
     const events = await collectAll(
       github,
@@ -2843,7 +2858,7 @@ export async function requestAutomatedReview({
       { owner, repo, issue_number: pullNumber },
       "final review epoch events",
     );
-    const currentKey = requestKey === "reopen" || requestKey === "base"
+    const currentKey = sentinelEpoch
       ? durableReviewRequestKey(
         events,
         requestKey,

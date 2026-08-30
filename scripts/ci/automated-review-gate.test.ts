@@ -1060,6 +1060,7 @@ function githubFixture(options: {
   queueRefHeads?: (string | undefined)[];
   queueRefError?: Error;
   statusIds?: unknown[];
+  commentError?: Error;
 } = {}) {
   const endpoints = {
     reviews: () => undefined,
@@ -1136,6 +1137,7 @@ function githubFixture(options: {
         listEvents: endpoints.events,
         listEventsForTimeline: endpoints.timeline,
         createComment: (comment: Record<string, unknown>) => {
+          if (options.commentError) return Promise.reject(options.commentError);
           commentsPosted.push(comment);
           return Promise.resolve();
         },
@@ -2571,6 +2573,47 @@ describe("automated review publication", () => {
     assertEquals(fixture.published[0]?.state, "pending");
   });
 
+  it("forces a run-bound reset when ready evidence is ambiguous", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexComment(HEAD.slice(0, 10), {
+          id: 103,
+          created_at: "2026-08-25T09:00:00Z",
+          updated_at: "2026-08-25T09:00:00Z",
+        })]],
+        events: [[{
+          event: "ready_for_review",
+          id: 41,
+          created_at: "2026-08-25T09:00:00Z",
+        }]],
+        timeline: [[
+          { event: "ready_for_review", id: 41 },
+          { event: "commented", id: 103 },
+        ]],
+      },
+      commit: HEAD,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      reviewResetKey: "ready",
+      reviewEpochNotBefore: "2026-08-25T09:00:00Z",
+      reviewEpochRunKey: "9001",
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(
+      fixture.published[0]?.description,
+      `PR#1 reset base:${
+        reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+      } key:83510c2f2105`,
+    );
+  });
+
   it("starts a fresh pending epoch when a pull request reopens", async () => {
     const fixture = githubFixture({
       pages: {
@@ -3783,6 +3826,37 @@ describe("automated review timeout watchdog", () => {
     assertEquals(queueOutage.published[0]?.state, "pending");
     assertEquals(
       queueOutage.published.at(-1)?.description,
+      "PR#1 review status unavailable; queue retry pending",
+    );
+
+    const requestOutage = githubFixture({
+      pageResponses: {
+        statuses: [
+          [[unavailableStatus]],
+          [[unavailableStatus]],
+        ],
+      },
+      pages: { refs: [[]] },
+      commentError: new Error("request comment unavailable"),
+      statusIds: [1001, 1002],
+    });
+    await assertRejects(
+      () =>
+        expireTimedOutAutomatedReview({
+          github: requestOutage.github,
+          owner: "veryfront",
+          repo: "veryfront-code",
+          pullNumber: 1,
+          headSha: HEAD,
+          now: Date.parse("2026-08-25T08:30:01Z"),
+          reviewTimeoutMs: 1_800_000,
+        }),
+      Error,
+      "request comment unavailable",
+    );
+    assertEquals(requestOutage.published[0]?.state, "pending");
+    assertEquals(
+      requestOutage.published.at(-1)?.description,
       "PR#1 review status unavailable; queue retry pending",
     );
   });
@@ -5970,6 +6044,11 @@ describe("automated review workflow", () => {
       script.includes('context.payload.action === "reopened"') &&
         script.includes('? "reopen"'),
       "reopened publishers must derive their key from the durable epoch",
+    );
+    assert(
+      script.includes('context.payload.action === "ready_for_review"') &&
+        script.includes('? "ready"'),
+      "ready publishers must establish a visible lifecycle epoch",
     );
     assert(!script.includes("`reopen-${context.runId}`"));
     assert(

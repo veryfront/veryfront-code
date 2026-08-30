@@ -674,6 +674,8 @@ jobs:
                     ? "base"
                     : context.payload.action === "reopened"
                     ? "reopen"
+                    : context.payload.action === "ready_for_review"
+                    ? "ready"
                     : undefined
                   : undefined,
               reviewFailureCommentId:
