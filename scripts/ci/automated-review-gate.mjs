@@ -201,6 +201,22 @@ function hasReviewRequest(comments, headSha, requestKey) {
   });
 }
 
+function durableReviewRequestKey(events, requestKey) {
+  if (requestKey !== "reopen") return requestKey;
+  let latestId;
+  for (const event of events) {
+    if (event?.event !== "reopened") continue;
+    if (!Number.isSafeInteger(event?.id) || event.id < 1) {
+      throw new Error("Reopen event identity is malformed");
+    }
+    if (latestId === undefined || event.id > latestId) latestId = event.id;
+  }
+  if (latestId === undefined) {
+    throw new Error("Could not resolve the current reopen event");
+  }
+  return `reopen-${latestId}`;
+}
+
 function timelinePosition(timeline, event, id) {
   if (!Number.isSafeInteger(id) || id < 1) return undefined;
   let position;
@@ -992,6 +1008,7 @@ export async function publishAutomatedReviewStatus({
   let baseRef;
   let isDraft = false;
   let resetPending = false;
+  let effectiveReviewResetKey = reviewResetKey;
   let existingPendingStatus;
   let existingTerminalStatus;
   let existingTerminalStatusIsLatest = false;
@@ -1077,13 +1094,17 @@ export async function publishAutomatedReviewStatus({
           ),
         ],
       );
-      resetPending = reviewResetKey !== undefined &&
-        !hasReviewRequest(comments, headSha, reviewResetKey) &&
+      effectiveReviewResetKey = durableReviewRequestKey(
+        events,
+        reviewResetKey,
+      );
+      resetPending = effectiveReviewResetKey !== undefined &&
+        !hasReviewRequest(comments, headSha, effectiveReviewResetKey) &&
         !hasReviewReset(
           statuses,
           pullNumber,
           baseBinding,
-          reviewResetKey,
+          effectiveReviewResetKey,
         );
       existingPendingStatus = latestPendingReviewStatus(
         statuses,
@@ -1248,7 +1269,7 @@ export async function publishAutomatedReviewStatus({
     description = reviewResetDescription(
       pullNumber,
       baseBinding,
-      reviewResetKey,
+      effectiveReviewResetKey,
     );
   } else if (isDraft) description = `PR#${pullNumber} draft waits for review`;
   else {
@@ -1600,6 +1621,40 @@ async function propagateAndFinalizeReviewFailure({
   return { resolution, ...finalStatus };
 }
 
+/** Propagate one published retry marker, then restore its terminal diagnosis. */
+export async function completeReviewFailurePropagation({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  headSha,
+  sourceStatusId,
+  description,
+  targetUrl,
+}) {
+  if (!isPositiveStatusId(sourceStatusId)) {
+    throw new Error("Review failure retry status identity is malformed");
+  }
+  const failureKind = reviewFailureKindFromDescription(
+    description,
+    pullNumber,
+    true,
+  );
+  if (failureKind === undefined) {
+    throw new Error("Review failure retry description is malformed");
+  }
+  return propagateAndFinalizeReviewFailure({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    headSha,
+    sourceStatusId,
+    failureKind,
+    targetUrl,
+  });
+}
+
 /** Revalidate one discovered timeout and publish under the per-pull lock. */
 export async function expireTimedOutAutomatedReview({
   github,
@@ -1753,6 +1808,7 @@ export async function invalidateReviewProof({
   }
   const headSha = resolvedHeadSha.toLowerCase();
   const description = `PR#${pullNumber} review status unavailable`;
+  let sourceStatusId;
   if (
     expectedHeadSha !== undefined &&
     headSha !== expectedHeadSha.toLowerCase()
@@ -1772,6 +1828,10 @@ export async function invalidateReviewProof({
       "review statuses",
     );
     const latestStatus = latestReviewGateStatusForPull(statuses, pullNumber);
+    sourceStatusId = latestReviewPropagationRetryStatus(
+      statuses,
+      pullNumber,
+    )?.status?.id;
     if (
       Number.isSafeInteger(latestStatus?.id) &&
       latestStatus.id !== reconciliationStatusId &&
@@ -1795,6 +1855,7 @@ export async function invalidateReviewProof({
     repo,
     pullNumber,
     sourceHeadSha: headSha,
+    sourceStatusId,
     pullUrl: typeof response?.data?.html_url === "string"
       ? response.data.html_url
       : undefined,
@@ -2428,8 +2489,18 @@ export async function requestAutomatedReview({
   ) {
     throw new Error("Refusing to use a malformed review request key");
   }
+  let effectiveRequestKey = requestKey;
+  if (requestKey === "reopen") {
+    const events = await collectAll(
+      github,
+      github.rest.issues.listEvents,
+      { owner, repo, issue_number: pullNumber },
+      "review epoch events",
+    );
+    effectiveRequestKey = durableReviewRequestKey(events, requestKey);
+  }
   const marker = `<!-- automated-review-request: ${headSha.toLowerCase()}${
-    requestKey === undefined ? "" : ` ${requestKey}`
+    effectiveRequestKey === undefined ? "" : ` ${effectiveRequestKey}`
   } -->`;
   const comments = await collectAll(
     github,
@@ -2437,7 +2508,11 @@ export async function requestAutomatedReview({
     { owner, repo, issue_number: pullNumber },
     "request comments",
   );
-  const alreadyRequested = hasReviewRequest(comments, headSha, requestKey);
+  const alreadyRequested = hasReviewRequest(
+    comments,
+    headSha,
+    effectiveRequestKey,
+  );
   if (alreadyRequested) {
     return { requested: false, marker };
   }

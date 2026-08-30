@@ -2321,7 +2321,14 @@ describe("automated review publication", () => {
 
   it("starts a fresh pending epoch when a pull request reopens", async () => {
     const fixture = githubFixture({
-      pages: { statuses: [[pendingAutomatedReviewStatus()]] },
+      pages: {
+        events: [[{
+          event: "reopened",
+          id: 42,
+          created_at: "2026-08-25T09:00:00Z",
+        }]],
+        statuses: [[pendingAutomatedReviewStatus()]],
+      },
     });
     const result = await publishAutomatedReviewStatus({
       github: fixture.github,
@@ -2330,15 +2337,17 @@ describe("automated review publication", () => {
       pullNumber: 1,
       headSha: HEAD,
       pullUrl: "https://example.test/pr/1",
-      reviewResetKey: "reopen-42",
+      reviewResetKey: "reopen",
     });
 
     assertEquals(result.state, "pending");
     assertEquals(fixture.published.length, 1);
     assertEquals(fixture.published[0]?.state, "pending");
-    assertStringIncludes(
-      String(fixture.published[0]?.description),
-      "PR#1 reset base:",
+    assertEquals(
+      fixture.published[0]?.description,
+      `PR#1 reset base:${
+        reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+      } key:10c4ec5f2d10`,
     );
   });
 
@@ -3946,6 +3955,7 @@ describe("merge queue review propagation", () => {
 
 function requestFixture(options: {
   comments?: Record<string, unknown>[];
+  events?: Record<string, unknown>[];
   currentHead?: string;
   currentState?: string;
   draft?: boolean;
@@ -3953,21 +3963,25 @@ function requestFixture(options: {
   const posted: Record<string, unknown>[] = [];
   const state = {
     comments: options.comments ?? [],
+    events: options.events ?? [],
     currentHead: options.currentHead ?? HEAD,
     currentState: options.currentState ?? "open",
     draft: options.draft ?? false,
   };
   const listComments = () => undefined;
+  const listEvents = () => undefined;
   const github = {
     paginate: {
       async *iterator(endpoint: unknown) {
-        if (endpoint !== listComments) throw new Error("unknown endpoint");
-        yield { data: state.comments };
+        if (endpoint === listComments) yield { data: state.comments };
+        else if (endpoint === listEvents) yield { data: state.events };
+        else throw new Error("unknown endpoint");
       },
     },
     rest: {
       issues: {
         listComments,
+        listEvents,
         createComment: (comment: Record<string, unknown>) => {
           posted.push(comment);
           return Promise.resolve();
@@ -4106,6 +4120,36 @@ describe("automated review request", () => {
     assertEquals((await request()).requested, false);
   });
 
+  it("coalesces reopen requests on the latest durable epoch", async () => {
+    const fixture = requestFixture({
+      events: [
+        { event: "reopened", id: 41 },
+        { event: "reopened", id: 42 },
+      ],
+    });
+    const request = () =>
+      requestAutomatedReview({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha: HEAD,
+        requestKey: "reopen",
+      });
+
+    assertEquals((await request()).requested, true);
+    assertEquals(
+      fixture.posted[0]?.body,
+      `<!-- automated-review-request: ${HEAD} reopen-42 -->\n@codex review`,
+    );
+    fixture.state.comments.push({
+      user: bot("github-actions[bot]", GITHUB_ACTIONS_ID),
+      body: fixture.posted[0]?.body,
+    });
+    assertEquals((await request()).requested, false);
+    assertEquals(fixture.posted.length, 1);
+  });
+
   it("refuses to request a review of a malformed head commit", async () => {
     const fixture = requestFixture();
     for (
@@ -4227,6 +4271,37 @@ describe("review proof invalidation", () => {
 
     assertEquals(result.skipped, false);
     assertEquals(fixture.published[0]?.state, "failure");
+  });
+
+  it("preserves a queue-retry marker during fallback invalidation", async () => {
+    const retryStatus = automatedReviewStatus({
+      id: 105,
+      state: "failure",
+      description: "PR#1 automated review rate limited; queue retry pending",
+      target_url: "https://example.test/rate-limit",
+    });
+    const fixture = githubFixture({
+      commit: HEAD,
+      headResponses: [HEAD],
+      pageResponses: {
+        statuses: [
+          [[retryStatus]],
+          [[retryStatus]],
+        ],
+      },
+      pages: { refs: [[]] },
+    });
+    const result = await invalidateReviewProof({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      reconciliationStatusId: 105,
+    });
+
+    assertEquals(result.skipped, false);
+    assertEquals(result.queueFailures, 0);
+    assertEquals(fixture.published, []);
   });
 
   it("closes source and queued gates a dropped reconciliation left behind", async () => {
@@ -4909,6 +4984,8 @@ describe("automated review workflow", () => {
     );
     assert(script.includes("publishAutomatedReviewStatus"));
     assert(script.includes("publishReviewResolutionFailure"));
+    assert(script.includes("completeReviewFailurePropagation"));
+    assert(script.includes("queuePropagationPending: true"));
     assert(script.includes("sourceStatusId: result.statusId"));
     assert(script.includes("reconcileActiveMergeGroupReviewStatuses"));
     assert(!script.includes("github.rest.pulls.get"));
@@ -5008,9 +5085,11 @@ describe("automated review workflow", () => {
       "a base-edit rerun must reuse the original reset epoch",
     );
     assert(
-      requestScript.includes("`reopen-${context.runId}`"),
-      "a reopened pull request must request review in its fresh epoch",
+      requestScript.includes('context.payload.action === "reopened"') &&
+        requestScript.includes('? "reopen"'),
+      "reopened requests must derive their key from the durable epoch",
     );
+    assert(!requestScript.includes("`reopen-${context.runId}`"));
     assert(
       requestScript.includes('result.reason === "ineligible-pull"'),
       "a delayed request must report that the pull request is no longer eligible",
@@ -5021,9 +5100,11 @@ describe("automated review workflow", () => {
     );
     assert(script.includes("reviewResetKey"));
     assert(
-      script.includes("`reopen-${context.runId}`"),
-      "reopened pull requests must establish a fresh review epoch",
+      script.includes('context.payload.action === "reopened"') &&
+        script.includes('? "reopen"'),
+      "reopened publishers must derive their key from the durable epoch",
     );
+    assert(!script.includes("`reopen-${context.runId}`"));
 
     const invalidateJob = record(jobs.invalidate, "invalidate job");
     assertEquals(

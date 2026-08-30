@@ -617,6 +617,7 @@ jobs:
             }
             let publishAutomatedReviewStatus;
             let publishReviewResolutionFailure;
+            let completeReviewFailurePropagation;
             let reconcileActiveMergeGroupReviewStatuses;
             try {
               const response = await github.rest.repos.getContent({
@@ -637,6 +638,7 @@ jobs:
               ({
                 publishAutomatedReviewStatus,
                 publishReviewResolutionFailure,
+                completeReviewFailurePropagation,
                 reconcileActiveMergeGroupReviewStatuses,
               } = await import(gateUrl));
             } catch (error) {
@@ -669,7 +671,7 @@ jobs:
                       context.payload.changes?.base !== undefined
                     ? `base-${context.runId}`
                     : context.payload.action === "reopened"
-                    ? `reopen-${context.runId}`
+                    ? "reopen"
                     : undefined
                   : undefined,
               reviewFailureCommentId:
@@ -677,6 +679,7 @@ jobs:
                   context.payload.action !== "deleted"
                   ? context.payload.comment?.id
                   : undefined,
+              queuePropagationPending: true,
             });
             if (Number.isSafeInteger(result.statusId)) {
               core.setOutput("source-status-id", String(result.statusId));
@@ -701,10 +704,25 @@ jobs:
               return true;
             };
             let queueResultCount;
-            if (
-              result.state === "failure" ||
-              typeof result.baseRef !== "string"
-            ) {
+            if (result.state === "failure") {
+              let completed;
+              try {
+                completed = await completeReviewFailurePropagation({
+                  github,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pullNumber,
+                  headSha,
+                  sourceStatusId: result.statusId,
+                  description: result.description,
+                  targetUrl: result.targetUrl,
+                });
+              } catch (error) {
+                if (!forceInvalidateCurrentSource()) return "failure";
+                throw error;
+              }
+              queueResultCount = completed.resolution.queueFailures;
+            } else if (typeof result.baseRef !== "string") {
               const { queueFailures } = await publishReviewResolutionFailure({
                 github,
                 owner: context.repo.owner,
@@ -815,7 +833,7 @@ jobs:
               requestKey: context.payload.action === "edited"
                 ? `base-${context.runId}`
                 : context.payload.action === "reopened"
-                ? `reopen-${context.runId}`
+                ? "reopen"
                 : undefined,
             });
             core.notice(
