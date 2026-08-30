@@ -381,8 +381,11 @@ async function buildOrReadOfflineReactModules(): Promise<ReadonlyMap<string, str
     if (cached) return cached;
     const modules = await buildOfflineReactModules();
     const serialized = JSON.stringify([...modules]);
-    if (new TextEncoder().encode(serialized).byteLength > MAX_OFFLINE_REACT_CACHE_BYTES) {
-      throw new Error("Offline React module cache exceeds its byte limit");
+    if (
+      modules.size > MAX_OFFLINE_REACT_CACHE_ENTRIES ||
+      new TextEncoder().encode(serialized).byteLength > MAX_OFFLINE_REACT_CACHE_BYTES
+    ) {
+      return modules;
     }
     await Deno.writeTextFile(paths.cache, serialized, {
       mode: 0o600,
