@@ -237,6 +237,7 @@ type EvalSuiteArtifactPaths = {
 type EvalSuiteResult = {
   id: string;
   name: string;
+  targetKind: EvalReport["targetKind"];
   target: string;
   status: "passed" | "failed" | "error";
   artifacts?: EvalArtifactPaths;
@@ -921,6 +922,7 @@ async function runEvalReportSuite(
       results.push({
         id: evalItem.id,
         name: evalItem.name,
+        targetKind: evalItem.definition.targetKind,
         target: evalItem.definition.target,
         status,
         artifacts: childArtifacts,
@@ -938,6 +940,7 @@ async function runEvalReportSuite(
       results.push({
         id: evalItem.id,
         name: evalItem.name,
+        targetKind: evalItem.definition.targetKind,
         target: evalItem.definition.target,
         status: "error",
         artifacts: childArtifacts,

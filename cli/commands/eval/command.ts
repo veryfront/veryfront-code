@@ -769,6 +769,7 @@ function listEvals(evals: DiscoveredEval[], projectDir: string) {
   return sortEvals(evals).map((item) => ({
     id: item.id,
     name: item.name,
+    targetKind: item.definition.targetKind,
     target: item.definition.target,
     source: {
       filePath: displaySourcePath(item.filePath, projectDir),
