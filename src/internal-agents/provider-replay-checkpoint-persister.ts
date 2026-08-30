@@ -14,17 +14,40 @@ const MAX_RUN_EVENT_APPEND_TOKEN_BYTES = 4 * 1024;
 
 type Fetch = typeof globalThis.fetch;
 
+// Capture credential-touching intrinsics before project code can mutate the
+// shared realm. The opaque writer token must never be passed to ambient
+// prototype methods after project discovery.
+const NativeTextEncoder = TextEncoder;
 const apply = Reflect.apply;
 const jsonStringify = JSON.stringify;
-const textEncoder = new TextEncoder();
+const stringTrim = String.prototype.trim;
+const textEncoderEncode = NativeTextEncoder.prototype.encode;
+const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+const typedArrayByteLengthGetterCandidate = Object.getOwnPropertyDescriptor(
+  typedArrayPrototype,
+  "byteLength",
+)?.get;
+const textEncoder = new NativeTextEncoder();
+
+if (typeof typedArrayByteLengthGetterCandidate !== "function") {
+  throw new TypeError("Required Uint8Array byteLength intrinsic is unavailable");
+}
+const typedArrayByteLengthGetter = typedArrayByteLengthGetterCandidate;
 
 function snapshotFetch(fetchImpl: Fetch): Fetch {
   return (input, init) => apply(fetchImpl, undefined, [input, init]) as Promise<Response>;
 }
 
 function isValidRunEventAppendToken(token: string | null | undefined): token is string {
-  return typeof token === "string" && token.length > 0 && token.trim() === token &&
-    textEncoder.encode(token).byteLength <= MAX_RUN_EVENT_APPEND_TOKEN_BYTES;
+  if (
+    typeof token !== "string" || token.length === 0 ||
+    apply(stringTrim, token, []) !== token
+  ) {
+    return false;
+  }
+  const encoded = apply(textEncoderEncode, textEncoder, [token]) as Uint8Array;
+  return (apply(typedArrayByteLengthGetter, encoded, []) as number) <=
+    MAX_RUN_EVENT_APPEND_TOKEN_BYTES;
 }
 
 function getAbortReason(signal: AbortSignal): unknown {

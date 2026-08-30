@@ -12,6 +12,7 @@ import { createRunScopedProviderReplayCheckpointPersister } from "./provider-rep
 
 const RUN_ID = "run_checkpoint_1";
 const MESSAGE_ID = "10000000-1000-4000-8000-100000000001";
+const testApply = Reflect.apply;
 
 function checkpoint(): ProviderReplayCheckpoint {
   return {
@@ -135,5 +136,39 @@ describe("run-scoped provider replay checkpoint persistence", () => {
         undefined,
       );
     }
+  });
+
+  it("keeps credential validation on captured intrinsics after project poisoning", async () => {
+    const token = "writer-token-that-must-stay-private";
+    const nativeTrim = String.prototype.trim;
+    const nativeStringValueOf = String.prototype.valueOf;
+    const nativeEncode = TextEncoder.prototype.encode;
+    let observedTokenCalls = 0;
+
+    try {
+      String.prototype.trim = function () {
+        const value = testApply(nativeStringValueOf, this, []) as string;
+        if (value === token) observedTokenCalls++;
+        return testApply(nativeTrim, this, []) as string;
+      };
+      TextEncoder.prototype.encode = (function (this: TextEncoder, value = "") {
+        if (value === token) observedTokenCalls++;
+        return testApply(nativeEncode, this, [value]) as Uint8Array;
+      }) as typeof TextEncoder.prototype.encode;
+
+      const persist = createRunScopedProviderReplayCheckpointPersister({
+        apiUrl: "https://api.example.test",
+        runId: RUN_ID,
+        runEventAppendToken: token,
+        fetch: () => Promise.resolve(Response.json({ appended_count: 1 })),
+      });
+      if (!persist) throw new Error("Expected a checkpoint persister");
+      await persist(checkpoint());
+    } finally {
+      String.prototype.trim = nativeTrim;
+      TextEncoder.prototype.encode = nativeEncode;
+    }
+
+    assertEquals(observedTokenCalls, 0);
   });
 });
