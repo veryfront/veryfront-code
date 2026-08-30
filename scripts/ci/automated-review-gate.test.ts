@@ -3624,7 +3624,18 @@ describe("automated review timeout watchdog", () => {
           [[unavailableStatus]],
         ],
       },
-      pages: { refs: [[]] },
+      pages: {
+        comments: [[{
+          user: bot("github-actions[bot]", GITHUB_ACTIONS_ID),
+          body: `<!-- automated-review-request: ${HEAD} -->\n@codex review`,
+        }]],
+        events: [[{
+          event: "base_ref_changed",
+          id: 42,
+          created_at: "2026-08-25T08:00:00Z",
+        }]],
+        refs: [[]],
+      },
     });
     const result = await expireTimedOutAutomatedReview({
       github: fixture.github,
@@ -3643,7 +3654,7 @@ describe("automated review timeout watchdog", () => {
     assertEquals(fixture.published[0]?.state, "pending");
     assertEquals(
       fixture.commentsPosted[0]?.body,
-      `<!-- automated-review-request: ${HEAD} -->\n@codex review`,
+      `<!-- automated-review-request: ${HEAD} base-42 -->\n@codex review`,
     );
   });
 

@@ -33,6 +33,10 @@ const REVIEW_REQUEST_EVENT_KINDS = new Map([
   ["reopen", "reopened"],
   ["base", "base_ref_changed"],
 ]);
+const REVIEW_BOUNDARY_REQUEST_KEYS = new Map([
+  ["reopened", "reopen"],
+  ["base_ref_changed", "base"],
+]);
 /** @type {(ref: string) => Promise<string | undefined>} */
 const NO_COMMIT = () => Promise.resolve(undefined);
 /** @type {(login: string) => Promise<boolean>} */
@@ -286,6 +290,14 @@ function activeReviewBoundary(request, reviewNotBefore, epochChange) {
   ) return { ...request, timelineEvent: "commented" };
   if (boundary !== undefined || request === undefined) return boundary;
   return { ...request, timelineEvent: "commented" };
+}
+
+function reviewRequestKeyFromBoundary(boundary) {
+  const requestKey = REVIEW_BOUNDARY_REQUEST_KEYS.get(boundary?.kind);
+  return requestKey !== undefined && Number.isSafeInteger(boundary?.id) &&
+      boundary.id > 0
+    ? `${requestKey}-${boundary.id}`
+    : undefined;
 }
 
 function evidenceFreshness(
@@ -1076,6 +1088,7 @@ export async function publishAutomatedReviewStatus({
   let existingPropagationRetryStatus;
   let existingPropagationRetryKind;
   let existingPropagationRetryIsLatest = false;
+  let reviewRequestKey;
   let reviewBoundary;
   let failureKind;
   let failureUrl;
@@ -1202,6 +1215,8 @@ export async function publishAutomatedReviewStatus({
         reviewNotBefore,
         latestReviewEpochChange(events),
       );
+      reviewRequestKey = effectiveReviewResetKey ??
+        reviewRequestKeyFromBoundary(reviewBoundary);
       if (
         !pendingStatusBelongsToReviewEpoch(
           existingPendingStatus,
@@ -1406,6 +1421,7 @@ export async function publishAutomatedReviewStatus({
       description: existingPendingStatus.description,
       baseRef,
       statusId: existingPendingStatus.id,
+      reviewRequestKey,
     };
   }
   let targetUrl = failureUrl ?? review?.url ?? pullUrl;
@@ -1454,6 +1470,7 @@ export async function publishAutomatedReviewStatus({
     baseRef,
     statusId,
     targetUrl,
+    reviewRequestKey,
   };
 }
 
@@ -1995,6 +2012,7 @@ export async function expireTimedOutAutomatedReview({
         repo,
         pullNumber,
         headSha,
+        requestKey: result.reviewRequestKey,
       })
       : undefined;
     return {
