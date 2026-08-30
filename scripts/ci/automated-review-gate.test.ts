@@ -1584,7 +1584,13 @@ describe("automated review publication", () => {
 
   it("fails a triggering usage-limit reply that beats the first pending status", async () => {
     const fixture = githubFixture({
-      pages: { comments: [[codexRateLimitComment()]] },
+      pages: {
+        comments: [[codexRateLimitComment()]],
+        timeline: [[
+          { event: "committed", sha: HEAD },
+          { event: "commented", id: 103 },
+        ]],
+      },
     });
     const result = await publishAutomatedReviewStatus({
       github: fixture.github,
@@ -1599,6 +1605,55 @@ describe("automated review publication", () => {
     assertEquals(result.state, "failure");
     assertEquals(result.description, "PR#1 automated review rate limited");
     assertEquals(fixture.published[0]?.state, "failure");
+  });
+
+  it("does not bind a delayed limit-comment event to a newer head", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexRateLimitComment()]],
+        timeline: [[
+          { event: "commented", id: 103 },
+          { event: "committed", sha: HEAD },
+        ]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      reviewFailureCommentId: 103,
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(fixture.published[0]?.state, "pending");
+  });
+
+  it("does not treat two missing comment ids as a triggering limit reply", async () => {
+    const comment = {
+      ...codexRateLimitComment("2026-08-25T07:59:59Z"),
+      id: undefined,
+    };
+    const fixture = githubFixture({
+      pages: {
+        comments: [[comment]],
+        statuses: [[pendingAutomatedReviewStatus()]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(result.statusId, 100);
+    assertEquals(fixture.published, []);
   });
 
   it("does not apply an old-head usage-limit reply to a newer pending epoch", async () => {
@@ -1709,6 +1764,31 @@ describe("automated review publication", () => {
 
     assertEquals(result.state, "pending");
     assertEquals(result.statusId, 100);
+    assertEquals(fixture.published, []);
+  });
+
+  it("preserves a terminal review failure across unrelated edits", async () => {
+    const terminalStatus = automatedReviewStatus({
+      id: 105,
+      state: "failure",
+      description: "PR#1 automated review rate limited",
+      target_url: "https://example.test/rate-limit",
+    });
+    const fixture = githubFixture({
+      pages: { statuses: [[terminalStatus]] },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+
+    assertEquals(result.state, "failure");
+    assertEquals(result.statusId, 105);
+    assertEquals(result.description, "PR#1 automated review rate limited");
     assertEquals(fixture.published, []);
   });
 
@@ -2237,6 +2317,28 @@ describe("automated review timeout watchdog", () => {
         reviewTimeoutMs: 1_800_000,
       }),
       [{ pullNumber: 550, headSha: HEAD }],
+    );
+  });
+
+  it("fails visibly instead of silently truncating beyond 1,000 pulls", async () => {
+    const pages = Array.from({ length: 21 }, (_, pageIndex) =>
+      Array.from({ length: 50 }, (_, itemIndex) =>
+        timeoutPull(pageIndex * 50 + itemIndex + 1, undefined)
+      )
+    );
+    const github = timeoutDiscoveryFixture(pages);
+
+    await assertRejects(
+      () =>
+        findTimedOutAutomatedReviews({
+          github,
+          owner: "veryfront",
+          repo: "veryfront-code",
+          now: Date.parse("2026-08-25T08:30:00Z"),
+          reviewTimeoutMs: 1_800_000,
+        }),
+      Error,
+      "exceeded 1,000 open pull requests",
     );
   });
 

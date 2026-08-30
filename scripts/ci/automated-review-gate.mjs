@@ -373,19 +373,25 @@ function latestCodexUsageLimit(
   comments,
   pendingStatus,
   reviewFailureCommentId,
+  timeline,
+  headSha,
 ) {
   const pendingAt = Date.parse(pendingStatus?.created_at ?? "");
   let latest;
   let latestAt = Number.NEGATIVE_INFINITY;
   for (const comment of comments) {
-    const isTrigger = comment?.id === reviewFailureCommentId;
+    const isTrigger = reviewFailureCommentId !== undefined &&
+      comment?.id === reviewFailureCommentId;
     if (
       !isPinnedBot(comment?.user, CODEX_LOGIN) ||
       typeof comment?.body !== "string" ||
       !CODEX_USAGE_LIMIT.test(comment.body.trim()) ||
       (!isTrigger && !isProvablyUneditedComment(comment))
     ) continue;
-    if (isTrigger) return comment;
+    if (
+      isTrigger &&
+      commentFollowsHeadCommit(timeline, comment.id, headSha)
+    ) return comment;
     const createdAt = Date.parse(comment.created_at ?? "");
     if (
       !Number.isFinite(pendingAt) ||
@@ -398,6 +404,34 @@ function latestCodexUsageLimit(
     }
   }
   return latest;
+}
+
+function commentFollowsHeadCommit(timeline, commentId, headSha) {
+  const commentIndex = timeline.findIndex((item) =>
+    item?.event === "commented" && item?.id === commentId
+  );
+  if (commentIndex < 0) return false;
+  let headIndex = -1;
+  for (const [index, item] of timeline.entries()) {
+    if (
+      (item?.event === "committed" && item?.sha === headSha) ||
+      (item?.event === "head_ref_force_pushed" && item?.after === headSha)
+    ) headIndex = index;
+  }
+  return headIndex >= 0 && commentIndex > headIndex;
+}
+
+function latestTerminalReviewStatus(statuses, pullNumber) {
+  const status = latestReviewGateStatusForPull(statuses, pullNumber);
+  if (
+    status?.state !== "failure" ||
+    !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
+  ) return undefined;
+  const rateLimited = `PR#${pullNumber} automated review rate limited`;
+  const timedOut = `PR#${pullNumber} automated review timed out`;
+  return status?.description === rateLimited || status?.description === timedOut
+    ? status
+    : undefined;
 }
 
 function canReusePendingStatus(
@@ -842,6 +876,7 @@ export async function publishAutomatedReviewStatus({
   let isDraft = false;
   let resetPending = false;
   let existingPendingStatus;
+  let existingTerminalStatus;
   let failureKind;
   let failureUrl;
   if (
@@ -933,6 +968,10 @@ export async function publishAutomatedReviewStatus({
         statuses,
         pullNumber,
       );
+      existingTerminalStatus = latestTerminalReviewStatus(
+        statuses,
+        pullNumber,
+      );
       if (!resetPending && !isDraft) {
         review = await findAutomatedReview(
           { reviews, comments, events, timeline },
@@ -951,6 +990,8 @@ export async function publishAutomatedReviewStatus({
             comments,
             existingPendingStatus,
             reviewFailureCommentId,
+            timeline,
+            headSha,
           );
           if (usageLimit) {
             failure = new Error("Automated review was rate limited");
@@ -965,6 +1006,21 @@ export async function publishAutomatedReviewStatus({
           ) {
             failure = new Error("Automated review timed out");
             failureKind = "timed-out";
+          }
+          if (!failure && existingTerminalStatus) {
+            failureKind = existingTerminalStatus.description.endsWith(
+                "rate limited",
+              )
+              ? "rate-limited"
+              : "timed-out";
+            failure = new Error(
+              failureKind === "rate-limited"
+                ? "Automated review remains rate limited"
+                : "Automated review remains timed out",
+            );
+            failureUrl = typeof existingTerminalStatus.target_url === "string"
+              ? existingTerminalStatus.target_url
+              : undefined;
           }
         }
       }
@@ -1027,6 +1083,21 @@ export async function publishAutomatedReviewStatus({
   } else if (isDraft) description = `PR#${pullNumber} draft waits for review`;
   else {
     description = `PR#${pullNumber} waits for review ${headSha.slice(0, 12)}`;
+  }
+  if (
+    state === "failure" &&
+    existingTerminalStatus &&
+    existingTerminalStatus.description === description &&
+    isPositiveStatusId(existingTerminalStatus.id)
+  ) {
+    return {
+      state,
+      review,
+      failure,
+      description,
+      baseRef,
+      statusId: existingTerminalStatus.id,
+    };
   }
   if (
     state === "pending" &&
@@ -1198,7 +1269,7 @@ export async function findTimedOutAutomatedReviews({
     }
     cursor = pageInfo.endCursor;
   }
-  return targets;
+  throw new Error("Timeout discovery exceeded 1,000 open pull requests");
 }
 
 /** Revalidate one discovered timeout and publish under the per-pull lock. */
