@@ -128,7 +128,6 @@ const ReflectSet = Reflect.set;
 const StringPrototypeIncludes = String.prototype.includes;
 const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeEndsWith = String.prototype.endsWith;
-const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypeReplaceAll = String.prototype.replaceAll;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeSplit = String.prototype.split;
@@ -1911,203 +1910,36 @@ const MAX_CONFIG_LOAD_CAUSE_CHARACTERS = 200;
 
 // deno-lint-ignore no-control-regex
 const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/g;
-// A colorized cause arrives as ESC + "[31m" + text. Dropping only the ESC as a
-// control character leaves the "[31m" behind, and that residue sits between the
-// start of the token and the path -- which defeats any pattern anchored on what
-// precedes a path. Remove the whole sequence so the path patterns see the text
-// a plain terminal would.
-//
-// Matches the full CSI grammar rather than the colour sequences alone:
-// parameter bytes 0x30-0x3F, intermediate bytes 0x20-0x2F, one final byte
-// 0x40-0x7E. Accepting only digits and semicolons missed the colon-separated
-// form a true-colour sequence uses (`ESC[38:2:255:0:0m`), whose residue then
-// defeated POSIX_ABSOLUTE_PATH exactly as an unstripped `[31m` would.
+// Strip complete CSI sequences before matching paths and URLs.
 // deno-lint-ignore no-control-regex
 const ANSI_CSI_SEQUENCE = /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\u0040-\u007E]/g;
-// A CSI introducer, with any parameter and intermediate bytes it carries,
-// immediately followed by a path start. Removed before the full CSI pass so
-// that pass cannot consume the path's first characters; see
-// summarizeConfigLoadCause for why the path itself is not redacted here.
-//
-// The parameter and intermediate runs are part of the match, not just the bare
-// introducer: `ESC[31C:\\Users\\alice` is a legal CUF sequence whose final byte
-// is the drive letter, and `ESC[31/home/alice` is a legal sequence whose
-// intermediate is the leading `/` and whose final byte is the `h`. Matching only
-// the introducer left `:\\Users\\alice` and `ome/alice` behind, which no later
-// path pattern recognises.
-//
-// The intermediate run stops at 0x2E rather than the grammar's 0x2F, because
-// 0x2F is `/` -- the first character of the path this pass exists to preserve.
-//
-// The final byte is optional so a *completed* sequence is covered too, not only
-// an introducer. `Failed at` + `ESC[3~` + `/home/alice/x` is a legal CSI whose
-// final byte is `~`; removing it during de-colorization joined `at` to the path,
-// POSIX_ABSOLUTE_PATH's lookbehind then refused the slash, and the path reached
-// the caller. Optional rather than required, because `ESC[/home` has no final
-// byte before the path at all.
-//
-// The backslash branch of the lookahead requires *both* UNC separators, not one.
-// A backslash is 0x5C, inside the final-byte range, so in an introducer followed by
-// a UNC path the optional final byte ate the first separator while the lookahead was
-// satisfied by the second. The pass then emitted a single-separator path, which
-// WINDOWS_ABSOLUTE_PATH does not recognise -- it requires a doubled separator or a
-// drive letter -- so the UNC path reached the caller. `origin/main` redacts that same
-// input, so this pre-pass introduced the leak rather than inheriting it. Demanding
-// both separators makes the engine backtrack the optional final byte to zero width
-// and leave the prefix whole. A forward slash needs no such care: 0x2F sits below the
-// final-byte range, and the intermediate run already stops at 0x2E to protect it.
-//
-// The sequence is taken here rather than by making de-colorization emit a space
-// instead of nothing. That pass must keep emitting nothing: `sk-` + `ESC[0m` +
-// `ABCD1234EFGH5678` only rejoins into a contiguous credential if the removal
-// leaves no gap, and the sanitiser that runs after it matches nothing otherwise.
-// Fixing a path boundary must not reopen that.
+// Remove a CSI prefix separately when its grammar could consume the first path
+// byte. Preserve `/`, both UNC separators, and drive-letter starts for redaction.
 const CSI_GLUED_PATH =
   // deno-lint-ignore no-control-regex
   /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002E]*[\u0040-\u007E]?(?=\\\\|\/|[A-Za-z]:[\\/])/g;
-// The same pre-pass for a special-scheme URL start, which the CSI grammar eats
-// exactly as it eats a path. In `ESC[https:registry.internal/x`, `h` is a legal
-// final byte, so the CSI pass left `ttps:registry.internal/x`:
-// ZERO_SLASH_SCHEME_URL no longer recognises the damaged scheme, and
-// POSIX_ABSOLUTE_PATH refuses the `/x` that follows a hostname, so the private
-// host reached the caller. `wss`, `ftp`, the 8-bit introducer, a parameterized
-// introducer and an uppercase scheme all leaked the same way; the single-slash
-// form survived but emitted `ttp[path]`, the path-as-URL mislabel this PR
-// exists to remove.
-//
-// A separate constant rather than a third alternative in the one above. The two
-// share a prefix, so folding them together is the obvious move -- and it is what
-// took SonarCloud's maintainability rating on new code to B. Splitting a dense
-// alternation into plain per-shape constants is what cleared the same gate
-// earlier in this PR, when `REMOTE_URL` became SCHEME_URL and
-// MALFORMED_SCHEME_URL. Each pass reads as one rule.
-//
-// The list is every scheme the redactor itself recognises: the special schemes
-// of MALFORMED_SCHEME_URL and ZERO_SLASH_SCHEME_URL, plus `file`, which
-// FILE_URL_ABSOLUTE_PATH claims. `file` is here because `f` is a legal final
-// byte, so `ESC[file:///home/alice/x` lost `ESC[f` and SCHEME_URL read the
-// remaining `ile:///home/alice/x` as a remote URL -- reporting `[url]` for a
-// local path. Keep this list in sync with those three. A generic
-// `[A-Za-z][A-Za-z0-9+.-]*:` lookahead cannot be used: it matches the prose in
-// `ESC[0mError: cannot find module`, which would strip `ESC[0` and leave a
-// stray `m` in an ordinary diagnostic. A generic `scheme://` needs no help
-// here, because SCHEME_URL still matches the damaged `ttps://host/x`.
-//
-// `i` is safe on the whole pattern: every other class is either explicitly
-// both cases (`[A-Za-z]`) or contains no letters at all.
+// Do the same for recognized schemes whose first letter is a CSI final byte.
+// Keep this list aligned with the special-scheme and file-URL redactors.
 const CSI_GLUED_URL =
   // deno-lint-ignore no-control-regex
   /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002E]*[\u0040-\u007E]?(?=(?:https?|wss?|ftp|file):)/gi;
-// The scheme needs at least two characters: `C://Users/alice` is a drive path
-// that Node normalises, not a URL with the one-letter scheme `C`, and matching it
-// here reintroduced the path-as-URL mislabel this PR exists to remove. No
-// registered scheme is a single character.
-// A remote config URL is redacted whole rather than picked apart: AGENTS.md
-// counts private hostnames among the values user-facing output must not carry,
-// and the caller cannot tell an internal registry from a public CDN by looking
-// at it (veryfront-issue-inbox#836).
-//
-// The ordinary form. Unanchored on the left so a scheme glued to preceding
-// text (`3https://host/x`) is still recognised rather than falling through to
-// the Windows pattern.
-//
-// The scheme length is bounded because this runs over the whole message before
-// the 200-character cap applies. Unbounded, the greedy prefix rescans to the
-// end of the input at every position starting with a letter, so a long
-// alphabetic message with no colon costs O(n^2) -- 100k characters measured at
-// ~17.9s, versus ~34ms bounded. Every registered scheme is far shorter than 31.
-//
-// The final two alternatives keep an unbalanced parenthesis from ending the
-// match. Without them the
-// hostname redacted but the tail did not, so
-// `https://host/a(TOKEN/c.ts` came back as `[url](TOKEN/c.ts` and a query-string
-// token printed verbatim into the caller-visible error
-// (veryfront-issue-inbox#845). It reproduces on `origin/main`, so this is a
-// pre-existing gap rather than one introduced with the URL passes.
-//
-// The distinct lookaheads are load-bearing. A lone opening parenthesis may
-// precede any non-blank URL tail. A lone closing parenthesis continues only
-// before a URL-like character, so prose punctuation in
-// `Failed (see https://host/x). Retry` stays outside the match.
-//
-// Dropping the balanced branch instead would be simpler and 25x faster, and was
-// rejected. It takes the quadratic guard's probe from ~45ms to ~0.2ms, which
-// leaves that guard passing while measuring nothing -- a failure mode that
-// already defanged it once -- and it emits `[url])` for a URL ending in `(b)`,
-// adding a cosmetic artefact to a change whose purpose is removing one.
-//
-// The balanced and lone-`(` branches are both ambiguous on `(`, so the cost was
-// measured rather than assumed. On the quadratic guard's own `"ab://(".repeat(n)`
-// input, for n of 10k/20k/40k, the tail costs 20/40/80ms against origin/main's
-// 21/45/83ms -- within noise, still linear at 2x per doubling, and far inside the
-// guard's 20x ratio. Shapes that exercise the `)` branch stay at 0-3ms on both.
-//
-// The closing-paren lookahead asks a structural question -- is the rest of this
-// token nothing but trailing punctuation or symbols? -- rather than listing the
-// characters prose is allowed to end with. Listing them does not converge: `.,;:)]` still
-// mangled `Failed (see https://host/x)! Retry` into `Failed (see [url] Retry`,
-// and adding `!` next would have left `?`, `}`, `>` and the rest of sentence
-// punctuation behind it. Worse, `?` can never go in such a list -- it legitimately
-// opens a query string, so excluding it would strand `https://host/a)?t=SECRET`
-// with its token in the caller-visible detail.
-// Unicode's `Punctuation`, `Symbol`, `Mark`, and `Format` properties supply the
-// structural categories, covering sentence marks and complete emoji sequences.
-// The latter need marks such as variation selectors and format characters such
-// as zero-width joiners in addition to their symbol code points.
-//
-// Asking the structural question settles both at once. A `)` whose remaining
-// token is only punctuation before a boundary is prose, so it stays outside the
-// match; anything else is URL and is consumed. `https://host/a)?t=SECRET` is
-// redacted whole because `t=SECRET` follows the `?`, while `(see .../x)? Retry`
-// keeps its bracket because nothing but the space follows.
-//
-// The `{0,16}` bound is load-bearing, like every other bound in this file. An
-// unbounded run rescans from each `)` in a long chain of them, so a single token
-// carrying 2k/4k/8k closing parens cost 6/22/89ms -- 4x per doubling, quadratic,
-// and reachable from a project-authored error. Bounded, the same inputs are
-// 0/0/1ms. No real sentence ends in 16 punctuation marks.
-//
-// Keep this source shared by every URL shape. Apart from preventing the four
-// redactors from drifting, the extraction keeps each complete expression below
-// the static-analysis complexity threshold.
-//
-// An RFC 3986 URI is ASCII before percent-encoding. Defining the token from
-// that legal set makes any non-ASCII character after a completed ASCII prefix
-// a boundary, including scripts that do not put spaces between a URL and the
-// following sentence. A percent-encoded equivalent stays entirely inside the
-// token.
-//
-// Apostrophes are intentionally absent even though RFC 3986 lists them as a
-// sub-delimiter. The userinfo prefix handles them before `@`, while the tail
-// must leave the closing quote in `Cannot find module 'https://host/x'` intact.
+// URI tails stay ASCII so glued Unicode prose remains visible. The parenthesis
+// branches consume URL payloads without swallowing terminal prose punctuation;
+// bounded interiors and punctuation lookahead keep failed scans linear.
+// Apostrophes terminate the tail but remain valid in the userinfo prefix.
 const URI_TOKEN_CHARACTER_SOURCE = String.raw`[A-Za-z0-9\-._~:/?#\[\]@!$&*+,;=%]`;
 const URI_PAREN_INTERIOR_SOURCE = String.raw`[A-Za-z0-9\-._~:/?#\[\]@!$&()*+,;=%]`;
 const URL_BALANCED_PAREN_SEGMENT_SOURCE = String.raw`\([^\s"']{0,512}\)`;
 const URL_TOKEN_TAIL_SOURCE = String
   .raw`(?:${URI_TOKEN_CHARACTER_SOURCE}|${URL_BALANCED_PAREN_SEGMENT_SOURCE}|\((?=(?:${URI_PAREN_INTERIOR_SOURCE}|\P{ASCII}))|\)(?=${URI_PAREN_INTERIOR_SOURCE})(?![\p{P}\p{S}\p{M}\p{Cf}]{0,16}(?:[\s"']|$)))+`;
-// Documented limit (inbox#852): prose glued to a drive path that also has a
-// redundant double separator -- `Failed atC://Users` -- lengthens the apparent
-// scheme to the RFC-legal `atC` and is labeled [url]. That token is
-// structurally identical to `...s://host`, so a drive-letter rescue here
-// re-opens the http[path] regression #4236 fixed, and a known-scheme whitelist
-// would under-redact real URLs. Redaction stays complete either way; only the
-// label is off. Pinned in loader.test.ts.
+// Require a bounded, multi-character scheme so drive-letter paths remain paths.
 const SCHEME_URL = new RegExp(
   String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
   "gu",
 );
-// Redact raw IRI authorities after the file-URL pass. Keep the optional tail
-// grouped: `${URL_TOKEN_TAIL_SOURCE}?` would make its final `+` lazy.
-// The strict host class covers IRI labels, emoji, and safe ASCII bridges while
-// leaving whitespace and trailing punctuation visible. When a component
-// delimiter proves the authority continues, the structured branch fails closed
-// across other host punctuation instead of enumerating IDNA context rules.
-// The bounded Unicode probe keeps scans linear; the second branch handles
-// authorities whose first Unicode code point occurs after that probe.
-// Backslash also proves a structured special-scheme authority because WHATWG
-// treats it as a path separator. Bare authorities admit bounded Unicode
-// punctuation runs only when non-punctuation follows before the token boundary;
-// rejected symbol suffixes are restored after validating the matched candidate.
+// Redact raw IRI authorities after file URLs. Structured authorities fail closed;
+// bare authorities retain terminal punctuation. Bounded probes keep scans linear.
+// Keep the optional tail grouped: a direct `?` would make its final `+` lazy.
 const NON_ASCII_HOST_CHARACTER_SOURCE = String
   .raw`[\p{L}\p{N}\p{M}\p{S}\u200D\u{E0020}-\u{E007E}.\-_$!&*+,;=%~]`;
 const NON_ASCII_HOST_PUNCTUATION_SOURCE = String
@@ -2153,8 +1985,9 @@ const RAW_IRI_REMAINDER = /\P{ASCII}[^\s"']*/uy;
 // a delimiter-only `>` in `<https://host/x>` remains visible.
 const RAW_ACCEPTED_URL_REMAINDER = /[\\<>{}\x60^|][^\s"']*/uy;
 const RAW_ACCEPTED_URL_PAYLOAD = /[\p{L}\p{N}\p{M}]/u;
-const URL_HOST_SYMBOL = /\p{S}/uy;
-const MAX_URL_HOST_SYMBOL_BOUNDARY_ATTEMPTS = 16;
+const NON_ASCII_URL_HOST_BOUNDARY =
+  /(?=\P{ASCII})(?![\u200C\u200D\u{E0020}-\u{E007E}])[\p{P}\p{S}\p{Cf}]/uy;
+const MAX_URL_HOST_BOUNDARY_ATTEMPTS = 16;
 
 // Userinfo and parenthesized segments are bounded to keep failed scans linear.
 // Userinfo stops at `/` but permits RFC sub-delimiters and parentheses before
@@ -2199,27 +2032,17 @@ const NON_ASCII_ZERO_SLASH_URL_PATH = new RegExp(
 );
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
-// Case-insensitive for the same reason. `FILE:///home/alice` otherwise fell
-// past this pattern to SCHEME_URL and came back as `[url]`. Not a leak -- the
-// home directory was redacted either way -- but it reported a local path as a
-// remote URL, which is this PR's original misclassification running backwards.
+// Match case-insensitively so uppercase file URLs remain paths, not remote URLs.
 const FILE_URL_ABSOLUTE_PATH = new RegExp(
   `file:///${URL_TOKEN_TAIL_SOURCE}`,
   "giu",
 );
-// Run before FILE_URL_ABSOLUTE_PATH. That ASCII matcher intentionally stops at
-// raw Unicode, but replacing only its prefix would expose a later IRI segment.
-// As with NON_ASCII_URL_PATH, the segment boundary distinguishes path data from
-// prose glued directly to an ASCII filename.
+// Run before the ASCII file-URL matcher so an IRI segment is redacted whole.
 const NON_ASCII_FILE_URL_PATH = new RegExp(
   String.raw`file:///(?:${URI_TOKEN_CHARACTER_SOURCE}{0,2048}/)?(?=[^\x00-\x7F])[^\s"']*`,
   "giu",
 );
-// Unanchored on the left. A boundary here refuses a path glued to preceding
-// text (`Failed atC:\\Users\\alice\\...`), and neither URL pattern can claim a
-// backslash form, so the path would reach the caller intact. The scheme match in
-// SCHEME_URL and MALFORMED_SCHEME_URL is what keeps `https:/` away from the
-// drive-letter alternative, so the boundary is not needed for that either.
+// Stay unanchored so paths glued to preceding diagnostic text are still removed.
 const WINDOWS_ABSOLUTE_PATH = /(?:[A-Za-z]:[\\/]|\\\\)[^\s"'()]+/g;
 const POSIX_ABSOLUTE_PATH = /(?<![A-Za-z0-9:/.\\])\/[^\s"'()]+/g;
 
@@ -2271,20 +2094,18 @@ function acceptedUnicodeHostMatchEnd(matched: string, matchIndex: number): numbe
     new IntrinsicURL(matched);
     return matchIndex + matched.length;
   } catch {
-    // A rejected symbol can terminate an otherwise valid bare authority. Work
-    // backward over a bounded number of symbol boundaries to retain its suffix.
+    // A rejected Unicode character can terminate an otherwise valid authority.
+    // Work backward over bounded candidates to retain its suffix.
   }
 
   try {
-    let attempts = MAX_URL_HOST_SYMBOL_BOUNDARY_ATTEMPTS;
+    let attempts = MAX_URL_HOST_BOUNDARY_ATTEMPTS;
     for (let index = matched.length - 1; index >= 0 && attempts > 0; index--) {
-      URL_HOST_SYMBOL.lastIndex = index;
-      const symbol = ReflectApply(RegExpPrototypeExec, URL_HOST_SYMBOL, [matched]) as
+      NON_ASCII_URL_HOST_BOUNDARY.lastIndex = index;
+      const character = ReflectApply(RegExpPrototypeExec, NON_ASCII_URL_HOST_BOUNDARY, [matched]) as
         | RegExpExecArray
         | null;
-      if (symbol === null || symbol.index !== index) continue;
-      const codeUnit = ReflectApply(StringPrototypeCharCodeAt, matched, [index]) as number;
-      if (codeUnit < 0x80) continue;
+      if (character === null || character.index !== index) continue;
       attempts -= 1;
       const followingAt = ReflectApply(StringPrototypeIndexOf, matched, ["@", index]) as number;
       if (followingAt !== -1) continue;
@@ -2295,14 +2116,14 @@ function acceptedUnicodeHostMatchEnd(matched: string, matchIndex: number): numbe
         continue;
       }
       try {
-        new IntrinsicURL(prefix + symbol[0]);
+        new IntrinsicURL(prefix + character[0]);
       } catch {
         return matchIndex + index;
       }
     }
     return matchIndex + matched.length;
   } finally {
-    URL_HOST_SYMBOL.lastIndex = 0;
+    NON_ASCII_URL_HOST_BOUNDARY.lastIndex = 0;
   }
 }
 
@@ -2311,7 +2132,7 @@ function replaceMatchesWithCapturedExec(
   pattern: RegExp,
   replacement: string,
   extendRawUrl = false,
-  validateUnicodeHostSymbols = false,
+  validateUnicodeHostBoundary = false,
 ): string {
   pattern.lastIndex = 0;
   let output = "";
@@ -2324,7 +2145,7 @@ function replaceMatchesWithCapturedExec(
       if (match === null) break;
       const matched = match[0];
       if (matched.length === 0) throw new TypeError("Diagnostic pattern must make progress");
-      const acceptedMatchEnd = validateUnicodeHostSymbols
+      const acceptedMatchEnd = validateUnicodeHostBoundary
         ? acceptedUnicodeHostMatchEnd(matched, match.index)
         : pattern.lastIndex;
       pattern.lastIndex = acceptedMatchEnd === pattern.lastIndex && extendRawUrl
@@ -2348,29 +2169,9 @@ function containsNonAscii(value: string): boolean {
 /**
  * Replace machine-identifying locations in a diagnostic with stable markers.
  *
- * The order is load-bearing, narrowest first. Each pass consumes its matches
- * before the next runs, so an earlier pattern is what keeps a later, greedier
- * one away from text it would mis-read:
- *
- * 1. the quoted forms, whose surrounding quotes bound the match precisely;
- * 2. `file:///`, including its unambiguous raw-IRI path form, which is a path
- *    wearing a URL and is reported as `[path]`;
- * 3. the non-ASCII authority and path fallbacks, then `SCHEME_URL` and
- *    `MALFORMED_SCHEME_URL`, each reported as `[url]` -- together these are
- *    also what keep `https:/` away from step 4, whose drive-letter alternative
- *    would otherwise match the `s:/` inside it and emit `http[path]`;
- * 4. unquoted Windows drive and UNC paths;
- * 5. unquoted POSIX paths.
- *
- * Callers must strip ANSI sequences first -- `summarizeConfigLoadCause` does,
- * before it sanitises credentials. Colorized text leaves `[31m` style residue
- * directly in front of a path once the escape itself is gone, which defeats the
- * boundary lookbehind step 5 relies on.
- *
- * That caller also removes a CSI introducer glued to a path start beforehand
- * (`CSI_GLUED_PATH`), because the CSI grammar would otherwise consume the path's
- * own first characters. It removes only the introducer, so this function still
- * runs exactly once and still runs after de-colorization.
+ * Order is narrowest to broadest: quoted paths, file URLs, IRIs and URLs, then
+ * Windows and POSIX paths. The caller strips CSI prefixes first so escape bytes
+ * cannot hide a path or scheme start.
  */
 function redactMachinePaths(value: string): string {
   let redacted = replaceMatchesWithCapturedExec(value, QUOTED_WINDOWS_ABSOLUTE_PATH, "[path]");

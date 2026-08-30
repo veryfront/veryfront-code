@@ -6550,7 +6550,7 @@ export default config as const;
         assertStringIncludes(glued.message, "Failed [url]");
       });
 
-      it("keeps rejected host symbols and quoted text after a Unicode authority", async () => {
+      it("keeps rejected host characters and quoted text after a Unicode authority", async () => {
         for (
           const [label, input, expected] of [
             [
@@ -6559,6 +6559,12 @@ export default config as const;
               'Failed [url]·"secret"',
             ],
             ["rejected-symbol", "Failed https://例え.internal¨Retry", "Failed [url]¨Retry"],
+            ["rejected-punctuation", "Failed https://例え.internal…Retry", "Failed [url]…Retry"],
+            [
+              "rejected-format-character",
+              "Failed https://例え.internal\u200eRetry",
+              "Failed [url]\u200eRetry",
+            ],
             [
               "single-slash-rejected-symbol",
               "Failed https:/例え.internal¨Retry",
