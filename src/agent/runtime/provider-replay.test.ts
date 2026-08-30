@@ -2881,7 +2881,7 @@ describe("agent/runtime/provider-replay", () => {
       );
     });
 
-    it("should reject replay groups beyond the provider assistant-message limit", () => {
+    it("should preserve replay groups across more than six model steps", () => {
       const checkpoint = createValidCheckpoint() as unknown as Record<string, unknown>;
       checkpoint.providerBlocks = Array.from({ length: 7 }, (_, index) => ({
         type: "provider-block",
@@ -2892,7 +2892,10 @@ describe("agent/runtime/provider-replay", () => {
       checkpoint.providerMessageBlockCounts = [1, 1, 1, 1, 1, 1, 1];
       checkpoint.totalPartCount = 7;
 
-      assertProviderReplayError(() => parseProviderReplayCheckpoint(checkpoint));
+      assertEquals(
+        parseProviderReplayCheckpoint(checkpoint),
+        checkpoint,
+      );
     });
 
     it("should reject raw replay blocks beyond provider metadata bounds", () => {

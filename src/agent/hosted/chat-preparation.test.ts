@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { it } from "#veryfront/testing/bdd.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import { convertToTextGenerationRuntimeRequestMessages } from "#veryfront/agent/runtime/text-generation-runtime-message-converter.ts";
@@ -9,6 +9,8 @@ import type { HistoricalToolInputCompactionDiagnostic } from "#veryfront/chat/me
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 import { ContextCompactionError } from "./context-budget-manager.ts";
 import {
+  createProviderReplayCheckpointCreationOptions,
+  isProviderReplayCheckpointEmissionEnabled,
   normalizeParsedHostedChatRequest,
   prepareHostedChatExecution,
   prepareHostedChatRuntimeCreationOptions,
@@ -77,6 +79,58 @@ function pendingResponseUntilAbort(signal: AbortSignal | null | undefined): Prom
     }
     signal.addEventListener("abort", rejectAbort, { once: true });
   });
+}
+
+function createSuccessfulPrivateCheckpointMirror(operations: string[]) {
+  return {
+    handleChunk: () => Promise.resolve(),
+    appendEvents: (events: Array<{ type: string }>) => {
+      operations.push(`append:${events.map((event) => event.type).join(",")}`);
+      return Promise.resolve();
+    },
+    flush: () => {
+      operations.push("flush");
+      return Promise.resolve({
+        latestEventId: 2,
+        latestExternalEventSequence: 2,
+        pendingEventCount: 0,
+        consecutiveFailures: 0,
+        disabled: false,
+        hasFlushTimer: false,
+        hasRetryTimer: false,
+        inFlight: false,
+      });
+    },
+    getSnapshot: () => ({
+      latestEventId: 1,
+      latestExternalEventSequence: 1,
+      pendingEventCount: 0,
+      consecutiveFailures: 0,
+      disabled: false,
+      hasFlushTimer: false,
+      hasRetryTimer: false,
+      inFlight: false,
+    }),
+    dispose: () => {
+      operations.push("dispose");
+    },
+  };
+}
+
+function replayCheckpoint() {
+  return {
+    version: 1 as const,
+    messageId: "message-1",
+    provider: "anthropic" as const,
+    providerBlocks: [{
+      type: "provider-block" as const,
+      provider: "anthropic" as const,
+      block: { type: "thinking", thinking: "", signature: "test-signature" },
+    }],
+    providerBlockPositions: [0],
+    providerMessageBlockCounts: [1],
+    totalPartCount: 1,
+  };
 }
 
 function createParsedHostedChatRequest(
@@ -175,6 +229,67 @@ Deno.test("normalizeParsedHostedChatRequest falls back to top-level context valu
     projectId: "project-top-level",
     conversationId: "conversation-top-level",
     branchId: null,
+  });
+});
+
+describe("provider replay checkpoint emission", () => {
+  it("is disabled unless the host opts in", () => {
+    assertEquals(isProviderReplayCheckpointEmissionEnabled(undefined), false);
+    assertEquals(isProviderReplayCheckpointEmissionEnabled("0"), false);
+    assertEquals(isProviderReplayCheckpointEmissionEnabled("1"), true);
+  });
+
+  it("is default-off and uses the private mirror when enabled", async () => {
+    const operations: string[] = [];
+    const rootRunContext = {
+      durableRootRun: {
+        runId: "run-1",
+        conversationId: "conversation-1",
+        messageId: "message-1",
+        latestEventId: 1,
+        latestExternalEventSequence: 1,
+      },
+      privateDurableRunMirror: createSuccessfulPrivateCheckpointMirror(operations),
+    };
+
+    assertEquals(createProviderReplayCheckpointCreationOptions(rootRunContext, false), {});
+    const continuingOptions = createProviderReplayCheckpointCreationOptions(
+      rootRunContext,
+      false,
+      [replayCheckpoint()],
+    );
+    assertEquals(continuingOptions.providerReplayCheckpointMessageId, "message-1");
+    assertEquals(continuingOptions.requireProviderReplayCheckpointPersistence, true);
+    const options = createProviderReplayCheckpointCreationOptions(rootRunContext, true);
+    assertEquals(options.providerReplayCheckpointMessageId, "message-1");
+    assertEquals(options.requireProviderReplayCheckpointPersistence, true);
+    await options.persistProviderReplayCheckpoint?.(replayCheckpoint());
+    assertEquals(operations, [
+      "append:AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT",
+      "flush",
+    ]);
+  });
+
+  it("fails closed without a private mirror", async () => {
+    const options = createProviderReplayCheckpointCreationOptions({
+      durableRootRun: {
+        runId: "run-1",
+        conversationId: "conversation-1",
+        messageId: "message-1",
+        latestEventId: 1,
+        latestExternalEventSequence: 1,
+      },
+      privateDurableRunMirror: null,
+    }, true);
+
+    await assertRejects(
+      () =>
+        options.persistProviderReplayCheckpoint?.(replayCheckpoint()) ??
+          Promise.resolve(),
+      Error,
+      "trusted run-event append token",
+    );
+    assertEquals(options.requireProviderReplayCheckpointPersistence, true);
   });
 });
 

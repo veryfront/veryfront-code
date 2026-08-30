@@ -21,6 +21,11 @@ export type RuntimeToolFilterConfig = AgentConfig & {
   >;
   __vfToolExposureCheckpoint?: ToolExposureCheckpoint;
   __vfProviderReplayCheckpoints?: readonly ProviderReplayCheckpoint[];
+  __vfProviderReplayCheckpointMessageId?: string;
+  __vfPersistProviderReplayCheckpoint?: (
+    checkpoint: ProviderReplayCheckpoint,
+  ) => void | Promise<void>;
+  __vfProviderReplayCheckpointPersistenceRequired?: boolean;
   __vfPersistToolExposureCheckpoint?: (
     checkpoint: ToolExposureCheckpoint,
   ) => void | Promise<void>;
@@ -124,6 +129,30 @@ export function getRuntimeProviderReplayCheckpoints(
   config: AgentConfig,
 ): readonly ProviderReplayCheckpoint[] | undefined {
   return (config as RuntimeToolFilterConfig).__vfProviderReplayCheckpoints;
+}
+
+/** Return the trusted durable assistant message id used for emitted replay state. */
+export function getRuntimeProviderReplayCheckpointMessageId(
+  config: AgentConfig,
+): string | undefined {
+  const value = (config as RuntimeToolFilterConfig).__vfProviderReplayCheckpointMessageId;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/** Return the trusted private provider replay checkpoint persistence hook. */
+export function getRuntimeProviderReplayCheckpointPersister(
+  config: AgentConfig,
+): ((checkpoint: ProviderReplayCheckpoint) => void | Promise<void>) | undefined {
+  const value = (config as RuntimeToolFilterConfig).__vfPersistProviderReplayCheckpoint;
+  return typeof value === "function" ? value : undefined;
+}
+
+/** Return whether provider replay state must be durable before continuation. */
+export function isRuntimeProviderReplayCheckpointPersistenceRequired(
+  config: AgentConfig,
+): boolean {
+  return (config as RuntimeToolFilterConfig).__vfProviderReplayCheckpointPersistenceRequired ===
+    true;
 }
 
 /** Return whether the trusted host requires checkpoint durability before continuation. */

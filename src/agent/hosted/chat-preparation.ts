@@ -40,7 +40,10 @@ import {
 } from "./context-budget-manager.ts";
 import { findSubmittedFormInputResult } from "./form-input-tool.ts";
 import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
-import type { ProviderReplayCheckpoint } from "../runtime/provider-replay.ts";
+import {
+  createProviderReplayCheckpointEvent,
+  type ProviderReplayCheckpoint,
+} from "#veryfront/agent/runtime/provider-replay.ts";
 import {
   createToolExposureCheckpointEvent,
   TOOL_SEARCH_TOOL_NAME,
@@ -52,6 +55,19 @@ import {
   runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
+
+/** Host-owned opt-in for new provider replay checkpoint emission. */
+export const PROVIDER_REPLAY_CHECKPOINT_EMISSION_ENV =
+  "VERYFRONT_ENABLE_PROVIDER_REPLAY_CHECKPOINT_EMISSION";
+
+/** Return whether the trusted host explicitly enabled private replay checkpoint writes. */
+export function isProviderReplayCheckpointEmissionEnabled(
+  value: string | undefined = getHostEnv(PROVIDER_REPLAY_CHECKPOINT_EMISSION_ENV),
+): boolean {
+  return value === "1";
+}
 
 /** Request payload for normalized hosted chat. */
 export type NormalizedHostedChatRequest = {
@@ -202,27 +218,83 @@ async function flushRequiredContextCompactionEvent(
   }
 }
 
-function createDurableToolExposureCheckpointPersister(
-  rootRunContext: HostedChatRuntimePreparationRootRunContext | undefined,
-): ((checkpoint: ToolExposureCheckpoint) => Promise<void>) | undefined {
-  const privateDurableRunMirror = rootRunContext?.privateDurableRunMirror;
-  if (rootRunContext?.durableRootRun && !privateDurableRunMirror) {
+function createDurablePrivateCheckpointPersister<T>(input: {
+  rootRunContext: HostedChatRuntimePreparationRootRunContext | undefined;
+  createEvent: (checkpoint: T) => ConversationRunEvent;
+  missingWriterMessage: string;
+  incompleteFlushMessage: string;
+}): ((checkpoint: T) => Promise<void>) | undefined {
+  const privateDurableRunMirror = input.rootRunContext?.privateDurableRunMirror;
+  if (input.rootRunContext?.durableRootRun && !privateDurableRunMirror) {
     return async () => {
-      throw new Error(
-        "A trusted run-event append token is required to persist a private tool exposure checkpoint",
-      );
+      throw DURABLE_RUN_EVENT_PERSISTENCE_FAILED.create({
+        detail: input.missingWriterMessage,
+      });
     };
   }
   if (!privateDurableRunMirror) return undefined;
   return async (checkpoint) => {
-    await privateDurableRunMirror.appendEvents([createToolExposureCheckpointEvent(checkpoint)]);
+    await privateDurableRunMirror.appendEvents([input.createEvent(checkpoint)]);
     const snapshot = await privateDurableRunMirror.flush();
     if (snapshot.disabled || snapshot.pendingEventCount > 0 || snapshot.inFlight) {
       privateDurableRunMirror.dispose();
-      throw new Error(
-        "Tool exposure checkpoint was not durably persisted before model execution",
-      );
+      throw DURABLE_RUN_EVENT_PERSISTENCE_FAILED.create({
+        detail: input.incompleteFlushMessage,
+      });
     }
+  };
+}
+
+function createDurableToolExposureCheckpointPersister(
+  rootRunContext: HostedChatRuntimePreparationRootRunContext | undefined,
+): ((checkpoint: ToolExposureCheckpoint) => Promise<void>) | undefined {
+  return createDurablePrivateCheckpointPersister({
+    rootRunContext,
+    createEvent: createToolExposureCheckpointEvent,
+    missingWriterMessage:
+      "A trusted run-event append token is required to persist a private tool exposure checkpoint",
+    incompleteFlushMessage:
+      "Tool exposure checkpoint was not durably persisted before model execution",
+  });
+}
+
+function createDurableProviderReplayCheckpointPersister(
+  rootRunContext: HostedChatRuntimePreparationRootRunContext | undefined,
+): ((checkpoint: ProviderReplayCheckpoint) => Promise<void>) | undefined {
+  return createDurablePrivateCheckpointPersister({
+    rootRunContext,
+    createEvent: createProviderReplayCheckpointEvent,
+    missingWriterMessage:
+      "A trusted run-event append token is required to persist a private provider replay checkpoint",
+    incompleteFlushMessage:
+      "Provider replay checkpoint was not durably persisted before continuation",
+  });
+}
+
+/** Resolve private provider replay bindings without exposing the host gate to requests. */
+export function createProviderReplayCheckpointCreationOptions(
+  rootRunContext: HostedChatRuntimePreparationRootRunContext | undefined,
+  enabled = isProviderReplayCheckpointEmissionEnabled(),
+  existingCheckpoints: readonly ProviderReplayCheckpoint[] = [],
+): {
+  providerReplayCheckpointMessageId?: string;
+  persistProviderReplayCheckpoint?: (
+    checkpoint: ProviderReplayCheckpoint,
+  ) => void | Promise<void>;
+  requireProviderReplayCheckpointPersistence?: true;
+} {
+  if (!rootRunContext?.durableRootRun) return {};
+  const messageId = rootRunContext.durableRootRun.messageId;
+  const mustContinueExistingCheckpoint = existingCheckpoints.some((checkpoint) =>
+    checkpoint.messageId === messageId
+  );
+  if (!enabled && !mustContinueExistingCheckpoint) return {};
+  return {
+    providerReplayCheckpointMessageId: messageId,
+    persistProviderReplayCheckpoint: createDurableProviderReplayCheckpointPersister(
+      rootRunContext,
+    ),
+    requireProviderReplayCheckpointPersistence: true,
   };
 }
 
@@ -496,6 +568,11 @@ export async function prepareHostedChatRuntimeCreationOptions<
             : {}),
         }
         : {}),
+      ...createProviderReplayCheckpointCreationOptions(
+        input.rootRunContext,
+        isProviderReplayCheckpointEmissionEnabled(),
+        input.serverResolvedProviderReplayCheckpoints,
+      ),
       clientProfile: runtimeConfig.clientProfile,
       liveProjectSteering: buildHostedChatRuntimeProjectSteering({
         agentConfig: input.agentConfig,

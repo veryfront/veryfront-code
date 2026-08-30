@@ -167,6 +167,14 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
   /** @internal Verified provider replay state for persisted assistant turns. */
   serverResolvedProviderReplayCheckpoints?: readonly ProviderReplayCheckpoint[];
+  /** @internal Durable assistant message id for emitted provider replay state. */
+  providerReplayCheckpointMessageId?: string;
+  /** @internal Persists private provider replay state outside model messages. */
+  persistProviderReplayCheckpoint?: (
+    checkpoint: ProviderReplayCheckpoint,
+  ) => void | Promise<void>;
+  /** @internal Fail closed when a hosted durable run cannot persist provider replay state. */
+  requireProviderReplayCheckpointPersistence?: true;
   /** @internal Persists private checkpoint state outside model messages. */
   persistToolExposureCheckpoint?: (
     checkpoint: ToolExposureCheckpoint,

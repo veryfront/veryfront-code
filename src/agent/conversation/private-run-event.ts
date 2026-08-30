@@ -1,4 +1,8 @@
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED, VeryfrontError } from "../../errors/index.ts";
+import {
+  AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE,
+  parseProviderReplayCheckpointEvent,
+} from "#veryfront/agent/runtime/provider-replay.ts";
 
 function ownDataValue(record: object, key: string): unknown {
   const descriptor = Object.getOwnPropertyDescriptor(record, key);
@@ -157,13 +161,23 @@ function isTool(value: unknown): boolean {
 
 /** Return whether an event declares the private durable run-event discriminator. */
 export function hasPrivateConversationRunEventType(value: unknown): value is object {
-  return !!value && typeof value === "object" && !Array.isArray(value) &&
-    ownDataValue(value, "type") === "AGENT_RUN_MODEL_CALL_CONTEXT";
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const type = ownDataValue(value, "type");
+  return type === "AGENT_RUN_MODEL_CALL_CONTEXT" ||
+    type === AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE;
 }
 
 /** Return whether an event belongs to the private durable run-event sequence. */
 export function isPrivateConversationRunEvent(value: unknown): boolean {
   if (!hasPrivateConversationRunEventType(value)) return false;
+  if (ownDataValue(value, "type") === AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE) {
+    try {
+      parseProviderReplayCheckpointEvent(value);
+      return true;
+    } catch {
+      return false;
+    }
+  }
   const messages = ownDataValue(value, "messages");
   if (!Array.isArray(messages) || !messages.every(isMessage)) return false;
   const toolsDescriptor = Object.getOwnPropertyDescriptor(value, "tools");

@@ -104,6 +104,8 @@ export function isAnthropicProviderExecutedContentBlockType(type: unknown): bool
 }
 
 export const MAX_ANTHROPIC_RAW_ASSISTANT_MESSAGES = 6;
+/** Maximum raw response groups reconstructed from one cumulative durable checkpoint. */
+export const MAX_ANTHROPIC_REPLAY_ASSISTANT_MESSAGES = 100;
 export const MAX_ANTHROPIC_RAW_ASSISTANT_BLOCKS = 4_096;
 export const MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_BYTES = 8 * 1024 * 1024;
 export const MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_DEPTH = 64;
@@ -171,15 +173,24 @@ function hasValidCaller(value: unknown): boolean {
 export function validateAnthropicRawAssistantMessages(
   value: unknown,
   providerToolNamesById: AnthropicProviderToolNameRegistry = new Map(),
+  maximumMessages = MAX_ANTHROPIC_RAW_ASSISTANT_MESSAGES,
 ): Array<Array<Record<string, unknown>>> {
+  if (
+    !Number.isSafeInteger(maximumMessages) || maximumMessages < 1 ||
+    maximumMessages > MAX_ANTHROPIC_REPLAY_ASSISTANT_MESSAGES
+  ) {
+    throw new TypeError(
+      `Anthropic raw assistant message limit must be between 1 and ${MAX_ANTHROPIC_REPLAY_ASSISTANT_MESSAGES}`,
+    );
+  }
   const snapshot = snapshotAnthropicRawAssistantMetadata(value);
   if (
     !Array.isArray(snapshot) ||
     snapshot.length === 0 ||
-    snapshot.length > MAX_ANTHROPIC_RAW_ASSISTANT_MESSAGES
+    snapshot.length > maximumMessages
   ) {
     throw new TypeError(
-      `Anthropic raw assistant messages must contain between 1 and ${MAX_ANTHROPIC_RAW_ASSISTANT_MESSAGES} messages`,
+      `Anthropic raw assistant messages must contain between 1 and ${maximumMessages} messages`,
     );
   }
 

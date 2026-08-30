@@ -7,6 +7,37 @@ import {
 } from "./private-run-event.ts";
 
 describe("agent/conversation/private-run-event", () => {
+  it("recognizes only well-shaped private provider replay checkpoint events", () => {
+    const checkpoint = {
+      type: "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT",
+      version: 1,
+      messageId: "assistant-message-1",
+      provider: "anthropic",
+      providerBlocks: [{
+        type: "provider-block",
+        provider: "anthropic",
+        block: { type: "thinking", thinking: "", signature: "test-signature" },
+      }],
+      providerBlockPositions: [0],
+      providerMessageBlockCounts: [1],
+      totalPartCount: 1,
+      elapsedMs: 42,
+      emittedAt: 1_786_866_357_364,
+    };
+
+    assertEquals(isPrivateConversationRunEvent(checkpoint), true);
+    assertEquals(
+      isPrivateConversationRunEvent({
+        ...checkpoint,
+        providerBlocks: [{
+          ...checkpoint.providerBlocks[0],
+          provider: "openai-responses",
+        }],
+      }),
+      false,
+    );
+  });
+
   it("recognizes only well-shaped private model-call context events", () => {
     assertEquals(
       isPrivateConversationRunEvent({

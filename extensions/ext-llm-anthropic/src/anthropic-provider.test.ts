@@ -1,5 +1,5 @@
-import { assertEquals, assertRejects } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 
 import { ProviderOverloadedError, ProviderRequestError } from "veryfront/provider/shared";
@@ -195,6 +195,16 @@ describe("anthropic-provider", () => {
         inputTokens: 8,
         outputTokens: 2,
         totalTokens: 10,
+      },
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "tool_use",
+            id: "tool_weather",
+            name: "weather",
+            input: { city: "Tokyo" },
+          }]],
+        },
       },
     });
   });
@@ -2007,6 +2017,16 @@ describe("anthropic-provider", () => {
         outputTokens: 4,
         totalTokens: 5,
       },
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "tool_use",
+            id: "toolu_1",
+            name: "bash",
+            input: { command: "pwd" },
+          }]],
+        },
+      },
     });
   });
 
@@ -2810,6 +2830,15 @@ describe("anthropic-provider", () => {
           outputTokens: 6,
           totalTokens: 18,
         },
+        providerMetadata: {
+          anthropic: {
+            rawAssistantMessages: [[{
+              type: "thinking",
+              thinking: "Let me think.",
+              signature: "sig_123",
+            }]],
+          },
+        },
       },
     ]);
   });
@@ -2911,6 +2940,15 @@ describe("anthropic-provider", () => {
           inputTokens: 8,
           outputTokens: 2,
           totalTokens: 10,
+        },
+        providerMetadata: {
+          anthropic: {
+            rawAssistantMessages: [[
+              { type: "thinking", thinking: "First thought." },
+              { type: "thinking", thinking: "Second thought." },
+              { type: "text", text: "Done." },
+            ]],
+          },
         },
       },
     ]);
@@ -3895,6 +3933,15 @@ describe("anthropic-provider", () => {
         },
         { type: "text", text: "The answer is 42." },
       ]);
+      assertEquals(result.providerMetadata, {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "thinking",
+            thinking: "Let me consider this carefully.",
+            signature: "sig_abc123",
+          }, { type: "text", text: "The answer is 42." }]],
+        },
+      });
     });
 
     it("parses redacted thinking blocks", async () => {
@@ -3927,6 +3974,14 @@ describe("anthropic-provider", () => {
         { type: "reasoning", redactedData: "encrypted_blob_xyz" },
         { type: "text", text: "I can help with that." },
       ]);
+      assertEquals(result.providerMetadata, {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "redacted_thinking",
+            data: "encrypted_blob_xyz",
+          }, { type: "text", text: "I can help with that." }]],
+        },
+      });
     });
   });
 
@@ -4092,6 +4147,14 @@ describe("anthropic-provider", () => {
           type: "finish",
           finishReason: { unified: "stop", raw: "end_turn" },
           usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7 },
+          providerMetadata: {
+            anthropic: {
+              rawAssistantMessages: [[
+                { type: "redacted_thinking", data: "encrypted" },
+                { type: "text", text: "Answer." },
+              ]],
+            },
+          },
         },
       ]);
     });

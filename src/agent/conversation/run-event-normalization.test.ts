@@ -41,6 +41,32 @@ describe("agent/conversation-run-event-normalization", () => {
     );
   });
 
+  it("fails closed instead of summarizing an oversized provider replay checkpoint", () => {
+    assertThrows(
+      () =>
+        normalizeConversationRunEvent({
+          type: "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT",
+          version: 1,
+          messageId: "assistant-message-1",
+          provider: "anthropic",
+          providerBlocks: [{
+            type: "provider-block",
+            provider: "anthropic",
+            block: {
+              type: "thinking",
+              thinking: "",
+              signature: "x".repeat(MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES),
+            },
+          }],
+          providerBlockPositions: [0],
+          providerMessageBlockCounts: [1],
+          totalPartCount: 1,
+        }),
+      DurableRunEventPersistenceError,
+      "Provider replay checkpoint event exceeded the durable payload limit",
+    );
+  });
+
   it("splits oversized string-delta events", () => {
     const largeDelta = "x".repeat(300 * 1024);
     const event = { type: "TEXT_MESSAGE_CONTENT", delta: largeDelta };
