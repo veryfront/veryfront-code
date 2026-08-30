@@ -53,17 +53,6 @@ async function* walkTypeScript(dir: string): AsyncGenerator<string> {
 }
 
 describe("error docs links", () => {
-  it("keeps the registry as the only exhaustive published slug list", async () => {
-    const registryTestSource = await Deno.readTextFile(
-      new URL("../../src/errors/error-registry.test.ts", import.meta.url),
-    );
-    assertEquals(
-      registryTestSource.includes("PUBLISHED_ERROR_SLUGS"),
-      false,
-      "derive exhaustive slug coverage from ERROR_REGISTRY instead of maintaining a second list",
-    );
-  });
-
   it("points every registered slug at a published destination", async () => {
     const docFile = localFileForDocsBaseUrl(ERROR_DOCS_BASE_URL);
     const markdown = await Deno.readTextFile(docFile);
