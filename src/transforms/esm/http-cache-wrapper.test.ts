@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ApiCacheBackend } from "#veryfront/cache/backend.ts";
 import {
   __setDistributedCacheAccessorForTests,
+  __setDistributedCacheFallbackForTests,
   detokenize,
   httpBundleCache,
   initializeHttpModuleDistributedCache,
@@ -55,6 +56,23 @@ describe("transforms/esm/http-cache-wrapper", () => {
         assertEquals(await initializeHttpModuleDistributedCache(), true);
       } finally {
         __setDistributedCacheAccessorForTests(null);
+      }
+    });
+
+    it("uses the offline fallback unless a test injects an explicit backend", async () => {
+      const restore = __setDistributedCacheFallbackForTests(() => Promise.resolve(null));
+      try {
+        __setDistributedCacheAccessorForTests(null);
+        assertEquals(await initializeHttpModuleDistributedCache(), false);
+
+        __setDistributedCacheAccessorForTests(() => Promise.resolve(new RecordingCacheBackend()));
+        assertEquals(await initializeHttpModuleDistributedCache(), true);
+
+        __setDistributedCacheAccessorForTests(null);
+        assertEquals(await initializeHttpModuleDistributedCache(), false);
+      } finally {
+        __setDistributedCacheAccessorForTests(null);
+        restore();
       }
     });
   });

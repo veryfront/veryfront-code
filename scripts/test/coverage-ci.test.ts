@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildCoverageCommandArgs,
   buildDenoTestCommandArgs,
+  LOOPBACK_ALLOW_NET,
 } from "./coverage-ci.ts";
 
 /**
@@ -20,18 +21,15 @@ const providerDenyNet =
   "--deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai,mcp.context7.com";
 
 describe("coverage CI command", () => {
-  it("denies live provider egress while preserving allow-all for local test fixtures", () => {
+  it("runs coverage shards with loopback-only network permission", () => {
     const args = buildDenoTestCommandArgs({
       coverageDir: "coverage-shard-1",
       files: ["src/provider/model-registry.test.ts"],
     });
 
-    assert(args.includes("--allow-all"));
-    assertEquals(args.includes(providerDenyNet), true);
-    assertEquals(
-      args.indexOf(providerDenyNet) > args.indexOf("--allow-all"),
-      true,
-    );
+    assertEquals(args.includes("--allow-all"), false);
+    assertEquals(args.includes(providerDenyNet), false);
+    assert(args.includes(LOOPBACK_ALLOW_NET));
   });
 
   it("reports on cli/ as well as src/", () => {

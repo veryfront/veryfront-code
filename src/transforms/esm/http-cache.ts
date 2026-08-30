@@ -8,6 +8,7 @@
  */
 
 import { createFileSystem, exists, type FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { BUILD_FAILED, BUNDLE_ERROR, retryWithBackoff } from "#veryfront/errors";
@@ -116,6 +117,22 @@ export const HTTP_MODULE_FETCH_MAX_WAIT_MS = HTTP_MODULE_FETCH_RETRY_BUDGET_MS +
 const httpCacheLog = logger.component("http-cache");
 const contentMetricsLog = logger.component("content-metrics");
 const httpBundlePublications = new Map<string, Promise<unknown>>();
+type HttpModuleCacheDirResolver = (url: string, requestedCacheDir: string) => string | undefined;
+let testHttpModuleCacheDirResolver: HttpModuleCacheDirResolver | undefined;
+
+/** Install a URL-aware HTTP module cache override in a DENO_TESTING process. */
+export function __setHttpModuleCacheDirResolverForTests(
+  resolver: HttpModuleCacheDirResolver | undefined,
+): () => void {
+  if (getHostEnv("DENO_TESTING") !== "1") {
+    throw new Error("The HTTP module cache test override requires DENO_TESTING=1");
+  }
+  const previous = testHttpModuleCacheDirResolver;
+  testHttpModuleCacheDirResolver = resolver;
+  return () => {
+    if (testHttpModuleCacheDirResolver === resolver) testHttpModuleCacheDirResolver = previous;
+  };
+}
 
 function abandonedHttpFetchError(abortSignal: AbortSignal): unknown {
   return abortSignal.reason ??
@@ -384,7 +401,9 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
   options.abortSignal?.throwIfAborted();
   const normalizedUrl = normalizeHttpUrl(url);
   const safeUrl = sanitizeUrlForSpan(normalizedUrl);
-  const cacheDir = ensureAbsoluteDir(options.cacheDir);
+  const cacheDir = ensureAbsoluteDir(
+    testHttpModuleCacheDirResolver?.(normalizedUrl, options.cacheDir) ?? options.cacheDir,
+  );
   const cacheIdentity = await buildHttpCacheIdentity(normalizedUrl, options);
   const identityMetadata = await buildHttpCacheIdentityMetadata(normalizedUrl, options);
   const cacheKey = `${cacheDir}:${cacheIdentity}`;

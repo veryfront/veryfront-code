@@ -14,6 +14,55 @@ export const DENO_TEST_ENV: Readonly<Record<string, string>> = Object.freeze({
   LOG_FORMAT: "text",
 });
 
+/** Unit-only environment enabling the first-party offline React transport. */
+export const UNIT_DENO_TEST_ENV: Readonly<Record<string, string>> = Object
+  .freeze({
+    ...DENO_TEST_ENV,
+    VERYFRONT_TEST_OFFLINE_REACT: "1",
+  });
+
+export const LOOPBACK_ALLOW_NET =
+  "--allow-net=127.0.0.1,localhost,0.0.0.0,[::1],[::]";
+
+export const LOOPBACK_TEST_PERMISSIONS: readonly string[] = Object.freeze([
+  "--allow-read",
+  "--allow-write",
+  "--allow-env",
+  // Unit tests are trusted code. Deno does not apply parent network grants to
+  // spawned executables, so OS-level child-process egress isolation is a
+  // separate boundary; provider credentials are still removed from child env.
+  "--allow-run",
+  "--allow-sys",
+  "--allow-ffi",
+  LOOPBACK_ALLOW_NET,
+]);
+
+const DENO_PERMISSION_SHORT_FLAGS = new Set([
+  "-A",
+  "-E",
+  "-I",
+  "-N",
+  "-P",
+  "-R",
+  "-S",
+  "-W",
+]);
+
+/** Return whether forwarded Deno arguments can alter process permissions. */
+export function hasDenoPermissionFlag(args: readonly string[]): boolean {
+  for (const arg of args) {
+    if (arg === "--") return false;
+    const name = arg.split("=", 1)[0]!;
+    if (
+      DENO_PERMISSION_SHORT_FLAGS.has(name) ||
+      /^--(?:allow|deny)(?:-|$)/.test(name)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Live inference providers no test process may reach. Lanes that record
  * against live services on purpose (test:record, test:tool-search-live,

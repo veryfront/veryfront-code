@@ -11,9 +11,38 @@ import "./sanitize-process-env.ts";
 import "./bdd.ts";
 import "../schemas/_test-setup.ts";
 import { __installUnpinnedHostTransportForTests } from "../security/http/outbound-fetch.ts";
+import {
+  installOfflineReactTransportForTests,
+  isOfflineUnitModuleUrlForTests,
+  OFFLINE_REACT_TEST_ENV,
+  prepareOfflineReactModulesForTests,
+} from "./offline-react-transport.ts";
+import { __setHttpModuleCacheDirResolverForTests } from "#veryfront/transforms/esm/http-cache.ts";
+import { __setDistributedCacheFallbackForTests } from "#veryfront/transforms/esm/http-cache-wrapper.ts";
+import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 
 // Tests that genuinely reach the network use the plain host transport rather
 // than Deno's pinned SOCKS client, which holds connections open past the end of
 // a test. Installing it here keeps the security module to a single rule and
 // leaves the test-only decision somewhere a reader can find it.
-__installUnpinnedHostTransportForTests();
+if (Deno.env.get(OFFLINE_REACT_TEST_ENV) === "1") {
+  const cacheDir = Deno.makeTempDirSync({ prefix: "veryfront-unit-cache-" });
+  __setHttpModuleCacheDirResolverForTests((url, requestedCacheDir) =>
+    requestedCacheDir === getHttpBundleCacheDir() &&
+      isOfflineUnitModuleUrlForTests(new URL(url))
+      ? cacheDir
+      : undefined
+  );
+  __setDistributedCacheFallbackForTests(() => Promise.resolve(null));
+  await prepareOfflineReactModulesForTests();
+  addEventListener("unload", () => {
+    try {
+      Deno.removeSync(cacheDir, { recursive: true });
+    } catch {
+      // Process teardown is already discarding the isolated cache.
+    }
+  });
+  installOfflineReactTransportForTests();
+} else {
+  __installUnpinnedHostTransportForTests();
+}

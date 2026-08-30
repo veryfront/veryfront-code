@@ -1,9 +1,11 @@
 import { walk } from "#std/fs/walk";
 import {
   buildTestProcessEnv,
-  DENO_TEST_ENV,
-  PROVIDER_EGRESS_DENY_NET,
+  LOOPBACK_TEST_PERMISSIONS,
+  UNIT_DENO_TEST_ENV,
 } from "./suites.ts";
+
+export { LOOPBACK_ALLOW_NET } from "./suites.ts";
 
 export interface ShardSpec {
   index: number;
@@ -20,7 +22,7 @@ interface LcovLineRecord {
   line: number;
 }
 
-const UNIT_COVERAGE_ENV = DENO_TEST_ENV;
+const UNIT_COVERAGE_ENV = UNIT_DENO_TEST_ENV;
 
 export function parseShardSpec(value: string): ShardSpec {
   const match = /^(\d+)\/(\d+)$/.exec(value);
@@ -50,8 +52,7 @@ export function buildDenoTestCommandArgs(
     // Leaks here are load-dependent and do not reproduce on demand, so the
     // first failure has to carry the stack rather than advise a rerun.
     "--trace-leaks",
-    "--allow-all",
-    PROVIDER_EGRESS_DENY_NET,
+    ...LOOPBACK_TEST_PERMISSIONS,
     "--v8-flags=--max-old-space-size=8192",
     `--coverage=${options.coverageDir}`,
     "--coverage-raw-data-only",

@@ -32,6 +32,7 @@ const DENO_ONLY_FILES = [
   "src/server/dev-server/handler-only.integration.test.ts",
   "src/testing/cwd-exclusion-a.test.ts",
   "src/testing/cwd-exclusion-b.test.ts",
+  "src/testing/offline-react-transport.test.ts",
 ];
 
 /** Ordinary tests, including neighbours of the excluded pair. */

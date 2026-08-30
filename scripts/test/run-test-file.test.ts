@@ -1,9 +1,12 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { fileURLToPath } from "node:url";
 import {
   buildTestFileCommandArgs,
+  LOOPBACK_ALLOW_NET,
   PROVIDER_EGRESS_DENY_NET,
   TEST_FILE_ENV,
+  type TestTargetFileSystem,
 } from "./run-test-file.ts";
 
 describe("test:file task command", () => {
@@ -12,22 +15,19 @@ describe("test:file task command", () => {
       "src/config/cicd-coverage-workflow.test.ts",
       "--filter",
       "cicd",
-      "--allow-net=api.openai.com",
+      "--shuffle=123",
     ]);
 
     assertEquals(TEST_FILE_ENV.DENO_TESTING, "1");
     assertEquals(args.includes("--preload=src/testing/preload.ts"), true);
-    assertEquals(args.includes("--allow-all"), true);
-    assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), true);
-    assertEquals(
-      args.indexOf(PROVIDER_EGRESS_DENY_NET) > args.indexOf("--allow-all"),
-      true,
-    );
+    assertEquals(args.includes("--allow-all"), false);
+    assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), false);
+    assertEquals(args.includes(LOOPBACK_ALLOW_NET), true);
     assertEquals(args.slice(-4), [
       "src/config/cicd-coverage-workflow.test.ts",
       "--filter",
       "cicd",
-      "--allow-net=api.openai.com",
+      "--shuffle=123",
     ]);
   });
 
@@ -40,12 +40,209 @@ describe("test:file task command", () => {
 
     assertEquals(args.includes("--config=scripts/test.deno.json"), true);
     assertEquals(args.includes("--preload=src/testing/preload.ts"), false);
-    assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), true);
+    assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), false);
+    assertEquals(args.includes(LOOPBACK_ALLOW_NET), true);
     assertEquals(args.slice(-3), [
       "scripts/test/coverage-ci.test.ts",
       "--filter",
       "coverage",
     ]);
+  });
+
+  it("keeps integration paths on the provider deny-list", () => {
+    const args = buildTestFileCommandArgs(["tests/integration/routes.test.ts"]);
+
+    assertEquals(args.includes("--allow-all"), true);
+    assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), true);
+    assertEquals(args.includes(LOOPBACK_ALLOW_NET), false);
+  });
+
+  it("does not classify option values as integration targets", () => {
+    const args = buildTestFileCommandArgs([
+      "src/foo.test.ts",
+      "--filter",
+      "tests/integration",
+    ]);
+
+    assertEquals(args.includes("--allow-all"), false);
+    assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), false);
+    assertEquals(args.includes(LOOPBACK_ALLOW_NET), true);
+  });
+
+  it("does not classify short or preload option values as integration targets", () => {
+    const args = buildTestFileCommandArgs([
+      "src/foo.test.ts",
+      "-c",
+      "tests/integration/deno.json",
+      "-L",
+      "debug",
+      "--preload",
+      "tests/integration/setup.ts",
+    ]);
+
+    assertEquals(args.includes("--allow-all"), false);
+    assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), false);
+    assertEquals(args.includes(LOOPBACK_ALLOW_NET), true);
+  });
+
+  it("does not classify ignored paths or script arguments as integration targets", () => {
+    for (
+      const rawArgs of [
+        ["src/foo.test.ts", "--ignore", "tests/integration"],
+        ["src/foo.test.ts", "--", "tests/integration"],
+      ]
+    ) {
+      const args = buildTestFileCommandArgs(rawArgs);
+      assertEquals(args.includes("--allow-all"), false);
+      assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), false);
+      assertEquals(args.includes(LOOPBACK_ALLOW_NET), true);
+    }
+  });
+
+  it("rejects invocations without a positional test target", () => {
+    for (
+      const rawArgs of [
+        [],
+        ["--filter", "unit name"],
+        ["--ignore", "tests/integration"],
+        ["--", "script argument"],
+      ]
+    ) {
+      assertThrows(
+        () => buildTestFileCommandArgs(rawArgs),
+        Error,
+        "test:file requires at least one test file or directory target",
+      );
+    }
+  });
+
+  it("rejects permission flags before Deno can widen the test profile", () => {
+    for (
+      const permissionFlag of [
+        "--allow-all",
+        "--allow-import=https://example.com",
+        "--allow-net=api.openai.com",
+        "--deny-net=localhost",
+        "-A",
+        "-N",
+      ]
+    ) {
+      assertThrows(
+        () => buildTestFileCommandArgs(["src/foo.test.ts", permissionFlag]),
+        Error,
+        "test:file does not accept forwarded permission flags",
+      );
+    }
+
+    const scriptArg = buildTestFileCommandArgs([
+      "src/foo.test.ts",
+      "--",
+      "--allow-all",
+    ]);
+    assertEquals(scriptArg.includes(LOOPBACK_ALLOW_NET), true);
+  });
+
+  it("keeps ambiguous filesystem targets on loopback-only permissions", () => {
+    const permissionDenied = new Deno.errors.PermissionDenied(
+      "test target is unreadable",
+    );
+    const failures: TestTargetFileSystem[] = [
+      {
+        statSync: () => {
+          throw permissionDenied;
+        },
+        readDirSync: () => [],
+      },
+      {
+        statSync: () => ({ isDirectory: true }),
+        readDirSync: () => {
+          throw permissionDenied;
+        },
+      },
+      {
+        statSync: () => ({ isDirectory: true }),
+        readDirSync: function* () {
+          for (let index = 0; index <= 10_000; index++) {
+            yield {
+              name: `entry-${index}`,
+              isDirectory: false,
+              isFile: true,
+              isSymlink: false,
+            };
+          }
+        },
+      },
+    ];
+
+    for (const fileSystem of failures) {
+      const args = buildTestFileCommandArgs(["ambiguous-target"], fileSystem);
+      assertEquals(args.includes("--allow-all"), false);
+      assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), false);
+      assertEquals(args.includes(LOOPBACK_ALLOW_NET), true);
+    }
+  });
+
+  it("uses integration permissions for source-root integration tests", () => {
+    for (
+      const target of [
+        "cli/commands/deploy/deploy.integration.test.ts",
+        "src/discovery/auto-discovery.integration.test.ts",
+      ]
+    ) {
+      const args = buildTestFileCommandArgs([target]);
+      assertEquals(args.includes("--allow-all"), true, target);
+      assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), true, target);
+      assertEquals(args.includes(LOOPBACK_ALLOW_NET), false, target);
+    }
+  });
+
+  it("classifies absolute repository targets relative to the project root", () => {
+    const root = fileURLToPath(new URL("../../", import.meta.url))
+      .replaceAll("\\", "/")
+      .replace(/\/$/, "");
+    for (
+      const target of [
+        `${root}/tests/integration/routes.test.ts`,
+        `${root}/src/discovery/auto-discovery.integration.test.ts`,
+      ]
+    ) {
+      const args = buildTestFileCommandArgs([target]);
+      assertEquals(args.includes("--allow-all"), true, target);
+      assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), true, target);
+      assertEquals(args.includes(LOOPBACK_ALLOW_NET), false, target);
+    }
+
+    const scriptArgs = buildTestFileCommandArgs([
+      `${root}/scripts/test/run-test-file.test.ts`,
+    ]);
+    assertEquals(scriptArgs.includes("--config=scripts/test.deno.json"), true);
+  });
+
+  it("canonicalizes relative dot segments before classifying targets", () => {
+    for (
+      const target of [
+        "src/../tests/integration/routes.test.ts",
+        "cli/../src/discovery/auto-discovery.integration.test.ts",
+      ]
+    ) {
+      const args = buildTestFileCommandArgs([target]);
+      assertEquals(args.includes("--allow-all"), true, target);
+      assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), true, target);
+      assertEquals(args.includes(LOOPBACK_ALLOW_NET), false, target);
+    }
+
+    const scriptArgs = buildTestFileCommandArgs([
+      "src/../scripts/test/run-test-file.test.ts",
+    ]);
+    assertEquals(scriptArgs.includes("--config=scripts/test.deno.json"), true);
+  });
+
+  it("uses integration permissions when a target directory contains integration tests", () => {
+    const args = buildTestFileCommandArgs(["src/server/dev-server"]);
+
+    assertEquals(args.includes("--allow-all"), true);
+    assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), true);
+    assertEquals(args.includes(LOOPBACK_ALLOW_NET), false);
   });
 });
 

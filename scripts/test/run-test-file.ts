@@ -1,15 +1,91 @@
 import {
   buildTestProcessEnv,
   DENO_TEST_ENV,
+  hasDenoPermissionFlag,
+  LOOPBACK_TEST_PERMISSIONS,
   PROVIDER_EGRESS_DENY_NET,
+  UNIT_DENO_TEST_ENV,
+} from "./suites.ts";
+import { relative, resolve } from "node:path";
+
+export {
+  LOOPBACK_ALLOW_NET,
+  PROVIDER_EGRESS_DENY_NET,
+  UNIT_DENO_TEST_ENV as TEST_FILE_ENV,
 } from "./suites.ts";
 
-export { PROVIDER_EGRESS_DENY_NET };
+const TEST_OPTIONS_WITH_SEPARATE_VALUE = new Set([
+  "-L",
+  "-c",
+  "--cert",
+  "--conditions",
+  "--config",
+  "--env-file",
+  "--ext",
+  "--filter",
+  "--ignore",
+  "--import-map",
+  "--junit-path",
+  "--location",
+  "--lock",
+  "--log-level",
+  "--minimum-dependency-age",
+  "--preload",
+  "--reporter",
+  "--require",
+  "--seed",
+  "--v8-flags",
+]);
+const MAX_TARGET_DIRECTORY_ENTRIES = 10_000;
+const MISSING_TEST_TARGET_MESSAGE =
+  "test:file requires at least one test file or directory target";
+const FORWARDED_PERMISSION_MESSAGE =
+  "test:file does not accept forwarded permission flags";
 
-export const TEST_FILE_ENV = DENO_TEST_ENV;
+export interface TestTargetFileSystem {
+  statSync(path: string): Pick<Deno.FileInfo, "isDirectory">;
+  readDirSync(path: string): Iterable<Deno.DirEntry>;
+}
 
-export function buildTestFileCommandArgs(rawArgs: string[]): string[] {
-  const usesScriptsConfig = rawArgs.some(isScriptsPath);
+const TEST_TARGET_FILE_SYSTEM: TestTargetFileSystem = {
+  statSync: (path) => Deno.statSync(path),
+  readDirSync: (path) => Deno.readDirSync(path),
+};
+
+function getPositionalTestTargets(rawArgs: readonly string[]): string[] {
+  const targets: string[] = [];
+  for (let index = 0; index < rawArgs.length; index++) {
+    const arg = rawArgs[index]!;
+    if (arg === "--") break;
+    if (arg.startsWith("-")) {
+      const option = arg.split("=", 1)[0]!;
+      if (!arg.includes("=") && TEST_OPTIONS_WITH_SEPARATE_VALUE.has(option)) {
+        index += 1;
+      }
+      continue;
+    }
+    targets.push(arg);
+  }
+  if (targets.length === 0) {
+    throw new TestFileUsageError(MISSING_TEST_TARGET_MESSAGE);
+  }
+  return targets;
+}
+
+class TestFileUsageError extends Error {}
+
+export function buildTestFileCommandArgs(
+  rawArgs: string[],
+  fileSystem: TestTargetFileSystem = TEST_TARGET_FILE_SYSTEM,
+): string[] {
+  const targets = getPositionalTestTargets(rawArgs);
+  const usesScriptsConfig = targets.some(isScriptsPath);
+  const usesIntegrationPermissions = targets.some((target) =>
+    isIntegrationTarget(target, fileSystem)
+  );
+  if (hasDenoPermissionFlag(rawArgs)) {
+    throw new TestFileUsageError(FORWARDED_PERMISSION_MESSAGE);
+  }
   const configArgs = usesScriptsConfig
     ? ["--config=scripts/test.deno.json"]
     : ["--preload=src/testing/preload.ts"];
@@ -21,8 +97,9 @@ export function buildTestFileCommandArgs(rawArgs: string[]): string[] {
     // Leaks here are load-dependent and do not reproduce on demand, so the
     // first failure has to carry the stack rather than advise a rerun.
     "--trace-leaks",
-    "--allow-all",
-    PROVIDER_EGRESS_DENY_NET,
+    ...(usesIntegrationPermissions
+      ? ["--allow-all", PROVIDER_EGRESS_DENY_NET]
+      : LOOPBACK_TEST_PERMISSIONS),
     "--unstable-worker-options",
     "--unstable-net",
     ...rawArgs,
@@ -30,15 +107,78 @@ export function buildTestFileCommandArgs(rawArgs: string[]): string[] {
 }
 
 function isScriptsPath(arg: string): boolean {
-  const normalized = arg.replaceAll("\\", "/").replace(/^\.\//, "");
+  const normalized = normalizeTestTarget(arg);
   return normalized === "scripts" || normalized.startsWith("scripts/");
 }
 
+function isIntegrationPath(arg: string): boolean {
+  const normalized = normalizeTestTarget(arg);
+  return normalized === "tests" ||
+    normalized.startsWith("tests/") ||
+    /\.integration\.test\.tsx?$/.test(normalized);
+}
+
+function normalizeTestTarget(arg: string): string {
+  const projectRelative = relative(Deno.cwd(), resolve(Deno.cwd(), arg));
+  return projectRelative.replaceAll("\\", "/").replace(/^\.\//, "");
+}
+
+function isIntegrationTarget(
+  arg: string,
+  fileSystem: TestTargetFileSystem = TEST_TARGET_FILE_SYSTEM,
+): boolean {
+  if (isIntegrationPath(arg)) return true;
+  const normalized = normalizeTestTarget(arg);
+  try {
+    if (!fileSystem.statSync(normalized).isDirectory) return false;
+  } catch {
+    return false;
+  }
+
+  const pending = [normalized];
+  let visitedEntries = 0;
+  while (pending.length > 0) {
+    const directory = pending.pop()!;
+    try {
+      for (const entry of fileSystem.readDirSync(directory)) {
+        visitedEntries += 1;
+        if (visitedEntries > MAX_TARGET_DIRECTORY_ENTRIES) return false;
+        if (entry.isSymlink) continue;
+        const path = `${directory}/${entry.name}`;
+        if (entry.isDirectory) {
+          pending.push(path);
+        } else if (entry.isFile && isIntegrationPath(path)) {
+          return true;
+        }
+      }
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 async function main(): Promise<void> {
+  let targets: string[];
+  let commandArgs: string[];
+  try {
+    targets = getPositionalTestTargets(Deno.args);
+    commandArgs = buildTestFileCommandArgs(Deno.args);
+  } catch (error) {
+    if (!(error instanceof TestFileUsageError)) throw error;
+    console.error(error.message);
+    Deno.exit(2);
+  }
+  const environment =
+    targets.some((target) =>
+        isIntegrationTarget(target, TEST_TARGET_FILE_SYSTEM)
+      )
+      ? DENO_TEST_ENV
+      : UNIT_DENO_TEST_ENV;
   const command = new Deno.Command("deno", {
-    args: buildTestFileCommandArgs(Deno.args),
+    args: commandArgs,
     clearEnv: true,
-    env: buildTestProcessEnv(Deno.env.toObject(), TEST_FILE_ENV),
+    env: buildTestProcessEnv(Deno.env.toObject(), environment),
     stdout: "inherit",
     stderr: "inherit",
   });
