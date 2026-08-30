@@ -1643,33 +1643,14 @@ export async function expireTimedOutAutomatedReview({
     statuses,
     pullNumber,
   );
-  if (retryStatus) {
-    const propagated = await propagateAndFinalizeReviewFailure({
-      github,
-      owner,
-      repo,
-      pullNumber,
-      headSha,
-      sourceStatusId: retryStatus.status.id,
-      failureKind: retryStatus.failureKind,
-      targetUrl: typeof retryStatus.status.target_url === "string"
-        ? retryStatus.status.target_url
-        : pullUrl,
-    });
-    return {
-      state: "failure",
-      failure: new Error("Automated review queue propagation was retried"),
-      baseRef: pull?.base?.ref,
-      expired: true,
-      retried: true,
-      ...propagated,
-    };
-  }
+  const retrying = retryStatus !== undefined;
   const pendingStatus = latestPendingReviewStatus(statuses, pullNumber);
-  if (!pendingStatus) {
+  if (!retrying && !pendingStatus) {
     return { expired: false, reason: "status-changed" };
   }
-  if (pendingReviewAge(pendingStatus, now) < reviewTimeoutMs) {
+  if (
+    !retrying && pendingReviewAge(pendingStatus, now) < reviewTimeoutMs
+  ) {
     return { expired: false, reason: "not-expired" };
   }
 
@@ -1682,7 +1663,7 @@ export async function expireTimedOutAutomatedReview({
     pullUrl,
     now,
     reviewTimeoutMs,
-    queuePropagationPending: true,
+    queuePropagationPending: !retrying,
   });
   if (result.state === "failure") {
     const failureKind = reviewFailureKindFromDescription(
@@ -1707,9 +1688,10 @@ export async function expireTimedOutAutomatedReview({
       ...result,
       ...propagated,
       expired: true,
+      retried: retrying,
     };
   }
-  if (result.state === "success" && typeof result.baseRef === "string") {
+  if (typeof result.baseRef === "string") {
     const queueResults = await reconcileActiveMergeGroupReviewStatuses({
       github,
       owner,
@@ -1721,7 +1703,7 @@ export async function expireTimedOutAutomatedReview({
     return {
       ...result,
       expired: false,
-      reason: "reviewed",
+      reason: result.state === "success" ? "reviewed" : "revalidated",
       queueResults,
     };
   }

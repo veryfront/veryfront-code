@@ -3059,9 +3059,38 @@ describe("automated review timeout watchdog", () => {
       [{ pullNumber: 1, headSha: HEAD }],
     );
 
+    const repaired = githubFixture({
+      pages: {
+        comments: [[codexComment()]],
+        refs: [[]],
+      },
+      pageResponses: {
+        statuses: [
+          [[retryStatus]],
+          [[retryStatus]],
+        ],
+      },
+      commit: HEAD,
+    });
+    const repairedResult = await expireTimedOutAutomatedReview({
+      github: repaired.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      now: Date.parse("2026-08-25T08:30:01Z"),
+      reviewTimeoutMs: 1_800_000,
+    });
+    assertEquals(repairedResult.expired, false);
+    assertEquals(repairedResult.reason, "reviewed");
+    assert("state" in repairedResult);
+    assertEquals(repairedResult.state, "success");
+    assertEquals(repaired.published[0]?.state, "success");
+
     const retry = githubFixture({
       pageResponses: {
         statuses: [
+          [[retryStatus]],
           [[retryStatus]],
           [[retryStatus]],
         ],
