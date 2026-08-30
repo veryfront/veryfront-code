@@ -178,6 +178,33 @@ describe("server/handlers/request/public-agent-metadata.handler", () => {
       );
     });
 
+    it("still rejects a malformed agent id with 400 before the runtime gate", async () => {
+      // Input validation needs neither discovery nor project-code execution,
+      // so the endpoint's 400 contract must hold on an ungranted shared
+      // runtime too. Gating first would turn every malformed id into a
+      // retryable 503.
+      const handler = new PublicAgentMetadataHandler({
+        ensureProjectDiscovery: async () => {
+          throw new Error("should not discover");
+        },
+        getAgent: () => undefined,
+        getAllAgentIds: () => [],
+      });
+
+      const result = await handler.handle(
+        new Request("https://example.com/api/agents/%", { method: "GET" }),
+        createSharedRuntimeCtx(),
+      );
+
+      assertExists(result.response);
+      assertEquals(
+        result.response.status,
+        400,
+        "a malformed agent id must be rejected as input error, not as runtime-unavailable",
+      );
+      assertEquals(await result.response.json(), { error: "Invalid agent id" });
+    });
+
     it("serves a shared runtime the host granted execution", async () => {
       // The granted counterpart. Without it, a handler that denies every
       // shared runtime passes the fail-closed test above.

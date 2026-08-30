@@ -4,10 +4,8 @@ import { serverLogger } from "#veryfront/utils";
 import { renderSnippet } from "#veryfront/rendering/snippet-renderer.ts";
 import {
   createErrorResponse,
-  createErrorResponseFromDefinition,
   FILE_NOT_FOUND,
   getErrorMessage,
-  PROJECT_EXECUTION_UNAVAILABLE,
   SECURITY_VIOLATION,
   VeryfrontError,
 } from "#veryfront/errors";
@@ -17,6 +15,7 @@ import {
   createHandlerDependencyPinningSource,
   getHandlerDependencyPinningIdentity,
 } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+import { buildProjectExecutionUnavailableResponse } from "#veryfront/server/handlers/utils/project-execution-unavailable.ts";
 
 const logger = serverLogger.component("snippet-handler");
 
@@ -48,21 +47,13 @@ export class SnippetHandler extends BaseHandler {
     }
 
     if (requiresIsolatedProjectRuntime(ctx)) {
-      const problem = createErrorResponseFromDefinition(
-        PROJECT_EXECUTION_UNAVAILABLE,
-        {
+      return this.respond(
+        buildProjectExecutionUnavailableResponse(this.helpers, req, ctx, {
           detail:
             "Shared runtimes require a dedicated isolated project runtime for snippet rendering",
           instance: pathname,
-        },
+        }),
       );
-      const response = this.createResponseBuilder(ctx)
-        .withCORS(req, ctx.securityConfig?.cors)
-        .withSecurity(ctx.securityConfig ?? undefined, req)
-        .withCache("no-store")
-        .withHeaders(problem.headers)
-        .build(problem.body, problem.status);
-      return Promise.resolve(this.respond(response));
     }
 
     logger.debug("Handling snippet request", {
