@@ -327,6 +327,10 @@ function createRuntimeAgentConfig(input: {
     __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy,
     __vfToolExposureCheckpoint: input.options.serverResolvedToolExposureCheckpoint,
     __vfProviderReplayCheckpoints: input.options.serverResolvedProviderReplayCheckpoints,
+    __vfProviderReplayCheckpointMessageId: input.options.providerReplayCheckpointMessageId,
+    __vfPersistProviderReplayCheckpoint: input.options.persistProviderReplayCheckpoint,
+    __vfProviderReplayCheckpointPersistenceRequired:
+      input.options.requireProviderReplayCheckpointPersistence === true,
     __vfPersistToolExposureCheckpoint: input.options.persistToolExposureCheckpoint,
     __vfToolExposureCheckpointPersistenceRequired:
       input.options.requireToolExposureCheckpointPersistence === true,

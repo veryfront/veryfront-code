@@ -395,9 +395,13 @@ function shouldPreserveAnthropicRawAssistantHistory(
     )
   );
   let hasServerToolContent = false;
+  let hasReplayRequiredContent = false;
   for (const content of rawAssistantMessages) {
     for (const value of content) {
       const block = readRecord(value);
+      if (block?.type === "thinking" || block?.type === "redacted_thinking") {
+        hasReplayRequiredContent = true;
+      }
       if (
         isAnthropicProviderExecutedContentBlockType(block?.type)
       ) {
@@ -405,7 +409,7 @@ function shouldPreserveAnthropicRawAssistantHistory(
       }
     }
   }
-  return hasPriorProviderCall || hasServerToolContent;
+  return hasPriorProviderCall || hasServerToolContent || hasReplayRequiredContent;
 }
 
 function createAnthropicRawAssistantMetadata(

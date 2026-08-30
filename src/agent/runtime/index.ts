@@ -44,7 +44,7 @@ import {
 } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { setActiveSpanAttributes as setOtelActiveSpanAttributes } from "#veryfront/observability";
 import { convertToTextGenerationRuntimeRequestMessages } from "./text-generation-runtime-message-converter.ts";
-import { attachProviderMetadata } from "./provider-metadata.ts";
+import { attachProviderMetadata, readAttachedProviderMetadata } from "./provider-metadata.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import {
   bindRuntimeRemoteToolSourcesToCredentialOwner,
@@ -103,17 +103,24 @@ import { markRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
 import {
   getRuntimeAllowedRemoteTools,
   getRuntimeForwardedIntegrationToolDefs,
+  getRuntimeProviderReplayCheckpointMessageId,
+  getRuntimeProviderReplayCheckpointPersister,
   getRuntimeProviderReplayCheckpoints,
   getRuntimeProviderTools,
   getRuntimeSourceIntegrationPolicy,
   getRuntimeToolExposureCheckpoint,
   getRuntimeToolExposureCheckpointPersister,
+  isRuntimeProviderReplayCheckpointPersistenceRequired,
   isRuntimeToolExposureCheckpointPersistenceRequired,
   resolveRuntimeToolLoading,
   type RuntimeToolFilterConfig,
 } from "./runtime-tool-config.ts";
 import {
   applyProviderReplayCheckpointsToMessages,
+  captureProviderReplayCheckpoint,
+  createProviderReplayCheckpointEmissionState,
+  type ProviderReplayCheckpoint,
+  type ProviderReplayCheckpointEmissionState,
   type ProviderReplayProvider,
 } from "./provider-replay.ts";
 import {
@@ -677,6 +684,56 @@ async function persistToolExposureCheckpointBeforeContinuation(input: {
     return;
   }
   await input.persist(input.checkpoint);
+}
+
+type RuntimeProviderReplayCheckpointEmission = {
+  state: ProviderReplayCheckpointEmissionState | undefined;
+  persist: ((checkpoint: ProviderReplayCheckpoint) => void | Promise<void>) | undefined;
+  required: boolean;
+};
+
+function resolveRuntimeProviderReplayCheckpointEmission(
+  config: AgentConfig,
+): RuntimeProviderReplayCheckpointEmission {
+  const messageId = getRuntimeProviderReplayCheckpointMessageId(config);
+  const existingCheckpoint = messageId
+    ? getRuntimeProviderReplayCheckpoints(config)?.find((checkpoint) =>
+      checkpoint.messageId === messageId
+    )
+    : undefined;
+  return {
+    state: messageId
+      ? createProviderReplayCheckpointEmissionState({ messageId, existingCheckpoint })
+      : undefined,
+    persist: getRuntimeProviderReplayCheckpointPersister(config),
+    required: isRuntimeProviderReplayCheckpointPersistenceRequired(config),
+  };
+}
+
+async function persistProviderReplayCheckpointAfterTurn(input: {
+  emission: RuntimeProviderReplayCheckpointEmission;
+  providerMetadata: Record<string, unknown> | undefined;
+}): Promise<void> {
+  if (!input.emission.state) {
+    if (input.emission.required) {
+      throw new Error("provider replay checkpoint message identity is required");
+    }
+    return;
+  }
+  const checkpoint = captureProviderReplayCheckpoint(
+    input.emission.state,
+    input.providerMetadata,
+  );
+  if (!checkpoint) return;
+  if (!input.emission.persist) {
+    if (input.emission.required) {
+      throw new Error(
+        "provider replay checkpoint persistence is required before continuation",
+      );
+    }
+    return;
+  }
+  await input.emission.persist(checkpoint);
 }
 
 function isToolVisibleForStep(toolName: string, plan: ToolExposurePlan): boolean {
@@ -1523,6 +1580,9 @@ export class AgentRuntime {
         getRuntimeProviderReplayCheckpoints(this.config),
         { activeProvider: getActiveProviderReplayProvider(languageModel) },
       );
+      const providerReplayCheckpointEmission = resolveRuntimeProviderReplayCheckpointEmission(
+        this.config,
+      );
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
       if (!supportsToolCalling && this.config.tools) {
@@ -1736,6 +1796,10 @@ export class AgentRuntime {
         });
         currentMessages.push(assistantMessage);
         await this.memory.add(assistantMessage);
+        await persistProviderReplayCheckpointAfterTurn({
+          emission: providerReplayCheckpointEmission,
+          providerMetadata: readAttachedProviderMetadata(assistantMessage),
+        });
         throwIfAborted(abortSignal);
         const generatedToolResults = collectGeneratedToolResults(response.toolResults);
 
@@ -2190,6 +2254,9 @@ export class AgentRuntime {
       currentMessages,
       getRuntimeProviderReplayCheckpoints(this.config),
       { activeProvider: getActiveProviderReplayProvider(languageModel) },
+    );
+    const providerReplayCheckpointEmission = resolveRuntimeProviderReplayCheckpointEmission(
+      this.config,
     );
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
@@ -2695,6 +2762,10 @@ export class AgentRuntime {
       }
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
+      await persistProviderReplayCheckpointAfterTurn({
+        emission: providerReplayCheckpointEmission,
+        providerMetadata: readAttachedProviderMetadata(assistantMessage),
+      });
 
       const persistToolResult = async (toolResult: StreamingToolResult): Promise<void> => {
         if (currentStepToolResults.has(toolResult.toolCallId)) {

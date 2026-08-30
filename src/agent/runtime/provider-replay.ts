@@ -20,11 +20,14 @@ import {
   groupAnthropicRawAssistantMessagesByAnchor,
   isAnthropicProviderToolResultBlock,
 } from "./anthropic-provider-replay-block.ts";
+import { readOwnDataProperty } from "./data-property-descriptor.ts";
 
 const MAX_PROVIDER_REPLAY_BLOCKS = 100;
 const MAX_PROVIDER_REPLAY_CHECKPOINTS = 100;
 const MAX_PROVIDER_REPLAY_TOTAL_PARTS = 10_000;
 const MAX_PROVIDER_REPLAY_MESSAGE_ID_LENGTH = 256;
+const MAX_PROVIDER_REPLAY_CHECKPOINT_EVENT_BYTES = 256 * 1024;
+const UTF8_ENCODER = new TextEncoder();
 
 const CHECKPOINT_KEYS = new Set([
   "version",
@@ -104,6 +107,21 @@ export type ProviderReplayCheckpoint = {
   emittedAt?: number;
 };
 
+export const AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE =
+  "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT" as const;
+
+/** Private durable event carrying provider-native replay state. */
+export type ProviderReplayCheckpointEvent = ProviderReplayCheckpoint & {
+  type: typeof AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE;
+};
+
+/** Run-local state accumulated until a provider turn requires opaque replay. */
+export type ProviderReplayCheckpointEmissionState = {
+  messageId: string;
+  rawAssistantMessages: Record<string, unknown>[][];
+  replayRequired: boolean;
+};
+
 type ApplyProviderReplayCheckpointsOptions = {
   activeProvider?: ProviderReplayProvider | "unsupported";
 };
@@ -122,6 +140,150 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isProviderReplayProvider(value: unknown): value is ProviderReplayProvider {
   return value === "anthropic" || value === "openai-responses";
+}
+
+function isReplayRequiredAnthropicBlock(block: Record<string, unknown>): boolean {
+  return block.type === "thinking" || block.type === "redacted_thinking";
+}
+
+function snapshotAnthropicRawAssistantMessagesForEmission(
+  providerMetadata: Record<string, unknown> | undefined,
+): Record<string, unknown>[][] | undefined {
+  if (providerMetadata === undefined) return undefined;
+  const anthropic = readOwnDataProperty(
+    providerMetadata,
+    "anthropic",
+    "provider metadata",
+    false,
+  );
+  if (anthropic === undefined) return undefined;
+  const rawAssistantMessages = readOwnDataProperty(
+    anthropic,
+    "rawAssistantMessages",
+    "Anthropic provider metadata",
+    false,
+  );
+  if (rawAssistantMessages === undefined) return undefined;
+
+  let snapshot: unknown;
+  try {
+    snapshot = snapshotProviderJsonValue(rawAssistantMessages, {
+      maxDepth: MAX_PROVIDER_REPLAY_RAW_METADATA_DEPTH,
+      maxNodes: MAX_PROVIDER_REPLAY_RAW_METADATA_NODES,
+      maxBytes: MAX_PROVIDER_REPLAY_RAW_METADATA_STRING_CHARS,
+    });
+  } catch {
+    invalidCheckpoint("provider replay emission metadata exceeds raw metadata bounds");
+  }
+  if (!Array.isArray(snapshot) || snapshot.length === 0) {
+    invalidCheckpoint("provider replay emission metadata must contain raw assistant messages");
+  }
+  const groups: Record<string, unknown>[][] = [];
+  for (const [messageIndex, rawAssistantMessage] of snapshot.entries()) {
+    if (!Array.isArray(rawAssistantMessage) || rawAssistantMessage.length === 0) {
+      invalidCheckpoint("provider replay emission raw assistant message must contain blocks", {
+        messageIndex,
+      });
+    }
+    const blocks: Record<string, unknown>[] = [];
+    for (const [blockIndex, block] of rawAssistantMessage.entries()) {
+      if (!isRecord(block)) {
+        invalidCheckpoint("provider replay emission block must be an object", {
+          messageIndex,
+          blockIndex,
+        });
+      }
+      blocks.push(block);
+    }
+    groups.push(blocks);
+  }
+  return groups;
+}
+
+/** Create an emitter state, optionally continuing the latest checkpoint for this run message. */
+export function createProviderReplayCheckpointEmissionState(input: {
+  messageId: string;
+  existingCheckpoint?: ProviderReplayCheckpoint;
+}): ProviderReplayCheckpointEmissionState {
+  if (
+    !isNonEmptyString(input.messageId) ||
+    input.messageId.length > MAX_PROVIDER_REPLAY_MESSAGE_ID_LENGTH
+  ) {
+    invalidCheckpoint("provider replay emission messageId must be a bounded non-empty string");
+  }
+  if (
+    input.existingCheckpoint?.messageId !== undefined &&
+    input.existingCheckpoint.messageId !== input.messageId
+  ) {
+    invalidCheckpoint(
+      "provider replay emission checkpoint messageId does not match the run message",
+    );
+  }
+  if (input.existingCheckpoint && input.existingCheckpoint.provider !== "anthropic") {
+    invalidCheckpoint("provider replay emission can only continue an Anthropic checkpoint");
+  }
+  const rawAssistantMessages = input.existingCheckpoint
+    ? getRawAssistantMessagesForCheckpoint(input.existingCheckpoint)
+    : [];
+  return {
+    messageId: input.messageId,
+    rawAssistantMessages: rawAssistantMessages.map((blocks) => [...blocks]),
+    replayRequired: rawAssistantMessages.some((blocks) =>
+      blocks.some(isReplayRequiredAnthropicBlock)
+    ),
+  };
+}
+
+/** Capture one provider step and return its cumulative checkpoint once replay is required. */
+export function captureProviderReplayCheckpoint(
+  state: ProviderReplayCheckpointEmissionState,
+  providerMetadata: Record<string, unknown> | undefined,
+): ProviderReplayCheckpoint | undefined {
+  const rawAssistantMessages = snapshotAnthropicRawAssistantMessagesForEmission(providerMetadata);
+  if (rawAssistantMessages === undefined) return undefined;
+  if (
+    state.rawAssistantMessages.length + rawAssistantMessages.length >
+      MAX_ANTHROPIC_RAW_ASSISTANT_MESSAGES
+  ) {
+    invalidCheckpoint("provider replay emission exceeds the Anthropic provider message limit");
+  }
+  state.rawAssistantMessages.push(...rawAssistantMessages);
+  state.replayRequired ||= rawAssistantMessages.some((blocks) =>
+    blocks.some(isReplayRequiredAnthropicBlock)
+  );
+  if (!state.replayRequired) return undefined;
+
+  const blocks = state.rawAssistantMessages.flat();
+  const checkpoint = parseProviderReplayCheckpoint({
+    version: 1,
+    messageId: state.messageId,
+    provider: "anthropic",
+    providerBlocks: blocks.map((block) => ({
+      type: "provider-block",
+      provider: "anthropic",
+      block,
+    })),
+    providerBlockPositions: blocks.map((_, index) => index),
+    providerMessageBlockCounts: state.rawAssistantMessages.map((group) => group.length),
+    totalPartCount: blocks.length,
+  });
+  if (
+    UTF8_ENCODER.encode(stringifyChatJson(createProviderReplayCheckpointEvent(checkpoint)))
+      .byteLength > MAX_PROVIDER_REPLAY_CHECKPOINT_EVENT_BYTES
+  ) {
+    invalidCheckpoint("provider replay checkpoint event exceeds the durable event limit");
+  }
+  return checkpoint;
+}
+
+/** Encode a private checkpoint for the trusted run-event append path. */
+export function createProviderReplayCheckpointEvent(
+  checkpoint: ProviderReplayCheckpoint,
+): ProviderReplayCheckpointEvent {
+  return {
+    type: AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT_EVENT_TYPE,
+    ...checkpoint,
+  };
 }
 
 function isNonEmptyString(value: unknown): value is string {
