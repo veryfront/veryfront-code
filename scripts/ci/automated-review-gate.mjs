@@ -232,6 +232,12 @@ function durableReviewRequestKey(
   if (notBefore !== undefined && latestEpoch.time < notBefore) {
     throw new Error("The current review epoch event is not visible");
   }
+  if (latestEpoch.kind !== eventKind) {
+    if (notBefore !== undefined && latestEpoch.time === notBefore) {
+      throw new Error("The current review epoch event is not visible");
+    }
+    return undefined;
+  }
   if (notBefore !== undefined && latestEpoch.time === notBefore) {
     if (
       typeof reviewEpochRunKey !== "string" ||
@@ -239,7 +245,6 @@ function durableReviewRequestKey(
     ) throw new Error("Review epoch run key is malformed");
     return `${requestKey}-run-${reviewEpochRunKey}`;
   }
-  if (latestEpoch.kind !== eventKind) return undefined;
   if (!Number.isSafeInteger(latestEpoch.id) || latestEpoch.id < 1) {
     throw new Error("Review epoch event identity is malformed");
   }
