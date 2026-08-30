@@ -77,6 +77,7 @@ function createSuiteEval(
   filePath: string,
   target: string,
   name = id,
+  targetKind: EvalReport["targetKind"] = "agent",
 ): DiscoveredEval {
   return {
     ...createDiscoveredEval(),
@@ -88,6 +89,7 @@ function createSuiteEval(
       ...createDiscoveredEval().definition,
       id,
       name,
+      targetKind,
       target,
     },
   };
@@ -768,7 +770,13 @@ describe("runEvalReport single mode", () => {
 
 describe("runEvalReport suite mode", () => {
   it("runs evals sorted by id and file path with sequential child ids, artifacts, and output events", async () => {
-    const beta = createSuiteEval("eval:beta", "/repo/evals/beta.eval.ts", "agent:beta", "Beta");
+    const beta = createSuiteEval(
+      "eval:beta",
+      "/repo/evals/beta.eval.ts",
+      "eval:beta",
+      "Beta",
+      "dataset",
+    );
     const alphaB = createSuiteEval(
       "eval:alpha",
       "/repo/evals/z-alpha.eval.ts",
@@ -793,7 +801,15 @@ describe("runEvalReport suite mode", () => {
     const betaFailure = createFailingReport();
     const reportById = new Map([
       ["eval:alpha", createReport({ definitionId: "eval:alpha", target: "agent:alpha" })],
-      ["eval:beta", { ...betaFailure, definitionId: "eval:beta", target: "agent:beta" }],
+      [
+        "eval:beta",
+        {
+          ...betaFailure,
+          definitionId: "eval:beta",
+          targetKind: "dataset" as const,
+          target: "eval:beta",
+        },
+      ],
       [
         "eval:gamma",
         createReport({
@@ -946,8 +962,8 @@ describe("runEvalReport suite mode", () => {
         report: {
           ...reportById.get("eval:beta")!,
           runId: "evalrun_20260621_010203004_abcdef12_003",
-          targetKind: "agent",
-          target: "agent:beta",
+          targetKind: "dataset",
+          target: "eval:beta",
           records: reportById.get("eval:beta")!.records.map((record) => ({
             ...record,
             evalId: "eval:beta",
@@ -982,6 +998,7 @@ describe("runEvalReport suite mode", () => {
         {
           id: "eval:alpha",
           name: "Alpha",
+          targetKind: "agent",
           target: "agent:alpha",
           status: "passed",
           artifacts: {
@@ -1004,6 +1021,7 @@ describe("runEvalReport suite mode", () => {
         {
           id: "eval:alpha",
           name: "Alpha missing",
+          targetKind: "agent",
           target: "agent:missing",
           status: "error",
           artifacts: {
@@ -1017,7 +1035,8 @@ describe("runEvalReport suite mode", () => {
         {
           id: "eval:beta",
           name: "Beta",
-          target: "agent:beta",
+          targetKind: "dataset",
+          target: "eval:beta",
           status: "failed",
           artifacts: {
             directory: "suite/003-beta",
@@ -1028,7 +1047,7 @@ describe("runEvalReport suite mode", () => {
           summary: {
             runId: "evalrun_20260621_010203004_abcdef12_003",
             evalId: "eval:beta",
-            target: "agent:beta",
+            target: "eval:beta",
             records: 1,
             passed: 0,
             failed: 1,
@@ -1039,6 +1058,7 @@ describe("runEvalReport suite mode", () => {
         {
           id: "eval:gamma",
           name: "Gamma",
+          targetKind: "agent",
           target: "agent:gamma",
           status: "failed",
           artifacts: {
@@ -1060,6 +1080,38 @@ describe("runEvalReport suite mode", () => {
         },
       ],
     });
+    const persistedSummary = JSON.parse(
+      writes.find((write) => write.path === "suite/summary.json")?.content ?? "null",
+    );
+    const persistedResults = (writes.find((write) => write.path === "suite/results.jsonl")
+      ?.content ?? "")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const expectedStructuredTargets = [
+      { id: "eval:alpha", targetKind: "agent", status: "passed" },
+      { id: "eval:alpha", targetKind: "agent", status: "error" },
+      { id: "eval:beta", targetKind: "dataset", status: "failed" },
+      { id: "eval:gamma", targetKind: "agent", status: "failed" },
+    ];
+    assertEquals(
+      persistedSummary.results.map(
+        (result: { id: string; targetKind: string; status: string }) => ({
+          id: result.id,
+          targetKind: result.targetKind,
+          status: result.status,
+        }),
+      ),
+      expectedStructuredTargets,
+    );
+    assertEquals(
+      persistedResults.map((result: { id: string; targetKind: string; status: string }) => ({
+        id: result.id,
+        targetKind: result.targetKind,
+        status: result.status,
+      })),
+      expectedStructuredTargets,
+    );
     assertEquals(targetRuns.map((run) => run.runId), [
       "evalrun_20260621_010203004_abcdef12_001",
       "evalrun_20260621_010203004_abcdef12_003",

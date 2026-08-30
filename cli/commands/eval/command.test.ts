@@ -551,6 +551,82 @@ describe("eval CLI command helpers", () => {
     }
   });
 
+  it("includes target kinds in structured eval list output", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-eval-list-json-" });
+    const configHome = await makeTempDir({ prefix: "vf-eval-list-json-auth-" });
+    const agentDefinition = evalAgent({
+      id: "eval:agent-target",
+      name: "Agent target",
+      target: "agent:fixture",
+      dataset: [{ id: "agent-case", input: "agent" }],
+    });
+    const datasetDefinition = evalDataset({
+      id: "eval:dataset-target",
+      name: "Dataset target",
+      dataset: [{ id: "dataset-case", input: "dataset" }],
+    });
+    agentDefinition.source = {
+      filePath: `${projectDir}/evals/agent-target.eval.ts`,
+      exportName: "default",
+    };
+    datasetDefinition.source = {
+      filePath: `${projectDir}/evals/dataset-target.eval.ts`,
+      exportName: "default",
+    };
+    const runtime = createProjectRuntimeDiscovery(normalizeSourceIntegrationPolicy({ allow: {} }));
+    runtime.evals.set(agentDefinition.id, agentDefinition);
+    runtime.evals.set(datasetDefinition.id, datasetDefinition);
+
+    try {
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("VERYFRONT_PROJECT_SLUG");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORT");
+      Deno.env.delete("VERYFRONT_EVAL_EXPORTERS");
+      Deno.env.set("XDG_CONFIG_HOME", configHome);
+      setJsonMode(true);
+
+      const output = await captureConsoleOutput(async () => {
+        await runEvalCommand(
+          {
+            list: true,
+            exporters: [],
+            debug: false,
+            candidateModels: [],
+            projectDir,
+          },
+          { discoverProjectAgentRuntime: () => Promise.resolve(runtime) },
+        );
+      });
+
+      assertEquals(parseLastJsonEnvelope(output).data.evals, [
+        {
+          id: "eval:agent-target",
+          name: "Agent target",
+          targetKind: "agent",
+          target: "agent:fixture",
+          source: {
+            filePath: "evals/agent-target.eval.ts",
+            exportName: "default",
+          },
+        },
+        {
+          id: "eval:dataset-target",
+          name: "Dataset target",
+          targetKind: "dataset",
+          target: "eval:dataset-target",
+          source: {
+            filePath: "evals/dataset-target.eval.ts",
+            exportName: "default",
+          },
+        },
+      ]);
+    } finally {
+      setJsonMode(false);
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
   it("resolves eval export redaction from exact global env toggles", () => {
     Deno.env.set("VERYFRONT_EVAL_EXPORT_INCLUDE_INPUTS", "true");
     Deno.env.set("VERYFRONT_EVAL_EXPORT_INCLUDE_OUTPUTS", "1");
