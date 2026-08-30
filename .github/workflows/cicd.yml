@@ -78,7 +78,7 @@ jobs:
         run: |
           case "${{ matrix.check }}" in
             test-layout) deno task test:layout ;;
-            format) deno fmt --check ;;
+            format) deno task fmt:check ;;
             # The chain lives in the lint:ci task so a contributor can run this
             # shard locally instead of learning what it covers from a red CI run.
             lint) deno task lint:ci ;;
