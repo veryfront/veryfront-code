@@ -2198,6 +2198,34 @@ describe("automated review publication", () => {
     });
     assertEquals(resetResult.state, "pending");
     assertEquals(resetFixture.published[0]?.state, "pending");
+
+    const hiddenFixture = githubFixture({
+      pages: {
+        statuses: [[
+          automatedReviewStatus({
+            id: 106,
+            state: "failure",
+            description: "PR#1 review status unavailable",
+          }),
+          retryStatus,
+        ]],
+      },
+    });
+    const hiddenResult = await publishAutomatedReviewStatus({
+      github: hiddenFixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(hiddenResult.state, "failure");
+    assertEquals(hiddenResult.description, retryStatus.description);
+    assertEquals(hiddenFixture.published[0]?.state, "failure");
+    assertEquals(
+      hiddenFixture.published[0]?.description,
+      retryStatus.description,
+    );
   });
 
   it("does not time out a pending status from before a base reset", async () => {
@@ -3356,6 +3384,77 @@ describe("automated review timeout watchdog", () => {
       queueOutage.published.at(-1)?.description,
       retryDescription,
     );
+
+    const publishedQueueFailure = githubFixture({
+      pages: {
+        reviews: [[review({ state: "APPROVED" })]],
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/${BASE_REF}/pr-1-${BASE_HEAD}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+      },
+      pageResponses: {
+        statuses: [
+          [[retryStatus]],
+          [[retryStatus]],
+          [[pendingAutomatedReviewStatus()]],
+        ],
+      },
+      statusIds: [1001, 1002, 1003],
+    });
+    await assertRejects(
+      () =>
+        expireTimedOutAutomatedReview({
+          github: publishedQueueFailure.github,
+          owner: "veryfront",
+          repo: "veryfront-code",
+          pullNumber: 1,
+          headSha: HEAD,
+          now: Date.parse("2026-08-25T08:30:01Z"),
+          reviewTimeoutMs: 1_800_000,
+        }),
+      Error,
+      "active merge queue review failed",
+    );
+    assertEquals(publishedQueueFailure.published[0]?.state, "success");
+    assertEquals(publishedQueueFailure.published[1]?.sha, OTHER_HEAD);
+    assertEquals(publishedQueueFailure.published[1]?.state, "failure");
+    assertEquals(
+      publishedQueueFailure.published.at(-1)?.description,
+      retryDescription,
+    );
+  });
+
+  it("reconciles an unavailable failure without a pending anchor", async () => {
+    const unavailableStatus = automatedReviewStatus({
+      id: 106,
+      state: "failure",
+      description: "PR#1 review status unavailable",
+    });
+    const fixture = githubFixture({
+      pageResponses: {
+        statuses: [
+          [[unavailableStatus]],
+          [[unavailableStatus]],
+        ],
+      },
+      pages: { refs: [[]] },
+    });
+    const result = await expireTimedOutAutomatedReview({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      now: Date.parse("2026-08-25T08:30:01Z"),
+      reviewTimeoutMs: 1_800_000,
+    });
+
+    assertEquals(result.expired, false);
+    assertEquals(result.reason, "revalidated");
+    assert("state" in result);
+    assertEquals(result.state, "pending");
+    assertEquals(fixture.published[0]?.state, "pending");
   });
 
   it("publishes review proof that arrives before timeout revalidation", async () => {

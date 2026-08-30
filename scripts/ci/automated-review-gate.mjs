@@ -404,12 +404,7 @@ function latestPendingReviewStatus(statuses, pullNumber) {
     status?.state === "pending" &&
       isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
   ) return status;
-  if (
-    status?.state !== "failure" ||
-    status?.description !==
-      reviewFailureDescription(pullNumber, "unavailable") ||
-    !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
-  ) return undefined;
+  if (!isTrustedOperationalReviewFailure(status, pullNumber)) return undefined;
   const descriptionPrefix = `PR#${pullNumber} `;
   return statuses.find((candidate) =>
     candidate?.context === AUTOMATED_REVIEW_STATUS_CONTEXT &&
@@ -524,6 +519,14 @@ function reviewFailureKindFromDescription(
     ) return kind;
   }
   return undefined;
+}
+
+function isTrustedOperationalReviewFailure(status, pullNumber) {
+  return status?.context === AUTOMATED_REVIEW_STATUS_CONTEXT &&
+    status?.state === "failure" &&
+    status?.description ===
+      reviewFailureDescription(pullNumber, "unavailable") &&
+    isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN);
 }
 
 function terminalStatusHasBoundaryProof(
@@ -1032,6 +1035,7 @@ export async function publishAutomatedReviewStatus({
   let existingTerminalStatusIsLatest = false;
   let existingPropagationRetryStatus;
   let existingPropagationRetryKind;
+  let existingPropagationRetryIsLatest = false;
   let reviewBoundary;
   let failureKind;
   let failureUrl;
@@ -1166,6 +1170,8 @@ export async function publishAutomatedReviewStatus({
       );
       existingPropagationRetryStatus = propagationRetry?.status;
       existingPropagationRetryKind = propagationRetry?.failureKind;
+      existingPropagationRetryIsLatest = propagationRetry?.status?.id ===
+        latestReviewGateStatusForPull(statuses, pullNumber)?.id;
       if (
         !isDraft &&
         (!resetPending || REVIEW_EPOCH_EVENTS.has(reviewBoundary?.kind))
@@ -1295,6 +1301,7 @@ export async function publishAutomatedReviewStatus({
   }
   if (
     state === "failure" &&
+    existingPropagationRetryIsLatest &&
     existingPropagationRetryStatus?.description === description &&
     isPositiveStatusId(existingPropagationRetryStatus.id)
   ) {
@@ -1554,17 +1561,38 @@ function latestReviewPropagationRetryStatus(
   timeline = [],
   headSha = "",
 ) {
-  const status = latestReviewGateStatusForPull(statuses, pullNumber);
+  const latestStatus = latestReviewGateStatusForPull(statuses, pullNumber);
+  let status = latestStatus;
+  let failureKind = reviewFailureKindFromDescription(
+    status?.description,
+    pullNumber,
+    true,
+  );
+  if (
+    failureKind === undefined &&
+    isTrustedOperationalReviewFailure(latestStatus, pullNumber)
+  ) {
+    status = statuses.find((candidate) =>
+      candidate?.context === AUTOMATED_REVIEW_STATUS_CONTEXT &&
+      candidate?.state === "failure" &&
+      isPinnedBot(candidate?.creator, GITHUB_ACTIONS_LOGIN) &&
+      reviewFailureKindFromDescription(
+          candidate?.description,
+          pullNumber,
+          true,
+        ) !== undefined
+    );
+    failureKind = reviewFailureKindFromDescription(
+      status?.description,
+      pullNumber,
+      true,
+    );
+  }
   if (
     status?.state !== "failure" ||
     !isPositiveStatusId(status?.id) ||
     !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
   ) return undefined;
-  const failureKind = reviewFailureKindFromDescription(
-    status.description,
-    pullNumber,
-    true,
-  );
   if (failureKind === undefined) return undefined;
   if (boundary !== undefined) {
     const createdAt = Date.parse(status?.created_at ?? "");
@@ -1749,12 +1777,17 @@ export async function expireTimedOutAutomatedReview({
     pullNumber,
   );
   const retrying = retryStatus !== undefined;
+  const operationalFailure = isTrustedOperationalReviewFailure(
+    latestReviewGateStatusForPull(statuses, pullNumber),
+    pullNumber,
+  );
+  const recovering = retrying || operationalFailure;
   const pendingStatus = latestPendingReviewStatus(statuses, pullNumber);
-  if (!retrying && !pendingStatus) {
+  if (!recovering && !pendingStatus) {
     return { expired: false, reason: "status-changed" };
   }
   if (
-    !retrying && pendingReviewAge(pendingStatus, now) < reviewTimeoutMs
+    !recovering && pendingReviewAge(pendingStatus, now) < reviewTimeoutMs
   ) {
     return { expired: false, reason: "not-expired" };
   }
@@ -1797,6 +1830,18 @@ export async function expireTimedOutAutomatedReview({
     };
   }
   if (typeof result.baseRef === "string") {
+    const preserveQueueRetry = () =>
+      publishReviewPropagationRetryStatus({
+        github,
+        owner,
+        repo,
+        pullNumber,
+        headSha,
+        failureKind: retryStatus?.failureKind ?? "unavailable",
+        targetUrl: typeof retryStatus?.status?.target_url === "string"
+          ? retryStatus.status.target_url
+          : result.targetUrl ?? pullUrl,
+      });
     let queueResults;
     try {
       queueResults = await reconcileActiveMergeGroupReviewStatuses({
@@ -1808,20 +1853,17 @@ export async function expireTimedOutAutomatedReview({
         baseRef: result.baseRef,
       });
     } catch (error) {
-      if (result.state === "success") {
-        await publishReviewPropagationRetryStatus({
-          github,
-          owner,
-          repo,
-          pullNumber,
-          headSha,
-          failureKind: retryStatus?.failureKind ?? "unavailable",
-          targetUrl: typeof retryStatus?.status?.target_url === "string"
-            ? retryStatus.status.target_url
-            : result.targetUrl ?? pullUrl,
-        });
-      }
+      if (result.state === "success") await preserveQueueRetry();
       throw error;
+    }
+    const queueFailures = queueResults.filter((entry) =>
+      entry?.state === "failure"
+    ).length;
+    if (result.state === "success" && queueFailures > 0) {
+      await preserveQueueRetry();
+      throw new Error(
+        `${queueFailures} active merge queue review failed`,
+      );
     }
     return {
       ...result,
