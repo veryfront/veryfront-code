@@ -30,6 +30,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow, github.ref) || format('{0}-{1}-{2}', github.workflow, github.ref, github.sha) }}
+  # Only cancel superseded pull_request runs: a new push to the same PR makes
+  # the in-flight audit moot. Push, schedule, and workflow_dispatch runs get
+  # unique groups (sha-suffixed) so none of them cancel or replace each other —
+  # same pattern as cicd.yml.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   npm-audit:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
