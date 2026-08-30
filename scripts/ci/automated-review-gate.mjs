@@ -1086,8 +1086,7 @@ export async function publishAutomatedReviewStatus({
   }
   if (
     state === "failure" &&
-    existingTerminalStatus &&
-    existingTerminalStatus.description === description &&
+    existingTerminalStatus?.description === description &&
     isPositiveStatusId(existingTerminalStatus.id)
   ) {
     return {
