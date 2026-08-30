@@ -6411,8 +6411,10 @@ export default config as const;
           ["two-slash-symbol-host", "https://🙂🙂.internal/private"],
           ["two-slash-query", "https://例え.internal?q=秘密"],
           ["single-slash-path", "https:/例え.internal/秘密"],
+          ["single-slash-symbol-host", "https:/🙂🙂.internal/private"],
           ["single-slash-query", "https:/例え.internal?q=秘密"],
           ["zero-slash-path", "https:例え.internal/秘密"],
+          ["zero-slash-symbol-host", "https:🙂🙂.internal/private"],
           ["zero-slash-query", "https:例え.internal?q=秘密"],
         ] as const;
 
@@ -6428,6 +6430,33 @@ export default config as const;
           assertEquals(error.message.includes("秘密"), false, label);
           assertStringIncludes(error.message, "Failed [url]", label);
         }
+      });
+
+      it("does not split redaction at the Unicode authority probe bound", async () => {
+        const cases = [
+          ["split-run", `${"a".repeat(511)}秘密.internal`],
+          ["overlong-prefix", `${"a".repeat(512)}秘密.internal`],
+        ] as const;
+
+        for (const [label, host] of cases) {
+          const error = await loadFailure(
+            `vf-config-iri-authority-bound-${label}-`,
+            `throw new Error(${JSON.stringify(`Failed https://${host}/private`)});\n`,
+          );
+
+          assertEquals(error.message.includes("密.internal"), false, label);
+          assertEquals(error.message.includes("/private"), false, label);
+          assertStringIncludes(error.message, "Failed [url]", label);
+        }
+      });
+
+      it("preserves prose after Unicode whitespace following an IRI authority", async () => {
+        const error = await loadFailure(
+          "vf-config-iri-authority-unicode-whitespace-",
+          `throw new Error(${JSON.stringify("Failed https://例え.internal\u00a0\u00a0Retry")});\n`,
+        );
+
+        assertStringIncludes(error.message, "Failed [url]\u00a0\u00a0Retry");
       });
 
       it("redacts a URL tail that begins after a lone `)` and punctuation", async () => {

@@ -2105,8 +2105,15 @@ const SCHEME_URL = new RegExp(
 // Group the optional ASCII tail. Writing `${URL_TOKEN_TAIL_SOURCE}?` directly
 // would turn the tail's final `+` lazy, stop after one delimiter, and strand an
 // ASCII query prefix before a later raw-IRI remainder.
-const NON_ASCII_HOST_SOURCE = String.raw`(?=[^\s"/]{0,511}[\u0080-\u{10FFFF}])` +
-  String.raw`[\p{L}\p{N}\p{M}.\-\u0080-\u{10FFFF}]{1,512}`;
+// Keep the ASCII and non-ASCII alternatives disjoint so completing a long host
+// run cannot introduce ambiguous backtracking. The negative lookahead excludes
+// Unicode whitespace from the broad non-ASCII range, preserving prose after the
+// URL. Once the bounded probe finds a raw code point, consume the complete host
+// run. The second branch fails closed when that code point falls beyond the
+// probe rather than exposing the suffix of an overlong authority.
+const NON_ASCII_HOST_CHARACTER_SOURCE = String.raw`(?:[A-Za-z0-9.\-]|(?!\s)[\u0080-\u{10FFFF}])`;
+const NON_ASCII_HOST_SOURCE = String
+  .raw`(?:(?=[^\s"/]{0,511}[\u0080-\u{10FFFF}])${NON_ASCII_HOST_CHARACTER_SOURCE}+|${NON_ASCII_HOST_CHARACTER_SOURCE}{513,})`;
 const NON_ASCII_AUTHORITY_URL = new RegExp(
   String
     .raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}(?:${URL_TOKEN_TAIL_SOURCE})?`,
