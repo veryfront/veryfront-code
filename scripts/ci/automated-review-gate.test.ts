@@ -1636,6 +1636,41 @@ describe("automated review publication", () => {
     assertEquals(fixture.published[0]?.state, "pending");
   });
 
+  it("binds a limit reply to the force-pushed head", async () => {
+    for (
+      const forcePush of [
+        { after_commit: HEAD },
+        { after_commit: { sha: HEAD } },
+        { after_commit: null, commit_id: HEAD },
+      ]
+    ) {
+      const fixture = githubFixture({
+        pages: {
+          comments: [[codexRateLimitComment()]],
+          timeline: [[
+            { event: "head_ref_force_pushed", ...forcePush },
+            { event: "commented", id: 103 },
+          ]],
+        },
+      });
+      const result = await publishAutomatedReviewStatus({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha: HEAD,
+        pullUrl: "https://example.test/pr/1",
+        reviewFailureCommentId: 103,
+      });
+
+      assertEquals(result.state, "failure");
+      assertEquals(
+        result.description,
+        "PR#1 automated review rate limited",
+      );
+    }
+  });
+
   it("does not bind a delayed limit reply across a same-head base reset", async () => {
     const resetStatus = automatedReviewResetStatus(
       "2026-08-25T08:01:00Z",

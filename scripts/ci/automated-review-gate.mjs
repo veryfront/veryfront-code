@@ -441,6 +441,14 @@ function latestCodexUsageLimit(
   return latest;
 }
 
+function forcePushedHeadSha(event) {
+  const afterCommit = event?.after_commit;
+  if (typeof afterCommit === "string") return afterCommit;
+  if (typeof afterCommit?.sha === "string") return afterCommit.sha;
+  if (typeof afterCommit?.oid === "string") return afterCommit.oid;
+  return typeof event?.commit_id === "string" ? event.commit_id : undefined;
+}
+
 function commentFollowsHeadCommit(timeline, commentId, headSha) {
   const commentIndex = timeline.findIndex((item) =>
     item?.event === "commented" && item?.id === commentId
@@ -450,7 +458,8 @@ function commentFollowsHeadCommit(timeline, commentId, headSha) {
   for (const [index, item] of timeline.entries()) {
     if (
       (item?.event === "committed" && item?.sha === headSha) ||
-      (item?.event === "head_ref_force_pushed" && item?.after === headSha)
+      (item?.event === "head_ref_force_pushed" &&
+        forcePushedHeadSha(item) === headSha)
     ) headIndex = index;
   }
   return headIndex >= 0 && commentIndex > headIndex;
