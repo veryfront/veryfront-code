@@ -18,7 +18,9 @@ describe("leaf test suite registry", () => {
         ["--allow-net=api.openai.com"],
         ["--deny-net", "localhost"],
         ["-A"],
+        ["-I"],
         ["-N"],
+        ["-P"],
       ]
     ) {
       assertEquals(hasDenoPermissionFlag(args), true);

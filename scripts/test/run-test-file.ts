@@ -15,16 +15,24 @@ export {
 } from "./suites.ts";
 
 const TEST_OPTIONS_WITH_SEPARATE_VALUE = new Set([
+  "-L",
+  "-c",
   "--cert",
+  "--conditions",
   "--config",
   "--env-file",
+  "--ext",
   "--filter",
   "--ignore",
   "--import-map",
   "--junit-path",
   "--location",
   "--lock",
+  "--log-level",
+  "--minimum-dependency-age",
+  "--preload",
   "--reporter",
+  "--require",
   "--seed",
   "--v8-flags",
 ]);

@@ -69,6 +69,22 @@ describe("test:file task command", () => {
     assertEquals(args.includes(LOOPBACK_ALLOW_NET), true);
   });
 
+  it("does not classify short or preload option values as integration targets", () => {
+    const args = buildTestFileCommandArgs([
+      "src/foo.test.ts",
+      "-c",
+      "tests/integration/deno.json",
+      "-L",
+      "debug",
+      "--preload",
+      "tests/integration/setup.ts",
+    ]);
+
+    assertEquals(args.includes("--allow-all"), false);
+    assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), false);
+    assertEquals(args.includes(LOOPBACK_ALLOW_NET), true);
+  });
+
   it("does not classify ignored paths or script arguments as integration targets", () => {
     for (
       const rawArgs of [

@@ -40,7 +40,9 @@ export const LOOPBACK_TEST_PERMISSIONS: readonly string[] = Object.freeze([
 const DENO_PERMISSION_SHORT_FLAGS = new Set([
   "-A",
   "-E",
+  "-I",
   "-N",
+  "-P",
   "-R",
   "-S",
   "-W",
