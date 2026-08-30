@@ -1235,9 +1235,13 @@ export async function publishAutomatedReviewStatus({
       existingPropagationRetryKind = propagationRetry?.failureKind;
       existingPropagationRetryIsLatest = propagationRetry?.status?.id ===
         latestReviewGateStatusForPull(statuses, pullNumber)?.id;
+      const runBoundResetPending = resetPending &&
+        /^(?:base|reopen)-run-/.test(effectiveReviewResetKey ?? "");
       if (
         !isDraft &&
-        (!resetPending || REVIEW_EPOCH_EVENTS.has(reviewBoundary?.kind))
+        (!resetPending ||
+          (!runBoundResetPending &&
+            REVIEW_EPOCH_EVENTS.has(reviewBoundary?.kind)))
       ) {
         review = await findAutomatedReview(
           { reviews, comments, events, timeline },

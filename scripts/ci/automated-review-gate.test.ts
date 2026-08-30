@@ -2676,13 +2676,23 @@ describe("automated review publication", () => {
     );
     const tiedFixture = githubFixture({
       pages: {
+        comments: [[codexComment(HEAD.slice(0, 10), {
+          id: 103,
+          created_at: "2026-08-25T09:00:00Z",
+          updated_at: "2026-08-25T09:00:00Z",
+        })]],
         events: [[{
           event: "reopened",
           id: 41,
           created_at: "2026-08-25T09:00:00Z",
         }]],
         statuses: [[tiedReset]],
+        timeline: [[
+          { event: "reopened", id: 41 },
+          { event: "commented", id: 103 },
+        ]],
       },
+      commit: HEAD,
     });
     const tiedResult = await publishAutomatedReviewStatus({
       github: tiedFixture.github,
