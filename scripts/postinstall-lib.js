@@ -77,3 +77,38 @@ export async function verifyChecksum(filePath, checksumUrl, downloadFn = downloa
 
   console.log("✅ Checksum verified");
 }
+
+/**
+ * Make a remote-controlled string safe to write to a log line.
+ *
+ * `error.message` on the install path can quote remote text -- an HTTP status
+ * message, a `Location` header, the first token of a malformed SHA256SUMS -- so
+ * whoever controls the release host controls part of the log entry. Line
+ * terminators are the dangerous part: they let that text forge whole new
+ * entries.
+ *
+ * The line-terminator replacement is deliberately spelled as a literal class
+ * replaced by the empty string. CodeQL's `js/log-injection` sanitizer only
+ * recognises a global replacement of a literal CR or LF by the empty string; a
+ * range, a wider character class, or a non-empty replacement is not recognised.
+ * The previous version of this code folded line terminators into one broad
+ * control-character class and replaced them with a space, which is correct at
+ * runtime but left the alert open.
+ *
+ * Removing rather than substituting means a genuinely multi-line message loses
+ * its breaks. The only one that reaches here is the checksum mismatch, whose
+ * continuation lines are indented, so it still reads as separate fields.
+ */
+export function sanitizeLogValue(value) {
+  return String(value)
+    // Line terminators: the log-forging vector proper.
+    .replace(/[\r\n]/g, "")
+    // Remaining control characters -- terminal escapes, NUL -- plus the Unicode
+    // line and paragraph separators that some log viewers also break on.
+    .replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]+/g, " ")
+    // Tidy the runs the passes above leave behind, and cap the length so one
+    // message cannot flood the install output.
+    .replace(/\s{2,}/g, " ")
+    .trim()
+    .slice(0, 500);
+}

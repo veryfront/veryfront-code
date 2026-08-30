@@ -4,7 +4,7 @@ import { writeFileSync, existsSync, unlinkSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { computeFileHash, verifyChecksum } from "./postinstall-lib.js";
+import { computeFileHash, sanitizeLogValue, verifyChecksum } from "./postinstall-lib.js";
 
 function makeTempFile(content) {
   const dir = mkdtempSync(join(tmpdir(), "postinstall-test-"));
@@ -241,5 +241,52 @@ describe("verifyChecksum", () => {
     } finally {
       if (existsSync(filePath)) unlinkSync(filePath);
     }
+  });
+});
+
+describe("sanitizeLogValue", () => {
+  it("removes the line terminators used to forge log entries", () => {
+    const forged = "HTTP 500\n✅ Checksum verified\r\n[INFO] installed";
+    const sanitized = sanitizeLogValue(forged);
+    assert.ok(!sanitized.includes("\n"), "must not contain LF");
+    assert.ok(!sanitized.includes("\r"), "must not contain CR");
+    assert.equal(sanitized, "HTTP 500✅ Checksum verified[INFO] installed");
+  });
+
+  it("removes Unicode line and paragraph separators", () => {
+    const sanitized = sanitizeLogValue("a\u2028b\u2029c");
+    assert.ok(!sanitized.includes("\u2028"));
+    assert.ok(!sanitized.includes("\u2029"));
+    assert.equal(sanitized, "a b c");
+  });
+
+  it("removes control characters, including terminal escapes", () => {
+    const sanitized = sanitizeLogValue("HTTP \u001b[2K\u0000500\u009f");
+    assert.equal(sanitized, "HTTP [2K 500");
+  });
+
+  it("collapses whitespace runs left behind by stripping", () => {
+    assert.equal(sanitizeLogValue("  HTTP\n\n\n   500  "), "HTTP 500");
+  });
+
+  it("caps the length so one message cannot flood the log", () => {
+    assert.equal(sanitizeLogValue("x".repeat(5000)).length, 500);
+  });
+
+  it("keeps the multi-line checksum mismatch message readable", () => {
+    const expected = "a".repeat(64);
+    const actual = "b".repeat(64);
+    const sanitized = sanitizeLogValue(
+      `Checksum mismatch!\n   Expected: ${expected}\n   Actual:   ${actual}`
+    );
+    assert.equal(
+      sanitized,
+      `Checksum mismatch! Expected: ${expected} Actual: ${actual}`
+    );
+  });
+
+  it("coerces non-string input instead of throwing", () => {
+    assert.equal(sanitizeLogValue(undefined), "undefined");
+    assert.equal(sanitizeLogValue(42), "42");
   });
 });
