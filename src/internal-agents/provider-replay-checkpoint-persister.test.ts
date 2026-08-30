@@ -1,55 +1,139 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { createRunScopedProviderReplayCheckpointPersister } from "./provider-replay-checkpoint-persister.ts";
 
-const checkpoint: ProviderReplayCheckpoint = {
-  version: 1,
-  messageId: "assistant-message-1",
-  provider: "anthropic",
-  providerBlocks: [{
-    type: "provider-block",
+const RUN_ID = "run_checkpoint_1";
+const MESSAGE_ID = "10000000-1000-4000-8000-100000000001";
+
+function checkpoint(): ProviderReplayCheckpoint {
+  return {
+    version: 1,
+    messageId: MESSAGE_ID,
     provider: "anthropic",
-    block: { type: "thinking", thinking: "", signature: "PRIVATE_SIGNATURE" },
-  }],
-  providerBlockPositions: [0],
-  providerMessageBlockCounts: [1],
-  totalPartCount: 1,
-};
+    providerBlocks: [{
+      type: "provider-block",
+      provider: "anthropic",
+      block: { type: "thinking", thinking: "", signature: "<REDACTED>" },
+    }],
+    providerBlockPositions: [0],
+    providerMessageBlockCounts: [1],
+    totalPartCount: 1,
+  };
+}
 
 describe("run-scoped provider replay checkpoint persistence", () => {
-  it("awaits the exact-run API append response", async () => {
-    let request: Request | undefined;
+  it("keeps persistence pending until the exact-run append is acknowledged", async () => {
+    let capturedUrl: string | undefined;
+    let capturedInit: RequestInit | undefined;
+    let acknowledge: ((response: Response) => void) | undefined;
+    const responseGate = new Promise<Response>((resolve) => {
+      acknowledge = resolve;
+    });
     const persist = createRunScopedProviderReplayCheckpointPersister({
-      apiUrl: "https://api.example.test",
-      runId: "run_1",
-      runEventToken: "writer-token",
-      fetch: async (input, init) => {
-        request = new Request(input, init);
-        return Response.json({ appended_count: 1 });
+      apiUrl: "https://api.example.test/api",
+      runId: RUN_ID,
+      runEventAppendToken: "<TOKEN>",
+      fetch: (input, init) => {
+        capturedUrl = String(input);
+        capturedInit = init;
+        return responseGate;
       },
     });
+    if (!persist) throw new Error("Expected a checkpoint persister");
 
-    await persist(checkpoint);
+    let settled = false;
+    const persistence = persist(checkpoint()).then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
 
-    assertEquals(request?.url, "https://api.example.test/runs/run_1/events");
-    assertEquals(request?.headers.get("Authorization"), "Bearer writer-token");
-    assertEquals((await request?.json()).events, [{
-      type: "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT",
-      ...checkpoint,
-    }]);
+    assertEquals(settled, false);
+    assertEquals(capturedUrl, `https://api.example.test/api/runs/${RUN_ID}/events`);
+    assertEquals(capturedInit?.method, "POST");
+    assertEquals(new Headers(capturedInit?.headers).get("Authorization"), "Bearer <TOKEN>");
+    const body = JSON.parse(String(capturedInit?.body)) as {
+      events: Array<Record<string, unknown>>;
+    };
+    assertEquals(body.events[0]?.type, "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT");
+    assertEquals(body.events[0]?.messageId, MESSAGE_ID);
+
+    acknowledge?.(Response.json({ appended_count: 1 }));
+    await persistence;
+    assertEquals(settled, true);
   });
 
-  it("redacts private response failures", async () => {
+  it("fails closed without exposing private response data or the credential", async () => {
+    const token = "private-test-token-that-must-not-appear";
     const persist = createRunScopedProviderReplayCheckpointPersister({
       apiUrl: "https://api.example.test",
-      runId: "run_1",
-      runEventToken: "writer-token",
-      fetch: () => Promise.resolve(new Response("PRIVATE_SIGNATURE", { status: 409 })),
+      runId: RUN_ID,
+      runEventAppendToken: token,
+      fetch: () => Promise.resolve(new Response("private response", { status: 503 })),
     });
+    if (!persist) throw new Error("Expected a checkpoint persister");
 
-    const error = await assertRejects(() => persist(checkpoint), Error, "HTTP 409");
-    assertEquals(String(error).includes("PRIVATE_SIGNATURE"), false);
+    const error = await assertRejects(
+      () => persist(checkpoint()),
+      VeryfrontError,
+      "status 503",
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertStringIncludes(error.slug, "durable-run-event-persistence-failed");
+    assertEquals(String(error).includes(token), false);
+    assertEquals(String(error).includes("private response"), false);
+  });
+
+  it("aborts an in-flight append when the run is cancelled", async () => {
+    let requestSignal: AbortSignal | null | undefined;
+    const persist = createRunScopedProviderReplayCheckpointPersister({
+      apiUrl: "https://api.example.test",
+      runId: RUN_ID,
+      runEventAppendToken: "<TOKEN>",
+      fetch: (input, init) => {
+        requestSignal = new Request(input, init).signal;
+        return new Promise<Response>((_resolve, reject) => {
+          requestSignal?.addEventListener("abort", () => reject(requestSignal?.reason), {
+            once: true,
+          });
+        });
+      },
+    });
+    if (!persist) throw new Error("Expected a checkpoint persister");
+    const controller = new AbortController();
+    const reason = new DOMException("run cancelled", "AbortError");
+
+    const persistence = persist(checkpoint(), controller.signal);
+    await Promise.resolve();
+    controller.abort(reason);
+
+    let caught: unknown;
+    try {
+      await persistence;
+    } catch (error) {
+      caught = error;
+    }
+    assertEquals(caught, reason);
+    assertEquals(requestSignal?.aborted, true);
+  });
+
+  it("does not create a writer for a missing or malformed credential", () => {
+    for (const runEventAppendToken of [null, " token-with-whitespace "]) {
+      assertEquals(
+        createRunScopedProviderReplayCheckpointPersister({
+          apiUrl: "https://api.example.test",
+          runId: RUN_ID,
+          runEventAppendToken,
+        }),
+        undefined,
+      );
+    }
   });
 });

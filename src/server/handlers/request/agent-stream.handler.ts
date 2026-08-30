@@ -110,6 +110,8 @@ export interface AgentStreamHandlerDeps
   getLocalTools?: (agentId: string) => RuntimeAgentStreamExecutionDeps["localTools"];
   loadAgentSourceEnvironment?: AgentSourceEnvironmentLoader;
   normalizeSourceIntegrationPolicy?: typeof normalizeSourceIntegrationPolicy;
+  createRunScopedProviderReplayCheckpointPersister?:
+    typeof createRunScopedProviderReplayCheckpointPersister;
 }
 
 type AgentSourceTargetIdentity = Pick<
@@ -133,6 +135,7 @@ const defaultDeps: AgentStreamHandlerDeps = {
   getLocalTools: (agentId) =>
     getDiscoveredHostTools({ agentId }) as RuntimeAgentStreamExecutionDeps["localTools"],
   providerReplayCheckpointEmissionEnabled: isProviderReplayCheckpointEmissionEnabled(),
+  createRunScopedProviderReplayCheckpointPersister,
 };
 const logger = serverLogger.component("agent-stream-handler");
 const IntrinsicReflectApply = Reflect.apply;
@@ -1008,7 +1011,7 @@ export class AgentStreamHandler extends BaseHandler {
         expectedSubject: payload.runId,
         expectedSurface: "studio",
       });
-      const runEventToken = req.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER)?.trim();
+      const runEventAppendToken = req.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER);
       assertAgentSourceMatchesHostedTarget(ctx, payload);
       const apiAuthToken = payload.credentials?.authToken || ctx.proxyToken || "";
       if (payload.agentSource.type === "environment" && !apiAuthToken) {
@@ -1169,13 +1172,12 @@ export class AgentStreamHandler extends BaseHandler {
                             serverEnvelopeVerified: true,
                           });
                         const veryfrontApiUrl = resolveVeryfrontApiBaseUrlFromHostEnv();
-                        const persistProviderReplayCheckpoint = runEventToken
-                          ? createRunScopedProviderReplayCheckpointPersister({
+                        const persistProviderReplayCheckpoint = this.deps
+                          .createRunScopedProviderReplayCheckpointPersister?.({
                             apiUrl: veryfrontApiUrl,
-                            runId: payload.runId,
-                            runEventToken,
-                          })
-                          : undefined;
+                            runId: runtimeInput.runId,
+                            runEventAppendToken,
+                          });
                         const localTools = this.deps.getLocalTools?.(runtimeBaseAgent.id);
                         const platformRuntimeAgent = await withVeryfrontPlatformRemoteTools({
                           agent: runtimeBaseAgent as Agent,

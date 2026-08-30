@@ -74,6 +74,8 @@ import type { RuntimeRunAgentInput } from "./schema.ts";
 import { serverLogger } from "#veryfront/utils";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { type ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
+import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
+import type { ProviderReplayCheckpointPersister } from "./provider-replay-checkpoint-persister.ts";
 
 const getAnyObjectSchema = defineSchema((v) => v.record(v.string(), v.unknown()));
 const anyObjectSchema = lazySchema(getAnyObjectSchema) as Schema<Record<string, unknown>>;
@@ -185,9 +187,7 @@ export interface RuntimeAgentStreamExecutionDeps {
   };
   providerReplayCheckpointEmissionEnabled?: boolean;
   providerReplayCheckpoints?: readonly ProviderReplayCheckpoint[];
-  persistProviderReplayCheckpoint?: (
-    checkpoint: ProviderReplayCheckpoint,
-  ) => void | Promise<void>;
+  persistProviderReplayCheckpoint?: ProviderReplayCheckpointPersister;
 }
 
 function createInjectedStudioTool(
@@ -1045,9 +1045,10 @@ export async function createRuntimeAgentStreamResponse(
           providerReplayCheckpoints.some((checkpoint) => checkpoint.messageId === input.messageId)),
     );
     if (shouldEmitProviderReplayCheckpoints && !deps.persistProviderReplayCheckpoint) {
-      throw new Error(
-        "Provider replay checkpoint emission requires a durable writer token",
-      );
+      throw DURABLE_RUN_EVENT_PERSISTENCE_FAILED.create({
+        detail:
+          "A trusted run-event append token is required to persist a private provider replay checkpoint",
+      });
     }
     const runtimeAgent: RuntimeFilteredAgent = {
       ...agent,
@@ -1068,7 +1069,8 @@ export async function createRuntimeAgentStreamResponse(
         ...(shouldEmitProviderReplayCheckpoints
           ? {
             __vfProviderReplayCheckpointMessageId: input.messageId,
-            __vfPersistProviderReplayCheckpoint: deps.persistProviderReplayCheckpoint,
+            __vfPersistProviderReplayCheckpoint: (checkpoint: ProviderReplayCheckpoint) =>
+              deps.persistProviderReplayCheckpoint!(checkpoint, abortSignal),
             __vfProviderReplayCheckpointPersistenceRequired: true,
           }
           : {}),

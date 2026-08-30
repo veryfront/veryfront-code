@@ -5,6 +5,7 @@ import {
   buildRuntimeAgentControlPlaneStreamRequestFromInvocation,
   parseRuntimeAgentRunInvocation,
   parseRuntimeAgentRunInvocationOrError,
+  type RuntimeAgentControlPlaneStreamRequest,
   RuntimeAgentRunInvocationSchema,
 } from "../index.ts";
 import { DEFAULT_LIMITS } from "#veryfront/security/input-validation/types.ts";
@@ -67,6 +68,21 @@ function createInvocation(overrides: Record<string, unknown> = {}) {
 }
 
 describe("agent/runtime-agent-invocation-contract", () => {
+  it("keeps the legacy control-plane request shape source-compatible", () => {
+    const request: RuntimeAgentControlPlaneStreamRequest = {
+      agentId: "builder",
+      threadId: conversationId,
+      runId: "run_legacy_1",
+      messages: [],
+      tools: [],
+      context: [],
+      runtimeTargetKind: "main_branch",
+      agentSource: { type: "branch", branch: "main" },
+    };
+
+    assertEquals(request.messageId, undefined);
+  });
+
   it("exports the control-plane runtime agent invocation schema from veryfront/agent", () => {
     const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation());
 

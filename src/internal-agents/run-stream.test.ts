@@ -539,7 +539,7 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedMaxOutputTokens, 1200);
   });
 
-  it("emits provider replay checkpoints on the private control-plane stream", async () => {
+  it("persists replay checkpoints before emitting the private turn boundary", async () => {
     const sessionManager = new AgentRunSessionManager();
     const messageId = crypto.randomUUID();
     const checkpoint: ProviderReplayCheckpoint = {
@@ -590,6 +590,7 @@ describe("internal-agents/run-stream", () => {
       providerReplayCheckpoints: [],
       persistProviderReplayCheckpoint: (value) => {
         persistedCheckpoints.push(value);
+        return Promise.resolve();
       },
       createRuntime: (runtimeAgent) => {
         capturedConfig = runtimeAgent.config as typeof capturedConfig;
@@ -670,6 +671,7 @@ describe("internal-agents/run-stream", () => {
         providerReplayCheckpoints: [checkpoint],
         persistProviderReplayCheckpoint: (value) => {
           persistedCheckpoints.push(value);
+          return Promise.resolve();
         },
         createRuntime: (runtimeAgent) => {
           persistCheckpoint = (runtimeAgent.config as Agent["config"] & {
@@ -818,6 +820,45 @@ describe("internal-agents/run-stream", () => {
       Error,
       "Provider replay checkpoint emission requires a runtime message identity",
     );
+  });
+
+  it("fails before provider execution when no trusted checkpoint writer is available", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let runtimeCreated = false;
+    const agent = {
+      id: "test",
+      config: {
+        id: "test",
+        model: "anthropic/claude-opus-4-8",
+        system: "test",
+      },
+    } as unknown as Agent;
+
+    await assertRejects(
+      () =>
+        createRuntimeAgentStreamResponse(
+          {
+            threadId: crypto.randomUUID(),
+            runId: "run_1",
+            messageId: crypto.randomUUID(),
+            messages: [],
+            tools: [],
+            context: [],
+          },
+          agent,
+          {
+            sessionManager,
+            providerReplayCheckpointEmissionEnabled: true,
+            createRuntime: () => {
+              runtimeCreated = true;
+              throw new Error("runtime must not be created");
+            },
+          },
+        ),
+      Error,
+      "trusted run-event append token",
+    );
+    assertEquals(runtimeCreated, false);
   });
 
   it("settles an open replay turn when the provider stream fails", async () => {
