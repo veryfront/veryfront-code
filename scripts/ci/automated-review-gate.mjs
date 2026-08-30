@@ -369,6 +369,25 @@ function pendingReviewAge(status, now) {
     : Number.POSITIVE_INFINITY;
 }
 
+function pendingStatusBelongsToReviewEpoch(
+  status,
+  boundary,
+  pullNumber,
+  baseBinding,
+) {
+  if (status === undefined) return false;
+  if (boundary === undefined) return true;
+  const createdAt = Date.parse(status.created_at ?? "");
+  if (!Number.isFinite(createdAt)) return false;
+  if (createdAt !== boundary.time) return createdAt > boundary.time;
+  const resetPrefix = reviewResetDescription(pullNumber, baseBinding);
+  const description = typeof status.description === "string"
+    ? status.description
+    : "";
+  return description === resetPrefix ||
+    description.startsWith(`${resetPrefix} key:`);
+}
+
 function latestCodexUsageLimit(
   comments,
   boundary,
@@ -879,6 +898,7 @@ export async function publishAutomatedReviewStatus({
   let resetPending = false;
   let existingPendingStatus;
   let existingTerminalStatus;
+  let existingTerminalStatusIsLatest = false;
   let reviewBoundary;
   let failureKind;
   let failureUrl;
@@ -981,11 +1001,21 @@ export async function publishAutomatedReviewStatus({
         reviewNotBefore,
         latestBaseRefChange(events),
       );
+      if (
+        !pendingStatusBelongsToReviewEpoch(
+          existingPendingStatus,
+          reviewBoundary,
+          pullNumber,
+          baseBinding,
+        )
+      ) existingPendingStatus = undefined;
       existingTerminalStatus = latestTerminalReviewStatus(
         statuses,
         pullNumber,
         reviewBoundary,
       );
+      existingTerminalStatusIsLatest = existingTerminalStatus?.id ===
+        latestReviewGateStatusForPull(statuses, pullNumber)?.id;
       if (!resetPending && !isDraft) {
         review = await findAutomatedReview(
           { reviews, comments, events, timeline },
@@ -1100,6 +1130,7 @@ export async function publishAutomatedReviewStatus({
   }
   if (
     state === "failure" &&
+    existingTerminalStatusIsLatest &&
     existingTerminalStatus?.description === description &&
     isPositiveStatusId(existingTerminalStatus.id)
   ) {

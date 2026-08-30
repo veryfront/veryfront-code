@@ -766,7 +766,8 @@ jobs:
       # A pending status on a trusted push event means no review exists for
       # this head yet, and nothing would request one: the Codex connector
       # handles open and ready-for-review events, but not a push to an open
-      # pull request. Post the "@codex review" request only for synchronize.
+      # pull request. Post the "@codex review" request for synchronize and
+      # reopened events.
       # The helper re-fetches the PR immediately before posting so a queued
       # stale event cannot bind its marker to a request for a newer head. A
       # base edit gets a marker scoped to the run, which invalidates
@@ -779,6 +780,7 @@ jobs:
           github.event_name == 'pull_request_target' &&
           github.event.pull_request.draft == false &&
           (github.event.action == 'synchronize' ||
+           github.event.action == 'reopened' ||
            (github.event.action == 'edited' && github.event.changes.base)) &&
           steps.publish.outputs.result == 'pending'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -812,6 +814,8 @@ jobs:
               headSha: process.env.TARGET_SHA,
               requestKey: context.payload.action === "edited"
                 ? `base-${context.runId}`
+                : context.payload.action === "reopened"
+                ? `reopen-${context.runId}`
                 : undefined,
             });
             core.notice(

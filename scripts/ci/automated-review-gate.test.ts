@@ -1870,24 +1870,34 @@ describe("automated review publication", () => {
     assertEquals(fixture.published, []);
   });
 
-  it("finds terminal evidence behind a later generic failure", async () => {
+  it("republishes terminal evidence hidden behind a later generic failure", async () => {
+    const republishedTerminalStatus = automatedReviewStatus({
+      id: 1001,
+      state: "failure",
+      description: "PR#1 automated review timed out",
+      created_at: "2026-08-25T08:02:00Z",
+    });
     const fixture = githubFixture({
-      pages: {
-        statuses: [[
-          automatedReviewStatus({
-            id: 106,
-            state: "failure",
-            description: "PR#1 review status unavailable",
-            created_at: "2026-08-25T08:01:00Z",
-          }),
-          automatedReviewStatus({
-            id: 105,
-            state: "failure",
-            description: "PR#1 automated review timed out",
-            created_at: "2026-08-25T08:00:00Z",
-          }),
-        ]],
+      pageResponses: {
+        statuses: [
+          [[
+            automatedReviewStatus({
+              id: 106,
+              state: "failure",
+              description: "PR#1 review status unavailable",
+              created_at: "2026-08-25T08:01:00Z",
+            }),
+            automatedReviewStatus({
+              id: 105,
+              state: "failure",
+              description: "PR#1 automated review timed out",
+              created_at: "2026-08-25T08:00:00Z",
+            }),
+          ]],
+          [[republishedTerminalStatus]],
+        ],
       },
+      commit: HEAD,
     });
     const result = await publishAutomatedReviewStatus({
       github: fixture.github,
@@ -1899,9 +1909,52 @@ describe("automated review publication", () => {
     });
 
     assertEquals(result.state, "failure");
-    assertEquals(result.statusId, 105);
+    assertEquals(result.statusId, 1001);
     assertEquals(result.description, "PR#1 automated review timed out");
-    assertEquals(fixture.published, []);
+    assertEquals(fixture.published[0]?.state, "failure");
+    assertEquals(
+      fixture.published[0]?.target_url,
+      "https://example.test/review-proof",
+    );
+    assertEquals(
+      await publishReviewResolutionFailure({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        sourceHeadSha: HEAD,
+        sourceStatusId: result.statusId,
+      }),
+      { queueFailures: 0, skipped: false },
+    );
+  });
+
+  it("does not time out a pending status from before a base reset", async () => {
+    const fixture = githubFixture({
+      pages: {
+        events: [[{
+          event: "base_ref_changed",
+          created_at: "2026-08-25T08:00:00Z",
+        }]],
+        statuses: [[pendingAutomatedReviewStatus(
+          "2026-08-25T07:00:00Z",
+        )]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      now: Date.parse("2026-08-25T08:30:00Z"),
+      reviewTimeoutMs: 1_800_000,
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(fixture.published.length, 1);
+    assertEquals(fixture.published[0]?.state, "pending");
   });
 
   it("starts a fresh pending epoch when a pull request reopens", async () => {
@@ -4349,6 +4402,7 @@ describe("automated review workflow", () => {
         "github.event_name == 'pull_request_target'",
         "github.event.pull_request.draft == false",
         "github.event.action == 'synchronize'",
+        "github.event.action == 'reopened'",
         "github.event.action == 'edited'",
         "github.event.changes.base",
         "steps.publish.outputs.result == 'pending'",
@@ -4360,8 +4414,8 @@ describe("automated review workflow", () => {
       );
     }
     assert(
-      !requestCondition.includes("ready_for_review") &&
-        !requestCondition.includes("opened"),
+      !requestCondition.includes("github.event.action == 'ready_for_review'") &&
+        !requestCondition.includes("github.event.action == 'opened'"),
       "open and ready-for-review events are already handled by the connector",
     );
     const requestScript = String(
@@ -4377,6 +4431,10 @@ describe("automated review workflow", () => {
     assert(
       requestScript.includes("`base-${context.runId}`"),
       "a base-edit rerun must reuse the original reset epoch",
+    );
+    assert(
+      requestScript.includes("`reopen-${context.runId}`"),
+      "a reopened pull request must request review in its fresh epoch",
     );
     assert(
       !("RUN_ATTEMPT" in record(request.env, "request environment")),
