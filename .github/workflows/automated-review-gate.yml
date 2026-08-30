@@ -843,6 +843,8 @@ jobs:
                 ? "Skipped an automated review request from a stale synchronize event."
                 : result.reason === "ineligible-pull"
                 ? "Skipped an automated review request because the pull request is no longer open and ready for review."
+                : result.reason === "stale-epoch"
+                ? "Skipped an automated review request from a superseded reopen event."
                 : "An automated review request for this head commit already exists.",
             );
 

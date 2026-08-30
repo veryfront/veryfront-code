@@ -203,18 +203,15 @@ function hasReviewRequest(comments, headSha, requestKey) {
 
 function durableReviewRequestKey(events, requestKey) {
   if (requestKey !== "reopen") return requestKey;
-  let latestId;
-  for (const event of events) {
-    if (event?.event !== "reopened") continue;
-    if (!Number.isSafeInteger(event?.id) || event.id < 1) {
-      throw new Error("Reopen event identity is malformed");
-    }
-    if (latestId === undefined || event.id > latestId) latestId = event.id;
-  }
-  if (latestId === undefined) {
+  const latestEpoch = latestReviewEpochChange(events);
+  if (latestEpoch === undefined) {
     throw new Error("Could not resolve the current reopen event");
   }
-  return `reopen-${latestId}`;
+  if (latestEpoch.kind !== "reopened") return undefined;
+  if (!Number.isSafeInteger(latestEpoch.id) || latestEpoch.id < 1) {
+    throw new Error("Reopen event identity is malformed");
+  }
+  return `reopen-${latestEpoch.id}`;
 }
 
 function timelinePosition(timeline, event, id) {
@@ -398,10 +395,24 @@ function latestReviewResetTime(statuses, pullNumber, baseBinding) {
 
 function latestPendingReviewStatus(statuses, pullNumber) {
   const status = latestReviewGateStatusForPull(statuses, pullNumber);
-  return status?.state === "pending" &&
+  if (
+    status?.state === "pending" &&
       isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
-    ? status
-    : undefined;
+  ) return status;
+  if (
+    status?.state !== "failure" ||
+    status?.description !==
+      reviewFailureDescription(pullNumber, "unavailable") ||
+    !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
+  ) return undefined;
+  const descriptionPrefix = `PR#${pullNumber} `;
+  return statuses.find((candidate) =>
+    candidate?.context === AUTOMATED_REVIEW_STATUS_CONTEXT &&
+    candidate?.state === "pending" &&
+    typeof candidate?.description === "string" &&
+    candidate.description.startsWith(descriptionPrefix) &&
+    isPinnedBot(candidate?.creator, GITHUB_ACTIONS_LOGIN)
+  );
 }
 
 function pendingReviewAge(status, now) {
@@ -427,7 +438,9 @@ function pendingStatusBelongsToReviewEpoch(
     ? status.description
     : "";
   return description === resetPrefix ||
-    description.startsWith(`${resetPrefix} key:`);
+    description.startsWith(`${resetPrefix} key:`) ||
+    (boundary.kind === "ready_for_review" &&
+      description.startsWith(`PR#${pullNumber} waits for review `));
 }
 
 function latestCodexUsageLimit(
@@ -1452,11 +1465,13 @@ function reviewTimeoutContext(pull, pullNumber) {
       return context.description.startsWith(descriptionPrefix);
     }
     return context.state === "FAILURE" &&
-      reviewFailureKindFromDescription(
-          context.description,
-          pullNumber,
-          true,
-        ) !== undefined;
+      (context.description ===
+          reviewFailureDescription(pullNumber, "unavailable") ||
+        reviewFailureKindFromDescription(
+            context.description,
+            pullNumber,
+            true,
+          ) !== undefined);
   });
 }
 
@@ -1591,6 +1606,36 @@ async function finalizeReviewFailureStatus({
   return { description, statusId };
 }
 
+async function publishReviewPropagationRetryStatus({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  headSha,
+  failureKind,
+  targetUrl,
+}) {
+  const description = reviewFailureDescription(
+    pullNumber,
+    failureKind,
+    true,
+  );
+  const response = await github.rest.repos.createCommitStatus({
+    owner,
+    repo,
+    sha: headSha,
+    state: "failure",
+    context: AUTOMATED_REVIEW_STATUS_CONTEXT,
+    description,
+    target_url: targetUrl,
+  });
+  const statusId = response?.data?.id;
+  if (!isPositiveStatusId(statusId)) {
+    throw new TypeError("Review propagation retry status identity is malformed");
+  }
+  return { description, statusId };
+}
+
 async function propagateAndFinalizeReviewFailure({
   github,
   owner,
@@ -1718,7 +1763,7 @@ export async function expireTimedOutAutomatedReview({
     pullUrl,
     now,
     reviewTimeoutMs,
-    queuePropagationPending: !retrying,
+    queuePropagationPending: true,
   });
   if (result.state === "failure") {
     const failureKind = reviewFailureKindFromDescription(
@@ -1747,14 +1792,32 @@ export async function expireTimedOutAutomatedReview({
     };
   }
   if (typeof result.baseRef === "string") {
-    const queueResults = await reconcileActiveMergeGroupReviewStatuses({
-      github,
-      owner,
-      repo,
-      pullNumber,
-      sourceHeadSha: headSha,
-      baseRef: result.baseRef,
-    });
+    let queueResults;
+    try {
+      queueResults = await reconcileActiveMergeGroupReviewStatuses({
+        github,
+        owner,
+        repo,
+        pullNumber,
+        sourceHeadSha: headSha,
+        baseRef: result.baseRef,
+      });
+    } catch (error) {
+      if (result.state === "success") {
+        await publishReviewPropagationRetryStatus({
+          github,
+          owner,
+          repo,
+          pullNumber,
+          headSha,
+          failureKind: retryStatus?.failureKind ?? "unavailable",
+          targetUrl: typeof retryStatus?.status?.target_url === "string"
+            ? retryStatus.status.target_url
+            : result.targetUrl ?? pullUrl,
+        });
+      }
+      throw error;
+    }
     return {
       ...result,
       expired: false,
@@ -2498,6 +2561,9 @@ export async function requestAutomatedReview({
       "review epoch events",
     );
     effectiveRequestKey = durableReviewRequestKey(events, requestKey);
+    if (effectiveRequestKey === undefined) {
+      return { requested: false, reason: "stale-epoch" };
+    }
   }
   const marker = `<!-- automated-review-request: ${headSha.toLowerCase()}${
     effectiveRequestKey === undefined ? "" : ` ${effectiveRequestKey}`
