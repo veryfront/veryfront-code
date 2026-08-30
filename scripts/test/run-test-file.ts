@@ -6,6 +6,7 @@ import {
   PROVIDER_EGRESS_DENY_NET,
   UNIT_DENO_TEST_ENV,
 } from "./suites.ts";
+import { isAbsolute, relative } from "node:path";
 
 export {
   LOOPBACK_ALLOW_NET,
@@ -98,15 +99,20 @@ export function buildTestFileCommandArgs(
 }
 
 function isScriptsPath(arg: string): boolean {
-  const normalized = arg.replaceAll("\\", "/").replace(/^\.\//, "");
+  const normalized = normalizeTestTarget(arg);
   return normalized === "scripts" || normalized.startsWith("scripts/");
 }
 
 function isIntegrationPath(arg: string): boolean {
-  const normalized = arg.replaceAll("\\", "/").replace(/^\.\//, "");
+  const normalized = normalizeTestTarget(arg);
   return normalized === "tests" ||
     normalized.startsWith("tests/") ||
     /\.integration\.test\.tsx?$/.test(normalized);
+}
+
+function normalizeTestTarget(arg: string): string {
+  const projectRelative = isAbsolute(arg) ? relative(Deno.cwd(), arg) : arg;
+  return projectRelative.replaceAll("\\", "/").replace(/^\.\//, "");
 }
 
 function isIntegrationTarget(
@@ -114,7 +120,7 @@ function isIntegrationTarget(
   fileSystem: TestTargetFileSystem = TEST_TARGET_FILE_SYSTEM,
 ): boolean {
   if (isIntegrationPath(arg)) return true;
-  const normalized = arg.replaceAll("\\", "/").replace(/^\.\//, "");
+  const normalized = normalizeTestTarget(arg);
   try {
     if (!fileSystem.statSync(normalized).isDirectory) return false;
   } catch {

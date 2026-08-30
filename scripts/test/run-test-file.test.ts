@@ -1,5 +1,6 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { fileURLToPath } from "node:url";
 import {
   buildTestFileCommandArgs,
   LOOPBACK_ALLOW_NET,
@@ -177,6 +178,28 @@ describe("test:file task command", () => {
       assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), true, target);
       assertEquals(args.includes(LOOPBACK_ALLOW_NET), false, target);
     }
+  });
+
+  it("classifies absolute repository targets relative to the project root", () => {
+    const root = fileURLToPath(new URL("../../", import.meta.url))
+      .replaceAll("\\", "/")
+      .replace(/\/$/, "");
+    for (
+      const target of [
+        `${root}/tests/integration/routes.test.ts`,
+        `${root}/src/discovery/auto-discovery.integration.test.ts`,
+      ]
+    ) {
+      const args = buildTestFileCommandArgs([target]);
+      assertEquals(args.includes("--allow-all"), true, target);
+      assertEquals(args.includes(PROVIDER_EGRESS_DENY_NET), true, target);
+      assertEquals(args.includes(LOOPBACK_ALLOW_NET), false, target);
+    }
+
+    const scriptArgs = buildTestFileCommandArgs([
+      `${root}/scripts/test/run-test-file.test.ts`,
+    ]);
+    assertEquals(scriptArgs.includes("--config=scripts/test.deno.json"), true);
   });
 
   it("uses integration permissions when a target directory contains integration tests", () => {

@@ -16,11 +16,6 @@ const OFFLINE_REACT_MODULE_PREFIX = "/__veryfront_test_react__/";
 // in-process, so this resolution result is never dialed.
 const OFFLINE_REACT_RESOLVED_ADDRESS = "192.0.2.1";
 const REACT_VERSION_19_1 = "19.1.1";
-const OFFLINE_REACT_CACHE_PATH = join(
-  tmpdir(),
-  `veryfront-offline-react-v1-${Deno.pid}.json`,
-);
-const OFFLINE_REACT_LOCK_PATH = `${OFFLINE_REACT_CACHE_PATH}.lock`;
 const MAX_OFFLINE_REACT_CACHE_BYTES = 16 * 1024 * 1024;
 const MAX_OFFLINE_REACT_CACHE_ENTRIES = 128;
 const OFFLINE_UNIT_MODULE_FIXTURES: Readonly<Record<string, string>> = Object.freeze({
@@ -310,6 +305,27 @@ const OFFLINE_REACT_ENTRIES = Object.freeze(
 type OfflineReactEntryKey = keyof typeof OFFLINE_REACT_ENTRIES;
 
 let bundledModules: Promise<ReadonlyMap<string, string>> | undefined;
+let cachePaths: Promise<{ cache: string; lock: string }> | undefined;
+
+async function getOfflineReactCachePaths(): Promise<{ cache: string; lock: string }> {
+  cachePaths ??= (async () => {
+    const identity = JSON.stringify({
+      versions: Object.keys(OFFLINE_REACT_PACKAGE_URLS),
+      entries: OFFLINE_REACT_ENTRIES,
+      generation: [
+        createEntrySource.toString(),
+        buildOfflineReactModules.toString(),
+      ],
+    });
+    const digest = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(identity)),
+    );
+    const key = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+    const cache = join(tmpdir(), `veryfront-offline-react-${key}.json`);
+    return { cache, lock: `${cache}.lock` };
+  })();
+  return await cachePaths;
+}
 
 function parseBundledModuleCache(serialized: string): ReadonlyMap<string, string> | undefined {
   if (new TextEncoder().encode(serialized).byteLength > MAX_OFFLINE_REACT_CACHE_BYTES) {
@@ -340,9 +356,11 @@ function parseBundledModuleCache(serialized: string): ReadonlyMap<string, string
   return modules;
 }
 
-async function readBundledModuleCache(): Promise<ReadonlyMap<string, string> | undefined> {
+async function readBundledModuleCache(
+  cachePath: string,
+): Promise<ReadonlyMap<string, string> | undefined> {
   try {
-    return parseBundledModuleCache(await Deno.readTextFile(OFFLINE_REACT_CACHE_PATH));
+    return parseBundledModuleCache(await Deno.readTextFile(cachePath));
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) return undefined;
     throw error;
@@ -350,7 +368,8 @@ async function readBundledModuleCache(): Promise<ReadonlyMap<string, string> | u
 }
 
 async function buildOrReadOfflineReactModules(): Promise<ReadonlyMap<string, string>> {
-  const lockFile = await Deno.open(OFFLINE_REACT_LOCK_PATH, {
+  const paths = await getOfflineReactCachePaths();
+  const lockFile = await Deno.open(paths.lock, {
     create: true,
     read: true,
     write: true,
@@ -358,14 +377,14 @@ async function buildOrReadOfflineReactModules(): Promise<ReadonlyMap<string, str
   });
   try {
     await lockFile.lock(true);
-    const cached = await readBundledModuleCache();
+    const cached = await readBundledModuleCache(paths.cache);
     if (cached) return cached;
     const modules = await buildOfflineReactModules();
     const serialized = JSON.stringify([...modules]);
     if (new TextEncoder().encode(serialized).byteLength > MAX_OFFLINE_REACT_CACHE_BYTES) {
       throw new Error("Offline React module cache exceeds its byte limit");
     }
-    await Deno.writeTextFile(OFFLINE_REACT_CACHE_PATH, serialized, {
+    await Deno.writeTextFile(paths.cache, serialized, {
       mode: 0o600,
     });
     return modules;
