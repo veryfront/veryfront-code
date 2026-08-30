@@ -6597,6 +6597,109 @@ export default config as const;
         }
       });
 
+      it("redacts a rejected userinfo symbol together with the whole candidate", async () => {
+        // Suffix restoration must never cut before the userinfo terminator:
+        // reparsing the prefix without the following `@` tests the symbol as
+        // host data, and the invalid port then exposed
+        // `¨value@例え.internal:99999/private` even though the same userinfo is
+        // accepted and percent-encoded when the port is valid.
+        for (
+          const [label, input] of [
+            ["two-slash-invalid-port", "Failed https://a¨value@例え.internal:99999/private"],
+            ["single-slash-invalid-port", "Failed https:/a¨value@例え.internal:99999/private"],
+            ["zero-slash-invalid-port", "Failed https:a¨value@例え.internal:99999/private"],
+            ["two-slash-valid-port", "Failed https://a¨value@例え.internal:8080/private"],
+          ] as const
+        ) {
+          const error = await loadFailure(
+            `vf-config-iri-userinfo-symbol-${label}-`,
+            `throw new Error(${JSON.stringify(input)});\n`,
+          );
+
+          assertEquals(error.message.endsWith("Failed [url]"), true, label);
+          assertEquals(error.message.includes("internal"), false, label);
+          assertEquals(error.message.includes("value"), false, label);
+          assertEquals(error.message.includes("private"), false, label);
+          assertEquals(error.message.includes("¨"), false, label);
+        }
+      });
+
+      it("keeps glued prose after a non-special IRI authority", async () => {
+        // WHATWG accepts sentence punctuation and the following text as an
+        // opaque percent-encoded host, so a successful parse proves nothing for
+        // a non-special scheme. The structural sentence boundary applies before
+        // the whole match is accepted.
+        for (
+          const [label, input, expected] of [
+            ["ideographic-full-stop", "Failed foo://例え.internal。Retry", "Failed [url]。Retry"],
+            ["latin-middle-dot", "Failed foo://例え.internal·Retry", "Failed [url]·Retry"],
+            ["katakana-middle-dot", "Failed foo://例え.internal・Retry", "Failed [url]・Retry"],
+            [
+              "glued-unicode-prose",
+              "Failed foo://例え.internal。次を試してください",
+              "Failed [url]。次を試してください",
+            ],
+          ] as const
+        ) {
+          const error = await loadFailure(
+            `vf-config-opaque-authority-prose-${label}-`,
+            `throw new Error(${JSON.stringify(input)});\n`,
+          );
+
+          assertStringIncludes(error.message, expected, label);
+          assertEquals(error.message.includes("internal"), false, label);
+        }
+      });
+
+      it("redacts a non-special IRI authority whole when punctuation is not a sentence boundary", async () => {
+        // Confidentiality wins over prose recovery: URL structure after the
+        // punctuation, an undotted authority prefix, or a host-shaped remainder
+        // all keep the candidate redacted whole.
+        for (
+          const [label, input] of [
+            ["path-after-punctuation", "Failed foo://例え。internal/private"],
+            ["port-after-punctuation", "Failed foo://例え.internal。Retry:8080"],
+            ["undotted-authority", "Failed foo://例え。internal"],
+            ["host-shaped-remainder", "Failed foo://a.b。c.d"],
+            ["userinfo-punctuation", "Failed foo://a。b@例え.internal"],
+          ] as const
+        ) {
+          const error = await loadFailure(
+            `vf-config-opaque-authority-boundary-${label}-`,
+            `throw new Error(${JSON.stringify(input)});\n`,
+          );
+
+          assertEquals(error.message.endsWith("Failed [url]"), true, label);
+          assertEquals(error.message.includes("internal"), false, label);
+          assertEquals(error.message.includes("private"), false, label);
+          assertEquals(error.message.includes("c.d"), false, label);
+        }
+      });
+
+      it("keeps special-scheme glued punctuation redacted whole", async () => {
+        // For special schemes the same punctuation is genuine host data:
+        // ideographic full stops are IDNA dot-equivalents, so `Retry` becomes a
+        // host label, and contextual middle dots fail validation without a
+        // restorable symbol boundary. `file:` is special too, and its two-slash
+        // remote-host form reaches the generic authority matcher.
+        for (
+          const [label, input] of [
+            ["https-ideographic-full-stop", "Failed https://例え.internal。Retry"],
+            ["https-latin-middle-dot", "Failed https://l·l.internal·Retry"],
+            ["https-katakana-middle-dot", "Failed https://例え.internal・Retry"],
+            ["file-ideographic-full-stop", "Failed file://例え.internal。Retry"],
+          ] as const
+        ) {
+          const error = await loadFailure(
+            `vf-config-special-authority-glued-${label}-`,
+            `throw new Error(${JSON.stringify(input)});\n`,
+          );
+
+          assertEquals(error.message.includes("internal"), false, label);
+          assertEquals(error.message.includes("Retry"), false, label);
+        }
+      });
+
       it("does not split redaction at the Unicode authority probe bound", async () => {
         const cases = [
           ["split-run", `${"a".repeat(511)}秘密.internal`],
