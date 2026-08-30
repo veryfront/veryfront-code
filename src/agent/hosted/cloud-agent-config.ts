@@ -32,6 +32,10 @@ import {
   resolveEnvironment,
   resolveProjectDir,
 } from "./cloud-agent-paths.ts";
+import {
+  isProviderReplayCheckpointEmissionEnabled,
+  PROVIDER_REPLAY_CHECKPOINT_EMISSION_ENV,
+} from "./chat-preparation.ts";
 
 /**
  * Full runtime context for a running cloud agent service instance.
@@ -46,6 +50,16 @@ export function getRemoteToolSourceFactory(
   context: Pick<NodeVeryfrontCloudAgentServiceContext, "options">,
 ): (config: RemoteMCPToolSourceConfig) => RemoteToolSource {
   return context.options.createRemoteToolSource ?? createRemoteMCPToolSource;
+}
+
+/** Snapshot the deployment-owned replay gate before any request-scoped environment is installed. */
+export function resolveProviderReplayCheckpointEmissionBootstrap(
+  input: Parameters<typeof resolveEnvironment>[0],
+): boolean {
+  const environment = resolveEnvironment(input);
+  return isProviderReplayCheckpointEmissionEnabled(
+    environment?.[PROVIDER_REPLAY_CHECKPOINT_EMISSION_ENV] ?? "",
+  );
 }
 
 /** Creates the shared runtime context for a cloud agent service instance. */
@@ -75,6 +89,10 @@ export function createNodeVeryfrontCloudAgentServiceContext(
     processTarget,
     projectDir: resolveProjectDir(options),
     infrastructure,
+    providerReplayCheckpointEmissionEnabled: resolveProviderReplayCheckpointEmissionBootstrap({
+      env: options.env,
+      processTarget,
+    }),
     trace,
     defaultAgentId: null as string | null,
     projectSteeringByAgentId: new Map<string, HostedAgentProjectSteering>(),

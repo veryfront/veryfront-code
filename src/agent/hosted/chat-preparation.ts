@@ -156,6 +156,8 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
   serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
   /** Verified provider replay state resolved by the authenticated server. */
   serverResolvedProviderReplayCheckpoints?: readonly ProviderReplayCheckpoint[];
+  /** Deployment-owned emission decision snapshotted before request-scoped environment setup. */
+  providerReplayCheckpointEmissionEnabled?: boolean;
   /** Verified integration tool grant for this run, resolved by the control plane. */
   serverResolvedIntegrationToolNames?: readonly string[];
   /** Service-owned authorization ceiling for Framework host tools. */
@@ -361,6 +363,8 @@ export type HostedChatExecutionPreparationInput<
   serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
   /** Verified provider replay state resolved by the authenticated server. */
   serverResolvedProviderReplayCheckpoints?: readonly ProviderReplayCheckpoint[];
+  /** Deployment-owned emission decision snapshotted before request-scoped environment setup. */
+  providerReplayCheckpointEmissionEnabled?: boolean;
   /** Verified integration tool grant for this run, resolved by the control plane. */
   serverResolvedIntegrationToolNames?: readonly string[];
   /** Service-owned authorization ceiling for Framework host tools. */
@@ -570,7 +574,8 @@ export async function prepareHostedChatRuntimeCreationOptions<
         : {}),
       ...createProviderReplayCheckpointCreationOptions(
         input.rootRunContext,
-        isProviderReplayCheckpointEmissionEnabled(),
+        input.providerReplayCheckpointEmissionEnabled ??
+          isProviderReplayCheckpointEmissionEnabled(),
         input.serverResolvedProviderReplayCheckpoints,
       ),
       clientProfile: runtimeConfig.clientProfile,
@@ -654,6 +659,7 @@ export async function prepareHostedChatExecution<
     buildInstructions: input.buildInstructions,
     serverResolvedToolExposureCheckpoint: input.serverResolvedToolExposureCheckpoint,
     serverResolvedProviderReplayCheckpoints: input.serverResolvedProviderReplayCheckpoints,
+    providerReplayCheckpointEmissionEnabled: input.providerReplayCheckpointEmissionEnabled,
     serverResolvedIntegrationToolNames: input.serverResolvedIntegrationToolNames,
     hostToolPolicy: input.hostToolPolicy,
   });
