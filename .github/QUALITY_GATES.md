@@ -70,10 +70,8 @@ The successful baseline pull request run
 had 12 minutes 17 seconds of active CI wall time. Its 29 non-skipped jobs used
 74.9 observed runner-minutes, and `tests (node)` used 12 minutes 2 seconds.
 
-Estimated npm-build savings: the same-build artifact flow replaces five npm
-builds with one. The estimate is four times the measured producer duration,
-or 80 percent of npm-build runner time before artifact transfer overhead. This
-is a build-reuse estimate, not an observed post-change end-to-end CI result.
-The [workflow summary calculation](workflows/cicd.yml) and
-[contract example](../tests/integration/ci/npm-compatibility-artifact-workflow.test.ts)
-record the estimate from the measured producer duration.
+npm-build reuse: the [npm-compatibility-artifact job](workflows/cicd.yml)
+builds the npm output once per commit, and every consumer job downloads the
+built artifact instead of rebuilding it. The
+[workflow contract test](../tests/integration/ci/npm-compatibility-artifact-workflow.test.ts)
+pins the single-build invariant and the download ordering in each consumer.

@@ -13,6 +13,7 @@ on:
       - "deno.lock"
       - ".github/workflows/e2e-playwright.yml"
       - ".github/actions/setup-deno/**"
+      - ".github/actions/install-chromium/**"
 
 permissions:
   contents: read
