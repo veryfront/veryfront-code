@@ -834,16 +834,18 @@ jobs:
     # resolver or the publisher cannot complete, the previous success stays on
     # the head and a later merge group reuses it, so a finding, a deleted
     # verdict, or a dismissed approval is silently lost. A new head has no
-    # status of its own. A base edit does need this fallback because the source
-    # SHA is unchanged and its prior success can otherwise remain current.
+    # status of its own. Lifecycle resets need this fallback because the source
+    # SHA is unchanged and prior success can otherwise remain current.
     needs: [target, review]
     if: >-
       failure() &&
       (github.event_name == 'issue_comment' ||
        github.event_name == 'workflow_run' ||
        (github.event_name == 'pull_request_target' &&
-        github.event.action == 'edited' &&
-        github.event.changes.base))
+        (github.event.action == 'reopened' ||
+         github.event.action == 'ready_for_review' ||
+         (github.event.action == 'edited' &&
+          github.event.changes.base))))
     permissions:
       contents: read
       pull-requests: read

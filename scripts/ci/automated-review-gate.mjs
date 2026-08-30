@@ -118,6 +118,13 @@ function isPinnedBot(user, login) {
     user?.type === "Bot";
 }
 
+function isPinnedGraphqlBot(user, login) {
+  const graphqlLogin = login.endsWith("[bot]") ? login.slice(0, -5) : login;
+  return user?.login === graphqlLogin &&
+    user?.databaseId === BOTS.get(login) &&
+    user?.__typename === "Bot";
+}
+
 function isLaterReview(candidate, current, candidateIndex, currentIndex) {
   const candidateTime = Date.parse(candidate?.submitted_at ?? "");
   const currentTime = Date.parse(current?.submitted_at ?? "");
@@ -1238,6 +1245,13 @@ const TIMED_OUT_AUTOMATED_REVIEWS_QUERY = `
                     state
                     description
                     createdAt
+                    creator {
+                      __typename
+                      login
+                      ... on Bot {
+                        databaseId
+                      }
+                    }
                   }
                 }
               }
@@ -1268,6 +1282,7 @@ function pendingReviewContext(pull, pullNumber) {
   return contexts.find((context) =>
     context?.context === AUTOMATED_REVIEW_STATUS_CONTEXT &&
     context?.state === "PENDING" &&
+    isPinnedGraphqlBot(context?.creator, GITHUB_ACTIONS_LOGIN) &&
     typeof context?.description === "string" &&
     context.description.startsWith(descriptionPrefix)
   );

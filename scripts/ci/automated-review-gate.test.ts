@@ -2459,6 +2459,11 @@ describe("automated review timeout watchdog", () => {
     createdAt?: string,
     overrides: Record<string, unknown> = {},
     statusState = "PENDING",
+    statusCreator: Record<string, unknown> = {
+      __typename: "Bot",
+      login: "github-actions",
+      databaseId: GITHUB_ACTIONS_ID,
+    },
   ) => ({
     number: pullNumber,
     isDraft: false,
@@ -2476,6 +2481,7 @@ describe("automated review timeout watchdog", () => {
                   HEAD.slice(0, 12)
                 }`,
                 createdAt,
+                creator: statusCreator,
               }],
           },
         },
@@ -2486,11 +2492,13 @@ describe("automated review timeout watchdog", () => {
 
   const timeoutDiscoveryFixture = (
     pages: Array<Record<string, unknown>[]>,
+    queryReads: unknown[] = [],
   ) => {
     let read = 0;
     return {
       graphql: (query: unknown, variables: Record<string, unknown>) => {
         assert(String(query).includes("TimedOutAutomatedReviews"));
+        queryReads.push(query);
         const nodes = pages[read] ?? [];
         const hasNextPage = read < pages.length - 1;
         read += 1;
@@ -2561,6 +2569,45 @@ describe("automated review timeout watchdog", () => {
     });
     assertEquals(targets.length, 25);
     assertEquals(targets.at(-1)?.pullNumber, 25);
+  });
+
+  it("does not let spoofed pending statuses starve the timeout batch", async () => {
+    const spoofedCreator = {
+      __typename: "Bot",
+      login: "github-actions",
+      databaseId: GITHUB_ACTIONS_ID + 1,
+    };
+    const pulls = [
+      ...Array.from({ length: 25 }, (_, index) =>
+        timeoutPull(
+          index + 1,
+          "2026-08-25T08:00:00Z",
+          {},
+          "PENDING",
+          spoofedCreator,
+        )),
+      timeoutPull(26, "2026-08-25T08:00:00Z"),
+    ];
+    const queryReads: unknown[] = [];
+    const github = timeoutDiscoveryFixture([pulls], queryReads);
+
+    assertEquals(
+      await findTimedOutAutomatedReviews({
+        github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        now: Date.parse("2026-08-25T08:30:00Z"),
+        reviewTimeoutMs: 1_800_000,
+      }),
+      [{ pullNumber: 26, headSha: HEAD }],
+    );
+    const query = String(queryReads[0]);
+    for (const field of ["creator", "__typename", "login", "databaseId"]) {
+      assert(
+        query.includes(field),
+        `timeout discovery must request the status creator ${field} field`,
+      );
+    }
   });
 
   it("continues bounded discovery beyond 500 open pull requests", async () => {
@@ -4573,6 +4620,8 @@ describe("automated review workflow", () => {
         "github.event_name == 'workflow_run'",
         "github.event_name == 'pull_request_target'",
         "github.event.action == 'edited'",
+        "github.event.action == 'reopened'",
+        "github.event.action == 'ready_for_review'",
         "github.event.changes.base",
       ]
     ) {
