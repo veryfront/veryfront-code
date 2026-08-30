@@ -1690,7 +1690,12 @@ describe("automated review publication", () => {
             updated_at: "2026-08-25T08:02:00Z",
           }),
         ]],
-        statuses: [[pendingAutomatedReviewStatus()]],
+        statuses: [[automatedReviewStatus({
+          id: 105,
+          state: "failure",
+          description: "PR#1 automated review rate limited",
+          target_url: "https://example.test/rate-limit",
+        })]],
       },
       commit: HEAD,
     });
@@ -2192,6 +2197,7 @@ describe("automated review timeout watchdog", () => {
     pullNumber: number,
     createdAt?: string,
     overrides: Record<string, unknown> = {},
+    statusState = "PENDING",
   ) => ({
     number: pullNumber,
     isDraft: false,
@@ -2204,7 +2210,7 @@ describe("automated review timeout watchdog", () => {
               ? []
               : [{
                 context: "Automated review",
-                state: "PENDING",
+                state: statusState,
                 description: `PR#${pullNumber} waits for review ${
                   HEAD.slice(0, 12)
                 }`,
@@ -2264,7 +2270,7 @@ describe("automated review timeout watchdog", () => {
   it("does not discover a younger pending status or a completed status", async () => {
     const github = timeoutDiscoveryFixture([[
       timeoutPull(1, "2026-08-25T08:00:01Z"),
-      timeoutPull(2, undefined),
+      timeoutPull(2, "2026-08-25T08:00:00Z", {}, "SUCCESS"),
     ]]);
 
     assertEquals(
