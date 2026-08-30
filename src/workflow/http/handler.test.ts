@@ -699,6 +699,206 @@ describe("createWorkflowHandler", () => {
       return [name, JSON.parse(data) as Record<string, unknown>];
     }
 
+    it("bounds the number of active event streams and releases cancelled streams", async () => {
+      const closeCalls: number[] = [];
+      let observationCalls = 0;
+      const boundedHandlers = createWorkflowHandler(client, {
+        authorize: () => "tester",
+        maxEventStreamsPerIdentity: 64,
+      });
+      Object.defineProperty(client, "observeRunEvents", {
+        configurable: true,
+        value: () => {
+          observationCalls++;
+          const call = observationCalls;
+          return Promise.resolve({
+            supported: true,
+            initial: {
+              id: "bounded-run",
+              workflowId: "pipeline",
+              status: "running",
+              input: {},
+              context: {},
+              nodeStates: {},
+              pendingApprovals: [],
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+            events: {
+              [Symbol.asyncIterator]() {
+                return {
+                  next: () => new Promise<IteratorResult<never>>(() => {}),
+                };
+              },
+            },
+            close: () => closeCalls.push(call),
+          });
+        },
+      });
+
+      const responses = await Promise.all(
+        Array.from(
+          { length: 64 },
+          () => boundedHandlers.GET(get("/api/workflows/runs/bounded-run/events")),
+        ),
+      );
+      expect(responses.every((response) => response.status === 200)).toBe(true);
+
+      const rejected = await boundedHandlers.GET(get("/api/workflows/runs/bounded-run/events"));
+      expect(rejected.status).toBe(429);
+      expect(observationCalls).toBe(64);
+
+      await responses[0]?.body?.cancel();
+      expect(closeCalls).toEqual([1]);
+
+      const replacement = await boundedHandlers.GET(
+        get("/api/workflows/runs/bounded-run/events"),
+      );
+      expect(replacement.status).toBe(200);
+      expect(observationCalls).toBe(65);
+
+      await Promise.all([
+        ...responses.slice(1).map((response) => response.body?.cancel()),
+        replacement.body?.cancel(),
+      ]);
+    });
+
+    it("limits active event streams per authorized identity", async () => {
+      let identity = "first-user";
+      let observationCalls = 0;
+      Object.defineProperty(client, "observeRunEvents", {
+        configurable: true,
+        value: () => {
+          observationCalls++;
+          return Promise.resolve({
+            supported: true,
+            initial: {
+              id: "identity-bounded-run",
+              workflowId: "pipeline",
+              status: "running",
+              input: {},
+              context: {},
+              nodeStates: {},
+              pendingApprovals: [],
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+            events: {
+              [Symbol.asyncIterator]() {
+                return {
+                  next: () => new Promise<IteratorResult<never>>(() => {}),
+                };
+              },
+            },
+            close: () => {},
+          });
+        },
+      });
+
+      const identityHandlers = createWorkflowHandler(client, {
+        authorize: () => identity,
+        maxEventStreams: 3,
+        maxEventStreamsPerIdentity: 2,
+      });
+      const firstUserResponses = await Promise.all(
+        Array.from(
+          { length: 2 },
+          () => identityHandlers.GET(get("/api/workflows/runs/identity-bounded-run/events")),
+        ),
+      );
+      expect(firstUserResponses.every((response) => response.status === 200)).toBe(true);
+      expect(
+        (await identityHandlers.GET(get("/api/workflows/runs/identity-bounded-run/events")))
+          .status,
+      ).toBe(429);
+
+      identity = "second-user";
+      const secondUserResponse = await identityHandlers.GET(
+        get("/api/workflows/runs/identity-bounded-run/events"),
+      );
+      expect(secondUserResponse.status).toBe(200);
+      expect(observationCalls).toBe(3);
+      expect(
+        (await identityHandlers.GET(get("/api/workflows/runs/identity-bounded-run/events")))
+          .status,
+      ).toBe(429);
+
+      await Promise.all([
+        ...firstUserResponses.map((response) => response.body?.cancel()),
+        secondUserResponse.body?.cancel(),
+      ]);
+    });
+
+    it("keeps the stream reservation until asynchronous teardown settles", async () => {
+      const iteratorTeardown = Promise.withResolvers<IteratorResult<never>>();
+      const observationTeardown = Promise.withResolvers<void>();
+      let returnCalls = 0;
+      let closeCalls = 0;
+      Object.defineProperty(client, "observeRunEvents", {
+        configurable: true,
+        value: () =>
+          Promise.resolve({
+            supported: true,
+            initial: {
+              id: "async-teardown-run",
+              workflowId: "pipeline",
+              status: "running",
+              input: {},
+              context: {},
+              nodeStates: {},
+              pendingApprovals: [],
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+            events: {
+              [Symbol.asyncIterator]() {
+                return {
+                  next: () => new Promise<IteratorResult<never>>(() => {}),
+                  return: () => {
+                    returnCalls++;
+                    return iteratorTeardown.promise;
+                  },
+                };
+              },
+            },
+            close: () => {
+              closeCalls++;
+              return observationTeardown.promise;
+            },
+          }),
+      });
+
+      const teardownHandlers = createWorkflowHandler(client, {
+        authorize: () => "teardown-user",
+        maxEventStreams: 1,
+        maxEventStreamsPerIdentity: 1,
+      });
+      const response = await teardownHandlers.GET(
+        get("/api/workflows/runs/async-teardown-run/events"),
+      );
+      expect(response.status).toBe(200);
+
+      const cancellation = response.body?.cancel();
+      await until(
+        async () => returnCalls === 1 && closeCalls === 1,
+        "asynchronous observation teardown to start",
+      );
+      expect(
+        (await teardownHandlers.GET(get("/api/workflows/runs/async-teardown-run/events")))
+          .status,
+      ).toBe(429);
+
+      iteratorTeardown.resolve({ value: undefined, done: true });
+      observationTeardown.resolve();
+      await cancellation;
+
+      const replacement = await teardownHandlers.GET(
+        get("/api/workflows/runs/async-teardown-run/events"),
+      );
+      expect(replacement.status).toBe(200);
+      await replacement.body?.cancel();
+    });
+
     it("streams each sequential step boundary before the next side effect runs", async () => {
       await client.destroy();
       const backend = new GatedActivationMemoryBackend({ debug: false });
