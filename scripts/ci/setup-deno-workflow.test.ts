@@ -901,7 +901,7 @@ jobs:
       asRecord(ci.jobs, "cicd jobs")["coverage-shards"],
       "coverage-shards job",
     );
-    assertEquals(coverageShards["timeout-minutes"], 15);
+    assertEquals(coverageShards["timeout-minutes"], 20);
     const coverageSetup = asSteps(
       coverageShards.steps,
       "coverage-shards steps",
