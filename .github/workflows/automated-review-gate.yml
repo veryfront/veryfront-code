@@ -684,7 +684,7 @@ jobs:
               queuePropagationPending: true,
               reviewEpochNotBefore:
                 context.payload.pull_request?.updated_at,
-              reviewEpochRunAttempt: context.runAttempt,
+              reviewEpochRunKey: String(context.runId),
             });
             if (Number.isSafeInteger(result.statusId)) {
               core.setOutput("source-status-id", String(result.statusId));
@@ -850,6 +850,7 @@ jobs:
                 : undefined,
               reviewEpochNotBefore:
                 context.payload.pull_request?.updated_at,
+              reviewEpochRunKey: String(context.runId),
             });
             core.notice(
               result.requested

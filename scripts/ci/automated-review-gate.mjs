@@ -209,7 +209,12 @@ function hasReviewRequest(comments, headSha, requestKey) {
   });
 }
 
-function durableReviewRequestKey(events, requestKey, reviewEpochNotBefore) {
+function durableReviewRequestKey(
+  events,
+  requestKey,
+  reviewEpochNotBefore,
+  reviewEpochRunKey,
+) {
   const eventKind = REVIEW_REQUEST_EVENT_KINDS.get(requestKey);
   if (eventKind === undefined) return requestKey;
   const notBefore = reviewEpochNotBefore === undefined
@@ -225,21 +230,18 @@ function durableReviewRequestKey(events, requestKey, reviewEpochNotBefore) {
   if (notBefore !== undefined && latestEpoch.time < notBefore) {
     throw new Error("The current review epoch event is not visible");
   }
+  if (notBefore !== undefined && latestEpoch.time === notBefore) {
+    if (
+      typeof reviewEpochRunKey !== "string" ||
+      !/^[1-9]\d*$/.test(reviewEpochRunKey)
+    ) throw new Error("Review epoch run key is malformed");
+    return `${requestKey}-run-${reviewEpochRunKey}`;
+  }
   if (latestEpoch.kind !== eventKind) return undefined;
   if (!Number.isSafeInteger(latestEpoch.id) || latestEpoch.id < 1) {
     throw new Error("Review epoch event identity is malformed");
   }
   return `${requestKey}-${latestEpoch.id}`;
-}
-
-function reviewEpochTiesTrigger(events, requestKey, reviewEpochNotBefore) {
-  const eventKind = REVIEW_REQUEST_EVENT_KINDS.get(requestKey);
-  if (eventKind === undefined || reviewEpochNotBefore === undefined) {
-    return false;
-  }
-  const latestEpoch = latestReviewEpochChange(events);
-  return latestEpoch?.kind === eventKind &&
-    latestEpoch.time === Date.parse(reviewEpochNotBefore);
 }
 
 function timelinePosition(timeline, event, id) {
@@ -1073,7 +1075,7 @@ export async function publishAutomatedReviewStatus({
   reviewTimeoutMs = /** @type {number | undefined} */ (undefined),
   queuePropagationPending = false,
   reviewEpochNotBefore = /** @type {string | undefined} */ (undefined),
-  reviewEpochRunAttempt = /** @type {number | undefined} */ (undefined),
+  reviewEpochRunKey = /** @type {string | undefined} */ (undefined),
 }) {
   let review;
   let failure;
@@ -1113,11 +1115,6 @@ export async function publishAutomatedReviewStatus({
     failure = new Error("Review timeout is invalid");
   } else if (!FULL_SHA.test(headSha)) {
     failure = new Error("Captured head is malformed");
-  } else if (
-    reviewEpochRunAttempt !== undefined &&
-    (!Number.isSafeInteger(reviewEpochRunAttempt) || reviewEpochRunAttempt < 1)
-  ) {
-    failure = new Error("Review epoch run attempt is invalid");
   } else {
     try {
       const current = await github.rest.pulls.get({
@@ -1179,6 +1176,7 @@ export async function publishAutomatedReviewStatus({
         events,
         reviewResetKey,
         reviewEpochNotBefore,
+        reviewEpochRunKey,
       );
       const resetRequested = effectiveReviewResetKey !== undefined &&
         hasReviewRequest(comments, headSha, effectiveReviewResetKey);
@@ -1189,17 +1187,6 @@ export async function publishAutomatedReviewStatus({
           baseBinding,
           effectiveReviewResetKey,
         );
-      if (
-        reviewEpochRunAttempt === 1 &&
-        (resetRequested || resetPublished) &&
-        reviewEpochTiesTrigger(
-          events,
-          reviewResetKey,
-          reviewEpochNotBefore,
-        )
-      ) {
-        throw new Error("The triggering review epoch event is not visible");
-      }
       resetPending = effectiveReviewResetKey !== undefined &&
         !resetRequested && !resetPublished;
       existingPendingStatus = latestPendingReviewStatus(
@@ -2738,6 +2725,7 @@ export async function requestAutomatedReview({
   headSha,
   requestKey = /** @type {string | undefined} */ (undefined),
   reviewEpochNotBefore = /** @type {string | undefined} */ (undefined),
+  reviewEpochRunKey = /** @type {string | undefined} */ (undefined),
   validateRequestEpoch = false,
 }) {
   // The comment body must stay a fixed instruction plus a verified commit
@@ -2773,6 +2761,7 @@ export async function requestAutomatedReview({
         events,
         requestKey,
         reviewEpochNotBefore,
+        reviewEpochRunKey,
       );
     } else {
       if (!concreteEpoch) {

@@ -2693,10 +2693,25 @@ describe("automated review publication", () => {
       pullUrl: "https://example.test/pr/1",
       reviewResetKey: "reopen",
       reviewEpochNotBefore: "2026-08-25T09:00:00Z",
-      reviewEpochRunAttempt: 1,
+      reviewEpochRunKey: "9001",
     });
-    assertEquals(tiedResult.state, "failure");
-    assertEquals(tiedResult.description, "PR#1 review status unavailable");
+    assertEquals(tiedResult.state, "pending");
+    assertEquals(
+      tiedFixture.published[0]?.description,
+      `PR#1 reset base:${
+        reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+      } key:bb86ec90ecc2`,
+    );
+
+    const runReset = automatedReviewResetStatus(
+      "2026-08-25T09:00:01Z",
+      {
+        id: 101,
+        description: `PR#1 reset base:${
+          reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+        } key:bb86ec90ecc2`,
+      },
+    );
 
     const rerun = await publishAutomatedReviewStatus({
       github: githubFixture({
@@ -2706,7 +2721,7 @@ describe("automated review publication", () => {
             id: 41,
             created_at: "2026-08-25T09:00:00Z",
           }]],
-          statuses: [[tiedReset]],
+          statuses: [[runReset, tiedReset]],
         },
       }).github,
       owner: "veryfront",
@@ -2716,10 +2731,10 @@ describe("automated review publication", () => {
       pullUrl: "https://example.test/pr/1",
       reviewResetKey: "reopen",
       reviewEpochNotBefore: "2026-08-25T09:00:00Z",
-      reviewEpochRunAttempt: 2,
+      reviewEpochRunKey: "9001",
     });
     assertEquals(rerun.state, "pending");
-    assertEquals(rerun.statusId, 100);
+    assertEquals(rerun.statusId, 101);
   });
 
   it("fails when exact-ref lookup is operationally unavailable", async () => {
@@ -5707,7 +5722,7 @@ describe("automated review workflow", () => {
     assert(
       script.includes("reviewEpochNotBefore") &&
         script.includes("context.payload.pull_request?.updated_at") &&
-        script.includes("reviewEpochRunAttempt: context.runAttempt"),
+        script.includes("reviewEpochRunKey: String(context.runId)"),
       "lifecycle publishers must wait for the triggering durable event",
     );
     assert(script.includes("sourceStatusId: result.statusId"));
@@ -5805,7 +5820,8 @@ describe("automated review workflow", () => {
     assert(requestScript.includes("requestKey"));
     assert(
       requestScript.includes("reviewEpochNotBefore") &&
-        requestScript.includes("context.payload.pull_request?.updated_at"),
+        requestScript.includes("context.payload.pull_request?.updated_at") &&
+        requestScript.includes("reviewEpochRunKey: String(context.runId)"),
       "lifecycle requests must wait for the triggering durable event",
     );
     assert(
