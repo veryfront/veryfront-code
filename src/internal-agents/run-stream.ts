@@ -833,6 +833,7 @@ function createProviderReplayCheckpointRelay(): {
       resolveIfReady();
     },
     fail: async () => {
+      if (terminalError) return;
       terminalError = new Error("Provider replay turn failed before its boundary");
       buffered.splice(0);
       const reject = rejectPending;
@@ -1248,6 +1249,7 @@ export async function createRuntimeAgentStreamResponse(
               threadId: input.threadId,
               agentId: agent.id,
             });
+            void providerReplayCheckpointRelay.fail();
             void cancelReaderOnce(cancellationError);
           };
 

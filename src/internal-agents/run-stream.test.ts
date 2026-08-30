@@ -908,6 +908,120 @@ describe("internal-agents/run-stream", () => {
     assertEquals(body.includes("event: RunFinished"), false);
   });
 
+  it("releases a pending tool boundary when the runtime turn fails", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let failProviderReplayTurn: (() => void | Promise<void>) | undefined;
+    const agent = {
+      id: "test",
+      config: {
+        id: "test",
+        model: "anthropic/claude-opus-4-8",
+        system: "test",
+      },
+    } as unknown as Agent;
+
+    const response = await createRuntimeAgentStreamResponse(
+      {
+        threadId: crypto.randomUUID(),
+        runId: "run_1",
+        messageId: crypto.randomUUID(),
+        messages: [],
+        tools: [],
+        context: [],
+      },
+      agent,
+      {
+        sessionManager,
+        providerReplayCheckpointEmissionEnabled: true,
+        persistProviderReplayCheckpoint: () => Promise.resolve(),
+        createRuntime: (runtimeAgent) => {
+          failProviderReplayTurn = (runtimeAgent.config as Agent["config"] & {
+            __vfProviderReplayCheckpointTurnFailed?: () => void | Promise<void>;
+          }).__vfProviderReplayCheckpointTurnFailed;
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(
+                    new TextEncoder().encode(
+                      'data: {"type":"step-start"}\n\ndata: {"type":"tool-input-start","toolCallId":"tool-1","toolName":"lookup"}\n\ndata: {"type":"tool-input-available","toolCallId":"tool-1","toolName":"lookup","input":{}}\n\n',
+                    ),
+                  );
+                  setTimeout(async () => {
+                    await failProviderReplayTurn?.();
+                    controller.enqueue(
+                      new TextEncoder().encode(
+                        'data: {"type":"error","error":"provider stream failed"}\n\n',
+                      ),
+                    );
+                    controller.close();
+                  }, 0);
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    const body = await response.text();
+
+    assertStringIncludes(body, "event: RunError");
+    assertEquals(body.includes("event: RunFinished"), false);
+  });
+
+  it("aborts a pending replay boundary when the run is cancelled", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let runtimeCancelCalls = 0;
+    const runId = "run_cancel_pending_replay";
+    const agent = {
+      id: "test",
+      config: {
+        id: "test",
+        model: "anthropic/claude-opus-4-8",
+        system: "test",
+      },
+    } as unknown as Agent;
+    const response = await createRuntimeAgentStreamResponse(
+      {
+        threadId: crypto.randomUUID(),
+        runId,
+        messageId: crypto.randomUUID(),
+        messages: [],
+        tools: [],
+        context: [],
+      },
+      agent,
+      {
+        sessionManager,
+        providerReplayCheckpointEmissionEnabled: true,
+        persistProviderReplayCheckpoint: () => Promise.resolve(),
+        createRuntime: () => ({
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    'data: {"type":"step-start"}\n\ndata: {"type":"tool-input-start","toolCallId":"tool-1","toolName":"lookup"}\n\ndata: {"type":"tool-input-available","toolCallId":"tool-1","toolName":"lookup","input":{}}\n\n',
+                  ),
+                );
+              },
+              cancel() {
+                runtimeCancelCalls++;
+              },
+            }),
+        }),
+      },
+    );
+
+    const body = response.text();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    assertEquals(sessionManager.cancelRun(runId), true);
+    await body;
+
+    assertEquals(runtimeCancelCalls, 1);
+    assertEquals(sessionManager.getRunStatus(runId), null);
+  });
+
   it("composes the runtime system prompt with project, environment, and tool context", async () => {
     const sessionManager = new AgentRunSessionManager();
     let capturedAgent: Agent | undefined;

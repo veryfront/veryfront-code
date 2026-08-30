@@ -188,7 +188,9 @@ describe("provider replay checkpoint emission", () => {
       }
 
       assertEquals(operations.indexOf("persist:done") < operations.indexOf("model:2"), true);
-      assertEquals(operations.indexOf("turn:complete") < operations.indexOf("model:2"), true);
+      const completionIndex = operations.indexOf("turn:complete");
+      assertEquals(completionIndex >= 0, true);
+      assertEquals(completionIndex < operations.indexOf("model:2"), true);
       assertEquals(checkpoints.length, 2);
       assertEquals(checkpoints[0]?.providerMessageBlockCounts, [2]);
       assertEquals(checkpoints[1]?.providerMessageBlockCounts, [2, 1]);
@@ -300,6 +302,35 @@ describe("provider replay checkpoint emission", () => {
       "checkpoint sink rejected",
     );
     assertEquals(model.callCount, 1);
+    assertEquals(failedTurns, 1);
+  });
+
+  it("fails the provider turn when streaming aborts before checkpoint capture", async () => {
+    let failedTurns = 0;
+    const model = scriptedModel([() => {
+      throw new Error("provider stream failed");
+    }], {
+      modelId: "anthropic/failed-provider-replay-stream",
+      provider: "anthropic",
+      only: "stream",
+    });
+    const config = {
+      id: "failed-provider-replay-stream",
+      model: "anthropic/failed-provider-replay-stream",
+      system: "Answer.",
+      skills: false,
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfProviderReplayCheckpointMessageId: MESSAGE_ID,
+      __vfProviderReplayCheckpointTurnFailed: () => {
+        failedTurns++;
+      },
+    } as AgentConfig & RuntimeToolFilterConfig;
+
+    const stream = await agent(config).stream({ input: "Answer" });
+    const body = await stream.toDataStreamResponse().text();
+
+    assertEquals(body.includes("provider stream failed"), true);
     assertEquals(failedTurns, 1);
   });
 

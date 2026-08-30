@@ -694,6 +694,7 @@ type RuntimeProviderReplayCheckpointEmission = {
   persist: ((checkpoint: ProviderReplayCheckpoint) => void | Promise<void>) | undefined;
   complete: (() => void | Promise<void>) | undefined;
   fail: (() => void | Promise<void>) | undefined;
+  failed: boolean;
   required: boolean;
 };
 
@@ -713,8 +714,17 @@ function resolveRuntimeProviderReplayCheckpointEmission(
     persist: getRuntimeProviderReplayCheckpointPersister(config),
     complete: getRuntimeProviderReplayCheckpointTurnComplete(config),
     fail: getRuntimeProviderReplayCheckpointTurnFailed(config),
+    failed: false,
     required: isRuntimeProviderReplayCheckpointPersistenceRequired(config),
   };
+}
+
+async function failProviderReplayCheckpointTurn(
+  emission: RuntimeProviderReplayCheckpointEmission,
+): Promise<void> {
+  if (emission.failed) return;
+  emission.failed = true;
+  await emission.fail?.();
 }
 
 async function persistProviderReplayCheckpointAfterTurn(input: {
@@ -724,7 +734,7 @@ async function persistProviderReplayCheckpointAfterTurn(input: {
   try {
     await persistProviderReplayCheckpointAfterTurnUnsafe(input);
   } catch (error) {
-    await input.emission.fail?.();
+    await failProviderReplayCheckpointTurn(input.emission);
     throw error;
   }
 }
@@ -1329,6 +1339,9 @@ export class AgentRuntime {
     const requestedModel = transport.requestedModel;
     const resolvedModelString = transport.resolvedModelString;
     const supportsToolCalling = supportsModelRuntimeToolCalling(transport.languageModel);
+    const providerReplayCheckpointEmission = resolveRuntimeProviderReplayCheckpointEmission(
+      this.config,
+    );
     debugRuntimeModelRemap(requestedModel, resolvedModelString);
 
     return withSpan("agent.generate", async (span) => {
@@ -1367,6 +1380,7 @@ export class AgentRuntime {
               context,
               runRuntimeContext,
               supportsToolCalling,
+              providerReplayCheckpointEmission,
               resolvedModelString,
               transport.languageModel,
               transport.headers,
@@ -1383,6 +1397,9 @@ export class AgentRuntime {
             )
           ),
       );
+    }).catch(async (error) => {
+      await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission);
+      throw error;
     });
   }
 
@@ -1449,6 +1466,9 @@ export class AgentRuntime {
     // Determine inference mode from the resolved model object, not the string.
     const isLocal = isLocalModelRuntime(languageModel);
     const supportsToolCalling = supportsModelRuntimeToolCalling(languageModel);
+    const providerReplayCheckpointEmission = resolveRuntimeProviderReplayCheckpointEmission(
+      this.config,
+    );
 
     // Eagerly verify the model runtime is available. For local models this
     // checks that @huggingface/transformers can be imported. Must happen
@@ -1510,6 +1530,7 @@ export class AgentRuntime {
                   context,
                   runRuntimeContext,
                   supportsToolCalling,
+                  providerReplayCheckpointEmission,
                   resolvedModelString,
                   languageModel,
                   transport.headers,
@@ -1539,6 +1560,13 @@ export class AgentRuntime {
           });
           closeSSEStream(controller);
         } catch (error) {
+          try {
+            await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission);
+          } catch (failureHookError) {
+            logger.debug("Provider replay failure hook rejected", {
+              error: failureHookError,
+            });
+          }
           if (isAbortError(error, streamAbortSignal)) {
             closeSSEStream(controller);
             return;
@@ -1582,6 +1610,7 @@ export class AgentRuntime {
     runtimeContext: Record<string, unknown> | undefined,
     runRuntimeContext: AgentRunRuntimeContext,
     supportsToolCalling: boolean,
+    providerReplayCheckpointEmission: RuntimeProviderReplayCheckpointEmission,
     modelString?: string,
     resolvedModel?: ModelRuntime,
     headers?: HeadersInit,
@@ -1605,9 +1634,6 @@ export class AgentRuntime {
         currentMessages,
         getRuntimeProviderReplayCheckpoints(this.config),
         { activeProvider: getActiveProviderReplayProvider(languageModel) },
-      );
-      const providerReplayCheckpointEmission = resolveRuntimeProviderReplayCheckpointEmission(
-        this.config,
       );
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
@@ -2259,6 +2285,7 @@ export class AgentRuntime {
     runtimeContext: Record<string, unknown> | undefined,
     runRuntimeContext: AgentRunRuntimeContext,
     supportsToolCalling: boolean,
+    providerReplayCheckpointEmission: RuntimeProviderReplayCheckpointEmission,
     modelString?: string,
     resolvedModel?: ModelRuntime,
     headers?: HeadersInit,
@@ -2280,9 +2307,6 @@ export class AgentRuntime {
       currentMessages,
       getRuntimeProviderReplayCheckpoints(this.config),
       { activeProvider: getActiveProviderReplayProvider(languageModel) },
-    );
-    const providerReplayCheckpointEmission = resolveRuntimeProviderReplayCheckpointEmission(
-      this.config,
     );
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
