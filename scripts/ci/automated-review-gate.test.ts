@@ -6,7 +6,9 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 import {
+  expireTimedOutAutomatedReview,
   findAutomatedReview,
+  findTimedOutAutomatedReviews,
   invalidateReviewProof,
   matchesReviewWakeupPullRequest,
   parseMergeQueuePullNumber,
@@ -124,6 +126,33 @@ function codexFindingComment(
     html_url: "https://example.test/finding",
     ...overrides,
   };
+}
+
+function codexRateLimitComment(
+  createdAt = "2026-08-25T08:01:00Z",
+) {
+  return {
+    id: 103,
+    user: bot("chatgpt-codex-connector[bot]", CODEX_ID),
+    body:
+      "You have reached your Codex usage limits for security reviews. Please try again later.",
+    html_url: "https://example.test/rate-limit",
+    created_at: createdAt,
+    updated_at: createdAt,
+  };
+}
+
+function pendingAutomatedReviewStatus(
+  createdAt = "2026-08-25T08:00:00Z",
+  pullNumber = 1,
+  id = 100,
+) {
+  return automatedReviewStatus({
+    id,
+    state: "pending",
+    description: `PR#${pullNumber} waits for review ${HEAD.slice(0, 12)}`,
+    created_at: createdAt,
+  });
 }
 
 function associatedPull(overrides: Record<string, unknown> = {}) {
@@ -1031,6 +1060,7 @@ function githubFixture(options: {
   statusIds?: unknown[];
 } = {}) {
   const endpoints = {
+    openPulls: () => undefined,
     reviews: () => undefined,
     comments: () => undefined,
     events: () => undefined,
@@ -1079,6 +1109,7 @@ function githubFixture(options: {
     },
     rest: {
       pulls: {
+        list: endpoints.openPulls,
         listReviews: endpoints.reviews,
         get: () => {
           if (options.pullError) return Promise.reject(options.pullError);
@@ -1526,6 +1557,124 @@ describe("automated review publication", () => {
     );
   });
 
+  it("fails a current-head Codex usage-limit reply", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexRateLimitComment()]],
+        statuses: [[pendingAutomatedReviewStatus()]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      now: Date.parse("2026-08-25T08:05:00Z"),
+      reviewTimeoutMs: 1_800_000,
+    });
+
+    assertEquals(result.state, "failure");
+    assertEquals(result.description, "PR#1 automated review rate limited");
+    assertEquals(fixture.published[0]?.state, "failure");
+    assertEquals(
+      fixture.published[0]?.target_url,
+      "https://example.test/rate-limit",
+    );
+  });
+
+  it("does not apply an old-head usage-limit reply to a newer pending epoch", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexRateLimitComment("2026-08-25T07:59:59Z")]],
+        statuses: [[pendingAutomatedReviewStatus()]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      now: Date.parse("2026-08-25T08:05:00Z"),
+      reviewTimeoutMs: 1_800_000,
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(fixture.published[0]?.state, "pending");
+  });
+
+  it("lets later exact-head proof recover a rate-limited review", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[
+          codexRateLimitComment(),
+          codexComment(HEAD.slice(0, 10), {
+            id: 104,
+            created_at: "2026-08-25T08:02:00Z",
+            updated_at: "2026-08-25T08:02:00Z",
+          }),
+        ]],
+        statuses: [[pendingAutomatedReviewStatus()]],
+      },
+      commit: HEAD,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      now: Date.parse("2026-08-25T08:05:00Z"),
+      reviewTimeoutMs: 1_800_000,
+    });
+
+    assertEquals(result.state, "success");
+    assertEquals(fixture.published[0]?.state, "success");
+  });
+
+  it("fails pending review evidence at the 30-minute timeout", async () => {
+    const fixture = githubFixture({
+      pages: { statuses: [[pendingAutomatedReviewStatus()]] },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      now: Date.parse("2026-08-25T08:30:00Z"),
+      reviewTimeoutMs: 1_800_000,
+    });
+
+    assertEquals(result.state, "failure");
+    assertEquals(result.description, "PR#1 automated review timed out");
+    assertEquals(fixture.published[0]?.state, "failure");
+  });
+
+  it("keeps a younger unreviewed head pending", async () => {
+    const fixture = githubFixture({
+      pages: { statuses: [[pendingAutomatedReviewStatus()]] },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+      now: Date.parse("2026-08-25T08:29:59Z"),
+      reviewTimeoutMs: 1_800_000,
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(fixture.published[0]?.state, "pending");
+  });
+
   it("fails when exact-ref lookup is operationally unavailable", async () => {
     const fixture = githubFixture({
       pages: { comments: [[codexComment()]] },
@@ -1918,6 +2067,191 @@ describe("automated review publication", () => {
     assertEquals(result.state, "failure");
     assertEquals(result.review, undefined);
     assertEquals(fixture.published[0]?.state, "failure");
+  });
+});
+
+describe("automated review timeout watchdog", () => {
+  it("discovers only expired pending reviews for open non-draft heads", async () => {
+    const fixture = githubFixture({
+      pages: {
+        openPulls: [[
+          associatedPull({ number: 1, state: "open", draft: false }),
+          associatedPull({
+            number: 2,
+            state: "open",
+            draft: true,
+            head: { sha: OTHER_HEAD },
+          }),
+        ]],
+        statuses: [[pendingAutomatedReviewStatus()]],
+      },
+    });
+
+    assertEquals(
+      await findTimedOutAutomatedReviews({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        now: Date.parse("2026-08-25T08:30:00Z"),
+        reviewTimeoutMs: 1_800_000,
+      }),
+      [{ pullNumber: 1, headSha: HEAD, pendingStatusId: 100 }],
+    );
+  });
+
+  it("does not discover a younger pending status or a completed status", async () => {
+    const pulls = [[
+      associatedPull({ number: 1, state: "open", draft: false }),
+      associatedPull({
+        number: 2,
+        state: "open",
+        draft: false,
+        head: { sha: OTHER_HEAD },
+      }),
+    ]];
+    const fixture = githubFixture({
+      pages: { openPulls: pulls },
+      pageResponses: {
+        statuses: [
+          [[pendingAutomatedReviewStatus("2026-08-25T08:00:01Z")]],
+          [[automatedReviewStatus({ id: 101 })]],
+        ],
+      },
+    });
+
+    assertEquals(
+      await findTimedOutAutomatedReviews({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        now: Date.parse("2026-08-25T08:30:00Z"),
+        reviewTimeoutMs: 1_800_000,
+      }),
+      [],
+    );
+  });
+
+  it("bounds scheduled fan-out when many reviews time out together", async () => {
+    const pulls = Array.from({ length: 26 }, (_, index) =>
+      associatedPull({
+        number: index + 1,
+        state: "open",
+        draft: false,
+      })
+    );
+    const fixture = githubFixture({
+      pages: { openPulls: [pulls] },
+      pageResponses: {
+        statuses: pulls.map((pull) => [[pendingAutomatedReviewStatus(
+          "2026-08-25T08:00:00Z",
+          Number(pull.number),
+          100 + Number(pull.number),
+        )]]),
+      },
+    });
+
+    const targets = await findTimedOutAutomatedReviews({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      now: Date.parse("2026-08-25T08:30:00Z"),
+      reviewTimeoutMs: 1_800_000,
+    });
+    assertEquals(targets.length, 25);
+    assertEquals(targets.at(-1)?.pullNumber, 25);
+  });
+
+  it("revalidates and expires the same pending status under the publisher", async () => {
+    const fixture = githubFixture({
+      pages: {
+        statuses: [[pendingAutomatedReviewStatus()]],
+        refs: [[]],
+      },
+      commit: HEAD,
+    });
+    const result = await expireTimedOutAutomatedReview({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pendingStatusId: 100,
+      now: Date.parse("2026-08-25T08:30:00Z"),
+      reviewTimeoutMs: 1_800_000,
+    });
+
+    assertEquals(result.expired, true);
+    assert("state" in result);
+    assertEquals(result.state, "failure");
+    assert(fixture.published.length > 0);
+    assertEquals(
+      fixture.published.every((status) => status.state === "failure"),
+      true,
+    );
+  });
+
+  it("publishes review proof that arrives before timeout revalidation", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexComment()]],
+        statuses: [[pendingAutomatedReviewStatus()]],
+        refs: [[]],
+      },
+      commit: HEAD,
+    });
+    const result = await expireTimedOutAutomatedReview({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pendingStatusId: 100,
+      now: Date.parse("2026-08-25T08:30:00Z"),
+      reviewTimeoutMs: 1_800_000,
+    });
+
+    assertEquals(result.expired, false);
+    assertEquals(result.reason, "reviewed");
+    assert("state" in result);
+    assertEquals(result.state, "success");
+    assertEquals(fixture.published[0]?.state, "success");
+  });
+
+  it("does not overwrite a later status or a changed head", async () => {
+    const laterStatus = automatedReviewStatus({ id: 101 });
+    const changedStatusFixture = githubFixture({
+      pages: { statuses: [[laterStatus]] },
+    });
+    assertEquals(
+      await expireTimedOutAutomatedReview({
+        github: changedStatusFixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha: HEAD,
+        pendingStatusId: 100,
+        now: Date.parse("2026-08-25T08:30:00Z"),
+        reviewTimeoutMs: 1_800_000,
+      }),
+      { expired: false, reason: "status-changed" },
+    );
+    assertEquals(changedStatusFixture.published, []);
+
+    const changedHeadFixture = githubFixture({ headResponses: [OTHER_HEAD] });
+    assertEquals(
+      await expireTimedOutAutomatedReview({
+        github: changedHeadFixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha: HEAD,
+        pendingStatusId: 100,
+        now: Date.parse("2026-08-25T08:30:00Z"),
+        reviewTimeoutMs: 1_800_000,
+      }),
+      { expired: false, reason: "stale-head" },
+    );
+    assertEquals(changedHeadFixture.published, []);
   });
 });
 
@@ -3282,12 +3616,81 @@ describe("automated review workflow", () => {
       record(triggers.merge_group, "merge group trigger").types,
       ["checks_requested"],
     );
+    assertEquals(
+      triggers.schedule,
+      [{ cron: "*/5 * * * *" }],
+      "the timeout watchdog must revisit silent pending reviews",
+    );
     assertEquals("status" in triggers, false);
     const jobs = record(workflow.jobs, "jobs");
+    const timeoutTargetsJob = record(
+      jobs.timeout_targets,
+      "timeout target discovery job",
+    );
+    assertEquals(timeoutTargetsJob.if, "github.event_name == 'schedule'");
+    assertEquals(
+      record(timeoutTargetsJob.permissions, "timeout discovery permissions"),
+      {
+        contents: "read",
+        "pull-requests": "read",
+        statuses: "read",
+      },
+      "timeout discovery must stay read-only",
+    );
+    const timeoutTargetSteps = timeoutTargetsJob.steps;
+    assert(Array.isArray(timeoutTargetSteps));
+    const timeoutTargetScript = String(
+      record(
+        record(timeoutTargetSteps[0], "timeout target discovery").with,
+        "timeout target discovery inputs",
+      ).script,
+    );
+    assertTrustedGateLoad(timeoutTargetScript);
+    assert(timeoutTargetScript.includes("findTimedOutAutomatedReviews"));
+    assert(timeoutTargetScript.includes("AUTOMATED_REVIEW_TIMEOUT_MS"));
+
+    const timeoutJob = record(jobs.timeout, "timeout publisher job");
+    assertEquals(timeoutJob.needs, "timeout_targets");
+    assertEquals(timeoutJob.if, "needs.timeout_targets.outputs.targets != '[]'");
+    assertEquals(
+      record(
+        record(timeoutJob.strategy, "timeout publisher strategy").matrix,
+        "timeout publisher matrix",
+      ).target,
+      "${{ fromJSON(needs.timeout_targets.outputs.targets) }}",
+    );
+    assertEquals(
+      record(timeoutJob.permissions, "timeout publisher permissions"),
+      {
+        contents: "read",
+        "pull-requests": "read",
+        statuses: "write",
+      },
+    );
+    assertEquals(
+      record(timeoutJob.concurrency, "timeout publisher concurrency"),
+      {
+        group: "automated-review-pr-${{ matrix.target.pullNumber }}",
+        queue: "max",
+      },
+      "timeout publication must serialize with normal per-pull publication",
+    );
+    const timeoutSteps = timeoutJob.steps;
+    assert(Array.isArray(timeoutSteps));
+    const timeoutScript = String(
+      record(
+        record(timeoutSteps[0], "timeout publisher").with,
+        "timeout publisher inputs",
+      ).script,
+    );
+    assertTrustedGateLoad(timeoutScript);
+    assert(timeoutScript.includes("expireTimedOutAutomatedReview"));
+    assert(timeoutScript.includes("AUTOMATED_REVIEW_TIMEOUT_MS"));
     const targetJob = record(jobs.target, "target job");
     const targetIf = String(targetJob.if);
     for (
       const condition of [
+        "github.event_name != 'schedule'",
         "github.event_name == 'merge_group'",
         "github.event.issue.pull_request",
         "github.event.comment.user.login == 'chatgpt-codex-connector[bot]'",

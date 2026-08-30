@@ -7,12 +7,15 @@ const BOTS = new Map([
 const CODEX_LOGIN = "chatgpt-codex-connector[bot]";
 const GITHUB_ACTIONS_LOGIN = "github-actions[bot]";
 const CODEX_NO_FINDINGS = "Codex Review: Didn't find any major issues.";
+const CODEX_USAGE_LIMIT =
+  /^You have reached your Codex usage limits(?: for [^.]+)?\. Please try again later\.$/i;
 const CODEX_REVIEWED_COMMIT = /\*\*Reviewed commit:\*\* `([0-9a-f]{10})`/i;
 const REVIEW_REQUEST_MARKER =
   /^<!-- automated-review-request: ([0-9a-f]{40})(?: ([a-z0-9-]{1,64}))? -->\n@codex review$/i;
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const REQUEST_KEY = /^[a-z0-9-]{1,64}$/i;
 const MAX_ITEMS_PER_SOURCE = 500;
+const MAX_TIMEOUT_TARGETS_PER_RUN = 25;
 const TRUSTED_PERMISSIONS = new Set(["admin", "maintain", "write"]);
 /** @type {(ref: string) => Promise<string | undefined>} */
 const NO_COMMIT = () => Promise.resolve(undefined);
@@ -20,6 +23,7 @@ const NO_COMMIT = () => Promise.resolve(undefined);
 const NO_TRUSTED_HUMAN = () => Promise.resolve(false);
 
 export const AUTOMATED_REVIEW_STATUS_CONTEXT = "Automated review";
+export const AUTOMATED_REVIEW_TIMEOUT_MS = 30 * 60 * 1000;
 
 const REVIEW_WAKEUP_PATH = ".github/workflows/automated-review-wakeup.yml";
 
@@ -345,6 +349,44 @@ function latestReviewResetTime(statuses, pullNumber, baseBinding) {
     const createdAt = Date.parse(status?.created_at ?? "");
     if (!Number.isFinite(createdAt)) return Number.POSITIVE_INFINITY;
     if (latest === undefined || createdAt > latest) latest = createdAt;
+  }
+  return latest;
+}
+
+function latestPendingReviewStatus(statuses, pullNumber) {
+  const status = latestReviewGateStatusForPull(statuses, pullNumber);
+  return status?.state === "pending" &&
+      isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
+    ? status
+    : undefined;
+}
+
+function pendingReviewAge(status, now) {
+  const createdAt = Date.parse(status?.created_at ?? "");
+  return Number.isFinite(createdAt)
+    ? now - createdAt
+    : Number.POSITIVE_INFINITY;
+}
+
+function latestCodexUsageLimit(comments, pendingStatus) {
+  if (!pendingStatus) return undefined;
+  const pendingAt = Date.parse(pendingStatus.created_at ?? "");
+  if (!Number.isFinite(pendingAt)) return undefined;
+  let latest;
+  let latestAt = Number.NEGATIVE_INFINITY;
+  for (const comment of comments) {
+    if (
+      !isPinnedBot(comment?.user, CODEX_LOGIN) ||
+      typeof comment?.body !== "string" ||
+      !CODEX_USAGE_LIMIT.test(comment.body.trim()) ||
+      !isProvablyUneditedComment(comment)
+    ) continue;
+    const createdAt = Date.parse(comment.created_at ?? "");
+    if (!Number.isFinite(createdAt) || createdAt < pendingAt) continue;
+    if (createdAt >= latestAt) {
+      latest = comment;
+      latestAt = createdAt;
+    }
   }
   return latest;
 }
@@ -743,6 +785,8 @@ export async function publishAutomatedReviewStatus({
   headSha,
   pullUrl,
   reviewResetKey = /** @type {string | undefined} */ (undefined),
+  now = Date.now(),
+  reviewTimeoutMs = /** @type {number | undefined} */ (undefined),
 }) {
   let review;
   let failure;
@@ -751,11 +795,20 @@ export async function publishAutomatedReviewStatus({
   let baseRef;
   let isDraft = false;
   let resetPending = false;
+  let failureKind;
+  let failureUrl;
   if (
     reviewResetKey !== undefined &&
     (typeof reviewResetKey !== "string" || !REQUEST_KEY.test(reviewResetKey))
   ) {
     failure = new Error("Review reset key is malformed");
+  } else if (!Number.isFinite(now)) {
+    failure = new Error("Review reconciliation time is invalid");
+  } else if (
+    reviewTimeoutMs !== undefined &&
+    (!Number.isSafeInteger(reviewTimeoutMs) || reviewTimeoutMs < 1)
+  ) {
+    failure = new Error("Review timeout is invalid");
   } else if (!FULL_SHA.test(headSha)) {
     failure = new Error("Captured head is malformed");
   } else {
@@ -836,6 +889,27 @@ export async function publishAutomatedReviewStatus({
             }),
           latestReviewResetTime(statuses, pullNumber, baseBinding),
         );
+        if (!review) {
+          const pendingStatus = latestPendingReviewStatus(
+            statuses,
+            pullNumber,
+          );
+          const usageLimit = latestCodexUsageLimit(comments, pendingStatus);
+          if (usageLimit) {
+            failure = new Error("Automated review was rate limited");
+            failureKind = "rate-limited";
+            failureUrl = typeof usageLimit.html_url === "string"
+              ? usageLimit.html_url
+              : undefined;
+          } else if (
+            pendingStatus &&
+            reviewTimeoutMs !== undefined &&
+            pendingReviewAge(pendingStatus, now) >= reviewTimeoutMs
+          ) {
+            failure = new Error("Automated review timed out");
+            failureKind = "timed-out";
+          }
+        }
       }
     } catch (error) {
       review = undefined;
@@ -864,6 +938,8 @@ export async function publishAutomatedReviewStatus({
   } catch (error) {
     review = undefined;
     failure = error instanceof Error ? error : new Error(String(error));
+    failureKind = undefined;
+    failureUrl = undefined;
   }
 
   // No proof for the captured head is the normal state right after a push,
@@ -877,8 +953,13 @@ export async function publishAutomatedReviewStatus({
   else if (review) state = "success";
 
   let description;
-  if (failure) description = `PR#${pullNumber} review status unavailable`;
-  else if (resetPending) {
+  if (failureKind === "rate-limited") {
+    description = `PR#${pullNumber} automated review rate limited`;
+  } else if (failureKind === "timed-out") {
+    description = `PR#${pullNumber} automated review timed out`;
+  } else if (failure) {
+    description = `PR#${pullNumber} review status unavailable`;
+  } else if (resetPending) {
     description = reviewResetDescription(
       pullNumber,
       baseBinding,
@@ -897,7 +978,7 @@ export async function publishAutomatedReviewStatus({
     state,
     context: AUTOMATED_REVIEW_STATUS_CONTEXT,
     description,
-    target_url: review?.url ?? pullUrl,
+    target_url: failureUrl ?? review?.url ?? pullUrl,
   });
   let statusId = statusResponse?.data?.id;
   if (state === "success" && !isPositiveStatusId(statusId)) {
@@ -923,6 +1004,154 @@ export async function publishAutomatedReviewStatus({
     throw new Error("Published review status identity is malformed");
   }
   return { state, review, failure, description, baseRef, statusId };
+}
+
+function requireReviewTimeoutInputs(now, reviewTimeoutMs) {
+  if (!Number.isFinite(now)) {
+    throw new Error("Review timeout discovery time is invalid");
+  }
+  if (!Number.isSafeInteger(reviewTimeoutMs) || reviewTimeoutMs < 1) {
+    throw new Error("Review timeout is invalid");
+  }
+}
+
+/** Discover current non-draft pull request heads whose review status expired. */
+export async function findTimedOutAutomatedReviews({
+  github,
+  owner,
+  repo,
+  now = Date.now(),
+  reviewTimeoutMs = AUTOMATED_REVIEW_TIMEOUT_MS,
+}) {
+  requireReviewTimeoutInputs(now, reviewTimeoutMs);
+  const pulls = await collectAll(
+    github,
+    github.rest.pulls.list,
+    { owner, repo, state: "open", sort: "created", direction: "asc" },
+    "open pull requests",
+  );
+  const targets = [];
+  for (const pull of pulls) {
+    if (pull?.state !== "open" || pull?.draft === true) continue;
+    const pullNumber = pull?.number;
+    const headSha = pull?.head?.sha;
+    if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+      throw new Error("Open pull request number is invalid");
+    }
+    if (typeof headSha !== "string" || !FULL_SHA.test(headSha)) {
+      throw new Error(`PR #${pullNumber} head commit is invalid`);
+    }
+    const statuses = await collectAll(
+      github,
+      github.rest.repos.listCommitStatusesForRef,
+      { owner, repo, ref: headSha },
+      `PR #${pullNumber} review statuses`,
+    );
+    const pendingStatus = latestPendingReviewStatus(statuses, pullNumber);
+    if (
+      !pendingStatus ||
+      !isPositiveStatusId(pendingStatus.id) ||
+      pendingReviewAge(pendingStatus, now) < reviewTimeoutMs
+    ) continue;
+    targets.push({
+      pullNumber,
+      headSha: headSha.toLowerCase(),
+      pendingStatusId: pendingStatus.id,
+    });
+    if (targets.length >= MAX_TIMEOUT_TARGETS_PER_RUN) break;
+  }
+  return targets;
+}
+
+/** Revalidate one discovered timeout and publish under the per-pull lock. */
+export async function expireTimedOutAutomatedReview({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  headSha,
+  pendingStatusId,
+  now = Date.now(),
+  reviewTimeoutMs = AUTOMATED_REVIEW_TIMEOUT_MS,
+}) {
+  requireReviewTimeoutInputs(now, reviewTimeoutMs);
+  if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+    throw new Error("Timed-out pull request number is invalid");
+  }
+  if (typeof headSha !== "string" || !FULL_SHA.test(headSha)) {
+    throw new Error("Timed-out pull request head is invalid");
+  }
+  if (!isPositiveStatusId(pendingStatusId)) {
+    throw new Error("Timed-out review status identity is invalid");
+  }
+
+  const response = await github.rest.pulls.get({
+    owner,
+    repo,
+    pull_number: pullNumber,
+  });
+  const pull = response?.data;
+  if (
+    pull?.state !== "open" ||
+    typeof pull?.head?.sha !== "string" ||
+    pull.head.sha.toLowerCase() !== headSha.toLowerCase()
+  ) return { expired: false, reason: "stale-head" };
+  if (pull?.draft === true) return { expired: false, reason: "draft" };
+
+  const statuses = await collectAll(
+    github,
+    github.rest.repos.listCommitStatusesForRef,
+    { owner, repo, ref: headSha },
+    "timeout review statuses",
+  );
+  const pendingStatus = latestPendingReviewStatus(statuses, pullNumber);
+  if (pendingStatus?.id !== pendingStatusId) {
+    return { expired: false, reason: "status-changed" };
+  }
+  if (pendingReviewAge(pendingStatus, now) < reviewTimeoutMs) {
+    return { expired: false, reason: "not-expired" };
+  }
+
+  const pullUrl = typeof pull.html_url === "string"
+    ? pull.html_url
+    : `https://github.com/${owner}/${repo}/pull/${pullNumber}`;
+  const result = await publishAutomatedReviewStatus({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    headSha,
+    pullUrl,
+    now,
+    reviewTimeoutMs,
+  });
+  if (result.state === "failure") {
+    const resolution = await publishReviewResolutionFailure({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      sourceHeadSha: headSha,
+    });
+    return { ...result, expired: true, resolution };
+  }
+  if (result.state === "success" && typeof result.baseRef === "string") {
+    const queueResults = await reconcileActiveMergeGroupReviewStatuses({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      sourceHeadSha: headSha,
+      baseRef: result.baseRef,
+    });
+    return {
+      ...result,
+      expired: false,
+      reason: "reviewed",
+      queueResults,
+    };
+  }
+  return { ...result, expired: false, reason: "revalidated" };
 }
 
 /**
