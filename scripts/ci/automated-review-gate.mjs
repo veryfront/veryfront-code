@@ -17,6 +17,12 @@ const REQUEST_KEY = /^[a-z0-9-]{1,64}$/i;
 const MAX_ITEMS_PER_SOURCE = 500;
 const MAX_TIMEOUT_TARGETS_PER_RUN = 25;
 const MAX_TIMEOUT_DISCOVERY_PAGES = 20;
+const REVIEW_PROPAGATION_RETRY_SUFFIX = "; queue retry pending";
+const REVIEW_FAILURE_DETAILS = new Map([
+  ["rate-limited", "automated review rate limited"],
+  ["timed-out", "automated review timed out"],
+  ["unavailable", "review status unavailable"],
+]);
 const TRUSTED_PERMISSIONS = new Set(["admin", "maintain", "write"]);
 const REVIEW_EPOCH_EVENTS = new Set([
   "base_ref_changed",
@@ -465,9 +471,58 @@ function commentFollowsHeadCommit(timeline, commentId, headSha) {
   return headIndex >= 0 && commentIndex > headIndex;
 }
 
-function latestTerminalReviewStatus(statuses, pullNumber, boundary) {
-  const rateLimited = `PR#${pullNumber} automated review rate limited`;
-  const timedOut = `PR#${pullNumber} automated review timed out`;
+function reviewFailureDescription(pullNumber, kind, retryPending = false) {
+  const detail = REVIEW_FAILURE_DETAILS.get(kind) ??
+    "review status unavailable";
+  return `PR#${pullNumber} ${detail}${
+    retryPending ? REVIEW_PROPAGATION_RETRY_SUFFIX : ""
+  }`;
+}
+
+function reviewFailureKindFromDescription(
+  description,
+  pullNumber,
+  retryPending = false,
+) {
+  for (const kind of REVIEW_FAILURE_DETAILS.keys()) {
+    if (
+      description === reviewFailureDescription(pullNumber, kind, retryPending)
+    ) return kind;
+  }
+  return undefined;
+}
+
+function terminalStatusHasBoundaryProof(
+  status,
+  comments,
+  boundary,
+  timeline,
+  headSha,
+) {
+  if (typeof status?.target_url !== "string") return false;
+  const comment = comments.find((candidate) =>
+    candidate?.html_url === status.target_url
+  );
+  return comment !== undefined &&
+    latestCodexUsageLimit(
+        [comment],
+        boundary,
+        comment.id,
+        timeline,
+        headSha,
+      ) === comment;
+}
+
+function latestTerminalReviewStatus(
+  statuses,
+  pullNumber,
+  boundary,
+  comments,
+  timeline,
+  headSha,
+) {
+  const rateLimited = reviewFailureDescription(pullNumber, "rate-limited");
+  const timedOut = reviewFailureDescription(pullNumber, "timed-out");
   for (const status of statuses) {
     if (
       status?.context !== AUTOMATED_REVIEW_STATUS_CONTEXT ||
@@ -478,7 +533,17 @@ function latestTerminalReviewStatus(statuses, pullNumber, boundary) {
     ) continue;
     if (boundary !== undefined) {
       const createdAt = Date.parse(status?.created_at ?? "");
-      if (!Number.isFinite(createdAt) || createdAt <= boundary.time) continue;
+      if (!Number.isFinite(createdAt) || createdAt < boundary.time) continue;
+      if (
+        createdAt === boundary.time &&
+        !terminalStatusHasBoundaryProof(
+          status,
+          comments,
+          boundary,
+          timeline,
+          headSha,
+        )
+      ) continue;
     }
     return status;
   }
@@ -918,6 +983,7 @@ export async function publishAutomatedReviewStatus({
   reviewFailureCommentId = /** @type {number | undefined} */ (undefined),
   now = Date.now(),
   reviewTimeoutMs = /** @type {number | undefined} */ (undefined),
+  queuePropagationPending = false,
 }) {
   let review;
   let failure;
@@ -1043,6 +1109,9 @@ export async function publishAutomatedReviewStatus({
         statuses,
         pullNumber,
         reviewBoundary,
+        comments,
+        timeline,
+        headSha,
       );
       existingTerminalStatusIsLatest = existingTerminalStatus?.id ===
         latestReviewGateStatusForPull(statuses, pullNumber)?.id;
@@ -1143,12 +1212,12 @@ export async function publishAutomatedReviewStatus({
   else if (review) state = "success";
 
   let description;
-  if (failureKind === "rate-limited") {
-    description = `PR#${pullNumber} automated review rate limited`;
-  } else if (failureKind === "timed-out") {
-    description = `PR#${pullNumber} automated review timed out`;
-  } else if (failure) {
-    description = `PR#${pullNumber} review status unavailable`;
+  if (failure) {
+    description = reviewFailureDescription(
+      pullNumber,
+      failureKind ?? "unavailable",
+      queuePropagationPending,
+    );
   } else if (review) {
     description = `PR#${pullNumber} base:${baseBinding} by:${review.reviewer}`;
   } else if (resetPending) {
@@ -1194,6 +1263,7 @@ export async function publishAutomatedReviewStatus({
       statusId: existingPendingStatus.id,
     };
   }
+  let targetUrl = failureUrl ?? review?.url ?? pullUrl;
   const statusResponse = await github.rest.repos.createCommitStatus({
     owner,
     repo,
@@ -1201,14 +1271,19 @@ export async function publishAutomatedReviewStatus({
     state,
     context: AUTOMATED_REVIEW_STATUS_CONTEXT,
     description,
-    target_url: failureUrl ?? review?.url ?? pullUrl,
+    target_url: targetUrl,
   });
   let statusId = statusResponse?.data?.id;
   if (state === "success" && !isPositiveStatusId(statusId)) {
     failure = new TypeError("Published review status identity is malformed");
     state = "failure";
     review = undefined;
-    description = `PR#${pullNumber} review status unavailable`;
+    description = reviewFailureDescription(
+      pullNumber,
+      "unavailable",
+      queuePropagationPending,
+    );
+    targetUrl = pullUrl;
     const failureResponse = await github.rest.repos.createCommitStatus({
       owner,
       repo,
@@ -1226,7 +1301,15 @@ export async function publishAutomatedReviewStatus({
   if (statusId !== undefined && !isPositiveStatusId(statusId)) {
     throw new TypeError("Published review status identity is malformed");
   }
-  return { state, review, failure, description, baseRef, statusId };
+  return {
+    state,
+    review,
+    failure,
+    description,
+    baseRef,
+    statusId,
+    targetUrl,
+  };
 }
 
 function requireReviewTimeoutInputs(now, reviewTimeoutMs) {
@@ -1287,7 +1370,7 @@ const TIMED_OUT_AUTOMATED_REVIEWS_QUERY = `
   }
 `;
 
-function pendingReviewContext(pull, pullNumber) {
+function reviewTimeoutContext(pull, pullNumber) {
   const commitNodes = pull?.commits?.nodes;
   if (!Array.isArray(commitNodes)) {
     throw new TypeError(`PR #${pullNumber} commit rollup is malformed`);
@@ -1299,13 +1382,22 @@ function pendingReviewContext(pull, pullNumber) {
     throw new TypeError(`PR #${pullNumber} status rollup is malformed`);
   }
   const descriptionPrefix = `PR#${pullNumber} `;
-  return contexts.find((context) =>
-    context?.context === AUTOMATED_REVIEW_STATUS_CONTEXT &&
-    context?.state === "PENDING" &&
-    isPinnedGraphqlBot(context?.creator, GITHUB_ACTIONS_LOGIN) &&
-    typeof context?.description === "string" &&
-    context.description.startsWith(descriptionPrefix)
-  );
+  return contexts.find((context) => {
+    if (
+      context?.context !== AUTOMATED_REVIEW_STATUS_CONTEXT ||
+      !isPinnedGraphqlBot(context?.creator, GITHUB_ACTIONS_LOGIN) ||
+      typeof context?.description !== "string"
+    ) return false;
+    if (context.state === "PENDING") {
+      return context.description.startsWith(descriptionPrefix);
+    }
+    return context.state === "FAILURE" &&
+      reviewFailureKindFromDescription(
+          context.description,
+          pullNumber,
+          true,
+        ) !== undefined;
+  });
 }
 
 function timeoutDiscoveryPage(response) {
@@ -1333,9 +1425,12 @@ function timedOutReviewTarget(pull, now, reviewTimeoutMs) {
   if (typeof headSha !== "string" || !FULL_SHA.test(headSha)) {
     throw new TypeError(`PR #${pullNumber} head commit is invalid`);
   }
-  const pendingStatus = pendingReviewContext(pull, pullNumber);
-  if (!pendingStatus) return undefined;
-  const createdAt = Date.parse(pendingStatus?.createdAt ?? "");
+  const timeoutContext = reviewTimeoutContext(pull, pullNumber);
+  if (!timeoutContext) return undefined;
+  if (timeoutContext.state === "FAILURE") {
+    return { pullNumber, headSha: headSha.toLowerCase() };
+  }
+  const createdAt = Date.parse(timeoutContext?.createdAt ?? "");
   if (Number.isFinite(createdAt) && now - createdAt < reviewTimeoutMs) {
     return undefined;
   }
@@ -1369,6 +1464,77 @@ export async function findTimedOutAutomatedReviews({
     cursor = pageResult.cursor;
   }
   throw new Error("Timeout discovery exceeded 1,000 open pull requests");
+}
+
+function latestReviewPropagationRetryStatus(statuses, pullNumber) {
+  const status = latestReviewGateStatusForPull(statuses, pullNumber);
+  if (
+    status?.state !== "failure" ||
+    !isPositiveStatusId(status?.id) ||
+    !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
+  ) return undefined;
+  const failureKind = reviewFailureKindFromDescription(
+    status.description,
+    pullNumber,
+    true,
+  );
+  return failureKind === undefined ? undefined : { status, failureKind };
+}
+
+async function finalizeReviewFailureStatus({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  headSha,
+  failureKind,
+  targetUrl,
+}) {
+  const description = reviewFailureDescription(pullNumber, failureKind);
+  const response = await github.rest.repos.createCommitStatus({
+    owner,
+    repo,
+    sha: headSha,
+    state: "failure",
+    context: AUTOMATED_REVIEW_STATUS_CONTEXT,
+    description,
+    target_url: targetUrl,
+  });
+  const statusId = response?.data?.id;
+  if (!isPositiveStatusId(statusId)) {
+    throw new TypeError("Final review failure status identity is malformed");
+  }
+  return { description, statusId };
+}
+
+async function propagateAndFinalizeReviewFailure({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  headSha,
+  sourceStatusId,
+  failureKind,
+  targetUrl,
+}) {
+  const resolution = await publishReviewResolutionFailure({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    sourceHeadSha: headSha,
+    sourceStatusId,
+  });
+  const finalStatus = await finalizeReviewFailureStatus({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    headSha,
+    failureKind,
+    targetUrl,
+  });
+  return { resolution, ...finalStatus };
 }
 
 /** Revalidate one discovered timeout and publish under the per-pull lock. */
@@ -1407,6 +1573,35 @@ export async function expireTimedOutAutomatedReview({
     { owner, repo, ref: headSha },
     "timeout review statuses",
   );
+  const pullUrl = typeof pull.html_url === "string"
+    ? pull.html_url
+    : `https://github.com/${owner}/${repo}/pull/${pullNumber}`;
+  const retryStatus = latestReviewPropagationRetryStatus(
+    statuses,
+    pullNumber,
+  );
+  if (retryStatus) {
+    const propagated = await propagateAndFinalizeReviewFailure({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      headSha,
+      sourceStatusId: retryStatus.status.id,
+      failureKind: retryStatus.failureKind,
+      targetUrl: typeof retryStatus.status.target_url === "string"
+        ? retryStatus.status.target_url
+        : pullUrl,
+    });
+    return {
+      state: "failure",
+      failure: new Error("Automated review queue propagation was retried"),
+      baseRef: pull?.base?.ref,
+      expired: true,
+      retried: true,
+      ...propagated,
+    };
+  }
   const pendingStatus = latestPendingReviewStatus(statuses, pullNumber);
   if (!pendingStatus) {
     return { expired: false, reason: "status-changed" };
@@ -1415,9 +1610,6 @@ export async function expireTimedOutAutomatedReview({
     return { expired: false, reason: "not-expired" };
   }
 
-  const pullUrl = typeof pull.html_url === "string"
-    ? pull.html_url
-    : `https://github.com/${owner}/${repo}/pull/${pullNumber}`;
   const result = await publishAutomatedReviewStatus({
     github,
     owner,
@@ -1427,17 +1619,32 @@ export async function expireTimedOutAutomatedReview({
     pullUrl,
     now,
     reviewTimeoutMs,
+    queuePropagationPending: true,
   });
   if (result.state === "failure") {
-    const resolution = await publishReviewResolutionFailure({
+    const failureKind = reviewFailureKindFromDescription(
+      result.description,
+      pullNumber,
+      true,
+    );
+    if (failureKind === undefined || !isPositiveStatusId(result.statusId)) {
+      throw new Error("Review failure retry status is malformed");
+    }
+    const propagated = await propagateAndFinalizeReviewFailure({
       github,
       owner,
       repo,
       pullNumber,
-      sourceHeadSha: headSha,
+      headSha,
       sourceStatusId: result.statusId,
+      failureKind,
+      targetUrl: result.targetUrl ?? pullUrl,
     });
-    return { ...result, expired: true, resolution };
+    return {
+      ...result,
+      ...propagated,
+      expired: true,
+    };
   }
   if (result.state === "success" && typeof result.baseRef === "string") {
     const queueResults = await reconcileActiveMergeGroupReviewStatuses({

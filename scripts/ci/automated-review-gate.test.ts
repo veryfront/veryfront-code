@@ -1969,6 +1969,76 @@ describe("automated review publication", () => {
     assertEquals(fixture.published, []);
   });
 
+  it("preserves a same-second terminal failure proven after a lifecycle reset", async () => {
+    const limitComment = {
+      ...codexRateLimitComment("2026-08-25T08:00:00Z"),
+      updated_at: "2026-08-25T08:00:01Z",
+    };
+    const terminalStatus = automatedReviewStatus({
+      id: 105,
+      state: "failure",
+      description: "PR#1 automated review rate limited",
+      target_url: limitComment.html_url,
+      created_at: "2026-08-25T08:00:00Z",
+    });
+    const fixture = githubFixture({
+      pages: {
+        comments: [[limitComment]],
+        events: [[{
+          event: "reopened",
+          id: 102,
+          created_at: "2026-08-25T08:00:00Z",
+        }]],
+        statuses: [[terminalStatus]],
+        timeline: [[
+          { event: "committed", sha: HEAD },
+          { event: "reopened", id: 102 },
+          { event: "commented", id: 103 },
+        ]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+
+    assertEquals(result.state, "failure");
+    assertEquals(result.statusId, 105);
+    assertEquals(result.description, "PR#1 automated review rate limited");
+    assertEquals(fixture.published, []);
+
+    const staleFixture = githubFixture({
+      pages: {
+        comments: [[limitComment]],
+        events: [[{
+          event: "reopened",
+          id: 102,
+          created_at: "2026-08-25T08:00:00Z",
+        }]],
+        statuses: [[terminalStatus]],
+        timeline: [[
+          { event: "committed", sha: HEAD },
+          { event: "commented", id: 103 },
+          { event: "reopened", id: 102 },
+        ]],
+      },
+    });
+    const staleResult = await publishAutomatedReviewStatus({
+      github: staleFixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(staleResult.state, "pending");
+    assertEquals(staleFixture.published[0]?.state, "pending");
+  });
+
   it("ignores terminal descriptions from another status context", async () => {
     const fixture = githubFixture({
       pages: {
@@ -2632,6 +2702,9 @@ describe("automated review timeout watchdog", () => {
       login: "github-actions",
       databaseId: GITHUB_ACTIONS_ID,
     },
+    statusDescription = `PR#${pullNumber} waits for review ${
+      HEAD.slice(0, 12)
+    }`,
   ) => ({
     number: pullNumber,
     isDraft: false,
@@ -2645,9 +2718,7 @@ describe("automated review timeout watchdog", () => {
               : [{
                 context: "Automated review",
                 state: statusState,
-                description: `PR#${pullNumber} waits for review ${
-                  HEAD.slice(0, 12)
-                }`,
+                description: statusDescription,
                 createdAt,
                 creator: statusCreator,
               }],
@@ -2865,6 +2936,111 @@ describe("automated review timeout watchdog", () => {
       fixture.published.at(-1)?.description,
       "PR#1 automated review timed out",
       "queue propagation must preserve the terminal source diagnosis",
+    );
+  });
+
+  it("retries queue propagation after a terminal timeout failure", async () => {
+    const retryDescription =
+      "PR#1 automated review timed out; queue retry pending";
+    const retryStatus = automatedReviewStatus({
+      id: 1001,
+      state: "failure",
+      description: retryDescription,
+      target_url: "https://example.test/pr/1",
+    });
+    const firstAttempt = githubFixture({
+      pageResponses: {
+        statuses: [
+          [[pendingAutomatedReviewStatus()]],
+          [[pendingAutomatedReviewStatus()]],
+          [[retryStatus]],
+        ],
+      },
+      pages: {
+        refs: [[{
+          ref: `refs/heads/gh-readonly-queue/main/pr-1-${BASE_HEAD}`,
+          object: { sha: OTHER_HEAD },
+        }]],
+      },
+      commit: HEAD,
+      queueBindingError: Object.assign(
+        new Error("queue binding unavailable"),
+        { status: 503 },
+      ),
+      queueRefError: Object.assign(new Error("queue ref unavailable"), {
+        status: 503,
+      }),
+    });
+
+    await assertRejects(
+      () =>
+        expireTimedOutAutomatedReview({
+          github: firstAttempt.github,
+          owner: "veryfront",
+          repo: "veryfront-code",
+          pullNumber: 1,
+          headSha: HEAD,
+          now: Date.parse("2026-08-25T08:30:00Z"),
+          reviewTimeoutMs: 1_800_000,
+        }),
+      Error,
+      "queue ref unavailable",
+    );
+    assertEquals(firstAttempt.published[0]?.description, retryDescription);
+
+    const discovery = timeoutDiscoveryFixture([[
+      timeoutPull(
+        1,
+        "2026-08-25T08:30:00Z",
+        {},
+        "FAILURE",
+        {
+          __typename: "Bot",
+          login: "github-actions",
+          databaseId: GITHUB_ACTIONS_ID,
+        },
+        retryDescription,
+      ),
+    ]]);
+    assertEquals(
+      await findTimedOutAutomatedReviews({
+        github: discovery,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        now: Date.parse("2026-08-25T08:30:01Z"),
+        reviewTimeoutMs: 1_800_000,
+      }),
+      [{ pullNumber: 1, headSha: HEAD }],
+    );
+
+    const retry = githubFixture({
+      pageResponses: {
+        statuses: [
+          [[retryStatus]],
+          [[retryStatus]],
+        ],
+      },
+      pages: { refs: [[]] },
+      commit: HEAD,
+      statusIds: [1002],
+    });
+    const result = await expireTimedOutAutomatedReview({
+      github: retry.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      now: Date.parse("2026-08-25T08:30:01Z"),
+      reviewTimeoutMs: 1_800_000,
+    });
+    assertEquals(result.expired, true);
+    assert("retried" in result);
+    assert("statusId" in result);
+    assertEquals(result.retried, true);
+    assertEquals(result.statusId, 1002);
+    assertEquals(
+      retry.published[0]?.description,
+      "PR#1 automated review timed out",
     );
   });
 
