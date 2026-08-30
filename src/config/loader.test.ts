@@ -6408,6 +6408,7 @@ export default config as const;
       it("redacts raw IRI remainders after Unicode authorities", async () => {
         const cases = [
           ["two-slash-path", "https://例え.internal/秘密"],
+          ["two-slash-symbol-host", "https://🙂🙂.internal/private"],
           ["two-slash-query", "https://例え.internal?q=秘密"],
           ["single-slash-path", "https:/例え.internal/秘密"],
           ["single-slash-query", "https:/例え.internal?q=秘密"],
@@ -6422,6 +6423,8 @@ export default config as const;
           );
 
           assertEquals(error.message.includes("例え.internal"), false, label);
+          assertEquals(error.message.includes("🙂.internal"), false, label);
+          assertEquals(error.message.includes("/private"), false, label);
           assertEquals(error.message.includes("秘密"), false, label);
           assertStringIncludes(error.message, "Failed [url]", label);
         }
