@@ -2272,9 +2272,13 @@ function acceptedUnicodeHostMatchEnd(matched: string, matchIndex: number): numbe
       const prefix = ReflectApply(StringPrototypeSlice, matched, [0, index]) as string;
       try {
         new IntrinsicURL(prefix);
-        return matchIndex + index;
       } catch {
-        // Try the preceding symbol boundary.
+        continue;
+      }
+      try {
+        new IntrinsicURL(prefix + symbol[0]);
+      } catch {
+        return matchIndex + index;
       }
     }
     return matchIndex + matched.length;

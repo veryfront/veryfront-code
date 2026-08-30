@@ -6564,6 +6564,11 @@ export default config as const;
               "Failed https:例え.internal¨Retry",
               "Failed [url]¨Retry",
             ],
+            [
+              "invalid-port-after-accepted-symbol",
+              "Failed https://a🙂.internal:99999/private",
+              "Failed [url]",
+            ],
           ] as const
         ) {
           const error = await loadFailure(
@@ -6572,6 +6577,7 @@ export default config as const;
           );
 
           assertStringIncludes(error.message, expected, label);
+          assertEquals(error.message.includes("internal"), false, label);
         }
       });
 
