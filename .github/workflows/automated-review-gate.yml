@@ -618,6 +618,7 @@ jobs:
             let publishAutomatedReviewStatus;
             let publishReviewResolutionFailure;
             let completeReviewFailurePropagation;
+            let publishReviewPropagationRetryStatus;
             let reconcileActiveMergeGroupReviewStatuses;
             try {
               const response = await github.rest.repos.getContent({
@@ -639,6 +640,7 @@ jobs:
                 publishAutomatedReviewStatus,
                 publishReviewResolutionFailure,
                 completeReviewFailurePropagation,
+                publishReviewPropagationRetryStatus,
                 reconcileActiveMergeGroupReviewStatuses,
               } = await import(gateUrl));
             } catch (error) {
@@ -749,18 +751,26 @@ jobs:
                 if (!forceInvalidateCurrentSource()) return "failure";
                 throw error;
               }
-              // A failure that never reached its synthetic commit leaves the
-              // queue's prior success as live review proof. The trusted gate
-              // throws on that, but the loaded module comes from the default
-              // branch, so verify the collected results here as well and fail
-              // the run: the fallback invalidation job keys on this failure.
-              const unreplaced = queueResults.filter((entry) =>
-                entry?.state === "failure" && entry?.published !== true
+              const failedQueueResults = queueResults.filter((entry) =>
+                entry?.state === "failure"
               ).length;
-              if (unreplaced > 0) {
+              if (result.state === "success" && failedQueueResults > 0) {
                 if (!forceInvalidateCurrentSource()) return "failure";
+                const retryStatus = await publishReviewPropagationRetryStatus({
+                  github,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pullNumber,
+                  headSha,
+                  failureKind: "unavailable",
+                  targetUrl: result.targetUrl,
+                });
+                core.setOutput(
+                  "source-status-id",
+                  String(retryStatus.statusId),
+                );
                 core.setFailed(
-                  `Review proof was not replaced on ${unreplaced} active merge queue commit(s).`,
+                  `${failedQueueResults} active merge queue review failed.`,
                 );
                 return "failure";
               }

@@ -1639,7 +1639,7 @@ async function finalizeReviewFailureStatus({
   return { description, statusId };
 }
 
-async function publishReviewPropagationRetryStatus({
+export async function publishReviewPropagationRetryStatus({
   github,
   owner,
   repo,

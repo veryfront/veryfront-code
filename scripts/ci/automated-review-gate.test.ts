@@ -5374,6 +5374,7 @@ describe("automated review workflow", () => {
     assert(script.includes("publishAutomatedReviewStatus"));
     assert(script.includes("publishReviewResolutionFailure"));
     assert(script.includes("completeReviewFailurePropagation"));
+    assert(script.includes("publishReviewPropagationRetryStatus"));
     assert(script.includes("queuePropagationPending: true"));
     assert(script.includes("sourceStatusId: result.statusId"));
     assert(script.includes("reconcileActiveMergeGroupReviewStatuses"));
@@ -5383,10 +5384,10 @@ describe("automated review workflow", () => {
     assert(script.includes("Number.isSafeInteger"));
     assert(script.includes("result.baseRef"));
     assert(
-      script.includes(
-        'entry?.state === "failure" && entry?.published !== true',
-      ) && script.includes("Review proof was not replaced"),
-      "an unreplaced merge queue failure must fail the run so the fallback invalidation job fires",
+      script.includes('entry?.state === "failure"') &&
+        !script.includes('entry?.published !== true') &&
+        script.includes("active merge queue review failed"),
+      "every merge queue failure must keep the source retryable",
     );
     assert(
       script.includes('core.setOutput("force-invalidate", "true")'),
@@ -5394,7 +5395,7 @@ describe("automated review workflow", () => {
     );
     assert(
       script.includes('core.setOutput("source-status-id"') &&
-        script.includes("result.statusId"),
+        script.includes("retryStatus.statusId"),
       "fallback invalidation must receive the source status written by this failed run",
     );
     assert(
