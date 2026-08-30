@@ -6446,6 +6446,43 @@ export default config as const;
         }
       });
 
+      it("redacts contextual IDNA characters in bare IRI authorities", async () => {
+        const cases = [
+          ["latin-middle-dot", "https://l·l.internal"],
+          ["greek-lower-numeral", "https://͵α.internal"],
+          ["hebrew-geresh", "https://א׳ב.internal"],
+          ["hebrew-gershayim", "https://א״ב.internal"],
+          ["katakana-middle-dot", "https://カ・ナ.internal"],
+          ["zero-width-non-joiner", "https://نامه‌ای.internal"],
+        ] as const;
+
+        for (const [label, url] of cases) {
+          const error = await loadFailure(
+            `vf-config-iri-bare-authority-${label}-`,
+            `throw new Error(${JSON.stringify(`Failed ${url}`)});\n`,
+          );
+
+          assertEquals(error.message.endsWith("Failed [url]"), true, label);
+        }
+      });
+
+      it("redacts backslash paths after contextual IDNA authorities", async () => {
+        for (
+          const [label, url] of [
+            ["two-slash", "https://l·l.internal\\PRIVATE"],
+            ["single-slash", "https:/l·l.internal\\PRIVATE"],
+            ["zero-slash", "https:l·l.internal\\PRIVATE"],
+          ] as const
+        ) {
+          const error = await loadFailure(
+            `vf-config-iri-backslash-authority-${label}-`,
+            `throw new Error(${JSON.stringify(`Failed ${url}`)});\n`,
+          );
+
+          assertEquals(error.message.endsWith("Failed [url]"), true, label);
+        }
+      });
+
       it("does not split redaction at the Unicode authority probe bound", async () => {
         const cases = [
           ["split-run", `${"a".repeat(511)}秘密.internal`],
@@ -6476,12 +6513,20 @@ export default config as const;
       });
 
       it("preserves prose after Unicode punctuation following an IRI authority", async () => {
-        const error = await loadFailure(
-          "vf-config-iri-authority-unicode-punctuation-",
-          `throw new Error(${JSON.stringify("Failed https://例え.internal。Retry")});\n`,
-        );
+        for (
+          const [label, message, expected] of [
+            ["mapped-dot", "Failed https://例え.internal。Retry", "Failed [url]。Retry"],
+            ["latin-middle-dot", "Failed https://example.internal·Retry", "Failed [url]·Retry"],
+            ["katakana-middle-dot", "Failed https://例え.internal・Retry", "Failed [url]・Retry"],
+          ] as const
+        ) {
+          const error = await loadFailure(
+            `vf-config-iri-authority-unicode-punctuation-${label}-`,
+            `throw new Error(${JSON.stringify(message)});\n`,
+          );
 
-        assertStringIncludes(error.message, "Failed [url]。Retry");
+          assertStringIncludes(error.message, expected, label);
+        }
       });
 
       it("redacts a URL tail that begins after a lone `)` and punctuation", async () => {
