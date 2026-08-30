@@ -18,12 +18,23 @@ const persistenceTails = new WeakMap<ConversationRunChunkMirror, Promise<void>>(
 export { DurableRunEventPersistenceError } from "../conversation/private-run-event.ts";
 
 function assertEnabled(snapshot: ConversationRunMirrorSnapshot): void {
-  if (snapshot.disabled) {
-    const suffix = snapshot.disableReason === undefined ? "" : `: ${snapshot.disableReason}`;
-    throw new DurableRunEventPersistenceError(
-      `Required durable run event mirror is disabled${suffix}`,
+  if (!snapshot.disabled) return;
+  // veryfront-issue-inbox#872: `run_terminal` means the API already declared the
+  // run finished server-side (a project delete cancels its in-flight runs first,
+  // see veryfront-issue-inbox#743). Nothing the runtime can still write is lost,
+  // and every other consumer of the reason treats it as a clean stop
+  // (run-chunk-mirror.ts, hosted-chat-finalization.ts). The dispatch is still
+  // refused, but as the runtime's abort shape rather than a persistence failure.
+  if (snapshot.disableReason === "run_terminal") {
+    throw new DOMException(
+      "Durable run event mirror stopped: the run is already terminal",
+      "AbortError",
     );
   }
+  const suffix = snapshot.disableReason === undefined ? "" : `: ${snapshot.disableReason}`;
+  throw new DurableRunEventPersistenceError(
+    `Required durable run event mirror is disabled${suffix}`,
+  );
 }
 
 function isDrained(snapshot: ConversationRunMirrorSnapshot): boolean {
