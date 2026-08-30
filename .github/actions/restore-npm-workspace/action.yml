@@ -1,0 +1,21 @@
+name: Restore npm runtime workspace
+description: >
+  Download the canonical npm runtime workspace produced by the
+  npm-compatibility-artifact job for this commit, unpack it over the checkout,
+  and materialize the locked test dependencies. Callers must declare
+  `needs: [npm-compatibility-artifact]`.
+
+runs:
+  using: composite
+  steps:
+    - name: Download npm runtime workspace
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: npm-runtime-workspace-${{ github.sha }}
+        path: dist/npm-runtime-workspace
+    - name: Restore npm runtime workspace
+      shell: bash
+      run: tar -xzf dist/npm-runtime-workspace/npm-runtime-workspace.tar.gz
+    - name: Materialize locked test dependencies
+      shell: bash
+      run: deno install --frozen

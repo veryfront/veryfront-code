@@ -400,7 +400,7 @@ it("release binaries carry the numbered RC version", async () => {
   );
   assertEquals(
     buildBinariesJob.indexOf("Prepare RC build version") <
-      buildBinariesJob.indexOf("Prepare build dependencies"),
+      buildBinariesJob.indexOf("./.github/actions/prepare-build-deps"),
     true,
     "the RC version must be injected before generators bundle it",
   );

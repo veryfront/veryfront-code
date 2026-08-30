@@ -1,0 +1,26 @@
+name: Prepare build dependencies
+description: >
+  Run `deno task build:prepare` with retries. It caches npm packages from the
+  registry, and a truncated response ("error reading a body from connection")
+  fails the whole leg, so retry before giving up rather than reddening a build
+  on registry weather.
+
+runs:
+  using: composite
+  steps:
+    - name: Prepare build dependencies
+      shell: bash
+      run: |
+        set -uo pipefail
+        for attempt in 1 2 3; do
+          if deno task build:prepare; then
+            exit 0
+          fi
+          if [ "$attempt" -lt 3 ]; then
+            delay=$((attempt * 10))
+            echo "build:prepare failed (attempt ${attempt}/3); retrying in ${delay}s" >&2
+            sleep "$delay"
+          fi
+        done
+        echo "build:prepare failed after 3 attempts" >&2
+        exit 1

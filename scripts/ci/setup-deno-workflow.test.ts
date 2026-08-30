@@ -909,54 +909,70 @@ jobs:
     assert(coverageSetup, "coverage shards must use setup-deno");
     assertEquals(coverageSetup["timeout-minutes"], MAX_SETUP_MINUTES);
 
+    const chromiumAction = await parseYamlFile(
+      ".github/actions/install-chromium/action.yml",
+    );
+    const chromiumRuns = asRecord(
+      chromiumAction.runs,
+      "install-chromium runs",
+    );
+    const chromiumInstall = asSteps(
+      chromiumRuns.steps,
+      "install-chromium steps",
+    ).find((step) => step.name === "Install Chromium");
+    assert(chromiumInstall, "the shared action must install Chromium");
+    const install = String(chromiumInstall.run);
+    for (
+      const expected of [
+        'for attempt in $(seq 1 "${install_attempts}")',
+        '--kill-after="${install_kill_grace_seconds}s" "${install_timeout_minutes}m"',
+        'for _ in $(seq 1 "${apt_lock_attempts}")',
+        'sleep "${apt_lock_sleep_seconds}"',
+        'sleep "${retry_backoff_seconds}"',
+      ]
+    ) {
+      assertStringIncludes(install, expected);
+    }
+    assertEquals(install.includes("apt-get clean"), false);
+    assertEquals(install.includes("rm -rf /var/lib/apt/lists"), false);
+
+    const attempts = shellInteger(install, "install_attempts");
+    const installSeconds = shellInteger(
+      install,
+      "install_timeout_minutes",
+    ) * 60;
+    const installKillGrace = shellInteger(
+      install,
+      "install_kill_grace_seconds",
+    );
+    const aptLockSeconds = shellInteger(install, "apt_lock_attempts") *
+      shellInteger(install, "apt_lock_sleep_seconds");
+    const backoffSeconds = shellInteger(install, "retry_backoff_seconds");
+    const worstCaseSeconds = attempts *
+        (aptLockSeconds + installSeconds + installKillGrace) +
+      (attempts - 1) * backoffSeconds;
+    assert(
+      worstCaseSeconds <=
+        CHROMIUM_STEP_MINUTES * 60 - CHROMIUM_OVERHEAD_MARGIN_SECONDS,
+      `Chromium retries need at least ${CHROMIUM_OVERHEAD_MARGIN_SECONDS}s of outer-step overhead margin; budget is ${worstCaseSeconds}s`,
+    );
+
     for (const jobName of ["tests-e2e-rsc-browser", "tests-binary-e2e"]) {
       const job = asRecord(
         asRecord(ci.jobs, "cicd jobs")[jobName],
         jobName,
       );
-      const chromiumInstall = asSteps(job.steps, `${jobName} steps`).find(
-        (step) => step.name === "Install Chromium",
+      const chromiumStep = asSteps(job.steps, `${jobName} steps`).find(
+        (step) => step.uses === "./.github/actions/install-chromium",
       );
-      assert(chromiumInstall, `${jobName} must install Chromium`);
+      assert(
+        chromiumStep,
+        `${jobName} must install Chromium via the shared action`,
+      );
       assertEquals(
-        chromiumInstall["timeout-minutes"],
+        chromiumStep["timeout-minutes"],
         CHROMIUM_STEP_MINUTES,
         `${jobName} Chromium provisioning needs a total step deadline`,
-      );
-      const install = String(chromiumInstall.run);
-      for (
-        const expected of [
-          'for attempt in $(seq 1 "${install_attempts}")',
-          '--kill-after="${install_kill_grace_seconds}s" "${install_timeout_minutes}m"',
-          'for _ in $(seq 1 "${apt_lock_attempts}")',
-          'sleep "${apt_lock_sleep_seconds}"',
-          'sleep "${retry_backoff_seconds}"',
-        ]
-      ) {
-        assertStringIncludes(install, expected);
-      }
-      assertEquals(install.includes("apt-get clean"), false);
-      assertEquals(install.includes("rm -rf /var/lib/apt/lists"), false);
-
-      const attempts = shellInteger(install, "install_attempts");
-      const installSeconds = shellInteger(
-        install,
-        "install_timeout_minutes",
-      ) * 60;
-      const installKillGrace = shellInteger(
-        install,
-        "install_kill_grace_seconds",
-      );
-      const aptLockSeconds = shellInteger(install, "apt_lock_attempts") *
-        shellInteger(install, "apt_lock_sleep_seconds");
-      const backoffSeconds = shellInteger(install, "retry_backoff_seconds");
-      const worstCaseSeconds = attempts *
-          (aptLockSeconds + installSeconds + installKillGrace) +
-        (attempts - 1) * backoffSeconds;
-      assert(
-        worstCaseSeconds <=
-          CHROMIUM_STEP_MINUTES * 60 - CHROMIUM_OVERHEAD_MARGIN_SECONDS,
-        `${jobName} Chromium retries need at least ${CHROMIUM_OVERHEAD_MARGIN_SECONDS}s of outer-step overhead margin; budget is ${worstCaseSeconds}s`,
       );
     }
   });
