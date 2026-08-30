@@ -850,6 +850,11 @@ jobs:
       /^\s*lint\) deno task lint:ci ;;$/m,
       "the lint shard must delegate to the lint:ci task",
     );
+    assertMatch(
+      String(ciRunStep.run),
+      /^\s*format\) deno task fmt:check ;;$/m,
+      "the format shard must delegate to the fmt:check task",
+    );
 
     const tasks = asRecord(
       asRecord(JSON.parse(await Deno.readTextFile("deno.json")), "deno.json")
