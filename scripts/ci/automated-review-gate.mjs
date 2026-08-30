@@ -1111,17 +1111,12 @@ const TIMED_OUT_AUTOMATED_REVIEWS_QUERY = `
           commits(last: 1) {
             nodes {
               commit {
-                statusCheckRollup {
-                  contexts(first: 100) {
-                    nodes {
-                      __typename
-                      ... on StatusContext {
-                        context
-                        state
-                        description
-                        createdAt
-                      }
-                    }
+                status {
+                  contexts {
+                    context
+                    state
+                    description
+                    createdAt
                   }
                 }
               }
@@ -1142,15 +1137,14 @@ function pendingReviewContext(pull, pullNumber) {
   if (!Array.isArray(commitNodes)) {
     throw new Error(`PR #${pullNumber} commit rollup is malformed`);
   }
-  const rollup = commitNodes[0]?.commit?.statusCheckRollup;
-  if (rollup == null) return undefined;
-  const contexts = rollup?.contexts?.nodes;
+  const status = commitNodes[0]?.commit?.status;
+  if (status == null) return undefined;
+  const contexts = status?.contexts;
   if (!Array.isArray(contexts)) {
     throw new Error(`PR #${pullNumber} status rollup is malformed`);
   }
   const descriptionPrefix = `PR#${pullNumber} `;
   return contexts.find((context) =>
-    context?.__typename === "StatusContext" &&
     context?.context === AUTOMATED_REVIEW_STATUS_CONTEXT &&
     context?.state === "PENDING" &&
     typeof context?.description === "string" &&

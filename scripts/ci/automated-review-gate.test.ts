@@ -2119,20 +2119,17 @@ describe("automated review timeout watchdog", () => {
     commits: {
       nodes: [{
         commit: {
-          statusCheckRollup: {
-            contexts: {
-              nodes: createdAt === undefined
-                ? []
-                : [{
-                  __typename: "StatusContext",
-                  context: "Automated review",
-                  state: "PENDING",
-                  description: `PR#${pullNumber} waits for review ${
-                    HEAD.slice(0, 12)
-                  }`,
-                  createdAt,
-                }],
-            },
+          status: {
+            contexts: createdAt === undefined
+              ? []
+              : [{
+                context: "Automated review",
+                state: "PENDING",
+                description: `PR#${pullNumber} waits for review ${
+                  HEAD.slice(0, 12)
+                }`,
+                createdAt,
+              }],
           },
         },
       }],
