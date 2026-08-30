@@ -43,6 +43,13 @@ const DEFAULT_ENVIRONMENT = "production";
 const DEFAULT_FLUSH_TIMEOUT_MS = 2_000;
 const MISSING_DSN_WARNING =
   "Sentry is enabled, but SENTRY_DSN is empty. Sentry reporting is disabled.";
+const EXPECTED_ERROR_NAMES = new Set([
+  "AbortError",
+  // Provider 429s surface to users as RATE_LIMITED after bounded retries;
+  // the serialized error carries no context statusCode, so filter by name
+  // (Sentry group VERYFRONT-AGENT-G).
+  "ProviderRateLimitError",
+]);
 const EXPECTED_ERROR_CODES = new Set([
   "AUTHENTICATION_REQUIRED",
   "CONTROL_PLANE_RUN_ID_MISMATCH",
@@ -118,7 +125,8 @@ function getProcessRole(entry: LogEntry): string | undefined {
 }
 
 function isExpectedAgentErrorLog(entry: LogEntry): boolean {
-  if (entry.error?.name === "AbortError") return true;
+  const errorName = entry.error?.name;
+  if (errorName && EXPECTED_ERROR_NAMES.has(errorName)) return true;
   const errorCode = getExpectedErrorCode(entry);
   if (errorCode && EXPECTED_ERROR_CODES.has(errorCode)) return true;
   const statusCode = getStatusCode(entry);
