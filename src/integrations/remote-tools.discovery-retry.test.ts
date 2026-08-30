@@ -18,10 +18,7 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import {
-  __subscribeLogRecordEmitter,
-  type LogEntry,
-} from "#veryfront/utils/logger/logger.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { getRemoteIntegrationToolDiscovery } from "./remote-tools.ts";
 
 const DISCOVERY_FAILURE_MESSAGE = "Failed to fetch remote integration tool definitions";
