@@ -5143,6 +5143,41 @@ describe("automated review request", () => {
       "current review epoch event is not visible",
     );
     assertEquals(tiedOtherKind.posted, []);
+
+    const staleRunBound = requestFixture({
+      eventResponses: [
+        [{
+          event: "base_ref_changed",
+          id: 42,
+          created_at: "2026-08-25T08:00:00Z",
+        }],
+        [
+          {
+            event: "base_ref_changed",
+            id: 42,
+            created_at: "2026-08-25T08:00:00Z",
+          },
+          {
+            event: "reopened",
+            id: 43,
+            created_at: "2026-08-25T10:00:00Z",
+          },
+        ],
+      ],
+    });
+    const staleRunResult = await requestAutomatedReview({
+      github: staleRunBound.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      requestKey: "base-run-9001",
+      validateRequestEpoch: true,
+      reviewEpochNotAfter: "2026-08-25T09:00:00Z",
+    });
+    assertEquals(staleRunResult.requested, false);
+    assertEquals(staleRunResult.reason, "stale-epoch");
+    assertEquals(staleRunBound.posted, []);
   });
 
   it("refuses to request a review of a malformed head commit", async () => {

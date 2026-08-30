@@ -463,7 +463,7 @@ function latestRunBoundReviewRequestKey(
       latest = { requestKey, createdAt };
     }
   }
-  return latest?.requestKey;
+  return latest;
 }
 
 function latestPendingReviewStatus(statuses, pullNumber) {
@@ -1138,6 +1138,7 @@ export async function publishAutomatedReviewStatus({
   let existingPropagationRetryKind;
   let existingPropagationRetryIsLatest = false;
   let reviewRequestKey;
+  let reviewRequestEpochTime;
   let reviewBoundary;
   let failureKind;
   let failureUrl;
@@ -1249,13 +1250,16 @@ export async function publishAutomatedReviewStatus({
         reviewNotBefore,
         latestReviewEpochChange(events),
       );
+      const runBoundRequest = latestRunBoundReviewRequestKey(
+        statuses,
+        pullNumber,
+        baseBinding,
+        reviewBoundary,
+      );
       reviewRequestKey = effectiveReviewResetKey ??
-        latestRunBoundReviewRequestKey(
-          statuses,
-          pullNumber,
-          baseBinding,
-          reviewBoundary,
-        ) ?? reviewRequestKeyFromBoundary(reviewBoundary);
+        runBoundRequest?.requestKey ??
+        reviewRequestKeyFromBoundary(reviewBoundary);
+      reviewRequestEpochTime = runBoundRequest?.createdAt;
       if (
         !pendingStatusBelongsToReviewEpoch(
           existingPendingStatus,
@@ -1467,6 +1471,7 @@ export async function publishAutomatedReviewStatus({
       baseRef,
       statusId: existingPendingStatus.id,
       reviewRequestKey,
+      reviewRequestEpochTime,
     };
   }
   let targetUrl = failureUrl ?? review?.url ?? pullUrl;
@@ -1516,6 +1521,7 @@ export async function publishAutomatedReviewStatus({
     statusId,
     targetUrl,
     reviewRequestKey,
+    reviewRequestEpochTime,
   };
 }
 
@@ -2065,10 +2071,12 @@ export async function expireTimedOutAutomatedReview({
           owner,
           repo,
           pullNumber,
-        headSha,
-        requestKey: result.reviewRequestKey,
-        validateRequestEpoch: result.reviewRequestKey !== undefined &&
-          !/-run-/.test(result.reviewRequestKey),
+          headSha,
+          requestKey: result.reviewRequestKey,
+          reviewEpochNotAfter: Number.isFinite(result.reviewRequestEpochTime)
+            ? new Date(result.reviewRequestEpochTime).toISOString()
+            : undefined,
+          validateRequestEpoch: result.reviewRequestKey !== undefined,
         });
       } catch (error) {
         await publishReviewPropagationRetryStatus({
@@ -2804,6 +2812,7 @@ export async function requestAutomatedReview({
   headSha,
   requestKey = /** @type {string | undefined} */ (undefined),
   reviewEpochNotBefore = /** @type {string | undefined} */ (undefined),
+  reviewEpochNotAfter = /** @type {string | undefined} */ (undefined),
   reviewEpochRunKey = /** @type {string | undefined} */ (undefined),
   validateRequestEpoch = false,
 }) {
@@ -2825,7 +2834,34 @@ export async function requestAutomatedReview({
   const concreteEpoch = typeof requestKey === "string"
     ? /^(base|ready|reopen)-([1-9]\d*)$/.exec(requestKey)
     : null;
+  const runBoundEpoch = typeof requestKey === "string"
+    ? /^(base|ready|reopen)-run-([1-9]\d*)$/.exec(requestKey)
+    : null;
   const sentinelEpoch = REVIEW_REQUEST_EVENT_KINDS.has(requestKey);
+  const resolveEpochKey = (events) => {
+    if (sentinelEpoch) {
+      return durableReviewRequestKey(
+        events,
+        requestKey,
+        reviewEpochNotBefore,
+        reviewEpochRunKey,
+      );
+    }
+    if (runBoundEpoch) {
+      const notAfter = Date.parse(reviewEpochNotAfter ?? "");
+      if (!Number.isFinite(notAfter)) {
+        throw new Error("Run-bound review epoch timestamp is malformed");
+      }
+      const latestEpoch = latestReviewEpochChange(events);
+      return latestEpoch === undefined || latestEpoch.time <= notAfter
+        ? requestKey
+        : undefined;
+    }
+    if (!concreteEpoch) {
+      throw new Error("Concrete review epoch key is malformed");
+    }
+    return durableReviewRequestKey(events, concreteEpoch[1]);
+  };
   if (sentinelEpoch || validateRequestEpoch) {
     const events = await collectAll(
       github,
@@ -2833,22 +2869,7 @@ export async function requestAutomatedReview({
       { owner, repo, issue_number: pullNumber },
       "review epoch events",
     );
-    if (sentinelEpoch) {
-      effectiveRequestKey = durableReviewRequestKey(
-        events,
-        requestKey,
-        reviewEpochNotBefore,
-        reviewEpochRunKey,
-      );
-    } else {
-      if (!concreteEpoch) {
-        throw new Error("Concrete review epoch key is malformed");
-      }
-      const currentKey = durableReviewRequestKey(events, concreteEpoch[1]);
-      if (currentKey !== requestKey) {
-        return { requested: false, reason: "stale-epoch" };
-      }
-    }
+    effectiveRequestKey = resolveEpochKey(events);
     if (effectiveRequestKey === undefined) {
       return { requested: false, reason: "stale-epoch" };
     }
@@ -2897,14 +2918,7 @@ export async function requestAutomatedReview({
       { owner, repo, issue_number: pullNumber },
       "final review epoch events",
     );
-    const currentKey = sentinelEpoch
-      ? durableReviewRequestKey(
-        events,
-        requestKey,
-        reviewEpochNotBefore,
-        reviewEpochRunKey,
-      )
-      : durableReviewRequestKey(events, concreteEpoch?.[1]);
+    const currentKey = resolveEpochKey(events);
     if (currentKey !== effectiveRequestKey) {
       return { requested: false, marker, reason: "stale-epoch" };
     }
