@@ -250,7 +250,7 @@ describe("sanitizeLogValue", () => {
     const sanitized = sanitizeLogValue(forged);
     assert.ok(!sanitized.includes("\n"), "must not contain LF");
     assert.ok(!sanitized.includes("\r"), "must not contain CR");
-    assert.equal(sanitized, "HTTP 500✅ Checksum verified[INFO] installed");
+    assert.equal(sanitized, "HTTP 500 ✅ Checksum verified [INFO] installed");
   });
 
   it("removes Unicode line and paragraph separators", () => {

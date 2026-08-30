@@ -87,21 +87,23 @@ export async function verifyChecksum(filePath, checksumUrl, downloadFn = downloa
  * terminators are the dangerous part: they let that text forge whole new
  * entries.
  *
- * The line-terminator replacement is deliberately spelled as a literal class
- * replaced by the empty string. CodeQL's `js/log-injection` sanitizer only
- * recognises a global replacement of a literal CR or LF by the empty string; a
- * range, a wider character class, or a non-empty replacement is not recognised.
- * The previous version of this code folded line terminators into one broad
- * control-character class and replaced them with a space, which is correct at
- * runtime but left the alert open.
+ * The line-terminator replacements are deliberately kept in a CodeQL-friendly
+ * shape. CodeQL's `js/log-injection` sanitizer only recognises a global
+ * replacement of a literal CR or LF by the empty string; a range, a wider
+ * character class, or a non-empty replacement is not recognised. The first
+ * pass replaces line terminators with spaces so adjacent words stay readable.
+ * The second pass is a runtime no-op, but preserves the empty-string
+ * replacement that CodeQL 2.26.4 requires to break the taint path.
  *
- * Removing rather than substituting means a genuinely multi-line message loses
- * its breaks. The only one that reaches here is the checksum mismatch, whose
- * continuation lines are indented, so it still reads as separate fields.
+ * A genuinely multi-line message loses its breaks but keeps a separator. The
+ * only one that reaches here is the checksum mismatch, whose continuation
+ * lines are indented, so it still reads as separate fields.
  */
 export function sanitizeLogValue(value) {
   return String(value)
-    // Line terminators: the log-forging vector proper.
+    // Keep line breaks as separators so adjacent words do not run together.
+    .replace(/[\r\n]/g, " ")
+    // CodeQL 2.26.4 recognises this empty replacement as the sanitizer.
     .replace(/[\r\n]/g, "")
     // Remaining control characters -- terminal escapes, NUL -- plus the Unicode
     // line and paragraph separators that some log viewers also break on.
