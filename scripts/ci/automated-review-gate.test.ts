@@ -2610,7 +2610,7 @@ describe("automated review publication", () => {
       fixture.published[0]?.description,
       `PR#1 reset base:${
         reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-      } key:83510c2f2105`,
+      } key:ready-run-9001`,
     );
   });
 
@@ -2784,7 +2784,7 @@ describe("automated review publication", () => {
       tiedFixture.published[0]?.description,
       `PR#1 reset base:${
         reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-      } key:bb86ec90ecc2`,
+      } key:reopen-run-9001`,
     );
 
     const runReset = automatedReviewResetStatus(
@@ -2793,7 +2793,7 @@ describe("automated review publication", () => {
         id: 101,
         description: `PR#1 reset base:${
           reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-        } key:bb86ec90ecc2`,
+        } key:reopen-run-9001`,
       },
     );
 
@@ -3788,6 +3788,50 @@ describe("automated review timeout watchdog", () => {
     assertEquals(
       fixture.commentsPosted[0]?.body,
       `<!-- automated-review-request: ${HEAD} base-42 -->\n@codex review`,
+    );
+
+    const runReset = automatedReviewResetStatus(
+      "2026-08-25T08:00:00Z",
+      {
+        id: 100,
+        description: `PR#1 reset base:${
+          reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+        } key:base-run-9001`,
+      },
+    );
+    const runRecovery = githubFixture({
+      pageResponses: {
+        statuses: [
+          [[unavailableStatus, runReset]],
+          [[unavailableStatus, runReset]],
+        ],
+      },
+      pages: {
+        comments: [[{
+          user: bot("github-actions[bot]", GITHUB_ACTIONS_ID),
+          body: `<!-- automated-review-request: ${HEAD} base-42 -->\n@codex review`,
+        }]],
+        events: [[{
+          event: "base_ref_changed",
+          id: 42,
+          created_at: "2026-08-25T08:00:00Z",
+        }]],
+        refs: [[]],
+      },
+    });
+    const runRecoveryResult = await expireTimedOutAutomatedReview({
+      github: runRecovery.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      now: Date.parse("2026-08-25T08:05:00Z"),
+      reviewTimeoutMs: 1_800_000,
+    });
+    assertEquals(runRecoveryResult.reason, "revalidated");
+    assertEquals(
+      runRecovery.commentsPosted[0]?.body,
+      `<!-- automated-review-request: ${HEAD} base-run-9001 -->\n@codex review`,
     );
 
     const queueOutage = githubFixture({

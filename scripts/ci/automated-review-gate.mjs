@@ -393,11 +393,11 @@ function isEvidenceProvablyLater(candidate, current, timeline) {
 
 function reviewResetDescription(pullNumber, baseBinding, requestKey) {
   const prefix = `PR#${pullNumber} reset base:${baseBinding}`;
-  return requestKey === undefined
-    ? prefix
-    : `${prefix} key:${
-      createHash("sha256").update(requestKey).digest("hex").slice(0, 12)
-    }`;
+  if (requestKey === undefined) return prefix;
+  const encodedKey = /^(?:base|ready|reopen)-run-[1-9]\d*$/.test(requestKey)
+    ? requestKey
+    : createHash("sha256").update(requestKey).digest("hex").slice(0, 12);
+  return `${prefix} key:${encodedKey}`;
 }
 
 function hasReviewReset(statuses, pullNumber, baseBinding, requestKey) {
@@ -431,6 +431,34 @@ function latestReviewResetTime(statuses, pullNumber, baseBinding) {
     if (latest === undefined || createdAt > latest) latest = createdAt;
   }
   return latest;
+}
+
+function latestRunBoundReviewRequestKey(
+  statuses,
+  pullNumber,
+  baseBinding,
+  boundary,
+) {
+  const prefix = `${reviewResetDescription(pullNumber, baseBinding)} key:`;
+  let latest;
+  for (const status of statuses) {
+    if (
+      status?.context !== AUTOMATED_REVIEW_STATUS_CONTEXT ||
+      status?.state !== "pending" ||
+      typeof status?.description !== "string" ||
+      !status.description.startsWith(prefix) ||
+      !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
+    ) continue;
+    const requestKey = status.description.slice(prefix.length);
+    if (!/^(?:base|ready|reopen)-run-[1-9]\d*$/.test(requestKey)) continue;
+    const createdAt = Date.parse(status?.created_at ?? "");
+    if (!Number.isFinite(createdAt)) continue;
+    if (boundary !== undefined && createdAt < boundary.time) continue;
+    if (latest === undefined || createdAt > latest.createdAt) {
+      latest = { requestKey, createdAt };
+    }
+  }
+  return latest?.requestKey;
 }
 
 function latestPendingReviewStatus(statuses, pullNumber) {
@@ -1217,7 +1245,12 @@ export async function publishAutomatedReviewStatus({
         latestReviewEpochChange(events),
       );
       reviewRequestKey = effectiveReviewResetKey ??
-        reviewRequestKeyFromBoundary(reviewBoundary);
+        latestRunBoundReviewRequestKey(
+          statuses,
+          pullNumber,
+          baseBinding,
+          reviewBoundary,
+        ) ?? reviewRequestKeyFromBoundary(reviewBoundary);
       if (
         !pendingStatusBelongsToReviewEpoch(
           existingPendingStatus,
@@ -2027,9 +2060,10 @@ export async function expireTimedOutAutomatedReview({
           owner,
           repo,
           pullNumber,
-          headSha,
-          requestKey: result.reviewRequestKey,
-          validateRequestEpoch: result.reviewRequestKey !== undefined,
+        headSha,
+        requestKey: result.reviewRequestKey,
+        validateRequestEpoch: result.reviewRequestKey !== undefined &&
+          !/-run-/.test(result.reviewRequestKey),
         });
       } catch (error) {
         await publishReviewPropagationRetryStatus({
