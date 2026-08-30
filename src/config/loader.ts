@@ -127,7 +127,6 @@ const ReflectGet = Reflect.get;
 const ReflectSet = Reflect.set;
 const StringPrototypeIncludes = String.prototype.includes;
 const StringPrototypeIndexOf = String.prototype.indexOf;
-const StringPrototypeLastIndexOf = String.prototype.lastIndexOf;
 const StringPrototypeEndsWith = String.prototype.endsWith;
 const StringPrototypeReplaceAll = String.prototype.replaceAll;
 const StringPrototypeSlice = String.prototype.slice;
@@ -1954,14 +1953,8 @@ const NON_ASCII_HOST_BODY_SOURCE =
   `(?:${NON_ASCII_STRUCTURED_HOST_SOURCE}|${NON_ASCII_STRICT_HOST_SOURCE})`;
 const NON_ASCII_HOST_SOURCE = String
   .raw`(?:(?=[^\s"/]{0,511}[\u0080-\u{10FFFF}])${NON_ASCII_HOST_BODY_SOURCE}|(?=[^\s"/]{513})${NON_ASCII_HOST_BODY_SOURCE})`;
-// The matcher stays permissive for every scheme on purpose: the candidate must
-// include glued punctuation and whatever follows it so validation
-// (acceptedOpaqueAuthorityMatchEnd) can separate a sentence boundary from
-// opaque host data with the full token in hand. A narrower non-special matcher
-// that excludes the punctuation up front cuts the candidate before validation
-// sees it, and nothing can restore redaction over text the pattern never
-// claimed -- that shape exposed `\u3002Retry` after `file://\u4F8B\u3048.internal`, where
-// WHATWG's special file scheme turns `Retry` into a genuine host label.
+// Keep glued punctuation in the candidate so validation can distinguish opaque
+// host data from prose. Special schemes, including file, remain fail-closed.
 const NON_ASCII_AUTHORITY_URL = new RegExp(
   String
     .raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}(?:${URL_TOKEN_TAIL_SOURCE})?`,
@@ -2081,31 +2074,13 @@ function rawUrlMatchEnd(value: string, matched: string, offset: number): number 
   return structurallyDelimited ? acceptedEnd : offset;
 }
 
-// The candidate's authority span: the delimiter mirrors the matchers' scheme
-// grammar across the two-slash, single-slash, and zero-slash forms; WHATWG
-// ends the authority at the first `/`, `\`, `?`, or `#` and takes the LAST `@`
-// before that as the userinfo terminator. A candidate without the scheme shape
-// is not reinterpreted -- the caller fails closed and keeps the whole match.
 const URL_CANDIDATE_SCHEME_DELIMITER = /^[A-Za-z][A-Za-z0-9+.-]{1,31}:\/{0,2}/;
 const URL_CANDIDATE_AUTHORITY_TERMINATOR = /[\\/?#]/;
-// `file` is absent from ASCII_SPECIAL_SCHEME_SOURCE because the malformed-form
-// matchers must not claim it, but its two-slash remote-host form reaches the
-// generic authority matcher and is IDNA-parsed like the other special schemes.
-// Spell the casing explicitly for the same reason as ZERO_SLASH_SCHEME_URL.
-const SPECIAL_SCHEME_CANDIDATE = new RegExp(
-  `^(?:${ASCII_SPECIAL_SCHEME_SOURCE}|[fF][iI][lL][eE]):`,
-);
-// The boundary decision shares NON_ASCII_HOST_PUNCTUATION_SOURCE so it and the
-// matcher cannot drift on what counts as punctuation.
+const URL_CANDIDATE_LAST_USERINFO_TERMINATOR = /@(?=[^@]*$)/;
 const OPAQUE_AUTHORITY_SENTENCE_PUNCTUATION = new RegExp(
   NON_ASCII_HOST_PUNCTUATION_SOURCE,
-  "u",
+  "gu",
 );
-// Prose after the boundary may hold letters, digits, marks, further Unicode
-// punctuation, and light ASCII sentence characters. Any other ASCII character
-// -- `/ ? # : @ \ = & %` and, deliberately, `.` -- reads as URL structure or a
-// host-shaped label and keeps the candidate redacted whole. The alternatives
-// are disjoint (ASCII versus non-ASCII), so the scan is linear.
 const OPAQUE_AUTHORITY_PROSE_REMAINDER = new RegExp(
   String.raw`^(?:[A-Za-z0-9!(),;-]|(?!\s)[^\x00-\x7F])+$`,
   "u",
@@ -2114,8 +2089,6 @@ const OPAQUE_AUTHORITY_PROSE_REMAINDER = new RegExp(
 interface UrlCandidateAuthoritySpan {
   start: number;
   end: number;
-  // Absolute index of the last `@` inside the authority, or `start - 1` when
-  // the candidate has no userinfo.
   userinfoBoundary: number;
 }
 
@@ -2131,56 +2104,70 @@ function urlCandidateAuthoritySpan(matched: string): UrlCandidateAuthoritySpan |
   ]) as RegExpExecArray | null;
   const end = terminator === null ? matched.length : start + terminator.index;
   const authority = ReflectApply(StringPrototypeSlice, matched, [start, end]) as string;
-  const lastAt = ReflectApply(StringPrototypeLastIndexOf, authority, ["@"]) as number;
-  return { start, end, userinfoBoundary: lastAt === -1 ? start - 1 : start + lastAt };
+  const userinfo = ReflectApply(RegExpPrototypeExec, URL_CANDIDATE_LAST_USERINFO_TERMINATOR, [
+    authority,
+  ]) as RegExpExecArray | null;
+  return {
+    start,
+    end,
+    userinfoBoundary: userinfo === null ? start - 1 : start + userinfo.index,
+  };
 }
 
-// A successful WHATWG parse proves nothing for a non-special scheme: the host
-// is opaque, so sentence punctuation and the prose after it are accepted and
-// percent-encoded rather than rejected. Accepting the whole match on parse
-// success alone therefore swallowed `。Retry` after `foo://例え.internal`,
-// unlike the special-scheme cases where the same punctuation is genuine host
-// data (an IDNA dot-equivalent turns `Retry` into a host label). Apply the
-// structural sentence boundary instead: cut before the first non-ASCII
-// punctuation when it sits in the authority after a completed dotted prefix
-// and nothing but prose follows. Every other shape -- URL structure after the
-// punctuation, an undotted authority, a host-shaped remainder, punctuation
-// inside userinfo, or a prefix WHATWG rejects -- keeps the candidate redacted
-// whole, because over-redacting prose is acceptable and leaking an authority
-// suffix is not.
-function acceptedOpaqueAuthorityMatchEnd(matched: string, matchIndex: number): number {
+function acceptedOpaqueAuthorityMatchEnd(
+  matched: string,
+  matchIndex: number,
+  parsed: URL,
+): number {
   const whole = matchIndex + matched.length;
-  if (ReflectApply(RegExpPrototypeExec, SPECIAL_SCHEME_CANDIDATE, [matched]) !== null) {
-    return whole;
-  }
-  const punctuation = ReflectApply(RegExpPrototypeExec, OPAQUE_AUTHORITY_SENTENCE_PUNCTUATION, [
-    matched,
-  ]) as RegExpExecArray | null;
-  if (punctuation === null) return whole;
-  const span = urlCandidateAuthoritySpan(matched);
-  if (span === null) return whole;
-  const cut = punctuation.index;
-  if (cut <= span.userinfoBoundary || cut >= span.end) return whole;
-  const remainder = ReflectApply(StringPrototypeSlice, matched, [cut]) as string;
+  const protocol = ReflectApply(intrinsicUrlProtocolGetter, parsed, []) as string;
   if (
-    ReflectApply(RegExpPrototypeExec, OPAQUE_AUTHORITY_PROSE_REMAINDER, [remainder]) === null
+    protocol === "http:" || protocol === "https:" || protocol === "ws:" ||
+    protocol === "wss:" || protocol === "ftp:" || protocol === "file:"
   ) {
     return whole;
   }
-  const authorityPrefix = ReflectApply(StringPrototypeSlice, matched, [span.start, cut]) as string;
-  if (!(ReflectApply(StringPrototypeIncludes, authorityPrefix, ["."]) as boolean)) return whole;
+  const span = urlCandidateAuthoritySpan(matched);
+  if (span === null) return whole;
+
   try {
-    new IntrinsicURL(ReflectApply(StringPrototypeSlice, matched, [0, cut]) as string);
-  } catch {
+    OPAQUE_AUTHORITY_SENTENCE_PUNCTUATION.lastIndex = span.start;
+    let attempts = MAX_URL_HOST_BOUNDARY_ATTEMPTS;
+    while (attempts-- > 0) {
+      const punctuation = ReflectApply(RegExpPrototypeExec, OPAQUE_AUTHORITY_SENTENCE_PUNCTUATION, [
+        matched,
+      ]) as RegExpExecArray | null;
+      if (punctuation === null || punctuation.index >= span.end) break;
+      const cut = punctuation.index;
+      if (cut <= span.userinfoBoundary) continue;
+      const remainder = ReflectApply(StringPrototypeSlice, matched, [cut]) as string;
+      if (
+        ReflectApply(RegExpPrototypeExec, OPAQUE_AUTHORITY_PROSE_REMAINDER, [remainder]) === null
+      ) {
+        continue;
+      }
+      try {
+        const prefix = new IntrinsicURL(
+          ReflectApply(StringPrototypeSlice, matched, [0, cut]) as string,
+        );
+        const hostname = ReflectApply(intrinsicUrlHostnameGetter, prefix, []) as string;
+        if (ReflectApply(StringPrototypeIncludes, hostname, ["."]) as boolean) {
+          return matchIndex + cut;
+        }
+      } catch {
+        continue;
+      }
+    }
     return whole;
+  } finally {
+    OPAQUE_AUTHORITY_SENTENCE_PUNCTUATION.lastIndex = 0;
   }
-  return matchIndex + cut;
 }
 
 function acceptedUnicodeHostMatchEnd(matched: string, matchIndex: number): number {
   try {
-    new IntrinsicURL(matched);
-    return acceptedOpaqueAuthorityMatchEnd(matched, matchIndex);
+    const parsed = new IntrinsicURL(matched);
+    return acceptedOpaqueAuthorityMatchEnd(matched, matchIndex, parsed);
   } catch {
     // A rejected Unicode character can terminate an otherwise valid authority.
     // Work backward over bounded candidates to retain its suffix.
@@ -2195,11 +2182,7 @@ function acceptedUnicodeHostMatchEnd(matched: string, matchIndex: number): numbe
         | null;
       if (character === null || character.index !== index) continue;
       attempts -= 1;
-      // A later `@` blocks restoration: cutting before the userinfo terminator
-      // would reparse the prefix without the `@`, testing the character as host
-      // data even though the full parse percent-encodes it inside userinfo --
-      // which exposed `¨value@例え.internal:99999/private` when only the port
-      // was invalid.
+      // Never reinterpret userinfo as host data by cutting before its `@`.
       const followingAt = ReflectApply(StringPrototypeIndexOf, matched, ["@", index]) as number;
       if (followingAt !== -1) continue;
       const prefix = ReflectApply(StringPrototypeSlice, matched, [0, index]) as string;
