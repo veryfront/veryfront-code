@@ -6507,16 +6507,6 @@ export default config as const;
           ["middle-dot-end", "Failed https://l·l.internal·", "Failed [url]·"],
           ["katakana-middle-dot", "Failed https://例え.internal・ Retry", "Failed [url]・ Retry"],
           [
-            "non-special-scheme",
-            "Failed foo://例え.internal。Retry",
-            "Failed [url]。Retry",
-          ],
-          [
-            "non-special-contextual-host",
-            "Failed foo://l·l.internal。Retry",
-            "Failed [url]。Retry",
-          ],
-          [
             "guillemets-comma",
             "Failed «https://例え.internal», réessayez",
             "Failed «[url]», réessayez",
@@ -6642,6 +6632,7 @@ export default config as const;
         const authorities = [
           ["rejected", "a¨b.internal\\private"],
           ["contextual", "א¡ב.internal:99999/private"],
+          ["contextual-prose", "x.א¡ב;Retry"],
           ["private-use", "a\ue000b.internal"],
           ["surrogate", "a\ud800b.internal"],
         ] as const;
@@ -6663,6 +6654,9 @@ export default config as const;
           const [label, input] of [
             ["file-special-scheme", "Failed file://例え.internal。Retry"],
             ["opaque-undotted-prefix", "Failed foo://例え。internal"],
+            ["opaque-glued-label", "Failed foo://public.example。privatehost"],
+            ["opaque-glued-prose", "Failed foo://例え.internal。Retry"],
+            ["opaque-contextual-host", "Failed foo://l·l.internal。Retry"],
             ["opaque-host-shaped-remainder", "Failed foo://a.b。c.d"],
             ["opaque-structured-remainder", "Failed foo://例え。internal/private"],
           ] as const

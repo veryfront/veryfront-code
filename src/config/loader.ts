@@ -1976,7 +1976,7 @@ const RAW_IRI_REMAINDER = /\P{ASCII}[^\s"']*/uy;
 const RAW_ACCEPTED_URL_REMAINDER = /[\\<>{}\x60^|][^\s"']*/uy;
 const RAW_ACCEPTED_URL_PAYLOAD = /[\p{L}\p{N}\p{M}]/u;
 const NON_ASCII_URL_HOST_BOUNDARY =
-  /(?=\P{ASCII})(?![\u200C\u200D\u{E0020}-\u{E007E}])[\p{P}\p{S}\p{Cf}]/uy;
+  /(?=\P{ASCII})(?!(?:\u200C|\u200D|[\u{E0020}-\u{E007E}]))[\p{P}\p{S}\p{Cf}]/uy;
 const MAX_URL_HOST_BOUNDARY_ATTEMPTS = 16;
 
 // Userinfo and parenthesized segments are bounded to keep failed scans linear.
@@ -2074,100 +2074,13 @@ function rawUrlMatchEnd(value: string, matched: string, offset: number): number 
   return structurallyDelimited ? acceptedEnd : offset;
 }
 
-const URL_CANDIDATE_SCHEME_DELIMITER = /^[A-Za-z][A-Za-z0-9+.-]{1,31}:\/{0,2}/;
-const URL_CANDIDATE_AUTHORITY_TERMINATOR = /[\\/?#]/;
-const URL_CANDIDATE_LAST_USERINFO_TERMINATOR = /@(?=[^@]*$)/;
-const OPAQUE_AUTHORITY_SENTENCE_PUNCTUATION = new RegExp(
-  NON_ASCII_HOST_PUNCTUATION_SOURCE,
-  "gu",
-);
-const URL_BOUNDARY_PROSE_REMAINDER = new RegExp(
-  String.raw`^(?:[A-Za-z0-9!(),;-]|(?!\s)[^\x00-\x7F])+$`,
-  "u",
-);
-
-interface UrlCandidateAuthoritySpan {
-  start: number;
-  end: number;
-  userinfoBoundary: number;
-}
-
-function urlCandidateAuthoritySpan(matched: string): UrlCandidateAuthoritySpan | null {
-  const delimiter = ReflectApply(RegExpPrototypeExec, URL_CANDIDATE_SCHEME_DELIMITER, [
-    matched,
-  ]) as RegExpExecArray | null;
-  if (delimiter === null) return null;
-  const start = delimiter[0].length;
-  const afterScheme = ReflectApply(StringPrototypeSlice, matched, [start]) as string;
-  const terminator = ReflectApply(RegExpPrototypeExec, URL_CANDIDATE_AUTHORITY_TERMINATOR, [
-    afterScheme,
-  ]) as RegExpExecArray | null;
-  const end = terminator === null ? matched.length : start + terminator.index;
-  const authority = ReflectApply(StringPrototypeSlice, matched, [start, end]) as string;
-  const userinfo = ReflectApply(RegExpPrototypeExec, URL_CANDIDATE_LAST_USERINFO_TERMINATOR, [
-    authority,
-  ]) as RegExpExecArray | null;
-  return {
-    start,
-    end,
-    userinfoBoundary: userinfo === null ? start - 1 : start + userinfo.index,
-  };
-}
-
-function acceptedOpaqueAuthorityMatchEnd(
-  matched: string,
-  matchIndex: number,
-  parsed: URL,
-): number {
-  const whole = matchIndex + matched.length;
-  const protocol = ReflectApply(intrinsicUrlProtocolGetter, parsed, []) as string;
-  if (
-    protocol === "http:" || protocol === "https:" || protocol === "ws:" ||
-    protocol === "wss:" || protocol === "ftp:" || protocol === "file:"
-  ) {
-    return whole;
-  }
-  const span = urlCandidateAuthoritySpan(matched);
-  if (span === null) return whole;
-
-  try {
-    OPAQUE_AUTHORITY_SENTENCE_PUNCTUATION.lastIndex = span.start;
-    let attempts = MAX_URL_HOST_BOUNDARY_ATTEMPTS;
-    while (attempts-- > 0) {
-      const punctuation = ReflectApply(RegExpPrototypeExec, OPAQUE_AUTHORITY_SENTENCE_PUNCTUATION, [
-        matched,
-      ]) as RegExpExecArray | null;
-      if (punctuation === null || punctuation.index >= span.end) break;
-      const cut = punctuation.index;
-      if (cut <= span.userinfoBoundary) continue;
-      const remainder = ReflectApply(StringPrototypeSlice, matched, [cut]) as string;
-      if (
-        ReflectApply(RegExpPrototypeExec, URL_BOUNDARY_PROSE_REMAINDER, [remainder]) === null
-      ) {
-        continue;
-      }
-      try {
-        const prefix = new IntrinsicURL(
-          ReflectApply(StringPrototypeSlice, matched, [0, cut]) as string,
-        );
-        const hostname = ReflectApply(intrinsicUrlHostnameGetter, prefix, []) as string;
-        if (ReflectApply(StringPrototypeIncludes, hostname, ["."]) as boolean) {
-          return matchIndex + cut;
-        }
-      } catch {
-        continue;
-      }
-    }
-    return whole;
-  } finally {
-    OPAQUE_AUTHORITY_SENTENCE_PUNCTUATION.lastIndex = 0;
-  }
-}
+const URL_BOUNDARY_PROSE_REMAINDER = /^(?:[A-Za-z0-9!(),;-]|(?!\s)\P{ASCII})+$/u;
+const URL_BOUNDARY_PROSE_SEPARATOR = /[!(),;]/g;
 
 function acceptedUnicodeHostMatchEnd(matched: string, matchIndex: number): number {
   try {
-    const parsed = new IntrinsicURL(matched);
-    return acceptedOpaqueAuthorityMatchEnd(matched, matchIndex, parsed);
+    new IntrinsicURL(matched);
+    return matchIndex + matched.length;
   } catch {
     // A rejected Unicode character can terminate an otherwise valid authority.
     // Work backward over bounded candidates to retain its suffix.
@@ -2180,7 +2093,7 @@ function acceptedUnicodeHostMatchEnd(matched: string, matchIndex: number): numbe
       const character = ReflectApply(RegExpPrototypeExec, NON_ASCII_URL_HOST_BOUNDARY, [matched]) as
         | RegExpExecArray
         | null;
-      if (character === null || character.index !== index) continue;
+      if (character?.index !== index) continue;
       attempts -= 1;
       // Never reinterpret userinfo as host data by cutting before its `@`.
       const followingAt = ReflectApply(StringPrototypeIndexOf, matched, ["@", index]) as number;
@@ -2197,13 +2110,29 @@ function acceptedUnicodeHostMatchEnd(matched: string, matchIndex: number): numbe
       }
       try {
         new IntrinsicURL(prefix + character[0]);
+        continue;
       } catch {
+        URL_BOUNDARY_PROSE_SEPARATOR.lastIndex = index + character[0].length;
+        const separator = ReflectApply(RegExpPrototypeExec, URL_BOUNDARY_PROSE_SEPARATOR, [
+          matched,
+        ]) as RegExpExecArray | null;
+        if (separator !== null) {
+          try {
+            new IntrinsicURL(
+              ReflectApply(StringPrototypeSlice, matched, [0, separator.index]) as string,
+            );
+            continue;
+          } catch {
+            // The rejected character remains invalid in its following label context.
+          }
+        }
         return matchIndex + index;
       }
     }
     return matchIndex + matched.length;
   } finally {
     NON_ASCII_URL_HOST_BOUNDARY.lastIndex = 0;
+    URL_BOUNDARY_PROSE_SEPARATOR.lastIndex = 0;
   }
 }
 
