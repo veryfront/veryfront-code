@@ -382,7 +382,12 @@ export type AgentGenerateToolReplacements = Record<string, Tool>;
 // Import for use in AgentMiddleware
 import type { AgentContext, AgentResponse } from "./schemas/index.ts";
 
-/** Public API contract for agent middleware. */
+/**
+ * Public API contract for agent middleware. Call `next` at most once during one
+ * middleware invocation. The continuation becomes invalid when the middleware's
+ * returned promise settles. Calling it again or after settlement rejects with
+ * the registered `middleware-error`.
+ */
 export type AgentMiddleware = (
   context: AgentContext,
   next: () => Promise<AgentResponse>,

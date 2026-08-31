@@ -563,6 +563,11 @@ export default agent({
 | `middleware`          | `AgentMiddleware[]`                                                                                    | Execution middleware                                                                                  |
 | `allowedModels`       | `string[]`                                                                                             | Restrict runtime model overrides to these `provider/model` strings                                    |
 
+Each agent middleware invocation receives a single-use `next()` continuation.
+The continuation becomes invalid when that middleware's returned promise
+settles. Calling it again or after settlement rejects with the registered
+`middleware-error`.
+
 ## Verify it worked
 
 Save the agent file and restart `veryfront dev`. The quickest server-side

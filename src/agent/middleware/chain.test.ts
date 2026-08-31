@@ -1,8 +1,9 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { VeryfrontError } from "#veryfront/errors";
 
-import type { AgentContext, AgentResponse } from "../types.ts";
-import { MiddlewareChain } from "./chain.ts";
+import type { AgentContext, AgentResponse } from "#veryfront/agent/types.ts";
+import { MiddlewareChain } from "#veryfront/agent/middleware/chain.ts";
 
 const context = {} as AgentContext;
 const response = {} as AgentResponse;
@@ -26,7 +27,8 @@ describe("agent/middleware/chain", () => {
       }),
       response,
     );
-    await assertRejects(() => retainedNext!(), Error, replayError);
+    const error = await assertRejects(() => retainedNext!(), VeryfrontError, replayError);
+    assertEquals((error as VeryfrontError).slug, "middleware-error");
     assertEquals(finalHandlerCalls, 1);
   });
 
@@ -47,7 +49,7 @@ describe("agent/middleware/chain", () => {
       }),
       response,
     );
-    await assertRejects(() => retainedNext!(), Error, replayError);
+    await assertRejects(() => retainedNext!(), VeryfrontError, replayError);
     assertEquals(finalHandlerCalls, 0);
   });
 
@@ -58,7 +60,7 @@ describe("agent/middleware/chain", () => {
       async (_context, next) => {
         const first = next();
         await finalHandlerStarted.promise;
-        await assertRejects(() => next(), Error, replayError);
+        await assertRejects(() => next(), VeryfrontError, replayError);
         releaseFinalHandler?.();
         return await first;
       },
@@ -103,5 +105,45 @@ describe("agent/middleware/chain", () => {
       "inner-after",
       "outer-after",
     ]);
+  });
+
+  it("rejects a continuation queued before an already-settled middleware promise", async () => {
+    let queuedNext: Promise<AgentResponse> | undefined;
+    let finalHandlerCalls = 0;
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        queueMicrotask(() => {
+          queuedNext = next();
+        });
+        return Promise.resolve(response);
+      },
+    ]);
+
+    assertEquals(
+      await chain.execute(context, () => {
+        finalHandlerCalls += 1;
+        return Promise.resolve(response);
+      }),
+      response,
+    );
+    await assertRejects(() => queuedNext!, VeryfrontError, replayError);
+    assertEquals(finalHandlerCalls, 0);
+  });
+
+  it("revokes a retained continuation when middleware throws", async () => {
+    let retainedNext: (() => Promise<AgentResponse>) | undefined;
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        retainedNext = next;
+        throw new Error("middleware failed");
+      },
+    ]);
+
+    await assertRejects(
+      () => chain.execute(context, () => Promise.resolve(response)),
+      Error,
+      "middleware failed",
+    );
+    await assertRejects(() => retainedNext!(), VeryfrontError, replayError);
   });
 });

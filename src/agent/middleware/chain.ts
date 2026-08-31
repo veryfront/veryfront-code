@@ -1,5 +1,9 @@
 import type { AgentContext, AgentMiddleware, AgentResponse } from "../types.ts";
+import { MIDDLEWARE_ERROR } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+
+const INVALID_CONTINUATION_MESSAGE =
+  "Agent middleware next() can only be called once while middleware is active";
 
 export class MiddlewareChain {
   private middleware: AgentMiddleware[];
@@ -24,22 +28,38 @@ export class MiddlewareChain {
             `agent.middleware.chain.dispatch.${middlewareIndex + 1}`,
             async () => {
               let nextCalled = false;
+              let middlewareInvoking = true;
               let middlewareSettled = false;
+
+              const rejectInvalidContinuation = (): Promise<AgentResponse> =>
+                Promise.reject(MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE }));
+
               const next = (): Promise<AgentResponse> => {
                 if (nextCalled || middlewareSettled) {
-                  return Promise.reject(
-                    new Error(
-                      "Agent middleware next() can only be called once while middleware is active",
-                    ),
-                  );
+                  return rejectInvalidContinuation();
                 }
                 nextCalled = true;
+
+                if (!middlewareInvoking) {
+                  return Promise.resolve().then(() => {
+                    if (middlewareSettled) {
+                      throw MIDDLEWARE_ERROR.create({
+                        message: INVALID_CONTINUATION_MESSAGE,
+                      });
+                    }
+                    return dispatch(middlewareIndex + 1);
+                  });
+                }
+
                 return dispatch(middlewareIndex + 1);
               };
 
               try {
-                return await currentMiddleware(context, next);
+                const result = currentMiddleware(context, next);
+                middlewareInvoking = false;
+                return await result;
               } finally {
+                middlewareInvoking = false;
                 middlewareSettled = true;
               }
             },
