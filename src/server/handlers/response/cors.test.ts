@@ -166,6 +166,31 @@ describe("server/handlers/response/cors", () => {
       assertEquals(routeResolutionCalls, 0);
     });
 
+    it("responds to API preflight when contextual execution is unavailable", async () => {
+      const ctx = makeCtx({
+        securityConfig: { cors: { origin: ["https://app.example"] } } as never,
+      });
+      (ctx.adapter.fs as unknown as { isContextualMode: () => boolean }).isContextualMode = () =>
+        true;
+
+      const result = await new CorsHandler().handle(
+        new Request("https://app.example/api/items", {
+          method: "OPTIONS",
+          headers: {
+            Origin: "https://app.example",
+            "access-control-request-method": "POST",
+          },
+        }),
+        ctx,
+      );
+
+      assertEquals(result.response?.status, 204);
+      assertEquals(
+        result.response?.headers.get("access-control-allow-origin"),
+        "https://app.example",
+      );
+    });
+
     it("continues API preflight in an operator-granted shared runtime", async () => {
       let routeResolutionCalls = 0;
       const handler = new CorsHandler({
@@ -191,7 +216,6 @@ describe("server/handlers/response/cors", () => {
     it("continues a matched non-API App route with an OPTIONS export", async () => {
       const handler = new CorsHandler({
         resolveAppRouteFile: () => Promise.resolve({ file: "/project/route.ts", params: {} }),
-        loadAppRouteModule: () => Promise.resolve({ OPTIONS: () => new Response() }),
       });
       const result = await handler.handle(
         new Request("https://app.example/webhook", { method: "OPTIONS" }),
@@ -205,7 +229,6 @@ describe("server/handlers/response/cors", () => {
     it("continues a matched non-API App route with a default export", async () => {
       const handler = new CorsHandler({
         resolveAppRouteFile: () => Promise.resolve({ file: "/project/route.ts", params: {} }),
-        loadAppRouteModule: () => Promise.resolve({ default: () => new Response() }),
       });
       const result = await handler.handle(
         new Request("https://app.example/webhook", { method: "OPTIONS" }),

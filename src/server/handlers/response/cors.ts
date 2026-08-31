@@ -9,14 +9,14 @@ import {
   requiresIsolatedProjectRuntime,
 } from "#veryfront/security/project-locality.ts";
 import { getApplicationPreflightHeaders } from "#veryfront/security/http/application-request.ts";
-import { resolveExecutableRouteMethods } from "#veryfront/routing/api/route-methods.ts";
 
 type AppRouteResolver = typeof resolveAppRouteFile;
-type AppRouteModuleLoader = (file: string) => Promise<Record<string, unknown>>;
+type FsWrapper = {
+  isContextualMode?: () => boolean;
+};
 
 export interface CorsHandlerDependencies {
   resolveAppRouteFile?: AppRouteResolver;
-  loadAppRouteModule?: AppRouteModuleLoader;
 }
 
 export class CorsHandler extends BaseHandler {
@@ -43,14 +43,17 @@ export class CorsHandler extends BaseHandler {
     const pathname = new URL(req.url).pathname;
     const isSharedRuntime = isSharedProjectRuntime(ctx);
     const mustAvoidProjectCode = requiresIsolatedProjectRuntime(ctx);
-    if (!mustAvoidProjectCode && (pathname === "/api" || pathname.startsWith("/api/"))) {
+    const isApiPath = pathname === "/api" || pathname.startsWith("/api/");
+    const fsWrapper = ctx.adapter.fs as FsWrapper;
+    const hasContextualFilesystem = fsWrapper.isContextualMode?.() === true;
+    if (!mustAvoidProjectCode && isApiPath && !hasContextualFilesystem) {
       return this.continue();
     }
 
-    const routeMethods = mustAvoidProjectCode
-      ? { allowMethods: CorsHandler.DEFAULT_METHODS, hasExecutableOptions: false }
-      : await this.resolveRouteMethods(pathname, ctx);
-    if (routeMethods.hasExecutableOptions) return this.continue();
+    if (!mustAvoidProjectCode && !isApiPath && !hasContextualFilesystem) {
+      const hasMatchedAppRoute = await this.hasMatchedAppRoute(pathname, ctx);
+      if (hasMatchedAppRoute) return this.continue();
+    }
 
     let corsConfig = ctx.securityConfig?.cors;
     if (!isSharedRuntime) {
@@ -69,7 +72,7 @@ export class CorsHandler extends BaseHandler {
     }
 
     const response = ResponseBuilder.preflight(req, {
-      allowMethods: routeMethods.allowMethods,
+      allowMethods: CorsHandler.DEFAULT_METHODS,
       allowHeaders: getApplicationPreflightHeaders(req),
       securityConfig: ctx.securityConfig ?? undefined,
       corsConfig,
@@ -78,28 +81,16 @@ export class CorsHandler extends BaseHandler {
     return this.respond(response);
   }
 
-  private async resolveRouteMethods(
+  private async hasMatchedAppRoute(
     pathname: string,
     ctx: HandlerContext,
-  ): Promise<{ allowMethods: string; hasExecutableOptions: boolean }> {
+  ): Promise<boolean> {
     try {
       const match = await this.resolveAppRouteFile(pathname, ctx);
-      if (!match) {
-        return { allowMethods: CorsHandler.DEFAULT_METHODS, hasExecutableOptions: false };
-      }
-
-      const mod = await this.loadAppRouteModule(match.file);
-      const executableMethods = resolveExecutableRouteMethods(mod);
-      const authoredMethods = resolveExecutableRouteMethods(mod, undefined, {
-        includeFrameworkOptions: false,
-      });
-      return {
-        allowMethods: executableMethods.join(", "),
-        hasExecutableOptions: authoredMethods.includes("OPTIONS"),
-      };
+      return match !== null;
     } catch (error) {
       this.logWarn("Failed to resolve route for CORS", { error, pathname });
-      return { allowMethods: CorsHandler.DEFAULT_METHODS, hasExecutableOptions: false };
+      return false;
     }
   }
 }
