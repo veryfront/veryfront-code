@@ -24,6 +24,7 @@ const REVIEW_FAILURE_DETAILS = new Map([
   ["rate-limited", "automated review rate limited"],
   ["timed-out", "automated review timed out"],
   ["unavailable", "review status unavailable"],
+  ["request-unavailable", "review request unavailable"],
 ]);
 const TRUSTED_PERMISSIONS = new Set(["admin", "maintain", "write"]);
 const REVIEW_EPOCH_EVENTS = new Set([
@@ -352,6 +353,12 @@ function latestReviewEpochChange(events) {
     }
   }
   return latest;
+}
+
+function sameReviewEpoch(left, right) {
+  if (left === undefined || right === undefined) return left === right;
+  return left.time === right.time && left.kind === right.kind &&
+    left.id === right.id;
 }
 
 function activeReviewBoundary(
@@ -721,23 +728,27 @@ function reviewPropagationRetryDescription(
   kind,
   requestKey,
 ) {
-  const epoch = kind === "unavailable"
+  const epoch = kind === "unavailable" || kind === "request-unavailable"
     ? `; epoch:${reviewEpochToken(requestKey)}`
     : "";
   return `${reviewFailureDescription(pullNumber, kind)}${epoch}${REVIEW_PROPAGATION_RETRY_SUFFIX}`;
 }
 
-function reviewPropagationRetryEpochToken(description, pullNumber) {
-  const prefix = `${reviewFailureDescription(pullNumber, "unavailable")}; epoch:`;
+function reviewPropagationRetryEpoch(description, pullNumber) {
   if (
-    typeof description !== "string" || !description.startsWith(prefix) ||
+    typeof description !== "string" ||
     !description.endsWith(REVIEW_PROPAGATION_RETRY_SUFFIX)
   ) return undefined;
-  const token = description.slice(
-    prefix.length,
-    -REVIEW_PROPAGATION_RETRY_SUFFIX.length,
-  );
-  return /^[0-9a-f]{12}$/.test(token) ? token : undefined;
+  for (const kind of ["unavailable", "request-unavailable"]) {
+    const prefix = `${reviewFailureDescription(pullNumber, kind)}; epoch:`;
+    if (!description.startsWith(prefix)) continue;
+    const token = description.slice(
+      prefix.length,
+      -REVIEW_PROPAGATION_RETRY_SUFFIX.length,
+    );
+    if (/^[0-9a-f]{12}$/.test(token)) return { kind, token };
+  }
+  return undefined;
 }
 
 function reviewFailureKindFromDescription(
@@ -750,10 +761,8 @@ function reviewFailureKindFromDescription(
       description === reviewFailureDescription(pullNumber, kind, retryPending)
     ) return kind;
   }
-  if (
-    retryPending &&
-    reviewPropagationRetryEpochToken(description, pullNumber) !== undefined
-  ) return "unavailable";
+  const retryEpoch = reviewPropagationRetryEpoch(description, pullNumber);
+  if (retryPending && retryEpoch !== undefined) return retryEpoch.kind;
   return undefined;
 }
 
@@ -1281,6 +1290,7 @@ export async function publishAutomatedReviewStatus({
   let reviewRequestKey;
   let reviewRequestEpochTime;
   let reviewBoundary;
+  let reviewEpochAtEvaluation;
   let failureKind;
   let failureUrl;
   if (
@@ -1386,10 +1396,11 @@ export async function publishAutomatedReviewStatus({
         pullNumber,
         baseBinding,
       );
+      reviewEpochAtEvaluation = latestReviewEpochChange(events);
       reviewBoundary = activeReviewBoundary(
         latestReviewRequest(comments, headSha),
         reviewNotBefore,
-        latestReviewEpochChange(events),
+        reviewEpochAtEvaluation,
       );
       const recoveredRunBoundRequest = latestRunBoundReviewRequestKey(
         statuses,
@@ -1439,6 +1450,9 @@ export async function publishAutomatedReviewStatus({
       );
       existingPropagationRetryStatus = propagationRetry?.status;
       existingPropagationRetryKind = propagationRetry?.failureKind;
+      if (existingPropagationRetryKind === "request-unavailable") {
+        existingPendingStatus = undefined;
+      }
       existingPropagationRetryIsLatest = propagationRetry?.status?.id ===
         latestReviewGateStatusForPull(statuses, pullNumber)?.id;
       const runBoundResetPending = resetPending &&
@@ -1463,7 +1477,10 @@ export async function publishAutomatedReviewStatus({
           runBoundRequest !== undefined,
         );
         if (!review) {
-          if (existingPropagationRetryStatus) {
+          if (
+            existingPropagationRetryStatus &&
+            existingPropagationRetryKind !== "request-unavailable"
+          ) {
             failure = new Error("Automated review queue propagation is pending");
             failureKind = existingPropagationRetryKind;
             failureUrl = typeof existingPropagationRetryStatus.target_url ===
@@ -1534,6 +1551,25 @@ export async function publishAutomatedReviewStatus({
       throw new Error(
         "Pull request base changed while checking review evidence",
       );
+    }
+    if (review) {
+      const finalEvents = await collectAll(
+        github,
+        github.rest.issues.listEvents,
+        { owner, repo, issue_number: pullNumber },
+        "final pull request events",
+      );
+      if (
+        !sameReviewEpoch(
+          reviewEpochAtEvaluation,
+          latestReviewEpochChange(finalEvents),
+        )
+      ) {
+        review = undefined;
+        throw new Error(
+          "Pull request lifecycle changed while checking review evidence",
+        );
+      }
     }
   } catch (error) {
     review = undefined;
@@ -1932,12 +1968,12 @@ function reviewPropagationRetryHasBoundaryProof(
       retry.status,
     );
   }
-  const retryEpoch = reviewPropagationRetryEpochToken(
+  const retryEpoch = reviewPropagationRetryEpoch(
     retry.status?.description,
     pullNumber,
   );
   if (retryEpoch !== undefined) {
-    return retryEpoch === reviewEpochToken(reviewRequestKey);
+    return retryEpoch.token === reviewEpochToken(reviewRequestKey);
   }
   const createdAt = Date.parse(retry.status?.created_at ?? "");
   return Number.isFinite(createdAt) && createdAt >= boundary.time;
@@ -2247,7 +2283,7 @@ async function requestTimedOutAutomatedReview({
       repo,
       pullNumber,
       headSha,
-      failureKind: "unavailable",
+      failureKind: "request-unavailable",
       targetUrl: result.targetUrl ?? pullUrl,
       reviewRequestKey: result.reviewRequestKey,
     });
@@ -2721,6 +2757,28 @@ async function requireCurrentAutomatedReview({
   pullNumber,
   baseBinding,
 }) {
+  const reviewNotBefore = latestReviewResetTime(
+    evidence.statuses,
+    pullNumber,
+    baseBinding,
+  );
+  const boundary = activeReviewBoundary(
+    latestReviewRequest(evidence.comments, sourceHeadSha),
+    reviewNotBefore,
+    latestReviewEpochChange(evidence.events),
+  );
+  const recoveredRunBoundRequest = latestRunBoundReviewRequestKey(
+    evidence.statuses,
+    pullNumber,
+    baseBinding,
+    boundary,
+  );
+  const runBoundRequest = runBoundRequestBelongsToBoundary(
+      recoveredRunBoundRequest,
+      boundary,
+    )
+    ? recoveredRunBoundRequest
+    : undefined;
   const liveReview = await findAutomatedReview(
     evidence,
     sourceHeadSha,
@@ -2731,7 +2789,8 @@ async function requireCurrentAutomatedReview({
         login,
         pullAuthor: pull?.data?.user?.login,
       }),
-    latestReviewResetTime(evidence.statuses, pullNumber, baseBinding),
+    reviewNotBefore,
+    runBoundRequest !== undefined,
   );
   if (!liveReview) {
     throw new Error("Pull request does not have current review evidence");
@@ -3173,6 +3232,28 @@ function pullSnapshotAdvanced(snapshotUpdatedAt, response) {
   return current > snapshot;
 }
 
+async function pullSnapshotHasNewLifecycle({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  snapshotUpdatedAt,
+  refreshed,
+  events,
+}) {
+  if (!pullSnapshotAdvanced(snapshotUpdatedAt, refreshed)) return false;
+  const finalEvents = await collectAll(
+    github,
+    github.rest.issues.listEvents,
+    { owner, repo, issue_number: pullNumber },
+    "final snapshot review events",
+  );
+  return !sameReviewEpoch(
+    latestReviewEpochChange(events),
+    latestReviewEpochChange(finalEvents),
+  );
+}
+
 async function revalidateAutomatedReviewRequest({
   github,
   owner,
@@ -3243,8 +3324,15 @@ async function revalidateAutomatedReviewRequest({
     return { requested: false, marker, reason: ineligibility };
   }
   if (
-    validateRequestEpoch &&
-    pullSnapshotAdvanced(pullSnapshotUpdatedAt, refreshed)
+    await pullSnapshotHasNewLifecycle({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      snapshotUpdatedAt: pullSnapshotUpdatedAt,
+      refreshed,
+      events,
+    })
   ) return { requested: false, marker, reason: "stale-epoch" };
   if (hasReviewRequest(comments, headSha, effectiveRequestKey)) {
     return { requested: false, marker };

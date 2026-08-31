@@ -3398,6 +3398,42 @@ describe("automated review publication", () => {
     assertEquals(result.review, undefined);
     assertEquals(fixture.published[0]?.state, "failure");
   });
+
+  it("rechecks durable lifecycle events before publishing success", async () => {
+    const oldEpoch = {
+      event: "base_ref_changed",
+      id: 42,
+      created_at: "2026-08-25T08:00:00Z",
+    };
+    const fixture = githubFixture({
+      pages: { comments: [[codexComment(HEAD.slice(0, 10), {
+        created_at: "2026-08-25T08:30:00Z",
+        updated_at: "2026-08-25T08:30:00Z",
+      })]] },
+      pageResponses: {
+        events: [
+          [[oldEpoch]],
+          [[oldEpoch, {
+            event: "ready_for_review",
+            id: 43,
+            created_at: "2026-08-25T09:00:00Z",
+          }]],
+        ],
+      },
+      commit: HEAD,
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+
+    assertEquals(result.state, "failure");
+    assertEquals(result.review, undefined);
+  });
 });
 
 describe("automated review timeout watchdog", () => {
@@ -4117,8 +4153,37 @@ describe("automated review timeout watchdog", () => {
     assertEquals(requestOutage.published[0]?.state, "pending");
     assertEquals(
       requestOutage.published.at(-1)?.description,
-      "PR#1 review status unavailable; epoch:9f2e6d33a371; queue retry pending",
+      "PR#1 review request unavailable; epoch:9f2e6d33a371; queue retry pending",
     );
+
+    const requestRetryStatus = automatedReviewStatus({
+      id: 107,
+      state: "failure",
+      description:
+        "PR#1 review request unavailable; epoch:9f2e6d33a371; queue retry pending",
+      created_at: "2026-08-25T08:05:00Z",
+    });
+    const requestRetry = githubFixture({
+      pageResponses: {
+        statuses: [
+          [[requestRetryStatus, pendingAutomatedReviewStatus()]],
+          [[requestRetryStatus, pendingAutomatedReviewStatus()]],
+        ],
+      },
+      pages: { refs: [[]] },
+      statusIds: [1001],
+    });
+    const requestRetryResult = await expireTimedOutAutomatedReview({
+      github: requestRetry.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      now: Date.parse("2026-08-25T08:10:00Z"),
+      reviewTimeoutMs: 1_800_000,
+    });
+    assertEquals(requestRetryResult.state, "pending");
+    assertEquals(requestRetry.commentsPosted.length, 1);
   });
 
   it("marks a propagated unavailable retry as finalized", async () => {
@@ -4629,6 +4694,46 @@ describe("merge queue review propagation", () => {
     assertEquals(result.state, "success");
     assertEquals(fixture.published[0]?.sha, OTHER_HEAD);
     assertEquals(fixture.published[0]?.state, "success");
+  });
+
+  it("honors an active run-bound reset during merge-group proof checks", async () => {
+    const fixture = githubFixture({
+      pages: {
+        comments: [[codexComment(HEAD.slice(0, 10), {
+          id: 103,
+          created_at: "2026-08-25T09:00:00Z",
+          updated_at: "2026-08-25T09:00:00Z",
+        })]],
+        events: [[{
+          event: "ready_for_review",
+          id: 41,
+          created_at: "2026-08-25T08:00:00Z",
+        }]],
+        statuses: [[
+          automatedReviewStatus(),
+          automatedReviewResetStatus("2026-08-25T10:00:00Z", {
+            id: 104,
+            description: `PR#1 reset base:${
+              reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+            } key:ready-run-9001-at-1787644800000-event-41`,
+          }),
+        ]],
+      },
+      commit: HEAD,
+      headResponses: [HEAD, HEAD],
+    });
+    const result = await publishMergeGroupReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      sourceHeadSha: HEAD,
+      baseHeadSha: BASE_HEAD,
+      mergeGroupSha: OTHER_HEAD,
+    });
+
+    assertEquals(result.state, "failure");
+    assertEquals(fixture.published[0]?.state, "failure");
   });
 
   it("does not reuse a source review status from another pull request", async () => {
@@ -5295,12 +5400,22 @@ describe("automated review request", () => {
   });
 
   it("rejects a lifecycle request when the final pull snapshot advances", async () => {
+    const oldEpoch = {
+      event: "base_ref_changed",
+      id: 42,
+      created_at: "2026-08-25T08:00:00Z",
+    };
     const fixture = requestFixture({
-      events: [{
-        event: "base_ref_changed",
-        id: 42,
-        created_at: "2026-08-25T08:00:00Z",
-      }],
+      eventResponses: [
+        [oldEpoch],
+        [oldEpoch],
+        [oldEpoch],
+        [oldEpoch, {
+          event: "ready_for_review",
+          id: 43,
+          created_at: "2026-08-25T09:00:00Z",
+        }],
+      ],
       updatedAtResponses: [
         "2026-08-25T08:00:00Z",
         "2026-08-25T09:00:00Z",
@@ -5320,6 +5435,51 @@ describe("automated review request", () => {
     assertEquals(result.requested, false);
     assertEquals(result.reason, "stale-epoch");
     assertEquals(fixture.posted, []);
+
+    const unrelatedUpdate = requestFixture({
+      events: [oldEpoch],
+      updatedAtResponses: [
+        "2026-08-25T08:00:00Z",
+        "2026-08-25T09:00:00Z",
+      ],
+    });
+    const unrelatedResult = await requestAutomatedReview({
+      github: unrelatedUpdate.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      requestKey: "base-42",
+      validateRequestEpoch: true,
+      revalidateReviewEvidence: true,
+    });
+    assertEquals(unrelatedResult.requested, true);
+
+    const synchronize = requestFixture({
+      eventResponses: [
+        [oldEpoch],
+        [oldEpoch, {
+          event: "ready_for_review",
+          id: 43,
+          created_at: "2026-08-25T09:00:00Z",
+        }],
+      ],
+      updatedAtResponses: [
+        "2026-08-25T08:00:00Z",
+        "2026-08-25T09:00:00Z",
+      ],
+    });
+    const synchronizeResult = await requestAutomatedReview({
+      github: synchronize.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      revalidateReviewEvidence: true,
+    });
+    assertEquals(synchronizeResult.requested, false);
+    assertEquals(synchronizeResult.reason, "stale-epoch");
+    assertEquals(synchronize.posted, []);
   });
 
   it("does not post when the pull request is closed or draft", async () => {
