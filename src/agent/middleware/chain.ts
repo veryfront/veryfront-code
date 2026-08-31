@@ -12,7 +12,15 @@ import { agentLogger } from "#veryfront/utils/logger/index.ts";
 const INVALID_CONTINUATION_MESSAGE =
   "You must call agent middleware next() at most once while the middleware is active";
 const DETACHED_CONTINUATION_FAILURE = "downstream continuation rejected";
-const INVALID_CONTINUATION_ERRORS = new WeakSet<object>();
+const IntrinsicPromise = Promise;
+const IntrinsicWeakSet = WeakSet;
+const PromiseThen = Promise.prototype.then;
+const ReflectApply = Reflect.apply;
+const WeakSetAdd = WeakSet.prototype.add;
+const WeakSetHas = WeakSet.prototype.has;
+const INVALID_CONTINUATION_ERRORS = new IntrinsicWeakSet<object>();
+const TRACKED_CONTINUATIONS = new IntrinsicWeakSet<object>();
+const OBSERVED_CONTINUATIONS = new IntrinsicWeakSet<object>();
 // A global symbol lets independently loaded package copies recognize the
 // expected internal error; the WeakSet remains the primary local check.
 const INVALID_CONTINUATION_MARKER = Symbol.for(
@@ -43,20 +51,19 @@ type ContinuationRejectionHandler = (
 ) => void;
 
 class ObservedContinuationPromise<T> extends Promise<T> {
-  private observed = false;
-
   constructor(
     executor: ContinuationExecutor<T>,
     private readonly onRejection?: ContinuationRejectionHandler,
   ) {
     super(executor);
+    ReflectApply(WeakSetAdd, TRACKED_CONTINUATIONS, [this]);
   }
 
   override then<TResult1 = T, TResult2 = never>( // NOSONAR: tracks rejection observation; catch/finally delegate here.
     onFulfilled?: ContinuationThenHandler<T, TResult1>,
     onRejected?: ContinuationThenHandler<unknown, TResult2>,
   ): Promise<TResult1 | TResult2> {
-    this.observed = true;
+    ReflectApply(WeakSetAdd, OBSERVED_CONTINUATIONS, [this]);
     const derived = super.then(onFulfilled, onRejected);
     if (this.onRejection) {
       const observedDerived = derived as ObservedContinuationPromise<TResult1 | TResult2>;
@@ -78,7 +85,7 @@ class ObservedContinuationPromise<T> extends Promise<T> {
   }
 
   isObserved(): boolean {
-    return this.observed;
+    return ReflectApply(WeakSetHas, OBSERVED_CONTINUATIONS, [this]) as boolean;
   }
 }
 
@@ -131,12 +138,33 @@ function adoptContinuationResult(
     reject(new TypeError("Your middleware continuation cannot resolve to itself"));
     return;
   }
-  void Promise.prototype.then.call(dispatched, resolve, reject);
+  void ReflectApply(PromiseThen, dispatched, [resolve, reject]);
+}
+
+function adoptMiddlewareResult(
+  result: Promise<AgentResponse>,
+  onSettled: () => void,
+): Promise<AgentResponse> {
+  if (ReflectApply(WeakSetHas, TRACKED_CONTINUATIONS, [result]) as boolean) {
+    ReflectApply(WeakSetAdd, OBSERVED_CONTINUATIONS, [result]);
+  }
+  return new IntrinsicPromise((resolve, reject) => {
+    void ReflectApply(PromiseThen, result, [
+      (value: AgentResponse) => {
+        onSettled();
+        resolve(value);
+      },
+      (error: unknown) => {
+        onSettled();
+        reject(error);
+      },
+    ]);
+  });
 }
 
 function createInvalidContinuationError() {
   const error = MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE });
-  INVALID_CONTINUATION_ERRORS.add(error);
+  ReflectApply(WeakSetAdd, INVALID_CONTINUATION_ERRORS, [error]);
   try {
     Object.defineProperty(error, INVALID_CONTINUATION_MARKER, { value: true });
   } catch {
@@ -147,7 +175,7 @@ function createInvalidContinuationError() {
 
 function isInvalidContinuationError(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
-  if (INVALID_CONTINUATION_ERRORS.has(error)) return true;
+  if (ReflectApply(WeakSetHas, INVALID_CONTINUATION_ERRORS, [error]) as boolean) return true;
   if (!canIdentifyProxyWithoutHooks) return false;
   if (isProxyWithoutHooks(error)) return false;
   try {
@@ -162,7 +190,7 @@ function isAbortError(error: unknown): boolean {
     if (isProxyWithoutHooks(error)) return false;
     if (typeof DOM_EXCEPTION_NAME_GETTER === "function") {
       try {
-        return Reflect.apply(DOM_EXCEPTION_NAME_GETTER, error, []) === "AbortError";
+        return ReflectApply(DOM_EXCEPTION_NAME_GETTER, error, []) === "AbortError";
       } catch {
         // The native Web IDL getter rejects non-DOMException values without
         // consulting their prototype chain.
@@ -182,14 +210,14 @@ function observeContinuationRejection(
   onUnexpectedRejection?: ContinuationRejectionHandler,
   isObserved: () => boolean = () => false,
 ): void {
-  void Promise.prototype.then.call(promise, undefined, (error: unknown) => {
+  void ReflectApply(PromiseThen, promise, [undefined, (error: unknown) => {
     try {
       if (isInvalidContinuationError(error) || isAbortError(error)) return;
       onUnexpectedRejection?.(error, isObserved);
     } catch {
       // Rejection observers must not create a second unhandled rejection.
     }
-  });
+  }]);
 }
 
 function reportDetachedContinuationFailure(error: unknown): void {
@@ -373,7 +401,7 @@ export class MiddlewareChain {
               try {
                 const result = currentMiddleware(context, continuation.next);
                 continuation.finishInvocation();
-                return await result;
+                return await adoptMiddlewareResult(result, continuation.settle);
               } finally {
                 continuation.settle();
               }
