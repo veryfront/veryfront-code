@@ -8,8 +8,6 @@ const INVALID_CONTINUATION_MESSAGE =
   "You must call agent middleware next() at most once while the middleware is active";
 const INVALID_CONTINUATION_ERRORS = new WeakSet<object>();
 
-class ObservedContinuationPromise extends Promise<AgentResponse> {}
-
 type ContinuationThenHandler<T, R> =
   | ((value: T) => R | PromiseLike<R>)
   | null
@@ -20,30 +18,28 @@ type ContinuationExecutor = (
   reject: (reason?: unknown) => void,
 ) => void;
 
+class ObservedContinuationPromise extends Promise<AgentResponse> {
+  constructor(
+    executor: ContinuationExecutor,
+    private readonly onObserved: () => void,
+  ) {
+    super(executor);
+  }
+
+  override then<TResult1 = AgentResponse, TResult2 = never>(
+    onFulfilled?: ContinuationThenHandler<AgentResponse, TResult1>,
+    onRejected?: ContinuationThenHandler<unknown, TResult2>,
+  ): Promise<TResult1 | TResult2> {
+    this.onObserved();
+    return super.then(onFulfilled, onRejected);
+  }
+}
+
 function createObservedContinuation(
   executor: ContinuationExecutor,
   onObserved: () => void,
 ): Promise<AgentResponse> {
-  const continuation = new ObservedContinuationPromise(executor);
-  let observed = false;
-  const markObserved = (): void => {
-    if (observed) return;
-    observed = true;
-    onObserved();
-  };
-  const trackedThen = <TResult1 = AgentResponse, TResult2 = never>(
-    onFulfilled?: ContinuationThenHandler<AgentResponse, TResult1>,
-    onRejected?: ContinuationThenHandler<unknown, TResult2>,
-  ): Promise<TResult1 | TResult2> => {
-    markObserved();
-    return Promise.prototype.then.call(
-      continuation,
-      onFulfilled,
-      onRejected,
-    ) as Promise<TResult1 | TResult2>;
-  };
-  Object.defineProperty(continuation, "then", { value: trackedThen });
-  return continuation;
+  return new ObservedContinuationPromise(executor, onObserved);
 }
 
 function adoptContinuationResult(
@@ -51,12 +47,8 @@ function adoptContinuationResult(
   resolve: (value: AgentResponse | PromiseLike<AgentResponse>) => void,
   reject: (reason?: unknown) => void,
 ): void {
-  try {
-    const dispatched = dispatch();
-    void Promise.prototype.then.call(dispatched, resolve, reject);
-  } catch (error) {
-    reject(error);
-  }
+  const dispatched = dispatch();
+  void Promise.prototype.then.call(dispatched, resolve, reject);
 }
 
 function createInvalidContinuationError() {
