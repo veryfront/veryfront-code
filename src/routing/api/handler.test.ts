@@ -1199,6 +1199,46 @@ describe("APIRouteHandler", () => {
       assertEquals(discoveryCalls, 1);
     });
 
+    it("reuses application auth admitted before middleware", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/precomputed-auth.ts",
+        "export function OPTIONS() { return new Response('dispatched'); }",
+      );
+      __injectDepsForTests({
+        loadHandlerModule: () => Promise.resolve({ OPTIONS: () => new Response("dispatched") }),
+      });
+      const securityConfig = {
+        auth: {
+          trustedProxy: {
+            trustedPeers: ["127.0.0.1"],
+            headers: { subject: "x-auth-subject" },
+          },
+        },
+      } as HandlerContext["securityConfig"];
+      const handler = await createInitializedHandler(
+        "/test/project",
+        adapter,
+        { security: securityConfig } as HandlerConfig,
+      );
+      const response = await handler.handle(
+        new Request("http://localhost/api/precomputed-auth", { method: "OPTIONS" }),
+        {
+          ...localContext(adapter),
+          securityConfig,
+          applicationAuthResult: {
+            metadata: {
+              applicationIdentity: createIdentity(),
+              applicationIdentityHeaderNames: ["x-auth-subject"],
+            },
+          },
+        },
+      );
+
+      assertEquals(response?.status, 200);
+      assertEquals(await response?.text(), "dispatched");
+    });
+
     it("keeps plain OPTIONS automatic when a protected route has no OPTIONS export", async () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set(
