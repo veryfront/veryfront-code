@@ -3433,6 +3433,31 @@ describe("automated review publication", () => {
 
     assertEquals(result.state, "failure");
     assertEquals(result.review, undefined);
+
+    const delayedEvent = githubFixture({
+      pages: {
+        comments: [[codexComment(HEAD.slice(0, 10), {
+          created_at: "2026-08-25T08:30:00Z",
+          updated_at: "2026-08-25T08:30:00Z",
+        })]],
+        events: [[oldEpoch]],
+      },
+      pullResponses: [
+        associatedPull({ updated_at: "2026-08-25T08:00:00Z" }),
+        associatedPull({ updated_at: "2026-08-25T09:00:00Z" }),
+      ],
+      commit: HEAD,
+    });
+    const delayedResult = await publishAutomatedReviewStatus({
+      github: delayedEvent.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(delayedResult.state, "failure");
+    assertEquals(delayedResult.review, undefined);
   });
 });
 
@@ -4219,6 +4244,36 @@ describe("automated review timeout watchdog", () => {
       fixture.published.at(-1)?.description,
       "PR#1 review status unavailable; retry finalized",
     );
+
+    const requestRetry = automatedReviewStatus({
+      id: 1001,
+      state: "failure",
+      description:
+        "PR#1 review request unavailable; epoch:9f2e6d33a371; queue retry pending",
+      target_url: "https://example.test/pr/1",
+      created_at: "2026-08-25T08:00:00Z",
+    });
+    const requestFixture = githubFixture({
+      pages: {
+        statuses: [[requestRetry]],
+        refs: [[]],
+      },
+      commit: HEAD,
+      statusIds: [1002],
+    });
+    const requestResult = await completeReviewFailurePropagation({
+      github: requestFixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      sourceStatusId: 1001,
+      description: requestRetry.description,
+      targetUrl: requestRetry.target_url,
+    });
+    assertEquals(requestResult.finalized, false);
+    assertEquals(requestResult.description, requestRetry.description);
+    assertEquals(requestFixture.published, []);
   });
 
   it("does not finalize a retry after a newer lifecycle epoch", async () => {

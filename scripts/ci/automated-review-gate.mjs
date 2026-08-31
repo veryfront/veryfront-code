@@ -1276,6 +1276,7 @@ export async function publishAutomatedReviewStatus({
   let review;
   let failure;
   let pullAuthor;
+  let pullSnapshotUpdatedAt;
   let baseBinding;
   let baseRef;
   let isDraft = false;
@@ -1326,6 +1327,7 @@ export async function publishAutomatedReviewStatus({
         );
       }
       pullAuthor = current?.data?.user?.login;
+      pullSnapshotUpdatedAt = current?.data?.updated_at;
       baseBinding = pullRequestBaseBinding(current?.data);
       baseRef = current?.data?.base?.ref;
       isDraft = current?.data?.draft === true;
@@ -1550,6 +1552,12 @@ export async function publishAutomatedReviewStatus({
       review = undefined;
       throw new Error(
         "Pull request base changed while checking review evidence",
+      );
+    }
+    if (review && pullSnapshotAdvanced(pullSnapshotUpdatedAt, current)) {
+      review = undefined;
+      throw new Error(
+        "Pull request changed while checking review evidence",
       );
     }
     if (review) {
@@ -2140,6 +2148,14 @@ async function propagateAndFinalizeReviewFailure({
     return {
       resolution,
       description: reviewFailureDescription(pullNumber, failureKind, true),
+      statusId: sourceStatusId,
+      finalized: false,
+    };
+  }
+  if (failureKind === "request-unavailable") {
+    return {
+      resolution,
+      description: currentRetry.status.description,
       statusId: sourceStatusId,
       finalized: false,
     };
