@@ -326,7 +326,9 @@ describe("agent/middleware/chain", () => {
   });
 
   it("reports a detached deferred downstream rejection", async () => {
-    const downstreamError = new Error("detached downstream failed");
+    const downstreamError = new Error(
+      "ENOENT: /Users/alice/private/customer-data.txt C:\\Users\\Bob\\secrets.txt",
+    );
     const records: LogEntry[] = [];
     const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
     try {
@@ -348,8 +350,10 @@ describe("agent/middleware/chain", () => {
     const record = records.find((entry) =>
       entry.message === "Agent middleware continuation failed"
     );
-    assertEquals(record?.context?.error, "detached downstream failed");
+    assertEquals(record?.context?.error, "downstream continuation rejected");
     assertEquals(record?.error, undefined);
+    assertEquals(String(record?.context?.error).includes("customer-data"), false);
+    assertEquals(String(record?.context?.error).includes("secrets"), false);
   });
 
   it("reports a detached synchronous downstream rejection", async () => {
@@ -374,7 +378,7 @@ describe("agent/middleware/chain", () => {
     const record = records.find((entry) =>
       entry.message === "Agent middleware continuation failed"
     );
-    assertEquals(record?.context?.error, "detached synchronous downstream failed");
+    assertEquals(record?.context?.error, "downstream continuation rejected");
     assertEquals(record?.error, undefined);
   });
 
@@ -407,6 +411,28 @@ describe("agent/middleware/chain", () => {
       records.some((entry) => entry.message === "Agent middleware continuation failed"),
       false,
     );
+  });
+
+  it("propagates a synchronous throw from deferred downstream dispatch", async () => {
+    let deferredContinuation: Promise<AgentResponse> | undefined;
+    const downstreamError = new Error("synchronous downstream failure");
+    const chain = new MiddlewareChain([
+      async (_context, next) => {
+        await Promise.resolve();
+        deferredContinuation = next();
+        return response;
+      },
+    ]);
+
+    await chain.execute(context, () => {
+      throw downstreamError;
+    });
+    const error = await assertRejects(
+      () => deferredContinuation!,
+      Error,
+      "synchronous downstream failure",
+    );
+    assertEquals(error, downstreamError);
   });
 
   it("supports standard Promise composition on continuations", async () => {

@@ -1,11 +1,11 @@
 import type { AgentContext, AgentMiddleware, AgentResponse } from "../types.ts";
 import { MIDDLEWARE_ERROR } from "#veryfront/errors";
-import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { agentLogger } from "#veryfront/utils/logger/index.ts";
 
 const INVALID_CONTINUATION_MESSAGE =
   "You must call agent middleware next() at most once while the middleware is active";
+const DETACHED_CONTINUATION_FAILURE = "downstream continuation rejected";
 const INVALID_CONTINUATION_ERRORS = new WeakSet<object>();
 
 type ContinuationThenHandler<T, R> =
@@ -79,6 +79,13 @@ function observeContinuationRejection(
   });
 }
 
+function reportDetachedContinuationFailure(): void {
+  agentLogger.error(
+    "Agent middleware continuation failed",
+    { error: DETACHED_CONTINUATION_FAILURE },
+  );
+}
+
 function rejectInvalidContinuation(): Promise<AgentResponse> {
   const rejection = Promise.reject<AgentResponse>(createInvalidContinuationError());
   observeContinuationRejection(rejection);
@@ -98,7 +105,7 @@ function createDeferredContinuation(
         return;
       }
       adoptContinuationResult(dispatch, resolve, reject);
-    });
+    }).catch(reject);
   }, onObserved ?? (() => {}));
   observeContinuationRejection(continuation, onUnexpectedRejection);
   return continuation;
@@ -126,10 +133,7 @@ function createMiddlewareContinuation(
       return;
     }
     if (continuationObserved || middlewareSettlementError === error) return;
-    agentLogger.error(
-      "Agent middleware continuation failed",
-      { error: snapshotThrowableDiagnostic(error) },
-    );
+    reportDetachedContinuationFailure();
   };
 
   const next = (): Promise<AgentResponse> => {
@@ -168,10 +172,7 @@ function createMiddlewareContinuation(
       const rejection = continuationRejection;
       continuationRejection = undefined;
       if (rejection && !continuationObserved && middlewareSettlementError !== rejection.error) {
-        agentLogger.error(
-          "Agent middleware continuation failed",
-          { error: snapshotThrowableDiagnostic(rejection.error) },
-        );
+        reportDetachedContinuationFailure();
       }
     },
   };
