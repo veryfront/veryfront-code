@@ -60,7 +60,10 @@ class ObservedContinuationPromise<T> extends Promise<T> {
     if (this.onRejection) {
       const observedDerived = derived as ObservedContinuationPromise<TResult1 | TResult2>;
       if (!PROMISE_SPECIES_SUPPORTED || typeof observedDerived.isObserved !== "function") {
-        return createTrackedDerivedContinuation(derived, this.onRejection);
+        // Preserve the runtime-selected branch and suppress native unhandled
+        // rejection noise when its observation state cannot be tracked.
+        observeContinuationRejection(derived);
+        return derived;
       }
       observeContinuationRejection(
         derived,
@@ -114,15 +117,6 @@ function createObservedContinuation<T>(
     // derived branches are adopted into tracked continuations instead.
   }
   return continuation;
-}
-
-function createTrackedDerivedContinuation<T>(
-  derived: Promise<T>,
-  onRejection: ContinuationRejectionHandler,
-): Promise<T> {
-  return createObservedContinuation<T>((resolve, reject) => {
-    void Promise.prototype.then.call(derived, resolve, reject);
-  }, onRejection);
 }
 
 function adoptContinuationResult(
