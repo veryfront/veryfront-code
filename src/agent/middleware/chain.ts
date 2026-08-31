@@ -15,22 +15,39 @@ export class MiddlewareChain {
     return withSpan(
       "agent.middleware.chain.execute",
       () => {
-        let index = 0;
-
-        const dispatch = (): Promise<AgentResponse> => {
-          const middlewareIndex = index++;
+        const dispatch = (middlewareIndex: number): Promise<AgentResponse> => {
           const currentMiddleware = this.middleware[middlewareIndex];
 
           if (!currentMiddleware) return finalHandler();
 
           return withSpan(
-            `agent.middleware.chain.dispatch.${index}`,
-            () => currentMiddleware(context, dispatch),
+            `agent.middleware.chain.dispatch.${middlewareIndex + 1}`,
+            async () => {
+              let nextCalled = false;
+              let middlewareSettled = false;
+              const next = (): Promise<AgentResponse> => {
+                if (nextCalled || middlewareSettled) {
+                  return Promise.reject(
+                    new Error(
+                      "Agent middleware next() can only be called once while middleware is active",
+                    ),
+                  );
+                }
+                nextCalled = true;
+                return dispatch(middlewareIndex + 1);
+              };
+
+              try {
+                return await currentMiddleware(context, next);
+              } finally {
+                middlewareSettled = true;
+              }
+            },
             { "middleware.index": middlewareIndex },
           );
         };
 
-        return dispatch();
+        return dispatch(0);
       },
       { "middleware.count": this.middleware.length },
     );
