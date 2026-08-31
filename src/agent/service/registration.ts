@@ -657,8 +657,12 @@ export async function createAgentServiceRegistrationLifecycle(
   });
 
   return {
-    serviceId: service.id,
-    service,
+    get serviceId() {
+      return service.id;
+    },
+    get service() {
+      return service;
+    },
     heartbeat,
     stop: () => {
       stopped = true;

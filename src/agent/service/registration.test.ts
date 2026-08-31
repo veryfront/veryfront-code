@@ -1119,6 +1119,16 @@ describe("agent/agent-service-registration heartbeat recovery", () => {
       recoveredHeartbeats > 0,
       "heartbeats must succeed again once the service is re-registered",
     );
+    assertEquals(
+      lifecycle.serviceId,
+      recoveredServiceId,
+      "the lifecycle must expose the adopted registration id",
+    );
+    assertEquals(
+      lifecycle.service.id,
+      recoveredServiceId,
+      "the lifecycle must expose the adopted registration row",
+    );
   });
 
   it("escalates when the control plane repeatedly loses successful re-registrations", async () => {
