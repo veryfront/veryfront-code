@@ -6785,6 +6785,49 @@ export default config as const;
         assertEquals(error.message.includes("31m"), false);
       });
 
+      it("redacts a URL whose scheme is split by a CSI sequence", async () => {
+        const escape = String.fromCharCode(27);
+        const csi = String.fromCharCode(0x9b);
+        const cases = [
+          ["https-after-h", `h${escape}[ttps:`],
+          ["https-after-ht", `ht${escape}[tps:`],
+          ["https-after-htt", `htt${escape}[ps:`],
+          ["https-before-s", `http${escape}[s:`],
+          ["parameterized", `h${escape}[31ttps:`],
+          ["eight-bit", `h${csi}ttps:`],
+          ["uppercase", `H${escape}[TTPS:`],
+          ["websocket", `w${escape}[ss:`],
+          ["ftp", `f${escape}[tp:`],
+        ] as const;
+
+        for (const [label, splitScheme] of cases) {
+          const error = await loadFailure(
+            `vf-config-csi-split-url-scheme-${label}-`,
+            `throw new Error(${
+              JSON.stringify(`Load ${splitScheme}registry.internal/config.ts`)
+            });\n`,
+          );
+
+          assertEquals(error.message.includes("registry.internal"), false, label);
+          assertStringIncludes(error.message, "Load [url]", label);
+        }
+
+        const fileUrl = await loadFailure(
+          "vf-config-csi-split-file-url-scheme-",
+          `throw new Error(${JSON.stringify(`Load fi${escape}[le:///home/alice/config.ts`)});\n`,
+        );
+        assertEquals(fileUrl.message.includes("alice"), false);
+        assertEquals(fileUrl.message.includes("[url]"), false);
+        assertStringIncludes(fileUrl.message, "Load [path]");
+
+        const prose = await loadFailure(
+          "vf-config-csi-before-scheme-like-prose-",
+          `throw new Error("Status h${escape}[31m ttps: retry");\n`,
+        );
+
+        assertStringIncludes(prose.message, "Status h ttps: retry");
+      });
+
       it("redacts credentials both before and after stripping CSI sequences", async () => {
         const escape = String.fromCharCode(27);
         const error = await loadFailure(

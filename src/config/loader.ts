@@ -1913,6 +1913,85 @@ const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/g;
 // Strip complete CSI sequences before matching paths and URLs.
 // deno-lint-ignore no-control-regex
 const ANSI_CSI_SEQUENCE = /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\u0040-\u007E]/g;
+const CSI_SPLITTABLE_URL_SCHEMES = freezeObject([
+  "http",
+  "https",
+  "ws",
+  "wss",
+  "ftp",
+  "file",
+]) as readonly string[];
+
+/**
+ * Restore a URL-scheme character consumed as a CSI final byte.
+ *
+ * In `h<ESC>[ttps:host/path`, `t` is both a legal CSI final byte and the
+ * second character of `https`. Ordinary de-colorization therefore leaves the
+ * unrecognized token `htps:host/path`. Restore the final byte only when the
+ * bounded text immediately before and after the sequence completes a scheme
+ * the URL redactor already recognizes. The normal redaction pass then removes
+ * the whole URL.
+ *
+ * Keep the CSI grammar unchanged. Restricting its final byte would leave real
+ * sequences behind, while matching arbitrary damaged schemes would erase
+ * ordinary colon-delimited prose.
+ */
+function restoreCsiSplitUrlSchemes(value: string): string {
+  ANSI_CSI_SEQUENCE.lastIndex = 0;
+  let output = "";
+  let offset = 0;
+  try {
+    while (true) {
+      const match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE, [value]) as
+        | RegExpExecArray
+        | null;
+      if (match === null) break;
+
+      const matched = match[0];
+      const finalByte = ReflectApply(
+        StringPrototypeToLowerCase,
+        stringSlice(matched, -1),
+        [],
+      ) as string;
+      const prefixStart = match.index > 5 ? match.index - 5 : 0;
+      const preceding = ReflectApply(
+        StringPrototypeToLowerCase,
+        stringSlice(value, prefixStart, match.index),
+        [],
+      ) as string;
+      const following = ReflectApply(
+        StringPrototypeToLowerCase,
+        stringSlice(value, ANSI_CSI_SEQUENCE.lastIndex, ANSI_CSI_SEQUENCE.lastIndex + 5),
+        [],
+      ) as string;
+
+      let restoresScheme = false;
+      for (
+        let schemeIndex = 0;
+        schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length && !restoresScheme;
+        schemeIndex++
+      ) {
+        const scheme = CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!;
+        for (let splitIndex = 1; splitIndex < scheme.length; splitIndex++) {
+          if (stringSlice(scheme, splitIndex, splitIndex + 1) !== finalByte) continue;
+          const prefix = stringSlice(scheme, 0, splitIndex);
+          const suffix = `${stringSlice(scheme, splitIndex + 1)}:`;
+          if (stringEndsWith(preceding, prefix) && stringStartsWith(following, suffix)) {
+            restoresScheme = true;
+            break;
+          }
+        }
+      }
+
+      output += stringSlice(value, offset, match.index);
+      output += restoresScheme ? stringSlice(matched, -1) : matched;
+      offset = ANSI_CSI_SEQUENCE.lastIndex;
+    }
+    return output + stringSlice(value, offset);
+  } finally {
+    ANSI_CSI_SEQUENCE.lastIndex = 0;
+  }
+}
 // Remove a CSI prefix separately when its grammar could consume the first path
 // byte. Preserve `/`, both UNC separators, and drive-letter starts for redaction.
 const CSI_GLUED_PATH =
@@ -2235,9 +2314,10 @@ function summarizeConfigLoadCause(error: unknown): string | undefined {
   if (message === undefined) return undefined;
   // Sanitize on both sides because stripping CSI can join or consume credential bytes.
   const initiallyRedacted = sanitizeUrlCredentials(message);
+  const restoredUrlSchemes = restoreCsiSplitUrlSchemes(initiallyRedacted);
   // Replacing a glued CSI introducer with space preserves the path or scheme start
   // without joining it to preceding prose. Machine paths are redacted afterward.
-  const unglued = replaceMatchesWithCapturedExec(initiallyRedacted, CSI_GLUED_PATH, " ");
+  const unglued = replaceMatchesWithCapturedExec(restoredUrlSchemes, CSI_GLUED_PATH, " ");
   const ungluedUrl = replaceMatchesWithCapturedExec(unglued, CSI_GLUED_URL, " ");
   const deColorized = replaceMatchesWithCapturedExec(
     ungluedUrl,
