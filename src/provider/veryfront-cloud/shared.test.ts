@@ -3,6 +3,7 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import {
   createVeryfrontCloudFetch,
   getVeryfrontCloudGatewayBaseUrl,
@@ -12,15 +13,16 @@ import {
 
 describe("provider/veryfront-cloud/shared", () => {
   it("requires HTTPS or loopback for run-scoped inference credentials", () => {
-    assertThrows(
+    const error = assertThrows(
       () =>
         runWithVeryfrontCloudContext(
           { apiBaseUrl: "http://api.example.test", apiToken: "broader-token" },
           () => requireVeryfrontCloudBootstrap("run-scoped-inference-token"),
         ),
-      TypeError,
+      VeryfrontError,
       "Run-scoped inference credentials require HTTPS or a loopback API base URL",
     );
+    assertEquals(error.slug, "config-invalid");
     assertEquals(
       runWithVeryfrontCloudContext(
         { apiBaseUrl: "http://localhost:4000", apiToken: "broader-token" },
