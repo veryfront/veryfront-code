@@ -147,6 +147,20 @@ describe("agent/middleware/chain", () => {
     await assertRejects(() => retainedNext!(), VeryfrontError, replayError);
   });
 
+  it("does not leak an ignored invalid continuation rejection", async () => {
+    let retainedNext: (() => Promise<AgentResponse>) | undefined;
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        retainedNext = next;
+        return Promise.resolve(response);
+      },
+    ]);
+
+    await chain.execute(context, () => Promise.resolve(response));
+    retainedNext!();
+    await Promise.resolve();
+  });
+
   it("propagates downstream rejection through an awaited continuation", async () => {
     let observedError: unknown;
     const downstreamError = new Error("downstream failed");

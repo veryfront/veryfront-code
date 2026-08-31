@@ -31,8 +31,21 @@ export class MiddlewareChain {
               let middlewareInvoking = true;
               let middlewareSettled = false;
 
-              const rejectInvalidContinuation = (): Promise<AgentResponse> =>
-                Promise.reject(MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE }));
+              const createInvalidContinuationError = (): Error =>
+                MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE });
+
+              const consumeRejectedPromise = (promise: Promise<AgentResponse>): void => {
+                void promise.then(
+                  () => undefined,
+                  () => undefined,
+                );
+              };
+
+              const rejectInvalidContinuation = (): Promise<AgentResponse> => {
+                const rejection = Promise.reject<AgentResponse>(createInvalidContinuationError());
+                consumeRejectedPromise(rejection);
+                return rejection;
+              };
 
               const next = (): Promise<AgentResponse> => {
                 if (nextCalled || middlewareSettled) {
@@ -41,14 +54,22 @@ export class MiddlewareChain {
                 nextCalled = true;
 
                 if (!middlewareInvoking) {
-                  return Promise.resolve().then(() => {
-                    if (middlewareSettled) {
-                      throw MIDDLEWARE_ERROR.create({
-                        message: INVALID_CONTINUATION_MESSAGE,
-                      });
-                    }
-                    return dispatch(middlewareIndex + 1);
+                  const deferredContinuation = new Promise<AgentResponse>((resolve, reject) => {
+                    queueMicrotask(() => {
+                      if (middlewareSettled) {
+                        reject(createInvalidContinuationError());
+                        consumeRejectedPromise(deferredContinuation);
+                        return;
+                      }
+
+                      try {
+                        void dispatch(middlewareIndex + 1).then(resolve, reject);
+                      } catch (error) {
+                        reject(error);
+                      }
+                    });
                   });
+                  return deferredContinuation;
                 }
 
                 return dispatch(middlewareIndex + 1);
