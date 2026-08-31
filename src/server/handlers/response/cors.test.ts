@@ -246,6 +246,40 @@ describe("server/handlers/response/cors", () => {
       assertEquals(routeResolutionCalls, 0);
     });
 
+    it("uses automatic preflight when an atomic runtime has no project slug", async () => {
+      let contextEntries = 0;
+      const ctx = makeCtx({
+        allowHostProjectCodeExecution: true,
+        prepareHostedConfigContext: () => Promise.reject(new Error("unused")),
+        securityConfig: { cors: { origin: ["https://app.example"] } } as never,
+      });
+      const fs = ctx.adapter.fs as unknown as {
+        isContextualMode: () => boolean;
+        isMultiProjectMode: () => boolean;
+        runWithContext: (...args: never[]) => Promise<unknown>;
+      };
+      fs.isContextualMode = () => true;
+      fs.isMultiProjectMode = () => true;
+      fs.runWithContext = async () => {
+        contextEntries++;
+        return undefined;
+      };
+
+      const result = await new CorsHandler().handle(
+        new Request("https://app.example/api/items", {
+          method: "OPTIONS",
+          headers: {
+            Origin: "https://app.example",
+            "access-control-request-method": "POST",
+          },
+        }),
+        ctx,
+      );
+
+      assertEquals(result.response?.status, 204);
+      assertEquals(contextEntries, 0);
+    });
+
     it("resolves a non-API App route inside its atomic project context", async () => {
       let inProjectContext = false;
       const ctx = makeCtx({
@@ -287,6 +321,49 @@ describe("server/handlers/response/cors", () => {
         ctx,
       );
 
+      assertEquals(result.continue, true);
+      assertEquals(result.response, undefined);
+    });
+
+    it("refreshes a mutable preview source before non-API route classification", async () => {
+      let sourceIsFresh = false;
+      const ctx = makeCtx({
+        projectSlug: "tenant-project",
+        projectId: "project-123",
+        proxyToken: "proxy-token",
+        allowHostProjectCodeExecution: true,
+        requestContext: { mode: "preview", branch: "feature" } as never,
+      });
+      const fs = ctx.adapter.fs as unknown as {
+        isContextualMode: () => boolean;
+        isMultiProjectMode: () => boolean;
+        runWithContext: <T>(
+          slug: string,
+          token: string,
+          fn: () => Promise<T>,
+        ) => Promise<T>;
+        sourceSnapshotFreshnessOptionsVersion: number;
+        ensureSourceSnapshotFresh: () => Promise<void>;
+      };
+      fs.isContextualMode = () => true;
+      fs.isMultiProjectMode = () => true;
+      fs.runWithContext = async (_slug, _token, fn) => await fn();
+      fs.sourceSnapshotFreshnessOptionsVersion = 1;
+      fs.ensureSourceSnapshotFresh = async () => {
+        sourceIsFresh = true;
+      };
+
+      const result = await new CorsHandler({
+        resolveAppRouteFile: () =>
+          Promise.resolve(
+            sourceIsFresh ? { file: "/project/app/webhook/route.ts", params: {} } : null,
+          ),
+      }).handle(
+        new Request("https://tenant.example/webhook", { method: "OPTIONS" }),
+        ctx,
+      );
+
+      assertEquals(sourceIsFresh, true);
       assertEquals(result.continue, true);
       assertEquals(result.response, undefined);
     });

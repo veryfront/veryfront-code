@@ -9,6 +9,7 @@ import {
   requiresIsolatedProjectRuntime,
 } from "#veryfront/security/project-locality.ts";
 import { getApplicationPreflightHeaders } from "#veryfront/security/http/application-request.ts";
+import { ensurePreviewSourceSnapshotFresh } from "../request/source-snapshot-freshness.ts";
 
 type AppRouteResolver = typeof resolveAppRouteFile;
 type FsWrapper = {
@@ -57,6 +58,7 @@ export class CorsHandler extends BaseHandler {
     const fsWrapper = ctx.adapter.fs as FsWrapper;
     const hasContextualFilesystem = fsWrapper.isContextualMode?.() === true;
     const hasAtomicSharedRuntimeContext = isSharedRuntime &&
+      !!ctx.projectSlug &&
       fsWrapper.isMultiProjectMode?.() === true &&
       typeof fsWrapper.runWithContext === "function";
     const shouldUseAutomaticPreflight = mustAvoidProjectCode ||
@@ -66,11 +68,15 @@ export class CorsHandler extends BaseHandler {
     }
 
     if (!shouldUseAutomaticPreflight && !isApiPath) {
+      const resolveMatchedRoute = async (): Promise<boolean> => {
+        await ensurePreviewSourceSnapshotFresh(ctx);
+        return this.hasMatchedAppRoute(pathname, ctx);
+      };
       const hasMatchedAppRoute = hasAtomicSharedRuntimeContext
         ? await fsWrapper.runWithContext!(
           ctx.projectSlug!,
           ctx.proxyToken ?? "",
-          () => this.hasMatchedAppRoute(pathname, ctx),
+          resolveMatchedRoute,
           ctx.projectId,
           {
             productionMode: ctx.requestContext?.mode === "production",
@@ -81,7 +87,7 @@ export class CorsHandler extends BaseHandler {
             environmentName: ctx.environmentName,
           },
         )
-        : await this.hasMatchedAppRoute(pathname, ctx);
+        : await resolveMatchedRoute();
       if (hasMatchedAppRoute) return this.continue();
     }
 

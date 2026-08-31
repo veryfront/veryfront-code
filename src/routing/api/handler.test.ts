@@ -1292,8 +1292,8 @@ describe("APIRouteHandler", () => {
         resolvePreparedRouteMethods: () =>
           Promise.reject(new Error("prepared method inspection failed")),
       });
-      setEnv("WORKER_ISOLATION_ENABLED", "1");
-      setEnv("WORKER_ISOLATION_API", "1");
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
       await __resetPoolForTests();
 
       const handler = await createInitializedHandler("/test/project", adapter);
