@@ -67,7 +67,7 @@ describe("ApiHandlerWrapper", () => {
       },
     });
 
-    assertEquals(await wrapper.isFrameworkOwnedPreflight(request, ctx), true);
+    assertEquals(await wrapper.prepareFrameworkOwnedPreflight(request, ctx), true);
     const result = await wrapper.handle(request, ctx);
 
     assertEquals(result.response?.status, 204);
@@ -108,7 +108,7 @@ describe("ApiHandlerWrapper", () => {
       },
     });
 
-    assertEquals(await wrapper.isFrameworkOwnedPreflight(request, ctx), true);
+    assertEquals(await wrapper.prepareFrameworkOwnedPreflight(request, ctx), true);
     const result = await wrapper.handle(request, ctx);
 
     assertEquals(result.response?.status, 204);
@@ -129,7 +129,7 @@ describe("ApiHandlerWrapper", () => {
     const wrapper = new ApiHandlerWrapper(ctx.projectDir, adapter);
 
     assertEquals(
-      await wrapper.isFrameworkOwnedPreflight(
+      await wrapper.prepareFrameworkOwnedPreflight(
         new Request("http://localhost/api/private", {
           method: "OPTIONS",
           headers: {
@@ -240,7 +240,7 @@ describe("ApiHandlerWrapper", () => {
 
     await assertRejects(
       () =>
-        new ApiHandlerWrapper("/tmp/project", ctx.adapter).isFrameworkOwnedPreflight(
+        new ApiHandlerWrapper("/tmp/project", ctx.adapter).prepareFrameworkOwnedPreflight(
           new Request("http://localhost/api/options", {
             method: "OPTIONS",
             headers: {

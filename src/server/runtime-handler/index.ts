@@ -733,7 +733,7 @@ export function createVeryfrontHandler(
             requestMetricsIncremented = true;
           }
 
-          const isFrameworkOwnedPreflight = await apiHandler.isFrameworkOwnedPreflight(
+          const isFrameworkOwnedPreflight = await apiHandler.prepareFrameworkOwnedPreflight(
             request,
             ctx,
           );

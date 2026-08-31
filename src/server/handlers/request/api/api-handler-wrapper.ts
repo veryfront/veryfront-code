@@ -70,7 +70,7 @@ export class ApiHandlerWrapper extends BaseHandler {
     await this.initPromise;
   }
 
-  async isFrameworkOwnedPreflight(req: Request, ctx: HandlerContext): Promise<boolean> {
+  async prepareFrameworkOwnedPreflight(req: Request, ctx: HandlerContext): Promise<boolean> {
     if (!isPreflightRequest(req)) return false;
     if (requiresIsolatedProjectRuntime(ctx)) {
       ctx.frameworkOwnedPreflight = true;
@@ -350,6 +350,8 @@ export class ApiHandlerWrapper extends BaseHandler {
   }
 
   private finalizePreflightResponse(ctx: HandlerContext, response: Response): Response {
+    // The prepared response already carries the validated CORS policy headers;
+    // only security and response headers are added here.
     return this.createResponseBuilder(ctx)
       .withSecurity(ctx.securityConfig ?? undefined)
       .withHeaders(response.headers)

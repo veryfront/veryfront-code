@@ -158,7 +158,8 @@ export class ProjectMiddlewareRuntime {
 
     // Browser preflight is framework-owned only after route inspection
     // prepared the response from the same source snapshot. Keep middleware on
-    // every ambiguous or authored route shape.
+    // every ambiguous or authored route shape. The auth-terminal bypass above
+    // is the separate browser-preflight path and is mutually exclusive.
     if (isFrameworkOwnedPreflight) {
       return next();
     }
