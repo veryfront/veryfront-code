@@ -120,7 +120,9 @@ class ObservedContinuationPromise<T> extends Promise<T> {
     onRejected?: ContinuationThenHandler<unknown, TResult2>,
   ): Promise<TResult1 | TResult2> {
     markContinuationObserved(this);
-    const derived = super.then(onFulfilled, onRejected);
+    const derived = ReflectApply(PromiseThen, this, [onFulfilled, onRejected]) as Promise<
+      TResult1 | TResult2
+    >;
     if (this.onRejection) {
       const observedDerived = derived as ObservedContinuationPromise<TResult1 | TResult2>;
       if (!PROMISE_SPECIES_SUPPORTED || typeof observedDerived.isObserved !== "function") {
@@ -270,8 +272,6 @@ function adoptMiddlewareResult(
   if (ReflectApply(WeakSetHas, TRACKED_CONTINUATIONS, [result]) as boolean) {
     markContinuationObserved(result);
   }
-  const preserveNativeRejection = !ReflectApply(WeakSetHas, TRACKED_CONTINUATIONS, [result]) &&
-    !canDecoratePromise(result);
   return new IntrinsicPromise((resolve, reject) => {
     beginAdoption();
     try {
@@ -279,18 +279,10 @@ function adoptMiddlewareResult(
         onSettled();
         resolve(value);
       };
-      if (preserveNativeRejection) {
-        const propagated = ReflectApply(PromiseThen, result, [onFulfilled]);
-        void ReflectApply(PromiseThen, propagated, [undefined, (error: unknown) => {
-          onSettled();
-          reject(error);
-        }]);
-      } else {
-        void ReflectApply(PromiseThen, result, [onFulfilled, (error: unknown) => {
-          onSettled();
-          reject(error);
-        }]);
-      }
+      void ReflectApply(PromiseThen, result, [onFulfilled, (error: unknown) => {
+        onSettled();
+        reject(error);
+      }]);
     } finally {
       endAdoption();
     }
@@ -309,7 +301,7 @@ function createInvalidContinuationError() {
 }
 
 function isInvalidContinuationError(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
+  if (error === null || typeof error !== "object") return false;
   if (ReflectApply(WeakSetHas, INVALID_CONTINUATION_ERRORS, [error]) as boolean) return true;
   if (!canIdentifyProxyWithoutHooks) return false;
   if (isProxyWithoutHooks(error)) return false;
