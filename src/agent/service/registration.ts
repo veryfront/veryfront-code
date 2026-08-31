@@ -541,13 +541,12 @@ export async function createAgentServiceRegistrationLifecycle(
   let heartbeatInFlight: Promise<void> | undefined;
   let heartbeatSkipLogged = false;
   let awaitingHeartbeatAfterReregistration = false;
-  let recoveredLostRegistration = false;
+  const recoveredHeartbeats = new WeakSet<Promise<void>>();
 
   const heartbeat = () => {
     if (heartbeatInFlight) return heartbeatInFlight;
 
     heartbeatSkipLogged = false;
-    recoveredLostRegistration = false;
     heartbeatInFlight = (async () => {
       if (stopped) {
         return;
@@ -576,7 +575,7 @@ export async function createAgentServiceRegistrationLifecycle(
           // is exempted: another 404 before any heartbeat succeeds means the
           // control plane is repeatedly losing registrations and must escalate.
           try {
-            service = await retryWithBackoff(
+            const registeredService = await retryWithBackoff(
               (signal) => registerAgentPushRuntimeService(input, fetchImpl, signal),
               {
                 maxAttempts: 1,
@@ -587,8 +586,16 @@ export async function createAgentServiceRegistrationLifecycle(
                 ),
               },
             );
-            recoveredLostRegistration = !awaitingHeartbeatAfterReregistration;
+            if (stopped) {
+              return;
+            }
+            if (!awaitingHeartbeatAfterReregistration && heartbeatInFlight) {
+              recoveredHeartbeats.add(heartbeatInFlight);
+            }
             awaitingHeartbeatAfterReregistration = true;
+            service = registeredService;
+            lifecycle.serviceId = registeredService.id;
+            lifecycle.service = registeredService;
             options.logger?.info?.(
               "Agent service re-registered after the control plane lost its registration",
               { serviceId: service.id },
@@ -634,10 +641,11 @@ export async function createAgentServiceRegistrationLifecycle(
       }
       return;
     }
-    void heartbeat().then(() => {
+    const scheduledHeartbeat = heartbeat();
+    void scheduledHeartbeat.then(() => {
       consecutiveHeartbeatFailures = 0;
     }).catch((error: unknown) => {
-      if (recoveredLostRegistration) {
+      if (recoveredHeartbeats.has(scheduledHeartbeat)) {
         consecutiveHeartbeatFailures = 0;
         return;
       }
@@ -659,20 +667,9 @@ export async function createAgentServiceRegistrationLifecycle(
     });
   }, input.heartbeatIntervalMs);
 
-  options.logger?.info?.("Agent service registered with control plane", {
+  const lifecycle: AgentServiceRegistrationLifecycle = {
     serviceId: service.id,
-    serviceName: service.service_name,
-    scopeKind: service.scope_kind,
-    projectId: service.project_id,
-  });
-
-  return {
-    get serviceId() {
-      return service.id;
-    },
-    get service() {
-      return service;
-    },
+    service,
     heartbeat,
     stop: () => {
       stopped = true;
@@ -680,4 +677,13 @@ export async function createAgentServiceRegistrationLifecycle(
       teardown.abort();
     },
   };
+
+  options.logger?.info?.("Agent service registered with control plane", {
+    serviceId: service.id,
+    serviceName: service.service_name,
+    scopeKind: service.scope_kind,
+    projectId: service.project_id,
+  });
+
+  return lifecycle;
 }
