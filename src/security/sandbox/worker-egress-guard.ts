@@ -55,7 +55,7 @@ function getNativeRequestProperty<TKey extends keyof typeof RequestGetters>(
   key: TKey,
 ): Request[TKey] {
   const getter = RequestGetters[key];
-  if (!getter) return undefined as Request[TKey];
+  if (!getter) throw new TypeError("Request accessor is unavailable");
   return IntrinsicReflectApply(getter, request, []) as Request[TKey];
 }
 
