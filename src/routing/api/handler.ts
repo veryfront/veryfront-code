@@ -148,6 +148,11 @@ type OptionsMiddlewareAdmission =
   | "continue"
   | "bypass-middleware";
 
+/**
+ * Request-scoped auth handoff consumed by handle(). The runtime creates a fresh
+ * HandlerContext for every attempt, and the weak key makes an abandoned prepare
+ * harmless; handle() deletes the entry as soon as it consumes it.
+ */
 const preparedOptionsAdmissions = new WeakMap<HandlerContext, Response | null>();
 
 /** Function signature for API route handlers. */
