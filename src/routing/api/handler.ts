@@ -251,10 +251,9 @@ export class APIRouteHandler {
     const { pathname } = new URL(request.url);
     const match = this.router.match(pathname);
     if (!match) {
-      const isApiPath = pathname === "/api" || pathname.startsWith("/api/");
       return {
         frameworkOwned: true,
-        response: isApiPath ? await this.automaticPreflight(request, undefined, ctx) : undefined,
+        response: await this.automaticPreflight(request, undefined, ctx),
       };
     }
 
