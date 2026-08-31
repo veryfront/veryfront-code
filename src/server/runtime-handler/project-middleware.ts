@@ -48,6 +48,10 @@ export interface ProjectMiddlewareRuntimeContext {
   next: () => Promise<Response | undefined>;
   /** Signals before project middleware can perform request-scoped side effects. */
   onMiddlewareStart?: () => void;
+  /** True only when route inspection proved the response is framework-owned. */
+  isFrameworkOwnedPreflight?: boolean;
+  /** True when a preflight auth response should flow to the API fallback. */
+  skipProjectMiddleware?: boolean;
 }
 
 function cacheSegment(value: string): string {
@@ -133,10 +137,30 @@ export class ProjectMiddlewareRuntime {
   }
 
   async execute(input: ProjectMiddlewareRuntimeContext): Promise<Response | undefined> {
-    const { handlerContext: ctx, isSharedProxy, next, onMiddlewareStart, request } = input;
+    const {
+      handlerContext: ctx,
+      isFrameworkOwnedPreflight,
+      isSharedProxy,
+      next,
+      onMiddlewareStart,
+      request,
+      skipProjectMiddleware,
+    } = input;
     const pathname = new URL(request.url).pathname;
 
     if (isWebSocketPath(pathname)) {
+      return next();
+    }
+
+    if (skipProjectMiddleware) {
+      return next();
+    }
+
+    // Browser preflight is framework-owned only after route inspection
+    // prepared the response from the same source snapshot. Keep middleware on
+    // every ambiguous or authored route shape. The auth-terminal bypass above
+    // is the separate browser-preflight path and is mutually exclusive.
+    if (isFrameworkOwnedPreflight) {
       return next();
     }
 

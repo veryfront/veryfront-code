@@ -241,6 +241,50 @@ export class APIRouteHandler {
     );
   }
 
+  async prepareFrameworkOwnedPreflight(
+    request: Request,
+    ctx?: HandlerContext,
+  ): Promise<{ frameworkOwned: boolean; response?: Response }> {
+    if (!isPreflightRequest(request)) return { frameworkOwned: false };
+    if (requiresIsolatedProjectRuntime(ctx)) {
+      // The denied-execution wrapper creates the public fallback response.
+      return { frameworkOwned: true };
+    }
+
+    const { pathname } = new URL(request.url);
+    const match = this.router.match(pathname);
+    if (!match) {
+      return {
+        frameworkOwned: true,
+        response: await this.automaticPreflight(request, undefined, ctx),
+      };
+    }
+
+    const adapter = await this.ensureAdapter();
+    let source: string;
+    try {
+      source = await adapter.fs.readFile(match.route.page);
+    } catch {
+      return { frameworkOwned: false };
+    }
+
+    if (await resolveStaticRouteOptionsCapability(source) !== "absent") {
+      return { frameworkOwned: false };
+    }
+
+    return {
+      frameworkOwned: true,
+      response: await this.automaticPreflight(
+        request,
+        await resolveStaticRouteMethodsFromSource(
+          source,
+          this.requestedPreflightMethod(request),
+        ),
+        ctx,
+      ),
+    };
+  }
+
   handle(
     request: Request,
     ctx?: HandlerContext,
@@ -629,7 +673,9 @@ export class APIRouteHandler {
   ): Promise<Response | null> {
     if (!ctx) return null;
 
-    const applicationAuth = await this.applicationAuth(request, ctx);
+    const applicationAuth = ctx?.applicationAuthResult === undefined
+      ? await this.applicationAuth(request, ctx)
+      : ctx.applicationAuthResult;
     if (applicationAuth?.response) return applicationAuth.response;
     if (applicationAuth) {
       ctx.applicationIdentity = applicationAuth.metadata?.applicationIdentity ?? null;

@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "#veryfront/types";
+import { createMockAdapter as createFileAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { ApiHandlerWrapper } from "./api-handler-wrapper.ts";
 import { __injectDepsForTests as injectMemoryPressureDeps } from "#veryfront/server/shared/renderer/memory/pressure.ts";
 
@@ -43,6 +44,202 @@ function createCtx(captured: { options?: Record<string, unknown> }): HandlerCont
 }
 
 describe("ApiHandlerWrapper", () => {
+  it("prepares and reuses a framework-owned preflight response", async () => {
+    const projectDir = `/tmp/api-wrapper-preflight-${crypto.randomUUID()}`;
+    const adapter = createFileAdapter();
+    adapter.fs.files.set(
+      `${projectDir}/pages/api/get-only.ts`,
+      "export function GET() { return new Response('get'); }",
+    );
+    const ctx = {
+      projectDir,
+      adapter,
+      securityConfig: null,
+      isLocalProject: true,
+      allowHostProjectCodeExecution: true,
+    } as HandlerContext;
+    const wrapper = new ApiHandlerWrapper(projectDir, adapter);
+    const request = new Request("http://localhost/api/get-only", {
+      method: "OPTIONS",
+      headers: {
+        origin: "https://client.example",
+        "access-control-request-method": "GET",
+      },
+    });
+
+    assertEquals(await wrapper.prepareFrameworkOwnedPreflight(request, ctx), true);
+    const result = await wrapper.handle(request, ctx);
+
+    assertEquals(result.response?.status, 204);
+    assertEquals(result.response?.headers.get("Allow"), "GET, HEAD, OPTIONS");
+  });
+
+  it("prepares framework-owned preflight inside a multi-project context", async () => {
+    const projectDir = `/tmp/api-wrapper-multi-preflight-${crypto.randomUUID()}`;
+    const adapter = createFileAdapter();
+    adapter.fs.files.set(
+      `${projectDir}/pages/api/get-only.ts`,
+      "export function GET() { return new Response('get'); }",
+    );
+    const fs = adapter.fs as typeof adapter.fs & {
+      isMultiProjectMode: () => boolean;
+      runWithContext: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
+    };
+    let contextEntries = 0;
+    fs.isMultiProjectMode = () => true;
+    fs.runWithContext = async <T>(
+      _slug: string,
+      _token: string,
+      fn: () => Promise<T>,
+    ): Promise<T> => {
+      contextEntries++;
+      return await fn();
+    };
+    const ctx = {
+      projectDir,
+      adapter,
+      securityConfig: null,
+      projectSlug: "multi-project",
+      projectId: "project-123",
+      proxyToken: "proxy-token",
+      releaseId: "release-123",
+      environmentName: "Production",
+      requestContext: {
+        token: "proxy-token",
+        slug: "multi-project",
+        branch: "main",
+        mode: "production",
+      },
+      isLocalProject: false,
+      allowHostProjectCodeExecution: true,
+    } as unknown as HandlerContext;
+    const wrapper = new ApiHandlerWrapper(projectDir, adapter);
+    const request = new Request("http://localhost/api/get-only", {
+      method: "OPTIONS",
+      headers: {
+        origin: "https://client.example",
+        "access-control-request-method": "GET",
+      },
+    });
+
+    assertEquals(await wrapper.prepareFrameworkOwnedPreflight(request, ctx), true);
+    assertEquals(contextEntries, 1);
+    const result = await wrapper.handle(request, ctx);
+
+    assertEquals(result.response?.status, 204);
+    assertEquals(contextEntries, 2);
+  });
+
+  it("keeps a prepared automatic preflight when route source changes", async () => {
+    const projectDir = `/tmp/api-wrapper-source-change-${crypto.randomUUID()}`;
+    const routePath = `${projectDir}/pages/api/get-only.ts`;
+    const adapter = createFileAdapter();
+    adapter.fs.files.set(routePath, "export function GET() { return new Response('get'); }");
+    const originalReadFile = adapter.fs.readFile;
+    let routeReads = 0;
+    adapter.fs.readFile = async (path) => {
+      const source = await originalReadFile(path);
+      if (path === routePath && routeReads++ === 0) {
+        adapter.fs.files.set(
+          routePath,
+          "export function OPTIONS() { return new Response('must not run'); }",
+        );
+      }
+      return source;
+    };
+    const ctx = {
+      projectDir,
+      adapter,
+      securityConfig: null,
+      isLocalProject: true,
+      allowHostProjectCodeExecution: true,
+    } as HandlerContext;
+    const wrapper = new ApiHandlerWrapper(projectDir, adapter);
+    const request = new Request("http://localhost/api/get-only", {
+      method: "OPTIONS",
+      headers: {
+        origin: "https://client.example",
+        "access-control-request-method": "GET",
+      },
+    });
+
+    assertEquals(await wrapper.prepareFrameworkOwnedPreflight(request, ctx), true);
+    const result = await wrapper.handle(request, ctx);
+
+    assertEquals(result.response?.status, 204);
+    assertEquals(result.response?.headers.get("Allow"), "GET, HEAD, OPTIONS");
+    assertEquals(routeReads, 1);
+  });
+
+  it("keeps denied shared runtimes on the automatic preflight path", async () => {
+    const adapter = createFileAdapter();
+    const fs = adapter.fs as typeof adapter.fs & {
+      isMultiProjectMode: () => boolean;
+      runWithContext: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
+    };
+    fs.isMultiProjectMode = () => true;
+    fs.runWithContext = async <T>(
+      _slug: string,
+      _token: string,
+      fn: () => Promise<T>,
+    ): Promise<T> => await fn();
+    const ctx = {
+      projectDir: "/tmp/denied-preflight",
+      adapter,
+      securityConfig: { cors: true },
+      applicationIdentityHeaderNames: ["x-auth-subject"],
+      projectSlug: "denied-project",
+      projectId: "project-123",
+      proxyToken: "proxy-token",
+      requestContext: { token: "proxy-token", mode: "preview" },
+      isLocalProject: false,
+      allowHostProjectCodeExecution: false,
+    } as unknown as HandlerContext;
+    const wrapper = new ApiHandlerWrapper(ctx.projectDir, adapter);
+    const request = new Request("http://localhost/api/private", {
+      method: "OPTIONS",
+      headers: {
+        origin: "https://client.example",
+        "access-control-request-method": "GET",
+        "access-control-request-headers": "x-auth-subject, content-type",
+      },
+    });
+
+    assertEquals(await wrapper.prepareFrameworkOwnedPreflight(request, ctx), true);
+    const result = await wrapper.handle(request, ctx);
+
+    assertEquals(result.response?.status, 204);
+    assertEquals(result.response?.headers.get("Access-Control-Allow-Headers"), "content-type");
+  });
+
+  it("keeps allowed contextual runtimes conservative during preflight inspection", async () => {
+    const adapter = createFileAdapter();
+    const fs = adapter.fs as typeof adapter.fs & { isContextualMode: () => boolean };
+    fs.isContextualMode = () => true;
+    const ctx = {
+      projectDir: "/tmp/contextual-preflight",
+      adapter,
+      securityConfig: null,
+      isLocalProject: true,
+      allowHostProjectCodeExecution: true,
+    } as unknown as HandlerContext;
+    const wrapper = new ApiHandlerWrapper(ctx.projectDir, adapter);
+
+    assertEquals(
+      await wrapper.prepareFrameworkOwnedPreflight(
+        new Request("http://localhost/api/private", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://client.example",
+            "access-control-request-method": "GET",
+          },
+        }),
+        ctx,
+      ),
+      false,
+    );
+  });
+
   it("does not discover project primitives before routing an OPTIONS request", async () => {
     const ctx = createCtx({});
     ctx.allowHostProjectCodeExecution = true;
@@ -119,6 +316,39 @@ describe("ApiHandlerWrapper", () => {
         ),
       Error,
       "snapshot refresh failed",
+    );
+  });
+
+  it("propagates preflight classification failures before auth or middleware", async () => {
+    const ctx = createCtx({});
+    ctx.allowHostProjectCodeExecution = true;
+    ctx.requestContext!.mode = "preview";
+    ctx.releaseId = undefined;
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+      refreshSourceSnapshot: (reason?: string) => Promise<void>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => await fn();
+    fs.refreshSourceSnapshot = () => Promise.reject(new Error("preflight snapshot failed"));
+
+    await assertRejects(
+      () =>
+        new ApiHandlerWrapper("/tmp/project", ctx.adapter).prepareFrameworkOwnedPreflight(
+          new Request("http://localhost/api/options", {
+            method: "OPTIONS",
+            headers: {
+              origin: "https://client.example",
+              "access-control-request-method": "GET",
+            },
+          }),
+          ctx,
+        ),
+      Error,
+      "preflight snapshot failed",
     );
   });
 

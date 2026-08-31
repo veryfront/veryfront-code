@@ -30,9 +30,13 @@ import {
   isSignedChannelDispatch,
   isSignedControlPlaneDispatch,
 } from "#veryfront/channels/control-plane.ts";
-import { createApplicationAuthRequestHandler } from "#veryfront/security/application-auth/application-auth-runtime.ts";
+import {
+  type ApplicationAuthHandlerResult,
+  createApplicationAuthRequestHandler,
+} from "#veryfront/security/application-auth/application-auth-runtime.ts";
 import { applyCORSHeaders } from "#veryfront/security/http/cors/headers.ts";
 import { isCspReportRequest } from "#veryfront/security/http/csp-report-endpoint.ts";
+import { isPreflightRequest } from "#veryfront/security/http/cors/preflight.ts";
 import { getEffectiveRequestOrigin } from "../utils/request-host.ts";
 
 // Re-export is at the bottom of the file
@@ -167,12 +171,34 @@ function shouldRetrySourceSnapshotFreshness(
     error.slug === SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.slug;
 }
 
-function skipsApplicationAuth(request: Request, pathname: string): boolean {
-  return request.method === "OPTIONS" ||
+function skipsApplicationAuth(
+  request: Request,
+  pathname: string,
+  isFrameworkOwnedPreflight = false,
+): boolean {
+  return (request.method === "OPTIONS" && isFrameworkOwnedPreflight) ||
     isCspReportRequest(request.method, pathname) ||
     isSignedControlPlaneDispatch(request) ||
     isSignedChannelDispatch(request) ||
     isConfigOptionalControlPlaneRunRequest(request.method, pathname);
+}
+
+function applyApplicationAuthResult(
+  authResult: ApplicationAuthHandlerResult | Response | null,
+  ctx: _HandlerContext,
+  isOptionsRequest: boolean,
+  isBrowserPreflight: boolean,
+): { response: Response | null; skipProjectMiddleware: boolean } {
+  if (authResult instanceof Response) {
+    if (!isBrowserPreflight) return { response: authResult, skipProjectMiddleware: false };
+    ctx.applicationAuthResult = { response: authResult };
+    return { response: null, skipProjectMiddleware: true };
+  }
+
+  if (isOptionsRequest) ctx.applicationAuthResult = authResult;
+  ctx.applicationIdentity = authResult?.metadata?.applicationIdentity ?? null;
+  ctx.applicationIdentityHeaderNames = authResult?.metadata?.applicationIdentityHeaderNames ?? [];
+  return { response: null, skipProjectMiddleware: false };
 }
 
 /** Handler names in registration order. */
@@ -437,8 +463,16 @@ export function createVeryfrontHandler(
         await readyPromise;
         if (!isProxyMode) await securityLoader.ensureLoaded();
 
+        // Monitoring endpoints are always framework-owned; their browser
+        // preflights stay public without project or application auth.
+        const isFrameworkOwnedMonitoringPreflight = req.method.toUpperCase() === "OPTIONS" &&
+          isPreflightRequest(req);
         const requiresApplicationAuth = !isPlatformLivenessProbe(req.method, url.pathname) &&
-          !skipsApplicationAuth(req, url.pathname);
+          !skipsApplicationAuth(
+            req,
+            url.pathname,
+            isFrameworkOwnedMonitoringPreflight,
+          );
         let requestOrigin: string | null | undefined;
         if (requiresApplicationAuth) {
           const preparedMonitoringRequest = await prepareProjectRequest({
@@ -699,7 +733,17 @@ export function createVeryfrontHandler(
             requestMetricsIncremented = true;
           }
 
-          if (!skipsApplicationAuth(request, url.pathname)) {
+          // This parser-only inspection intentionally precedes application
+          // auth: it never evaluates project code and keeps framework-owned
+          // automatic preflight public without widening authored-route access.
+          const isFrameworkOwnedPreflight = await apiHandler.prepareFrameworkOwnedPreflight(
+            request,
+            ctx,
+          );
+          const isOptionsRequest = request.method.toUpperCase() === "OPTIONS";
+          const isBrowserPreflight = isOptionsRequest && isPreflightRequest(request);
+          let skipProjectMiddleware = false;
+          if (!skipsApplicationAuth(request, url.pathname, isFrameworkOwnedPreflight)) {
             const runInFilesystemContext = <T>(operation: () => Promise<T>) =>
               runInProjectFilesystemContext(ctx, isProxyMode, operation);
             const authResult = await runInFilesystemContext(
@@ -729,10 +773,14 @@ export function createVeryfrontHandler(
                   },
                 ),
             );
-            if (authResult instanceof Response) return authResult;
-            ctx.applicationIdentity = authResult?.metadata?.applicationIdentity ?? null;
-            ctx.applicationIdentityHeaderNames =
-              authResult?.metadata?.applicationIdentityHeaderNames ?? [];
+            const authOutcome = applyApplicationAuthResult(
+              authResult,
+              ctx,
+              isOptionsRequest,
+              isBrowserPreflight,
+            );
+            if (authOutcome.response) return authOutcome.response;
+            skipProjectMiddleware = authOutcome.skipProjectMiddleware;
           }
 
           const sourceIntegrationPolicy = runtimeContext.sourceIntegrationPolicy;
@@ -741,6 +789,8 @@ export function createVeryfrontHandler(
               request,
               handlerContext: ctx,
               isSharedProxy: isProxyMode,
+              isFrameworkOwnedPreflight,
+              skipProjectMiddleware,
               next: async () => (await registry.execute(request, ctx)) ?? undefined,
               onMiddlewareStart: markProjectMiddlewareStarted,
             });

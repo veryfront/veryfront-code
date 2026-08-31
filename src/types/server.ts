@@ -101,6 +101,18 @@ export interface HandlerContext {
   applicationIdentity?: ApplicationIdentity | null;
   /** Application-auth identity headers to strip before project code sees the request. */
   applicationIdentityHeaderNames?: readonly string[];
+  /** Application-auth result already computed before project middleware. */
+  applicationAuthResult?: {
+    response?: Response;
+    metadata?: {
+      applicationIdentity?: ApplicationIdentity;
+      applicationIdentityHeaderNames?: readonly string[];
+    };
+  } | null;
+  /** Whether this request's preflight was proven framework-owned. */
+  frameworkOwnedPreflight?: boolean;
+  /** Prepared framework-owned preflight response from the inspected source. */
+  frameworkPreflightResponse?: Response;
   /**
    * Prepares this request's authenticated hosted evaluation context.
    *
