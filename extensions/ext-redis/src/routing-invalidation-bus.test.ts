@@ -14,6 +14,10 @@ const ROUTING_INVALIDATION_ACK_PREFIX = `${ROUTING_INVALIDATION_CHANNEL}:ack:`;
 const EVENT_SIGNATURE_DOMAIN = "vf-proxy-routing-invalidation:event:v1";
 const ACK_SIGNATURE_DOMAIN = "vf-proxy-routing-invalidation:ack:v1";
 const TEST_NOW_MS = 1_800_000_000_000;
+// These tests assert acknowledgement semantics, not scheduler speed. WebCrypto
+// verification can exceed 100 ms when the repository test matrix runs in
+// parallel, so keep the deadline comfortably above normal host contention.
+const ACKNOWLEDGEMENT_TEST_TIMEOUT_MS = 1_000;
 
 function createFakeRedisServer() {
   const subscriptions = new Map<RoutingInvalidationRedisClient, Map<string, RedisListener>>();
@@ -128,7 +132,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "rediss://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-a",
-      acknowledgementTimeoutMs: 100,
+      acknowledgementTimeoutMs: ACKNOWLEDGEMENT_TEST_TIMEOUT_MS,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: (event) => {
@@ -139,7 +143,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "rediss://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-b",
-      acknowledgementTimeoutMs: 100,
+      acknowledgementTimeoutMs: ACKNOWLEDGEMENT_TEST_TIMEOUT_MS,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: (event) => {
@@ -167,7 +171,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "rediss://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-a",
-      acknowledgementTimeoutMs: 100,
+      acknowledgementTimeoutMs: ACKNOWLEDGEMENT_TEST_TIMEOUT_MS,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: () => {},
@@ -176,7 +180,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "rediss://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-b",
-      acknowledgementTimeoutMs: 100,
+      acknowledgementTimeoutMs: ACKNOWLEDGEMENT_TEST_TIMEOUT_MS,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: () => {
@@ -222,7 +226,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "rediss://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-a",
-      acknowledgementTimeoutMs: 100,
+      acknowledgementTimeoutMs: ACKNOWLEDGEMENT_TEST_TIMEOUT_MS,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: (event) => {
@@ -233,7 +237,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "rediss://example.test:6379",
       expectedReplicas: 2,
       replicaId: "replica-b",
-      acknowledgementTimeoutMs: 100,
+      acknowledgementTimeoutMs: ACKNOWLEDGEMENT_TEST_TIMEOUT_MS,
       createClient: redis.createClient,
       integritySecret,
       onInvalidate: (event) => {
@@ -598,7 +602,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "rediss://example.test:6379",
       expectedReplicas: 1,
       replicaId: "replica-a",
-      acknowledgementTimeoutMs: 100,
+      acknowledgementTimeoutMs: ACKNOWLEDGEMENT_TEST_TIMEOUT_MS,
       createClient: redis.createClient,
       integritySecret: createIntegritySecret(),
       onInvalidate: () => {},
@@ -688,7 +692,7 @@ describe("proxy routing invalidation Redis bus", () => {
       redisUrl: "rediss://example.test:6379",
       expectedReplicas: 1,
       replicaId: "replica-a",
-      acknowledgementTimeoutMs: 100,
+      acknowledgementTimeoutMs: ACKNOWLEDGEMENT_TEST_TIMEOUT_MS,
       createClient: redis.createClient,
       integritySecret: createIntegritySecret(),
       logger: {
