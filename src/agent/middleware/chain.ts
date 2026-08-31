@@ -14,6 +14,7 @@ const INVALID_CONTINUATION_MESSAGE =
 const DETACHED_CONTINUATION_FAILURE = "downstream continuation rejected";
 const IntrinsicPromise = Promise;
 const IntrinsicWeakSet = WeakSet;
+const PromiseResolve = Promise.resolve;
 const PromiseThen = Promise.prototype.then;
 const ReflectApply = Reflect.apply;
 const WeakSetAdd = WeakSet.prototype.add;
@@ -148,21 +149,28 @@ function adoptContinuationResult(
 function adoptMiddlewareResult(
   result: Promise<AgentResponse>,
   onSettled: () => void,
+  beginAdoption: () => void,
+  endAdoption: () => void,
 ): Promise<AgentResponse> {
   if (ReflectApply(WeakSetHas, TRACKED_CONTINUATIONS, [result]) as boolean) {
     ReflectApply(WeakSetAdd, OBSERVED_CONTINUATIONS, [result]);
   }
   return new IntrinsicPromise((resolve, reject) => {
-    void ReflectApply(PromiseThen, result, [
-      (value: AgentResponse) => {
-        onSettled();
-        resolve(value);
-      },
-      (error: unknown) => {
-        onSettled();
-        reject(error);
-      },
-    ]);
+    beginAdoption();
+    try {
+      void ReflectApply(PromiseThen, result, [
+        (value: AgentResponse) => {
+          onSettled();
+          resolve(value);
+        },
+        (error: unknown) => {
+          onSettled();
+          reject(error);
+        },
+      ]);
+    } finally {
+      endAdoption();
+    }
   });
 }
 
@@ -306,19 +314,23 @@ function createDeferredContinuation(
   onUnexpectedRejection?: ContinuationRejectionHandler,
 ): Promise<AgentResponse> {
   const continuation = createObservedContinuation<AgentResponse>((resolve, reject) => {
-    void Promise.resolve().then(() => {
+    const schedulingPromise = ReflectApply(PromiseResolve, IntrinsicPromise, []);
+    const scheduled = ReflectApply(PromiseThen, schedulingPromise, [() => {
       if (isSettled()) {
         reject(createInvalidContinuationError());
         return;
       }
       adoptContinuationResult(dispatch, resolve, reject, continuation);
-    }).catch(reject);
+    }]);
+    void ReflectApply(PromiseThen, scheduled, [undefined, reject]);
   }, onUnexpectedRejection);
   return continuation;
 }
 
 interface MiddlewareContinuation {
   next: () => Promise<AgentResponse>;
+  beginAdoption: () => void;
+  endAdoption: () => void;
   finishInvocation: () => void;
   settle: () => void;
 }
@@ -328,6 +340,7 @@ function createMiddlewareContinuation(
 ): MiddlewareContinuation {
   let nextCalled = false;
   let middlewareInvoking = true;
+  let middlewareAdopting = false;
   let middlewareSettled = false;
 
   const reportContinuationFailure = (error: unknown, isObserved: () => boolean): void => {
@@ -343,7 +356,7 @@ function createMiddlewareContinuation(
   };
 
   const next = (): Promise<AgentResponse> => {
-    if (nextCalled || middlewareSettled) {
+    if (nextCalled || middlewareAdopting || middlewareSettled) {
       return rejectInvalidContinuation(reportContinuationFailure);
     }
     nextCalled = true;
@@ -366,6 +379,12 @@ function createMiddlewareContinuation(
 
   return {
     next,
+    beginAdoption: () => {
+      middlewareAdopting = true;
+    },
+    endAdoption: () => {
+      middlewareAdopting = false;
+    },
     finishInvocation: () => {
       middlewareInvoking = false;
     },
@@ -405,7 +424,12 @@ export class MiddlewareChain {
               try {
                 const result = currentMiddleware(context, continuation.next);
                 continuation.finishInvocation();
-                return await adoptMiddlewareResult(result, continuation.settle);
+                return await adoptMiddlewareResult(
+                  result,
+                  continuation.settle,
+                  continuation.beginAdoption,
+                  continuation.endAdoption,
+                );
               } finally {
                 continuation.settle();
               }

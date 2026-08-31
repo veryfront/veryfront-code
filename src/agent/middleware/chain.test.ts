@@ -64,7 +64,14 @@ describe("agent/middleware/chain", () => {
     let retainedNext: (() => Promise<AgentResponse>) | undefined;
     let finalHandlerCalls = 0;
     let overriddenThenCalls = 0;
-    class MiddlewarePromise extends Promise<AgentResponse> {}
+    let speciesHookCalls = 0;
+    class MiddlewarePromise extends Promise<AgentResponse> {
+      static override get [Symbol.species](): PromiseConstructor {
+        speciesHookCalls += 1;
+        retainedNext!();
+        return Promise;
+      }
+    }
     const selectedResponse = new MiddlewarePromise((resolve) => resolve(response));
     Object.defineProperty(selectedResponse, "then", {
       value(...args: unknown[]) {
@@ -88,6 +95,7 @@ describe("agent/middleware/chain", () => {
       response,
     );
     assertEquals(overriddenThenCalls, 0);
+    assertEquals(speciesHookCalls, 1);
     assertEquals(finalHandlerCalls, 0);
     await assertRejects(() => retainedNext!(), VeryfrontError, replayError);
   });
