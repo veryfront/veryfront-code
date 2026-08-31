@@ -7,19 +7,48 @@ const BOTS = new Map([
 const CODEX_LOGIN = "chatgpt-codex-connector[bot]";
 const GITHUB_ACTIONS_LOGIN = "github-actions[bot]";
 const CODEX_NO_FINDINGS = "Codex Review: Didn't find any major issues.";
+const CODEX_USAGE_LIMIT =
+  /^You have reached your Codex usage limits(?: for [^.]+)?\. Please try again later\.$/i;
 const CODEX_REVIEWED_COMMIT = /\*\*Reviewed commit:\*\* `([0-9a-f]{10})`/i;
 const REVIEW_REQUEST_MARKER =
   /^<!-- automated-review-request: ([0-9a-f]{40})(?: ([a-z0-9-]{1,64}))? -->\n@codex review$/i;
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const REQUEST_KEY = /^[a-z0-9-]{1,64}$/i;
 const MAX_ITEMS_PER_SOURCE = 500;
+const MAX_TIMEOUT_TARGETS_PER_RUN = 25;
+const MAX_TIMEOUT_DISCOVERY_PAGES = 20;
+const TIMEOUT_DISCOVERY_ROTATION_MS = 10 * 60 * 1000;
+const REVIEW_PROPAGATION_RETRY_SUFFIX = "; queue retry pending";
+const REVIEW_RETRY_FINALIZED_SUFFIX = "; retry finalized";
+const REVIEW_FAILURE_DETAILS = new Map([
+  ["rate-limited", "automated review rate limited"],
+  ["timed-out", "automated review timed out"],
+  ["unavailable", "review status unavailable"],
+  ["request-unavailable", "review request unavailable"],
+]);
 const TRUSTED_PERMISSIONS = new Set(["admin", "maintain", "write"]);
+const REVIEW_EPOCH_EVENTS = new Set([
+  "base_ref_changed",
+  "reopened",
+  "ready_for_review",
+]);
+const REVIEW_REQUEST_EVENT_KINDS = new Map([
+  ["reopen", "reopened"],
+  ["base", "base_ref_changed"],
+  ["ready", "ready_for_review"],
+]);
+const REVIEW_BOUNDARY_REQUEST_KEYS = new Map([
+  ["reopened", "reopen"],
+  ["base_ref_changed", "base"],
+  ["ready_for_review", "ready"],
+]);
 /** @type {(ref: string) => Promise<string | undefined>} */
 const NO_COMMIT = () => Promise.resolve(undefined);
 /** @type {(login: string) => Promise<boolean>} */
 const NO_TRUSTED_HUMAN = () => Promise.resolve(false);
 
 export const AUTOMATED_REVIEW_STATUS_CONTEXT = "Automated review";
+export const AUTOMATED_REVIEW_TIMEOUT_MS = 30 * 60 * 1000;
 
 const REVIEW_WAKEUP_PATH = ".github/workflows/automated-review-wakeup.yml";
 
@@ -108,6 +137,13 @@ function isPinnedBot(user, login) {
     user?.type === "Bot";
 }
 
+function isPinnedGraphqlBot(user, login) {
+  const graphqlLogin = login.endsWith("[bot]") ? login.slice(0, -5) : login;
+  return user?.login === graphqlLogin &&
+    user?.databaseId === BOTS.get(login) &&
+    user?.__typename === "Bot";
+}
+
 function isLaterReview(candidate, current, candidateIndex, currentIndex) {
   const candidateTime = Date.parse(candidate?.submitted_at ?? "");
   const currentTime = Date.parse(current?.submitted_at ?? "");
@@ -178,6 +214,116 @@ function hasReviewRequest(comments, headSha, requestKey) {
   });
 }
 
+function parseReviewEpochNotBefore(value) {
+  if (value === undefined) return undefined;
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    throw new TypeError("Review epoch timestamp is malformed");
+  }
+  return parsed;
+}
+
+function reviewEpochEventIdentity(epoch) {
+  return Number.isSafeInteger(epoch?.id) && epoch.id > 0
+    ? `-e-${epoch.id.toString(36)}`
+    : "";
+}
+
+function parseBase36Identity(value) {
+  if (typeof value !== "string" || !/^[0-9a-z]+$/i.test(value)) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(value, 36);
+  return Number.isSafeInteger(parsed) && parsed > 0 &&
+      parsed.toString(36) === value.toLowerCase()
+    ? parsed
+    : undefined;
+}
+
+function parseCompactRunBoundReviewRequestKey(requestKey) {
+  if (typeof requestKey !== "string") return undefined;
+  const match = /^(base|ready|reopen)-r-([0-9a-z]+)-t-([0-9a-z]+)(?:-e-([0-9a-z]+))?$/i
+    .exec(requestKey);
+  if (!match) return undefined;
+  const epochTime = parseBase36Identity(match[3]);
+  const eventId = match[4] === undefined
+    ? undefined
+    : parseBase36Identity(match[4]);
+  if (epochTime === undefined || (match[4] !== undefined && !eventId)) {
+    return undefined;
+  }
+  return {
+    requestKind: match[1].toLowerCase(),
+    eventKind: REVIEW_REQUEST_EVENT_KINDS.get(match[1].toLowerCase()),
+    epochTime,
+    eventId,
+  };
+}
+
+function parseLegacyRunBoundReviewRequestKey(requestKey) {
+  if (typeof requestKey !== "string") return undefined;
+  const match = /^(base|ready|reopen)-run-([1-9]\d*)-at-(\d{13})(?:-event-([1-9]\d*))?$/
+    .exec(requestKey);
+  if (!match) return undefined;
+  const epochTime = Number(match[3]);
+  const eventId = match[4] === undefined ? undefined : Number(match[4]);
+  if (
+    !Number.isSafeInteger(epochTime) || epochTime < 1 ||
+    (match[4] !== undefined && !isPositiveStatusId(eventId))
+  ) return undefined;
+  return {
+    requestKind: match[1],
+    eventKind: REVIEW_REQUEST_EVENT_KINDS.get(match[1]),
+    epochTime,
+    eventId,
+  };
+}
+
+function parseRunBoundReviewRequestKey(requestKey) {
+  return parseCompactRunBoundReviewRequestKey(requestKey) ??
+    parseLegacyRunBoundReviewRequestKey(requestKey);
+}
+
+function durableReviewRequestKey(
+  events,
+  requestKey,
+  reviewEpochNotBefore,
+  reviewEpochRunKey,
+) {
+  const eventKind = REVIEW_REQUEST_EVENT_KINDS.get(requestKey);
+  if (eventKind === undefined) return requestKey;
+  const notBefore = parseReviewEpochNotBefore(reviewEpochNotBefore);
+  const latestEpoch = latestReviewEpochChange(events);
+  if (latestEpoch === undefined) {
+    throw new Error("Could not resolve the current review epoch event");
+  }
+  if (notBefore !== undefined && latestEpoch.time < notBefore) {
+    throw new Error("The current review epoch event is not visible");
+  }
+  if (latestEpoch.kind !== eventKind) {
+    if (notBefore !== undefined && latestEpoch.time === notBefore) {
+      throw new Error("The current review epoch event is not visible");
+    }
+    return undefined;
+  }
+  if (notBefore !== undefined && latestEpoch.time === notBefore) {
+    if (
+      typeof reviewEpochRunKey !== "string" ||
+      !/^[1-9]\d*$/.test(reviewEpochRunKey)
+    ) throw new Error("Review epoch run key is malformed");
+    const eventIdentity = reviewEpochEventIdentity(latestEpoch);
+    const compactRunKey = Number.isSafeInteger(latestEpoch.id) &&
+        latestEpoch.id > 0
+      ? latestEpoch.id.toString(36)
+      : BigInt(reviewEpochRunKey).toString(36);
+    return `${requestKey}-r-${compactRunKey}-t-${notBefore.toString(36)}${eventIdentity}`;
+  }
+  if (!Number.isSafeInteger(latestEpoch.id) || latestEpoch.id < 1) {
+    throw new Error("Review epoch event identity is malformed");
+  }
+  return `${requestKey}-${latestEpoch.id}`;
+}
+
 function timelinePosition(timeline, event, id) {
   if (!Number.isSafeInteger(id) || id < 1) return undefined;
   let position;
@@ -189,35 +335,66 @@ function timelinePosition(timeline, event, id) {
   return position;
 }
 
-function latestBaseRefChange(events) {
+function latestReviewEpochChange(events) {
   let latest;
   for (const item of events) {
-    if (item?.event !== "base_ref_changed") continue;
+    if (!REVIEW_EPOCH_EVENTS.has(item?.event)) continue;
+    const kind = item.event;
     const time = Date.parse(item?.created_at ?? "");
     if (!Number.isFinite(time)) {
-      return { time: Number.POSITIVE_INFINITY, kind: "base-change" };
+      return { time: Number.POSITIVE_INFINITY, kind };
     }
-    if (latest === undefined || time > latest.time) {
-      latest = { time, kind: "base-change" };
+    const id = Number.isSafeInteger(item?.id) && item.id > 0
+      ? item.id
+      : undefined;
+    const laterAtSameTime = time === latest?.time && id !== undefined &&
+      (!Number.isSafeInteger(latest?.id) || id > latest.id);
+    if (latest === undefined || time > latest.time || laterAtSameTime) {
+      latest = id === undefined
+        ? { time, kind }
+        : { time, kind, id, timelineEvent: kind };
     }
   }
   return latest;
 }
 
-function activeReviewBoundary(request, reviewNotBefore, baseChange) {
-  // The issue event is GitHub's durable record of the policy change. The
+function sameReviewEpoch(left, right) {
+  if (left === undefined || right === undefined) return left === right;
+  return left.time === right.time && left.kind === right.kind &&
+    left.id === right.id;
+}
+
+function activeReviewBoundary(
+  request,
+  reviewNotBefore,
+  epochChange,
+  preferReviewNotBefore = false,
+) {
+  // The issue event is GitHub's durable record of the review-epoch change. The
   // workflow writes its reset status later, so letting that timestamp replace
   // the event would reject valid evidence submitted between the two writes.
-  if (baseChange !== undefined) return baseChange;
   const boundary = reviewNotBefore === undefined
     ? undefined
     : { time: reviewNotBefore, kind: "status" };
+  // A run-bound reset exists only when the triggering event cannot be ordered
+  // safely. Keep its published status as the boundary until a later lifecycle
+  // event supersedes the run-bound status.
+  if (preferReviewNotBefore && boundary !== undefined) return boundary;
+  if (epochChange !== undefined) return epochChange;
   if (
     boundary?.kind === "status" &&
     request?.time === boundary.time
   ) return { ...request, timelineEvent: "commented" };
   if (boundary !== undefined || request === undefined) return boundary;
   return { ...request, timelineEvent: "commented" };
+}
+
+function reviewRequestKeyFromBoundary(boundary) {
+  const requestKey = REVIEW_BOUNDARY_REQUEST_KEYS.get(boundary?.kind);
+  return requestKey !== undefined && Number.isSafeInteger(boundary?.id) &&
+      boundary.id > 0
+    ? `${requestKey}-${boundary.id}`
+    : undefined;
 }
 
 function evidenceFreshness(
@@ -309,11 +486,11 @@ function isEvidenceProvablyLater(candidate, current, timeline) {
 
 function reviewResetDescription(pullNumber, baseBinding, requestKey) {
   const prefix = `PR#${pullNumber} reset base:${baseBinding}`;
-  return requestKey === undefined
-    ? prefix
-    : `${prefix} key:${
-      createHash("sha256").update(requestKey).digest("hex").slice(0, 12)
-    }`;
+  if (requestKey === undefined) return prefix;
+  const encodedKey = parseRunBoundReviewRequestKey(requestKey) !== undefined
+    ? requestKey
+    : createHash("sha256").update(requestKey).digest("hex").slice(0, 12);
+  return `${prefix} key:${encodedKey}`;
 }
 
 function hasReviewReset(statuses, pullNumber, baseBinding, requestKey) {
@@ -349,6 +526,332 @@ function latestReviewResetTime(statuses, pullNumber, baseBinding) {
   return latest;
 }
 
+function latestRunBoundReviewRequestKey(
+  statuses,
+  pullNumber,
+  baseBinding,
+  boundary,
+) {
+  const prefix = `${reviewResetDescription(pullNumber, baseBinding)} key:`;
+  let latest;
+  for (const status of statuses) {
+    if (
+      status?.context !== AUTOMATED_REVIEW_STATUS_CONTEXT ||
+      status?.state !== "pending" ||
+      typeof status?.description !== "string" ||
+      !status.description.startsWith(prefix) ||
+      !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
+    ) continue;
+    const requestKey = status.description.slice(prefix.length);
+    const runBound = parseRunBoundReviewRequestKey(requestKey);
+    if (!runBound) continue;
+    const createdAt = Date.parse(status?.created_at ?? "");
+    if (!Number.isFinite(createdAt)) continue;
+    if (boundary !== undefined && createdAt < boundary.time) continue;
+    if (latest === undefined || createdAt > latest.createdAt) {
+      latest = {
+        requestKey,
+        createdAt,
+        epochTime: runBound.epochTime,
+        eventId: runBound.eventId,
+        eventKind: runBound.eventKind,
+      };
+    }
+  }
+  return latest;
+}
+
+function runBoundRequestBelongsToBoundary(request, boundary) {
+  if (request === undefined) return false;
+  if (boundary === undefined || !REVIEW_EPOCH_EVENTS.has(boundary.kind)) {
+    return true;
+  }
+  if (boundary.time !== request.epochTime) {
+    return boundary.time < request.epochTime;
+  }
+  return boundary.kind === request.eventKind &&
+    boundary.id === request.eventId;
+}
+
+function latestPendingReviewStatus(statuses, pullNumber) {
+  const status = latestReviewGateStatusForPull(statuses, pullNumber);
+  if (
+    status?.state === "pending" &&
+      isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
+  ) return status;
+  if (!isTrustedOperationalReviewFailure(status, pullNumber)) return undefined;
+  const descriptionPrefix = `PR#${pullNumber} `;
+  return statuses.find((candidate) =>
+    candidate?.context === AUTOMATED_REVIEW_STATUS_CONTEXT &&
+    candidate?.state === "pending" &&
+    typeof candidate?.description === "string" &&
+    candidate.description.startsWith(descriptionPrefix) &&
+    isPinnedBot(candidate?.creator, GITHUB_ACTIONS_LOGIN)
+  );
+}
+
+function pendingReviewAge(status, now) {
+  const createdAt = Date.parse(status?.created_at ?? "");
+  return Number.isFinite(createdAt)
+    ? now - createdAt
+    : Number.POSITIVE_INFINITY;
+}
+
+function pendingStatusBelongsToReviewEpoch(
+  status,
+  boundary,
+  pullNumber,
+  baseBinding,
+) {
+  if (status === undefined) return false;
+  if (boundary === undefined) return true;
+  const createdAt = Date.parse(status.created_at ?? "");
+  if (!Number.isFinite(createdAt)) return false;
+  if (createdAt !== boundary.time) return createdAt > boundary.time;
+  const resetPrefix = reviewResetDescription(pullNumber, baseBinding);
+  const description = typeof status.description === "string"
+    ? status.description
+    : "";
+  return description === resetPrefix ||
+    description.startsWith(`${resetPrefix} key:`) ||
+    (boundary.kind === "ready_for_review" &&
+      description.startsWith(`PR#${pullNumber} waits for review `));
+}
+
+function pendingHistoryHasBoundaryProof(
+  statuses,
+  pullNumber,
+  boundary,
+  failureStatus,
+) {
+  const descriptionPrefix = `PR#${pullNumber} `;
+  const failureAt = Date.parse(failureStatus?.created_at ?? "");
+  if (!Number.isFinite(failureAt)) return false;
+  return statuses.some((status) => {
+    if (
+      status?.context !== AUTOMATED_REVIEW_STATUS_CONTEXT ||
+      status?.state !== "pending" ||
+      typeof status?.description !== "string" ||
+      !status.description.startsWith(descriptionPrefix) ||
+      !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
+    ) return false;
+    const createdAt = Date.parse(status?.created_at ?? "");
+    if (
+      !Number.isFinite(createdAt) || createdAt < boundary.time ||
+      createdAt >= failureAt
+    ) return false;
+    if (createdAt > boundary.time) return true;
+    return status.description.startsWith(`PR#${pullNumber} reset base:`) ||
+      (boundary.kind === "ready_for_review" &&
+        status.description.startsWith(`PR#${pullNumber} waits for review `));
+  });
+}
+
+function latestCodexUsageLimit(
+  comments,
+  boundary,
+  reviewFailureCommentId,
+  timeline,
+  headSha,
+) {
+  let latest;
+  let latestAt = Number.NEGATIVE_INFINITY;
+  for (const comment of comments) {
+    const isTrigger = reviewFailureCommentId !== undefined &&
+      comment?.id === reviewFailureCommentId;
+    if (
+      !isPinnedBot(comment?.user, CODEX_LOGIN) ||
+      typeof comment?.body !== "string" ||
+      !CODEX_USAGE_LIMIT.test(comment.body.trim()) ||
+      (!isTrigger && !isProvablyUneditedComment(comment))
+    ) continue;
+    if (!commentFollowsHeadCommit(timeline, comment.id, headSha)) continue;
+    if (
+      evidenceFreshness(comment, "commented", boundary, timeline) !== "newer"
+    ) continue;
+    if (isTrigger) return comment;
+    const createdAt = Date.parse(comment.created_at ?? "");
+    if (!Number.isFinite(createdAt)) continue;
+    if (createdAt >= latestAt) {
+      latest = comment;
+      latestAt = createdAt;
+    }
+  }
+  return latest;
+}
+
+function forcePushedHeadSha(event) {
+  const afterCommit = event?.after_commit;
+  if (typeof afterCommit === "string") return afterCommit;
+  if (typeof afterCommit?.sha === "string") return afterCommit.sha;
+  if (typeof afterCommit?.oid === "string") return afterCommit.oid;
+  return typeof event?.commit_id === "string" ? event.commit_id : undefined;
+}
+
+function commentFollowsHeadCommit(timeline, commentId, headSha) {
+  const commentIndex = timeline.findIndex((item) =>
+    item?.event === "commented" && item?.id === commentId
+  );
+  if (commentIndex < 0) return false;
+  let headIndex = -1;
+  for (const [index, item] of timeline.entries()) {
+    if (
+      (item?.event === "committed" && item?.sha === headSha) ||
+      (item?.event === "head_ref_force_pushed" &&
+        forcePushedHeadSha(item) === headSha)
+    ) headIndex = index;
+  }
+  return headIndex >= 0 && commentIndex > headIndex;
+}
+
+function reviewFailureDescription(pullNumber, kind, retryPending = false) {
+  const detail = REVIEW_FAILURE_DETAILS.get(kind) ??
+    "review status unavailable";
+  return `PR#${pullNumber} ${detail}${
+    retryPending ? REVIEW_PROPAGATION_RETRY_SUFFIX : ""
+  }`;
+}
+
+function reviewEpochIdentity(requestKey) {
+  const runBound = parseRunBoundReviewRequestKey(requestKey);
+  return runBound?.eventId === undefined
+    ? requestKey ?? "head"
+    : `${runBound.requestKind}-${runBound.eventId}`;
+}
+
+function reviewEpochToken(requestKey) {
+  return createHash("sha256")
+    .update(reviewEpochIdentity(requestKey))
+    .digest("hex")
+    .slice(0, 12);
+}
+
+function reviewPropagationRetryDescription(
+  pullNumber,
+  kind,
+  requestKey,
+) {
+  const epoch = kind === "unavailable" || kind === "request-unavailable"
+    ? `; epoch:${reviewEpochToken(requestKey)}`
+    : "";
+  return `${reviewFailureDescription(pullNumber, kind)}${epoch}${REVIEW_PROPAGATION_RETRY_SUFFIX}`;
+}
+
+function reviewPropagationRetryEpoch(description, pullNumber) {
+  if (
+    typeof description !== "string" ||
+    !description.endsWith(REVIEW_PROPAGATION_RETRY_SUFFIX)
+  ) return undefined;
+  for (const kind of ["unavailable", "request-unavailable"]) {
+    const prefix = `${reviewFailureDescription(pullNumber, kind)}; epoch:`;
+    if (!description.startsWith(prefix)) continue;
+    const token = description.slice(
+      prefix.length,
+      -REVIEW_PROPAGATION_RETRY_SUFFIX.length,
+    );
+    if (/^[0-9a-f]{12}$/.test(token)) return { kind, token };
+  }
+  return undefined;
+}
+
+function reviewFailureKindFromDescription(
+  description,
+  pullNumber,
+  retryPending = false,
+) {
+  for (const kind of REVIEW_FAILURE_DETAILS.keys()) {
+    if (
+      description === reviewFailureDescription(pullNumber, kind, retryPending)
+    ) return kind;
+  }
+  const retryEpoch = reviewPropagationRetryEpoch(description, pullNumber);
+  if (retryPending && retryEpoch !== undefined) return retryEpoch.kind;
+  return undefined;
+}
+
+function isTrustedOperationalReviewFailure(status, pullNumber) {
+  return status?.context === AUTOMATED_REVIEW_STATUS_CONTEXT &&
+    status?.state === "failure" &&
+    status?.description ===
+      reviewFailureDescription(pullNumber, "unavailable") &&
+    isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN);
+}
+
+function terminalStatusHasBoundaryProof(
+  status,
+  comments,
+  boundary,
+  timeline,
+  headSha,
+) {
+  if (typeof status?.target_url !== "string") return false;
+  const comment = comments.find((candidate) =>
+    candidate?.html_url === status.target_url
+  );
+  return comment !== undefined &&
+    latestCodexUsageLimit(
+        [comment],
+        boundary,
+        comment.id,
+        timeline,
+        headSha,
+      ) === comment;
+}
+
+function latestTerminalReviewStatus(
+  statuses,
+  pullNumber,
+  boundary,
+  comments,
+  timeline,
+  headSha,
+) {
+  const rateLimited = reviewFailureDescription(pullNumber, "rate-limited");
+  const timedOut = reviewFailureDescription(pullNumber, "timed-out");
+  for (const status of statuses) {
+    if (
+      status?.context !== AUTOMATED_REVIEW_STATUS_CONTEXT ||
+      status?.state !== "failure" ||
+      !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN) ||
+      (status?.description !== rateLimited &&
+        status?.description !== timedOut)
+    ) continue;
+    if (boundary !== undefined) {
+      if (status.description === rateLimited) {
+        if (!terminalStatusHasBoundaryProof(
+          status,
+          comments,
+          boundary,
+          timeline,
+          headSha,
+        )) continue;
+      } else if (!pendingHistoryHasBoundaryProof(
+        statuses,
+        pullNumber,
+        boundary,
+        status,
+      )) continue;
+    }
+    return status;
+  }
+  return undefined;
+}
+
+function canReusePendingStatus(
+  status,
+  pullNumber,
+  isDraft,
+  resetPending,
+) {
+  if (!status || !isPositiveStatusId(status.id) || resetPending) return false;
+  const description = typeof status.description === "string"
+    ? status.description
+    : "";
+  if (isDraft) return description === `PR#${pullNumber} draft waits for review`;
+  return description.startsWith(`PR#${pullNumber} waits for review `) ||
+    description.startsWith(`PR#${pullNumber} reset base:`);
+}
+
 /** Find one authenticated automated-review proof for the captured head. */
 export async function findAutomatedReview(
   {
@@ -361,6 +864,7 @@ export async function findAutomatedReview(
   resolveCommit = NO_COMMIT,
   isTrustedHuman = NO_TRUSTED_HUMAN,
   reviewNotBefore = /** @type {number | undefined} */ (undefined),
+  preferReviewNotBefore = false,
 ) {
   if (!FULL_SHA.test(headSha)) return undefined;
   const request = latestReviewRequest(comments, headSha);
@@ -371,7 +875,8 @@ export async function findAutomatedReview(
   const boundary = activeReviewBoundary(
     request,
     validReviewNotBefore,
-    latestBaseRefChange(events),
+    latestReviewEpochChange(events),
+    preferReviewNotBefore,
   );
   const codexSuccesses = [];
   const codexFindings = [];
@@ -664,6 +1169,7 @@ export async function publishReviewResolutionFailure({
   repo,
   pullNumber,
   sourceHeadSha,
+  sourceStatusId = /** @type {number | undefined} */ (undefined),
   pullUrl = `https://github.com/${owner}/${repo}/pull/${pullNumber}`,
 }) {
   if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
@@ -671,6 +1177,9 @@ export async function publishReviewResolutionFailure({
   }
   if (!FULL_SHA.test(sourceHeadSha)) {
     throw new Error("Pull request source commit is malformed");
+  }
+  if (sourceStatusId !== undefined && !isPositiveStatusId(sourceStatusId)) {
+    throw new Error("Source review status identity is malformed");
   }
   const currentHeadSha = await resolveCommitRef(
     github,
@@ -680,15 +1189,32 @@ export async function publishReviewResolutionFailure({
   if (currentHeadSha?.toLowerCase() !== sourceHeadSha.toLowerCase()) {
     return { queueFailures: 0, skipped: true };
   }
-  await github.rest.repos.createCommitStatus({
-    owner,
-    repo,
-    sha: sourceHeadSha,
-    state: "failure",
-    context: AUTOMATED_REVIEW_STATUS_CONTEXT,
-    description: `PR#${pullNumber} review status unavailable`,
-    target_url: pullUrl,
-  });
+  if (sourceStatusId === undefined) {
+    await github.rest.repos.createCommitStatus({
+      owner,
+      repo,
+      sha: sourceHeadSha,
+      state: "failure",
+      context: AUTOMATED_REVIEW_STATUS_CONTEXT,
+      description: `PR#${pullNumber} review status unavailable`,
+      target_url: pullUrl,
+    });
+  } else {
+    const statuses = await collectAll(
+      github,
+      github.rest.repos.listCommitStatusesForRef,
+      { owner, repo, ref: sourceHeadSha },
+      "source review statuses",
+    );
+    const latestStatus = latestReviewGateStatusForPull(statuses, pullNumber);
+    if (
+      latestStatus?.id !== sourceStatusId ||
+      latestStatus?.state !== "failure" ||
+      !isPinnedBot(latestStatus?.creator, GITHUB_ACTIONS_LOGIN)
+    ) {
+      throw new Error("Source review failure changed before queue propagation");
+    }
+  }
   const refs = await collectAll(
     github,
     github.rest.git.listMatchingRefs,
@@ -743,19 +1269,52 @@ export async function publishAutomatedReviewStatus({
   headSha,
   pullUrl,
   reviewResetKey = /** @type {string | undefined} */ (undefined),
+  reviewFailureCommentId = /** @type {number | undefined} */ (undefined),
+  now = Date.now(),
+  reviewTimeoutMs = /** @type {number | undefined} */ (undefined),
+  queuePropagationPending = false,
+  reviewEpochNotBefore = /** @type {string | undefined} */ (undefined),
+  reviewEpochRunKey = /** @type {string | undefined} */ (undefined),
 }) {
   let review;
   let failure;
   let pullAuthor;
+  let pullSnapshotUpdatedAt;
   let baseBinding;
   let baseRef;
   let isDraft = false;
   let resetPending = false;
+  let effectiveReviewResetKey = reviewResetKey;
+  let existingPendingStatus;
+  let existingTerminalStatus;
+  let existingTerminalStatusIsLatest = false;
+  let existingPropagationRetryStatus;
+  let existingPropagationRetryKind;
+  let existingPropagationRetryIsLatest = false;
+  let reviewRequestKey;
+  let reviewRequestEpochTime;
+  let reviewBoundary;
+  let reviewEpochAtEvaluation;
+  let failureKind;
+  let failureUrl;
   if (
     reviewResetKey !== undefined &&
     (typeof reviewResetKey !== "string" || !REQUEST_KEY.test(reviewResetKey))
   ) {
     failure = new Error("Review reset key is malformed");
+  } else if (
+    reviewFailureCommentId !== undefined &&
+    (!Number.isSafeInteger(reviewFailureCommentId) ||
+      reviewFailureCommentId < 1)
+  ) {
+    failure = new Error("Review failure comment identity is malformed");
+  } else if (!Number.isFinite(now)) {
+    failure = new Error("Review reconciliation time is invalid");
+  } else if (
+    reviewTimeoutMs !== undefined &&
+    (!Number.isSafeInteger(reviewTimeoutMs) || reviewTimeoutMs < 1)
+  ) {
+    failure = new Error("Review timeout is invalid");
   } else if (!FULL_SHA.test(headSha)) {
     failure = new Error("Captured head is malformed");
   } else {
@@ -771,6 +1330,7 @@ export async function publishAutomatedReviewStatus({
         );
       }
       pullAuthor = current?.data?.user?.login;
+      pullSnapshotUpdatedAt = current?.data?.updated_at;
       baseBinding = pullRequestBaseBinding(current?.data);
       baseRef = current?.data?.base?.ref;
       isDraft = current?.data?.draft === true;
@@ -815,15 +1375,99 @@ export async function publishAutomatedReviewStatus({
           ),
         ],
       );
-      resetPending = reviewResetKey !== undefined &&
-        !hasReviewRequest(comments, headSha, reviewResetKey) &&
-        !hasReviewReset(
+      effectiveReviewResetKey = durableReviewRequestKey(
+        events,
+        reviewResetKey,
+        reviewEpochNotBefore,
+        reviewEpochRunKey,
+      );
+      const resetRequested = effectiveReviewResetKey !== undefined &&
+        hasReviewRequest(comments, headSha, effectiveReviewResetKey);
+      const resetPublished = effectiveReviewResetKey !== undefined &&
+        hasReviewReset(
           statuses,
           pullNumber,
           baseBinding,
-          reviewResetKey,
+          effectiveReviewResetKey,
         );
-      if (!resetPending && !isDraft) {
+      resetPending = effectiveReviewResetKey !== undefined &&
+        !resetRequested && !resetPublished;
+      existingPendingStatus = latestPendingReviewStatus(
+        statuses,
+        pullNumber,
+      );
+      const reviewNotBefore = latestReviewResetTime(
+        statuses,
+        pullNumber,
+        baseBinding,
+      );
+      reviewEpochAtEvaluation = latestReviewEpochChange(events);
+      reviewBoundary = activeReviewBoundary(
+        latestReviewRequest(comments, headSha),
+        reviewNotBefore,
+        reviewEpochAtEvaluation,
+      );
+      const recoveredRunBoundRequest = latestRunBoundReviewRequestKey(
+        statuses,
+        pullNumber,
+        baseBinding,
+        reviewBoundary,
+      );
+      const runBoundRequest = runBoundRequestBelongsToBoundary(
+          recoveredRunBoundRequest,
+          reviewBoundary,
+        )
+        ? recoveredRunBoundRequest
+        : undefined;
+      reviewRequestKey = effectiveReviewResetKey ??
+        runBoundRequest?.requestKey ??
+        reviewRequestKeyFromBoundary(reviewBoundary);
+      reviewRequestEpochTime = runBoundRequest?.epochTime;
+      const evidenceBoundary = runBoundRequest === undefined
+        ? reviewBoundary
+        : { time: runBoundRequest.createdAt, kind: "status" };
+      if (
+        !pendingStatusBelongsToReviewEpoch(
+          existingPendingStatus,
+          evidenceBoundary,
+          pullNumber,
+          baseBinding,
+        )
+      ) existingPendingStatus = undefined;
+      existingTerminalStatus = latestTerminalReviewStatus(
+        statuses,
+        pullNumber,
+        evidenceBoundary,
+        comments,
+        timeline,
+        headSha,
+      );
+      existingTerminalStatusIsLatest = existingTerminalStatus?.id ===
+        latestReviewGateStatusForPull(statuses, pullNumber)?.id;
+      const propagationRetry = latestReviewPropagationRetryStatus(
+        statuses,
+        pullNumber,
+        evidenceBoundary,
+        comments,
+        timeline,
+        headSha,
+        reviewRequestKey,
+      );
+      existingPropagationRetryStatus = propagationRetry?.status;
+      existingPropagationRetryKind = propagationRetry?.failureKind;
+      if (existingPropagationRetryKind === "request-unavailable") {
+        existingPendingStatus = undefined;
+      }
+      existingPropagationRetryIsLatest = propagationRetry?.status?.id ===
+        latestReviewGateStatusForPull(statuses, pullNumber)?.id;
+      const runBoundResetPending = resetPending &&
+        parseRunBoundReviewRequestKey(effectiveReviewResetKey) !== undefined;
+      if (
+        !isDraft &&
+        (!resetPending ||
+          (!runBoundResetPending &&
+            REVIEW_EPOCH_EVENTS.has(reviewBoundary?.kind)))
+      ) {
         review = await findAutomatedReview(
           { reviews, comments, events, timeline },
           headSha,
@@ -834,8 +1478,60 @@ export async function publishAutomatedReviewStatus({
               login,
               pullAuthor,
             }),
-          latestReviewResetTime(statuses, pullNumber, baseBinding),
+          reviewNotBefore,
+          runBoundRequest !== undefined,
         );
+        if (!review) {
+          if (
+            existingPropagationRetryStatus &&
+            existingPropagationRetryKind !== "request-unavailable"
+          ) {
+            failure = new Error("Automated review queue propagation is pending");
+            failureKind = existingPropagationRetryKind;
+            failureUrl = typeof existingPropagationRetryStatus.target_url ===
+                "string"
+              ? existingPropagationRetryStatus.target_url
+              : undefined;
+          } else {
+            const usageLimit = latestCodexUsageLimit(
+              comments,
+              evidenceBoundary,
+              reviewFailureCommentId,
+              timeline,
+              headSha,
+            );
+            if (usageLimit) {
+              failure = new Error("Automated review was rate limited");
+              failureKind = "rate-limited";
+              failureUrl = typeof usageLimit.html_url === "string"
+                ? usageLimit.html_url
+                : undefined;
+            } else if (
+              existingPendingStatus &&
+              reviewTimeoutMs !== undefined &&
+              pendingReviewAge(existingPendingStatus, now) >= reviewTimeoutMs
+            ) {
+              failure = new Error("Automated review timed out");
+              failureKind = "timed-out";
+            }
+            if (!failure && existingTerminalStatus) {
+              failureKind = existingTerminalStatus.description.endsWith(
+                  "rate limited",
+                )
+                ? "rate-limited"
+                : "timed-out";
+              failure = new Error(
+                failureKind === "rate-limited"
+                  ? "Automated review remains rate limited"
+                  : "Automated review remains timed out",
+              );
+              failureUrl = typeof existingTerminalStatus.target_url ===
+                  "string"
+                ? existingTerminalStatus.target_url
+                : undefined;
+            }
+          }
+        }
       }
     } catch (error) {
       review = undefined;
@@ -861,9 +1557,36 @@ export async function publishAutomatedReviewStatus({
         "Pull request base changed while checking review evidence",
       );
     }
+    if (review && pullSnapshotAdvanced(pullSnapshotUpdatedAt, current)) {
+      review = undefined;
+      throw new Error(
+        "Pull request changed while checking review evidence",
+      );
+    }
+    if (review) {
+      const finalEvents = await collectAll(
+        github,
+        github.rest.issues.listEvents,
+        { owner, repo, issue_number: pullNumber },
+        "final pull request events",
+      );
+      if (
+        !sameReviewEpoch(
+          reviewEpochAtEvaluation,
+          latestReviewEpochChange(finalEvents),
+        )
+      ) {
+        review = undefined;
+        throw new Error(
+          "Pull request lifecycle changed while checking review evidence",
+        );
+      }
+    }
   } catch (error) {
     review = undefined;
     failure = error instanceof Error ? error : new Error(String(error));
+    failureKind = undefined;
+    failureUrl = undefined;
   }
 
   // No proof for the captured head is the normal state right after a push,
@@ -877,19 +1600,83 @@ export async function publishAutomatedReviewStatus({
   else if (review) state = "success";
 
   let description;
-  if (failure) description = `PR#${pullNumber} review status unavailable`;
-  else if (resetPending) {
+  if (failure && existingPropagationRetryStatus) {
+    description = existingPropagationRetryStatus.description;
+  } else if (failure) {
+    description = queuePropagationPending
+      ? reviewPropagationRetryDescription(
+        pullNumber,
+        failureKind ?? "unavailable",
+        reviewRequestKey,
+      )
+      : reviewFailureDescription(
+        pullNumber,
+        failureKind ?? "unavailable",
+      );
+  } else if (review) {
+    description = `PR#${pullNumber} base:${baseBinding} by:${review.reviewer}`;
+  } else if (resetPending) {
     description = reviewResetDescription(
       pullNumber,
       baseBinding,
-      reviewResetKey,
+      effectiveReviewResetKey,
     );
-  } else if (review) {
-    description = `PR#${pullNumber} base:${baseBinding} by:${review.reviewer}`;
   } else if (isDraft) description = `PR#${pullNumber} draft waits for review`;
   else {
     description = `PR#${pullNumber} waits for review ${headSha.slice(0, 12)}`;
   }
+  if (
+    state === "failure" &&
+    existingPropagationRetryIsLatest &&
+    existingPropagationRetryStatus?.description === description &&
+    isPositiveStatusId(existingPropagationRetryStatus.id)
+  ) {
+    return {
+      state,
+      review,
+      failure,
+      description,
+      baseRef,
+      statusId: existingPropagationRetryStatus.id,
+      targetUrl: existingPropagationRetryStatus.target_url,
+    };
+  }
+  if (
+    state === "failure" &&
+    existingTerminalStatusIsLatest &&
+    existingTerminalStatus?.description === description &&
+    isPositiveStatusId(existingTerminalStatus.id)
+  ) {
+    return {
+      state,
+      review,
+      failure,
+      description,
+      baseRef,
+      statusId: existingTerminalStatus.id,
+    };
+  }
+  if (
+    state === "pending" &&
+    canReusePendingStatus(
+      existingPendingStatus,
+      pullNumber,
+      isDraft,
+      resetPending,
+    )
+  ) {
+    return {
+      state,
+      review,
+      failure,
+      description: existingPendingStatus.description,
+      baseRef,
+      statusId: existingPendingStatus.id,
+      reviewRequestKey,
+      reviewRequestEpochTime,
+    };
+  }
+  let targetUrl = failureUrl ?? review?.url ?? pullUrl;
   const statusResponse = await github.rest.repos.createCommitStatus({
     owner,
     repo,
@@ -897,14 +1684,21 @@ export async function publishAutomatedReviewStatus({
     state,
     context: AUTOMATED_REVIEW_STATUS_CONTEXT,
     description,
-    target_url: review?.url ?? pullUrl,
+    target_url: targetUrl,
   });
   let statusId = statusResponse?.data?.id;
   if (state === "success" && !isPositiveStatusId(statusId)) {
-    failure = new Error("Published review status identity is malformed");
+    failure = new TypeError("Published review status identity is malformed");
     state = "failure";
     review = undefined;
-    description = `PR#${pullNumber} review status unavailable`;
+    description = queuePropagationPending
+      ? reviewPropagationRetryDescription(
+        pullNumber,
+        "unavailable",
+        reviewRequestKey,
+      )
+      : reviewFailureDescription(pullNumber, "unavailable");
+    targetUrl = pullUrl;
     const failureResponse = await github.rest.repos.createCommitStatus({
       owner,
       repo,
@@ -920,9 +1714,759 @@ export async function publishAutomatedReviewStatus({
     }
   }
   if (statusId !== undefined && !isPositiveStatusId(statusId)) {
-    throw new Error("Published review status identity is malformed");
+    throw new TypeError("Published review status identity is malformed");
   }
-  return { state, review, failure, description, baseRef, statusId };
+  return {
+    state,
+    review,
+    failure,
+    description,
+    baseRef,
+    statusId,
+    targetUrl,
+    reviewRequestKey,
+    reviewRequestEpochTime,
+  };
+}
+
+function requireReviewTimeoutInputs(now, reviewTimeoutMs) {
+  if (!Number.isFinite(now)) {
+    throw new TypeError("Review timeout discovery time is invalid");
+  }
+  if (!Number.isSafeInteger(reviewTimeoutMs) || reviewTimeoutMs < 1) {
+    throw new TypeError("Review timeout is invalid");
+  }
+}
+
+/** Discover current non-draft pull request heads whose review status expired. */
+const TIMED_OUT_AUTOMATED_REVIEWS_QUERY = `
+  query TimedOutAutomatedReviews(
+    $owner: String!
+    $repo: String!
+    $cursor: String
+  ) {
+    repository(owner: $owner, name: $repo) {
+      pullRequests(
+        first: 50
+        after: $cursor
+        states: OPEN
+        orderBy: { field: UPDATED_AT, direction: DESC }
+      ) {
+        nodes {
+          number
+          isDraft
+          headRefOid
+          commits(last: 1) {
+            nodes {
+              commit {
+                status {
+                  contexts {
+                    context
+                    state
+                    description
+                    createdAt
+                    creator {
+                      __typename
+                      login
+                      ... on Bot {
+                        databaseId
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+`;
+
+function reviewTimeoutContext(pull, pullNumber) {
+  const commitNodes = pull?.commits?.nodes;
+  if (!Array.isArray(commitNodes)) {
+    throw new TypeError(`PR #${pullNumber} commit rollup is malformed`);
+  }
+  const status = commitNodes[0]?.commit?.status;
+  if (status == null) return undefined;
+  const contexts = status?.contexts;
+  if (!Array.isArray(contexts)) {
+    throw new TypeError(`PR #${pullNumber} status rollup is malformed`);
+  }
+  const descriptionPrefix = `PR#${pullNumber} `;
+  return contexts.find((context) => {
+    if (
+      context?.context !== AUTOMATED_REVIEW_STATUS_CONTEXT ||
+      !isPinnedGraphqlBot(context?.creator, GITHUB_ACTIONS_LOGIN) ||
+      typeof context?.description !== "string"
+    ) return false;
+    if (context.state === "PENDING") {
+      return context.description.startsWith(descriptionPrefix);
+    }
+    return context.state === "FAILURE" &&
+      (context.description ===
+          reviewFailureDescription(pullNumber, "unavailable") ||
+        reviewFailureKindFromDescription(
+            context.description,
+            pullNumber,
+            true,
+          ) !== undefined);
+  });
+}
+
+function timeoutDiscoveryPage(response) {
+  const pullRequests = response?.repository?.pullRequests;
+  if (!Array.isArray(pullRequests?.nodes)) {
+    throw new TypeError("Open pull request rollup is malformed");
+  }
+  const pageInfo = pullRequests?.pageInfo;
+  if (pageInfo?.hasNextPage !== true) {
+    return { nodes: pullRequests.nodes, cursor: undefined };
+  }
+  if (typeof pageInfo?.endCursor !== "string" || !pageInfo.endCursor) {
+    throw new TypeError("Open pull request cursor is malformed");
+  }
+  return { nodes: pullRequests.nodes, cursor: pageInfo.endCursor };
+}
+
+function timedOutReviewTarget(pull, now, reviewTimeoutMs) {
+  if (pull?.isDraft === true) return undefined;
+  const pullNumber = pull?.number;
+  const headSha = pull?.headRefOid;
+  if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+    throw new TypeError("Open pull request number is invalid");
+  }
+  if (typeof headSha !== "string" || !FULL_SHA.test(headSha)) {
+    throw new TypeError(`PR #${pullNumber} head commit is invalid`);
+  }
+  const timeoutContext = reviewTimeoutContext(pull, pullNumber);
+  if (!timeoutContext) return undefined;
+  if (timeoutContext.state === "FAILURE") {
+    return { pullNumber, headSha: headSha.toLowerCase() };
+  }
+  const createdAt = Date.parse(timeoutContext?.createdAt ?? "");
+  if (Number.isFinite(createdAt) && now - createdAt < reviewTimeoutMs) {
+    return undefined;
+  }
+  return { pullNumber, headSha: headSha.toLowerCase() };
+}
+
+function appendTimedOutReviewTargets(
+  targets,
+  pulls,
+  now,
+  reviewTimeoutMs,
+) {
+  for (const pull of pulls) {
+    const target = timedOutReviewTarget(pull, now, reviewTimeoutMs);
+    if (target) targets.push(target);
+  }
+}
+
+function boundedRotatingTimeoutTargets(targets, now) {
+  if (targets.length <= MAX_TIMEOUT_TARGETS_PER_RUN) return targets;
+  const batchCount = Math.ceil(
+    targets.length / MAX_TIMEOUT_TARGETS_PER_RUN,
+  );
+  const batch = Math.floor(now / TIMEOUT_DISCOVERY_ROTATION_MS) % batchCount;
+  const start = batch * MAX_TIMEOUT_TARGETS_PER_RUN;
+  return Array.from(
+    { length: MAX_TIMEOUT_TARGETS_PER_RUN },
+    (_, index) => targets[(start + index) % targets.length],
+  );
+}
+
+export async function findTimedOutAutomatedReviews({
+  github,
+  owner,
+  repo,
+  now = Date.now(),
+  reviewTimeoutMs = AUTOMATED_REVIEW_TIMEOUT_MS,
+}) {
+  requireReviewTimeoutInputs(now, reviewTimeoutMs);
+  const targets = [];
+  let cursor;
+  for (let page = 0; page < MAX_TIMEOUT_DISCOVERY_PAGES; page += 1) {
+    const response = await github.graphql(TIMED_OUT_AUTOMATED_REVIEWS_QUERY, {
+      owner,
+      repo,
+      cursor,
+    });
+    const pageResult = timeoutDiscoveryPage(response);
+    appendTimedOutReviewTargets(
+      targets,
+      pageResult.nodes,
+      now,
+      reviewTimeoutMs,
+    );
+    if (pageResult.cursor === undefined) {
+      return boundedRotatingTimeoutTargets(targets, now);
+    }
+    cursor = pageResult.cursor;
+  }
+  throw new Error("Timeout discovery exceeded 1,000 open pull requests");
+}
+
+function storedReviewPropagationRetry(statuses, pullNumber) {
+  const latestStatus = latestReviewGateStatusForPull(statuses, pullNumber);
+  let status = latestStatus;
+  let failureKind = reviewFailureKindFromDescription(
+    status?.description,
+    pullNumber,
+    true,
+  );
+  if (
+    failureKind === undefined &&
+    isTrustedOperationalReviewFailure(latestStatus, pullNumber)
+  ) {
+    status = statuses.find((candidate) =>
+      candidate?.context === AUTOMATED_REVIEW_STATUS_CONTEXT &&
+      candidate?.state === "failure" &&
+      isPinnedBot(candidate?.creator, GITHUB_ACTIONS_LOGIN) &&
+      reviewFailureKindFromDescription(
+          candidate?.description,
+          pullNumber,
+          true,
+        ) !== undefined
+    );
+    failureKind = reviewFailureKindFromDescription(
+      status?.description,
+      pullNumber,
+      true,
+    );
+  }
+  if (
+    status?.state !== "failure" ||
+    !isPositiveStatusId(status?.id) ||
+    !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
+  ) return undefined;
+  if (failureKind === undefined) return undefined;
+  return { status, failureKind };
+}
+
+function reviewPropagationRetryHasBoundaryProof(
+  retry,
+  {
+    statuses,
+    pullNumber,
+    boundary,
+    comments,
+    timeline,
+    headSha,
+    reviewRequestKey,
+  },
+) {
+  if (boundary === undefined) return true;
+  if (retry.failureKind === "rate-limited") {
+    return terminalStatusHasBoundaryProof(
+      retry.status,
+      comments,
+      boundary,
+      timeline,
+      headSha,
+    );
+  }
+  if (retry.failureKind === "timed-out") {
+    return pendingHistoryHasBoundaryProof(
+      statuses,
+      pullNumber,
+      boundary,
+      retry.status,
+    );
+  }
+  const retryEpoch = reviewPropagationRetryEpoch(
+    retry.status?.description,
+    pullNumber,
+  );
+  if (retryEpoch !== undefined) {
+    return retryEpoch.token === reviewEpochToken(reviewRequestKey);
+  }
+  const createdAt = Date.parse(retry.status?.created_at ?? "");
+  return Number.isFinite(createdAt) && createdAt >= boundary.time;
+}
+
+function latestReviewPropagationRetryStatus(
+  statuses,
+  pullNumber,
+  boundary,
+  comments = [],
+  timeline = [],
+  headSha = "",
+  reviewRequestKey = /** @type {string | undefined} */ (undefined),
+) {
+  const retry = storedReviewPropagationRetry(statuses, pullNumber);
+  return retry &&
+      reviewPropagationRetryHasBoundaryProof(
+        retry,
+        {
+          statuses,
+          pullNumber,
+          boundary,
+          comments,
+          timeline,
+          headSha,
+          reviewRequestKey,
+        },
+      )
+    ? retry
+    : undefined;
+}
+
+async function finalizeReviewFailureStatus({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  headSha,
+  failureKind,
+  targetUrl,
+}) {
+  const description = failureKind === "unavailable"
+    ? `${reviewFailureDescription(pullNumber, failureKind)}${REVIEW_RETRY_FINALIZED_SUFFIX}`
+    : reviewFailureDescription(pullNumber, failureKind);
+  const response = await github.rest.repos.createCommitStatus({
+    owner,
+    repo,
+    sha: headSha,
+    state: "failure",
+    context: AUTOMATED_REVIEW_STATUS_CONTEXT,
+    description,
+    target_url: targetUrl,
+  });
+  const statusId = response?.data?.id;
+  if (!isPositiveStatusId(statusId)) {
+    throw new TypeError("Final review failure status identity is malformed");
+  }
+  return { description, statusId };
+}
+
+async function currentReviewPropagationRetry({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  headSha,
+}) {
+  const common = { owner, repo };
+  const [statuses, comments, events, timeline] = await Promise.all([
+    collectAll(
+      github,
+      github.rest.repos.listCommitStatusesForRef,
+      { ...common, ref: headSha },
+      "final review statuses",
+    ),
+    collectAll(
+      github,
+      github.rest.issues.listComments,
+      { ...common, issue_number: pullNumber },
+      "final review comments",
+    ),
+    collectAll(
+      github,
+      github.rest.issues.listEvents,
+      { ...common, issue_number: pullNumber },
+      "final review events",
+    ),
+    collectAll(
+      github,
+      github.rest.issues.listEventsForTimeline,
+      { ...common, issue_number: pullNumber },
+      "final review timeline",
+    ),
+  ]);
+  const boundary = latestReviewEpochChange(events);
+  return latestReviewPropagationRetryStatus(
+    statuses,
+    pullNumber,
+    boundary,
+    comments,
+    timeline,
+    headSha,
+    reviewRequestKeyFromBoundary(boundary),
+  );
+}
+
+export async function publishReviewPropagationRetryStatus({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  headSha,
+  failureKind,
+  targetUrl,
+  reviewRequestKey = /** @type {string | undefined} */ (undefined),
+}) {
+  const description = reviewPropagationRetryDescription(
+    pullNumber,
+    failureKind,
+    reviewRequestKey,
+  );
+  const response = await github.rest.repos.createCommitStatus({
+    owner,
+    repo,
+    sha: headSha,
+    state: "failure",
+    context: AUTOMATED_REVIEW_STATUS_CONTEXT,
+    description,
+    target_url: targetUrl,
+  });
+  const statusId = response?.data?.id;
+  if (!isPositiveStatusId(statusId)) {
+    throw new TypeError("Review propagation retry status identity is malformed");
+  }
+  return { description, statusId };
+}
+
+async function propagateAndFinalizeReviewFailure({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  headSha,
+  sourceStatusId,
+  failureKind,
+  targetUrl,
+}) {
+  const resolution = await publishReviewResolutionFailure({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    sourceHeadSha: headSha,
+    sourceStatusId,
+  });
+  const currentRetry = await currentReviewPropagationRetry({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    headSha,
+  });
+  if (currentRetry?.status?.id !== sourceStatusId) {
+    return {
+      resolution,
+      description: reviewFailureDescription(pullNumber, failureKind, true),
+      statusId: sourceStatusId,
+      finalized: false,
+    };
+  }
+  if (failureKind === "request-unavailable") {
+    return {
+      resolution,
+      description: currentRetry.status.description,
+      statusId: sourceStatusId,
+      finalized: false,
+    };
+  }
+  const finalStatus = await finalizeReviewFailureStatus({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    headSha,
+    failureKind,
+    targetUrl,
+  });
+  return { resolution, ...finalStatus, finalized: true };
+}
+
+/** Propagate one published retry marker, then restore its terminal diagnosis. */
+export async function completeReviewFailurePropagation({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  headSha,
+  sourceStatusId,
+  description,
+  targetUrl,
+}) {
+  if (!isPositiveStatusId(sourceStatusId)) {
+    throw new Error("Review failure retry status identity is malformed");
+  }
+  const failureKind = reviewFailureKindFromDescription(
+    description,
+    pullNumber,
+    true,
+  );
+  if (failureKind === undefined) {
+    throw new Error("Review failure retry description is malformed");
+  }
+  return propagateAndFinalizeReviewFailure({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    headSha,
+    sourceStatusId,
+    failureKind,
+    targetUrl,
+  });
+}
+
+async function completeExpiredReviewFailure({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  headSha,
+  pullUrl,
+  result,
+  retrying,
+}) {
+  const failureKind = reviewFailureKindFromDescription(
+    result.description,
+    pullNumber,
+    true,
+  );
+  if (failureKind === undefined || !isPositiveStatusId(result.statusId)) {
+    throw new Error("Review failure retry status is malformed");
+  }
+  const propagated = await propagateAndFinalizeReviewFailure({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    headSha,
+    sourceStatusId: result.statusId,
+    failureKind,
+    targetUrl: result.targetUrl ?? pullUrl,
+  });
+  return {
+    ...result,
+    ...propagated,
+    expired: true,
+    retried: retrying,
+  };
+}
+
+async function preserveTimedOutQueueRetry({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  headSha,
+  pullUrl,
+  result,
+  retryStatus,
+}) {
+  return publishReviewPropagationRetryStatus({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    headSha,
+    failureKind: result.state === "success"
+      ? retryStatus?.failureKind ?? "unavailable"
+      : "unavailable",
+    targetUrl: typeof retryStatus?.status?.target_url === "string"
+      ? retryStatus.status.target_url
+      : result.targetUrl ?? pullUrl,
+    reviewRequestKey: result.reviewRequestKey,
+  });
+}
+
+async function requestTimedOutAutomatedReview({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  headSha,
+  pullUrl,
+  result,
+}) {
+  if (result.state !== "pending") return undefined;
+  try {
+    return await requestAutomatedReview({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      headSha,
+      requestKey: result.reviewRequestKey,
+      reviewEpochNotAfter: Number.isFinite(result.reviewRequestEpochTime)
+        ? new Date(result.reviewRequestEpochTime).toISOString()
+        : undefined,
+      validateRequestEpoch: result.reviewRequestKey !== undefined,
+      revalidateReviewEvidence: true,
+    });
+  } catch (error) {
+    await publishReviewPropagationRetryStatus({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      headSha,
+      failureKind: "request-unavailable",
+      targetUrl: result.targetUrl ?? pullUrl,
+      reviewRequestKey: result.reviewRequestKey,
+    });
+    throw error;
+  }
+}
+
+async function reconcileTimedOutReviewQueue({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  headSha,
+  pullUrl,
+  result,
+  retryStatus,
+}) {
+  const preserveQueueRetry = () =>
+    preserveTimedOutQueueRetry({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      headSha,
+      pullUrl,
+      result,
+      retryStatus,
+    });
+  let queueResults;
+  try {
+    queueResults = await reconcileActiveMergeGroupReviewStatuses({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      sourceHeadSha: headSha,
+      baseRef: result.baseRef,
+    });
+  } catch (error) {
+    await preserveQueueRetry();
+    throw error;
+  }
+  const queueFailures = queueResults.filter((entry) =>
+    entry?.state === "failure"
+  ).length;
+  if (result.state === "success" && queueFailures > 0) {
+    await preserveQueueRetry();
+    throw new Error(
+      `${queueFailures} active merge queue review failed`,
+    );
+  }
+  const reviewRequest = await requestTimedOutAutomatedReview({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    headSha,
+    pullUrl,
+    result,
+  });
+  return {
+    ...result,
+    expired: false,
+    reason: result.state === "success" ? "reviewed" : "revalidated",
+    queueResults,
+    reviewRequest,
+  };
+}
+
+/** Revalidate one discovered timeout and publish under the per-pull lock. */
+export async function expireTimedOutAutomatedReview({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  headSha,
+  now = Date.now(),
+  reviewTimeoutMs = AUTOMATED_REVIEW_TIMEOUT_MS,
+}) {
+  requireReviewTimeoutInputs(now, reviewTimeoutMs);
+  if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+    throw new TypeError("Timed-out pull request number is invalid");
+  }
+  if (typeof headSha !== "string" || !FULL_SHA.test(headSha)) {
+    throw new TypeError("Timed-out pull request head is invalid");
+  }
+  const response = await github.rest.pulls.get({
+    owner,
+    repo,
+    pull_number: pullNumber,
+  });
+  const pull = response?.data;
+  if (
+    pull?.state !== "open" ||
+    typeof pull?.head?.sha !== "string" ||
+    pull.head.sha.toLowerCase() !== headSha.toLowerCase()
+  ) return { expired: false, reason: "stale-head" };
+  if (pull?.draft === true) return { expired: false, reason: "draft" };
+
+  const statuses = await collectAll(
+    github,
+    github.rest.repos.listCommitStatusesForRef,
+    { owner, repo, ref: headSha },
+    "timeout review statuses",
+  );
+  const pullUrl = typeof pull.html_url === "string"
+    ? pull.html_url
+    : `https://github.com/${owner}/${repo}/pull/${pullNumber}`;
+  const retryStatus = latestReviewPropagationRetryStatus(
+    statuses,
+    pullNumber,
+  );
+  const retrying = retryStatus !== undefined;
+  const operationalFailure = isTrustedOperationalReviewFailure(
+    latestReviewGateStatusForPull(statuses, pullNumber),
+    pullNumber,
+  );
+  const recovering = retrying || operationalFailure;
+  const pendingStatus = latestPendingReviewStatus(statuses, pullNumber);
+  if (!recovering && !pendingStatus) {
+    return { expired: false, reason: "status-changed" };
+  }
+  if (
+    !recovering && pendingReviewAge(pendingStatus, now) < reviewTimeoutMs
+  ) {
+    return { expired: false, reason: "not-expired" };
+  }
+
+  const result = await publishAutomatedReviewStatus({
+    github,
+    owner,
+    repo,
+    pullNumber,
+    headSha,
+    pullUrl,
+    now,
+    reviewTimeoutMs,
+    queuePropagationPending: true,
+  });
+  if (result.state === "failure") {
+    return completeExpiredReviewFailure({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      headSha,
+      pullUrl,
+      result,
+      retrying,
+    });
+  }
+  if (typeof result.baseRef === "string") {
+    return reconcileTimedOutReviewQueue({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      headSha,
+      pullUrl,
+      result,
+      retryStatus,
+    });
+  }
+  return { ...result, expired: false, reason: "revalidated" };
 }
 
 /**
@@ -968,6 +2512,7 @@ export async function invalidateReviewProof({
   }
   const headSha = resolvedHeadSha.toLowerCase();
   const description = `PR#${pullNumber} review status unavailable`;
+  let sourceStatusId;
   if (
     expectedHeadSha !== undefined &&
     headSha !== expectedHeadSha.toLowerCase()
@@ -987,6 +2532,10 @@ export async function invalidateReviewProof({
       "review statuses",
     );
     const latestStatus = latestReviewGateStatusForPull(statuses, pullNumber);
+    sourceStatusId = latestReviewPropagationRetryStatus(
+      statuses,
+      pullNumber,
+    )?.status?.id;
     if (
       Number.isSafeInteger(latestStatus?.id) &&
       latestStatus.id !== reconciliationStatusId &&
@@ -1010,6 +2559,7 @@ export async function invalidateReviewProof({
     repo,
     pullNumber,
     sourceHeadSha: headSha,
+    sourceStatusId,
     pullUrl: typeof response?.data?.html_url === "string"
       ? response.data.html_url
       : undefined,
@@ -1226,6 +2776,28 @@ async function requireCurrentAutomatedReview({
   pullNumber,
   baseBinding,
 }) {
+  const reviewNotBefore = latestReviewResetTime(
+    evidence.statuses,
+    pullNumber,
+    baseBinding,
+  );
+  const boundary = activeReviewBoundary(
+    latestReviewRequest(evidence.comments, sourceHeadSha),
+    reviewNotBefore,
+    latestReviewEpochChange(evidence.events),
+  );
+  const recoveredRunBoundRequest = latestRunBoundReviewRequestKey(
+    evidence.statuses,
+    pullNumber,
+    baseBinding,
+    boundary,
+  );
+  const runBoundRequest = runBoundRequestBelongsToBoundary(
+      recoveredRunBoundRequest,
+      boundary,
+    )
+    ? recoveredRunBoundRequest
+    : undefined;
   const liveReview = await findAutomatedReview(
     evidence,
     sourceHeadSha,
@@ -1236,7 +2808,8 @@ async function requireCurrentAutomatedReview({
         login,
         pullAuthor: pull?.data?.user?.login,
       }),
-    latestReviewResetTime(evidence.statuses, pullNumber, baseBinding),
+    reviewNotBefore,
+    runBoundRequest !== undefined,
   );
   if (!liveReview) {
     throw new Error("Pull request does not have current review evidence");
@@ -1600,6 +3173,208 @@ export async function reconcileActiveMergeGroupReviewStatuses({
   return results;
 }
 
+function requireAutomatedReviewRequestInputs(headSha, requestKey) {
+  if (typeof headSha !== "string" || !FULL_SHA.test(headSha)) {
+    throw new TypeError(
+      "Refusing to request an automated review of a malformed head commit",
+    );
+  }
+  if (
+    requestKey !== undefined &&
+    (typeof requestKey !== "string" || !REQUEST_KEY.test(requestKey))
+  ) {
+    throw new TypeError("Refusing to use a malformed review request key");
+  }
+}
+
+function resolveAutomatedReviewRequestEpochKey(
+  events,
+  requestKey,
+  reviewEpochNotBefore,
+  reviewEpochNotAfter,
+  reviewEpochRunKey,
+) {
+  if (REVIEW_REQUEST_EVENT_KINDS.has(requestKey)) {
+    return durableReviewRequestKey(
+      events,
+      requestKey,
+      reviewEpochNotBefore,
+      reviewEpochRunKey,
+    );
+  }
+  const runBoundEpoch = parseRunBoundReviewRequestKey(requestKey);
+  if (runBoundEpoch) {
+    const notAfter = Date.parse(reviewEpochNotAfter ?? "");
+    if (!Number.isFinite(notAfter) || notAfter !== runBoundEpoch.epochTime) {
+      throw new TypeError("Run-bound review epoch timestamp is malformed");
+    }
+    const latestEpoch = latestReviewEpochChange(events);
+    return latestEpoch?.time === notAfter &&
+        latestEpoch.kind === runBoundEpoch.eventKind &&
+        latestEpoch.id === runBoundEpoch.eventId
+      ? requestKey
+      : undefined;
+  }
+  const concreteEpoch = typeof requestKey === "string"
+    ? /^(base|ready|reopen)-([1-9]\d*)$/.exec(requestKey)
+    : null;
+  if (!concreteEpoch) {
+    throw new TypeError("Concrete review epoch key is malformed");
+  }
+  return durableReviewRequestKey(events, concreteEpoch[1]);
+}
+
+function automatedReviewRequestIneligibility(response, headSha) {
+  const currentHeadSha = response?.data?.head?.sha;
+  if (
+    typeof currentHeadSha !== "string" ||
+    !FULL_SHA.test(currentHeadSha)
+  ) {
+    throw new Error("Could not verify the current pull request head commit");
+  }
+  if (currentHeadSha.toLowerCase() !== headSha.toLowerCase()) {
+    return "stale-head";
+  }
+  if (response?.data?.state !== "open" || response?.data?.draft !== false) {
+    return "ineligible-pull";
+  }
+  return undefined;
+}
+
+function pullSnapshotAdvanced(snapshotUpdatedAt, response) {
+  if (typeof snapshotUpdatedAt !== "string") return false;
+  const snapshot = Date.parse(snapshotUpdatedAt);
+  const current = Date.parse(response?.data?.updated_at ?? "");
+  if (!Number.isFinite(snapshot) || !Number.isFinite(current)) {
+    throw new TypeError("Could not verify the pull request lifecycle snapshot");
+  }
+  return current > snapshot;
+}
+
+async function pullSnapshotHasNewLifecycle({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  snapshotUpdatedAt,
+  refreshed,
+  events,
+}) {
+  if (!pullSnapshotAdvanced(snapshotUpdatedAt, refreshed)) return false;
+  const finalEvents = await collectAll(
+    github,
+    github.rest.issues.listEvents,
+    { owner, repo, issue_number: pullNumber },
+    "final snapshot review events",
+  );
+  return !sameReviewEpoch(
+    latestReviewEpochChange(events),
+    latestReviewEpochChange(finalEvents),
+  );
+}
+
+async function revalidateAutomatedReviewRequest({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  headSha,
+  requestKey,
+  effectiveRequestKey,
+  reviewEpochNotBefore,
+  reviewEpochNotAfter,
+  reviewEpochRunKey,
+  validateRequestEpoch,
+  pullSnapshotUpdatedAt,
+  marker,
+}) {
+  const common = { owner, repo };
+  const [reviews, comments, events, statuses, timeline] = await Promise.all([
+    collectAll(
+      github,
+      github.rest.pulls.listReviews,
+      { ...common, pull_number: pullNumber },
+      "final request reviews",
+    ),
+    collectAll(
+      github,
+      github.rest.issues.listComments,
+      { ...common, issue_number: pullNumber },
+      "final request comments",
+    ),
+    collectAll(
+      github,
+      github.rest.issues.listEvents,
+      { ...common, issue_number: pullNumber },
+      "final request events",
+    ),
+    collectAll(
+      github,
+      github.rest.repos.listCommitStatusesForRef,
+      { ...common, ref: headSha },
+      "final request statuses",
+    ),
+    collectAll(
+      github,
+      github.rest.issues.listEventsForTimeline,
+      { ...common, issue_number: pullNumber },
+      "final request timeline",
+    ),
+  ]);
+  if (validateRequestEpoch) {
+    const currentKey = resolveAutomatedReviewRequestEpochKey(
+      events,
+      requestKey,
+      reviewEpochNotBefore,
+      reviewEpochNotAfter,
+      reviewEpochRunKey,
+    );
+    if (currentKey !== effectiveRequestKey) {
+      return { requested: false, marker, reason: "stale-epoch" };
+    }
+  }
+  const refreshed = await github.rest.pulls.get({
+    owner,
+    repo,
+    pull_number: pullNumber,
+  });
+  const ineligibility = automatedReviewRequestIneligibility(refreshed, headSha);
+  if (ineligibility) {
+    return { requested: false, marker, reason: ineligibility };
+  }
+  if (
+    await pullSnapshotHasNewLifecycle({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      snapshotUpdatedAt: pullSnapshotUpdatedAt,
+      refreshed,
+      events,
+    })
+  ) return { requested: false, marker, reason: "stale-epoch" };
+  if (hasReviewRequest(comments, headSha, effectiveRequestKey)) {
+    return { requested: false, marker };
+  }
+  const baseBinding = pullRequestBaseBinding(refreshed?.data);
+  const review = await findAutomatedReview(
+    { reviews, comments, events, timeline },
+    headSha,
+    (ref) => resolveCommitRef(github, common, ref),
+    (login) =>
+      isCurrentlyTrustedHuman(github, {
+        ...common,
+        login,
+        pullAuthor: refreshed?.data?.user?.login,
+    }),
+    latestReviewResetTime(statuses, pullNumber, baseBinding),
+    parseRunBoundReviewRequestKey(effectiveRequestKey) !== undefined,
+  );
+  return review
+    ? { requested: false, marker, reason: "reviewed" }
+    : undefined;
+}
+
 /**
  * Ask Codex to review the current head commit, at most once per commit.
  *
@@ -1615,10 +3390,11 @@ export async function reconcileActiveMergeGroupReviewStatuses({
  * that suppress the request would let anyone silence the review nudge for a
  * head commit.
  *
- * Immediately before posting, re-fetch the pull request and require its
- * current head to match the event head. That prevents a queued synchronize
- * run from marking an old SHA while its unqualified request targets a newer
- * current head.
+ * Immediately before posting, re-fetch the pull request and require it to
+ * remain open and non-draft with a current head that matches the event head.
+ * That prevents a queued run from consuming review quota after the pull
+ * request becomes ineligible or marking an old SHA while its unqualified
+ * request targets a newer current head.
  */
 export async function requestAutomatedReview({
   github,
@@ -1627,23 +3403,39 @@ export async function requestAutomatedReview({
   pullNumber,
   headSha,
   requestKey = /** @type {string | undefined} */ (undefined),
+  reviewEpochNotBefore = /** @type {string | undefined} */ (undefined),
+  reviewEpochNotAfter = /** @type {string | undefined} */ (undefined),
+  reviewEpochRunKey = /** @type {string | undefined} */ (undefined),
+  validateRequestEpoch = false,
+  revalidateReviewEvidence = false,
 }) {
   // The comment body must stay a fixed instruction plus a verified commit
   // SHA. Never interpolate pull request controlled content here: this runs
   // with pull_request_target authority.
-  if (typeof headSha !== "string" || !FULL_SHA.test(headSha)) {
-    throw new Error(
-      "Refusing to request an automated review of a malformed head commit",
+  requireAutomatedReviewRequestInputs(headSha, requestKey);
+  let effectiveRequestKey = requestKey;
+  const sentinelEpoch = REVIEW_REQUEST_EVENT_KINDS.has(requestKey);
+  const shouldValidateRequestEpoch = sentinelEpoch || validateRequestEpoch;
+  if (shouldValidateRequestEpoch) {
+    const events = await collectAll(
+      github,
+      github.rest.issues.listEvents,
+      { owner, repo, issue_number: pullNumber },
+      "review epoch events",
     );
-  }
-  if (
-    requestKey !== undefined &&
-    (typeof requestKey !== "string" || !REQUEST_KEY.test(requestKey))
-  ) {
-    throw new Error("Refusing to use a malformed review request key");
+    effectiveRequestKey = resolveAutomatedReviewRequestEpochKey(
+      events,
+      requestKey,
+      reviewEpochNotBefore,
+      reviewEpochNotAfter,
+      reviewEpochRunKey,
+    );
+    if (effectiveRequestKey === undefined) {
+      return { requested: false, reason: "stale-epoch" };
+    }
   }
   const marker = `<!-- automated-review-request: ${headSha.toLowerCase()}${
-    requestKey === undefined ? "" : ` ${requestKey}`
+    effectiveRequestKey === undefined ? "" : ` ${effectiveRequestKey}`
   } -->`;
   const comments = await collectAll(
     github,
@@ -1651,7 +3443,11 @@ export async function requestAutomatedReview({
     { owner, repo, issue_number: pullNumber },
     "request comments",
   );
-  const alreadyRequested = hasReviewRequest(comments, headSha, requestKey);
+  const alreadyRequested = hasReviewRequest(
+    comments,
+    headSha,
+    effectiveRequestKey,
+  );
   if (alreadyRequested) {
     return { requested: false, marker };
   }
@@ -1660,15 +3456,45 @@ export async function requestAutomatedReview({
     repo,
     pull_number: pullNumber,
   });
-  const currentHeadSha = response?.data?.head?.sha;
-  if (
-    typeof currentHeadSha !== "string" ||
-    !FULL_SHA.test(currentHeadSha)
-  ) {
-    throw new Error("Could not verify the current pull request head commit");
+  const ineligibility = automatedReviewRequestIneligibility(response, headSha);
+  if (ineligibility) {
+    return { requested: false, marker, reason: ineligibility };
   }
-  if (currentHeadSha.toLowerCase() !== headSha.toLowerCase()) {
-    return { requested: false, marker, reason: "stale-head" };
+  if (shouldValidateRequestEpoch) {
+    const events = await collectAll(
+      github,
+      github.rest.issues.listEvents,
+      { owner, repo, issue_number: pullNumber },
+      "final review epoch events",
+    );
+    const currentKey = resolveAutomatedReviewRequestEpochKey(
+      events,
+      requestKey,
+      reviewEpochNotBefore,
+      reviewEpochNotAfter,
+      reviewEpochRunKey,
+    );
+    if (currentKey !== effectiveRequestKey) {
+      return { requested: false, marker, reason: "stale-epoch" };
+    }
+  }
+  if (revalidateReviewEvidence) {
+    const result = await revalidateAutomatedReviewRequest({
+      github,
+      owner,
+      repo,
+      pullNumber,
+      headSha,
+      requestKey,
+      effectiveRequestKey,
+      reviewEpochNotBefore,
+      reviewEpochNotAfter,
+      reviewEpochRunKey,
+      validateRequestEpoch: shouldValidateRequestEpoch,
+      pullSnapshotUpdatedAt: response?.data?.updated_at,
+      marker,
+    });
+    if (result) return result;
   }
   await github.rest.issues.createComment({
     owner,

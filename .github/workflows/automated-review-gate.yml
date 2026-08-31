@@ -17,25 +17,137 @@ on:
     types: [completed]
   merge_group:
     types: [checks_requested]
+  schedule:
+    - cron: "*/10 * * * *"
 
 permissions: {}
 
 jobs:
+  timeout_targets:
+    name: find timed-out automated reviews
+    if: github.event_name == 'schedule'
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      targets: ${{ steps.discover.outputs.result }}
+    steps:
+      - name: Discover expired review statuses
+        id: discover
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 3
+          result-encoding: string
+          script: |
+            const response = await github.rest.repos.getContent({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: "scripts/ci/automated-review-gate.mjs",
+              ref: context.payload.repository.default_branch,
+            });
+            const file = response.data;
+            if (
+              Array.isArray(file) || file?.type !== "file" ||
+              file?.encoding !== "base64" ||
+              typeof file?.content !== "string"
+            ) throw new Error("Trusted review gate content is malformed");
+            const gateUrl = `data:text/javascript;base64,${
+              Buffer.from(file.content, "base64").toString("base64")
+            }`;
+            const {
+              AUTOMATED_REVIEW_TIMEOUT_MS,
+              findTimedOutAutomatedReviews,
+            } = await import(gateUrl);
+            const targets = await findTimedOutAutomatedReviews({
+              github,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              now: Date.now(),
+              reviewTimeoutMs: AUTOMATED_REVIEW_TIMEOUT_MS,
+            });
+            core.notice(`Found ${targets.length} timed-out automated review(s).`);
+            return JSON.stringify(targets);
+
+  timeout:
+    name: fail timed-out automated review
+    needs: timeout_targets
+    if: needs.timeout_targets.outputs.targets != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        target: ${{ fromJSON(needs.timeout_targets.outputs.targets) }}
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    concurrency:
+      group: automated-review-pr-${{ matrix.target.pullNumber }}
+      queue: max
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Publish the expired review status
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PULL_NUMBER: ${{ matrix.target.pullNumber }}
+          HEAD_SHA: ${{ matrix.target.headSha }}
+        with:
+          retries: 3
+          script: |
+            const response = await github.rest.repos.getContent({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: "scripts/ci/automated-review-gate.mjs",
+              ref: context.payload.repository.default_branch,
+            });
+            const file = response.data;
+            if (
+              Array.isArray(file) || file?.type !== "file" ||
+              file?.encoding !== "base64" ||
+              typeof file?.content !== "string"
+            ) throw new Error("Trusted review gate content is malformed");
+            const gateUrl = `data:text/javascript;base64,${
+              Buffer.from(file.content, "base64").toString("base64")
+            }`;
+            const {
+              AUTOMATED_REVIEW_TIMEOUT_MS,
+              expireTimedOutAutomatedReview,
+            } = await import(gateUrl);
+            const result = await expireTimedOutAutomatedReview({
+              github,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pullNumber: Number(process.env.PULL_NUMBER),
+              headSha: process.env.HEAD_SHA,
+              now: Date.now(),
+              reviewTimeoutMs: AUTOMATED_REVIEW_TIMEOUT_MS,
+            });
+            core.notice(
+              result.expired
+                ? `Failed timed-out review for PR #${process.env.PULL_NUMBER}.`
+                : `Skipped PR #${process.env.PULL_NUMBER}: ${result.reason}.`,
+            );
+
   target:
     name: resolve automated review target
     # Apply publisher eligibility before allocating a resolver runner. The
     # resolver also gives source and merge-group publishers the same per-pull
     # concurrency key while keeping the immutable source SHA separate.
     if: >-
-      github.event_name == 'merge_group' ||
-      ((github.event_name != 'issue_comment' ||
-        (github.event.issue.pull_request &&
-         github.event.comment.user.login == 'chatgpt-codex-connector[bot]' &&
-         github.event.comment.user.id == 199175422 &&
-         github.event.comment.user.type == 'Bot')) &&
-       (github.event_name != 'workflow_run' ||
-        (github.event.workflow_run.event == 'pull_request_review' &&
-         endsWith(github.event.workflow_run.display_title, '-eligible'))))
+      github.event_name != 'schedule' &&
+      (github.event_name == 'merge_group' ||
+       ((github.event_name != 'issue_comment' ||
+         (github.event.issue.pull_request &&
+          github.event.comment.user.login == 'chatgpt-codex-connector[bot]' &&
+          github.event.comment.user.id == 199175422 &&
+          github.event.comment.user.type == 'Bot')) &&
+        (github.event_name != 'workflow_run' ||
+         (github.event.workflow_run.event == 'pull_request_review' &&
+          endsWith(github.event.workflow_run.display_title, '-eligible')))))
     permissions:
       contents: read
       pull-requests: read
@@ -505,6 +617,8 @@ jobs:
             }
             let publishAutomatedReviewStatus;
             let publishReviewResolutionFailure;
+            let completeReviewFailurePropagation;
+            let publishReviewPropagationRetryStatus;
             let reconcileActiveMergeGroupReviewStatuses;
             try {
               const response = await github.rest.repos.getContent({
@@ -525,6 +639,8 @@ jobs:
               ({
                 publishAutomatedReviewStatus,
                 publishReviewResolutionFailure,
+                completeReviewFailurePropagation,
+                publishReviewPropagationRetryStatus,
                 reconcileActiveMergeGroupReviewStatuses,
               } = await import(gateUrl));
             } catch (error) {
@@ -552,12 +668,33 @@ jobs:
               headSha,
               pullUrl: `https://github.com/${context.repo.owner}/${context.repo.repo}/pull/${pullNumber}`,
               reviewResetKey:
-                context.eventName === "pull_request_target" &&
-                context.payload.action === "edited" &&
-                context.payload.changes?.base !== undefined
-                  ? `base-${context.runId}`
+                context.eventName === "pull_request_target"
+                    ? context.payload.action === "edited" &&
+                      context.payload.changes?.base !== undefined
+                    ? "base"
+                    : context.payload.action === "reopened"
+                    ? "reopen"
+                    : context.payload.action === "ready_for_review"
+                    ? "ready"
+                    : undefined
                   : undefined,
+              reviewFailureCommentId:
+                context.eventName === "issue_comment" &&
+                  context.payload.action !== "deleted"
+                  ? context.payload.comment?.id
+                  : undefined,
+              queuePropagationPending: true,
+              reviewEpochNotBefore:
+                context.payload.pull_request?.updated_at,
+              reviewEpochRunKey: String(context.runId),
             });
+            if (
+              context.eventName === "pull_request_target" &&
+              context.payload.action === "ready_for_review" &&
+              /^ready-(?:r|run)-/.test(result.reviewRequestKey ?? "")
+            ) {
+              core.setOutput("explicit-ready-request", "true");
+            }
             if (Number.isSafeInteger(result.statusId)) {
               core.setOutput("source-status-id", String(result.statusId));
             }
@@ -581,16 +718,32 @@ jobs:
               return true;
             };
             let queueResultCount;
-            if (
-              result.state === "failure" ||
-              typeof result.baseRef !== "string"
-            ) {
+            if (result.state === "failure") {
+              let completed;
+              try {
+                completed = await completeReviewFailurePropagation({
+                  github,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pullNumber,
+                  headSha,
+                  sourceStatusId: result.statusId,
+                  description: result.description,
+                  targetUrl: result.targetUrl,
+                });
+              } catch (error) {
+                if (!forceInvalidateCurrentSource()) return "failure";
+                throw error;
+              }
+              queueResultCount = completed.resolution.queueFailures;
+            } else if (typeof result.baseRef !== "string") {
               const { queueFailures } = await publishReviewResolutionFailure({
                 github,
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 pullNumber,
                 sourceHeadSha: headSha,
+                sourceStatusId: result.statusId,
               });
               queueResultCount = queueFailures;
             } else {
@@ -610,18 +763,27 @@ jobs:
                 if (!forceInvalidateCurrentSource()) return "failure";
                 throw error;
               }
-              // A failure that never reached its synthetic commit leaves the
-              // queue's prior success as live review proof. The trusted gate
-              // throws on that, but the loaded module comes from the default
-              // branch, so verify the collected results here as well and fail
-              // the run: the fallback invalidation job keys on this failure.
-              const unreplaced = queueResults.filter((entry) =>
-                entry?.state === "failure" && entry?.published !== true
+              const failedQueueResults = queueResults.filter((entry) =>
+                entry?.state === "failure"
               ).length;
-              if (unreplaced > 0) {
+              if (result.state === "success" && failedQueueResults > 0) {
                 if (!forceInvalidateCurrentSource()) return "failure";
+                const retryStatus = await publishReviewPropagationRetryStatus({
+                  github,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pullNumber,
+                  headSha,
+                  failureKind: "unavailable",
+                  targetUrl: result.targetUrl,
+                  reviewRequestKey: result.reviewRequestKey,
+                });
+                core.setOutput(
+                  "source-status-id",
+                  String(retryStatus.statusId),
+                );
                 core.setFailed(
-                  `Review proof was not replaced on ${unreplaced} active merge queue commit(s).`,
+                  `${failedQueueResults} active merge queue review failed.`,
                 );
                 return "failure";
               }
@@ -645,7 +807,10 @@ jobs:
       # A pending status on a trusted push event means no review exists for
       # this head yet, and nothing would request one: the Codex connector
       # handles open and ready-for-review events, but not a push to an open
-      # pull request. Post the "@codex review" request only for synchronize.
+      # pull request. Post the "@codex review" request for synchronize and
+      # reopened events. Request explicitly after ready-for-review only when
+      # an ambiguous run-bound reset invalidated the connector's automatic
+      # proof and requires replacement evidence.
       # The helper re-fetches the PR immediately before posting so a queued
       # stale event cannot bind its marker to a request for a newer head. A
       # base edit gets a marker scoped to the run, which invalidates
@@ -658,6 +823,9 @@ jobs:
           github.event_name == 'pull_request_target' &&
           github.event.pull_request.draft == false &&
           (github.event.action == 'synchronize' ||
+           github.event.action == 'reopened' ||
+           (github.event.action == 'ready_for_review' &&
+            steps.publish.outputs.explicit-ready-request == 'true') ||
            (github.event.action == 'edited' && github.event.changes.base)) &&
           steps.publish.outputs.result == 'pending'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -690,14 +858,26 @@ jobs:
               pullNumber: pullRequest.number,
               headSha: process.env.TARGET_SHA,
               requestKey: context.payload.action === "edited"
-                ? `base-${context.runId}`
+                ? "base"
+                : context.payload.action === "reopened"
+                ? "reopen"
+                : context.payload.action === "ready_for_review"
+                ? "ready"
                 : undefined,
+              reviewEpochNotBefore:
+                context.payload.pull_request?.updated_at,
+              reviewEpochRunKey: String(context.runId),
+              revalidateReviewEvidence: true,
             });
             core.notice(
               result.requested
                 ? `Requested an automated review of ${process.env.TARGET_SHA.slice(0, 12)}.`
                 : result.reason === "stale-head"
                 ? "Skipped an automated review request from a stale synchronize event."
+                : result.reason === "ineligible-pull"
+                ? "Skipped an automated review request because the pull request is no longer open and ready for review."
+                : result.reason === "stale-epoch"
+                ? "Skipped an automated review request from a superseded review epoch."
                 : "An automated review request for this head commit already exists.",
             );
 
@@ -707,16 +887,19 @@ jobs:
     # resolver or the publisher cannot complete, the previous success stays on
     # the head and a later merge group reuses it, so a finding, a deleted
     # verdict, or a dismissed approval is silently lost. A new head has no
-    # status of its own. A base edit does need this fallback because the source
-    # SHA is unchanged and its prior success can otherwise remain current.
+    # status of its own. Lifecycle resets need this fallback because the source
+    # SHA is unchanged and prior success can otherwise remain current.
     needs: [target, review]
     if: >-
       failure() &&
       (github.event_name == 'issue_comment' ||
        github.event_name == 'workflow_run' ||
        (github.event_name == 'pull_request_target' &&
-        github.event.action == 'edited' &&
-        github.event.changes.base))
+        (github.event.action == 'synchronize' ||
+         github.event.action == 'reopened' ||
+         github.event.action == 'ready_for_review' ||
+         (github.event.action == 'edited' &&
+          github.event.changes.base))))
     permissions:
       contents: read
       pull-requests: read
