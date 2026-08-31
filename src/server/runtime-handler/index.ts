@@ -168,7 +168,8 @@ type OptionsMiddlewareAdmission =
 
 type ProjectEnvironmentRunner = <T>(operation: () => T) => T;
 
-async function prepareOptionsBeforeProjectMiddleware(input: {
+/** @internal Exported for the runtime admission regression tests. */
+export async function prepareOptionsBeforeProjectMiddleware(input: {
   request: Request;
   ctx: _HandlerContext;
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
@@ -196,7 +197,7 @@ async function prepareOptionsBeforeProjectMiddleware(input: {
       input.ctx,
       prepareWithSourcePolicy,
       {
-        retainAfterOperation: (result) => result !== "not-applicable",
+        retainAfterOperation: () => true,
         runDeferredOperation: input.runInFilesystemContext,
       },
     )
@@ -204,7 +205,8 @@ async function prepareOptionsBeforeProjectMiddleware(input: {
   return admission === "bypass-middleware" ? "bypass-middleware-retained" : admission;
 }
 
-function shouldRetrySourceSnapshotFreshness(
+/** Whether a request can be replayed before project middleware has started. */
+export function shouldRetrySourceSnapshotFreshness(
   request: Request,
   error: unknown,
   retries: number,
@@ -212,7 +214,7 @@ function shouldRetrySourceSnapshotFreshness(
 ): boolean {
   return retries < SOURCE_SNAPSHOT_FRESHNESS_RETRY_LIMIT &&
     !projectMiddlewareStarted &&
-    (request.method === "GET" || request.method === "HEAD") &&
+    (request.method === "GET" || request.method === "HEAD" || request.method === "OPTIONS") &&
     isVeryfrontError(error) &&
     error.slug === SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.slug;
 }

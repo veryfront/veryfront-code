@@ -1,10 +1,11 @@
 // Deno-only end-to-end runtime-handler coverage. Node and Bun planners
 // intentionally exclude this file because it exercises Deno.env and the Deno adapter.
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter, RuntimeId } from "#veryfront/platform/adapters/base.ts";
 import { createMockAdapter as createRouteMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import type { HandlerContext } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE } from "#veryfront/errors";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
@@ -16,7 +17,11 @@ import {
 } from "#veryfront/utils/logger/logger.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
 import { runWithProjectEnv } from "../project-env/storage.ts";
-import { createVeryfrontHandler } from "./index.ts";
+import {
+  createVeryfrontHandler,
+  prepareOptionsBeforeProjectMiddleware,
+  shouldRetrySourceSnapshotFreshness,
+} from "./index.ts";
 import { __injectDepsForTests as injectIsolationDepsForTests } from "./isolation.ts";
 import { requestTracker } from "./request-tracker.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
@@ -25,6 +30,8 @@ import { createMockOidcProvider } from "#veryfront/security/application-auth/moc
 import { createSessionCookie } from "#veryfront/security/application-auth/cookies.ts";
 import { createMockAdapter as createRouteMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { MiddlewareFunction } from "#veryfront/server/dev-server/middleware.ts";
+import { ProjectMiddlewareRuntime } from "./project-middleware.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import {
   createSnapshot,
   resetMetrics,
@@ -39,6 +46,7 @@ import {
   getCurrentRequestContext,
   runWithRequestContext,
 } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { seedPreviewDocumentSourceSnapshot } from "../handlers/request/source-snapshot-freshness.ts";
 
 function createMockAdapter(
   envValues: Record<string, string> = {},
@@ -697,6 +705,77 @@ describe("server/runtime-handler/index", () => {
     assertEquals(sourceVersion, 2);
     assertEquals(createSnapshot().requests, 1);
     assertEquals(otelRequestCount, 1);
+  });
+
+  it("allows automatic OPTIONS snapshot failures to retry before middleware", () => {
+    const error = SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({ detail: "snapshot changed" });
+
+    assertEquals(
+      shouldRetrySourceSnapshotFreshness(
+        new Request("http://localhost/api/protected", { method: "OPTIONS" }),
+        error,
+        0,
+        false,
+      ),
+      true,
+    );
+  });
+
+  it("retains an unmatched OPTIONS admission snapshot through middleware dispatch", async () => {
+    let sourceVersion = 1;
+    const adapter = createRouteMockAdapter();
+    const fs = adapter.fs as typeof adapter.fs & {
+      getSourceSnapshotIdentity: () => string;
+      getSourceSnapshotVersion: () => number;
+    };
+    fs.getSourceSnapshotIdentity = () => "branch:unmatched-options:main";
+    fs.getSourceSnapshotVersion = () => sourceVersion;
+    const context: HandlerContext = {
+      projectDir: "/tmp/test-unmatched-options",
+      adapter,
+      config: {},
+      securityConfig: null,
+      projectSlug: "unmatched-options",
+      projectId: "project-unmatched-options",
+      proxyToken: "proxy-token",
+      resolvedEnvironment: "preview",
+      requestContext: {
+        token: "proxy-token",
+        slug: "unmatched-options",
+        branch: "main",
+        mode: "preview",
+      },
+      isLocalProject: false,
+    };
+    const request = new Request("http://localhost/api/late-route", { method: "OPTIONS" });
+    seedPreviewDocumentSourceSnapshot(context, {
+      identity: "branch:unmatched-options:main",
+      version: sourceVersion,
+    });
+
+    const admission = await prepareOptionsBeforeProjectMiddleware({
+      request,
+      ctx: context,
+      sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
+      runInFilesystemContext: (operation) => operation(),
+      runInRequestProjectEnv: (operation) => operation(),
+    });
+
+    assertEquals(admission, "not-applicable");
+    sourceVersion++;
+
+    const runtime = new ProjectMiddlewareRuntime({ loadMiddleware: () => Promise.resolve([]) });
+    await assertRejects(
+      () =>
+        runtime.execute({
+          request,
+          handlerContext: context,
+          isSharedProxy: false,
+          next: () => Promise.resolve(new Response("late route")),
+        }),
+      Error,
+      "changed after request configuration was derived",
+    );
   });
 
   it("does not replay project middleware after a downstream snapshot failure", async () => {
