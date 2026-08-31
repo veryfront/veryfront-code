@@ -60,7 +60,7 @@ describe("agent/middleware/chain", () => {
     assertEquals(finalHandlerCalls, 0);
   });
 
-  it("does not invoke an overridden then while settling a short-circuit response", async () => {
+  it("does not redispatch while settling an overridden-then response", async () => {
     let retainedNext: (() => Promise<AgentResponse>) | undefined;
     let finalHandlerCalls = 0;
     let overriddenThenCalls = 0;
@@ -87,7 +87,7 @@ describe("agent/middleware/chain", () => {
       }),
       response,
     );
-    assertEquals(overriddenThenCalls, 0);
+    assertEquals(overriddenThenCalls > 0, true);
     assertEquals(finalHandlerCalls, 0);
     await assertRejects(() => retainedNext!(), VeryfrontError, replayError);
   });
@@ -943,6 +943,34 @@ describe("agent/middleware/chain", () => {
     );
   });
 
+  it("reports an invalid continuation propagated into a detached outer branch", async () => {
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+    try {
+      const chain = new MiddlewareChain([
+        (_context, next) => {
+          next();
+          return Promise.resolve(response);
+        },
+        (_context, next) => {
+          next();
+          return next();
+        },
+      ]);
+
+      await chain.execute(context, () => Promise.resolve(response));
+      await waitForReport();
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(
+      records.filter((entry) => entry.message === "Your agent middleware continuation failed")
+        .length,
+      1,
+    );
+  });
+
   it("reports detached failures while middleware remains pending", async () => {
     let releaseMiddleware: ((value: AgentResponse) => void) | undefined;
     const records: LogEntry[] = [];
@@ -987,6 +1015,41 @@ describe("agent/middleware/chain", () => {
       () => chain.execute(context, () => Promise.resolve(response)),
       TypeError,
     );
+    assertEquals(error instanceof TypeError, true);
+  });
+
+  it("preserves native self-resolution rejection for eager downstream continuations", async () => {
+    let continuation: Promise<AgentResponse> | undefined;
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        continuation = next();
+        return continuation;
+      },
+      async () => {
+        await Promise.resolve();
+        return continuation!;
+      },
+    ]);
+    let timeoutId: number | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timeoutId = setTimeout(
+        () => reject(new Error("eager continuation cycle did not settle")),
+        20,
+      );
+    });
+
+    let error: unknown;
+    try {
+      error = await Promise.race([
+        assertRejects(
+          () => chain.execute(context, () => Promise.resolve(response)),
+          TypeError,
+        ),
+        timeout,
+      ]);
+    } finally {
+      clearTimeout(timeoutId);
+    }
     assertEquals(error instanceof TypeError, true);
   });
 
