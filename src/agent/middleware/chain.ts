@@ -26,18 +26,11 @@ function createDeferredContinuation(
   isSettled: () => boolean,
   dispatch: () => Promise<AgentResponse>,
 ): Promise<AgentResponse> {
-  const deferredContinuation = new Promise<AgentResponse>((resolve, reject) => {
-    queueMicrotask(() => {
-      if (isSettled()) {
-        reject(createInvalidContinuationError());
-        // queueMicrotask runs after the promise has been assigned.
-        consumeRejectedPromise(deferredContinuation!);
-        return;
-      }
-
-      void Promise.resolve().then(dispatch).then(resolve, reject);
-    });
+  const deferredContinuation = Promise.resolve().then(() => {
+    if (isSettled()) throw createInvalidContinuationError();
+    return dispatch();
   });
+  consumeRejectedPromise(deferredContinuation);
   return deferredContinuation;
 }
 
