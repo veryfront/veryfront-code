@@ -194,7 +194,10 @@ async function prepareOptionsBeforeProjectMiddleware(input: {
     runWithRetainedPreviewDocumentSourceSnapshot(
       input.ctx,
       prepareWithSourcePolicy,
-      { runDeferredOperation: input.runInFilesystemContext },
+      {
+        retainAfterOperation: (result) => result === "continue",
+        runDeferredOperation: input.runInFilesystemContext,
+      },
     )
   );
 }
