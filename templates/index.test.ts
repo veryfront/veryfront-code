@@ -9,9 +9,10 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { fromFileUrl } from "#veryfront/compat/path";
-import { MemoryTokenStore, type OAuthTokens } from "veryfront/oauth";
+import { docsGoogleConfig, MemoryTokenStore, type OAuthTokens } from "veryfront/oauth";
 
 import { getTemplate, getTemplateConfig, templateConfigs } from "./index.ts";
+import { getIntegrationTemplate } from "./loader.ts";
 import { STARTER_TEMPLATE_NAMES, type TemplateName } from "./types.ts";
 
 const STYLED_STARTER_TEMPLATES: TemplateName[] = [
@@ -696,6 +697,33 @@ describe("templates", () => {
       `OAuth refresh helpers must use the shared lock/CAS protocol. Offenders: ${
         offenders.join(", ")
       }`,
+    );
+  });
+
+  it("keeps scaffolded Google Docs OAuth scopes aligned with the runtime contract", async () => {
+    const docsFiles = await getIntegrationTemplate("docs-google");
+    assertExists(docsFiles);
+    const docsClient = docsFiles.find((file) => file.path === "lib/docs-client.ts");
+    assertExists(docsClient);
+
+    const scopeBlock = docsClient.content.match(
+      /scopes:\s*\[([\s\S]*?)\],\s*callbackPath:/,
+    )?.[1];
+    assertExists(scopeBlock);
+    const scaffoldedScopes = [...scopeBlock.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+    assertEquals(scaffoldedScopes, docsGoogleConfig.defaultScopes);
+
+    const baseFiles = await getIntegrationTemplate("_base");
+    assertExists(baseFiles);
+    const setup = baseFiles.find((file) => file.path === "SETUP.md");
+    assertExists(setup);
+    const docsScopeRow = setup.content.split("\n").find((line) => line.startsWith("| Docs"));
+    assertExists(docsScopeRow);
+    assertEquals(
+      docsGoogleConfig.defaultScopes.every((scope) =>
+        docsScopeRow.includes(`\`${scope.split("/").at(-1)}\``)
+      ),
+      true,
     );
   });
 
