@@ -89,7 +89,8 @@ describe("ApiHandlerWrapper", () => {
     const ctx = {
       projectDir: "/tmp/denied-preflight",
       adapter,
-      securityConfig: null,
+      securityConfig: { cors: true },
+      applicationIdentityHeaderNames: ["x-auth-subject"],
       projectSlug: "denied-project",
       projectId: "project-123",
       proxyToken: "proxy-token",
@@ -103,6 +104,7 @@ describe("ApiHandlerWrapper", () => {
       headers: {
         origin: "https://client.example",
         "access-control-request-method": "GET",
+        "access-control-request-headers": "x-auth-subject, content-type",
       },
     });
 
@@ -110,6 +112,7 @@ describe("ApiHandlerWrapper", () => {
     const result = await wrapper.handle(request, ctx);
 
     assertEquals(result.response?.status, 204);
+    assertEquals(result.response?.headers.get("Access-Control-Allow-Headers"), "content-type");
   });
 
   it("keeps allowed contextual runtimes conservative during preflight inspection", async () => {

@@ -20,6 +20,7 @@ import {
 } from "#veryfront/errors";
 import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import { isPreflightRequest } from "#veryfront/security/http/cors/preflight.ts";
+import { getApplicationPreflightHeaders } from "#veryfront/security/http/application-request.ts";
 import { DEFAULT_CORS_METHODS, handleCORSPreflight } from "#veryfront/security";
 
 type FsWrapper = {
@@ -304,6 +305,9 @@ export class ApiHandlerWrapper extends BaseHandler {
         request: req,
         config: ctx.securityConfig?.cors,
         allowMethods: DEFAULT_CORS_METHODS.join(", "),
+        allowHeaders: getApplicationPreflightHeaders(req, {
+          denyHeaders: ctx.applicationIdentityHeaderNames,
+        }),
       });
       response.headers.set("Allow", DEFAULT_CORS_METHODS.join(", "));
       return this.respond(this.finalizePreflightResponse(ctx, response));
