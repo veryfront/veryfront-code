@@ -95,6 +95,8 @@
       "veryfront/cli": ["./cli/main.ts"],
       "#veryfront/testing": ["./src/testing/index.ts"],
       "#veryfront/testing/*": ["./src/testing/*"],
+      "#veryfront/templates/index.ts": ["./templates/index.ts"],
+      "#veryfront/templates/loader.ts": ["./templates/loader.ts"],
       "#veryfront": ["./src/index.ts"],
       "#veryfront/*": ["./src/*"],
       "#veryfront/platform": ["./src/platform/index.ts"],

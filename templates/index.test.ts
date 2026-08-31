@@ -11,8 +11,8 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { fromFileUrl } from "#veryfront/compat/path";
 import { docsGoogleConfig, MemoryTokenStore, type OAuthTokens } from "veryfront/oauth";
 
-import { getTemplate, getTemplateConfig, templateConfigs } from "./index.ts";
-import { getIntegrationTemplate } from "./loader.ts";
+import { getTemplate, getTemplateConfig, templateConfigs } from "#veryfront/templates/index.ts";
+import { getIntegrationTemplate } from "#veryfront/templates/loader.ts";
 import { STARTER_TEMPLATE_NAMES, type TemplateName } from "./types.ts";
 
 const STYLED_STARTER_TEMPLATES: TemplateName[] = [

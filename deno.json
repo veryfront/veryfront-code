@@ -366,6 +366,8 @@
     "#veryfront/testing/bdd.ts": "./src/testing/bdd.ts",
     "#veryfront/testing/deno-compat": "./src/testing/deno-compat.ts",
     "#veryfront/testing/utils": "./src/testing/utils.ts",
+    "#veryfront/templates/index.ts": "./templates/index.ts",
+    "#veryfront/templates/loader.ts": "./templates/loader.ts",
     "#veryfront/sandbox": "./src/sandbox/index.ts",
     "#veryfront/tool": "./src/tool/index.ts",
     "#veryfront/tool/schema": "./src/tool/schema/index.ts",
