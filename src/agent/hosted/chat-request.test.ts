@@ -1556,13 +1556,11 @@ describe("agent/hosted-chat-request", () => {
     const nativeReflectApply = Reflect.apply;
     let exposedToSharedRealmJson = false;
 
-    JSON.parse = ((
-      text: string,
-      reviver?: (this: unknown, key: string, value: unknown) => unknown,
-    ) => {
+    const observedJsonParse: typeof JSON.parse = (text, reviver) => {
       if (text.includes(inferenceAuthToken)) exposedToSharedRealmJson = true;
       return nativeReflectApply(nativeJsonParse, JSON, [text, reviver]);
-    }) as typeof JSON.parse;
+    };
+    JSON.parse = observedJsonParse;
 
     let parsed: ParsedHostedChatRequest | Response;
     try {
