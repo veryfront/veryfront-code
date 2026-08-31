@@ -55,7 +55,12 @@ function readRequestValue<T>(request: Request, getter: (() => T) | undefined): T
   return IntrinsicReflectApply(getter, request, []) as T;
 }
 
-function withoutInferenceCredential(credentials: object): Record<string, unknown> {
+function isCredentialRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null &&
+    !IntrinsicReflectApply(ArrayIsArray, Array, [value]);
+}
+
+function withoutInferenceCredential(credentials: Record<string, unknown>): Record<string, unknown> {
   const entries = IntrinsicReflectApply(ObjectEntries, Object, [credentials]);
   const retained = IntrinsicReflectApply(
     ArrayFilter,
@@ -211,8 +216,7 @@ async function createRuntimeInvocationApplicationRequest(request: Request): Prom
   // the detached callback receives an application-facing request.
   const payload = await IntrinsicReflectApply(RequestJson, request, []) as Record<string, unknown>;
   const credentials = payload.credentials;
-  const sanitizedPayload = credentials && typeof credentials === "object" &&
-      !IntrinsicReflectApply(ArrayIsArray, Array, [credentials])
+  const sanitizedPayload = isCredentialRecord(credentials)
     ? {
       ...payload,
       credentials: withoutInferenceCredential(credentials),

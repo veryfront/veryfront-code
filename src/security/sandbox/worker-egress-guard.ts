@@ -55,7 +55,7 @@ function getNativeRequestProperty<TKey extends keyof typeof RequestGetters>(
   key: TKey,
 ): Request[TKey] {
   const getter = RequestGetters[key];
-  if (!getter) return undefined as unknown as Request[TKey];
+  if (!getter) return undefined as Request[TKey];
   return IntrinsicReflectApply(getter, request, []) as Request[TKey];
 }
 

@@ -34,7 +34,10 @@ const ObjectHasOwn = Object.hasOwn;
 const ObjectPrototype = Object.prototype;
 const ReflectOwnKeys = Reflect.ownKeys;
 
-function bindModelMethod<T extends (...args: never[]) => unknown>(method: T, model: object): T {
+function bindModelMethod<T extends (...args: never[]) => unknown>(
+  method: T,
+  model: ModelRuntime,
+): T {
   return IntrinsicReflectApply(FunctionBind, method, [model]) as T;
 }
 
