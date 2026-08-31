@@ -3,6 +3,7 @@ import { MIDDLEWARE_ERROR } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
   isNativeErrorWithoutHooks,
+  isProxyWithoutHooks,
   readNativeErrorNameWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
 import { unrefTimer } from "#veryfront/platform/compat/process/lifecycle.ts";
@@ -14,9 +15,6 @@ const DETACHED_CONTINUATION_FAILURE = "downstream continuation rejected";
 const INVALID_CONTINUATION_ERRORS = new WeakSet<object>();
 const DOM_EXCEPTION_NAME_GETTER = typeof DOMException === "function"
   ? Object.getOwnPropertyDescriptor(DOMException.prototype, "name")?.get
-  : undefined;
-const DOM_EXCEPTION_TO_STRING = typeof DOMException === "function"
-  ? Object.getOwnPropertyDescriptor(DOMException.prototype, "toString")?.value
   : undefined;
 
 type ContinuationThenHandler<T, R> =
@@ -103,13 +101,19 @@ function isInvalidContinuationError(error: unknown): boolean {
 
 function isAbortError(error: unknown): boolean {
   try {
+    if (isProxyWithoutHooks(error)) return false;
+    if (typeof DOM_EXCEPTION_NAME_GETTER === "function") {
+      try {
+        return Reflect.apply(DOM_EXCEPTION_NAME_GETTER, error, []) === "AbortError";
+      } catch {
+        // The native Web IDL getter rejects non-DOMException values without
+        // consulting their prototype chain.
+      }
+    }
     if (isNativeErrorWithoutHooks(error)) {
       return readNativeErrorNameWithoutHooks(error) === "AbortError";
     }
-    if (typeof DOM_EXCEPTION_TO_STRING !== "function") return false;
-    Reflect.apply(DOM_EXCEPTION_TO_STRING, error, []);
-    return typeof DOM_EXCEPTION_NAME_GETTER === "function" &&
-      Reflect.apply(DOM_EXCEPTION_NAME_GETTER, error, []) === "AbortError";
+    return false;
   } catch {
     return false;
   }

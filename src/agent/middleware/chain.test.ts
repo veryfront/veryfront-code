@@ -486,6 +486,28 @@ describe("agent/middleware/chain", () => {
       ]);
       await abortChain.execute(context, () => Promise.reject(crossRealmAbort));
 
+      const nativeAbort = new DOMException("native cancellation", "AbortError");
+      const nativeAbortChain = new MiddlewareChain([
+        async (_context, next) => {
+          next();
+          return response;
+        },
+      ]);
+      await nativeAbortChain.execute(context, () => Promise.reject(nativeAbort));
+
+      const crossRealmDomAbort = new DOMException("cross-realm cancellation", "AbortError");
+      Object.setPrototypeOf(crossRealmDomAbort, { name: "AbortError" });
+      const crossRealmDomAbortChain = new MiddlewareChain([
+        async (_context, next) => {
+          next();
+          return response;
+        },
+      ]);
+      await crossRealmDomAbortChain.execute(
+        context,
+        () => Promise.reject(crossRealmDomAbort),
+      );
+
       const hostileError = new Error("hostile cancellation");
       Object.defineProperty(hostileError, "name", {
         configurable: true,
