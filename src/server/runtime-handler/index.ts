@@ -733,6 +733,9 @@ export function createVeryfrontHandler(
             requestMetricsIncremented = true;
           }
 
+          // This parser-only inspection intentionally precedes application
+          // auth: it never evaluates project code and keeps framework-owned
+          // automatic preflight public without widening authored-route access.
           const isFrameworkOwnedPreflight = await apiHandler.prepareFrameworkOwnedPreflight(
             request,
             ctx,
