@@ -399,12 +399,17 @@ describe("integrations/remote-tools hardening", () => {
 
   it("fails discovery closed for malformed UTF-8", async () => {
     configureRemoteTools();
+    let fetchCalls = 0;
     const definitions = await withMockFetch(
-      async () => new Response(new Uint8Array([0xff])),
+      async () => {
+        fetchCalls++;
+        return new Response(new Uint8Array([0xff]));
+      },
       () => getRemoteIntegrationToolDefinitions(),
     );
 
     assertEquals(definitions, [], "a body that is not valid UTF-8 must admit no tools");
+    assertEquals(fetchCalls, 1, "a malformed response body must not be retried as a network error");
 
     // Valid JSON only after lenient U+FFFD replacement, so a repaired decode
     // would admit the tool with corrupted metadata instead of failing closed.
@@ -415,8 +420,12 @@ describe("integrations/remote-tools hardening", () => {
     repairableBody[prefix.length] = 0xff;
     repairableBody.set(suffix, prefix.length + 1);
 
+    fetchCalls = 0;
     const discovery = await withMockFetch(
-      async () => new Response(repairableBody),
+      async () => {
+        fetchCalls++;
+        return new Response(repairableBody);
+      },
       () => getRemoteIntegrationToolDiscovery(),
     );
 
@@ -425,6 +434,7 @@ describe("integrations/remote-tools hardening", () => {
       { status: "unavailable", reason: "request_failed" },
       "malformed UTF-8 in the discovery body must fail closed rather than be repaired",
     );
+    assertEquals(fetchCalls, 1, "a malformed streamed body must fail without retrying");
   });
 
   it("admits remote tool definitions atomically within count limits", async () => {

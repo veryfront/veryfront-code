@@ -24,6 +24,8 @@ import {
   runWithRemoteIntegrationToolDiscoveryScope,
 } from "./remote-tools.ts";
 
+const DISCOVERY_FAILURE_MESSAGE = "Failed to fetch remote integration tool definitions";
+
 const ENV_KEYS = [
   "PROXY_MODE",
   "VERYFRONT_API_BASE_URL",
@@ -1271,6 +1273,11 @@ describe("integrations/remote-tools", () => {
       records.filter((entry) => entry.level === "error").length,
       1,
       "a persistent server failure must be reported at error level exactly once",
+    );
+    assertEquals(
+      records.filter((entry) => entry.level === "error").map((entry) => entry.message),
+      [DISCOVERY_FAILURE_MESSAGE],
+      "persistent failure must preserve the exact Sentry grouping signature",
     );
     assertEquals(
       records.filter((entry) => entry.level !== "error").map((entry) => entry.level),

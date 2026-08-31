@@ -566,14 +566,25 @@ async function fetchToolList(
 ): Promise<RemoteToolDefinition[]> {
   const requestScope = createIntegrationRequestSignalScope(context.abortSignal);
   try {
-    const response = await postIntegrationApi(
-      baseUrl,
-      "/integrations/tools/list",
-      token,
-      undefined,
-      context,
-      requestScope.signal,
-    );
+    let response: Response;
+    try {
+      response = await postIntegrationApi(
+        baseUrl,
+        "/integrations/tools/list",
+        token,
+        undefined,
+        context,
+        requestScope.signal,
+      );
+    } catch (error) {
+      context.abortSignal?.throwIfAborted();
+      if (!(error instanceof TypeError)) throw error;
+      throw INTEGRATION_TOOL_LIST_REQUEST_FAILED.create({
+        message: error.message,
+        status: 502,
+        cause: error,
+      });
+    }
 
     if (!response.ok) {
       // Throw so callers can distinguish a fetch failure from "no remote tools
@@ -602,9 +613,10 @@ async function fetchToolList(
 }
 
 /**
- * Transient tool-list failures worth another attempt: network errors, which
- * `fetch` rejects with a `TypeError`, and 5xx responses. Client errors such
- * as 400/401/403 describe the request or credential and never heal on retry.
+ * Transient tool-list failures worth another attempt: transport rejections,
+ * which `fetchToolList` wraps as a 502, and 5xx responses. Response parsing
+ * errors and the per-attempt request deadline are not retried, which keeps
+ * malformed responses and timeouts within one 30-second request budget.
  */
 function isTransientToolListFailure(err: unknown): boolean {
   if (
@@ -613,7 +625,7 @@ function isTransientToolListFailure(err: unknown): boolean {
   ) {
     return typeof err.status === "number" && err.status >= 500;
   }
-  return err instanceof TypeError;
+  return false;
 }
 
 /** Wait before the next tool-list attempt, rejecting as soon as the caller aborts. */
