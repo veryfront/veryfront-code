@@ -2,7 +2,7 @@
 // intentionally exclude this file because it exercises Deno.env and the Deno adapter.
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter, RuntimeId } from "#veryfront/platform/adapters/base.ts";
 import { createMockAdapter as createRouteMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -23,6 +23,7 @@ import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/run
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createMockOidcProvider } from "#veryfront/security/application-auth/mock-oidc-provider.ts";
 import { createSessionCookie } from "#veryfront/security/application-auth/cookies.ts";
+import { createMockAdapter as createRouteMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { MiddlewareFunction } from "#veryfront/server/dev-server/middleware.ts";
 import {
   createSnapshot,
@@ -176,6 +177,36 @@ function withTrustedPeer(request: Request): Request {
   return request;
 }
 
+function createTrustedOptionsMiddlewareHandler(options: {
+  projectDir: string;
+  routePath: string;
+  routeSource: string;
+  middleware: MiddlewareFunction;
+  corsOrigin?: string;
+}) {
+  const adapter = createRouteMockAdapter();
+  adapter.fs.files.set(
+    `${options.projectDir}/${options.routePath}`,
+    options.routeSource,
+  );
+  return createVeryfrontHandler(options.projectDir, adapter, {
+    projectDir: options.projectDir,
+    config: {
+      security: {
+        ...(options.corsOrigin ? { cors: { origin: [options.corsOrigin] } } : {}),
+        auth: {
+          trustedProxy: {
+            trustedPeers: ["127.0.0.1"],
+            headers: { subject: "x-auth-subject" },
+          },
+        },
+      },
+      middleware: { custom: [options.middleware] },
+    } as any,
+    allowHostProjectCodeExecution: true,
+  });
+}
+
 function captureOtelHttpRequestCount(): { count: () => number } {
   let count = 0;
   const meter = {
@@ -201,6 +232,11 @@ function captureOtelHttpRequestCount(): { count: () => number } {
 }
 
 describe("server/runtime-handler/index", () => {
+  afterAll(async () => {
+    const { stop } = await import("veryfront/extensions/bundler");
+    await stop();
+  });
+
   beforeEach(() => {
     resetMetrics();
     resetOtelInstruments();
@@ -727,6 +763,113 @@ describe("server/runtime-handler/index", () => {
     );
 
     assertEquals(response.status, 204);
+    assertEquals(middlewareCalls, 0);
+  });
+
+  it("admits an explicit OPTIONS route before identity-gated project middleware", async () => {
+    const projectDir = "/tmp/test-options-middleware-auth";
+    let middlewareCalls = 0;
+    const identityMiddleware: MiddlewareFunction = async (context, next) => {
+      middlewareCalls++;
+      if (context.identity?.subject !== "user-123") {
+        return new Response("middleware unauthorized", { status: 403 });
+      }
+      return await next();
+    };
+    const handler = createTrustedOptionsMiddlewareHandler({
+      projectDir,
+      routePath: "pages/api/protected-options.ts",
+      routeSource: 'export function OPTIONS() { return new Response("route options"); }',
+      middleware: identityMiddleware,
+    });
+
+    const response = await handler(withTrustedPeer(
+      new Request("http://localhost/api/protected-options", {
+        method: "OPTIONS",
+        headers: { "x-auth-subject": "user-123" },
+      }),
+    ));
+
+    assertEquals(response.status, 200);
+    assertEquals(await response.text(), "route options");
+    assertEquals(middlewareCalls, 1);
+  });
+
+  it("keeps automatic OPTIONS public before identity-gated project middleware", async () => {
+    const projectDir = "/tmp/test-options-middleware-fallback";
+    let middlewareCalls = 0;
+    const identityGate: MiddlewareFunction = () => {
+      middlewareCalls++;
+      return new Response("middleware unauthorized", { status: 403 });
+    };
+    const handler = createTrustedOptionsMiddlewareHandler({
+      projectDir,
+      routePath: "pages/api/protected-get-only.ts",
+      routeSource: 'export function GET() { return new Response("get"); }',
+      middleware: identityGate,
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/protected-get-only", { method: "OPTIONS" }),
+    );
+
+    assertEquals(response.status, 204);
+    assertEquals(middlewareCalls, 0);
+  });
+
+  it("short-circuits rejected explicit OPTIONS auth before project middleware", async () => {
+    const projectDir = "/tmp/test-options-middleware-rejection";
+    let middlewareCalls = 0;
+    const middleware: MiddlewareFunction = () => {
+      middlewareCalls++;
+      return new Response("middleware ran", { status: 418 });
+    };
+    const handler = createTrustedOptionsMiddlewareHandler({
+      projectDir,
+      routePath: "pages/api/protected-options.ts",
+      routeSource: 'export function OPTIONS() { return new Response("must not run"); }',
+      middleware,
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/protected-options", {
+        method: "OPTIONS",
+        headers: { "x-auth-subject": "forged-user" },
+      }),
+    );
+
+    assertEquals(response.status, 401);
+    assertEquals(await response.text(), "Unauthorized");
+    assertEquals(middlewareCalls, 0);
+  });
+
+  it("keeps unauthenticated App-route preflight public before project middleware", async () => {
+    const projectDir = "/tmp/test-options-app-route-preflight";
+    let middlewareCalls = 0;
+    const middleware: MiddlewareFunction = () => {
+      middlewareCalls++;
+      return new Response("middleware ran", { status: 418 });
+    };
+    const handler = createTrustedOptionsMiddlewareHandler({
+      projectDir,
+      routePath: "app/webhooks/github/route.ts",
+      routeSource: 'export function OPTIONS() { return new Response("must not run"); }',
+      middleware,
+      corsOrigin: "https://client.example",
+    });
+
+    const response = await handler(
+      new Request("http://localhost/webhooks/github", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://client.example",
+          "access-control-request-method": "POST",
+        },
+      }),
+    );
+
+    assertEquals(response.status, 204);
+    assertEquals(response.headers.get("access-control-allow-origin"), "https://client.example");
     assertEquals(middlewareCalls, 0);
   });
 

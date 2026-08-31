@@ -143,6 +143,13 @@ export interface APIRouteHandleOptions {
   beforeOptionsDispatch?: () => Promise<void>;
 }
 
+type OptionsMiddlewareAdmission =
+  | "not-applicable"
+  | "continue"
+  | "bypass-middleware";
+
+const preparedOptionsAdmissions = new WeakMap<HandlerContext, Response | null>();
+
 /** Function signature for API route handlers. */
 export type APIHandler = (ctx: APIContext) => Promise<Response> | Response;
 
@@ -285,6 +292,39 @@ export class APIRouteHandler {
     };
   }
 
+  /**
+   * Admit a matched OPTIONS route before project middleware runs.
+   *
+   * This phase inspects route source without importing the route module. It
+   * authenticates only a route that may execute OPTIONS. Automatic fallback
+   * stays public and bypasses identity-gated project middleware.
+   */
+  async prepareOptionsMiddlewareAdmission(
+    request: Request,
+    ctx: HandlerContext,
+  ): Promise<OptionsMiddlewareAdmission> {
+    if (request.method.toUpperCase() !== "OPTIONS") return "not-applicable";
+
+    const pathname = new URL(request.url).pathname;
+    const match = this.router.match(pathname);
+    if (!match) return "not-applicable";
+
+    const adapter = await this.ensureAdapter();
+    await this.ensureCorsConfig(adapter);
+    if (
+      !isPreflightRequest(request) &&
+      await this.resolveStaticOptionsCapability(match.route.page, adapter) === "absent"
+    ) {
+      return "bypass-middleware";
+    }
+
+    const authResponse = await this.authenticateOptionsRoute(request, ctx);
+    preparedOptionsAdmissions.set(ctx, authResponse);
+    if (authResponse) return "bypass-middleware";
+
+    return "continue";
+  }
+
   handle(
     request: Request,
     ctx?: HandlerContext,
@@ -339,6 +379,11 @@ export class APIRouteHandler {
         });
 
         if (method === "OPTIONS") {
+          const hasPreparedAdmission = ctx ? preparedOptionsAdmissions.has(ctx) : false;
+          const preparedAuthResponse = ctx && hasPreparedAdmission
+            ? preparedOptionsAdmissions.get(ctx) ?? null
+            : null;
+          if (ctx && hasPreparedAdmission) preparedOptionsAdmissions.delete(ctx);
           if (
             !isPreflightRequest(request) &&
             await this.resolveStaticOptionsCapability(match.route.page, adapter) === "absent"
@@ -346,7 +391,9 @@ export class APIRouteHandler {
             return this.automaticPreflight(request, undefined, ctx);
           }
 
-          const authResponse = await this.authenticateOptionsRoute(request, ctx);
+          const authResponse = hasPreparedAdmission
+            ? preparedAuthResponse
+            : await this.authenticateOptionsRoute(request, ctx);
           if (authResponse) {
             if (isPreflightRequest(request)) {
               return this.automaticPreflight(

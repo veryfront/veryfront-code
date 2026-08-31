@@ -72,7 +72,7 @@ import { ProdHydrationModuleHandler } from "../handlers/request/prod-hydration-m
 import { CSSHandler } from "../handlers/request/css.handler.ts";
 import { RSCHandler } from "../handlers/request/rsc/index.ts";
 import { ModuleHandler } from "../handlers/request/module/index.ts";
-import { ApiHandlerWrapper } from "../handlers/request/api/index.ts";
+import { ApiHandlerWrapper, withApiHandler } from "../handlers/request/api/index.ts";
 import { SSRHandler } from "../handlers/request/ssr/index.ts";
 import { NotFoundHandler } from "../handlers/response/not-found.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
@@ -148,6 +148,7 @@ import {
   resolveProjectRuntimeContext,
 } from "./project-runtime-context.ts";
 import { runWithRetainedPreviewDocumentSourceSnapshot } from "#veryfront/server/handlers/request/source-snapshot-freshness.ts";
+import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
@@ -728,6 +729,10 @@ export function createVeryfrontHandler(
               ? operation()
               : runWithProjectEnv(isolatedEnvForRequest, operation);
 
+          const runInFilesystemContext = <T>(operation: () => Promise<T>) =>
+            runInProjectFilesystemContext(ctx, isProxyMode, operation);
+          const sourceIntegrationPolicy = runtimeContext.sourceIntegrationPolicy;
+
           if (!requestMetricsIncremented) {
             await incrementRequestMetrics();
             requestMetricsIncremented = true;
@@ -744,8 +749,6 @@ export function createVeryfrontHandler(
           const isBrowserPreflight = isOptionsRequest && isPreflightRequest(request);
           let skipProjectMiddleware = false;
           if (!skipsApplicationAuth(request, url.pathname, isFrameworkOwnedPreflight)) {
-            const runInFilesystemContext = <T>(operation: () => Promise<T>) =>
-              runInProjectFilesystemContext(ctx, isProxyMode, operation);
             const authResult = await runInFilesystemContext(
               () =>
                 runWithRetainedPreviewDocumentSourceSnapshot(
@@ -783,17 +786,42 @@ export function createVeryfrontHandler(
             skipProjectMiddleware = authOutcome.skipProjectMiddleware;
           }
 
-          const sourceIntegrationPolicy = runtimeContext.sourceIntegrationPolicy;
+          const optionsAdmission = request.method === "OPTIONS"
+            ? requiresIsolatedProjectRuntime(ctx)
+              ? "bypass-middleware"
+              : await runInFilesystemContext(() =>
+                runWithRetainedPreviewDocumentSourceSnapshot(
+                  ctx,
+                  () =>
+                    runWithExactSourceIntegrationPolicy(
+                      sourceIntegrationPolicy,
+                      () =>
+                        runInRequestProjectEnv(() =>
+                          withApiHandler(
+                            ctx,
+                            (api) => api.prepareOptionsMiddlewareAdmission(request, ctx),
+                            { sourceSnapshotReady: true },
+                          )
+                        ),
+                    ),
+                  { runDeferredOperation: runInFilesystemContext },
+                )
+              )
+            : "not-applicable";
+
+          const executeRegistry = async () => (await registry.execute(request, ctx)) ?? undefined;
           const executeProjectRoute = () =>
-            projectMiddlewareRuntime.execute({
-              request,
-              handlerContext: ctx,
-              isSharedProxy: isProxyMode,
-              isFrameworkOwnedPreflight,
-              skipProjectMiddleware,
-              next: async () => (await registry.execute(request, ctx)) ?? undefined,
-              onMiddlewareStart: markProjectMiddlewareStarted,
-            });
+            optionsAdmission === "bypass-middleware"
+              ? executeRegistry()
+              : projectMiddlewareRuntime.execute({
+                request,
+                handlerContext: ctx,
+                isSharedProxy: isProxyMode,
+                isFrameworkOwnedPreflight,
+                skipProjectMiddleware,
+                next: executeRegistry,
+                onMiddlewareStart: markProjectMiddlewareStarted,
+              });
           const executeRoute = () =>
             runWithExactSourceIntegrationPolicy(
               sourceIntegrationPolicy,
