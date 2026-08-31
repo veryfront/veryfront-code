@@ -1206,6 +1206,7 @@ export class AgentStreamHandler extends BaseHandler {
                         const runAgentStream = () =>
                           createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
                             ...this.deps,
+                            inferenceAuthToken: payload.credentials?.inferenceAuthToken,
                             localTools,
                             providerReplayCheckpoints,
                             persistProviderReplayCheckpoint,

@@ -76,6 +76,7 @@ import { compareStrings } from "#veryfront/utils/compare.ts";
 import { type ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
 import type { ProviderReplayCheckpointPersister } from "./provider-replay-checkpoint-persister.ts";
+import { runWithVeryfrontCloudInferenceCredential } from "#veryfront/provider/veryfront-cloud/provider.ts";
 
 const getAnyObjectSchema = defineSchema((v) => v.record(v.string(), v.unknown()));
 const anyObjectSchema = lazySchema(getAnyObjectSchema) as Schema<Record<string, unknown>>;
@@ -158,6 +159,8 @@ function mergeRemoteToolNames(source: string[], forwarded: string[]): string[] {
 
 export interface RuntimeAgentStreamExecutionDeps {
   sessionManager: AgentRunSessionManager;
+  /** Framework-private gateway credential; never copy into runtime or tool context. */
+  inferenceAuthToken?: string;
   localTools?: Record<string, Tool | boolean>;
   projectAgentSandbox?: {
     apiUrl?: string;
@@ -1095,20 +1098,24 @@ export async function createRuntimeAgentStreamResponse(
     // Scoped here because the runtime dispatches the run's first model call
     // before stream() resolves. Later steps inherit this scope through the
     // stream they are pumped from.
-    const candidateRuntimeStream = await runWithMandatoryRunEventSink(
-      modelCallContextRelay.sink,
+    const candidateRuntimeStream = await runWithVeryfrontCloudInferenceCredential(
+      deps.inferenceAuthToken,
       () =>
-        runtime.stream(
-          runtimeMessages,
-          runtimeContext,
-          {
-            onFinish: (response) => {
-              completedResponse = response;
-            },
-          },
-          undefined,
-          maxOutputTokens,
-          abortSignal,
+        runWithMandatoryRunEventSink(
+          modelCallContextRelay.sink,
+          () =>
+            runtime.stream(
+              runtimeMessages,
+              runtimeContext,
+              {
+                onFinish: (response) => {
+                  completedResponse = response;
+                },
+              },
+              undefined,
+              maxOutputTokens,
+              abortSignal,
+            ),
         ),
     );
     if (candidateRuntimeStream.locked) {
@@ -1322,9 +1329,13 @@ export async function createRuntimeAgentStreamResponse(
               // A runtime that dispatches later model calls from its pull()
               // rather than from a continuation of stream() needs the sink in
               // scope on the read that triggers the pull.
-              const { done, value } = await runWithMandatoryRunEventSink(
-                modelCallContextRelay.sink,
-                () => reader.read(),
+              const { done, value } = await runWithVeryfrontCloudInferenceCredential(
+                deps.inferenceAuthToken,
+                () =>
+                  runWithMandatoryRunEventSink(
+                    modelCallContextRelay.sink,
+                    () => reader.read(),
+                  ),
               );
               throwIfAborted();
 

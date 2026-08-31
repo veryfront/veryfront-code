@@ -22,6 +22,10 @@ function isWithinJsonSizeLimit(value: unknown, maxBytes: number): boolean {
   }
 }
 
+function isWithinUtf8SizeLimit(value: string, maxBytes: number): boolean {
+  return encoder.encode(value).byteLength <= maxBytes;
+}
+
 export const getRuntimeAgentRunIdSchema = defineSchema((v) =>
   v.string().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/)
 );
@@ -342,12 +346,18 @@ export const getRuntimeAgentRunContextSchema = defineSchema((v) =>
  */
 export const RuntimeAgentRunContextSchema = lazySchema(getRuntimeAgentRunContextSchema);
 
-export const getRuntimeAgentCredentialsSchema = defineSchema((v) =>
-  v.object({
-    authToken: v.string().min(1).max(MAX_CREDENTIAL_BYTES),
-    inferenceAuthToken: v.string().min(1).max(MAX_CREDENTIAL_BYTES).optional(),
-  }).strict()
-);
+export const getRuntimeAgentCredentialsSchema = defineSchema((v) => {
+  const credential = () =>
+    v.string().min(1).max(MAX_CREDENTIAL_BYTES).refine(
+      (value) => isWithinUtf8SizeLimit(value, MAX_CREDENTIAL_BYTES),
+      { message: "Credential must not exceed 16 KB" },
+    );
+
+  return v.object({
+    authToken: credential(),
+    inferenceAuthToken: credential().optional(),
+  }).strict();
+});
 
 export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
   v.object({

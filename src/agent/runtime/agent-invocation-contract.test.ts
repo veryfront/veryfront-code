@@ -60,10 +60,7 @@ function createInvocation(overrides: Record<string, unknown> = {}) {
       },
     }],
     context: [{ type: "text", text: "Current file: app.tsx" }],
-    credentials: {
-      authToken: "request-scoped-user-token",
-      inferenceAuthToken: "run-scoped-inference-token",
-    },
+    credentials: { authToken: "request-scoped-user-token" },
     agentSource: { type: "branch", branch: "main" },
     forwardedProps: { activeChatId: "chat_123" },
     ...overrides,
@@ -95,7 +92,44 @@ describe("agent/runtime-agent-invocation-contract", () => {
     assertEquals(parsed.messages.length, 2);
     assertEquals(parsed.tools[0]?.name, "studio_focus_component");
     assertEquals(parsed.credentials?.authToken, "request-scoped-user-token");
+    assertEquals(parsed.credentials?.inferenceAuthToken, undefined);
+  });
+
+  it("accepts a separate bounded inference credential without changing legacy calls", () => {
+    const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      credentials: {
+        authToken: "request-scoped-user-token",
+        inferenceAuthToken: "run-scoped-inference-token",
+      },
+    }));
+    const request = buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed);
+
     assertEquals(parsed.credentials?.inferenceAuthToken, "run-scoped-inference-token");
+    assertEquals(request.credentials?.authToken, "request-scoped-user-token");
+    assertEquals(request.credentials?.inferenceAuthToken, "run-scoped-inference-token");
+  });
+
+  it("bounds runtime credentials by UTF-8 bytes", () => {
+    const exactByteLimit = "é".repeat(8_192);
+    const overByteLimit = "é".repeat(8_193);
+
+    const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      credentials: {
+        authToken: exactByteLimit,
+        inferenceAuthToken: exactByteLimit,
+      },
+    }));
+    assertEquals(parsed.credentials?.authToken, exactByteLimit);
+    assertEquals(parsed.credentials?.inferenceAuthToken, exactByteLimit);
+
+    assertThrows(() =>
+      RuntimeAgentRunInvocationSchema.parse(createInvocation({
+        credentials: {
+          authToken: "request-scoped-user-token",
+          inferenceAuthToken: overByteLimit,
+        },
+      }))
+    );
   });
 
   it("preserves explicit delegation denial across the control-plane transform", () => {

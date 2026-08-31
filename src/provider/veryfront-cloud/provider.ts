@@ -1,4 +1,5 @@
 import { createError, toError } from "#veryfront/errors";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import type { ModelRuntime } from "../types.ts";
 import {
@@ -16,6 +17,42 @@ import {
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
   resolveVeryfrontCloudOpenAITransport,
 } from "./model-catalog.ts";
+
+const inferenceCredentialStorage = new AsyncLocalStorage<string>();
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicObjectDefineProperty = Object.defineProperty;
+const AsyncLocalStorageGetStore = AsyncLocalStorage.prototype.getStore;
+const AsyncLocalStorageRun = AsyncLocalStorage.prototype.run;
+IntrinsicObjectDefineProperty(inferenceCredentialStorage, "getStore", {
+  configurable: false,
+  value: AsyncLocalStorageGetStore,
+  writable: false,
+});
+IntrinsicObjectDefineProperty(inferenceCredentialStorage, "run", {
+  configurable: false,
+  value: AsyncLocalStorageRun,
+  writable: false,
+});
+
+/** @internal Keep run-bound gateway authority outside public/project credential contexts. */
+export function runWithVeryfrontCloudInferenceCredential<T>(
+  credential: string | undefined,
+  operation: () => T,
+): T {
+  if (!credential) return operation();
+  return IntrinsicReflectApply(AsyncLocalStorageRun, inferenceCredentialStorage, [
+    credential,
+    operation,
+  ]) as T;
+}
+
+function getCurrentInferenceCredential(): string | undefined {
+  return IntrinsicReflectApply(
+    AsyncLocalStorageGetStore,
+    inferenceCredentialStorage,
+    [],
+  ) as string | undefined;
+}
 
 function wrapVeryfrontCloudModel(
   model: ModelRuntime,
@@ -62,7 +99,9 @@ function shouldUseOpenAIResponsesRuntime(upstreamModelId: string): boolean {
 
 export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "language");
-  const { apiBaseUrl, apiToken, projectSlug } = requireVeryfrontCloudBootstrap();
+  const { apiBaseUrl, apiToken, projectSlug } = requireVeryfrontCloudBootstrap(
+    getCurrentInferenceCredential(),
+  );
   const baseURL = getVeryfrontCloudGatewayBaseUrl(apiBaseUrl, provider);
   const fetch = createVeryfrontCloudFetch(apiToken, baseURL, projectSlug);
   const registry = ensureBuiltinLLMProviders();

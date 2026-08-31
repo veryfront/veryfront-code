@@ -122,14 +122,15 @@ export function parseVeryfrontCloudModelId(
   };
 }
 
-export function requireVeryfrontCloudBootstrap(): {
+export function requireVeryfrontCloudBootstrap(apiTokenOverride?: string): {
   apiBaseUrl: string;
   apiToken: string;
   projectSlug?: string;
 } {
   const bootstrap = getVeryfrontCloudBootstrap();
 
-  if (!bootstrap.apiToken) {
+  const apiToken = apiTokenOverride ?? bootstrap.apiToken;
+  if (!apiToken) {
     throw toError(
       createError({
         type: "config",
@@ -142,7 +143,7 @@ export function requireVeryfrontCloudBootstrap(): {
 
   return {
     apiBaseUrl: bootstrap.apiBaseUrl,
-    apiToken: bootstrap.apiToken,
+    apiToken,
     projectSlug: bootstrap.projectSlug,
   };
 }

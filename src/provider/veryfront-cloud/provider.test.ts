@@ -8,6 +8,8 @@ import { clearEmbeddingProviders, resolveEmbeddingModel } from "#veryfront/embed
 import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { clearModelProviders, resolveModel } from "#veryfront/provider";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
+import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
+import { runWithVeryfrontCloudInferenceCredential } from "./provider.ts";
 
 const CLOUD_ENV_KEYS = [
   "VERYFRONT_API_TOKEN",
@@ -68,6 +70,39 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doStream, "function");
     assertEquals(model._generateViaStream, true);
     assertEquals(model.modelProvider, "openai");
+  });
+
+  it("uses the private inference credential only for gateway model construction", async () => {
+    setCloudBootstrap();
+    let capturedAuthorization: string | null = null;
+    let projectVisibleToken: string | undefined;
+
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedAuthorization = request.headers.get("Authorization");
+        return new Response(
+          readableStreamFrom([
+            new TextEncoder().encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+            new TextEncoder().encode("data: [DONE]\n\n"),
+          ]),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+
+    await runWithVeryfrontCloudInferenceCredential(
+      "run-scoped-inference-token",
+      async () => {
+        projectVisibleToken = getVeryfrontCloudAuthToken();
+        const model = resolveModel("veryfront-cloud/openai/gpt-test");
+        const result = await model.doStream({ prompt: [] });
+        await drainStream(result.stream);
+      },
+    );
+
+    assertEquals(capturedAuthorization, "Bearer run-scoped-inference-token");
+    assertEquals(projectVisibleToken, "vf_test_provider");
   });
 
   it("preserves class runtime method receivers while adding cloud metadata", async () => {
