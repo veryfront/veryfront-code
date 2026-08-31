@@ -209,6 +209,14 @@ function reportDetachedContinuationFailure(error: unknown): void {
 function classifyContinuationFailure(error: unknown): string {
   if (error === null) return "null";
   if (isProxyWithoutHooks(error)) return "proxy";
+  if (typeof DOM_EXCEPTION_NAME_GETTER === "function") {
+    try {
+      Reflect.apply(DOM_EXCEPTION_NAME_GETTER, error, []);
+      return "domexception";
+    } catch {
+      // The native getter is a side-effect-free DOMException brand check.
+    }
+  }
   if (isNativeErrorWithoutHooks(error)) {
     const name = readNativeErrorNameWithoutHooks(error);
     switch (name) {
