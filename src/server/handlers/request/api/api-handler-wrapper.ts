@@ -83,7 +83,7 @@ export class ApiHandlerWrapper extends BaseHandler {
       typeof fsWrapper.isMultiProjectMode === "function" &&
       fsWrapper.isMultiProjectMode();
     const inspect = async (): Promise<boolean> => {
-      await ensurePreviewSourceSnapshotFresh(ctx);
+      await preparePreviewDocumentSourceSnapshot(ctx);
       const result = await withApiHandler(
         ctx,
         (api) => api.prepareFrameworkOwnedPreflight(req, ctx),
