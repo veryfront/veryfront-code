@@ -162,9 +162,14 @@ describe("agent/middleware/chain", () => {
   });
 
   it("dispatches a continuation deferred after middleware returns", async () => {
+    let deferredContinuation: Promise<AgentResponse> | undefined;
     let finalHandlerCalls = 0;
     const chain = new MiddlewareChain([
-      (_context, next) => Promise.resolve().then(() => next()),
+      (_context, next) =>
+        Promise.resolve().then(() => {
+          deferredContinuation = next();
+          return deferredContinuation;
+        }),
     ]);
 
     assertEquals(
@@ -175,6 +180,7 @@ describe("agent/middleware/chain", () => {
       response,
     );
     assertEquals(finalHandlerCalls, 1);
+    assertEquals(deferredContinuation instanceof Promise, true);
   });
 
   it("rejects deferred dispatch when the middleware settles after calling next", async () => {

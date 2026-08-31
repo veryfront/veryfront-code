@@ -4,16 +4,16 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const INVALID_CONTINUATION_MESSAGE =
   "Agent middleware next() can only be called once while middleware is active";
+const NOOP = (): undefined => undefined;
+
+class DeferredContinuationPromise extends Promise<AgentResponse> {}
 
 function createInvalidContinuationError() {
   return MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE });
 }
 
 function consumeRejectedPromise(promise: Promise<AgentResponse>): void {
-  void promise.then(
-    () => undefined,
-    () => undefined,
-  );
+  void promise.then(NOOP, NOOP);
 }
 
 function rejectInvalidContinuation(): Promise<AgentResponse> {
@@ -30,12 +30,13 @@ function createDeferredContinuation(
   let started = false;
   let resolveContinuation: (response: AgentResponse) => void = () => {};
   let rejectContinuation: (error: unknown) => void = () => {};
-  const continuationPromise = new Promise<AgentResponse>((resolve, reject) => {
+  const continuationPromise = new DeferredContinuationPromise((resolve, reject) => {
     resolveContinuation = resolve;
     rejectContinuation = reject;
   });
 
-  const start = (): void => {
+  let start = (): void => {};
+  const startContinuation = (): void => {
     if (started) return;
     started = true;
     if (isSettled()) {
@@ -52,6 +53,7 @@ function createDeferredContinuation(
     }
     void dispatched.then(resolveContinuation, rejectContinuation);
   };
+  start = startContinuation;
 
   void middlewareResult.then(
     () => {
@@ -61,25 +63,18 @@ function createDeferredContinuation(
       if (!started) rejectContinuation(createInvalidContinuationError());
     },
   );
-  consumeRejectedPromise(continuationPromise);
+  const nativeThen = Promise.prototype.then.bind(
+    continuationPromise,
+  ) as typeof continuationPromise.then;
+  void nativeThen(NOOP, NOOP);
 
   const then: typeof continuationPromise.then = (onFulfilled, onRejected) => {
     start();
-    return continuationPromise.then(onFulfilled, onRejected);
+    return nativeThen(onFulfilled, onRejected);
   };
-  const deferredContinuation = {
-    then,
-    catch: (onRejected: Parameters<typeof continuationPromise.catch>[0]) => {
-      start();
-      return continuationPromise.catch(onRejected);
-    },
-    finally: (onFinally: Parameters<typeof continuationPromise.finally>[0]) => {
-      start();
-      return continuationPromise.finally(onFinally);
-    },
-  } as Promise<AgentResponse>;
+  Object.defineProperty(continuationPromise, "then", { value: then });
 
-  return deferredContinuation;
+  return continuationPromise;
 }
 
 interface MiddlewareContinuation {
