@@ -20,6 +20,9 @@ import {
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { hasDisabledThinking } from "./model-capabilities.ts";
 
+const IntrinsicReflectApply = Reflect.apply;
+const StringStartsWith = String.prototype.startsWith;
+
 export type ResolvedModelTransport = {
   requestedModel: string;
   resolvedModelString: string;
@@ -69,7 +72,7 @@ export async function resolveAgentModelTransport(
   const requestedModel = resolveConfiguredAgentModel(input.modelOverride || input.config.model);
   const resolvedModelString = resolveRuntimeModel(input.modelOverride || input.config.model);
   const privatelyResolvedModel = input.resolveModelRuntime &&
-      resolvedModelString.startsWith(VERYFRONT_CLOUD_MODEL_PREFIX)
+      IntrinsicReflectApply(StringStartsWith, resolvedModelString, [VERYFRONT_CLOUD_MODEL_PREFIX])
     ? input.resolveModelRuntime(resolvedModelString)
     : undefined;
   const transport = privatelyResolvedModel

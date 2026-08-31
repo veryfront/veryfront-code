@@ -6,6 +6,8 @@ import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 
 const inferenceCredentials = createPrivateWeakStore<object, string>();
 const VERYFRONT_CLOUD_MODEL_PREFIX = "veryfront-cloud/";
+const IntrinsicReflectApply = Reflect.apply;
+const StringStartsWith = String.prototype.startsWith;
 
 /** @internal Bind a verified control-plane inference credential without exposing it on the request. */
 export function registerHostedInferenceCredential(
@@ -21,7 +23,7 @@ export function createVeryfrontCloudInferenceModelResolver(
   credential: string,
 ): AgentModelRuntimeResolver {
   return (modelId) => {
-    if (!modelId.startsWith(VERYFRONT_CLOUD_MODEL_PREFIX)) {
+    if (!IntrinsicReflectApply(StringStartsWith, modelId, [VERYFRONT_CLOUD_MODEL_PREFIX])) {
       return undefined;
     }
 

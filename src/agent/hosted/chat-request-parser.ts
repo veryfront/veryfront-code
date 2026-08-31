@@ -14,8 +14,8 @@ import {
   hostedChatRequestSchema,
 } from "./chat-request.ts";
 import {
-  getRuntimeAgentRunInvocationSchema,
   type RuntimeAgentSourceContext,
+  safeParseRuntimeAgentRunInvocationValue,
 } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import {
@@ -40,6 +40,9 @@ import {
   type HostedServiceRunEventAppendTokenVerification as RunEventAppendTokenVerification,
   toRunEventAppendTokenResult,
 } from "../service/auth.ts";
+
+const IntrinsicReflectApply = Reflect.apply;
+const JsonParse = JSON.parse;
 
 /** Internal control-plane credential for exact-run durable event appends. */
 export const RUN_EVENT_APPEND_TOKEN_HEADER = "X-Veryfront-Run-Event-Token";
@@ -157,7 +160,7 @@ async function parseRequestJson(
     return null;
   }
   try {
-    return JSON.parse(body);
+    return IntrinsicReflectApply(JsonParse, JSON, [body]);
   } catch {
     return null;
   }
@@ -642,7 +645,7 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
   const requestBody = await parseRequestJson(request, DEFAULT_MAX_BODY_SIZE_BYTES);
   if (requestBody instanceof Response) return requestBody;
 
-  const invocation = getRuntimeAgentRunInvocationSchema().safeParse(requestBody);
+  const invocation = safeParseRuntimeAgentRunInvocationValue(requestBody);
   if (!invocation.success) {
     return createValidationErrorResponse({
       messagePrefix: "Invalid runtime agent invocation",

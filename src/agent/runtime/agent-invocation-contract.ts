@@ -416,6 +416,32 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
   })
 );
 
+// Capture the trusted ingress methods before project code can mutate the public
+// compatibility facade or the materialized schema instance.
+const trustedRuntimeAgentRunInvocationSchema = getRuntimeAgentRunInvocationSchema();
+const TrustedRuntimeAgentRunInvocationParse = trustedRuntimeAgentRunInvocationSchema.parse;
+const TrustedRuntimeAgentRunInvocationSafeParse = trustedRuntimeAgentRunInvocationSchema.safeParse;
+
+export function parseRuntimeAgentRunInvocationValue(
+  value: unknown,
+): InferSchema<ReturnType<typeof getRuntimeAgentRunInvocationSchema>> {
+  return IntrinsicReflectApply(
+    TrustedRuntimeAgentRunInvocationParse,
+    trustedRuntimeAgentRunInvocationSchema,
+    [value],
+  );
+}
+
+export function safeParseRuntimeAgentRunInvocationValue(
+  value: unknown,
+): ReturnType<typeof trustedRuntimeAgentRunInvocationSchema.safeParse> {
+  return IntrinsicReflectApply(
+    TrustedRuntimeAgentRunInvocationSafeParse,
+    trustedRuntimeAgentRunInvocationSchema,
+    [value],
+  );
+}
+
 /** Schema for runtime agent run invocation.
  * @deprecated Use getRuntimeAgentRunInvocationSchema()
  */
@@ -516,7 +542,7 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
 export async function parseRuntimeAgentRunInvocation(
   request: Request,
 ): Promise<RuntimeAgentRunInvocation> {
-  return getRuntimeAgentRunInvocationSchema().parse(await parseAgUiJsonBody(request));
+  return parseRuntimeAgentRunInvocationValue(await parseAgUiJsonBody(request));
 }
 
 /** Error shape for parse runtime agent run invocation or. */

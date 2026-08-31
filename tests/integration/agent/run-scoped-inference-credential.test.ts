@@ -17,7 +17,12 @@ import {
   registerRuntimeInferenceCredential,
 } from "#veryfront/internal-agents/run-stream.ts";
 import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
-import { RuntimeAgentRunInvocationSchema } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
+import {
+  parseRuntimeAgentRunInvocationValue,
+  RuntimeAgentRunInvocationSchema,
+} from "#veryfront/agent/runtime/agent-invocation-contract.ts";
+import { parseAgUiJsonBody } from "#veryfront/agent/ag-ui/request-shared.ts";
+import { readBodyWithLimit } from "#veryfront/security/input-validation/limits.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -95,6 +100,68 @@ describe("run-scoped inference credential", () => {
     assertEquals(JSON.stringify(runtime).includes(inferenceAuthToken), false);
   });
 
+  it("keeps trusted invocation parsing off the public schema facade", () => {
+    const inferenceAuthToken = "run-scoped-inference-token";
+    const originalParse = RuntimeAgentRunInvocationSchema.parse;
+    let publicParserCalled = false;
+    RuntimeAgentRunInvocationSchema.parse = (value: unknown) => {
+      publicParserCalled = true;
+      throw new Error(`public parser received ${String(value)}`);
+    };
+
+    try {
+      const parsed = parseRuntimeAgentRunInvocationValue(
+        runtimeAgentInvocation(inferenceAuthToken),
+      );
+      assertEquals(parsed.credentials?.inferenceAuthToken, inferenceAuthToken);
+    } finally {
+      RuntimeAgentRunInvocationSchema.parse = originalParse;
+    }
+
+    assertEquals(publicParserCalled, false);
+  });
+
+  it("keeps ingress JSON and body reads on captured primitives", async () => {
+    const inferenceAuthToken = "run-scoped-inference-token";
+    const originalJsonParse = JSON.parse;
+    const originalBody = Object.getOwnPropertyDescriptor(Request.prototype, "body")!;
+    const originalGetReader = ReadableStream.prototype.getReader;
+    let observedToken = false;
+    JSON.parse = ((value: string) => {
+      if (value.includes(inferenceAuthToken)) observedToken = true;
+      return Reflect.apply(originalJsonParse, JSON, [value]);
+    }) as typeof JSON.parse;
+    Object.defineProperty(Request.prototype, "body", {
+      ...originalBody,
+      get() {
+        observedToken = true;
+        return Reflect.apply(originalBody.get!, this, []);
+      },
+    });
+    ReadableStream.prototype.getReader = function () {
+      observedToken = true;
+      return Reflect.apply(originalGetReader, this, []);
+    };
+
+    try {
+      const body = JSON.stringify(runtimeAgentInvocation(inferenceAuthToken));
+      const parsed = await parseAgUiJsonBody(
+        new Request("http://localhost/", {
+          method: "POST",
+          body,
+        }),
+      );
+      assertEquals(typeof parsed, "object");
+      await readBodyWithLimit(new Request("http://localhost/", { method: "POST", body }));
+    } finally {
+      JSON.parse = originalJsonParse;
+      Object.defineProperty(Request.prototype, "body", originalBody);
+      ReadableStream.prototype.getReader = originalGetReader;
+    }
+
+    assertEquals(observedToken, false);
+  });
+
   it("keeps the dedicated credential private through internal stream pulls", async () => {
     setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
     setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
@@ -140,19 +207,30 @@ describe("run-scoped inference credential", () => {
       context: [],
     } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
     registerRuntimeInferenceCredential(runtimeInput, "run-scoped-inference-token");
-    const response = await createRuntimeAgentStreamResponse(
-      runtimeInput,
-      runtimeAgent,
-      {
-        sessionManager: new AgentRunSessionManager(),
-      },
-    );
-    await response.text();
+    const originalRuntimeStream = AgentRuntime.prototype.stream;
+    let publicRuntimeStreamCalled = false;
+    AgentRuntime.prototype.stream = (async function (...args) {
+      publicRuntimeStreamCalled = true;
+      return await Reflect.apply(originalRuntimeStream, this, args);
+    }) as typeof originalRuntimeStream;
+    try {
+      const response = await createRuntimeAgentStreamResponse(
+        runtimeInput,
+        runtimeAgent,
+        {
+          sessionManager: new AgentRunSessionManager(),
+        },
+      );
+      await response.text();
+    } finally {
+      AgentRuntime.prototype.stream = originalRuntimeStream;
+    }
 
     assertEquals(capturedAuthorizations, [
       "Bearer broader-project-runtime-token",
       "Bearer run-scoped-inference-token",
     ]);
+    assertEquals(publicRuntimeStreamCalled, false);
   });
 
   it("bypasses project model overrides for credentialed Veryfront Cloud resolution", () => {
@@ -599,6 +677,7 @@ describe("run-scoped inference credential", () => {
     const originalTrim = String.prototype.trim;
     const originalRegExpTest = RegExp.prototype.test;
     const originalTextEncoderEncode = TextEncoder.prototype.encode;
+    const originalStartsWith = String.prototype.startsWith;
     const observedValidationTokens: string[] = [];
 
     String.prototype.trim = function (): string {
@@ -606,6 +685,9 @@ describe("run-scoped inference credential", () => {
         observedValidationTokens.push("trim");
       }
       return Reflect.apply(originalTrim, this, []);
+    };
+    String.prototype.startsWith = function (): boolean {
+      throw new Error("live String.startsWith used");
     };
     RegExp.prototype.test = function (value: string): boolean {
       if (value.includes(inferenceToken)) observedValidationTokens.push("regexp");
@@ -666,6 +748,7 @@ describe("run-scoped inference credential", () => {
       TextEncoder.prototype.encode = originalTextEncoderEncode;
       RegExp.prototype.test = originalRegExpTest;
       String.prototype.trim = originalTrim;
+      String.prototype.startsWith = originalStartsWith;
     }
 
     assertEquals(observedValidationTokens, []);

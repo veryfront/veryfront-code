@@ -33,6 +33,9 @@ const NativeURL = URL;
 const HeadersDelete = NativeHeaders.prototype.delete;
 const HeadersGet = NativeHeaders.prototype.get;
 const HeadersSet = NativeHeaders.prototype.set;
+const StringEndsWith = String.prototype.endsWith;
+const StringSlice = String.prototype.slice;
+const StringStartsWith = String.prototype.startsWith;
 const RequestArrayBuffer = NativeRequest.prototype.arrayBuffer;
 const RequestGetters = Object.freeze({
   body: Object.getOwnPropertyDescriptor(NativeRequest.prototype, "body")?.get,
@@ -160,7 +163,10 @@ export function isInternalEgressOverrideEnabled(value: string | undefined): bool
 }
 
 function stripIpv6Brackets(value: string): string {
-  return value.startsWith("[") && value.endsWith("]") ? value.slice(1, -1) : value;
+  return IntrinsicReflectApply(StringStartsWith, value, ["["]) &&
+      IntrinsicReflectApply(StringEndsWith, value, ["]"])
+    ? IntrinsicReflectApply(StringSlice, value, [1, -1])
+    : value;
 }
 
 function stripIpv6Zone(value: string): string {
