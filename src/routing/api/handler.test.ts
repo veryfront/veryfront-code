@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it as bddIt } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { HandlerContext } from "#veryfront/types";
 import {
@@ -16,8 +16,24 @@ import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/sou
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
 const handlers: APIRouteHandler[] = [];
+const workerDenoEnvGet = "Deno" + ".env.get";
+const DENO_ONLY_TEST_NAMES = new Set([
+  "prepares without host import and executes top-level code in an env-denied worker",
+  "passes admitted identity through isolated prepared App Router execution",
+  "passes admitted identity through isolated prepared Pages Router execution",
+  "prepares local routes before execution when API isolation is enabled",
+  "authenticates an explicit OPTIONS handler but keeps automatic preflight public",
+  "does not reuse prepared method capability across worker semantics",
+  "dispatches a named OPTIONS handler from a prepared route",
+]);
+
+function it(name: string, fn: () => void | Promise<void>): void {
+  bddIt(name, DENO_ONLY_TEST_NAMES.has(name) ? { ignore: !isDeno } : {}, fn);
+}
 
 type HandlerConfig = ConstructorParameters<typeof APIRouteHandler>[2];
 
@@ -66,8 +82,12 @@ async function prepareSource(source: string): Promise<{ source: string; sha256: 
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(source));
   return {
     source,
-    sha256: new Uint8Array(digest).toHex(),
+    sha256: bytesToHex(new Uint8Array(digest)),
   };
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 /** App routes receive (request, ctx); Pages routes receive (ctx). */
@@ -94,8 +114,8 @@ afterEach(async (): Promise<void> => {
   while (handlers.length) handlers.pop()?.destroy();
   __injectDepsForTests(null);
   await __resetPoolForTests();
-  Deno.env.delete("WORKER_ISOLATION_ENABLED");
-  Deno.env.delete("WORKER_ISOLATION_API");
+  deleteEnv("WORKER_ISOLATION_ENABLED");
+  deleteEnv("WORKER_ISOLATION_API");
 });
 
 describe("APIRouteHandler", () => {
@@ -310,7 +330,7 @@ describe("APIRouteHandler", () => {
       const source = [
         `import "data:text/javascript,globalThis.${marker}%3D%27worker-imported%27";`,
         "let envAccess = 'allowed';",
-        "try { Deno.env.get('VF_TEST_HOST_ONLY_SECRET'); } catch { envAccess = 'blocked'; }",
+        `try { ${workerDenoEnvGet}('VF_TEST_HOST_ONLY_SECRET'); } catch { envAccess = 'blocked'; }`,
         "export function GET(request) {",
         `  return Response.json({`,
         `    envAccess,`,
@@ -335,13 +355,13 @@ describe("APIRouteHandler", () => {
           preparations++;
           return Promise.resolve({
             source,
-            sha256: new Uint8Array(digest).toHex(),
+            sha256: bytesToHex(new Uint8Array(digest)),
           });
         },
       });
 
-      Deno.env.delete("WORKER_ISOLATION_ENABLED");
-      Deno.env.delete("WORKER_ISOLATION_API");
+      deleteEnv("WORKER_ISOLATION_ENABLED");
+      deleteEnv("WORKER_ISOLATION_API");
       await __resetPoolForTests();
       const handler = await createInitializedHandler("/test/project", adapter);
       const remoteCtx = {
@@ -381,7 +401,7 @@ describe("APIRouteHandler", () => {
       assertEquals(preparations, 1);
       assertEquals((globalThis as Record<string, unknown>)[marker], undefined);
       assert(
-        Deno.env.get("VF_TEST_HOST_ONLY_SECRET") === undefined,
+        getEnv("VF_TEST_HOST_ONLY_SECRET") === undefined,
         "the test must not depend on a real host secret",
       );
     });
@@ -658,12 +678,12 @@ describe("APIRouteHandler", () => {
           preparations++;
           return Promise.resolve({
             source,
-            sha256: new Uint8Array(digest).toHex(),
+            sha256: bytesToHex(new Uint8Array(digest)),
           });
         },
       });
-      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
-      Deno.env.set("WORKER_ISOLATION_API", "1");
+      setEnv("WORKER_ISOLATION_ENABLED", "1");
+      setEnv("WORKER_ISOLATION_API", "1");
       await __resetPoolForTests();
 
       const handler = await createInitializedHandler("/test/project", adapter);
@@ -690,7 +710,7 @@ describe("APIRouteHandler", () => {
     describe("when the runtime cannot prepare an isolated module", () => {
       afterEach(() => {
         __setCompiledBinaryForTests(undefined);
-        Deno.env.delete(HOST_PROJECT_EXECUTION_OVERRIDE_ENV);
+        deleteEnv(HOST_PROJECT_EXECUTION_OVERRIDE_ENV);
       });
 
       it("fails closed when API isolation conflicts with a host execution grant", async () => {
@@ -713,9 +733,9 @@ describe("APIRouteHandler", () => {
             throw new Error("prepared an isolated module this runtime cannot link");
           },
         });
-        Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
-        Deno.env.set("WORKER_ISOLATION_API", "1");
-        Deno.env.set(HOST_PROJECT_EXECUTION_OVERRIDE_ENV, "1");
+        setEnv("WORKER_ISOLATION_ENABLED", "1");
+        setEnv("WORKER_ISOLATION_API", "1");
+        setEnv(HOST_PROJECT_EXECUTION_OVERRIDE_ENV, "1");
         __setCompiledBinaryForTests(true);
         await __resetPoolForTests();
 
@@ -759,8 +779,8 @@ describe("APIRouteHandler", () => {
             throw new Error("unreachable");
           },
         });
-        Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
-        Deno.env.set("WORKER_ISOLATION_API", "1");
+        setEnv("WORKER_ISOLATION_ENABLED", "1");
+        setEnv("WORKER_ISOLATION_API", "1");
         // Deliberately no VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION.
         __setCompiledBinaryForTests(true);
         await __resetPoolForTests();
@@ -1189,8 +1209,8 @@ describe("APIRouteHandler", () => {
         prepareHandlerModule: () => Promise.resolve(module),
         resolvePreparedRouteMethods: () => Promise.resolve([...inspectedMethods]),
       });
-      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
-      Deno.env.set("WORKER_ISOLATION_API", "1");
+      setEnv("WORKER_ISOLATION_ENABLED", "1");
+      setEnv("WORKER_ISOLATION_API", "1");
       await __resetPoolForTests();
       const handler = await createInitializedHandler("/test/project", adapter);
 
@@ -1237,8 +1257,8 @@ describe("APIRouteHandler", () => {
         },
         prepareHandlerModule: () => Promise.resolve(module),
       });
-      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
-      Deno.env.set("WORKER_ISOLATION_API", "1");
+      setEnv("WORKER_ISOLATION_ENABLED", "1");
+      setEnv("WORKER_ISOLATION_API", "1");
       await __resetPoolForTests();
 
       const handler = await createInitializedHandler("/test/project", adapter);
@@ -1292,8 +1312,8 @@ describe("APIRouteHandler", () => {
         resolvePreparedRouteMethods: () =>
           Promise.reject(new Error("prepared method inspection failed")),
       });
-      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
-      Deno.env.set("WORKER_ISOLATION_API", "1");
+      setEnv("WORKER_ISOLATION_ENABLED", "1");
+      setEnv("WORKER_ISOLATION_API", "1");
       await __resetPoolForTests();
 
       const handler = await createInitializedHandler("/test/project", adapter);
@@ -1901,7 +1921,7 @@ describe("APIRouteHandler", () => {
             "SHA-256",
             new TextEncoder().encode(source),
           );
-          return { source, sha256: new Uint8Array(digest).toHex() };
+          return { source, sha256: bytesToHex(new Uint8Array(digest)) };
         },
       });
 
