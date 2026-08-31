@@ -86,7 +86,9 @@ function createMiddlewareContinuation(
       );
     }
 
-    return dispatch();
+    const continuation = dispatch();
+    observeContinuationRejection(continuation, reportContinuationFailure);
+    return continuation;
   };
 
   return {

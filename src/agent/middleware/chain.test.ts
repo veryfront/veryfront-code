@@ -350,6 +350,31 @@ describe("agent/middleware/chain", () => {
     assertEquals(record?.error?.message, "detached downstream failed");
   });
 
+  it("reports a detached synchronous downstream rejection", async () => {
+    const downstreamError = new Error("detached synchronous downstream failed");
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+    try {
+      const chain = new MiddlewareChain([
+        async (_context, next) => {
+          next();
+          return response;
+        },
+      ]);
+
+      await chain.execute(context, () => Promise.reject(downstreamError));
+      await Promise.resolve();
+      await Promise.resolve();
+    } finally {
+      unsubscribe();
+    }
+
+    const record = records.find((entry) =>
+      entry.message === "Agent middleware continuation failed"
+    );
+    assertEquals(record?.error?.message, "detached synchronous downstream failed");
+  });
+
   it("invokes the final handler for an empty middleware chain", async () => {
     let finalHandlerCalls = 0;
     assertEquals(
