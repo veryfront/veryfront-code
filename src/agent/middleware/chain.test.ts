@@ -408,7 +408,7 @@ describe("agent/middleware/chain", () => {
     }
 
     assertEquals(
-      records.some((entry) => entry.message === "Agent middleware continuation failed"),
+      records.some((entry) => entry.message === "Your agent middleware continuation failed"),
       false,
     );
   });
