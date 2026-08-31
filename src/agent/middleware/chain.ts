@@ -59,14 +59,14 @@ class ObservedContinuationPromise<T> extends Promise<T> {
     const derived = super.then(onFulfilled, onRejected);
     if (this.onRejection) {
       const observedDerived = derived as ObservedContinuationPromise<TResult1 | TResult2>;
+      if (!PROMISE_SPECIES_SUPPORTED || typeof observedDerived.isObserved !== "function") {
+        return createTrackedDerivedContinuation(derived, this.onRejection);
+      }
       observeContinuationRejection(
         derived,
         this.onRejection,
         () => {
-          // Keep a safe fallback if a future engine stops honoring Promise
-          // species: report rather than suppress a derived rejection.
-          return typeof observedDerived.isObserved === "function" &&
-            observedDerived.isObserved();
+          return observedDerived.isObserved();
         },
       );
     }
@@ -106,11 +106,19 @@ function createObservedContinuation<T>(
       value: DerivedContinuationPromise,
     });
     // Promise species currently keeps every derived branch on this
-    // per-continuation constructor. If a future engine removes that hook, the
-    // guarded isObserved() fallback reports the rejection instead of hiding it.
-    // NOTE: Revisit this fallback if Promise species semantics change.
+    // per-continuation constructor. If a future engine removes that hook,
+    // derived branches are adopted into tracked continuations instead.
   }
   return continuation;
+}
+
+function createTrackedDerivedContinuation<T>(
+  derived: Promise<T>,
+  onRejection: ContinuationRejectionHandler,
+): Promise<T> {
+  return createObservedContinuation<T>((resolve, reject) => {
+    void Promise.prototype.then.call(derived, resolve, reject);
+  }, onRejection);
 }
 
 function adoptContinuationResult(

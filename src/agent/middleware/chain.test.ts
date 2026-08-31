@@ -788,7 +788,7 @@ describe("agent/middleware/chain", () => {
     );
   });
 
-  it("observes discarded derived rejections when Promise species is not preserving", async () => {
+  it("tracks derived rejections when Promise species is not preserving", async () => {
     const nativeSpecies = Object.getOwnPropertyDescriptor(Promise, Symbol.species);
     const records: LogEntry[] = [];
     const unhandled: PromiseRejectionEvent[] = [];
@@ -823,6 +823,12 @@ describe("agent/middleware/chain", () => {
           return Promise.resolve(response);
         },
       ]).execute(context, () => Promise.reject(new Error("species fallback failure")));
+      await new NonPreservingSpeciesChain([
+        (_context: AgentContext, next: () => Promise<AgentResponse>) => {
+          next().then(() => response).catch(() => response);
+          return Promise.resolve(response);
+        },
+      ]).execute(context, () => Promise.reject(new Error("handled species fallback failure")));
       restoreSpecies();
       await Promise.resolve();
       await Promise.resolve();
