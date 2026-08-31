@@ -130,6 +130,47 @@ describe("ApiHandlerWrapper", () => {
     assertEquals(contextEntries, 2);
   });
 
+  it("keeps a prepared automatic preflight when route source changes", async () => {
+    const projectDir = `/tmp/api-wrapper-source-change-${crypto.randomUUID()}`;
+    const routePath = `${projectDir}/pages/api/get-only.ts`;
+    const adapter = createFileAdapter();
+    adapter.fs.files.set(routePath, "export function GET() { return new Response('get'); }");
+    const originalReadFile = adapter.fs.readFile;
+    let routeReads = 0;
+    adapter.fs.readFile = async (path) => {
+      const source = await originalReadFile(path);
+      if (path === routePath && routeReads++ === 0) {
+        adapter.fs.files.set(
+          routePath,
+          "export function OPTIONS() { return new Response('must not run'); }",
+        );
+      }
+      return source;
+    };
+    const ctx = {
+      projectDir,
+      adapter,
+      securityConfig: null,
+      isLocalProject: true,
+      allowHostProjectCodeExecution: true,
+    } as HandlerContext;
+    const wrapper = new ApiHandlerWrapper(projectDir, adapter);
+    const request = new Request("http://localhost/api/get-only", {
+      method: "OPTIONS",
+      headers: {
+        origin: "https://client.example",
+        "access-control-request-method": "GET",
+      },
+    });
+
+    assertEquals(await wrapper.prepareFrameworkOwnedPreflight(request, ctx), true);
+    const result = await wrapper.handle(request, ctx);
+
+    assertEquals(result.response?.status, 204);
+    assertEquals(result.response?.headers.get("Allow"), "GET, HEAD, OPTIONS");
+    assertEquals(routeReads, 1);
+  });
+
   it("keeps denied shared runtimes on the automatic preflight path", async () => {
     const adapter = createFileAdapter();
     const fs = adapter.fs as typeof adapter.fs & {
