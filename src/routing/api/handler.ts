@@ -246,7 +246,10 @@ export class APIRouteHandler {
     ctx?: HandlerContext,
   ): Promise<{ frameworkOwned: boolean; response?: Response }> {
     if (!isPreflightRequest(request)) return { frameworkOwned: false };
-    if (requiresIsolatedProjectRuntime(ctx)) return { frameworkOwned: true };
+    if (requiresIsolatedProjectRuntime(ctx)) {
+      // The denied-execution wrapper creates the public fallback response.
+      return { frameworkOwned: true };
+    }
 
     const { pathname } = new URL(request.url);
     const match = this.router.match(pathname);

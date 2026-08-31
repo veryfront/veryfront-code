@@ -463,11 +463,15 @@ export function createVeryfrontHandler(
         await readyPromise;
         if (!isProxyMode) await securityLoader.ensureLoaded();
 
+        // Monitoring endpoints are always framework-owned; their browser
+        // preflights stay public without project or application auth.
+        const isFrameworkOwnedMonitoringPreflight = req.method.toUpperCase() === "OPTIONS" &&
+          isPreflightRequest(req);
         const requiresApplicationAuth = !isPlatformLivenessProbe(req.method, url.pathname) &&
           !skipsApplicationAuth(
             req,
             url.pathname,
-            req.method.toUpperCase() === "OPTIONS" && isPreflightRequest(req),
+            isFrameworkOwnedMonitoringPreflight,
           );
         let requestOrigin: string | null | undefined;
         if (requiresApplicationAuth) {
