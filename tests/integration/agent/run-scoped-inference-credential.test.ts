@@ -371,7 +371,12 @@ describe("run-scoped inference credential", () => {
       });
     };
     Object.entries = ((value: object) => {
-      if (containsInferenceToken(value)) observedEntriesCredentials.push(value);
+      const isCredentialsRecord = originalObjectEntries(value).some(([key]) =>
+        key === "authToken" || key === "inferenceAuthToken"
+      );
+      if (isCredentialsRecord && containsInferenceToken(value)) {
+        observedEntriesCredentials.push(inferenceToken);
+      }
       return originalObjectEntries(value);
     }) as typeof Object.entries;
     let response: Response;
