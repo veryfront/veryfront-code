@@ -138,10 +138,13 @@ describe("run-scoped inference credential", () => {
         return Reflect.apply(originalBody.get!, this, []);
       },
     });
-    ReadableStream.prototype.getReader = function () {
+    ReadableStream.prototype.getReader = function (
+      this: ReadableStream<Uint8Array>,
+      ...args: Parameters<typeof originalGetReader>
+    ): ReturnType<typeof originalGetReader> {
       observedToken = true;
-      return Reflect.apply(originalGetReader, this, []);
-    };
+      return Reflect.apply(originalGetReader, this, args);
+    } as typeof originalGetReader;
 
     try {
       const body = JSON.stringify(runtimeAgentInvocation(inferenceAuthToken));
@@ -209,7 +212,10 @@ describe("run-scoped inference credential", () => {
     registerRuntimeInferenceCredential(runtimeInput, "run-scoped-inference-token");
     const originalRuntimeStream = AgentRuntime.prototype.stream;
     let publicRuntimeStreamCalled = false;
-    AgentRuntime.prototype.stream = (async function (...args) {
+    AgentRuntime.prototype.stream = (async function (
+      this: AgentRuntime,
+      ...args: Parameters<typeof originalRuntimeStream>
+    ): ReturnType<typeof originalRuntimeStream> {
       publicRuntimeStreamCalled = true;
       return await Reflect.apply(originalRuntimeStream, this, args);
     }) as typeof originalRuntimeStream;
