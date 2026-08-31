@@ -1303,7 +1303,13 @@ describe("APIRouteHandler", () => {
           normalizeSourceIntegrationPolicy({ allow: {} }),
           () =>
             handler.handle(
-              new Request("http://localhost/api/prepared-options-failure", { method: "OPTIONS" }),
+              new Request("http://localhost/api/prepared-options-failure", {
+                method: "OPTIONS",
+                headers: {
+                  origin: "https://client.example",
+                  "access-control-request-method": "POST",
+                },
+              }),
               {
                 projectDir: "/test/project",
                 adapter,
