@@ -146,6 +146,20 @@ describe("agent/middleware/chain", () => {
     ]);
   });
 
+  it("preserves a frozen downstream Promise without decorating it", async () => {
+    const frozenResponse = Object.freeze(Promise.resolve(response));
+    const chain = new MiddlewareChain([
+      (_context, next) => next(),
+      () => frozenResponse,
+    ]);
+
+    assertEquals(
+      await chain.execute(context, () => Promise.resolve(response)),
+      response,
+    );
+    assertEquals(Object.isExtensible(frozenResponse), false);
+  });
+
   it("rejects a continuation queued before an already-settled middleware promise", async () => {
     let queuedNext: Promise<AgentResponse> | undefined;
     let finalHandlerCalls = 0;

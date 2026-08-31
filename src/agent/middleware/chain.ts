@@ -4,6 +4,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
   canIdentifyProxyWithoutHooks,
   isNativeErrorWithoutHooks,
+  isNativePromiseWithoutHooks,
   isProxyWithoutHooks,
   readNativeErrorNameWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
@@ -17,6 +18,7 @@ const IntrinsicWeakSet = WeakSet;
 const ObjectCreate = Object.create;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectIsExtensible = Object.isExtensible;
 const PromiseThen = Promise.prototype.then;
 const ReflectApply = Reflect.apply;
 const SymbolSpecies = Symbol.species;
@@ -114,6 +116,16 @@ function trackEagerContinuation<T>(
       onRejection,
       suppressedInvalidErrors,
     );
+  }
+  if (!isNativePromiseWithoutHooks(promise) || !ObjectIsExtensible(promise)) {
+    observeContinuationRejection(promise);
+    return promise;
+  }
+  const ownThen = ObjectGetOwnPropertyDescriptor(promise, "then");
+  const ownConstructor = ObjectGetOwnPropertyDescriptor(promise, "constructor");
+  if (ownThen?.configurable === false || ownConstructor?.configurable === false) {
+    observeContinuationRejection(promise);
+    return promise;
   }
   ReflectApply(WeakSetAdd, TRACKED_CONTINUATIONS, [promise]);
 
