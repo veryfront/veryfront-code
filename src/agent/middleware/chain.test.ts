@@ -693,6 +693,32 @@ describe("agent/middleware/chain", () => {
     );
   });
 
+  it("classifies non-abort DOMException rejection reasons across runtimes", async () => {
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+    try {
+      const chain = new MiddlewareChain([
+        async (_context, next) => {
+          next();
+          return response;
+        },
+      ]);
+      await chain.execute(
+        context,
+        () => Promise.reject(new DOMException("private detail", "NotFoundError")),
+      );
+      await waitForReport();
+    } finally {
+      unsubscribe();
+    }
+
+    const record = records.find((entry) =>
+      entry.message === "Your agent middleware continuation failed"
+    );
+    assertEquals(record?.context?.failure_type, "domexception");
+    assertEquals(JSON.stringify(record)?.includes("private detail"), false);
+  });
+
   it("does not report a late await handler during the grace window", async () => {
     const records: LogEntry[] = [];
     let continuation: Promise<AgentResponse> | undefined;

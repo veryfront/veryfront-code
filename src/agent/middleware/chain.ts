@@ -2,6 +2,7 @@ import type { AgentContext, AgentMiddleware, AgentResponse } from "../types.ts";
 import { MIDDLEWARE_ERROR } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
+  canIdentifyProxyWithoutHooks,
   isNativeErrorWithoutHooks,
   isProxyWithoutHooks,
   readNativeErrorNameWithoutHooks,
@@ -60,7 +61,10 @@ class ObservedContinuationPromise<T> extends Promise<T> {
     if (this.onRejection) {
       const observedDerived = derived as ObservedContinuationPromise<TResult1 | TResult2>;
       if (!PROMISE_SPECIES_SUPPORTED || typeof observedDerived.isObserved !== "function") {
-        return createTrackedDerivedContinuation(derived, this.onRejection);
+        // Preserve the runtime-selected branch and suppress native unhandled
+        // rejection noise when its observation state cannot be tracked.
+        observeContinuationRejection(derived);
+        return derived;
       }
       observeContinuationRejection(
         derived,
@@ -111,18 +115,9 @@ function createObservedContinuation<T>(
     });
     // Promise species currently keeps every derived branch on this
     // per-continuation constructor. If a future engine removes that hook,
-    // derived branches are adopted into tracked continuations instead.
+    // preserve the runtime-selected branch and contain native rejection noise.
   }
   return continuation;
-}
-
-function createTrackedDerivedContinuation<T>(
-  derived: Promise<T>,
-  onRejection: ContinuationRejectionHandler,
-): Promise<T> {
-  return createObservedContinuation<T>((resolve, reject) => {
-    void Promise.prototype.then.call(derived, resolve, reject);
-  }, onRejection);
 }
 
 function adoptContinuationResult(
@@ -153,6 +148,7 @@ function createInvalidContinuationError() {
 function isInvalidContinuationError(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   if (INVALID_CONTINUATION_ERRORS.has(error)) return true;
+  if (!canIdentifyProxyWithoutHooks) return false;
   if (isProxyWithoutHooks(error)) return false;
   try {
     return Object.getOwnPropertyDescriptor(error, INVALID_CONTINUATION_MARKER)?.value === true;

@@ -16,6 +16,8 @@ describe("agent middleware continuation Promise species", () => {
     const nativeSpecies = Object.getOwnPropertyDescriptor(Promise, Symbol.species);
     const records: LogEntry[] = [];
     const unhandled: PromiseRejectionEvent[] = [];
+    let discardedBranch: Promise<AgentResponse> | undefined;
+    let handledBranch: Promise<AgentResponse> | undefined;
     const onUnhandled = (event: PromiseRejectionEvent): void => {
       unhandled.push(event);
       event.preventDefault();
@@ -43,13 +45,13 @@ describe("agent middleware continuation Promise species", () => {
       );
       await new NonPreservingSpeciesChain([
         (_context: AgentContext, next: () => Promise<AgentResponse>) => {
-          next().then(() => response);
+          discardedBranch = next().then(() => response);
           return Promise.resolve(response);
         },
       ]).execute(context, () => Promise.reject(new Error("species fallback failure")));
       await new NonPreservingSpeciesChain([
         (_context: AgentContext, next: () => Promise<AgentResponse>) => {
-          next().then(() => response).catch(() => response);
+          handledBranch = next().then(() => response).catch(() => response);
           return Promise.resolve(response);
         },
       ]).execute(context, () => Promise.reject(new Error("handled species fallback failure")));
@@ -65,10 +67,12 @@ describe("agent middleware continuation Promise species", () => {
     }
 
     assertEquals(unhandled.length, 0);
+    assertEquals(discardedBranch?.constructor, Promise);
+    assertEquals(handledBranch?.constructor, Promise);
     assertEquals(
       records.filter((entry) => entry.message === "Your agent middleware continuation failed")
         .length,
-      1,
+      0,
     );
   });
 });
