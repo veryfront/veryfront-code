@@ -134,6 +134,17 @@ describe("APIRouteHandler", () => {
       assertEquals(response, null, "Non-API routes should return null");
     });
 
+    it("should return null for unmatched non-API OPTIONS routes", async () => {
+      const adapter = createMockAdapter();
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const response = await handler.handle(
+        new Request("http://localhost/not-an-api-route", { method: "OPTIONS" }),
+      );
+
+      assertEquals(response, null);
+    });
+
     it("should return null for root path", async () => {
       const adapter = createMockAdapter();
       const handler = await createInitializedHandler("/test/project", adapter);

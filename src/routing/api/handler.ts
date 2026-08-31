@@ -255,16 +255,17 @@ export class APIRouteHandler {
 
         const match = this.router.match(pathname);
         if (!match) {
+          const isApiPath = pathname === "/api" || pathname.startsWith("/api/");
           logger.debug("No route match", {
             pathname,
-            isApiPath: pathname.startsWith("/api/"),
+            isApiPath,
             availableRoutes: this.router.listRoutes().map((r) => r.pattern),
           });
 
-          if (method === "OPTIONS") {
+          if (method === "OPTIONS" && isApiPath) {
             return this.automaticPreflight(request);
           }
-          if (pathname === "/api" || pathname.startsWith("/api/")) return notFound();
+          if (isApiPath) return notFound();
           return null;
         }
 
