@@ -922,7 +922,7 @@ describe("run-scoped inference credential", () => {
         },
         () => privateModelResolver,
       );
-      const compactionInput = {
+      const result = await generator({
         messagesToSummarize: [{
           id: "message-1",
           role: "user",
@@ -930,8 +930,7 @@ describe("run-scoped inference credential", () => {
           parts: [{ type: "text", text: "Summarize this context." }],
         }],
         retainedMessages: [],
-      };
-      const result = await generator(compactionInput);
+      });
 
       assertEquals(result, { text: "summary" });
       assertEquals(capturedAuthorization, "Bearer run-scoped-inference-token");
