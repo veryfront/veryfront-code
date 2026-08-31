@@ -22,6 +22,9 @@ describe("provider/veryfront-cloud/shared", () => {
       VeryfrontError,
       "Run-scoped inference credentials require HTTPS or a loopback API base URL",
     );
+    if (!(error instanceof VeryfrontError)) {
+      throw new Error("Expected a registered VeryfrontError");
+    }
     assertEquals(error.slug, "config-invalid");
     assertEquals(
       runWithVeryfrontCloudContext(

@@ -1,6 +1,10 @@
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import type { ModelRuntime } from "#veryfront/provider";
+import { clearModelProviders, registerModelProvider } from "#veryfront/provider";
 import { getCurrentVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
+import { createVeryfrontCloudInferenceModelResolver } from "./inference-credential.ts";
+import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import type { RuntimeGenerateTextResult } from "../runtime/runtime-tool-types.ts";
 import { createVeryfrontCloudContextSummaryGenerator } from "./context-summary-generator.ts";
 
@@ -79,6 +83,77 @@ Deno.test("createVeryfrontCloudContextSummaryGenerator rolls oversized history t
   assertEquals(prompts[0]?.includes("Keep project constraints."), true);
   assertEquals(projectSlugs, ["demo-project", "demo-project", "demo-project"]);
   assertEquals(visibleTokens, [undefined, undefined, undefined]);
+});
+
+Deno.test("createVeryfrontCloudContextSummaryGenerator uses the private inference resolver", async () => {
+  setEnv("VERYFRONT_API_TOKEN", "broader-project-token");
+  setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+  let capturedAuthorization: string | null = null;
+  let projectProviderCalls = 0;
+  installMockFetch(
+    (async (input: URL | Request | string, init?: RequestInit) => {
+      const request = new Request(input, init);
+      capturedAuthorization = request.headers.get("Authorization");
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode(
+                'data: {"choices":[{"delta":{"content":"summary"}}]}\n\n',
+              ),
+            );
+            controller.enqueue(
+              new TextEncoder().encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+            );
+            controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+            controller.close();
+          },
+        }),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    }) as typeof fetch,
+  );
+  const unregister = registerModelProvider("veryfront-cloud", () => {
+    projectProviderCalls += 1;
+    throw new Error("Project provider must not handle compaction inference");
+  });
+
+  try {
+    const privateModelResolver = createVeryfrontCloudInferenceModelResolver(
+      "run-scoped-inference-token",
+    );
+    const generator = createVeryfrontCloudContextSummaryGenerator({
+      apiUrl: "https://api.veryfront.com",
+      authToken: "broader-project-token",
+      model: "openai/gpt-test",
+      maxOutputTokens: 500,
+      maxInputTokens: 1_000,
+      resolveModel: (modelId) => {
+        const model = privateModelResolver(modelId);
+        if (!model) throw new TypeError("Expected private Veryfront Cloud model");
+        return model;
+      },
+    });
+    const result = await generator({
+      messagesToSummarize: [{
+        id: "message-1",
+        role: "user",
+        timestamp: 1,
+        parts: [{ type: "text", text: "Summarize this context." }],
+      }],
+      retainedMessages: [],
+    });
+
+    assertEquals(result, { text: "summary" });
+    assertEquals(capturedAuthorization, "Bearer run-scoped-inference-token");
+    assertEquals(projectProviderCalls, 0);
+  } finally {
+    unregister();
+    restoreMockFetch();
+    clearModelProviders();
+    deleteEnv("VERYFRONT_API_TOKEN");
+    deleteEnv("VERYFRONT_PROJECT_SLUG");
+  }
 });
 
 Deno.test("createVeryfrontCloudContextSummaryGenerator redacts sensitive tool data before summarization", async () => {

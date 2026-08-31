@@ -21,6 +21,8 @@ import {
   resolveVeryfrontCloudOpenAITransport,
 } from "./model-catalog.ts";
 
+const GATEWAY_PROVIDER_CREDENTIAL = "veryfront-cloud-gateway";
+
 function wrapVeryfrontCloudModel(
   model: ModelRuntime,
   modelProvider: string,
@@ -76,6 +78,9 @@ function createVeryfrontCloudModelInternal(
   const fetch = createVeryfrontCloudFetch(apiToken, baseURL, projectSlug, {
     inferenceCredential: inferenceCredential !== undefined,
   });
+  // Native provider request builders require a credential, but the guarded
+  // gateway fetch owns the real run-scoped token and replaces native auth.
+  const providerCredential = inferenceCredential ? GATEWAY_PROVIDER_CREDENTIAL : apiToken;
   // Project extensions may replace registry providers. A signed inference
   // credential therefore uses only first-party transports that project code
   // cannot replace; ordinary project credentials retain extension behavior.
@@ -87,8 +92,8 @@ function createVeryfrontCloudModelInternal(
       if (anthropic) {
         return wrapVeryfrontCloudModel(
           anthropic.createModel(upstreamModelId, {
-            credential: apiToken,
-            authToken: apiToken,
+            credential: providerCredential,
+            authToken: providerCredential,
             baseURL,
             name: "veryfront-cloud",
             fetch,
@@ -99,8 +104,8 @@ function createVeryfrontCloudModelInternal(
       if (inferenceCredential) {
         return wrapVeryfrontCloudModel(
           createAnthropicProviderModel(upstreamModelId, {
-            credential: apiToken,
-            authToken: apiToken,
+            credential: providerCredential,
+            authToken: providerCredential,
             baseURL,
             name: "veryfront-cloud",
             fetch,
@@ -116,7 +121,7 @@ function createVeryfrontCloudModelInternal(
       if (google) {
         return wrapVeryfrontCloudModel(
           google.createModel(upstreamModelId, {
-            credential: apiToken,
+            credential: providerCredential,
             baseURL,
             name: "veryfront-cloud",
             fetch,
@@ -127,7 +132,7 @@ function createVeryfrontCloudModelInternal(
       if (inferenceCredential) {
         return wrapVeryfrontCloudModel(
           createGoogleProviderModel(upstreamModelId, {
-            credential: apiToken,
+            credential: providerCredential,
             baseURL,
             name: "veryfront-cloud",
             fetch,
@@ -150,7 +155,7 @@ function createVeryfrontCloudModelInternal(
         if (inferenceCredential) {
           return wrapVeryfrontCloudModel(
             createVeryfrontCloudOpenAIResponsesModel(upstreamModelId, {
-              apiToken,
+              apiToken: providerCredential,
               baseURL,
               fetch,
             }),
@@ -161,7 +166,7 @@ function createVeryfrontCloudModelInternal(
         if (openai?.createResponses) {
           return wrapVeryfrontCloudModel(
             openai.createResponses(upstreamModelId, {
-              credential: apiToken,
+              credential: providerCredential,
               baseURL,
               name: "veryfront-cloud",
               providerName: "veryfront-cloud",
@@ -171,7 +176,11 @@ function createVeryfrontCloudModelInternal(
           );
         }
         return wrapVeryfrontCloudModel(
-          createVeryfrontCloudOpenAIResponsesModel(upstreamModelId, { apiToken, baseURL, fetch }),
+          createVeryfrontCloudOpenAIResponsesModel(upstreamModelId, {
+            apiToken: providerCredential,
+            baseURL,
+            fetch,
+          }),
           provider,
         );
       }
@@ -179,7 +188,7 @@ function createVeryfrontCloudModelInternal(
       if (inferenceCredential) {
         return wrapVeryfrontCloudModel(
           createVeryfrontCloudOpenAIModel(upstreamModelId, {
-            apiToken,
+            apiToken: providerCredential,
             baseURL,
             openAIChatReasoningWithFunctionTools,
             openAITransport,
@@ -192,7 +201,7 @@ function createVeryfrontCloudModelInternal(
       if (openai) {
         return wrapVeryfrontCloudModel(
           openai.createModel(upstreamModelId, {
-            credential: apiToken,
+            credential: providerCredential,
             baseURL,
             name: "veryfront-cloud",
             providerName: "veryfront-cloud",
@@ -205,7 +214,7 @@ function createVeryfrontCloudModelInternal(
       }
       return wrapVeryfrontCloudModel(
         createVeryfrontCloudOpenAIModel(upstreamModelId, {
-          apiToken,
+          apiToken: providerCredential,
           baseURL,
           openAIChatReasoningWithFunctionTools,
           openAITransport,
@@ -220,7 +229,7 @@ function createVeryfrontCloudModelInternal(
       if (inferenceCredential) {
         return wrapVeryfrontCloudModel(
           createVeryfrontCloudOpenAIModel(upstreamModelId, {
-            apiToken,
+            apiToken: providerCredential,
             baseURL,
             fetch,
           }),
@@ -231,7 +240,7 @@ function createVeryfrontCloudModelInternal(
       if (openai) {
         return wrapVeryfrontCloudModel(
           openai.createModel(upstreamModelId, {
-            credential: apiToken,
+            credential: providerCredential,
             baseURL,
             name: "veryfront-cloud",
             providerName: "openai-compatible",
@@ -242,7 +251,7 @@ function createVeryfrontCloudModelInternal(
       }
       return wrapVeryfrontCloudModel(
         createVeryfrontCloudOpenAIModel(upstreamModelId, {
-          apiToken,
+          apiToken: providerCredential,
           baseURL,
           fetch,
         }),

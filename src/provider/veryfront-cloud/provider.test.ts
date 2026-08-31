@@ -190,6 +190,50 @@ describe("provider/veryfront-cloud", () => {
     ]);
   });
 
+  it("keeps explicit inference authority out of provider-native headers", async () => {
+    setCloudBootstrap();
+    const inferenceCredential = "x".repeat(16 * 1024);
+    let capturedAuthorization: string | null = null;
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedAuthorization = request.headers.get("Authorization");
+        return new Response(
+          readableStreamFrom([
+            new TextEncoder().encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+            new TextEncoder().encode("data: [DONE]\n\n"),
+          ]),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+    const model = createVeryfrontCloudInferenceModel(
+      "openai/gpt-test",
+      inferenceCredential,
+    );
+    const originalSet = Object.getOwnPropertyDescriptor(Headers.prototype, "set")!;
+    const observedNativeCredentials: string[] = [];
+    Object.defineProperty(Headers.prototype, "set", {
+      ...originalSet,
+      value(this: Headers, name: string, value: string) {
+        if (name.toLowerCase() === "authorization") {
+          observedNativeCredentials.push(value);
+        }
+        return Reflect.apply(originalSet.value, this, [name, value]);
+      },
+    });
+
+    try {
+      const result = await model.doStream({ prompt: [] });
+      await drainStream(result.stream);
+    } finally {
+      Object.defineProperty(Headers.prototype, "set", originalSet);
+    }
+
+    assertEquals(observedNativeCredentials.includes(`Bearer ${inferenceCredential}`), false);
+    assertEquals(capturedAuthorization, `Bearer ${inferenceCredential}`);
+  });
+
   it("does not make explicit inference authority ambient to ordinary model resolution", async () => {
     setCloudBootstrap();
     let capturedAuthorization: string | null = null;

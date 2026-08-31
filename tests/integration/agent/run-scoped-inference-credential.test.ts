@@ -233,15 +233,38 @@ describe("run-scoped inference credential", () => {
     );
   });
 
-  it("accepts inference credentials through the full provider transport bound", () => {
+  it("accepts inference credentials through the full provider transport bound", async () => {
     setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
     setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
-    const model = createVeryfrontCloudInferenceModelResolver("x".repeat(8_193))(
+    const inferenceCredential = "x".repeat(16 * 1024);
+    let capturedAuthorization: string | null = null;
+    const encoder = new TextEncoder();
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedAuthorization = request.headers.get("Authorization");
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+              );
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+    const model = createVeryfrontCloudInferenceModelResolver(inferenceCredential)(
       "veryfront-cloud/openai/gpt-test",
     );
     if (!model) throw new TypeError("Expected Veryfront Cloud model");
+    const result = await model.doStream({ prompt: [] });
+    await drainStream(result.stream);
 
-    assertEquals(typeof model.doStream, "function");
+    assertEquals(capturedAuthorization, `Bearer ${inferenceCredential}`);
   });
 
   it("routes a serialized standalone AgentService invocation to gateway Authorization", async () => {
