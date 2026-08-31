@@ -40,6 +40,7 @@ import {
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 import { createHostedInferenceModelResolver } from "./inference-credential.ts";
 import type { AgentRuntimeInternalOptions } from "../runtime/index.ts";
+import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
 import type { PreparedHostedChatExecution } from "./prepared-chat-execution.ts";
 import {
   runPreparedHostedChatExecutionDetached,
@@ -269,6 +270,7 @@ function createHostedChatContextBudgetOptions(
   req: ParsedHostedChatRequest,
   agentConfig: { model?: string },
   abortSignal: AbortSignal,
+  resolveModelRuntime: AgentModelRuntimeResolver | undefined,
 ): HostedChatContextBudgetOptions | undefined {
   const config = context.infrastructure.getConfig();
   if (!config.VERYFRONT_CONTEXT_COMPACTION_ENABLED || !req.durableRootRun) {
@@ -283,12 +285,24 @@ function createHostedChatContextBudgetOptions(
     maxSummaryTokens: config.VERYFRONT_CONTEXT_COMPACTION_MAX_SUMMARY_TOKENS,
     summaryGenerator: createVeryfrontCloudContextSummaryGenerator({
       apiUrl: config.VERYFRONT_API_URL,
-      authToken: req.authToken,
       projectSlug: req.projectSlug,
       model: config.VERYFRONT_CONTEXT_COMPACTION_SUMMARY_MODEL ?? agentConfig.model,
       maxOutputTokens: config.VERYFRONT_CONTEXT_COMPACTION_MAX_SUMMARY_TOKENS,
       maxInputTokens: config.VERYFRONT_CONTEXT_COMPACTION_SUMMARY_INPUT_TOKENS,
       abortSignal,
+      ...(resolveModelRuntime
+        ? {
+          resolveModel: (modelId: string) => {
+            const model = resolveModelRuntime(modelId);
+            if (!model) {
+              throw new TypeError(
+                `Context compaction requires a Veryfront Cloud model, received "${modelId}"`,
+              );
+            }
+            return model;
+          },
+        }
+        : { authToken: req.authToken }),
     }),
     logger: {
       debug: (message, metadata) => context.infrastructure.logger.debug(message, metadata),
@@ -367,6 +381,7 @@ export async function prepareChatExecutionWithinProjectRuntime(
       req,
       agentConfig,
       preparationSignal,
+      resolveModelRuntime,
     ),
     createRuntime: (creationOptions) =>
       context.trace("chat.createRuntime", () => {

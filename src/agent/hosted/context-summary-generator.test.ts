@@ -16,9 +16,9 @@ function createModel(): ModelRuntime {
 Deno.test("createVeryfrontCloudContextSummaryGenerator rolls oversized history through bounded summaries", async () => {
   const prompts: string[] = [];
   const projectSlugs: Array<string | undefined> = [];
+  const visibleTokens: Array<string | undefined> = [];
   const generator = createVeryfrontCloudContextSummaryGenerator({
     apiUrl: "https://api.example.com",
-    authToken: "token-1",
     projectSlug: "demo-project",
     model: "openai/gpt-5.2",
     maxOutputTokens: 500,
@@ -29,6 +29,7 @@ Deno.test("createVeryfrontCloudContextSummaryGenerator rolls oversized history t
     },
     generateText: (options): PromiseLike<RuntimeGenerateTextResult> => {
       projectSlugs.push(getCurrentVeryfrontCloudContext()?.projectSlug);
+      visibleTokens.push(getCurrentVeryfrontCloudContext()?.apiToken);
       const message = options.messages.find((candidate) => candidate.role === "user");
       prompts.push(typeof message?.content === "string" ? message.content : "");
       return Promise.resolve({
@@ -77,6 +78,7 @@ Deno.test("createVeryfrontCloudContextSummaryGenerator rolls oversized history t
   assertEquals(prompts[2]?.includes("Existing summary to update:\nsummary-2"), true);
   assertEquals(prompts[0]?.includes("Keep project constraints."), true);
   assertEquals(projectSlugs, ["demo-project", "demo-project", "demo-project"]);
+  assertEquals(visibleTokens, [undefined, undefined, undefined]);
 });
 
 Deno.test("createVeryfrontCloudContextSummaryGenerator redacts sensitive tool data before summarization", async () => {
