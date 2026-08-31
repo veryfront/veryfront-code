@@ -50,6 +50,10 @@ export interface ProjectMiddlewareRuntimeContext {
   onMiddlewareStart?: () => void;
   /** True only when route inspection proved the response is framework-owned. */
   isFrameworkOwnedPreflight?: boolean;
+  /** True when a preflight auth response should flow to the API fallback. */
+  skipProjectMiddleware?: boolean;
+  /** Rechecks a framework-owned preflight before bypassing project code. */
+  revalidateFrameworkOwnedPreflight?: () => Promise<boolean>;
 }
 
 function cacheSegment(value: string): string {
@@ -142,6 +146,8 @@ export class ProjectMiddlewareRuntime {
       next,
       onMiddlewareStart,
       request,
+      revalidateFrameworkOwnedPreflight,
+      skipProjectMiddleware,
     } = input;
     const pathname = new URL(request.url).pathname;
 
@@ -149,10 +155,19 @@ export class ProjectMiddlewareRuntime {
       return next();
     }
 
+    if (skipProjectMiddleware) {
+      return next();
+    }
+
     // Browser preflight is framework-owned only after route inspection proves
-    // that no authored OPTIONS/default handler can execute. Keep middleware
-    // on every ambiguous or authored route shape.
-    if (isFrameworkOwnedPreflight) {
+    // that no authored OPTIONS/default handler can execute. Revalidate the
+    // proof immediately before bypassing project code so a source change
+    // cannot turn an automatic response into authored route execution.
+    if (
+      isFrameworkOwnedPreflight &&
+      (revalidateFrameworkOwnedPreflight === undefined ||
+        await revalidateFrameworkOwnedPreflight())
+    ) {
       return next();
     }
 

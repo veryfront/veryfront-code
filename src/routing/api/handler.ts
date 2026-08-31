@@ -652,7 +652,9 @@ export class APIRouteHandler {
   ): Promise<Response | null> {
     if (!ctx) return null;
 
-    const applicationAuth = await this.applicationAuth(request, ctx);
+    const applicationAuth = ctx?.applicationAuthResult === undefined
+      ? await this.applicationAuth(request, ctx)
+      : ctx.applicationAuthResult;
     if (applicationAuth?.response) return applicationAuth.response;
     if (applicationAuth) {
       ctx.applicationIdentity = applicationAuth.metadata?.applicationIdentity ?? null;

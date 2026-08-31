@@ -457,6 +457,18 @@ describe("server/runtime-handler/index", () => {
       assertEquals(await response.text(), expectedBody);
       assertEquals(response.headers.get("x-project-middleware"), "ran");
       assertEquals(middlewareCalls, 1);
+
+      const publicPreflight = await handler(
+        new Request("http://localhost/api/options", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://client.example",
+            "access-control-request-method": "GET",
+          },
+        }),
+      );
+      assertEquals(publicPreflight.status, 204);
+      assertEquals(middlewareCalls, 1);
     });
   }
 
@@ -743,6 +755,55 @@ describe("server/runtime-handler/index", () => {
 
     assertEquals(response.status, 204);
     assertEquals(middlewareCalls, 0);
+  });
+
+  it("revalidates framework-owned preflight before bypassing middleware", async () => {
+    const projectDir = `/tmp/test-options-revalidation-${crypto.randomUUID()}`;
+    const routePath = `${projectDir}/pages/api/options.ts`;
+    const adapter = createRouteMockAdapter();
+    adapter.fs.files.set(routePath, "export function GET() { return new Response('get'); }");
+    const originalReadFile = adapter.fs.readFile;
+    let routeReads = 0;
+    adapter.fs.readFile = async (path) => {
+      const source = await originalReadFile(path);
+      if (path === routePath && routeReads++ === 0) {
+        adapter.fs.files.set(
+          routePath,
+          "export function OPTIONS() { return new Response('options'); }",
+        );
+      }
+      return source;
+    };
+    let middlewareCalls = 0;
+    const handler = createVeryfrontHandler(projectDir, adapter, {
+      projectDir,
+      config: {
+        middleware: {
+          custom: [
+            () => {
+              middlewareCalls++;
+              return new Response("middleware ran");
+            },
+          ],
+        },
+      } as any,
+      allowHostProjectCodeExecution: true,
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/options", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://client.example",
+          "access-control-request-method": "GET",
+        },
+      }),
+    );
+
+    assertEquals(response.status, 200);
+    assertEquals(await response.text(), "middleware ran");
+    assertEquals(middlewareCalls, 1);
+    assertEquals(routeReads, 2);
   });
 
   it("keeps CSP reports ahead of application auth admission", async () => {

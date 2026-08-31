@@ -33,6 +33,7 @@ import {
 import { createApplicationAuthRequestHandler } from "#veryfront/security/application-auth/application-auth-runtime.ts";
 import { applyCORSHeaders } from "#veryfront/security/http/cors/headers.ts";
 import { isCspReportRequest } from "#veryfront/security/http/csp-report-endpoint.ts";
+import { isPreflightRequest } from "#veryfront/security/http/cors/preflight.ts";
 import { getEffectiveRequestOrigin } from "../utils/request-host.ts";
 
 // Re-export is at the bottom of the file
@@ -707,6 +708,9 @@ export function createVeryfrontHandler(
             request,
             ctx,
           );
+          const isOptionsRequest = request.method.toUpperCase() === "OPTIONS";
+          const isBrowserPreflight = isOptionsRequest && isPreflightRequest(request);
+          let skipProjectMiddleware = false;
           if (!skipsApplicationAuth(request, url.pathname, isFrameworkOwnedPreflight)) {
             const runInFilesystemContext = <T>(operation: () => Promise<T>) =>
               runInProjectFilesystemContext(ctx, isProxyMode, operation);
@@ -737,10 +741,16 @@ export function createVeryfrontHandler(
                   },
                 ),
             );
-            if (authResult instanceof Response) return authResult;
-            ctx.applicationIdentity = authResult?.metadata?.applicationIdentity ?? null;
-            ctx.applicationIdentityHeaderNames =
-              authResult?.metadata?.applicationIdentityHeaderNames ?? [];
+            if (authResult instanceof Response) {
+              if (!isBrowserPreflight) return authResult;
+              ctx.applicationAuthResult = { response: authResult };
+              skipProjectMiddleware = true;
+            } else {
+              if (isOptionsRequest) ctx.applicationAuthResult = authResult;
+              ctx.applicationIdentity = authResult?.metadata?.applicationIdentity ?? null;
+              ctx.applicationIdentityHeaderNames =
+                authResult?.metadata?.applicationIdentityHeaderNames ?? [];
+            }
           }
 
           const sourceIntegrationPolicy = runtimeContext.sourceIntegrationPolicy;
@@ -750,6 +760,10 @@ export function createVeryfrontHandler(
               handlerContext: ctx,
               isSharedProxy: isProxyMode,
               isFrameworkOwnedPreflight,
+              skipProjectMiddleware,
+              revalidateFrameworkOwnedPreflight: isFrameworkOwnedPreflight
+                ? () => apiHandler.isFrameworkOwnedPreflight(request, ctx)
+                : undefined,
               next: async () => (await registry.execute(request, ctx)) ?? undefined,
               onMiddlewareStart: markProjectMiddlewareStarted,
             });

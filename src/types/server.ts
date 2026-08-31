@@ -101,6 +101,14 @@ export interface HandlerContext {
   applicationIdentity?: ApplicationIdentity | null;
   /** Application-auth identity headers to strip before project code sees the request. */
   applicationIdentityHeaderNames?: readonly string[];
+  /** Application-auth result already computed before project middleware. */
+  applicationAuthResult?: {
+    response?: Response;
+    metadata?: {
+      applicationIdentity?: ApplicationIdentity;
+      applicationIdentityHeaderNames?: readonly string[];
+    };
+  } | null;
   /**
    * Prepares this request's authenticated hosted evaluation context.
    *
