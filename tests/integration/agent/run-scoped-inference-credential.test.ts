@@ -17,9 +17,20 @@ import {
   registerRuntimeInferenceCredential,
 } from "#veryfront/internal-agents/run-stream.ts";
 import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  installMockFetch,
+  restoreMockFetch,
+  withMockFetch,
+} from "#veryfront/testing/mock-fetch.ts";
+import { createVeryfrontCloudContextSummaryGenerator } from "#veryfront/agent/hosted/context-summary-generator.ts";
+import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
+import {
+  createVeryfrontCloudFetch,
+  requireVeryfrontCloudBootstrap,
+} from "#veryfront/provider/veryfront-cloud/shared.ts";
+import { VeryfrontError } from "#veryfront/errors";
 
 async function drainStream(stream: ReadableStream<unknown>): Promise<void> {
   const reader = stream.getReader();
@@ -399,5 +410,135 @@ describe("run-scoped inference credential", () => {
 
     assertEquals(response.status, 202);
     assertEquals(capturedAuthorization, "Bearer broader-project-runtime-token");
+  });
+
+  it("uses private inference authority for context compaction", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "broader-project-token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+    let capturedAuthorization: string | null = null;
+    let projectProviderCalls = 0;
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedAuthorization = request.headers.get("Authorization");
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'data: {"choices":[{"delta":{"content":"summary"}}]}\n\n',
+                ),
+              );
+              controller.enqueue(
+                new TextEncoder().encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+              );
+              controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+    const unregister = registerModelProvider("veryfront-cloud", () => {
+      projectProviderCalls += 1;
+      throw new Error("Project provider must not handle compaction inference");
+    });
+
+    try {
+      const privateModelResolver = createVeryfrontCloudInferenceModelResolver(
+        "run-scoped-inference-token",
+      );
+      const generator = createVeryfrontCloudContextSummaryGenerator({
+        apiUrl: "https://api.veryfront.com",
+        model: "openai/gpt-test",
+        maxOutputTokens: 500,
+        maxInputTokens: 1_000,
+        resolveModel: (modelId) => {
+          const model = privateModelResolver(modelId);
+          if (!model) throw new TypeError("Expected private Veryfront Cloud model");
+          return model;
+        },
+      });
+      const result = await generator({
+        messagesToSummarize: [{
+          id: "message-1",
+          role: "user",
+          timestamp: 1,
+          parts: [{ type: "text", text: "Summarize this context." }],
+        }],
+        retainedMessages: [],
+      });
+
+      assertEquals(result, { text: "summary" });
+      assertEquals(capturedAuthorization, "Bearer run-scoped-inference-token");
+      assertEquals(projectProviderCalls, 0);
+    } finally {
+      unregister();
+    }
+  });
+
+  it("requires HTTPS or loopback for run-scoped inference credentials", () => {
+    const error = assertThrows(
+      () =>
+        runWithVeryfrontCloudContext(
+          { apiBaseUrl: "http://api.example.test", apiToken: "broader-token" },
+          () => requireVeryfrontCloudBootstrap("run-scoped-inference-token"),
+        ),
+      VeryfrontError,
+      "Run-scoped inference credentials require HTTPS or a loopback API base URL",
+    );
+    if (!(error instanceof VeryfrontError)) {
+      throw new Error("Expected a registered VeryfrontError");
+    }
+    assertEquals(error.slug, "config-invalid");
+    for (const apiBaseUrl of ["http://localhost:4000", "http://[::1]:4000"]) {
+      assertEquals(
+        runWithVeryfrontCloudContext(
+          { apiBaseUrl, apiToken: "broader-token" },
+          () => requireVeryfrontCloudBootstrap("run-scoped-inference-token").apiToken,
+        ),
+        "run-scoped-inference-token",
+      );
+    }
+  });
+
+  it("keeps inference credentials out of mutable Headers prototype methods", async () => {
+    const originalSet = Object.getOwnPropertyDescriptor(Headers.prototype, "set")!;
+    const observedAuthorizationValues: string[] = [];
+    Object.defineProperty(Headers.prototype, "set", {
+      ...originalSet,
+      value(this: Headers, name: string, value: string) {
+        if (name.toLowerCase() === "authorization") {
+          observedAuthorizationValues.push(value);
+        }
+        return Reflect.apply(originalSet.value, this, [name, value]);
+      },
+    });
+
+    let capturedRequest: Request | undefined;
+    try {
+      const wrappedFetch = createVeryfrontCloudFetch(
+        "run-scoped-inference-token",
+        "https://93.184.216.34/ai/gateway/openai/v1",
+        undefined,
+        { inferenceCredential: true },
+      );
+      await withMockFetch(
+        async (input: URL | Request | string, init?: RequestInit) => {
+          capturedRequest = new Request(input, init);
+          return new Response(null, { status: 204 });
+        },
+        () => wrappedFetch("https://93.184.216.34/ai/gateway/openai/v1/chat/completions"),
+      );
+    } finally {
+      Object.defineProperty(Headers.prototype, "set", originalSet);
+    }
+
+    assertEquals(observedAuthorizationValues, []);
+    assertEquals(
+      capturedRequest?.headers.get("Authorization"),
+      "Bearer run-scoped-inference-token",
+    );
   });
 });

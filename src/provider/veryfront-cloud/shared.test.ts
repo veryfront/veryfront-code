@@ -3,45 +3,13 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
-import { VeryfrontError } from "#veryfront/errors";
 import {
   createVeryfrontCloudFetch,
   getVeryfrontCloudGatewayBaseUrl,
   parseVeryfrontCloudModelId,
-  requireVeryfrontCloudBootstrap,
 } from "./shared.ts";
 
 describe("provider/veryfront-cloud/shared", () => {
-  it("requires HTTPS or loopback for run-scoped inference credentials", () => {
-    const error = assertThrows(
-      () =>
-        runWithVeryfrontCloudContext(
-          { apiBaseUrl: "http://api.example.test", apiToken: "broader-token" },
-          () => requireVeryfrontCloudBootstrap("run-scoped-inference-token"),
-        ),
-      VeryfrontError,
-      "Run-scoped inference credentials require HTTPS or a loopback API base URL",
-    );
-    if (!(error instanceof VeryfrontError)) {
-      throw new Error("Expected a registered VeryfrontError");
-    }
-    assertEquals(error.slug, "config-invalid");
-    assertEquals(
-      runWithVeryfrontCloudContext(
-        { apiBaseUrl: "http://localhost:4000", apiToken: "broader-token" },
-        () => requireVeryfrontCloudBootstrap("run-scoped-inference-token").apiToken,
-      ),
-      "run-scoped-inference-token",
-    );
-    assertEquals(
-      runWithVeryfrontCloudContext(
-        { apiBaseUrl: "http://[::1]:4000", apiToken: "broader-token" },
-        () => requireVeryfrontCloudBootstrap("run-scoped-inference-token").apiToken,
-      ),
-      "run-scoped-inference-token",
-    );
-  });
-
   it("normalizes provider aliases when parsing model IDs", () => {
     assertEquals(
       parseVeryfrontCloudModelId("google-ai-studio/gemini-2.0-flash", "embedding"),
