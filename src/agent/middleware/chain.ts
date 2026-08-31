@@ -301,7 +301,7 @@ function createInvalidContinuationError() {
 }
 
 function isInvalidContinuationError(error: unknown): boolean {
-  if (error === null || typeof error !== "object") return false;
+  if (typeof error !== "object" || !error) return false;
   if (ReflectApply(WeakSetHas, INVALID_CONTINUATION_ERRORS, [error]) as boolean) return true;
   if (!canIdentifyProxyWithoutHooks) return false;
   if (isProxyWithoutHooks(error)) return false;
@@ -341,7 +341,7 @@ function observeContinuationRejection(
   void ReflectApply(PromiseThen, promise, [undefined, (error: unknown) => {
     try {
       if (
-        error && typeof error === "object" && suppressedInvalidErrors &&
+        typeof error === "object" && error && suppressedInvalidErrors &&
         isInvalidContinuationError(error) &&
         ReflectApply(WeakSetHas, suppressedInvalidErrors, [error]) as boolean
       ) {
