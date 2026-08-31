@@ -95,6 +95,8 @@ function createObservedContinuation<T>(
 ): Promise<T> {
   const continuation = new ObservedContinuationPromise<T>(executor, onRejection);
   if (onRejection) {
+    // Keep a root observer for engines without species propagation; each
+    // user-created derived branch gets its own observer in then().
     observeContinuationRejection(
       continuation,
       onRejection,
@@ -235,7 +237,7 @@ function classifyContinuationFailure(error: unknown): string {
   if (isProxyWithoutHooks(error)) return "proxy";
   if (typeof DOM_EXCEPTION_NAME_GETTER === "function") {
     try {
-      Reflect.apply(DOM_EXCEPTION_NAME_GETTER, error, []);
+      ReflectApply(DOM_EXCEPTION_NAME_GETTER, error, []);
       return "domexception";
     } catch {
       // The native getter is a side-effect-free DOMException brand check.
