@@ -143,7 +143,7 @@ export interface APIRouteHandleOptions {
   beforeOptionsDispatch?: () => Promise<void>;
 }
 
-type OptionsMiddlewareAdmission =
+export type OptionsMiddlewareAdmission =
   | "not-applicable"
   | "continue"
   | "bypass-middleware";

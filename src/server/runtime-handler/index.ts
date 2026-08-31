@@ -20,6 +20,7 @@ import {
   UNKNOWN_ERROR,
 } from "#veryfront/errors";
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
+import type { OptionsMiddlewareAdmission as ApiOptionsMiddlewareAdmission } from "#veryfront/routing/api/handler.ts";
 import type { Handler } from "#veryfront/types";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
@@ -160,10 +161,8 @@ const logger = baseLogger.component("runtime-handler");
 
 const SOURCE_SNAPSHOT_FRESHNESS_RETRY_LIMIT = 1;
 
-type OptionsMiddlewareAdmission =
-  | "not-applicable"
-  | "continue"
-  | "bypass-middleware"
+type RuntimeOptionsMiddlewareAdmission =
+  | ApiOptionsMiddlewareAdmission
   | "bypass-middleware-retained";
 
 type ProjectEnvironmentRunner = <T>(operation: () => T) => T;
@@ -175,7 +174,7 @@ export async function prepareOptionsBeforeProjectMiddleware(input: {
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   runInFilesystemContext: <T>(operation: () => Promise<T>) => Promise<T>;
   runInRequestProjectEnv: ProjectEnvironmentRunner;
-}): Promise<OptionsMiddlewareAdmission> {
+}): Promise<RuntimeOptionsMiddlewareAdmission> {
   if (input.request.method !== "OPTIONS") return "not-applicable";
   if (requiresIsolatedProjectRuntime(input.ctx)) return "bypass-middleware";
 
