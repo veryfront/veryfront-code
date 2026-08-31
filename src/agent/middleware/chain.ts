@@ -151,17 +151,31 @@ function trackEagerContinuation<T>(
   onRejection: ContinuationRejectionHandler,
   suppressedInvalidErrors = new IntrinsicWeakSet<object>(),
 ): Promise<T> {
+  if (ReflectApply(WeakSetHas, TRACKED_CONTINUATIONS, [promise]) as boolean) {
+    registerEagerObservation(promise, onRejection, suppressedInvalidErrors);
+    return promise;
+  }
+  const isNativePromise = isNativePromiseWithoutHooks(promise);
+  if (isNativePromise) {
+    const ownThen = ObjectGetOwnPropertyDescriptor(promise, "then");
+    const ownConstructor = ObjectGetOwnPropertyDescriptor(promise, "constructor");
+    if (
+      !ObjectIsExtensible(promise) ||
+      ownThen?.configurable === false ||
+      ownConstructor?.configurable === false
+    ) {
+      return createObservedContinuation<T>(
+        (resolve, reject) => {
+          void ReflectApply(PromiseThen, promise, [resolve, reject]);
+        },
+        onRejection,
+        suppressedInvalidErrors,
+      );
+    }
+  }
   registerEagerObservation(promise, onRejection, suppressedInvalidErrors);
-  if (ReflectApply(WeakSetHas, TRACKED_CONTINUATIONS, [promise]) as boolean) return promise;
   ReflectApply(WeakSetAdd, TRACKED_CONTINUATIONS, [promise]);
-  if (!isNativePromiseWithoutHooks(promise) || !ObjectIsExtensible(promise)) {
-    return promise;
-  }
-  const ownThen = ObjectGetOwnPropertyDescriptor(promise, "then");
-  const ownConstructor = ObjectGetOwnPropertyDescriptor(promise, "constructor");
-  if (ownThen?.configurable === false || ownConstructor?.configurable === false) {
-    return promise;
-  }
+  if (!isNativePromise) return promise;
   const trackedThen = function <TResult1 = T, TResult2 = never>(
     onFulfilled?: ContinuationThenHandler<T, TResult1>,
     onRejected?: ContinuationThenHandler<unknown, TResult2>,
@@ -288,9 +302,7 @@ function createInvalidContinuationError() {
   return error;
 }
 
-function isInvalidContinuationError(error: unknown): boolean {
-  if (error === null) return false;
-  if (typeof error !== "object") return false;
+function isInvalidContinuationError(error: WeakKey): boolean {
   if (ReflectApply(WeakSetHas, INVALID_CONTINUATION_ERRORS, [error]) as boolean) return true;
   if (!canIdentifyProxyWithoutHooks) return false;
   if (isProxyWithoutHooks(error)) return false;
@@ -470,13 +482,6 @@ function createMiddlewareContinuation(
   let middlewareSettled = false;
 
   const reportContinuationFailure = (error: unknown, isObserved: () => boolean): void => {
-    if (!middlewareSettled) {
-      if (!isObserved()) {
-        const record = { error, isObserved, reported: false };
-        scheduleDetachedContinuationFailureReport(record);
-      }
-      return;
-    }
     if (isObserved()) return;
     scheduleDetachedContinuationFailureReport({ error, isObserved, reported: false });
   };

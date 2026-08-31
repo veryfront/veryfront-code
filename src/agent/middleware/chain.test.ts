@@ -221,6 +221,34 @@ describe("agent/middleware/chain", () => {
     );
   });
 
+  it("recognizes a rejection handler attached to a frozen continuation", async () => {
+    const records: LogEntry[] = [];
+    const frozenRejection = Object.freeze(
+      Promise.reject(new Error("recovered frozen downstream failure")),
+    );
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+    try {
+      const chain = new MiddlewareChain([
+        (_context, next) => next().catch(() => response),
+        () => frozenRejection,
+      ]);
+
+      assertEquals(
+        await chain.execute(context, () => Promise.resolve(response)),
+        response,
+      );
+      await waitForReport();
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(
+      records.filter((entry) => entry.message === "Your agent middleware continuation failed")
+        .length,
+      0,
+    );
+  });
+
   it("rejects a continuation queued before an already-settled middleware promise", async () => {
     let queuedNext: Promise<AgentResponse> | undefined;
     let finalHandlerCalls = 0;
