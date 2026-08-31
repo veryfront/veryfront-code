@@ -76,7 +76,7 @@ function createObservedContinuation<T>(
   if (onRejection) {
     const DerivedContinuationPromise = class extends ObservedContinuationPromise<T> {
       static override get [Symbol.species](): PromiseConstructor {
-        return this as unknown as PromiseConstructor;
+        return this as PromiseConstructor;
       }
 
       constructor(derivedExecutor: ContinuationExecutor<T>) {
