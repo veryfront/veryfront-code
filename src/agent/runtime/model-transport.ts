@@ -29,25 +29,21 @@ const AbortControllerAbort = AbortController.prototype.abort;
 const EventTargetAddEventListener = EventTarget.prototype.addEventListener;
 const EventTargetRemoveEventListener = EventTarget.prototype.removeEventListener;
 
-function captureIntrinsicGetter<T>(
-  prototype: AbortController | AbortSignal,
-  property: "signal" | "aborted" | "reason",
-): () => T {
-  const getter = IntrinsicObjectGetOwnPropertyDescriptor(prototype, property)?.get;
+function requireAbortIntrinsic<T>(getter: (() => T) | undefined, property: string): () => T {
   if (!getter) throw new TypeError(`Abort intrinsic ${property} is unavailable`);
   return getter;
 }
 
-const AbortControllerSignalGetter = captureIntrinsicGetter<AbortSignal>(
-  AbortController.prototype,
+const AbortControllerSignalGetter = requireAbortIntrinsic<AbortSignal>(
+  IntrinsicObjectGetOwnPropertyDescriptor(AbortController.prototype, "signal")?.get,
   "signal",
 );
-const AbortSignalAbortedGetter = captureIntrinsicGetter<boolean>(
-  AbortSignal.prototype,
+const AbortSignalAbortedGetter = requireAbortIntrinsic<boolean>(
+  IntrinsicObjectGetOwnPropertyDescriptor(AbortSignal.prototype, "aborted")?.get,
   "aborted",
 );
-const AbortSignalReasonGetter = captureIntrinsicGetter<unknown>(
-  AbortSignal.prototype,
+const AbortSignalReasonGetter = requireAbortIntrinsic<unknown>(
+  IntrinsicObjectGetOwnPropertyDescriptor(AbortSignal.prototype, "reason")?.get,
   "reason",
 );
 
