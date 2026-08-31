@@ -568,6 +568,9 @@ must call `next()` at most once while the middleware is active.
 The continuation becomes invalid when that middleware's returned promise
 settles. Calling it again or after settlement rejects with the registered
 `middleware-error`.
+If you call `next()` after the middleware function returns, downstream dispatch
+starts on the next microtask so settlement revocation wins races with an
+already-fulfilled middleware promise.
 
 ## Verify it worked
 

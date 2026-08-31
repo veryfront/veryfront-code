@@ -213,7 +213,7 @@ describe("agent/middleware/chain", () => {
     assertEquals(await queuedNext, response);
   });
 
-  it("dispatches next immediately after an async middleware await", async () => {
+  it("dispatches next after an async middleware await", async () => {
     let finalHandlerCalls = 0;
     const chain = new MiddlewareChain([
       async (_context, next) => {
@@ -230,6 +230,37 @@ describe("agent/middleware/chain", () => {
       response,
     );
     assertEquals(finalHandlerCalls, 1);
+  });
+
+  it("keeps post-invocation continuation ordering explicit", async () => {
+    const calls: string[] = [];
+    const chain = new MiddlewareChain([
+      async (_context, next) => {
+        await Promise.resolve();
+        calls.push("outer-before-next");
+        const result = next();
+        calls.push("outer-after-next");
+        return await result;
+      },
+      async (_context, next) => {
+        calls.push("inner-before");
+        const result = await next();
+        calls.push("inner-after");
+        return result;
+      },
+    ]);
+
+    await chain.execute(context, () => {
+      calls.push("final");
+      return Promise.resolve(response);
+    });
+    assertEquals(calls, [
+      "outer-before-next",
+      "outer-after-next",
+      "inner-before",
+      "final",
+      "inner-after",
+    ]);
   });
 
   it("eagerly dispatches an unawaited continuation after an async suspension", async () => {
