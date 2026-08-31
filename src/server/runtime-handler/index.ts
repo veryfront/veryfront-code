@@ -30,7 +30,10 @@ import {
   isSignedChannelDispatch,
   isSignedControlPlaneDispatch,
 } from "#veryfront/channels/control-plane.ts";
-import { createApplicationAuthRequestHandler } from "#veryfront/security/application-auth/application-auth-runtime.ts";
+import {
+  type ApplicationAuthHandlerResult,
+  createApplicationAuthRequestHandler,
+} from "#veryfront/security/application-auth/application-auth-runtime.ts";
 import { applyCORSHeaders } from "#veryfront/security/http/cors/headers.ts";
 import { isCspReportRequest } from "#veryfront/security/http/csp-report-endpoint.ts";
 import { isPreflightRequest } from "#veryfront/security/http/cors/preflight.ts";
@@ -178,6 +181,24 @@ function skipsApplicationAuth(
     isSignedControlPlaneDispatch(request) ||
     isSignedChannelDispatch(request) ||
     isConfigOptionalControlPlaneRunRequest(request.method, pathname);
+}
+
+function applyApplicationAuthResult(
+  authResult: ApplicationAuthHandlerResult | Response | null,
+  ctx: _HandlerContext,
+  isOptionsRequest: boolean,
+  isBrowserPreflight: boolean,
+): { response: Response | null; skipProjectMiddleware: boolean } {
+  if (authResult instanceof Response) {
+    if (!isBrowserPreflight) return { response: authResult, skipProjectMiddleware: false };
+    ctx.applicationAuthResult = { response: authResult };
+    return { response: null, skipProjectMiddleware: true };
+  }
+
+  if (isOptionsRequest) ctx.applicationAuthResult = authResult;
+  ctx.applicationIdentity = authResult?.metadata?.applicationIdentity ?? null;
+  ctx.applicationIdentityHeaderNames = authResult?.metadata?.applicationIdentityHeaderNames ?? [];
+  return { response: null, skipProjectMiddleware: false };
 }
 
 /** Handler names in registration order. */
@@ -745,16 +766,14 @@ export function createVeryfrontHandler(
                   },
                 ),
             );
-            if (authResult instanceof Response) {
-              if (!isBrowserPreflight) return authResult;
-              ctx.applicationAuthResult = { response: authResult };
-              skipProjectMiddleware = true;
-            } else {
-              if (isOptionsRequest) ctx.applicationAuthResult = authResult;
-              ctx.applicationIdentity = authResult?.metadata?.applicationIdentity ?? null;
-              ctx.applicationIdentityHeaderNames =
-                authResult?.metadata?.applicationIdentityHeaderNames ?? [];
-            }
+            const authOutcome = applyApplicationAuthResult(
+              authResult,
+              ctx,
+              isOptionsRequest,
+              isBrowserPreflight,
+            );
+            if (authOutcome.response) return authOutcome.response;
+            skipProjectMiddleware = authOutcome.skipProjectMiddleware;
           }
 
           const sourceIntegrationPolicy = runtimeContext.sourceIntegrationPolicy;

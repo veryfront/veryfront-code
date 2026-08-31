@@ -191,24 +191,11 @@ export class ApiHandlerWrapper extends BaseHandler {
         if (req.signal.aborted) throw req.signal.reason;
 
         if (mustDenyProjectExecution) {
-          if (req.method.toUpperCase() === "OPTIONS" && isPreflightRequest(req)) {
-            const response = await handleCORSPreflight({
-              request: req,
-              config: ctx.securityConfig?.cors,
-              allowMethods: DEFAULT_CORS_METHODS.join(", "),
-            });
-            response.headers.set("Allow", DEFAULT_CORS_METHODS.join(", "));
-            return this.respond(this.finalizeResponse(req, ctx, response));
-          }
-          // A shared runtime without an explicit execution grant cannot serve
-          // any project-owned route. Reject before refreshing or classifying
-          // tenant source that no downstream handler is allowed to execute.
-          return this.projectExecutionUnavailable(req, ctx, pathname);
+          return await this.handleDeniedProjectExecution(req, ctx, pathname);
         }
 
-        if (req.method.toUpperCase() === "OPTIONS" && ctx.frameworkPreflightResponse) {
-          return this.respond(this.finalizeResponse(req, ctx, ctx.frameworkPreflightResponse));
-        }
+        const preparedResponse = this.handlePreparedFrameworkPreflight(req, ctx);
+        if (preparedResponse) return preparedResponse;
 
         const canResolveAsPage = pathname !== "/api" &&
           !pathname.startsWith("/api/") &&
@@ -305,6 +292,34 @@ export class ApiHandlerWrapper extends BaseHandler {
         "api.projectSlug": ctx.projectSlug ?? "unknown",
       },
     );
+  }
+
+  private async handleDeniedProjectExecution(
+    req: Request,
+    ctx: HandlerContext,
+    pathname: string,
+  ): Promise<HandlerResult> {
+    if (req.method.toUpperCase() === "OPTIONS" && isPreflightRequest(req)) {
+      const response = await handleCORSPreflight({
+        request: req,
+        config: ctx.securityConfig?.cors,
+        allowMethods: DEFAULT_CORS_METHODS.join(", "),
+      });
+      response.headers.set("Allow", DEFAULT_CORS_METHODS.join(", "));
+      return this.respond(this.finalizeResponse(req, ctx, response));
+    }
+    // A shared runtime without an explicit execution grant cannot serve any
+    // project-owned route. Reject before refreshing or classifying tenant
+    // source that no downstream handler is allowed to execute.
+    return this.projectExecutionUnavailable(req, ctx, pathname);
+  }
+
+  private handlePreparedFrameworkPreflight(
+    req: Request,
+    ctx: HandlerContext,
+  ): HandlerResult | null {
+    if (req.method.toUpperCase() !== "OPTIONS" || !ctx.frameworkPreflightResponse) return null;
+    return this.respond(this.finalizeResponse(req, ctx, ctx.frameworkPreflightResponse));
   }
 
   private projectExecutionUnavailable(

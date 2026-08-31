@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "#veryfront/types";
+import { createMockAdapter as createFileAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { ApiHandlerWrapper } from "./api-handler-wrapper.ts";
 import { __injectDepsForTests as injectMemoryPressureDeps } from "#veryfront/server/shared/renderer/memory/pressure.ts";
 
@@ -43,6 +44,102 @@ function createCtx(captured: { options?: Record<string, unknown> }): HandlerCont
 }
 
 describe("ApiHandlerWrapper", () => {
+  it("prepares and reuses a framework-owned preflight response", async () => {
+    const projectDir = `/tmp/api-wrapper-preflight-${crypto.randomUUID()}`;
+    const adapter = createFileAdapter();
+    adapter.fs.files.set(
+      `${projectDir}/pages/api/get-only.ts`,
+      "export function GET() { return new Response('get'); }",
+    );
+    const ctx = {
+      projectDir,
+      adapter,
+      securityConfig: null,
+      isLocalProject: true,
+      allowHostProjectCodeExecution: true,
+    } as HandlerContext;
+    const wrapper = new ApiHandlerWrapper(projectDir, adapter);
+    const request = new Request("http://localhost/api/get-only", {
+      method: "OPTIONS",
+      headers: {
+        origin: "https://client.example",
+        "access-control-request-method": "GET",
+      },
+    });
+
+    assertEquals(await wrapper.isFrameworkOwnedPreflight(request, ctx), true);
+    const result = await wrapper.handle(request, ctx);
+
+    assertEquals(result.response?.status, 204);
+    assertEquals(result.response?.headers.get("Allow"), "GET, HEAD, OPTIONS");
+  });
+
+  it("keeps denied shared runtimes on the automatic preflight path", async () => {
+    const adapter = createFileAdapter();
+    const fs = adapter.fs as typeof adapter.fs & {
+      isMultiProjectMode: () => boolean;
+      runWithContext: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
+    };
+    fs.isMultiProjectMode = () => true;
+    fs.runWithContext = async <T>(
+      _slug: string,
+      _token: string,
+      fn: () => Promise<T>,
+    ): Promise<T> => await fn();
+    const ctx = {
+      projectDir: "/tmp/denied-preflight",
+      adapter,
+      securityConfig: null,
+      projectSlug: "denied-project",
+      projectId: "project-123",
+      proxyToken: "proxy-token",
+      requestContext: { token: "proxy-token", mode: "preview" },
+      isLocalProject: false,
+      allowHostProjectCodeExecution: false,
+    } as unknown as HandlerContext;
+    const wrapper = new ApiHandlerWrapper(ctx.projectDir, adapter);
+    const request = new Request("http://localhost/api/private", {
+      method: "OPTIONS",
+      headers: {
+        origin: "https://client.example",
+        "access-control-request-method": "GET",
+      },
+    });
+
+    assertEquals(await wrapper.isFrameworkOwnedPreflight(request, ctx), true);
+    const result = await wrapper.handle(request, ctx);
+
+    assertEquals(result.response?.status, 204);
+  });
+
+  it("keeps allowed contextual runtimes conservative during preflight inspection", async () => {
+    const adapter = createFileAdapter();
+    const fs = adapter.fs as typeof adapter.fs & { isContextualMode: () => boolean };
+    fs.isContextualMode = () => true;
+    const ctx = {
+      projectDir: "/tmp/contextual-preflight",
+      adapter,
+      securityConfig: null,
+      isLocalProject: true,
+      allowHostProjectCodeExecution: true,
+    } as unknown as HandlerContext;
+    const wrapper = new ApiHandlerWrapper(ctx.projectDir, adapter);
+
+    assertEquals(
+      await wrapper.isFrameworkOwnedPreflight(
+        new Request("http://localhost/api/private", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://client.example",
+            "access-control-request-method": "GET",
+          },
+        }),
+        ctx,
+      ),
+      false,
+    );
+  });
+
   it("does not discover project primitives before routing an OPTIONS request", async () => {
     const ctx = createCtx({});
     ctx.allowHostProjectCodeExecution = true;

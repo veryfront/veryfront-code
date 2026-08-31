@@ -844,6 +844,72 @@ describe("APIRouteHandler", () => {
       assertEquals(await response?.text(), "named options");
     });
 
+    it("prepares an automatic preflight for an unmatched route", async () => {
+      const adapter = createMockAdapter();
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const preparation = await handler.prepareFrameworkOwnedPreflight(
+        new Request("http://localhost/api/missing", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://client.example",
+            "access-control-request-method": "GET",
+          },
+        }),
+        localContext(adapter),
+      );
+
+      assertEquals(preparation.frameworkOwned, true);
+      assertEquals(preparation.response?.status, 204);
+    });
+
+    it("prepares a static automatic preflight from the same route source", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/get-only.ts",
+        "export function GET() { return new Response('get'); }",
+      );
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const preparation = await handler.prepareFrameworkOwnedPreflight(
+        new Request("http://localhost/api/get-only", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://client.example",
+            "access-control-request-method": "POST",
+          },
+        }),
+        localContext(adapter),
+      );
+
+      assertEquals(preparation.frameworkOwned, true);
+      assertEquals(preparation.response?.status, 204);
+      assertEquals(preparation.response?.headers.get("Allow"), "GET, HEAD, OPTIONS");
+    });
+
+    it("keeps authored and uninspectable preflights in the middleware path", async () => {
+      const adapter = createMockAdapter();
+      const authoredPath = "/test/project/pages/api/authored.ts";
+      adapter.fs.files.set(authoredPath, "export function OPTIONS() {}\n");
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const request = new Request("http://localhost/api/authored", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://client.example",
+          "access-control-request-method": "GET",
+        },
+      });
+
+      const authored = await handler.prepareFrameworkOwnedPreflight(request, localContext(adapter));
+      assertEquals(authored.frameworkOwned, false);
+      assertEquals(authored.response, undefined);
+
+      adapter.fs.readFile = () => Promise.reject(new Error("source unavailable"));
+      const uninspectable = await handler.prepareFrameworkOwnedPreflight(
+        request,
+        localContext(adapter),
+      );
+      assertEquals(uninspectable.frameworkOwned, false);
+    });
+
     it("discovers project primitives after OPTIONS auth and before dispatch", async () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set(
