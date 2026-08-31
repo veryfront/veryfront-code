@@ -18,6 +18,8 @@ const PromiseThen = Promise.prototype.then;
 const ReflectApply = Reflect.apply;
 const WeakSetAdd = WeakSet.prototype.add;
 const WeakSetHas = WeakSet.prototype.has;
+// These intrinsic WeakSets retain only live keys; entries are collectible once
+// no middleware or error consumer retains the associated objects.
 const INVALID_CONTINUATION_ERRORS = new IntrinsicWeakSet<object>();
 const TRACKED_CONTINUATIONS = new IntrinsicWeakSet<object>();
 const OBSERVED_CONTINUATIONS = new IntrinsicWeakSet<object>();
