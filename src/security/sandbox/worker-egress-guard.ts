@@ -59,6 +59,14 @@ function getNativeRequestProperty<TKey extends keyof typeof RequestGetters>(
   return IntrinsicReflectApply(getter, request, []) as Request[TKey];
 }
 
+function getOptionalNativeRequestProperty<TKey extends keyof typeof RequestGetters>(
+  request: Request,
+  key: TKey,
+): Request[TKey] | undefined {
+  const getter = RequestGetters[key];
+  return getter ? IntrinsicReflectApply(getter, request, []) as Request[TKey] : undefined;
+}
+
 function isNativeRequest(value: unknown): value is Request {
   try {
     if (!RequestGetters.url) return false;
@@ -1264,7 +1272,8 @@ export async function guardedEgressFetch(
   const requestInput = isNativeRequest(input) ? input : undefined;
 
   const requestedRedirect: RequestRedirect = init?.redirect ??
-    (requestInput ? getNativeRequestProperty(requestInput, "redirect") : "follow");
+    (requestInput ? getOptionalNativeRequestProperty(requestInput, "redirect") : undefined) ??
+    "follow";
 
   let url = requestInput
     ? getNativeRequestProperty(requestInput, "url")
@@ -1303,17 +1312,20 @@ export async function guardedEgressFetch(
   // rather than an init bag, and that must persist across every redirect hop.
   const reqInput = requestInput;
   const carryInit: RequestInit = {
-    signal: init?.signal ?? (reqInput ? getNativeRequestProperty(reqInput, "signal") : undefined),
+    signal: init?.signal ??
+      (reqInput ? getOptionalNativeRequestProperty(reqInput, "signal") : undefined),
     credentials: init?.credentials ??
-      (reqInput ? getNativeRequestProperty(reqInput, "credentials") : undefined),
-    cache: init?.cache ?? (reqInput ? getNativeRequestProperty(reqInput, "cache") : undefined),
-    mode: init?.mode ?? (reqInput ? getNativeRequestProperty(reqInput, "mode") : undefined),
+      (reqInput ? getOptionalNativeRequestProperty(reqInput, "credentials") : undefined),
+    cache: init?.cache ??
+      (reqInput ? getOptionalNativeRequestProperty(reqInput, "cache") : undefined),
+    mode: init?.mode ??
+      (reqInput ? getOptionalNativeRequestProperty(reqInput, "mode") : undefined),
     referrer: init?.referrer ??
-      (reqInput ? getNativeRequestProperty(reqInput, "referrer") : undefined),
+      (reqInput ? getOptionalNativeRequestProperty(reqInput, "referrer") : undefined),
     referrerPolicy: init?.referrerPolicy ??
-      (reqInput ? getNativeRequestProperty(reqInput, "referrerPolicy") : undefined),
+      (reqInput ? getOptionalNativeRequestProperty(reqInput, "referrerPolicy") : undefined),
     keepalive: init?.keepalive ??
-      (reqInput ? getNativeRequestProperty(reqInput, "keepalive") : undefined),
+      (reqInput ? getOptionalNativeRequestProperty(reqInput, "keepalive") : undefined),
   };
 
   for (let hop = 0;; hop++) {
