@@ -1,7 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import { CorsHandler } from "./cors.ts";
 import type { HandlerContext } from "../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -190,51 +189,31 @@ describe("server/handlers/response/cors", () => {
     });
 
     it("continues a matched non-API App route with an OPTIONS export", async () => {
-      const projectDir = await makeTempDir({ prefix: "veryfront-cors-options-" });
-      const routeFile = `${projectDir}/route.mjs`;
-      await writeTextFile(
-        routeFile,
-        "export function OPTIONS() { return new Response('route options'); }",
+      const handler = new CorsHandler({
+        resolveAppRouteFile: () => Promise.resolve({ file: "/project/route.ts", params: {} }),
+        loadAppRouteModule: () => Promise.resolve({ OPTIONS: () => new Response() }),
+      });
+      const result = await handler.handle(
+        new Request("https://app.example/webhook", { method: "OPTIONS" }),
+        makeCtx(),
       );
 
-      try {
-        const handler = new CorsHandler({
-          resolveAppRouteFile: () => Promise.resolve({ file: routeFile, params: {} }),
-        });
-        const result = await handler.handle(
-          new Request("https://app.example/webhook", { method: "OPTIONS" }),
-          makeCtx({ projectDir }),
-        );
-
-        assertEquals(result.continue, true);
-        assertEquals(result.response, undefined);
-      } finally {
-        await remove(projectDir, { recursive: true });
-      }
+      assertEquals(result.continue, true);
+      assertEquals(result.response, undefined);
     });
 
     it("continues a matched non-API App route with a default export", async () => {
-      const projectDir = await makeTempDir({ prefix: "veryfront-cors-default-options-" });
-      const routeFile = `${projectDir}/route.mjs`;
-      await writeTextFile(
-        routeFile,
-        "export default function handler() { return new Response('default options'); }",
+      const handler = new CorsHandler({
+        resolveAppRouteFile: () => Promise.resolve({ file: "/project/route.ts", params: {} }),
+        loadAppRouteModule: () => Promise.resolve({ default: () => new Response() }),
+      });
+      const result = await handler.handle(
+        new Request("https://app.example/webhook", { method: "OPTIONS" }),
+        makeCtx(),
       );
 
-      try {
-        const handler = new CorsHandler({
-          resolveAppRouteFile: () => Promise.resolve({ file: routeFile, params: {} }),
-        });
-        const result = await handler.handle(
-          new Request("https://app.example/webhook", { method: "OPTIONS" }),
-          makeCtx({ projectDir }),
-        );
-
-        assertEquals(result.continue, true);
-        assertEquals(result.response, undefined);
-      } finally {
-        await remove(projectDir, { recursive: true });
-      }
+      assertEquals(result.continue, true);
+      assertEquals(result.response, undefined);
     });
 
     it("does not advertise infrastructure-only request headers", async () => {

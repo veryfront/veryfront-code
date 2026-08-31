@@ -12,9 +12,11 @@ import { getApplicationPreflightHeaders } from "#veryfront/security/http/applica
 import { resolveExecutableRouteMethods } from "#veryfront/routing/api/route-methods.ts";
 
 type AppRouteResolver = typeof resolveAppRouteFile;
+type AppRouteModuleLoader = (file: string) => Promise<Record<string, unknown>>;
 
 export interface CorsHandlerDependencies {
   resolveAppRouteFile?: AppRouteResolver;
+  loadAppRouteModule?: AppRouteModuleLoader;
 }
 
 export class CorsHandler extends BaseHandler {
@@ -26,10 +28,13 @@ export class CorsHandler extends BaseHandler {
 
   private static readonly DEFAULT_METHODS = "GET,POST,PUT,PATCH,DELETE,OPTIONS";
   private readonly resolveAppRouteFile: AppRouteResolver;
+  private readonly loadAppRouteModule: AppRouteModuleLoader;
 
   constructor(dependencies: CorsHandlerDependencies = {}) {
     super();
     this.resolveAppRouteFile = dependencies.resolveAppRouteFile ?? resolveAppRouteFile;
+    this.loadAppRouteModule = dependencies.loadAppRouteModule ??
+      ((file) => import(`file://${file}`) as Promise<Record<string, unknown>>);
   }
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
@@ -83,7 +88,7 @@ export class CorsHandler extends BaseHandler {
         return { allowMethods: CorsHandler.DEFAULT_METHODS, hasExecutableOptions: false };
       }
 
-      const mod = (await import(`file://${match.file}`)) as Record<string, unknown>;
+      const mod = await this.loadAppRouteModule(match.file);
       const executableMethods = resolveExecutableRouteMethods(mod);
       const authoredMethods = resolveExecutableRouteMethods(mod, undefined, {
         includeFrameworkOptions: false,
