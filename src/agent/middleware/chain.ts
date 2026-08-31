@@ -6,8 +6,6 @@ const INVALID_CONTINUATION_MESSAGE =
   "Agent middleware next() can only be called once while middleware is active";
 const NOOP = (): undefined => undefined;
 
-class DeferredContinuationPromise extends Promise<AgentResponse> {}
-
 function createInvalidContinuationError() {
   return MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE });
 }
@@ -25,61 +23,18 @@ function rejectInvalidContinuation(): Promise<AgentResponse> {
 function createDeferredContinuation(
   isSettled: () => boolean,
   dispatch: () => Promise<AgentResponse>,
-  middlewareResult: Promise<AgentResponse>,
 ): Promise<AgentResponse> {
-  let started = false;
-  let resolveContinuation: (response: AgentResponse) => void = () => {};
-  let rejectContinuation: (error: unknown) => void = () => {};
-  const continuationPromise = new DeferredContinuationPromise((resolve, reject) => {
-    resolveContinuation = resolve;
-    rejectContinuation = reject;
+  const deferredContinuation = Promise.resolve().then(() => {
+    if (isSettled()) throw createInvalidContinuationError();
+    return dispatch();
   });
-
-  let start = (): void => {};
-  const startContinuation = (): void => {
-    if (started) return;
-    started = true;
-    if (isSettled()) {
-      rejectContinuation(createInvalidContinuationError());
-      return;
-    }
-
-    let dispatched: Promise<AgentResponse>;
-    try {
-      dispatched = dispatch();
-    } catch (error) {
-      rejectContinuation(error);
-      return;
-    }
-    void dispatched.then(resolveContinuation, rejectContinuation);
-  };
-  start = startContinuation;
-
-  void middlewareResult.then(
-    () => {
-      if (!started) rejectContinuation(createInvalidContinuationError());
-    },
-    () => {
-      if (!started) rejectContinuation(createInvalidContinuationError());
-    },
-  );
-  const nativeThen = Promise.prototype.then.bind(
-    continuationPromise,
-  ) as typeof continuationPromise.then;
-  void nativeThen(NOOP, NOOP);
-
-  const then: typeof continuationPromise.then = (onFulfilled, onRejected) => {
-    start();
-    return nativeThen(onFulfilled, onRejected);
-  };
-  Object.defineProperty(continuationPromise, "then", { value: then });
-
-  return continuationPromise;
+  consumeRejectedPromise(deferredContinuation);
+  return deferredContinuation;
 }
 
 interface MiddlewareContinuation {
   next: () => Promise<AgentResponse>;
-  finishInvocation: (result: Promise<AgentResponse>) => void;
+  finishInvocation: () => void;
   settle: () => void;
 }
 
@@ -89,7 +44,6 @@ function createMiddlewareContinuation(
   let nextCalled = false;
   let middlewareInvoking = true;
   let middlewareSettled = false;
-  let middlewareResult: Promise<AgentResponse> | undefined;
 
   const next = (): Promise<AgentResponse> => {
     if (nextCalled || middlewareSettled) return rejectInvalidContinuation();
@@ -99,7 +53,6 @@ function createMiddlewareContinuation(
       return createDeferredContinuation(
         () => middlewareSettled,
         dispatch,
-        middlewareResult!,
       );
     }
 
@@ -108,9 +61,8 @@ function createMiddlewareContinuation(
 
   return {
     next,
-    finishInvocation: (result) => {
+    finishInvocation: () => {
       middlewareInvoking = false;
-      middlewareResult = result;
     },
     settle: () => {
       middlewareInvoking = false;
@@ -147,7 +99,7 @@ export class MiddlewareChain {
 
               try {
                 const result = currentMiddleware(context, continuation.next);
-                continuation.finishInvocation(result);
+                continuation.finishInvocation();
                 return await result;
               } finally {
                 continuation.settle();

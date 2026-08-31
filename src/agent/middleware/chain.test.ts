@@ -183,8 +183,8 @@ describe("agent/middleware/chain", () => {
     assertEquals(deferredContinuation instanceof Promise, true);
   });
 
-  it("rejects deferred dispatch when the middleware settles after calling next", async () => {
-    let retainedNext: (() => Promise<AgentResponse>) | undefined;
+  it("eagerly dispatches a continuation called before middleware settles", async () => {
+    let queuedNext: Promise<AgentResponse> | undefined;
     let resolveMiddleware: ((value: AgentResponse) => void) | undefined;
     let finalHandlerCalls = 0;
     const middlewareResult = new Promise<AgentResponse>((resolve) => {
@@ -192,9 +192,8 @@ describe("agent/middleware/chain", () => {
     });
     const chain = new MiddlewareChain([
       (_context, next) => {
-        retainedNext = next;
         queueMicrotask(() => {
-          retainedNext!();
+          queuedNext = next();
           resolveMiddleware!(response);
         });
         return middlewareResult;
@@ -208,7 +207,8 @@ describe("agent/middleware/chain", () => {
       }),
       response,
     );
-    assertEquals(finalHandlerCalls, 0);
+    assertEquals(finalHandlerCalls, 1);
+    assertEquals(await queuedNext, response);
   });
 
   it("dispatches next immediately after an async middleware await", async () => {
@@ -217,6 +217,26 @@ describe("agent/middleware/chain", () => {
       async (_context, next) => {
         await Promise.resolve();
         return next();
+      },
+    ]);
+
+    assertEquals(
+      await chain.execute(context, () => {
+        finalHandlerCalls += 1;
+        return Promise.resolve(response);
+      }),
+      response,
+    );
+    assertEquals(finalHandlerCalls, 1);
+  });
+
+  it("eagerly dispatches an unawaited continuation after an async suspension", async () => {
+    let finalHandlerCalls = 0;
+    const chain = new MiddlewareChain([
+      async (_context, next) => {
+        await Promise.resolve();
+        next();
+        return response;
       },
     ]);
 
