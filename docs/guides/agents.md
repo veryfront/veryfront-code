@@ -579,6 +579,9 @@ Its lifecycle is:
 - Handlers attached after the macrotask grace window will not suppress the
   report. Synchronous throws also settle the middleware invocation and revoke
   its continuation.
+- If a runtime Promise cannot be instrumented directly, the framework adapts
+  it without mutating the original; native unhandled-rejection handling remains
+  the fallback for derived branches whose observation state cannot be tracked.
 
 ## Verify it worked
 

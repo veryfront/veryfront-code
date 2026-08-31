@@ -82,9 +82,8 @@ class ObservedContinuationPromise<T> extends Promise<T> {
     if (this.onRejection) {
       const observedDerived = derived as ObservedContinuationPromise<TResult1 | TResult2>;
       if (!PROMISE_SPECIES_SUPPORTED || typeof observedDerived.isObserved !== "function") {
-        // Preserve the runtime-selected branch and suppress native unhandled
-        // rejection noise when its observation state cannot be tracked.
-        observeContinuationRejection(derived);
+        // Preserve the runtime-selected branch and leave native rejection
+        // evidence visible when its observation state cannot be tracked.
         return derived;
       }
       observeContinuationRejection(
@@ -118,15 +117,16 @@ function trackEagerContinuation<T>(
       suppressedInvalidErrors,
     );
   }
-  if (!isNativePromiseWithoutHooks(promise) || !ObjectIsExtensible(promise)) {
-    observeContinuationRejection(promise);
-    return promise;
-  }
-  const ownThen = ObjectGetOwnPropertyDescriptor(promise, "then");
-  const ownConstructor = ObjectGetOwnPropertyDescriptor(promise, "constructor");
-  if (ownThen?.configurable === false || ownConstructor?.configurable === false) {
-    observeContinuationRejection(promise);
-    return promise;
+  if (!canDecoratePromise(promise)) {
+    // Adapt non-trackable promises without mutating them so detached failures
+    // still use the framework's observation and reporting path.
+    return createObservedContinuation<T>(
+      (resolve, reject) => {
+        void ReflectApply(PromiseThen, promise, [resolve, reject]);
+      },
+      onRejection,
+      suppressedInvalidErrors,
+    );
   }
   ReflectApply(WeakSetAdd, TRACKED_CONTINUATIONS, [promise]);
 
@@ -139,7 +139,6 @@ function trackEagerContinuation<T>(
       TResult1 | TResult2
     >;
     if (!PROMISE_SPECIES_SUPPORTED) {
-      observeContinuationRejection(derived);
       return derived;
     }
     return trackEagerContinuation(derived, onRejection, suppressedInvalidErrors);
@@ -161,6 +160,13 @@ function trackEagerContinuation<T>(
     suppressedInvalidErrors,
   );
   return promise;
+}
+
+function canDecoratePromise(promise: Promise<unknown>): boolean {
+  if (!isNativePromiseWithoutHooks(promise) || !ObjectIsExtensible(promise)) return false;
+  const ownThen = ObjectGetOwnPropertyDescriptor(promise, "then");
+  const ownConstructor = ObjectGetOwnPropertyDescriptor(promise, "constructor");
+  return ownThen?.configurable !== false && ownConstructor?.configurable !== false;
 }
 
 function createObservedContinuation<T>(
@@ -232,19 +238,27 @@ function adoptMiddlewareResult(
   if (ReflectApply(WeakSetHas, TRACKED_CONTINUATIONS, [result]) as boolean) {
     ReflectApply(WeakSetAdd, OBSERVED_CONTINUATIONS, [result]);
   }
+  const preserveNativeRejection = !ReflectApply(WeakSetHas, TRACKED_CONTINUATIONS, [result]) &&
+    !canDecoratePromise(result);
   return new IntrinsicPromise((resolve, reject) => {
     beginAdoption();
     try {
-      void ReflectApply(PromiseThen, result, [
-        (value: AgentResponse) => {
-          onSettled();
-          resolve(value);
-        },
-        (error: unknown) => {
+      const onFulfilled = (value: AgentResponse): void => {
+        onSettled();
+        resolve(value);
+      };
+      if (preserveNativeRejection) {
+        const propagated = ReflectApply(PromiseThen, result, [onFulfilled]);
+        void ReflectApply(PromiseThen, propagated, [undefined, (error: unknown) => {
           onSettled();
           reject(error);
-        },
-      ]);
+        }]);
+      } else {
+        void ReflectApply(PromiseThen, result, [onFulfilled, (error: unknown) => {
+          onSettled();
+          reject(error);
+        }]);
+      }
     } finally {
       endAdoption();
     }

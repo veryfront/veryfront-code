@@ -66,7 +66,7 @@ describe("agent middleware continuation Promise species", () => {
       unsubscribe();
     }
 
-    assertEquals(unhandled.length, 0);
+    assertEquals(unhandled.length, 1);
     assertEquals(discardedBranch?.constructor, Promise);
     assertEquals(handledBranch?.constructor, Promise);
     assertEquals(
