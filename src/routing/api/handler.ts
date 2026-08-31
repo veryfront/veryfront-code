@@ -249,13 +249,17 @@ export class APIRouteHandler {
         await this.ensureCorsConfig(adapter);
 
         const method = request.method.toUpperCase();
-        if (method === "OPTIONS" && requiresIsolatedProjectRuntime(ctx)) {
+        const isApiPath = pathname === "/api" || pathname.startsWith("/api/");
+        if (
+          method === "OPTIONS" &&
+          isApiPath &&
+          requiresIsolatedProjectRuntime(ctx)
+        ) {
           return this.automaticPreflight(request);
         }
 
         const match = this.router.match(pathname);
         if (!match) {
-          const isApiPath = pathname === "/api" || pathname.startsWith("/api/");
           logger.debug("No route match", {
             pathname,
             isApiPath,

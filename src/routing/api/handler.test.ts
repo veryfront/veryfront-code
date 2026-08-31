@@ -145,6 +145,31 @@ describe("APIRouteHandler", () => {
       assertEquals(response, null);
     });
 
+    it("should return null for unmatched non-API OPTIONS in an isolated runtime", async () => {
+      const adapter = createMockAdapter();
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const response = await handler.handle(
+        new Request("http://localhost/not-an-api-route", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://client.example",
+            "access-control-request-method": "GET",
+          },
+        }),
+        {
+          projectDir: "/test/project",
+          adapter,
+          securityConfig: null,
+          isLocalProject: false,
+          prepareHostedConfigContext: () =>
+            Promise.reject(new Error("hosted config must not be evaluated")),
+        },
+      );
+
+      assertEquals(response, null);
+    });
+
     it("should return null for root path", async () => {
       const adapter = createMockAdapter();
       const handler = await createInitializedHandler("/test/project", adapter);
