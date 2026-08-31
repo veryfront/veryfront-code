@@ -23,6 +23,7 @@ import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import type { Handler } from "#veryfront/types";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import {
@@ -158,6 +159,45 @@ const baseLogger = getBaseLogger("SERVER");
 const logger = baseLogger.component("runtime-handler");
 
 const SOURCE_SNAPSHOT_FRESHNESS_RETRY_LIMIT = 1;
+
+type OptionsMiddlewareAdmission =
+  | "not-applicable"
+  | "continue"
+  | "bypass-middleware";
+
+type ProjectEnvironmentRunner = <T>(operation: () => T) => T;
+
+async function prepareOptionsBeforeProjectMiddleware(input: {
+  request: Request;
+  ctx: _HandlerContext;
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
+  runInFilesystemContext: <T>(operation: () => Promise<T>) => Promise<T>;
+  runInRequestProjectEnv: ProjectEnvironmentRunner;
+}): Promise<OptionsMiddlewareAdmission> {
+  if (input.request.method !== "OPTIONS") return "not-applicable";
+  if (requiresIsolatedProjectRuntime(input.ctx)) return "bypass-middleware";
+
+  const prepareApiAdmission = () =>
+    withApiHandler(
+      input.ctx,
+      (api) => api.prepareOptionsMiddlewareAdmission(input.request, input.ctx),
+      { sourceSnapshotReady: true },
+    );
+  const prepareInProjectEnv = () => input.runInRequestProjectEnv(prepareApiAdmission);
+  const prepareWithSourcePolicy = () =>
+    runWithExactSourceIntegrationPolicy(
+      input.sourceIntegrationPolicy,
+      prepareInProjectEnv,
+    );
+
+  return await input.runInFilesystemContext(() =>
+    runWithRetainedPreviewDocumentSourceSnapshot(
+      input.ctx,
+      prepareWithSourcePolicy,
+      { runDeferredOperation: input.runInFilesystemContext },
+    )
+  );
+}
 
 function shouldRetrySourceSnapshotFreshness(
   request: Request,
@@ -786,28 +826,13 @@ export function createVeryfrontHandler(
             skipProjectMiddleware = authOutcome.skipProjectMiddleware;
           }
 
-          const optionsAdmission = request.method === "OPTIONS"
-            ? requiresIsolatedProjectRuntime(ctx)
-              ? "bypass-middleware"
-              : await runInFilesystemContext(() =>
-                runWithRetainedPreviewDocumentSourceSnapshot(
-                  ctx,
-                  () =>
-                    runWithExactSourceIntegrationPolicy(
-                      sourceIntegrationPolicy,
-                      () =>
-                        runInRequestProjectEnv(() =>
-                          withApiHandler(
-                            ctx,
-                            (api) => api.prepareOptionsMiddlewareAdmission(request, ctx),
-                            { sourceSnapshotReady: true },
-                          )
-                        ),
-                    ),
-                  { runDeferredOperation: runInFilesystemContext },
-                )
-              )
-            : "not-applicable";
+          const optionsAdmission = await prepareOptionsBeforeProjectMiddleware({
+            request,
+            ctx,
+            sourceIntegrationPolicy,
+            runInFilesystemContext,
+            runInRequestProjectEnv,
+          });
 
           const executeRegistry = async () => (await registry.execute(request, ctx)) ?? undefined;
           const executeProjectRoute = () =>
