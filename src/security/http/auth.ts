@@ -188,7 +188,22 @@ export class AuthHandler extends BaseHandler {
   };
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    if (req.method.toUpperCase() === "OPTIONS") return Promise.resolve(this.continue());
+    return this.handleRequest(req, ctx, true);
+  }
+
+  /** Apply the configured credential gate to a route-owned OPTIONS handler. */
+  handleExplicitOptions(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+    return this.handleRequest(req, ctx, false);
+  }
+
+  private handleRequest(
+    req: Request,
+    ctx: HandlerContext,
+    exemptOptions: boolean,
+  ): Promise<HandlerResult> {
+    if (exemptOptions && req.method.toUpperCase() === "OPTIONS") {
+      return Promise.resolve(this.continue());
+    }
 
     const pathname = new URL(req.url).pathname;
 

@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertRejects,
+  assertStrictEquals,
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
@@ -1606,6 +1607,90 @@ describe("routing/api/route-executor", () => {
       );
 
       assertEquals(methods, ["GET", "HEAD", "POST", "OPTIONS"]);
+    });
+
+    it("can omit the framework OPTIONS fallback from prepared route methods", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const options = await preparedRouteOptions(
+        "export function GET() {}",
+        "prepared-methods-authored",
+      );
+
+      const methods = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          resolvePreparedRouteMethods(
+            undefined,
+            options,
+            { includeFrameworkOptions: false },
+          ),
+      );
+
+      assertEquals(methods, ["GET", "HEAD"]);
+    });
+
+    it("keeps authored OPTIONS when omitting the framework fallback", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const options = await preparedRouteOptions(
+        "export function GET() {} export function OPTIONS() {}",
+        "prepared-methods-options",
+      );
+
+      const methods = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          resolvePreparedRouteMethods(
+            undefined,
+            options,
+            { includeFrameworkOptions: false },
+          ),
+      );
+
+      assertEquals(methods, ["GET", "HEAD", "OPTIONS"]);
+    });
+
+    it("caches prepared methods by worker semantics and requested custom method", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const options = await preparedRouteOptions(
+        "export default function handler() {}",
+        "prepared-methods-semantic-cache",
+      );
+      const emptyPolicy = normalizeSourceIntegrationPolicy({ allow: {} });
+      const githubPolicy = normalizeSourceIntegrationPolicy({ allow: { github: {} } });
+
+      const first = await runWithExactSourceIntegrationPolicy(
+        emptyPolicy,
+        () => resolvePreparedRouteMethods("PROPFIND", options),
+      );
+      const repeated = await runWithExactSourceIntegrationPolicy(
+        emptyPolicy,
+        () => resolvePreparedRouteMethods("PROPFIND", options),
+      );
+      assertStrictEquals(repeated, first);
+      assertEquals(first.includes("PROPFIND"), true);
+
+      const customMethod = await runWithExactSourceIntegrationPolicy(
+        emptyPolicy,
+        () => resolvePreparedRouteMethods("MKCOL", options),
+      );
+      assertEquals(customMethod.includes("MKCOL"), true);
+      assertEquals(customMethod.includes("PROPFIND"), false);
+
+      const changedPolicy = await runWithExactSourceIntegrationPolicy(
+        githubPolicy,
+        () => resolvePreparedRouteMethods("PROPFIND", options),
+      );
+      assertEquals(Object.is(changedPolicy, first), false);
+      assertEquals(changedPolicy, first);
     });
 
     it("rejects when the prepared module has no callable route export", async () => {

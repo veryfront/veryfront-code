@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DEFAULT_MAX_AGE, DEFAULT_METHODS } from "./constants.ts";
 import {
+  applyCORSPreflightHeaders,
   handleCORSPreflight,
   isPreflightRequest,
   normalizeCORSPreflightList,
@@ -11,6 +12,47 @@ import { MAX_CORS_TOKEN_LENGTH } from "#veryfront/utils/cors-policy-limits.ts";
 
 describe("security/http/cors/preflight", () => {
   describe("configured policy", () => {
+    it("merges preflight policy into a route response with one origin validation", async () => {
+      let validations = 0;
+      const request = new Request("http://localhost/", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://app.example.com",
+          "access-control-request-method": "POST",
+          "access-control-request-headers": "Authorization",
+        },
+      });
+
+      const response = await applyCORSPreflightHeaders({
+        request,
+        response: new Response("route response", {
+          status: 207,
+          headers: {
+            vary: "Accept-Encoding",
+            "x-route": "options",
+            "access-control-allow-origin": "https://untrusted.example",
+          },
+        }),
+        config: {
+          origin: async (origin) => {
+            validations++;
+            return origin;
+          },
+        },
+        allowMethods: "POST, OPTIONS",
+        allowHeaders: "Authorization",
+      });
+
+      assertEquals(validations, 1);
+      assertEquals(response.status, 207);
+      assertEquals(await response.text(), "route response");
+      assertEquals(response.headers.get("x-route"), "options");
+      assertEquals(response.headers.get("access-control-allow-origin"), "https://app.example.com");
+      assertEquals(response.headers.get("access-control-allow-methods"), "POST, OPTIONS");
+      assertEquals(response.headers.get("access-control-allow-headers"), "Authorization");
+      assertEquals(response.headers.get("vary"), "Accept-Encoding, Origin");
+    });
+
     it("keeps configured methods and headers narrower than runtime capabilities", async () => {
       const request = new Request("http://localhost/", {
         method: "OPTIONS",

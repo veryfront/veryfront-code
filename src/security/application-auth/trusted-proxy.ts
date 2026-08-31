@@ -57,6 +57,7 @@ const stringToLowerCase = String.prototype.toLowerCase;
 const stringTrim = String.prototype.trim;
 
 const admittedTrustedProxyRequests = new NativeWeakSet<Request>();
+const EMPTY_IDENTITY_HEADER_NAMES = objectFreeze([] as string[]);
 
 if (typeof rawRequestHeadersGetter !== "function") {
   throw new TypeError("Request.prototype.headers getter is unavailable");
@@ -94,6 +95,26 @@ export function markTrustedProxyApplicationAuthAdmittedRequest(request: Request)
 
 export function isTrustedProxyApplicationAuthAdmittedRequest(request: Request): boolean {
   return apply(weakSetHas, admittedTrustedProxyRequests, [request]) as boolean;
+}
+
+/** Snapshot the configured identity headers before request admission runs. */
+export function getTrustedProxyApplicationIdentityHeaderNames(
+  config: TrustedProxyAuthConfig,
+): readonly string[] {
+  try {
+    const root = readPlainObjectDescriptors(config);
+    const headers = snapshotHeaders(readDataProperty(root, "headers"));
+    if (headers === null) return EMPTY_IDENTITY_HEADER_NAMES;
+    return freezeUniqueHeaderNames([
+      headers.subject,
+      headers.email,
+      headers.name,
+      headers.groups,
+      headers.roles,
+    ]) ?? EMPTY_IDENTITY_HEADER_NAMES;
+  } catch {
+    return EMPTY_IDENTITY_HEADER_NAMES;
+  }
 }
 
 interface TrustedProxyConfigSnapshot {

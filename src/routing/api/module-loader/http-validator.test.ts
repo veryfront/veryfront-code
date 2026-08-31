@@ -10,10 +10,95 @@ import {
 } from "./http-validator.ts";
 import {
   __setSourceCapabilityParserLoaderForTests,
+  resolveStaticRouteMethods,
+  resolveStaticRouteOptionsCapability,
   rewriteImportMetaLocations,
   rewriteUnboundCommonJsDynamicRequire,
   usesUnboundCommonJsModule,
 } from "./source-capability-analyzer.ts";
+
+describe("resolveStaticRouteOptionsCapability", () => {
+  it("proves absence only for statically closed export sets", async () => {
+    assertEquals(
+      await resolveStaticRouteOptionsCapability(
+        "export function GET() {}\nexport type OPTIONS = { enabled: true };",
+      ),
+      "absent",
+    );
+  });
+
+  it("keeps every statically visible OPTIONS or default route behind auth", async () => {
+    const sources = [
+      "export function OPTIONS() {}",
+      "export default function route() {}",
+      "const handler = () => {}; export { handler as OPTIONS };",
+      'export { handler as OPTIONS } from "./handler.ts";',
+      "export const OPTIONS = () => new Response();",
+    ];
+
+    for (
+      const source of [
+        "export default 123;",
+        "export default { OPTIONS() {} };",
+      ]
+    ) {
+      assertEquals(await resolveStaticRouteOptionsCapability(source), "absent", source);
+    }
+
+    for (
+      const source of [
+        "export const { OPTIONS } = handlers;",
+        "export default handler;",
+      ]
+    ) {
+      assertEquals(await resolveStaticRouteOptionsCapability(source), "unknown", source);
+    }
+
+    for (const source of sources) {
+      assertEquals(await resolveStaticRouteOptionsCapability(source), "present", source);
+    }
+  });
+
+  it("keeps ambiguous, CommonJS, and invalid sources on the authenticated fallback", async () => {
+    const sources = [
+      'export * from "./handler.ts";',
+      "module.exports = { OPTIONS() {} };",
+      "export const OPTIONS = handler;",
+      "export const { OPTIONS } = handlers;",
+      "export function OPTIONS(",
+    ];
+
+    for (const source of sources) {
+      assertEquals(await resolveStaticRouteOptionsCapability(source), "unknown", source);
+    }
+  });
+});
+
+describe("resolveStaticRouteMethods", () => {
+  it("returns the proven method surface without evaluating the route", async () => {
+    assertEquals(
+      await resolveStaticRouteMethods(
+        "export function GET() {}\nexport function POST() {}",
+      ),
+      ["GET", "HEAD", "POST"],
+    );
+    assertEquals(
+      await resolveStaticRouteMethods("export default function route() {}", "PROPFIND"),
+      ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "PROPFIND"],
+    );
+  });
+
+  it("keeps dynamic method exports on the conservative fallback", async () => {
+    assertEquals(
+      await resolveStaticRouteMethods("export const GET = handler;"),
+      undefined,
+    );
+    assertEquals(
+      await resolveStaticRouteMethods("export { GET } from './handler.ts';"),
+      undefined,
+    );
+  });
+});
 
 describe("usesUnboundCommonJsModule", () => {
   it("distinguishes runtime CommonJS module references from inert text and bindings", async () => {

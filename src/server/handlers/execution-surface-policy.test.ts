@@ -39,6 +39,7 @@ const CAPABILITY_GATED_SURFACES = [
   "request/public-agents-list.handler.ts",
   "request/snippet.handler.ts",
   "request/ssr/ssr.handler.ts",
+  "response/cors.ts",
 ].toSorted();
 
 /**
@@ -48,7 +49,7 @@ const CAPABILITY_GATED_SURFACES = [
  */
 const NON_GATE_USES: Record<string, string> = {
   "response/cors.ts":
-    "Chooses which CORS methods to advertise. Degrades to defaults on a shared runtime rather than denying, so the capability does not apply.",
+    "Avoids reloading request-scoped hosted config after its separate capability gate admits route inspection.",
 };
 
 async function readHandlerSources(): Promise<Map<string, string>> {

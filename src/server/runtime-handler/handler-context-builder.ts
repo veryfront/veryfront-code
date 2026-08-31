@@ -18,6 +18,7 @@ import type { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import { buildEnrichedContext } from "../context/enriched-context.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
+import { getTrustedProxyApplicationIdentityHeaderNames } from "#veryfront/security/application-auth/trusted-proxy.ts";
 
 export interface HandlerContextOptions {
   /** Project directory */
@@ -80,6 +81,15 @@ export interface HandlerContextOptions {
   prepareHostedConfigContext?: HandlerContext["prepareHostedConfigContext"];
 }
 
+function configuredApplicationIdentityHeaderNames(
+  securityConfig: SecurityConfig | null,
+): readonly string[] {
+  const trustedProxy = securityConfig?.auth?.trustedProxy;
+  return trustedProxy === undefined
+    ? []
+    : getTrustedProxyApplicationIdentityHeaderNames(trustedProxy);
+}
+
 /**
  * Build the HandlerContext for route handlers.
  */
@@ -139,7 +149,8 @@ export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext
     isProxyMode: opts.isProxyMode,
     environmentId: opts.environmentId,
     applicationIdentity: opts.applicationIdentity ?? null,
-    applicationIdentityHeaderNames: opts.applicationIdentityHeaderNames ?? [],
+    applicationIdentityHeaderNames: opts.applicationIdentityHeaderNames ??
+      configuredApplicationIdentityHeaderNames(opts.securityConfig),
     prepareHostedConfigContext: opts.prepareHostedConfigContext,
     enriched: enrichedContext,
   };
@@ -164,6 +175,6 @@ export function buildMinimalContext(
     config,
     requestOrigin,
     applicationIdentity: null,
-    applicationIdentityHeaderNames: [],
+    applicationIdentityHeaderNames: configuredApplicationIdentityHeaderNames(securityConfig),
   };
 }

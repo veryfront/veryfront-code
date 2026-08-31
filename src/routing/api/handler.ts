@@ -11,19 +11,27 @@ import {
 } from "#veryfront/errors";
 import { badGateway, internalServerError, notFound } from "#veryfront/http/responses";
 import type { CORSConfig } from "#veryfront/security";
-import { applyCORSHeaders, handleCORSPreflight } from "#veryfront/security";
+import { applyCORSHeaders, DEFAULT_CORS_METHODS, handleCORSPreflight } from "#veryfront/security";
 import { type APIContext } from "./context-builder.ts";
 import { ApiRouteMatcher, type RouteMatch } from "./api-route-matcher.ts";
 import type { APIRoute } from "./module-loader/types.ts";
 import { loadHandlerModule, prepareHandlerModule } from "./module-loader/loader.ts";
+import {
+  resolveStaticRouteMethods as resolveStaticRouteMethodsFromSource,
+  resolveStaticRouteOptionsCapability,
+  type StaticRouteOptionsCapability,
+} from "./module-loader/source-capability-analyzer.ts";
 import { discoverAppRoutes, discoverPagesRoutes } from "./route-discovery.ts";
 import {
+  createAPIRouteErrorResponse,
   executeAppRoute,
   executePagesRoute,
   executePreparedAppRoute,
   executePreparedPagesRoute,
   type ExecuteRouteOptions,
+  resolvePreparedRouteMethods,
 } from "./route-executor.ts";
+import { normalizeRouteMethod, resolveExecutableRouteMethods } from "./route-methods.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { HandlerContext } from "#veryfront/types";
 import type { PreparedWorkerModule } from "#veryfront/security/sandbox/worker-types.ts";
@@ -36,11 +44,21 @@ import {
   isIsolatedApiPreparationSupported,
   ISOLATED_API_PREPARATION_UNSUPPORTED_REASON,
 } from "#veryfront/security/sandbox/isolation-capability.ts";
-import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
+import {
+  createApplicationRequest,
+  getApplicationPreflightHeaders,
+} from "#veryfront/security/http/application-request.ts";
 import {
   isHostProjectCodeExecutionAllowed,
   isSharedProjectRuntime,
+  requiresIsolatedProjectRuntime,
 } from "#veryfront/security/project-locality.ts";
+import { createApplicationAuthRequestHandler } from "#veryfront/security/application-auth/application-auth-runtime.ts";
+import { AuthHandler } from "#veryfront/security/http/auth.ts";
+import {
+  applyCORSPreflightHeaders,
+  isPreflightRequest,
+} from "#veryfront/security/http/cors/preflight.ts";
 
 /** Max entries in the loaded-handler LRU cache */
 const HANDLER_CACHE_MAX_ENTRIES = 256;
@@ -87,6 +105,7 @@ export function sanitizeLoadErrorForResponse(message: string, projectDir?: strin
 interface APIRouteHandlerDeps {
   loadHandlerModule?: typeof loadHandlerModule;
   prepareHandlerModule?: typeof prepareHandlerModule;
+  resolvePreparedRouteMethods?: typeof resolvePreparedRouteMethods;
   discoverPagesRoutes?: typeof discoverPagesRoutes;
   discoverAppRoutes?: typeof discoverAppRoutes;
   getConfig?: typeof getConfig;
@@ -105,6 +124,8 @@ function getDeps(): Required<APIRouteHandlerDeps> {
   return {
     loadHandlerModule: injectedDeps?.loadHandlerModule ?? loadHandlerModule,
     prepareHandlerModule: injectedDeps?.prepareHandlerModule ?? prepareHandlerModule,
+    resolvePreparedRouteMethods: injectedDeps?.resolvePreparedRouteMethods ??
+      resolvePreparedRouteMethods,
     discoverPagesRoutes: injectedDeps?.discoverPagesRoutes ?? discoverPagesRoutes,
     discoverAppRoutes: injectedDeps?.discoverAppRoutes ?? discoverAppRoutes,
     getConfig: injectedDeps?.getConfig ?? getConfig,
@@ -116,6 +137,10 @@ export interface APIResponse {
   body?: unknown;
   status?: number;
   headers?: HeadersInit;
+}
+
+export interface APIRouteHandleOptions {
+  beforeOptionsDispatch?: () => Promise<void>;
 }
 
 /** Function signature for API route handlers. */
@@ -137,6 +162,8 @@ type LoadedRoute =
 export class APIRouteHandler {
   private router = new ApiRouteMatcher();
   private routeCache = new LRUCache<string, LoadedRoute>({ maxEntries: HANDLER_CACHE_MAX_ENTRIES });
+  private readonly applicationAuth = createApplicationAuthRequestHandler();
+  private readonly httpAuth = new AuthHandler();
   private executionScopeId = crypto.randomUUID();
   private activeRequests = 0;
   private destroyRequested = false;
@@ -214,7 +241,11 @@ export class APIRouteHandler {
     );
   }
 
-  handle(request: Request, ctx?: HandlerContext): Promise<Response | null> {
+  handle(
+    request: Request,
+    ctx?: HandlerContext,
+    options: APIRouteHandleOptions = {},
+  ): Promise<Response | null> {
     const { pathname } = new URL(request.url);
     this.activeRequests++;
 
@@ -231,22 +262,28 @@ export class APIRouteHandler {
 
         await this.ensureCorsConfig(adapter);
 
-        if (request.method.toUpperCase() === "OPTIONS") {
-          return handleCORSPreflight({
-            request,
-            config: this.corsConfig ?? undefined,
-          });
+        const method = request.method.toUpperCase();
+        const isApiPath = pathname === "/api" || pathname.startsWith("/api/");
+        if (
+          method === "OPTIONS" &&
+          isApiPath &&
+          requiresIsolatedProjectRuntime(ctx)
+        ) {
+          return this.automaticPreflight(request, undefined, ctx);
         }
 
         const match = this.router.match(pathname);
         if (!match) {
           logger.debug("No route match", {
             pathname,
-            isApiPath: pathname.startsWith("/api/"),
+            isApiPath,
             availableRoutes: this.router.listRoutes().map((r) => r.pattern),
           });
 
-          if (pathname === "/api" || pathname.startsWith("/api/")) return notFound();
+          if (method === "OPTIONS" && isApiPath) {
+            return this.automaticPreflight(request, undefined, ctx);
+          }
+          if (isApiPath) return notFound();
           return null;
         }
 
@@ -256,6 +293,36 @@ export class APIRouteHandler {
           page: match.route.page,
           params: match.params,
         });
+
+        if (method === "OPTIONS") {
+          if (
+            !isPreflightRequest(request) &&
+            await this.resolveStaticOptionsCapability(match.route.page, adapter) === "absent"
+          ) {
+            return this.automaticPreflight(request, undefined, ctx);
+          }
+
+          const authResponse = await this.authenticateOptionsRoute(request, ctx);
+          if (authResponse) {
+            if (isPreflightRequest(request)) {
+              return this.automaticPreflight(
+                request,
+                await this.resolveStaticRouteMethods(
+                  match.route.page,
+                  adapter,
+                  this.requestedPreflightMethod(request),
+                ),
+                ctx,
+              );
+            }
+            return await applyCORSHeaders({
+              request,
+              response: authResponse,
+              config: this.corsConfig ?? undefined,
+            }) ?? authResponse;
+          }
+          await options.beforeOptionsDispatch?.();
+        }
 
         const isLocalProject = ctx?.isLocalProject === true;
         const allowHostProjectCodeExecution = isHostProjectCodeExecutionAllowed(ctx);
@@ -345,6 +412,28 @@ export class APIRouteHandler {
           allowHostProjectCodeExecution: useHostRealm,
         };
 
+        let executableOptionsMethods: readonly string[] | undefined;
+        if (method === "OPTIONS") {
+          try {
+            const requestedMethod = this.requestedPreflightMethod(request);
+            executableOptionsMethods = route.kind === "isolated"
+              ? await this.resolveIsolatedRouteMethods(
+                match.route.page,
+                route.module,
+                requestedMethod,
+              )
+              : resolveExecutableRouteMethods(route.handler, requestedMethod, {
+                includeFrameworkOptions: false,
+              });
+          } catch (error) {
+            return createAPIRouteErrorResponse(error, pathname, isLocalProject);
+          }
+
+          if (!executableOptionsMethods.includes("OPTIONS")) {
+            return this.automaticPreflight(request, executableOptionsMethods, ctx);
+          }
+        }
+
         const applicationRequest = createApplicationRequest(request, {
           denyHeaders: ctx?.applicationIdentityHeaderNames,
         });
@@ -386,11 +475,20 @@ export class APIRouteHandler {
             { ...isolationOptions, applicationIdentity },
           );
 
-        const corsResponse = await applyCORSHeaders({
-          request,
-          response,
-          config: this.corsConfig ?? undefined,
-        });
+        const corsResponse = method === "OPTIONS" &&
+            executableOptionsMethods &&
+            isPreflightRequest(request)
+          ? await this.applyExplicitOptionsPreflightPolicy(
+            request,
+            response,
+            executableOptionsMethods,
+            ctx,
+          )
+          : await applyCORSHeaders({
+            request,
+            response,
+            config: this.corsConfig ?? undefined,
+          });
 
         return corsResponse ?? response;
       },
@@ -450,6 +548,114 @@ export class APIRouteHandler {
       },
       { "api.modulePath": modulePath },
     );
+  }
+
+  private async resolveIsolatedRouteMethods(
+    modulePath: string,
+    module: PreparedWorkerModule,
+    requestedMethod: string | undefined,
+  ): Promise<readonly string[]> {
+    return await getDeps().resolvePreparedRouteMethods(requestedMethod, {
+      executionScopeId: this.executionScopeId,
+      module,
+      modulePath,
+      projectDir: this.projectDir,
+    }, { includeFrameworkOptions: false });
+  }
+
+  private requestedPreflightMethod(request: Request): string | undefined {
+    try {
+      return normalizeRouteMethod(
+        request.headers.get("access-control-request-method"),
+      ) ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async resolveStaticOptionsCapability(
+    modulePath: string,
+    adapter: RuntimeAdapter,
+  ): Promise<StaticRouteOptionsCapability> {
+    try {
+      const source = await adapter.fs.readFile(modulePath);
+      return await resolveStaticRouteOptionsCapability(source);
+    } catch {
+      // Static inspection is an optimization for plain OPTIONS only. If the
+      // source cannot be read or parsed, retain the safe auth-before-evaluation
+      // fallback and let the canonical route path decide after admission.
+      return "unknown";
+    }
+  }
+
+  private async resolveStaticRouteMethods(
+    modulePath: string,
+    adapter: RuntimeAdapter,
+    requestedMethod?: string,
+  ): Promise<readonly string[] | undefined> {
+    try {
+      const source = await adapter.fs.readFile(modulePath);
+      return await resolveStaticRouteMethodsFromSource(source, requestedMethod);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async automaticPreflight(
+    request: Request,
+    executableMethods?: readonly string[],
+    ctx?: HandlerContext,
+  ): Promise<Response> {
+    const allowMethods = executableMethods
+      ? (executableMethods.includes("OPTIONS")
+        ? executableMethods
+        : [...executableMethods, "OPTIONS"]).join(", ")
+      : DEFAULT_CORS_METHODS.join(", ");
+    const response = await handleCORSPreflight({
+      request,
+      config: this.corsConfig ?? undefined,
+      allowMethods,
+      allowHeaders: getApplicationPreflightHeaders(request, {
+        denyHeaders: ctx?.applicationIdentityHeaderNames,
+      }),
+    });
+    response.headers.set("Allow", allowMethods);
+    return response;
+  }
+
+  private async authenticateOptionsRoute(
+    request: Request,
+    ctx: HandlerContext | undefined,
+  ): Promise<Response | null> {
+    if (!ctx) return null;
+
+    const applicationAuth = await this.applicationAuth(request, ctx);
+    if (applicationAuth?.response) return applicationAuth.response;
+    if (applicationAuth) {
+      ctx.applicationIdentity = applicationAuth.metadata?.applicationIdentity ?? null;
+      ctx.applicationIdentityHeaderNames =
+        applicationAuth.metadata?.applicationIdentityHeaderNames ?? [];
+    }
+
+    const httpAuth = await this.httpAuth.handleExplicitOptions(request, ctx);
+    return httpAuth.response ?? null;
+  }
+
+  private async applyExplicitOptionsPreflightPolicy(
+    request: Request,
+    response: Response,
+    executableMethods: readonly string[],
+    ctx?: HandlerContext,
+  ): Promise<Response> {
+    return await applyCORSPreflightHeaders({
+      request,
+      response,
+      config: this.corsConfig ?? undefined,
+      allowMethods: executableMethods.join(", "),
+      allowHeaders: getApplicationPreflightHeaders(request, {
+        denyHeaders: ctx?.applicationIdentityHeaderNames,
+      }),
+    });
   }
 
   clearCache(): void {
