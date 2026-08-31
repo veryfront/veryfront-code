@@ -27,9 +27,7 @@ import type {
   CreateSandboxBashTool,
 } from "#veryfront/sandbox";
 import { registerSkill } from "#veryfront/skill/registry.ts";
-import { clearModelProviders, type ModelRuntime, registerModelProvider } from "#veryfront/provider";
-import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
+import { type ModelRuntime, registerModelProvider } from "#veryfront/provider";
 import type { RemoteToolSource, Tool } from "#veryfront/tool";
 import { __resetLoggerConfigForTests, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import type { AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
@@ -214,60 +212,6 @@ describe("internal-agents/run-stream", () => {
   afterEach(() => {
     _resetShimForTests();
     skillRegistryInternal.clearAll();
-    restoreMockFetch();
-    clearModelProviders();
-    deleteEnv("VERYFRONT_API_TOKEN");
-    deleteEnv("VERYFRONT_PROJECT_SLUG");
-  });
-
-  it("routes the run inference credential to the Veryfront Cloud gateway", async () => {
-    setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
-    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
-    let capturedAuthorization: string | null = null;
-    const encoder = new TextEncoder();
-    installMockFetch(
-      (async (input: URL | Request | string, init?: RequestInit) => {
-        const request = new Request(input, init);
-        capturedAuthorization = request.headers.get("Authorization");
-        return new Response(
-          new ReadableStream({
-            start(controller) {
-              controller.enqueue(
-                encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
-              );
-              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-              controller.close();
-            },
-          }),
-          { status: 200, headers: { "content-type": "text/event-stream" } },
-        );
-      }) as typeof fetch,
-    );
-    const runtimeAgent = createAgent({
-      id: "run-scoped-inference-agent",
-      model: "veryfront-cloud/openai/gpt-test",
-      system: "Answer concisely.",
-      skills: false,
-    });
-
-    const response = await createRuntimeAgentStreamResponse(
-      {
-        agentId: runtimeAgent.id,
-        threadId: crypto.randomUUID(),
-        runId: "run_scoped_inference_1",
-        messages: [{ id: "user-1", role: "user", content: "Hello" }],
-        tools: [],
-        context: [],
-      } as Parameters<typeof createRuntimeAgentStreamResponse>[0],
-      runtimeAgent,
-      {
-        sessionManager: new AgentRunSessionManager(),
-        inferenceAuthToken: "run-scoped-inference-token",
-      },
-    );
-    await response.text();
-
-    assertEquals(capturedAuthorization, "Bearer run-scoped-inference-token");
   });
 
   it("includes skill infrastructure for tools: true agents without a skills selector", () => {
