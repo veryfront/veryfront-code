@@ -6,6 +6,31 @@ versions are listed at
 
 ## Unreleased
 
+### Breaking: workflow HTTP reads return summaries
+
+The built-in workflow handler now returns `WorkflowRunSummary` from
+`GET /runs`, `GET /runs/{runId}`, and the initial SSE `snapshot`. The
+`useWorkflow` and `useWorkflowList` result and callback types use the same
+summary contract.
+
+These responses no longer contain run input, output, context, checkpoints,
+source integration policy, node input and output, approval payloads and
+decision metadata, or framework runtime metadata. List requests without an
+explicit limit now read at most 100 runs.
+
+`WorkflowClient` still returns the durable full run state for trusted
+server-side code. If browser code reads a removed field, move that read to a
+separately authorized server endpoint backed by `WorkflowClient`, and return
+only the fields the application needs. Use `useApproval` or the dedicated
+approval-by-ID route for approval payloads.
+
+Operational error strings and approval request messages remain visible. Do not
+place secrets, tokens, customer payloads, or private model output in those
+developer-authored fields.
+
+See [Workflows: loops, blob storage, React hooks](./docs/guides/workflows-advanced.md#understand-run-summaries)
+for the exact summary shape and authorization guidance.
+
 ### Breaking: `veryfront dev` enforces CSRF
 
 `security.csrf` now resolves the same way in every environment. Local
