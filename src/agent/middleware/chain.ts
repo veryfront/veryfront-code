@@ -329,7 +329,7 @@ function observeContinuationRejection(
   void ReflectApply(PromiseThen, promise, [undefined, (error: unknown) => {
     try {
       if (
-        typeof error === "object" && error !== null && suppressedInvalidErrors &&
+        error && typeof error === "object" && suppressedInvalidErrors &&
         isInvalidContinuationError(error) &&
         ReflectApply(WeakSetHas, suppressedInvalidErrors, [error]) as boolean
       ) {
