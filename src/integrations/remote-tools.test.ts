@@ -210,6 +210,59 @@ describe("integrations/remote-tools", () => {
     assertEquals(records.map((entry) => entry.level), ["debug"]);
   });
 
+  it("retries a response-body transport failure and recovers discovery", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    let fetchCalls = 0;
+    let result: RemoteIntegrationToolDiscoveryResult | undefined;
+    const records = await captureIntegrationDiscoveryLogs(async () => {
+      result = await withMockFetch(async () => {
+        fetchCalls++;
+        if (fetchCalls === 1) {
+          return new Response(
+            new ReadableStream({
+              pull(controller) {
+                controller.error(new TypeError("connection reset while reading body"));
+              },
+            }),
+          );
+        }
+        return Response.json({ tools: [] });
+      }, () => getRemoteIntegrationToolDiscovery());
+    });
+
+    assertEquals(fetchCalls, 2);
+    assertEquals(result, { status: "ok", tools: [] });
+    assertEquals(records.map((entry) => entry.level), ["debug"]);
+  });
+
+  it("does not retry local project slug validation failures", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    let fetchCalls = 0;
+    let result: RemoteIntegrationToolDiscoveryResult | undefined;
+    const records = await captureIntegrationDiscoveryLogs(async () => {
+      result = await withMockFetch(async () => {
+        fetchCalls++;
+        return Response.json({ tools: [] });
+      }, () =>
+        getRemoteIntegrationToolDiscovery({
+          authToken: "request-token",
+          projectSlug: "not_a_canonical_slug",
+        }));
+    });
+
+    assertEquals(fetchCalls, 0);
+    assertEquals(result, { status: "unavailable", reason: "request_failed" });
+    assertEquals(records.map((entry) => entry.level), ["error"]);
+  });
+
   it("keys the per-run discovery cache by credential and project", async () => {
     setRemoteToolEnv({
       VERYFRONT_API_BASE_URL: "https://api.test",
