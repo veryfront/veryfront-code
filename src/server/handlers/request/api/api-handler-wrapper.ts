@@ -300,13 +300,13 @@ export class ApiHandlerWrapper extends BaseHandler {
     ctx: HandlerContext,
     pathname: string,
   ): Promise<HandlerResult> {
-    if (req.method.toUpperCase() === "OPTIONS" && isPreflightRequest(req)) {
+    if (isPreflightRequest(req)) {
       const response = await handleCORSPreflight({
         request: req,
         config: ctx.securityConfig?.cors,
         allowMethods: DEFAULT_CORS_METHODS.join(", "),
         allowHeaders: getApplicationPreflightHeaders(req, {
-          denyHeaders: ctx.applicationIdentityHeaderNames,
+          denyHeaders: ctx.applicationIdentityHeaderNames ?? [],
         }),
       });
       response.headers.set("Allow", DEFAULT_CORS_METHODS.join(", "));
