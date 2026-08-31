@@ -2610,7 +2610,36 @@ describe("automated review publication", () => {
       fixture.published[0]?.description,
       `PR#1 reset base:${
         reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-      } key:ready-run-9001-at-1787648400000-event-41`,
+      } key:ready-r-6y1-t-mt8fp9c0-e-15`,
+    );
+  });
+
+  it("keeps run-bound reset descriptions within GitHub's status limit", async () => {
+    const fixture = githubFixture({
+      pages: {
+        events: [[{
+          event: "base_ref_changed",
+          id: 12_345_678_901,
+          created_at: "2026-08-25T09:00:00Z",
+        }]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1234,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1234",
+      reviewResetKey: "base",
+      reviewEpochNotBefore: "2026-08-25T09:00:00Z",
+      reviewEpochRunKey: "12345678901",
+    });
+
+    assertEquals(result.state, "pending");
+    assert(
+      result.description.length <= 140,
+      "commit-status descriptions must fit GitHub's 140-character limit",
     );
   });
 
@@ -2650,6 +2679,43 @@ describe("automated review publication", () => {
     assertEquals(result.state, "pending");
     assertEquals(result.review, undefined);
     assertEquals(fixture.published, []);
+  });
+
+  it("prefers a newly visible epoch over a superseded run-bound reset", async () => {
+    const reset = automatedReviewResetStatus("2026-08-25T08:00:00Z", {
+      id: 104,
+      description: `PR#1 reset base:${
+        reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+      } key:base-run-9001-at-1787644800000-event-42`,
+    });
+    const fixture = githubFixture({
+      pages: {
+        events: [[
+          {
+            event: "base_ref_changed",
+            id: 42,
+            created_at: "2026-08-25T08:00:00Z",
+          },
+          {
+            event: "base_ref_changed",
+            id: 43,
+            created_at: "2026-08-25T08:00:00Z",
+          },
+        ]],
+        statuses: [[reset]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(result.reviewRequestKey, "base-43");
   });
 
   it("starts a fresh pending epoch when a pull request reopens", async () => {
@@ -2822,7 +2888,7 @@ describe("automated review publication", () => {
       tiedFixture.published[0]?.description,
       `PR#1 reset base:${
         reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-      } key:reopen-run-9001-at-1787648400000-event-41`,
+      } key:reopen-r-6y1-t-mt8fp9c0-e-15`,
     );
 
     const runReset = automatedReviewResetStatus(
@@ -2831,7 +2897,7 @@ describe("automated review publication", () => {
         id: 101,
         description: `PR#1 reset base:${
           reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-        } key:reopen-run-9001-at-1787648400000-event-41`,
+        } key:reopen-r-6y1-t-mt8fp9c0-e-15`,
       },
     );
 
@@ -4816,6 +4882,8 @@ function requestFixture(options: {
   events?: Record<string, unknown>[];
   eventResponses?: Record<string, unknown>[][];
   reviews?: Record<string, unknown>[];
+  statuses?: Record<string, unknown>[];
+  timeline?: Record<string, unknown>[];
   currentHead?: string;
   headResponses?: string[];
   currentState?: string;
@@ -4826,6 +4894,8 @@ function requestFixture(options: {
     comments: options.comments ?? [],
     events: options.events ?? [],
     reviews: options.reviews ?? [],
+    statuses: options.statuses ?? [],
+    timeline: options.timeline ?? [],
     currentHead: options.currentHead ?? HEAD,
     currentState: options.currentState ?? "open",
     draft: options.draft ?? false,
@@ -4847,9 +4917,8 @@ function requestFixture(options: {
           ] ?? state.events;
           yield { data: events };
         } else if (endpoint === listReviews) yield { data: state.reviews };
-        else if (endpoint === listStatuses || endpoint === listTimeline) {
-          yield { data: [] };
-        }
+        else if (endpoint === listStatuses) yield { data: state.statuses };
+        else if (endpoint === listTimeline) yield { data: state.timeline };
         else throw new Error("unknown endpoint");
       },
     },
@@ -5030,6 +5099,44 @@ describe("automated review request", () => {
     assertEquals(changedEpochResult.requested, false);
     assertEquals(changedEpochResult.reason, "stale-epoch");
     assertEquals(changedEpoch.posted, []);
+  });
+
+  it("honors a run-bound reset during the final proof refresh", async () => {
+    const fixture = requestFixture({
+      comments: [codexComment(HEAD.slice(0, 10), {
+        id: 103,
+        created_at: "2026-08-25T09:00:00Z",
+        updated_at: "2026-08-25T09:00:00Z",
+      })],
+      events: [{
+        event: "ready_for_review",
+        id: 41,
+        created_at: "2026-08-25T08:00:00Z",
+      }],
+      statuses: [automatedReviewResetStatus("2026-08-25T10:00:00Z", {
+        id: 104,
+        description: `PR#1 reset base:${
+          reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+        } key:ready-run-9001-at-1787644800000-event-41`,
+      })],
+    });
+    const result = await requestAutomatedReview({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      requestKey: "ready-run-9001-at-1787644800000-event-41",
+      reviewEpochNotAfter: "2026-08-25T08:00:00Z",
+      validateRequestEpoch: true,
+      revalidateReviewEvidence: true,
+    });
+
+    assertEquals(result.requested, true);
+    assertEquals(
+      fixture.posted[0]?.body,
+      `<!-- automated-review-request: ${HEAD} ready-run-9001-at-1787644800000-event-41 -->\n@codex review`,
+    );
   });
 
   it("does not post when the pull request is closed or draft", async () => {

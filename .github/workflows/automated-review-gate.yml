@@ -691,7 +691,7 @@ jobs:
             if (
               context.eventName === "pull_request_target" &&
               context.payload.action === "ready_for_review" &&
-              /^ready-run-/.test(result.reviewRequestKey ?? "")
+              /^ready-(?:r|run)-/.test(result.reviewRequestKey ?? "")
             ) {
               core.setOutput("explicit-ready-request", "true");
             }

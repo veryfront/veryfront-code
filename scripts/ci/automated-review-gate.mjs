@@ -222,8 +222,63 @@ function parseReviewEpochNotBefore(value) {
 
 function reviewEpochEventIdentity(epoch) {
   return Number.isSafeInteger(epoch?.id) && epoch.id > 0
-    ? `-event-${epoch.id}`
+    ? `-e-${epoch.id.toString(36)}`
     : "";
+}
+
+function parseBase36Identity(value) {
+  if (typeof value !== "string" || !/^[0-9a-z]+$/i.test(value)) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(value, 36);
+  return Number.isSafeInteger(parsed) && parsed > 0 &&
+      parsed.toString(36) === value.toLowerCase()
+    ? parsed
+    : undefined;
+}
+
+function parseCompactRunBoundReviewRequestKey(requestKey) {
+  if (typeof requestKey !== "string") return undefined;
+  const match = /^(base|ready|reopen)-r-([0-9a-z]+)-t-([0-9a-z]+)(?:-e-([0-9a-z]+))?$/i
+    .exec(requestKey);
+  if (!match) return undefined;
+  const epochTime = parseBase36Identity(match[3]);
+  const eventId = match[4] === undefined
+    ? undefined
+    : parseBase36Identity(match[4]);
+  if (epochTime === undefined || (match[4] !== undefined && !eventId)) {
+    return undefined;
+  }
+  return {
+    requestKind: match[1].toLowerCase(),
+    eventKind: REVIEW_REQUEST_EVENT_KINDS.get(match[1].toLowerCase()),
+    epochTime,
+    eventId,
+  };
+}
+
+function parseLegacyRunBoundReviewRequestKey(requestKey) {
+  if (typeof requestKey !== "string") return undefined;
+  const match = /^(base|ready|reopen)-run-([1-9]\d*)-at-(\d{13})(?:-event-([1-9]\d*))?$/
+    .exec(requestKey);
+  if (!match) return undefined;
+  const epochTime = Number(match[3]);
+  const eventId = match[4] === undefined ? undefined : Number(match[4]);
+  if (
+    !Number.isSafeInteger(epochTime) || epochTime < 1 ||
+    (match[4] !== undefined && !isPositiveStatusId(eventId))
+  ) return undefined;
+  return {
+    requestKind: match[1],
+    eventKind: REVIEW_REQUEST_EVENT_KINDS.get(match[1]),
+    epochTime,
+    eventId,
+  };
+}
+
+function parseRunBoundReviewRequestKey(requestKey) {
+  return parseCompactRunBoundReviewRequestKey(requestKey) ??
+    parseLegacyRunBoundReviewRequestKey(requestKey);
 }
 
 function durableReviewRequestKey(
@@ -254,7 +309,8 @@ function durableReviewRequestKey(
       !/^[1-9]\d*$/.test(reviewEpochRunKey)
     ) throw new Error("Review epoch run key is malformed");
     const eventIdentity = reviewEpochEventIdentity(latestEpoch);
-    return `${requestKey}-run-${reviewEpochRunKey}-at-${notBefore}${eventIdentity}`;
+    const compactRunKey = BigInt(reviewEpochRunKey).toString(36);
+    return `${requestKey}-r-${compactRunKey}-t-${notBefore.toString(36)}${eventIdentity}`;
   }
   if (!Number.isSafeInteger(latestEpoch.id) || latestEpoch.id < 1) {
     throw new Error("Review epoch event identity is malformed");
@@ -419,9 +475,7 @@ function isEvidenceProvablyLater(candidate, current, timeline) {
 function reviewResetDescription(pullNumber, baseBinding, requestKey) {
   const prefix = `PR#${pullNumber} reset base:${baseBinding}`;
   if (requestKey === undefined) return prefix;
-  const encodedKey = /^(?:base|ready|reopen)-run-[1-9]\d*-at-\d{13}(?:-event-[1-9]\d*)?$/.test(
-      requestKey,
-    )
+  const encodedKey = parseRunBoundReviewRequestKey(requestKey) !== undefined
     ? requestKey
     : createHash("sha256").update(requestKey).digest("hex").slice(0, 12);
   return `${prefix} key:${encodedKey}`;
@@ -477,10 +531,8 @@ function latestRunBoundReviewRequestKey(
       !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
     ) continue;
     const requestKey = status.description.slice(prefix.length);
-    const runBound = /^(?:base|ready|reopen)-run-[1-9]\d*-at-(\d{13})(?:-event-([1-9]\d*))?$/
-      .exec(requestKey);
+    const runBound = parseRunBoundReviewRequestKey(requestKey);
     if (!runBound) continue;
-    const epochTime = Number(runBound[1]);
     const createdAt = Date.parse(status?.created_at ?? "");
     if (!Number.isFinite(createdAt)) continue;
     if (boundary !== undefined && createdAt < boundary.time) continue;
@@ -488,12 +540,25 @@ function latestRunBoundReviewRequestKey(
       latest = {
         requestKey,
         createdAt,
-        epochTime,
-        eventId: runBound[2] === undefined ? undefined : Number(runBound[2]),
+        epochTime: runBound.epochTime,
+        eventId: runBound.eventId,
+        eventKind: runBound.eventKind,
       };
     }
   }
   return latest;
+}
+
+function runBoundRequestBelongsToBoundary(request, boundary) {
+  if (request === undefined) return false;
+  if (boundary === undefined || !REVIEW_EPOCH_EVENTS.has(boundary.kind)) {
+    return true;
+  }
+  if (boundary.time !== request.epochTime) {
+    return boundary.time < request.epochTime;
+  }
+  return boundary.kind === request.eventKind &&
+    boundary.id === request.eventId;
 }
 
 function latestPendingReviewStatus(statuses, pullNumber) {
@@ -1282,12 +1347,18 @@ export async function publishAutomatedReviewStatus({
         reviewNotBefore,
         latestReviewEpochChange(events),
       );
-      const runBoundRequest = latestRunBoundReviewRequestKey(
+      const recoveredRunBoundRequest = latestRunBoundReviewRequestKey(
         statuses,
         pullNumber,
         baseBinding,
         reviewBoundary,
       );
+      const runBoundRequest = runBoundRequestBelongsToBoundary(
+          recoveredRunBoundRequest,
+          reviewBoundary,
+        )
+        ? recoveredRunBoundRequest
+        : undefined;
       reviewRequestKey = effectiveReviewResetKey ??
         runBoundRequest?.requestKey ??
         reviewRequestKeyFromBoundary(reviewBoundary);
@@ -1323,9 +1394,7 @@ export async function publishAutomatedReviewStatus({
       existingPropagationRetryIsLatest = propagationRetry?.status?.id ===
         latestReviewGateStatusForPull(statuses, pullNumber)?.id;
       const runBoundResetPending = resetPending &&
-        /^(?:base|ready|reopen)-run-/.test(
-          effectiveReviewResetKey ?? "",
-        );
+        parseRunBoundReviewRequestKey(effectiveReviewResetKey) !== undefined;
       if (
         !isDraft &&
         (!resetPending ||
@@ -1730,14 +1799,7 @@ export async function findTimedOutAutomatedReviews({
   throw new Error("Timeout discovery exceeded 1,000 open pull requests");
 }
 
-function latestReviewPropagationRetryStatus(
-  statuses,
-  pullNumber,
-  boundary,
-  comments = [],
-  timeline = [],
-  headSha = "",
-) {
+function storedReviewPropagationRetry(statuses, pullNumber) {
   const latestStatus = latestReviewGateStatusForPull(statuses, pullNumber);
   let status = latestStatus;
   let failureKind = reviewFailureKindFromDescription(
@@ -1771,32 +1833,61 @@ function latestReviewPropagationRetryStatus(
     !isPinnedBot(status?.creator, GITHUB_ACTIONS_LOGIN)
   ) return undefined;
   if (failureKind === undefined) return undefined;
-  if (boundary !== undefined) {
-    if (failureKind === "rate-limited") {
-      if (!terminalStatusHasBoundaryProof(
-        status,
-        comments,
-        boundary,
-        timeline,
-        headSha,
-      )) return undefined;
-    } else if (failureKind === "timed-out") {
-      if (!pendingHistoryHasBoundaryProof(
+  return { status, failureKind };
+}
+
+function reviewPropagationRetryHasBoundaryProof(
+  retry,
+  statuses,
+  pullNumber,
+  boundary,
+  comments,
+  timeline,
+  headSha,
+) {
+  if (boundary === undefined) return true;
+  if (retry.failureKind === "rate-limited") {
+    return terminalStatusHasBoundaryProof(
+      retry.status,
+      comments,
+      boundary,
+      timeline,
+      headSha,
+    );
+  }
+  if (retry.failureKind === "timed-out") {
+    return pendingHistoryHasBoundaryProof(
+      statuses,
+      pullNumber,
+      boundary,
+      retry.status,
+    );
+  }
+  const createdAt = Date.parse(retry.status?.created_at ?? "");
+  return Number.isFinite(createdAt) && createdAt >= boundary.time;
+}
+
+function latestReviewPropagationRetryStatus(
+  statuses,
+  pullNumber,
+  boundary,
+  comments = [],
+  timeline = [],
+  headSha = "",
+) {
+  const retry = storedReviewPropagationRetry(statuses, pullNumber);
+  return retry &&
+      reviewPropagationRetryHasBoundaryProof(
+        retry,
         statuses,
         pullNumber,
         boundary,
-        status,
-      )) {
-        return undefined;
-      }
-    } else {
-      const createdAt = Date.parse(status?.created_at ?? "");
-      if (!Number.isFinite(createdAt) || createdAt < boundary.time) {
-        return undefined;
-      }
-    }
-  }
-  return { status, failureKind };
+        comments,
+        timeline,
+        headSha,
+      )
+    ? retry
+    : undefined;
 }
 
 async function finalizeReviewFailureStatus({
@@ -2946,23 +3037,16 @@ function resolveAutomatedReviewRequestEpochKey(
       reviewEpochRunKey,
     );
   }
-  const runBoundEpoch = typeof requestKey === "string"
-    ? /^(base|ready|reopen)-run-([1-9]\d*)-at-(\d{13})(?:-event-([1-9]\d*))?$/
-      .exec(requestKey)
-    : null;
+  const runBoundEpoch = parseRunBoundReviewRequestKey(requestKey);
   if (runBoundEpoch) {
     const notAfter = Date.parse(reviewEpochNotAfter ?? "");
-    if (!Number.isFinite(notAfter) || notAfter !== Number(runBoundEpoch[3])) {
+    if (!Number.isFinite(notAfter) || notAfter !== runBoundEpoch.epochTime) {
       throw new TypeError("Run-bound review epoch timestamp is malformed");
     }
     const latestEpoch = latestReviewEpochChange(events);
-    const pinnedEventId = runBoundEpoch[4] === undefined
-      ? undefined
-      : Number(runBoundEpoch[4]);
-    const expectedKind = REVIEW_REQUEST_EVENT_KINDS.get(runBoundEpoch[1]);
     return latestEpoch?.time === notAfter &&
-        latestEpoch.kind === expectedKind &&
-        latestEpoch.id === pinnedEventId
+        latestEpoch.kind === runBoundEpoch.eventKind &&
+        latestEpoch.id === runBoundEpoch.eventId
       ? requestKey
       : undefined;
   }
@@ -3073,8 +3157,9 @@ async function revalidateAutomatedReviewRequest({
         ...common,
         login,
         pullAuthor: refreshed?.data?.user?.login,
-      }),
+    }),
     latestReviewResetTime(statuses, pullNumber, baseBinding),
+    parseRunBoundReviewRequestKey(effectiveRequestKey) !== undefined,
   );
   return review
     ? { requested: false, marker, reason: "reviewed" }
