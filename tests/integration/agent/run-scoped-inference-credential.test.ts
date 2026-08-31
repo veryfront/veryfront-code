@@ -563,6 +563,85 @@ describe("run-scoped inference credential", () => {
     );
   });
 
+  it("keeps inference credentials out of mutable URL, Request, and validation primitives", async () => {
+    const inferenceToken = "run-scoped-inference-token";
+    const NativeHeaders = globalThis.Headers;
+    const NativeRequest = globalThis.Request;
+    const NativeURL = globalThis.URL;
+    const originalRequestHeaders = Object.getOwnPropertyDescriptor(
+      NativeRequest.prototype,
+      "headers",
+    )!;
+    const originalUrlOrigin = Object.getOwnPropertyDescriptor(NativeURL.prototype, "origin")!;
+    const originalTrim = String.prototype.trim;
+    const originalRegExpTest = RegExp.prototype.test;
+    const originalTextEncoderEncode = TextEncoder.prototype.encode;
+    const observedValidationTokens: string[] = [];
+
+    String.prototype.trim = function (): string {
+      if (this === inferenceToken) observedValidationTokens.push("trim");
+      return Reflect.apply(originalTrim, this, []);
+    };
+    RegExp.prototype.test = function (value: string): boolean {
+      if (value === inferenceToken) observedValidationTokens.push("regexp");
+      return Reflect.apply(originalRegExpTest, this, [value]);
+    };
+    TextEncoder.prototype.encode = function (value = ""): Uint8Array {
+      if (value === inferenceToken) observedValidationTokens.push("encode");
+      return Reflect.apply(originalTextEncoderEncode, this, [value]);
+    };
+    Object.defineProperty(NativeRequest.prototype, "headers", {
+      ...originalRequestHeaders,
+      get() {
+        throw new Error("live Request headers getter used");
+      },
+    });
+    Object.defineProperty(NativeURL.prototype, "origin", {
+      ...originalUrlOrigin,
+      get() {
+        throw new Error("live URL origin getter used");
+      },
+    });
+    globalThis.URL = new Proxy(NativeURL, {
+      construct() {
+        throw new Error("live URL constructor used");
+      },
+    });
+
+    let capturedAuthorization: string | null = null;
+    try {
+      const wrappedFetch = createVeryfrontCloudFetch(
+        inferenceToken,
+        "https://93.184.216.34/ai/gateway/openai/v1",
+        undefined,
+        { inferenceCredential: true },
+      );
+      await withMockFetch(
+        async (input: URL | Request | string, init?: RequestInit) => {
+          const request = new NativeRequest(input, init);
+          const headers = Reflect.apply(originalRequestHeaders.get!, request, []) as Headers;
+          capturedAuthorization = Reflect.apply(
+            NativeHeaders.prototype.get,
+            headers,
+            ["authorization"],
+          ) as string | null;
+          return new Response(null, { status: 204 });
+        },
+        () => wrappedFetch("https://93.184.216.34/ai/gateway/openai/v1/chat/completions"),
+      );
+    } finally {
+      globalThis.URL = NativeURL;
+      Object.defineProperty(NativeURL.prototype, "origin", originalUrlOrigin);
+      Object.defineProperty(NativeRequest.prototype, "headers", originalRequestHeaders);
+      TextEncoder.prototype.encode = originalTextEncoderEncode;
+      RegExp.prototype.test = originalRegExpTest;
+      String.prototype.trim = originalTrim;
+    }
+
+    assertEquals(observedValidationTokens, []);
+    assertEquals(capturedAuthorization, `Bearer ${inferenceToken}`);
+  });
+
   it("keeps inference credentials out of replaced web constructors", async () => {
     setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
     setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
