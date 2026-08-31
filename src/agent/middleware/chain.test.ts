@@ -1,6 +1,7 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 
 import type { AgentContext, AgentResponse } from "#veryfront/agent/types.ts";
 import { MiddlewareChain } from "#veryfront/agent/middleware/chain.ts";
@@ -294,6 +295,49 @@ describe("agent/middleware/chain", () => {
     );
     assertEquals(error, downstreamError);
     assertEquals(observedError, downstreamError);
+  });
+
+  it("propagates a deferred downstream rejection without replacing its identity", async () => {
+    const downstreamError = new Error("deferred downstream failed");
+    const chain = new MiddlewareChain([
+      async (_context, next) => {
+        await Promise.resolve();
+        return await next();
+      },
+    ]);
+
+    const error = await assertRejects(
+      () => chain.execute(context, () => Promise.reject(downstreamError)),
+      Error,
+      "deferred downstream failed",
+    );
+    assertEquals(error, downstreamError);
+  });
+
+  it("reports a detached deferred downstream rejection", async () => {
+    const downstreamError = new Error("detached downstream failed");
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+    try {
+      const chain = new MiddlewareChain([
+        async (_context, next) => {
+          await Promise.resolve();
+          next();
+          return response;
+        },
+      ]);
+
+      await chain.execute(context, () => Promise.reject(downstreamError));
+      await Promise.resolve();
+      await Promise.resolve();
+    } finally {
+      unsubscribe();
+    }
+
+    const record = records.find((entry) =>
+      entry.message === "Agent middleware continuation failed"
+    );
+    assertEquals(record?.error?.message, "detached downstream failed");
   });
 
   it("invokes the final handler for an empty middleware chain", async () => {

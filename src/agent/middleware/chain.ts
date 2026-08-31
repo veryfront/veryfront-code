@@ -1,22 +1,39 @@
 import type { AgentContext, AgentMiddleware, AgentResponse } from "../types.ts";
 import { MIDDLEWARE_ERROR } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { agentLogger } from "#veryfront/utils/logger/index.ts";
 
 const INVALID_CONTINUATION_MESSAGE =
   "Agent middleware next() can only be called once while middleware is active";
-const NOOP = (): undefined => undefined;
+const INVALID_CONTINUATION_ERRORS = new WeakSet<object>();
 
 function createInvalidContinuationError() {
-  return MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE });
+  const error = MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE });
+  INVALID_CONTINUATION_ERRORS.add(error);
+  return error;
 }
 
-function consumeRejectedPromise(promise: Promise<AgentResponse>): void {
-  void promise.then(NOOP, NOOP);
+function isInvalidContinuationError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && INVALID_CONTINUATION_ERRORS.has(error);
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function observeContinuationRejection(promise: Promise<AgentResponse>): void {
+  void promise.catch((error) => {
+    if (isInvalidContinuationError(error) || isAbortError(error)) return;
+    // The returned continuation remains rejected for callers that await it.
+    // This observer is for detached calls: report their real failures instead
+    // of creating an unhandled rejection or silently discarding the error.
+    agentLogger.error("Agent middleware continuation failed", error);
+  });
 }
 
 function rejectInvalidContinuation(): Promise<AgentResponse> {
   const rejection = Promise.reject<AgentResponse>(createInvalidContinuationError());
-  consumeRejectedPromise(rejection);
+  observeContinuationRejection(rejection);
   return rejection;
 }
 
@@ -24,12 +41,12 @@ function createDeferredContinuation(
   isSettled: () => boolean,
   dispatch: () => Promise<AgentResponse>,
 ): Promise<AgentResponse> {
-  const deferredContinuation = Promise.resolve().then(() => {
+  const continuation = Promise.resolve().then(() => {
     if (isSettled()) throw createInvalidContinuationError();
     return dispatch();
   });
-  consumeRejectedPromise(deferredContinuation);
-  return deferredContinuation;
+  observeContinuationRejection(continuation);
+  return continuation;
 }
 
 interface MiddlewareContinuation {
@@ -50,10 +67,7 @@ function createMiddlewareContinuation(
     nextCalled = true;
 
     if (!middlewareInvoking) {
-      return createDeferredContinuation(
-        () => middlewareSettled,
-        dispatch,
-      );
+      return createDeferredContinuation(() => middlewareSettled, dispatch);
     }
 
     return dispatch();
