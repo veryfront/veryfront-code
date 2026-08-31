@@ -299,6 +299,8 @@ describe("agent/middleware/chain", () => {
 
   it("propagates a deferred downstream rejection without replacing its identity", async () => {
     const downstreamError = new Error("deferred downstream failed");
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
     const chain = new MiddlewareChain([
       async (_context, next) => {
         await Promise.resolve();
@@ -306,12 +308,20 @@ describe("agent/middleware/chain", () => {
       },
     ]);
 
-    const error = await assertRejects(
-      () => chain.execute(context, () => Promise.reject(downstreamError)),
-      Error,
-      "deferred downstream failed",
+    try {
+      const error = await assertRejects(
+        () => chain.execute(context, () => Promise.reject(downstreamError)),
+        Error,
+        "deferred downstream failed",
+      );
+      assertEquals(error, downstreamError);
+    } finally {
+      unsubscribe();
+    }
+    assertEquals(
+      records.some((entry) => entry.message === "Agent middleware continuation failed"),
+      false,
     );
-    assertEquals(error, downstreamError);
   });
 
   it("reports a detached deferred downstream rejection", async () => {

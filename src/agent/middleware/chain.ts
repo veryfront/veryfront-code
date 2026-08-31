@@ -21,13 +21,13 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
 
-function observeContinuationRejection(promise: Promise<AgentResponse>): void {
+function observeContinuationRejection(
+  promise: Promise<AgentResponse>,
+  onUnexpectedRejection?: (error: unknown) => void,
+): void {
   void promise.catch((error) => {
     if (isInvalidContinuationError(error) || isAbortError(error)) return;
-    // The returned continuation remains rejected for callers that await it.
-    // This observer is for detached calls: report their real failures instead
-    // of creating an unhandled rejection or silently discarding the error.
-    agentLogger.error("Agent middleware continuation failed", error);
+    onUnexpectedRejection?.(error);
   });
 }
 
@@ -40,19 +40,20 @@ function rejectInvalidContinuation(): Promise<AgentResponse> {
 function createDeferredContinuation(
   isSettled: () => boolean,
   dispatch: () => Promise<AgentResponse>,
+  onUnexpectedRejection?: (error: unknown) => void,
 ): Promise<AgentResponse> {
   const continuation = Promise.resolve().then(() => {
     if (isSettled()) throw createInvalidContinuationError();
     return dispatch();
   });
-  observeContinuationRejection(continuation);
+  observeContinuationRejection(continuation, onUnexpectedRejection);
   return continuation;
 }
 
 interface MiddlewareContinuation {
   next: () => Promise<AgentResponse>;
   finishInvocation: () => void;
-  settle: () => void;
+  settle: (error?: unknown) => void;
 }
 
 function createMiddlewareContinuation(
@@ -61,13 +62,28 @@ function createMiddlewareContinuation(
   let nextCalled = false;
   let middlewareInvoking = true;
   let middlewareSettled = false;
+  let middlewareSettlementError: unknown;
+  let continuationRejection: { error: unknown } | undefined;
+
+  const reportContinuationFailure = (error: unknown): void => {
+    if (!middlewareSettled) {
+      continuationRejection = { error };
+      return;
+    }
+    if (middlewareSettlementError === error) return;
+    agentLogger.error("Agent middleware continuation failed", error);
+  };
 
   const next = (): Promise<AgentResponse> => {
     if (nextCalled || middlewareSettled) return rejectInvalidContinuation();
     nextCalled = true;
 
     if (!middlewareInvoking) {
-      return createDeferredContinuation(() => middlewareSettled, dispatch);
+      return createDeferredContinuation(
+        () => middlewareSettled,
+        dispatch,
+        reportContinuationFailure,
+      );
     }
 
     return dispatch();
@@ -78,9 +94,15 @@ function createMiddlewareContinuation(
     finishInvocation: () => {
       middlewareInvoking = false;
     },
-    settle: () => {
+    settle: (error?: unknown) => {
       middlewareInvoking = false;
       middlewareSettled = true;
+      middlewareSettlementError = error;
+      const rejection = continuationRejection;
+      continuationRejection = undefined;
+      if (rejection && rejection.error !== error) {
+        agentLogger.error("Agent middleware continuation failed", rejection.error);
+      }
     },
   };
 }
@@ -111,12 +133,16 @@ export class MiddlewareChain {
                 () => dispatch(middlewareIndex + 1),
               );
 
+              let middlewareError: unknown;
               try {
                 const result = currentMiddleware(context, continuation.next);
                 continuation.finishInvocation();
                 return await result;
+              } catch (error) {
+                middlewareError = error;
+                throw error;
               } finally {
-                continuation.settle();
+                continuation.settle(middlewareError);
               }
             },
             { "middleware.index": middlewareIndex },
