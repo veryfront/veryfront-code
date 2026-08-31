@@ -6979,6 +6979,17 @@ export default config as const;
         assertStringIncludes(error.message, "Load [url]");
       });
 
+      it("redacts a split zero-slash URL with a Unicode hostname", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-split-unicode-host-",
+          `throw new Error(${JSON.stringify(`Load htt${escape}[p:内部.example/config.ts`)});\n`,
+        );
+
+        assertEquals(error.message.includes("内部.example"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
       it("redacts a file URL whose path delimiters are consumed by CSI", async () => {
         const escape = String.fromCharCode(27);
         const error = await loadFailure(
