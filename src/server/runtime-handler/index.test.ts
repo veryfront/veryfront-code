@@ -715,8 +715,19 @@ describe("server/runtime-handler/index", () => {
         error,
         0,
         false,
+        true,
       ),
       true,
+    );
+    assertEquals(
+      shouldRetrySourceSnapshotFreshness(
+        new Request("http://localhost/api/protected", { method: "OPTIONS" }),
+        error,
+        0,
+        false,
+        false,
+      ),
+      false,
     );
   });
 

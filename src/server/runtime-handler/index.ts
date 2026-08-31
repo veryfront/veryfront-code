@@ -211,10 +211,13 @@ export function shouldRetrySourceSnapshotFreshness(
   error: unknown,
   retries: number,
   projectMiddlewareStarted: boolean,
+  isFrameworkOwnedPreflight = false,
 ): boolean {
+  const methodCanRetry = request.method === "GET" || request.method === "HEAD" ||
+    (request.method === "OPTIONS" && isFrameworkOwnedPreflight);
   return retries < SOURCE_SNAPSHOT_FRESHNESS_RETRY_LIMIT &&
     !projectMiddlewareStarted &&
-    (request.method === "GET" || request.method === "HEAD" || request.method === "OPTIONS") &&
+    methodCanRetry &&
     isVeryfrontError(error) &&
     error.slug === SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.slug;
 }
@@ -659,10 +662,12 @@ export function createVeryfrontHandler(
 
         let requestMetricsIncremented = false;
         let projectMiddlewareStarted = false;
+        let isFrameworkOwnedPreflightForRetry = false;
         const markProjectMiddlewareStarted = () => {
           projectMiddlewareStarted = true;
         };
         const executeHandlerAttempt = async (request: Request): Promise<Response> => {
+          isFrameworkOwnedPreflightForRetry = false;
           // Fast rejection of vulnerability scanner probes before any async work
           if (SCANNER_PATH_PATTERN.test(url.pathname)) {
             return new Response("Not Found", { status: 404 });
@@ -792,6 +797,7 @@ export function createVeryfrontHandler(
             request,
             ctx,
           );
+          isFrameworkOwnedPreflightForRetry = isFrameworkOwnedPreflight;
           const isOptionsRequest = request.method.toUpperCase() === "OPTIONS";
           const isBrowserPreflight = isOptionsRequest && isPreflightRequest(request);
           let skipProjectMiddleware = false;
@@ -910,6 +916,7 @@ export function createVeryfrontHandler(
                   error,
                   retries,
                   projectMiddlewareStarted,
+                  isFrameworkOwnedPreflightForRetry,
                 )
               ) throw error;
               retries++;
