@@ -36,9 +36,10 @@ For pull requests and merge queue runs, `quality gate (artifact)` is a separate
 stable required check from `quality gate (merge)`. Runtime compatibility lanes
 are aggregated only by the artifact gate, so `quality-gate-merge` does not
 duplicate them. The workflow exposes both stable check names for repository
-rules to require. The main ruleset also requires SonarCloud's
-`SonarCloud Code Analysis` check so the external quality-gate result cannot be
-silently omitted from a merge.
+rules to require. The required `sonar` check is the merge-blocking SonarCloud
+quality gate. The separate `SonarCloud Code Analysis` decoration remains
+informational because secret-dependent analysis is intentionally skipped for
+Dependabot and fork pull requests.
 
 Evidence: [artifact implementation](../scripts/ci/npm-compatibility-artifact.ts),
 [artifact contract](../tests/integration/ci/npm-compatibility-artifact.test.ts),
