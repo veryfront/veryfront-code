@@ -5085,6 +5085,14 @@ export async function resolveStaticRouteOptionsCapability(
         const optionsDeclarator = declarators.find((item) =>
           staticExportName(item.id as ASTNode | undefined) === "OPTIONS"
         );
+        if (
+          declarators.some((item) => {
+            const id = item.id as ASTNode | undefined;
+            return isNode(id) && id.type !== "Identifier";
+          })
+        ) {
+          uncertain = true;
+        }
         if (optionsDeclarator) {
           if (isStaticCallableRouteValue(optionsDeclarator.init as ASTNode | undefined)) {
             return "present";
