@@ -817,6 +817,37 @@ describe("server/runtime-handler/index", () => {
     assertEquals(middlewareCalls, 0);
   });
 
+  it("keeps authenticated automatic preflight ahead of project middleware", async () => {
+    const projectDir = "/tmp/test-options-authenticated-preflight";
+    let middlewareCalls = 0;
+    const middleware: MiddlewareFunction = () => {
+      middlewareCalls++;
+      return new Response("middleware ran", { status: 403 });
+    };
+    const handler = createTrustedOptionsMiddlewareHandler({
+      projectDir,
+      routePath: "pages/api/protected-get-only.ts",
+      routeSource: 'export function GET() { return new Response("get"); }',
+      middleware,
+      corsOrigin: "https://client.example",
+    });
+
+    const response = await handler(withTrustedPeer(
+      new Request("http://localhost/api/protected-get-only", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://client.example",
+          "access-control-request-method": "GET",
+          "x-auth-subject": "user-123",
+        },
+      }),
+    ));
+
+    assertEquals(response.status, 204);
+    assertEquals(response.headers.get("access-control-allow-origin"), "https://client.example");
+    assertEquals(middlewareCalls, 0);
+  });
+
   it("short-circuits rejected explicit OPTIONS auth before project middleware", async () => {
     const projectDir = "/tmp/test-options-middleware-rejection";
     let middlewareCalls = 0;

@@ -311,10 +311,7 @@ export class APIRouteHandler {
 
     const adapter = await this.ensureAdapter();
     await this.ensureCorsConfig(adapter);
-    if (
-      !isPreflightRequest(request) &&
-      await this.resolveStaticOptionsCapability(match.route.page, adapter) === "absent"
-    ) {
+    if (await this.resolveStaticOptionsCapability(match.route.page, adapter) === "absent") {
       return "bypass-middleware";
     }
 

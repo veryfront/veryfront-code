@@ -163,7 +163,8 @@ const SOURCE_SNAPSHOT_FRESHNESS_RETRY_LIMIT = 1;
 type OptionsMiddlewareAdmission =
   | "not-applicable"
   | "continue"
-  | "bypass-middleware";
+  | "bypass-middleware"
+  | "bypass-middleware-retained";
 
 type ProjectEnvironmentRunner = <T>(operation: () => T) => T;
 
@@ -190,16 +191,17 @@ async function prepareOptionsBeforeProjectMiddleware(input: {
       prepareInProjectEnv,
     );
 
-  return await input.runInFilesystemContext(() =>
+  const admission = await input.runInFilesystemContext(() =>
     runWithRetainedPreviewDocumentSourceSnapshot(
       input.ctx,
       prepareWithSourcePolicy,
       {
-        retainAfterOperation: (result) => result === "continue",
+        retainAfterOperation: (result) => result !== "not-applicable",
         runDeferredOperation: input.runInFilesystemContext,
       },
     )
   );
+  return admission === "bypass-middleware" ? "bypass-middleware-retained" : admission;
 }
 
 function shouldRetrySourceSnapshotFreshness(
@@ -838,18 +840,29 @@ export function createVeryfrontHandler(
           });
 
           const executeRegistry = async () => (await registry.execute(request, ctx)) ?? undefined;
-          const executeProjectRoute = () =>
-            optionsAdmission === "bypass-middleware"
-              ? executeRegistry()
-              : projectMiddlewareRuntime.execute({
-                request,
-                handlerContext: ctx,
-                isSharedProxy: isProxyMode,
-                isFrameworkOwnedPreflight,
-                skipProjectMiddleware,
-                next: executeRegistry,
-                onMiddlewareStart: markProjectMiddlewareStarted,
-              });
+          const executeRegistryWithRetainedSnapshot = () =>
+            runInFilesystemContext(() =>
+              runWithRetainedPreviewDocumentSourceSnapshot(
+                ctx,
+                executeRegistry,
+                { runDeferredOperation: runInFilesystemContext },
+              )
+            );
+          const executeProjectRoute = () => {
+            if (optionsAdmission === "bypass-middleware") return executeRegistry();
+            if (optionsAdmission === "bypass-middleware-retained") {
+              return executeRegistryWithRetainedSnapshot();
+            }
+            return projectMiddlewareRuntime.execute({
+              request,
+              handlerContext: ctx,
+              isSharedProxy: isProxyMode,
+              isFrameworkOwnedPreflight,
+              skipProjectMiddleware,
+              next: executeRegistry,
+              onMiddlewareStart: markProjectMiddlewareStarted,
+            });
+          };
           const executeRoute = () =>
             runWithExactSourceIntegrationPolicy(
               sourceIntegrationPolicy,
