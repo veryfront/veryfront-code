@@ -749,6 +749,28 @@ describe("worker-script request snapshots", () => {
     );
   });
 
+  it("snapshots the framework OPTIONS inspection flag as a boolean", () => {
+    const request = {
+      type: "inspect-api-route-methods",
+      id: "authored-options-only",
+      module: {
+        source: "export function GET() {}",
+        sha256: "a".repeat(64),
+      },
+      modulePath: "/project/app/api/route.ts",
+      projectDir: "/project",
+      sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+      includeFrameworkOptions: false,
+    };
+
+    assertEquals(snapshotWorkerRequest(request).includeFrameworkOptions, false);
+    assertThrows(
+      () => snapshotWorkerRequest({ ...request, includeFrameworkOptions: "false" }),
+      TypeError,
+      "Invalid worker request includeFrameworkOptions",
+    );
+  });
+
   it("uses stable typed protocol errors for invalid request contracts", () => {
     const unknownTypeError = assertThrows(
       () =>

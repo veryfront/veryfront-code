@@ -754,6 +754,149 @@ describe("APIRouteHandler", () => {
   });
 
   describe("OPTIONS/CORS handling", () => {
+    it("dispatches a named OPTIONS handler on a matched route", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/options.ts",
+        "export function OPTIONS() { return new Response('unused'); }",
+      );
+      let routeCalls = 0;
+      __injectDepsForTests({
+        loadHandlerModule: () =>
+          Promise.resolve({
+            OPTIONS: () => {
+              routeCalls++;
+              return new Response("named options", {
+                status: 207,
+                headers: { "x-options-owner": "route" },
+              });
+            },
+          }),
+      });
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const response = await handler.handle(
+        new Request("http://localhost/api/options", { method: "OPTIONS" }),
+        localContext(adapter),
+      );
+
+      assertEquals(routeCalls, 1, "the exact OPTIONS export must execute");
+      assertEquals(response?.status, 207);
+      assertEquals(response?.headers.get("x-options-owner"), "route");
+      assertEquals(await response?.text(), "named options");
+    });
+
+    it("dispatches a default route handler for OPTIONS", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/default-options.ts",
+        "export default function handler() { return new Response('unused'); }",
+      );
+      __injectDepsForTests({
+        loadHandlerModule: () =>
+          Promise.resolve({
+            default: () =>
+              new Response("default options", {
+                status: 208,
+                headers: { "x-options-owner": "default" },
+              }),
+          }),
+      });
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const response = await handler.handle(
+        new Request("http://localhost/api/default-options", { method: "OPTIONS" }),
+        localContext(adapter),
+      );
+
+      assertEquals(response?.status, 208);
+      assertEquals(response?.headers.get("x-options-owner"), "default");
+      assertEquals(await response?.text(), "default options");
+    });
+
+    it("dispatches OPTIONS for a dynamic App route with normalized params", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/app/hooks/[hookId]/route.ts",
+        "export function OPTIONS() { return new Response('unused'); }",
+      );
+      __injectDepsForTests({
+        loadHandlerModule: () =>
+          Promise.resolve({
+            OPTIONS: (first: unknown, second?: unknown) =>
+              Response.json({ params: routeParamsOf(first, second) }, { status: 210 }),
+          }),
+      });
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const response = await handler.handle(
+        new Request("http://localhost/hooks/deploy", { method: "OPTIONS" }),
+        localContext(adapter),
+      );
+
+      assertEquals(response?.status, 210);
+      assertEquals(await response?.json(), { params: { hookId: "deploy" } });
+    });
+
+    it("keeps automatic preflight for a matched route without OPTIONS", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/automatic-options.ts",
+        "export function GET() { return new Response('unused'); }",
+      );
+      __injectDepsForTests({
+        loadHandlerModule: () => Promise.resolve({ GET: () => new Response("get") }),
+      });
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const response = await handler.handle(
+        new Request("http://localhost/api/automatic-options", { method: "OPTIONS" }),
+        localContext(adapter),
+      );
+
+      assertEquals(response?.status, 204);
+      assertEquals(response?.body, null);
+    });
+
+    it("dispatches a named OPTIONS handler from a prepared route", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/prepared-options.ts",
+        "export function OPTIONS() { return new Response('discovery-only'); }",
+      );
+      const module = await prepareSource(
+        `export function OPTIONS() {
+          return new Response("prepared options", {
+            status: 209,
+            headers: { "x-options-owner": "worker" },
+          });
+        }`,
+      );
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          throw new Error("prepared OPTIONS route reached host import");
+        },
+        prepareHandlerModule: () => Promise.resolve(module),
+      });
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          handler.handle(
+            new Request("http://localhost/api/prepared-options", { method: "OPTIONS" }),
+            localContext(adapter),
+          ),
+      );
+
+      assertEquals(response?.status, 209);
+      assertEquals(response?.headers.get("x-options-owner"), "worker");
+      assertEquals(await response?.text(), "prepared options");
+    });
+
     it("should handle OPTIONS preflight requests with secure-by-default CORS", async () => {
       const adapter = createMockAdapter();
       const handler = await createInitializedHandler("/test/project", adapter);

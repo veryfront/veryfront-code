@@ -23,7 +23,9 @@ import {
   executePreparedAppRoute,
   executePreparedPagesRoute,
   type ExecuteRouteOptions,
+  resolvePreparedRouteMethods,
 } from "./route-executor.ts";
+import { resolveExecutableRouteMethods } from "./route-methods.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { HandlerContext } from "#veryfront/types";
 import type { PreparedWorkerModule } from "#veryfront/security/sandbox/worker-types.ts";
@@ -231,7 +233,8 @@ export class APIRouteHandler {
 
         await this.ensureCorsConfig(adapter);
 
-        if (request.method.toUpperCase() === "OPTIONS") {
+        const method = request.method.toUpperCase();
+        if (method === "OPTIONS" && isSharedProjectRuntime(ctx)) {
           return handleCORSPreflight({
             request,
             config: this.corsConfig ?? undefined,
@@ -246,6 +249,12 @@ export class APIRouteHandler {
             availableRoutes: this.router.listRoutes().map((r) => r.pattern),
           });
 
+          if (method === "OPTIONS") {
+            return handleCORSPreflight({
+              request,
+              config: this.corsConfig ?? undefined,
+            });
+          }
           if (pathname === "/api" || pathname.startsWith("/api/")) return notFound();
           return null;
         }
@@ -344,6 +353,26 @@ export class APIRouteHandler {
           isLocalProject,
           allowHostProjectCodeExecution: useHostRealm,
         };
+
+        if (method === "OPTIONS") {
+          const executableMethods = route.kind === "isolated"
+            ? await resolvePreparedRouteMethods(undefined, {
+              executionScopeId: this.executionScopeId,
+              module: route.module,
+              modulePath: match.route.page,
+              projectDir: this.projectDir,
+            }, { includeFrameworkOptions: false })
+            : resolveExecutableRouteMethods(route.handler, undefined, {
+              includeFrameworkOptions: false,
+            });
+
+          if (!executableMethods.includes("OPTIONS")) {
+            return handleCORSPreflight({
+              request,
+              config: this.corsConfig ?? undefined,
+            });
+          }
+        }
 
         const applicationRequest = createApplicationRequest(request, {
           denyHeaders: ctx?.applicationIdentityHeaderNames,

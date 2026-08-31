@@ -1,17 +1,12 @@
 import { BaseHandler } from "./base.ts";
-import type {
-  HandlerContext,
-  HandlerMetadata,
-  HandlerPriority,
-  HandlerResult,
-  RouteHandlerModule,
-} from "../types.ts";
+import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { getConfig } from "#veryfront/config";
 import { PRIORITY_VERY_HIGH } from "#veryfront/utils/constants/index.ts";
 import { resolveAppRouteFile } from "../request/api/app-router-resolver.ts";
 import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import { isInfrastructureOnlyRequestHeader } from "#veryfront/security/http/application-request.ts";
+import { resolveExecutableRouteMethods } from "#veryfront/routing/api/route-methods.ts";
 
 type AppRouteResolver = typeof resolveAppRouteFile;
 const DEFAULT_ALLOWED_HEADERS = "Content-Type,Authorization";
@@ -38,7 +33,6 @@ export class CorsHandler extends BaseHandler {
   };
 
   private static readonly DEFAULT_METHODS = "GET,POST,PUT,PATCH,DELETE,OPTIONS";
-  private static readonly HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
   private readonly resolveAppRouteFile: AppRouteResolver;
 
   constructor(dependencies: CorsHandlerDependencies = {}) {
@@ -51,9 +45,14 @@ export class CorsHandler extends BaseHandler {
 
     const pathname = new URL(req.url).pathname;
     const isSharedRuntime = isSharedProjectRuntime(ctx);
-    const allowMethods = isSharedRuntime
-      ? CorsHandler.DEFAULT_METHODS
-      : await this.resolveAllowedMethods(pathname, ctx);
+    if (!isSharedRuntime && (pathname === "/api" || pathname.startsWith("/api/"))) {
+      return this.continue();
+    }
+
+    const routeMethods = isSharedRuntime
+      ? { allowMethods: CorsHandler.DEFAULT_METHODS, hasExecutableOptions: false }
+      : await this.resolveRouteMethods(pathname, ctx);
+    if (routeMethods.hasExecutableOptions) return this.continue();
 
     let corsConfig = ctx.securityConfig?.cors;
     if (!isSharedRuntime) {
@@ -72,7 +71,7 @@ export class CorsHandler extends BaseHandler {
     }
 
     const response = ResponseBuilder.preflight(req, {
-      allowMethods,
+      allowMethods: routeMethods.allowMethods,
       allowHeaders: getApplicationPreflightHeaders(req),
       securityConfig: ctx.securityConfig ?? undefined,
       corsConfig,
@@ -81,22 +80,28 @@ export class CorsHandler extends BaseHandler {
     return this.respond(response);
   }
 
-  private async resolveAllowedMethods(pathname: string, ctx: HandlerContext): Promise<string> {
+  private async resolveRouteMethods(
+    pathname: string,
+    ctx: HandlerContext,
+  ): Promise<{ allowMethods: string; hasExecutableOptions: boolean }> {
     try {
       const match = await this.resolveAppRouteFile(pathname, ctx);
-      if (!match) return CorsHandler.DEFAULT_METHODS;
+      if (!match) {
+        return { allowMethods: CorsHandler.DEFAULT_METHODS, hasExecutableOptions: false };
+      }
 
-      const mod = (await import(`file://${match.file}`)) as RouteHandlerModule;
-      const foundMethods = CorsHandler.HTTP_METHODS.filter((m) => typeof mod[m] === "function");
-
-      const methods: string[] = [...foundMethods];
-      if (foundMethods.includes("GET")) methods.unshift("HEAD");
-      methods.push("OPTIONS");
-
-      return [...new Set(methods)].join(", ");
+      const mod = (await import(`file://${match.file}`)) as Record<string, unknown>;
+      const executableMethods = resolveExecutableRouteMethods(mod);
+      const authoredMethods = resolveExecutableRouteMethods(mod, undefined, {
+        includeFrameworkOptions: false,
+      });
+      return {
+        allowMethods: executableMethods.join(", "),
+        hasExecutableOptions: authoredMethods.includes("OPTIONS"),
+      };
     } catch (error) {
       this.logWarn("Failed to resolve route for CORS", { error, pathname });
-      return CorsHandler.DEFAULT_METHODS;
+      return { allowMethods: CorsHandler.DEFAULT_METHODS, hasExecutableOptions: false };
     }
   }
 }

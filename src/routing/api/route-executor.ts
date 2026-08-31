@@ -1214,6 +1214,7 @@ export function executePreparedPagesRoute(
 export async function resolvePreparedRouteMethods(
   requestedMethod: string | undefined,
   options: Omit<PreparedRouteExecutionOptions, "isLocalProject">,
+  methodOptions: { includeFrameworkOptions?: boolean } = {},
 ): Promise<string[]> {
   const semanticContext = await snapshotWorkerSemanticContext();
   const workerResponse = await getWorkerPool().execute(
@@ -1225,6 +1226,9 @@ export async function resolvePreparedRouteMethods(
       module: options.module,
       modulePath: options.modulePath,
       requestedMethod,
+      ...(methodOptions.includeFrameworkOptions === undefined
+        ? {}
+        : { includeFrameworkOptions: methodOptions.includeFrameworkOptions }),
       projectDir: options.projectDir,
       sourceIntegrationPolicy: semanticContext.sourceIntegrationPolicy,
       projectEnv: semanticContext.projectEnv,

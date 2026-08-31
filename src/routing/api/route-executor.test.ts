@@ -1608,6 +1608,52 @@ describe("routing/api/route-executor", () => {
       assertEquals(methods, ["GET", "HEAD", "POST", "OPTIONS"]);
     });
 
+    it("can omit the framework OPTIONS fallback from prepared route methods", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const options = await preparedRouteOptions(
+        "export function GET() {}",
+        "prepared-methods-authored",
+      );
+
+      const methods = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          resolvePreparedRouteMethods(
+            undefined,
+            options,
+            { includeFrameworkOptions: false },
+          ),
+      );
+
+      assertEquals(methods, ["GET", "HEAD"]);
+    });
+
+    it("keeps authored OPTIONS when omitting the framework fallback", async () => {
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const options = await preparedRouteOptions(
+        "export function GET() {} export function OPTIONS() {}",
+        "prepared-methods-options",
+      );
+
+      const methods = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          resolvePreparedRouteMethods(
+            undefined,
+            options,
+            { includeFrameworkOptions: false },
+          ),
+      );
+
+      assertEquals(methods, ["GET", "HEAD", "OPTIONS"]);
+    });
+
     it("rejects when the prepared module has no callable route export", async () => {
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
