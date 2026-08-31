@@ -2,11 +2,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { FakeTime } from "#std/testing/time";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   __subscribeLogRecordEmitter,
+  type LogEntry,
   LogLevel,
   refreshLoggerConfig,
   setLogLevel,
@@ -339,6 +340,43 @@ describe("integrations/remote-tools hardening", () => {
     assertEquals(requestSignal?.aborted, true);
     assertEquals(error instanceof DOMException, true);
     assertEquals((error as DOMException).name, "TimeoutError");
+  });
+
+  it("preserves the integration discovery timeout reason without retrying", async () => {
+    using time = new FakeTime();
+    configureRemoteTools();
+    const started = Promise.withResolvers<void>();
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+      if (entry.message === "Failed to fetch remote integration tool definitions") {
+        records.push(entry);
+      }
+    });
+    let fetchCalls = 0;
+
+    try {
+      const operation = withMockFetch(
+        async (_input, init) => {
+          fetchCalls++;
+          return await rejectFetchWhenAborted(requestSignalFromInit(init), started);
+        },
+        () => getRemoteIntegrationToolDiscovery(),
+      );
+      await started.promise;
+      time.tick(INTEGRATION_REQUEST_TIMEOUT_MS);
+
+      assertEquals(await operation, { status: "unavailable", reason: "request_failed" });
+      assertEquals(fetchCalls, 1);
+      assertEquals(records.length, 1);
+      const [record] = records;
+      assert(record);
+      assertEquals(
+        record.context?.error,
+        `Integration API request timed out after ${INTEGRATION_REQUEST_TIMEOUT_MS} ms`,
+      );
+    } finally {
+      unsubscribe();
+    }
   });
 
   it("rejects an oversized declared discovery body before reading and cancels it", async () => {

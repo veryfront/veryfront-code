@@ -263,6 +263,26 @@ describe("integrations/remote-tools", () => {
     assertEquals(records.map((entry) => entry.level), ["error"]);
   });
 
+  it("does not retry an invalid integration API base URL", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "not-a-url",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    let fetchCalls = 0;
+    let result: RemoteIntegrationToolDiscoveryResult | undefined;
+    const records = await captureIntegrationDiscoveryLogs(async () => {
+      result = await withMockFetch(async () => {
+        fetchCalls++;
+        return new Response(undefined, { status: 503, statusText: "Service Unavailable" });
+      }, () => getRemoteIntegrationToolDiscovery());
+    });
+
+    assertEquals(fetchCalls, 0);
+    assertEquals(result, { status: "unavailable", reason: "request_failed" });
+    assertEquals(records.map((entry) => entry.level), ["error"]);
+  });
+
   it("keys the per-run discovery cache by credential and project", async () => {
     setRemoteToolEnv({
       VERYFRONT_API_BASE_URL: "https://api.test",
