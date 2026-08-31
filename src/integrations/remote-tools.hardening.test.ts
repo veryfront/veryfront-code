@@ -2,9 +2,16 @@ import "#veryfront/schemas/_test-setup.ts";
 import { FakeTime } from "#std/testing/time";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  __subscribeLogRecordEmitter,
+  type LogEntry,
+  LogLevel,
+  refreshLoggerConfig,
+  setLogLevel,
+} from "#veryfront/utils/logger/logger.ts";
 import {
   INTEGRATION_REQUEST_TIMEOUT_MS,
   MAX_INTEGRATION_API_ERROR_RESPONSE_BYTES,
@@ -225,6 +232,43 @@ describe("integrations/remote-tools hardening", () => {
     assertStrictEquals(await operation, reason);
   });
 
+  it("cancels discovery during retry backoff without another request", async () => {
+    configureRemoteTools();
+    const caller = new AbortController();
+    const reason = new DOMException("caller stopped retry", "AbortError");
+    const retryStarted = Promise.withResolvers<void>();
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+      if (
+        entry.message === "Retrying remote integration tool discovery after a transient failure"
+      ) {
+        retryStarted.resolve();
+      }
+    });
+    setLogLevel(LogLevel.DEBUG);
+    let fetchCalls = 0;
+
+    try {
+      const operation = withMockFetch(
+        async () => {
+          fetchCalls++;
+          return new Response(undefined, { status: 503, statusText: "Service Unavailable" });
+        },
+        () =>
+          captureRejection(() =>
+            getRemoteIntegrationToolDefinitions({ abortSignal: caller.signal })
+          ),
+      );
+      await retryStarted.promise;
+      caller.abort(reason);
+
+      assertStrictEquals(await operation, reason);
+      assertEquals(fetchCalls, 1);
+    } finally {
+      unsubscribe();
+      refreshLoggerConfig();
+    }
+  });
+
   it("cancels an in-flight response body with the caller reason", async () => {
     configureRemoteTools();
     const caller = new AbortController();
@@ -298,6 +342,43 @@ describe("integrations/remote-tools hardening", () => {
     assertEquals((error as DOMException).name, "TimeoutError");
   });
 
+  it("preserves the integration discovery timeout reason without retrying", async () => {
+    using time = new FakeTime();
+    configureRemoteTools();
+    const started = Promise.withResolvers<void>();
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+      if (entry.message === "Failed to fetch remote integration tool definitions") {
+        records.push(entry);
+      }
+    });
+    let fetchCalls = 0;
+
+    try {
+      const operation = withMockFetch(
+        async (_input, init) => {
+          fetchCalls++;
+          return await rejectFetchWhenAborted(requestSignalFromInit(init), started);
+        },
+        () => getRemoteIntegrationToolDiscovery(),
+      );
+      await started.promise;
+      time.tick(INTEGRATION_REQUEST_TIMEOUT_MS);
+
+      assertEquals(await operation, { status: "unavailable", reason: "request_failed" });
+      assertEquals(fetchCalls, 1);
+      assertEquals(records.length, 1);
+      const [record] = records;
+      assert(record);
+      assertEquals(
+        record.context?.error,
+        `Integration API request timed out after ${INTEGRATION_REQUEST_TIMEOUT_MS} ms`,
+      );
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it("rejects an oversized declared discovery body before reading and cancels it", async () => {
     configureRemoteTools();
     const oversized = createOpenByteResponse(new Uint8Array(), {
@@ -356,12 +437,17 @@ describe("integrations/remote-tools hardening", () => {
 
   it("fails discovery closed for malformed UTF-8", async () => {
     configureRemoteTools();
+    let fetchCalls = 0;
     const definitions = await withMockFetch(
-      async () => new Response(new Uint8Array([0xff])),
+      async () => {
+        fetchCalls++;
+        return new Response(new Uint8Array([0xff]));
+      },
       () => getRemoteIntegrationToolDefinitions(),
     );
 
     assertEquals(definitions, [], "a body that is not valid UTF-8 must admit no tools");
+    assertEquals(fetchCalls, 1, "a malformed response body must not be retried as a network error");
 
     // Valid JSON only after lenient U+FFFD replacement, so a repaired decode
     // would admit the tool with corrupted metadata instead of failing closed.
@@ -372,8 +458,12 @@ describe("integrations/remote-tools hardening", () => {
     repairableBody[prefix.length] = 0xff;
     repairableBody.set(suffix, prefix.length + 1);
 
+    fetchCalls = 0;
     const discovery = await withMockFetch(
-      async () => new Response(repairableBody),
+      async () => {
+        fetchCalls++;
+        return new Response(repairableBody);
+      },
       () => getRemoteIntegrationToolDiscovery(),
     );
 
@@ -382,6 +472,7 @@ describe("integrations/remote-tools hardening", () => {
       { status: "unavailable", reason: "request_failed" },
       "malformed UTF-8 in the discovery body must fail closed rather than be repaired",
     );
+    assertEquals(fetchCalls, 1, "a malformed streamed body must fail without retrying");
   });
 
   it("admits remote tool definitions atomically within count limits", async () => {

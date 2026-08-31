@@ -13,7 +13,7 @@
 
 import { getApiBaseUrlEnv, getApiTokenEnv } from "#veryfront/config/env.ts";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { defineError, VeryfrontError } from "#veryfront/errors";
+import { defineError, retryWithBackoff, VeryfrontError } from "#veryfront/errors";
 import { AsyncLocalStorage } from "#veryfront/platform/compat/async-context.ts";
 import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import {
@@ -21,20 +21,26 @@ import {
   parseIntegrationToolIdentity,
 } from "#veryfront/integrations/source-policy.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { createVeryfrontApiRequestUrlResolver } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { type BoundedJsonValue, snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { logger } from "#veryfront/utils";
 import {
   hasProjectIdentityControlCharacters,
   isCanonicalProjectSlug,
 } from "#veryfront/utils/project-identity.ts";
-import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
+import {
+  InvalidResponseBodyError,
+  readResponseTextPrefix,
+} from "#veryfront/utils/response-body.ts";
 
 import type { ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import {
   INTEGRATION_REQUEST_TIMEOUT_MS,
+  INTEGRATION_TOOL_LIST_RETRY_DELAY_MS,
   MAX_INTEGRATION_API_ERROR_RESPONSE_BYTES,
   MAX_INTEGRATION_CALL_REQUEST_BYTES,
   MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
+  MAX_INTEGRATION_TOOL_LIST_ATTEMPTS,
   MAX_INTEGRATION_TOOL_LIST_RESPONSE_BYTES,
   MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH,
   MAX_REMOTE_INTEGRATION_CONTEXT_ID_LENGTH,
@@ -92,7 +98,7 @@ type RemoteIntegrationToolCatalogResult =
   | { readonly status: "unavailable"; readonly reason: "request_failed" };
 
 interface RemoteIntegrationToolDiscoveryCacheEntry {
-  readonly baseUrl: string;
+  readonly toolListUrl: string;
   readonly token: string;
   readonly projectSlug: string | undefined;
   readonly result: Promise<RemoteIntegrationToolCatalogResult>;
@@ -535,17 +541,15 @@ function serializeCallRequest(
  * (a retried call could re-send an email or re-create a record).
  */
 async function postIntegrationApi(
-  baseUrl: string,
-  path: string,
+  requestUrl: string,
   token: string,
   serializedBody: string | undefined,
-  context: RemoteIntegrationExecutionContext,
+  projectSlug: string | undefined,
   signal: AbortSignal,
 ): Promise<Response> {
-  const projectSlug = resolveRequestProjectSlug(context);
   signal.throwIfAborted();
 
-  return await fetch(`${baseUrl}${path}`, {
+  return await fetch(requestUrl, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -557,50 +561,104 @@ async function postIntegrationApi(
   });
 }
 
-async function fetchToolList(
-  baseUrl: string,
+async function fetchToolListAttempt(
+  toolListUrl: string,
   token: string,
+  projectSlug: string | undefined,
+  signal: AbortSignal,
+): Promise<RemoteToolDefinition[]> {
+  const response = await postIntegrationApi(
+    toolListUrl,
+    token,
+    undefined,
+    projectSlug,
+    signal,
+  );
+
+  if (!response.ok) {
+    // Throw so callers can distinguish a fetch failure from "no remote tools
+    // available" (which returns an empty tools array with status 200).
+    discardResponseBody(response);
+    throw INTEGRATION_TOOL_LIST_REQUEST_FAILED.create({
+      message: `Integration tools API returned ${response.status} ${response.statusText}`.trim(),
+      status: response.status,
+    });
+  }
+
+  const rawData = await readBoundedResponseJson(
+    response,
+    MAX_INTEGRATION_TOOL_LIST_RESPONSE_BYTES,
+    signal,
+    "Integration tools API list response",
+  );
+  const definitions = parseToolListResponse(rawData);
+  if (!definitions) {
+    throw new Error("Integration tools API returned unexpected response shape");
+  }
+  return definitions;
+}
+
+function createIntegrationRequestTimeoutError(): DOMException {
+  return new DOMException(
+    `Integration API request timed out after ${INTEGRATION_REQUEST_TIMEOUT_MS} ms`,
+    "TimeoutError",
+  );
+}
+
+async function fetchToolList(
+  toolListUrl: string,
+  token: string,
+  projectSlug: string | undefined,
   context: RemoteIntegrationExecutionContext,
 ): Promise<RemoteToolDefinition[]> {
-  const requestScope = createIntegrationRequestSignalScope(context.abortSignal);
-  try {
-    const response = await postIntegrationApi(
-      baseUrl,
-      "/integrations/tools/list",
-      token,
-      undefined,
-      context,
-      requestScope.signal,
-    );
+  return await retryWithBackoff(
+    async (signal) => {
+      if (!signal) {
+        throw new Error("Integration tool discovery retry signal is unavailable");
+      }
+      try {
+        return await fetchToolListAttempt(toolListUrl, token, projectSlug, signal);
+      } catch (error) {
+        context.abortSignal?.throwIfAborted();
+        if (signal.aborted && error === signal.reason) {
+          throw createIntegrationRequestTimeoutError();
+        }
+        throw error;
+      }
+    },
+    {
+      abortSignal: context.abortSignal,
+      maxAttempts: MAX_INTEGRATION_TOOL_LIST_ATTEMPTS,
+      timeoutMs: INTEGRATION_REQUEST_TIMEOUT_MS,
+      shouldRetry: isTransientToolListFailure,
+      computeDelay: (attempt) => INTEGRATION_TOOL_LIST_RETRY_DELAY_MS * (attempt + 1),
+      onRetry: ({ error, attempt }) => {
+        logger.debug("Retrying remote integration tool discovery after a transient failure", {
+          attempt: attempt + 1,
+          error: error.message,
+        });
+      },
+    },
+  );
+}
 
-    if (!response.ok) {
-      // Throw so callers can distinguish a fetch failure from "no remote tools
-      // available" (which returns an empty tools array with status 200).
-      discardResponseBody(response);
-      throw INTEGRATION_TOOL_LIST_REQUEST_FAILED.create({
-        message: `Integration tools API returned ${response.status} ${response.statusText}`.trim(),
-        status: response.status,
-      });
-    }
-
-    const rawData = await readBoundedResponseJson(
-      response,
-      MAX_INTEGRATION_TOOL_LIST_RESPONSE_BYTES,
-      requestScope.signal,
-      "Integration tools API list response",
-    );
-    const definitions = parseToolListResponse(rawData);
-    if (!definitions) {
-      throw new Error("Integration tools API returned unexpected response shape");
-    }
-    return definitions;
-  } finally {
-    requestScope.dispose();
+/**
+ * Transient tool-list failures worth another attempt: transport TypeErrors
+ * from fetch dispatch or body streaming, and 5xx responses. Deterministic
+ * response validation errors and request timeouts are not retried.
+ */
+function isTransientToolListFailure(err: unknown): boolean {
+  if (
+    err instanceof VeryfrontError &&
+    err.slug === INTEGRATION_TOOL_LIST_REQUEST_FAILED.slug
+  ) {
+    return typeof err.status === "number" && err.status >= 500;
   }
+  return err instanceof TypeError && !(err instanceof InvalidResponseBodyError);
 }
 
 async function discoverRemoteIntegrationToolCatalog(
-  baseUrl: string,
+  toolListUrl: string,
   token: string,
   projectSlug: string | undefined,
   context: RemoteIntegrationExecutionContext,
@@ -608,7 +666,7 @@ async function discoverRemoteIntegrationToolCatalog(
   try {
     return {
       status: "ok",
-      tools: await fetchToolList(baseUrl, token, context),
+      tools: await fetchToolList(toolListUrl, token, projectSlug, context),
     };
   } catch (err) {
     context.abortSignal?.throwIfAborted();
@@ -635,7 +693,7 @@ async function discoverRemoteIntegrationToolCatalog(
 }
 
 function getRemoteIntegrationToolCatalog(
-  baseUrl: string,
+  toolListUrl: string,
   token: string,
   projectSlug: string | undefined,
   context: RemoteIntegrationExecutionContext,
@@ -643,17 +701,17 @@ function getRemoteIntegrationToolCatalog(
   const scope = getRemoteIntegrationToolDiscoveryScope();
   const cached = scope?.entry;
   if (
-    cached?.baseUrl === baseUrl &&
+    cached?.toolListUrl === toolListUrl &&
     cached.token === token &&
     cached.projectSlug === projectSlug
   ) {
     return cached.result;
   }
 
-  const result = discoverRemoteIntegrationToolCatalog(baseUrl, token, projectSlug, context);
+  const result = discoverRemoteIntegrationToolCatalog(toolListUrl, token, projectSlug, context);
   if (scope) {
     const entry: RemoteIntegrationToolDiscoveryCacheEntry = {
-      baseUrl,
+      toolListUrl,
       token,
       projectSlug,
       result,
@@ -677,12 +735,15 @@ async function callRemoteTool(
   const requestScope = createIntegrationRequestSignalScope(context.abortSignal);
   try {
     const serializedBody = serializeCallRequest(args, context);
-    const response = await postIntegrationApi(
-      baseUrl,
+    const projectSlug = resolveRequestProjectSlug(context);
+    const requestUrl = createVeryfrontApiRequestUrlResolver(baseUrl)(
       `/integrations/${encodeURIComponent(integration)}/tools/${encodeURIComponent(toolId)}/call`,
+    );
+    const response = await postIntegrationApi(
+      requestUrl,
       token,
       serializedBody,
-      context,
+      projectSlug,
       requestScope.signal,
     );
 
@@ -765,9 +826,12 @@ export async function getRemoteIntegrationToolDiscovery(
   if (!baseUrl || !token) return { status: "ok", tools: [] };
 
   try {
+    const toolListUrl = createVeryfrontApiRequestUrlResolver(baseUrl)(
+      "/integrations/tools/list",
+    );
     const projectSlug = resolveRequestProjectSlug(requestContext);
     const catalog = await getRemoteIntegrationToolCatalog(
-      baseUrl,
+      toolListUrl,
       token,
       projectSlug,
       requestContext,
