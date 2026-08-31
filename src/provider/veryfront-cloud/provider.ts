@@ -41,8 +41,7 @@ function wrapVeryfrontCloudModel(
   model: ModelRuntime,
   modelProvider: string,
 ): ModelRuntime {
-  const wrapped = ObjectCreate(null);
-  ObjectDefineProperties(wrapped, {
+  const wrapped = ObjectCreate(model, {
     _generateViaStream: { enumerable: true, value: true },
     modelProvider: { enumerable: true, value: modelProvider },
   });
@@ -61,16 +60,13 @@ function wrapVeryfrontCloudModel(
 
       forwardedAccessors.add(key);
       const descriptor = ObjectGetOwnPropertyDescriptor(source, key);
-      if (!descriptor || typeof descriptor.value === "function") continue;
+      if (!descriptor || (!descriptor.get && !descriptor.set)) continue;
 
-      const forwardedDescriptor = descriptor.get || descriptor.set
-        ? {
-          ...descriptor,
-          get: descriptor.get ? bindModelMethod(descriptor.get, model) : undefined,
-          set: descriptor.set ? bindModelMethod(descriptor.set, model) : undefined,
-        }
-        : descriptor;
-      ObjectDefineProperty(wrapped, key, forwardedDescriptor);
+      ObjectDefineProperty(wrapped, key, {
+        ...descriptor,
+        get: descriptor.get ? bindModelMethod(descriptor.get, model) : undefined,
+        set: descriptor.set ? bindModelMethod(descriptor.set, model) : undefined,
+      });
     }
     source = ObjectGetPrototypeOf(source);
   }
