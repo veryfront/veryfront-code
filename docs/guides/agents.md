@@ -574,8 +574,9 @@ already-fulfilled middleware promise.
 If you intentionally detach that promise, attach its rejection handler in the
 same turn or a microtask; detached-failure reporting runs on the next
 macrotask after that grace window.
-Handlers scheduled by a later macrotask may race with the report and are not
-part of this grace window.
+Handlers scheduled by a later macrotask are not covered by this grace window
+and can lose the race with the report. Synchronous throws also settle the
+middleware invocation and revoke its continuation.
 
 ## Verify it worked
 

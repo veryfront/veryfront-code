@@ -163,6 +163,8 @@ describe("agent/middleware/chain", () => {
     ]);
 
     await chain.execute(context, () => Promise.resolve(response));
+    // This intentionally relies on the continuation's internal observer to
+    // suppress the invalid rejection without adding a consumer in the test.
     retainedNext!();
     await Promise.resolve();
   });
