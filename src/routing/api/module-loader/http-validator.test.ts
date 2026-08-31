@@ -10,10 +10,49 @@ import {
 } from "./http-validator.ts";
 import {
   __setSourceCapabilityParserLoaderForTests,
+  resolveStaticRouteOptionsCapability,
   rewriteImportMetaLocations,
   rewriteUnboundCommonJsDynamicRequire,
   usesUnboundCommonJsModule,
 } from "./source-capability-analyzer.ts";
+
+describe("resolveStaticRouteOptionsCapability", () => {
+  it("proves absence only for statically closed export sets", async () => {
+    assertEquals(
+      await resolveStaticRouteOptionsCapability(
+        "export function GET() {}\nexport type OPTIONS = { enabled: true };",
+      ),
+      "absent",
+    );
+  });
+
+  it("keeps every statically visible OPTIONS or default route behind auth", async () => {
+    const sources = [
+      "export function OPTIONS() {}",
+      "export default function route() {}",
+      "const handler = () => {}; export { handler as OPTIONS };",
+      'export { handler as OPTIONS } from "./handler.ts";',
+      "export const OPTIONS = () => new Response();",
+    ];
+
+    for (const source of sources) {
+      assertEquals(await resolveStaticRouteOptionsCapability(source), "present", source);
+    }
+  });
+
+  it("keeps ambiguous, CommonJS, and invalid sources on the authenticated fallback", async () => {
+    const sources = [
+      'export * from "./handler.ts";',
+      "module.exports = { OPTIONS() {} };",
+      "export const OPTIONS = handler;",
+      "export function OPTIONS(",
+    ];
+
+    for (const source of sources) {
+      assertEquals(await resolveStaticRouteOptionsCapability(source), "unknown", source);
+    }
+  });
+});
 
 describe("usesUnboundCommonJsModule", () => {
   it("distinguishes runtime CommonJS module references from inert text and bindings", async () => {
