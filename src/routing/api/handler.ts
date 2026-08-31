@@ -11,13 +11,14 @@ import {
 } from "#veryfront/errors";
 import { badGateway, internalServerError, notFound } from "#veryfront/http/responses";
 import type { CORSConfig } from "#veryfront/security";
-import { applyCORSHeaders, handleCORSPreflight } from "#veryfront/security";
+import { applyCORSHeaders, DEFAULT_CORS_METHODS, handleCORSPreflight } from "#veryfront/security";
 import { type APIContext } from "./context-builder.ts";
 import { ApiRouteMatcher, type RouteMatch } from "./api-route-matcher.ts";
 import type { APIRoute } from "./module-loader/types.ts";
 import { loadHandlerModule, prepareHandlerModule } from "./module-loader/loader.ts";
 import { discoverAppRoutes, discoverPagesRoutes } from "./route-discovery.ts";
 import {
+  createAPIRouteErrorResponse,
   executeAppRoute,
   executePagesRoute,
   executePreparedAppRoute,
@@ -394,13 +395,7 @@ export class APIRouteHandler {
                 includeFrameworkOptions: false,
               });
           } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            logger.error(`handler method inspection failed: ${match.route.page}`, { reason: msg });
-            return internalServerError(
-              ctx?.isLocalProject
-                ? sanitizeLoadErrorForResponse(msg, this.projectDir)
-                : "Handler not found",
-            );
+            return createAPIRouteErrorResponse(error, pathname, isLocalProject);
           }
 
           if (!executableOptionsMethods.includes("OPTIONS")) {
@@ -546,7 +541,7 @@ export class APIRouteHandler {
     }
   }
 
-  private automaticPreflight(
+  private async automaticPreflight(
     request: Request,
     executableMethods?: readonly string[],
   ): Promise<Response> {
@@ -554,13 +549,15 @@ export class APIRouteHandler {
       ? (executableMethods.includes("OPTIONS")
         ? executableMethods
         : [...executableMethods, "OPTIONS"]).join(", ")
-      : undefined;
-    return handleCORSPreflight({
+      : DEFAULT_CORS_METHODS.join(", ");
+    const response = await handleCORSPreflight({
       request,
       config: this.corsConfig ?? undefined,
       allowMethods,
       allowHeaders: getApplicationPreflightHeaders(request),
     });
+    response.headers.set("Allow", allowMethods);
+    return response;
   }
 
   private async authenticateOptionsRoute(

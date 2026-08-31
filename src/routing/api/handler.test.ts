@@ -954,6 +954,7 @@ describe("APIRouteHandler", () => {
       assertEquals(response?.status, 204);
       assertEquals(response?.body, null);
       assertEquals(response?.headers.get("access-control-allow-methods"), "GET, HEAD, OPTIONS");
+      assertEquals(response?.headers.get("allow"), "GET, HEAD, OPTIONS");
       assertEquals(
         response?.headers.get("access-control-allow-headers"),
         "Authorization, X-App-Trace",
@@ -1235,7 +1236,10 @@ describe("APIRouteHandler", () => {
         );
 
         assertEquals(response?.status, 500);
-        assertEquals(await response?.text(), "Handler not found");
+        assertEquals(response?.headers.get("content-type"), "application/problem+json");
+        const body = await response?.json();
+        assertEquals(body.status, 500);
+        assertEquals(body.title, "Unknown/unclassified error");
       } finally {
         __setCompiledBinaryForTests(undefined);
       }

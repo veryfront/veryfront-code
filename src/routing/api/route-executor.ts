@@ -410,6 +410,15 @@ function handleAPIError(
   return errorToRFC9457Response(detached, ctx, req);
 }
 
+/** Convert a route-boundary failure through the canonical API error policy. */
+export function createAPIRouteErrorResponse(
+  error: unknown,
+  pathname: string,
+  isLocalProject: boolean,
+): Response {
+  return handleAPIError(error, pathname, isLocalProject);
+}
+
 interface ExecuteRouteOptionsSnapshot {
   readonly modulePath?: string;
   readonly projectDir?: string;
