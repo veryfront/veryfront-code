@@ -325,19 +325,35 @@ function recordingLogger() {
  * Answers registration with 200 and each heartbeat with the next scripted
  * status, repeating the last one once the script runs out.
  */
-function scriptedHeartbeatFetch(statuses: readonly number[]) {
+function scriptedHeartbeatFetch(
+  statuses: readonly number[],
+  options: {
+    heartbeatResponse?: (input: RequestInfo | URL, attempt: number) => Response;
+    registrationResponse?: (attempt: number) => Response;
+  } = {},
+) {
   let heartbeatAttempts = 0;
+  let registrationAttempts = 0;
   const fetch: typeof globalThis.fetch = (input) => {
     if (!input.toString().endsWith("/heartbeat")) {
-      return Promise.resolve(jsonResponse(serviceResponse));
+      registrationAttempts++;
+      return Promise.resolve(
+        options.registrationResponse?.(registrationAttempts) ?? jsonResponse(serviceResponse),
+      );
     }
+    const heartbeatResponse = options.heartbeatResponse?.(input, heartbeatAttempts + 1);
     const status = statuses[Math.min(heartbeatAttempts, statuses.length - 1)] ?? 200;
     heartbeatAttempts++;
     return Promise.resolve(
-      status === 200 ? jsonResponse(serviceResponse) : jsonResponse({ error: "boom" }, status),
+      heartbeatResponse ??
+        (status === 200 ? jsonResponse(serviceResponse) : jsonResponse({ error: "boom" }, status)),
     );
   };
-  return { fetch, heartbeatAttempts: () => heartbeatAttempts };
+  return {
+    fetch,
+    heartbeatAttempts: () => heartbeatAttempts,
+    registrationAttempts: () => registrationAttempts,
+  };
 }
 
 function lifecycleOptions(
@@ -1056,27 +1072,26 @@ describe("agent/agent-service-registration heartbeat recovery", () => {
   // forever: nothing ever registers the service again, and the control plane
   // considers it dead while it keeps running.
   it("re-registers a service the control plane no longer knows instead of failing persistently", async () => {
-    let registrations = 0;
     let recoveredHeartbeats = 0;
-    const fetch: typeof globalThis.fetch = (input) => {
-      const url = input.toString();
-      if (url.endsWith("/heartbeat")) {
-        // The stale id stays unknown until the service registers again.
-        if (registrations >= 2) {
-          recoveredHeartbeats++;
-          return Promise.resolve(jsonResponse(serviceResponse));
+    const recoveredServiceId = "33333333-3333-4333-a333-333333333333";
+    const script = scriptedHeartbeatFetch([404], {
+      heartbeatResponse: (input) => {
+        if (!input.toString().includes(recoveredServiceId)) {
+          return jsonResponse({ error: "Agent push runtime service not found" }, 404);
         }
-        return Promise.resolve(
-          jsonResponse({ error: "Agent push runtime service not found" }, 404),
-        );
-      }
-      registrations++;
-      return Promise.resolve(jsonResponse(serviceResponse));
-    };
-
+        recoveredHeartbeats++;
+        return jsonResponse(serviceResponse);
+      },
+      registrationResponse: (attempt) =>
+        jsonResponse(
+          attempt === 1 ? serviceResponse : {
+            service: { ...serviceResponse.service, id: recoveredServiceId },
+          },
+        ),
+    });
     const log = recordingLogger();
     const lifecycle = await createAgentServiceRegistrationLifecycle(
-      lifecycleOptions(fetch, { heartbeatIntervalMs: 40, logger: log.logger }),
+      lifecycleOptions(script.fetch, { heartbeatIntervalMs: 40, logger: log.logger }),
     );
 
     try {
@@ -1097,12 +1112,75 @@ describe("agent/agent-service-registration heartbeat recovery", () => {
       "a lost registration must trigger re-registration, not the persistent-failure escalation",
     );
     assert(
-      registrations >= 2,
+      script.registrationAttempts() >= 2,
       "a heartbeat 404 must make the lifecycle register the service again",
     );
     assert(
       recoveredHeartbeats > 0,
       "heartbeats must succeed again once the service is re-registered",
+    );
+  });
+
+  it("escalates when the control plane repeatedly loses successful re-registrations", async () => {
+    const script = scriptedHeartbeatFetch([404]);
+    const log = recordingLogger();
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(script.fetch, { heartbeatIntervalMs: 40, logger: log.logger }),
+    );
+
+    try {
+      await waitFor(() => log.errors.length > 0, {
+        timeout: 2_000,
+        interval: 10,
+        message: "repeatedly lost re-registrations never reached the persistent-failure log",
+      });
+    } finally {
+      lifecycle.stop();
+    }
+
+    assert(
+      script.registrationAttempts() >= 4,
+      "each lost registration must still attempt recovery before escalation",
+    );
+    assertEquals(
+      log.errors[0]?.metadata?.consecutiveFailures,
+      3,
+      "repeatedly lost registrations must escalate on the third failed tick",
+    );
+  });
+
+  it("counts failed re-registration attempts toward persistent-failure escalation", async () => {
+    const script = scriptedHeartbeatFetch([404], {
+      registrationResponse: (attempt) =>
+        attempt === 1
+          ? jsonResponse(serviceResponse)
+          : jsonResponse({ error: "registration unavailable" }, 500),
+    });
+    const log = recordingLogger();
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(script.fetch, { heartbeatIntervalMs: 40, logger: log.logger }),
+    );
+
+    try {
+      await waitFor(() => log.errors.length > 0, {
+        timeout: 2_000,
+        interval: 10,
+        message: "failed re-registration never reached the persistent-failure log",
+      });
+    } finally {
+      lifecycle.stop();
+    }
+
+    assertEquals(
+      log.warnings.filter((entry) => entry.message === "Agent service re-registration failed")
+        .length,
+      3,
+      "each failed re-registration must be reported before escalation",
+    );
+    assertEquals(
+      log.errors[0]?.metadata?.consecutiveFailures,
+      3,
+      "failed re-registration must escalate on the third failed tick",
     );
   });
 });
