@@ -15,7 +15,6 @@ import { HOST_PROJECT_EXECUTION_OVERRIDE_ENV } from "#veryfront/security/host-ex
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
-import { resolvePreparedRouteMethods } from "./route-executor.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 const handlers: APIRouteHandler[] = [];
@@ -804,16 +803,65 @@ describe("APIRouteHandler", () => {
               }),
           }),
       });
-      const handler = await createInitializedHandler("/test/project", adapter);
+      const handler = await createInitializedHandler(
+        "/test/project",
+        adapter,
+        { security: { cors: { origin: ["https://client.example"] } } } as HandlerConfig,
+      );
 
       const response = await handler.handle(
-        new Request("http://localhost/api/default-options", { method: "OPTIONS" }),
+        new Request("http://localhost/api/default-options", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://client.example",
+            "access-control-request-method": "PROPFIND",
+          },
+        }),
         localContext(adapter),
       );
 
       assertEquals(response?.status, 208);
       assertEquals(response?.headers.get("x-options-owner"), "default");
+      assertEquals(
+        response?.headers.get("access-control-allow-methods"),
+        "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, PROPFIND",
+      );
       assertEquals(await response?.text(), "default options");
+    });
+
+    it("dispatches OPTIONS in an operator-granted shared runtime", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/granted-options.ts",
+        "export function OPTIONS() {}",
+      );
+      let routeCalls = 0;
+      __injectDepsForTests({
+        loadHandlerModule: () =>
+          Promise.resolve({
+            OPTIONS: () => {
+              routeCalls++;
+              return new Response("granted options", { status: 212 });
+            },
+          }),
+      });
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const response = await handler.handle(
+        new Request("http://localhost/api/granted-options", { method: "OPTIONS" }),
+        {
+          projectDir: "/test/project",
+          adapter,
+          securityConfig: null,
+          isLocalProject: false,
+          allowHostProjectCodeExecution: true,
+          prepareHostedConfigContext: () => Promise.reject(new Error("unused")),
+        },
+      );
+
+      assertEquals(response?.status, 212);
+      assertEquals(await response?.text(), "granted options");
+      assertEquals(routeCalls, 1);
     });
 
     it("dispatches OPTIONS for a dynamic App route with normalized params", async () => {
@@ -938,9 +986,11 @@ describe("APIRouteHandler", () => {
         "export function OPTIONS() {}",
       );
       let routeCalls = 0;
+      let moduleLoads = 0;
       __injectDepsForTests({
-        loadHandlerModule: () =>
-          Promise.resolve({
+        loadHandlerModule: () => {
+          moduleLoads++;
+          return Promise.resolve({
             OPTIONS: (context: unknown) => {
               routeCalls++;
               const apiContext = context as {
@@ -952,7 +1002,8 @@ describe("APIRouteHandler", () => {
                 admittedHeader: apiContext.headers.get("x-auth-subject"),
               });
             },
-          }),
+          });
+        },
       });
       const config = {
         security: {
@@ -968,7 +1019,7 @@ describe("APIRouteHandler", () => {
       const handler = await createInitializedHandler("/test/project", adapter, config);
       const ctx = {
         ...localContext(adapter),
-        securityConfig: config.security ?? null,
+        securityConfig: config?.security ?? null,
       } as HandlerContext;
 
       const preflight = await handler.handle(
@@ -984,6 +1035,7 @@ describe("APIRouteHandler", () => {
       );
       assertEquals(preflight?.status, 204);
       assertEquals(routeCalls, 0);
+      assertEquals(moduleLoads, 0, "unauthenticated preflight must not evaluate the route module");
 
       const admittedRequest = new Request("http://localhost/api/protected-options", {
         method: "OPTIONS",
@@ -1002,6 +1054,52 @@ describe("APIRouteHandler", () => {
         admittedHeader: null,
       });
       assertEquals(routeCalls, 1);
+      assertEquals(moduleLoads, 1);
+    });
+
+    it("does not reuse prepared method capability across worker semantics", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/semantic-options.ts",
+        "export function OPTIONS() {}",
+      );
+      const module = await prepareSource(
+        `export function OPTIONS() { return new Response("semantic options", { status: 213 }); }`,
+      );
+      let inspectedMethods = ["GET", "HEAD"];
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          throw new Error("semantic OPTIONS route reached host import");
+        },
+        prepareHandlerModule: () => Promise.resolve(module),
+        resolvePreparedRouteMethods: () => Promise.resolve([...inspectedMethods]),
+      });
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const first = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          handler.handle(
+            new Request("http://localhost/api/semantic-options", { method: "OPTIONS" }),
+            localContext(adapter),
+          ),
+      );
+      assertEquals(first?.status, 204);
+
+      inspectedMethods = ["OPTIONS"];
+      const second = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: { github: {} } }),
+        () =>
+          handler.handle(
+            new Request("http://localhost/api/semantic-options", { method: "OPTIONS" }),
+            localContext(adapter),
+          ),
+      );
+      assertEquals(second?.status, 213);
+      assertEquals(await second?.text(), "semantic options");
     });
 
     it("dispatches a named OPTIONS handler from a prepared route", async () => {
@@ -1018,16 +1116,11 @@ describe("APIRouteHandler", () => {
           });
         }`,
       );
-      let methodInspections = 0;
       __injectDepsForTests({
         loadHandlerModule: () => {
           throw new Error("prepared OPTIONS route reached host import");
         },
         prepareHandlerModule: () => Promise.resolve(module),
-        resolvePreparedRouteMethods: (...args) => {
-          methodInspections++;
-          return resolvePreparedRouteMethods(...args);
-        },
       });
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
@@ -1056,7 +1149,6 @@ describe("APIRouteHandler", () => {
           ),
       );
       assertEquals(repeated?.status, 209);
-      assertEquals(methodInspections, 1, "prepared methods should be inspected once per route");
 
       handler.clearCache();
       const refreshed = await runWithExactSourceIntegrationPolicy(
@@ -1068,7 +1160,6 @@ describe("APIRouteHandler", () => {
           ),
       );
       assertEquals(refreshed?.status, 209);
-      assertEquals(methodInspections, 2, "clearing route state must invalidate method inspection");
     });
 
     it("should handle OPTIONS preflight requests with secure-by-default CORS", async () => {

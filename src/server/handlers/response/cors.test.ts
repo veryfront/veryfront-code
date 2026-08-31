@@ -167,6 +167,28 @@ describe("server/handlers/response/cors", () => {
       assertEquals(routeResolutionCalls, 0);
     });
 
+    it("continues API preflight in an operator-granted shared runtime", async () => {
+      let routeResolutionCalls = 0;
+      const handler = new CorsHandler({
+        resolveAppRouteFile: () => {
+          routeResolutionCalls++;
+          return Promise.resolve(null);
+        },
+      });
+
+      const result = await handler.handle(
+        new Request("https://tenant.example/api/items", { method: "OPTIONS" }),
+        makeCtx({
+          allowHostProjectCodeExecution: true,
+          prepareHostedConfigContext: () => Promise.reject(new Error("unused")),
+        }),
+      );
+
+      assertEquals(result.continue, true);
+      assertEquals(result.response, undefined);
+      assertEquals(routeResolutionCalls, 0);
+    });
+
     it("continues a matched non-API App route with an OPTIONS export", async () => {
       const projectDir = await makeTempDir({ prefix: "veryfront-cors-options-" });
       const routeFile = `${projectDir}/route.mjs`;

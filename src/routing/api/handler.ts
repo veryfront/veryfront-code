@@ -25,7 +25,7 @@ import {
   type ExecuteRouteOptions,
   resolvePreparedRouteMethods,
 } from "./route-executor.ts";
-import { resolveExecutableRouteMethods } from "./route-methods.ts";
+import { normalizeRouteMethod, resolveExecutableRouteMethods } from "./route-methods.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { HandlerContext } from "#veryfront/types";
 import type { PreparedWorkerModule } from "#veryfront/security/sandbox/worker-types.ts";
@@ -45,6 +45,7 @@ import {
 import {
   isHostProjectCodeExecutionAllowed,
   isSharedProjectRuntime,
+  requiresIsolatedProjectRuntime,
 } from "#veryfront/security/project-locality.ts";
 import { createApplicationAuthRequestHandler } from "#veryfront/security/application-auth/application-auth-runtime.ts";
 import { AuthHandler } from "#veryfront/security/http/auth.ts";
@@ -151,9 +152,6 @@ type LoadedRoute =
 export class APIRouteHandler {
   private router = new ApiRouteMatcher();
   private routeCache = new LRUCache<string, LoadedRoute>({ maxEntries: HANDLER_CACHE_MAX_ENTRIES });
-  private isolatedRouteMethodCache = new LRUCache<string, Promise<readonly string[]>>({
-    maxEntries: HANDLER_CACHE_MAX_ENTRIES,
-  });
   private readonly applicationAuth = createApplicationAuthRequestHandler();
   private readonly httpAuth = new AuthHandler();
   private executionScopeId = crypto.randomUUID();
@@ -251,7 +249,7 @@ export class APIRouteHandler {
         await this.ensureCorsConfig(adapter);
 
         const method = request.method.toUpperCase();
-        if (method === "OPTIONS" && isSharedProjectRuntime(ctx)) {
+        if (method === "OPTIONS" && requiresIsolatedProjectRuntime(ctx)) {
           return this.automaticPreflight(request);
         }
 
@@ -276,6 +274,18 @@ export class APIRouteHandler {
           page: match.route.page,
           params: match.params,
         });
+
+        if (method === "OPTIONS") {
+          const authResponse = await this.authenticateOptionsRoute(request, ctx);
+          if (authResponse) {
+            if (isPreflightRequest(request)) return this.automaticPreflight(request);
+            return await applyCORSHeaders({
+              request,
+              response: authResponse,
+              config: this.corsConfig ?? undefined,
+            }) ?? authResponse;
+          }
+        }
 
         const isLocalProject = ctx?.isLocalProject === true;
         const allowHostProjectCodeExecution = isHostProjectCodeExecutionAllowed(ctx);
@@ -367,26 +377,19 @@ export class APIRouteHandler {
 
         let executableOptionsMethods: readonly string[] | undefined;
         if (method === "OPTIONS") {
+          const requestedMethod = this.requestedPreflightMethod(request);
           executableOptionsMethods = route.kind === "isolated"
-            ? await this.resolveIsolatedRouteMethods(match.route.page, route.module)
-            : resolveExecutableRouteMethods(route.handler, undefined, {
+            ? await this.resolveIsolatedRouteMethods(
+              match.route.page,
+              route.module,
+              requestedMethod,
+            )
+            : resolveExecutableRouteMethods(route.handler, requestedMethod, {
               includeFrameworkOptions: false,
             });
 
           if (!executableOptionsMethods.includes("OPTIONS")) {
             return this.automaticPreflight(request, executableOptionsMethods);
-          }
-
-          const authResponse = await this.authenticateExplicitOptions(request, ctx);
-          if (authResponse) {
-            if (isPreflightRequest(request)) {
-              return this.automaticPreflight(request, executableOptionsMethods);
-            }
-            return await applyCORSHeaders({
-              request,
-              response: authResponse,
-              config: this.corsConfig ?? undefined,
-            }) ?? authResponse;
           }
         }
 
@@ -508,26 +511,23 @@ export class APIRouteHandler {
   private async resolveIsolatedRouteMethods(
     modulePath: string,
     module: PreparedWorkerModule,
+    requestedMethod: string | undefined,
   ): Promise<readonly string[]> {
-    const cacheKey = `${modulePath}:${module.sha256}`;
-    let pending = this.isolatedRouteMethodCache.get(cacheKey);
-    if (!pending) {
-      pending = getDeps().resolvePreparedRouteMethods(undefined, {
-        executionScopeId: this.executionScopeId,
-        module,
-        modulePath,
-        projectDir: this.projectDir,
-      }, { includeFrameworkOptions: false });
-      this.isolatedRouteMethodCache.set(cacheKey, pending);
-    }
+    return await getDeps().resolvePreparedRouteMethods(requestedMethod, {
+      executionScopeId: this.executionScopeId,
+      module,
+      modulePath,
+      projectDir: this.projectDir,
+    }, { includeFrameworkOptions: false });
+  }
 
+  private requestedPreflightMethod(request: Request): string | undefined {
     try {
-      return await pending;
-    } catch (error) {
-      if (this.isolatedRouteMethodCache.get(cacheKey) === pending) {
-        this.isolatedRouteMethodCache.delete(cacheKey);
-      }
-      throw error;
+      return normalizeRouteMethod(
+        request.headers.get("access-control-request-method"),
+      ) ?? undefined;
+    } catch {
+      return undefined;
     }
   }
 
@@ -548,7 +548,7 @@ export class APIRouteHandler {
     });
   }
 
-  private async authenticateExplicitOptions(
+  private async authenticateOptionsRoute(
     request: Request,
     ctx: HandlerContext | undefined,
   ): Promise<Response | null> {
@@ -585,7 +585,6 @@ export class APIRouteHandler {
     this.executionScopeId = crypto.randomUUID();
     evictWorkerScopeIfPresent(previousScopeId);
     this.routeCache.clear();
-    this.isolatedRouteMethodCache.clear();
     this.router.clearCache();
   }
 
@@ -611,7 +610,6 @@ export class APIRouteHandler {
     this.destroyed = true;
     evictWorkerScopeIfPresent(this.executionScopeId);
     this.routeCache.destroy();
-    this.isolatedRouteMethodCache.destroy();
     this.router.destroy();
   }
 

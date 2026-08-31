@@ -4,7 +4,10 @@ import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { getConfig } from "#veryfront/config";
 import { PRIORITY_VERY_HIGH } from "#veryfront/utils/constants/index.ts";
 import { resolveAppRouteFile } from "../request/api/app-router-resolver.ts";
-import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
+import {
+  isSharedProjectRuntime,
+  requiresIsolatedProjectRuntime,
+} from "#veryfront/security/project-locality.ts";
 import { getApplicationPreflightHeaders } from "#veryfront/security/http/application-request.ts";
 import { resolveExecutableRouteMethods } from "#veryfront/routing/api/route-methods.ts";
 
@@ -34,11 +37,12 @@ export class CorsHandler extends BaseHandler {
 
     const pathname = new URL(req.url).pathname;
     const isSharedRuntime = isSharedProjectRuntime(ctx);
-    if (!isSharedRuntime && (pathname === "/api" || pathname.startsWith("/api/"))) {
+    const mustAvoidProjectCode = requiresIsolatedProjectRuntime(ctx);
+    if (!mustAvoidProjectCode && (pathname === "/api" || pathname.startsWith("/api/"))) {
       return this.continue();
     }
 
-    const routeMethods = isSharedRuntime
+    const routeMethods = mustAvoidProjectCode
       ? { allowMethods: CorsHandler.DEFAULT_METHODS, hasExecutableOptions: false }
       : await this.resolveRouteMethods(pathname, ctx);
     if (routeMethods.hasExecutableOptions) return this.continue();

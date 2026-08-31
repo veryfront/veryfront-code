@@ -763,7 +763,12 @@ describe("worker-script request snapshots", () => {
       includeFrameworkOptions: false,
     };
 
-    assertEquals(snapshotWorkerRequest(request).includeFrameworkOptions, false);
+    const snapshot = snapshotWorkerRequest(request);
+    assertEquals(snapshot.type, "inspect-api-route-methods");
+    if (snapshot.type !== "inspect-api-route-methods") {
+      throw new Error("Expected an API route inspection request");
+    }
+    assertEquals(snapshot.includeFrameworkOptions, false);
     assertThrows(
       () => snapshotWorkerRequest({ ...request, includeFrameworkOptions: "false" }),
       TypeError,
