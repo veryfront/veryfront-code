@@ -1542,6 +1542,63 @@ describe("server/runtime-handler/index", () => {
     });
   });
 
+  it("keeps shared-runtime automatic OPTIONS ahead of project middleware", async () => {
+    const projectDir = "/tmp/test-shared-options-fallback";
+    const adapter = createRouteMockAdapter();
+    adapter.fs.files.set(
+      `${projectDir}/veryfront.config.ts`,
+      "export default {};",
+    );
+    const fs = adapter.fs as typeof adapter.fs & {
+      isVeryfrontAdapter: () => boolean;
+      getUnderlyingAdapter: () => typeof adapter.fs;
+      isMultiProjectMode: () => boolean;
+      isContextualMode: () => boolean;
+      runWithContext: <T>(
+        slug: string,
+        token: string,
+        operation: () => Promise<T>,
+        projectId?: string,
+        options?: { branch?: string | null },
+      ) => Promise<T>;
+      sourceSnapshotFreshnessOptionsVersion: 1;
+      ensureSourceSnapshotFresh: () => Promise<void>;
+      getSourceSnapshotIdentity: () => string;
+      getSourceSnapshotVersion: () => number;
+    };
+    fs.isVeryfrontAdapter = () => true;
+    fs.getUnderlyingAdapter = () => fs;
+    fs.isMultiProjectMode = () => true;
+    fs.isContextualMode = () => true;
+    fs.runWithContext = (slug, token, operation, projectId, options) =>
+      runWithRequestContext({ projectSlug: slug, token, projectId, ...options }, operation);
+    fs.sourceSnapshotFreshnessOptionsVersion = 1;
+    fs.ensureSourceSnapshotFresh = () => Promise.resolve();
+    fs.getSourceSnapshotIdentity = () => "branch:shared-options:main";
+    fs.getSourceSnapshotVersion = () => 1;
+    const handler = createVeryfrontHandler(projectDir, adapter, {
+      projectDir,
+      config: { fs: { veryfront: { proxyMode: true } } } as any,
+    });
+    Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+
+    const response = await handler(
+      new Request("http://runtime.internal/api/private", {
+        method: "OPTIONS",
+        headers: {
+          "x-project-slug": "shared-options",
+          "x-project-id": "project-shared-options",
+          "x-token": "proxy-token",
+          "x-environment": "preview",
+          "x-forwarded-host": "shared-options.preview.veryfront.com",
+          "x-forwarded-proto": "https",
+        },
+      }),
+    );
+
+    assertEquals(response.status, 204);
+  });
+
   it("allows proxy context only behind the operator-trusted topology", async () => {
     const handler = createProxyModeHandler();
     const isolationCalls = { check: 0, start: 0, complete: 0 };
