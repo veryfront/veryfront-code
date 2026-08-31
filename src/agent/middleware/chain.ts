@@ -14,8 +14,12 @@ const INVALID_CONTINUATION_MESSAGE =
 const DETACHED_CONTINUATION_FAILURE = "downstream continuation rejected";
 const IntrinsicPromise = Promise;
 const IntrinsicWeakSet = WeakSet;
+const ObjectCreate = Object.create;
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const PromiseThen = Promise.prototype.then;
 const ReflectApply = Reflect.apply;
+const SymbolSpecies = Symbol.species;
 const WeakSetAdd = WeakSet.prototype.add;
 const WeakSetHas = WeakSet.prototype.has;
 // These intrinsic WeakSets retain only live keys; entries are collectible once
@@ -23,13 +27,17 @@ const WeakSetHas = WeakSet.prototype.has;
 const INVALID_CONTINUATION_ERRORS = new IntrinsicWeakSet<object>();
 const TRACKED_CONTINUATIONS = new IntrinsicWeakSet<object>();
 const OBSERVED_CONTINUATIONS = new IntrinsicWeakSet<object>();
+const CONTINUATION_SPECIES_HOLDER = ReflectApply(ObjectCreate, Object, [null]) as object;
+ObjectDefineProperty(CONTINUATION_SPECIES_HOLDER, SymbolSpecies, {
+  value: IntrinsicPromise,
+});
 // A global symbol lets independently loaded package copies recognize the
 // expected internal error; the WeakSet remains the primary local check.
 const INVALID_CONTINUATION_MARKER = Symbol.for(
   "veryfront.agent.middleware.invalid-continuation",
 );
 const DOM_EXCEPTION_NAME_GETTER = typeof DOMException === "function"
-  ? Object.getOwnPropertyDescriptor(DOMException.prototype, "name")?.get
+  ? ObjectGetOwnPropertyDescriptor(DOMException.prototype, "name")?.get
   : undefined;
 const PROMISE_SPECIES_SUPPORTED = (() => {
   class SpeciesProbe extends Promise<void> {}
@@ -56,6 +64,7 @@ class ObservedContinuationPromise<T> extends Promise<T> {
   constructor(
     executor: ContinuationExecutor<T>,
     private readonly onRejection?: ContinuationRejectionHandler,
+    private readonly suppressedInvalidErrors = new IntrinsicWeakSet<object>(),
   ) {
     super(executor);
     ReflectApply(WeakSetAdd, TRACKED_CONTINUATIONS, [this]);
@@ -81,6 +90,7 @@ class ObservedContinuationPromise<T> extends Promise<T> {
         () => {
           return observedDerived.isObserved();
         },
+        this.suppressedInvalidErrors,
       );
     }
     return derived;
@@ -91,11 +101,65 @@ class ObservedContinuationPromise<T> extends Promise<T> {
   }
 }
 
+function trackEagerContinuation<T>(
+  promise: Promise<T>,
+  onRejection: ContinuationRejectionHandler,
+  suppressedInvalidErrors = new IntrinsicWeakSet<object>(),
+): Promise<T> {
+  if (ReflectApply(WeakSetHas, TRACKED_CONTINUATIONS, [promise]) as boolean) {
+    return createObservedContinuation<T>(
+      (resolve, reject) => {
+        void ReflectApply(PromiseThen, promise, [resolve, reject]);
+      },
+      onRejection,
+      suppressedInvalidErrors,
+    );
+  }
+  ReflectApply(WeakSetAdd, TRACKED_CONTINUATIONS, [promise]);
+
+  const trackedThen = function <TResult1 = T, TResult2 = never>(
+    onFulfilled?: ContinuationThenHandler<T, TResult1>,
+    onRejected?: ContinuationThenHandler<unknown, TResult2>,
+  ): Promise<TResult1 | TResult2> {
+    ReflectApply(WeakSetAdd, OBSERVED_CONTINUATIONS, [promise]);
+    const derived = ReflectApply(PromiseThen, promise, [onFulfilled, onRejected]) as Promise<
+      TResult1 | TResult2
+    >;
+    if (!PROMISE_SPECIES_SUPPORTED) {
+      observeContinuationRejection(derived);
+      return derived;
+    }
+    return trackEagerContinuation(derived, onRejection, suppressedInvalidErrors);
+  };
+  ObjectDefineProperty(promise, "then", {
+    configurable: false,
+    value: trackedThen,
+    writable: false,
+  });
+  ObjectDefineProperty(promise, "constructor", {
+    configurable: false,
+    value: CONTINUATION_SPECIES_HOLDER,
+    writable: false,
+  });
+  observeContinuationRejection(
+    promise,
+    onRejection,
+    () => ReflectApply(WeakSetHas, OBSERVED_CONTINUATIONS, [promise]) as boolean,
+    suppressedInvalidErrors,
+  );
+  return promise;
+}
+
 function createObservedContinuation<T>(
   executor: ContinuationExecutor<T>,
   onRejection?: ContinuationRejectionHandler,
+  suppressedInvalidErrors = new IntrinsicWeakSet<object>(),
 ): Promise<T> {
-  const continuation = new ObservedContinuationPromise<T>(executor, onRejection);
+  const continuation = new ObservedContinuationPromise<T>(
+    executor,
+    onRejection,
+    suppressedInvalidErrors,
+  );
   if (onRejection) {
     // Keep a root observer for engines without species propagation; each
     // user-created derived branch gets its own observer in then().
@@ -103,6 +167,7 @@ function createObservedContinuation<T>(
       continuation,
       onRejection,
       () => continuation.isObserved(),
+      suppressedInvalidErrors,
     );
     if (!PROMISE_SPECIES_SUPPORTED) return continuation;
 
@@ -114,12 +179,12 @@ function createObservedContinuation<T>(
       }
 
       constructor(derivedExecutor: ContinuationExecutor<T>) {
-        super(derivedExecutor, onRejection);
+        super(derivedExecutor, onRejection, suppressedInvalidErrors);
       }
     };
     // Keep the species constructor tamper-resistant after wiring the branch
     // tracker onto this internal continuation.
-    Object.defineProperty(continuation, "constructor", {
+    ObjectDefineProperty(continuation, "constructor", {
       configurable: false,
       value: DerivedContinuationPromise,
       writable: false,
@@ -170,7 +235,7 @@ function createInvalidContinuationError() {
   const error = MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE });
   ReflectApply(WeakSetAdd, INVALID_CONTINUATION_ERRORS, [error]);
   try {
-    Object.defineProperty(error, INVALID_CONTINUATION_MARKER, { value: true });
+    ObjectDefineProperty(error, INVALID_CONTINUATION_MARKER, { value: true });
   } catch {
     // The WeakSet remains the local fallback if the error is not extensible.
   }
@@ -183,7 +248,7 @@ function isInvalidContinuationError(error: unknown): boolean {
   if (!canIdentifyProxyWithoutHooks) return false;
   if (isProxyWithoutHooks(error)) return false;
   try {
-    return Object.getOwnPropertyDescriptor(error, INVALID_CONTINUATION_MARKER)?.value === true;
+    return ObjectGetOwnPropertyDescriptor(error, INVALID_CONTINUATION_MARKER)?.value === true;
   } catch {
     return false;
   }
@@ -213,10 +278,18 @@ function observeContinuationRejection(
   promise: Promise<unknown>,
   onUnexpectedRejection?: ContinuationRejectionHandler,
   isObserved: () => boolean = () => false,
+  suppressedInvalidErrors?: WeakSet<object>,
 ): void {
   void ReflectApply(PromiseThen, promise, [undefined, (error: unknown) => {
     try {
-      if (isInvalidContinuationError(error) || isAbortError(error)) return;
+      if (
+        typeof error === "object" && error !== null && suppressedInvalidErrors &&
+        isInvalidContinuationError(error) &&
+        ReflectApply(WeakSetHas, suppressedInvalidErrors, [error]) as boolean
+      ) {
+        return;
+      }
+      if (isAbortError(error)) return;
       onUnexpectedRejection?.(error, isObserved);
     } catch {
       // Rejection observers must not create a second unhandled rejection.
@@ -295,9 +368,16 @@ function scheduleDetachedContinuationFailureReport(record: {
 function rejectInvalidContinuation(
   onUnexpectedRejection?: ContinuationRejectionHandler,
 ): Promise<AgentResponse> {
-  return createObservedContinuation<AgentResponse>((_resolve, reject) => {
-    reject(createInvalidContinuationError());
-  }, onUnexpectedRejection);
+  const suppressedInvalidErrors = new IntrinsicWeakSet<object>();
+  return createObservedContinuation<AgentResponse>(
+    (_resolve, reject) => {
+      const error = createInvalidContinuationError();
+      ReflectApply(WeakSetAdd, suppressedInvalidErrors, [error]);
+      reject(error);
+    },
+    onUnexpectedRejection,
+    suppressedInvalidErrors,
+  );
 }
 
 function createDeferredContinuation(
@@ -305,15 +385,22 @@ function createDeferredContinuation(
   dispatch: () => Promise<AgentResponse>,
   onUnexpectedRejection?: ContinuationRejectionHandler,
 ): Promise<AgentResponse> {
-  const continuation = createObservedContinuation<AgentResponse>((resolve, reject) => {
-    void Promise.resolve().then(() => {
-      if (isSettled()) {
-        reject(createInvalidContinuationError());
-        return;
-      }
-      adoptContinuationResult(dispatch, resolve, reject, continuation);
-    }).catch(reject);
-  }, onUnexpectedRejection);
+  const suppressedInvalidErrors = new IntrinsicWeakSet<object>();
+  const continuation = createObservedContinuation<AgentResponse>(
+    (resolve, reject) => {
+      void Promise.resolve().then(() => {
+        if (isSettled()) {
+          const error = createInvalidContinuationError();
+          ReflectApply(WeakSetAdd, suppressedInvalidErrors, [error]);
+          reject(error);
+          return;
+        }
+        adoptContinuationResult(dispatch, resolve, reject, continuation);
+      }).catch(reject);
+    },
+    onUnexpectedRejection,
+    suppressedInvalidErrors,
+  );
   return continuation;
 }
 
@@ -356,12 +443,9 @@ function createMiddlewareContinuation(
       );
     }
 
-    // The executor does not expose the continuation until construction
-    // completes, so native Promise resolution handles eager self-resolution.
-    const continuation = createObservedContinuation<AgentResponse>((resolve, reject) => {
-      adoptContinuationResult(dispatch, resolve, reject);
-    }, reportContinuationFailure);
-    return continuation;
+    // Preserve the dispatched Promise identity so native cycle detection still
+    // rejects a downstream handler that returns its own eager continuation.
+    return trackEagerContinuation(dispatch(), reportContinuationFailure);
   };
 
   return {
@@ -395,7 +479,8 @@ export class MiddlewareChain {
 
           if (!currentMiddleware) return finalHandler();
 
-          return withSpan(
+          let middlewareResult: Promise<AgentResponse> | undefined;
+          const tracedResult = withSpan(
             `agent.middleware.chain.dispatch.${middlewareIndex + 1}`,
             async () => {
               const continuation = createMiddlewareContinuation(
@@ -403,15 +488,18 @@ export class MiddlewareChain {
               );
 
               try {
-                const result = currentMiddleware(context, continuation.next);
+                middlewareResult = currentMiddleware(context, continuation.next);
                 continuation.finishInvocation();
-                return await adoptMiddlewareResult(result, continuation.settle);
+                return await adoptMiddlewareResult(middlewareResult, continuation.settle);
               } finally {
                 continuation.settle();
               }
             },
             { "middleware.index": middlewareIndex },
           );
+          if (!middlewareResult) return tracedResult;
+          observeContinuationRejection(tracedResult);
+          return middlewareResult;
         };
 
         return dispatch(0);
