@@ -352,6 +352,7 @@ describe("run-scoped inference credential", () => {
     );
     const originalRequestJson = Request.prototype.json;
     const originalObjectEntries = Object.entries;
+    const inferenceToken = "run-scoped-inference-token";
     const observedJsonCredentials: unknown[] = [];
     const observedEntriesCredentials: unknown[] = [];
     const containsInferenceToken = (value: unknown): boolean => {
