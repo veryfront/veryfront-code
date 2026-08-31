@@ -620,4 +620,93 @@ describe("agent/conversation-run-chunk-mirror", () => {
       "an oversized-event stop must be reported at error level with the cursor metadata",
     );
   });
+
+  // VERYFRONT-AGENT-3 (veryfront-issue-inbox#821): the threshold added for the
+  // first incident stopped the first four retries from paging, but every
+  // attempt at or past the threshold still logged at error level. Retry
+  // backoff caps at ~5s, so one persistent append outage resumes emitting a
+  // Sentry error every ~5s per active run once the streak reaches five.
+  // Escalation must fire once per failure streak; the remaining attempts in
+  // the same streak stay at warn. A successful flush ends the streak, so the
+  // next persistent outage must escalate again.
+  it("escalates a persistent retry streak to error once, not on every attempt", async () => {
+    const logs: Array<{ level: "warn" | "error"; message: string; consecutiveFailures: unknown }> =
+      [];
+    let failing = true;
+    const flakyFetch = (() =>
+      Promise.resolve(
+        failing
+          ? new Response(
+            JSON.stringify({ detail: "upstream unavailable" }),
+            { status: 503, headers: { "Content-Type": "application/json" } },
+          )
+          : new Response(
+            JSON.stringify({
+              latestEventId: 1,
+              latestExternalEventSequence: 1,
+              appendedCount: 1,
+              run: {
+                runId: "run-1",
+                conversationId: "11111111-1111-4111-8111-111111111111",
+                latestEventId: 1,
+                latestExternalEventSequence: 1,
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+      )) as typeof fetch;
+    const mirror = createHostedConversationRunChunkMirror({
+      authToken: "token",
+      apiUrl: "https://api.example.test",
+      conversationId: "11111111-1111-4111-8111-111111111111",
+      runId: "run-1",
+      latestEventId: 0,
+      fetch: flakyFetch,
+      instrumentation: {
+        warn: (message, metadata) => {
+          logs.push({ level: "warn", message, consecutiveFailures: metadata.consecutiveFailures });
+        },
+        error: (message, metadata) => {
+          logs.push({ level: "error", message, consecutiveFailures: metadata.consecutiveFailures });
+        },
+      },
+    });
+
+    await mirror.appendEvents([{ type: "TEXT_MESSAGE_CONTENT", delta: "persisted" }]);
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await mirror.flush();
+    }
+
+    failing = false;
+    await mirror.flush();
+
+    failing = true;
+    await mirror.appendEvents([{ type: "TEXT_MESSAGE_CONTENT", delta: "queued again" }]);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await mirror.flush();
+    }
+    mirror.dispose();
+
+    assertEquals(
+      logs,
+      [
+        { level: "warn", message: RETRY_LOG_MESSAGE, consecutiveFailures: 1 },
+        { level: "warn", message: RETRY_LOG_MESSAGE, consecutiveFailures: 2 },
+        { level: "warn", message: RETRY_LOG_MESSAGE, consecutiveFailures: 3 },
+        { level: "warn", message: RETRY_LOG_MESSAGE, consecutiveFailures: 4 },
+        { level: "error", message: RETRY_LOG_MESSAGE, consecutiveFailures: 5 },
+        { level: "warn", message: RETRY_LOG_MESSAGE, consecutiveFailures: 6 },
+        { level: "warn", message: RETRY_LOG_MESSAGE, consecutiveFailures: 7 },
+        { level: "warn", message: RETRY_LOG_MESSAGE, consecutiveFailures: 8 },
+        { level: "warn", message: RETRY_LOG_MESSAGE, consecutiveFailures: 1 },
+        { level: "warn", message: RETRY_LOG_MESSAGE, consecutiveFailures: 2 },
+        { level: "warn", message: RETRY_LOG_MESSAGE, consecutiveFailures: 3 },
+        { level: "warn", message: RETRY_LOG_MESSAGE, consecutiveFailures: 4 },
+        { level: "error", message: RETRY_LOG_MESSAGE, consecutiveFailures: 5 },
+      ],
+      "a failure streak must escalate to error exactly once at the threshold; " +
+        "later attempts in the same streak stay at warn, and a recovered flush " +
+        "resets the streak so the next persistent outage escalates again",
+    );
+  });
 });
