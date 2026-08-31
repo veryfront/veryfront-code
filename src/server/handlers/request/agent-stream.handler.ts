@@ -1208,6 +1208,8 @@ export class AgentStreamHandler extends BaseHandler {
                           count: Object.keys(envVarsForAgent).length,
                         });
 
+                        // verifyControlPlaneRequest above authenticates the raw envelope before
+                        // this verified credential can be bound to the runtime input.
                         const inferenceAuthToken = payload.credentials?.inferenceAuthToken;
                         if (inferenceAuthToken) {
                           registerRuntimeInferenceCredential(runtimeInput, inferenceAuthToken);

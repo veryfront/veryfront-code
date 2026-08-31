@@ -6,6 +6,7 @@ import type { HostedServiceAuthenticatedRequest } from "#veryfront/agent/service
 import type { AgUiResumeValue } from "#veryfront/agent/ag-ui/tool-shared.ts";
 import {
   createHostedInferenceModelResolver,
+  createVeryfrontCloudInferenceModelResolver,
   registerHostedInferenceCredential,
 } from "#veryfront/agent/hosted/inference-credential.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
@@ -215,6 +216,46 @@ describe("run-scoped inference credential", () => {
     }
 
     assertEquals(projectResolverCalls, 0);
+  });
+
+  it("clears inference authority before non-cloud project model resolution", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
+    let capturedAuthorization: string | null = null;
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedAuthorization = request.headers.get("Authorization");
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+              );
+              controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+
+    const unregister = registerModelProvider(
+      "project-test",
+      () => resolveModel("veryfront-cloud/openai/gpt-nested"),
+    );
+    try {
+      const model = createVeryfrontCloudInferenceModelResolver("run-scoped-inference-token")(
+        "project-test/model",
+      );
+      const result = await model.doStream({ prompt: [] });
+      await drainStream(result.stream);
+    } finally {
+      unregister();
+    }
+
+    assertEquals(capturedAuthorization, "Bearer broader-project-runtime-token");
   });
 
   it("routes a serialized standalone AgentService invocation to gateway Authorization", async () => {
