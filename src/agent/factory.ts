@@ -508,12 +508,12 @@ export function createEphemeralAgent<TOutput = never>(
   return createAgent(config, { register: false });
 }
 
-/** @internal Creates a registered agent with framework-private runtime options. */
-export function createAgentWithRuntimeOptions<TOutput = never>(
+/** @internal Creates an unregistered agent with framework-private runtime options. */
+export function createEphemeralAgentWithRuntimeOptions<TOutput = never>(
   config: AgentConfig<TOutput>,
   runtimeOptions: AgentRuntimeInternalOptions,
 ): Agent<TOutput> {
-  return createAgent(config, { register: true, runtimeOptions });
+  return createAgent(config, { register: false, runtimeOptions });
 }
 
 function createAgent<TOutput = never>(

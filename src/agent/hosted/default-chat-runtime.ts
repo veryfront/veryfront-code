@@ -22,7 +22,7 @@ import {
   runWithVeryfrontCloudContextAsync,
   type VeryfrontCloudContext,
 } from "#veryfront/provider/veryfront-cloud/context.ts";
-import { createAgentWithRuntimeOptions } from "../factory.ts";
+import { createEphemeralAgentWithRuntimeOptions } from "../factory.ts";
 import type { AgentRuntimeInternalOptions } from "../runtime/index.ts";
 import { markRuntimeLocalTool } from "../runtime/local-tool.ts";
 import {
@@ -524,7 +524,7 @@ export async function createDefaultHostedChatRuntime(
         });
         const runtimeAgent = runWithVeryfrontCloudContext(
           cloudContext,
-          () => createAgentWithRuntimeOptions(runtimeAgentConfig, runtimeOptions),
+          () => createEphemeralAgentWithRuntimeOptions(runtimeAgentConfig, runtimeOptions),
         );
 
         return {
