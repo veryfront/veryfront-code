@@ -147,12 +147,10 @@ export class ProjectMiddlewareRuntime {
       skipProjectMiddleware,
     } = input;
     const pathname = new URL(request.url).pathname;
+    const runInFilesystemContext = <T>(operation: () => Promise<T>) =>
+      runInProjectFilesystemContext(ctx, isSharedProxy, operation);
 
     if (isWebSocketPath(pathname)) {
-      return next();
-    }
-
-    if (skipProjectMiddleware) {
       return next();
     }
 
@@ -160,8 +158,12 @@ export class ProjectMiddlewareRuntime {
     // prepared the response from the same source snapshot. Keep middleware on
     // every ambiguous or authored route shape. The auth-terminal bypass above
     // is the separate browser-preflight path and is mutually exclusive.
-    if (isFrameworkOwnedPreflight) {
-      return next();
+    if (skipProjectMiddleware || isFrameworkOwnedPreflight) {
+      return await runInFilesystemContext(() =>
+        runWithRetainedPreviewDocumentSourceSnapshot(ctx, next, {
+          runDeferredOperation: runInFilesystemContext,
+        })
+      );
     }
 
     // A control-plane dispatch is not the project's traffic. It addresses a
@@ -274,8 +276,6 @@ export class ProjectMiddlewareRuntime {
       );
       return await composed(middlewareContext, next);
     };
-    const runInFilesystemContext = <T>(operation: () => Promise<T>) =>
-      runInProjectFilesystemContext(ctx, isSharedProxy, operation);
     const executeWithPreparedSnapshot = () =>
       runWithRetainedPreviewDocumentSourceSnapshot(ctx, executeMiddleware, {
         runDeferredOperation: runInFilesystemContext,

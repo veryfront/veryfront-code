@@ -71,10 +71,11 @@ export class ApiHandlerWrapper extends BaseHandler {
   }
 
   async prepareFrameworkOwnedPreflight(req: Request, ctx: HandlerContext): Promise<boolean> {
-    if (!isPreflightRequest(req)) return false;
+    if (req.method.toUpperCase() !== "OPTIONS") return false;
+    const isBrowserPreflight = isPreflightRequest(req);
     if (requiresIsolatedProjectRuntime(ctx)) {
-      ctx.frameworkOwnedPreflight = true;
-      return true;
+      if (isBrowserPreflight) ctx.frameworkOwnedPreflight = true;
+      return isBrowserPreflight;
     }
 
     const fsWrapper = ctx.adapter.fs as FsWrapper;
@@ -82,7 +83,7 @@ export class ApiHandlerWrapper extends BaseHandler {
       typeof fsWrapper.isMultiProjectMode === "function" &&
       fsWrapper.isMultiProjectMode();
     const inspect = async (): Promise<boolean> => {
-      await ensurePreviewSourceSnapshotFresh(ctx);
+      await preparePreviewDocumentSourceSnapshot(ctx);
       const result = await withApiHandler(
         ctx,
         (api) => api.prepareFrameworkOwnedPreflight(req, ctx),

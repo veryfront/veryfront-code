@@ -143,6 +143,18 @@ export interface APIRouteHandleOptions {
   beforeOptionsDispatch?: () => Promise<void>;
 }
 
+export type OptionsMiddlewareAdmission =
+  | "not-applicable"
+  | "continue"
+  | "bypass-middleware";
+
+/**
+ * Request-scoped auth handoff consumed by handle(). The runtime creates a fresh
+ * HandlerContext for every attempt, and the weak key makes an abandoned prepare
+ * harmless; handle() deletes the entry as soon as it consumes it.
+ */
+const preparedOptionsAdmissions = new WeakMap<HandlerContext, Response | null>();
+
 /** Function signature for API route handlers. */
 export type APIHandler = (ctx: APIContext) => Promise<Response> | Response;
 
@@ -245,15 +257,17 @@ export class APIRouteHandler {
     request: Request,
     ctx?: HandlerContext,
   ): Promise<{ frameworkOwned: boolean; response?: Response }> {
-    if (!isPreflightRequest(request)) return { frameworkOwned: false };
+    if (request.method.toUpperCase() !== "OPTIONS") return { frameworkOwned: false };
+    const isBrowserPreflight = isPreflightRequest(request);
     if (requiresIsolatedProjectRuntime(ctx)) {
       // The denied-execution wrapper creates the public fallback response.
-      return { frameworkOwned: true };
+      return { frameworkOwned: isBrowserPreflight };
     }
 
     const { pathname } = new URL(request.url);
     const match = this.router.match(pathname);
     if (!match) {
+      if (!isBrowserPreflight) return { frameworkOwned: false };
       return {
         frameworkOwned: true,
         response: await this.automaticPreflight(request, undefined, ctx),
@@ -272,17 +286,47 @@ export class APIRouteHandler {
       return { frameworkOwned: false };
     }
 
-    return {
-      frameworkOwned: true,
-      response: await this.automaticPreflight(
+    const response = isBrowserPreflight
+      ? await this.automaticPreflight(
         request,
         await resolveStaticRouteMethodsFromSource(
           source,
           this.requestedPreflightMethod(request),
         ),
         ctx,
-      ),
-    };
+      )
+      : undefined;
+    return { frameworkOwned: true, ...(response ? { response } : {}) };
+  }
+
+  /**
+   * Admit a matched OPTIONS route before project middleware runs.
+   *
+   * This phase inspects route source without importing the route module. It
+   * authenticates only a route that may execute OPTIONS. Automatic fallback
+   * stays public and bypasses identity-gated project middleware.
+   */
+  async prepareOptionsMiddlewareAdmission(
+    request: Request,
+    ctx: HandlerContext,
+  ): Promise<OptionsMiddlewareAdmission> {
+    if (request.method.toUpperCase() !== "OPTIONS") return "not-applicable";
+
+    const pathname = new URL(request.url).pathname;
+    const match = this.router.match(pathname);
+    if (!match) return "not-applicable";
+
+    const adapter = await this.ensureAdapter();
+    await this.ensureCorsConfig(adapter);
+    if (await this.resolveStaticOptionsCapability(match.route.page, adapter) === "absent") {
+      return "bypass-middleware";
+    }
+
+    const authResponse = await this.authenticateOptionsRoute(request, ctx);
+    preparedOptionsAdmissions.set(ctx, authResponse);
+    if (authResponse) return "bypass-middleware";
+
+    return "continue";
   }
 
   handle(
@@ -339,6 +383,11 @@ export class APIRouteHandler {
         });
 
         if (method === "OPTIONS") {
+          const hasPreparedAdmission = ctx ? preparedOptionsAdmissions.has(ctx) : false;
+          const preparedAuthResponse = ctx && hasPreparedAdmission
+            ? preparedOptionsAdmissions.get(ctx) ?? null
+            : null;
+          if (ctx && hasPreparedAdmission) preparedOptionsAdmissions.delete(ctx);
           if (
             !isPreflightRequest(request) &&
             await this.resolveStaticOptionsCapability(match.route.page, adapter) === "absent"
@@ -346,7 +395,9 @@ export class APIRouteHandler {
             return this.automaticPreflight(request, undefined, ctx);
           }
 
-          const authResponse = await this.authenticateOptionsRoute(request, ctx);
+          const authResponse = hasPreparedAdmission
+            ? preparedAuthResponse
+            : await this.authenticateOptionsRoute(request, ctx);
           if (authResponse) {
             if (isPreflightRequest(request)) {
               return this.automaticPreflight(
@@ -657,7 +708,7 @@ export class APIRouteHandler {
       : DEFAULT_CORS_METHODS.join(", ");
     const response = await handleCORSPreflight({
       request,
-      config: this.corsConfig ?? undefined,
+      config: this.corsConfig ?? ctx?.config?.security?.cors ?? undefined,
       allowMethods,
       allowHeaders: getApplicationPreflightHeaders(request, {
         denyHeaders: ctx?.applicationIdentityHeaderNames,

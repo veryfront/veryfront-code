@@ -360,6 +360,47 @@ describe("ProjectMiddlewareRuntime", () => {
     );
   });
 
+  it("validates framework-owned OPTIONS dispatch against the retained snapshot", async () => {
+    let sourceVersion = 1;
+    const adapter = createAdapter();
+    adapter.fs.getSourceSnapshotIdentity = () => "branch:trusted-project:main";
+    adapter.fs.getSourceSnapshotVersion = () => sourceVersion;
+    const context = createContext(adapter, {
+      releaseId: undefined,
+      environmentName: "Preview",
+      resolvedEnvironment: "preview",
+      requestContext: {
+        token: "trusted-token",
+        slug: "trusted-project",
+        branch: "main",
+        mode: "preview",
+      },
+    });
+    seedPreviewDocumentSourceSnapshot(context, {
+      identity: "branch:trusted-project:main",
+      version: sourceVersion,
+    });
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () => Promise.resolve([]),
+    });
+
+    await assertRejects(
+      () =>
+        runtime.execute({
+          request: new Request("https://example.com/api/automatic", { method: "OPTIONS" }),
+          handlerContext: context,
+          isSharedProxy: false,
+          isFrameworkOwnedPreflight: true,
+          next: async () => {
+            sourceVersion++;
+            return new Response(null, { status: 204 });
+          },
+        }),
+      Error,
+      "changed after request configuration was derived",
+    );
+  });
+
   it("validates the config marker before forwarding a streamed response chunk", async () => {
     let sourceVersion = 1;
     let releaseBody!: () => void;

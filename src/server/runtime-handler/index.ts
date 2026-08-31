@@ -20,9 +20,11 @@ import {
   UNKNOWN_ERROR,
 } from "#veryfront/errors";
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
+import type { OptionsMiddlewareAdmission as ApiOptionsMiddlewareAdmission } from "#veryfront/routing/api/handler.ts";
 import type { Handler } from "#veryfront/types";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import {
@@ -72,7 +74,7 @@ import { ProdHydrationModuleHandler } from "../handlers/request/prod-hydration-m
 import { CSSHandler } from "../handlers/request/css.handler.ts";
 import { RSCHandler } from "../handlers/request/rsc/index.ts";
 import { ModuleHandler } from "../handlers/request/module/index.ts";
-import { ApiHandlerWrapper } from "../handlers/request/api/index.ts";
+import { ApiHandlerWrapper, withApiHandler } from "#veryfront/server/handlers/request/api/index.ts";
 import { SSRHandler } from "../handlers/request/ssr/index.ts";
 import { NotFoundHandler } from "../handlers/response/not-found.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
@@ -148,6 +150,7 @@ import {
   resolveProjectRuntimeContext,
 } from "./project-runtime-context.ts";
 import { runWithRetainedPreviewDocumentSourceSnapshot } from "#veryfront/server/handlers/request/source-snapshot-freshness.ts";
+import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
@@ -158,15 +161,62 @@ const logger = baseLogger.component("runtime-handler");
 
 const SOURCE_SNAPSHOT_FRESHNESS_RETRY_LIMIT = 1;
 
-function shouldRetrySourceSnapshotFreshness(
+type RuntimeOptionsMiddlewareAdmission =
+  | ApiOptionsMiddlewareAdmission
+  | "bypass-middleware-retained";
+
+type ProjectEnvironmentRunner = <T>(operation: () => T) => T;
+
+/** @internal Exported for the runtime admission regression tests. */
+export async function prepareOptionsBeforeProjectMiddleware(input: {
+  request: Request;
+  ctx: _HandlerContext;
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
+  runInFilesystemContext: <T>(operation: () => Promise<T>) => Promise<T>;
+  runInRequestProjectEnv: ProjectEnvironmentRunner;
+}): Promise<RuntimeOptionsMiddlewareAdmission> {
+  if (input.request.method !== "OPTIONS") return "not-applicable";
+  if (requiresIsolatedProjectRuntime(input.ctx)) return "bypass-middleware";
+
+  const prepareApiAdmission = () =>
+    withApiHandler(
+      input.ctx,
+      (api) => api.prepareOptionsMiddlewareAdmission(input.request, input.ctx),
+      { sourceSnapshotReady: true },
+    );
+  const prepareInProjectEnv = () => input.runInRequestProjectEnv(prepareApiAdmission);
+  const prepareWithSourcePolicy = () =>
+    runWithExactSourceIntegrationPolicy(
+      input.sourceIntegrationPolicy,
+      prepareInProjectEnv,
+    );
+
+  const admission = await input.runInFilesystemContext(() =>
+    runWithRetainedPreviewDocumentSourceSnapshot(
+      input.ctx,
+      prepareWithSourcePolicy,
+      {
+        retainAfterOperation: () => true,
+        runDeferredOperation: input.runInFilesystemContext,
+      },
+    )
+  );
+  return admission === "bypass-middleware" ? "bypass-middleware-retained" : admission;
+}
+
+/** Whether a request can be replayed before project middleware has started. */
+export function shouldRetrySourceSnapshotFreshness(
   request: Request,
   error: unknown,
   retries: number,
   projectMiddlewareStarted: boolean,
+  isFrameworkOwnedPreflight = false,
 ): boolean {
+  const methodCanRetry = request.method === "GET" || request.method === "HEAD" ||
+    (request.method === "OPTIONS" && isFrameworkOwnedPreflight);
   return retries < SOURCE_SNAPSHOT_FRESHNESS_RETRY_LIMIT &&
     !projectMiddlewareStarted &&
-    (request.method === "GET" || request.method === "HEAD") &&
+    methodCanRetry &&
     isVeryfrontError(error) &&
     error.slug === SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.slug;
 }
@@ -611,10 +661,12 @@ export function createVeryfrontHandler(
 
         let requestMetricsIncremented = false;
         let projectMiddlewareStarted = false;
+        let isFrameworkOwnedPreflightForRetry = false;
         const markProjectMiddlewareStarted = () => {
           projectMiddlewareStarted = true;
         };
         const executeHandlerAttempt = async (request: Request): Promise<Response> => {
+          isFrameworkOwnedPreflightForRetry = false;
           // Fast rejection of vulnerability scanner probes before any async work
           if (SCANNER_PATH_PATTERN.test(url.pathname)) {
             return new Response("Not Found", { status: 404 });
@@ -728,6 +780,10 @@ export function createVeryfrontHandler(
               ? operation()
               : runWithProjectEnv(isolatedEnvForRequest, operation);
 
+          const runInFilesystemContext = <T>(operation: () => Promise<T>) =>
+            runInProjectFilesystemContext(ctx, isProxyMode, operation);
+          const sourceIntegrationPolicy = runtimeContext.sourceIntegrationPolicy;
+
           if (!requestMetricsIncremented) {
             await incrementRequestMetrics();
             requestMetricsIncremented = true;
@@ -740,12 +796,11 @@ export function createVeryfrontHandler(
             request,
             ctx,
           );
+          isFrameworkOwnedPreflightForRetry = isFrameworkOwnedPreflight;
           const isOptionsRequest = request.method.toUpperCase() === "OPTIONS";
           const isBrowserPreflight = isOptionsRequest && isPreflightRequest(request);
           let skipProjectMiddleware = false;
           if (!skipsApplicationAuth(request, url.pathname, isFrameworkOwnedPreflight)) {
-            const runInFilesystemContext = <T>(operation: () => Promise<T>) =>
-              runInProjectFilesystemContext(ctx, isProxyMode, operation);
             const authResult = await runInFilesystemContext(
               () =>
                 runWithRetainedPreviewDocumentSourceSnapshot(
@@ -783,17 +838,40 @@ export function createVeryfrontHandler(
             skipProjectMiddleware = authOutcome.skipProjectMiddleware;
           }
 
-          const sourceIntegrationPolicy = runtimeContext.sourceIntegrationPolicy;
-          const executeProjectRoute = () =>
-            projectMiddlewareRuntime.execute({
+          const optionsAdmission = isFrameworkOwnedPreflight
+            ? "not-applicable"
+            : await prepareOptionsBeforeProjectMiddleware({
+              request,
+              ctx,
+              sourceIntegrationPolicy,
+              runInFilesystemContext,
+              runInRequestProjectEnv,
+            });
+
+          const executeRegistry = async () => (await registry.execute(request, ctx)) ?? undefined;
+          const executeRegistryWithRetainedSnapshot = () =>
+            runInFilesystemContext(() =>
+              runWithRetainedPreviewDocumentSourceSnapshot(
+                ctx,
+                executeRegistry,
+                { runDeferredOperation: runInFilesystemContext },
+              )
+            );
+          const executeProjectRoute = () => {
+            if (optionsAdmission === "bypass-middleware") return executeRegistry();
+            if (optionsAdmission === "bypass-middleware-retained") {
+              return executeRegistryWithRetainedSnapshot();
+            }
+            return projectMiddlewareRuntime.execute({
               request,
               handlerContext: ctx,
               isSharedProxy: isProxyMode,
               isFrameworkOwnedPreflight,
               skipProjectMiddleware,
-              next: async () => (await registry.execute(request, ctx)) ?? undefined,
+              next: executeRegistry,
               onMiddlewareStart: markProjectMiddlewareStarted,
             });
+          };
           const executeRoute = () =>
             runWithExactSourceIntegrationPolicy(
               sourceIntegrationPolicy,
@@ -837,6 +915,7 @@ export function createVeryfrontHandler(
                   error,
                   retries,
                   projectMiddlewareStarted,
+                  isFrameworkOwnedPreflightForRetry,
                 )
               ) throw error;
               retries++;

@@ -5,6 +5,7 @@ import type { HandlerContext } from "#veryfront/types";
 import { createMockAdapter as createFileAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { ApiHandlerWrapper } from "./api-handler-wrapper.ts";
 import { __injectDepsForTests as injectMemoryPressureDeps } from "#veryfront/server/shared/renderer/memory/pressure.ts";
+import { runWithRetainedPreviewDocumentSourceSnapshot } from "#veryfront/server/handlers/request/source-snapshot-freshness.ts";
 
 function createCtx(captured: { options?: Record<string, unknown> }): HandlerContext {
   return {
@@ -72,6 +73,56 @@ describe("ApiHandlerWrapper", () => {
 
     assertEquals(result.response?.status, 204);
     assertEquals(result.response?.headers.get("Allow"), "GET, HEAD, OPTIONS");
+  });
+
+  it("retains a framework-owned preflight snapshot through dispatch", async () => {
+    const projectDir = "test-fixtures/api-wrapper-preflight-snapshot";
+    const adapter = createFileAdapter();
+    adapter.fs.files.set(
+      `${projectDir}/pages/api/get-only.ts`,
+      "export function GET() { return new Response('get'); }",
+    );
+    let sourceVersion = 1;
+    Object.assign(adapter.fs, {
+      sourceSnapshotFreshnessOptionsVersion: 1,
+      ensureSourceSnapshotFresh: () => Promise.resolve(),
+      getSourceSnapshotIdentity: () => "branch:preflight-snapshot:main",
+      getSourceSnapshotVersion: () => sourceVersion,
+    });
+    const ctx = {
+      projectDir,
+      adapter,
+      securityConfig: null,
+      projectSlug: "preflight-snapshot",
+      projectId: "project-preflight-snapshot",
+      resolvedEnvironment: "preview",
+      requestContext: {
+        token: "proxy-token",
+        slug: "preflight-snapshot",
+        branch: "main",
+        mode: "preview",
+      },
+      isLocalProject: false,
+      allowHostProjectCodeExecution: true,
+    } as unknown as HandlerContext;
+    const wrapper = new ApiHandlerWrapper(projectDir, adapter);
+    const request = new Request("http://localhost/api/get-only", {
+      method: "OPTIONS",
+      headers: {
+        origin: "https://client.example",
+        "access-control-request-method": "GET",
+      },
+    });
+
+    assertEquals(await wrapper.prepareFrameworkOwnedPreflight(request, ctx), true);
+    sourceVersion++;
+
+    await assertRejects(() =>
+      runWithRetainedPreviewDocumentSourceSnapshot(
+        ctx,
+        () => wrapper.handle(request, ctx),
+      )
+    );
   });
 
   it("prepares framework-owned preflight inside a multi-project context", async () => {
