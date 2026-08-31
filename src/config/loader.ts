@@ -110,6 +110,7 @@ const MapPrototypeDelete = Map.prototype.delete;
 const MapPrototypeForEach = Map.prototype.forEach;
 const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeSet = Map.prototype.set;
+const MathMin = Math.min;
 const NumberPrototypeToString = Number.prototype.toString;
 const ObjectCreate = Object.create;
 const ObjectDefineProperty = Object.defineProperty;
@@ -2380,9 +2381,10 @@ function restoreCsiSplitUrlSchemes(value: string): string {
         | null;
     }
 
-    const tailWindowEnd = inputOffset + MAX_GENERIC_URL_SCHEME_LENGTH < value.length
-      ? inputOffset + MAX_GENERIC_URL_SCHEME_LENGTH
-      : value.length;
+    const tailWindowEnd = MathMin(
+      inputOffset + MAX_GENERIC_URL_SCHEME_LENGTH,
+      value.length,
+    );
     advanceCsiLiteralRange(
       states,
       value,
