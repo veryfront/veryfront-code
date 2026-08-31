@@ -1,8 +1,5 @@
 import { resolveModel } from "#veryfront/provider";
-import {
-  createVeryfrontCloudModel,
-  runWithVeryfrontCloudInferenceCredential,
-} from "#veryfront/provider/veryfront-cloud/provider.ts";
+import { createVeryfrontCloudInferenceModel } from "#veryfront/provider/veryfront-cloud/provider.ts";
 
 import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
@@ -29,14 +26,13 @@ export function createVeryfrontCloudInferenceModelResolver(
 ): AgentModelRuntimeResolver {
   return (modelId) => {
     if (modelId.startsWith(VERYFRONT_CLOUD_MODEL_PREFIX)) {
-      return runWithVeryfrontCloudInferenceCredential(
+      return createVeryfrontCloudInferenceModel(
+        modelId.slice(VERYFRONT_CLOUD_MODEL_PREFIX.length),
         credential,
-        () => createVeryfrontCloudModel(modelId.slice(VERYFRONT_CLOUD_MODEL_PREFIX.length)),
       );
     }
 
-    // Never let project/provider code inherit the run-scoped authority.
-    return runWithVeryfrontCloudInferenceCredential(undefined, () => resolveModel(modelId));
+    return resolveModel(modelId);
   };
 }
 

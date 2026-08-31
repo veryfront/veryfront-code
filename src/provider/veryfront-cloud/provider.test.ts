@@ -9,7 +9,7 @@ import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensi
 import { clearModelProviders, resolveModel } from "#veryfront/provider";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
-import { runWithVeryfrontCloudInferenceCredential } from "./provider.ts";
+import { createVeryfrontCloudInferenceModel } from "./provider.ts";
 import { AnthropicProvider } from "@veryfront/ext-llm-anthropic";
 import { GoogleProvider } from "@veryfront/ext-llm-google";
 import { OpenAIProvider } from "@veryfront/ext-llm-openai";
@@ -113,15 +113,13 @@ describe("provider/veryfront-cloud", () => {
     });
 
     try {
-      await runWithVeryfrontCloudInferenceCredential(
+      projectVisibleToken = getVeryfrontCloudAuthToken();
+      const model = createVeryfrontCloudInferenceModel(
+        "openai/gpt-test",
         "run-scoped-inference-token",
-        async () => {
-          projectVisibleToken = getVeryfrontCloudAuthToken();
-          const model = resolveModel("veryfront-cloud/openai/gpt-test");
-          const result = await model.doStream({ prompt: [] });
-          await drainStream(result.stream);
-        },
       );
+      const result = await model.doStream({ prompt: [] });
+      await drainStream(result.stream);
     } finally {
       registry.unregister("openai");
       registry.register(builtinOpenAI);
@@ -132,7 +130,67 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(extensionVisibleCredential, undefined);
   });
 
-  it("clears a parent inference credential for an uncredentialed nested run", async () => {
+  it("does not expose explicit inference authority to mutable runtime config hooks", async () => {
+    setCloudBootstrap();
+    const globalRecord = globalThis as Record<string, unknown>;
+    const originalConfigGetter = globalRecord.__vfGetRuntimeConfig;
+    const originalConfigChecker = globalRecord.__vfIsRuntimeConfigInitialized;
+    let retainedNestedModel: ModelRuntime | undefined;
+    let resolvingNestedModel = false;
+
+    globalRecord.__vfIsRuntimeConfigInitialized = () => true;
+    globalRecord.__vfGetRuntimeConfig = () => {
+      if (!resolvingNestedModel) {
+        resolvingNestedModel = true;
+        try {
+          retainedNestedModel = resolveModel("veryfront-cloud/openai/gpt-nested");
+        } finally {
+          resolvingNestedModel = false;
+        }
+      }
+      return {};
+    };
+
+    let inferenceModel: ModelRuntime;
+    try {
+      inferenceModel = createVeryfrontCloudInferenceModel(
+        "openai/gpt-protected",
+        "run-scoped-inference-token",
+      );
+    } finally {
+      if (originalConfigGetter === undefined) delete globalRecord.__vfGetRuntimeConfig;
+      else globalRecord.__vfGetRuntimeConfig = originalConfigGetter;
+      if (originalConfigChecker === undefined) delete globalRecord.__vfIsRuntimeConfigInitialized;
+      else globalRecord.__vfIsRuntimeConfigInitialized = originalConfigChecker;
+    }
+
+    const capturedAuthorization: Array<string | null> = [];
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedAuthorization.push(request.headers.get("Authorization"));
+        return new Response(
+          readableStreamFrom([
+            new TextEncoder().encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+            new TextEncoder().encode("data: [DONE]\n\n"),
+          ]),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+
+    const nestedResult = await retainedNestedModel!.doStream({ prompt: [] });
+    await drainStream(nestedResult.stream);
+    const inferenceResult = await inferenceModel.doStream({ prompt: [] });
+    await drainStream(inferenceResult.stream);
+
+    assertEquals(capturedAuthorization, [
+      "Bearer vf_test_provider",
+      "Bearer run-scoped-inference-token",
+    ]);
+  });
+
+  it("does not make explicit inference authority ambient to ordinary model resolution", async () => {
     setCloudBootstrap();
     let capturedAuthorization: string | null = null;
 
@@ -152,20 +210,15 @@ describe("provider/veryfront-cloud", () => {
       }) as typeof fetch,
     );
 
-    await runWithVeryfrontCloudInferenceCredential(
-      "parent-run-inference-token",
-      () =>
-        runWithVeryfrontCloudInferenceCredential(undefined, async () => {
-          const model = resolveModel("veryfront-cloud/openai/gpt-test");
-          const result = await model.doStream({ prompt: [] });
-          await drainStream(result.stream);
-        }),
-    );
+    createVeryfrontCloudInferenceModel("openai/gpt-unused", "parent-run-inference-token");
+    const model = resolveModel("veryfront-cloud/openai/gpt-test");
+    const result = await model.doStream({ prompt: [] });
+    await drainStream(result.stream);
 
     assertEquals(capturedAuthorization, "Bearer vf_test_provider");
   });
 
-  it("allows a nested inference credential to override its parent", async () => {
+  it("uses the credential passed to each explicit inference model", async () => {
     setCloudBootstrap();
     let capturedAuthorization: string | null = null;
 
@@ -183,15 +236,13 @@ describe("provider/veryfront-cloud", () => {
       }) as typeof fetch,
     );
 
-    await runWithVeryfrontCloudInferenceCredential(
-      "parent-run-inference-token",
-      () =>
-        runWithVeryfrontCloudInferenceCredential("child-run-inference-token", async () => {
-          const model = resolveModel("veryfront-cloud/openai/gpt-test");
-          const result = await model.doStream({ prompt: [] });
-          await drainStream(result.stream);
-        }),
+    createVeryfrontCloudInferenceModel("openai/gpt-unused", "parent-run-inference-token");
+    const model = createVeryfrontCloudInferenceModel(
+      "openai/gpt-test",
+      "child-run-inference-token",
     );
+    const result = await model.doStream({ prompt: [] });
+    await drainStream(result.stream);
 
     assertEquals(capturedAuthorization, "Bearer child-run-inference-token");
   });
@@ -217,13 +268,17 @@ describe("provider/veryfront-cloud", () => {
     };
 
     try {
-      runWithVeryfrontCloudInferenceCredential(
+      createVeryfrontCloudInferenceModel(
+        "anthropic/claude-test",
         "run-scoped-inference-token",
-        () => {
-          resolveModel("veryfront-cloud/anthropic/claude-test");
-          resolveModel("veryfront-cloud/google/gemini-test");
-          resolveModel("veryfront-cloud/openai/gpt-test");
-        },
+      );
+      createVeryfrontCloudInferenceModel(
+        "google/gemini-test",
+        "run-scoped-inference-token",
+      );
+      createVeryfrontCloudInferenceModel(
+        "openai/gpt-test",
+        "run-scoped-inference-token",
       );
     } finally {
       AnthropicProvider.prototype.createModel = originalAnthropicCreateModel;

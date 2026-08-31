@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import { createAnthropicProviderModel } from "@veryfront/ext-llm-anthropic";
 import { createGoogleProviderModel } from "@veryfront/ext-llm-google";
 
@@ -21,42 +20,6 @@ import {
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
   resolveVeryfrontCloudOpenAITransport,
 } from "./model-catalog.ts";
-
-const IntrinsicReflectApply = Reflect.apply;
-
-const inferenceCredentialStorage = new AsyncLocalStorage<string | undefined>();
-const IntrinsicObjectDefineProperty = Object.defineProperty;
-const AsyncLocalStorageGetStore = AsyncLocalStorage.prototype.getStore;
-const AsyncLocalStorageRun = AsyncLocalStorage.prototype.run;
-IntrinsicObjectDefineProperty(inferenceCredentialStorage, "getStore", {
-  configurable: false,
-  value: AsyncLocalStorageGetStore,
-  writable: false,
-});
-IntrinsicObjectDefineProperty(inferenceCredentialStorage, "run", {
-  configurable: false,
-  value: AsyncLocalStorageRun,
-  writable: false,
-});
-
-/** @internal Keep run-bound gateway authority outside public/project credential contexts. */
-export function runWithVeryfrontCloudInferenceCredential<T>(
-  credential: string | undefined,
-  operation: () => T,
-): T {
-  return IntrinsicReflectApply(AsyncLocalStorageRun, inferenceCredentialStorage, [
-    credential,
-    operation,
-  ]) as T;
-}
-
-function getCurrentInferenceCredential(): string | undefined {
-  return IntrinsicReflectApply(
-    AsyncLocalStorageGetStore,
-    inferenceCredentialStorage,
-    [],
-  ) as string | undefined;
-}
 
 function wrapVeryfrontCloudModel(
   model: ModelRuntime,
@@ -101,9 +64,11 @@ function shouldUseOpenAIResponsesRuntime(upstreamModelId: string): boolean {
   return resolveVeryfrontCloudModelThinking(`openai/${upstreamModelId}`)?.enabled === true;
 }
 
-export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
+function createVeryfrontCloudModelInternal(
+  modelId: string,
+  inferenceCredential?: string,
+): ModelRuntime {
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "language");
-  const inferenceCredential = getCurrentInferenceCredential();
   const { apiBaseUrl, apiToken, projectSlug } = requireVeryfrontCloudBootstrap(
     inferenceCredential,
   );
@@ -302,4 +267,16 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
       message: `Language provider "${provider}" is not available for veryfront-cloud.`,
     }),
   );
+}
+
+export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
+  return createVeryfrontCloudModelInternal(modelId);
+}
+
+/** @internal Build a first-party gateway model with explicit run-scoped authority. */
+export function createVeryfrontCloudInferenceModel(
+  modelId: string,
+  inferenceCredential: string,
+): ModelRuntime {
+  return createVeryfrontCloudModelInternal(modelId, inferenceCredential);
 }

@@ -20,6 +20,12 @@ import {
 
 export type { VeryfrontCloudProviderId } from "./model-catalog.ts";
 
+const IntrinsicReflectApply = Reflect.apply;
+const NativeHeaders = Headers;
+const NativeRequest = Request;
+const HeadersDelete = NativeHeaders.prototype.delete;
+const HeadersSet = NativeHeaders.prototype.set;
+
 interface ParsedVeryfrontCloudModelId {
   provider: VeryfrontCloudProviderId;
   modelId: string;
@@ -197,27 +203,30 @@ export function createVeryfrontCloudFetch(
     : requireProviderCredential(apiToken, "Veryfront Cloud API token");
   const authorizedOrigin = parseVeryfrontCloudApiBaseUrl(apiBaseUrl).origin;
   return (input, init) => {
-    const request = new Request(input, init);
-    const headers = new Headers(request.headers);
+    const request = new NativeRequest(input, init);
+    const headers = new NativeHeaders(request.headers);
 
-    headers.delete("x-api-key");
-    headers.delete("x-goog-api-key");
-    headers.delete("x-veryfront-project-slug");
-    headers.delete("x-veryfront-billing-group-id");
-    headers.set("Authorization", `Bearer ${trustedApiToken}`);
+    IntrinsicReflectApply(HeadersDelete, headers, ["x-api-key"]);
+    IntrinsicReflectApply(HeadersDelete, headers, ["x-goog-api-key"]);
+    IntrinsicReflectApply(HeadersDelete, headers, ["x-veryfront-project-slug"]);
+    IntrinsicReflectApply(HeadersDelete, headers, ["x-veryfront-billing-group-id"]);
+    IntrinsicReflectApply(HeadersSet, headers, ["Authorization", `Bearer ${trustedApiToken}`]);
 
     if (projectSlug) {
-      headers.set("x-veryfront-project-slug", projectSlug);
+      IntrinsicReflectApply(HeadersSet, headers, ["x-veryfront-project-slug", projectSlug]);
     }
 
     const billingGroupId = getCurrentVeryfrontCloudContext()?.billingGroupId?.trim();
     if (billingGroupId) {
-      headers.set("x-veryfront-billing-group-id", billingGroupId);
+      IntrinsicReflectApply(HeadersSet, headers, [
+        "x-veryfront-billing-group-id",
+        billingGroupId,
+      ]);
       markCurrentVeryfrontCloudBillingGroupUsed();
     }
 
     return guardedOutboundFetch(
-      new Request(request, { headers }),
+      new NativeRequest(request, { headers }),
       { redirect: "error" },
       {
         authorizeUrl(url) {
