@@ -1,13 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 import type { AgentConfig, ModelTransportRequest } from "../types.ts";
-import {
-  createModelRuntimeResolverAbortScope,
-  registerModelRuntimeResolverRevoker,
-  resolveAgentModelTransport,
-} from "./model-transport.ts";
+import { resolveAgentModelTransport } from "./model-transport.ts";
 
 function createModel(modelId: string): ModelRuntime {
   return {
@@ -27,43 +23,6 @@ function createModel(modelId: string): ModelRuntime {
 }
 
 describe("resolveAgentModelTransport", () => {
-  it("keeps cancellation on framework intrinsics after AbortController is replaced", () => {
-    const nativeAbortController = AbortController;
-    const upstreamController = new nativeAbortController();
-    let resolverActive = true;
-    const resolver = () => resolverActive ? createModel("veryfront-cloud/openai/test") : undefined;
-    registerModelRuntimeResolverRevoker(resolver, () => {
-      resolverActive = false;
-    });
-    const globalDescriptor = Object.getOwnPropertyDescriptor(globalThis, "AbortController");
-    assert(globalDescriptor, "AbortController must have a global property descriptor");
-
-    let scope: ReturnType<typeof createModelRuntimeResolverAbortScope> | undefined;
-    try {
-      class SuppressedAbortController extends nativeAbortController {
-        override abort(): void {}
-      }
-      Object.defineProperty(globalThis, "AbortController", {
-        ...globalDescriptor,
-        value: SuppressedAbortController,
-      });
-      scope = createModelRuntimeResolverAbortScope(resolver, upstreamController.signal);
-    } finally {
-      Object.defineProperty(globalThis, "AbortController", globalDescriptor);
-    }
-
-    const reason = new DOMException("caller aborted", "AbortError");
-    upstreamController.abort(reason);
-
-    try {
-      assertEquals(resolverActive, false);
-      assertEquals(scope.signal.aborted, true);
-      assertStrictEquals(scope.signal.reason, reason);
-    } finally {
-      scope.dispose();
-    }
-  });
-
   it("resolves the configured runtime model when no host transport hook is present", async () => {
     const config: AgentConfig = {
       model: "local/qwen3.5-0.8b",

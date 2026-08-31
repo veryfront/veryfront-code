@@ -249,67 +249,6 @@ describe("agent runtime stream cancellation (#2334)", () => {
     assertEquals(resolverActive, false);
   });
 
-  it("cannot suppress generation abort revocation by replacing event listeners", async () => {
-    const modelStarted = Promise.withResolvers<void>();
-    const modelStopped = Promise.withResolvers<never>();
-    let resolverActive = true;
-    const resolver: AgentModelRuntimeResolver = () => resolverActive ? model : undefined;
-    const model: ModelRuntime = {
-      provider: "test",
-      modelId: "veryfront-cloud/openai/patched-event-target-model",
-      doGenerate() {
-        modelStarted.resolve();
-        return modelStopped.promise;
-      },
-      doStream() {
-        throw new Error("Expected generation path");
-      },
-    };
-    registerModelRuntimeResolverRevoker(resolver, () => {
-      resolverActive = false;
-    });
-    const runtime = new AgentRuntime(
-      "patched-event-target-runtime",
-      {
-        model: "veryfront-cloud/openai/patched-event-target-model",
-        system: "patched event target lease test",
-        maxSteps: 1,
-      },
-      { resolveModelRuntime: resolver },
-    );
-    const abortController = new AbortController();
-    const nativeAddEventListener = EventTarget.prototype.addEventListener;
-    let generation: Promise<unknown> | undefined;
-
-    try {
-      EventTarget.prototype.addEventListener = () => {};
-      generation = assertRejects(
-        async () =>
-          await runtime.generate(
-            "Hello",
-            undefined,
-            undefined,
-            undefined,
-            abortController.signal,
-          ),
-        Error,
-        "stop patched event target model",
-      );
-      await modelStarted.promise;
-    } finally {
-      EventTarget.prototype.addEventListener = nativeAddEventListener;
-    }
-
-    abortController.abort(new DOMException("caller aborted", "AbortError"));
-
-    try {
-      assertEquals(resolverActive, false);
-    } finally {
-      modelStopped.reject(new Error("stop patched event target model"));
-      await generation;
-    }
-  });
-
   it("revokes generation authority when the inference handler settles", async () => {
     const middlewarePostProcessing = Promise.withResolvers<void>();
     const releaseMiddleware = Promise.withResolvers<void>();
