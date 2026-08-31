@@ -400,52 +400,65 @@ describe("server/runtime-handler/index", () => {
     assertEquals(middlewareCalls, 1);
   });
 
-  it("runs middleware for authored OPTIONS preflight routes", async () => {
-    const projectDir = `/tmp/test-options-auth-${crypto.randomUUID()}`;
-    const adapter = createRouteMockAdapter();
-    adapter.fs.files.set(
-      `${projectDir}/pages/api/options.ts`,
-      "export function OPTIONS() { return new Response('unused'); }",
-    );
-    let middlewareCalls = 0;
-    const handler = createVeryfrontHandler(projectDir, adapter, {
-      projectDir,
-      config: {
-        security: {
-          auth: {
-            trustedProxy: {
-              trustedPeers: ["127.0.0.1"],
-              headers: { subject: "x-auth-subject" },
+  for (
+    const [exportName, source, expectedBody] of [
+      [
+        "OPTIONS",
+        "export function OPTIONS() { return new Response('named options'); }",
+        "named options",
+      ],
+      [
+        "default",
+        "export default function handler() { return new Response('default options'); }",
+        "default options",
+      ],
+    ] as const
+  ) {
+    it(`runs middleware before authored ${exportName} OPTIONS preflight route`, async () => {
+      const projectDir = `/tmp/test-options-auth-${crypto.randomUUID()}`;
+      const adapter = createRouteMockAdapter();
+      adapter.fs.files.set(`${projectDir}/pages/api/options.ts`, source);
+      let middlewareCalls = 0;
+      const middleware: MiddlewareFunction = async (context, next) => {
+        middlewareCalls++;
+        assertEquals(context.identity?.subject, "user-123");
+        const response = await next();
+        response?.headers.set("x-project-middleware", "ran");
+        return response;
+      };
+      const handler = createVeryfrontHandler(projectDir, adapter, {
+        projectDir,
+        config: {
+          security: {
+            auth: {
+              trustedProxy: {
+                trustedPeers: ["127.0.0.1"],
+                headers: { subject: "x-auth-subject" },
+              },
             },
           },
-        },
-        middleware: {
-          custom: [
-            (c: { identity: { subject?: string } | null }) => {
-              middlewareCalls++;
-              return Response.json({ subject: c.identity?.subject ?? null });
-            },
-          ],
-        },
-      } as any,
-      allowHostProjectCodeExecution: true,
+          middleware: { custom: [middleware] },
+        } as any,
+        allowHostProjectCodeExecution: true,
+      });
+
+      const response = await handler(withTrustedPeer(
+        new Request("http://localhost/api/options", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://client.example",
+            "access-control-request-method": "GET",
+            "x-auth-subject": "user-123",
+          },
+        }),
+      ));
+
+      assertEquals(response.status, 200);
+      assertEquals(await response.text(), expectedBody);
+      assertEquals(response.headers.get("x-project-middleware"), "ran");
+      assertEquals(middlewareCalls, 1);
     });
-
-    const response = await handler(withTrustedPeer(
-      new Request("http://localhost/api/options", {
-        method: "OPTIONS",
-        headers: {
-          origin: "https://client.example",
-          "access-control-request-method": "GET",
-          "x-auth-subject": "user-123",
-        },
-      }),
-    ));
-
-    assertEquals(response.status, 200);
-    assertEquals(await response.json(), { subject: "user-123" });
-    assertEquals(middlewareCalls, 1);
-  });
+  }
 
   it("short-circuits terminal application auth responses before project middleware", async () => {
     let middlewareCalls = 0;

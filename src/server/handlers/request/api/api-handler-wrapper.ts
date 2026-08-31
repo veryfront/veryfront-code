@@ -84,31 +84,25 @@ export class ApiHandlerWrapper extends BaseHandler {
       );
     };
 
-    try {
-      if (!isMultiProject) {
-        if (fsWrapper.isContextualMode?.() === true) return false;
-        return await inspect();
-      }
-
-      return await fsWrapper.runWithContext!(
-        ctx.projectSlug!,
-        ctx.proxyToken ?? "",
-        inspect,
-        ctx.projectId,
-        {
-          productionMode: ctx.requestContext?.mode === "production",
-          releaseId: ctx.releaseId,
-          branch: ctx.requestContext?.mode === "production"
-            ? null
-            : ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null,
-          environmentName: ctx.environmentName,
-        },
-      );
-    } catch {
-      // Classification is an optimization. If route inspection cannot be
-      // completed, retain middleware and route execution for correctness.
-      return false;
+    if (!isMultiProject) {
+      if (fsWrapper.isContextualMode?.() === true) return false;
+      return await inspect();
     }
+
+    return await fsWrapper.runWithContext!(
+      ctx.projectSlug!,
+      ctx.proxyToken ?? "",
+      inspect,
+      ctx.projectId,
+      {
+        productionMode: ctx.requestContext?.mode === "production",
+        releaseId: ctx.releaseId,
+        branch: ctx.requestContext?.mode === "production"
+          ? null
+          : ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null,
+        environmentName: ctx.environmentName,
+      },
+    );
   }
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {

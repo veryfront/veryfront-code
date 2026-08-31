@@ -122,6 +122,39 @@ describe("ApiHandlerWrapper", () => {
     );
   });
 
+  it("propagates preflight classification failures before auth or middleware", async () => {
+    const ctx = createCtx({});
+    ctx.allowHostProjectCodeExecution = true;
+    ctx.requestContext!.mode = "preview";
+    ctx.releaseId = undefined;
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+      refreshSourceSnapshot: (reason?: string) => Promise<void>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => await fn();
+    fs.refreshSourceSnapshot = () => Promise.reject(new Error("preflight snapshot failed"));
+
+    await assertRejects(
+      () =>
+        new ApiHandlerWrapper("/tmp/project", ctx.adapter).isFrameworkOwnedPreflight(
+          new Request("http://localhost/api/options", {
+            method: "OPTIONS",
+            headers: {
+              origin: "https://client.example",
+              "access-control-request-method": "GET",
+            },
+          }),
+          ctx,
+        ),
+      Error,
+      "preflight snapshot failed",
+    );
+  });
+
   it("routes known pages without remote stat misses or full API discovery", async () => {
     let enteredProjectContext = false;
     let remoteStatMisses = 0;
