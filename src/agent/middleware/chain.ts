@@ -32,28 +32,38 @@ type ContinuationRejectionHandler = (
 ) => void;
 
 class ObservedContinuationPromise<T> extends Promise<T> {
-  static override get [Symbol.species](): PromiseConstructor {
-    return Promise;
-  }
+  private static pendingRejectionHandler: ContinuationRejectionHandler | undefined;
+  private observed = false;
+  private readonly rejectionHandler?: ContinuationRejectionHandler;
 
   constructor(
     executor: ContinuationExecutor<T>,
-    private readonly onObserved: () => void,
-    private readonly onRejection?: ContinuationRejectionHandler,
+    onRejection?: ContinuationRejectionHandler,
   ) {
+    const inheritedRejectionHandler = ObservedContinuationPromise.pendingRejectionHandler;
+    ObservedContinuationPromise.pendingRejectionHandler = undefined;
     super(executor);
+    this.rejectionHandler = onRejection ?? inheritedRejectionHandler;
+    if (this.rejectionHandler) {
+      observeContinuationRejection(
+        this,
+        this.rejectionHandler,
+        () => this.observed,
+      );
+    }
   }
 
   override then<TResult1 = T, TResult2 = never>( // NOSONAR: tracks Promise observation for detached-error diagnostics.
     onFulfilled?: ContinuationThenHandler<T, TResult1>,
     onRejected?: ContinuationThenHandler<unknown, TResult2>,
   ): Promise<TResult1 | TResult2> {
-    this.onObserved();
-    const derived = super.then(onFulfilled, onRejected);
-    if (!this.onRejection) return derived;
-    return createObservedContinuation<TResult1 | TResult2>((resolve, reject) => {
-      void Promise.prototype.then.call(derived, resolve, reject);
-    }, this.onRejection);
+    this.observed = true;
+    ObservedContinuationPromise.pendingRejectionHandler = this.rejectionHandler;
+    try {
+      return super.then(onFulfilled, onRejected);
+    } finally {
+      ObservedContinuationPromise.pendingRejectionHandler = undefined;
+    }
   }
 }
 
@@ -61,22 +71,7 @@ function createObservedContinuation<T>(
   executor: ContinuationExecutor<T>,
   onRejection?: ContinuationRejectionHandler,
 ): Promise<T> {
-  let observed = false;
-  const continuation = new ObservedContinuationPromise<T>(
-    executor,
-    () => {
-      observed = true;
-    },
-    onRejection,
-  );
-  if (onRejection) {
-    observeContinuationRejection(
-      continuation,
-      onRejection,
-      () => observed,
-    );
-  }
-  return continuation;
+  return new ObservedContinuationPromise<T>(executor, onRejection);
 }
 
 function adoptContinuationResult(
@@ -140,9 +135,15 @@ function reportDetachedContinuationFailure(): void {
   );
 }
 
-function scheduleDetachedContinuationFailureReport(isObserved: () => boolean): void {
+function scheduleDetachedContinuationFailureReport(record: {
+  isObserved: () => boolean;
+  reported: boolean;
+}): void {
   setTimeout(() => {
-    if (!isObserved()) reportDetachedContinuationFailure();
+    if (!record.isObserved() && !record.reported) {
+      record.reported = true;
+      reportDetachedContinuationFailure();
+    }
   }, 0);
 }
 
@@ -174,7 +175,7 @@ function createDeferredContinuation(
 interface MiddlewareContinuation {
   next: () => Promise<AgentResponse>;
   finishInvocation: () => void;
-  settle: (error?: unknown, rejected?: boolean) => void;
+  settle: () => void;
 }
 
 function createMiddlewareContinuation(
@@ -183,18 +184,22 @@ function createMiddlewareContinuation(
   let nextCalled = false;
   let middlewareInvoking = true;
   let middlewareSettled = false;
-  let middlewareSettlementError: unknown;
-  let middlewareSettlementRejected = false;
-  const continuationRejections = new Set<{ error: unknown; isObserved: () => boolean }>();
+  const continuationRejections = new Set<{
+    isObserved: () => boolean;
+    reported: boolean;
+  }>();
 
-  const reportContinuationFailure = (error: unknown, isObserved: () => boolean): void => {
+  const reportContinuationFailure = (_error: unknown, isObserved: () => boolean): void => {
     if (!middlewareSettled) {
-      if (!isObserved()) continuationRejections.add({ error, isObserved });
+      if (!isObserved()) {
+        const record = { isObserved, reported: false };
+        continuationRejections.add(record);
+        scheduleDetachedContinuationFailureReport(record);
+      }
       return;
     }
     if (isObserved()) return;
-    if (middlewareSettlementRejected && Object.is(middlewareSettlementError, error)) return;
-    scheduleDetachedContinuationFailureReport(isObserved);
+    scheduleDetachedContinuationFailureReport({ isObserved, reported: false });
   };
 
   const next = (): Promise<AgentResponse> => {
@@ -222,19 +227,9 @@ function createMiddlewareContinuation(
     finishInvocation: () => {
       middlewareInvoking = false;
     },
-    settle: (error?: unknown, rejected = false) => {
+    settle: () => {
       middlewareInvoking = false;
       middlewareSettled = true;
-      middlewareSettlementError = error;
-      middlewareSettlementRejected = rejected;
-      for (const rejection of continuationRejections) {
-        if (
-          !rejection.isObserved() &&
-          (!middlewareSettlementRejected || !Object.is(middlewareSettlementError, rejection.error))
-        ) {
-          scheduleDetachedContinuationFailureReport(rejection.isObserved);
-        }
-      }
       continuationRejections.clear();
     },
   };
@@ -266,18 +261,12 @@ export class MiddlewareChain {
                 () => dispatch(middlewareIndex + 1),
               );
 
-              let middlewareError: unknown;
-              let middlewareRejected = false;
               try {
                 const result = currentMiddleware(context, continuation.next);
                 continuation.finishInvocation();
                 return await result;
-              } catch (error) {
-                middlewareError = error;
-                middlewareRejected = true;
-                throw error;
               } finally {
-                continuation.settle(middlewareError, middlewareRejected);
+                continuation.settle();
               }
             },
             { "middleware.index": middlewareIndex },

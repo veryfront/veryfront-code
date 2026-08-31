@@ -633,7 +633,7 @@ describe("agent/middleware/chain", () => {
     );
   });
 
-  it("distinguishes an undefined middleware rejection from success", async () => {
+  it("reports a detached continuation when middleware also rejects undefined", async () => {
     const records: LogEntry[] = [];
     const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
     try {
@@ -655,7 +655,7 @@ describe("agent/middleware/chain", () => {
 
     assertEquals(
       records.some((entry) => entry.message === "Your agent middleware continuation failed"),
-      false,
+      true,
     );
   });
 
@@ -780,6 +780,41 @@ describe("agent/middleware/chain", () => {
     );
   });
 
+  it("reports a discarded branch with the same error as the returned branch", async () => {
+    const sharedError = new Error("shared branch failure");
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+    try {
+      const chain = new MiddlewareChain([
+        (_context, next) => {
+          const continuation = next();
+          const returnedBranch = continuation.then(() => {
+            throw sharedError;
+          });
+          continuation.finally(() => {
+            throw sharedError;
+          });
+          return returnedBranch;
+        },
+      ]);
+
+      await assertRejects(
+        () => chain.execute(context, () => Promise.resolve(response)),
+        Error,
+        "shared branch failure",
+      );
+      await waitForReport();
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(
+      records.filter((entry) => entry.message === "Your agent middleware continuation failed")
+        .length,
+      1,
+    );
+  });
+
   it("reports unexpected errors from invalid continuation derivatives", async () => {
     let retainedNext: (() => Promise<AgentResponse>) | undefined;
     const records: LogEntry[] = [];
@@ -814,6 +849,53 @@ describe("agent/middleware/chain", () => {
         .length,
       2,
     );
+  });
+
+  it("reports detached failures while middleware remains pending", async () => {
+    let releaseMiddleware: ((value: AgentResponse) => void) | undefined;
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+    try {
+      const chain = new MiddlewareChain([
+        (_context, next) => {
+          next();
+          return new Promise<AgentResponse>((resolve) => {
+            releaseMiddleware = resolve;
+          });
+        },
+      ]);
+
+      const execution = chain.execute(context, () => Promise.reject(new Error("pending failure")));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await waitForReport();
+      assertEquals(
+        records.some((entry) => entry.message === "Your agent middleware continuation failed"),
+        true,
+      );
+      releaseMiddleware!(response);
+      await execution;
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("preserves native self-resolution rejection for derived continuations", async () => {
+    let derived: Promise<AgentResponse> | undefined;
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        derived = next().then(() => derived!);
+        return derived!;
+      },
+    ]);
+
+    const error = await assertRejects(
+      () => chain.execute(context, () => Promise.resolve(response)),
+      TypeError,
+    );
+    assertEquals(error instanceof TypeError, true);
   });
 
   it("invokes the final handler for an empty middleware chain", async () => {
