@@ -571,6 +571,9 @@ settles. Calling it again or after settlement rejects with the registered
 If you call `next()` after the middleware function returns, downstream dispatch
 starts on the next microtask so settlement revocation wins races with an
 already-fulfilled middleware promise.
+If you intentionally detach that promise, attach its rejection handler in the
+same turn or a microtask; detached-failure reporting runs at the end of the
+current turn after that grace window.
 
 ## Verify it worked
 

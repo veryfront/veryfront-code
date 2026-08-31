@@ -386,11 +386,11 @@ describe("agent/middleware/chain", () => {
     const record = records.find((entry) =>
       entry.message === "Your agent middleware continuation failed"
     );
-    assertEquals(record?.context?.error, "downstream continuation rejected");
-    assertEquals(record?.context?.error_type, "error");
+    assertEquals(record?.context?.failure, "downstream continuation rejected");
+    assertEquals(record?.context?.failure_type, "error");
     assertEquals(record?.error, undefined);
-    assertEquals(String(record?.context?.error).includes("customer-data"), false);
-    assertEquals(String(record?.context?.error).includes("secrets"), false);
+    assertEquals(String(record?.context?.failure).includes("customer-data"), false);
+    assertEquals(String(record?.context?.failure).includes("secrets"), false);
   });
 
   it("reports a detached synchronous downstream rejection", async () => {
@@ -416,7 +416,7 @@ describe("agent/middleware/chain", () => {
     const record = records.find((entry) =>
       entry.message === "Your agent middleware continuation failed"
     );
-    assertEquals(record?.context?.error, "downstream continuation rejected");
+    assertEquals(record?.context?.failure, "downstream continuation rejected");
     assertEquals(record?.error, undefined);
   });
 

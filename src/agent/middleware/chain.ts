@@ -70,6 +70,10 @@ function createObservedContinuation<T>(
   const continuation = new ObservedContinuationPromise<T>(executor, onRejection);
   if (onRejection) {
     const DerivedContinuationPromise = class extends ObservedContinuationPromise<T> {
+      static override get [Symbol.species](): PromiseConstructor {
+        return this as unknown as PromiseConstructor;
+      }
+
       constructor(derivedExecutor: ContinuationExecutor<T>) {
         super(derivedExecutor, onRejection);
       }
@@ -149,8 +153,8 @@ function reportDetachedContinuationFailure(error: unknown): void {
   agentLogger.error(
     "Your agent middleware continuation failed",
     {
-      error: DETACHED_CONTINUATION_FAILURE,
-      error_type: classifyContinuationFailure(error),
+      failure: DETACHED_CONTINUATION_FAILURE,
+      failure_type: classifyContinuationFailure(error),
     },
   );
 }
