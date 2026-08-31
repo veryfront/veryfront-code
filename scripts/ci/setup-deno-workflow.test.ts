@@ -922,6 +922,27 @@ jobs:
     ).find((step) => step.name === "Install Chromium");
     assert(chromiumInstall, "the shared action must install Chromium");
     const install = String(chromiumInstall.run);
+    const chromiumAptSetup = asSteps(
+      chromiumRuns.steps,
+      "install-chromium steps",
+    ).find((step) =>
+      step.name === "Configure apt sources, retries, and mirrors"
+    );
+    assert(chromiumAptSetup, "the shared action must configure apt sources");
+    const aptSetup = String(chromiumAptSetup.run);
+    assertStringIncludes(
+      aptSetup,
+      "-e 's|[[:alpha:]]*://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g'",
+    );
+    assertStringIncludes(
+      aptSetup,
+      "-e 's|[[:alpha:]]*://security.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g'",
+    );
+    assertEquals(
+      aptSetup.includes("http://"),
+      false,
+      "APT mirror rewrites must not contain clear-text HTTP URLs",
+    );
     for (
       const expected of [
         'for attempt in $(seq 1 "${install_attempts}")',
