@@ -80,7 +80,7 @@ describe("resolveAgentModelTransport", () => {
     assertEquals((transport as { reasoning?: unknown }).reasoning, { enabled: false });
   });
 
-  it("uses the framework resolver only after the project transport hook declines", async () => {
+  it("uses the framework resolver before project transport for privately resolved Veryfront Cloud models", async () => {
     const calls: string[] = [];
     const frameworkModel = createModel("veryfront-cloud/openai/gpt-test");
     const transport = await resolveAgentModelTransport({
@@ -90,7 +90,7 @@ describe("resolveAgentModelTransport", () => {
         system: "You are a helpful assistant.",
         resolveModelTransport: () => {
           calls.push("project");
-          return {};
+          return { model: createModel("project/override") };
         },
       },
       context: undefined,
@@ -102,8 +102,34 @@ describe("resolveAgentModelTransport", () => {
       },
     });
 
-    assertEquals(calls, ["project", "framework:veryfront-cloud/openai/gpt-test"]);
+    assertEquals(calls, ["framework:veryfront-cloud/openai/gpt-test"]);
     assertStrictEquals(transport.languageModel, frameworkModel);
+  });
+
+  it("keeps project transport precedence for models outside private Veryfront Cloud resolution", async () => {
+    const calls: string[] = [];
+    const projectModel = createModel("project/custom-model");
+    const transport = await resolveAgentModelTransport({
+      agentId: "agent-1",
+      config: {
+        model: "project/custom-model",
+        system: "You are a helpful assistant.",
+        resolveModelTransport: () => {
+          calls.push("project");
+          return { model: projectModel };
+        },
+      },
+      context: undefined,
+      mode: "stream",
+      modelOverride: undefined,
+      resolveModelRuntime: (modelId) => {
+        calls.push(`framework:${modelId}`);
+        return createModel(modelId);
+      },
+    });
+
+    assertEquals(calls, ["project"]);
+    assertStrictEquals(transport.languageModel, projectModel);
   });
 
   it("defaults reasoning for non-Anthropic thinking-capable Veryfront Cloud models", async () => {

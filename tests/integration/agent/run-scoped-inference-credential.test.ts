@@ -185,9 +185,10 @@ describe("run-scoped inference credential", () => {
           ),
         )) as typeof fetch,
     );
-    let projectResolverCalls = 0;
+    let projectProviderResolverCalls = 0;
+    let projectTransportResolverCalls = 0;
     const unregister = registerModelProvider("veryfront-cloud", () => {
-      projectResolverCalls += 1;
+      projectProviderResolverCalls += 1;
       throw new Error("Project model override must not handle signed inference");
     });
     const runtimeAgent = createAgent({
@@ -195,6 +196,10 @@ describe("run-scoped inference credential", () => {
       model: "veryfront-cloud/openai/gpt-test",
       system: "Answer concisely.",
       skills: false,
+      resolveModelTransport: () => {
+        projectTransportResolverCalls += 1;
+        throw new Error("Project transport override must not handle signed inference");
+      },
     });
     const runtimeInput = {
       agentId: runtimeAgent.id,
@@ -215,7 +220,8 @@ describe("run-scoped inference credential", () => {
       unregister();
     }
 
-    assertEquals(projectResolverCalls, 0);
+    assertEquals(projectProviderResolverCalls, 0);
+    assertEquals(projectTransportResolverCalls, 0);
   });
 
   it("clears inference authority before non-cloud project model resolution", async () => {

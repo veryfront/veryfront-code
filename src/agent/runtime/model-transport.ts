@@ -16,6 +16,7 @@ import {
   resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudReasoningOption,
   tryGetVeryfrontCloudProviderFromModelId,
+  VERYFRONT_CLOUD_MODEL_PREFIX,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { hasDisabledThinking } from "./model-capabilities.ts";
 
@@ -67,19 +68,25 @@ export async function resolveAgentModelTransport(
 ): Promise<ResolvedModelTransport> {
   const requestedModel = resolveConfiguredAgentModel(input.modelOverride || input.config.model);
   const resolvedModelString = resolveRuntimeModel(input.modelOverride || input.config.model);
-  const transport = await input.config.resolveModelTransport?.({
-    agentId: input.agentId,
-    requestedModel,
-    resolvedModel: resolvedModelString,
-    context: input.context,
-    mode: input.mode,
-  });
+  const privatelyResolvedModel = input.resolveModelRuntime &&
+      resolvedModelString.startsWith(VERYFRONT_CLOUD_MODEL_PREFIX)
+    ? input.resolveModelRuntime(resolvedModelString)
+    : undefined;
+  const transport = privatelyResolvedModel
+    ? undefined
+    : await input.config.resolveModelTransport?.({
+      agentId: input.agentId,
+      requestedModel,
+      resolvedModel: resolvedModelString,
+      context: input.context,
+      mode: input.mode,
+    });
 
   const providerOptions = resolveProviderOptionsWithDefaults(
     resolvedModelString,
     transport?.providerOptions,
   );
-  const languageModel = transport?.model ??
+  const languageModel = privatelyResolvedModel ?? transport?.model ??
     input.resolveModelRuntime?.(resolvedModelString) ??
     resolveModel(resolvedModelString);
   const providerOptionKey = resolveModelProviderOptionKey(resolvedModelString, languageModel);

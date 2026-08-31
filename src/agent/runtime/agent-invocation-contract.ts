@@ -434,7 +434,15 @@ export type RuntimeAgentValidatedClaims = InferSchema<
 export type RuntimeAgentRunContext = InferSchema<
   ReturnType<typeof getRuntimeAgentRunContextSchema>
 >;
-/** Public API contract for runtime agent run invocation. */
+/**
+ * Public API contract for a signed runtime agent invocation.
+ *
+ * `credentials.authToken` authorizes control-plane and project operations.
+ * `credentials.inferenceAuthToken`, when present, is separate run-scoped
+ * authority for attributed Veryfront Cloud inference. Trusted runtime ingress
+ * must keep that credential out of project callbacks, tools, logs, and durable
+ * request payloads.
+ */
 export type RuntimeAgentRunInvocation = InferSchema<
   ReturnType<typeof getRuntimeAgentRunInvocationSchema>
 >;

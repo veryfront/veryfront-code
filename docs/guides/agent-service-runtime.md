@@ -271,6 +271,24 @@ Services that use Veryfront Cloud project steering can reuse
 `fetchDefaultAgentServiceProjectSteering()` for the initial fetch and
 `createDefaultAgentServiceProjectSteeringRefresh()` for step-boundary refresh.
 
+## Keep inference authority separate
+
+Signed runtime invocations may include an optional
+`credentials.inferenceAuthToken` alongside the broader
+`credentials.authToken`. The inference credential is bound to the exact run and
+agent and is intended only for attributed Veryfront Cloud model requests. It is
+size-bounded to 16 KB and remains optional so existing producers and consumers
+stay compatible.
+
+Treat this as trusted-host authority. Do not copy it into project context,
+tools, logs, durable request payloads, or a general API client. Framework-managed
+agent services bind it only after the signed invocation and run-event credential
+have been verified, bypass project model overrides for Veryfront Cloud models,
+and send it only to an HTTPS (or loopback development) gateway. Custom runtime
+adapters should follow the same boundary: use `authToken` for project and
+control-plane operations, and expose `inferenceAuthToken` only to the model
+subprocess's Veryfront Cloud gateway configuration.
+
 ## Use lower-level helpers
 
 Use `startNodeVeryfrontCloudAgentService()` for the standard service shape.
