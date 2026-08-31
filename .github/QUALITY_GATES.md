@@ -11,7 +11,9 @@ four-shard coverage dependency with its 80 percent floor, integration tests,
 the full Node and Bun runtime suites, binary end-to-end tests, and RSC browser
 end-to-end tests to succeed for pull requests, merge queue runs, and main
 pushes. Sonar analysis is also mandatory for merge queue runs, main pushes,
-manually dispatched runs, and trusted pull requests. A failed, skipped, or
+manually dispatched runs, and trusted pull requests. The scanner waits for the
+server-side SonarCloud Quality Gate, so the required `sonar` check fails when
+that gate fails rather than only when report upload fails. A failed, skipped, or
 cancelled dependency fails the aggregate check, except that Sonar is
 intentionally skipped and ignored for fork and Dependabot pull requests because
 those runs cannot receive `SONAR_TOKEN`. Fork pull requests still skip other
@@ -34,8 +36,9 @@ For pull requests and merge queue runs, `quality gate (artifact)` is a separate
 stable required check from `quality gate (merge)`. Runtime compatibility lanes
 are aggregated only by the artifact gate, so `quality-gate-merge` does not
 duplicate them. The workflow exposes both stable check names for repository
-rules to require. Those external branch protection or ruleset settings are not
-configured or asserted by this document.
+rules to require. The main ruleset also requires SonarCloud's
+`SonarCloud Code Analysis` check so the external quality-gate result cannot be
+silently omitted from a merge.
 
 Evidence: [artifact implementation](../scripts/ci/npm-compatibility-artifact.ts),
 [artifact contract](../tests/integration/ci/npm-compatibility-artifact.test.ts),

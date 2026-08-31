@@ -1,4 +1,8 @@
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 
@@ -35,6 +39,8 @@ const SONAR_REQUIRED_CONDITION =
 const SONAR_REQUIRED_EXPRESSION = `\${{ ${SONAR_REQUIRED_CONDITION} }}`;
 const SONAR_JOB_EXPRESSION =
   `\${{ needs.coverage-shards.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
+const SONAR_JOB_TIMEOUT_MINUTES = 35;
+const SONAR_QUALITY_GATE_TIMEOUT_SECONDS = 1200;
 
 function asRecord(value: unknown, context: string): YamlRecord {
   assert(
@@ -150,6 +156,23 @@ describe("merge quality gate workflow", () => {
 
     assertEquals(sonar.if, SONAR_JOB_EXPRESSION);
     assertEquals(gateEnv.SONAR_REQUIRED, SONAR_REQUIRED_EXPRESSION);
+  });
+
+  it("makes the required Sonar check wait for the server-side quality gate", async () => {
+    const workflow = await readWorkflow();
+    const jobs = asRecord(workflow.jobs, "cicd workflow jobs");
+    const sonar = asRecord(jobs.sonar, "sonar job");
+    const sonarProperties = await readRepoFile("sonar-project.properties");
+
+    assertEquals(sonar["timeout-minutes"], SONAR_JOB_TIMEOUT_MINUTES);
+    assertStringIncludes(
+      sonarProperties,
+      "sonar.qualitygate.wait=true",
+    );
+    assertStringIncludes(
+      sonarProperties,
+      `sonar.qualitygate.timeout=${SONAR_QUALITY_GATE_TIMEOUT_SECONDS}`,
+    );
   });
 
   it("documents Sonar enforcement for manually dispatched runs", async () => {
