@@ -74,6 +74,62 @@ describe("ApiHandlerWrapper", () => {
     assertEquals(result.response?.headers.get("Allow"), "GET, HEAD, OPTIONS");
   });
 
+  it("prepares framework-owned preflight inside a multi-project context", async () => {
+    const projectDir = `/tmp/api-wrapper-multi-preflight-${crypto.randomUUID()}`;
+    const adapter = createFileAdapter();
+    adapter.fs.files.set(
+      `${projectDir}/pages/api/get-only.ts`,
+      "export function GET() { return new Response('get'); }",
+    );
+    const fs = adapter.fs as typeof adapter.fs & {
+      isMultiProjectMode: () => boolean;
+      runWithContext: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
+    };
+    let contextEntries = 0;
+    fs.isMultiProjectMode = () => true;
+    fs.runWithContext = async <T>(
+      _slug: string,
+      _token: string,
+      fn: () => Promise<T>,
+    ): Promise<T> => {
+      contextEntries++;
+      return await fn();
+    };
+    const ctx = {
+      projectDir,
+      adapter,
+      securityConfig: null,
+      projectSlug: "multi-project",
+      projectId: "project-123",
+      proxyToken: "proxy-token",
+      releaseId: "release-123",
+      environmentName: "Production",
+      requestContext: {
+        token: "proxy-token",
+        slug: "multi-project",
+        branch: "main",
+        mode: "production",
+      },
+      isLocalProject: false,
+      allowHostProjectCodeExecution: true,
+    } as unknown as HandlerContext;
+    const wrapper = new ApiHandlerWrapper(projectDir, adapter);
+    const request = new Request("http://localhost/api/get-only", {
+      method: "OPTIONS",
+      headers: {
+        origin: "https://client.example",
+        "access-control-request-method": "GET",
+      },
+    });
+
+    assertEquals(await wrapper.prepareFrameworkOwnedPreflight(request, ctx), true);
+    assertEquals(contextEntries, 1);
+    const result = await wrapper.handle(request, ctx);
+
+    assertEquals(result.response?.status, 204);
+    assertEquals(contextEntries, 2);
+  });
+
   it("keeps denied shared runtimes on the automatic preflight path", async () => {
     const adapter = createFileAdapter();
     const fs = adapter.fs as typeof adapter.fs & {

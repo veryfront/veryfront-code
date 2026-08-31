@@ -310,7 +310,7 @@ export class ApiHandlerWrapper extends BaseHandler {
         }),
       });
       response.headers.set("Allow", DEFAULT_CORS_METHODS.join(", "));
-      return this.respond(this.finalizePreflightResponse(ctx, response));
+      return this.respond(this.finalizePreflightResponse(req, ctx, response));
     }
     // A shared runtime without an explicit execution grant cannot serve any
     // project-owned route. Reject before refreshing or classifying tenant
@@ -323,7 +323,7 @@ export class ApiHandlerWrapper extends BaseHandler {
     ctx: HandlerContext,
   ): HandlerResult | null {
     if (req.method.toUpperCase() !== "OPTIONS" || !ctx.frameworkPreflightResponse) return null;
-    return this.respond(this.finalizePreflightResponse(ctx, ctx.frameworkPreflightResponse));
+    return this.respond(this.finalizePreflightResponse(req, ctx, ctx.frameworkPreflightResponse));
   }
 
   private projectExecutionUnavailable(
@@ -349,11 +349,15 @@ export class ApiHandlerWrapper extends BaseHandler {
     return this.respond(response, { executionTopology: "dedicated-runtime-required" });
   }
 
-  private finalizePreflightResponse(ctx: HandlerContext, response: Response): Response {
+  private finalizePreflightResponse(
+    req: Request,
+    ctx: HandlerContext,
+    response: Response,
+  ): Response {
     // The prepared response already carries the validated CORS policy headers;
     // only security and response headers are added here.
     return this.createResponseBuilder(ctx)
-      .withSecurity(ctx.securityConfig ?? undefined)
+      .withSecurity(ctx.securityConfig ?? undefined, req)
       .withHeaders(response.headers)
       .build(response.body, response.status);
   }
