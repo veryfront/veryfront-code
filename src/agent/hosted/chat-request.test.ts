@@ -1543,50 +1543,6 @@ describe("agent/hosted-chat-request", () => {
     }]);
   });
 
-  it("parses run credentials with framework-captured JSON intrinsics", async () => {
-    const inferenceAuthToken = "run-scoped-inference-token";
-    const body = JSON.stringify({
-      ...createRuntimeInvocation(),
-      credentials: {
-        authToken: "request-scoped-user-token",
-        inferenceAuthToken,
-      },
-    });
-    const nativeJsonParse = JSON.parse;
-    const nativeReflectApply = Reflect.apply;
-    let exposedToSharedRealmJson = false;
-
-    const observedJsonParse: typeof JSON.parse = (text, reviver) => {
-      if (text.includes(inferenceAuthToken)) exposedToSharedRealmJson = true;
-      return nativeReflectApply(nativeJsonParse, JSON, [text, reviver]);
-    };
-    JSON.parse = observedJsonParse;
-
-    let parsed: ParsedHostedChatRequest | Response;
-    try {
-      parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
-        new Request("https://agent.example.com/api/control-plane/runs/run_root_1/stream", {
-          method: "POST",
-          headers: { "X-Veryfront-Run-Event-Token": "verified-event-token" },
-          body,
-        }),
-        {
-          authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
-          verifyProjectAccess: () => Promise.resolve({ success: true }),
-          verifyRunEventAppendToken: () => Promise.resolve(true),
-          runtimeSource,
-        },
-      );
-    } finally {
-      JSON.parse = nativeJsonParse;
-    }
-
-    if (parsed instanceof Response) {
-      throw new Error("Expected parsed runtime invocation");
-    }
-    assertEquals(exposedToSharedRealmJson, false);
-  });
-
   it("normalizes persisted uploaded file parts from runtime invocations", async () => {
     const invocation = RuntimeAgentRunInvocationSchema.parse({
       ...createRuntimeInvocation(),

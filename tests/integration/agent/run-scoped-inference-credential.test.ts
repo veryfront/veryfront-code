@@ -758,10 +758,12 @@ describe("run-scoped inference credential", () => {
       },
     );
     const originalRequestJson = Request.prototype.json;
+    const originalJsonParse = JSON.parse;
     const originalObjectEntries = Object.entries;
     const inferenceToken = "run-scoped-inference-token";
     const observedJsonCredentials: unknown[] = [];
     const observedEntriesCredentials: unknown[] = [];
+    let exposedToSharedRealmJson = false;
     const containsInferenceToken = (value: unknown): boolean => {
       if (typeof value === "string") return value.includes("run-scoped-inference-token");
       if (typeof value !== "object" || value === null) return false;
@@ -778,6 +780,11 @@ describe("run-scoped inference credential", () => {
         return payload;
       });
     };
+    const observedJsonParse: typeof JSON.parse = (text, reviver) => {
+      if (text.includes(inferenceToken)) exposedToSharedRealmJson = true;
+      return Reflect.apply(originalJsonParse, JSON, [text, reviver]);
+    };
+    JSON.parse = observedJsonParse;
     Object.entries = ((value: object) => {
       const isCredentialsRecord = originalObjectEntries(value).some(([key]) =>
         key === "authToken" || key === "inferenceAuthToken"
@@ -795,6 +802,7 @@ describe("run-scoped inference credential", () => {
       });
     } finally {
       Request.prototype.json = originalRequestJson;
+      JSON.parse = originalJsonParse;
       Object.entries = originalObjectEntries;
     }
 
@@ -807,6 +815,7 @@ describe("run-scoped inference credential", () => {
     assertEquals(detachedRequestBody.includes("run-scoped-inference-token"), false);
     assertEquals(observedJsonCredentials, []);
     assertEquals(observedEntriesCredentials.length, 0);
+    assertEquals(exposedToSharedRealmJson, false);
   });
 
   it("ignores an inference credential without a verified run-event token", async () => {
