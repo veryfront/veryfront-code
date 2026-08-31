@@ -1922,6 +1922,9 @@ const ANSI_CSI_SEQUENCE_AT_INDEX =
 const ANSI_CSI_SEQUENCE_FOR_URL_REDACTION =
   // deno-lint-ignore no-control-regex
   /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\u0040-\u007E]/g;
+// Numeric SGR changes presentation only; its final `m` is not source text.
+// deno-lint-ignore no-control-regex
+const ANSI_SGR_SEQUENCE = /^(?:\u001B\[|\u009B)[0-9:;]*m$/u;
 const CSI_SPLITTABLE_URL_SCHEMES = freezeObject([
   "http",
   "https",
@@ -2092,14 +2095,20 @@ function skipCompleteCsiSequences(value: string, index: number): number {
   }
 }
 
+function hasStickyMatchAtIndex(pattern: RegExp, value: string, index: number): boolean {
+  pattern.lastIndex = index;
+  try {
+    return ReflectApply(RegExpPrototypeExec, pattern, [value]) !== null;
+  } finally {
+    pattern.lastIndex = 0;
+  }
+}
+
 function hasRedactableCsiUrlPayload(value: string, index: number): boolean {
   const payloadIndex = skipCompleteCsiSequences(value, index);
-  URL_TOKEN_TAIL_AT_INDEX.lastIndex = payloadIndex;
-  try {
-    return ReflectApply(RegExpPrototypeExec, URL_TOKEN_TAIL_AT_INDEX, [value]) !== null;
-  } finally {
-    URL_TOKEN_TAIL_AT_INDEX.lastIndex = 0;
-  }
+  return hasStickyMatchAtIndex(URL_TOKEN_TAIL_AT_INDEX, value, payloadIndex) ||
+    hasStickyMatchAtIndex(NON_ASCII_AUTHORITY_PAYLOAD_AT_INDEX, value, payloadIndex) ||
+    hasStickyMatchAtIndex(NON_ASCII_PATH_PAYLOAD_AT_INDEX, value, payloadIndex);
 }
 
 function markCompleteCsiSequenceStarts(
@@ -2380,13 +2389,16 @@ function restoreCsiSplitUrlSchemes(value: string): string {
         stringSlice(matched, -1),
         [],
       ) as string;
+      const schemeByte = ReflectApply(RegExpPrototypeExec, ANSI_SGR_SEQUENCE, [matched]) === null
+        ? finalByte
+        : "";
       const matchIndex = matches.length;
       defineOwnArrayElement(matches, matchIndex, {
         matched,
         inputIndex: match.index,
         inputEnd: ANSI_CSI_SEQUENCE.lastIndex,
       });
-      states = advanceCsiSchemeSequence(states, finalByte, matchIndex, match.index);
+      states = advanceCsiSchemeSequence(states, schemeByte, matchIndex, match.index);
       inputOffset = ANSI_CSI_SEQUENCE.lastIndex;
       match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE, [value]) as
         | RegExpExecArray
@@ -2528,6 +2540,15 @@ const NON_ASCII_ZERO_SLASH_URL_PATH = new RegExp(
     .raw`${ASCII_SPECIAL_SCHEME_SOURCE}:(?![/\s])(?:[^\s"/]{0,512}@)?[^\s"/]{1,512}(?:/${URI_TOKEN_CHARACTER_SOURCE}{0,2048})?/(?=[^\x00-\x7F])[^\s"']*`,
   "gu",
 );
+const NON_ASCII_AUTHORITY_PAYLOAD_AT_INDEX = new RegExp(
+  String.raw`(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}(?:${URL_TOKEN_TAIL_SOURCE})?`,
+  "uy",
+);
+const NON_ASCII_PATH_PAYLOAD_AT_INDEX = new RegExp(
+  String
+    .raw`(?:[^\s"/]{0,512}@)?[^\s"/]{1,512}(?:/${URI_TOKEN_CHARACTER_SOURCE}{0,2048})?/(?=[^\x00-\x7F])[^\s"']*`,
+  "uy",
+);
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
 // Match case-insensitively so uppercase file URLs remain paths, not remote URLs.
@@ -2660,8 +2681,13 @@ function csiConsumedUrlSpan(
 
   const matched = match[0];
   const introducerLength = stringSlice(matched, 0, 1) === "\u001B" ? 2 : 1;
+  const rawBody = stringSlice(matched, introducerLength);
+  const swallowedUrlStructure =
+    (ReflectApply(StringPrototypeIncludes, rawBody, [":"]) as boolean) ||
+    (ReflectApply(StringPrototypeIncludes, rawBody, ["/"]) as boolean);
+  if (!swallowedUrlStructure) return undefined;
   const lookaheadEnd = MathMin(value.length, matchEnd + MAX_CSI_CONSUMED_URL_LOOKAHEAD);
-  const candidate = prefix.value + stringSlice(matched, introducerLength) +
+  const candidate = prefix.value + rawBody +
     stringSlice(value, matchEnd, lookaheadEnd);
   const redaction = matchCsiConsumedUrlCandidate(candidate);
   const reachesLookaheadBound = redaction?.endIndex === candidate.length &&

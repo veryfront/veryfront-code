@@ -7038,6 +7038,31 @@ export default config as const;
         assertStringIncludes(split.message, "…Retry");
       });
 
+      it("redacts a raw Unicode path after CSI-consumed URL delimiters", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-consumed-unicode-path-",
+          `throw new Error(${
+            JSON.stringify(`Load http${escape}[://registry.internal/config/秘密`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message.includes("秘密"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("does not manufacture a scheme from an ordinary SGR sequence", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-ordinary-sgr-scheme-",
+          `throw new Error(${JSON.stringify(`Status a${escape}[31m://retry`)});\n`,
+        );
+
+        assertStringIncludes(error.message, "Status a [path]");
+        assertEquals(error.message.includes("[url]"), false);
+      });
+
       it("redacts a file URL whose path delimiters are consumed by CSI", async () => {
         const escape = String.fromCharCode(27);
         const error = await loadFailure(
