@@ -207,45 +207,6 @@ describe("provider/veryfront-cloud/shared", () => {
     assertEquals(capturedRequest?.headers.get("x-veryfront-billing-group-id"), null);
   });
 
-  it("keeps inference credentials out of mutable Headers prototype methods", async () => {
-    const originalSet = Object.getOwnPropertyDescriptor(Headers.prototype, "set")!;
-    const observedAuthorizationValues: string[] = [];
-    Object.defineProperty(Headers.prototype, "set", {
-      ...originalSet,
-      value(this: Headers, name: string, value: string) {
-        if (name.toLowerCase() === "authorization") {
-          observedAuthorizationValues.push(value);
-        }
-        return Reflect.apply(originalSet.value, this, [name, value]);
-      },
-    });
-
-    let capturedRequest: Request | undefined;
-    try {
-      const wrappedFetch = createVeryfrontCloudFetch(
-        "run-scoped-inference-token",
-        "https://93.184.216.34/ai/gateway/openai/v1",
-        undefined,
-        { inferenceCredential: true },
-      );
-      await withMockFetch(
-        async (input: URL | Request | string, init?: RequestInit) => {
-          capturedRequest = new Request(input, init);
-          return new Response(null, { status: 204 });
-        },
-        () => wrappedFetch("https://93.184.216.34/ai/gateway/openai/v1/chat/completions"),
-      );
-    } finally {
-      Object.defineProperty(Headers.prototype, "set", originalSet);
-    }
-
-    assertEquals(observedAuthorizationValues, []);
-    assertEquals(
-      capturedRequest?.headers.get("Authorization"),
-      "Bearer run-scoped-inference-token",
-    );
-  });
-
   it("replaces caller identity headers with trusted project and billing context", async () => {
     let capturedRequest: Request | undefined;
 

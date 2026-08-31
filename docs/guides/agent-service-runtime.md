@@ -277,8 +277,8 @@ Signed runtime invocations may include an optional
 `credentials.inferenceAuthToken` alongside the broader
 `credentials.authToken`. The inference credential is bound to the exact run and
 agent and is intended only for attributed Veryfront Cloud model requests. It is
-size-bounded to 16 KB and remains optional so existing producers and consumers
-stay compatible.
+size-bounded to 16 KB, uses visible ASCII token characters, and remains optional
+so existing producers and consumers stay compatible.
 
 Treat this as trusted-host authority. Do not copy it into project context,
 tools, logs, durable request payloads, or a general API client. Framework-managed
