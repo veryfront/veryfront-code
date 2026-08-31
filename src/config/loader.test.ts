@@ -5979,6 +5979,30 @@ export default config as const;
         assertEquals(colorAndSplit.message.includes("registry.internal"), false);
         assertStringIncludes(colorAndSplit.message, "[url]");
 
+        const generic = await loadFailure(
+          "vf-config-csi-zero-slash-generic-",
+          `throw new Error(String.fromCharCode(27) + "[s3://internal-bucket/config.ts");\n`,
+        );
+
+        assertEquals(generic.message.includes("internal-bucket"), false);
+        assertStringIncludes(generic.message, "[url]");
+
+        const ambiguous = await loadFailure(
+          "vf-config-csi-zero-slash-ambiguous-",
+          `throw new Error(String.fromCharCode(27) + "[h" + String.fromCharCode(27) + "[f" + String.fromCharCode(27) + "[t" + String.fromCharCode(27) + "[t" + String.fromCharCode(27) + "[p:registry.internal/config.ts");\n`,
+        );
+
+        assertEquals(ambiguous.message.includes("registry.internal"), false);
+        assertStringIncludes(ambiguous.message, "[url]");
+
+        const schemeProse = await loadFailure(
+          "vf-config-csi-zero-slash-prose-payload-",
+          `throw new Error("http" + String.fromCharCode(27) + "[s: unavailable");\n`,
+        );
+
+        assertStringIncludes(schemeProse.message, "http: unavailable");
+        assertEquals(schemeProse.message.includes("https: unavailable"), false);
+
         const singleSlash = await loadFailure(
           "vf-config-csi-single-slash-url-",
           `throw new Error(String.fromCharCode(27) + "[https:/registry.internal/veryfront.config.ts");\n`,

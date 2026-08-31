@@ -1930,6 +1930,25 @@ interface CsiSchemeMatch {
 
 type CsiSchemeStates = Array<Array<readonly number[] | undefined>>;
 
+interface CsiGenericSchemePath {
+  matches: readonly number[];
+  startIndex: number;
+}
+
+type CsiGenericSchemeStates = Array<CsiGenericSchemePath | undefined>;
+
+interface CsiRestorationStates {
+  special: CsiSchemeStates;
+  generic: CsiGenericSchemeStates;
+}
+
+type CsiUrlPayloadKind = "generic" | "special" | "none";
+
+const MAX_GENERIC_URL_SCHEME_LENGTH = 32;
+const GENERIC_URL_SCHEME_FIRST_CHARACTER = /[A-Za-z]/;
+const GENERIC_URL_SCHEME_CHARACTER = /[A-Za-z0-9+.-]/;
+const CSI_URL_PAYLOAD_CHARACTER = /[^\s"'\\]/u;
+
 function appendCsiSchemeMatch(path: readonly number[], matchIndex: number): readonly number[] {
   const appended: number[] = [];
   for (let index = 0; index < path.length; index++) appended[index] = path[index]!;
@@ -1944,37 +1963,154 @@ function keepShorterCsiSchemePath(
   return current === undefined || candidate.length < current.length ? candidate : current;
 }
 
-function createCsiSchemeStates(): CsiSchemeStates {
-  const states: CsiSchemeStates = [];
-  for (let index = 0; index < CSI_SPLITTABLE_URL_SCHEMES.length; index++) states[index] = [];
+function appendGenericCsiSchemeMatch(
+  path: CsiGenericSchemePath,
+  matchIndex: number,
+): CsiGenericSchemePath {
+  return {
+    matches: appendCsiSchemeMatch(path.matches, matchIndex),
+    startIndex: path.startIndex,
+  };
+}
+
+function keepPreferredGenericCsiPath(
+  current: CsiGenericSchemePath | undefined,
+  candidate: CsiGenericSchemePath,
+): CsiGenericSchemePath {
+  if (current === undefined || candidate.startIndex < current.startIndex) return candidate;
+  if (
+    candidate.startIndex === current.startIndex &&
+    candidate.matches.length < current.matches.length
+  ) {
+    return candidate;
+  }
+  return current;
+}
+
+function createDenseCsiPathStates(length: number): Array<readonly number[] | undefined> {
+  const states: Array<readonly number[] | undefined> = [];
+  for (let index = 0; index <= length; index++) states[index] = undefined;
   return states;
 }
 
-function markCompletedCsiSchemes(states: CsiSchemeStates, restoreMatches: boolean[]): void {
+function createDenseGenericCsiStates(): CsiGenericSchemeStates {
+  const states: CsiGenericSchemeStates = [];
+  for (let index = 0; index <= MAX_GENERIC_URL_SCHEME_LENGTH; index++) {
+    states[index] = undefined;
+  }
+  return states;
+}
+
+function createCsiSchemeStates(): CsiSchemeStates {
+  const states: CsiSchemeStates = [];
+  for (let index = 0; index < CSI_SPLITTABLE_URL_SCHEMES.length; index++) {
+    states[index] = createDenseCsiPathStates(CSI_SPLITTABLE_URL_SCHEMES[index]!.length);
+  }
+  return states;
+}
+
+function createCsiRestorationStates(): CsiRestorationStates {
+  return {
+    special: createCsiSchemeStates(),
+    generic: createDenseGenericCsiStates(),
+  };
+}
+
+function chooseCompletedSpecialCsiPath(states: CsiSchemeStates): readonly number[] | undefined {
+  let selected: readonly number[] | undefined;
   for (let schemeIndex = 0; schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length; schemeIndex++) {
     const scheme = CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!;
-    const path = states[schemeIndex]?.[scheme.length];
-    if (path === undefined) continue;
-    for (let pathIndex = 0; pathIndex < path.length; pathIndex++) { // NOSONAR: Avoid mutable iterator hooks.
-      restoreMatches[path[pathIndex]!] = true;
-    }
+    const path = states[schemeIndex]![scheme.length];
+    if (path !== undefined) selected = keepShorterCsiSchemePath(selected, path);
+  }
+  return selected;
+}
+
+function chooseCompletedGenericCsiPath(
+  states: CsiGenericSchemeStates,
+): CsiGenericSchemePath | undefined {
+  let selected: CsiGenericSchemePath | undefined;
+  for (let length = 2; length <= MAX_GENERIC_URL_SCHEME_LENGTH; length++) {
+    const path = states[length];
+    if (path !== undefined) selected = keepPreferredGenericCsiPath(selected, path);
+  }
+  return selected;
+}
+
+function markCsiSchemePath(path: readonly number[] | undefined, restoreMatches: Set<number>): void {
+  if (path === undefined) return;
+  for (let pathIndex = 0; pathIndex < path.length; pathIndex++) { // NOSONAR: Avoid mutable iterator hooks.
+    setAdd(restoreMatches, path[pathIndex]!);
   }
 }
 
-function advanceCsiSchemeLiteral(
-  states: CsiSchemeStates,
+function hasCsiUrlPayloadCharacter(value: string, index: number): boolean {
+  const character = stringSlice(value, index, index + 1);
+  return character !== "" &&
+    ReflectApply(RegExpPrototypeExec, CSI_URL_PAYLOAD_CHARACTER, [character]) !== null;
+}
+
+function classifyCsiUrlPayload(value: string, colonIndex: number): CsiUrlPayloadKind {
+  if (stringSlice(value, colonIndex + 1, colonIndex + 2) !== "/") {
+    return hasCsiUrlPayloadCharacter(value, colonIndex + 1) ? "special" : "none";
+  }
+  if (stringSlice(value, colonIndex + 2, colonIndex + 3) !== "/") {
+    return hasCsiUrlPayloadCharacter(value, colonIndex + 2) ? "special" : "none";
+  }
+  return hasCsiUrlPayloadCharacter(value, colonIndex + 3) ? "generic" : "none";
+}
+
+function advanceGenericCsiLiteral(
+  current: CsiGenericSchemeStates,
   value: string,
-  restoreMatches: boolean[],
-): CsiSchemeStates {
+  inputIndex: number,
+): CsiGenericSchemeStates {
+  const advanced = createDenseGenericCsiStates();
+  const isSchemeCharacter = ReflectApply(
+    RegExpPrototypeExec,
+    GENERIC_URL_SCHEME_CHARACTER,
+    [value],
+  ) !== null;
+  if (isSchemeCharacter) {
+    for (let length = 1; length < MAX_GENERIC_URL_SCHEME_LENGTH; length++) {
+      const path = current[length];
+      if (path !== undefined) {
+        advanced[length + 1] = keepPreferredGenericCsiPath(advanced[length + 1], path);
+      }
+    }
+  }
+  if (ReflectApply(RegExpPrototypeExec, GENERIC_URL_SCHEME_FIRST_CHARACTER, [value]) !== null) {
+    advanced[1] = keepPreferredGenericCsiPath(advanced[1], {
+      matches: [],
+      startIndex: inputIndex,
+    });
+  }
+  return advanced;
+}
+
+function advanceCsiSchemeLiteral(
+  states: CsiRestorationStates,
+  value: string,
+  input: string,
+  inputIndex: number,
+  restoreMatches: Set<number>,
+): CsiRestorationStates {
   if (value === ":") {
-    markCompletedCsiSchemes(states, restoreMatches);
-    return createCsiSchemeStates();
+    const payload = classifyCsiUrlPayload(input, inputIndex);
+    if (payload === "generic") {
+      const special = chooseCompletedSpecialCsiPath(states.special);
+      const path = special ?? chooseCompletedGenericCsiPath(states.generic)?.matches;
+      markCsiSchemePath(path, restoreMatches);
+    } else if (payload === "special") {
+      markCsiSchemePath(chooseCompletedSpecialCsiPath(states.special), restoreMatches);
+    }
+    return createCsiRestorationStates();
   }
 
   const next = createCsiSchemeStates();
   for (let schemeIndex = 0; schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length; schemeIndex++) {
     const scheme = CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!;
-    const current = states[schemeIndex]!;
+    const current = states.special[schemeIndex]!;
     const advanced = next[schemeIndex]!;
     for (let characterIndex = 1; characterIndex < scheme.length; characterIndex++) {
       const path = current[characterIndex];
@@ -1992,18 +2128,22 @@ function advanceCsiSchemeLiteral(
       advanced[1] = keepShorterCsiSchemePath(advanced[1], []);
     }
   }
-  return next;
+  return {
+    special: next,
+    generic: advanceGenericCsiLiteral(states.generic, value, inputIndex),
+  };
 }
 
 function advanceCsiSchemeSequence(
-  states: CsiSchemeStates,
+  states: CsiRestorationStates,
   value: string,
   matchIndex: number,
-): CsiSchemeStates {
+  inputIndex: number,
+): CsiRestorationStates {
   const next = createCsiSchemeStates();
   for (let schemeIndex = 0; schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length; schemeIndex++) {
     const scheme = CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!;
-    const current = states[schemeIndex]!;
+    const current = states.special[schemeIndex]!;
     const advanced = next[schemeIndex]!;
     for (let characterIndex = 1; characterIndex <= scheme.length; characterIndex++) {
       const path = current[characterIndex];
@@ -2024,7 +2164,29 @@ function advanceCsiSchemeSequence(
       advanced[1] = keepShorterCsiSchemePath(advanced[1], [matchIndex]);
     }
   }
-  return next;
+
+  const generic = createDenseGenericCsiStates();
+  const isSchemeCharacter = ReflectApply(
+    RegExpPrototypeExec,
+    GENERIC_URL_SCHEME_CHARACTER,
+    [value],
+  ) !== null;
+  for (let length = 1; length <= MAX_GENERIC_URL_SCHEME_LENGTH; length++) {
+    const path = states.generic[length];
+    if (path === undefined) continue;
+    generic[length] = keepPreferredGenericCsiPath(generic[length], path);
+    if (isSchemeCharacter && length < MAX_GENERIC_URL_SCHEME_LENGTH) {
+      const restored = appendGenericCsiSchemeMatch(path, matchIndex);
+      generic[length + 1] = keepPreferredGenericCsiPath(generic[length + 1], restored);
+    }
+  }
+  if (ReflectApply(RegExpPrototypeExec, GENERIC_URL_SCHEME_FIRST_CHARACTER, [value]) !== null) {
+    generic[1] = keepPreferredGenericCsiPath(generic[1], {
+      matches: [matchIndex],
+      startIndex: inputIndex,
+    });
+  }
+  return { special: next, generic };
 }
 
 /**
@@ -2044,16 +2206,16 @@ function advanceCsiSchemeSequence(
 function restoreCsiSplitUrlSchemes(value: string): string {
   ANSI_CSI_SEQUENCE.lastIndex = 0;
   try {
-    const matches: CsiSchemeMatch[] = [];
-    const restoreMatches: boolean[] = [];
-    let states = createCsiSchemeStates();
-    let inputOffset = 0;
-    while (true) {
-      const match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE, [value]) as
-        | RegExpExecArray
-        | null;
-      if (match === null) break;
+    let match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE, [value]) as
+      | RegExpExecArray
+      | null;
+    if (match === null) return value;
 
+    const matches: CsiSchemeMatch[] = [];
+    const restoreMatches = new IntrinsicSet<number>();
+    let states = createCsiRestorationStates();
+    let inputOffset = 0;
+    while (match !== null) {
       const matched = match[0];
       for (let index = inputOffset; index < match.index; index++) {
         const literal = ReflectApply(
@@ -2061,7 +2223,7 @@ function restoreCsiSplitUrlSchemes(value: string): string {
           stringSlice(value, index, index + 1),
           [],
         ) as string;
-        states = advanceCsiSchemeLiteral(states, literal, restoreMatches);
+        states = advanceCsiSchemeLiteral(states, literal, value, index, restoreMatches);
       }
       const finalByte = ReflectApply(
         StringPrototypeToLowerCase,
@@ -2074,8 +2236,11 @@ function restoreCsiSplitUrlSchemes(value: string): string {
         inputIndex: match.index,
         inputEnd: ANSI_CSI_SEQUENCE.lastIndex,
       };
-      states = advanceCsiSchemeSequence(states, finalByte, matchIndex);
+      states = advanceCsiSchemeSequence(states, finalByte, matchIndex, match.index);
       inputOffset = ANSI_CSI_SEQUENCE.lastIndex;
+      match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE, [value]) as
+        | RegExpExecArray
+        | null;
     }
 
     for (let index = inputOffset; index < value.length; index++) {
@@ -2084,7 +2249,7 @@ function restoreCsiSplitUrlSchemes(value: string): string {
         stringSlice(value, index, index + 1),
         [],
       ) as string;
-      states = advanceCsiSchemeLiteral(states, literal, restoreMatches);
+      states = advanceCsiSchemeLiteral(states, literal, value, index, restoreMatches);
     }
 
     let output = "";
@@ -2092,9 +2257,7 @@ function restoreCsiSplitUrlSchemes(value: string): string {
     for (let matchIndex = 0; matchIndex < matches.length; matchIndex++) {
       const match = matches[matchIndex]!;
       output += stringSlice(value, outputOffset, match.inputIndex);
-      output += restoreMatches[matchIndex] === true
-        ? stringSlice(match.matched, -1)
-        : match.matched;
+      output += setHas(restoreMatches, matchIndex) ? stringSlice(match.matched, -1) : match.matched;
       outputOffset = match.inputEnd;
     }
     return output + stringSlice(value, outputOffset);
