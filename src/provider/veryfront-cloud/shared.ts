@@ -65,7 +65,7 @@ function parseVeryfrontCloudApiBaseUrl(value: string): URL {
 
 function requireSecureInferenceApiBaseUrl(value: string): void {
   const url = parseVeryfrontCloudApiBaseUrl(value);
-  const hostname = url.hostname.replace(/^\[|\]$/g, "");
+  const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
   const loopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
   if (url.protocol !== "https:" && !loopback) {
     throw CONFIG_INVALID.create({

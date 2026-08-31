@@ -77,15 +77,11 @@ import { type ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
 import type { ProviderReplayCheckpointPersister } from "./provider-replay-checkpoint-persister.ts";
 import { createVeryfrontCloudInferenceModelResolver } from "#veryfront/agent/hosted/inference-credential.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 
 const getAnyObjectSchema = defineSchema((v) => v.record(v.string(), v.unknown()));
 const anyObjectSchema = lazySchema(getAnyObjectSchema) as Schema<Record<string, unknown>>;
-const runtimeInferenceCredentials = new WeakMap<object, string>();
-const IntrinsicReflectApply = Reflect.apply;
-const WeakMapGet = WeakMap.prototype.get;
-const WeakMapSet = WeakMap.prototype.set;
-// Freeze the expando surface; captured WeakMap intrinsics above mutate entries safely.
-Object.freeze(runtimeInferenceCredentials);
+const runtimeInferenceCredentials = createPrivateWeakStore<object, string>();
 const logger = serverLogger.component("internal-agent-run-stream");
 const PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME = "bash";
 const INTERNAL_AGENT_RUNTIME_HEARTBEAT_INTERVAL_MS = 25_000;
@@ -202,14 +198,11 @@ export function registerRuntimeInferenceCredential(
   input: RuntimeRunAgentInput,
   credential: string,
 ): void {
-  IntrinsicReflectApply(WeakMapSet, runtimeInferenceCredentials, [input, credential]);
+  runtimeInferenceCredentials.set(input, credential);
 }
 
 function getRuntimeInferenceCredential(input: RuntimeRunAgentInput): string | undefined {
-  const credential: unknown = IntrinsicReflectApply(WeakMapGet, runtimeInferenceCredentials, [
-    input,
-  ]);
-  return typeof credential === "string" ? credential : undefined;
+  return runtimeInferenceCredentials.get(input);
 }
 
 function createInjectedStudioTool(

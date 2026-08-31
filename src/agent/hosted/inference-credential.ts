@@ -1,15 +1,11 @@
 import { createVeryfrontCloudInferenceModel } from "#veryfront/provider/veryfront-cloud/provider.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 
 import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 
-const inferenceCredentials = new WeakMap<object, string>();
+const inferenceCredentials = createPrivateWeakStore<object, string>();
 const VERYFRONT_CLOUD_MODEL_PREFIX = "veryfront-cloud/";
-const IntrinsicReflectApply = Reflect.apply;
-const WeakMapGet = WeakMap.prototype.get;
-const WeakMapSet = WeakMap.prototype.set;
-// Freeze the expando surface; captured WeakMap intrinsics above mutate entries safely.
-Object.freeze(inferenceCredentials);
 
 /** @internal Bind a verified control-plane inference credential without exposing it on the request. */
 export function registerHostedInferenceCredential(
@@ -17,7 +13,7 @@ export function registerHostedInferenceCredential(
   credential: string | undefined,
 ): void {
   if (!credential) return;
-  IntrinsicReflectApply(WeakMapSet, inferenceCredentials, [request, credential]);
+  inferenceCredentials.set(request, credential);
 }
 
 /** @internal Create a model resolver without exposing verified inference authority. */
@@ -40,11 +36,7 @@ export function createVeryfrontCloudInferenceModelResolver(
 export function createHostedInferenceModelResolver(
   request: ParsedHostedChatRequest,
 ): AgentModelRuntimeResolver | undefined {
-  const storedCredential: unknown = IntrinsicReflectApply(
-    WeakMapGet,
-    inferenceCredentials,
-    [request],
-  );
+  const storedCredential = inferenceCredentials.get(request);
   return typeof storedCredential === "string"
     ? createVeryfrontCloudInferenceModelResolver(storedCredential)
     : undefined;
