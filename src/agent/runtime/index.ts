@@ -1479,7 +1479,6 @@ export class AgentRuntime {
       outputSchema?: unknown;
     },
   ): Promise<AgentResponse> {
-    throwIfAborted(abortSignal);
     const runRuntimeContext = captureAgentRunRuntimeContext();
     const { transport, resolveModelRuntime } = await this.#resolveModelTransport(
       context,
@@ -1487,6 +1486,7 @@ export class AgentRuntime {
       "generate",
     );
     try {
+      throwIfAborted(abortSignal);
       const outputSchema = this.resolveOutputSchema(options?.outputSchema);
       const requestedModel = transport.requestedModel;
       const resolvedModelString = transport.resolvedModelString;
@@ -1615,11 +1615,12 @@ export class AgentRuntime {
       const encoder = new TextEncoder();
       const streamAbortController = new AbortController();
       const forwardAbort = () => {
+        revokeModelRuntimeResolver(resolveModelRuntime);
         streamAbortController.abort(abortSignal?.reason);
       };
       if (abortSignal) {
         if (abortSignal.aborted) {
-          streamAbortController.abort(abortSignal.reason);
+          forwardAbort();
         } else {
           abortSignal.addEventListener("abort", forwardAbort, { once: true });
         }

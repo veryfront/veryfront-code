@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay, waitFor } from "#veryfront/testing/deno-compat.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
@@ -92,6 +92,101 @@ function settleAbortedRun(): Promise<void> {
 }
 
 describe("agent runtime stream cancellation (#2334)", () => {
+  it("revokes run-scoped model authority when generation starts aborted", async () => {
+    const model = scriptedModel([{ text: "must not run" }], {
+      modelId: "veryfront-cloud/openai/pre-aborted-model",
+      only: "generate",
+    });
+    let resolverActive = true;
+    const resolver: AgentModelRuntimeResolver = () => resolverActive ? model : undefined;
+    registerModelRuntimeResolverRevoker(resolver, () => {
+      resolverActive = false;
+    });
+    const runtime = new AgentRuntime(
+      "pre-aborted-runtime",
+      {
+        model: "veryfront-cloud/openai/pre-aborted-model",
+        system: "pre-aborted lease test",
+        maxSteps: 1,
+      },
+      {
+        resolveModelRuntime: resolver,
+      },
+    );
+    const abortController = new AbortController();
+    abortController.abort(new DOMException("caller aborted", "AbortError"));
+
+    await assertRejects(
+      async () =>
+        await runtime.generate(
+          "Hello",
+          undefined,
+          undefined,
+          undefined,
+          abortController.signal,
+        ),
+      DOMException,
+      "caller aborted",
+    );
+
+    assertEquals(resolverActive, false);
+    assertEquals(model.calls.length, 0);
+  });
+
+  it("revokes run-scoped model authority before forwarding caller aborts", async () => {
+    const model = scriptedModel([
+      { hangUntilAbort: true, parts: [{ type: "text-delta", text: "thinking" }] },
+    ], { modelId: "veryfront-cloud/openai/caller-abort-model", only: "stream" });
+    let resolverActive = true;
+    const resolver: AgentModelRuntimeResolver = () => resolverActive ? model : undefined;
+    registerModelRuntimeResolverRevoker(resolver, () => {
+      resolverActive = false;
+    });
+    const runtime = new AgentRuntime(
+      "caller-abort-runtime",
+      {
+        model: "veryfront-cloud/openai/caller-abort-model",
+        system: "caller abort lease test",
+        maxSteps: 1,
+      },
+      {
+        resolveModelRuntime: resolver,
+      },
+    );
+    const abortController = new AbortController();
+    const stream = await runtime.stream(
+      [{
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Hello" }],
+      }],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      abortController.signal,
+    );
+    const reader = stream.getReader();
+    const first = await reader.read();
+    assertEquals(first.done, false, "the model call must be in flight before aborting");
+    await waitFor(
+      () => model.calls[0]?.abortSignal !== undefined,
+      { message: "the model call must expose its abort signal before aborting" },
+    );
+    const signal = model.calls[0]?.abortSignal;
+    assert(signal !== undefined, "expected the model call abort signal");
+    let replayedDuringAbort: unknown;
+    signal.addEventListener("abort", () => {
+      replayedDuringAbort = resolver("veryfront-cloud/openai/caller-abort-model");
+    }, { once: true });
+
+    abortController.abort(new DOMException("caller aborted", "AbortError"));
+
+    assertEquals(replayedDuringAbort, undefined);
+    assertEquals(resolverActive, false);
+    await reader.cancel();
+  });
+
   it("revokes run-scoped model authority before dispatching cancellation abort", async () => {
     const model = scriptedModel([
       { hangUntilAbort: true, parts: [{ type: "text-delta", text: "thinking" }] },

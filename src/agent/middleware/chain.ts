@@ -36,6 +36,9 @@ export class MiddlewareChain {
                   throw createReplayError();
                 }
                 nextCalled = true;
+                // A reaction registered by the middleware can enter next()
+                // before our await observes that middleware's settled promise.
+                // Yield once so the enclosing finally closes the continuation.
                 await Promise.resolve();
                 if (middlewareSettled) {
                   throw createReplayError();
