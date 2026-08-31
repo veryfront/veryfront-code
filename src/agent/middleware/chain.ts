@@ -81,7 +81,7 @@ function observeContinuationRejection(
 
 function reportDetachedContinuationFailure(): void {
   agentLogger.error(
-    "Agent middleware continuation failed",
+    "Your agent middleware continuation failed",
     { error: DETACHED_CONTINUATION_FAILURE },
   );
 }

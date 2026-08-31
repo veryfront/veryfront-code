@@ -320,7 +320,7 @@ describe("agent/middleware/chain", () => {
       unsubscribe();
     }
     assertEquals(
-      records.some((entry) => entry.message === "Agent middleware continuation failed"),
+      records.some((entry) => entry.message === "Your agent middleware continuation failed"),
       false,
     );
   });
@@ -348,7 +348,7 @@ describe("agent/middleware/chain", () => {
     }
 
     const record = records.find((entry) =>
-      entry.message === "Agent middleware continuation failed"
+      entry.message === "Your agent middleware continuation failed"
     );
     assertEquals(record?.context?.error, "downstream continuation rejected");
     assertEquals(record?.error, undefined);
@@ -376,7 +376,7 @@ describe("agent/middleware/chain", () => {
     }
 
     const record = records.find((entry) =>
-      entry.message === "Agent middleware continuation failed"
+      entry.message === "Your agent middleware continuation failed"
     );
     assertEquals(record?.context?.error, "downstream continuation rejected");
     assertEquals(record?.error, undefined);
