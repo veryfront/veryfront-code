@@ -29,6 +29,7 @@ jobs:
   ci:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -455,9 +456,12 @@ jobs:
   # Skipped for forks and for Dependabot: both reach the scan without SONAR_TOKEN
   # (Dependabot branches live in this repository, but Actions secrets are not
   # exposed to Dependabot-triggered runs), and an empty token fails the scan.
+  # The scan waits for SonarCloud's server-side Quality Gate before this
+  # required job succeeds; the timeout leaves room for the observed analysis
+  # and report-processing latency.
   sonar:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     name: sonar
     needs: [coverage-shards]
     if: ${{ needs.coverage-shards.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}

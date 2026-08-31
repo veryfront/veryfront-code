@@ -35,6 +35,10 @@ const SONAR_REQUIRED_CONDITION =
 const SONAR_REQUIRED_EXPRESSION = `\${{ ${SONAR_REQUIRED_CONDITION} }}`;
 const SONAR_JOB_EXPRESSION =
   `\${{ needs.coverage-shards.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
+const SONAR_JOB_TIMEOUT_MINUTES = 35;
+const SONAR_QUALITY_GATE_TIMEOUT_SECONDS = 1200;
+const MERGE_QUEUE_RESPONSE_TIMEOUT_MINUTES = 70;
+const MERGE_QUEUE_SCHEDULING_HEADROOM_MINUTES = 8;
 
 function asRecord(value: unknown, context: string): YamlRecord {
   assert(
@@ -53,6 +57,24 @@ async function readWorkflow(): Promise<YamlRecord> {
 
 async function readRepoFile(path: string): Promise<string> {
   return await Deno.readTextFile(new URL(`../../../${path}`, import.meta.url));
+}
+
+function parseProperties(content: string): Map<string, string> {
+  const properties = new Map<string, string>();
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line === "" || line.startsWith("#")) continue;
+
+    const separator = line.indexOf("=");
+    assert(separator > 0, `invalid property line: ${line}`);
+    properties.set(
+      line.slice(0, separator).trim(),
+      line.slice(separator + 1).trim(),
+    );
+  }
+
+  return properties;
 }
 
 async function readMergeGate(): Promise<YamlRecord> {
@@ -150,6 +172,56 @@ describe("merge quality gate workflow", () => {
 
     assertEquals(sonar.if, SONAR_JOB_EXPRESSION);
     assertEquals(gateEnv.SONAR_REQUIRED, SONAR_REQUIRED_EXPRESSION);
+  });
+
+  it("makes the required Sonar check wait for the server-side quality gate", async () => {
+    const workflow = await readWorkflow();
+    const jobs = asRecord(workflow.jobs, "cicd workflow jobs");
+    const sonar = asRecord(jobs.sonar, "sonar job");
+    const sonarProperties = parseProperties(
+      await readRepoFile("sonar-project.properties"),
+    );
+
+    assertEquals(sonar["timeout-minutes"], SONAR_JOB_TIMEOUT_MINUTES);
+    assertEquals(
+      sonarProperties.get("sonar.qualitygate.wait"),
+      "true",
+    );
+    assertEquals(
+      sonarProperties.get("sonar.qualitygate.timeout"),
+      String(SONAR_QUALITY_GATE_TIMEOUT_SECONDS),
+    );
+  });
+
+  it("keeps the longest merge-gate path within the merge queue response budget", async () => {
+    const workflow = await readWorkflow();
+    const jobs = asRecord(workflow.jobs, "cicd workflow jobs");
+    const mergeGate = asRecord(
+      jobs["quality-gate-merge"],
+      "merge quality gate job",
+    );
+    const dependencyTimeouts = REQUIRED_DEPENDENCIES.map((jobName) => {
+      const job = asRecord(jobs[jobName], `${jobName} job`);
+      const timeout = Number(job["timeout-minutes"]);
+      assert(
+        Number.isFinite(timeout) && timeout > 0,
+        `${jobName} must have a positive timeout-minutes value`,
+      );
+      return timeout;
+    });
+    const maximumDependencyMinutes = Math.max(...dependencyTimeouts);
+    const mergeGateMinutes = Number(mergeGate["timeout-minutes"]);
+
+    assert(
+      maximumDependencyMinutes + mergeGateMinutes +
+          MERGE_QUEUE_SCHEDULING_HEADROOM_MINUTES <=
+        MERGE_QUEUE_RESPONSE_TIMEOUT_MINUTES,
+      "merge queue response timeout must cover the longest merge-gate dependency and aggregate timeouts with scheduling headroom",
+    );
+    assertStringIncludes(
+      await readRepoFile(".github/QUALITY_GATES.md"),
+      `at least ${MERGE_QUEUE_RESPONSE_TIMEOUT_MINUTES} minutes`,
+    );
   });
 
   it("documents Sonar enforcement for manually dispatched runs", async () => {
