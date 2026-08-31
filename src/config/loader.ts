@@ -2549,38 +2549,67 @@ interface CsiConsumedUrlRedaction {
   marker: "[path]" | "[url]";
 }
 
-function csiConsumedUrlPrefixStart(
-  value: string,
-  matchIndex: number,
-  minimumIndex: number,
-): number | undefined {
-  let schemeEnd = matchIndex;
-  if (stringSlice(value, schemeEnd - 1, schemeEnd) === ":") schemeEnd -= 1;
-  let startIndex = schemeEnd;
-  while (
-    startIndex > minimumIndex &&
-    schemeEnd - startIndex < MAX_GENERIC_URL_SCHEME_LENGTH &&
-    ReflectApply(RegExpPrototypeExec, GENERIC_URL_SCHEME_CHARACTER, [
-        stringSlice(value, startIndex - 1, startIndex),
-      ]) !== null
-  ) {
-    startIndex -= 1;
-  }
-  if (startIndex === schemeEnd) return undefined;
-  return ReflectApply(RegExpPrototypeExec, GENERIC_URL_SCHEME_FIRST_CHARACTER, [
-      stringSlice(value, startIndex, startIndex + 1),
-    ]) !== null
-    ? startIndex
-    : undefined;
+interface CsiConsumedUrlPrefix {
+  startIndex: number;
+  value: string;
 }
 
-function matchPatternAtStart(pattern: RegExp, value: string): number {
+function csiConsumedUrlPrefix(
+  value: string,
+  matchIndex: number,
+): CsiConsumedUrlPrefix | undefined {
+  const windowStart = matchIndex > MAX_CSI_CONSUMED_URL_LOOKAHEAD
+    ? matchIndex - MAX_CSI_CONSUMED_URL_LOOKAHEAD
+    : 0;
+  let startIndex = matchIndex;
+  let prefix = "";
+  let index = windowStart;
+  while (index < matchIndex) {
+    const sequenceEnd = skipCompleteCsiSequences(value, index);
+    if (sequenceEnd !== index && sequenceEnd <= matchIndex) {
+      index = sequenceEnd;
+      continue;
+    }
+
+    const character = stringSlice(value, index, index + 1);
+    const isSchemeCharacter = ReflectApply(RegExpPrototypeExec, GENERIC_URL_SCHEME_CHARACTER, [
+      character,
+    ]) !== null;
+    if (isSchemeCharacter) {
+      const canStart = ReflectApply(RegExpPrototypeExec, GENERIC_URL_SCHEME_FIRST_CHARACTER, [
+        character,
+      ]) !== null;
+      if (prefix === "" || prefix.length >= MAX_GENERIC_URL_SCHEME_LENGTH) {
+        prefix = canStart ? character : "";
+        startIndex = canStart ? index : matchIndex;
+      } else {
+        prefix += character;
+      }
+    } else if (character === ":" && index === matchIndex - 1 && prefix !== "") {
+      prefix += character;
+    } else {
+      prefix = "";
+      startIndex = matchIndex;
+    }
+    index += 1;
+  }
+  return prefix === "" ? undefined : { startIndex, value: prefix };
+}
+
+function matchPatternAtStart(
+  pattern: RegExp,
+  value: string,
+  validateUnicodeHostBoundary = false,
+): number {
   pattern.lastIndex = 0;
   try {
     const match = ReflectApply(RegExpPrototypeExec, pattern, [value]) as
       | RegExpExecArray
       | null;
-    return match?.index === 0 ? pattern.lastIndex : 0;
+    if (match?.index !== 0) return 0;
+    return validateUnicodeHostBoundary
+      ? acceptedUnicodeHostMatchEnd(match[0], 0)
+      : pattern.lastIndex;
   } finally {
     pattern.lastIndex = 0;
   }
@@ -2593,22 +2622,25 @@ function matchCsiConsumedAsciiUrl(value: string): number {
 }
 
 function matchCsiConsumedNonAsciiUrl(value: string): number {
-  return matchPatternAtStart(NON_ASCII_AUTHORITY_URL, value) ||
+  return matchPatternAtStart(NON_ASCII_AUTHORITY_URL, value, true) ||
     matchPatternAtStart(NON_ASCII_URL_PATH, value) ||
-    matchPatternAtStart(NON_ASCII_MALFORMED_AUTHORITY_URL, value) ||
+    matchPatternAtStart(NON_ASCII_MALFORMED_AUTHORITY_URL, value, true) ||
     matchPatternAtStart(NON_ASCII_MALFORMED_URL_PATH, value) ||
-    matchPatternAtStart(NON_ASCII_ZERO_SLASH_AUTHORITY_URL, value) ||
+    matchPatternAtStart(NON_ASCII_ZERO_SLASH_AUTHORITY_URL, value, true) ||
     matchPatternAtStart(NON_ASCII_ZERO_SLASH_URL_PATH, value);
 }
 
 function matchCsiConsumedUrlCandidate(value: string): CsiConsumedUrlRedaction | undefined {
   const hasNonAscii = containsNonAscii(value);
-  const fileEndIndex = matchPatternAtStart(FILE_URL_ABSOLUTE_PATH, value) ||
-    (hasNonAscii ? matchPatternAtStart(NON_ASCII_FILE_URL_PATH, value) : 0);
+  const fileEndIndex = hasNonAscii
+    ? matchPatternAtStart(NON_ASCII_FILE_URL_PATH, value) ||
+      matchPatternAtStart(FILE_URL_ABSOLUTE_PATH, value)
+    : matchPatternAtStart(FILE_URL_ABSOLUTE_PATH, value);
   if (fileEndIndex !== 0) return { endIndex: fileEndIndex, marker: "[path]" };
 
-  const urlEndIndex = matchCsiConsumedAsciiUrl(value) ||
-    (hasNonAscii ? matchCsiConsumedNonAsciiUrl(value) : 0);
+  const urlEndIndex = hasNonAscii
+    ? matchCsiConsumedNonAsciiUrl(value) || matchCsiConsumedAsciiUrl(value)
+    : matchCsiConsumedAsciiUrl(value);
   return urlEndIndex === 0 ? undefined : { endIndex: urlEndIndex, marker: "[url]" };
 }
 
@@ -2620,51 +2652,64 @@ function csiConsumedUrlSpan(
   value: string,
   match: RegExpExecArray,
   matchEnd: number,
-  literalStart: number,
   outputOffset: number,
 ): CsiConsumedUrlSpan | undefined {
   if (match.index < outputOffset) return undefined;
-  const prefixStart = csiConsumedUrlPrefixStart(value, match.index, literalStart);
-  if (prefixStart === undefined) return undefined;
+  const prefix = csiConsumedUrlPrefix(value, match.index);
+  if (prefix === undefined || prefix.startIndex < outputOffset) return undefined;
 
   const matched = match[0];
   const introducerLength = stringSlice(matched, 0, 1) === "\u001B" ? 2 : 1;
   const lookaheadEnd = MathMin(value.length, matchEnd + MAX_CSI_CONSUMED_URL_LOOKAHEAD);
-  const prefix = stringSlice(value, prefixStart, match.index);
-  const candidate = prefix + stringSlice(matched, introducerLength) +
+  const candidate = prefix.value + stringSlice(matched, introducerLength) +
     stringSlice(value, matchEnd, lookaheadEnd);
   const redaction = matchCsiConsumedUrlCandidate(candidate);
+  const reachesLookaheadBound = redaction?.endIndex === candidate.length &&
+    lookaheadEnd < value.length;
   return redaction
     ? {
-      startIndex: prefixStart,
-      endIndex: prefixStart + redaction.endIndex + introducerLength,
+      startIndex: prefix.startIndex,
+      endIndex: reachesLookaheadBound
+        ? value.length
+        : prefix.startIndex + redaction.endIndex + introducerLength,
       marker: redaction.marker,
     }
     : undefined;
 }
 
+function exceedsCsiReconstructionLimit(value: string): boolean {
+  ANSI_CSI_SEQUENCE_FOR_URL_REDACTION.lastIndex = 0;
+  let matchCount = 0;
+  try {
+    while (
+      ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE_FOR_URL_REDACTION, [value]) !== null
+    ) {
+      matchCount += 1;
+      if (matchCount > MAX_CSI_RECONSTRUCTION_MATCHES) return true;
+    }
+    return false;
+  } finally {
+    ANSI_CSI_SEQUENCE_FOR_URL_REDACTION.lastIndex = 0;
+  }
+}
+
 function redactCsiConsumedUrls(value: string): string {
+  if (exceedsCsiReconstructionLimit(value)) return "[REDACTED]";
   ANSI_CSI_SEQUENCE_FOR_URL_REDACTION.lastIndex = 0;
   try {
     let output = "";
     let outputOffset = 0;
-    let literalStart = 0;
-    let matchCount = 0;
     let match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE_FOR_URL_REDACTION, [value]) as
       | RegExpExecArray
       | null;
     while (match !== null) {
       const matchEnd = ANSI_CSI_SEQUENCE_FOR_URL_REDACTION.lastIndex;
-      matchCount += 1;
-      if (matchCount > MAX_CSI_RECONSTRUCTION_MATCHES) return "[REDACTED]";
-      const span = csiConsumedUrlSpan(value, match, matchEnd, literalStart, outputOffset);
+      const span = csiConsumedUrlSpan(value, match, matchEnd, outputOffset);
       if (span) {
         output += stringSlice(value, outputOffset, span.startIndex) + span.marker;
         outputOffset = span.endIndex;
         ANSI_CSI_SEQUENCE_FOR_URL_REDACTION.lastIndex = span.endIndex;
-        literalStart = span.endIndex;
       }
-      if (literalStart < matchEnd) literalStart = matchEnd;
       match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE_FOR_URL_REDACTION, [value]) as
         | RegExpExecArray
         | null;
@@ -2877,8 +2922,10 @@ function summarizeConfigLoadCause(error: unknown): string | undefined {
     ? readOwnDataString(error, "message")
     : undefined;
   if (message === undefined) return undefined;
+  const retainedLine = (ReflectApply(StringPrototypeSplit, message, ["\n", 1]) as string[])[0] ??
+    "";
   // Sanitize on both sides because stripping CSI can join or consume credential bytes.
-  const initiallyRedacted = sanitizeUrlCredentials(message);
+  const initiallyRedacted = sanitizeUrlCredentials(retainedLine);
   const intactUrlRedacted = redactCsiConsumedUrls(initiallyRedacted);
   const restoredUrlSchemes = restoreCsiSplitUrlSchemes(intactUrlRedacted);
   // Replacing a glued CSI introducer with space preserves the path or scheme start
@@ -2891,9 +2938,7 @@ function summarizeConfigLoadCause(error: unknown): string | undefined {
     "",
   );
   const redacted = sanitizeUrlCredentials(deColorized);
-  const firstLine = (ReflectApply(StringPrototypeSplit, redacted, ["\n", 1]) as string[])[0] ??
-    "";
-  const replaced = replaceMatchesWithCapturedExec(firstLine, CONTROL_CHARACTERS, " ");
+  const replaced = replaceMatchesWithCapturedExec(redacted, CONTROL_CHARACTERS, " ");
   const clean = ReflectApply(StringPrototypeTrim, redactMachinePaths(replaced), []) as string;
   if (clean.length === 0) return undefined;
   return clean.length > MAX_CONFIG_LOAD_CAUSE_CHARACTERS

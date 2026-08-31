@@ -5887,6 +5887,16 @@ export default config as const;
         assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
       });
 
+      it("ignores dense CSI content after the retained first line", async () => {
+        const error = await loadFailure(
+          "vf-config-dense-csi-second-line-",
+          `throw new Error("actionable failure\\n" + (String.fromCharCode(27) + "[31m").repeat(65));\n`,
+        );
+
+        assertStringIncludes(error.message, "actionable failure");
+        assertEquals(error.message.includes("[REDACTED]"), false);
+      });
+
       it("redacts a path with a CSI introducer glued to its first character", async () => {
         const posix = await loadFailure(
           "vf-config-csi-glued-posix-",
@@ -6988,6 +6998,44 @@ export default config as const;
 
         assertEquals(error.message.includes("内部.example"), false);
         assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("preserves scheme context across ordinary CSI before a consumed colon", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-context-before-consumed-colon-",
+          `throw new Error(${
+            JSON.stringify(`Load ht${escape}[31mtp${escape}[:@registry.internal/config.ts`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("fails closed when a CSI-consumed file URL reaches the lookahead bound", async () => {
+        const error = await loadFailure(
+          "vf-config-csi-file-lookahead-bound-",
+          `throw new Error("Load file:" + String.fromCharCode(27) + "[///h" + "a".repeat(4096) + "alice/config.ts");\n`,
+        );
+
+        assertEquals(error.message.includes("alice"), false);
+        assertStringIncludes(error.message, "[path]");
+      });
+
+      it("preserves rejected Unicode prose after a CSI-rebuilt URL", async () => {
+        const escape = String.fromCharCode(27);
+        const control = await loadFailure(
+          "vf-config-csi-unicode-boundary-control-",
+          `throw new Error(${JSON.stringify("Load https:a例え.internal…Retry")});\n`,
+        );
+        const split = await loadFailure(
+          "vf-config-csi-unicode-boundary-split-",
+          `throw new Error(${JSON.stringify(`Load https${escape}[:a例え.internal…Retry`)});\n`,
+        );
+
+        assertEquals(split.message, control.message);
+        assertStringIncludes(split.message, "…Retry");
       });
 
       it("redacts a file URL whose path delimiters are consumed by CSI", async () => {
