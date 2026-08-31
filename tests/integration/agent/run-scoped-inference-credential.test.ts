@@ -436,7 +436,7 @@ describe("run-scoped inference credential", () => {
     );
   });
 
-  it("does not replay run-scoped authority through a retained original stream method", async () => {
+  it("rejects signed runtime replay while keeping ordinary runtimes reusable", async () => {
     setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
     setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
     const encoder = new TextEncoder();
@@ -482,13 +482,31 @@ describe("run-scoped inference credential", () => {
 
     const first = await runtime.stream(messages);
     await drainStream(first);
-    const second = await Reflect.apply(originalStream, runtime, [messages]) as ReadableStream<
-      Uint8Array
-    >;
-    await drainStream(second);
+    await assertRejects(
+      async () => {
+        const second = await Reflect.apply(originalStream, runtime, [messages]);
+        await drainStream(second);
+      },
+      TypeError,
+      "AgentRuntime model resolver has already been consumed",
+    );
+
+    const ordinaryRuntime = new AgentRuntime(
+      "reusable-ordinary-stream-runtime",
+      {
+        model: "veryfront-cloud/openai/gpt-test",
+        system: "Answer concisely.",
+        skills: false,
+      },
+    );
+    const ordinaryFirst = await ordinaryRuntime.stream(messages);
+    await drainStream(ordinaryFirst);
+    const ordinarySecond = await ordinaryRuntime.stream(messages);
+    await drainStream(ordinarySecond);
 
     assertEquals(capturedAuthorizations, [
       "Bearer run-scoped-inference-token",
+      "Bearer broader-project-runtime-token",
       "Bearer broader-project-runtime-token",
     ]);
   });

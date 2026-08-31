@@ -1248,6 +1248,11 @@ type AgentRuntimeDispatch = {
   stream: AgentRuntimeStreamDispatch;
 };
 
+type AgentRuntimeModelResolverState =
+  | { status: "absent" }
+  | { status: "available"; resolver: AgentModelRuntimeResolver }
+  | { status: "consumed" };
+
 const agentRuntimeDispatches = new IntrinsicWeakMap<AgentRuntime, AgentRuntimeDispatch>();
 
 function getAgentRuntimeDispatch(runtime: AgentRuntime): AgentRuntimeDispatch {
@@ -1278,7 +1283,7 @@ export function streamWithAgentRuntimeDispatch(
 
 /** Implement agent runtime. */
 export class AgentRuntime {
-  #resolveModelRuntime: AgentModelRuntimeResolver | undefined;
+  #modelResolverState: AgentRuntimeModelResolverState;
   private id: string;
   private config: AgentConfig;
   private memory: Memory<Message>;
@@ -1289,7 +1294,9 @@ export class AgentRuntime {
     config: AgentConfig,
     internalOptions: AgentRuntimeInternalOptions = {},
   ) {
-    this.#resolveModelRuntime = internalOptions.resolveModelRuntime;
+    this.#modelResolverState = internalOptions.resolveModelRuntime
+      ? { status: "available", resolver: internalOptions.resolveModelRuntime }
+      : { status: "absent" };
     this.id = id;
     this.config = { ...config };
 
@@ -1329,8 +1336,16 @@ export class AgentRuntime {
     transport: ResolvedModelTransport;
     resolveModelRuntime?: AgentModelRuntimeResolver;
   }> {
-    const resolveModelRuntime = this.#resolveModelRuntime;
-    this.#resolveModelRuntime = undefined;
+    const resolverState = this.#modelResolverState;
+    if (resolverState.status === "consumed") {
+      throw new TypeError("AgentRuntime model resolver has already been consumed");
+    }
+    const resolveModelRuntime = resolverState.status === "available"
+      ? resolverState.resolver
+      : undefined;
+    if (resolverState.status === "available") {
+      this.#modelResolverState = { status: "consumed" };
+    }
     try {
       return {
         transport: await resolveAgentModelTransport({
