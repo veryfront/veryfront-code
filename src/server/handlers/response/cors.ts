@@ -13,6 +13,8 @@ import { getApplicationPreflightHeaders } from "#veryfront/security/http/applica
 type AppRouteResolver = typeof resolveAppRouteFile;
 type FsWrapper = {
   isContextualMode?: () => boolean;
+  isMultiProjectMode?: () => boolean;
+  runWithContext?: (...args: never[]) => Promise<unknown>;
 };
 
 export interface CorsHandlerDependencies {
@@ -43,11 +45,16 @@ export class CorsHandler extends BaseHandler {
     const isApiPath = pathname === "/api" || pathname.startsWith("/api/");
     const fsWrapper = ctx.adapter.fs as FsWrapper;
     const hasContextualFilesystem = fsWrapper.isContextualMode?.() === true;
-    if (!mustAvoidProjectCode && isApiPath && !hasContextualFilesystem) {
+    const hasAtomicSharedRuntimeContext = isSharedRuntime &&
+      fsWrapper.isMultiProjectMode?.() === true &&
+      typeof fsWrapper.runWithContext === "function";
+    const shouldUseAutomaticPreflight = mustAvoidProjectCode ||
+      (hasContextualFilesystem && !hasAtomicSharedRuntimeContext);
+    if (!shouldUseAutomaticPreflight && isApiPath) {
       return this.continue();
     }
 
-    if (!mustAvoidProjectCode && !isApiPath && !hasContextualFilesystem) {
+    if (!shouldUseAutomaticPreflight && !isApiPath) {
       const hasMatchedAppRoute = await this.hasMatchedAppRoute(pathname, ctx);
       if (hasMatchedAppRoute) return this.continue();
     }

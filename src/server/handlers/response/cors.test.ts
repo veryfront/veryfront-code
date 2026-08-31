@@ -213,6 +213,38 @@ describe("server/handlers/response/cors", () => {
       assertEquals(routeResolutionCalls, 0);
     });
 
+    it("continues API preflight in an operator-granted atomic contextual runtime", async () => {
+      let routeResolutionCalls = 0;
+      const ctx = makeCtx({
+        projectSlug: "tenant-project",
+        allowHostProjectCodeExecution: true,
+        prepareHostedConfigContext: () => Promise.reject(new Error("unused")),
+      });
+      const fs = ctx.adapter.fs as unknown as {
+        isContextualMode: () => boolean;
+        isMultiProjectMode: () => boolean;
+        runWithContext: (...args: never[]) => Promise<unknown>;
+      };
+      fs.isContextualMode = () => true;
+      fs.isMultiProjectMode = () => true;
+      fs.runWithContext = () => Promise.resolve(undefined);
+      const handler = new CorsHandler({
+        resolveAppRouteFile: () => {
+          routeResolutionCalls++;
+          return Promise.resolve(null);
+        },
+      });
+
+      const result = await handler.handle(
+        new Request("https://tenant.example/api/items", { method: "OPTIONS" }),
+        ctx,
+      );
+
+      assertEquals(result.continue, true);
+      assertEquals(result.response, undefined);
+      assertEquals(routeResolutionCalls, 0);
+    });
+
     it("continues a matched non-API App route with an OPTIONS export", async () => {
       const handler = new CorsHandler({
         resolveAppRouteFile: () => Promise.resolve({ file: "/project/route.ts", params: {} }),

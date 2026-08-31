@@ -1198,6 +1198,49 @@ describe("APIRouteHandler", () => {
       assertEquals(refreshed?.status, 209);
     });
 
+    it("returns an API error when prepared OPTIONS inspection fails", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/prepared-options-failure.ts",
+        "export function GET() {}",
+      );
+      const module = await prepareSource("export function GET() {}\n");
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          throw new Error("prepared route reached host import");
+        },
+        prepareHandlerModule: () => Promise.resolve(module),
+        resolvePreparedRouteMethods: () =>
+          Promise.reject(new Error("prepared method inspection failed")),
+      });
+      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
+      Deno.env.set("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const handler = await createInitializedHandler("/test/project", adapter);
+      __setCompiledBinaryForTests(false);
+      try {
+        const response = await runWithExactSourceIntegrationPolicy(
+          normalizeSourceIntegrationPolicy({ allow: {} }),
+          () =>
+            handler.handle(
+              new Request("http://localhost/api/prepared-options-failure", { method: "OPTIONS" }),
+              {
+                projectDir: "/test/project",
+                adapter,
+                securityConfig: null,
+                isLocalProject: false,
+              },
+            ),
+        );
+
+        assertEquals(response?.status, 500);
+        assertEquals(await response?.text(), "Handler not found");
+      } finally {
+        __setCompiledBinaryForTests(undefined);
+      }
+    });
+
     it("should handle OPTIONS preflight requests with secure-by-default CORS", async () => {
       const adapter = createMockAdapter();
       const handler = await createInitializedHandler("/test/project", adapter);

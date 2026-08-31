@@ -382,16 +382,26 @@ export class APIRouteHandler {
 
         let executableOptionsMethods: readonly string[] | undefined;
         if (method === "OPTIONS") {
-          const requestedMethod = this.requestedPreflightMethod(request);
-          executableOptionsMethods = route.kind === "isolated"
-            ? await this.resolveIsolatedRouteMethods(
-              match.route.page,
-              route.module,
-              requestedMethod,
-            )
-            : resolveExecutableRouteMethods(route.handler, requestedMethod, {
-              includeFrameworkOptions: false,
-            });
+          try {
+            const requestedMethod = this.requestedPreflightMethod(request);
+            executableOptionsMethods = route.kind === "isolated"
+              ? await this.resolveIsolatedRouteMethods(
+                match.route.page,
+                route.module,
+                requestedMethod,
+              )
+              : resolveExecutableRouteMethods(route.handler, requestedMethod, {
+                includeFrameworkOptions: false,
+              });
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            logger.error(`handler method inspection failed: ${match.route.page}`, { reason: msg });
+            return internalServerError(
+              ctx?.isLocalProject
+                ? sanitizeLoadErrorForResponse(msg, this.projectDir)
+                : "Handler not found",
+            );
+          }
 
           if (!executableOptionsMethods.includes("OPTIONS")) {
             return this.automaticPreflight(request, executableOptionsMethods);
