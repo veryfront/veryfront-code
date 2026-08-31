@@ -345,6 +345,7 @@ export const RuntimeAgentRunContextSchema = lazySchema(getRuntimeAgentRunContext
 export const getRuntimeAgentCredentialsSchema = defineSchema((v) =>
   v.object({
     authToken: v.string().min(1).max(MAX_CREDENTIAL_BYTES),
+    inferenceAuthToken: v.string().min(1).max(MAX_CREDENTIAL_BYTES).optional(),
   }).strict()
 );
 

@@ -60,7 +60,10 @@ function createInvocation(overrides: Record<string, unknown> = {}) {
       },
     }],
     context: [{ type: "text", text: "Current file: app.tsx" }],
-    credentials: { authToken: "request-scoped-user-token" },
+    credentials: {
+      authToken: "request-scoped-user-token",
+      inferenceAuthToken: "run-scoped-inference-token",
+    },
     agentSource: { type: "branch", branch: "main" },
     forwardedProps: { activeChatId: "chat_123" },
     ...overrides,
@@ -92,6 +95,7 @@ describe("agent/runtime-agent-invocation-contract", () => {
     assertEquals(parsed.messages.length, 2);
     assertEquals(parsed.tools[0]?.name, "studio_focus_component");
     assertEquals(parsed.credentials?.authToken, "request-scoped-user-token");
+    assertEquals(parsed.credentials?.inferenceAuthToken, "run-scoped-inference-token");
   });
 
   it("preserves explicit delegation denial across the control-plane transform", () => {
