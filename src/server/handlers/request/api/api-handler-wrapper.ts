@@ -335,7 +335,7 @@ export class ApiHandlerWrapper extends BaseHandler {
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined, req)
       .withHeaders(response.headers)
-      .build(null, response.status);
+      .build(response.body, response.status);
   }
 
   private async isPageRequest(
