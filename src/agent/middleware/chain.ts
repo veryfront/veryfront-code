@@ -6,7 +6,6 @@ import {
   isProxyWithoutHooks,
   readNativeErrorNameWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
-import { unrefTimer } from "#veryfront/platform/compat/process/lifecycle.ts";
 import { agentLogger } from "#veryfront/utils/logger/index.ts";
 
 const INVALID_CONTINUATION_MESSAGE =
@@ -142,16 +141,17 @@ function reportDetachedContinuationFailure(): void {
 }
 
 function scheduleDetachedContinuationFailureReport(isObserved: () => boolean): void {
-  const reportTimer = setTimeout(() => {
+  setTimeout(() => {
     if (!isObserved()) reportDetachedContinuationFailure();
   }, 0);
-  unrefTimer(reportTimer);
 }
 
-function rejectInvalidContinuation(): Promise<AgentResponse> {
+function rejectInvalidContinuation(
+  onUnexpectedRejection?: ContinuationRejectionHandler,
+): Promise<AgentResponse> {
   return createObservedContinuation<AgentResponse>((_resolve, reject) => {
     reject(createInvalidContinuationError());
-  }, () => {});
+  }, onUnexpectedRejection);
 }
 
 function createDeferredContinuation(
@@ -185,13 +185,11 @@ function createMiddlewareContinuation(
   let middlewareSettled = false;
   let middlewareSettlementError: unknown;
   let middlewareSettlementRejected = false;
-  let continuationRejection:
-    | { error: unknown; isObserved: () => boolean }
-    | undefined;
+  const continuationRejections = new Set<{ error: unknown; isObserved: () => boolean }>();
 
   const reportContinuationFailure = (error: unknown, isObserved: () => boolean): void => {
     if (!middlewareSettled) {
-      if (!isObserved()) continuationRejection = { error, isObserved };
+      if (!isObserved()) continuationRejections.add({ error, isObserved });
       return;
     }
     if (isObserved()) return;
@@ -200,7 +198,9 @@ function createMiddlewareContinuation(
   };
 
   const next = (): Promise<AgentResponse> => {
-    if (nextCalled || middlewareSettled) return rejectInvalidContinuation();
+    if (nextCalled || middlewareSettled) {
+      return rejectInvalidContinuation(reportContinuationFailure);
+    }
     nextCalled = true;
 
     if (!middlewareInvoking) {
@@ -227,14 +227,15 @@ function createMiddlewareContinuation(
       middlewareSettled = true;
       middlewareSettlementError = error;
       middlewareSettlementRejected = rejected;
-      const rejection = continuationRejection;
-      continuationRejection = undefined;
-      if (
-        rejection && !rejection.isObserved() &&
-        (!middlewareSettlementRejected || !Object.is(middlewareSettlementError, rejection.error))
-      ) {
-        scheduleDetachedContinuationFailureReport(rejection.isObserved);
+      for (const rejection of continuationRejections) {
+        if (
+          !rejection.isObserved() &&
+          (!middlewareSettlementRejected || !Object.is(middlewareSettlementError, rejection.error))
+        ) {
+          scheduleDetachedContinuationFailureReport(rejection.isObserved);
+        }
       }
+      continuationRejections.clear();
     },
   };
 }

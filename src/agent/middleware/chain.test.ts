@@ -754,6 +754,68 @@ describe("agent/middleware/chain", () => {
     );
   });
 
+  it("reports every unobserved derived rejection", async () => {
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+    try {
+      const chain = new MiddlewareChain([
+        (_context, next) => {
+          const continuation = next();
+          continuation.then(() => response);
+          continuation.finally(() => undefined).catch(() => response);
+          return Promise.resolve(response);
+        },
+      ]);
+
+      await chain.execute(context, () => Promise.reject(new Error("branch failure")));
+      await waitForReport();
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(
+      records.filter((entry) => entry.message === "Your agent middleware continuation failed")
+        .length,
+      1,
+    );
+  });
+
+  it("reports unexpected errors from invalid continuation derivatives", async () => {
+    let retainedNext: (() => Promise<AgentResponse>) | undefined;
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+    try {
+      const chain = new MiddlewareChain([
+        (_context, next) => {
+          retainedNext = next;
+          return Promise.resolve(response);
+        },
+      ]);
+      await chain.execute(context, () => Promise.resolve(response));
+
+      const invalidContinuation = retainedNext!();
+      invalidContinuation.catch(() => {
+        throw new Error("invalid catch handler failed");
+      });
+      invalidContinuation.finally(() => {
+        throw new Error("invalid finally handler failed");
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await waitForReport();
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(
+      records.filter((entry) => entry.message === "Your agent middleware continuation failed")
+        .length,
+      2,
+    );
+  });
+
   it("invokes the final handler for an empty middleware chain", async () => {
     let finalHandlerCalls = 0;
     assertEquals(
