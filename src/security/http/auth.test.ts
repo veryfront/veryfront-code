@@ -94,6 +94,18 @@ describe("AuthHandler realm sanitization", () => {
     expect(result.response).toBeUndefined();
   });
 
+  it("applies the credential gate when an OPTIONS route is executable", async () => {
+    const handler = createHandler();
+    const result = await handler.handleExplicitOptions(
+      new Request("http://localhost/test", { method: "OPTIONS" }),
+      createCtx(),
+    );
+
+    expect(result.continue).not.toBe(true);
+    expect(result.response?.status).toBe(401);
+    expect(result.response?.headers.get("WWW-Authenticate")).toBe('Basic realm="Secure Area"');
+  });
+
   it("does not widen the method exemption past OPTIONS", async () => {
     const handler = createHandler();
     const result = await handler.handle(

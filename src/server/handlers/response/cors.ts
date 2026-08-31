@@ -5,21 +5,10 @@ import { getConfig } from "#veryfront/config";
 import { PRIORITY_VERY_HIGH } from "#veryfront/utils/constants/index.ts";
 import { resolveAppRouteFile } from "../request/api/app-router-resolver.ts";
 import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
-import { isInfrastructureOnlyRequestHeader } from "#veryfront/security/http/application-request.ts";
+import { getApplicationPreflightHeaders } from "#veryfront/security/http/application-request.ts";
 import { resolveExecutableRouteMethods } from "#veryfront/routing/api/route-methods.ts";
 
 type AppRouteResolver = typeof resolveAppRouteFile;
-const DEFAULT_ALLOWED_HEADERS = "Content-Type,Authorization";
-
-function getApplicationPreflightHeaders(request: Request): string {
-  const requested = request.headers.get("access-control-request-headers");
-  if (!requested) return DEFAULT_ALLOWED_HEADERS;
-
-  const allowed = requested.split(",")
-    .map((name) => name.trim())
-    .filter((name) => name.length > 0 && !isInfrastructureOnlyRequestHeader(name));
-  return allowed.length > 0 ? allowed.join(",") : DEFAULT_ALLOWED_HEADERS;
-}
 
 export interface CorsHandlerDependencies {
   resolveAppRouteFile?: AppRouteResolver;

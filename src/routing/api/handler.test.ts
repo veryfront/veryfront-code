@@ -16,6 +16,7 @@ import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/sou
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 import { resolvePreparedRouteMethods } from "./route-executor.ts";
+import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 const handlers: APIRouteHandler[] = [];
 
@@ -848,15 +849,159 @@ describe("APIRouteHandler", () => {
       __injectDepsForTests({
         loadHandlerModule: () => Promise.resolve({ GET: () => new Response("get") }),
       });
-      const handler = await createInitializedHandler("/test/project", adapter);
+      const handler = await createInitializedHandler(
+        "/test/project",
+        adapter,
+        { security: { cors: { origin: ["https://client.example"] } } } as HandlerConfig,
+      );
 
       const response = await handler.handle(
-        new Request("http://localhost/api/automatic-options", { method: "OPTIONS" }),
+        new Request("http://localhost/api/automatic-options", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://client.example",
+            "access-control-request-method": "PUT",
+            "access-control-request-headers": "Authorization, X-Token, X-Project-Id, X-App-Trace",
+          },
+        }),
         localContext(adapter),
       );
 
       assertEquals(response?.status, 204);
       assertEquals(response?.body, null);
+      assertEquals(response?.headers.get("access-control-allow-methods"), "GET, HEAD, OPTIONS");
+      assertEquals(
+        response?.headers.get("access-control-allow-headers"),
+        "Authorization, X-App-Trace",
+      );
+    });
+
+    it("applies preflight policy headers to an explicit OPTIONS response", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/policy-options.ts",
+        "export function POST() {} export function OPTIONS() {}",
+      );
+      __injectDepsForTests({
+        loadHandlerModule: () =>
+          Promise.resolve({
+            POST: () => new Response("post"),
+            OPTIONS: () =>
+              new Response("explicit options", {
+                status: 211,
+                headers: {
+                  "x-options-owner": "route",
+                  "access-control-allow-origin": "https://untrusted.example",
+                  "access-control-allow-headers": "X-Token",
+                },
+              }),
+          }),
+      });
+      const handler = await createInitializedHandler(
+        "/test/project",
+        adapter,
+        {
+          security: {
+            cors: {
+              origin: ["https://client.example"],
+              maxAge: 123,
+            },
+          },
+        } as HandlerConfig,
+      );
+
+      const response = await handler.handle(
+        new Request("http://localhost/api/policy-options", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://client.example",
+            "access-control-request-method": "POST",
+            "access-control-request-headers": "Authorization, X-Token",
+          },
+        }),
+        localContext(adapter),
+      );
+
+      assertEquals(response?.status, 211);
+      assertEquals(await response?.text(), "explicit options");
+      assertEquals(response?.headers.get("x-options-owner"), "route");
+      assertEquals(response?.headers.get("access-control-allow-origin"), "https://client.example");
+      assertEquals(response?.headers.get("access-control-allow-methods"), "POST, OPTIONS");
+      assertEquals(response?.headers.get("access-control-allow-headers"), "Authorization");
+      assertEquals(response?.headers.get("access-control-max-age"), "123");
+    });
+
+    it("authenticates an explicit OPTIONS handler but keeps automatic preflight public", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/protected-options.ts",
+        "export function OPTIONS() {}",
+      );
+      let routeCalls = 0;
+      __injectDepsForTests({
+        loadHandlerModule: () =>
+          Promise.resolve({
+            OPTIONS: (context: unknown) => {
+              routeCalls++;
+              const apiContext = context as {
+                identity?: { subject?: string } | null;
+                headers: Headers;
+              };
+              return Response.json({
+                subject: apiContext.identity?.subject ?? null,
+                admittedHeader: apiContext.headers.get("x-auth-subject"),
+              });
+            },
+          }),
+      });
+      const config = {
+        security: {
+          cors: { origin: ["https://client.example"] },
+          auth: {
+            trustedProxy: {
+              trustedPeers: ["127.0.0.1"],
+              headers: { subject: "x-auth-subject" },
+            },
+          },
+        },
+      } as HandlerConfig;
+      const handler = await createInitializedHandler("/test/project", adapter, config);
+      const ctx = {
+        ...localContext(adapter),
+        securityConfig: config.security ?? null,
+      } as HandlerContext;
+
+      const preflight = await handler.handle(
+        new Request("http://localhost/api/protected-options", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://client.example",
+            "access-control-request-method": "POST",
+            "x-auth-subject": "forged-user",
+          },
+        }),
+        ctx,
+      );
+      assertEquals(preflight?.status, 204);
+      assertEquals(routeCalls, 0);
+
+      const admittedRequest = new Request("http://localhost/api/protected-options", {
+        method: "OPTIONS",
+        headers: { "x-auth-subject": "user-123" },
+      });
+      recordRequestPeerFromTransport(admittedRequest, {
+        runtime: "deno",
+        transport: "tcp",
+        hostname: "127.0.0.1",
+      });
+      const admitted = await handler.handle(admittedRequest, ctx);
+
+      assertEquals(admitted?.status, 200);
+      assertEquals(await admitted?.json(), {
+        subject: "user-123",
+        admittedHeader: null,
+      });
+      assertEquals(routeCalls, 1);
     });
 
     it("dispatches a named OPTIONS handler from a prepared route", async () => {
