@@ -30,7 +30,7 @@ class ObservedContinuationPromise extends Promise<AgentResponse> {
     super(executor);
   }
 
-  override then<TResult1 = AgentResponse, TResult2 = never>(
+  override then<TResult1 = AgentResponse, TResult2 = never>( // NOSONAR: tracks Promise observation for detached-error diagnostics.
     onFulfilled?: ContinuationThenHandler<AgentResponse, TResult1>,
     onRejected?: ContinuationThenHandler<unknown, TResult2>,
   ): Promise<TResult1 | TResult2> {
