@@ -241,27 +241,46 @@ export class APIRouteHandler {
     );
   }
 
-  /**
-   * Determine whether a CORS preflight is guaranteed to be handled by the
-   * framework without executing an authored route handler.
-   *
-   * An unknown source shape stays in the middleware path. This conservative
-   * result protects authored OPTIONS/default handlers from being hidden by a
-   * preflight-looking request.
-   */
-  async isFrameworkOwnedPreflight(
+  async prepareFrameworkOwnedPreflight(
     request: Request,
     ctx?: HandlerContext,
-  ): Promise<boolean> {
-    if (!isPreflightRequest(request)) return false;
-    if (requiresIsolatedProjectRuntime(ctx)) return true;
+  ): Promise<{ frameworkOwned: boolean; response?: Response }> {
+    if (!isPreflightRequest(request)) return { frameworkOwned: false };
+    if (requiresIsolatedProjectRuntime(ctx)) return { frameworkOwned: true };
 
     const { pathname } = new URL(request.url);
     const match = this.router.match(pathname);
-    if (!match) return true;
+    if (!match) {
+      const isApiPath = pathname === "/api" || pathname.startsWith("/api/");
+      return {
+        frameworkOwned: true,
+        response: isApiPath ? await this.automaticPreflight(request, undefined, ctx) : undefined,
+      };
+    }
 
     const adapter = await this.ensureAdapter();
-    return await this.resolveStaticOptionsCapability(match.route.page, adapter) === "absent";
+    let source: string;
+    try {
+      source = await adapter.fs.readFile(match.route.page);
+    } catch {
+      return { frameworkOwned: false };
+    }
+
+    if (await resolveStaticRouteOptionsCapability(source) !== "absent") {
+      return { frameworkOwned: false };
+    }
+
+    return {
+      frameworkOwned: true,
+      response: await this.automaticPreflight(
+        request,
+        await resolveStaticRouteMethodsFromSource(
+          source,
+          this.requestedPreflightMethod(request),
+        ),
+        ctx,
+      ),
+    };
   }
 
   handle(

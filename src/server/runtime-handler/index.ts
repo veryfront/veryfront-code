@@ -443,7 +443,11 @@ export function createVeryfrontHandler(
         if (!isProxyMode) await securityLoader.ensureLoaded();
 
         const requiresApplicationAuth = !isPlatformLivenessProbe(req.method, url.pathname) &&
-          !skipsApplicationAuth(req, url.pathname);
+          !skipsApplicationAuth(
+            req,
+            url.pathname,
+            req.method.toUpperCase() === "OPTIONS" && isPreflightRequest(req),
+          );
         let requestOrigin: string | null | undefined;
         if (requiresApplicationAuth) {
           const preparedMonitoringRequest = await prepareProjectRequest({
@@ -761,9 +765,6 @@ export function createVeryfrontHandler(
               isSharedProxy: isProxyMode,
               isFrameworkOwnedPreflight,
               skipProjectMiddleware,
-              revalidateFrameworkOwnedPreflight: isFrameworkOwnedPreflight
-                ? () => apiHandler.isFrameworkOwnedPreflight(request, ctx)
-                : undefined,
               next: async () => (await registry.execute(request, ctx)) ?? undefined,
               onMiddlewareStart: markProjectMiddlewareStarted,
             });

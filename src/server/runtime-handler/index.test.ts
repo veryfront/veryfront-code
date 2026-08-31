@@ -757,7 +757,7 @@ describe("server/runtime-handler/index", () => {
     assertEquals(middlewareCalls, 0);
   });
 
-  it("revalidates framework-owned preflight before bypassing middleware", async () => {
+  it("retains a framework-owned preflight response across source changes", async () => {
     const projectDir = `/tmp/test-options-revalidation-${crypto.randomUUID()}`;
     const routePath = `${projectDir}/pages/api/options.ts`;
     const adapter = createRouteMockAdapter();
@@ -800,10 +800,10 @@ describe("server/runtime-handler/index", () => {
       }),
     );
 
-    assertEquals(response.status, 200);
-    assertEquals(await response.text(), "middleware ran");
-    assertEquals(middlewareCalls, 1);
-    assertEquals(routeReads, 2);
+    assertEquals(response.status, 204);
+    assertEquals(await response.text(), "");
+    assertEquals(middlewareCalls, 0);
+    assertEquals(routeReads, 1);
   });
 
   it("keeps CSP reports ahead of application auth admission", async () => {
@@ -1160,6 +1160,19 @@ describe("server/runtime-handler/index", () => {
     const response = await handler(new Request("http://localhost/healthz"));
 
     assertEquals(response.status, 200);
+    assertEquals(middlewareCalls, 0);
+
+    const preflight = await handler(
+      new Request("http://localhost/healthz", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://client.example",
+          "access-control-request-method": "GET",
+        },
+      }),
+    );
+
+    assertEquals(preflight.status, 204);
     assertEquals(middlewareCalls, 0);
   });
 

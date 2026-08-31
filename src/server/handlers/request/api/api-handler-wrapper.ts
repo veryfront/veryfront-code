@@ -20,6 +20,7 @@ import {
 } from "#veryfront/errors";
 import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import { isPreflightRequest } from "#veryfront/security/http/cors/preflight.ts";
+import { DEFAULT_CORS_METHODS, handleCORSPreflight } from "#veryfront/security";
 
 type FsWrapper = {
   isMultiProjectMode?: () => boolean;
@@ -70,6 +71,10 @@ export class ApiHandlerWrapper extends BaseHandler {
 
   async isFrameworkOwnedPreflight(req: Request, ctx: HandlerContext): Promise<boolean> {
     if (!isPreflightRequest(req)) return false;
+    if (requiresIsolatedProjectRuntime(ctx)) {
+      ctx.frameworkOwnedPreflight = true;
+      return true;
+    }
 
     const fsWrapper = ctx.adapter.fs as FsWrapper;
     const isMultiProject = !!ctx.projectSlug &&
@@ -77,11 +82,14 @@ export class ApiHandlerWrapper extends BaseHandler {
       fsWrapper.isMultiProjectMode();
     const inspect = async (): Promise<boolean> => {
       await ensurePreviewSourceSnapshotFresh(ctx);
-      return await withApiHandler(
+      const result = await withApiHandler(
         ctx,
-        (api) => api.isFrameworkOwnedPreflight(req, ctx),
+        (api) => api.prepareFrameworkOwnedPreflight(req, ctx),
         { sourceSnapshotReady: true },
       );
+      ctx.frameworkOwnedPreflight = result.frameworkOwned;
+      if (result.response) ctx.frameworkPreflightResponse = result.response;
+      return result.frameworkOwned;
     };
 
     if (!isMultiProject) {
@@ -183,10 +191,23 @@ export class ApiHandlerWrapper extends BaseHandler {
         if (req.signal.aborted) throw req.signal.reason;
 
         if (mustDenyProjectExecution) {
+          if (req.method.toUpperCase() === "OPTIONS" && isPreflightRequest(req)) {
+            const response = await handleCORSPreflight({
+              request: req,
+              config: ctx.securityConfig?.cors,
+              allowMethods: DEFAULT_CORS_METHODS.join(", "),
+            });
+            response.headers.set("Allow", DEFAULT_CORS_METHODS.join(", "));
+            return this.respond(this.finalizeResponse(req, ctx, response));
+          }
           // A shared runtime without an explicit execution grant cannot serve
           // any project-owned route. Reject before refreshing or classifying
           // tenant source that no downstream handler is allowed to execute.
           return this.projectExecutionUnavailable(req, ctx, pathname);
+        }
+
+        if (req.method.toUpperCase() === "OPTIONS" && ctx.frameworkPreflightResponse) {
+          return this.respond(this.finalizeResponse(req, ctx, ctx.frameworkPreflightResponse));
         }
 
         const canResolveAsPage = pathname !== "/api" &&
@@ -260,12 +281,7 @@ export class ApiHandlerWrapper extends BaseHandler {
             ctx,
           );
 
-          const builder = this.createResponseBuilder(ctx);
-          const finalRes = builder
-            .withCORS(req, ctx.securityConfig?.cors)
-            .withSecurity(ctx.securityConfig ?? undefined, req)
-            .withHeaders(apiRes.headers)
-            .build(apiRes.body, apiRes.status);
+          const finalRes = this.finalizeResponse(req, ctx, apiRes);
 
           return this.respond(finalRes);
         } catch (error) {
@@ -312,6 +328,14 @@ export class ApiHandlerWrapper extends BaseHandler {
       .withHeaders(problem.headers)
       .build(req.method === "HEAD" ? null : problem.body, problem.status);
     return this.respond(response, { executionTopology: "dedicated-runtime-required" });
+  }
+
+  private finalizeResponse(req: Request, ctx: HandlerContext, response: Response): Response {
+    return this.createResponseBuilder(ctx)
+      .withCORS(req, ctx.securityConfig?.cors)
+      .withSecurity(ctx.securityConfig ?? undefined, req)
+      .withHeaders(response.headers)
+      .build(null, response.status);
   }
 
   private async isPageRequest(

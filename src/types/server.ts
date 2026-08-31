@@ -109,6 +109,10 @@ export interface HandlerContext {
       applicationIdentityHeaderNames?: readonly string[];
     };
   } | null;
+  /** Whether this request's preflight was proven framework-owned. */
+  frameworkOwnedPreflight?: boolean;
+  /** Prepared framework-owned preflight response from the inspected source. */
+  frameworkPreflightResponse?: Response;
   /**
    * Prepares this request's authenticated hosted evaluation context.
    *
