@@ -33,6 +33,7 @@ import {
 import { createApplicationAuthRequestHandler } from "#veryfront/security/application-auth/application-auth-runtime.ts";
 import { applyCORSHeaders } from "#veryfront/security/http/cors/headers.ts";
 import { isCspReportRequest } from "#veryfront/security/http/csp-report-endpoint.ts";
+import { isPreflightRequest } from "#veryfront/security/http/cors/preflight.ts";
 import { getEffectiveRequestOrigin } from "../utils/request-host.ts";
 
 // Re-export is at the bottom of the file
@@ -168,7 +169,7 @@ function shouldRetrySourceSnapshotFreshness(
 }
 
 function skipsApplicationAuth(request: Request, pathname: string): boolean {
-  return request.method === "OPTIONS" ||
+  return (request.method === "OPTIONS" && isPreflightRequest(request)) ||
     isCspReportRequest(request.method, pathname) ||
     isSignedControlPlaneDispatch(request) ||
     isSignedChannelDispatch(request) ||

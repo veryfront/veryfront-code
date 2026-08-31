@@ -362,6 +362,43 @@ describe("server/runtime-handler/index", () => {
     });
   });
 
+  it("runs application auth admission before project middleware for plain OPTIONS", async () => {
+    let middlewareCalls = 0;
+    const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
+      projectDir: "/tmp/test-project",
+      config: {
+        security: {
+          auth: {
+            trustedProxy: {
+              trustedPeers: ["127.0.0.1"],
+              headers: { subject: "x-auth-subject" },
+            },
+          },
+        },
+        middleware: {
+          custom: [
+            (c: { identity: { subject?: string } | null }) => {
+              middlewareCalls++;
+              return Response.json({ subject: c.identity?.subject ?? null });
+            },
+          ],
+        },
+      } as any,
+      allowHostProjectCodeExecution: true,
+    });
+
+    const response = await handler(withTrustedPeer(
+      new Request("http://localhost/api/options", {
+        method: "OPTIONS",
+        headers: { "x-auth-subject": "user-123" },
+      }),
+    ));
+
+    assertEquals(response.status, 200);
+    assertEquals(await response.json(), { subject: "user-123" });
+    assertEquals(middlewareCalls, 1);
+  });
+
   it("short-circuits terminal application auth responses before project middleware", async () => {
     let middlewareCalls = 0;
     const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
@@ -634,11 +671,56 @@ describe("server/runtime-handler/index", () => {
     });
 
     const response = await handler(
-      new Request("http://localhost/dashboard", { method: "OPTIONS" }),
+      new Request("http://localhost/dashboard", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://client.example",
+          "access-control-request-method": "GET",
+        },
+      }),
     );
 
     assertEquals(response.status, 204);
     assertEquals(middlewareCalls, 1);
+  });
+
+  it("bypasses project middleware for public CORS preflight", async () => {
+    let middlewareCalls = 0;
+    const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
+      projectDir: "/tmp/test-project",
+      config: {
+        security: {
+          auth: {
+            trustedProxy: {
+              trustedPeers: ["127.0.0.1"],
+              headers: { subject: "x-auth-subject" },
+            },
+          },
+        },
+        middleware: {
+          custom: [
+            () => {
+              middlewareCalls++;
+              return new Response("middleware must not run", { status: 401 });
+            },
+          ],
+        },
+      } as any,
+      allowHostProjectCodeExecution: true,
+    });
+
+    const response = await handler(
+      new Request("http://localhost/dashboard", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://client.example",
+          "access-control-request-method": "GET",
+        },
+      }),
+    );
+
+    assertEquals(response.status, 204);
+    assertEquals(middlewareCalls, 0);
   });
 
   it("keeps CSP reports ahead of application auth admission", async () => {

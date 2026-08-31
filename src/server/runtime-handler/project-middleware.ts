@@ -25,6 +25,7 @@ import { isWebSocketPath } from "#veryfront/server/runtime-handler/request-utils
 import { isHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
 import { runWithRetainedPreviewDocumentSourceSnapshot } from "../handlers/request/source-snapshot-freshness.ts";
+import { isPreflightRequest } from "#veryfront/security/http/cors/preflight.ts";
 
 const DEFAULT_MAX_ENTRIES = 100;
 const logger = serverLogger.component("project-middleware");
@@ -137,6 +138,14 @@ export class ProjectMiddlewareRuntime {
     const pathname = new URL(request.url).pathname;
 
     if (isWebSocketPath(pathname)) {
+      return next();
+    }
+
+    // Browser preflight is framework-owned and must remain public. It is
+    // handled by the registry after route-independent CORS validation, so a
+    // project middleware identity gate must not turn it into an application
+    // authorization failure.
+    if (isPreflightRequest(request)) {
       return next();
     }
 
