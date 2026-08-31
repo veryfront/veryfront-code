@@ -31,7 +31,7 @@ import {
   restoreMockFetch,
   withMockFetch,
 } from "#veryfront/testing/mock-fetch.ts";
-import { createVeryfrontCloudContextSummaryGenerator } from "#veryfront/agent/hosted/context-summary-generator.ts";
+import { createRunScopedVeryfrontCloudContextSummaryGenerator } from "#veryfront/agent/hosted/context-summary-generator.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import {
   createVeryfrontCloudFetch,
@@ -899,17 +899,18 @@ describe("run-scoped inference credential", () => {
       const privateModelResolver = createVeryfrontCloudInferenceModelResolver(
         "run-scoped-inference-token",
       );
-      const generator = createVeryfrontCloudContextSummaryGenerator({
-        apiUrl: "https://api.veryfront.com",
-        model: "openai/gpt-test",
-        maxOutputTokens: 500,
-        maxInputTokens: 1_000,
-        resolveModel: (modelId) => {
-          const model = privateModelResolver(modelId);
-          if (!model) throw new TypeError("Expected private Veryfront Cloud model");
-          return model;
+      const retainedModel = privateModelResolver("veryfront-cloud/openai/gpt-test");
+      if (!retainedModel) throw new TypeError("Expected retained compaction model");
+      const generator = createRunScopedVeryfrontCloudContextSummaryGenerator(
+        {
+          apiUrl: "https://api.veryfront.com",
+          authToken: "broader-project-token",
+          model: "openai/gpt-test",
+          maxOutputTokens: 500,
+          maxInputTokens: 1_000,
         },
-      });
+        () => privateModelResolver,
+      );
       const result = await generator({
         messagesToSummarize: [{
           id: "message-1",
@@ -923,9 +924,64 @@ describe("run-scoped inference credential", () => {
       assertEquals(result, { text: "summary" });
       assertEquals(capturedAuthorization, "Bearer run-scoped-inference-token");
       assertEquals(projectProviderCalls, 0);
+      await assertRejects(
+        async () => {
+          const replay = await retainedModel.doStream({ prompt: [] });
+          await drainStream(replay.stream);
+        },
+        TypeError,
+        "Run-scoped inference credential is no longer active",
+      );
     } finally {
       unregister();
     }
+  });
+
+  it("revokes context compaction authority when summary generation fails", async () => {
+    let retainedModel: Awaited<ReturnType<typeof resolveModel>> | undefined;
+    const resolver = createVeryfrontCloudInferenceModelResolver(
+      "run-scoped-inference-token",
+    );
+    const generator = createRunScopedVeryfrontCloudContextSummaryGenerator(
+      {
+        apiUrl: "https://api.veryfront.com",
+        authToken: "broader-project-token",
+        model: "openai/gpt-test",
+        maxOutputTokens: 500,
+        maxInputTokens: 1_000,
+        generateText: (input) => {
+          retainedModel = input.model;
+          throw new Error("context compaction failed");
+        },
+      },
+      () => resolver,
+    );
+
+    await assertRejects(
+      async () =>
+        await generator({
+          messagesToSummarize: [{
+            id: "message-1",
+            role: "user",
+            timestamp: 1,
+            parts: [{ type: "text", text: "Summarize this context." }],
+          }],
+          retainedMessages: [],
+        }),
+      Error,
+      "context compaction failed",
+    );
+    const capturedModel = retainedModel;
+    if (!capturedModel) throw new TypeError("Expected retained compaction model");
+
+    await assertRejects(
+      async () => {
+        const result = await capturedModel.doStream({ prompt: [] });
+        await drainStream(result.stream);
+      },
+      TypeError,
+      "Run-scoped inference credential is no longer active",
+    );
   });
 
   it("requires HTTPS or loopback for run-scoped inference credentials", () => {

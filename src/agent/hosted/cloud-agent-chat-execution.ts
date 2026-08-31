@@ -22,7 +22,9 @@ import {
   type DefaultHostedChatRuntimeTaskContext,
 } from "./default-chat-runtime.ts";
 import { createHostedRootLocalToolRuntime } from "./root-sandbox-tool-source.ts";
-import { createVeryfrontCloudContextSummaryGenerator } from "./context-summary-generator.ts";
+import {
+  createRunScopedVeryfrontCloudContextSummaryGenerator,
+} from "./context-summary-generator.ts";
 import { createDefaultHostedProjectSteeringRefresh } from "./default-project-steering-refresh.ts";
 import type { HostedChatContextBudgetOptions } from "./chat-preparation.ts";
 import { applyAgentProjectContextChange } from "../project/context.ts";
@@ -40,7 +42,6 @@ import {
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 import { createHostedInferenceModelResolver } from "./inference-credential.ts";
 import type { AgentRuntimeInternalOptions } from "../runtime/index.ts";
-import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
 import type { PreparedHostedChatExecution } from "./prepared-chat-execution.ts";
 import {
   runPreparedHostedChatExecutionDetached,
@@ -270,7 +271,6 @@ function createHostedChatContextBudgetOptions(
   req: ParsedHostedChatRequest,
   agentConfig: { model?: string },
   abortSignal: AbortSignal,
-  resolveModelRuntime: AgentModelRuntimeResolver | undefined,
 ): HostedChatContextBudgetOptions | undefined {
   const config = context.infrastructure.getConfig();
   if (!config.VERYFRONT_CONTEXT_COMPACTION_ENABLED || !req.durableRootRun) {
@@ -283,27 +283,18 @@ function createHostedChatContextBudgetOptions(
     recentTailTokens: config.VERYFRONT_CONTEXT_COMPACTION_RECENT_TAIL_TOKENS,
     minimumRecentTurns: config.VERYFRONT_CONTEXT_COMPACTION_MINIMUM_RECENT_TURNS,
     maxSummaryTokens: config.VERYFRONT_CONTEXT_COMPACTION_MAX_SUMMARY_TOKENS,
-    summaryGenerator: createVeryfrontCloudContextSummaryGenerator({
-      apiUrl: config.VERYFRONT_API_URL,
-      projectSlug: req.projectSlug,
-      model: config.VERYFRONT_CONTEXT_COMPACTION_SUMMARY_MODEL ?? agentConfig.model,
-      maxOutputTokens: config.VERYFRONT_CONTEXT_COMPACTION_MAX_SUMMARY_TOKENS,
-      maxInputTokens: config.VERYFRONT_CONTEXT_COMPACTION_SUMMARY_INPUT_TOKENS,
-      abortSignal,
-      ...(resolveModelRuntime
-        ? {
-          resolveModel: (modelId: string) => {
-            const model = resolveModelRuntime(modelId);
-            if (!model) {
-              throw new TypeError(
-                `Context compaction requires a Veryfront Cloud model, received "${modelId}"`,
-              );
-            }
-            return model;
-          },
-        }
-        : { authToken: req.authToken }),
-    }),
+    summaryGenerator: createRunScopedVeryfrontCloudContextSummaryGenerator(
+      {
+        apiUrl: config.VERYFRONT_API_URL,
+        authToken: req.authToken,
+        projectSlug: req.projectSlug,
+        model: config.VERYFRONT_CONTEXT_COMPACTION_SUMMARY_MODEL ?? agentConfig.model,
+        maxOutputTokens: config.VERYFRONT_CONTEXT_COMPACTION_MAX_SUMMARY_TOKENS,
+        maxInputTokens: config.VERYFRONT_CONTEXT_COMPACTION_SUMMARY_INPUT_TOKENS,
+        abortSignal,
+      },
+      () => createHostedInferenceModelResolver(req),
+    ),
     logger: {
       debug: (message, metadata) => context.infrastructure.logger.debug(message, metadata),
       error: (message, metadata) => context.infrastructure.logger.error(message, metadata),
@@ -381,7 +372,6 @@ export async function prepareChatExecutionWithinProjectRuntime(
       req,
       agentConfig,
       preparationSignal,
-      resolveModelRuntime,
     ),
     createRuntime: (creationOptions) =>
       context.trace("chat.createRuntime", () => {
