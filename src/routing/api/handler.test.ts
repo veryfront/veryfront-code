@@ -1058,6 +1058,7 @@ describe("APIRouteHandler", () => {
       );
       let routeCalls = 0;
       let moduleLoads = 0;
+      let discoveryCalls = 0;
       __injectDepsForTests({
         loadHandlerModule: () => {
           moduleLoads++;
@@ -1093,6 +1094,10 @@ describe("APIRouteHandler", () => {
         securityConfig: config?.security ?? null,
       } as HandlerContext;
 
+      const beforeOptionsDispatch = () => {
+        discoveryCalls++;
+        return Promise.resolve();
+      };
       const preflight = await handler.handle(
         new Request("http://localhost/api/protected-options", {
           method: "OPTIONS",
@@ -1103,8 +1108,10 @@ describe("APIRouteHandler", () => {
           },
         }),
         ctx,
+        { beforeOptionsDispatch },
       );
       assertEquals(preflight?.status, 204);
+      assertEquals(discoveryCalls, 0);
       assertEquals(routeCalls, 0);
       assertEquals(moduleLoads, 0, "unauthenticated preflight must not evaluate the route module");
 
@@ -1117,7 +1124,7 @@ describe("APIRouteHandler", () => {
         transport: "tcp",
         hostname: "127.0.0.1",
       });
-      const admitted = await handler.handle(admittedRequest, ctx);
+      const admitted = await handler.handle(admittedRequest, ctx, { beforeOptionsDispatch });
 
       assertEquals(admitted?.status, 200);
       assertEquals(await admitted?.json(), {
@@ -1126,6 +1133,7 @@ describe("APIRouteHandler", () => {
       });
       assertEquals(routeCalls, 1);
       assertEquals(moduleLoads, 1);
+      assertEquals(discoveryCalls, 1);
     });
 
     it("does not reuse prepared method capability across worker semantics", async () => {

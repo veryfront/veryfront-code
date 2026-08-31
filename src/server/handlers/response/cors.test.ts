@@ -245,6 +245,51 @@ describe("server/handlers/response/cors", () => {
       assertEquals(routeResolutionCalls, 0);
     });
 
+    it("resolves a non-API App route inside its atomic project context", async () => {
+      let inProjectContext = false;
+      const ctx = makeCtx({
+        projectSlug: "tenant-project",
+        projectId: "project-123",
+        proxyToken: "proxy-token",
+        environmentName: "Staging",
+        allowHostProjectCodeExecution: true,
+        requestContext: { mode: "preview", branch: "feature" } as never,
+      });
+      const fs = ctx.adapter.fs as unknown as {
+        isContextualMode: () => boolean;
+        isMultiProjectMode: () => boolean;
+        runWithContext: <T>(
+          slug: string,
+          token: string,
+          fn: () => Promise<T>,
+        ) => Promise<T>;
+      };
+      fs.isContextualMode = () => true;
+      fs.isMultiProjectMode = () => true;
+      fs.runWithContext = async (_slug, _token, fn) => {
+        inProjectContext = true;
+        try {
+          return await fn();
+        } finally {
+          inProjectContext = false;
+        }
+      };
+      const handler = new CorsHandler({
+        resolveAppRouteFile: () => {
+          if (!inProjectContext) throw new Error("route resolution escaped project context");
+          return Promise.resolve({ file: "/project/app/webhook/route.ts", params: {} });
+        },
+      });
+
+      const result = await handler.handle(
+        new Request("https://tenant.example/webhook", { method: "OPTIONS" }),
+        ctx,
+      );
+
+      assertEquals(result.continue, true);
+      assertEquals(result.response, undefined);
+    });
+
     it("continues a matched non-API App route with an OPTIONS export", async () => {
       const handler = new CorsHandler({
         resolveAppRouteFile: () => Promise.resolve({ file: "/project/route.ts", params: {} }),
@@ -312,6 +357,31 @@ describe("server/handlers/response/cors", () => {
       assertEquals(
         result.response?.headers.get("access-control-allow-headers"),
         "Authorization, X-App-Trace",
+      );
+    });
+
+    it("fails preflight header capabilities closed for a malformed dynamic deny list", async () => {
+      const denyHeaders = ["x-auth-subject"];
+      Object.defineProperty(denyHeaders, "unexpected", { value: "x-app-trace" });
+
+      const result = await new CorsHandler().handle(
+        new Request("http://localhost/webhook", {
+          method: "OPTIONS",
+          headers: {
+            Origin: "https://app.example",
+            "access-control-request-method": "POST",
+            "access-control-request-headers": "X-Auth-Subject, X-App-Trace",
+          },
+        }),
+        makeCtx({
+          applicationIdentityHeaderNames: denyHeaders,
+          securityConfig: { cors: { origin: ["https://app.example"] } } as never,
+        }),
+      );
+
+      assertEquals(
+        result.response?.headers.get("access-control-allow-headers"),
+        "Content-Type, Authorization",
       );
     });
   });

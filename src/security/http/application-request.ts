@@ -96,6 +96,7 @@ export function getApplicationPreflightHeaders(
     }
 
     const dynamicDenyHeaders = normalizeDynamicDenyHeaders(options.denyHeaders);
+    if (dynamicDenyHeaders === null) return DEFAULT_APPLICATION_PREFLIGHT_HEADERS;
     const names = apply(stringSplit, requested, [","]) as string[];
     const allowed: string[] = [];
     for (let index = 0; index < names.length; index++) {
@@ -104,7 +105,7 @@ export function getApplicationPreflightHeaders(
       if (
         name.length > 0 &&
         !isInfrastructureOnlyRequestHeader(name) &&
-        !(dynamicDenyHeaders && setContains(dynamicDenyHeaders, normalizedName))
+        !setContains(dynamicDenyHeaders, normalizedName)
       ) {
         apply(arrayPush, allowed, [name]);
       }

@@ -264,7 +264,7 @@ export class APIRouteHandler {
           isApiPath &&
           requiresIsolatedProjectRuntime(ctx)
         ) {
-          return this.automaticPreflight(request);
+          return this.automaticPreflight(request, undefined, ctx);
         }
 
         const match = this.router.match(pathname);
@@ -276,7 +276,7 @@ export class APIRouteHandler {
           });
 
           if (method === "OPTIONS" && isApiPath) {
-            return this.automaticPreflight(request);
+            return this.automaticPreflight(request, undefined, ctx);
           }
           if (isApiPath) return notFound();
           return null;
