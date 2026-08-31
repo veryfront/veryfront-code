@@ -5963,6 +5963,22 @@ export default config as const;
         assertEquals(multiple.message.includes("registry.internal"), false);
         assertStringIncludes(multiple.message, "[url]");
 
+        const firstAndLater = await loadFailure(
+          "vf-config-csi-zero-slash-first-and-later-",
+          `throw new Error(String.fromCharCode(27) + "[ht" + String.fromCharCode(27) + "[tps:registry.internal/veryfront.config.ts");\n`,
+        );
+
+        assertEquals(firstAndLater.message.includes("registry.internal"), false);
+        assertStringIncludes(firstAndLater.message, "[url]");
+
+        const colorAndSplit = await loadFailure(
+          "vf-config-csi-zero-slash-color-and-split-",
+          `throw new Error("h" + String.fromCharCode(27) + "[31m" + String.fromCharCode(27) + "[ttps:registry.internal/veryfront.config.ts");\n`,
+        );
+
+        assertEquals(colorAndSplit.message.includes("registry.internal"), false);
+        assertStringIncludes(colorAndSplit.message, "[url]");
+
         const singleSlash = await loadFailure(
           "vf-config-csi-single-slash-url-",
           `throw new Error(String.fromCharCode(27) + "[https:/registry.internal/veryfront.config.ts");\n`,

@@ -1921,14 +1921,111 @@ const CSI_SPLITTABLE_URL_SCHEMES = freezeObject([
   "ftp",
   "file",
 ]) as readonly string[];
-const CSI_SPLITTABLE_URL_SCHEME_LOOKAROUND = (() => {
-  let longest = 0;
-  for (let index = 0; index < CSI_SPLITTABLE_URL_SCHEMES.length; index++) {
-    const length = CSI_SPLITTABLE_URL_SCHEMES[index]!.length;
-    if (length > longest) longest = length;
+
+interface CsiSchemeMatch {
+  matched: string;
+  inputIndex: number;
+  inputEnd: number;
+}
+
+type CsiSchemeStates = Array<Array<readonly number[] | undefined>>;
+
+function appendCsiSchemeMatch(path: readonly number[], matchIndex: number): readonly number[] {
+  const appended: number[] = [];
+  for (let index = 0; index < path.length; index++) appended[index] = path[index]!;
+  appended[path.length] = matchIndex;
+  return appended;
+}
+
+function keepShorterCsiSchemePath(
+  current: readonly number[] | undefined,
+  candidate: readonly number[],
+): readonly number[] {
+  return current === undefined || candidate.length < current.length ? candidate : current;
+}
+
+function createCsiSchemeStates(): CsiSchemeStates {
+  const states: CsiSchemeStates = [];
+  for (let index = 0; index < CSI_SPLITTABLE_URL_SCHEMES.length; index++) states[index] = [];
+  return states;
+}
+
+function markCompletedCsiSchemes(states: CsiSchemeStates, restoreMatches: boolean[]): void {
+  for (let schemeIndex = 0; schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length; schemeIndex++) {
+    const scheme = CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!;
+    const path = states[schemeIndex]?.[scheme.length];
+    if (path === undefined) continue;
+    for (let pathIndex = 0; pathIndex < path.length; pathIndex++) {
+      restoreMatches[path[pathIndex]!] = true;
+    }
   }
-  return longest;
-})();
+}
+
+function advanceCsiSchemeLiteral(
+  states: CsiSchemeStates,
+  value: string,
+  restoreMatches: boolean[],
+): CsiSchemeStates {
+  if (value === ":") {
+    markCompletedCsiSchemes(states, restoreMatches);
+    return createCsiSchemeStates();
+  }
+
+  const next = createCsiSchemeStates();
+  for (let schemeIndex = 0; schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length; schemeIndex++) {
+    const scheme = CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!;
+    const current = states[schemeIndex]!;
+    const advanced = next[schemeIndex]!;
+    for (let characterIndex = 1; characterIndex < scheme.length; characterIndex++) {
+      const path = current[characterIndex];
+      if (
+        path !== undefined &&
+        stringSlice(scheme, characterIndex, characterIndex + 1) === value
+      ) {
+        advanced[characterIndex + 1] = keepShorterCsiSchemePath(
+          advanced[characterIndex + 1],
+          path,
+        );
+      }
+    }
+    if (stringSlice(scheme, 0, 1) === value) {
+      advanced[1] = keepShorterCsiSchemePath(advanced[1], []);
+    }
+  }
+  return next;
+}
+
+function advanceCsiSchemeSequence(
+  states: CsiSchemeStates,
+  value: string,
+  matchIndex: number,
+): CsiSchemeStates {
+  const next = createCsiSchemeStates();
+  for (let schemeIndex = 0; schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length; schemeIndex++) {
+    const scheme = CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!;
+    const current = states[schemeIndex]!;
+    const advanced = next[schemeIndex]!;
+    for (let characterIndex = 1; characterIndex <= scheme.length; characterIndex++) {
+      const path = current[characterIndex];
+      if (path === undefined) continue;
+      advanced[characterIndex] = keepShorterCsiSchemePath(advanced[characterIndex], path);
+      if (
+        characterIndex < scheme.length &&
+        stringSlice(scheme, characterIndex, characterIndex + 1) === value
+      ) {
+        const restored = appendCsiSchemeMatch(path, matchIndex);
+        advanced[characterIndex + 1] = keepShorterCsiSchemePath(
+          advanced[characterIndex + 1],
+          restored,
+        );
+      }
+    }
+    if (stringSlice(scheme, 0, 1) === value) {
+      advanced[1] = keepShorterCsiSchemePath(advanced[1], [matchIndex]);
+    }
+  }
+  return next;
+}
 
 /**
  * Restore a URL-scheme character consumed as a CSI final byte.
@@ -1947,13 +2044,9 @@ const CSI_SPLITTABLE_URL_SCHEME_LOOKAROUND = (() => {
 function restoreCsiSplitUrlSchemes(value: string): string {
   ANSI_CSI_SEQUENCE.lastIndex = 0;
   try {
-    const matches: Array<{
-      matched: string;
-      inputIndex: number;
-      inputEnd: number;
-      candidateIndex: number;
-    }> = [];
-    let candidate = "";
+    const matches: CsiSchemeMatch[] = [];
+    const restoreMatches: boolean[] = [];
+    let states = createCsiSchemeStates();
     let inputOffset = 0;
     while (true) {
       const match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE, [value]) as
@@ -1962,66 +2055,46 @@ function restoreCsiSplitUrlSchemes(value: string): string {
       if (match === null) break;
 
       const matched = match[0];
-      candidate += stringSlice(value, inputOffset, match.index);
-      const candidateIndex = candidate.length;
-      candidate += stringSlice(matched, -1);
-      matches[matches.length] = {
+      for (let index = inputOffset; index < match.index; index++) {
+        const literal = ReflectApply(
+          StringPrototypeToLowerCase,
+          stringSlice(value, index, index + 1),
+          [],
+        ) as string;
+        states = advanceCsiSchemeLiteral(states, literal, restoreMatches);
+      }
+      const finalByte = ReflectApply(
+        StringPrototypeToLowerCase,
+        stringSlice(matched, -1),
+        [],
+      ) as string;
+      const matchIndex = matches.length;
+      matches[matchIndex] = {
         matched,
         inputIndex: match.index,
         inputEnd: ANSI_CSI_SEQUENCE.lastIndex,
-        candidateIndex,
       };
+      states = advanceCsiSchemeSequence(states, finalByte, matchIndex);
       inputOffset = ANSI_CSI_SEQUENCE.lastIndex;
     }
-    candidate += stringSlice(value, inputOffset);
+
+    for (let index = inputOffset; index < value.length; index++) {
+      const literal = ReflectApply(
+        StringPrototypeToLowerCase,
+        stringSlice(value, index, index + 1),
+        [],
+      ) as string;
+      states = advanceCsiSchemeLiteral(states, literal, restoreMatches);
+    }
 
     let output = "";
     let outputOffset = 0;
     for (let matchIndex = 0; matchIndex < matches.length; matchIndex++) {
       const match = matches[matchIndex]!;
-      const finalByte = ReflectApply(
-        StringPrototypeToLowerCase,
-        stringSlice(match.matched, -1),
-        [],
-      ) as string;
-      const prefixStart = match.candidateIndex > CSI_SPLITTABLE_URL_SCHEME_LOOKAROUND
-        ? match.candidateIndex - CSI_SPLITTABLE_URL_SCHEME_LOOKAROUND
-        : 0;
-      const preceding = ReflectApply(
-        StringPrototypeToLowerCase,
-        stringSlice(candidate, prefixStart, match.candidateIndex),
-        [],
-      ) as string;
-      const following = ReflectApply(
-        StringPrototypeToLowerCase,
-        stringSlice(
-          candidate,
-          match.candidateIndex + 1,
-          match.candidateIndex + 1 + CSI_SPLITTABLE_URL_SCHEME_LOOKAROUND,
-        ),
-        [],
-      ) as string;
-
-      let restoresScheme = false;
-      for (
-        let schemeIndex = 0;
-        schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length && !restoresScheme;
-        schemeIndex++
-      ) {
-        const scheme = CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!;
-        for (let splitIndex = 1; splitIndex < scheme.length; splitIndex++) {
-          if (stringSlice(scheme, splitIndex, splitIndex + 1) !== finalByte) continue;
-          const prefix = stringSlice(scheme, 0, splitIndex);
-          const suffix = `${stringSlice(scheme, splitIndex + 1)}:`;
-          if (stringEndsWith(preceding, prefix) && stringStartsWith(following, suffix)) {
-            restoresScheme = true;
-            break;
-          }
-        }
-      }
-
       output += stringSlice(value, outputOffset, match.inputIndex);
-      output += restoresScheme ? stringSlice(match.matched, -1) : match.matched;
+      output += restoreMatches[matchIndex] === true
+        ? stringSlice(match.matched, -1)
+        : match.matched;
       outputOffset = match.inputEnd;
     }
     return output + stringSlice(value, outputOffset);
