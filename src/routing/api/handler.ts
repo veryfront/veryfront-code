@@ -16,6 +16,10 @@ import { type APIContext } from "./context-builder.ts";
 import { ApiRouteMatcher, type RouteMatch } from "./api-route-matcher.ts";
 import type { APIRoute } from "./module-loader/types.ts";
 import { loadHandlerModule, prepareHandlerModule } from "./module-loader/loader.ts";
+import {
+  resolveStaticRouteOptionsCapability,
+  type StaticRouteOptionsCapability,
+} from "./module-loader/source-capability-analyzer.ts";
 import { discoverAppRoutes, discoverPagesRoutes } from "./route-discovery.ts";
 import {
   createAPIRouteErrorResponse,
@@ -290,6 +294,13 @@ export class APIRouteHandler {
         });
 
         if (method === "OPTIONS") {
+          if (
+            !isPreflightRequest(request) &&
+            await this.resolveStaticOptionsCapability(match.route.page, adapter) === "absent"
+          ) {
+            return this.automaticPreflight(request, undefined, ctx);
+          }
+
           const authResponse = await this.authenticateOptionsRoute(request, ctx);
           if (authResponse) {
             if (isPreflightRequest(request)) {
@@ -550,6 +561,21 @@ export class APIRouteHandler {
       ) ?? undefined;
     } catch {
       return undefined;
+    }
+  }
+
+  private async resolveStaticOptionsCapability(
+    modulePath: string,
+    adapter: RuntimeAdapter,
+  ): Promise<StaticRouteOptionsCapability> {
+    try {
+      const source = await adapter.fs.readFile(modulePath);
+      return await resolveStaticRouteOptionsCapability(source);
+    } catch {
+      // Static inspection is an optimization for plain OPTIONS only. If the
+      // source cannot be read or parsed, retain the safe auth-before-evaluation
+      // fallback and let the canonical route path decide after admission.
+      return "unknown";
     }
   }
 

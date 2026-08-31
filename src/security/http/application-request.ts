@@ -38,7 +38,7 @@ const stringCharCodeAt = String.prototype.charCodeAt;
 const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 const MAX_DYNAMIC_DENY_HEADERS = 32;
 const MAX_DYNAMIC_DENY_HEADER_NAME_LENGTH = 128;
-const DEFAULT_APPLICATION_PREFLIGHT_HEADERS = "Content-Type,Authorization";
+const DEFAULT_APPLICATION_PREFLIGHT_HEADER_NAMES = ["Content-Type", "Authorization"] as const;
 
 if (typeof requestHeadersGetter !== "function") {
   throw new TypeError("Request.prototype.headers getter is unavailable");
@@ -88,15 +88,16 @@ export function getApplicationPreflightHeaders(
   request: Request,
   options: Pick<ApplicationRequestHeaderOptions, "denyHeaders"> = {},
 ): string {
+  const dynamicDenyHeaders = normalizeDynamicDenyHeaders(options.denyHeaders);
+  if (dynamicDenyHeaders === null) return "";
+
   try {
     const headers = apply(requestHeadersGetter!, request, []) as Headers;
     const requested = apply(headersGet, headers, ["access-control-request-headers"]);
     if (typeof requested !== "string" || requested.length === 0) {
-      return DEFAULT_APPLICATION_PREFLIGHT_HEADERS;
+      return defaultApplicationPreflightHeaders(dynamicDenyHeaders);
     }
 
-    const dynamicDenyHeaders = normalizeDynamicDenyHeaders(options.denyHeaders);
-    if (dynamicDenyHeaders === null) return DEFAULT_APPLICATION_PREFLIGHT_HEADERS;
     const names = apply(stringSplit, requested, [","]) as string[];
     const allowed: string[] = [];
     for (let index = 0; index < names.length; index++) {
@@ -112,10 +113,23 @@ export function getApplicationPreflightHeaders(
     }
     return allowed.length > 0
       ? apply(arrayJoin, allowed, [","]) as string
-      : DEFAULT_APPLICATION_PREFLIGHT_HEADERS;
+      : defaultApplicationPreflightHeaders(dynamicDenyHeaders);
   } catch {
-    return DEFAULT_APPLICATION_PREFLIGHT_HEADERS;
+    return defaultApplicationPreflightHeaders(dynamicDenyHeaders);
   }
+}
+
+function defaultApplicationPreflightHeaders(denyHeaders: ReadonlySet<string>): string {
+  const allowed: string[] = [];
+  for (const name of DEFAULT_APPLICATION_PREFLIGHT_HEADER_NAMES) {
+    if (
+      !isInfrastructureOnlyRequestHeader(name) &&
+      !setContains(denyHeaders, apply(stringToLowerCase, name, []) as string)
+    ) {
+      apply(arrayPush, allowed, [name]);
+    }
+  }
+  return apply(arrayJoin, allowed, [","]) as string;
 }
 
 export interface ApplicationRequestHeaderOptions {

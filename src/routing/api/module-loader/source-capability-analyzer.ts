@@ -14,6 +14,7 @@ const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeIncludes = String.prototype.includes;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeStartsWith = String.prototype.startsWith;
+const COMMONJS_EXPORT_PATTERN = /\b(?:module\s*\.\s*exports|exports\s*\.)/;
 
 interface ParentLink {
   parent: ASTNode;
@@ -4999,4 +5000,109 @@ export async function analyzeSourceCapabilities(
     moduleSpecifiers: analysis.moduleSpecifiers,
     hasUnconstrainedDynamicImport: analysis.hasUnconstrainedDynamicImport,
   };
+}
+
+export type StaticRouteOptionsCapability = "present" | "absent" | "unknown";
+
+function staticExportName(node: ASTNode | undefined): string | null {
+  if (!isNode(node)) return null;
+  if (node.type === "Identifier" && typeof node.name === "string") return node.name;
+  if (
+    (node.type === "StringLiteral" || node.type === "Literal") &&
+    typeof node.value === "string"
+  ) return node.value;
+  return null;
+}
+
+function isStaticCallableRouteValue(node: ASTNode | undefined): boolean {
+  return isNode(node) && (
+    node.type === "ArrowFunctionExpression" ||
+    node.type === "FunctionExpression" ||
+    node.type === "ClassExpression"
+  );
+}
+
+function isTypeOnlyExportDeclaration(node: ASTNode | undefined): boolean {
+  if (!isNode(node)) return true;
+  return node.declare === true ||
+    node.type === "TSInterfaceDeclaration" ||
+    node.type === "TSTypeAliasDeclaration" ||
+    node.type === "TSDeclareFunction";
+}
+
+/**
+ * Determine whether a route's OPTIONS export is statically absent.
+ *
+ * This intentionally reports `unknown` for dynamic or ambiguous export
+ * shapes. Callers may use only `absent` as a pre-authentication signal; every
+ * other result keeps the existing authenticate-before-evaluation boundary.
+ */
+export async function resolveStaticRouteOptionsCapability(
+  source: string,
+): Promise<StaticRouteOptionsCapability> {
+  // CommonJS assignments are resolved by the loader rather than the ESM
+  // export declarations below. Keep the pre-auth path conservative for them.
+  if (COMMONJS_EXPORT_PATTERN.test(source)) return "unknown";
+
+  const program = await parseSource(source);
+  if (program === null) return "unknown";
+
+  const statements = Array.isArray(program.body)
+    ? program.body.filter((statement): statement is ASTNode => isNode(statement))
+    : [];
+  let uncertain = false;
+
+  for (const statement of statements) {
+    if (statement.type === "ExportDefaultDeclaration") {
+      if (!isTypeOnlyExportDeclaration(statement.declaration as ASTNode | undefined)) {
+        return "present";
+      }
+      continue;
+    }
+
+    if (statement.type === "ExportAllDeclaration") {
+      if (statement.exportKind !== "type") uncertain = true;
+      continue;
+    }
+
+    if (statement.type !== "ExportNamedDeclaration" || statement.exportKind === "type") {
+      continue;
+    }
+
+    const declaration = statement.declaration as ASTNode | undefined;
+    if (isNode(declaration)) {
+      const declarationName = staticExportName(declaration.id as ASTNode | undefined);
+      if (
+        declarationName === "OPTIONS" &&
+        declaration.declare !== true &&
+        (declaration.type === "FunctionDeclaration" || declaration.type === "ClassDeclaration")
+      ) return "present";
+
+      if (declaration.type === "VariableDeclaration") {
+        const declarators = Array.isArray(declaration.declarations)
+          ? declaration.declarations.filter((item): item is ASTNode => isNode(item))
+          : [];
+        const optionsDeclarator = declarators.find((item) =>
+          staticExportName(item.id as ASTNode | undefined) === "OPTIONS"
+        );
+        if (optionsDeclarator) {
+          if (isStaticCallableRouteValue(optionsDeclarator.init as ASTNode | undefined)) {
+            return "present";
+          }
+          uncertain = true;
+        }
+      }
+    }
+
+    const specifiers = Array.isArray(statement.specifiers)
+      ? statement.specifiers.filter((specifier): specifier is ASTNode => isNode(specifier))
+      : [];
+    for (const specifier of specifiers) {
+      if (specifier.exportKind === "type") continue;
+      const exportedName = staticExportName(specifier.exported as ASTNode | undefined);
+      if (exportedName === "OPTIONS" || exportedName === "default") return "present";
+    }
+  }
+
+  return uncertain ? "unknown" : "absent";
 }

@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { CorsHandler } from "./cors.ts";
 import type { HandlerContext } from "../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { getApplicationPreflightHeaders } from "#veryfront/security/http/application-request.ts";
 
 function createMockAdapter(): RuntimeAdapter {
   return {
@@ -381,7 +382,31 @@ describe("server/handlers/response/cors", () => {
 
       assertEquals(
         result.response?.headers.get("access-control-allow-headers"),
-        "Content-Type, Authorization",
+        null,
+      );
+    });
+
+    it("does not reintroduce dynamically denied default preflight headers", () => {
+      const request = new Request("http://localhost/webhook", {
+        method: "OPTIONS",
+        headers: {
+          "access-control-request-headers": "Authorization, Content-Type",
+        },
+      });
+
+      assertEquals(
+        getApplicationPreflightHeaders(request, { denyHeaders: ["authorization"] }),
+        "Content-Type",
+      );
+      assertEquals(
+        getApplicationPreflightHeaders(request, { denyHeaders: ["content-type"] }),
+        "Authorization",
+      );
+      assertEquals(
+        getApplicationPreflightHeaders(request, {
+          denyHeaders: ["authorization", "content-type"],
+        }),
+        "",
       );
     });
   });

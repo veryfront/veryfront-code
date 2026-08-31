@@ -1136,6 +1136,42 @@ describe("APIRouteHandler", () => {
       assertEquals(discoveryCalls, 1);
     });
 
+    it("keeps plain OPTIONS automatic when a protected route has no OPTIONS export", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/protected-get-only.ts",
+        "export function GET() { return new Response('unused'); }",
+      );
+      let moduleLoads = 0;
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          moduleLoads++;
+          return Promise.resolve({ GET: () => new Response("get") });
+        },
+      });
+      const securityConfig = {
+        security: {
+          cors: { origin: ["https://client.example"] },
+          auth: { basic: { username: "admin", password: "secret" } },
+        },
+      }.security as HandlerContext["securityConfig"];
+      const config = { security: securityConfig } as HandlerConfig;
+      const handler = await createInitializedHandler("/test/project", adapter, config);
+      const response = await handler.handle(
+        new Request("http://localhost/api/protected-get-only", {
+          method: "OPTIONS",
+          headers: { origin: "https://client.example" },
+        }),
+        {
+          ...localContext(adapter),
+          securityConfig,
+        },
+      );
+
+      assertEquals(response?.status, 204);
+      assertEquals(moduleLoads, 0, "automatic plain OPTIONS must not evaluate the route");
+    });
+
     it("does not reuse prepared method capability across worker semantics", async () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set(
