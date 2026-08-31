@@ -2399,11 +2399,13 @@ function restoreCsiSplitUrlSchemes(value: string): string {
     for (let matchIndex = 0; matchIndex < matches.length; matchIndex++) {
       const match = matches[matchIndex]!;
       output += stringSlice(value, outputOffset, match.inputIndex);
-      output += setHas(stripSequenceStarts, match.inputIndex)
-        ? ""
-        : setHas(restoreMatches, matchIndex)
-        ? stringSlice(match.matched, -1)
-        : match.matched;
+      let replacement = match.matched;
+      if (setHas(stripSequenceStarts, match.inputIndex)) {
+        replacement = "";
+      } else if (setHas(restoreMatches, matchIndex)) {
+        replacement = stringSlice(match.matched, -1);
+      }
+      output += replacement;
       outputOffset = match.inputEnd;
     }
     return output + stringSlice(value, outputOffset);
