@@ -41,6 +41,8 @@ import {
   type SourceIntegrationPolicyManifest,
 } from "#veryfront/integrations/source-policy.ts";
 
+const IntrinsicReadableStream = ReadableStream;
+
 export type { ForkPart, ForkRuntimeStep, ForkRuntimeStreamLogger } from "./fork-runtime-types.ts";
 
 export {
@@ -306,13 +308,23 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
   // Callers may never await responsePromise (e.g. Stop during a fork). Mark its
   // rejection as observed so an abort does not surface as an unhandled rejection.
   responsePromise.catch(() => {});
-  const abortHandler = () => {
-    rejectResponsePromise(createAgentRuntimeForkAbortError(input.abortSignal));
+  const abortHandler = (): Error => {
+    const error = createAgentRuntimeForkAbortError(input.abortSignal);
+    rejectResponsePromise(error);
+    return error;
   };
 
   if (input.abortSignal) {
     if (input.abortSignal.aborted) {
-      abortHandler();
+      const error = abortHandler();
+      return {
+        stream: new IntrinsicReadableStream<Uint8Array>({
+          start(controller) {
+            controller.error(error);
+          },
+        }),
+        responsePromise,
+      };
     } else {
       input.abortSignal.addEventListener("abort", abortHandler, { once: true });
     }

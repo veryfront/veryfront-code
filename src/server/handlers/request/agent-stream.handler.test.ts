@@ -33,7 +33,7 @@ import { getVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-cre
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { AgentRunResumeHandler } from "./agent-run-resume.handler.ts";
 import { AgentStreamHandler, type AgentStreamHandlerDeps } from "./agent-stream.handler.ts";
-import type { HandlerContext } from "../types.ts";
+import type { HandlerContext, HandlerResult } from "../types.ts";
 import {
   type CapturedApplicationError,
   createAgent,
@@ -122,6 +122,53 @@ function createRuntimeAgentRunInvocationBody() {
 }
 
 describe("server/handlers/request/agent-stream.handler", () => {
+  it("parses run credentials with framework-captured JSON intrinsics", async () => {
+    const inferenceAuthToken = "run-scoped-inference-token";
+    const body = createAgentStreamRequestBody({
+      credentials: {
+        authToken: "request-scoped-user-token",
+        inferenceAuthToken,
+      },
+    });
+    const { publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: () => Promise.resolve(createEmptyDiscoveryResult()),
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const nativeJsonParse = JSON.parse;
+    const nativeReflectApply = Reflect.apply;
+    let exposedToSharedRealmJson = false;
+
+    const observedJsonParse: typeof JSON.parse = (text, reviver) => {
+      if (text.includes(inferenceAuthToken)) exposedToSharedRealmJson = true;
+      return nativeReflectApply(nativeJsonParse, JSON, [text, reviver]);
+    };
+    JSON.parse = observedJsonParse;
+
+    let result: HandlerResult | undefined;
+    try {
+      result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/different-run/stream", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+    } finally {
+      JSON.parse = nativeJsonParse;
+    }
+
+    assertExists(result);
+    assertExists(result.response);
+    assertEquals(result.response.status, 400);
+    assertEquals(exposedToSharedRealmJson, false);
+  });
+
   it("rejects a preview source whose signed branch ID differs from the trusted target", async () => {
     let discoveryCalls = 0;
     const handler = createTestAgentStreamHandler({

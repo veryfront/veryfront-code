@@ -269,8 +269,11 @@ import { resolveTemperatureParameter } from "./model-capabilities.ts";
 import { applySkillDelegationOverridesToToolInput } from "./skill-delegation-overrides.ts";
 import {
   type AgentModelRuntimeResolver,
+  createModelRuntimeResolverAbortGuard,
+  createModelRuntimeResolverAbortScope,
   resolveAgentModelTransport,
   type ResolvedModelTransport,
+  revokeModelRuntimeResolver,
 } from "./model-transport.ts";
 import { buildRuntimeUsageTraceAttributes } from "./trace-usage.ts";
 import {
@@ -289,12 +292,17 @@ import { compareStrings } from "#veryfront/utils/compare.ts";
 const ArrayIsArray = Array.isArray;
 const cloneStructuredValue = globalThis.structuredClone;
 const IntrinsicWeakMap = WeakMap;
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicReadableStream = ReadableStream;
+const PromiseThen = Promise.prototype.then;
 const ObjectCreate = Object.create;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectPrototype = Object.prototype;
 const ReflectOwnKeys = Reflect.ownKeys;
+const WeakMapGet = IntrinsicWeakMap.prototype.get;
+const WeakMapSet = IntrinsicWeakMap.prototype.set;
 const logger = serverLogger.component("agent");
 const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = ["load_skill", "load_skill_reference"] as const;
 
@@ -1202,9 +1210,84 @@ export type AgentRuntimeInternalOptions = {
   resolveModelRuntime?: AgentModelRuntimeResolver;
 };
 
+type AgentRuntimeGenerateArgs = [
+  input: string | Message[],
+  context?: Record<string, unknown>,
+  modelOverride?: string,
+  maxOutputTokensOverride?: number,
+  abortSignal?: AbortSignal,
+  options?: {
+    toolReplacements?: AgentGenerateToolReplacements;
+    retainSkillLoaderTools?: boolean;
+    outputSchema?: unknown;
+  },
+];
+
+type AgentRuntimeStreamCallbacks = {
+  onToolCall?: (toolCall: ToolCall) => void;
+  onChunk?: (chunk: string) => void;
+  onFinish?: (response: AgentResponse) => void;
+};
+
+type AgentRuntimeStreamArgs = [
+  messages: Message[],
+  context?: Record<string, unknown>,
+  callbacks?: AgentRuntimeStreamCallbacks,
+  modelOverride?: string,
+  maxOutputTokensOverride?: number,
+  abortSignal?: AbortSignal,
+  options?: { outputSchema?: unknown },
+];
+
+type AgentRuntimeGenerateDispatch = (
+  ...args: AgentRuntimeGenerateArgs
+) => Promise<AgentResponse>;
+
+type AgentRuntimeStreamDispatch = (
+  ...args: AgentRuntimeStreamArgs
+) => Promise<ReadableStream<Uint8Array>>;
+
+type AgentRuntimeDispatch = {
+  generate: AgentRuntimeGenerateDispatch;
+  stream: AgentRuntimeStreamDispatch;
+};
+
+type AgentRuntimeModelResolverState =
+  | { status: "absent" }
+  | { status: "available"; resolver: AgentModelRuntimeResolver }
+  | { status: "consumed" };
+
+const agentRuntimeDispatches = new IntrinsicWeakMap<AgentRuntime, AgentRuntimeDispatch>();
+
+function getAgentRuntimeDispatch(runtime: AgentRuntime): AgentRuntimeDispatch {
+  const dispatch = IntrinsicReflectApply(WeakMapGet, agentRuntimeDispatches, [
+    runtime,
+  ]) as AgentRuntimeDispatch | undefined;
+  if (!dispatch) {
+    throw new TypeError("AgentRuntime framework dispatch is unavailable");
+  }
+  return dispatch;
+}
+
+/** @internal Dispatch through framework-owned runtime capabilities, not mutable prototype methods. */
+export function generateWithAgentRuntimeDispatch(
+  runtime: AgentRuntime,
+  ...args: AgentRuntimeGenerateArgs
+): Promise<AgentResponse> {
+  return getAgentRuntimeDispatch(runtime).generate(...args);
+}
+
+/** @internal Dispatch through framework-owned runtime capabilities, not mutable prototype methods. */
+export function streamWithAgentRuntimeDispatch(
+  runtime: AgentRuntime,
+  ...args: AgentRuntimeStreamArgs
+): Promise<ReadableStream<Uint8Array>> {
+  return getAgentRuntimeDispatch(runtime).stream(...args);
+}
+
 /** Implement agent runtime. */
 export class AgentRuntime {
-  readonly #resolveModelRuntime: AgentModelRuntimeResolver | undefined;
+  #modelResolverState: AgentRuntimeModelResolverState;
   private id: string;
   private config: AgentConfig;
   private memory: Memory<Message>;
@@ -1215,7 +1298,9 @@ export class AgentRuntime {
     config: AgentConfig,
     internalOptions: AgentRuntimeInternalOptions = {},
   ) {
-    this.#resolveModelRuntime = internalOptions.resolveModelRuntime;
+    this.#modelResolverState = internalOptions.resolveModelRuntime
+      ? { status: "available", resolver: internalOptions.resolveModelRuntime }
+      : { status: "absent" };
     this.id = id;
     this.config = { ...config };
 
@@ -1224,6 +1309,13 @@ export class AgentRuntime {
     // concurrent stream()/generate() on a shared instance stay isolated.
     // Providing `memory` opts in to cross-call persistence.
     this.memory = createAgentMemory<Message>(config.memory);
+    IntrinsicReflectApply(WeakMapSet, agentRuntimeDispatches, [
+      this,
+      {
+        generate: (...args: AgentRuntimeGenerateArgs) => this.#generate(...args),
+        stream: (...args: AgentRuntimeStreamArgs) => this.#stream(...args),
+      },
+    ]);
   }
 
   /**
@@ -1244,15 +1336,36 @@ export class AgentRuntime {
     context: Record<string, unknown> | undefined,
     modelOverride: string | undefined,
     mode: "generate" | "stream",
-  ): Promise<ResolvedModelTransport> {
-    return await resolveAgentModelTransport({
-      agentId: this.id,
-      config: this.config,
-      context,
-      modelOverride,
-      mode,
-      resolveModelRuntime: this.#resolveModelRuntime,
-    });
+  ): Promise<{
+    transport: ResolvedModelTransport;
+    resolveModelRuntime?: AgentModelRuntimeResolver;
+  }> {
+    const resolverState = this.#modelResolverState;
+    if (resolverState.status === "consumed") {
+      throw new TypeError("AgentRuntime model resolver has already been consumed");
+    }
+    const resolveModelRuntime = resolverState.status === "available"
+      ? resolverState.resolver
+      : undefined;
+    if (resolverState.status === "available") {
+      this.#modelResolverState = { status: "consumed" };
+    }
+    try {
+      return {
+        transport: await resolveAgentModelTransport({
+          agentId: this.id,
+          config: this.config,
+          context,
+          modelOverride,
+          mode,
+          resolveModelRuntime,
+        }),
+        ...(resolveModelRuntime ? { resolveModelRuntime } : {}),
+      };
+    } catch (error) {
+      revokeModelRuntimeResolver(resolveModelRuntime);
+      throw error;
+    }
   }
 
   private async resolveRuntimeState(
@@ -1348,75 +1461,112 @@ export class AgentRuntime {
       outputSchema?: unknown;
     },
   ): Promise<AgentResponse> {
-    throwIfAborted(abortSignal);
-    const outputSchema = this.resolveOutputSchema(options?.outputSchema);
-    const runRuntimeContext = captureAgentRunRuntimeContext();
-    const transport = await this.#resolveModelTransport(context, modelOverride, "generate");
-    const requestedModel = transport.requestedModel;
-    const resolvedModelString = transport.resolvedModelString;
-    const supportsToolCalling = supportsModelRuntimeToolCalling(transport.languageModel);
-    const providerReplayCheckpointEmission = resolveRuntimeProviderReplayCheckpointEmission(
-      this.config,
+    return this.#generate(
+      input,
+      context,
+      modelOverride,
+      maxOutputTokensOverride,
+      abortSignal,
+      options,
     );
-    debugRuntimeModelRemap(requestedModel, resolvedModelString);
+  }
 
-    return withSpan("agent.generate", async (span) => {
-      setSpanAttributes(span, {
-        "agent.id": this.id,
-        "agent.model": resolvedModelString,
-        "run.started_at_utc": runRuntimeContext.runStartedAtUtc,
-        "run.current_date_utc": runRuntimeContext.currentDateUtc,
-      });
-
-      const inputMessages = normalizeInput(input);
-      const messages = await this.prepareTurnMessages(inputMessages);
-
-      const systemPrompt = await this.resolveSystemPrompt(transport.providerOptionKey);
-
-      const agentContext: AgentContext = {
-        agentId: this.id,
-        model: resolvedModelString,
-        input: inputMessages,
-        data: context,
-        platform: detectPlatform(),
-      };
-
-      const chain = new MiddlewareChain(this.config.middleware);
-      return chain.execute(
-        agentContext,
-        () =>
-          runWithRemoteIntegrationToolDiscoveryScope(() =>
-            this.executeAgentLoop(
-              systemPrompt,
-              messages,
-              {
-                agentId: this.id,
-                projectId: tryGetCacheKeyContext()?.projectId,
-              },
-              context,
-              runRuntimeContext,
-              supportsToolCalling,
-              providerReplayCheckpointEmission,
-              resolvedModelString,
-              transport.languageModel,
-              transport.headers,
-              transport.providerOptions,
-              transport.reasoning,
-              maxOutputTokensOverride,
-              requestedModel,
-              this.createGenerateReplacementTools(
-                options?.toolReplacements,
-                options?.retainSkillLoaderTools,
-              ),
-              abortSignal,
-              outputSchema,
-            )
-          ),
+  async #generate(
+    input: string | Message[],
+    context?: Record<string, unknown>,
+    modelOverride?: string,
+    maxOutputTokensOverride?: number,
+    abortSignal?: AbortSignal,
+    options?: {
+      toolReplacements?: AgentGenerateToolReplacements;
+      retainSkillLoaderTools?: boolean;
+      outputSchema?: unknown;
+    },
+  ): Promise<AgentResponse> {
+    const runRuntimeContext = captureAgentRunRuntimeContext();
+    if (this.#modelResolverState.status === "absent") throwIfAborted(abortSignal);
+    const { transport, resolveModelRuntime } = await this.#resolveModelTransport(
+      context,
+      modelOverride,
+      "generate",
+    );
+    const abortGuard = createModelRuntimeResolverAbortGuard(resolveModelRuntime, abortSignal);
+    try {
+      throwIfAborted(abortSignal);
+      const outputSchema = this.resolveOutputSchema(options?.outputSchema);
+      const requestedModel = transport.requestedModel;
+      const resolvedModelString = transport.resolvedModelString;
+      const supportsToolCalling = supportsModelRuntimeToolCalling(transport.languageModel);
+      const providerReplayCheckpointEmission = resolveRuntimeProviderReplayCheckpointEmission(
+        this.config,
       );
-    }).catch(async (error) => {
-      await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission);
-      throw error;
-    });
+      debugRuntimeModelRemap(requestedModel, resolvedModelString);
+
+      return await withSpan("agent.generate", async (span) => {
+        setSpanAttributes(span, {
+          "agent.id": this.id,
+          "agent.model": resolvedModelString,
+          "run.started_at_utc": runRuntimeContext.runStartedAtUtc,
+          "run.current_date_utc": runRuntimeContext.currentDateUtc,
+        });
+
+        const inputMessages = normalizeInput(input);
+        const messages = await this.prepareTurnMessages(inputMessages);
+
+        const systemPrompt = await this.resolveSystemPrompt(transport.providerOptionKey);
+
+        const agentContext: AgentContext = {
+          agentId: this.id,
+          model: resolvedModelString,
+          input: inputMessages,
+          data: context,
+          platform: detectPlatform(),
+        };
+
+        const chain = new MiddlewareChain(this.config.middleware);
+        return chain.execute(
+          agentContext,
+          async () => {
+            try {
+              return await runWithRemoteIntegrationToolDiscoveryScope(() =>
+                this.#executeAgentLoop(
+                  systemPrompt,
+                  messages,
+                  {
+                    agentId: this.id,
+                    projectId: tryGetCacheKeyContext()?.projectId,
+                  },
+                  context,
+                  runRuntimeContext,
+                  supportsToolCalling,
+                  providerReplayCheckpointEmission,
+                  resolvedModelString,
+                  transport.languageModel,
+                  transport.headers,
+                  transport.providerOptions,
+                  transport.reasoning,
+                  maxOutputTokensOverride,
+                  requestedModel,
+                  this.createGenerateReplacementTools(
+                    options?.toolReplacements,
+                    options?.retainSkillLoaderTools,
+                  ),
+                  abortSignal,
+                  outputSchema,
+                )
+              );
+            } finally {
+              abortGuard.revoke();
+            }
+          },
+        );
+      }).catch(async (error) => {
+        await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission);
+        throw error;
+      });
+    } finally {
+      abortGuard.dispose();
+    }
   }
 
   /**
@@ -1426,200 +1576,228 @@ export class AgentRuntime {
   async stream(
     messages: Message[],
     context?: Record<string, unknown>,
-    callbacks?: {
-      onToolCall?: (toolCall: ToolCall) => void;
-      onChunk?: (chunk: string) => void;
-      onFinish?: (response: AgentResponse) => void;
-    },
+    callbacks?: AgentRuntimeStreamCallbacks,
+    modelOverride?: string,
+    maxOutputTokensOverride?: number,
+    abortSignal?: AbortSignal,
+    options?: { outputSchema?: unknown },
+  ): Promise<ReadableStream<Uint8Array>> {
+    return this.#stream(
+      messages,
+      context,
+      callbacks,
+      modelOverride,
+      maxOutputTokensOverride,
+      abortSignal,
+      options,
+    );
+  }
+
+  async #stream(
+    messages: Message[],
+    context?: Record<string, unknown>,
+    callbacks?: AgentRuntimeStreamCallbacks,
     modelOverride?: string,
     maxOutputTokensOverride?: number,
     abortSignal?: AbortSignal,
     options?: { outputSchema?: unknown },
   ): Promise<ReadableStream<Uint8Array>> {
     const runRuntimeContext = captureAgentRunRuntimeContext();
-    const outputSchema = this.resolveOutputSchema(options?.outputSchema);
     setOtelActiveSpanAttributes({
       "run.started_at_utc": runRuntimeContext.runStartedAtUtc,
       "run.current_date_utc": runRuntimeContext.currentDateUtc,
     });
-    const transport = await this.#resolveModelTransport(context, modelOverride, "stream");
-    const requestedModel = transport.requestedModel;
-    const resolvedModelString = transport.resolvedModelString;
-    debugRuntimeModelRemap(requestedModel, resolvedModelString);
-
-    const inputMessages = normalizeInput(messages);
-    const memoryMessages = await this.prepareTurnMessages(inputMessages);
-
-    const systemPrompt = await this.resolveSystemPrompt(transport.providerOptionKey);
-
-    const encoder = new TextEncoder();
-    const streamAbortController = new AbortController();
-    const forwardAbort = () => {
-      streamAbortController.abort(abortSignal?.reason);
-    };
-    if (abortSignal) {
-      if (abortSignal.aborted) {
-        streamAbortController.abort(abortSignal.reason);
-      } else {
-        abortSignal.addEventListener("abort", forwardAbort, { once: true });
-      }
-    }
-    const streamAbortSignal = streamAbortController.signal;
-    const streamCacheCtx = tryGetCacheKeyContext();
-    const toolContext = {
-      agentId: this.id,
-      abortSignal: streamAbortSignal,
-      projectId: streamCacheCtx?.projectId,
-      ...context,
-    };
-    const textPartId = generateId("text");
-
-    // Resolve model BEFORE creating the ReadableStream. If this throws
-    // (e.g., no_ai_available), the error propagates to the caller who can
-    // return a proper error response (503) instead of a 200 with an error event.
-    const languageModel = transport.languageModel;
-
-    // Determine inference mode from the resolved model object, not the string.
-    const isLocal = isLocalModelRuntime(languageModel);
-    const supportsToolCalling = supportsModelRuntimeToolCalling(languageModel);
-    const providerReplayCheckpointEmission = resolveRuntimeProviderReplayCheckpointEmission(
-      this.config,
+    if (this.#modelResolverState.status === "absent") throwIfAborted(abortSignal);
+    const { transport, resolveModelRuntime } = await this.#resolveModelTransport(
+      context,
+      modelOverride,
+      "stream",
     );
+    const abortScope = createModelRuntimeResolverAbortScope(resolveModelRuntime, abortSignal);
+    try {
+      const outputSchema = this.resolveOutputSchema(options?.outputSchema);
+      const requestedModel = transport.requestedModel;
+      const resolvedModelString = transport.resolvedModelString;
+      debugRuntimeModelRemap(requestedModel, resolvedModelString);
 
-    // Eagerly verify the model runtime is available. For local models this
-    // checks that @huggingface/transformers can be imported. Must happen
-    // BEFORE creating the ReadableStream so no_ai_available errors propagate
-    // to the route handler, which returns a 503 instead of swallowing it as an
-    // in-band SSE error in a 200 response.
-    await ensureModelReady(languageModel, streamAbortSignal);
+      const inputMessages = normalizeInput(messages);
+      const memoryMessages = await this.prepareTurnMessages(inputMessages);
 
-    const agentContext: AgentContext = {
-      agentId: this.id,
-      model: resolvedModelString,
-      input: messages,
-      data: context,
-      platform: detectPlatform(),
-    };
-    const chain = new MiddlewareChain(this.config.middleware);
+      const systemPrompt = await this.resolveSystemPrompt(transport.providerOptionKey);
 
-    // Hold the in-flight agent-loop promise so stream cancellation can detach a
-    // no-op rejection handler. When the client cancels, we abort the shared
-    // signal; the loop (model fetch / tool execution) then rejects with an
-    // AbortError. The `start` body awaits it, but cancellation can land after
-    // that await settles, leaving the rejection without a consumer, fatal as
-    // an unhandled rejection under Deno (#2334).
-    let inFlight: Promise<AgentResponse> | undefined;
+      const encoder = new TextEncoder();
+      const streamAbortSignal = abortScope.signal;
+      const streamCacheCtx = tryGetCacheKeyContext();
+      const toolContext = {
+        agentId: this.id,
+        abortSignal: streamAbortSignal,
+        projectId: streamCacheCtx?.projectId,
+        ...context,
+      };
+      const textPartId = generateId("text");
 
-    return new ReadableStream<Uint8Array>({
-      start: async (controller) => {
-        try {
-          throwIfAborted(streamAbortSignal);
-          this.status = "streaming";
+      // Resolve model BEFORE creating the ReadableStream. If this throws
+      // (e.g., no_ai_available), the error propagates to the caller who can
+      // return a proper error response (503) instead of a 200 with an error event.
+      const languageModel = transport.languageModel;
 
-          const messageId = generateMessageId();
-          sendSSE(controller, encoder, { type: "message-start", messageId });
-          // Report the effective model after resolution so the client can show
-          // whether inference is cloud or explicit server-local.
-          sendSSE(controller, encoder, {
-            type: "data",
-            data: {
-              inferenceMode: isLocal ? "server-local" : "cloud",
-              model: resolvedModelString,
-            },
-          });
-          sendSSE(controller, encoder, {
-            type: "data-veryfront.runtime_context",
-            data: runRuntimeContext,
-          });
-          inFlight = chain.execute(
-            agentContext,
-            () =>
-              runWithRemoteIntegrationToolDiscoveryScope(() =>
-                this.executeAgentLoopStreaming(
-                  systemPrompt,
-                  memoryMessages,
-                  controller,
-                  encoder,
-                  callbacks,
-                  textPartId,
-                  toolContext,
-                  context,
-                  runRuntimeContext,
-                  supportsToolCalling,
-                  providerReplayCheckpointEmission,
-                  resolvedModelString,
-                  languageModel,
-                  transport.headers,
-                  transport.providerOptions,
-                  transport.reasoning,
-                  maxOutputTokensOverride,
-                  streamAbortSignal,
-                  requestedModel,
-                  outputSchema,
-                )
-              ),
-          );
-          const response = await inFlight;
-          throwIfAborted(streamAbortSignal);
-          callbacks?.onFinish?.(response);
-          throwIfAborted(streamAbortSignal);
+      // Determine inference mode from the resolved model object, not the string.
+      const isLocal = isLocalModelRuntime(languageModel);
+      const supportsToolCalling = supportsModelRuntimeToolCalling(languageModel);
+      const providerReplayCheckpointEmission = resolveRuntimeProviderReplayCheckpointEmission(
+        this.config,
+      );
 
-          const finishUsage = buildStreamFinishUsage(response.usage);
-          const finishReason = getResponseFinishReason(response);
-          sendSSE(controller, encoder, {
-            type: "message-finish",
-            ...(finishReason ? { finishReason } : {}),
-            ...(finishUsage ? { totalUsage: finishUsage } : {}),
-            ...("object" in response && response.object !== undefined
-              ? { object: response.object }
-              : {}),
-          });
-          closeSSEStream(controller);
-        } catch (error) {
+      // Eagerly verify the model runtime is available. For local models this
+      // checks that @huggingface/transformers can be imported. Must happen
+      // BEFORE creating the ReadableStream so no_ai_available errors propagate
+      // to the route handler, which returns a 503 instead of swallowing it as an
+      // in-band SSE error in a 200 response.
+      try {
+        await ensureModelReady(languageModel, streamAbortSignal);
+      } catch (error) {
+        revokeModelRuntimeResolver(resolveModelRuntime);
+        throw error;
+      }
+
+      const agentContext: AgentContext = {
+        agentId: this.id,
+        model: resolvedModelString,
+        input: messages,
+        data: context,
+        platform: detectPlatform(),
+      };
+      const chain = new MiddlewareChain(this.config.middleware);
+
+      // Hold the in-flight agent-loop promise so stream cancellation can detach a
+      // no-op rejection handler. When the client cancels, we abort the shared
+      // signal; the loop (model fetch / tool execution) then rejects with an
+      // AbortError. The `start` body awaits it, but cancellation can land after
+      // that await settles, leaving the rejection without a consumer, fatal as
+      // an unhandled rejection under Deno (#2334).
+      let inFlight: Promise<AgentResponse> | undefined;
+
+      const runtimeStream = new IntrinsicReadableStream<Uint8Array>({
+        start: async (controller) => {
           try {
-            await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission);
-          } catch (failureHookError) {
-            logger.debug("Provider replay failure hook rejected", {
-              error: failureHookError,
-            });
-          }
-          if (isAbortError(error, streamAbortSignal)) {
-            closeSSEStream(controller);
-            return;
-          }
+            throwIfAborted(streamAbortSignal);
+            this.status = "streaming";
 
-          this.status = "error";
-          logger.error("Agent stream error", { error });
-          sendSSE(controller, encoder, {
-            type: "error",
-            error: error instanceof Error ? error.message : String(error),
-          });
-          closeSSEStream(controller);
-        } finally {
-          abortSignal?.removeEventListener("abort", forwardAbort);
-        }
-      },
-      cancel(reason) {
-        // The client disconnected (e.g. the Chat Stop button). Treat this as a
-        // clean stop: detach a no-op handler from the in-flight loop so the
-        // AbortError it throws when we abort the shared signal cannot surface as
-        // an unhandled rejection, then abort. Guard the abort itself so a
-        // synchronous signal-abort rejection can never escape here (#2334).
-        inFlight?.catch(() => {});
-        try {
-          streamAbortController.abort(reason);
-        } catch {
-          // Aborting an already-aborted controller, or a synchronous reject
-          // from a signal consumer, is a no-op for cancellation purposes.
-        }
-      },
-    });
+            const messageId = generateMessageId();
+            sendSSE(controller, encoder, { type: "message-start", messageId });
+            // Report the effective model after resolution so the client can show
+            // whether inference is cloud or explicit server-local.
+            sendSSE(controller, encoder, {
+              type: "data",
+              data: {
+                inferenceMode: isLocal ? "server-local" : "cloud",
+                model: resolvedModelString,
+              },
+            });
+            sendSSE(controller, encoder, {
+              type: "data-veryfront.runtime_context",
+              data: runRuntimeContext,
+            });
+            inFlight = chain.execute(
+              agentContext,
+              async () => {
+                try {
+                  return await runWithRemoteIntegrationToolDiscoveryScope(() =>
+                    this.#executeAgentLoopStreaming(
+                      systemPrompt,
+                      memoryMessages,
+                      controller,
+                      encoder,
+                      callbacks,
+                      textPartId,
+                      toolContext,
+                      context,
+                      runRuntimeContext,
+                      supportsToolCalling,
+                      providerReplayCheckpointEmission,
+                      resolvedModelString,
+                      languageModel,
+                      transport.headers,
+                      transport.providerOptions,
+                      transport.reasoning,
+                      maxOutputTokensOverride,
+                      streamAbortSignal,
+                      requestedModel,
+                      outputSchema,
+                    )
+                  );
+                } finally {
+                  abortScope.revoke();
+                }
+              },
+            );
+            const response = await inFlight;
+            throwIfAborted(streamAbortSignal);
+            callbacks?.onFinish?.(response);
+            throwIfAborted(streamAbortSignal);
+
+            const finishUsage = buildStreamFinishUsage(response.usage);
+            const finishReason = getResponseFinishReason(response);
+            sendSSE(controller, encoder, {
+              type: "message-finish",
+              ...(finishReason ? { finishReason } : {}),
+              ...(finishUsage ? { totalUsage: finishUsage } : {}),
+              ...("object" in response && response.object !== undefined
+                ? { object: response.object }
+                : {}),
+            });
+            closeSSEStream(controller);
+          } catch (error) {
+            try {
+              await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission);
+            } catch (failureHookError) {
+              logger.debug("Provider replay failure hook rejected", {
+                error: failureHookError,
+              });
+            }
+            if (isAbortError(error, streamAbortSignal)) {
+              closeSSEStream(controller);
+              return;
+            }
+
+            this.status = "error";
+            logger.error("Agent stream error", { error });
+            sendSSE(controller, encoder, {
+              type: "error",
+              error: error instanceof Error ? error.message : String(error),
+            });
+            closeSSEStream(controller);
+          } finally {
+            abortScope.dispose();
+          }
+        },
+        cancel(reason) {
+          // The client disconnected (e.g. the Chat Stop button). Treat this as a
+          // clean stop: revoke authority before project-controlled abort listeners
+          // run, then attach a no-op rejection handler through the captured Promise
+          // intrinsic so the aborted loop cannot surface an unhandled rejection.
+          try {
+            abortScope.abort(reason);
+          } catch {
+            // Aborting an already-aborted controller, or a synchronous reject
+            // from a signal consumer, is a no-op for cancellation purposes.
+          }
+          if (inFlight) {
+            void IntrinsicReflectApply(PromiseThen, inFlight, [undefined, () => {}]);
+          }
+        },
+      });
+      return runtimeStream;
+    } catch (error) {
+      abortScope.dispose();
+      throw error;
+    }
   }
 
   /**
    * Execute agent loop (with tool calling)
    */
-  private async executeAgentLoop(
+  async #executeAgentLoop( // NOSONAR: Existing loop shape; this patch only adds authority cleanup.
     systemPrompt: AgentSystem,
     messages: Message[],
     toolContextBase: ToolExecutionContext | undefined,
@@ -2286,7 +2464,7 @@ export class AgentRuntime {
    * Emits veryfront stream events (message-start/message-finish + step-start/step-end)
    * while consuming model-runtime `streamText()` parts internally.
    */
-  private async executeAgentLoopStreaming(
+  async #executeAgentLoopStreaming( // NOSONAR: Existing loop shape; this patch only adds authority cleanup.
     systemPrompt: AgentSystem,
     messages: Message[],
     controller: ReadableStreamDefaultController,

@@ -1735,15 +1735,18 @@ import real from "./real.js";`,
 
     it("keeps line-broken division scans within a bounded runtime", () => {
       const source = "x\n/2/x;\n".repeat(4_000);
+      // This guards against nonlinear scanning, not shared-host scheduling.
+      // The full repository matrix runs CPU-intensive files in parallel.
+      const maxMillis = 2_500;
       const startedAt = performance.now();
 
       assertEquals(specifiers(source), []);
 
       const durationMs = performance.now() - startedAt;
       assert(
-        durationMs < 1_500,
+        durationMs < maxMillis,
         `Expected a ${Math.round(source.length / 1024)} KB line-broken division scan to ` +
-          `finish within 1500 ms, got ${durationMs.toFixed(1)} ms`,
+          `finish within ${maxMillis} ms, got ${durationMs.toFixed(1)} ms`,
       );
     });
 

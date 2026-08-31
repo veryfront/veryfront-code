@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 import { agent, resolveSecurityMiddleware } from "./factory.ts";
@@ -206,42 +206,42 @@ describe("resolveSecurityMiddleware", () => {
     });
   });
 
-  it("forwards abortSignal and onFinish through agent.stream", async () => {
+  it("uses framework-owned stream dispatch while preserving abortSignal and onFinish", async () => {
     const originalStream = AgentRuntime.prototype.stream;
     const abortController = new AbortController();
     const finishCalls: AgentResponse[] = [];
+    let publicStreamCalls = 0;
     let capturedAbortSignal: AbortSignal | undefined;
-    let forwardedOnFinish: ((response: AgentResponse) => void) | undefined;
+    let modelCalls = 0;
 
-    AgentRuntime.prototype.stream = async function (
-      messages,
-      context,
-      callbacks,
-      modelOverride,
-      maxOutputTokensOverride,
-      abortSignal,
-    ): Promise<ReadableStream<Uint8Array>> {
-      capturedAbortSignal = abortSignal;
-      forwardedOnFinish = callbacks?.onFinish;
-
-      assertEquals(messages.length, 1);
-      assertEquals(messages[0]?.role, "user");
-      assertEquals(context, undefined);
-      assertEquals(modelOverride, undefined);
-      assertEquals(maxOutputTokensOverride, undefined);
-
-      callbacks?.onFinish?.(createAgentResponse({ text: "stream complete" }));
-
-      return new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.close();
-        },
-      });
+    AgentRuntime.prototype.stream = async function (): Promise<ReadableStream<Uint8Array>> {
+      publicStreamCalls += 1;
+      throw new Error("mutable public stream dispatch must not be used by agent.stream");
     };
 
     try {
+      const model: ModelRuntime = {
+        provider: "hosted",
+        modelId: "hosted/private-stream-dispatch",
+        async doGenerate() {
+          throw new Error("Expected streaming path");
+        },
+        async doStream(options) {
+          modelCalls += 1;
+          capturedAbortSignal = (options as { abortSignal?: AbortSignal }).abortSignal;
+          return {
+            stream: createTextStream([
+              { type: "text-delta", text: "stream complete" },
+              { type: "finish" },
+            ]),
+          };
+        },
+      };
       const assistant = agent({
+        model: "hosted/private-stream-dispatch",
         system: "You are helpful.",
+        skills: false,
+        resolveModelTransport: async () => ({ model }),
       });
 
       const result = await assistant.stream({
@@ -254,29 +254,58 @@ describe("resolveSecurityMiddleware", () => {
 
       await result.toDataStreamResponse().text();
 
-      assertStrictEquals(
-        capturedAbortSignal,
-        abortController.signal,
-        "agent.stream must forward the caller AbortSignal object unchanged to runtime.stream",
-      );
-      assertEquals(capturedAbortSignal?.aborted, false, "forwarded signal must not start aborted");
-      assertEquals(
-        typeof forwardedOnFinish,
-        "function",
-        "onFinish must be forwarded as a callback",
-      );
+      assertEquals(publicStreamCalls, 0);
+      assertEquals(modelCalls, 1);
+      assertEquals(capturedAbortSignal?.aborted, false, "model signal must not start aborted");
       assertEquals(finishCalls.length, 1, "onFinish must be invoked exactly once");
       assertEquals(finishCalls[0]?.text, "stream complete", "onFinish receives the final text");
       assertEquals(finishCalls[0]?.status, "completed", "onFinish receives the final status");
-
-      abortController.abort();
-      assertEquals(
-        capturedAbortSignal?.aborted,
-        true,
-        "aborting the caller controller must abort the signal the runtime received",
-      );
     } finally {
       AgentRuntime.prototype.stream = originalStream;
+    }
+  });
+
+  it("uses framework-owned generate dispatch while preserving output", async () => {
+    const originalGenerate = AgentRuntime.prototype.generate;
+    let publicGenerateCalls = 0;
+    let modelCalls = 0;
+
+    AgentRuntime.prototype.generate = async function (): Promise<AgentResponse> {
+      publicGenerateCalls += 1;
+      throw new Error("mutable public generate dispatch must not be used by agent.generate");
+    };
+
+    try {
+      const model: ModelRuntime = {
+        provider: "hosted",
+        modelId: "hosted/private-generate-dispatch",
+        async doGenerate() {
+          modelCalls += 1;
+          return {
+            content: [{ type: "text", text: "generate complete" }],
+            finishReason: "stop",
+            usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          };
+        },
+        async doStream() {
+          throw new Error("Expected generate path");
+        },
+      };
+      const assistant = agent({
+        model: "hosted/private-generate-dispatch",
+        system: "You are helpful.",
+        skills: false,
+        resolveModelTransport: async () => ({ model }),
+      });
+
+      const result = await assistant.generate({ input: "hello" });
+
+      assertEquals(publicGenerateCalls, 0);
+      assertEquals(modelCalls, 1);
+      assertEquals(result.text, "generate complete");
+      assertEquals(result.status, "completed");
+    } finally {
+      AgentRuntime.prototype.generate = originalGenerate;
     }
   });
 });

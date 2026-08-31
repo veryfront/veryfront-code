@@ -124,7 +124,6 @@ export type {
   AgentMcpServerAuth,
   AgentMcpServerConfig,
   AgentMcpToolPolicy,
-  AgentMiddleware,
   AgentOutputSchema,
   AgentResponse,
   AgentStatus,
@@ -158,6 +157,14 @@ export type {
   ToolCallPartWithInput,
   ToolResultPart,
 } from "./types.ts";
+
+/**
+ * Public API contract for agent middleware. You must call `next` at most once during one
+ * middleware invocation. The continuation becomes invalid when the middleware's
+ * returned promise settles. Calling it again or after settlement rejects with
+ * the registered `middleware-error`.
+ */
+export type { AgentMiddleware } from "./types.ts";
 
 export {
   type HostedChildProjectSwitchHandler,

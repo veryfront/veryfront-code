@@ -10,6 +10,28 @@ import type { Message } from "../types.ts";
 import { AgentRuntime } from "./index.ts";
 
 describe("agent runtime generate cancellation", () => {
+  it("does not resolve a custom transport for an already-aborted run", async () => {
+    const controller = new AbortController();
+    const reason = new Error("cancelled before transport resolution");
+    controller.abort(reason);
+    let transportCalls = 0;
+    const runtime = new AgentRuntime("pre-aborted-transport", {
+      model: "hosted/pre-aborted-transport",
+      system: "Cancellation test",
+      resolveModelTransport: () => {
+        transportCalls++;
+        throw new Error("transport must not resolve");
+      },
+    });
+
+    await assertRejects(
+      () => runtime.generate("run", undefined, undefined, undefined, controller.signal),
+      Error,
+      reason.message,
+    );
+    assertEquals(transportCalls, 0);
+  });
+
   it("does not start tools when cancellation occurs during assistant memory persistence", async () => {
     const controller = new AbortController();
     const reason = new Error("cancelled while saving memory");
