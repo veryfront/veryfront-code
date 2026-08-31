@@ -91,8 +91,8 @@ function createObservedContinuation<T>(
     );
     if (!PROMISE_SPECIES_SUPPORTED) return continuation;
 
-    // Per-continuation class: species requires a distinct constructor per
-    // observed chain.
+    // Allocate one class per continuation: species requires a distinct
+    // constructor per observed chain.
     const DerivedContinuationPromise = class extends ObservedContinuationPromise<T> {
       static override get [Symbol.species](): PromiseConstructor {
         return this as PromiseConstructor;
@@ -102,8 +102,12 @@ function createObservedContinuation<T>(
         super(derivedExecutor, onRejection);
       }
     };
+    // Keep the species constructor tamper-resistant after wiring the branch
+    // tracker onto this internal continuation.
     Object.defineProperty(continuation, "constructor", {
+      configurable: false,
       value: DerivedContinuationPromise,
+      writable: false,
     });
     // Promise species currently keeps every derived branch on this
     // per-continuation constructor. If a future engine removes that hook,
@@ -205,6 +209,14 @@ function reportDetachedContinuationFailure(error: unknown): void {
 function classifyContinuationFailure(error: unknown): string {
   if (error === null) return "null";
   if (isProxyWithoutHooks(error)) return "proxy";
+  if (typeof DOM_EXCEPTION_NAME_GETTER === "function") {
+    try {
+      Reflect.apply(DOM_EXCEPTION_NAME_GETTER, error, []);
+      return "domexception";
+    } catch {
+      // The native getter is a side-effect-free DOMException brand check.
+    }
+  }
   if (isNativeErrorWithoutHooks(error)) {
     const name = readNativeErrorNameWithoutHooks(error);
     switch (name) {
