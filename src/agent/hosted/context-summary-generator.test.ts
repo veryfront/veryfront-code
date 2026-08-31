@@ -1,10 +1,14 @@
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 import { getCurrentVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
 import { createVeryfrontCloudInferenceModelResolver } from "./inference-credential.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeGenerateTextResult } from "../runtime/runtime-tool-types.ts";
-import { createVeryfrontCloudContextSummaryGenerator } from "./context-summary-generator.ts";
+import {
+  createRunScopedVeryfrontCloudContextSummaryGenerator,
+  createVeryfrontCloudContextSummaryGenerator,
+} from "./context-summary-generator.ts";
+import { registerModelRuntimeResolverRevoker } from "../runtime/model-transport.ts";
 
 function createModel(): ModelRuntime {
   return {
@@ -14,6 +18,16 @@ function createModel(): ModelRuntime {
     doStream: () => Promise.resolve({ stream: new ReadableStream<unknown>() }),
   };
 }
+
+const summaryInput = {
+  messagesToSummarize: [{
+    id: "message-1",
+    role: "user" as const,
+    timestamp: 1,
+    parts: [{ type: "text" as const, text: "Summarize this context." }],
+  }],
+  retainedMessages: [],
+};
 
 describe("createVeryfrontCloudContextSummaryGenerator", () => {
   it("rolls oversized history through bounded summaries", async () => {
@@ -257,5 +271,103 @@ describe("createVeryfrontCloudContextSummaryGenerator", () => {
       "[unserializable]",
       "tool results that cannot be JSON serialized must use the unserializable placeholder",
     );
+  });
+});
+
+describe("createRunScopedVeryfrontCloudContextSummaryGenerator", () => {
+  it("uses and revokes one private resolver, then rejects replay", async () => {
+    let resolverCreations = 0;
+    let revocations = 0;
+    const resolvedModelIds: string[] = [];
+    const resolver = (modelId: string) => {
+      resolvedModelIds.push(modelId);
+      return createModel();
+    };
+    registerModelRuntimeResolverRevoker(resolver, () => {
+      revocations += 1;
+    });
+    const generator = createRunScopedVeryfrontCloudContextSummaryGenerator(
+      {
+        apiUrl: "https://api.example.com",
+        authToken: "must-not-be-used-with-a-private-resolver",
+        model: "openai/gpt-test",
+        maxOutputTokens: 500,
+        maxInputTokens: 1_000,
+        generateText: () =>
+          Promise.resolve({
+            text: "private summary",
+            usage: { inputTokens: 1, outputTokens: 1 },
+            finishReason: "stop",
+          }),
+      },
+      () => {
+        resolverCreations += 1;
+        return resolver;
+      },
+    );
+
+    assertEquals(await generator(summaryInput), { text: "private summary" });
+    assertEquals(resolvedModelIds, ["veryfront-cloud/openai/gpt-test"]);
+    assertEquals(revocations, 1);
+
+    await assertRejects(
+      async () => await generator(summaryInput),
+      TypeError,
+      "Context compaction inference authority has already been used",
+    );
+    assertEquals(resolverCreations, 1);
+    assertEquals(revocations, 1);
+  });
+
+  it("rejects a non-cloud model from the private resolver and still revokes it", async () => {
+    let revocations = 0;
+    const resolver = () => undefined;
+    registerModelRuntimeResolverRevoker(resolver, () => {
+      revocations += 1;
+    });
+    const generator = createRunScopedVeryfrontCloudContextSummaryGenerator(
+      {
+        apiUrl: "https://api.example.com",
+        model: "openai/gpt-test",
+        maxOutputTokens: 500,
+        maxInputTokens: 1_000,
+        generateText: () => {
+          throw new Error("generateText must not run without a private cloud model");
+        },
+      },
+      () => resolver,
+    );
+
+    await assertRejects(
+      async () => await generator(summaryInput),
+      TypeError,
+      'Context compaction requires a Veryfront Cloud model, received "veryfront-cloud/openai/gpt-test"',
+    );
+    assertEquals(revocations, 1);
+  });
+
+  it("falls back to the supplied token when no private resolver exists", async () => {
+    const visibleTokens: Array<string | undefined> = [];
+    const generator = createRunScopedVeryfrontCloudContextSummaryGenerator(
+      {
+        apiUrl: "https://api.example.com",
+        authToken: "fallback-token",
+        model: "openai/gpt-test",
+        maxOutputTokens: 500,
+        maxInputTokens: 1_000,
+        generateText: () => {
+          visibleTokens.push(getCurrentVeryfrontCloudContext()?.apiToken);
+          return Promise.resolve({
+            text: "fallback summary",
+            usage: { inputTokens: 1, outputTokens: 1 },
+            finishReason: "stop",
+          });
+        },
+      },
+      () => undefined,
+    );
+
+    assertEquals(await generator(summaryInput), { text: "fallback summary" });
+    assertEquals(visibleTokens, ["fallback-token"]);
   });
 });
