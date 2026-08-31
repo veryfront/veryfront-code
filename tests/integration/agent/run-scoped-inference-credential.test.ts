@@ -91,6 +91,7 @@ describe("run-scoped inference credential", () => {
     );
 
     assertEquals(Reflect.get(runtime, "resolveModelRuntime"), undefined);
+    assertEquals(Reflect.get(runtime, "resolveModelTransport"), undefined);
     assertEquals(JSON.stringify(runtime).includes(inferenceAuthToken), false);
   });
 
