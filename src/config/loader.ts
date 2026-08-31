@@ -1946,9 +1946,15 @@ const CSI_SPLITTABLE_URL_SCHEME_LOOKAROUND = (() => {
  */
 function restoreCsiSplitUrlSchemes(value: string): string {
   ANSI_CSI_SEQUENCE.lastIndex = 0;
-  let output = "";
-  let offset = 0;
   try {
+    const matches: Array<{
+      matched: string;
+      inputIndex: number;
+      inputEnd: number;
+      candidateIndex: number;
+    }> = [];
+    let candidate = "";
+    let inputOffset = 0;
     while (true) {
       const match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE, [value]) as
         | RegExpExecArray
@@ -1956,25 +1962,42 @@ function restoreCsiSplitUrlSchemes(value: string): string {
       if (match === null) break;
 
       const matched = match[0];
+      candidate += stringSlice(value, inputOffset, match.index);
+      const candidateIndex = candidate.length;
+      candidate += stringSlice(matched, -1);
+      matches[matches.length] = {
+        matched,
+        inputIndex: match.index,
+        inputEnd: ANSI_CSI_SEQUENCE.lastIndex,
+        candidateIndex,
+      };
+      inputOffset = ANSI_CSI_SEQUENCE.lastIndex;
+    }
+    candidate += stringSlice(value, inputOffset);
+
+    let output = "";
+    let outputOffset = 0;
+    for (let matchIndex = 0; matchIndex < matches.length; matchIndex++) {
+      const match = matches[matchIndex]!;
       const finalByte = ReflectApply(
         StringPrototypeToLowerCase,
-        stringSlice(matched, -1),
+        stringSlice(match.matched, -1),
         [],
       ) as string;
-      const prefixStart = match.index > CSI_SPLITTABLE_URL_SCHEME_LOOKAROUND
-        ? match.index - CSI_SPLITTABLE_URL_SCHEME_LOOKAROUND
+      const prefixStart = match.candidateIndex > CSI_SPLITTABLE_URL_SCHEME_LOOKAROUND
+        ? match.candidateIndex - CSI_SPLITTABLE_URL_SCHEME_LOOKAROUND
         : 0;
       const preceding = ReflectApply(
         StringPrototypeToLowerCase,
-        stringSlice(value, prefixStart, match.index),
+        stringSlice(candidate, prefixStart, match.candidateIndex),
         [],
       ) as string;
       const following = ReflectApply(
         StringPrototypeToLowerCase,
         stringSlice(
-          value,
-          ANSI_CSI_SEQUENCE.lastIndex,
-          ANSI_CSI_SEQUENCE.lastIndex + CSI_SPLITTABLE_URL_SCHEME_LOOKAROUND,
+          candidate,
+          match.candidateIndex + 1,
+          match.candidateIndex + 1 + CSI_SPLITTABLE_URL_SCHEME_LOOKAROUND,
         ),
         [],
       ) as string;
@@ -1997,11 +2020,11 @@ function restoreCsiSplitUrlSchemes(value: string): string {
         }
       }
 
-      output += stringSlice(value, offset, match.index);
-      output += restoresScheme ? stringSlice(matched, -1) : matched;
-      offset = ANSI_CSI_SEQUENCE.lastIndex;
+      output += stringSlice(value, outputOffset, match.inputIndex);
+      output += restoresScheme ? stringSlice(match.matched, -1) : match.matched;
+      outputOffset = match.inputEnd;
     }
-    return output + stringSlice(value, offset);
+    return output + stringSlice(value, outputOffset);
   } finally {
     ANSI_CSI_SEQUENCE.lastIndex = 0;
   }

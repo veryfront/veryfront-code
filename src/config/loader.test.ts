@@ -5955,6 +5955,14 @@ export default config as const;
         assertEquals(eightBit.message.includes("registry.internal"), false);
         assertStringIncludes(eightBit.message, "[url]");
 
+        const multiple = await loadFailure(
+          "vf-config-csi-zero-slash-multiple-",
+          `throw new Error("h" + String.fromCharCode(27) + "[t" + String.fromCharCode(27) + "[tps:registry.internal/veryfront.config.ts");\n`,
+        );
+
+        assertEquals(multiple.message.includes("registry.internal"), false);
+        assertStringIncludes(multiple.message, "[url]");
+
         const singleSlash = await loadFailure(
           "vf-config-csi-single-slash-url-",
           `throw new Error(String.fromCharCode(27) + "[https:/registry.internal/veryfront.config.ts");\n`,
