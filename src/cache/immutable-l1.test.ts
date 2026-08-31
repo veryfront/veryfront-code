@@ -700,13 +700,18 @@ describe("createImmutableFileCacheL1", () => {
     );
   });
 
-  it("reclaims an expired entry without waiting for it to be touched", async () => {
-    const store = createImmutableFileCacheL1({ maxEntries: 8, maxValueBytes: 20 });
+  it("reclaims an expired entry without waiting for it to be touched", () => {
+    let elapsedMs = 0;
+    const store = createImmutableFileCacheL1({
+      maxEntries: 8,
+      maxValueBytes: 20,
+      elapsedNow: () => elapsedMs,
+    });
     const other = "file:release:acme:rel_2:/app/page.tsx";
     store.admit("scope-a", RELEASE_KEY, "e".repeat(10), store.beginRead(RELEASE_KEY), 1);
     store.admit("scope-a", other, "f".repeat(10), store.beginRead(other), HOUR_MS);
 
-    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    elapsedMs = 1;
     assertEquals(store.evictExpired(), 1, "the sweep must reclaim exactly the expired entry");
     assertEquals(store.size, 1, "only the live entry may remain");
     assertEquals(
@@ -717,8 +722,12 @@ describe("createImmutableFileCacheL1", () => {
     assertEquals(store.lookup("scope-a", other), "f".repeat(10), "the live entry still serves");
   });
 
-  it("reclaims expired entries on admission instead of evicting live ones", async () => {
-    const store = createImmutableFileCacheL1({ maxEntries: 2 });
+  it("reclaims expired entries on admission instead of evicting live ones", () => {
+    let elapsedMs = 0;
+    const store = createImmutableFileCacheL1({
+      maxEntries: 2,
+      elapsedNow: () => elapsedMs,
+    });
     const live = "file:release:acme:rel_2:/app/live.tsx";
     const incoming = "file:release:acme:rel_2:/app/incoming.tsx";
     // The live entry sits at the LRU head, so a purely LRU eviction would
@@ -726,7 +735,7 @@ describe("createImmutableFileCacheL1", () => {
     store.admit("scope-a", live, "live", store.beginRead(live), HOUR_MS);
     store.admit("scope-a", RELEASE_KEY, "dying", store.beginRead(RELEASE_KEY), 1);
 
-    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    elapsedMs = 1;
     store.admit("scope-a", incoming, "incoming", store.beginRead(incoming), HOUR_MS);
 
     assertEquals(store.size, 2, "the expired entry is reclaimed by the admission itself");
