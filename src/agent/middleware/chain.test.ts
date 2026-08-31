@@ -64,7 +64,14 @@ describe("agent/middleware/chain", () => {
     let retainedNext: (() => Promise<AgentResponse>) | undefined;
     let finalHandlerCalls = 0;
     let overriddenThenCalls = 0;
-    class MiddlewarePromise extends Promise<AgentResponse> {}
+    let speciesHookCalls = 0;
+    class MiddlewarePromise extends Promise<AgentResponse> {
+      static override get [Symbol.species](): PromiseConstructor {
+        speciesHookCalls += 1;
+        retainedNext!();
+        return Promise;
+      }
+    }
     const selectedResponse = new MiddlewarePromise((resolve) => resolve(response));
     Object.defineProperty(selectedResponse, "then", {
       value(...args: unknown[]) {
@@ -88,6 +95,7 @@ describe("agent/middleware/chain", () => {
       response,
     );
     assertEquals(overriddenThenCalls > 0, true);
+    assertEquals(speciesHookCalls > 0, true);
     assertEquals(finalHandlerCalls, 0);
     await assertRejects(() => retainedNext!(), VeryfrontError, replayError);
   });
@@ -158,6 +166,31 @@ describe("agent/middleware/chain", () => {
       response,
     );
     assertEquals(Object.isExtensible(frozenResponse), false);
+  });
+
+  it("reports a detached rejection from a frozen downstream Promise", async () => {
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+    try {
+      const chain = new MiddlewareChain([
+        (_context, next) => {
+          next();
+          return Promise.resolve(response);
+        },
+        () => Object.freeze(Promise.reject(new Error("frozen downstream failure"))),
+      ]);
+
+      await chain.execute(context, () => Promise.resolve(response));
+      await waitForReport();
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(
+      records.filter((entry) => entry.message === "Your agent middleware continuation failed")
+        .length,
+      1,
+    );
   });
 
   it("rejects a continuation queued before an already-settled middleware promise", async () => {
@@ -1057,6 +1090,42 @@ describe("agent/middleware/chain", () => {
       error = await Promise.race([
         assertRejects(
           () => chain.execute(context, () => Promise.resolve(response)),
+          TypeError,
+        ),
+        timeout,
+      ]);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+    assertEquals(error instanceof TypeError, true);
+  });
+
+  it("preserves native self-resolution through pass-through middleware", async () => {
+    let continuation: Promise<AgentResponse> | undefined;
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        continuation = next();
+        return continuation;
+      },
+      (_context, next) => next(),
+    ]);
+    let timeoutId: number | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timeoutId = setTimeout(
+        () => reject(new Error("pass-through continuation cycle did not settle")),
+        20,
+      );
+    });
+
+    let error: unknown;
+    try {
+      error = await Promise.race([
+        assertRejects(
+          () =>
+            chain.execute(context, async () => {
+              await Promise.resolve();
+              return continuation!;
+            }),
           TypeError,
         ),
         timeout,

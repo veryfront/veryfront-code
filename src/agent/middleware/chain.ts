@@ -14,7 +14,9 @@ const INVALID_CONTINUATION_MESSAGE =
   "You must call agent middleware next() at most once while the middleware is active";
 const DETACHED_CONTINUATION_FAILURE = "downstream continuation rejected";
 const IntrinsicPromise = Promise;
+const IntrinsicWeakMap = WeakMap;
 const IntrinsicWeakSet = WeakSet;
+const PromiseResolve = Promise.resolve;
 const ObjectCreate = Object.create;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -24,6 +26,8 @@ const ReflectApply = Reflect.apply;
 const SymbolSpecies = Symbol.species;
 const WeakSetAdd = WeakSet.prototype.add;
 const WeakSetHas = WeakSet.prototype.has;
+const WeakMapGet = WeakMap.prototype.get;
+const WeakMapSet = WeakMap.prototype.set;
 // These intrinsic WeakSets retain only live keys; entries are collectible once
 // no middleware or error consumer retains the associated objects.
 const INVALID_CONTINUATION_ERRORS = new IntrinsicWeakSet<object>();
@@ -62,6 +66,44 @@ type ContinuationRejectionHandler = (
   isObserved: () => boolean,
 ) => void;
 
+interface EagerObservationRecord {
+  next?: EagerObservationRecord;
+  observed: boolean;
+}
+
+const EAGER_OBSERVATION_RECORDS = new IntrinsicWeakMap<object, EagerObservationRecord>();
+
+function registerEagerObservation(
+  promise: Promise<unknown>,
+  onRejection: ContinuationRejectionHandler,
+  suppressedInvalidErrors: WeakSet<object>,
+): void {
+  const record: EagerObservationRecord = {
+    next: ReflectApply(WeakMapGet, EAGER_OBSERVATION_RECORDS, [promise]) as
+      | EagerObservationRecord
+      | undefined,
+    observed: false,
+  };
+  ReflectApply(WeakMapSet, EAGER_OBSERVATION_RECORDS, [promise, record]);
+  observeContinuationRejection(
+    promise,
+    onRejection,
+    () => record.observed,
+    suppressedInvalidErrors,
+  );
+}
+
+function markContinuationObserved(promise: Promise<unknown>): void {
+  ReflectApply(WeakSetAdd, OBSERVED_CONTINUATIONS, [promise]);
+  let record = ReflectApply(WeakMapGet, EAGER_OBSERVATION_RECORDS, [promise]) as
+    | EagerObservationRecord
+    | undefined;
+  while (record) {
+    record.observed = true;
+    record = record.next;
+  }
+}
+
 class ObservedContinuationPromise<T> extends Promise<T> {
   constructor(
     executor: ContinuationExecutor<T>,
@@ -76,7 +118,7 @@ class ObservedContinuationPromise<T> extends Promise<T> {
     onFulfilled?: ContinuationThenHandler<T, TResult1>,
     onRejected?: ContinuationThenHandler<unknown, TResult2>,
   ): Promise<TResult1 | TResult2> {
-    ReflectApply(WeakSetAdd, OBSERVED_CONTINUATIONS, [this]);
+    markContinuationObserved(this);
     const derived = super.then(onFulfilled, onRejected);
     if (this.onRejection) {
       const observedDerived = derived as ObservedContinuationPromise<TResult1 | TResult2>;
@@ -108,23 +150,14 @@ function trackEagerContinuation<T>(
   onRejection: ContinuationRejectionHandler,
   suppressedInvalidErrors = new IntrinsicWeakSet<object>(),
 ): Promise<T> {
-  if (ReflectApply(WeakSetHas, TRACKED_CONTINUATIONS, [promise]) as boolean) {
-    return createObservedContinuation<T>(
-      (resolve, reject) => {
-        void ReflectApply(PromiseThen, promise, [resolve, reject]);
-      },
-      onRejection,
-      suppressedInvalidErrors,
-    );
-  }
+  registerEagerObservation(promise, onRejection, suppressedInvalidErrors);
+  if (ReflectApply(WeakSetHas, TRACKED_CONTINUATIONS, [promise]) as boolean) return promise;
   if (!isNativePromiseWithoutHooks(promise) || !ObjectIsExtensible(promise)) {
-    observeContinuationRejection(promise);
     return promise;
   }
   const ownThen = ObjectGetOwnPropertyDescriptor(promise, "then");
   const ownConstructor = ObjectGetOwnPropertyDescriptor(promise, "constructor");
   if (ownThen?.configurable === false || ownConstructor?.configurable === false) {
-    observeContinuationRejection(promise);
     return promise;
   }
   ReflectApply(WeakSetAdd, TRACKED_CONTINUATIONS, [promise]);
@@ -133,7 +166,7 @@ function trackEagerContinuation<T>(
     onFulfilled?: ContinuationThenHandler<T, TResult1>,
     onRejected?: ContinuationThenHandler<unknown, TResult2>,
   ): Promise<TResult1 | TResult2> {
-    ReflectApply(WeakSetAdd, OBSERVED_CONTINUATIONS, [promise]);
+    markContinuationObserved(promise);
     const derived = ReflectApply(PromiseThen, promise, [onFulfilled, onRejected]) as Promise<
       TResult1 | TResult2
     >;
@@ -153,12 +186,6 @@ function trackEagerContinuation<T>(
     value: CONTINUATION_SPECIES_HOLDER,
     writable: false,
   });
-  observeContinuationRejection(
-    promise,
-    onRejection,
-    () => ReflectApply(WeakSetHas, OBSERVED_CONTINUATIONS, [promise]) as boolean,
-    suppressedInvalidErrors,
-  );
   return promise;
 }
 
@@ -225,21 +252,28 @@ function adoptContinuationResult(
 function adoptMiddlewareResult(
   result: Promise<AgentResponse>,
   onSettled: () => void,
+  beginAdoption: () => void,
+  endAdoption: () => void,
 ): Promise<AgentResponse> {
   if (ReflectApply(WeakSetHas, TRACKED_CONTINUATIONS, [result]) as boolean) {
-    ReflectApply(WeakSetAdd, OBSERVED_CONTINUATIONS, [result]);
+    markContinuationObserved(result);
   }
   return new IntrinsicPromise((resolve, reject) => {
-    void ReflectApply(PromiseThen, result, [
-      (value: AgentResponse) => {
-        onSettled();
-        resolve(value);
-      },
-      (error: unknown) => {
-        onSettled();
-        reject(error);
-      },
-    ]);
+    beginAdoption();
+    try {
+      void ReflectApply(PromiseThen, result, [
+        (value: AgentResponse) => {
+          onSettled();
+          resolve(value);
+        },
+        (error: unknown) => {
+          onSettled();
+          reject(error);
+        },
+      ]);
+    } finally {
+      endAdoption();
+    }
   });
 }
 
@@ -400,7 +434,8 @@ function createDeferredContinuation(
   const suppressedInvalidErrors = new IntrinsicWeakSet<object>();
   const continuation = createObservedContinuation<AgentResponse>(
     (resolve, reject) => {
-      void Promise.resolve().then(() => {
+      const schedulingPromise = ReflectApply(PromiseResolve, IntrinsicPromise, []);
+      const scheduled = ReflectApply(PromiseThen, schedulingPromise, [() => {
         if (isSettled()) {
           const error = createInvalidContinuationError();
           ReflectApply(WeakSetAdd, suppressedInvalidErrors, [error]);
@@ -408,7 +443,8 @@ function createDeferredContinuation(
           return;
         }
         adoptContinuationResult(dispatch, resolve, reject, continuation);
-      }).catch(reject);
+      }]);
+      void ReflectApply(PromiseThen, scheduled, [undefined, reject]);
     },
     onUnexpectedRejection,
     suppressedInvalidErrors,
@@ -418,6 +454,8 @@ function createDeferredContinuation(
 
 interface MiddlewareContinuation {
   next: () => Promise<AgentResponse>;
+  beginAdoption: () => void;
+  endAdoption: () => void;
   finishInvocation: () => void;
   settle: () => void;
 }
@@ -427,6 +465,7 @@ function createMiddlewareContinuation(
 ): MiddlewareContinuation {
   let nextCalled = false;
   let middlewareInvoking = true;
+  let middlewareAdopting = false;
   let middlewareSettled = false;
 
   const reportContinuationFailure = (error: unknown, isObserved: () => boolean): void => {
@@ -442,7 +481,7 @@ function createMiddlewareContinuation(
   };
 
   const next = (): Promise<AgentResponse> => {
-    if (nextCalled || middlewareSettled) {
+    if (nextCalled || middlewareAdopting || middlewareSettled) {
       return rejectInvalidContinuation(reportContinuationFailure);
     }
     nextCalled = true;
@@ -462,6 +501,12 @@ function createMiddlewareContinuation(
 
   return {
     next,
+    beginAdoption: () => {
+      middlewareAdopting = true;
+    },
+    endAdoption: () => {
+      middlewareAdopting = false;
+    },
     finishInvocation: () => {
       middlewareInvoking = false;
     },
@@ -502,7 +547,12 @@ export class MiddlewareChain {
               try {
                 middlewareResult = currentMiddleware(context, continuation.next);
                 continuation.finishInvocation();
-                return await adoptMiddlewareResult(middlewareResult, continuation.settle);
+                return await adoptMiddlewareResult(
+                  middlewareResult,
+                  continuation.settle,
+                  continuation.beginAdoption,
+                  continuation.endAdoption,
+                );
               } finally {
                 continuation.settle();
               }
