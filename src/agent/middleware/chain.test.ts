@@ -327,7 +327,7 @@ describe("agent/middleware/chain", () => {
 
   it("reports a detached deferred downstream rejection", async () => {
     const downstreamError = new Error(
-      "ENOENT: /Users/alice/private/customer-data.txt C:\\Users\\Bob\\secrets.txt",
+      "ENOENT: <REDACTED>/private/customer-data.txt <REDACTED>\\secrets.txt",
     );
     const records: LogEntry[] = [];
     const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
@@ -466,6 +466,38 @@ describe("agent/middleware/chain", () => {
       response,
     );
     assertEquals(finallyCalls, 1);
+  });
+
+  it("reports discarded derived continuation rejections", async () => {
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+    try {
+      const thenChain = new MiddlewareChain([
+        (_context, next) => {
+          next().then(() => response);
+          return Promise.resolve(response);
+        },
+      ]);
+      await thenChain.execute(context, () => Promise.reject(new Error("then failed")));
+
+      const finallyChain = new MiddlewareChain([
+        (_context, next) => {
+          next().finally(() => undefined);
+          return Promise.resolve(response);
+        },
+      ]);
+      await finallyChain.execute(context, () => Promise.reject(new Error("finally failed")));
+      await Promise.resolve();
+      await Promise.resolve();
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(
+      records.filter((entry) => entry.message === "Your agent middleware continuation failed")
+        .length,
+      2,
+    );
   });
 
   it("invokes the final handler for an empty middleware chain", async () => {

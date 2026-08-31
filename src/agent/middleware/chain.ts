@@ -13,37 +13,62 @@ type ContinuationThenHandler<T, R> =
   | null
   | undefined;
 
-type ContinuationExecutor = (
-  resolve: (value: AgentResponse | PromiseLike<AgentResponse>) => void,
+type ContinuationExecutor<T> = (
+  resolve: (value: T | PromiseLike<T>) => void,
   reject: (reason?: unknown) => void,
 ) => void;
 
-class ObservedContinuationPromise extends Promise<AgentResponse> {
+type ContinuationRejectionHandler = (
+  error: unknown,
+  isObserved: () => boolean,
+) => void;
+
+class ObservedContinuationPromise<T> extends Promise<T> {
   static override get [Symbol.species](): PromiseConstructor {
     return Promise;
   }
 
   constructor(
-    executor: ContinuationExecutor,
+    executor: ContinuationExecutor<T>,
     private readonly onObserved: () => void,
+    private readonly onRejection?: ContinuationRejectionHandler,
   ) {
     super(executor);
   }
 
-  override then<TResult1 = AgentResponse, TResult2 = never>( // NOSONAR: tracks Promise observation for detached-error diagnostics.
-    onFulfilled?: ContinuationThenHandler<AgentResponse, TResult1>,
+  override then<TResult1 = T, TResult2 = never>( // NOSONAR: tracks Promise observation for detached-error diagnostics.
+    onFulfilled?: ContinuationThenHandler<T, TResult1>,
     onRejected?: ContinuationThenHandler<unknown, TResult2>,
   ): Promise<TResult1 | TResult2> {
     this.onObserved();
-    return super.then(onFulfilled, onRejected);
+    const derived = super.then(onFulfilled, onRejected);
+    if (!this.onRejection) return derived;
+    return createObservedContinuation<TResult1 | TResult2>((resolve, reject) => {
+      void Promise.prototype.then.call(derived, resolve, reject);
+    }, this.onRejection);
   }
 }
 
-function createObservedContinuation(
-  executor: ContinuationExecutor,
-  onObserved: () => void,
-): Promise<AgentResponse> {
-  return new ObservedContinuationPromise(executor, onObserved);
+function createObservedContinuation<T>(
+  executor: ContinuationExecutor<T>,
+  onRejection?: ContinuationRejectionHandler,
+): Promise<T> {
+  let observed = false;
+  const continuation = new ObservedContinuationPromise<T>(
+    executor,
+    () => {
+      observed = true;
+    },
+    onRejection,
+  );
+  if (onRejection) {
+    observeContinuationRejection(
+      continuation,
+      onRejection,
+      () => observed,
+    );
+  }
+  return continuation;
 }
 
 function adoptContinuationResult(
@@ -70,12 +95,13 @@ function isAbortError(error: unknown): boolean {
 }
 
 function observeContinuationRejection(
-  promise: Promise<AgentResponse>,
-  onUnexpectedRejection?: (error: unknown) => void,
+  promise: Promise<unknown>,
+  onUnexpectedRejection?: ContinuationRejectionHandler,
+  isObserved: () => boolean = () => false,
 ): void {
   void Promise.prototype.then.call(promise, undefined, (error: unknown) => {
     if (isInvalidContinuationError(error) || isAbortError(error)) return;
-    onUnexpectedRejection?.(error);
+    onUnexpectedRejection?.(error, isObserved);
   });
 }
 
@@ -95,10 +121,9 @@ function rejectInvalidContinuation(): Promise<AgentResponse> {
 function createDeferredContinuation(
   isSettled: () => boolean,
   dispatch: () => Promise<AgentResponse>,
-  onUnexpectedRejection?: (error: unknown) => void,
-  onObserved?: () => void,
+  onUnexpectedRejection?: ContinuationRejectionHandler,
 ): Promise<AgentResponse> {
-  const continuation = createObservedContinuation((resolve, reject) => {
+  const continuation = createObservedContinuation<AgentResponse>((resolve, reject) => {
     void Promise.resolve().then(() => {
       if (isSettled()) {
         reject(createInvalidContinuationError());
@@ -106,8 +131,7 @@ function createDeferredContinuation(
       }
       adoptContinuationResult(dispatch, resolve, reject);
     }).catch(reject);
-  }, onObserved ?? (() => {}));
-  observeContinuationRejection(continuation, onUnexpectedRejection);
+  }, onUnexpectedRejection);
   return continuation;
 }
 
@@ -124,15 +148,16 @@ function createMiddlewareContinuation(
   let middlewareInvoking = true;
   let middlewareSettled = false;
   let middlewareSettlementError: unknown;
-  let continuationObserved = false;
-  let continuationRejection: { error: unknown } | undefined;
+  let continuationRejection:
+    | { error: unknown; isObserved: () => boolean }
+    | undefined;
 
-  const reportContinuationFailure = (error: unknown): void => {
+  const reportContinuationFailure = (error: unknown, isObserved: () => boolean): void => {
     if (!middlewareSettled) {
-      if (!continuationObserved) continuationRejection = { error };
+      if (!isObserved()) continuationRejection = { error, isObserved };
       return;
     }
-    if (continuationObserved || middlewareSettlementError === error) return;
+    if (isObserved() || middlewareSettlementError === error) return;
     reportDetachedContinuationFailure();
   };
 
@@ -145,18 +170,12 @@ function createMiddlewareContinuation(
         () => middlewareSettled,
         dispatch,
         reportContinuationFailure,
-        () => {
-          continuationObserved = true;
-        },
       );
     }
 
-    const continuation = createObservedContinuation((resolve, reject) => {
+    const continuation = createObservedContinuation<AgentResponse>((resolve, reject) => {
       adoptContinuationResult(dispatch, resolve, reject);
-    }, () => {
-      continuationObserved = true;
-    });
-    observeContinuationRejection(continuation, reportContinuationFailure);
+    }, reportContinuationFailure);
     return continuation;
   };
 
@@ -171,7 +190,7 @@ function createMiddlewareContinuation(
       middlewareSettlementError = error;
       const rejection = continuationRejection;
       continuationRejection = undefined;
-      if (rejection && !continuationObserved && middlewareSettlementError !== rejection.error) {
+      if (rejection && !rejection.isObserved() && middlewareSettlementError !== rejection.error) {
         reportDetachedContinuationFailure();
       }
     },
