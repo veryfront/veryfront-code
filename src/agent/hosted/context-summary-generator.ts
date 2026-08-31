@@ -227,7 +227,13 @@ export function createRunScopedVeryfrontCloudContextSummaryGenerator(
   createModelResolver: () => AgentModelRuntimeResolver | undefined,
 ): ContextSummaryGenerator {
   const { authToken, ...baseOptions } = options;
+  let used = false;
   return async (input) => {
+    if (used) {
+      throw new TypeError("Context compaction inference authority has already been used");
+    }
+    used = true;
+
     const resolveModelRuntime = createModelResolver();
     try {
       return await createVeryfrontCloudContextSummaryGenerator({

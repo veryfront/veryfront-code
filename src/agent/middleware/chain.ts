@@ -26,16 +26,20 @@ export class MiddlewareChain {
             async () => {
               let nextCalled = false;
               let middlewareSettled = false;
-              const next = (): Promise<AgentResponse> => {
+              const createReplayError = () =>
+                MIDDLEWARE_ERROR.create({
+                  detail:
+                    "Agent middleware next() can only be called once while middleware is active",
+                });
+              const next = async (): Promise<AgentResponse> => {
                 if (nextCalled || middlewareSettled) {
-                  return Promise.reject(
-                    MIDDLEWARE_ERROR.create({
-                      detail:
-                        "Agent middleware next() can only be called once while middleware is active",
-                    }),
-                  );
+                  throw createReplayError();
                 }
                 nextCalled = true;
+                await Promise.resolve();
+                if (middlewareSettled) {
+                  throw createReplayError();
+                }
                 return dispatch(middlewareIndex + 1);
               };
 

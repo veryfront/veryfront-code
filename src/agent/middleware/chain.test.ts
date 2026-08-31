@@ -1,8 +1,8 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
-import type { AgentContext, AgentResponse } from "../types.ts";
-import { MiddlewareChain } from "./chain.ts";
+import { MiddlewareChain } from "#veryfront/agent/middleware/chain.ts";
+import type { AgentContext, AgentResponse } from "#veryfront/agent/types.ts";
 
 const context = {} as AgentContext;
 const response = {} as AgentResponse;
@@ -48,6 +48,33 @@ describe("agent/middleware/chain", () => {
       response,
     );
     await assertRejects(() => retainedNext!(), Error, replayError);
+    assertEquals(finalHandlerCalls, 0);
+  });
+
+  it("rejects a pre-registered continuation reaction after middleware settles", async () => {
+    let replay: Promise<AgentResponse> | undefined;
+    let finalHandlerCalls = 0;
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        const selectedResponse = Promise.resolve(response);
+        selectedResponse.then(() => {
+          replay = next();
+        });
+        return selectedResponse;
+      },
+    ]);
+
+    assertEquals(
+      await chain.execute(context, () => {
+        finalHandlerCalls += 1;
+        return Promise.resolve(response);
+      }),
+      response,
+    );
+    if (!replay) {
+      throw new Error("Expected pre-registered continuation replay");
+    }
+    await assertRejects(() => replay!, Error, replayError);
     assertEquals(finalHandlerCalls, 0);
   });
 

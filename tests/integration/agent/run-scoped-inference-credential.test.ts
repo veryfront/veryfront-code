@@ -17,7 +17,6 @@ import {
   registerRuntimeInferenceCredential,
 } from "#veryfront/internal-agents/run-stream.ts";
 import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
-import type { AgentResponse } from "#veryfront/agent/types.ts";
 import {
   parseRuntimeAgentRunInvocationValue,
   RuntimeAgentRunInvocationSchema,
@@ -345,12 +344,7 @@ describe("run-scoped inference credential", () => {
     );
 
     const originalPublicStream = AgentRuntime.prototype.stream;
-    const runtimePrototype = AgentRuntime.prototype as unknown as {
-      executeAgentLoopStreaming?: (...args: unknown[]) => Promise<AgentResponse>;
-    };
-    const originalLoop = runtimePrototype.executeAgentLoopStreaming;
     let publicStreamCalls = 0;
-    let prototypeLoopCalls = 0;
 
     AgentRuntime.prototype.stream = function (
       ...args: Parameters<AgentRuntime["stream"]>
@@ -360,14 +354,6 @@ describe("run-scoped inference credential", () => {
         AgentRuntime["stream"]
       >;
     };
-    if (originalLoop) {
-      runtimePrototype.executeAgentLoopStreaming = function (
-        ...args: unknown[]
-      ): Promise<AgentResponse> {
-        prototypeLoopCalls += 1;
-        return Reflect.apply(originalLoop, this, args) as Promise<AgentResponse>;
-      };
-    }
 
     try {
       const runtimeAgent = createAgent({
@@ -392,11 +378,9 @@ describe("run-scoped inference credential", () => {
       await response.text();
     } finally {
       AgentRuntime.prototype.stream = originalPublicStream;
-      if (originalLoop) runtimePrototype.executeAgentLoopStreaming = originalLoop;
     }
 
     assertEquals(publicStreamCalls, 0);
-    assertEquals(prototypeLoopCalls, 0);
   });
 
   it("revokes retained run-scoped stream model capability after stream completion", async () => {
@@ -920,7 +904,7 @@ describe("run-scoped inference credential", () => {
         },
         () => privateModelResolver,
       );
-      const result = await generator({
+      const compactionInput = {
         messagesToSummarize: [{
           id: "message-1",
           role: "user",
@@ -928,7 +912,8 @@ describe("run-scoped inference credential", () => {
           parts: [{ type: "text", text: "Summarize this context." }],
         }],
         retainedMessages: [],
-      });
+      };
+      const result = await generator(compactionInput);
 
       assertEquals(result, { text: "summary" });
       assertEquals(capturedAuthorization, "Bearer run-scoped-inference-token");
@@ -944,6 +929,71 @@ describe("run-scoped inference credential", () => {
     } finally {
       unregister();
     }
+  });
+
+  it("rejects retained context compaction generator replay", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "broader-project-token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+    const capturedAuthorizations: string[] = [];
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedAuthorizations.push(request.headers.get("Authorization") ?? "");
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'data: {"choices":[{"delta":{"content":"summary"}}]}\n\n',
+                ),
+              );
+              controller.enqueue(
+                new TextEncoder().encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+              );
+              controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+    let resolverCreations = 0;
+    const generator = createRunScopedVeryfrontCloudContextSummaryGenerator(
+      {
+        apiUrl: "https://api.veryfront.com",
+        authToken: "broader-project-token",
+        model: "openai/gpt-test",
+        maxOutputTokens: 500,
+        maxInputTokens: 1_000,
+      },
+      () => {
+        resolverCreations += 1;
+        return createVeryfrontCloudInferenceModelResolver(
+          `run-scoped-inference-token-${resolverCreations}`,
+        );
+      },
+    );
+    const input = {
+      messagesToSummarize: [{
+        id: "message-1",
+        role: "user" as const,
+        timestamp: 1,
+        parts: [{ type: "text" as const, text: "Summarize this context." }],
+      }],
+      retainedMessages: [],
+    };
+
+    const result = await generator(input);
+    assertEquals(result, { text: "summary" });
+    await assertRejects(
+      async () => await generator(input),
+      TypeError,
+      "Context compaction inference authority has already been used",
+    );
+
+    assertEquals(resolverCreations, 1);
+    assertEquals(capturedAuthorizations, ["Bearer run-scoped-inference-token-1"]);
   });
 
   it("revokes context compaction authority when summary generation fails", async () => {

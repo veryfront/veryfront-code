@@ -1757,6 +1757,7 @@ export class AgentRuntime {
           // an unhandled rejection, then abort. Guard the abort itself so a
           // synchronous signal-abort rejection can never escape here (#2334).
           inFlight?.catch(() => {});
+          revokeModelRuntimeResolver(resolveModelRuntime);
           try {
             streamAbortController.abort(reason);
           } catch {

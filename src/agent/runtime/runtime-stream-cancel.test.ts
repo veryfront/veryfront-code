@@ -6,7 +6,12 @@ import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/log
 import { tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { agent } from "../index.ts";
+import { AgentRuntime } from "./index.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
+import {
+  type AgentModelRuntimeResolver,
+  registerModelRuntimeResolverRevoker,
+} from "./model-transport.ts";
 
 /**
  * Regression coverage for #2334: cancelling an in-flight agent run must be
@@ -87,6 +92,52 @@ function settleAbortedRun(): Promise<void> {
 }
 
 describe("agent runtime stream cancellation (#2334)", () => {
+  it("revokes run-scoped model authority before dispatching cancellation abort", async () => {
+    const model = scriptedModel([
+      { hangUntilAbort: true, parts: [{ type: "text-delta", text: "thinking" }] },
+    ], { modelId: "veryfront-cloud/openai/cancel-lease-model", only: "stream" });
+    let resolverActive = true;
+    const resolver: AgentModelRuntimeResolver = () => resolverActive ? model : undefined;
+    registerModelRuntimeResolverRevoker(resolver, () => {
+      resolverActive = false;
+    });
+    const runtime = new AgentRuntime(
+      "cancel-lease-runtime",
+      {
+        model: "veryfront-cloud/openai/cancel-lease-model",
+        system: "cancel lease test",
+        maxSteps: 1,
+      },
+      {
+        resolveModelRuntime: resolver,
+      },
+    );
+
+    const stream = await runtime.stream([{
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "Hello" }],
+    }]);
+    const reader = stream.getReader();
+    const first = await reader.read();
+    assertEquals(first.done, false, "the model call must be in flight before cancelling");
+    await waitFor(
+      () => model.calls[0]?.abortSignal !== undefined,
+      { message: "the model call must expose its abort signal before cancelling" },
+    );
+    const signal = model.calls[0]?.abortSignal;
+    assert(signal !== undefined, "expected the model call abort signal");
+    let replayedDuringAbort: unknown;
+    signal.addEventListener("abort", () => {
+      replayedDuringAbort = resolver("veryfront-cloud/openai/cancel-lease-model");
+    }, { once: true });
+
+    await reader.cancel(new DOMException("client disconnected", "AbortError"));
+
+    assertEquals(replayedDuringAbort, undefined);
+    assertEquals(resolverActive, false);
+  });
+
   it("cancelling a model-streaming run does not raise an unhandled AbortError", async () => {
     // The model stream stays open until the run is aborted, then rejects its
     // pending read with the abort reason — mirroring a real provider fetch body.
