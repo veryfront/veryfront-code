@@ -77,7 +77,7 @@ function createDeferredContinuation(
       start();
       return continuationPromise.finally(onFinally);
     },
-  } as unknown as Promise<AgentResponse>;
+  } as Promise<AgentResponse>;
 
   return deferredContinuation;
 }
