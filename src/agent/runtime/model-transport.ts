@@ -29,7 +29,10 @@ const AbortControllerAbort = AbortController.prototype.abort;
 const EventTargetAddEventListener = EventTarget.prototype.addEventListener;
 const EventTargetRemoveEventListener = EventTarget.prototype.removeEventListener;
 
-function captureIntrinsicGetter<T>(prototype: object, property: string): () => T {
+function captureIntrinsicGetter<T>(
+  prototype: AbortController | AbortSignal,
+  property: "signal" | "aborted" | "reason",
+): () => T {
   const getter = IntrinsicObjectGetOwnPropertyDescriptor(prototype, property)?.get;
   if (!getter) throw new TypeError(`Abort intrinsic ${property} is unavailable`);
   return getter;
