@@ -7,15 +7,13 @@ export async function POST(
   const body = await request.json().catch(() => ({})) as {
     input?: { topic?: string };
   };
-  const run = startDemoWorkflowRun(context.params.workflowId, body.input);
+  const workflowId = context.params.workflowId;
+  if (!workflowId) {
+    return Response.json({ message: "Workflow ID is required" }, { status: 400 });
+  }
+  const run = startDemoWorkflowRun(workflowId, body.input);
 
   return Response.json({
-    success: true,
     runId: run.id,
-    id: run.id,
-    workflowId: run.workflowId,
-    status: run.status,
-    input: run.input,
-    createdAt: run.createdAt,
   });
 }

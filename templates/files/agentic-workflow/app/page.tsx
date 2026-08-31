@@ -6,16 +6,9 @@ import { useWorkflowStart, useWorkflowList } from 'veryfront/workflow'
 const STATUS_STYLES: Record<string, string> = {
   running: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
   completed: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
-  waiting_for_approval: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+  waiting: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
   failed: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
   pending: 'bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400',
-}
-
-/** A run's input is workflow-defined, so narrow it before reading `topic`. */
-function topicOf(input: unknown): string {
-  return typeof input === 'object' && input !== null && 'topic' in input
-    ? String((input as { topic: unknown }).topic)
-    : ''
 }
 
 export default function WorkflowDashboard(): React.JSX.Element {
@@ -79,7 +72,7 @@ export default function WorkflowDashboard(): React.JSX.Element {
                 >
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="font-medium text-neutral-900 dark:text-white text-sm">{topicOf(wf.input) || 'Untitled'}</p>
+                      <p className="font-medium text-neutral-900 dark:text-white text-sm">{wf.workflowId}</p>
                       <p className="text-xs text-neutral-500 mt-1">{new Date(wf.createdAt).toLocaleString()}</p>
                     </div>
                     <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${STATUS_STYLES[wf.status] || STATUS_STYLES.pending}`}>

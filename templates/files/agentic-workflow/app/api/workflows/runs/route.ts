@@ -1,4 +1,7 @@
-import { listDemoWorkflowRuns } from "../sample-runs.ts";
+import {
+  listDemoWorkflowRuns,
+  projectDemoWorkflowRunSummary,
+} from "../sample-runs.ts";
 
 export function GET(request: Request): Response {
   const url = new URL(request.url);
@@ -8,7 +11,7 @@ export function GET(request: Request): Response {
   const runs = listDemoWorkflowRuns({ workflowId, limit });
 
   return Response.json({
-    runs,
+    runs: runs.map(projectDemoWorkflowRunSummary),
     totalCount: runs.length,
   });
 }

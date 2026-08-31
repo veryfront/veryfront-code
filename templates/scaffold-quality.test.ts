@@ -26,7 +26,7 @@
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { exists, makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
+import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import { fromFileUrl, join } from "#veryfront/compat/path/index.ts";
 import { walk } from "#std/fs.ts";
 import { runCommand } from "#veryfront/compat/process.ts";
@@ -97,22 +97,30 @@ async function lintScaffold(projectDir: string): Promise<string[]> {
  */
 const REPO_CONFIG = fromFileUrl(new URL("../deno.json", import.meta.url));
 
-/** Server-side template code: agents, tools, workflows and evals. */
+/**
+ * Framework definitions outside the client app.
+ *
+ * Discover files instead of maintaining a directory allowlist, so agents,
+ * evals, integrations, prompts, resources, schedules, skills, tasks, tools,
+ * triggers, webhooks, workflows, and future definition roots stay covered.
+ */
 async function serverSourceFiles(projectDir: string): Promise<string[]> {
   const files: string[] = [];
-  for (const directory of ["agents", "tools", "workflows", "evals"]) {
-    const root = join(projectDir, directory);
-    if (!await exists(root)) continue;
-    for await (const entry of walk(root, { includeDirs: false, exts: [".ts"] })) {
-      files.push(entry.path);
-    }
+  for await (
+    const entry of walk(projectDir, {
+      includeDirs: false,
+      exts: [".ts", ".tsx"],
+    })
+  ) {
+    const relativePath = entry.path.slice(projectDir.length + 1).replaceAll("\\", "/");
+    if (relativePath.startsWith("app/")) continue;
+    files.push(entry.path);
   }
   return files.sort();
 }
 
-/** Type-check a scaffold's server code against the framework declarations. */
-async function typeCheckScaffold(projectDir: string): Promise<string> {
-  const files = await serverSourceFiles(projectDir);
+/** Type-check source files against the framework declarations. */
+async function typeCheckFiles(projectDir: string, files: string[]): Promise<string> {
   if (files.length === 0) return "";
 
   const result = await runCommand("deno", {
@@ -122,6 +130,26 @@ async function typeCheckScaffold(projectDir: string): Promise<string> {
   });
 
   return result.code === 0 ? "" : (result.stderr ?? result.stdout ?? "type check failed");
+}
+
+/** Type-check a scaffold's server code against the framework declarations. */
+async function typeCheckScaffold(projectDir: string): Promise<string> {
+  return await typeCheckFiles(projectDir, await serverSourceFiles(projectDir));
+}
+
+/** Client and route code shipped by the agentic workflow starter. */
+async function agenticWorkflowAppFiles(projectDir: string): Promise<string[]> {
+  const files: string[] = [];
+  for await (
+    const entry of walk(join(projectDir, "app"), {
+      includeDirs: false,
+      exts: [".ts", ".tsx"],
+    })
+  ) {
+    files.push(entry.path);
+  }
+  files.push(join(projectDir, "globals.d.ts"));
+  return files.sort();
 }
 
 describe("scaffolded starter templates", () => {
@@ -157,4 +185,18 @@ describe("scaffolded starter templates", () => {
       }
     });
   }
+
+  it("type-checks the agentic workflow app against workflow hook contracts", async () => {
+    const projectDir = await makeTempDir({ prefix: "veryfront-types-agentic-workflow-app-" });
+    try {
+      await scaffold("agentic-workflow", projectDir);
+      assertEquals(
+        await typeCheckFiles(projectDir, await agenticWorkflowAppFiles(projectDir)),
+        "",
+        "the agentic workflow app must use the public workflow hook response types",
+      );
+    } finally {
+      await remove(projectDir, { recursive: true }).catch(() => {});
+    }
+  });
 });
