@@ -4,7 +4,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { WorkflowRun } from "#veryfront/workflow/types.ts";
 
-import { projectWorkflowRunSummary } from "./run-summary.ts";
+import { projectWorkflowRunSummary } from "#veryfront/workflow/http/run-summary.ts";
 
 describe("projectWorkflowRunSummary", () => {
   it("allowlists operational fields without reading or mutating run payloads", () => {

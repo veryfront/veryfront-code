@@ -20,4 +20,4 @@ export type {
   WorkflowApprovalSummary,
   WorkflowNodeStateSummary,
   WorkflowRunSummary,
-} from "../http/run-summary.ts";
+} from "#veryfront/workflow/http/run-summary.ts";

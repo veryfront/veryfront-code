@@ -139,16 +139,19 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
             totalCount?: number;
           }
           | WorkflowRunSummary[];
-        const fetchedRuns = Array.isArray(data) ? data : data.runs ?? [];
-        const nextCursor = Array.isArray(data) ? undefined : data.cursor;
-        const total = Array.isArray(data) ? undefined : data.totalCount;
+        const isBareArray = Array.isArray(data);
+        const fetchedRuns = isBareArray ? data : data.runs ?? [];
+        const nextCursor = isBareArray ? undefined : data.cursor;
+        const total = isBareArray ? undefined : data.totalCount;
 
         if (!isCurrentRequest(request)) return request;
 
         setDataAuthorizationContext(authorizationContext);
         setRuns((prev) => (append ? [...prev, ...fetchedRuns] : fetchedRuns));
         setCursor(nextCursor);
-        setHasMore(Boolean(nextCursor) || fetchedRuns.length === filter.limit);
+        setHasMore(
+          !isBareArray && (Boolean(nextCursor) || fetchedRuns.length === filter.limit),
+        );
         setTotalCount(total);
         setError(null);
       } catch (err) {

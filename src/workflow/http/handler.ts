@@ -29,12 +29,15 @@
 
 import { isVeryfrontError } from "#veryfront/errors";
 import { logger as baseLogger } from "#veryfront/utils";
-import type { WorkflowClient } from "../api/index.ts";
-import { ApprovalDecisionSchema, RunFilterSchema } from "../schemas/index.ts";
-import { isTerminalRunStatus, type WorkflowRunEventObservation } from "../events.ts";
-import type { ApprovalDecision, RunFilter } from "../types.ts";
-import { DEFAULT_WORKFLOW_RUN_LIST_LIMIT } from "../limits.ts";
-import { projectWorkflowRunSummary } from "./run-summary.ts";
+import type { WorkflowClient } from "#veryfront/workflow/api/index.ts";
+import { ApprovalDecisionSchema, RunFilterSchema } from "#veryfront/workflow/schemas/index.ts";
+import {
+  isTerminalRunStatus,
+  type WorkflowRunEventObservation,
+} from "#veryfront/workflow/events.ts";
+import type { ApprovalDecision, RunFilter } from "#veryfront/workflow/types.ts";
+import { DEFAULT_WORKFLOW_RUN_LIST_LIMIT } from "#veryfront/workflow/limits.ts";
+import { projectWorkflowRunSummary } from "#veryfront/workflow/http/run-summary.ts";
 
 /** Options for {@linkcode createWorkflowHandler}. */
 export interface WorkflowHandlerOptions {

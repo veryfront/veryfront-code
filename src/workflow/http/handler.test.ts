@@ -4,7 +4,7 @@ import { delay } from "#std/async.ts";
 import { expect } from "#std/expect.ts";
 
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import type { Tool } from "#veryfront/tool";
@@ -288,9 +288,9 @@ describe("createWorkflowHandler", () => {
 
     const run = await response.json() as Record<string, unknown>;
     expect(run.id).toBe(runId);
-    expect(run.input).toBeUndefined();
-    expect(run.output).toBeUndefined();
-    expect(run.context).toBeUndefined();
+    assertEquals(run.input, undefined);
+    assertEquals(run.output, undefined);
+    assertEquals(run.context, undefined);
     expect(run._tenant).toBeUndefined();
     // Trace identity names internal infrastructure and belongs to telemetry,
     // not to anyone polling a run.
@@ -298,13 +298,13 @@ describe("createWorkflowHandler", () => {
     expect(run.workerId).toBeUndefined();
     expect(run.heartbeatAt).toBeUndefined();
     expect(run.checkpoints).toBeUndefined();
-    expect(run.sourceIntegrationPolicy).toBeUndefined();
+    assertEquals(run.sourceIntegrationPolicy, undefined);
     // useWorkflow derives status, progress and approvals from exactly these.
     expect(run.status).toBeDefined();
     expect(run.nodeStates).toBeDefined();
-    expect(run.currentNodes).toBeDefined();
-    expect(run.pendingApprovals).toBeDefined();
-    expect(typeof run.createdAt).toBe("string");
+    assertExists(run.currentNodes);
+    assertExists(run.pendingApprovals);
+    assertEquals(typeof run.createdAt, "string");
   });
 
   it("uses the approvals hydrated by the run read", async () => {
@@ -362,8 +362,8 @@ describe("createWorkflowHandler", () => {
 
     const response = await handlers.GET(get("/api/workflows/runs"));
 
-    expect(response.status).toBe(200);
-    expect(receivedFilter).toEqual({ limit: 100 });
+    assertEquals(response.status, 200);
+    assertEquals(receivedFilter, { limit: 100 });
   });
 
   it("pages runs with the cursor useWorkflowList round-trips", async () => {
@@ -811,9 +811,9 @@ describe("createWorkflowHandler", () => {
       const listText = await listResponse.text();
       const snapshotText = await snapshotResponse.text();
 
-      expect(detailText).not.toContain(privateMarker);
-      expect(listText).not.toContain(privateMarker);
-      expect(snapshotText).not.toContain(privateMarker);
+      assertEquals(detailText.includes(privateMarker), false);
+      assertEquals(listText.includes(privateMarker), false);
+      assertEquals(snapshotText.includes(privateMarker), false);
 
       const detail = JSON.parse(detailText) as Record<string, unknown>;
       const list = JSON.parse(listText) as { runs: Array<Record<string, unknown>> };
@@ -821,9 +821,9 @@ describe("createWorkflowHandler", () => {
       if (!snapshotData) throw new Error("expected an SSE snapshot frame");
       const snapshot = JSON.parse(snapshotData) as Record<string, unknown>;
 
-      expect(list.runs).toEqual([detail]);
-      expect(snapshot).toEqual(detail);
-      expect(detail).toEqual({
+      assertEquals(list.runs, [detail]);
+      assertEquals(snapshot, detail);
+      assertEquals(detail, {
         id: runId,
         workflowId: persisted.workflowId,
         version: "v1",
@@ -863,9 +863,9 @@ describe("createWorkflowHandler", () => {
         error: { message: "Operational run failure", nodeId: "__proto__" },
       });
 
-      expect(exposedRun.input).toEqual({ privateMarker });
-      expect(exposedRun.pendingApprovals[0]?.payload).toEqual({ privateMarker });
-      expect(exposedRun.nodeStates.__proto__?.output).toEqual({ privateMarker });
+      assertEquals(exposedRun.input, { privateMarker });
+      assertEquals(exposedRun.pendingApprovals[0]?.payload, { privateMarker });
+      assertEquals(exposedRun.nodeStates.__proto__?.output, { privateMarker });
     });
 
     it("bounds the number of active event streams and releases cancelled streams", async () => {
