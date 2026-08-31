@@ -1484,6 +1484,7 @@ export class AgentRuntime {
     },
   ): Promise<AgentResponse> {
     const runRuntimeContext = captureAgentRunRuntimeContext();
+    if (this.#modelResolverState.status === "absent") throwIfAborted(abortSignal);
     const { transport, resolveModelRuntime } = await this.#resolveModelTransport(
       context,
       modelOverride,
@@ -1606,6 +1607,7 @@ export class AgentRuntime {
       "run.started_at_utc": runRuntimeContext.runStartedAtUtc,
       "run.current_date_utc": runRuntimeContext.currentDateUtc,
     });
+    if (this.#modelResolverState.status === "absent") throwIfAborted(abortSignal);
     const { transport, resolveModelRuntime } = await this.#resolveModelTransport(
       context,
       modelOverride,
