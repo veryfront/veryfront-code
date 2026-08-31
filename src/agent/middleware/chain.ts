@@ -25,43 +25,87 @@ function rejectInvalidContinuation(): Promise<AgentResponse> {
 function createDeferredContinuation(
   isSettled: () => boolean,
   dispatch: () => Promise<AgentResponse>,
+  middlewareResult: Promise<AgentResponse>,
 ): Promise<AgentResponse> {
-  const deferredContinuation = new Promise<AgentResponse>((resolve, reject) => {
-    queueMicrotask(() => {
-      queueMicrotask(() => {
-        void Promise.resolve()
-          .then(() => {
-            if (isSettled()) throw createInvalidContinuationError();
-            return dispatch();
-          })
-          .then(resolve, reject);
-      });
-    });
+  let started = false;
+  let resolveContinuation: (response: AgentResponse) => void = () => {};
+  let rejectContinuation: (error: unknown) => void = () => {};
+  const continuationPromise = new Promise<AgentResponse>((resolve, reject) => {
+    resolveContinuation = resolve;
+    rejectContinuation = reject;
   });
-  consumeRejectedPromise(deferredContinuation);
+
+  const start = (): void => {
+    if (started) return;
+    started = true;
+    if (isSettled()) {
+      rejectContinuation(createInvalidContinuationError());
+      return;
+    }
+
+    let dispatched: Promise<AgentResponse>;
+    try {
+      dispatched = dispatch();
+    } catch (error) {
+      rejectContinuation(error);
+      return;
+    }
+    void dispatched.then(resolveContinuation, rejectContinuation);
+  };
+
+  void middlewareResult.then(
+    () => {
+      if (!started) rejectContinuation(createInvalidContinuationError());
+    },
+    () => {
+      if (!started) rejectContinuation(createInvalidContinuationError());
+    },
+  );
+  consumeRejectedPromise(continuationPromise);
+
+  const then: typeof continuationPromise.then = (onFulfilled, onRejected) => {
+    start();
+    return continuationPromise.then(onFulfilled, onRejected);
+  };
+  const deferredContinuation = {
+    then,
+    catch: (onRejected: Parameters<typeof continuationPromise.catch>[0]) => {
+      start();
+      return continuationPromise.catch(onRejected);
+    },
+    finally: (onFinally: Parameters<typeof continuationPromise.finally>[0]) => {
+      start();
+      return continuationPromise.finally(onFinally);
+    },
+  } as unknown as Promise<AgentResponse>;
+
   return deferredContinuation;
 }
 
 interface MiddlewareContinuation {
   next: () => Promise<AgentResponse>;
-  finishInvocation: () => void;
+  finishInvocation: (result: Promise<AgentResponse>) => void;
   settle: () => void;
 }
 
 function createMiddlewareContinuation(
   dispatch: () => Promise<AgentResponse>,
-  deferPostInvocation: boolean,
 ): MiddlewareContinuation {
   let nextCalled = false;
   let middlewareInvoking = true;
   let middlewareSettled = false;
+  let middlewareResult: Promise<AgentResponse> | undefined;
 
   const next = (): Promise<AgentResponse> => {
     if (nextCalled || middlewareSettled) return rejectInvalidContinuation();
     nextCalled = true;
 
-    if (!middlewareInvoking && deferPostInvocation) {
-      return createDeferredContinuation(() => middlewareSettled, dispatch);
+    if (!middlewareInvoking) {
+      return createDeferredContinuation(
+        () => middlewareSettled,
+        dispatch,
+        middlewareResult!,
+      );
     }
 
     return dispatch();
@@ -69,8 +113,9 @@ function createMiddlewareContinuation(
 
   return {
     next,
-    finishInvocation: () => {
+    finishInvocation: (result) => {
       middlewareInvoking = false;
+      middlewareResult = result;
     },
     settle: () => {
       middlewareInvoking = false;
@@ -103,12 +148,11 @@ export class MiddlewareChain {
             async () => {
               const continuation = createMiddlewareContinuation(
                 () => dispatch(middlewareIndex + 1),
-                currentMiddleware.constructor.name !== "AsyncFunction",
               );
 
               try {
                 const result = currentMiddleware(context, continuation.next);
-                continuation.finishInvocation();
+                continuation.finishInvocation(result);
                 return await result;
               } finally {
                 continuation.settle();

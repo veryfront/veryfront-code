@@ -224,6 +224,29 @@ describe("agent/middleware/chain", () => {
     assertEquals(finalHandlerCalls, 1);
   });
 
+  it("rejects a queued continuation before an async middleware settles", async () => {
+    let queuedNext: Promise<AgentResponse> | undefined;
+    let finalHandlerCalls = 0;
+    const chain = new MiddlewareChain([
+      async (_context, next) => {
+        queueMicrotask(() => {
+          queuedNext = next();
+        });
+        return response;
+      },
+    ]);
+
+    assertEquals(
+      await chain.execute(context, () => {
+        finalHandlerCalls += 1;
+        return Promise.resolve(response);
+      }),
+      response,
+    );
+    await assertRejects(() => queuedNext!, VeryfrontError, replayError);
+    assertEquals(finalHandlerCalls, 0);
+  });
+
   it("propagates downstream rejection through an awaited continuation", async () => {
     let observedError: unknown;
     const downstreamError = new Error("downstream failed");
