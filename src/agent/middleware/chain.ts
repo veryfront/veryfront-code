@@ -12,9 +12,17 @@ const INVALID_CONTINUATION_MESSAGE =
   "You must call agent middleware next() at most once while the middleware is active";
 const DETACHED_CONTINUATION_FAILURE = "downstream continuation rejected";
 const INVALID_CONTINUATION_ERRORS = new WeakSet<object>();
+const INVALID_CONTINUATION_MARKER = Symbol.for(
+  "veryfront.agent.middleware.invalid-continuation",
+);
 const DOM_EXCEPTION_NAME_GETTER = typeof DOMException === "function"
   ? Object.getOwnPropertyDescriptor(DOMException.prototype, "name")?.get
   : undefined;
+const PROMISE_SPECIES_SUPPORTED = (() => {
+  class SpeciesProbe extends Promise<void> {}
+  const probe = new SpeciesProbe((resolve) => resolve(undefined));
+  return probe.then() instanceof SpeciesProbe;
+})();
 
 type ContinuationThenHandler<T, R> =
   | ((value: T) => R | PromiseLike<R>)
@@ -47,7 +55,7 @@ class ObservedContinuationPromise<T> extends Promise<T> {
   ): Promise<TResult1 | TResult2> {
     this.observed = true;
     const derived = super.then(onFulfilled, onRejected);
-    if (this.onRejection) {
+    if (this.onRejection && PROMISE_SPECIES_SUPPORTED) {
       const observedDerived = derived as ObservedContinuationPromise<TResult1 | TResult2>;
       observeContinuationRejection(
         derived,
@@ -74,6 +82,13 @@ function createObservedContinuation<T>(
 ): Promise<T> {
   const continuation = new ObservedContinuationPromise<T>(executor, onRejection);
   if (onRejection) {
+    observeContinuationRejection(
+      continuation,
+      onRejection,
+      () => continuation.isObserved(),
+    );
+    if (!PROMISE_SPECIES_SUPPORTED) return continuation;
+
     const DerivedContinuationPromise = class extends ObservedContinuationPromise<T> {
       static override get [Symbol.species](): PromiseConstructor {
         return this as PromiseConstructor;
@@ -90,11 +105,6 @@ function createObservedContinuation<T>(
     // per-continuation constructor. If a future engine removes that hook, the
     // guarded isObserved() fallback reports the rejection instead of hiding it.
     // NOTE: Revisit this fallback if Promise species semantics change.
-    observeContinuationRejection(
-      continuation,
-      onRejection,
-      () => continuation.isObserved(),
-    );
   }
   return continuation;
 }
@@ -116,11 +126,23 @@ function adoptContinuationResult(
 function createInvalidContinuationError() {
   const error = MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE });
   INVALID_CONTINUATION_ERRORS.add(error);
+  try {
+    Object.defineProperty(error, INVALID_CONTINUATION_MARKER, { value: true });
+  } catch {
+    // The WeakSet remains the local fallback if the error is not extensible.
+  }
   return error;
 }
 
 function isInvalidContinuationError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && INVALID_CONTINUATION_ERRORS.has(error);
+  if (typeof error !== "object" || error === null) return false;
+  if (INVALID_CONTINUATION_ERRORS.has(error)) return true;
+  if (isProxyWithoutHooks(error)) return false;
+  try {
+    return Object.getOwnPropertyDescriptor(error, INVALID_CONTINUATION_MARKER)?.value === true;
+  } catch {
+    return false;
+  }
 }
 
 function isAbortError(error: unknown): boolean {

@@ -391,8 +391,9 @@ describe("agent/middleware/chain", () => {
     assertEquals(record?.context?.failure, "downstream continuation rejected");
     assertEquals(record?.context?.failure_type, "error");
     assertEquals(record?.error, undefined);
-    assertEquals(String(record?.context?.failure).includes("customer-data"), false);
-    assertEquals(String(record?.context?.failure).includes("secrets"), false);
+    const serializedRecord = JSON.stringify(record);
+    assertEquals(serializedRecord?.includes("customer-data"), false);
+    assertEquals(serializedRecord?.includes("secrets"), false);
   });
 
   it("reports a detached synchronous downstream rejection", async () => {
