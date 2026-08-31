@@ -8,7 +8,7 @@ import {
   createRunScopedVeryfrontCloudContextSummaryGenerator,
   createVeryfrontCloudContextSummaryGenerator,
 } from "./context-summary-generator.ts";
-import { registerModelRuntimeResolverRevoker } from "../runtime/model-transport.ts";
+import { registerModelRuntimeResolverRevoker } from "#veryfront/agent/runtime/model-transport.ts";
 
 function createModel(): ModelRuntime {
   return {
