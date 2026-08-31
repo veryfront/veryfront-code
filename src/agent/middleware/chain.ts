@@ -19,6 +19,10 @@ type ContinuationExecutor = (
 ) => void;
 
 class ObservedContinuationPromise extends Promise<AgentResponse> {
+  static override get [Symbol.species](): PromiseConstructor {
+    return Promise;
+  }
+
   constructor(
     executor: ContinuationExecutor,
     private readonly onObserved: () => void,

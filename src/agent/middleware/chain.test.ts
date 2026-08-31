@@ -409,6 +409,39 @@ describe("agent/middleware/chain", () => {
     );
   });
 
+  it("supports standard Promise composition on continuations", async () => {
+    assertEquals(
+      await new MiddlewareChain([
+        (_context, next) => next().then((value) => value),
+      ]).execute(context, () => Promise.resolve(response)),
+      response,
+    );
+
+    const recoveredError = new Error("recoverable downstream failed");
+    assertEquals(
+      await new MiddlewareChain([
+        (_context, next) =>
+          next().catch((error) => {
+            assertEquals(error, recoveredError);
+            return response;
+          }),
+      ]).execute(context, () => Promise.reject(recoveredError)),
+      response,
+    );
+
+    let finallyCalls = 0;
+    assertEquals(
+      await new MiddlewareChain([
+        (_context, next) =>
+          next().finally(() => {
+            finallyCalls += 1;
+          }),
+      ]).execute(context, () => Promise.resolve(response)),
+      response,
+    );
+    assertEquals(finallyCalls, 1);
+  });
+
   it("invokes the final handler for an empty middleware chain", async () => {
     let finalHandlerCalls = 0;
     assertEquals(
