@@ -170,7 +170,6 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
     }
 
     case "openai": {
-      const openai = registry?.get("openai");
       const openAITransport = resolveVeryfrontCloudOpenAITransport(
         `openai/${upstreamModelId}`,
       );
@@ -179,6 +178,17 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
           `openai/${upstreamModelId}`,
         );
       if (shouldUseOpenAIResponsesRuntime(upstreamModelId)) {
+        if (inferenceCredential) {
+          return wrapVeryfrontCloudModel(
+            createVeryfrontCloudOpenAIResponsesModel(upstreamModelId, {
+              apiToken,
+              baseURL,
+              fetch,
+            }),
+            provider,
+          );
+        }
+        const openai = registry?.get("openai");
         if (openai?.createResponses) {
           return wrapVeryfrontCloudModel(
             openai.createResponses(upstreamModelId, {
@@ -192,15 +202,24 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
           );
         }
         return wrapVeryfrontCloudModel(
-          createVeryfrontCloudOpenAIResponsesModel(upstreamModelId, {
+          createVeryfrontCloudOpenAIResponsesModel(upstreamModelId, { apiToken, baseURL, fetch }),
+          provider,
+        );
+      }
+
+      if (inferenceCredential) {
+        return wrapVeryfrontCloudModel(
+          createVeryfrontCloudOpenAIModel(upstreamModelId, {
             apiToken,
             baseURL,
+            openAIChatReasoningWithFunctionTools,
+            openAITransport,
             fetch,
           }),
           provider,
         );
       }
-
+      const openai = registry?.get("openai");
       if (openai) {
         return wrapVeryfrontCloudModel(
           openai.createModel(upstreamModelId, {
@@ -229,6 +248,16 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
 
     case "mistral":
     case "moonshotai": {
+      if (inferenceCredential) {
+        return wrapVeryfrontCloudModel(
+          createVeryfrontCloudOpenAIModel(upstreamModelId, {
+            apiToken,
+            baseURL,
+            fetch,
+          }),
+          provider,
+        );
+      }
       const openai = registry?.get("openai");
       if (openai) {
         return wrapVeryfrontCloudModel(

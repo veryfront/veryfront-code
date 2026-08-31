@@ -15,6 +15,7 @@ import {
 } from "#veryfront/cache/verified-api-credential-context.ts";
 import {
   createRuntimeAgentStreamResponse,
+  registerRuntimeInferenceCredential,
   type RuntimeAgentStreamExecutionDeps,
 } from "#veryfront/internal-agents/run-stream.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
@@ -1203,10 +1204,13 @@ export class AgentStreamHandler extends BaseHandler {
                           count: Object.keys(envVarsForAgent).length,
                         });
 
+                        const inferenceAuthToken = payload.credentials?.inferenceAuthToken;
+                        if (inferenceAuthToken) {
+                          registerRuntimeInferenceCredential(runtimeInput, inferenceAuthToken);
+                        }
                         const runAgentStream = () =>
                           createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
                             ...this.deps,
-                            inferenceAuthToken: payload.credentials?.inferenceAuthToken,
                             localTools,
                             providerReplayCheckpoints,
                             persistProviderReplayCheckpoint,

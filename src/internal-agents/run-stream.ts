@@ -81,6 +81,10 @@ import { runWithVeryfrontCloudInferenceCredential } from "#veryfront/provider/ve
 
 const getAnyObjectSchema = defineSchema((v) => v.record(v.string(), v.unknown()));
 const anyObjectSchema = lazySchema(getAnyObjectSchema) as Schema<Record<string, unknown>>;
+const runtimeInferenceCredentials = new WeakMap<object, string>();
+const IntrinsicReflectApply = Reflect.apply;
+const WeakMapGet = WeakMap.prototype.get;
+const WeakMapSet = WeakMap.prototype.set;
 const logger = serverLogger.component("internal-agent-run-stream");
 const PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME = "bash";
 const INTERNAL_AGENT_RUNTIME_HEARTBEAT_INTERVAL_MS = 25_000;
@@ -160,8 +164,6 @@ function mergeRemoteToolNames(source: string[], forwarded: string[]): string[] {
 
 export interface RuntimeAgentStreamExecutionDeps {
   sessionManager: AgentRunSessionManager;
-  /** Framework-private gateway credential; never copy into runtime or tool context. */
-  inferenceAuthToken?: string;
   localTools?: Record<string, Tool | boolean>;
   projectAgentSandbox?: {
     apiUrl?: string;
@@ -192,6 +194,21 @@ export interface RuntimeAgentStreamExecutionDeps {
   providerReplayCheckpointEmissionEnabled?: boolean;
   providerReplayCheckpoints?: readonly ProviderReplayCheckpoint[];
   persistProviderReplayCheckpoint?: ProviderReplayCheckpointPersister;
+}
+
+/** @internal Bind a verified gateway credential without exposing it on the run input or deps. */
+export function registerRuntimeInferenceCredential(
+  input: RuntimeRunAgentInput,
+  credential: string,
+): void {
+  IntrinsicReflectApply(WeakMapSet, runtimeInferenceCredentials, [input, credential]);
+}
+
+function getRuntimeInferenceCredential(input: RuntimeRunAgentInput): string | undefined {
+  const credential: unknown = IntrinsicReflectApply(WeakMapGet, runtimeInferenceCredentials, [
+    input,
+  ]);
+  return typeof credential === "string" ? credential : undefined;
 }
 
 function createInjectedStudioTool(
@@ -1088,13 +1105,14 @@ export async function createRuntimeAgentStreamResponse(
           : {}),
       },
     };
+    const inferenceAuthToken = getRuntimeInferenceCredential(input);
     const runtime = deps.createRuntime?.(runtimeAgent, mergedTools) ??
       new AgentRuntime(runtimeAgent.id, runtimeAgent.config, {
-        ...(deps.inferenceAuthToken
+        ...(inferenceAuthToken
           ? {
             resolveModelRuntime: (modelId) =>
               runWithVeryfrontCloudInferenceCredential(
-                deps.inferenceAuthToken,
+                inferenceAuthToken,
                 () => resolveModel(modelId),
               ),
           }

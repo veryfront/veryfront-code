@@ -8,7 +8,10 @@ import { createHostedInferenceModelResolver } from "#veryfront/agent/hosted/infe
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { clearModelProviders, resolveModel } from "#veryfront/provider";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
-import { createRuntimeAgentStreamResponse } from "#veryfront/internal-agents/run-stream.ts";
+import {
+  createRuntimeAgentStreamResponse,
+  registerRuntimeInferenceCredential,
+} from "#veryfront/internal-agents/run-stream.ts";
 import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -111,19 +114,20 @@ describe("run-scoped inference credential", () => {
       }],
     });
 
+    const runtimeInput = {
+      agentId: runtimeAgent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_scoped_inference_1",
+      messages: [{ id: "user-1", role: "user", content: "Hello" }],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+    registerRuntimeInferenceCredential(runtimeInput, "run-scoped-inference-token");
     const response = await createRuntimeAgentStreamResponse(
-      {
-        agentId: runtimeAgent.id,
-        threadId: crypto.randomUUID(),
-        runId: "run_scoped_inference_1",
-        messages: [{ id: "user-1", role: "user", content: "Hello" }],
-        tools: [],
-        context: [],
-      } as Parameters<typeof createRuntimeAgentStreamResponse>[0],
+      runtimeInput,
       runtimeAgent,
       {
         sessionManager: new AgentRunSessionManager(),
-        inferenceAuthToken: "run-scoped-inference-token",
       },
     );
     await response.text();

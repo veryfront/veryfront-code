@@ -165,6 +165,37 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(capturedAuthorization, "Bearer vf_test_provider");
   });
 
+  it("allows a nested inference credential to override its parent", async () => {
+    setCloudBootstrap();
+    let capturedAuthorization: string | null = null;
+
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedAuthorization = request.headers.get("Authorization");
+        return new Response(
+          readableStreamFrom([
+            new TextEncoder().encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+            new TextEncoder().encode("data: [DONE]\n\n"),
+          ]),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+
+    await runWithVeryfrontCloudInferenceCredential(
+      "parent-run-inference-token",
+      () =>
+        runWithVeryfrontCloudInferenceCredential("child-run-inference-token", async () => {
+          const model = resolveModel("veryfront-cloud/openai/gpt-test");
+          const result = await model.doStream({ prompt: [] });
+          await drainStream(result.stream);
+        }),
+    );
+
+    assertEquals(capturedAuthorization, "Bearer child-run-inference-token");
+  });
+
   it("does not dispatch signed inference through mutable provider prototypes", () => {
     setCloudBootstrap();
     const originalAnthropicCreateModel = AnthropicProvider.prototype.createModel;
