@@ -17,6 +17,7 @@ import {
   parseReviewWakeupRun,
   publishAutomatedReviewStatus,
   publishMergeGroupReviewStatus,
+  publishReviewPropagationRetryStatus,
   publishReviewResolutionFailure,
   reconcileActiveMergeGroupReviewStatuses,
   requestAutomatedReview,
@@ -2396,6 +2397,46 @@ describe("automated review publication", () => {
     assertEquals(staleTimeoutResult.state, "pending");
   });
 
+  it("does not adopt an unavailable retry from an older review epoch", async () => {
+    const origin = githubFixture();
+    const retry = await publishReviewPropagationRetryStatus({
+      github: origin.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      failureKind: "unavailable",
+      targetUrl: "https://example.test/pr/1",
+      reviewRequestKey: "base-42",
+    });
+    const fixture = githubFixture({
+      pages: {
+        events: [[{
+          event: "base_ref_changed",
+          id: 43,
+          created_at: "2026-08-25T09:00:00Z",
+        }]],
+        statuses: [[automatedReviewStatus({
+          id: 105,
+          state: "failure",
+          description: retry.description,
+          created_at: "2026-08-25T09:00:01Z",
+        })]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(result.reviewRequestKey, "base-43");
+  });
+
   it("does not time out a pending status from before a base reset", async () => {
     const fixture = githubFixture({
       pages: {
@@ -3764,7 +3805,7 @@ describe("automated review timeout watchdog", () => {
     assertEquals(outageResult.state, "failure");
     assertEquals(
       revalidationOutage.published[0]?.description,
-      "PR#1 review status unavailable; queue retry pending",
+      "PR#1 review status unavailable; epoch:9f2e6d33a371; queue retry pending",
     );
 
     const queueOutage = githubFixture({
@@ -3974,7 +4015,7 @@ describe("automated review timeout watchdog", () => {
     assertEquals(queueOutage.published[0]?.state, "pending");
     assertEquals(
       queueOutage.published.at(-1)?.description,
-      "PR#1 review status unavailable; queue retry pending",
+      "PR#1 review status unavailable; epoch:9f2e6d33a371; queue retry pending",
     );
 
     const requestOutage = githubFixture({
@@ -4005,7 +4046,7 @@ describe("automated review timeout watchdog", () => {
     assertEquals(requestOutage.published[0]?.state, "pending");
     assertEquals(
       requestOutage.published.at(-1)?.description,
-      "PR#1 review status unavailable; queue retry pending",
+      "PR#1 review status unavailable; epoch:9f2e6d33a371; queue retry pending",
     );
   });
 
@@ -4886,6 +4927,7 @@ function requestFixture(options: {
   timeline?: Record<string, unknown>[];
   currentHead?: string;
   headResponses?: string[];
+  updatedAtResponses?: string[];
   currentState?: string;
   draft?: boolean;
 } = {}) {
@@ -4907,6 +4949,7 @@ function requestFixture(options: {
   const listTimeline = () => undefined;
   let eventRead = 0;
   let pullRead = 0;
+  let updatedAtRead = 0;
   const github = {
     paginate: {
       async *iterator(endpoint: unknown) {
@@ -4946,6 +4989,12 @@ function requestFixture(options: {
               user: { login: "pull-author" },
               state: state.currentState,
               draft: state.draft,
+              updated_at: options.updatedAtResponses?.[
+                Math.min(
+                  updatedAtRead++,
+                  options.updatedAtResponses.length - 1,
+                )
+              ] ?? "2026-08-25T08:00:00Z",
             },
           }),
       },
@@ -5137,6 +5186,34 @@ describe("automated review request", () => {
       fixture.posted[0]?.body,
       `<!-- automated-review-request: ${HEAD} ready-run-9001-at-1787644800000-event-41 -->\n@codex review`,
     );
+  });
+
+  it("rejects a lifecycle request when the final pull snapshot advances", async () => {
+    const fixture = requestFixture({
+      events: [{
+        event: "base_ref_changed",
+        id: 42,
+        created_at: "2026-08-25T08:00:00Z",
+      }],
+      updatedAtResponses: [
+        "2026-08-25T08:00:00Z",
+        "2026-08-25T09:00:00Z",
+      ],
+    });
+    const result = await requestAutomatedReview({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      requestKey: "base-42",
+      validateRequestEpoch: true,
+      revalidateReviewEvidence: true,
+    });
+
+    assertEquals(result.requested, false);
+    assertEquals(result.reason, "stale-epoch");
+    assertEquals(fixture.posted, []);
   });
 
   it("does not post when the pull request is closed or draft", async () => {
@@ -6281,6 +6358,10 @@ describe("automated review workflow", () => {
     assert(script.includes("publishReviewResolutionFailure"));
     assert(script.includes("completeReviewFailurePropagation"));
     assert(script.includes("publishReviewPropagationRetryStatus"));
+    assert(
+      script.includes("reviewRequestKey: result.reviewRequestKey"),
+      "normal-workflow retry markers must retain their originating review epoch",
+    );
     assert(script.includes("queuePropagationPending: true"));
     assert(
       script.includes("reviewEpochNotBefore") &&

@@ -776,6 +776,7 @@ jobs:
                   headSha,
                   failureKind: "unavailable",
                   targetUrl: result.targetUrl,
+                  reviewRequestKey: result.reviewRequestKey,
                 });
                 core.setOutput(
                   "source-status-id",
