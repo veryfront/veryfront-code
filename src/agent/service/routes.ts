@@ -176,6 +176,9 @@ function defaultTrace<TResult>(
 }
 
 async function createRuntimeInvocationApplicationRequest(request: Request): Promise<Request> {
+  // The hosted parser consumes the original request body for authentication. The
+  // retained clone must therefore be materialized and sanitized separately before
+  // the detached callback receives an application-facing request.
   const payload = await request.json() as Record<string, unknown>;
   const credentials = payload.credentials;
   const sanitizedPayload = credentials && typeof credentials === "object" &&

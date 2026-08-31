@@ -12,6 +12,7 @@ const VERYFRONT_CLOUD_MODEL_PREFIX = "veryfront-cloud/";
 const IntrinsicReflectApply = Reflect.apply;
 const WeakMapGet = WeakMap.prototype.get;
 const WeakMapSet = WeakMap.prototype.set;
+Object.freeze(inferenceCredentials);
 
 /** @internal Bind a verified control-plane inference credential without exposing it on the request. */
 export function registerHostedInferenceCredential(

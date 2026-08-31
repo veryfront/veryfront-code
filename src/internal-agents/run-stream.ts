@@ -84,6 +84,7 @@ const runtimeInferenceCredentials = new WeakMap<object, string>();
 const IntrinsicReflectApply = Reflect.apply;
 const WeakMapGet = WeakMap.prototype.get;
 const WeakMapSet = WeakMap.prototype.set;
+Object.freeze(runtimeInferenceCredentials);
 const logger = serverLogger.component("internal-agent-run-stream");
 const PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME = "bash";
 const INTERNAL_AGENT_RUNTIME_HEARTBEAT_INTERVAL_MS = 25_000;
