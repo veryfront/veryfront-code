@@ -2,6 +2,7 @@ import type { AgentContext, AgentMiddleware, AgentResponse } from "../types.ts";
 import { MIDDLEWARE_ERROR } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
+  canIdentifyProxyWithoutHooks,
   isNativeErrorWithoutHooks,
   isProxyWithoutHooks,
   readNativeErrorNameWithoutHooks,
@@ -114,7 +115,7 @@ function createObservedContinuation<T>(
     });
     // Promise species currently keeps every derived branch on this
     // per-continuation constructor. If a future engine removes that hook,
-    // derived branches are adopted into tracked continuations instead.
+    // preserve the runtime-selected branch and contain native rejection noise.
   }
   return continuation;
 }
@@ -147,6 +148,7 @@ function createInvalidContinuationError() {
 function isInvalidContinuationError(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   if (INVALID_CONTINUATION_ERRORS.has(error)) return true;
+  if (!canIdentifyProxyWithoutHooks) return false;
   if (isProxyWithoutHooks(error)) return false;
   try {
     return Object.getOwnPropertyDescriptor(error, INVALID_CONTINUATION_MARKER)?.value === true;
