@@ -124,6 +124,8 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   runtimeTargetKind?: HostedChatRuntimeTargetKind | null;
   runtimeTargetEnvironmentId?: string | null;
   authToken: string;
+  /** @internal Verified run-scoped gateway credential, never copied to public config. */
+  inferenceAuthToken?: string;
   instructions: string | ChatSystemMessage[];
   runId?: string;
   agentId?: string;

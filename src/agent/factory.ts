@@ -489,6 +489,14 @@ export function agent<TOutput = never>(config: AgentConfig<TOutput>): Agent<TOut
   return createAgent(config, { register: true });
 }
 
+/** @internal Create a framework-owned agent with a private inference credential. */
+export function createAgentWithInferenceCredential<TOutput = never>(
+  config: AgentConfig<TOutput>,
+  inferenceAuthToken: string,
+): Agent<TOutput> {
+  return createAgent(config, { register: true, inferenceAuthToken });
+}
+
 /**
  * Build an agent runtime without adding it to the project registry.
  *
@@ -510,7 +518,7 @@ export function createEphemeralAgent<TOutput = never>(
 
 function createAgent<TOutput = never>(
   config: AgentConfig<TOutput>,
-  options: { register: boolean },
+  options: { register: boolean; inferenceAuthToken?: string },
 ): Agent<TOutput> {
   if (typeof config.id === "string" && config.id.trim().length === 0) {
     throw toError(
@@ -567,7 +575,7 @@ function createAgent<TOutput = never>(
     tools: mergedToolsConfig,
     system: augmentedSystem,
     middleware: resolvedMiddleware,
-  });
+  }, options.inferenceAuthToken);
 
   const agentInstance = createAgentInstance({
     id,

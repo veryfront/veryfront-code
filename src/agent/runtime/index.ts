@@ -1199,10 +1199,12 @@ export class AgentRuntime {
   private config: AgentConfig;
   private memory: Memory<Message>;
   private status: AgentStatus = "idle";
+  private readonly inferenceAuthToken: string | undefined;
 
-  constructor(id: string, config: AgentConfig) {
+  constructor(id: string, config: AgentConfig, inferenceAuthToken?: string) {
     this.id = id;
     this.config = { ...config };
+    this.inferenceAuthToken = inferenceAuthToken;
 
     // Agents are stateless by default (see docs/guides/memory-and-streaming.md):
     // with no `memory` config, calls never share conversation history, so
@@ -1236,6 +1238,7 @@ export class AgentRuntime {
       context,
       modelOverride,
       mode,
+      inferenceAuthToken: this.inferenceAuthToken,
     });
   }
 
