@@ -11,6 +11,7 @@ import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { clearModelProviders, resolveModel } from "#veryfront/provider";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import { createRuntimeAgentStreamResponse } from "#veryfront/internal-agents/run-stream.ts";
+import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -55,6 +56,20 @@ describe("run-scoped inference credential", () => {
     clearModelProviders();
     deleteEnv("VERYFRONT_API_TOKEN");
     deleteEnv("VERYFRONT_PROJECT_SLUG");
+  });
+
+  it("keeps inference authority off the public AgentRuntime object", () => {
+    const runtime = new AgentRuntime(
+      "private-inference-runtime",
+      {
+        model: "veryfront-cloud/openai/gpt-test",
+        system: "Answer concisely.",
+      },
+      "run-scoped-inference-token",
+    );
+
+    assertEquals(Reflect.get(runtime, "inferenceAuthToken"), undefined);
+    assertEquals(JSON.stringify(runtime).includes("run-scoped-inference-token"), false);
   });
 
   it("keeps the dedicated credential private through internal stream pulls", async () => {
