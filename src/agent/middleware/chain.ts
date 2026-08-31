@@ -55,7 +55,7 @@ class ObservedContinuationPromise<T> extends Promise<T> {
   ): Promise<TResult1 | TResult2> {
     this.observed = true;
     const derived = super.then(onFulfilled, onRejected);
-    if (this.onRejection && PROMISE_SPECIES_SUPPORTED) {
+    if (this.onRejection) {
       const observedDerived = derived as ObservedContinuationPromise<TResult1 | TResult2>;
       observeContinuationRejection(
         derived,
