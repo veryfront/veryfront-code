@@ -293,6 +293,7 @@ const ArrayIsArray = Array.isArray;
 const cloneStructuredValue = globalThis.structuredClone;
 const IntrinsicWeakMap = WeakMap;
 const IntrinsicReflectApply = Reflect.apply;
+const PromiseThen = Promise.prototype.then;
 const ObjectCreate = Object.create;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
@@ -1769,16 +1770,22 @@ export class AgentRuntime {
         },
         cancel(reason) {
           // The client disconnected (e.g. the Chat Stop button). Treat this as a
-          // clean stop: detach a no-op handler from the in-flight loop so the
-          // AbortError it throws when we abort the shared signal cannot surface as
-          // an unhandled rejection, then abort. Guard the abort itself so a
-          // synchronous signal-abort rejection can never escape here (#2334).
-          inFlight?.catch(() => {});
+          // clean stop: revoke authority before project-controlled abort listeners
+          // run, then attach a no-op rejection handler through the captured Promise
+          // intrinsic so the aborted loop cannot surface an unhandled rejection.
           try {
             abortScope.abort(reason);
           } catch {
             // Aborting an already-aborted controller, or a synchronous reject
             // from a signal consumer, is a no-op for cancellation purposes.
+          }
+          if (inFlight) {
+            try {
+              IntrinsicReflectApply(PromiseThen, inFlight, [undefined, () => {}]);
+            } catch {
+              // The runtime promise is native, but cancellation must stay closed
+              // even if a foreign thenable crosses the middleware boundary.
+            }
           }
         },
       });

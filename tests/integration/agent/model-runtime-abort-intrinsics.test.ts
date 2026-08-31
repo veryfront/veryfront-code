@@ -6,8 +6,10 @@ import {
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
+import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
 import {
   type AgentModelRuntimeResolver,
   createModelRuntimeResolverAbortGuard,
@@ -33,6 +35,54 @@ function createModel(modelId: string): ModelRuntime {
 }
 
 describe("run-scoped model cancellation intrinsics", () => {
+  it("revokes stream authority when Promise.prototype.catch is replaced", async () => {
+    const model = scriptedModel([
+      { hangUntilAbort: true, parts: [{ type: "text-delta", text: "thinking" }] },
+    ], { modelId: "veryfront-cloud/openai/patched-promise-model", only: "stream" });
+    let resolverActive = true;
+    const resolver: AgentModelRuntimeResolver = () => resolverActive ? model : undefined;
+    registerModelRuntimeResolverRevoker(resolver, () => {
+      resolverActive = false;
+    });
+    const runtime = new AgentRuntime(
+      "patched-promise-runtime",
+      {
+        model: "veryfront-cloud/openai/patched-promise-model",
+        system: "patched promise lease test",
+        maxSteps: 1,
+      },
+      { resolveModelRuntime: resolver },
+    );
+    const stream = await runtime.stream([{
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "Hello" }],
+    }]);
+    const reader = stream.getReader();
+    const first = await reader.read();
+    assertEquals(first.done, false, "the model call must be in flight before cancelling");
+    await waitFor(
+      () => model.calls[0]?.abortSignal !== undefined,
+      { message: "the model call must expose its abort signal before cancelling" },
+    );
+    const catchDescriptor = Object.getOwnPropertyDescriptor(Promise.prototype, "catch");
+    assert(catchDescriptor, "Promise.prototype.catch must have a property descriptor");
+
+    try {
+      Object.defineProperty(Promise.prototype, "catch", {
+        ...catchDescriptor,
+        value: () => {
+          throw new Error("project replaced Promise.prototype.catch");
+        },
+      });
+      await reader.cancel(new DOMException("client disconnected", "AbortError"));
+    } finally {
+      Object.defineProperty(Promise.prototype, "catch", catchDescriptor);
+    }
+
+    assertEquals(resolverActive, false);
+  });
+
   it("revokes a pre-aborted generation through the captured getter", () => {
     const abortController = new AbortController();
     abortController.abort(new DOMException("caller aborted", "AbortError"));
