@@ -3648,9 +3648,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
         token: string;
       }
       | undefined;
+    let observedEnvironmentTargetKeys: string[] = [];
 
     const handler = createTestAgentStreamHandler({
       loadAgentSourceEnvironment: (_ctx, source, target, token) => {
+        observedEnvironmentTargetKeys = Object.keys(target).sort();
         observedFrameworkCacheCredential = getVerifiedCacheApiCredential();
         observedEnvironmentTarget = {
           environmentName: source.type === "environment" ? source.environmentName : source.type,
@@ -3714,7 +3716,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
         environmentName: "staging",
         releaseId: "10000000-1000-4000-8000-100000000099",
       },
-      credentials: { authToken: "request-scoped-user-token" },
+      credentials: {
+        authToken: "request-scoped-user-token",
+        inferenceAuthToken: "run-scoped-inference-token",
+      },
     });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
     const ctx = createCtx(publicKeyPem);
@@ -3772,6 +3777,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
       environmentId: "10000000-1000-4000-8000-100000000098",
       token: "request-scoped-user-token",
     });
+    assertEquals(observedEnvironmentTargetKeys, [
+      "runtimeTargetBranchId",
+      "runtimeTargetEnvironmentId",
+      "runtimeTargetKind",
+    ]);
     assertEquals(observedFrameworkCacheCredential, {
       token: "request-scoped-user-token",
       projectId: "proj-1",

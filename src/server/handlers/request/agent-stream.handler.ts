@@ -1061,7 +1061,11 @@ export class AgentStreamHandler extends BaseHandler {
               )(
                 requestScopedContext,
                 payload.agentSource,
-                payload,
+                {
+                  runtimeTargetKind: payload.runtimeTargetKind,
+                  runtimeTargetEnvironmentId: payload.runtimeTargetEnvironmentId,
+                  runtimeTargetBranchId: payload.runtimeTargetBranchId,
+                },
                 apiAuthToken,
                 req.signal,
               );

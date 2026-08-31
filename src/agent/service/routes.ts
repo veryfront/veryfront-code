@@ -175,6 +175,30 @@ function defaultTrace<TResult>(
   return operation();
 }
 
+async function createRuntimeInvocationApplicationRequest(request: Request): Promise<Request> {
+  const payload = await request.json() as Record<string, unknown>;
+  const credentials = payload.credentials;
+  const sanitizedPayload = credentials && typeof credentials === "object" &&
+      !Array.isArray(credentials)
+    ? {
+      ...payload,
+      credentials: Object.fromEntries(
+        Object.entries(credentials).filter(([key]) => key !== "inferenceAuthToken"),
+      ),
+    }
+    : payload;
+  const headers = new Headers(request.headers);
+  headers.delete("content-length");
+  return createApplicationRequest(
+    new Request(request.url, {
+      body: JSON.stringify(sanitizedPayload),
+      headers,
+      method: request.method,
+      signal: request.signal,
+    }),
+  );
+}
+
 function createAgUiSetupErrorResponse(input: {
   error: unknown;
   projectId: string | null;
@@ -358,7 +382,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     runId?: string;
   }): Promise<Response> {
     return trace("handler.runtimeAgentRunInvocationExecute", async () => {
-      const applicationRequest = createApplicationRequest(input.request);
+      const applicationRequestSource = input.request.clone();
       const req = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(input.request, {
         authenticate: options.authenticateRequest,
         verifyProjectAccess: ({ projectId, authToken }) =>
@@ -373,6 +397,10 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
       if (input.runId && req.durableRootRun?.runId !== input.runId) {
         return Response.json({ errorCode: "CONTROL_PLANE_RUN_ID_MISMATCH" }, { status: 400 });
       }
+
+      const applicationRequest = await createRuntimeInvocationApplicationRequest(
+        applicationRequestSource,
+      );
 
       return executeParsedDurableChatRun({
         req,

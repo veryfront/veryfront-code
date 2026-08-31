@@ -7,9 +7,29 @@ import {
   createVeryfrontCloudFetch,
   getVeryfrontCloudGatewayBaseUrl,
   parseVeryfrontCloudModelId,
+  requireVeryfrontCloudBootstrap,
 } from "./shared.ts";
 
 describe("provider/veryfront-cloud/shared", () => {
+  it("requires HTTPS or loopback for run-scoped inference credentials", () => {
+    assertThrows(
+      () =>
+        runWithVeryfrontCloudContext(
+          { apiBaseUrl: "http://api.example.test", apiToken: "broader-token" },
+          () => requireVeryfrontCloudBootstrap("run-scoped-inference-token"),
+        ),
+      TypeError,
+      "Run-scoped inference credentials require HTTPS or a loopback API base URL",
+    );
+    assertEquals(
+      runWithVeryfrontCloudContext(
+        { apiBaseUrl: "http://localhost:4000", apiToken: "broader-token" },
+        () => requireVeryfrontCloudBootstrap("run-scoped-inference-token").apiToken,
+      ),
+      "run-scoped-inference-token",
+    );
+  });
+
   it("normalizes provider aliases when parsing model IDs", () => {
     assertEquals(
       parseVeryfrontCloudModelId("google-ai-studio/gemini-2.0-flash", "embedding"),

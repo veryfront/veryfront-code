@@ -163,11 +163,66 @@ describe("run-scoped inference credential", () => {
     assertEquals(projectResolverCalls, 0);
   });
 
+  it("bypasses project model overrides for internal credentialed runs", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
+    const encoder = new TextEncoder();
+    installMockFetch(
+      (() =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+                );
+                controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                controller.close();
+              },
+            }),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        )) as typeof fetch,
+    );
+    let projectResolverCalls = 0;
+    const unregister = registerModelProvider("veryfront-cloud", () => {
+      projectResolverCalls += 1;
+      throw new Error("Project model override must not handle signed inference");
+    });
+    const runtimeAgent = createAgent({
+      id: "internal-trusted-inference-agent",
+      model: "veryfront-cloud/openai/gpt-test",
+      system: "Answer concisely.",
+      skills: false,
+    });
+    const runtimeInput = {
+      agentId: runtimeAgent.id,
+      threadId: crypto.randomUUID(),
+      runId: "run_internal_trusted_inference",
+      messages: [{ id: "user-1", role: "user", content: "Hello" }],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+    registerRuntimeInferenceCredential(runtimeInput, "run-scoped-inference-token");
+
+    try {
+      const response = await createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
+        sessionManager: new AgentRunSessionManager(),
+      });
+      await response.text();
+    } finally {
+      unregister();
+    }
+
+    assertEquals(projectResolverCalls, 0);
+  });
+
   it("routes a serialized standalone AgentService invocation to gateway Authorization", async () => {
     setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
     setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
     const capturedAuthorizations: Array<string | null> = [];
     let serializedPreparedRequest = "";
+    let detachedRequestBody = "";
     let setupFailure: unknown;
     let frameworkModel: ReturnType<typeof resolveModel> | undefined;
     const encoder = new TextEncoder();
@@ -210,7 +265,8 @@ describe("run-scoped inference credential", () => {
         return { executionId: "exec-1" };
       },
       streamExecutionToAgUiResponse: () => new Response("streamed"),
-      startDetachedExecution: async () => {
+      startDetachedExecution: async ({ rawRequest }) => {
+        detachedRequestBody = await rawRequest.text();
         if (!frameworkModel) throw new TypeError("Expected framework model");
         const result = await frameworkModel.doStream({ prompt: [] });
         await drainStream(result.stream);
@@ -239,6 +295,7 @@ describe("run-scoped inference credential", () => {
       "Bearer run-scoped-inference-token",
     ]);
     assertEquals(serializedPreparedRequest.includes("run-scoped-inference-token"), false);
+    assertEquals(detachedRequestBody.includes("run-scoped-inference-token"), false);
   });
 
   it("ignores an inference credential without a verified run-event token", async () => {
