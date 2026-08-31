@@ -35,6 +35,24 @@ describe("resolveStaticRouteOptionsCapability", () => {
       "export const OPTIONS = () => new Response();",
     ];
 
+    for (
+      const source of [
+        "export default 123;",
+        "export default { OPTIONS() {} };",
+      ]
+    ) {
+      assertEquals(await resolveStaticRouteOptionsCapability(source), "absent", source);
+    }
+
+    for (
+      const source of [
+        "export const { OPTIONS } = handlers;",
+        "export default handler;",
+      ]
+    ) {
+      assertEquals(await resolveStaticRouteOptionsCapability(source), "unknown", source);
+    }
+
     for (const source of sources) {
       assertEquals(await resolveStaticRouteOptionsCapability(source), "present", source);
     }

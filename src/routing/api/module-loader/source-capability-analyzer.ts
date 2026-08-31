@@ -5018,8 +5018,29 @@ function isStaticCallableRouteValue(node: ASTNode | undefined): boolean {
   return isNode(node) && (
     node.type === "ArrowFunctionExpression" ||
     node.type === "FunctionExpression" ||
+    node.type === "FunctionDeclaration" ||
+    node.type === "ClassDeclaration" ||
     node.type === "ClassExpression"
   );
+}
+
+function staticDefaultRouteCapability(node: ASTNode | undefined): StaticRouteOptionsCapability {
+  if (isTypeOnlyExportDeclaration(node)) return "absent";
+  if (isStaticCallableRouteValue(node)) return "present";
+  if (!isNode(node)) return "unknown";
+
+  switch (node.type) {
+    case "ArrayExpression":
+    case "BooleanLiteral":
+    case "NullLiteral":
+    case "NumericLiteral":
+    case "ObjectExpression":
+    case "RegExpLiteral":
+    case "StringLiteral":
+      return "absent";
+    default:
+      return "unknown";
+  }
 }
 
 function isTypeOnlyExportDeclaration(node: ASTNode | undefined): boolean {
@@ -5054,9 +5075,11 @@ export async function resolveStaticRouteOptionsCapability(
 
   for (const statement of statements) {
     if (statement.type === "ExportDefaultDeclaration") {
-      if (!isTypeOnlyExportDeclaration(statement.declaration as ASTNode | undefined)) {
-        return "present";
-      }
+      const defaultCapability = staticDefaultRouteCapability(
+        statement.declaration as ASTNode | undefined,
+      );
+      if (defaultCapability === "present") return "present";
+      if (defaultCapability === "unknown") uncertain = true;
       continue;
     }
 
