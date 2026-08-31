@@ -89,6 +89,7 @@ export function sanitizeLoadErrorForResponse(message: string, projectDir?: strin
 interface APIRouteHandlerDeps {
   loadHandlerModule?: typeof loadHandlerModule;
   prepareHandlerModule?: typeof prepareHandlerModule;
+  resolvePreparedRouteMethods?: typeof resolvePreparedRouteMethods;
   discoverPagesRoutes?: typeof discoverPagesRoutes;
   discoverAppRoutes?: typeof discoverAppRoutes;
   getConfig?: typeof getConfig;
@@ -107,6 +108,8 @@ function getDeps(): Required<APIRouteHandlerDeps> {
   return {
     loadHandlerModule: injectedDeps?.loadHandlerModule ?? loadHandlerModule,
     prepareHandlerModule: injectedDeps?.prepareHandlerModule ?? prepareHandlerModule,
+    resolvePreparedRouteMethods: injectedDeps?.resolvePreparedRouteMethods ??
+      resolvePreparedRouteMethods,
     discoverPagesRoutes: injectedDeps?.discoverPagesRoutes ?? discoverPagesRoutes,
     discoverAppRoutes: injectedDeps?.discoverAppRoutes ?? discoverAppRoutes,
     getConfig: injectedDeps?.getConfig ?? getConfig,
@@ -139,6 +142,9 @@ type LoadedRoute =
 export class APIRouteHandler {
   private router = new ApiRouteMatcher();
   private routeCache = new LRUCache<string, LoadedRoute>({ maxEntries: HANDLER_CACHE_MAX_ENTRIES });
+  private isolatedRouteMethodCache = new LRUCache<string, Promise<readonly string[]>>({
+    maxEntries: HANDLER_CACHE_MAX_ENTRIES,
+  });
   private executionScopeId = crypto.randomUUID();
   private activeRequests = 0;
   private destroyRequested = false;
@@ -356,12 +362,7 @@ export class APIRouteHandler {
 
         if (method === "OPTIONS") {
           const executableMethods = route.kind === "isolated"
-            ? await resolvePreparedRouteMethods(undefined, {
-              executionScopeId: this.executionScopeId,
-              module: route.module,
-              modulePath: match.route.page,
-              projectDir: this.projectDir,
-            }, { includeFrameworkOptions: false })
+            ? await this.resolveIsolatedRouteMethods(match.route.page, route.module)
             : resolveExecutableRouteMethods(route.handler, undefined, {
               includeFrameworkOptions: false,
             });
@@ -481,11 +482,38 @@ export class APIRouteHandler {
     );
   }
 
+  private async resolveIsolatedRouteMethods(
+    modulePath: string,
+    module: PreparedWorkerModule,
+  ): Promise<readonly string[]> {
+    const cacheKey = `${modulePath}:${module.sha256}`;
+    let pending = this.isolatedRouteMethodCache.get(cacheKey);
+    if (!pending) {
+      pending = getDeps().resolvePreparedRouteMethods(undefined, {
+        executionScopeId: this.executionScopeId,
+        module,
+        modulePath,
+        projectDir: this.projectDir,
+      }, { includeFrameworkOptions: false });
+      this.isolatedRouteMethodCache.set(cacheKey, pending);
+    }
+
+    try {
+      return await pending;
+    } catch (error) {
+      if (this.isolatedRouteMethodCache.get(cacheKey) === pending) {
+        this.isolatedRouteMethodCache.delete(cacheKey);
+      }
+      throw error;
+    }
+  }
+
   clearCache(): void {
     const previousScopeId = this.executionScopeId;
     this.executionScopeId = crypto.randomUUID();
     evictWorkerScopeIfPresent(previousScopeId);
     this.routeCache.clear();
+    this.isolatedRouteMethodCache.clear();
     this.router.clearCache();
   }
 
@@ -511,6 +539,7 @@ export class APIRouteHandler {
     this.destroyed = true;
     evictWorkerScopeIfPresent(this.executionScopeId);
     this.routeCache.destroy();
+    this.isolatedRouteMethodCache.destroy();
     this.router.destroy();
   }
 

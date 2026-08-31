@@ -15,6 +15,7 @@ import { HOST_PROJECT_EXECUTION_OVERRIDE_ENV } from "#veryfront/security/host-ex
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
+import { resolvePreparedRouteMethods } from "./route-executor.ts";
 
 const handlers: APIRouteHandler[] = [];
 
@@ -872,11 +873,16 @@ describe("APIRouteHandler", () => {
           });
         }`,
       );
+      let methodInspections = 0;
       __injectDepsForTests({
         loadHandlerModule: () => {
           throw new Error("prepared OPTIONS route reached host import");
         },
         prepareHandlerModule: () => Promise.resolve(module),
+        resolvePreparedRouteMethods: (...args) => {
+          methodInspections++;
+          return resolvePreparedRouteMethods(...args);
+        },
       });
       Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
       Deno.env.set("WORKER_ISOLATION_API", "1");
@@ -895,6 +901,29 @@ describe("APIRouteHandler", () => {
       assertEquals(response?.status, 209);
       assertEquals(response?.headers.get("x-options-owner"), "worker");
       assertEquals(await response?.text(), "prepared options");
+
+      const repeated = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          handler.handle(
+            new Request("http://localhost/api/prepared-options", { method: "OPTIONS" }),
+            localContext(adapter),
+          ),
+      );
+      assertEquals(repeated?.status, 209);
+      assertEquals(methodInspections, 1, "prepared methods should be inspected once per route");
+
+      handler.clearCache();
+      const refreshed = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          handler.handle(
+            new Request("http://localhost/api/prepared-options", { method: "OPTIONS" }),
+            localContext(adapter),
+          ),
+      );
+      assertEquals(refreshed?.status, 209);
+      assertEquals(methodInspections, 2, "clearing route state must invalidate method inspection");
     });
 
     it("should handle OPTIONS preflight requests with secure-by-default CORS", async () => {
