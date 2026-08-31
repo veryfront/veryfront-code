@@ -149,9 +149,7 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
         setDataAuthorizationContext(authorizationContext);
         setRuns((prev) => (append ? [...prev, ...fetchedRuns] : fetchedRuns));
         setCursor(nextCursor);
-        setHasMore(
-          !isBareArray && (Boolean(nextCursor) || fetchedRuns.length === filter.limit),
-        );
+        setHasMore(Boolean(nextCursor));
         setTotalCount(total);
         setError(null);
       } catch (err) {

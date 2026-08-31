@@ -612,6 +612,48 @@ describe("useWorkflowStart", () => {
     }
   });
 
+  it("treats a cursorless workflow list envelope as a complete page", async () => {
+    const restoreDom = installDom();
+    let requestCount = 0;
+    let hook: UseWorkflowListResult | null = null;
+    const summaries = ["run-1", "run-2"].map((id) => ({
+      id,
+      workflowId: "pipeline",
+      status: "completed",
+      currentNodes: [],
+      nodeStates: {},
+      pendingApprovals: [],
+      createdAt: "2026-08-30T10:00:00.000Z",
+      completedAt: "2026-08-30T10:01:00.000Z",
+    }));
+
+    installMockFetch(
+      (() => {
+        requestCount++;
+        return Promise.resolve(Response.json({ runs: summaries }));
+      }) as typeof fetch,
+    );
+
+    function Capture(): null {
+      hook = useWorkflowList({ autoRefresh: false, pageSize: 2 });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      assertEquals(hook!.runs.map((run) => run.id), ["run-1", "run-2"]);
+      assertEquals(hook!.hasMore, false);
+      await hook!.loadMore();
+      assertEquals(requestCount, 1);
+    } finally {
+      flushSync(() => root.unmount());
+      restoreDom();
+    }
+  });
+
   it("keeps loading active when an obsolete refresh finishes during replacement loading", async () => {
     const restoreDom = installDom();
     const oldRefreshResponse = Promise.withResolvers<Response>();
