@@ -22,6 +22,23 @@ export function registerHostedInferenceCredential(
 }
 
 /** @internal Create a model resolver without exposing verified inference authority. */
+export function createVeryfrontCloudInferenceModelResolver(
+  credential: string,
+): AgentModelRuntimeResolver {
+  return (modelId) => {
+    if (modelId.startsWith(VERYFRONT_CLOUD_MODEL_PREFIX)) {
+      return runWithVeryfrontCloudInferenceCredential(
+        credential,
+        () => createVeryfrontCloudModel(modelId.slice(VERYFRONT_CLOUD_MODEL_PREFIX.length)),
+      );
+    }
+
+    // Never let project/provider code inherit the run-scoped authority.
+    return runWithVeryfrontCloudInferenceCredential(undefined, () => resolveModel(modelId));
+  };
+}
+
+/** @internal Create a model resolver without exposing verified inference authority. */
 export function createHostedInferenceModelResolver(
   request: ParsedHostedChatRequest,
 ): AgentModelRuntimeResolver | undefined {
@@ -30,16 +47,7 @@ export function createHostedInferenceModelResolver(
     inferenceCredentials,
     [request],
   );
-  if (typeof storedCredential !== "string") return undefined;
-  return (modelId) => {
-    if (modelId.startsWith(VERYFRONT_CLOUD_MODEL_PREFIX)) {
-      return runWithVeryfrontCloudInferenceCredential(
-        storedCredential,
-        () => createVeryfrontCloudModel(modelId.slice(VERYFRONT_CLOUD_MODEL_PREFIX.length)),
-      );
-    }
-
-    // Never let project/provider code inherit the run-scoped authority.
-    return runWithVeryfrontCloudInferenceCredential(undefined, () => resolveModel(modelId));
-  };
+  return typeof storedCredential === "string"
+    ? createVeryfrontCloudInferenceModelResolver(storedCredential)
+    : undefined;
 }

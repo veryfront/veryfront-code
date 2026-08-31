@@ -76,8 +76,7 @@ import { compareStrings } from "#veryfront/utils/compare.ts";
 import { type ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
 import type { ProviderReplayCheckpointPersister } from "./provider-replay-checkpoint-persister.ts";
-import { resolveModel } from "#veryfront/provider";
-import { runWithVeryfrontCloudInferenceCredential } from "#veryfront/provider/veryfront-cloud/provider.ts";
+import { createVeryfrontCloudInferenceModelResolver } from "#veryfront/agent/hosted/inference-credential.ts";
 
 const getAnyObjectSchema = defineSchema((v) => v.record(v.string(), v.unknown()));
 const anyObjectSchema = lazySchema(getAnyObjectSchema) as Schema<Record<string, unknown>>;
@@ -1110,11 +1109,7 @@ export async function createRuntimeAgentStreamResponse(
       new AgentRuntime(runtimeAgent.id, runtimeAgent.config, {
         ...(inferenceAuthToken
           ? {
-            resolveModelRuntime: (modelId) =>
-              runWithVeryfrontCloudInferenceCredential(
-                inferenceAuthToken,
-                () => resolveModel(modelId),
-              ),
+            resolveModelRuntime: createVeryfrontCloudInferenceModelResolver(inferenceAuthToken),
           }
           : {}),
       });
