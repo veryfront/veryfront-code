@@ -17,13 +17,14 @@ import {
   registerRuntimeInferenceCredential,
 } from "#veryfront/internal-agents/run-stream.ts";
 import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
+import type { AgentResponse } from "#veryfront/agent/types.ts";
 import {
   parseRuntimeAgentRunInvocationValue,
   RuntimeAgentRunInvocationSchema,
 } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import { parseAgUiJsonBody } from "#veryfront/agent/ag-ui/request-shared.ts";
 import { readBodyWithLimit } from "#veryfront/security/input-validation/limits.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   installMockFetch,
@@ -319,6 +320,327 @@ describe("run-scoped inference credential", () => {
 
     assertEquals(projectProviderResolverCalls, 0);
     assertEquals(projectTransportResolverCalls, 0);
+  });
+
+  it("does not dispatch internal credentialed runs through mutable AgentRuntime methods", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
+    const encoder = new TextEncoder();
+    installMockFetch(
+      (() =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+                );
+                controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                controller.close();
+              },
+            }),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        )) as typeof fetch,
+    );
+
+    const originalPublicStream = AgentRuntime.prototype.stream;
+    const runtimePrototype = AgentRuntime.prototype as unknown as {
+      executeAgentLoopStreaming?: (...args: unknown[]) => Promise<AgentResponse>;
+    };
+    const originalLoop = runtimePrototype.executeAgentLoopStreaming;
+    let publicStreamCalls = 0;
+    let prototypeLoopCalls = 0;
+
+    AgentRuntime.prototype.stream = function (
+      ...args: Parameters<AgentRuntime["stream"]>
+    ): ReturnType<AgentRuntime["stream"]> {
+      publicStreamCalls += 1;
+      return Reflect.apply(originalPublicStream, this, args) as ReturnType<
+        AgentRuntime["stream"]
+      >;
+    };
+    if (originalLoop) {
+      runtimePrototype.executeAgentLoopStreaming = function (
+        ...args: unknown[]
+      ): Promise<AgentResponse> {
+        prototypeLoopCalls += 1;
+        return Reflect.apply(originalLoop, this, args) as Promise<AgentResponse>;
+      };
+    }
+
+    try {
+      const runtimeAgent = createAgent({
+        id: "internal-private-dispatch-agent",
+        model: "veryfront-cloud/openai/gpt-test",
+        system: "Answer concisely.",
+        skills: false,
+      });
+      const runtimeInput = {
+        agentId: runtimeAgent.id,
+        threadId: crypto.randomUUID(),
+        runId: "run_internal_private_dispatch",
+        messages: [{ id: "user-1", role: "user", content: "Hello" }],
+        tools: [],
+        context: [],
+      } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+      registerRuntimeInferenceCredential(runtimeInput, "run-scoped-inference-token");
+
+      const response = await createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
+        sessionManager: new AgentRunSessionManager(),
+      });
+      await response.text();
+    } finally {
+      AgentRuntime.prototype.stream = originalPublicStream;
+      if (originalLoop) runtimePrototype.executeAgentLoopStreaming = originalLoop;
+    }
+
+    assertEquals(publicStreamCalls, 0);
+    assertEquals(prototypeLoopCalls, 0);
+  });
+
+  it("revokes retained run-scoped stream model capability after stream completion", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
+    const encoder = new TextEncoder();
+    installMockFetch(
+      (() =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+                );
+                controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                controller.close();
+              },
+            }),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        )) as typeof fetch,
+    );
+    const resolver = createVeryfrontCloudInferenceModelResolver("run-scoped-inference-token");
+    const retainedModel = resolver("veryfront-cloud/openai/gpt-test");
+    if (!retainedModel) throw new TypeError("Expected retained model");
+    const runtime = new AgentRuntime(
+      "leased-stream-runtime",
+      {
+        model: "veryfront-cloud/openai/gpt-test",
+        system: "Answer concisely.",
+        skills: false,
+      },
+      {
+        resolveModelRuntime: resolver,
+      },
+    );
+
+    const stream = await runtime.stream([{
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "Hello" }],
+    }]);
+    await drainStream(stream);
+
+    await assertRejects(
+      async () => {
+        const result = await retainedModel.doStream({ prompt: [] });
+        await drainStream(result.stream);
+      },
+      TypeError,
+      "Run-scoped inference credential is no longer active",
+    );
+  });
+
+  it("does not replay run-scoped authority through a retained original stream method", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
+    const encoder = new TextEncoder();
+    const capturedAuthorizations: Array<string | null> = [];
+    installMockFetch(
+      ((input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedAuthorizations.push(request.headers.get("Authorization"));
+        return Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+                );
+                controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                controller.close();
+              },
+            }),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        );
+      }) as typeof fetch,
+    );
+    const resolver = createVeryfrontCloudInferenceModelResolver("run-scoped-inference-token");
+    const originalStream = AgentRuntime.prototype.stream;
+    const runtime = new AgentRuntime(
+      "retained-original-stream-runtime",
+      {
+        model: "veryfront-cloud/openai/gpt-test",
+        system: "Answer concisely.",
+        skills: false,
+      },
+      {
+        resolveModelRuntime: resolver,
+      },
+    );
+    const messages = [{
+      id: "user-1",
+      role: "user" as const,
+      parts: [{ type: "text" as const, text: "Hello" }],
+    }];
+
+    const first = await runtime.stream(messages);
+    await drainStream(first);
+    const second = await Reflect.apply(originalStream, runtime, [messages]) as ReadableStream<
+      Uint8Array
+    >;
+    await drainStream(second);
+
+    assertEquals(capturedAuthorizations, [
+      "Bearer run-scoped-inference-token",
+      "Bearer broader-project-runtime-token",
+    ]);
+  });
+
+  it("revokes run-scoped stream authority when the invocation is cancelled before start", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
+    const resolver = createVeryfrontCloudInferenceModelResolver("run-scoped-inference-token");
+    const retainedModel = resolver("veryfront-cloud/openai/gpt-test");
+    if (!retainedModel) throw new TypeError("Expected retained model");
+    const runtime = new AgentRuntime(
+      "cancelled-leased-stream-runtime",
+      {
+        model: "veryfront-cloud/openai/gpt-test",
+        system: "Answer concisely.",
+        skills: false,
+      },
+      {
+        resolveModelRuntime: resolver,
+      },
+    );
+    const abortController = new AbortController();
+    abortController.abort("cancel before start");
+
+    const stream = await runtime.stream(
+      [{
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Hello" }],
+      }],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      abortController.signal,
+    );
+    await drainStream(stream);
+
+    await assertRejects(
+      async () => {
+        const result = await retainedModel.doStream({ prompt: [] });
+        await drainStream(result.stream);
+      },
+      TypeError,
+      "Run-scoped inference credential is no longer active",
+    );
+  });
+
+  it("revokes run-scoped stream authority when provider streaming errors", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
+    installMockFetch(
+      (() => Promise.resolve(new Response("gateway failed", { status: 500 }))) as typeof fetch,
+    );
+    const resolver = createVeryfrontCloudInferenceModelResolver("run-scoped-inference-token");
+    const retainedModel = resolver("veryfront-cloud/openai/gpt-test");
+    if (!retainedModel) throw new TypeError("Expected retained model");
+    const runtime = new AgentRuntime(
+      "errored-leased-stream-runtime",
+      {
+        model: "veryfront-cloud/openai/gpt-test",
+        system: "Answer concisely.",
+        skills: false,
+      },
+      {
+        resolveModelRuntime: resolver,
+      },
+    );
+
+    const stream = await runtime.stream([{
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "Hello" }],
+    }]);
+    await drainStream(stream);
+
+    await assertRejects(
+      async () => {
+        const result = await retainedModel.doStream({ prompt: [] });
+        await drainStream(result.stream);
+      },
+      TypeError,
+      "Run-scoped inference credential is no longer active",
+    );
+  });
+
+  it("revokes retained run-scoped generate model capability after generate completion", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
+    const encoder = new TextEncoder();
+    installMockFetch(
+      (() =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  encoder.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'),
+                );
+                controller.enqueue(
+                  encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+                );
+                controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                controller.close();
+              },
+            }),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        )) as typeof fetch,
+    );
+    const resolver = createVeryfrontCloudInferenceModelResolver("run-scoped-inference-token");
+    const retainedModel = resolver("veryfront-cloud/openai/gpt-test");
+    if (!retainedModel) throw new TypeError("Expected retained model");
+    const runtime = new AgentRuntime(
+      "leased-generate-runtime",
+      {
+        model: "veryfront-cloud/openai/gpt-test",
+        system: "Answer concisely.",
+        skills: false,
+      },
+      {
+        resolveModelRuntime: resolver,
+      },
+    );
+
+    const response = await runtime.generate("Hello");
+
+    assertEquals(response.text, "Hello");
+    await assertRejects(
+      async () => {
+        const result = await retainedModel.doStream({ prompt: [] });
+        await drainStream(result.stream);
+      },
+      TypeError,
+      "Run-scoped inference credential is no longer active",
+    );
   });
 
   it("does not resolve non-cloud models through the private resolver", () => {

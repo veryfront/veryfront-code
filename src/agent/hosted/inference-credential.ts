@@ -1,7 +1,10 @@
 import { createVeryfrontCloudInferenceModel } from "#veryfront/provider/veryfront-cloud/provider.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 
-import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
+import {
+  type AgentModelRuntimeResolver,
+  registerModelRuntimeResolverRevoker,
+} from "../runtime/model-transport.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 
 const inferenceCredentials = createPrivateWeakStore<object, string>();
@@ -22,7 +25,8 @@ export function registerHostedInferenceCredential(
 export function createVeryfrontCloudInferenceModelResolver(
   credential: string,
 ): AgentModelRuntimeResolver {
-  return (modelId) => {
+  let active = true;
+  const resolver: AgentModelRuntimeResolver = (modelId) => {
     if (!IntrinsicReflectApply(StringStartsWith, modelId, [VERYFRONT_CLOUD_MODEL_PREFIX])) {
       return undefined;
     }
@@ -30,8 +34,19 @@ export function createVeryfrontCloudInferenceModelResolver(
     return createVeryfrontCloudInferenceModel(
       modelId.slice(VERYFRONT_CLOUD_MODEL_PREFIX.length),
       credential,
+      {
+        assertInferenceCredentialActive() {
+          if (!active) {
+            throw new TypeError("Run-scoped inference credential is no longer active");
+          }
+        },
+      },
     );
   };
+  registerModelRuntimeResolverRevoker(resolver, () => {
+    active = false;
+  });
+  return resolver;
 }
 
 /** @internal Create a model resolver without exposing verified inference authority. */

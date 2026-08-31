@@ -6,6 +6,7 @@
 
 import { type AgentConfig, type RuntimeReasoningOption } from "../types.ts";
 import { type ModelRuntime, resolveModel } from "#veryfront/provider";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { resolveProviderOptionsWithDefaults } from "./default-provider-options.ts";
 import {
   resolveConfiguredAgentModel,
@@ -35,6 +36,33 @@ export type ResolvedModelTransport = {
 
 /** @internal Framework-owned model resolver for private transport authority. */
 export type AgentModelRuntimeResolver = (modelId: string) => ModelRuntime | undefined;
+
+type RevokerState = {
+  revoked: boolean;
+  revoke: () => void;
+};
+
+const modelRuntimeResolverRevokers = createPrivateWeakStore<
+  AgentModelRuntimeResolver,
+  RevokerState
+>();
+
+/** @internal Attach invocation-scoped cleanup to a privately resolved model runtime. */
+export function registerModelRuntimeResolverRevoker(
+  resolver: AgentModelRuntimeResolver,
+  revoke: () => void,
+): void {
+  modelRuntimeResolverRevokers.set(resolver, { revoked: false, revoke });
+}
+
+/** @internal Revoke invocation-scoped authority attached to a private resolver, if any. */
+export function revokeModelRuntimeResolver(resolver: AgentModelRuntimeResolver | undefined): void {
+  if (!resolver) return;
+  const state = modelRuntimeResolverRevokers.get(resolver);
+  if (!state || state.revoked) return;
+  state.revoked = true;
+  state.revoke();
+}
 
 export interface ResolveAgentModelTransportInput {
   agentId: string;

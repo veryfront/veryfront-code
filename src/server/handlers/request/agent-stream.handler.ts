@@ -149,10 +149,6 @@ const FSAdapterWrapperRunWithContext = FSAdapterWrapperPrototype.runWithContext;
 const MultiProjectFSAdapterPrototype = MultiProjectFSAdapter.prototype;
 const MultiProjectFSAdapterRunWithContext = MultiProjectFSAdapterPrototype.runWithContext;
 
-function parseJson(value: string): unknown {
-  return IntrinsicReflectApply(IntrinsicJsonParse, undefined, [value]);
-}
-
 /** VeryfrontError.cause is `unknown` and is often a plain string. */
 function describeErrorCause(cause: unknown): string | undefined {
   if (cause === undefined || cause === null) return undefined;

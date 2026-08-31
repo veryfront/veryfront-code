@@ -264,7 +264,10 @@ export function createVeryfrontCloudFetch(
   apiToken: string,
   apiBaseUrl: string,
   projectSlug?: string,
-  options?: { inferenceCredential?: boolean },
+  options?: {
+    inferenceCredential?: boolean;
+    assertInferenceCredentialActive?: () => void;
+  },
 ): typeof fetch {
   const trustedApiToken = options?.inferenceCredential
     ? requireInferenceProviderCredential(apiToken, "Veryfront Cloud API token")
@@ -274,6 +277,7 @@ export function createVeryfrontCloudFetch(
     URLOriginGet,
   );
   return (input, init) => {
+    options?.assertInferenceCredentialActive?.();
     const request = new NativeRequest(input, init);
     const headers = new NativeHeaders(readNativeRequestHeaders(request));
 

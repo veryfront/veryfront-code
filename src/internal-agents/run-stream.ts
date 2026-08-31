@@ -77,14 +77,13 @@ import { type ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
 import type { ProviderReplayCheckpointPersister } from "./provider-replay-checkpoint-persister.ts";
 import { createVeryfrontCloudInferenceModelResolver } from "#veryfront/agent/hosted/inference-credential.ts";
+import { streamWithAgentRuntimeDispatch } from "#veryfront/agent/runtime/index.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 
 const getAnyObjectSchema = defineSchema((v) => v.record(v.string(), v.unknown()));
 const anyObjectSchema = lazySchema(getAnyObjectSchema) as Schema<Record<string, unknown>>;
 const runtimeInferenceCredentials = createPrivateWeakStore<object, string>();
 const logger = serverLogger.component("internal-agent-run-stream");
-const IntrinsicReflectApply = Reflect.apply;
-const AgentRuntimeStream = AgentRuntime.prototype.stream;
 const PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME = "bash";
 const INTERNAL_AGENT_RUNTIME_HEARTBEAT_INTERVAL_MS = 25_000;
 const INTERNAL_AGENT_RUNTIME_HEARTBEAT_FRAME = new TextEncoder().encode(
@@ -1102,14 +1101,19 @@ export async function createRuntimeAgentStreamResponse(
       },
     };
     const inferenceAuthToken = getRuntimeInferenceCredential(input);
-    const customRuntime = deps.createRuntime?.(runtimeAgent, mergedTools);
-    const runtime = customRuntime ?? new AgentRuntime(runtimeAgent.id, runtimeAgent.config, {
-      ...(inferenceAuthToken
-        ? {
-          resolveModelRuntime: createVeryfrontCloudInferenceModelResolver(inferenceAuthToken),
-        }
-        : {}),
-    });
+    const runtimeOverride = deps.createRuntime?.(runtimeAgent, mergedTools);
+    const runtimeDispatch = runtimeOverride
+      ? { kind: "override" as const, runtime: runtimeOverride }
+      : {
+        kind: "framework" as const,
+        runtime: new AgentRuntime(runtimeAgent.id, runtimeAgent.config, {
+          ...(inferenceAuthToken
+            ? {
+              resolveModelRuntime: createVeryfrontCloudInferenceModelResolver(inferenceAuthToken),
+            }
+            : {}),
+        }),
+      };
     const runtimeMessages = compactRuntimeMessagesForStream(
       normalizeAgUiRuntimeMessages(input.messages),
       systemPrompt,
@@ -1119,8 +1123,8 @@ export async function createRuntimeAgentStreamResponse(
     const candidateRuntimeStream = await runWithMandatoryRunEventSink(
       modelCallContextRelay.sink,
       () =>
-        customRuntime
-          ? runtime.stream(
+        runtimeDispatch.kind === "override"
+          ? runtimeDispatch.runtime.stream(
             runtimeMessages,
             runtimeContext,
             {
@@ -1132,18 +1136,19 @@ export async function createRuntimeAgentStreamResponse(
             maxOutputTokens,
             abortSignal,
           )
-          : IntrinsicReflectApply(AgentRuntimeStream, runtime, [
+          : streamWithAgentRuntimeDispatch(
+            runtimeDispatch.runtime,
             runtimeMessages,
             runtimeContext,
             {
-              onFinish: (response: AgentResponse) => {
+              onFinish: (response) => {
                 completedResponse = response;
               },
             },
             undefined,
             maxOutputTokens,
             abortSignal,
-          ]),
+          ),
     );
     if (candidateRuntimeStream.locked) {
       throw new TypeError("Internal agent runtime returned a locked stream");
