@@ -54,7 +54,6 @@ import {
   createHostedRunEventWriterCapabilityForRequest,
   runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
-import { getHostedInferenceCredential } from "./inference-credential.ts";
 import { compareStrings } from "#veryfront/utils/compare.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
@@ -496,13 +495,11 @@ export async function prepareHostedChatRuntimeCreationOptions<
     skills: promptSkills,
     availableToolNames: initialModelVisibleToolNames,
   });
-  const inferenceAuthToken = getHostedInferenceCredential(input.request);
   return {
     creationOptions: {
       projectId: input.projectId,
       ...(input.request.projectSlug ? { projectSlug: input.request.projectSlug } : {}),
       authToken: input.authToken,
-      ...(inferenceAuthToken ? { inferenceAuthToken } : {}),
       instructions: agentInstructions,
       ...(input.branchId !== undefined ? { branchId: input.branchId } : {}),
       ...(input.runtimeTargetKind !== undefined

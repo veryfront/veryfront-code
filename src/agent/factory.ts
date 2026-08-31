@@ -11,7 +11,7 @@ import type {
   Message,
   ResolvedAgentConfig,
 } from "./types.ts";
-import { AgentRuntime } from "./runtime/index.ts";
+import { AgentRuntime, type AgentRuntimeInternalOptions } from "./runtime/index.ts";
 import { isRuntimeLocalTool } from "./runtime/local-tool.ts";
 import {
   detectPlatform,
@@ -489,14 +489,6 @@ export function agent<TOutput = never>(config: AgentConfig<TOutput>): Agent<TOut
   return createAgent(config, { register: true });
 }
 
-/** @internal Create a framework-owned agent with a private inference credential. */
-export function createAgentWithInferenceCredential<TOutput = never>(
-  config: AgentConfig<TOutput>,
-  inferenceAuthToken: string,
-): Agent<TOutput> {
-  return createAgent(config, { register: true, inferenceAuthToken });
-}
-
 /**
  * Build an agent runtime without adding it to the project registry.
  *
@@ -516,9 +508,17 @@ export function createEphemeralAgent<TOutput = never>(
   return createAgent(config, { register: false });
 }
 
+/** @internal Creates a registered agent with framework-private runtime options. */
+export function createAgentWithRuntimeOptions<TOutput = never>(
+  config: AgentConfig<TOutput>,
+  runtimeOptions: AgentRuntimeInternalOptions,
+): Agent<TOutput> {
+  return createAgent(config, { register: true, runtimeOptions });
+}
+
 function createAgent<TOutput = never>(
   config: AgentConfig<TOutput>,
-  options: { register: boolean; inferenceAuthToken?: string },
+  options: { register: boolean; runtimeOptions?: AgentRuntimeInternalOptions },
 ): Agent<TOutput> {
   if (typeof config.id === "string" && config.id.trim().length === 0) {
     throw toError(
@@ -575,7 +575,7 @@ function createAgent<TOutput = never>(
     tools: mergedToolsConfig,
     system: augmentedSystem,
     middleware: resolvedMiddleware,
-  }, options.inferenceAuthToken);
+  }, options.runtimeOptions);
 
   const agentInstance = createAgentInstance({
     id,

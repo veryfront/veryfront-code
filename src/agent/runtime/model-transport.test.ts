@@ -80,6 +80,32 @@ describe("resolveAgentModelTransport", () => {
     assertEquals((transport as { reasoning?: unknown }).reasoning, { enabled: false });
   });
 
+  it("uses the framework resolver only after the project transport hook declines", async () => {
+    const calls: string[] = [];
+    const frameworkModel = createModel("veryfront-cloud/openai/gpt-test");
+    const transport = await resolveAgentModelTransport({
+      agentId: "agent-1",
+      config: {
+        model: "veryfront-cloud/openai/gpt-test",
+        system: "You are a helpful assistant.",
+        resolveModelTransport: () => {
+          calls.push("project");
+          return {};
+        },
+      },
+      context: undefined,
+      mode: "stream",
+      modelOverride: undefined,
+      resolveModelRuntime: (modelId) => {
+        calls.push(`framework:${modelId}`);
+        return frameworkModel;
+      },
+    });
+
+    assertEquals(calls, ["project", "framework:veryfront-cloud/openai/gpt-test"]);
+    assertStrictEquals(transport.languageModel, frameworkModel);
+  });
+
   it("defaults reasoning for non-Anthropic thinking-capable Veryfront Cloud models", async () => {
     const hostModel = createModel("veryfront-cloud/google-ai-studio/gemini-2.5-pro");
     const config: AgentConfig = {

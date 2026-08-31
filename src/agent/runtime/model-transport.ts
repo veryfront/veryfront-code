@@ -6,7 +6,6 @@
 
 import { type AgentConfig, type RuntimeReasoningOption } from "../types.ts";
 import { type ModelRuntime, resolveModel } from "#veryfront/provider";
-import { runWithVeryfrontCloudInferenceCredential } from "#veryfront/provider/veryfront-cloud/provider.ts";
 import { resolveProviderOptionsWithDefaults } from "./default-provider-options.ts";
 import {
   resolveConfiguredAgentModel,
@@ -30,14 +29,16 @@ export type ResolvedModelTransport = {
   reasoning?: RuntimeReasoningOption;
 };
 
+/** @internal Framework-owned model resolver for private transport authority. */
+export type AgentModelRuntimeResolver = (modelId: string) => ModelRuntime;
+
 export interface ResolveAgentModelTransportInput {
   agentId: string;
   config: AgentConfig;
   context: Record<string, unknown> | undefined;
   modelOverride: string | undefined;
   mode: "generate" | "stream";
-  /** @internal Framework-owned credential used only while resolving the model. */
-  inferenceAuthToken?: string;
+  resolveModelRuntime?: AgentModelRuntimeResolver;
 }
 
 function resolveReasoningWithDefaults(
@@ -78,10 +79,9 @@ export async function resolveAgentModelTransport(
     resolvedModelString,
     transport?.providerOptions,
   );
-  const languageModel = transport?.model ?? runWithVeryfrontCloudInferenceCredential(
-    input.inferenceAuthToken,
-    () => resolveModel(resolvedModelString),
-  );
+  const languageModel = transport?.model ??
+    input.resolveModelRuntime?.(resolvedModelString) ??
+    resolveModel(resolvedModelString);
   const providerOptionKey = resolveModelProviderOptionKey(resolvedModelString, languageModel);
 
   return {

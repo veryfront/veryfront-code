@@ -17,14 +17,13 @@ import {
   resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
-import { resolveModel } from "#veryfront/provider";
-import { runWithVeryfrontCloudInferenceCredential } from "#veryfront/provider/veryfront-cloud/provider.ts";
 import {
   runWithVeryfrontCloudContext,
   runWithVeryfrontCloudContextAsync,
   type VeryfrontCloudContext,
 } from "#veryfront/provider/veryfront-cloud/context.ts";
-import { agent, createAgentWithInferenceCredential } from "../factory.ts";
+import { createAgentWithRuntimeOptions } from "../factory.ts";
+import type { AgentRuntimeInternalOptions } from "../runtime/index.ts";
 import { markRuntimeLocalTool } from "../runtime/local-tool.ts";
 import {
   applyDefaultResearchArtifactPath,
@@ -340,12 +339,6 @@ function createRuntimeAgentConfig(input: {
     temperature: input.options.temperature,
     maxSteps: input.options.maxSteps ?? 50,
     resolveModelTransport: ({ resolvedModel }) => {
-      const languageModel = input.options.inferenceAuthToken
-        ? runWithVeryfrontCloudInferenceCredential(
-          input.options.inferenceAuthToken,
-          () => resolveModel(resolvedModel),
-        )
-        : undefined;
       const thinking = input.options.thinking ??
         resolveVeryfrontCloudModelThinking(resolvedModel);
       const providerOptions = resolveVeryfrontCloudThinkingProviderOptions(
@@ -353,9 +346,7 @@ function createRuntimeAgentConfig(input: {
         thinking,
       );
       const reasoning = resolveVeryfrontCloudReasoningOption(resolvedModel, thinking);
-      return providerOptions || reasoning || languageModel
-        ? { ...(languageModel ? { model: languageModel } : {}), providerOptions, reasoning }
-        : {};
+      return providerOptions || reasoning ? { providerOptions, reasoning } : {};
     },
     resolveRuntimeState: async ({ structuredSystem, system, ...request }) => {
       const result = await resolveHostedRuntimeState({
@@ -502,6 +493,7 @@ function runWithDefaultHostedRequestContext<TResult>(
 /** Create default hosted chat runtime. */
 export async function createDefaultHostedChatRuntime(
   input: CreateDefaultHostedChatRuntimeOptions,
+  runtimeOptions: AgentRuntimeInternalOptions = {},
 ): Promise<HostedChatRuntimeCreationResult> {
   const effectiveRunEventWriterCapability = getActiveHostedRunEventWriterCapability();
   return await runWithEffectiveSourceIntegrationPolicy(
@@ -532,13 +524,7 @@ export async function createDefaultHostedChatRuntime(
         });
         const runtimeAgent = runWithVeryfrontCloudContext(
           cloudContext,
-          () =>
-            input.options.inferenceAuthToken
-              ? createAgentWithInferenceCredential(
-                runtimeAgentConfig,
-                input.options.inferenceAuthToken,
-              )
-              : agent(runtimeAgentConfig),
+          () => createAgentWithRuntimeOptions(runtimeAgentConfig, runtimeOptions),
         );
 
         return {

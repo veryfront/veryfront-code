@@ -10,6 +10,13 @@ import type { LLMProviderRegistry } from "veryfront/extensions/llm";
 import { LLMProviderRegistryName } from "veryfront/extensions/llm";
 import { GoogleProvider } from "./google-provider.ts";
 
+const trustedGoogleProvider = new GoogleProvider();
+
+/** @internal Framework-owned factory captured before project code can replace provider methods. */
+export const createGoogleProviderModel = trustedGoogleProvider.createModel.bind(
+  trustedGoogleProvider,
+);
+
 const extGoogle: ExtensionFactory = () => {
   const provider = new GoogleProvider();
   let registryRef: LLMProviderRegistry | undefined;

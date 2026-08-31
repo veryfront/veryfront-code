@@ -10,6 +10,19 @@ import type { LLMProviderRegistry } from "veryfront/extensions/llm";
 import { LLMProviderRegistryName } from "veryfront/extensions/llm";
 import { OpenAIProvider } from "./openai-provider.ts";
 
+const trustedOpenAIProvider = new OpenAIProvider();
+
+/** @internal Framework-owned factories captured before project code can replace provider methods. */
+export const createOpenAIProviderModel = trustedOpenAIProvider.createModel.bind(
+  trustedOpenAIProvider,
+);
+export const createOpenAIProviderEmbedding = trustedOpenAIProvider.createEmbedding.bind(
+  trustedOpenAIProvider,
+);
+export const createOpenAIProviderResponses = trustedOpenAIProvider.createResponses.bind(
+  trustedOpenAIProvider,
+);
+
 const extOpenAI: ExtensionFactory = () => {
   const provider = new OpenAIProvider();
   let registry: LLMProviderRegistry | undefined;

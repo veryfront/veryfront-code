@@ -1,12 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { agent as createAgent } from "#veryfront/agent";
-import { createAgentWithInferenceCredential } from "#veryfront/agent/factory.ts";
-import type { Agent } from "#veryfront/agent";
 import { createDetachedRunTracker } from "#veryfront/agent/service/detached-run-tracker.ts";
 import { createHostedAgentServiceRouteSet } from "#veryfront/agent/service/routes.ts";
 import type { HostedServiceAuthenticatedRequest } from "#veryfront/agent/service/auth.ts";
 import type { AgUiResumeValue } from "#veryfront/agent/ag-ui/tool-shared.ts";
-import { getHostedInferenceCredential } from "#veryfront/agent/hosted/inference-credential.ts";
+import { createHostedInferenceModelResolver } from "#veryfront/agent/hosted/inference-credential.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { clearModelProviders, resolveModel } from "#veryfront/provider";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
@@ -59,29 +57,33 @@ describe("run-scoped inference credential", () => {
   });
 
   it("keeps inference authority off the public AgentRuntime object", () => {
+    const inferenceAuthToken = "run-scoped-inference-token";
     const runtime = new AgentRuntime(
       "private-inference-runtime",
       {
         model: "veryfront-cloud/openai/gpt-test",
         system: "Answer concisely.",
       },
-      "run-scoped-inference-token",
+      {
+        resolveModelRuntime: () => {
+          throw new Error(inferenceAuthToken);
+        },
+      },
     );
 
-    assertEquals(Reflect.get(runtime, "inferenceAuthToken"), undefined);
-    assertEquals(JSON.stringify(runtime).includes("run-scoped-inference-token"), false);
+    assertEquals(Reflect.get(runtime, "resolveModelRuntime"), undefined);
+    assertEquals(JSON.stringify(runtime).includes(inferenceAuthToken), false);
   });
 
   it("keeps the dedicated credential private through internal stream pulls", async () => {
     setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
     setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
-    const capturedAuthorizations: string[] = [];
+    const capturedAuthorizations: Array<string | null> = [];
     const encoder = new TextEncoder();
     installMockFetch(
       (async (input: URL | Request | string, init?: RequestInit) => {
         const request = new Request(input, init);
-        const authorization = request.headers.get("Authorization");
-        if (authorization) capturedAuthorizations.push(authorization);
+        capturedAuthorizations.push(request.headers.get("Authorization"));
         return new Response(
           new ReadableStream({
             start(controller) {
@@ -102,9 +104,9 @@ describe("run-scoped inference credential", () => {
       system: "Answer concisely.",
       skills: false,
       middleware: [async (_context, next) => {
-        const projectModel = resolveModel("veryfront-cloud/openai/gpt-test");
-        const projectResult = await projectModel.doStream({ prompt: [] });
-        await drainStream(projectResult.stream);
+        const projectModel = resolveModel("veryfront-cloud/openai/gpt-project-callback");
+        const result = await projectModel.doStream({ prompt: [] });
+        await drainStream(result.stream);
         return await next();
       }],
     });
@@ -135,14 +137,15 @@ describe("run-scoped inference credential", () => {
   it("routes a serialized standalone AgentService invocation to gateway Authorization", async () => {
     setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
     setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
-    let capturedAuthorization: string | null = null;
+    const capturedAuthorizations: Array<string | null> = [];
     let serializedPreparedRequest = "";
     let setupFailure: unknown;
+    let frameworkModel: ReturnType<typeof resolveModel> | undefined;
     const encoder = new TextEncoder();
     installMockFetch(
       (async (input: URL | Request | string, init?: RequestInit) => {
         const request = new Request(input, init);
-        capturedAuthorization = request.headers.get("Authorization");
+        capturedAuthorizations.push(request.headers.get("Authorization"));
         return new Response(
           new ReadableStream({
             start(controller) {
@@ -158,15 +161,6 @@ describe("run-scoped inference credential", () => {
       }) as typeof fetch,
     );
 
-    let executionInput: {
-      runtimeAgent: Agent<never>;
-    } | undefined;
-    let resolveExecutionComplete!: () => void;
-    let rejectExecutionComplete!: (error: unknown) => void;
-    const executionComplete = new Promise<void>((resolve, reject) => {
-      resolveExecutionComplete = resolve;
-      rejectExecutionComplete = reject;
-    });
     const routeSet = createHostedAgentServiceRouteSet({
       tracker: createDetachedRunTracker<AgUiResumeValue>(),
       runtimeSource: { type: "release", releaseId: "release-42" },
@@ -178,28 +172,19 @@ describe("run-scoped inference credential", () => {
       verifyRunEventAppendToken: async () => ({ verified: true }),
       prepareExecution: async (request) => {
         serializedPreparedRequest = JSON.stringify(request);
-        const inferenceAuthToken = getHostedInferenceCredential(request);
-        if (!inferenceAuthToken) throw new Error("Expected verified inference credential");
-        const runtimeAgent = createAgentWithInferenceCredential({
-          id: "run-scoped-route-agent",
-          model: "veryfront-cloud/openai/gpt-test",
-          system: "Answer concisely.",
-          skills: false,
-        }, inferenceAuthToken);
-        const execution = { runtimeAgent };
-        executionInput = execution;
-        return execution;
+        const projectModel = resolveModel("veryfront-cloud/openai/gpt-project-callback");
+        const projectResult = await projectModel.doStream({ prompt: [] });
+        await drainStream(projectResult.stream);
+        frameworkModel = createHostedInferenceModelResolver(request)?.(
+          "veryfront-cloud/openai/gpt-test",
+        );
+        return { executionId: "exec-1" };
       },
       streamExecutionToAgUiResponse: () => new Response("streamed"),
-      startDetachedExecution: async ({ execution }) => {
-        try {
-          if (!executionInput) throw new Error("Expected prepared execution");
-          const result = await execution.runtimeAgent.stream({ input: "Hello" });
-          await result.toDataStreamResponse().text();
-          resolveExecutionComplete();
-        } catch (error) {
-          rejectExecutionComplete(error);
-        }
+      startDetachedExecution: async () => {
+        if (!frameworkModel) throw new TypeError("Expected framework model");
+        const result = await frameworkModel.doStream({ prompt: [] });
+        await drainStream(result.stream);
       },
       logger: {
         error(message, metadata) {
@@ -220,8 +205,10 @@ describe("run-scoped inference credential", () => {
     });
 
     assertEquals(response.status, 202, JSON.stringify(setupFailure));
-    await executionComplete;
-    assertEquals(capturedAuthorization, "Bearer run-scoped-inference-token");
+    assertEquals(capturedAuthorizations, [
+      "Bearer broader-project-runtime-token",
+      "Bearer run-scoped-inference-token",
+    ]);
     assertEquals(serializedPreparedRequest.includes("run-scoped-inference-token"), false);
   });
 

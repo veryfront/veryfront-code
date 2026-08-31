@@ -17,14 +17,10 @@ import {
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
   resolveVeryfrontCloudOpenAITransport,
 } from "./model-catalog.ts";
-import { AnthropicProvider } from "@veryfront/ext-llm-anthropic";
-import { GoogleProvider } from "@veryfront/ext-llm-google";
+import { createAnthropicProviderModel } from "@veryfront/ext-llm-anthropic";
+import { createGoogleProviderModel } from "@veryfront/ext-llm-google";
 
-const trustedAnthropicProvider = new AnthropicProvider();
-const trustedGoogleProvider = new GoogleProvider();
 const IntrinsicReflectApply = Reflect.apply;
-const trustedAnthropicCreateModel = AnthropicProvider.prototype.createModel;
-const trustedGoogleCreateModel = GoogleProvider.prototype.createModel;
 
 const inferenceCredentialStorage = new AsyncLocalStorage<string | undefined>();
 const IntrinsicObjectDefineProperty = Object.defineProperty;
@@ -118,28 +114,28 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
 
   switch (provider) {
     case "anthropic": {
-      const anthropic = inferenceCredential ? trustedAnthropicProvider : registry?.get("anthropic");
+      const anthropic = registry?.get("anthropic");
       if (anthropic) {
-        const model = inferenceCredential
-          ? IntrinsicReflectApply(trustedAnthropicCreateModel, trustedAnthropicProvider, [
-            upstreamModelId,
-            {
-              credential: apiToken,
-              authToken: apiToken,
-              baseURL,
-              name: "veryfront-cloud",
-              fetch,
-            },
-          ]) as ModelRuntime
-          : anthropic.createModel(upstreamModelId, {
+        return wrapVeryfrontCloudModel(
+          anthropic.createModel(upstreamModelId, {
             credential: apiToken,
             authToken: apiToken,
             baseURL,
             name: "veryfront-cloud",
             fetch,
-          });
+          }),
+          provider,
+        );
+      }
+      if (inferenceCredential) {
         return wrapVeryfrontCloudModel(
-          model,
+          createAnthropicProviderModel(upstreamModelId, {
+            credential: apiToken,
+            authToken: apiToken,
+            baseURL,
+            name: "veryfront-cloud",
+            fetch,
+          }),
           provider,
         );
       }
@@ -147,26 +143,26 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
     }
 
     case "google": {
-      const google = inferenceCredential ? trustedGoogleProvider : registry?.get("google");
+      const google = registry?.get("google");
       if (google) {
-        const model = inferenceCredential
-          ? IntrinsicReflectApply(trustedGoogleCreateModel, trustedGoogleProvider, [
-            upstreamModelId,
-            {
-              credential: apiToken,
-              baseURL,
-              name: "veryfront-cloud",
-              fetch,
-            },
-          ]) as ModelRuntime
-          : google.createModel(upstreamModelId, {
+        return wrapVeryfrontCloudModel(
+          google.createModel(upstreamModelId, {
             credential: apiToken,
             baseURL,
             name: "veryfront-cloud",
             fetch,
-          });
+          }),
+          provider,
+        );
+      }
+      if (inferenceCredential) {
         return wrapVeryfrontCloudModel(
-          model,
+          createGoogleProviderModel(upstreamModelId, {
+            credential: apiToken,
+            baseURL,
+            name: "veryfront-cloud",
+            fetch,
+          }),
           provider,
         );
       }

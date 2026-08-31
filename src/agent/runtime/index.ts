@@ -267,7 +267,11 @@ import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 import { telemetryErrorType } from "#veryfront/observability/telemetry-error.ts";
 import { resolveTemperatureParameter } from "./model-capabilities.ts";
 import { applySkillDelegationOverridesToToolInput } from "./skill-delegation-overrides.ts";
-import { resolveAgentModelTransport, type ResolvedModelTransport } from "./model-transport.ts";
+import {
+  type AgentModelRuntimeResolver,
+  resolveAgentModelTransport,
+  type ResolvedModelTransport,
+} from "./model-transport.ts";
 import { buildRuntimeUsageTraceAttributes } from "./trace-usage.ts";
 import {
   createToolExposureCheckpoint,
@@ -1193,18 +1197,27 @@ type RuntimeStepState = {
   context?: Record<string, unknown>;
 };
 
+/** @internal Framework-only AgentRuntime construction options. */
+export type AgentRuntimeInternalOptions = {
+  resolveModelRuntime?: AgentModelRuntimeResolver;
+};
+
 /** Implement agent runtime. */
 export class AgentRuntime {
+  readonly #resolveModelRuntime: AgentModelRuntimeResolver | undefined;
   private id: string;
   private config: AgentConfig;
   private memory: Memory<Message>;
   private status: AgentStatus = "idle";
-  readonly #inferenceAuthToken: string | undefined;
 
-  constructor(id: string, config: AgentConfig, inferenceAuthToken?: string) {
+  constructor(
+    id: string,
+    config: AgentConfig,
+    internalOptions: AgentRuntimeInternalOptions = {},
+  ) {
+    this.#resolveModelRuntime = internalOptions.resolveModelRuntime;
     this.id = id;
     this.config = { ...config };
-    this.#inferenceAuthToken = inferenceAuthToken;
 
     // Agents are stateless by default (see docs/guides/memory-and-streaming.md):
     // with no `memory` config, calls never share conversation history, so
@@ -1238,7 +1251,7 @@ export class AgentRuntime {
       context,
       modelOverride,
       mode,
-      inferenceAuthToken: this.#inferenceAuthToken,
+      resolveModelRuntime: this.#resolveModelRuntime,
     });
   }
 

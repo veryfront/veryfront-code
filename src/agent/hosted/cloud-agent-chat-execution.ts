@@ -38,6 +38,8 @@ import {
   resolveAgentServiceRegistrationInput,
 } from "../service/registration.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
+import { createHostedInferenceModelResolver } from "./inference-credential.ts";
+import type { AgentRuntimeInternalOptions } from "../runtime/index.ts";
 import type { PreparedHostedChatExecution } from "./prepared-chat-execution.ts";
 import {
   runPreparedHostedChatExecutionDetached,
@@ -142,6 +144,7 @@ export function createProjectSteeringRefresh(context: NodeVeryfrontCloudAgentSer
 export function createAgentRuntime(
   context: NodeVeryfrontCloudAgentServiceContext,
   options: DefaultHostedChatRuntimeCreationOptions,
+  runtimeOptions?: AgentRuntimeInternalOptions,
 ): Promise<HostedChatRuntimeCreationResult> {
   const config = context.infrastructure.getConfig();
   const projectRuntime = getProjectAgentRuntime(context);
@@ -199,7 +202,7 @@ export function createAgentRuntime(
       setAttributes: (attributes) => setFilteredTraceAttributes(context, attributes),
     },
     logger: context.infrastructure.logger,
-  });
+  }, runtimeOptions);
 }
 
 function setPrepareChatExecutionStartAttributes(
@@ -309,6 +312,7 @@ export async function prepareChatExecutionWithinProjectRuntime(
     spawnedFromToolCallId,
   } = req;
   const config = context.infrastructure.getConfig();
+  const resolveModelRuntime = createHostedInferenceModelResolver(req);
   const projectServiceTraceAttributes = buildProjectServiceTraceAttributes({
     projectSlug: req.projectSlug,
     readEnv: getEnv,
@@ -366,10 +370,14 @@ export async function prepareChatExecutionWithinProjectRuntime(
     ),
     createRuntime: (creationOptions) =>
       context.trace("chat.createRuntime", () => {
-        return createAgentRuntime(context, {
-          ...creationOptions,
-          userId: req.userId,
-        });
+        return createAgentRuntime(
+          context,
+          {
+            ...creationOptions,
+            userId: req.userId,
+          },
+          resolveModelRuntime ? { resolveModelRuntime } : undefined,
+        );
       }),
   });
 

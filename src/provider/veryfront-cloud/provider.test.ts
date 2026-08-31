@@ -3,9 +3,6 @@ import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetc
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { agent } from "#veryfront/agent";
-import { AnthropicProvider } from "@veryfront/ext-llm-anthropic";
-import { GoogleProvider } from "@veryfront/ext-llm-google";
-import { OpenAIProvider } from "@veryfront/ext-llm-openai";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { clearEmbeddingProviders, resolveEmbeddingModel } from "#veryfront/embedding/index.ts";
 import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
@@ -13,6 +10,9 @@ import { clearModelProviders, resolveModel } from "#veryfront/provider";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
 import { runWithVeryfrontCloudInferenceCredential } from "./provider.ts";
+import { AnthropicProvider } from "@veryfront/ext-llm-anthropic";
+import { GoogleProvider } from "@veryfront/ext-llm-google";
+import { OpenAIProvider } from "@veryfront/ext-llm-openai";
 
 const CLOUD_ENV_KEYS = [
   "VERYFRONT_API_TOKEN",
@@ -132,74 +132,75 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(extensionVisibleCredential, undefined);
   });
 
-  it("clears an outer inference credential for an uncredentialed nested scope", () => {
+  it("clears a parent inference credential for an uncredentialed nested run", async () => {
     setCloudBootstrap();
-    const registry = ensureBuiltinLLMProviders();
-    const builtinOpenAI = registry.require("openai");
-    let overrideCalled = false;
-    let overrideCredential: string | undefined;
-    registry.unregister("openai");
-    registry.register({
-      id: "openai",
-      createModel(modelId, config) {
-        overrideCalled = true;
-        overrideCredential = config.credential;
-        return builtinOpenAI.createModel(modelId, config);
-      },
-    });
+    let capturedAuthorization: string | null = null;
 
-    try {
-      runWithVeryfrontCloudInferenceCredential(
-        "outer-inference-token",
-        () =>
-          runWithVeryfrontCloudInferenceCredential(
-            undefined,
-            () => resolveModel("veryfront-cloud/openai/gpt-test"),
-          ),
-      );
-    } finally {
-      registry.unregister("openai");
-      registry.register(builtinOpenAI);
-    }
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedAuthorization = request.headers.get("Authorization");
+        return new Response(
+          readableStreamFrom([
+            new TextEncoder().encode(
+              'data: {"choices":[{"finish_reason":"stop"}]}\n\n',
+            ),
+            new TextEncoder().encode("data: [DONE]\n\n"),
+          ]),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
 
-    assertEquals(overrideCalled, true);
-    assertEquals(overrideCredential, "vf_test_provider");
+    await runWithVeryfrontCloudInferenceCredential(
+      "parent-run-inference-token",
+      () =>
+        runWithVeryfrontCloudInferenceCredential(undefined, async () => {
+          const model = resolveModel("veryfront-cloud/openai/gpt-test");
+          const result = await model.doStream({ prompt: [] });
+          await drainStream(result.stream);
+        }),
+    );
+
+    assertEquals(capturedAuthorization, "Bearer vf_test_provider");
   });
 
-  it("uses provider method targets captured before project code can mutate prototypes", () => {
+  it("does not dispatch signed inference through mutable provider prototypes", () => {
     setCloudBootstrap();
-    const originalMethods = [
-      { prototype: AnthropicProvider.prototype, method: "createModel" },
-      { prototype: GoogleProvider.prototype, method: "createModel" },
-      { prototype: OpenAIProvider.prototype, method: "createModel" },
-    ].map((entry) => ({
-      ...entry,
-      descriptor: Object.getOwnPropertyDescriptor(entry.prototype, entry.method),
-    }));
-    if (originalMethods.some(({ descriptor }) => descriptor === undefined)) {
-      throw new Error("Missing provider method descriptor");
-    }
-    const blocked = () => {
-      throw new Error("project provider prototype received inference credential");
+    const originalAnthropicCreateModel = AnthropicProvider.prototype.createModel;
+    const originalGoogleCreateModel = GoogleProvider.prototype.createModel;
+    const originalOpenAICreateModel = OpenAIProvider.prototype.createModel;
+    const extensionVisibleCredentials: string[] = [];
+
+    AnthropicProvider.prototype.createModel = function (_modelId, config) {
+      extensionVisibleCredentials.push(config.credential);
+      throw new Error("Mutated Anthropic provider called");
+    };
+    GoogleProvider.prototype.createModel = function (_modelId, config) {
+      extensionVisibleCredentials.push(config.credential);
+      throw new Error("Mutated Google provider called");
+    };
+    OpenAIProvider.prototype.createModel = function (_modelId, config) {
+      extensionVisibleCredentials.push(config.credential);
+      throw new Error("Mutated OpenAI provider called");
     };
 
     try {
-      for (const { prototype, method } of originalMethods) {
-        Object.defineProperty(prototype, method, {
-          configurable: true,
-          value: blocked,
-        });
-      }
-      runWithVeryfrontCloudInferenceCredential("run-scoped-inference-token", () => {
-        resolveModel("veryfront-cloud/anthropic/claude-sonnet-4-6");
-        resolveModel("veryfront-cloud/google-ai-studio/gemini-2.5-flash");
-        resolveModel("veryfront-cloud/openai/gpt-test");
-      });
+      runWithVeryfrontCloudInferenceCredential(
+        "run-scoped-inference-token",
+        () => {
+          resolveModel("veryfront-cloud/anthropic/claude-test");
+          resolveModel("veryfront-cloud/google/gemini-test");
+          resolveModel("veryfront-cloud/openai/gpt-test");
+        },
+      );
     } finally {
-      for (const { prototype, method, descriptor } of originalMethods) {
-        Object.defineProperty(prototype, method, descriptor!);
-      }
+      AnthropicProvider.prototype.createModel = originalAnthropicCreateModel;
+      GoogleProvider.prototype.createModel = originalGoogleCreateModel;
+      OpenAIProvider.prototype.createModel = originalOpenAICreateModel;
     }
+
+    assertEquals(extensionVisibleCredentials, []);
   });
 
   it("preserves class runtime method receivers while adding cloud metadata", async () => {
