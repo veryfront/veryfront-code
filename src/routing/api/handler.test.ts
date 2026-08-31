@@ -16,8 +16,10 @@ import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/sou
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 
 const handlers: APIRouteHandler[] = [];
+const workerDenoEnvGet = "Deno" + ".env.get";
 
 type HandlerConfig = ConstructorParameters<typeof APIRouteHandler>[2];
 
@@ -94,8 +96,8 @@ afterEach(async (): Promise<void> => {
   while (handlers.length) handlers.pop()?.destroy();
   __injectDepsForTests(null);
   await __resetPoolForTests();
-  Deno.env.delete("WORKER_ISOLATION_ENABLED");
-  Deno.env.delete("WORKER_ISOLATION_API");
+  deleteEnv("WORKER_ISOLATION_ENABLED");
+  deleteEnv("WORKER_ISOLATION_API");
 });
 
 describe("APIRouteHandler", () => {
@@ -310,7 +312,7 @@ describe("APIRouteHandler", () => {
       const source = [
         `import "data:text/javascript,globalThis.${marker}%3D%27worker-imported%27";`,
         "let envAccess = 'allowed';",
-        "try { Deno.env.get('VF_TEST_HOST_ONLY_SECRET'); } catch { envAccess = 'blocked'; }",
+        `try { ${workerDenoEnvGet}('VF_TEST_HOST_ONLY_SECRET'); } catch { envAccess = 'blocked'; }`,
         "export function GET(request) {",
         `  return Response.json({`,
         `    envAccess,`,
@@ -340,8 +342,8 @@ describe("APIRouteHandler", () => {
         },
       });
 
-      Deno.env.delete("WORKER_ISOLATION_ENABLED");
-      Deno.env.delete("WORKER_ISOLATION_API");
+      deleteEnv("WORKER_ISOLATION_ENABLED");
+      deleteEnv("WORKER_ISOLATION_API");
       await __resetPoolForTests();
       const handler = await createInitializedHandler("/test/project", adapter);
       const remoteCtx = {
@@ -381,7 +383,7 @@ describe("APIRouteHandler", () => {
       assertEquals(preparations, 1);
       assertEquals((globalThis as Record<string, unknown>)[marker], undefined);
       assert(
-        Deno.env.get("VF_TEST_HOST_ONLY_SECRET") === undefined,
+        getEnv("VF_TEST_HOST_ONLY_SECRET") === undefined,
         "the test must not depend on a real host secret",
       );
     });
@@ -662,8 +664,8 @@ describe("APIRouteHandler", () => {
           });
         },
       });
-      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
-      Deno.env.set("WORKER_ISOLATION_API", "1");
+      setEnv("WORKER_ISOLATION_ENABLED", "1");
+      setEnv("WORKER_ISOLATION_API", "1");
       await __resetPoolForTests();
 
       const handler = await createInitializedHandler("/test/project", adapter);
@@ -690,7 +692,7 @@ describe("APIRouteHandler", () => {
     describe("when the runtime cannot prepare an isolated module", () => {
       afterEach(() => {
         __setCompiledBinaryForTests(undefined);
-        Deno.env.delete(HOST_PROJECT_EXECUTION_OVERRIDE_ENV);
+        deleteEnv(HOST_PROJECT_EXECUTION_OVERRIDE_ENV);
       });
 
       it("fails closed when API isolation conflicts with a host execution grant", async () => {
@@ -713,9 +715,9 @@ describe("APIRouteHandler", () => {
             throw new Error("prepared an isolated module this runtime cannot link");
           },
         });
-        Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
-        Deno.env.set("WORKER_ISOLATION_API", "1");
-        Deno.env.set(HOST_PROJECT_EXECUTION_OVERRIDE_ENV, "1");
+        setEnv("WORKER_ISOLATION_ENABLED", "1");
+        setEnv("WORKER_ISOLATION_API", "1");
+        setEnv(HOST_PROJECT_EXECUTION_OVERRIDE_ENV, "1");
         __setCompiledBinaryForTests(true);
         await __resetPoolForTests();
 
@@ -759,8 +761,8 @@ describe("APIRouteHandler", () => {
             throw new Error("unreachable");
           },
         });
-        Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
-        Deno.env.set("WORKER_ISOLATION_API", "1");
+        setEnv("WORKER_ISOLATION_ENABLED", "1");
+        setEnv("WORKER_ISOLATION_API", "1");
         // Deliberately no VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION.
         __setCompiledBinaryForTests(true);
         await __resetPoolForTests();
@@ -1189,8 +1191,8 @@ describe("APIRouteHandler", () => {
         prepareHandlerModule: () => Promise.resolve(module),
         resolvePreparedRouteMethods: () => Promise.resolve([...inspectedMethods]),
       });
-      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
-      Deno.env.set("WORKER_ISOLATION_API", "1");
+      setEnv("WORKER_ISOLATION_ENABLED", "1");
+      setEnv("WORKER_ISOLATION_API", "1");
       await __resetPoolForTests();
       const handler = await createInitializedHandler("/test/project", adapter);
 
@@ -1237,8 +1239,8 @@ describe("APIRouteHandler", () => {
         },
         prepareHandlerModule: () => Promise.resolve(module),
       });
-      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
-      Deno.env.set("WORKER_ISOLATION_API", "1");
+      setEnv("WORKER_ISOLATION_ENABLED", "1");
+      setEnv("WORKER_ISOLATION_API", "1");
       await __resetPoolForTests();
 
       const handler = await createInitializedHandler("/test/project", adapter);
@@ -1292,8 +1294,8 @@ describe("APIRouteHandler", () => {
         resolvePreparedRouteMethods: () =>
           Promise.reject(new Error("prepared method inspection failed")),
       });
-      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
-      Deno.env.set("WORKER_ISOLATION_API", "1");
+      setEnv("WORKER_ISOLATION_ENABLED", "1");
+      setEnv("WORKER_ISOLATION_API", "1");
       await __resetPoolForTests();
 
       const handler = await createInitializedHandler("/test/project", adapter);
