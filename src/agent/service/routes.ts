@@ -35,6 +35,10 @@ import {
   runWithVerifiedHostedRunEventWriterRequest,
 } from "../hosted/child-run-event-writer-token.ts";
 
+const IntrinsicReflectApply = Reflect.apply;
+const RequestClone = Request.prototype.clone;
+const RequestJson = Request.prototype.json;
+
 /** Public API contract for hosted agent service routes logger. */
 export type HostedAgentServiceRoutesLogger = {
   warn?: (message: string, metadata?: Record<string, unknown>) => void;
@@ -179,7 +183,7 @@ async function createRuntimeInvocationApplicationRequest(request: Request): Prom
   // The hosted parser consumes the original request body for authentication. The
   // retained clone must therefore be materialized and sanitized separately before
   // the detached callback receives an application-facing request.
-  const payload = await request.json() as Record<string, unknown>;
+  const payload = await IntrinsicReflectApply(RequestJson, request, []) as Record<string, unknown>;
   const credentials = payload.credentials;
   const sanitizedPayload = credentials && typeof credentials === "object" &&
       !Array.isArray(credentials)
@@ -385,7 +389,11 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     runId?: string;
   }): Promise<Response> {
     return trace("handler.runtimeAgentRunInvocationExecute", async () => {
-      const applicationRequestSource = input.request.clone();
+      const applicationRequestSource = IntrinsicReflectApply(
+        RequestClone,
+        input.request,
+        [],
+      ) as Request;
       const req = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(input.request, {
         authenticate: options.authenticateRequest,
         verifyProjectAccess: ({ projectId, authToken }) =>

@@ -21,38 +21,53 @@ import {
   resolveVeryfrontCloudOpenAITransport,
 } from "./model-catalog.ts";
 
+const IntrinsicReflectApply = Reflect.apply;
+const FunctionBind = Function.prototype.bind;
+const ObjectCreate = Object.create;
+const ObjectDefineProperties = Object.defineProperties;
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectHasOwn = Object.hasOwn;
+const ObjectPrototype = Object.prototype;
+const ReflectOwnKeys = Reflect.ownKeys;
+
+function bindModelMethod<T extends (...args: never[]) => unknown>(method: T, model: object): T {
+  return IntrinsicReflectApply(FunctionBind, method, [model]) as T;
+}
+
 function wrapVeryfrontCloudModel(
   model: ModelRuntime,
   modelProvider: string,
 ): ModelRuntime {
-  const wrapped = Object.create(model, {
+  const wrapped = ObjectCreate(model, {
     _generateViaStream: { enumerable: true, value: true },
     modelProvider: { enumerable: true, value: modelProvider },
   });
 
-  Object.defineProperties(wrapped, {
-    doGenerate: { value: model.doGenerate.bind(model) },
-    doStream: { value: model.doStream.bind(model) },
-    ...(model.prepare ? { prepare: { value: model.prepare.bind(model) } } : {}),
+  ObjectDefineProperties(wrapped, {
+    doGenerate: { value: bindModelMethod(model.doGenerate, model) },
+    doStream: { value: bindModelMethod(model.doStream, model) },
+    ...(model.prepare ? { prepare: { value: bindModelMethod(model.prepare, model) } } : {}),
   });
 
   const forwardedAccessors = new Set<PropertyKey>();
   let source: object | null = model;
-  while (source && source !== Object.prototype) {
-    for (const key of Reflect.ownKeys(source)) {
-      if (forwardedAccessors.has(key) || Object.hasOwn(wrapped, key)) continue;
+  while (source && source !== ObjectPrototype) {
+    for (const key of ReflectOwnKeys(source)) {
+      if (forwardedAccessors.has(key) || ObjectHasOwn(wrapped, key)) continue;
 
       forwardedAccessors.add(key);
-      const descriptor = Object.getOwnPropertyDescriptor(source, key);
+      const descriptor = ObjectGetOwnPropertyDescriptor(source, key);
       if (!descriptor || (!descriptor.get && !descriptor.set)) continue;
 
-      Object.defineProperty(wrapped, key, {
+      ObjectDefineProperty(wrapped, key, {
         ...descriptor,
-        get: descriptor.get?.bind(model),
-        set: descriptor.set?.bind(model),
+        get: descriptor.get ? bindModelMethod(descriptor.get, model) : undefined,
+        set: descriptor.set ? bindModelMethod(descriptor.set, model) : undefined,
       });
     }
-    source = Object.getPrototypeOf(source);
+    source = ObjectGetPrototypeOf(source);
   }
 
   return wrapped;

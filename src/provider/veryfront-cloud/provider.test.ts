@@ -234,6 +234,66 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(capturedAuthorization, `Bearer ${inferenceCredential}`);
   });
 
+  it("does not expose credential-bearing models to mutable object intrinsics", () => {
+    setCloudBootstrap();
+    const originalCreate = Object.create;
+    const originalDefineProperties = Object.defineProperties;
+    const originalDefineProperty = Object.defineProperty;
+    const originalGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+    const originalGetPrototypeOf = Object.getPrototypeOf;
+    const originalOwnKeys = Reflect.ownKeys;
+    let retainedModelCapability = false;
+    const observe = (value: unknown): void => {
+      if (
+        value !== null && typeof value === "object" &&
+        typeof (value as { doStream?: unknown }).doStream === "function"
+      ) {
+        retainedModelCapability = true;
+      }
+    };
+
+    Object.create = ((prototype: object | null, properties?: PropertyDescriptorMap) => {
+      observe(prototype);
+      return originalCreate(prototype, properties);
+    }) as typeof Object.create;
+    Object.defineProperties = ((object: object, properties: PropertyDescriptorMap) => {
+      observe(object);
+      return originalDefineProperties(object, properties);
+    }) as typeof Object.defineProperties;
+    Object.defineProperty = ((object: object, key: PropertyKey, descriptor: PropertyDescriptor) => {
+      observe(object);
+      return originalDefineProperty(object, key, descriptor);
+    }) as typeof Object.defineProperty;
+    Object.getOwnPropertyDescriptor = ((object: object, key: PropertyKey) => {
+      observe(object);
+      return originalGetOwnPropertyDescriptor(object, key);
+    }) as typeof Object.getOwnPropertyDescriptor;
+    Object.getPrototypeOf = ((object: object) => {
+      observe(object);
+      return originalGetPrototypeOf(object);
+    }) as typeof Object.getPrototypeOf;
+    Reflect.ownKeys = ((target: object) => {
+      observe(target);
+      return originalOwnKeys(target);
+    }) as typeof Reflect.ownKeys;
+
+    try {
+      createVeryfrontCloudInferenceModel(
+        "openai/gpt-test",
+        "run-scoped-inference-token",
+      );
+    } finally {
+      Object.create = originalCreate;
+      Object.defineProperties = originalDefineProperties;
+      Object.defineProperty = originalDefineProperty;
+      Object.getOwnPropertyDescriptor = originalGetOwnPropertyDescriptor;
+      Object.getPrototypeOf = originalGetPrototypeOf;
+      Reflect.ownKeys = originalOwnKeys;
+    }
+
+    assertEquals(retainedModelCapability, false);
+  });
+
   it("does not make explicit inference authority ambient to ordinary model resolution", async () => {
     setCloudBootstrap();
     let capturedAuthorization: string | null = null;

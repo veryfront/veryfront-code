@@ -338,17 +338,37 @@ describe("run-scoped inference credential", () => {
         },
       },
     });
-    const response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
-      request: new Request("https://agent.example.test/api/control-plane/runs/run-1/stream", {
+    const invocationRequest = new Request(
+      "https://agent.example.test/api/control-plane/runs/run-1/stream",
+      {
         method: "POST",
         headers: {
           "content-type": "application/json",
           "X-Veryfront-Run-Event-Token": "run-event-token",
         },
         body: JSON.stringify(runtimeAgentInvocation("run-scoped-inference-token")),
-      }),
-      runId: "run-1",
-    });
+      },
+    );
+    const originalRequestJson = Request.prototype.json;
+    const observedJsonCredentials: unknown[] = [];
+    Request.prototype.json = function (): Promise<unknown> {
+      return originalRequestJson.call(this).then((payload) => {
+        observedJsonCredentials.push(
+          (payload as { credentials?: { inferenceAuthToken?: unknown } })
+            .credentials?.inferenceAuthToken,
+        );
+        return payload;
+      });
+    };
+    let response: Response;
+    try {
+      response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
+        request: invocationRequest,
+        runId: "run-1",
+      });
+    } finally {
+      Request.prototype.json = originalRequestJson;
+    }
 
     assertEquals(response.status, 202, JSON.stringify(setupFailure));
     assertEquals(capturedAuthorizations, [
@@ -357,6 +377,7 @@ describe("run-scoped inference credential", () => {
     ]);
     assertEquals(serializedPreparedRequest.includes("run-scoped-inference-token"), false);
     assertEquals(detachedRequestBody.includes("run-scoped-inference-token"), false);
+    assertEquals(observedJsonCredentials, []);
   });
 
   it("ignores an inference credential without a verified run-event token", async () => {
@@ -540,5 +561,75 @@ describe("run-scoped inference credential", () => {
       capturedRequest?.headers.get("Authorization"),
       "Bearer run-scoped-inference-token",
     );
+  });
+
+  it("keeps inference credentials out of replaced web constructors", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
+    const NativeHeaders = globalThis.Headers;
+    const NativeRequest = globalThis.Request;
+    const intrinsicReflectApply = Reflect.apply;
+    const nativeHasInstance = Function.prototype[Symbol.hasInstance];
+    const observedAuthorizations: Array<string | null> = [];
+    const observeHeaders = (headers: Headers): void => {
+      observedAuthorizations.push(headers.get("authorization"));
+    };
+    class ObservingHeaders extends NativeHeaders {
+      constructor(init?: HeadersInit) {
+        super(init);
+        observeHeaders(this);
+      }
+    }
+    class ObservingRequest extends NativeRequest {
+      constructor(input: RequestInfo | URL, init?: RequestInit) {
+        super(input, init);
+        observeHeaders(this.headers);
+      }
+
+      static [Symbol.hasInstance](value: unknown): boolean {
+        if (intrinsicReflectApply(nativeHasInstance, NativeRequest, [value])) {
+          observeHeaders((value as Request).headers);
+        }
+        return intrinsicReflectApply(nativeHasInstance, NativeRequest, [value]) as boolean;
+      }
+    }
+    const model = createVeryfrontCloudInferenceModelResolver("run-scoped-inference-token")(
+      "veryfront-cloud/openai/gpt-test",
+    );
+    if (!model) throw new TypeError("Expected Veryfront Cloud model");
+
+    let capturedAuthorization: string | null = null;
+    try {
+      globalThis.Headers = ObservingHeaders as typeof Headers;
+      globalThis.Request = ObservingRequest as typeof Request;
+      await withMockFetch(
+        async (input: URL | Request | string, init?: RequestInit) => {
+          const request = new NativeRequest(input, init);
+          capturedAuthorization = request.headers.get("authorization");
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+                );
+                controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+                controller.close();
+              },
+            }),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          );
+        },
+        async () => {
+          const result = await model.doStream({ prompt: [] });
+          await drainStream(result.stream);
+        },
+      );
+    } finally {
+      globalThis.Headers = NativeHeaders;
+      globalThis.Request = NativeRequest;
+    }
+
+    assertEquals(capturedAuthorization, "Bearer run-scoped-inference-token");
+    assertEquals(observedAuthorizations.includes("Bearer run-scoped-inference-token"), false);
   });
 });
