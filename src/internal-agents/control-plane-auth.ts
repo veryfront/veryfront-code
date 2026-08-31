@@ -12,6 +12,8 @@ const CONTROL_PLANE_JWS_HEADER = "x-veryfront-control-plane-jws";
 const MAX_CONTROL_PLANE_SIGNATURE_AGE_SECONDS = 60;
 const CONTROL_PLANE_SIGNING_KEY_ENV = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
 const logger = serverLogger.component("internal-agents-auth");
+const IntrinsicReflectApply = Reflect.apply;
+const JsonParse = JSON.parse;
 
 declare const verifiedControlPlaneRequestBrand: unique symbol;
 
@@ -40,7 +42,7 @@ function extractVerifiedCacheCredential(
   claims: ControlPlaneClaims,
 ): VerifiedControlPlaneCacheCredential | null {
   try {
-    const body = JSON.parse(rawBody) as Record<string, unknown>;
+    const body = IntrinsicReflectApply(JsonParse, JSON, [rawBody]) as Record<string, unknown>;
     const credentials = body.credentials;
     if (!credentials || typeof credentials !== "object" || Array.isArray(credentials)) {
       return null;

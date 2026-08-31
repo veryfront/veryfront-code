@@ -15,6 +15,7 @@ import {
 } from "#veryfront/cache/verified-api-credential-context.ts";
 import {
   createRuntimeAgentStreamResponse,
+  registerRuntimeInferenceCredential,
   type RuntimeAgentStreamExecutionDeps,
 } from "#veryfront/internal-agents/run-stream.ts";
 import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
@@ -53,7 +54,7 @@ import {
 } from "#veryfront/internal-agents/session-manager.ts";
 import {
   buildRuntimeAgentControlPlaneStreamRequestFromInvocation,
-  RuntimeAgentRunInvocationSchema,
+  parseRuntimeAgentRunInvocationValue,
 } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import {
   getInternalAgentStreamRequestSchema,
@@ -139,6 +140,9 @@ const defaultDeps: AgentStreamHandlerDeps = {
 };
 const logger = serverLogger.component("agent-stream-handler");
 const IntrinsicReflectApply = Reflect.apply;
+const JsonParse = JSON.parse;
+const TrustedInternalAgentStreamRequestSchema = getInternalAgentStreamRequestSchema();
+const TrustedInternalAgentStreamRequestParse = TrustedInternalAgentStreamRequestSchema.parse;
 const ObjectPrototypeIsPrototypeOf = Object.prototype.isPrototypeOf;
 const FSAdapterWrapperPrototype = FSAdapterWrapper.prototype;
 const FSAdapterWrapperRunWithContext = FSAdapterWrapperPrototype.runWithContext;
@@ -922,10 +926,11 @@ function setResponseHeader(target: Response, key: string, value: string): Respon
 }
 
 function parseAgentStreamPayload(rawPayload: unknown): InternalAgentStreamRequest {
-  const internalAgentStreamRequestSchema = getInternalAgentStreamRequestSchema();
-  const invocation = RuntimeAgentRunInvocationSchema.parse(rawPayload);
-  return internalAgentStreamRequestSchema.parse(
-    buildRuntimeAgentControlPlaneStreamRequestFromInvocation(invocation),
+  const invocation = parseRuntimeAgentRunInvocationValue(rawPayload);
+  return IntrinsicReflectApply(
+    TrustedInternalAgentStreamRequestParse,
+    TrustedInternalAgentStreamRequestSchema,
+    [buildRuntimeAgentControlPlaneStreamRequestFromInvocation(invocation)],
   );
 }
 
@@ -1003,7 +1008,7 @@ export class AgentStreamHandler extends BaseHandler {
         req,
         INTERNAL_AGENT_STREAM_MAX_BODY_BYTES,
       );
-      const payload = parseAgentStreamPayload(JSON.parse(rawBody));
+      const payload = parseAgentStreamPayload(IntrinsicReflectApply(JsonParse, JSON, [rawBody]));
       if (!pathRunId || pathRunId !== payload.runId) {
         return this.respond(builder.json({ error: "CONTROL_PLANE_RUN_ID_MISMATCH" }, 400));
       }
@@ -1060,7 +1065,11 @@ export class AgentStreamHandler extends BaseHandler {
               )(
                 requestScopedContext,
                 payload.agentSource,
-                payload,
+                {
+                  runtimeTargetKind: payload.runtimeTargetKind,
+                  runtimeTargetEnvironmentId: payload.runtimeTargetEnvironmentId,
+                  runtimeTargetBranchId: payload.runtimeTargetBranchId,
+                },
                 apiAuthToken,
                 req.signal,
               );
@@ -1203,6 +1212,12 @@ export class AgentStreamHandler extends BaseHandler {
                           count: Object.keys(envVarsForAgent).length,
                         });
 
+                        // verifyControlPlaneRequest above authenticates the raw envelope before
+                        // this verified credential can be bound to the runtime input.
+                        const inferenceAuthToken = payload.credentials?.inferenceAuthToken;
+                        if (verifiedClaims && inferenceAuthToken) {
+                          registerRuntimeInferenceCredential(runtimeInput, inferenceAuthToken);
+                        }
                         const runAgentStream = () =>
                           createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
                             ...this.deps,

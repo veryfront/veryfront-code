@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it as bddIt } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { HandlerContext } from "#veryfront/types";
 import {
@@ -15,8 +15,25 @@ import { HOST_PROJECT_EXECUTION_OVERRIDE_ENV } from "#veryfront/security/host-ex
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
+import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
 const handlers: APIRouteHandler[] = [];
+const workerDenoEnvGet = "Deno" + ".env.get";
+const DENO_ONLY_TEST_NAMES = new Set([
+  "prepares without host import and executes top-level code in an env-denied worker",
+  "passes admitted identity through isolated prepared App Router execution",
+  "passes admitted identity through isolated prepared Pages Router execution",
+  "prepares local routes before execution when API isolation is enabled",
+  "authenticates an explicit OPTIONS handler but keeps automatic preflight public",
+  "does not reuse prepared method capability across worker semantics",
+  "dispatches a named OPTIONS handler from a prepared route",
+]);
+
+function it(name: string, fn: () => void | Promise<void>): void {
+  bddIt(name, DENO_ONLY_TEST_NAMES.has(name) ? { ignore: !isDeno } : {}, fn);
+}
 
 type HandlerConfig = ConstructorParameters<typeof APIRouteHandler>[2];
 
@@ -65,8 +82,12 @@ async function prepareSource(source: string): Promise<{ source: string; sha256: 
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(source));
   return {
     source,
-    sha256: new Uint8Array(digest).toHex(),
+    sha256: bytesToHex(new Uint8Array(digest)),
   };
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 /** App routes receive (request, ctx); Pages routes receive (ctx). */
@@ -93,8 +114,8 @@ afterEach(async (): Promise<void> => {
   while (handlers.length) handlers.pop()?.destroy();
   __injectDepsForTests(null);
   await __resetPoolForTests();
-  Deno.env.delete("WORKER_ISOLATION_ENABLED");
-  Deno.env.delete("WORKER_ISOLATION_API");
+  deleteEnv("WORKER_ISOLATION_ENABLED");
+  deleteEnv("WORKER_ISOLATION_API");
 });
 
 describe("APIRouteHandler", () => {
@@ -131,6 +152,42 @@ describe("APIRouteHandler", () => {
       const response = await handler.handle(request);
 
       assertEquals(response, null, "Non-API routes should return null");
+    });
+
+    it("should return null for unmatched non-API OPTIONS routes", async () => {
+      const adapter = createMockAdapter();
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const response = await handler.handle(
+        new Request("http://localhost/not-an-api-route", { method: "OPTIONS" }),
+      );
+
+      assertEquals(response, null);
+    });
+
+    it("should return null for unmatched non-API OPTIONS in an isolated runtime", async () => {
+      const adapter = createMockAdapter();
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const response = await handler.handle(
+        new Request("http://localhost/not-an-api-route", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://client.example",
+            "access-control-request-method": "GET",
+          },
+        }),
+        {
+          projectDir: "/test/project",
+          adapter,
+          securityConfig: null,
+          isLocalProject: false,
+          prepareHostedConfigContext: () =>
+            Promise.reject(new Error("hosted config must not be evaluated")),
+        },
+      );
+
+      assertEquals(response, null);
     });
 
     it("should return null for root path", async () => {
@@ -273,7 +330,7 @@ describe("APIRouteHandler", () => {
       const source = [
         `import "data:text/javascript,globalThis.${marker}%3D%27worker-imported%27";`,
         "let envAccess = 'allowed';",
-        "try { Deno.env.get('VF_TEST_HOST_ONLY_SECRET'); } catch { envAccess = 'blocked'; }",
+        `try { ${workerDenoEnvGet}('VF_TEST_HOST_ONLY_SECRET'); } catch { envAccess = 'blocked'; }`,
         "export function GET(request) {",
         `  return Response.json({`,
         `    envAccess,`,
@@ -298,13 +355,13 @@ describe("APIRouteHandler", () => {
           preparations++;
           return Promise.resolve({
             source,
-            sha256: new Uint8Array(digest).toHex(),
+            sha256: bytesToHex(new Uint8Array(digest)),
           });
         },
       });
 
-      Deno.env.delete("WORKER_ISOLATION_ENABLED");
-      Deno.env.delete("WORKER_ISOLATION_API");
+      deleteEnv("WORKER_ISOLATION_ENABLED");
+      deleteEnv("WORKER_ISOLATION_API");
       await __resetPoolForTests();
       const handler = await createInitializedHandler("/test/project", adapter);
       const remoteCtx = {
@@ -344,7 +401,7 @@ describe("APIRouteHandler", () => {
       assertEquals(preparations, 1);
       assertEquals((globalThis as Record<string, unknown>)[marker], undefined);
       assert(
-        Deno.env.get("VF_TEST_HOST_ONLY_SECRET") === undefined,
+        getEnv("VF_TEST_HOST_ONLY_SECRET") === undefined,
         "the test must not depend on a real host secret",
       );
     });
@@ -621,12 +678,12 @@ describe("APIRouteHandler", () => {
           preparations++;
           return Promise.resolve({
             source,
-            sha256: new Uint8Array(digest).toHex(),
+            sha256: bytesToHex(new Uint8Array(digest)),
           });
         },
       });
-      Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
-      Deno.env.set("WORKER_ISOLATION_API", "1");
+      setEnv("WORKER_ISOLATION_ENABLED", "1");
+      setEnv("WORKER_ISOLATION_API", "1");
       await __resetPoolForTests();
 
       const handler = await createInitializedHandler("/test/project", adapter);
@@ -653,7 +710,7 @@ describe("APIRouteHandler", () => {
     describe("when the runtime cannot prepare an isolated module", () => {
       afterEach(() => {
         __setCompiledBinaryForTests(undefined);
-        Deno.env.delete(HOST_PROJECT_EXECUTION_OVERRIDE_ENV);
+        deleteEnv(HOST_PROJECT_EXECUTION_OVERRIDE_ENV);
       });
 
       it("fails closed when API isolation conflicts with a host execution grant", async () => {
@@ -676,9 +733,9 @@ describe("APIRouteHandler", () => {
             throw new Error("prepared an isolated module this runtime cannot link");
           },
         });
-        Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
-        Deno.env.set("WORKER_ISOLATION_API", "1");
-        Deno.env.set(HOST_PROJECT_EXECUTION_OVERRIDE_ENV, "1");
+        setEnv("WORKER_ISOLATION_ENABLED", "1");
+        setEnv("WORKER_ISOLATION_API", "1");
+        setEnv(HOST_PROJECT_EXECUTION_OVERRIDE_ENV, "1");
         __setCompiledBinaryForTests(true);
         await __resetPoolForTests();
 
@@ -722,8 +779,8 @@ describe("APIRouteHandler", () => {
             throw new Error("unreachable");
           },
         });
-        Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
-        Deno.env.set("WORKER_ISOLATION_API", "1");
+        setEnv("WORKER_ISOLATION_ENABLED", "1");
+        setEnv("WORKER_ISOLATION_API", "1");
         // Deliberately no VERYFRONT_HOST_ALLOW_PROJECT_EXECUTION.
         __setCompiledBinaryForTests(true);
         await __resetPoolForTests();
@@ -754,6 +811,587 @@ describe("APIRouteHandler", () => {
   });
 
   describe("OPTIONS/CORS handling", () => {
+    it("dispatches a named OPTIONS handler on a matched route", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/options.ts",
+        "export function OPTIONS() { return new Response('unused'); }",
+      );
+      let routeCalls = 0;
+      __injectDepsForTests({
+        loadHandlerModule: () =>
+          Promise.resolve({
+            OPTIONS: () => {
+              routeCalls++;
+              return new Response("named options", {
+                status: 207,
+                headers: { "x-options-owner": "route" },
+              });
+            },
+          }),
+      });
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const response = await handler.handle(
+        new Request("http://localhost/api/options", { method: "OPTIONS" }),
+        localContext(adapter),
+      );
+
+      assertEquals(routeCalls, 1, "the exact OPTIONS export must execute");
+      assertEquals(response?.status, 207);
+      assertEquals(response?.headers.get("x-options-owner"), "route");
+      assertEquals(await response?.text(), "named options");
+    });
+
+    it("discovers project primitives after OPTIONS auth and before dispatch", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/options-order.ts",
+        "export function OPTIONS() { return new Response('unused'); }",
+      );
+      const order: string[] = [];
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          order.push("load");
+          return Promise.resolve({
+            OPTIONS: () => {
+              order.push("dispatch");
+              return new Response("ordered options");
+            },
+          });
+        },
+      });
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const response = await handler.handle(
+        new Request("http://localhost/api/options-order", { method: "OPTIONS" }),
+        localContext(adapter),
+        {
+          beforeOptionsDispatch: async () => {
+            order.push("discover");
+          },
+        },
+      );
+
+      assertEquals(await response?.text(), "ordered options");
+      assertEquals(order, ["discover", "load", "dispatch"]);
+    });
+
+    it("dispatches a default route handler for OPTIONS", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/default-options.ts",
+        "export default function handler() { return new Response('unused'); }",
+      );
+      __injectDepsForTests({
+        loadHandlerModule: () =>
+          Promise.resolve({
+            default: () =>
+              new Response("default options", {
+                status: 208,
+                headers: { "x-options-owner": "default" },
+              }),
+          }),
+      });
+      const handler = await createInitializedHandler(
+        "/test/project",
+        adapter,
+        { security: { cors: { origin: ["https://client.example"] } } } as HandlerConfig,
+      );
+
+      const response = await handler.handle(
+        new Request("http://localhost/api/default-options", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://client.example",
+            "access-control-request-method": "PROPFIND",
+          },
+        }),
+        localContext(adapter),
+      );
+
+      assertEquals(response?.status, 208);
+      assertEquals(response?.headers.get("x-options-owner"), "default");
+      assertEquals(
+        response?.headers.get("access-control-allow-methods"),
+        "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, PROPFIND",
+      );
+      assertEquals(await response?.text(), "default options");
+    });
+
+    it("dispatches OPTIONS in an operator-granted shared runtime", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/granted-options.ts",
+        "export function OPTIONS() {}",
+      );
+      let routeCalls = 0;
+      __injectDepsForTests({
+        loadHandlerModule: () =>
+          Promise.resolve({
+            OPTIONS: () => {
+              routeCalls++;
+              return new Response("granted options", { status: 212 });
+            },
+          }),
+      });
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const response = await handler.handle(
+        new Request("http://localhost/api/granted-options", { method: "OPTIONS" }),
+        {
+          projectDir: "/test/project",
+          adapter,
+          securityConfig: null,
+          isLocalProject: false,
+          allowHostProjectCodeExecution: true,
+          prepareHostedConfigContext: () => Promise.reject(new Error("unused")),
+        },
+      );
+
+      assertEquals(response?.status, 212);
+      assertEquals(await response?.text(), "granted options");
+      assertEquals(routeCalls, 1);
+    });
+
+    it("dispatches OPTIONS for a dynamic App route with normalized params", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/app/hooks/[hookId]/route.ts",
+        "export function OPTIONS() { return new Response('unused'); }",
+      );
+      __injectDepsForTests({
+        loadHandlerModule: () =>
+          Promise.resolve({
+            OPTIONS: (first: unknown, second?: unknown) =>
+              Response.json({ params: routeParamsOf(first, second) }, { status: 210 }),
+          }),
+      });
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const response = await handler.handle(
+        new Request("http://localhost/hooks/deploy", { method: "OPTIONS" }),
+        localContext(adapter),
+      );
+
+      assertEquals(response?.status, 210);
+      assertEquals(await response?.json(), { params: { hookId: "deploy" } });
+    });
+
+    it("keeps automatic preflight for a matched route without OPTIONS", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/automatic-options.ts",
+        "export function GET() { return new Response('unused'); }",
+      );
+      __injectDepsForTests({
+        loadHandlerModule: () => Promise.resolve({ GET: () => new Response("get") }),
+      });
+      const handler = await createInitializedHandler(
+        "/test/project",
+        adapter,
+        { security: { cors: { origin: ["https://client.example"] } } } as HandlerConfig,
+      );
+
+      const response = await handler.handle(
+        new Request("http://localhost/api/automatic-options", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://client.example",
+            "access-control-request-method": "PUT",
+            "access-control-request-headers": "Authorization, X-Token, X-Project-Id, X-App-Trace",
+          },
+        }),
+        localContext(adapter),
+      );
+
+      assertEquals(response?.status, 204);
+      assertEquals(response?.body, null);
+      assertEquals(response?.headers.get("access-control-allow-methods"), "GET, HEAD, OPTIONS");
+      assertEquals(response?.headers.get("allow"), "GET, HEAD, OPTIONS");
+      assertEquals(
+        response?.headers.get("access-control-allow-headers"),
+        "Authorization, X-App-Trace",
+      );
+    });
+
+    it("preserves matched methods on an unauthenticated protected preflight", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/protected-get-only-preflight.ts",
+        "export function GET() { return new Response('unused'); }",
+      );
+      let moduleLoads = 0;
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          moduleLoads++;
+          return Promise.resolve({ GET: () => new Response("get") });
+        },
+      });
+      const securityConfig = {
+        cors: { origin: ["https://client.example"] },
+        auth: { basic: { username: "admin", password: "secret" } },
+      } as HandlerContext["securityConfig"];
+      const handler = await createInitializedHandler(
+        "/test/project",
+        adapter,
+        { security: securityConfig } as HandlerConfig,
+      );
+
+      const response = await handler.handle(
+        new Request("http://localhost/api/protected-get-only-preflight", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://client.example",
+            "access-control-request-method": "POST",
+          },
+        }),
+        {
+          ...localContext(adapter),
+          securityConfig,
+        },
+      );
+
+      assertEquals(response?.status, 204);
+      assertEquals(response?.headers.get("access-control-allow-methods"), "GET, HEAD, OPTIONS");
+      assertEquals(response?.headers.get("allow"), "GET, HEAD, OPTIONS");
+      assertEquals(moduleLoads, 0);
+    });
+
+    it("applies preflight policy headers to an explicit OPTIONS response", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/policy-options.ts",
+        "export function POST() {} export function OPTIONS() {}",
+      );
+      __injectDepsForTests({
+        loadHandlerModule: () =>
+          Promise.resolve({
+            POST: () => new Response("post"),
+            OPTIONS: () =>
+              new Response("explicit options", {
+                status: 211,
+                headers: {
+                  "x-options-owner": "route",
+                  "access-control-allow-origin": "https://untrusted.example",
+                  "access-control-allow-headers": "X-Token",
+                },
+              }),
+          }),
+      });
+      const handler = await createInitializedHandler(
+        "/test/project",
+        adapter,
+        {
+          security: {
+            cors: {
+              origin: ["https://client.example"],
+              maxAge: 123,
+            },
+          },
+        } as HandlerConfig,
+      );
+
+      const response = await handler.handle(
+        new Request("http://localhost/api/policy-options", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://client.example",
+            "access-control-request-method": "POST",
+            "access-control-request-headers": "Authorization, X-Token",
+          },
+        }),
+        localContext(adapter),
+      );
+
+      assertEquals(response?.status, 211);
+      assertEquals(await response?.text(), "explicit options");
+      assertEquals(response?.headers.get("x-options-owner"), "route");
+      assertEquals(response?.headers.get("access-control-allow-origin"), "https://client.example");
+      assertEquals(response?.headers.get("access-control-allow-methods"), "POST, OPTIONS");
+      assertEquals(response?.headers.get("access-control-allow-headers"), "Authorization");
+      assertEquals(response?.headers.get("access-control-max-age"), "123");
+    });
+
+    it("authenticates an explicit OPTIONS handler but keeps automatic preflight public", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/protected-options.ts",
+        "export function OPTIONS() {}",
+      );
+      let routeCalls = 0;
+      let moduleLoads = 0;
+      let discoveryCalls = 0;
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          moduleLoads++;
+          return Promise.resolve({
+            OPTIONS: (context: unknown) => {
+              routeCalls++;
+              const apiContext = context as {
+                identity?: { subject?: string } | null;
+                headers: Headers;
+              };
+              return Response.json({
+                subject: apiContext.identity?.subject ?? null,
+                admittedHeader: apiContext.headers.get("x-auth-subject"),
+              });
+            },
+          });
+        },
+      });
+      const config = {
+        security: {
+          cors: { origin: ["https://client.example"] },
+          auth: {
+            trustedProxy: {
+              trustedPeers: ["127.0.0.1"],
+              headers: { subject: "x-auth-subject" },
+            },
+          },
+        },
+      } as HandlerConfig;
+      const handler = await createInitializedHandler("/test/project", adapter, config);
+      const ctx = {
+        ...localContext(adapter),
+        securityConfig: config?.security ?? null,
+      } as HandlerContext;
+
+      const beforeOptionsDispatch = () => {
+        discoveryCalls++;
+        return Promise.resolve();
+      };
+      const preflight = await handler.handle(
+        new Request("http://localhost/api/protected-options", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://client.example",
+            "access-control-request-method": "POST",
+            "x-auth-subject": "forged-user",
+          },
+        }),
+        ctx,
+        { beforeOptionsDispatch },
+      );
+      assertEquals(preflight?.status, 204);
+      assertEquals(discoveryCalls, 0);
+      assertEquals(routeCalls, 0);
+      assertEquals(moduleLoads, 0, "unauthenticated preflight must not evaluate the route module");
+
+      const admittedRequest = new Request("http://localhost/api/protected-options", {
+        method: "OPTIONS",
+        headers: { "x-auth-subject": "user-123" },
+      });
+      recordRequestPeerFromTransport(admittedRequest, {
+        runtime: "deno",
+        transport: "tcp",
+        hostname: "127.0.0.1",
+      });
+      const admitted = await handler.handle(admittedRequest, ctx, { beforeOptionsDispatch });
+
+      assertEquals(admitted?.status, 200);
+      assertEquals(await admitted?.json(), {
+        subject: "user-123",
+        admittedHeader: null,
+      });
+      assertEquals(routeCalls, 1);
+      assertEquals(moduleLoads, 1);
+      assertEquals(discoveryCalls, 1);
+    });
+
+    it("keeps plain OPTIONS automatic when a protected route has no OPTIONS export", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/protected-get-only.ts",
+        "export function GET() { return new Response('unused'); }",
+      );
+      let moduleLoads = 0;
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          moduleLoads++;
+          return Promise.resolve({ GET: () => new Response("get") });
+        },
+      });
+      const securityConfig = {
+        security: {
+          cors: { origin: ["https://client.example"] },
+          auth: { basic: { username: "admin", password: "secret" } },
+        },
+      }.security as HandlerContext["securityConfig"];
+      const config = { security: securityConfig } as HandlerConfig;
+      const handler = await createInitializedHandler("/test/project", adapter, config);
+      const response = await handler.handle(
+        new Request("http://localhost/api/protected-get-only", {
+          method: "OPTIONS",
+          headers: { origin: "https://client.example" },
+        }),
+        {
+          ...localContext(adapter),
+          securityConfig,
+        },
+      );
+
+      assertEquals(response?.status, 204);
+      assertEquals(moduleLoads, 0, "automatic plain OPTIONS must not evaluate the route");
+    });
+
+    it("does not reuse prepared method capability across worker semantics", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/semantic-options.ts",
+        "export function OPTIONS() {}",
+      );
+      const module = await prepareSource(
+        `export function OPTIONS() { return new Response("semantic options", { status: 213 }); }`,
+      );
+      let inspectedMethods = ["GET", "HEAD"];
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          throw new Error("semantic OPTIONS route reached host import");
+        },
+        prepareHandlerModule: () => Promise.resolve(module),
+        resolvePreparedRouteMethods: () => Promise.resolve([...inspectedMethods]),
+      });
+      setEnv("WORKER_ISOLATION_ENABLED", "1");
+      setEnv("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const first = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          handler.handle(
+            new Request("http://localhost/api/semantic-options", { method: "OPTIONS" }),
+            localContext(adapter),
+          ),
+      );
+      assertEquals(first?.status, 204);
+
+      inspectedMethods = ["OPTIONS"];
+      const second = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: { github: {} } }),
+        () =>
+          handler.handle(
+            new Request("http://localhost/api/semantic-options", { method: "OPTIONS" }),
+            localContext(adapter),
+          ),
+      );
+      assertEquals(second?.status, 213);
+      assertEquals(await second?.text(), "semantic options");
+    });
+
+    it("dispatches a named OPTIONS handler from a prepared route", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/prepared-options.ts",
+        "export function OPTIONS() { return new Response('discovery-only'); }",
+      );
+      const module = await prepareSource(
+        `export function OPTIONS() {
+          return new Response("prepared options", {
+            status: 209,
+            headers: { "x-options-owner": "worker" },
+          });
+        }`,
+      );
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          throw new Error("prepared OPTIONS route reached host import");
+        },
+        prepareHandlerModule: () => Promise.resolve(module),
+      });
+      setEnv("WORKER_ISOLATION_ENABLED", "1");
+      setEnv("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const response = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          handler.handle(
+            new Request("http://localhost/api/prepared-options", { method: "OPTIONS" }),
+            localContext(adapter),
+          ),
+      );
+
+      assertEquals(response?.status, 209);
+      assertEquals(response?.headers.get("x-options-owner"), "worker");
+      assertEquals(await response?.text(), "prepared options");
+
+      const repeated = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          handler.handle(
+            new Request("http://localhost/api/prepared-options", { method: "OPTIONS" }),
+            localContext(adapter),
+          ),
+      );
+      assertEquals(repeated?.status, 209);
+
+      handler.clearCache();
+      const refreshed = await runWithExactSourceIntegrationPolicy(
+        normalizeSourceIntegrationPolicy({ allow: {} }),
+        () =>
+          handler.handle(
+            new Request("http://localhost/api/prepared-options", { method: "OPTIONS" }),
+            localContext(adapter),
+          ),
+      );
+      assertEquals(refreshed?.status, 209);
+    });
+
+    it("returns an API error when prepared OPTIONS inspection fails", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/prepared-options-failure.ts",
+        "export function GET() {}",
+      );
+      const module = await prepareSource("export function GET() {}\n");
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          throw new Error("prepared route reached host import");
+        },
+        prepareHandlerModule: () => Promise.resolve(module),
+        resolvePreparedRouteMethods: () =>
+          Promise.reject(new Error("prepared method inspection failed")),
+      });
+      setEnv("WORKER_ISOLATION_ENABLED", "1");
+      setEnv("WORKER_ISOLATION_API", "1");
+      await __resetPoolForTests();
+
+      const handler = await createInitializedHandler("/test/project", adapter);
+      __setCompiledBinaryForTests(false);
+      try {
+        const response = await runWithExactSourceIntegrationPolicy(
+          normalizeSourceIntegrationPolicy({ allow: {} }),
+          () =>
+            handler.handle(
+              new Request("http://localhost/api/prepared-options-failure", {
+                method: "OPTIONS",
+                headers: {
+                  origin: "https://client.example",
+                  "access-control-request-method": "POST",
+                },
+              }),
+              {
+                projectDir: "/test/project",
+                adapter,
+                securityConfig: null,
+                isLocalProject: false,
+              },
+            ),
+        );
+
+        assertEquals(response?.status, 500);
+        assertEquals(response?.headers.get("content-type"), "application/problem+json");
+        const body = await response?.json();
+        assertEquals(body.status, 500);
+        assertEquals(body.title, "Unknown/unclassified error");
+      } finally {
+        __setCompiledBinaryForTests(undefined);
+      }
+    });
+
     it("should handle OPTIONS preflight requests with secure-by-default CORS", async () => {
       const adapter = createMockAdapter();
       const handler = await createInitializedHandler("/test/project", adapter);
@@ -1326,7 +1964,7 @@ describe("APIRouteHandler", () => {
             "SHA-256",
             new TextEncoder().encode(source),
           );
-          return { source, sha256: new Uint8Array(digest).toHex() };
+          return { source, sha256: bytesToHex(new Uint8Array(digest)) };
         },
       });
 

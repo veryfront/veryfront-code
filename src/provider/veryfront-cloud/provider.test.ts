@@ -8,6 +8,11 @@ import { clearEmbeddingProviders, resolveEmbeddingModel } from "#veryfront/embed
 import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { clearModelProviders, resolveModel } from "#veryfront/provider";
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
+import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
+import { createVeryfrontCloudInferenceModel } from "./provider.ts";
+import { AnthropicProvider } from "@veryfront/ext-llm-anthropic";
+import { GoogleProvider } from "@veryfront/ext-llm-google";
+import { OpenAIProvider } from "@veryfront/ext-llm-openai";
 
 const CLOUD_ENV_KEYS = [
   "VERYFRONT_API_TOKEN",
@@ -68,6 +73,334 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doStream, "function");
     assertEquals(model._generateViaStream, true);
     assertEquals(model.modelProvider, "openai");
+  });
+
+  it("uses the private inference credential only for gateway model construction", async () => {
+    setCloudBootstrap();
+    let capturedAuthorization: string | null = null;
+    let projectVisibleToken: string | undefined;
+    let extensionVisibleCredential: string | undefined;
+
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedAuthorization = request.headers.get("Authorization");
+        return new Response(
+          readableStreamFrom([
+            new TextEncoder().encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+            new TextEncoder().encode("data: [DONE]\n\n"),
+          ]),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+
+    const registry = ensureBuiltinLLMProviders();
+    const builtinOpenAI = registry.require("openai");
+    registry.unregister("openai");
+    registry.register({
+      id: "openai",
+      createModel(_modelId, config) {
+        extensionVisibleCredential = config.credential;
+        return {
+          provider: "project-openai",
+          modelId: "project-openai",
+          specificationVersion: "v3",
+          doGenerate: () => Promise.resolve({ content: [] }),
+          doStream: () => Promise.resolve({ stream: readableStreamFrom([]) }),
+        };
+      },
+    });
+
+    try {
+      projectVisibleToken = getVeryfrontCloudAuthToken();
+      const model = createVeryfrontCloudInferenceModel(
+        "openai/gpt-test",
+        "run-scoped-inference-token",
+      );
+      const result = await model.doStream({ prompt: [] });
+      await drainStream(result.stream);
+    } finally {
+      registry.unregister("openai");
+      registry.register(builtinOpenAI);
+    }
+
+    assertEquals(capturedAuthorization, "Bearer run-scoped-inference-token");
+    assertEquals(projectVisibleToken, "vf_test_provider");
+    assertEquals(extensionVisibleCredential, undefined);
+  });
+
+  it("does not expose explicit inference authority to mutable runtime config hooks", async () => {
+    setCloudBootstrap();
+    const globalRecord = globalThis as Record<string, unknown>;
+    const originalConfigGetter = globalRecord.__vfGetRuntimeConfig;
+    const originalConfigChecker = globalRecord.__vfIsRuntimeConfigInitialized;
+    let retainedNestedModel: ModelRuntime | undefined;
+    let resolvingNestedModel = false;
+
+    globalRecord.__vfIsRuntimeConfigInitialized = () => true;
+    globalRecord.__vfGetRuntimeConfig = () => {
+      if (!resolvingNestedModel) {
+        resolvingNestedModel = true;
+        try {
+          retainedNestedModel = resolveModel("veryfront-cloud/openai/gpt-nested");
+        } finally {
+          resolvingNestedModel = false;
+        }
+      }
+      return {};
+    };
+
+    let inferenceModel: ModelRuntime;
+    try {
+      inferenceModel = createVeryfrontCloudInferenceModel(
+        "openai/gpt-protected",
+        "run-scoped-inference-token",
+      );
+    } finally {
+      if (originalConfigGetter === undefined) delete globalRecord.__vfGetRuntimeConfig;
+      else globalRecord.__vfGetRuntimeConfig = originalConfigGetter;
+      if (originalConfigChecker === undefined) delete globalRecord.__vfIsRuntimeConfigInitialized;
+      else globalRecord.__vfIsRuntimeConfigInitialized = originalConfigChecker;
+    }
+
+    const capturedAuthorization: Array<string | null> = [];
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedAuthorization.push(request.headers.get("Authorization"));
+        return new Response(
+          readableStreamFrom([
+            new TextEncoder().encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+            new TextEncoder().encode("data: [DONE]\n\n"),
+          ]),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+
+    const nestedResult = await retainedNestedModel!.doStream({ prompt: [] });
+    await drainStream(nestedResult.stream);
+    const inferenceResult = await inferenceModel.doStream({ prompt: [] });
+    await drainStream(inferenceResult.stream);
+
+    assertEquals(capturedAuthorization, [
+      "Bearer vf_test_provider",
+      "Bearer run-scoped-inference-token",
+    ]);
+  });
+
+  it("keeps explicit inference authority out of provider-native headers", async () => {
+    setCloudBootstrap();
+    const inferenceCredential = "x".repeat(16 * 1024);
+    let capturedAuthorization: string | null = null;
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedAuthorization = request.headers.get("Authorization");
+        return new Response(
+          readableStreamFrom([
+            new TextEncoder().encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+            new TextEncoder().encode("data: [DONE]\n\n"),
+          ]),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+    const model = createVeryfrontCloudInferenceModel(
+      "openai/gpt-test",
+      inferenceCredential,
+    );
+    const originalSet = Object.getOwnPropertyDescriptor(Headers.prototype, "set")!;
+    const observedNativeCredentials: string[] = [];
+    Object.defineProperty(Headers.prototype, "set", {
+      ...originalSet,
+      value(this: Headers, name: string, value: string) {
+        if (name.toLowerCase() === "authorization") {
+          observedNativeCredentials.push(value);
+        }
+        return Reflect.apply(originalSet.value, this, [name, value]);
+      },
+    });
+
+    try {
+      const result = await model.doStream({ prompt: [] });
+      await drainStream(result.stream);
+    } finally {
+      Object.defineProperty(Headers.prototype, "set", originalSet);
+    }
+
+    assertEquals(observedNativeCredentials.includes(`Bearer ${inferenceCredential}`), false);
+    assertEquals(capturedAuthorization, `Bearer ${inferenceCredential}`);
+  });
+
+  it("does not expose credential-bearing models to mutable object intrinsics", () => {
+    setCloudBootstrap();
+    const originalCreate = Object.create;
+    const originalDefineProperties = Object.defineProperties;
+    const originalDefineProperty = Object.defineProperty;
+    const originalGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+    const originalGetPrototypeOf = Object.getPrototypeOf;
+    const originalOwnKeys = Reflect.ownKeys;
+    const originalRandomUuid = Crypto.prototype.randomUUID;
+    let retainedModelCapability = false;
+    let mutableRandomUuidCalled = false;
+    const observe = (value: unknown): void => {
+      if (
+        value !== null && typeof value === "object" &&
+        typeof (value as { doStream?: unknown }).doStream === "function"
+      ) {
+        retainedModelCapability = true;
+      }
+    };
+
+    Object.create = ((prototype: object | null, properties?: PropertyDescriptorMap) => {
+      observe(prototype);
+      return properties === undefined
+        ? originalCreate(prototype)
+        : originalCreate(prototype, properties);
+    }) as typeof Object.create;
+    Object.defineProperties = ((object: object, properties: PropertyDescriptorMap) => {
+      observe(object);
+      return originalDefineProperties(object, properties);
+    }) as typeof Object.defineProperties;
+    Object.defineProperty = ((object: object, key: PropertyKey, descriptor: PropertyDescriptor) => {
+      observe(object);
+      return originalDefineProperty(object, key, descriptor);
+    }) as typeof Object.defineProperty;
+    Object.getOwnPropertyDescriptor = ((object: object, key: PropertyKey) => {
+      observe(object);
+      return originalGetOwnPropertyDescriptor(object, key);
+    }) as typeof Object.getOwnPropertyDescriptor;
+    Object.getPrototypeOf = ((object: object) => {
+      observe(object);
+      return originalGetPrototypeOf(object);
+    }) as typeof Object.getPrototypeOf;
+    Reflect.ownKeys = ((target: object) => {
+      observe(target);
+      return originalOwnKeys(target);
+    }) as typeof Reflect.ownKeys;
+    Crypto.prototype.randomUUID = function (): `${string}-${string}-${string}-${string}-${string}` {
+      mutableRandomUuidCalled = true;
+      return "00000000-0000-4000-8000-000000000000";
+    };
+
+    try {
+      createVeryfrontCloudInferenceModel(
+        "openai/gpt-test",
+        "run-scoped-inference-token",
+      );
+    } finally {
+      Object.create = originalCreate;
+      Object.defineProperties = originalDefineProperties;
+      Object.defineProperty = originalDefineProperty;
+      Object.getOwnPropertyDescriptor = originalGetOwnPropertyDescriptor;
+      Object.getPrototypeOf = originalGetPrototypeOf;
+      Reflect.ownKeys = originalOwnKeys;
+      Crypto.prototype.randomUUID = originalRandomUuid;
+    }
+
+    assertEquals(retainedModelCapability, false);
+    assertEquals(mutableRandomUuidCalled, false);
+  });
+
+  it("does not make explicit inference authority ambient to ordinary model resolution", async () => {
+    setCloudBootstrap();
+    let capturedAuthorization: string | null = null;
+
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedAuthorization = request.headers.get("Authorization");
+        return new Response(
+          readableStreamFrom([
+            new TextEncoder().encode(
+              'data: {"choices":[{"finish_reason":"stop"}]}\n\n',
+            ),
+            new TextEncoder().encode("data: [DONE]\n\n"),
+          ]),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+
+    createVeryfrontCloudInferenceModel("openai/gpt-unused", "parent-run-inference-token");
+    const model = resolveModel("veryfront-cloud/openai/gpt-test");
+    const result = await model.doStream({ prompt: [] });
+    await drainStream(result.stream);
+
+    assertEquals(capturedAuthorization, "Bearer vf_test_provider");
+  });
+
+  it("uses the credential passed to each explicit inference model", async () => {
+    setCloudBootstrap();
+    let capturedAuthorization: string | null = null;
+
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedAuthorization = request.headers.get("Authorization");
+        return new Response(
+          readableStreamFrom([
+            new TextEncoder().encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+            new TextEncoder().encode("data: [DONE]\n\n"),
+          ]),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
+
+    createVeryfrontCloudInferenceModel("openai/gpt-unused", "parent-run-inference-token");
+    const model = createVeryfrontCloudInferenceModel(
+      "openai/gpt-test",
+      "child-run-inference-token",
+    );
+    const result = await model.doStream({ prompt: [] });
+    await drainStream(result.stream);
+
+    assertEquals(capturedAuthorization, "Bearer child-run-inference-token");
+  });
+
+  it("does not dispatch signed inference through mutable provider prototypes", () => {
+    setCloudBootstrap();
+    const originalAnthropicCreateModel = AnthropicProvider.prototype.createModel;
+    const originalGoogleCreateModel = GoogleProvider.prototype.createModel;
+    const originalOpenAICreateModel = OpenAIProvider.prototype.createModel;
+    const extensionVisibleCredentials: string[] = [];
+
+    AnthropicProvider.prototype.createModel = function (_modelId, config) {
+      extensionVisibleCredentials.push(config.credential);
+      throw new Error("Mutated Anthropic provider called");
+    };
+    GoogleProvider.prototype.createModel = function (_modelId, config) {
+      extensionVisibleCredentials.push(config.credential);
+      throw new Error("Mutated Google provider called");
+    };
+    OpenAIProvider.prototype.createModel = function (_modelId, config) {
+      extensionVisibleCredentials.push(config.credential);
+      throw new Error("Mutated OpenAI provider called");
+    };
+
+    try {
+      createVeryfrontCloudInferenceModel(
+        "anthropic/claude-test",
+        "run-scoped-inference-token",
+      );
+      createVeryfrontCloudInferenceModel(
+        "google/gemini-test",
+        "run-scoped-inference-token",
+      );
+      createVeryfrontCloudInferenceModel(
+        "openai/gpt-test",
+        "run-scoped-inference-token",
+      );
+    } finally {
+      AnthropicProvider.prototype.createModel = originalAnthropicCreateModel;
+      GoogleProvider.prototype.createModel = originalGoogleCreateModel;
+      OpenAIProvider.prototype.createModel = originalOpenAICreateModel;
+    }
+
+    assertEquals(extensionVisibleCredentials, []);
   });
 
   it("preserves class runtime method receivers while adding cloud metadata", async () => {

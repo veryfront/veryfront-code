@@ -35,6 +35,41 @@ import {
   runWithVerifiedHostedRunEventWriterRequest,
 } from "../hosted/child-run-event-writer-token.ts";
 
+const IntrinsicReflectApply = Reflect.apply;
+const NativeHeaders = Headers;
+const NativeRequest = Request;
+const RequestClone = Request.prototype.clone;
+const RequestJson = Request.prototype.json;
+const RequestHeadersGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")?.get;
+const RequestMethodGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "method")?.get;
+const RequestSignalGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "signal")?.get;
+const RequestUrlGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "url")?.get;
+const HeadersDelete = NativeHeaders.prototype.delete;
+const ObjectEntries = Object.entries;
+const ObjectFromEntries = Object.fromEntries;
+const ArrayFilter = Array.prototype.filter;
+const ArrayIsArray = Array.isArray;
+
+function readRequestValue<T>(request: Request, getter: (() => T) | undefined): T {
+  if (!getter) throw new TypeError("Request accessor is unavailable");
+  return IntrinsicReflectApply(getter, request, []) as T;
+}
+
+function isCredentialRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null &&
+    !IntrinsicReflectApply(ArrayIsArray, Array, [value]);
+}
+
+function withoutInferenceCredential(credentials: Record<string, unknown>): Record<string, unknown> {
+  const entries = IntrinsicReflectApply(ObjectEntries, Object, [credentials]);
+  const retained = IntrinsicReflectApply(
+    ArrayFilter,
+    entries,
+    [([key]: [string, unknown]) => key !== "inferenceAuthToken"],
+  );
+  return IntrinsicReflectApply(ObjectFromEntries, Object, [retained]) as Record<string, unknown>;
+}
+
 /** Public API contract for hosted agent service routes logger. */
 export type HostedAgentServiceRoutesLogger = {
   warn?: (message: string, metadata?: Record<string, unknown>) => void;
@@ -173,6 +208,30 @@ function defaultTrace<TResult>(
   operation: () => Promise<TResult>,
 ): Promise<TResult> {
   return operation();
+}
+
+async function createRuntimeInvocationApplicationRequest(request: Request): Promise<Request> {
+  // The hosted parser consumes the original request body for authentication. The
+  // retained clone must therefore be materialized and sanitized separately before
+  // the detached callback receives an application-facing request.
+  const payload = await IntrinsicReflectApply(RequestJson, request, []) as Record<string, unknown>;
+  const credentials = payload.credentials;
+  const sanitizedPayload = isCredentialRecord(credentials)
+    ? {
+      ...payload,
+      credentials: withoutInferenceCredential(credentials),
+    }
+    : payload;
+  const headers = new NativeHeaders(readRequestValue<Headers>(request, RequestHeadersGet));
+  IntrinsicReflectApply(HeadersDelete, headers, ["content-length"]);
+  return createApplicationRequest(
+    new NativeRequest(readRequestValue<string>(request, RequestUrlGet), {
+      body: JSON.stringify(sanitizedPayload),
+      headers,
+      method: readRequestValue<string>(request, RequestMethodGet),
+      signal: readRequestValue<AbortSignal>(request, RequestSignalGet),
+    }),
+  );
 }
 
 function createAgUiSetupErrorResponse(input: {
@@ -358,7 +417,11 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     runId?: string;
   }): Promise<Response> {
     return trace("handler.runtimeAgentRunInvocationExecute", async () => {
-      const applicationRequest = createApplicationRequest(input.request);
+      const applicationRequestSource = IntrinsicReflectApply(
+        RequestClone,
+        input.request,
+        [],
+      ) as Request;
       const req = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(input.request, {
         authenticate: options.authenticateRequest,
         verifyProjectAccess: ({ projectId, authToken }) =>
@@ -373,6 +436,10 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
       if (input.runId && req.durableRootRun?.runId !== input.runId) {
         return Response.json({ errorCode: "CONTROL_PLANE_RUN_ID_MISMATCH" }, { status: 400 });
       }
+
+      const applicationRequest = await createRuntimeInvocationApplicationRequest(
+        applicationRequestSource,
+      );
 
       return executeParsedDurableChatRun({
         req,

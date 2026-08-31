@@ -179,13 +179,31 @@ export class ApiHandlerWrapper extends BaseHandler {
             return this.continue();
           }
 
-          // Lazy per-project primitive discovery (agents, tools) on first access.
-          // Must run within runWithContext so VFS and registry scope are correct.
-          await ensureProjectDiscovery(ctx);
+          // OPTIONS is authenticated by APIRouteHandler before discovery. The
+          // callback runs after a matched route's auth decision but before the
+          // route module is loaded or executed.
+          const isOptionsRequest = req.method.toUpperCase() === "OPTIONS";
+          if (!isOptionsRequest) {
+            // Lazy per-project primitive discovery (agents, tools) on first
+            // access. Must run within runWithContext so VFS and registry scope
+            // are correct.
+            await ensureProjectDiscovery(ctx);
+          }
 
           const apiRes = await withApiHandler(
             ctx,
-            (api) => api.handle(req, ctx),
+            (api) =>
+              api.handle(
+                req,
+                ctx,
+                isOptionsRequest
+                  ? {
+                    beforeOptionsDispatch: async () => {
+                      await ensureProjectDiscovery(ctx);
+                    },
+                  }
+                  : undefined,
+              ),
             { sourceSnapshotReady: true },
           );
 

@@ -20,7 +20,7 @@ type ResolveModelFunction = typeof resolveModel;
 /** Options accepted by Veryfront Cloud context summary generator. */
 export type VeryfrontCloudContextSummaryGeneratorOptions = {
   apiUrl: string | URL;
-  authToken: string;
+  authToken?: string;
   projectSlug?: string | null;
   model?: string;
   maxOutputTokens: number;

@@ -14,6 +14,7 @@ const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeIncludes = String.prototype.includes;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeStartsWith = String.prototype.startsWith;
+const COMMONJS_EXPORT_PATTERN = /\b(?:module\s*\.\s*exports|exports\s*\.)/;
 
 interface ParentLink {
   parent: ASTNode;
@@ -4999,4 +5000,304 @@ export async function analyzeSourceCapabilities(
     moduleSpecifiers: analysis.moduleSpecifiers,
     hasUnconstrainedDynamicImport: analysis.hasUnconstrainedDynamicImport,
   };
+}
+
+export type StaticRouteOptionsCapability = "present" | "absent" | "unknown";
+
+const STATIC_STANDARD_ROUTE_METHODS = [
+  "GET",
+  "HEAD",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "OPTIONS",
+] as const;
+const STATIC_HTTP_METHOD_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Z]+$/;
+
+function staticExportName(node: ASTNode | undefined): string | null {
+  if (!isNode(node)) return null;
+  if (node.type === "Identifier" && typeof node.name === "string") return node.name;
+  if (
+    (node.type === "StringLiteral" || node.type === "Literal") &&
+    typeof node.value === "string"
+  ) return node.value;
+  return null;
+}
+
+function isStaticCallableRouteValue(node: ASTNode | undefined): boolean {
+  return isNode(node) && (
+    node.type === "ArrowFunctionExpression" ||
+    node.type === "FunctionExpression" ||
+    node.type === "FunctionDeclaration" ||
+    node.type === "ClassDeclaration" ||
+    node.type === "ClassExpression"
+  );
+}
+
+function staticDefaultRouteCapability(node: ASTNode | undefined): StaticRouteOptionsCapability {
+  if (isTypeOnlyExportDeclaration(node)) return "absent";
+  if (isStaticCallableRouteValue(node)) return "present";
+  if (!isNode(node)) return "unknown";
+
+  switch (node.type) {
+    case "ArrayExpression":
+    case "BooleanLiteral":
+    case "NullLiteral":
+    case "NumericLiteral":
+    case "ObjectExpression":
+    case "RegExpLiteral":
+    case "StringLiteral":
+      return "absent";
+    default:
+      return "unknown";
+  }
+}
+
+function isTypeOnlyExportDeclaration(node: ASTNode | undefined): boolean {
+  if (!isNode(node)) return true;
+  return node.declare === true ||
+    node.type === "TSInterfaceDeclaration" ||
+    node.type === "TSTypeAliasDeclaration" ||
+    node.type === "TSDeclareFunction";
+}
+
+function isStaticHttpMethodName(value: string | null): value is string {
+  return value !== null && STATIC_HTTP_METHOD_PATTERN.test(value);
+}
+
+function addStaticRouteMethod(methods: string[], method: string): void {
+  if (!methods.includes(method)) methods.push(method);
+}
+
+function orderStaticRouteMethods(methods: string[]): string[] {
+  const ordered: string[] = [];
+  for (const method of STATIC_STANDARD_ROUTE_METHODS) {
+    if (methods.includes(method)) ordered.push(method);
+  }
+  for (const method of methods.toSorted((left, right) => left.localeCompare(right))) {
+    if (
+      !STATIC_STANDARD_ROUTE_METHODS.includes(
+        method as typeof STATIC_STANDARD_ROUTE_METHODS[number],
+      )
+    ) {
+      ordered.push(method);
+    }
+  }
+  return ordered;
+}
+
+function staticProgramStatements(program: ASTNode): ASTNode[] {
+  return Array.isArray(program.body)
+    ? program.body.filter((statement): statement is ASTNode => isNode(statement))
+    : [];
+}
+
+function addDefaultRouteMethods(
+  declaration: ASTNode | undefined,
+  methods: string[],
+  requestedMethod: unknown,
+): boolean {
+  const capability = staticDefaultRouteCapability(declaration);
+  if (capability === "unknown") return false;
+  if (capability !== "present") return true;
+
+  for (const method of STATIC_STANDARD_ROUTE_METHODS) {
+    addStaticRouteMethod(methods, method);
+  }
+  if (isStaticHttpMethodName(requestedMethod as string | null)) {
+    addStaticRouteMethod(methods, requestedMethod as string);
+  }
+  return true;
+}
+
+function staticVariableDeclarators(declaration: ASTNode): ASTNode[] {
+  return Array.isArray(declaration.declarations)
+    ? declaration.declarations.filter((item): item is ASTNode => isNode(item))
+    : [];
+}
+
+function addVariableRouteMethods(declaration: ASTNode, methods: string[]): boolean {
+  for (const declarator of staticVariableDeclarators(declaration)) {
+    const method = staticExportName(declarator.id as ASTNode | undefined);
+    if (method === null) return false;
+    if (!isStaticHttpMethodName(method)) continue;
+    if (!isStaticCallableRouteValue(declarator.init as ASTNode | undefined)) return false;
+    addStaticRouteMethod(methods, method);
+  }
+  return true;
+}
+
+function addNamedDeclarationRouteMethods(
+  declaration: ASTNode | undefined,
+  methods: string[],
+): boolean {
+  if (!isNode(declaration)) return true;
+  if (
+    declaration.type === "FunctionDeclaration" ||
+    declaration.type === "ClassDeclaration"
+  ) {
+    const method = staticExportName(declaration.id as ASTNode | undefined);
+    if (isStaticHttpMethodName(method)) addStaticRouteMethod(methods, method);
+    return true;
+  }
+  if (declaration.type === "VariableDeclaration") {
+    return addVariableRouteMethods(declaration, methods);
+  }
+  return true;
+}
+
+function hasAmbiguousRouteSpecifier(statement: ASTNode): boolean {
+  if (!Array.isArray(statement.specifiers)) return false;
+  for (const specifier of statement.specifiers) {
+    if (!isNode(specifier) || specifier.exportKind === "type") continue;
+    const exportedName = staticExportName(specifier.exported as ASTNode | undefined);
+    if (isStaticHttpMethodName(exportedName)) return true;
+  }
+  return false;
+}
+
+function addNamedRouteMethods(statement: ASTNode, methods: string[]): boolean {
+  if (statement.exportKind === "type") return true;
+  if (!addNamedDeclarationRouteMethods(statement.declaration as ASTNode | undefined, methods)) {
+    return false;
+  }
+  return !hasAmbiguousRouteSpecifier(statement);
+}
+
+function inspectStaticRouteMethodStatement(
+  statement: ASTNode,
+  methods: string[],
+  requestedMethod: unknown,
+): boolean {
+  if (statement.type === "ExportDefaultDeclaration") {
+    return addDefaultRouteMethods(
+      statement.declaration as ASTNode | undefined,
+      methods,
+      requestedMethod,
+    );
+  }
+  if (statement.type === "ExportAllDeclaration") {
+    return statement.exportKind === "type";
+  }
+  if (statement.type !== "ExportNamedDeclaration") return true;
+  return addNamedRouteMethods(statement, methods);
+}
+
+/**
+ * Resolve only route methods that are proven by export syntax, without
+ * evaluating the route module. `undefined` means the source is too dynamic to
+ * safely narrow a preflight response; callers must use their conservative
+ * default in that case.
+ */
+export async function resolveStaticRouteMethods(
+  source: string,
+  requestedMethod?: unknown,
+): Promise<readonly string[] | undefined> {
+  if (COMMONJS_EXPORT_PATTERN.test(source)) return undefined;
+
+  const program = await parseSource(source);
+  if (program === null) return undefined;
+
+  const methods: string[] = [];
+  for (const statement of staticProgramStatements(program)) {
+    if (!inspectStaticRouteMethodStatement(statement, methods, requestedMethod)) {
+      return undefined;
+    }
+  }
+
+  if (methods.includes("GET")) addStaticRouteMethod(methods, "HEAD");
+  return orderStaticRouteMethods(methods);
+}
+
+type StaticRouteOptionsInspection = StaticRouteOptionsCapability | "continue";
+
+function inspectStaticOptionsDeclaration(
+  declaration: ASTNode | undefined,
+): StaticRouteOptionsInspection {
+  if (!isNode(declaration)) return "continue";
+
+  const declarationName = staticExportName(declaration.id as ASTNode | undefined);
+  if (
+    declarationName === "OPTIONS" &&
+    declaration.declare !== true &&
+    (declaration.type === "FunctionDeclaration" || declaration.type === "ClassDeclaration")
+  ) {
+    return "present";
+  }
+  if (declaration.type !== "VariableDeclaration") return "continue";
+
+  const declarators = staticVariableDeclarators(declaration);
+  const hasDestructuredDeclaration = declarators.some((item) => {
+    const id = item.id as ASTNode | undefined;
+    return isNode(id) && id.type !== "Identifier";
+  });
+  const optionsDeclarator = declarators.find((item) =>
+    staticExportName(item.id as ASTNode | undefined) === "OPTIONS"
+  );
+  if (optionsDeclarator) {
+    return isStaticCallableRouteValue(optionsDeclarator.init as ASTNode | undefined)
+      ? "present"
+      : "unknown";
+  }
+  return hasDestructuredDeclaration ? "unknown" : "continue";
+}
+
+function inspectStaticOptionsSpecifiers(statement: ASTNode): StaticRouteOptionsInspection {
+  if (!Array.isArray(statement.specifiers)) return "continue";
+  for (const specifier of statement.specifiers) {
+    if (!isNode(specifier) || specifier.exportKind === "type") continue;
+    const exportedName = staticExportName(specifier.exported as ASTNode | undefined);
+    if (exportedName === "OPTIONS" || exportedName === "default") return "present";
+  }
+  return "continue";
+}
+
+function inspectStaticOptionsStatement(statement: ASTNode): StaticRouteOptionsInspection {
+  if (statement.type === "ExportDefaultDeclaration") {
+    return staticDefaultRouteCapability(statement.declaration as ASTNode | undefined);
+  }
+  if (statement.type === "ExportAllDeclaration") {
+    return statement.exportKind === "type" ? "continue" : "unknown";
+  }
+  if (statement.type !== "ExportNamedDeclaration" || statement.exportKind === "type") {
+    return "continue";
+  }
+
+  const declarationResult = inspectStaticOptionsDeclaration(
+    statement.declaration as ASTNode | undefined,
+  );
+  if (declarationResult === "present") return "present";
+
+  const specifierResult = inspectStaticOptionsSpecifiers(statement);
+  if (specifierResult === "present") return "present";
+  return declarationResult;
+}
+
+/**
+ * Determine whether a route's OPTIONS export is statically absent.
+ *
+ * This intentionally reports `unknown` for dynamic or ambiguous export
+ * shapes. Callers may use only `absent` as a pre-authentication signal; every
+ * other result keeps the existing authenticate-before-evaluation boundary.
+ */
+export async function resolveStaticRouteOptionsCapability(
+  source: string,
+): Promise<StaticRouteOptionsCapability> {
+  // CommonJS assignments are resolved by the loader rather than the ESM
+  // export declarations below. Keep the pre-auth path conservative for them.
+  if (COMMONJS_EXPORT_PATTERN.test(source)) return "unknown";
+
+  const program = await parseSource(source);
+  if (program === null) return "unknown";
+
+  let uncertain = false;
+
+  for (const statement of staticProgramStatements(program)) {
+    const result = inspectStaticOptionsStatement(statement);
+    if (result === "present") return "present";
+    if (result === "unknown") uncertain = true;
+  }
+
+  return uncertain ? "unknown" : "absent";
 }

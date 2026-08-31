@@ -15,8 +15,11 @@ const NativeRequest = Request;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const getOwnPropertySymbols = Object.getOwnPropertySymbols;
+const arrayJoin = Array.prototype.join;
+const arrayPush = Array.prototype.push;
 const headersAppend = NativeHeaders.prototype.append;
 const headersForEach = NativeHeaders.prototype.forEach;
+const headersGet = NativeHeaders.prototype.get;
 const numberIsSafeInteger = NativeNumber.isSafeInteger;
 const objectKeys = Object.keys;
 const regexpTest = RegExp.prototype.test;
@@ -29,10 +32,13 @@ const requestHeadersGetter = getOwnPropertyDescriptor(
 )?.get;
 const stringToLowerCase = String.prototype.toLowerCase;
 const stringStartsWith = String.prototype.startsWith;
+const stringSplit = String.prototype.split;
+const stringTrim = String.prototype.trim;
 const stringCharCodeAt = String.prototype.charCodeAt;
 const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 const MAX_DYNAMIC_DENY_HEADERS = 32;
 const MAX_DYNAMIC_DENY_HEADER_NAME_LENGTH = 128;
+const DEFAULT_APPLICATION_PREFLIGHT_HEADER_NAMES = ["Content-Type", "Authorization"] as const;
 
 if (typeof requestHeadersGetter !== "function") {
   throw new TypeError("Request.prototype.headers getter is unavailable");
@@ -75,6 +81,55 @@ export function isInfrastructureOnlyRequestHeader(name: string): boolean {
     default:
       return false;
   }
+}
+
+/** Keep infrastructure-only request headers out of browser preflight policy. */
+export function getApplicationPreflightHeaders(
+  request: Request,
+  options: Pick<ApplicationRequestHeaderOptions, "denyHeaders"> = {},
+): string {
+  const dynamicDenyHeaders = normalizeDynamicDenyHeaders(options.denyHeaders);
+  if (dynamicDenyHeaders === null) return "";
+
+  try {
+    const headers = apply(requestHeadersGetter!, request, []) as Headers;
+    const requested = apply(headersGet, headers, ["access-control-request-headers"]);
+    if (typeof requested !== "string" || requested.length === 0) {
+      return defaultApplicationPreflightHeaders(dynamicDenyHeaders);
+    }
+
+    const names = apply(stringSplit, requested, [","]) as string[];
+    const allowed: string[] = [];
+    for (let index = 0; index < names.length; index++) {
+      const name = apply(stringTrim, names[index], []) as string;
+      const normalizedName = apply(stringToLowerCase, name, []) as string;
+      if (
+        name.length > 0 &&
+        !isInfrastructureOnlyRequestHeader(name) &&
+        !setContains(dynamicDenyHeaders, normalizedName)
+      ) {
+        apply(arrayPush, allowed, [name]);
+      }
+    }
+    return allowed.length > 0
+      ? apply(arrayJoin, allowed, [","]) as string
+      : defaultApplicationPreflightHeaders(dynamicDenyHeaders);
+  } catch {
+    return defaultApplicationPreflightHeaders(dynamicDenyHeaders);
+  }
+}
+
+function defaultApplicationPreflightHeaders(denyHeaders: ReadonlySet<string>): string {
+  const allowed: string[] = [];
+  for (const name of DEFAULT_APPLICATION_PREFLIGHT_HEADER_NAMES) {
+    if (
+      !isInfrastructureOnlyRequestHeader(name) &&
+      !setContains(denyHeaders, apply(stringToLowerCase, name, []) as string)
+    ) {
+      apply(arrayPush, allowed, [name]);
+    }
+  }
+  return apply(arrayJoin, allowed, [","]) as string;
 }
 
 export interface ApplicationRequestHeaderOptions {

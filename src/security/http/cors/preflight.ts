@@ -17,9 +17,11 @@ import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
   isBoundedCorsTokenList,
+  isCorsPolicyResponseHeaderName,
   MAX_CORS_SERIALIZED_LIST_LENGTH,
   MAX_CORS_TOKEN_COUNT,
 } from "#veryfront/utils/cors-policy-limits.ts";
+import { scrubPolicyOwnedCORSHeaders } from "./headers.ts";
 
 const logger = serverLogger.component("cors");
 const REJECTED_PREFLIGHT_BODY = "CORS request rejected";
@@ -181,6 +183,36 @@ export function handleCORSPreflight(options: CORSPreflightOptions): Promise<Resp
     },
     { "cors.origin": corsOriginForTelemetry(observedOrigin) },
   );
+}
+
+/** Apply validated preflight policy headers without replacing the route response. */
+export async function applyCORSPreflightHeaders(
+  options: CORSPreflightOptions & { response: Response },
+): Promise<Response> {
+  const policy = await handleCORSPreflight(options);
+  const headers = new Headers(options.response.headers);
+  scrubPolicyOwnedCORSHeaders(headers);
+  for (const [name, value] of policy.headers) {
+    if (isCorsPolicyResponseHeaderName(name)) headers.set(name, value);
+  }
+
+  const policyVary = policy.headers.get("Vary");
+  if (policyVary) {
+    const varyValues = headers
+      .get("Vary")
+      ?.split(",")
+      .map((value) => value.trim())
+      .filter(Boolean) ?? [];
+    if (!varyValues.some((value) => value === "*" || value.toLowerCase() === "origin")) {
+      headers.set("Vary", [...varyValues, policyVary].join(", "));
+    }
+  }
+
+  return new Response(options.response.body, {
+    status: options.response.status,
+    statusText: options.response.statusText,
+    headers,
+  });
 }
 
 export function isPreflightRequest(request: Request): boolean {

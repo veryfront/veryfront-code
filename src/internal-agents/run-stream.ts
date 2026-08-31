@@ -76,10 +76,15 @@ import { compareStrings } from "#veryfront/utils/compare.ts";
 import { type ProviderReplayCheckpoint } from "#veryfront/agent/runtime/provider-replay.ts";
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED } from "#veryfront/errors";
 import type { ProviderReplayCheckpointPersister } from "./provider-replay-checkpoint-persister.ts";
+import { createVeryfrontCloudInferenceModelResolver } from "#veryfront/agent/hosted/inference-credential.ts";
+import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 
 const getAnyObjectSchema = defineSchema((v) => v.record(v.string(), v.unknown()));
 const anyObjectSchema = lazySchema(getAnyObjectSchema) as Schema<Record<string, unknown>>;
+const runtimeInferenceCredentials = createPrivateWeakStore<object, string>();
 const logger = serverLogger.component("internal-agent-run-stream");
+const IntrinsicReflectApply = Reflect.apply;
+const AgentRuntimeStream = AgentRuntime.prototype.stream;
 const PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME = "bash";
 const INTERNAL_AGENT_RUNTIME_HEARTBEAT_INTERVAL_MS = 25_000;
 const INTERNAL_AGENT_RUNTIME_HEARTBEAT_FRAME = new TextEncoder().encode(
@@ -188,6 +193,18 @@ export interface RuntimeAgentStreamExecutionDeps {
   providerReplayCheckpointEmissionEnabled?: boolean;
   providerReplayCheckpoints?: readonly ProviderReplayCheckpoint[];
   persistProviderReplayCheckpoint?: ProviderReplayCheckpointPersister;
+}
+
+/** @internal Bind a verified gateway credential without exposing it on the run input or deps. */
+export function registerRuntimeInferenceCredential(
+  input: RuntimeRunAgentInput,
+  credential: string,
+): void {
+  runtimeInferenceCredentials.set(input, credential);
+}
+
+function getRuntimeInferenceCredential(input: RuntimeRunAgentInput): string | undefined {
+  return runtimeInferenceCredentials.get(input);
 }
 
 function createInjectedStudioTool(
@@ -1084,32 +1101,49 @@ export async function createRuntimeAgentStreamResponse(
           : {}),
       },
     };
-    const runtime = deps.createRuntime?.(runtimeAgent, mergedTools) ??
-      new AgentRuntime(runtimeAgent.id, runtimeAgent.config);
+    const inferenceAuthToken = getRuntimeInferenceCredential(input);
+    const customRuntime = deps.createRuntime?.(runtimeAgent, mergedTools);
+    const runtime = customRuntime ?? new AgentRuntime(runtimeAgent.id, runtimeAgent.config, {
+      ...(inferenceAuthToken
+        ? {
+          resolveModelRuntime: createVeryfrontCloudInferenceModelResolver(inferenceAuthToken),
+        }
+        : {}),
+    });
     const runtimeMessages = compactRuntimeMessagesForStream(
       normalizeAgUiRuntimeMessages(input.messages),
       systemPrompt,
       runtimeToolNames.length,
     );
     const maxOutputTokens = getForwardedMaxOutputTokens(input.forwardedProps);
-    // Scoped here because the runtime dispatches the run's first model call
-    // before stream() resolves. Later steps inherit this scope through the
-    // stream they are pumped from.
     const candidateRuntimeStream = await runWithMandatoryRunEventSink(
       modelCallContextRelay.sink,
       () =>
-        runtime.stream(
-          runtimeMessages,
-          runtimeContext,
-          {
-            onFinish: (response) => {
-              completedResponse = response;
+        customRuntime
+          ? runtime.stream(
+            runtimeMessages,
+            runtimeContext,
+            {
+              onFinish: (response) => {
+                completedResponse = response;
+              },
             },
-          },
-          undefined,
-          maxOutputTokens,
-          abortSignal,
-        ),
+            undefined,
+            maxOutputTokens,
+            abortSignal,
+          )
+          : IntrinsicReflectApply(AgentRuntimeStream, runtime, [
+            runtimeMessages,
+            runtimeContext,
+            {
+              onFinish: (response: AgentResponse) => {
+                completedResponse = response;
+              },
+            },
+            undefined,
+            maxOutputTokens,
+            abortSignal,
+          ]),
     );
     if (candidateRuntimeStream.locked) {
       throw new TypeError("Internal agent runtime returned a locked stream");

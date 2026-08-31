@@ -1,30 +1,33 @@
 import { BaseHandler } from "./base.ts";
-import type {
-  HandlerContext,
-  HandlerMetadata,
-  HandlerPriority,
-  HandlerResult,
-  RouteHandlerModule,
-} from "../types.ts";
+import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { getConfig } from "#veryfront/config";
 import { PRIORITY_VERY_HIGH } from "#veryfront/utils/constants/index.ts";
 import { resolveAppRouteFile } from "../request/api/app-router-resolver.ts";
-import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
-import { isInfrastructureOnlyRequestHeader } from "#veryfront/security/http/application-request.ts";
+import {
+  isSharedProjectRuntime,
+  requiresIsolatedProjectRuntime,
+} from "#veryfront/security/project-locality.ts";
+import { getApplicationPreflightHeaders } from "#veryfront/security/http/application-request.ts";
+import { ensurePreviewSourceSnapshotFresh } from "../request/source-snapshot-freshness.ts";
 
 type AppRouteResolver = typeof resolveAppRouteFile;
-const DEFAULT_ALLOWED_HEADERS = "Content-Type,Authorization";
-
-function getApplicationPreflightHeaders(request: Request): string {
-  const requested = request.headers.get("access-control-request-headers");
-  if (!requested) return DEFAULT_ALLOWED_HEADERS;
-
-  const allowed = requested.split(",")
-    .map((name) => name.trim())
-    .filter((name) => name.length > 0 && !isInfrastructureOnlyRequestHeader(name));
-  return allowed.length > 0 ? allowed.join(",") : DEFAULT_ALLOWED_HEADERS;
-}
+type FsWrapper = {
+  isContextualMode?: () => boolean;
+  isMultiProjectMode?: () => boolean;
+  runWithContext?: <T>(
+    slug: string,
+    token: string,
+    fn: () => Promise<T>,
+    projectId?: string,
+    options?: {
+      productionMode?: boolean;
+      releaseId?: string | null;
+      branch?: string | null;
+      environmentName?: string | null;
+    },
+  ) => Promise<T>;
+};
 
 export interface CorsHandlerDependencies {
   resolveAppRouteFile?: AppRouteResolver;
@@ -38,7 +41,6 @@ export class CorsHandler extends BaseHandler {
   };
 
   private static readonly DEFAULT_METHODS = "GET,POST,PUT,PATCH,DELETE,OPTIONS";
-  private static readonly HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
   private readonly resolveAppRouteFile: AppRouteResolver;
 
   constructor(dependencies: CorsHandlerDependencies = {}) {
@@ -51,9 +53,43 @@ export class CorsHandler extends BaseHandler {
 
     const pathname = new URL(req.url).pathname;
     const isSharedRuntime = isSharedProjectRuntime(ctx);
-    const allowMethods = isSharedRuntime
-      ? CorsHandler.DEFAULT_METHODS
-      : await this.resolveAllowedMethods(pathname, ctx);
+    const mustAvoidProjectCode = requiresIsolatedProjectRuntime(ctx);
+    const isApiPath = pathname === "/api" || pathname.startsWith("/api/");
+    const fsWrapper = ctx.adapter.fs as FsWrapper;
+    const hasContextualFilesystem = fsWrapper.isContextualMode?.() === true;
+    const hasAtomicSharedRuntimeContext = isSharedRuntime &&
+      !!ctx.projectSlug &&
+      fsWrapper.isMultiProjectMode?.() === true &&
+      typeof fsWrapper.runWithContext === "function";
+    const shouldUseAutomaticPreflight = mustAvoidProjectCode ||
+      (hasContextualFilesystem && !hasAtomicSharedRuntimeContext);
+    if (!shouldUseAutomaticPreflight && isApiPath) {
+      return this.continue();
+    }
+
+    if (!shouldUseAutomaticPreflight && !isApiPath) {
+      const resolveMatchedRoute = async (): Promise<boolean> => {
+        await ensurePreviewSourceSnapshotFresh(ctx);
+        return this.hasMatchedAppRoute(pathname, ctx);
+      };
+      const hasMatchedAppRoute = hasAtomicSharedRuntimeContext
+        ? await fsWrapper.runWithContext!(
+          ctx.projectSlug!,
+          ctx.proxyToken ?? "",
+          resolveMatchedRoute,
+          ctx.projectId,
+          {
+            productionMode: ctx.requestContext?.mode === "production",
+            releaseId: ctx.releaseId,
+            branch: ctx.requestContext?.mode === "production"
+              ? null
+              : ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null,
+            environmentName: ctx.environmentName,
+          },
+        )
+        : await resolveMatchedRoute();
+      if (hasMatchedAppRoute) return this.continue();
+    }
 
     let corsConfig = ctx.securityConfig?.cors;
     if (!isSharedRuntime) {
@@ -72,8 +108,10 @@ export class CorsHandler extends BaseHandler {
     }
 
     const response = ResponseBuilder.preflight(req, {
-      allowMethods,
-      allowHeaders: getApplicationPreflightHeaders(req),
+      allowMethods: CorsHandler.DEFAULT_METHODS,
+      allowHeaders: getApplicationPreflightHeaders(req, {
+        denyHeaders: ctx.applicationIdentityHeaderNames,
+      }),
       securityConfig: ctx.securityConfig ?? undefined,
       corsConfig,
     });
@@ -81,22 +119,16 @@ export class CorsHandler extends BaseHandler {
     return this.respond(response);
   }
 
-  private async resolveAllowedMethods(pathname: string, ctx: HandlerContext): Promise<string> {
+  private async hasMatchedAppRoute(
+    pathname: string,
+    ctx: HandlerContext,
+  ): Promise<boolean> {
     try {
       const match = await this.resolveAppRouteFile(pathname, ctx);
-      if (!match) return CorsHandler.DEFAULT_METHODS;
-
-      const mod = (await import(`file://${match.file}`)) as RouteHandlerModule;
-      const foundMethods = CorsHandler.HTTP_METHODS.filter((m) => typeof mod[m] === "function");
-
-      const methods: string[] = [...foundMethods];
-      if (foundMethods.includes("GET")) methods.unshift("HEAD");
-      methods.push("OPTIONS");
-
-      return [...new Set(methods)].join(", ");
+      return match !== null;
     } catch (error) {
       this.logWarn("Failed to resolve route for CORS", { error, pathname });
-      return CorsHandler.DEFAULT_METHODS;
+      return false;
     }
   }
 }

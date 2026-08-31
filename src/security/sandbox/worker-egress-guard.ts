@@ -25,6 +25,71 @@ import { DnsPermissionError, resolveHostAddresses } from "#veryfront/platform/co
 import { getDenoRuntime, isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { fetchWithPinnedAddresses } from "#veryfront/platform/compat/http/pinned-fetch.ts";
 
+const IntrinsicReflectApply = Reflect.apply;
+const NativeHeaders = Headers;
+const NativeRequest = Request;
+const NativeResponse = Response;
+const NativeURL = URL;
+const HeadersDelete = NativeHeaders.prototype.delete;
+const HeadersGet = NativeHeaders.prototype.get;
+const HeadersSet = NativeHeaders.prototype.set;
+const StringEndsWith = String.prototype.endsWith;
+const StringSlice = String.prototype.slice;
+const StringStartsWith = String.prototype.startsWith;
+const RequestArrayBuffer = NativeRequest.prototype.arrayBuffer;
+const RequestGetters = Object.freeze({
+  body: Object.getOwnPropertyDescriptor(NativeRequest.prototype, "body")?.get,
+  cache: Object.getOwnPropertyDescriptor(NativeRequest.prototype, "cache")?.get,
+  credentials: Object.getOwnPropertyDescriptor(NativeRequest.prototype, "credentials")?.get,
+  headers: Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")?.get,
+  keepalive: Object.getOwnPropertyDescriptor(NativeRequest.prototype, "keepalive")?.get,
+  method: Object.getOwnPropertyDescriptor(NativeRequest.prototype, "method")?.get,
+  mode: Object.getOwnPropertyDescriptor(NativeRequest.prototype, "mode")?.get,
+  redirect: Object.getOwnPropertyDescriptor(NativeRequest.prototype, "redirect")?.get,
+  referrer: Object.getOwnPropertyDescriptor(NativeRequest.prototype, "referrer")?.get,
+  referrerPolicy: Object.getOwnPropertyDescriptor(NativeRequest.prototype, "referrerPolicy")?.get,
+  signal: Object.getOwnPropertyDescriptor(NativeRequest.prototype, "signal")?.get,
+  url: Object.getOwnPropertyDescriptor(NativeRequest.prototype, "url")?.get,
+});
+const UrlHrefGet = Object.getOwnPropertyDescriptor(NativeURL.prototype, "href")?.get;
+
+function getNativeRequestProperty<TKey extends keyof typeof RequestGetters>(
+  request: Request,
+  key: TKey,
+): Request[TKey] {
+  const getter = RequestGetters[key];
+  if (!getter) throw new TypeError("Request accessor is unavailable");
+  return IntrinsicReflectApply(getter, request, []) as Request[TKey];
+}
+
+function getOptionalNativeRequestProperty<TKey extends keyof typeof RequestGetters>(
+  request: Request,
+  key: TKey,
+): Request[TKey] | undefined {
+  const getter = RequestGetters[key];
+  return getter ? IntrinsicReflectApply(getter, request, []) as Request[TKey] : undefined;
+}
+
+function isNativeRequest(value: unknown): value is Request {
+  try {
+    if (!RequestGetters.url) return false;
+    IntrinsicReflectApply(RequestGetters.url, value, []);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isNativeUrl(value: unknown): value is URL {
+  try {
+    if (!UrlHrefGet) return false;
+    IntrinsicReflectApply(UrlHrefGet, value, []);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const WORKER_INTERNAL_EGRESS_OVERRIDE_ENV = "VERYFRONT_WORKER_ALLOW_INTERNAL_EGRESS";
 export const WORKER_INTERNAL_EGRESS_ALLOWED_HOSTS_ENV = "VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS";
 
@@ -98,7 +163,10 @@ export function isInternalEgressOverrideEnabled(value: string | undefined): bool
 }
 
 function stripIpv6Brackets(value: string): string {
-  return value.startsWith("[") && value.endsWith("]") ? value.slice(1, -1) : value;
+  return IntrinsicReflectApply(StringStartsWith, value, ["["]) &&
+      IntrinsicReflectApply(StringEndsWith, value, ["]"])
+    ? IntrinsicReflectApply(StringSlice, value, [1, -1])
+    : value;
 }
 
 function stripIpv6Zone(value: string): string {
@@ -278,11 +346,11 @@ async function defaultResolveHost(hostname: string): Promise<string[]> {
 }
 
 function getUrlHostname(input: string | URL | Request): string | null {
-  const url = input instanceof URL
+  const url = isNativeUrl(input)
     ? input
-    : input instanceof Request
-    ? new URL(input.url)
-    : new URL(String(input));
+    : isNativeRequest(input)
+    ? new NativeURL(getNativeRequestProperty(input, "url"))
+    : new NativeURL(String(input));
 
   if (
     url.protocol !== "http:" && url.protocol !== "https:" && url.protocol !== "ws:" &&
@@ -1056,7 +1124,9 @@ const CROSS_ORIGIN_CREDENTIAL_HEADERS = [
 ] as const;
 
 function stripHopByHopHeaders(headers: Headers): void {
-  for (const name of HOP_BY_HOP_HEADERS) headers.delete(name);
+  for (const name of HOP_BY_HOP_HEADERS) {
+    IntrinsicReflectApply(HeadersDelete, headers, [name]);
+  }
 }
 
 function createSocksHttpClient(
@@ -1078,11 +1148,11 @@ async function fetchThroughHttpBroker(
   targetUrl: string,
   init: RequestInit,
 ): Promise<Response> {
-  const headers = new Headers(init.headers);
+  const headers = new NativeHeaders(init.headers);
   stripHopByHopHeaders(headers);
-  headers.delete("content-length");
-  headers.set(BROKER_AUTH_HEADER, broker.token);
-  headers.set(BROKER_TARGET_HEADER, targetUrl);
+  IntrinsicReflectApply(HeadersDelete, headers, ["content-length"]);
+  IntrinsicReflectApply(HeadersSet, headers, [BROKER_AUTH_HEADER, broker.token]);
+  IntrinsicReflectApply(HeadersSet, headers, [BROKER_TARGET_HEADER, targetUrl]);
 
   const brokerInit = {
     ...init,
@@ -1091,7 +1161,7 @@ async function fetchThroughHttpBroker(
   } as RequestInit & Record<PropertyKey, unknown>;
   delete brokerInit.client;
   const brokerResponse = await fetchImpl(broker.url, brokerInit);
-  if (brokerResponse.headers.get(BROKER_ERROR_HEADER) === "1") {
+  if (IntrinsicReflectApply(HeadersGet, brokerResponse.headers, [BROKER_ERROR_HEADER]) === "1") {
     let message = "Worker network egress failed";
     try {
       const payload = await brokerResponse.json() as { message?: unknown };
@@ -1102,16 +1172,24 @@ async function fetchThroughHttpBroker(
     throw new WorkerEgressBlockedError(message);
   }
 
-  const responseHeaders = new Headers(brokerResponse.headers);
-  const contentEncoding = responseHeaders.get(BROKER_CONTENT_ENCODING_HEADER);
-  const contentLength = responseHeaders.get(BROKER_CONTENT_LENGTH_HEADER);
-  responseHeaders.delete(BROKER_ERROR_HEADER);
-  responseHeaders.delete(BROKER_CONTENT_ENCODING_HEADER);
-  responseHeaders.delete(BROKER_CONTENT_LENGTH_HEADER);
-  if (contentEncoding !== null) responseHeaders.set("content-encoding", contentEncoding);
-  if (contentLength !== null) responseHeaders.set("content-length", contentLength);
+  const responseHeaders = new NativeHeaders(brokerResponse.headers);
+  const contentEncoding = IntrinsicReflectApply(HeadersGet, responseHeaders, [
+    BROKER_CONTENT_ENCODING_HEADER,
+  ]) as string | null;
+  const contentLength = IntrinsicReflectApply(HeadersGet, responseHeaders, [
+    BROKER_CONTENT_LENGTH_HEADER,
+  ]) as string | null;
+  IntrinsicReflectApply(HeadersDelete, responseHeaders, [BROKER_ERROR_HEADER]);
+  IntrinsicReflectApply(HeadersDelete, responseHeaders, [BROKER_CONTENT_ENCODING_HEADER]);
+  IntrinsicReflectApply(HeadersDelete, responseHeaders, [BROKER_CONTENT_LENGTH_HEADER]);
+  if (contentEncoding !== null) {
+    IntrinsicReflectApply(HeadersSet, responseHeaders, ["content-encoding", contentEncoding]);
+  }
+  if (contentLength !== null) {
+    IntrinsicReflectApply(HeadersSet, responseHeaders, ["content-length", contentLength]);
+  }
 
-  const response = new Response(brokerResponse.body, {
+  const response = new NativeResponse(brokerResponse.body, {
     status: brokerResponse.status,
     statusText: brokerResponse.statusText,
     headers: responseHeaders,
@@ -1197,18 +1275,22 @@ export async function guardedEgressFetch(
   const getRuntime = () => resolvedRuntime ??= getPinnedEgressRuntime(deps.runtime);
   let didRedirect = false;
   let pendingRedirect: WorkerEgressRedirect | undefined;
+  const requestInput = isNativeRequest(input) ? input : undefined;
 
   const requestedRedirect: RequestRedirect = init?.redirect ??
-    (input instanceof Request ? input.redirect : "follow");
+    (requestInput ? getOptionalNativeRequestProperty(requestInput, "redirect") : undefined) ??
+    "follow";
 
-  let url = input instanceof Request
-    ? input.url
-    : input instanceof URL
-    ? input.href
+  let url = requestInput
+    ? getNativeRequestProperty(requestInput, "url")
+    : isNativeUrl(input)
+    ? IntrinsicReflectApply(UrlHrefGet!, input, []) as string
     : String(input);
-  let method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
-  const headers = new Headers(
-    init?.headers ?? (input instanceof Request ? input.headers : undefined),
+  let method = (init?.method ??
+    (requestInput ? getNativeRequestProperty(requestInput, "method") : "GET")).toUpperCase();
+  const headers = new NativeHeaders(
+    init?.headers ??
+      (requestInput ? getNativeRequestProperty(requestInput, "headers") : undefined),
   );
   // Following a redirect means resending the body, and a stream cannot replay,
   // so streams are materialized only when redirects are actually followed --
@@ -1221,28 +1303,39 @@ export async function guardedEgressFetch(
   let body: BodyInit | undefined;
   if (init?.body != null) {
     body = mayFollowRedirect && init.body instanceof ReadableStream
-      ? new Uint8Array(await new Response(init.body).arrayBuffer())
+      ? new Uint8Array(await new NativeResponse(init.body).arrayBuffer())
       : init.body as BodyInit;
-  } else if (input instanceof Request && input.body) {
-    body = mayFollowRedirect ? new Uint8Array(await input.arrayBuffer()) : input.body;
+  } else if (requestInput && getNativeRequestProperty(requestInput, "body")) {
+    body = mayFollowRedirect
+      ? new Uint8Array(
+        await IntrinsicReflectApply(RequestArrayBuffer, requestInput, []) as ArrayBuffer,
+      )
+      : getNativeRequestProperty(requestInput, "body") ?? undefined;
   }
 
   // Preserve request-level options (notably `signal`, so aborts keep working)
   // that would otherwise be dropped when the caller passes a Request object
   // rather than an init bag, and that must persist across every redirect hop.
-  const reqInput = input instanceof Request ? input : undefined;
+  const reqInput = requestInput;
   const carryInit: RequestInit = {
-    signal: init?.signal ?? reqInput?.signal,
-    credentials: init?.credentials ?? reqInput?.credentials,
-    cache: init?.cache ?? reqInput?.cache,
-    mode: init?.mode ?? reqInput?.mode,
-    referrer: init?.referrer ?? reqInput?.referrer,
-    referrerPolicy: init?.referrerPolicy ?? reqInput?.referrerPolicy,
-    keepalive: init?.keepalive ?? reqInput?.keepalive,
+    signal: init?.signal ??
+      (reqInput ? getOptionalNativeRequestProperty(reqInput, "signal") : undefined),
+    credentials: init?.credentials ??
+      (reqInput ? getOptionalNativeRequestProperty(reqInput, "credentials") : undefined),
+    cache: init?.cache ??
+      (reqInput ? getOptionalNativeRequestProperty(reqInput, "cache") : undefined),
+    mode: init?.mode ??
+      (reqInput ? getOptionalNativeRequestProperty(reqInput, "mode") : undefined),
+    referrer: init?.referrer ??
+      (reqInput ? getOptionalNativeRequestProperty(reqInput, "referrer") : undefined),
+    referrerPolicy: init?.referrerPolicy ??
+      (reqInput ? getOptionalNativeRequestProperty(reqInput, "referrerPolicy") : undefined),
+    keepalive: init?.keepalive ??
+      (reqInput ? getOptionalNativeRequestProperty(reqInput, "keepalive") : undefined),
   };
 
   for (let hop = 0;; hop++) {
-    const parsedUrl = new URL(url);
+    const parsedUrl = new NativeURL(url);
     await deps.authorizeUrl?.(parsedUrl);
     const hostname = getUrlHostname(parsedUrl);
     let tunnel: PinnedSocksTunnel | undefined;
@@ -1354,7 +1447,7 @@ export async function guardedEgressFetch(
 
     await response.body?.cancel().catch(() => undefined);
 
-    const nextUrl = new URL(location, url);
+    const nextUrl = new NativeURL(location, url);
     // Only follow redirects to http(s). The platform fetch treats a redirect to
     // any other scheme as a network error; following e.g. file:// here would let
     // an attacker-controlled redirect turn a network fetch into a local file
@@ -1373,8 +1466,10 @@ export async function guardedEgressFetch(
     // Cross-origin redirect: strip credential-bearing headers, matching the
     // platform fetch this guard replaces, so a redirect target cannot receive
     // the caller's Authorization/Cookie.
-    if (nextUrl.origin !== new URL(url).origin) {
-      for (const header of CROSS_ORIGIN_CREDENTIAL_HEADERS) headers.delete(header);
+    if (nextUrl.origin !== new NativeURL(url).origin) {
+      for (const header of CROSS_ORIGIN_CREDENTIAL_HEADERS) {
+        IntrinsicReflectApply(HeadersDelete, headers, [header]);
+      }
     }
     url = nextUrl.href;
     didRedirect = true;
@@ -1396,7 +1491,7 @@ export async function guardedEgressFetch(
           "content-type",
         ]
       ) {
-        headers.delete(header);
+        IntrinsicReflectApply(HeadersDelete, headers, [header]);
       }
     } else if (!isReplayableBody(body)) {
       throw new WorkerEgressBlockedError(

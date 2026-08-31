@@ -267,7 +267,11 @@ import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 import { telemetryErrorType } from "#veryfront/observability/telemetry-error.ts";
 import { resolveTemperatureParameter } from "./model-capabilities.ts";
 import { applySkillDelegationOverridesToToolInput } from "./skill-delegation-overrides.ts";
-import { resolveAgentModelTransport, type ResolvedModelTransport } from "./model-transport.ts";
+import {
+  type AgentModelRuntimeResolver,
+  resolveAgentModelTransport,
+  type ResolvedModelTransport,
+} from "./model-transport.ts";
 import { buildRuntimeUsageTraceAttributes } from "./trace-usage.ts";
 import {
   createToolExposureCheckpoint,
@@ -1193,14 +1197,25 @@ type RuntimeStepState = {
   context?: Record<string, unknown>;
 };
 
+/** @internal Framework-only AgentRuntime construction options. */
+export type AgentRuntimeInternalOptions = {
+  resolveModelRuntime?: AgentModelRuntimeResolver;
+};
+
 /** Implement agent runtime. */
 export class AgentRuntime {
+  readonly #resolveModelRuntime: AgentModelRuntimeResolver | undefined;
   private id: string;
   private config: AgentConfig;
   private memory: Memory<Message>;
   private status: AgentStatus = "idle";
 
-  constructor(id: string, config: AgentConfig) {
+  constructor(
+    id: string,
+    config: AgentConfig,
+    internalOptions: AgentRuntimeInternalOptions = {},
+  ) {
+    this.#resolveModelRuntime = internalOptions.resolveModelRuntime;
     this.id = id;
     this.config = { ...config };
 
@@ -1225,7 +1240,7 @@ export class AgentRuntime {
     return persisted.length > 0 ? persisted : inputMessages;
   }
 
-  private async resolveModelTransport(
+  async #resolveModelTransport(
     context: Record<string, unknown> | undefined,
     modelOverride: string | undefined,
     mode: "generate" | "stream",
@@ -1236,6 +1251,7 @@ export class AgentRuntime {
       context,
       modelOverride,
       mode,
+      resolveModelRuntime: this.#resolveModelRuntime,
     });
   }
 
@@ -1335,7 +1351,7 @@ export class AgentRuntime {
     throwIfAborted(abortSignal);
     const outputSchema = this.resolveOutputSchema(options?.outputSchema);
     const runRuntimeContext = captureAgentRunRuntimeContext();
-    const transport = await this.resolveModelTransport(context, modelOverride, "generate");
+    const transport = await this.#resolveModelTransport(context, modelOverride, "generate");
     const requestedModel = transport.requestedModel;
     const resolvedModelString = transport.resolvedModelString;
     const supportsToolCalling = supportsModelRuntimeToolCalling(transport.languageModel);
@@ -1426,7 +1442,7 @@ export class AgentRuntime {
       "run.started_at_utc": runRuntimeContext.runStartedAtUtc,
       "run.current_date_utc": runRuntimeContext.currentDateUtc,
     });
-    const transport = await this.resolveModelTransport(context, modelOverride, "stream");
+    const transport = await this.#resolveModelTransport(context, modelOverride, "stream");
     const requestedModel = transport.requestedModel;
     const resolvedModelString = transport.resolvedModelString;
     debugRuntimeModelRemap(requestedModel, resolvedModelString);

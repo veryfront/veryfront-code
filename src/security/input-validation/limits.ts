@@ -14,10 +14,90 @@ const REQUEST_LIMIT_KEYS = new Set([
   "maxFileSize",
 ]);
 const READ_BODY_OPTION_KEYS = new Set(["signal"]);
+const IntrinsicReflectApply = Reflect.apply;
+const NativeRequest = Request;
+const NativeHeaders = Headers;
+const NativeReadableStream = ReadableStream;
+const NativeReadableStreamDefaultReader = ReadableStreamDefaultReader;
+const RequestBodyGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "body")?.get;
+const RequestBodyUsedGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "bodyUsed")
+  ?.get;
+const RequestHeadersGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")?.get;
+const RequestSignalGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "signal")?.get;
+const RequestUrlGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "url")?.get;
+const HeadersGet = NativeHeaders.prototype.get;
+const ReadableStreamCancel = NativeReadableStream.prototype.cancel;
+const ReadableStreamGetReader = NativeReadableStream.prototype.getReader;
+const ReadableStreamLockedGet = Object.getOwnPropertyDescriptor(
+  NativeReadableStream.prototype,
+  "locked",
+)?.get;
+const ReaderCancel = NativeReadableStreamDefaultReader.prototype.cancel;
+const ReaderRead = NativeReadableStreamDefaultReader.prototype.read;
+const ReaderReleaseLock = NativeReadableStreamDefaultReader.prototype.releaseLock;
 
 export interface ReadBodyLimitOptions {
   /** Abort the read and cancel the underlying stream when the caller deadline expires. */
   signal?: AbortSignal;
+}
+
+function readNativeRequestValue<T>(
+  request: Request,
+  getter: ((this: Request) => T) | undefined,
+  name: string,
+): T {
+  if (!getter) throw new TypeError(`Request accessor ${name} is unavailable`);
+  return IntrinsicReflectApply(getter, request, []);
+}
+
+export function getNativeRequestBody(request: Request): ReadableStream<Uint8Array> | null {
+  return readNativeRequestValue(request, RequestBodyGet, "body");
+}
+
+function getNativeRequestBodyUsed(request: Request): boolean {
+  return readNativeRequestValue(request, RequestBodyUsedGet, "bodyUsed");
+}
+
+function getNativeRequestHeaders(request: Request): Headers {
+  return readNativeRequestValue(request, RequestHeadersGet, "headers");
+}
+
+function getNativeRequestSignal(request: Request): AbortSignal {
+  return readNativeRequestValue(request, RequestSignalGet, "signal");
+}
+
+function getNativeRequestUrl(request: Request): string {
+  return readNativeRequestValue(request, RequestUrlGet, "url");
+}
+
+function getRequestUrlForValidation(request: Request): string {
+  try {
+    return getNativeRequestUrl(request);
+  } catch {
+    // Keep the lightweight request-shaped fixture accepted by this legacy
+    // validation helper. Credential-bearing body reads remain native-only.
+    return request.url;
+  }
+}
+
+function getRequestHeadersForValidation(request: Request): Headers {
+  try {
+    return getNativeRequestHeaders(request);
+  } catch {
+    return request.headers;
+  }
+}
+
+function getNativeHeader(headers: Headers, name: string): string | null {
+  return IntrinsicReflectApply(HeadersGet, headers, [name]);
+}
+
+function getNativeReader(
+  stream: ReadableStream<Uint8Array>,
+): ReadableStreamDefaultReader<Uint8Array> {
+  return IntrinsicReflectApply(ReadableStreamGetReader, stream, []) as ReadableStreamDefaultReader<
+    Uint8Array
+  >;
 }
 
 function requireByteLimit(name: string, value: unknown): number {
@@ -110,7 +190,7 @@ export function validateRequestLimits(
   const resolved = resolveRequestLimits(limits);
   const { maxUrlLength, maxBodySize, maxHeaderSize } = resolved;
 
-  validateUrlLength(request.url, maxUrlLength);
+  validateUrlLength(getRequestUrlForValidation(request), maxUrlLength);
   validateContentLength(request, maxBodySize);
   validateHeaderSize(request, maxHeaderSize);
   return resolved;
@@ -127,7 +207,10 @@ function validateUrlLength(url: string, maxLength: number): void {
 }
 
 function validateContentLength(request: Request, maxSize: number): void {
-  const contentLength = request.headers.get("content-length");
+  const contentLength = getNativeHeader(
+    getRequestHeadersForValidation(request),
+    "content-length",
+  );
   if (contentLength === null) return;
 
   const size = parseContentLength(contentLength);
@@ -168,9 +251,11 @@ function cancelBody(
   body: ReadableStream<Uint8Array> | null,
   reason: unknown,
 ): void {
-  if (!body || body.locked) return;
+  if (!body) return;
+  if (ReadableStreamLockedGet && IntrinsicReflectApply(ReadableStreamLockedGet, body, [])) return;
+  if (!ReadableStreamCancel) return;
   try {
-    void body.cancel(reason).catch(() => undefined);
+    void IntrinsicReflectApply(ReadableStreamCancel, body, [reason]).catch(() => undefined);
   } catch {
     // Cancellation is best effort. A hostile or broken stream must not keep
     // the caller waiting after the body has already been rejected.
@@ -181,8 +266,9 @@ function cancelReader(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   reason: unknown,
 ): void {
+  if (!ReaderCancel) return;
   try {
-    void reader.cancel(reason).catch(() => undefined);
+    void IntrinsicReflectApply(ReaderCancel, reader, [reason]).catch(() => undefined);
   } catch {
     // The rejection reason remains authoritative if cancellation itself fails.
   }
@@ -195,7 +281,7 @@ function yieldToTaskQueue(): Promise<void> {
 function validateHeaderSize(request: Request, maxSize: number): void {
   let headerSize = 0;
 
-  for (const [key, value] of request.headers) {
+  for (const [key, value] of getRequestHeadersForValidation(request)) {
     headerSize += textEncoder.encode(key).byteLength +
       textEncoder.encode(value).byteLength +
       4; // ": " and "\r\n"
@@ -213,7 +299,10 @@ function validateHeaderSize(request: Request, maxSize: number): void {
 export function validateContentType(request: Request, expected: string | string[]): void {
   const allowed = Array.isArray(expected) ? expected : [expected];
   const label = allowed.join(" or ");
-  const contentType = request.headers.get("content-type");
+  const contentType = getNativeHeader(
+    getRequestHeadersForValidation(request),
+    "content-type",
+  );
   if (!contentType) {
     throw createValidationError(`Missing Content-Type header, expected ${label}`);
   }
@@ -256,27 +345,30 @@ export async function readBodyBytesWithLimit(
     throw new TypeError("Request body read options.signal must be an AbortSignal");
   }
   requireByteLimit("Request body size limit", maxSize);
-  if (request.bodyUsed) {
+  if (getNativeRequestBodyUsed(request)) {
     throw createValidationError("Request body has already been consumed");
   }
 
-  const contentLength = request.headers.get("content-length");
+  const requestHeaders = getNativeRequestHeaders(request);
+  const requestBody = getNativeRequestBody(request);
+  const requestSignal = getNativeRequestSignal(request);
+  const contentLength = getNativeHeader(requestHeaders, "content-length");
   if (contentLength !== null) {
     let declaredSize: number;
     try {
       declaredSize = parseContentLength(contentLength);
     } catch (error) {
-      cancelBody(request.body, error);
+      cancelBody(requestBody, error);
       throw error;
     }
     if (declaredSize > maxSize) {
       const error = createBodyTooLargeError(maxSize, declaredSize, "content-length");
-      cancelBody(request.body, error);
+      cancelBody(requestBody, error);
       throw error;
     }
   }
 
-  const reader = request.body?.getReader();
+  const reader = requestBody ? getNativeReader(requestBody) : null;
   if (!reader) throw createValidationError("No request body");
 
   const blocks: Uint8Array[] = [];
@@ -288,9 +380,9 @@ export async function readBodyBytesWithLimit(
   let consecutiveEmptyChunks = 0;
   let abortReason: unknown;
   const optionSignal = optionSnapshot.signal as AbortSignal | undefined;
-  const signal = optionSignal && optionSignal !== request.signal
-    ? AbortSignal.any([request.signal, optionSignal])
-    : request.signal;
+  const signal = optionSignal && optionSignal !== requestSignal
+    ? AbortSignal.any([requestSignal, optionSignal])
+    : requestSignal;
   const abort = (): void => {
     abortReason = signal?.reason ?? new DOMException("The operation was aborted", "AbortError");
     cancelReader(reader, abortReason);
@@ -302,7 +394,7 @@ export async function readBodyBytesWithLimit(
   try {
     while (true) {
       if (abortReason !== undefined) throw abortReason;
-      const { done, value } = await reader.read();
+      const { done, value } = await IntrinsicReflectApply(ReaderRead, reader, []);
       if (abortReason !== undefined) throw abortReason;
       if (done) break;
       if (!(value instanceof Uint8Array)) {
@@ -377,7 +469,7 @@ export async function readBodyBytesWithLimit(
     }
   } finally {
     signal?.removeEventListener("abort", abort);
-    reader.releaseLock();
+    IntrinsicReflectApply(ReaderReleaseLock, reader, []);
   }
 
   const combined = new Uint8Array(totalSize);
