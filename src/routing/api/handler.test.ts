@@ -15,6 +15,7 @@ import { HOST_PROJECT_EXECUTION_OVERRIDE_ENV } from "#veryfront/security/host-ex
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
+import { markTrustedProxyApplicationAuthAdmittedRequest } from "#veryfront/security/application-auth/trusted-proxy.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
@@ -1221,8 +1222,10 @@ describe("APIRouteHandler", () => {
         adapter,
         { security: securityConfig } as HandlerConfig,
       );
+      const request = new Request("http://localhost/api/precomputed-auth", { method: "OPTIONS" });
+      markTrustedProxyApplicationAuthAdmittedRequest(request);
       const response = await handler.handle(
-        new Request("http://localhost/api/precomputed-auth", { method: "OPTIONS" }),
+        request,
         {
           ...localContext(adapter),
           securityConfig,
