@@ -60,6 +60,38 @@ describe("agent/middleware/chain", () => {
     assertEquals(finalHandlerCalls, 0);
   });
 
+  it("does not invoke an overridden then while settling a short-circuit response", async () => {
+    let retainedNext: (() => Promise<AgentResponse>) | undefined;
+    let finalHandlerCalls = 0;
+    let overriddenThenCalls = 0;
+    class MiddlewarePromise extends Promise<AgentResponse> {}
+    const selectedResponse = new MiddlewarePromise((resolve) => resolve(response));
+    Object.defineProperty(selectedResponse, "then", {
+      value(...args: unknown[]) {
+        overriddenThenCalls += 1;
+        retainedNext!();
+        return Reflect.apply(Promise.prototype.then, selectedResponse, args);
+      },
+    });
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        retainedNext = next;
+        return selectedResponse;
+      },
+    ]);
+
+    assertEquals(
+      await chain.execute(context, () => {
+        finalHandlerCalls += 1;
+        return Promise.resolve(response);
+      }),
+      response,
+    );
+    assertEquals(overriddenThenCalls, 0);
+    assertEquals(finalHandlerCalls, 0);
+    await assertRejects(() => retainedNext!(), VeryfrontError, replayError);
+  });
+
   it("rejects concurrent continuation replay", async () => {
     let releaseFinalHandler: (() => void) | undefined;
     const finalHandlerStarted = Promise.withResolvers<void>();
