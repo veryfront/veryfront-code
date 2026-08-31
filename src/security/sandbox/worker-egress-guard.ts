@@ -1473,7 +1473,7 @@ export async function guardedEgressFetch(
           "content-type",
         ]
       ) {
-        headers.delete(header);
+        IntrinsicReflectApply(HeadersDelete, headers, [header]);
       }
     } else if (!isReplayableBody(body)) {
       throw new WorkerEgressBlockedError(
