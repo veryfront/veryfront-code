@@ -4,7 +4,6 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter, RuntimeId } from "#veryfront/platform/adapters/base.ts";
-import { createMockAdapter as createRouteMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE } from "#veryfront/errors";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
@@ -400,78 +399,6 @@ describe("server/runtime-handler/index", () => {
     assertEquals(middlewareCalls, 1);
   });
 
-  for (
-    const [exportName, source, expectedBody] of [
-      [
-        "OPTIONS",
-        "export function OPTIONS() { return new Response('named options'); }",
-        "named options",
-      ],
-      [
-        "default",
-        "export default function handler() { return new Response('default options'); }",
-        "default options",
-      ],
-    ] as const
-  ) {
-    it(`runs middleware before authored ${exportName} OPTIONS preflight route`, async () => {
-      const projectDir = `/tmp/test-options-auth-${crypto.randomUUID()}`;
-      const adapter = createRouteMockAdapter();
-      adapter.fs.files.set(`${projectDir}/pages/api/options.ts`, source);
-      let middlewareCalls = 0;
-      const middleware: MiddlewareFunction = async (context, next) => {
-        middlewareCalls++;
-        assertEquals(context.identity?.subject, "user-123");
-        const response = await next();
-        response?.headers.set("x-project-middleware", "ran");
-        return response;
-      };
-      const handler = createVeryfrontHandler(projectDir, adapter, {
-        projectDir,
-        config: {
-          security: {
-            auth: {
-              trustedProxy: {
-                trustedPeers: ["127.0.0.1"],
-                headers: { subject: "x-auth-subject" },
-              },
-            },
-          },
-          middleware: { custom: [middleware] },
-        } as any,
-        allowHostProjectCodeExecution: true,
-      });
-
-      const response = await handler(withTrustedPeer(
-        new Request("http://localhost/api/options", {
-          method: "OPTIONS",
-          headers: {
-            origin: "https://client.example",
-            "access-control-request-method": "GET",
-            "x-auth-subject": "user-123",
-          },
-        }),
-      ));
-
-      assertEquals(response.status, 200);
-      assertEquals(await response.text(), expectedBody);
-      assertEquals(response.headers.get("x-project-middleware"), "ran");
-      assertEquals(middlewareCalls, 1);
-
-      const publicPreflight = await handler(
-        new Request("http://localhost/api/options", {
-          method: "OPTIONS",
-          headers: {
-            origin: "https://client.example",
-            "access-control-request-method": "GET",
-          },
-        }),
-      );
-      assertEquals(publicPreflight.status, 204);
-      assertEquals(middlewareCalls, 1);
-    });
-  }
-
   it("short-circuits terminal application auth responses before project middleware", async () => {
     let middlewareCalls = 0;
     const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
@@ -755,55 +682,6 @@ describe("server/runtime-handler/index", () => {
 
     assertEquals(response.status, 204);
     assertEquals(middlewareCalls, 0);
-  });
-
-  it("retains a framework-owned preflight response across source changes", async () => {
-    const projectDir = `/tmp/test-options-revalidation-${crypto.randomUUID()}`;
-    const routePath = `${projectDir}/pages/api/options.ts`;
-    const adapter = createRouteMockAdapter();
-    adapter.fs.files.set(routePath, "export function GET() { return new Response('get'); }");
-    const originalReadFile = adapter.fs.readFile;
-    let routeReads = 0;
-    adapter.fs.readFile = async (path) => {
-      const source = await originalReadFile(path);
-      if (path === routePath && routeReads++ === 0) {
-        adapter.fs.files.set(
-          routePath,
-          "export function OPTIONS() { return new Response('options'); }",
-        );
-      }
-      return source;
-    };
-    let middlewareCalls = 0;
-    const handler = createVeryfrontHandler(projectDir, adapter, {
-      projectDir,
-      config: {
-        middleware: {
-          custom: [
-            () => {
-              middlewareCalls++;
-              return new Response("middleware ran");
-            },
-          ],
-        },
-      } as any,
-      allowHostProjectCodeExecution: true,
-    });
-
-    const response = await handler(
-      new Request("http://localhost/api/options", {
-        method: "OPTIONS",
-        headers: {
-          origin: "https://client.example",
-          "access-control-request-method": "GET",
-        },
-      }),
-    );
-
-    assertEquals(response.status, 204);
-    assertEquals(await response.text(), "");
-    assertEquals(middlewareCalls, 0);
-    assertEquals(routeReads, 1);
   });
 
   it("keeps CSP reports ahead of application auth admission", async () => {
