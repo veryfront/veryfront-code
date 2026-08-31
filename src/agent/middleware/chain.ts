@@ -140,21 +140,48 @@ function observeContinuationRejection(
   });
 }
 
-function reportDetachedContinuationFailure(): void {
+function reportDetachedContinuationFailure(error: unknown): void {
   agentLogger.error(
     "Your agent middleware continuation failed",
-    { error: DETACHED_CONTINUATION_FAILURE },
+    {
+      error: DETACHED_CONTINUATION_FAILURE,
+      error_type: classifyContinuationFailure(error),
+    },
   );
 }
 
+function classifyContinuationFailure(error: unknown): string {
+  if (error === null) return "null";
+  if (isProxyWithoutHooks(error)) return "proxy";
+  if (isNativeErrorWithoutHooks(error)) {
+    const name = readNativeErrorNameWithoutHooks(error);
+    switch (name) {
+      case "AggregateError":
+      case "DOMException":
+      case "Error":
+      case "EvalError":
+      case "RangeError":
+      case "ReferenceError":
+      case "SyntaxError":
+      case "TypeError":
+      case "URIError":
+        return name.toLowerCase();
+      default:
+        return "error";
+    }
+  }
+  return typeof error;
+}
+
 function scheduleDetachedContinuationFailureReport(record: {
+  error: unknown;
   isObserved: () => boolean;
   reported: boolean;
 }): void {
   setTimeout(() => {
     if (!record.isObserved() && !record.reported) {
       record.reported = true;
-      reportDetachedContinuationFailure();
+      reportDetachedContinuationFailure(record.error);
     }
   }, 0);
 }
@@ -197,6 +224,7 @@ function createMiddlewareContinuation(
   let middlewareInvoking = true;
   let middlewareSettled = false;
   const continuationRejections = new Set<{
+    error: unknown;
     isObserved: () => boolean;
     reported: boolean;
   }>();
@@ -204,14 +232,14 @@ function createMiddlewareContinuation(
   const reportContinuationFailure = (_error: unknown, isObserved: () => boolean): void => {
     if (!middlewareSettled) {
       if (!isObserved()) {
-        const record = { isObserved, reported: false };
+        const record = { error: _error, isObserved, reported: false };
         continuationRejections.add(record);
         scheduleDetachedContinuationFailureReport(record);
       }
       return;
     }
     if (isObserved()) return;
-    scheduleDetachedContinuationFailureReport({ isObserved, reported: false });
+    scheduleDetachedContinuationFailureReport({ error: _error, isObserved, reported: false });
   };
 
   const next = (): Promise<AgentResponse> => {

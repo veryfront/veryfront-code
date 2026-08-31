@@ -387,6 +387,7 @@ describe("agent/middleware/chain", () => {
       entry.message === "Your agent middleware continuation failed"
     );
     assertEquals(record?.context?.error, "downstream continuation rejected");
+    assertEquals(record?.context?.error_type, "error");
     assertEquals(record?.error, undefined);
     assertEquals(String(record?.context?.error).includes("customer-data"), false);
     assertEquals(String(record?.context?.error).includes("secrets"), false);
