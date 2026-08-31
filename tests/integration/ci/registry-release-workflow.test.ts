@@ -7,7 +7,6 @@ import { parse } from "#std/yaml/parse";
 type YamlRecord = Record<string, unknown>;
 const MERGE_CORRECTNESS_DEPENDENCIES = [
   "ci",
-  "unit-tests",
   "coverage",
   "tests",
   "tests-node",

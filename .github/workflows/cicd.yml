@@ -362,22 +362,6 @@ jobs:
       - name: Add coverage shard summary
         run: echo "### Coverage shard ${{ matrix.shard }}/4 completed in ${{ steps.coverage.outputs.duration }}" >> "$GITHUB_STEP_SUMMARY"
 
-  unit-tests:
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    name: tests (unit)
-    needs: [coverage-shards]
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    steps:
-      - name: Require all unit test shards
-        env:
-          COVERAGE_SHARDS_RESULT: ${{ needs.coverage-shards.result }}
-        run: |
-          if [ "$COVERAGE_SHARDS_RESULT" != "success" ]; then
-            echo "::error::Unit test shards finished with $COVERAGE_SHARDS_RESULT"
-            exit 1
-          fi
-
   coverage:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -553,7 +537,6 @@ jobs:
     timeout-minutes: 2
     needs:
       - ci
-      - unit-tests
       - coverage
       - tests
       - tests-node
@@ -570,7 +553,6 @@ jobs:
           # skip it. Pushes, merge-group runs, and trusted PRs must block on it.
           SONAR_REQUIRED: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]') }}
           SOURCE_CHECKS_RESULT: ${{ needs.ci.result }}
-          UNIT_TESTS_RESULT: ${{ needs.unit-tests.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
           SONAR_RESULT: ${{ needs.sonar.result }}
           INTEGRATION_TESTS_RESULT: ${{ needs.tests.result }}
@@ -583,7 +565,6 @@ jobs:
           failed=0
           for result_name in \
             SOURCE_CHECKS_RESULT \
-            UNIT_TESTS_RESULT \
             COVERAGE_RESULT \
             SONAR_RESULT \
             INTEGRATION_TESTS_RESULT \

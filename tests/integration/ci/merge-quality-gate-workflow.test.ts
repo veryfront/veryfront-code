@@ -10,7 +10,6 @@ const WORKFLOW_PATH = new URL(
 );
 const REQUIRED_DEPENDENCIES = [
   "ci",
-  "unit-tests",
   "coverage",
   "tests",
   "tests-node",
@@ -22,7 +21,6 @@ const REQUIRED_DEPENDENCIES = [
 ] as const;
 const RESULT_ENV = {
   SOURCE_CHECKS_RESULT: "${{ needs.ci.result }}",
-  UNIT_TESTS_RESULT: "${{ needs.unit-tests.result }}",
   COVERAGE_RESULT: "${{ needs.coverage.result }}",
   SONAR_RESULT: "${{ needs.sonar.result }}",
   INTEGRATION_TESTS_RESULT: "${{ needs.tests.result }}",
@@ -174,7 +172,7 @@ describe("merge quality gate workflow", () => {
     }
   });
 
-  it("preserves all required coverage shards, the unit sentinel, and the floor", async () => {
+  it("preserves all required coverage shards, the aggregate gate, and the floor", async () => {
     const workflow = await readWorkflow();
     const jobs = asRecord(workflow.jobs, "cicd workflow jobs");
     const coverageShards = asRecord(
@@ -186,12 +184,10 @@ describe("merge quality gate workflow", () => {
       "coverage shard strategy",
     );
     const matrix = asRecord(strategy.matrix, "coverage shard matrix");
-    const unitTests = asRecord(jobs["unit-tests"], "unit sentinel job");
     const coverage = asRecord(jobs.coverage, "coverage gate job");
 
     assertEquals(matrix.shard, [1, 2, 3, 4]);
-    assertEquals(unitTests.name, "tests (unit)");
-    assertEquals(unitTests.needs, ["coverage-shards"]);
+    assertEquals("unit-tests" in jobs, false);
     assertEquals(coverage.name, "coverage gate");
     assertEquals(coverage.needs, ["coverage-shards"]);
     assertStringIncludes(
