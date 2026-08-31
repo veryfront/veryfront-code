@@ -11,6 +11,10 @@ const response = {} as AgentResponse;
 const replayError =
   "You must call agent middleware next() at most once while the middleware is active";
 
+function waitForReport(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("agent/middleware/chain", () => {
   it("rejects replay after a continuation completes", async () => {
     let retainedNext: (() => Promise<AgentResponse>) | undefined;
@@ -374,6 +378,7 @@ describe("agent/middleware/chain", () => {
       await chain.execute(context, () => Promise.reject(downstreamError));
       await Promise.resolve();
       await Promise.resolve();
+      await waitForReport();
     } finally {
       unsubscribe();
     }
@@ -402,6 +407,7 @@ describe("agent/middleware/chain", () => {
       await chain.execute(context, () => Promise.reject(downstreamError));
       await Promise.resolve();
       await Promise.resolve();
+      await waitForReport();
     } finally {
       unsubscribe();
     }
@@ -496,6 +502,7 @@ describe("agent/middleware/chain", () => {
       await hostileChain.execute(context, () => Promise.reject(hostileError));
       await Promise.resolve();
       await Promise.resolve();
+      await waitForReport();
     } finally {
       unsubscribe();
     }
@@ -529,6 +536,7 @@ describe("agent/middleware/chain", () => {
     retainedFinally!().finally(() => undefined);
     await Promise.resolve();
     await Promise.resolve();
+    await waitForReport();
   });
 
   it("allows a late rejection handler before detached reporting", async () => {
@@ -553,6 +561,58 @@ describe("agent/middleware/chain", () => {
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(
+      records.some((entry) => entry.message === "Your agent middleware continuation failed"),
+      false,
+    );
+  });
+
+  it("reports detached primitive rejection reasons", async () => {
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+    try {
+      for (const reason of [undefined, "primitive downstream failure"] as const) {
+        const chain = new MiddlewareChain([
+          async (_context, next) => {
+            next();
+            return response;
+          },
+        ]);
+        await chain.execute(context, () => Promise.reject<AgentResponse>(reason));
+        await waitForReport();
+      }
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(
+      records.filter((entry) => entry.message === "Your agent middleware continuation failed")
+        .length,
+      2,
+    );
+  });
+
+  it("does not report a late await handler during the grace window", async () => {
+    const records: LogEntry[] = [];
+    let continuation: Promise<AgentResponse> | undefined;
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+    try {
+      const downstreamError = new Error("late await failure");
+      const chain = new MiddlewareChain([
+        (_context, next) => {
+          continuation = next();
+          return Promise.resolve(response);
+        },
+      ]);
+
+      await chain.execute(context, () => Promise.reject(downstreamError));
+      const error = await assertRejects(() => continuation!, Error, "late await failure");
+      assertEquals(error, downstreamError);
+      await waitForReport();
     } finally {
       unsubscribe();
     }
@@ -619,6 +679,7 @@ describe("agent/middleware/chain", () => {
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
+      await waitForReport();
     } finally {
       unsubscribe();
     }

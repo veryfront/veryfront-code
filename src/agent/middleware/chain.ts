@@ -5,6 +5,7 @@ import {
   isErrorAcrossRealms,
   readNativeErrorNameWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
+import { unrefTimer } from "#veryfront/platform/compat/process/lifecycle.ts";
 import { agentLogger } from "#veryfront/utils/logger/index.ts";
 
 const INVALID_CONTINUATION_MESSAGE =
@@ -125,9 +126,10 @@ function reportDetachedContinuationFailure(): void {
 }
 
 function scheduleDetachedContinuationFailureReport(isObserved: () => boolean): void {
-  queueMicrotask(() => {
+  const reportTimer = setTimeout(() => {
     if (!isObserved()) reportDetachedContinuationFailure();
-  });
+  }, 0);
+  unrefTimer(reportTimer);
 }
 
 function rejectInvalidContinuation(): Promise<AgentResponse> {
@@ -156,7 +158,7 @@ function createDeferredContinuation(
 interface MiddlewareContinuation {
   next: () => Promise<AgentResponse>;
   finishInvocation: () => void;
-  settle: (error?: unknown) => void;
+  settle: (error?: unknown, rejected?: boolean) => void;
 }
 
 function createMiddlewareContinuation(
@@ -166,6 +168,7 @@ function createMiddlewareContinuation(
   let middlewareInvoking = true;
   let middlewareSettled = false;
   let middlewareSettlementError: unknown;
+  let middlewareSettlementRejected = false;
   let continuationRejection:
     | { error: unknown; isObserved: () => boolean }
     | undefined;
@@ -175,7 +178,8 @@ function createMiddlewareContinuation(
       if (!isObserved()) continuationRejection = { error, isObserved };
       return;
     }
-    if (isObserved() || middlewareSettlementError === error) return;
+    if (isObserved()) return;
+    if (middlewareSettlementRejected && Object.is(middlewareSettlementError, error)) return;
     scheduleDetachedContinuationFailureReport(isObserved);
   };
 
@@ -202,13 +206,17 @@ function createMiddlewareContinuation(
     finishInvocation: () => {
       middlewareInvoking = false;
     },
-    settle: (error?: unknown) => {
+    settle: (error?: unknown, rejected = false) => {
       middlewareInvoking = false;
       middlewareSettled = true;
       middlewareSettlementError = error;
+      middlewareSettlementRejected = rejected;
       const rejection = continuationRejection;
       continuationRejection = undefined;
-      if (rejection && !rejection.isObserved() && middlewareSettlementError !== rejection.error) {
+      if (
+        rejection && !rejection.isObserved() &&
+        (!middlewareSettlementRejected || !Object.is(middlewareSettlementError, rejection.error))
+      ) {
         scheduleDetachedContinuationFailureReport(rejection.isObserved);
       }
     },
@@ -242,15 +250,17 @@ export class MiddlewareChain {
               );
 
               let middlewareError: unknown;
+              let middlewareRejected = false;
               try {
                 const result = currentMiddleware(context, continuation.next);
                 continuation.finishInvocation();
                 return await result;
               } catch (error) {
                 middlewareError = error;
+                middlewareRejected = true;
                 throw error;
               } finally {
-                continuation.settle(middlewareError);
+                continuation.settle(middlewareError, middlewareRejected);
               }
             },
             { "middleware.index": middlewareIndex },
