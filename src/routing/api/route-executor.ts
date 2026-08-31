@@ -61,6 +61,7 @@ import {
 import { isInfrastructureOnlyRequestHeader } from "#veryfront/security/http/application-request.ts";
 import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
 import { snapshotApplicationIdentity } from "#veryfront/security/application-auth/identity.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 
 const apply = Reflect.apply;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -76,6 +77,10 @@ const objectPrototype = Object.prototype;
 const EMPTY_PROJECT_ENV = objectFreeze(
   objectCreate(null) as Record<string, string>,
 );
+const PREPARED_ROUTE_METHOD_CACHE_MAX_ENTRIES = 256;
+const preparedRouteMethodCache = new LRUCache<string, Promise<readonly string[]>>({
+  maxEntries: PREPARED_ROUTE_METHOD_CACHE_MAX_ENTRIES,
+});
 const numberIsSafeInteger = Number.isSafeInteger;
 const NativePromise = Promise;
 const promiseResolve = NativePromise.resolve;
@@ -403,6 +408,15 @@ function handleAPIError(
   const ctx = { isLocalProject } as HandlerContext;
   const req = new NativeRequest(`http://localhost${pathname}`);
   return errorToRFC9457Response(detached, ctx, req);
+}
+
+/** Convert a route-boundary failure through the canonical API error policy. */
+export function createAPIRouteErrorResponse(
+  error: unknown,
+  pathname: string,
+  isLocalProject: boolean,
+): Response {
+  return handleAPIError(error, pathname, isLocalProject);
 }
 
 interface ExecuteRouteOptionsSnapshot {
@@ -1214,39 +1228,71 @@ export function executePreparedPagesRoute(
 export async function resolvePreparedRouteMethods(
   requestedMethod: string | undefined,
   options: Omit<PreparedRouteExecutionOptions, "isLocalProject">,
-): Promise<string[]> {
+  methodOptions: { includeFrameworkOptions?: boolean } = {},
+): Promise<readonly string[]> {
   const semanticContext = await snapshotWorkerSemanticContext();
-  const workerResponse = await getWorkerPool().execute(
-    await resolveApiWorkerId(options.executionScopeId, semanticContext.generation),
-    [options.projectDir],
-    {
-      type: "inspect-api-route-methods",
-      id: randomUUID(),
-      module: options.module,
-      modulePath: options.modulePath,
-      requestedMethod,
-      projectDir: options.projectDir,
-      sourceIntegrationPolicy: semanticContext.sourceIntegrationPolicy,
-      projectEnv: semanticContext.projectEnv,
-    },
+  const normalizedRequestedMethod = normalizeRouteMethod(requestedMethod) ?? undefined;
+  const includeFrameworkOptions = methodOptions.includeFrameworkOptions;
+  const keyParts: string[] = [];
+  appendFramed(keyParts, options.executionScopeId);
+  appendFramed(keyParts, semanticContext.generation);
+  appendFramed(keyParts, options.projectDir);
+  appendFramed(keyParts, options.modulePath);
+  appendFramed(keyParts, options.module.sha256);
+  appendFramed(keyParts, normalizedRequestedMethod ?? "");
+  appendFramed(
+    keyParts,
+    includeFrameworkOptions === false ? "authored" : "framework",
   );
+  const cacheKey = apply(arrayJoin, keyParts, ["|"]) as string;
 
-  if (workerResponse.type === "error") {
-    throw deserializeWorkerError(workerResponse.error);
-  }
-  if (workerResponse.type !== "api-route-methods") {
-    throw createRequestBodyReadError(
-      "Worker returned an unexpected API route capability response",
-    );
+  let pending = preparedRouteMethodCache.get(cacheKey);
+  if (!pending) {
+    pending = (async (): Promise<readonly string[]> => {
+      const workerResponse = await getWorkerPool().execute(
+        await resolveApiWorkerId(options.executionScopeId, semanticContext.generation),
+        [options.projectDir],
+        {
+          type: "inspect-api-route-methods",
+          id: randomUUID(),
+          module: options.module,
+          modulePath: options.modulePath,
+          requestedMethod: normalizedRequestedMethod,
+          ...(includeFrameworkOptions === undefined ? {} : { includeFrameworkOptions }),
+          projectDir: options.projectDir,
+          sourceIntegrationPolicy: semanticContext.sourceIntegrationPolicy,
+          projectEnv: semanticContext.projectEnv,
+        },
+      );
+
+      if (workerResponse.type === "error") {
+        throw deserializeWorkerError(workerResponse.error);
+      }
+      if (workerResponse.type !== "api-route-methods") {
+        throw createRequestBodyReadError(
+          "Worker returned an unexpected API route capability response",
+        );
+      }
+
+      const methods = snapshotWorkerRouteMethods(workerResponse);
+      if (!methods) {
+        throw createRequestBodyReadError(
+          "Worker returned an invalid API route capability response",
+        );
+      }
+      return objectFreeze(methods) as readonly string[];
+    })();
+    preparedRouteMethodCache.set(cacheKey, pending);
   }
 
-  const methods = snapshotWorkerRouteMethods(workerResponse);
-  if (!methods) {
-    throw createRequestBodyReadError(
-      "Worker returned an invalid API route capability response",
-    );
+  try {
+    return await pending;
+  } catch (error) {
+    if (preparedRouteMethodCache.get(cacheKey) === pending) {
+      preparedRouteMethodCache.delete(cacheKey);
+    }
+    throw error;
   }
-  return methods;
 }
 
 export function executeAppRoute(

@@ -1948,7 +1948,7 @@ export function snapshotWorkerRequest(value: unknown): WorkerRequest {
         "projectDir",
         "sourceIntegrationPolicy",
       ],
-      ["requestedMethod", "projectEnv"],
+      ["requestedMethod", "includeFrameworkOptions", "projectEnv"],
       "payload",
     );
     return {
@@ -1973,6 +1973,16 @@ export function snapshotWorkerRequest(value: unknown): WorkerRequest {
         "requestedMethod",
         64,
       ),
+      includeFrameworkOptions: (() => {
+        const field = readOptionalDataProperty(request, "includeFrameworkOptions");
+        if (!field.present) return undefined;
+        if (typeof field.value !== "boolean") {
+          throw new NativeTypeError(
+            "Invalid worker request includeFrameworkOptions",
+          );
+        }
+        return field.value;
+      })(),
       projectDir: requireString(
         readDataProperty(request, "projectDir"),
         "projectDir",
@@ -2854,7 +2864,9 @@ async function handleInspectApiRouteMethods(
         projectEnv: req.projectEnv,
       });
       return snapshotResolvedRouteMethods(
-        resolveExecutableRouteMethods(mod, req.requestedMethod),
+        resolveExecutableRouteMethods(mod, req.requestedMethod, {
+          includeFrameworkOptions: req.includeFrameworkOptions,
+        }),
         false,
       );
     },

@@ -107,6 +107,26 @@ describe("buildHandlerContext", () => {
     assertEquals(ctx.enriched?.allowHostProjectCodeExecution, true);
   });
 
+  it("snapshots configured trusted-proxy identity header names", () => {
+    const ctx = buildHandlerContext(
+      makeOpts({
+        securityConfig: {
+          auth: {
+            trustedProxy: {
+              trustedPeers: ["127.0.0.1"],
+              headers: {
+                subject: "X-Auth-Subject",
+                email: "X-Auth-Email",
+              },
+            },
+          },
+        } as never,
+      }),
+    );
+
+    assertEquals(ctx.applicationIdentityHeaderNames, ["x-auth-subject", "x-auth-email"]);
+  });
+
   it("builds enriched context when both config and projectSlug present", () => {
     const opts = makeOpts({
       config: { name: "test" } as any,
@@ -206,5 +226,24 @@ describe("buildMinimalContext", () => {
     assertEquals(ctx.projectSlug, undefined);
     assertEquals(ctx.routeRegistry, undefined);
     assertEquals(ctx.isLocalProject, undefined);
+  });
+
+  it("snapshots trusted-proxy identity headers for pre-authentication handlers", () => {
+    const ctx = buildMinimalContext(
+      "/tmp/minimal",
+      {} as any,
+      {
+        auth: {
+          trustedProxy: {
+            trustedPeers: ["127.0.0.1"],
+            headers: { subject: "X-Auth-Subject" },
+          },
+        },
+      } as never,
+      false,
+      undefined,
+    );
+
+    assertEquals(ctx.applicationIdentityHeaderNames, ["x-auth-subject"]);
   });
 });

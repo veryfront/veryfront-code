@@ -169,6 +169,8 @@ export interface InspectApiRouteMethodsRequest {
   modulePath: string;
   /** Optional custom-method probe used for default-export capability parity. */
   requestedMethod?: string;
+  /** Whether method discovery includes the framework-provided OPTIONS fallback. */
+  includeFrameworkOptions?: boolean;
   projectDir: string;
   /** Exact source-owned integration policy for this project execution. */
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;

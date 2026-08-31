@@ -43,6 +43,33 @@ function createCtx(captured: { options?: Record<string, unknown> }): HandlerCont
 }
 
 describe("ApiHandlerWrapper", () => {
+  it("does not discover project primitives before routing an OPTIONS request", async () => {
+    const ctx = createCtx({});
+    ctx.allowHostProjectCodeExecution = true;
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+      ensureSourceSnapshotFresh: (reason?: string) => Promise<void>;
+    };
+    const freshnessReasons: string[] = [];
+    fs.runWithContext = async (_slug, _token, fn) => await fn();
+    fs.ensureSourceSnapshotFresh = (reason) => {
+      if (reason) freshnessReasons.push(reason);
+      return Promise.resolve();
+    };
+
+    const result = await new ApiHandlerWrapper("/tmp/project", ctx.adapter).handle(
+      new Request("http://localhost/api/private", { method: "OPTIONS" }),
+      ctx,
+    );
+
+    assertEquals(result.continue, true);
+    assertEquals(freshnessReasons.includes("primitive-discovery"), false);
+  });
+
   it("propagates request cancellation instead of continuing handler discovery", async () => {
     const ctx = createCtx({});
     const fs = ctx.adapter.fs as unknown as {

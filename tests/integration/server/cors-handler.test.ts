@@ -1,11 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { withTempDir, writeTextFile } from "#veryfront/testing/deno-compat";
-import { CorsHandler } from "#veryfront/server/handlers/response/cors.ts";
+import { mkdir, withTempDir, writeTextFile } from "#veryfront/testing/deno-compat";
 import type { HandlerContext } from "#veryfront/server/handlers/types.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { clearConfigCache } from "#veryfront/config";
+import { APIRouteHandler } from "#veryfront/routing/api/index.ts";
 
 function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
   return {
@@ -18,33 +18,39 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
 
 describe("integration/server/cors-handler", () => {
   it("advertises only the methods the matched route module exports", async () => {
-    await withTempDir(async (routeDir) => {
-      const routeFile = `${routeDir}/route.ts`;
+    await withTempDir(async (projectDir) => {
+      const apiDir = `${projectDir}/pages/api`;
+      const routeFile = `${apiDir}/only-get.ts`;
+      await mkdir(apiDir, { recursive: true });
       await writeTextFile(
         routeFile,
         "export function GET() { return new Response('ok'); }\n",
       );
-      const handler = new CorsHandler({
-        resolveAppRouteFile: () => Promise.resolve({ file: routeFile, params: {} }),
-      });
-      const result = await handler.handle(
-        new Request("http://localhost/api/only-get", {
-          method: "OPTIONS",
-          headers: {
-            origin: "http://localhost:3000",
-            "access-control-request-method": "GET",
-          },
-        }),
-        makeCtx({
-          securityConfig: { cors: { origin: ["http://localhost:3000"] } } as never,
-        }),
+      await writeTextFile(
+        `${projectDir}/veryfront.config.js`,
+        'export default { security: { cors: { origin: ["http://localhost:3000"] } } };\n',
       );
-
-      assertEquals(
-        result.response?.headers.get("access-control-allow-methods"),
-        "HEAD, GET, OPTIONS",
-        "preflight must advertise exactly the exported methods plus HEAD and OPTIONS",
-      );
+      const handler = new APIRouteHandler(projectDir);
+      await handler.initialize();
+      try {
+        const response = await handler.handle(
+          new Request("http://localhost/api/only-get", {
+            method: "OPTIONS",
+            headers: {
+              origin: "http://localhost:3000",
+              "access-control-request-method": "GET",
+            },
+          }),
+          makeCtx({ projectDir, isLocalProject: true }),
+        );
+        assertEquals(
+          response?.headers.get("access-control-allow-methods"),
+          "GET, HEAD, OPTIONS",
+          "preflight must advertise exactly the exported methods plus HEAD and OPTIONS",
+        );
+      } finally {
+        handler.destroy();
+      }
     }, { prefix: "vf-cors-route-" });
   });
 
@@ -71,26 +77,31 @@ describe("integration/server/cors-handler", () => {
             method: "OPTIONS",
             headers: { origin, "access-control-request-method": "POST" },
           });
+        const handler = new APIRouteHandler(projectDir);
+        await handler.initialize();
+        try {
+          const allowed = await handler.handle(
+            preflight("https://allowed.example"),
+            ctx,
+          );
+          assertEquals(
+            allowed?.headers.get("access-control-allow-origin"),
+            "https://allowed.example",
+            "the project config CORS policy must win on preflight",
+          );
 
-        const allowed = await new CorsHandler().handle(
-          preflight("https://allowed.example"),
-          ctx,
-        );
-        assertEquals(
-          allowed.response?.headers.get("access-control-allow-origin"),
-          "https://allowed.example",
-          "the project config CORS policy must win on preflight",
-        );
-
-        const denied = await new CorsHandler().handle(
-          preflight("https://ctx-only.example"),
-          ctx,
-        );
-        assertEquals(
-          denied.response?.headers.get("access-control-allow-origin"),
-          null,
-          "an origin only the request context allows must be denied once the config file speaks",
-        );
+          const denied = await handler.handle(
+            preflight("https://ctx-only.example"),
+            ctx,
+          );
+          assertEquals(
+            denied?.headers.get("access-control-allow-origin"),
+            null,
+            "an origin only the request context allows must be denied once the config file speaks",
+          );
+        } finally {
+          handler.destroy();
+        }
       } finally {
         clearConfigCache();
       }
