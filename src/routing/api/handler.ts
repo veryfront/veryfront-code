@@ -134,6 +134,10 @@ export interface APIResponse {
   headers?: HeadersInit;
 }
 
+export interface APIRouteHandleOptions {
+  beforeOptionsDispatch?: () => Promise<void>;
+}
+
 /** Function signature for API route handlers. */
 export type APIHandler = (ctx: APIContext) => Promise<Response> | Response;
 
@@ -232,7 +236,11 @@ export class APIRouteHandler {
     );
   }
 
-  handle(request: Request, ctx?: HandlerContext): Promise<Response | null> {
+  handle(
+    request: Request,
+    ctx?: HandlerContext,
+    options: APIRouteHandleOptions = {},
+  ): Promise<Response | null> {
     const { pathname } = new URL(request.url);
     this.activeRequests++;
 
@@ -284,13 +292,16 @@ export class APIRouteHandler {
         if (method === "OPTIONS") {
           const authResponse = await this.authenticateOptionsRoute(request, ctx);
           if (authResponse) {
-            if (isPreflightRequest(request)) return this.automaticPreflight(request);
+            if (isPreflightRequest(request)) {
+              return this.automaticPreflight(request, undefined, ctx);
+            }
             return await applyCORSHeaders({
               request,
               response: authResponse,
               config: this.corsConfig ?? undefined,
             }) ?? authResponse;
           }
+          await options.beforeOptionsDispatch?.();
         }
 
         const isLocalProject = ctx?.isLocalProject === true;
@@ -399,7 +410,7 @@ export class APIRouteHandler {
           }
 
           if (!executableOptionsMethods.includes("OPTIONS")) {
-            return this.automaticPreflight(request, executableOptionsMethods);
+            return this.automaticPreflight(request, executableOptionsMethods, ctx);
           }
         }
 
@@ -451,6 +462,7 @@ export class APIRouteHandler {
             request,
             response,
             executableOptionsMethods,
+            ctx,
           )
           : await applyCORSHeaders({
             request,
@@ -544,6 +556,7 @@ export class APIRouteHandler {
   private async automaticPreflight(
     request: Request,
     executableMethods?: readonly string[],
+    ctx?: HandlerContext,
   ): Promise<Response> {
     const allowMethods = executableMethods
       ? (executableMethods.includes("OPTIONS")
@@ -554,7 +567,9 @@ export class APIRouteHandler {
       request,
       config: this.corsConfig ?? undefined,
       allowMethods,
-      allowHeaders: getApplicationPreflightHeaders(request),
+      allowHeaders: getApplicationPreflightHeaders(request, {
+        denyHeaders: ctx?.applicationIdentityHeaderNames,
+      }),
     });
     response.headers.set("Allow", allowMethods);
     return response;
@@ -582,13 +597,16 @@ export class APIRouteHandler {
     request: Request,
     response: Response,
     executableMethods: readonly string[],
+    ctx?: HandlerContext,
   ): Promise<Response> {
     return await applyCORSPreflightHeaders({
       request,
       response,
       config: this.corsConfig ?? undefined,
       allowMethods: executableMethods.join(", "),
-      allowHeaders: getApplicationPreflightHeaders(request),
+      allowHeaders: getApplicationPreflightHeaders(request, {
+        denyHeaders: ctx?.applicationIdentityHeaderNames,
+      }),
     });
   }
 

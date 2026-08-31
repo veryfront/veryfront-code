@@ -823,6 +823,40 @@ describe("APIRouteHandler", () => {
       assertEquals(await response?.text(), "named options");
     });
 
+    it("discovers project primitives after OPTIONS auth and before dispatch", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/options-order.ts",
+        "export function OPTIONS() { return new Response('unused'); }",
+      );
+      const order: string[] = [];
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          order.push("load");
+          return Promise.resolve({
+            OPTIONS: () => {
+              order.push("dispatch");
+              return new Response("ordered options");
+            },
+          });
+        },
+      });
+      const handler = await createInitializedHandler("/test/project", adapter);
+
+      const response = await handler.handle(
+        new Request("http://localhost/api/options-order", { method: "OPTIONS" }),
+        localContext(adapter),
+        {
+          beforeOptionsDispatch: async () => {
+            order.push("discover");
+          },
+        },
+      );
+
+      assertEquals(await response?.text(), "ordered options");
+      assertEquals(order, ["discover", "load", "dispatch"]);
+    });
+
     it("dispatches a default route handler for OPTIONS", async () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set(

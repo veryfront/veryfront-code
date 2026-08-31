@@ -14,7 +14,18 @@ type AppRouteResolver = typeof resolveAppRouteFile;
 type FsWrapper = {
   isContextualMode?: () => boolean;
   isMultiProjectMode?: () => boolean;
-  runWithContext?: (...args: never[]) => Promise<unknown>;
+  runWithContext?: <T>(
+    slug: string,
+    token: string,
+    fn: () => Promise<T>,
+    projectId?: string,
+    options?: {
+      productionMode?: boolean;
+      releaseId?: string | null;
+      branch?: string | null;
+      environmentName?: string | null;
+    },
+  ) => Promise<T>;
 };
 
 export interface CorsHandlerDependencies {
@@ -55,7 +66,22 @@ export class CorsHandler extends BaseHandler {
     }
 
     if (!shouldUseAutomaticPreflight && !isApiPath) {
-      const hasMatchedAppRoute = await this.hasMatchedAppRoute(pathname, ctx);
+      const hasMatchedAppRoute = hasAtomicSharedRuntimeContext
+        ? await fsWrapper.runWithContext!(
+          ctx.projectSlug!,
+          ctx.proxyToken ?? "",
+          () => this.hasMatchedAppRoute(pathname, ctx),
+          ctx.projectId,
+          {
+            productionMode: ctx.requestContext?.mode === "production",
+            releaseId: ctx.releaseId,
+            branch: ctx.requestContext?.mode === "production"
+              ? null
+              : ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null,
+            environmentName: ctx.environmentName,
+          },
+        )
+        : await this.hasMatchedAppRoute(pathname, ctx);
       if (hasMatchedAppRoute) return this.continue();
     }
 
@@ -77,7 +103,9 @@ export class CorsHandler extends BaseHandler {
 
     const response = ResponseBuilder.preflight(req, {
       allowMethods: CorsHandler.DEFAULT_METHODS,
-      allowHeaders: getApplicationPreflightHeaders(req),
+      allowHeaders: getApplicationPreflightHeaders(req, {
+        denyHeaders: ctx.applicationIdentityHeaderNames,
+      }),
       securityConfig: ctx.securityConfig ?? undefined,
       corsConfig,
     });

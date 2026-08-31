@@ -84,7 +84,10 @@ export function isInfrastructureOnlyRequestHeader(name: string): boolean {
 }
 
 /** Keep infrastructure-only request headers out of browser preflight policy. */
-export function getApplicationPreflightHeaders(request: Request): string {
+export function getApplicationPreflightHeaders(
+  request: Request,
+  options: Pick<ApplicationRequestHeaderOptions, "denyHeaders"> = {},
+): string {
   try {
     const headers = apply(requestHeadersGetter!, request, []) as Headers;
     const requested = apply(headersGet, headers, ["access-control-request-headers"]);
@@ -92,11 +95,17 @@ export function getApplicationPreflightHeaders(request: Request): string {
       return DEFAULT_APPLICATION_PREFLIGHT_HEADERS;
     }
 
+    const dynamicDenyHeaders = normalizeDynamicDenyHeaders(options.denyHeaders);
     const names = apply(stringSplit, requested, [","]) as string[];
     const allowed: string[] = [];
     for (let index = 0; index < names.length; index++) {
       const name = apply(stringTrim, names[index], []) as string;
-      if (name.length > 0 && !isInfrastructureOnlyRequestHeader(name)) {
+      const normalizedName = apply(stringToLowerCase, name, []) as string;
+      if (
+        name.length > 0 &&
+        !isInfrastructureOnlyRequestHeader(name) &&
+        !(dynamicDenyHeaders && setContains(dynamicDenyHeaders, normalizedName))
+      ) {
         apply(arrayPush, allowed, [name]);
       }
     }

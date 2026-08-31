@@ -179,11 +179,11 @@ export class ApiHandlerWrapper extends BaseHandler {
             return this.continue();
           }
 
-          // OPTIONS is routed by APIRouteHandler before any project primitive
-          // discovery. The API handler authenticates an authored OPTIONS route
-          // before loading or executing its module; discovery must not become a
-          // pre-auth project-code evaluation side effect.
-          if (req.method.toUpperCase() !== "OPTIONS") {
+          // OPTIONS is authenticated by APIRouteHandler before discovery. The
+          // callback runs after a matched route's auth decision but before the
+          // route module is loaded or executed.
+          const isOptionsRequest = req.method.toUpperCase() === "OPTIONS";
+          if (!isOptionsRequest) {
             // Lazy per-project primitive discovery (agents, tools) on first
             // access. Must run within runWithContext so VFS and registry scope
             // are correct.
@@ -192,7 +192,18 @@ export class ApiHandlerWrapper extends BaseHandler {
 
           const apiRes = await withApiHandler(
             ctx,
-            (api) => api.handle(req, ctx),
+            (api) =>
+              api.handle(
+                req,
+                ctx,
+                isOptionsRequest
+                  ? {
+                    beforeOptionsDispatch: async () => {
+                      await ensureProjectDiscovery(ctx);
+                    },
+                  }
+                  : undefined,
+              ),
             { sourceSnapshotReady: true },
           );
 
