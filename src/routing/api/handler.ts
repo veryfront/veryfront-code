@@ -241,6 +241,29 @@ export class APIRouteHandler {
     );
   }
 
+  /**
+   * Determine whether a CORS preflight is guaranteed to be handled by the
+   * framework without executing an authored route handler.
+   *
+   * An unknown source shape stays in the middleware path. This conservative
+   * result protects authored OPTIONS/default handlers from being hidden by a
+   * preflight-looking request.
+   */
+  async isFrameworkOwnedPreflight(
+    request: Request,
+    ctx?: HandlerContext,
+  ): Promise<boolean> {
+    if (!isPreflightRequest(request)) return false;
+    if (requiresIsolatedProjectRuntime(ctx)) return true;
+
+    const { pathname } = new URL(request.url);
+    const match = this.router.match(pathname);
+    if (!match) return true;
+
+    const adapter = await this.ensureAdapter();
+    return await this.resolveStaticOptionsCapability(match.route.page, adapter) === "absent";
+  }
+
   handle(
     request: Request,
     ctx?: HandlerContext,

@@ -33,7 +33,6 @@ import {
 import { createApplicationAuthRequestHandler } from "#veryfront/security/application-auth/application-auth-runtime.ts";
 import { applyCORSHeaders } from "#veryfront/security/http/cors/headers.ts";
 import { isCspReportRequest } from "#veryfront/security/http/csp-report-endpoint.ts";
-import { isPreflightRequest } from "#veryfront/security/http/cors/preflight.ts";
 import { getEffectiveRequestOrigin } from "../utils/request-host.ts";
 
 // Re-export is at the bottom of the file
@@ -168,8 +167,12 @@ function shouldRetrySourceSnapshotFreshness(
     error.slug === SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.slug;
 }
 
-function skipsApplicationAuth(request: Request, pathname: string): boolean {
-  return (request.method === "OPTIONS" && isPreflightRequest(request)) ||
+function skipsApplicationAuth(
+  request: Request,
+  pathname: string,
+  isFrameworkOwnedPreflight = false,
+): boolean {
+  return (request.method === "OPTIONS" && isFrameworkOwnedPreflight) ||
     isCspReportRequest(request.method, pathname) ||
     isSignedControlPlaneDispatch(request) ||
     isSignedChannelDispatch(request) ||
@@ -700,7 +703,11 @@ export function createVeryfrontHandler(
             requestMetricsIncremented = true;
           }
 
-          if (!skipsApplicationAuth(request, url.pathname)) {
+          const isFrameworkOwnedPreflight = await apiHandler.isFrameworkOwnedPreflight(
+            request,
+            ctx,
+          );
+          if (!skipsApplicationAuth(request, url.pathname, isFrameworkOwnedPreflight)) {
             const runInFilesystemContext = <T>(operation: () => Promise<T>) =>
               runInProjectFilesystemContext(ctx, isProxyMode, operation);
             const authResult = await runInFilesystemContext(
@@ -742,6 +749,7 @@ export function createVeryfrontHandler(
               request,
               handlerContext: ctx,
               isSharedProxy: isProxyMode,
+              isFrameworkOwnedPreflight,
               next: async () => (await registry.execute(request, ctx)) ?? undefined,
               onMiddlewareStart: markProjectMiddlewareStarted,
             });

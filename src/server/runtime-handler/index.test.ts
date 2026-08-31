@@ -4,6 +4,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter, RuntimeId } from "#veryfront/platform/adapters/base.ts";
+import { createMockAdapter as createRouteMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE } from "#veryfront/errors";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
@@ -399,6 +400,52 @@ describe("server/runtime-handler/index", () => {
     assertEquals(middlewareCalls, 1);
   });
 
+  it("runs middleware for authored OPTIONS preflight routes", async () => {
+    const adapter = createRouteMockAdapter();
+    adapter.fs.files.set(
+      "/tmp/test-project/pages/api/options.ts",
+      "export function OPTIONS() { return new Response('unused'); }",
+    );
+    let middlewareCalls = 0;
+    const handler = createVeryfrontHandler("/tmp/test-project", adapter, {
+      projectDir: "/tmp/test-project",
+      config: {
+        security: {
+          auth: {
+            trustedProxy: {
+              trustedPeers: ["127.0.0.1"],
+              headers: { subject: "x-auth-subject" },
+            },
+          },
+        },
+        middleware: {
+          custom: [
+            (c: { identity: { subject?: string } | null }) => {
+              middlewareCalls++;
+              return Response.json({ subject: c.identity?.subject ?? null });
+            },
+          ],
+        },
+      } as any,
+      allowHostProjectCodeExecution: true,
+    });
+
+    const response = await handler(withTrustedPeer(
+      new Request("http://localhost/api/options", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://client.example",
+          "access-control-request-method": "GET",
+          "x-auth-subject": "user-123",
+        },
+      }),
+    ));
+
+    assertEquals(response.status, 200);
+    assertEquals(await response.json(), { subject: "user-123" });
+    assertEquals(middlewareCalls, 1);
+  });
+
   it("short-circuits terminal application auth responses before project middleware", async () => {
     let middlewareCalls = 0;
     const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
@@ -646,45 +693,6 @@ describe("server/runtime-handler/index", () => {
   });
 
   it("keeps CORS preflight ahead of application auth admission", async () => {
-    let middlewareCalls = 0;
-    const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
-      projectDir: "/tmp/test-project",
-      config: {
-        security: {
-          auth: {
-            trustedProxy: {
-              trustedPeers: ["127.0.0.1"],
-              headers: { subject: "x-auth-subject" },
-            },
-          },
-        },
-        middleware: {
-          custom: [
-            () => {
-              middlewareCalls++;
-              return new Response(null, { status: 204 });
-            },
-          ],
-        },
-      } as any,
-      allowHostProjectCodeExecution: true,
-    });
-
-    const response = await handler(
-      new Request("http://localhost/dashboard", {
-        method: "OPTIONS",
-        headers: {
-          origin: "https://client.example",
-          "access-control-request-method": "GET",
-        },
-      }),
-    );
-
-    assertEquals(response.status, 204);
-    assertEquals(middlewareCalls, 1);
-  });
-
-  it("bypasses project middleware for public CORS preflight", async () => {
     let middlewareCalls = 0;
     const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
       projectDir: "/tmp/test-project",

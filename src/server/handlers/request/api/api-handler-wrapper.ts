@@ -19,6 +19,7 @@ import {
   PROJECT_EXECUTION_UNAVAILABLE,
 } from "#veryfront/errors";
 import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
+import { isPreflightRequest } from "#veryfront/security/http/cors/preflight.ts";
 
 type FsWrapper = {
   isMultiProjectMode?: () => boolean;
@@ -65,6 +66,49 @@ export class ApiHandlerWrapper extends BaseHandler {
     })();
 
     await this.initPromise;
+  }
+
+  async isFrameworkOwnedPreflight(req: Request, ctx: HandlerContext): Promise<boolean> {
+    if (!isPreflightRequest(req)) return false;
+
+    const fsWrapper = ctx.adapter.fs as FsWrapper;
+    const isMultiProject = !!ctx.projectSlug &&
+      typeof fsWrapper.isMultiProjectMode === "function" &&
+      fsWrapper.isMultiProjectMode();
+    const inspect = async (): Promise<boolean> => {
+      await ensurePreviewSourceSnapshotFresh(ctx);
+      return await withApiHandler(
+        ctx,
+        (api) => api.isFrameworkOwnedPreflight(req, ctx),
+        { sourceSnapshotReady: true },
+      );
+    };
+
+    try {
+      if (!isMultiProject) {
+        if (fsWrapper.isContextualMode?.() === true) return false;
+        return await inspect();
+      }
+
+      return await fsWrapper.runWithContext!(
+        ctx.projectSlug!,
+        ctx.proxyToken ?? "",
+        inspect,
+        ctx.projectId,
+        {
+          productionMode: ctx.requestContext?.mode === "production",
+          releaseId: ctx.releaseId,
+          branch: ctx.requestContext?.mode === "production"
+            ? null
+            : ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null,
+          environmentName: ctx.environmentName,
+        },
+      );
+    } catch {
+      // Classification is an optimization. If route inspection cannot be
+      // completed, retain middleware and route execution for correctness.
+      return false;
+    }
   }
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
