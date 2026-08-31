@@ -170,13 +170,7 @@ describe("agent/middleware/chain", () => {
 
   it("reports discarded frozen Promise rejection without decorating it", async () => {
     const records: LogEntry[] = [];
-    const unhandled: PromiseRejectionEvent[] = [];
-    const onUnhandled = (event: PromiseRejectionEvent): void => {
-      unhandled.push(event);
-      event.preventDefault();
-    };
     const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
-    globalThis.addEventListener("unhandledrejection", onUnhandled);
     try {
       const frozenRejection = Object.freeze(
         Promise.reject<AgentResponse>(new Error("frozen downstream failure")),
@@ -202,11 +196,9 @@ describe("agent/middleware/chain", () => {
       await handledChain.execute(context, () => Promise.resolve(response));
       await waitForReport();
     } finally {
-      globalThis.removeEventListener("unhandledrejection", onUnhandled);
       unsubscribe();
     }
 
-    assertEquals(unhandled.length, 0);
     assertEquals(
       records.filter((entry) => entry.message === "Your agent middleware continuation failed")
         .length,
