@@ -101,7 +101,11 @@ export function createModelRuntimeResolverAbortGuard(
 } {
   const revoke = () => revokeModelRuntimeResolver(resolver);
   if (signal) {
-    IntrinsicReflectApply(EventTargetAddEventListener, signal, ["abort", revoke, { once: true }]);
+    const aborted: boolean = IntrinsicReflectApply(AbortSignalAbortedGetter, signal, []);
+    if (aborted) revoke();
+    else {
+      IntrinsicReflectApply(EventTargetAddEventListener, signal, ["abort", revoke, { once: true }]);
+    }
   }
 
   return {

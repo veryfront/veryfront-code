@@ -10,6 +10,7 @@ import type { ModelRuntime } from "#veryfront/provider";
 import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
 import {
   type AgentModelRuntimeResolver,
+  createModelRuntimeResolverAbortGuard,
   createModelRuntimeResolverAbortScope,
   registerModelRuntimeResolverRevoker,
 } from "#veryfront/agent/runtime/model-transport.ts";
@@ -32,6 +33,38 @@ function createModel(modelId: string): ModelRuntime {
 }
 
 describe("run-scoped model cancellation intrinsics", () => {
+  it("revokes a pre-aborted generation through the captured getter", () => {
+    const abortController = new AbortController();
+    abortController.abort(new DOMException("caller aborted", "AbortError"));
+    let resolverActive = true;
+    const resolver = () => resolverActive ? createModel("veryfront-cloud/openai/test") : undefined;
+    registerModelRuntimeResolverRevoker(resolver, () => {
+      resolverActive = false;
+    });
+    const abortedDescriptor = Object.getOwnPropertyDescriptor(
+      AbortSignal.prototype,
+      "aborted",
+    );
+    assert(abortedDescriptor, "AbortSignal.aborted must have a property descriptor");
+
+    let guard: ReturnType<typeof createModelRuntimeResolverAbortGuard> | undefined;
+    try {
+      Object.defineProperty(AbortSignal.prototype, "aborted", {
+        ...abortedDescriptor,
+        get: () => false,
+      });
+      guard = createModelRuntimeResolverAbortGuard(resolver, abortController.signal);
+    } finally {
+      Object.defineProperty(AbortSignal.prototype, "aborted", abortedDescriptor);
+    }
+
+    try {
+      assertEquals(resolverActive, false);
+    } finally {
+      guard?.dispose();
+    }
+  });
+
   it("cannot suppress generation abort revocation by replacing event listeners", async () => {
     const modelStarted = Promise.withResolvers<void>();
     const modelStopped = Promise.withResolvers<never>();
