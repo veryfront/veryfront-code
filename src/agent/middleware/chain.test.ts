@@ -8,7 +8,8 @@ import { MiddlewareChain } from "#veryfront/agent/middleware/chain.ts";
 
 const context = {} as AgentContext;
 const response = {} as AgentResponse;
-const replayError = "Agent middleware next() can only be called once while middleware is active";
+const replayError =
+  "You must call agent middleware next() at most once while the middleware is active";
 
 describe("agent/middleware/chain", () => {
   it("rejects replay after a continuation completes", async () => {
@@ -347,7 +348,8 @@ describe("agent/middleware/chain", () => {
     const record = records.find((entry) =>
       entry.message === "Agent middleware continuation failed"
     );
-    assertEquals(record?.error?.message, "detached downstream failed");
+    assertEquals(record?.context?.error, "detached downstream failed");
+    assertEquals(record?.error, undefined);
   });
 
   it("reports a detached synchronous downstream rejection", async () => {
@@ -372,7 +374,39 @@ describe("agent/middleware/chain", () => {
     const record = records.find((entry) =>
       entry.message === "Agent middleware continuation failed"
     );
-    assertEquals(record?.error?.message, "detached synchronous downstream failed");
+    assertEquals(record?.context?.error, "detached synchronous downstream failed");
+    assertEquals(record?.error, undefined);
+  });
+
+  it("does not report a deferred rejection recovered by middleware", async () => {
+    const downstreamError = new Error("recovered downstream failed");
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+    try {
+      const chain = new MiddlewareChain([
+        async (_context, next) => {
+          try {
+            return await next();
+          } catch {
+            return response;
+          }
+        },
+      ]);
+
+      assertEquals(
+        await chain.execute(context, () => Promise.reject(downstreamError)),
+        response,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(
+      records.some((entry) => entry.message === "Agent middleware continuation failed"),
+      false,
+    );
   });
 
   it("invokes the final handler for an empty middleware chain", async () => {

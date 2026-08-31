@@ -563,7 +563,8 @@ export default agent({
 | `middleware`          | `AgentMiddleware[]`                                                                                    | Execution middleware                                                                                  |
 | `allowedModels`       | `string[]`                                                                                             | Restrict runtime model overrides to these `provider/model` strings                                    |
 
-Each agent middleware invocation receives a single-use `next()` continuation.
+Each agent middleware invocation receives a single-use `next()` continuation. You
+must call `next()` at most once while the middleware is active.
 The continuation becomes invalid when that middleware's returned promise
 settles. Calling it again or after settlement rejects with the registered
 `middleware-error`.

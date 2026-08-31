@@ -1,11 +1,63 @@
 import type { AgentContext, AgentMiddleware, AgentResponse } from "../types.ts";
 import { MIDDLEWARE_ERROR } from "#veryfront/errors";
+import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { agentLogger } from "#veryfront/utils/logger/index.ts";
 
 const INVALID_CONTINUATION_MESSAGE =
-  "Agent middleware next() can only be called once while middleware is active";
+  "You must call agent middleware next() at most once while the middleware is active";
 const INVALID_CONTINUATION_ERRORS = new WeakSet<object>();
+
+class ObservedContinuationPromise extends Promise<AgentResponse> {}
+
+type ContinuationThenHandler<T, R> =
+  | ((value: T) => R | PromiseLike<R>)
+  | null
+  | undefined;
+
+type ContinuationExecutor = (
+  resolve: (value: AgentResponse | PromiseLike<AgentResponse>) => void,
+  reject: (reason?: unknown) => void,
+) => void;
+
+function createObservedContinuation(
+  executor: ContinuationExecutor,
+  onObserved: () => void,
+): Promise<AgentResponse> {
+  const continuation = new ObservedContinuationPromise(executor);
+  let observed = false;
+  const markObserved = (): void => {
+    if (observed) return;
+    observed = true;
+    onObserved();
+  };
+  const trackedThen = <TResult1 = AgentResponse, TResult2 = never>(
+    onFulfilled?: ContinuationThenHandler<AgentResponse, TResult1>,
+    onRejected?: ContinuationThenHandler<unknown, TResult2>,
+  ): Promise<TResult1 | TResult2> => {
+    markObserved();
+    return Promise.prototype.then.call(
+      continuation,
+      onFulfilled,
+      onRejected,
+    ) as Promise<TResult1 | TResult2>;
+  };
+  Object.defineProperty(continuation, "then", { value: trackedThen });
+  return continuation;
+}
+
+function adoptContinuationResult(
+  dispatch: () => Promise<AgentResponse>,
+  resolve: (value: AgentResponse | PromiseLike<AgentResponse>) => void,
+  reject: (reason?: unknown) => void,
+): void {
+  try {
+    const dispatched = dispatch();
+    void Promise.prototype.then.call(dispatched, resolve, reject);
+  } catch (error) {
+    reject(error);
+  }
+}
 
 function createInvalidContinuationError() {
   const error = MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE });
@@ -25,7 +77,7 @@ function observeContinuationRejection(
   promise: Promise<AgentResponse>,
   onUnexpectedRejection?: (error: unknown) => void,
 ): void {
-  void promise.catch((error) => {
+  void Promise.prototype.then.call(promise, undefined, (error: unknown) => {
     if (isInvalidContinuationError(error) || isAbortError(error)) return;
     onUnexpectedRejection?.(error);
   });
@@ -41,11 +93,17 @@ function createDeferredContinuation(
   isSettled: () => boolean,
   dispatch: () => Promise<AgentResponse>,
   onUnexpectedRejection?: (error: unknown) => void,
+  onObserved?: () => void,
 ): Promise<AgentResponse> {
-  const continuation = Promise.resolve().then(() => {
-    if (isSettled()) throw createInvalidContinuationError();
-    return dispatch();
-  });
+  const continuation = createObservedContinuation((resolve, reject) => {
+    void Promise.resolve().then(() => {
+      if (isSettled()) {
+        reject(createInvalidContinuationError());
+        return;
+      }
+      adoptContinuationResult(dispatch, resolve, reject);
+    });
+  }, onObserved ?? (() => {}));
   observeContinuationRejection(continuation, onUnexpectedRejection);
   return continuation;
 }
@@ -63,15 +121,19 @@ function createMiddlewareContinuation(
   let middlewareInvoking = true;
   let middlewareSettled = false;
   let middlewareSettlementError: unknown;
+  let continuationObserved = false;
   let continuationRejection: { error: unknown } | undefined;
 
   const reportContinuationFailure = (error: unknown): void => {
     if (!middlewareSettled) {
-      continuationRejection = { error };
+      if (!continuationObserved) continuationRejection = { error };
       return;
     }
-    if (middlewareSettlementError === error) return;
-    agentLogger.error("Agent middleware continuation failed", error);
+    if (continuationObserved || middlewareSettlementError === error) return;
+    agentLogger.error(
+      "Agent middleware continuation failed",
+      { error: snapshotThrowableDiagnostic(error) },
+    );
   };
 
   const next = (): Promise<AgentResponse> => {
@@ -83,10 +145,17 @@ function createMiddlewareContinuation(
         () => middlewareSettled,
         dispatch,
         reportContinuationFailure,
+        () => {
+          continuationObserved = true;
+        },
       );
     }
 
-    const continuation = dispatch();
+    const continuation = createObservedContinuation((resolve, reject) => {
+      adoptContinuationResult(dispatch, resolve, reject);
+    }, () => {
+      continuationObserved = true;
+    });
     observeContinuationRejection(continuation, reportContinuationFailure);
     return continuation;
   };
@@ -102,8 +171,11 @@ function createMiddlewareContinuation(
       middlewareSettlementError = error;
       const rejection = continuationRejection;
       continuationRejection = undefined;
-      if (rejection && rejection.error !== error) {
-        agentLogger.error("Agent middleware continuation failed", rejection.error);
+      if (rejection && !continuationObserved && middlewareSettlementError !== rejection.error) {
+        agentLogger.error(
+          "Agent middleware continuation failed",
+          { error: snapshotThrowableDiagnostic(rejection.error) },
+        );
       }
     },
   };

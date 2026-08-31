@@ -159,7 +159,7 @@ export type {
 } from "./types.ts";
 
 /**
- * Public API contract for agent middleware. Call `next` at most once during one
+ * Public API contract for agent middleware. You must call `next` at most once during one
  * middleware invocation. The continuation becomes invalid when the middleware's
  * returned promise settles. Calling it again or after settlement rejects with
  * the registered `middleware-error`.
