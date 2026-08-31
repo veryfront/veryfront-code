@@ -59,6 +59,27 @@ describe("internal-agents/schema", () => {
     );
   });
 
+  it("strictly parses the optional signed inference credential", () => {
+    const parsed = getInternalAgentStreamRequestSchema().parse({
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
+      agentSource: { type: "branch", branch: "main" },
+      messages: [],
+      context: [],
+      credentials: {
+        authToken: "request-scoped-user-token",
+        inferenceAuthToken: "run-scoped-inference-token",
+      },
+    });
+
+    assertEquals(parsed.credentials, {
+      authToken: "request-scoped-user-token",
+      inferenceAuthToken: "run-scoped-inference-token",
+    });
+  });
+
   it("forwards validated task identity into the canonical runtime input", () => {
     const parsed = getInternalAgentStreamRequestSchema().parse({
       agentId: "agent_1",

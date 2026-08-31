@@ -1,8 +1,31 @@
+import { MAX_RUNTIME_INFERENCE_CREDENTIAL_BYTES } from "#veryfront/security/credential-limits.ts";
+
+const IntrinsicReflectApply = Reflect.apply;
+const StringPrototypeTrim = String.prototype.trim;
+const RegExpPrototypeTest = RegExp.prototype.test;
+const TextEncoderEncode = TextEncoder.prototype.encode;
 const ANTHROPIC_FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-2025-05-14";
 const ANTHROPIC_MCP_CLIENT_BETA = "mcp-client-2025-11-20";
 const DEPRECATED_ANTHROPIC_MCP_CLIENT_BETA = "mcp-client-2025-04-04";
 const MAX_PROVIDER_CREDENTIAL_BYTES = 8 * 1024;
+const MAX_INFERENCE_CREDENTIAL_BYTES = MAX_RUNTIME_INFERENCE_CREDENTIAL_BYTES;
 const PROVIDER_CREDENTIAL_ENCODER = new TextEncoder();
+const CREDENTIAL_PATTERN = /^[\x21-\x7e]+$/;
+
+function trimCredential(value: string): string {
+  return IntrinsicReflectApply(StringPrototypeTrim, value, []) as string;
+}
+
+function matchesCredentialPattern(value: string): boolean {
+  return IntrinsicReflectApply(RegExpPrototypeTest, CREDENTIAL_PATTERN, [value]) as boolean;
+}
+
+function credentialByteLength(value: string): number {
+  return (IntrinsicReflectApply(TextEncoderEncode, PROVIDER_CREDENTIAL_ENCODER, [
+    value,
+  ]) as Uint8Array)
+    .byteLength;
+}
 
 /**
  * Minimum Anthropic API version this runtime was built against.
@@ -15,26 +38,34 @@ const ANTHROPIC_API_VERSION = "2023-06-01";
 export function requireProviderCredential(
   value: unknown,
   credentialName: string,
+  maxBytes = MAX_PROVIDER_CREDENTIAL_BYTES,
 ): string {
   if (
     typeof value !== "string" ||
     value.length === 0 ||
-    value !== value.trim() ||
-    !/^[\x21-\x7e]+$/.test(value)
+    value !== trimCredential(value) ||
+    !matchesCredentialPattern(value)
   ) {
     throw new TypeError(
       `${credentialName} must be a non-empty visible ASCII string without surrounding whitespace`,
     );
   }
   if (
-    PROVIDER_CREDENTIAL_ENCODER.encode(value).byteLength >
-      MAX_PROVIDER_CREDENTIAL_BYTES
+    credentialByteLength(value) > maxBytes
   ) {
     throw new RangeError(
-      `${credentialName} must not exceed ${MAX_PROVIDER_CREDENTIAL_BYTES} bytes`,
+      `${credentialName} must not exceed ${maxBytes} bytes`,
     );
   }
   return value;
+}
+
+/** @internal Validate signed inference credentials at their larger transport bound. */
+export function requireInferenceProviderCredential(
+  value: unknown,
+  credentialName: string,
+): string {
+  return requireProviderCredential(value, credentialName, MAX_INFERENCE_CREDENTIAL_BYTES);
 }
 
 export function createRequestHeaders(options: {

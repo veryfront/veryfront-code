@@ -10,6 +10,13 @@ import type { LLMProviderRegistry } from "veryfront/extensions/llm";
 import { LLMProviderRegistryName } from "veryfront/extensions/llm";
 import { AnthropicProvider } from "./anthropic-provider.ts";
 
+const trustedAnthropicProvider = new AnthropicProvider();
+
+/** @internal Framework-owned factory captured before project code can replace provider methods. */
+export const createAnthropicProviderModel = trustedAnthropicProvider.createModel.bind(
+  trustedAnthropicProvider,
+);
+
 const extAnthropic: ExtensionFactory = () => {
   const provider = new AnthropicProvider();
   let registryRef: LLMProviderRegistry | undefined;

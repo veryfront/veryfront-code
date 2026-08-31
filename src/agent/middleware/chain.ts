@@ -1,5 +1,6 @@
 import type { AgentContext, AgentMiddleware, AgentResponse } from "../types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { MIDDLEWARE_ERROR } from "#veryfront/errors";
 
 export class MiddlewareChain {
   private middleware: AgentMiddleware[];
@@ -15,22 +16,27 @@ export class MiddlewareChain {
     return withSpan(
       "agent.middleware.chain.execute",
       () => {
-        let index = 0;
+        let lastDispatchedIndex = -1;
 
-        const dispatch = (): Promise<AgentResponse> => {
-          const middlewareIndex = index++;
+        const dispatch = (middlewareIndex: number): Promise<AgentResponse> => {
+          if (middlewareIndex <= lastDispatchedIndex) {
+            return Promise.reject(
+              MIDDLEWARE_ERROR.create({ detail: "Agent middleware next() called multiple times" }),
+            );
+          }
+          lastDispatchedIndex = middlewareIndex;
           const currentMiddleware = this.middleware[middlewareIndex];
 
           if (!currentMiddleware) return finalHandler();
 
           return withSpan(
-            `agent.middleware.chain.dispatch.${index}`,
-            () => currentMiddleware(context, dispatch),
+            `agent.middleware.chain.dispatch.${middlewareIndex + 1}`,
+            () => currentMiddleware(context, () => dispatch(middlewareIndex + 1)),
             { "middleware.index": middlewareIndex },
           );
         };
 
-        return dispatch();
+        return dispatch(0);
       },
       { "middleware.count": this.middleware.length },
     );

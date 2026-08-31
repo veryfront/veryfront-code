@@ -5,10 +5,17 @@ import {
 } from "#veryfront/security/input-validation/limits.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 
+const IntrinsicReflectApply = Reflect.apply;
+const JsonParse = JSON.parse;
+
 export const AG_UI_MAX_REQUEST_BODY_BYTES = DEFAULT_MAX_BODY_SIZE_BYTES;
 
 export async function parseAgUiJsonBody(request: Request): Promise<unknown> {
-  return JSON.parse(await readBodyWithLimit(request, AG_UI_MAX_REQUEST_BODY_BYTES));
+  return IntrinsicReflectApply(
+    JsonParse,
+    JSON,
+    [await readBodyWithLimit(request, AG_UI_MAX_REQUEST_BODY_BYTES)],
+  );
 }
 
 export function createAgUiBodyLimitErrorResponse(

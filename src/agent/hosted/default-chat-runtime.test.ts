@@ -40,6 +40,7 @@ import {
   getActiveHostedRunEventWriterCapability,
   runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
+import { agentRegistry, getAgent } from "../composition/index.ts";
 
 const unrestrictedSourceIntegrationPolicy = {
   schemaVersion: 1,
@@ -1084,8 +1085,10 @@ Deno.test("createDefaultHostedChatRuntime keeps per-run host tools out of the gl
     await createRuntime("Load updated skill catalog");
 
     assertEquals(toolRegistry.getOwn("load_skill"), undefined);
+    assertEquals(getAgent("veryfront-hosted-runtime"), undefined);
   } finally {
     toolRegistryInternal.clearAll();
+    agentRegistry.delete("veryfront-hosted-runtime");
   }
 });
 

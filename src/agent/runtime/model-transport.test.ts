@@ -80,6 +80,58 @@ describe("resolveAgentModelTransport", () => {
     assertEquals((transport as { reasoning?: unknown }).reasoning, { enabled: false });
   });
 
+  it("uses the framework resolver before project transport for privately resolved Veryfront Cloud models", async () => {
+    const calls: string[] = [];
+    const frameworkModel = createModel("veryfront-cloud/openai/gpt-test");
+    const transport = await resolveAgentModelTransport({
+      agentId: "agent-1",
+      config: {
+        model: "veryfront-cloud/openai/gpt-test",
+        system: "You are a helpful assistant.",
+        resolveModelTransport: () => {
+          calls.push("project");
+          return { model: createModel("project/override") };
+        },
+      },
+      context: undefined,
+      mode: "stream",
+      modelOverride: undefined,
+      resolveModelRuntime: (modelId) => {
+        calls.push(`framework:${modelId}`);
+        return frameworkModel;
+      },
+    });
+
+    assertEquals(calls, ["framework:veryfront-cloud/openai/gpt-test"]);
+    assertStrictEquals(transport.languageModel, frameworkModel);
+  });
+
+  it("keeps project transport precedence for models outside private Veryfront Cloud resolution", async () => {
+    const calls: string[] = [];
+    const projectModel = createModel("project/custom-model");
+    const transport = await resolveAgentModelTransport({
+      agentId: "agent-1",
+      config: {
+        model: "project/custom-model",
+        system: "You are a helpful assistant.",
+        resolveModelTransport: () => {
+          calls.push("project");
+          return { model: projectModel };
+        },
+      },
+      context: undefined,
+      mode: "stream",
+      modelOverride: undefined,
+      resolveModelRuntime: (modelId) => {
+        calls.push(`framework:${modelId}`);
+        return createModel(modelId);
+      },
+    });
+
+    assertEquals(calls, ["project"]);
+    assertStrictEquals(transport.languageModel, projectModel);
+  });
+
   it("defaults reasoning for non-Anthropic thinking-capable Veryfront Cloud models", async () => {
     const hostModel = createModel("veryfront-cloud/google-ai-studio/gemini-2.5-pro");
     const config: AgentConfig = {

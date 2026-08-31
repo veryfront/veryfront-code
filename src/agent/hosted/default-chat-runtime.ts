@@ -22,7 +22,8 @@ import {
   runWithVeryfrontCloudContextAsync,
   type VeryfrontCloudContext,
 } from "#veryfront/provider/veryfront-cloud/context.ts";
-import { agent } from "../factory.ts";
+import { createEphemeralAgentWithRuntimeOptions } from "../factory.ts";
+import type { AgentRuntimeInternalOptions } from "../runtime/index.ts";
 import { markRuntimeLocalTool } from "../runtime/local-tool.ts";
 import {
   applyDefaultResearchArtifactPath,
@@ -492,6 +493,7 @@ function runWithDefaultHostedRequestContext<TResult>(
 /** Create default hosted chat runtime. */
 export async function createDefaultHostedChatRuntime(
   input: CreateDefaultHostedChatRuntimeOptions,
+  runtimeOptions: AgentRuntimeInternalOptions = {},
 ): Promise<HostedChatRuntimeCreationResult> {
   const effectiveRunEventWriterCapability = getActiveHostedRunEventWriterCapability();
   return await runWithEffectiveSourceIntegrationPolicy(
@@ -522,7 +524,7 @@ export async function createDefaultHostedChatRuntime(
         });
         const runtimeAgent = runWithVeryfrontCloudContext(
           cloudContext,
-          () => agent(runtimeAgentConfig),
+          () => createEphemeralAgentWithRuntimeOptions(runtimeAgentConfig, runtimeOptions),
         );
 
         return {

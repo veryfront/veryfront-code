@@ -1,4 +1,5 @@
 import { isRequestBodyTooLargeError, readBodyWithLimit } from "#veryfront/security/index.ts";
+import { getNativeRequestBody } from "#veryfront/security/input-validation/limits.ts";
 import {
   DEFAULT_MAX_BODY_SIZE_BYTES,
   HTTP_PAYLOAD_TOO_LARGE,
@@ -20,7 +21,7 @@ export async function readInternalAgentRequestBody(
   request: Request,
   maxBodyBytes = INTERNAL_AGENT_STREAM_MAX_BODY_BYTES,
 ): Promise<string> {
-  if (!request.body) {
+  if (!getNativeRequestBody(request)) {
     return "";
   }
 

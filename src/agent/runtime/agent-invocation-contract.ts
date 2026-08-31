@@ -3,6 +3,7 @@ import type { InferSchema, RefinementCtx } from "#veryfront/extensions/schema/in
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-extensions.ts";
 import { parseAgUiJsonBody, parseAgUiJsonRequestOrError } from "../ag-ui/request-shared.ts";
 import { getRuntimeAgentMarkdownDefinitionSchema } from "./agent-definition.ts";
+import { MAX_RUNTIME_INFERENCE_CREDENTIAL_BYTES } from "#veryfront/security/credential-limits.ts";
 
 ensureBuiltinSchemaValidator();
 
@@ -11,8 +12,12 @@ const MAX_CONTEXT_ITEM_BYTES = 16_384;
 const MAX_CONTEXT_TOTAL_BYTES = 65_536;
 const MAX_AGENT_CONFIG_BYTES = 65_536;
 const MAX_FORWARDED_PROPS_BYTES = 196_608;
-const MAX_CREDENTIAL_BYTES = 16_384;
+const MAX_CREDENTIAL_BYTES = MAX_RUNTIME_INFERENCE_CREDENTIAL_BYTES;
 const encoder = new TextEncoder();
+const IntrinsicReflectApply = Reflect.apply;
+const RegExpPrototypeTest = RegExp.prototype.test;
+const TextEncoderEncode = TextEncoder.prototype.encode;
+const INFERENCE_CREDENTIAL_PATTERN = /^[\x21-\x7e]+$/;
 
 function isWithinJsonSizeLimit(value: unknown, maxBytes: number): boolean {
   try {
@@ -20,6 +25,11 @@ function isWithinJsonSizeLimit(value: unknown, maxBytes: number): boolean {
   } catch {
     return false;
   }
+}
+
+function isWithinUtf8SizeLimit(value: string, maxBytes: number): boolean {
+  return (IntrinsicReflectApply(TextEncoderEncode, encoder, [value]) as Uint8Array).byteLength <=
+    maxBytes;
 }
 
 export const getRuntimeAgentRunIdSchema = defineSchema((v) =>
@@ -342,11 +352,28 @@ export const getRuntimeAgentRunContextSchema = defineSchema((v) =>
  */
 export const RuntimeAgentRunContextSchema = lazySchema(getRuntimeAgentRunContextSchema);
 
-export const getRuntimeAgentCredentialsSchema = defineSchema((v) =>
-  v.object({
-    authToken: v.string().min(1).max(MAX_CREDENTIAL_BYTES),
-  }).strict()
-);
+export const getRuntimeAgentCredentialsSchema = defineSchema((v) => {
+  const credential = () => v.string().min(1).max(MAX_CREDENTIAL_BYTES);
+  const inferenceCredential = () =>
+    credential().refine(
+      (value) =>
+        IntrinsicReflectApply(RegExpPrototypeTest, INFERENCE_CREDENTIAL_PATTERN, [
+          value,
+        ]) as boolean,
+      { message: "Credential must be a non-empty visible ASCII string" },
+    ).refine(
+      (value) => isWithinUtf8SizeLimit(value, MAX_CREDENTIAL_BYTES),
+      { message: "Credential must not exceed 16 KB" },
+    );
+
+  return v.object({
+    // Preserve the legacy character-count contract for authToken; the byte
+    // refinement and transport-safe character set are intentionally limited to
+    // the new inference credential.
+    authToken: credential(),
+    inferenceAuthToken: inferenceCredential().optional(),
+  }).strict();
+});
 
 export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
   v.object({
@@ -389,6 +416,32 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
   })
 );
 
+// Capture the trusted ingress methods before project code can mutate the public
+// compatibility facade or the materialized schema instance.
+const trustedRuntimeAgentRunInvocationSchema = getRuntimeAgentRunInvocationSchema();
+const TrustedRuntimeAgentRunInvocationParse = trustedRuntimeAgentRunInvocationSchema.parse;
+const TrustedRuntimeAgentRunInvocationSafeParse = trustedRuntimeAgentRunInvocationSchema.safeParse;
+
+export function parseRuntimeAgentRunInvocationValue(
+  value: unknown,
+): InferSchema<ReturnType<typeof getRuntimeAgentRunInvocationSchema>> {
+  return IntrinsicReflectApply(
+    TrustedRuntimeAgentRunInvocationParse,
+    trustedRuntimeAgentRunInvocationSchema,
+    [value],
+  );
+}
+
+export function safeParseRuntimeAgentRunInvocationValue(
+  value: unknown,
+): ReturnType<typeof trustedRuntimeAgentRunInvocationSchema.safeParse> {
+  return IntrinsicReflectApply(
+    TrustedRuntimeAgentRunInvocationSafeParse,
+    trustedRuntimeAgentRunInvocationSchema,
+    [value],
+  );
+}
+
 /** Schema for runtime agent run invocation.
  * @deprecated Use getRuntimeAgentRunInvocationSchema()
  */
@@ -420,7 +473,15 @@ export type RuntimeAgentValidatedClaims = InferSchema<
 export type RuntimeAgentRunContext = InferSchema<
   ReturnType<typeof getRuntimeAgentRunContextSchema>
 >;
-/** Public API contract for runtime agent run invocation. */
+/**
+ * Public API contract for a signed runtime agent invocation.
+ *
+ * `credentials.authToken` authorizes control-plane and project operations.
+ * `credentials.inferenceAuthToken`, when present, is separate run-scoped
+ * authority for attributed Veryfront Cloud inference. Trusted runtime ingress
+ * must keep that credential out of project callbacks, tools, logs, and durable
+ * request payloads.
+ */
 export type RuntimeAgentRunInvocation = InferSchema<
   ReturnType<typeof getRuntimeAgentRunInvocationSchema>
 >;
@@ -481,7 +542,7 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
 export async function parseRuntimeAgentRunInvocation(
   request: Request,
 ): Promise<RuntimeAgentRunInvocation> {
-  return getRuntimeAgentRunInvocationSchema().parse(await parseAgUiJsonBody(request));
+  return parseRuntimeAgentRunInvocationValue(await parseAgUiJsonBody(request));
 }
 
 /** Error shape for parse runtime agent run invocation or. */
