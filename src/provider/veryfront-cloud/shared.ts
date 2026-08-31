@@ -57,7 +57,9 @@ function readNativeURLString(
   url: URL,
   getter: ((this: URL) => string) | undefined,
 ): string {
-  if (!getter) throw new TypeError("Veryfront Cloud URL accessors are unavailable");
+  if (!getter) {
+    throw CONFIG_INVALID.create({ detail: "Veryfront Cloud URL accessors are unavailable" });
+  }
   return IntrinsicReflectApply(getter, url, []) as string;
 }
 
@@ -66,12 +68,16 @@ function writeNativeURLString(
   setter: ((this: URL, value: string) => void) | undefined,
   value: string,
 ): void {
-  if (!setter) throw new TypeError("Veryfront Cloud URL accessors are unavailable");
+  if (!setter) {
+    throw CONFIG_INVALID.create({ detail: "Veryfront Cloud URL accessors are unavailable" });
+  }
   IntrinsicReflectApply(setter, url, [value]);
 }
 
 function readNativeRequestHeaders(request: Request): Headers {
-  if (!RequestHeadersGet) throw new TypeError("Veryfront Cloud Request accessors are unavailable");
+  if (!RequestHeadersGet) {
+    throw CONFIG_INVALID.create({ detail: "Veryfront Cloud Request accessors are unavailable" });
+  }
   return IntrinsicReflectApply(RequestHeadersGet, request, []) as Headers;
 }
 

@@ -354,6 +354,13 @@ describe("run-scoped inference credential", () => {
     const originalObjectEntries = Object.entries;
     const observedJsonCredentials: unknown[] = [];
     const observedEntriesCredentials: unknown[] = [];
+    const containsInferenceToken = (value: unknown): boolean => {
+      if (typeof value === "string") return value.includes("run-scoped-inference-token");
+      if (typeof value !== "object" || value === null) return false;
+      return originalObjectEntries(value).some(([, candidate]) =>
+        containsInferenceToken(candidate)
+      );
+    };
     Request.prototype.json = function (): Promise<unknown> {
       return originalRequestJson.call(this).then((payload) => {
         observedJsonCredentials.push(
@@ -364,9 +371,7 @@ describe("run-scoped inference credential", () => {
       });
     };
     Object.entries = ((value: object) => {
-      observedEntriesCredentials.push(
-        (value as { inferenceAuthToken?: unknown }).inferenceAuthToken,
-      );
+      if (containsInferenceToken(value)) observedEntriesCredentials.push(value);
       return originalObjectEntries(value);
     }) as typeof Object.entries;
     let response: Response;
@@ -388,7 +393,7 @@ describe("run-scoped inference credential", () => {
     assertEquals(serializedPreparedRequest.includes("run-scoped-inference-token"), false);
     assertEquals(detachedRequestBody.includes("run-scoped-inference-token"), false);
     assertEquals(observedJsonCredentials, []);
-    assertEquals(observedEntriesCredentials.includes("run-scoped-inference-token"), false);
+    assertEquals(observedEntriesCredentials.length, 0);
   });
 
   it("ignores an inference credential without a verified run-event token", async () => {
@@ -590,17 +595,19 @@ describe("run-scoped inference credential", () => {
     const observedValidationTokens: string[] = [];
 
     String.prototype.trim = function (): string {
-      if (this === inferenceToken) observedValidationTokens.push("trim");
+      if (typeof this === "string" && this.includes(inferenceToken)) {
+        observedValidationTokens.push("trim");
+      }
       return Reflect.apply(originalTrim, this, []);
     };
     RegExp.prototype.test = function (value: string): boolean {
-      if (value === inferenceToken) observedValidationTokens.push("regexp");
+      if (value.includes(inferenceToken)) observedValidationTokens.push("regexp");
       return Reflect.apply(originalRegExpTest, this, [value]);
     };
     TextEncoder.prototype.encode = function (
       value = "",
     ): ReturnType<TextEncoder["encode"]> {
-      if (value === inferenceToken) observedValidationTokens.push("encode");
+      if (value.includes(inferenceToken)) observedValidationTokens.push("encode");
       return Reflect.apply(originalTextEncoderEncode, this, [value]) as ReturnType<
         TextEncoder["encode"]
       >;
