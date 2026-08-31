@@ -2,7 +2,7 @@ import type { AgentContext, AgentMiddleware, AgentResponse } from "../types.ts";
 import { MIDDLEWARE_ERROR } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
-  isErrorAcrossRealms,
+  isNativeErrorWithoutHooks,
   readNativeErrorNameWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
 import { unrefTimer } from "#veryfront/platform/compat/process/lifecycle.ts";
@@ -12,6 +12,12 @@ const INVALID_CONTINUATION_MESSAGE =
   "You must call agent middleware next() at most once while the middleware is active";
 const DETACHED_CONTINUATION_FAILURE = "downstream continuation rejected";
 const INVALID_CONTINUATION_ERRORS = new WeakSet<object>();
+const DOM_EXCEPTION_NAME_GETTER = typeof DOMException === "function"
+  ? Object.getOwnPropertyDescriptor(DOMException.prototype, "name")?.get
+  : undefined;
+const DOM_EXCEPTION_TO_STRING = typeof DOMException === "function"
+  ? Object.getOwnPropertyDescriptor(DOMException.prototype, "toString")?.value
+  : undefined;
 
 type ContinuationThenHandler<T, R> =
   | ((value: T) => R | PromiseLike<R>)
@@ -97,7 +103,13 @@ function isInvalidContinuationError(error: unknown): boolean {
 
 function isAbortError(error: unknown): boolean {
   try {
-    return isErrorAcrossRealms(error) && readNativeErrorNameWithoutHooks(error) === "AbortError";
+    if (isNativeErrorWithoutHooks(error)) {
+      return readNativeErrorNameWithoutHooks(error) === "AbortError";
+    }
+    if (typeof DOM_EXCEPTION_TO_STRING !== "function") return false;
+    Reflect.apply(DOM_EXCEPTION_TO_STRING, error, []);
+    return typeof DOM_EXCEPTION_NAME_GETTER === "function" &&
+      Reflect.apply(DOM_EXCEPTION_NAME_GETTER, error, []) === "AbortError";
   } catch {
     return false;
   }

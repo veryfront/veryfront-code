@@ -500,9 +500,24 @@ describe("agent/middleware/chain", () => {
         },
       ]);
       await hostileChain.execute(context, () => Promise.reject(hostileError));
+      let proxyTrapCalls = 0;
+      const proxyError = new Proxy(new Error("proxy error"), {
+        getPrototypeOf() {
+          proxyTrapCalls += 1;
+          throw new Error("proxy prototype trap failed");
+        },
+      });
+      const proxyChain = new MiddlewareChain([
+        async (_context, next) => {
+          next();
+          return response;
+        },
+      ]);
+      await proxyChain.execute(context, () => Promise.reject(proxyError));
       await Promise.resolve();
       await Promise.resolve();
       await waitForReport();
+      assertEquals(proxyTrapCalls, 0);
     } finally {
       unsubscribe();
     }
@@ -510,7 +525,7 @@ describe("agent/middleware/chain", () => {
     assertEquals(
       records.filter((entry) => entry.message === "Your agent middleware continuation failed")
         .length,
-      1,
+      2,
     );
   });
 
@@ -593,6 +608,32 @@ describe("agent/middleware/chain", () => {
       records.filter((entry) => entry.message === "Your agent middleware continuation failed")
         .length,
       2,
+    );
+  });
+
+  it("distinguishes an undefined middleware rejection from success", async () => {
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+    try {
+      const chain = new MiddlewareChain([
+        (_context, next) => {
+          next();
+          return Promise.reject<AgentResponse>(undefined);
+        },
+      ]);
+      await chain.execute(context, () => Promise.reject<AgentResponse>(undefined)).catch(
+        (error) => {
+          assertEquals(error, undefined);
+        },
+      );
+      await waitForReport();
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(
+      records.some((entry) => entry.message === "Your agent middleware continuation failed"),
+      false,
     );
   });
 
