@@ -7,7 +7,7 @@ import { MiddlewareChain } from "#veryfront/agent/middleware/chain.ts";
 
 const context = {} as AgentContext;
 const response = {} as AgentResponse;
-const replayError = "next() can only be called once while middleware is active";
+const replayError = "Agent middleware next() can only be called once while middleware is active";
 
 describe("agent/middleware/chain", () => {
   it("rejects replay after a continuation completes", async () => {
@@ -143,6 +143,59 @@ describe("agent/middleware/chain", () => {
       () => chain.execute(context, () => Promise.resolve(response)),
       Error,
       "middleware failed",
+    );
+    await assertRejects(() => retainedNext!(), VeryfrontError, replayError);
+  });
+
+  it("propagates downstream rejection through an awaited continuation", async () => {
+    let observedError: unknown;
+    const downstreamError = new Error("downstream failed");
+    const chain = new MiddlewareChain([
+      async (_context, next) => {
+        try {
+          return await next();
+        } catch (error) {
+          observedError = error;
+          throw error;
+        }
+      },
+    ]);
+
+    const error = await assertRejects(
+      () => chain.execute(context, () => Promise.reject(downstreamError)),
+      Error,
+      "downstream failed",
+    );
+    assertEquals(error, downstreamError);
+    assertEquals(observedError, downstreamError);
+  });
+
+  it("invokes the final handler for an empty middleware chain", async () => {
+    let finalHandlerCalls = 0;
+    assertEquals(
+      await new MiddlewareChain().execute(context, () => {
+        finalHandlerCalls += 1;
+        return Promise.resolve(response);
+      }),
+      response,
+    );
+    assertEquals(finalHandlerCalls, 1);
+  });
+
+  it("revokes a retained continuation when middleware rejects", async () => {
+    let retainedNext: (() => Promise<AgentResponse>) | undefined;
+    const middlewareError = new Error("middleware rejected");
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        retainedNext = next;
+        return Promise.reject(middlewareError);
+      },
+    ]);
+
+    await assertRejects(
+      () => chain.execute(context, () => Promise.resolve(response)),
+      Error,
+      "middleware rejected",
     );
     await assertRejects(() => retainedNext!(), VeryfrontError, replayError);
   });
