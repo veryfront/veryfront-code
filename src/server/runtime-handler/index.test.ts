@@ -401,14 +401,15 @@ describe("server/runtime-handler/index", () => {
   });
 
   it("runs middleware for authored OPTIONS preflight routes", async () => {
+    const projectDir = `/tmp/test-options-auth-${crypto.randomUUID()}`;
     const adapter = createRouteMockAdapter();
     adapter.fs.files.set(
-      "/tmp/test-project/pages/api/options.ts",
+      `${projectDir}/pages/api/options.ts`,
       "export function OPTIONS() { return new Response('unused'); }",
     );
     let middlewareCalls = 0;
-    const handler = createVeryfrontHandler("/tmp/test-project", adapter, {
-      projectDir: "/tmp/test-project",
+    const handler = createVeryfrontHandler(projectDir, adapter, {
+      projectDir,
       config: {
         security: {
           auth: {
