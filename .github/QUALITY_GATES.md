@@ -20,10 +20,11 @@ those runs cannot receive `SONAR_TOKEN`. Fork pull requests still skip other
 protected dependency jobs and therefore fail this aggregate gate closed.
 Codecov reporting remains advisory.
 
-The active merge queue ruleset gives required checks at least 65 minutes to
-report a conclusion. This covers the configured sequential maximum of 20
-minutes for coverage shards, 35 minutes for Sonar, and 2 minutes for the
-aggregate merge gate, plus 8 minutes of runner scheduling headroom.
+The active merge queue ruleset gives required checks at least 70 minutes to
+report a conclusion. This covers the longest configured dependency path: 60
+minutes for binary end-to-end tests and 2 minutes for the aggregate merge gate,
+plus 8 minutes of runner scheduling headroom. The sequential coverage and Sonar
+path has a lower 57-minute maximum.
 
 Evidence: [CI workflow](workflows/cicd.yml) and
 [merge gate contract](../tests/integration/ci/merge-quality-gate-workflow.test.ts).

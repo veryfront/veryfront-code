@@ -37,7 +37,7 @@ const SONAR_JOB_EXPRESSION =
   `\${{ needs.coverage-shards.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
 const SONAR_JOB_TIMEOUT_MINUTES = 35;
 const SONAR_QUALITY_GATE_TIMEOUT_SECONDS = 1200;
-const MERGE_QUEUE_RESPONSE_TIMEOUT_MINUTES = 65;
+const MERGE_QUEUE_RESPONSE_TIMEOUT_MINUTES = 70;
 const MERGE_QUEUE_SCHEDULING_HEADROOM_MINUTES = 8;
 
 function asRecord(value: unknown, context: string): YamlRecord {
@@ -193,26 +193,30 @@ describe("merge quality gate workflow", () => {
     );
   });
 
-  it("keeps the sequential Sonar path within the merge queue response budget", async () => {
+  it("keeps the longest merge-gate path within the merge queue response budget", async () => {
     const workflow = await readWorkflow();
     const jobs = asRecord(workflow.jobs, "cicd workflow jobs");
-    const coverageShards = asRecord(
-      jobs["coverage-shards"],
-      "coverage shards job",
-    );
-    const sonar = asRecord(jobs.sonar, "sonar job");
     const mergeGate = asRecord(
       jobs["quality-gate-merge"],
       "merge quality gate job",
     );
-    const maximumSequentialMinutes = Number(coverageShards["timeout-minutes"]) +
-      Number(sonar["timeout-minutes"]) +
-      Number(mergeGate["timeout-minutes"]);
+    const dependencyTimeouts = REQUIRED_DEPENDENCIES.map((jobName) => {
+      const job = asRecord(jobs[jobName], `${jobName} job`);
+      const timeout = Number(job["timeout-minutes"]);
+      assert(
+        Number.isFinite(timeout) && timeout > 0,
+        `${jobName} must have a positive timeout-minutes value`,
+      );
+      return timeout;
+    });
+    const maximumDependencyMinutes = Math.max(...dependencyTimeouts);
+    const mergeGateMinutes = Number(mergeGate["timeout-minutes"]);
 
     assert(
-      maximumSequentialMinutes + MERGE_QUEUE_SCHEDULING_HEADROOM_MINUTES <=
+      maximumDependencyMinutes + mergeGateMinutes +
+          MERGE_QUEUE_SCHEDULING_HEADROOM_MINUTES <=
         MERGE_QUEUE_RESPONSE_TIMEOUT_MINUTES,
-      "merge queue response timeout must cover the sequential coverage, Sonar, and merge-gate timeouts with scheduling headroom",
+      "merge queue response timeout must cover the longest merge-gate dependency and aggregate timeouts with scheduling headroom",
     );
     assertStringIncludes(
       await readRepoFile(".github/QUALITY_GATES.md"),
