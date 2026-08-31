@@ -98,7 +98,7 @@ function adoptContinuationResult(
 ): void {
   const dispatched = dispatch();
   if (dispatched === continuation) {
-    reject(new TypeError("Chaining cycle detected for promise"));
+    reject(new TypeError("Your middleware continuation cannot resolve to itself"));
     return;
   }
   void Promise.prototype.then.call(dispatched, resolve, reject);
@@ -232,17 +232,11 @@ function createMiddlewareContinuation(
   let nextCalled = false;
   let middlewareInvoking = true;
   let middlewareSettled = false;
-  const continuationRejections = new Set<{
-    error: unknown;
-    isObserved: () => boolean;
-    reported: boolean;
-  }>();
 
   const reportContinuationFailure = (_error: unknown, isObserved: () => boolean): void => {
     if (!middlewareSettled) {
       if (!isObserved()) {
         const record = { error: _error, isObserved, reported: false };
-        continuationRejections.add(record);
         scheduleDetachedContinuationFailureReport(record);
       }
       return;
@@ -279,7 +273,6 @@ function createMiddlewareContinuation(
     settle: () => {
       middlewareInvoking = false;
       middlewareSettled = true;
-      continuationRejections.clear();
     },
   };
 }
