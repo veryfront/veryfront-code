@@ -176,6 +176,11 @@ export { api } from "./api.ts";
 // =============================================================================
 export { createWorkflowHandler } from "./http/handler.ts";
 export type { WorkflowHandlerOptions, WorkflowHandlers } from "./http/handler.ts";
+export type {
+  WorkflowApprovalSummary,
+  WorkflowNodeStateSummary,
+  WorkflowRunSummary,
+} from "./http/run-summary.ts";
 export { deriveRunEvents, isTerminalRunStatus, snapshotRun } from "./events.ts";
 export type {
   RunEventSnapshot,

@@ -15,3 +15,9 @@ export type { UseWorkflowListOptions, UseWorkflowListResult } from "./use-workfl
 
 export { useWorkflowStart } from "./use-workflow-start.ts";
 export type { UseWorkflowStartOptions, UseWorkflowStartResult } from "./use-workflow-start.ts";
+
+export type {
+  WorkflowApprovalSummary,
+  WorkflowNodeStateSummary,
+  WorkflowRunSummary,
+} from "../http/run-summary.ts";

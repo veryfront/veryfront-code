@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
-import type { RunFilter, WorkflowRun, WorkflowStatus } from "#veryfront/workflow/types.ts";
+import type { RunFilter, WorkflowStatus } from "#veryfront/workflow/types.ts";
+import type { WorkflowRunSummary } from "#veryfront/workflow/http/run-summary.ts";
 import { normalizeWorkflowApiBase, useStableWorkflowHeaders } from "./mutation-headers.ts";
 
 /** Default interval for auto-refreshing the workflow list */
@@ -24,7 +25,7 @@ export interface UseWorkflowListOptions {
 
 /** Result returned from use workflow list. */
 export interface UseWorkflowListResult {
-  runs: WorkflowRun[];
+  runs: WorkflowRunSummary[];
   totalCount?: number;
   isLoading: boolean;
   error: Error | null;
@@ -60,7 +61,7 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
   const currentAuthorizationContext = useRef(authorizationContext);
   currentAuthorizationContext.current = authorizationContext;
 
-  const [runs, setRuns] = useState<WorkflowRun[]>([]);
+  const [runs, setRuns] = useState<WorkflowRunSummary[]>([]);
   const [totalCount, setTotalCount] = useState<number | undefined>();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -131,11 +132,16 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
           });
         }
 
-        const data: { runs?: WorkflowRun[]; cursor?: string; totalCount?: number } = await response
-          .json();
-        const fetchedRuns: WorkflowRun[] = data.runs ?? (data as WorkflowRun[]);
-        const nextCursor: string | undefined = data.cursor;
-        const total: number | undefined = data.totalCount;
+        const data = await response.json() as
+          | {
+            runs?: WorkflowRunSummary[];
+            cursor?: string;
+            totalCount?: number;
+          }
+          | WorkflowRunSummary[];
+        const fetchedRuns = Array.isArray(data) ? data : data.runs ?? [];
+        const nextCursor = Array.isArray(data) ? undefined : data.cursor;
+        const total = Array.isArray(data) ? undefined : data.totalCount;
 
         if (!isCurrentRequest(request)) return request;
 

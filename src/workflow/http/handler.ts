@@ -6,6 +6,12 @@
  * Those clients are the specification for this module. Every response shape
  * below is the one its caller parses.
  *
+ * Generic run reads return `WorkflowRunSummary` values. They omit
+ * workflow input, output, context, node payloads, checkpoints, approval
+ * payloads, source policy, and framework metadata. Use a separately authorized
+ * server route backed by `WorkflowClient` when an application must expose
+ * selected run interiors.
+ *
  * @module workflow/http
  *
  * @example Mount every workflow route at once
@@ -26,21 +32,18 @@ import { logger as baseLogger } from "#veryfront/utils";
 import type { WorkflowClient } from "../api/index.ts";
 import { ApprovalDecisionSchema, RunFilterSchema } from "../schemas/index.ts";
 import { isTerminalRunStatus, type WorkflowRunEventObservation } from "../events.ts";
-import type {
-  ApprovalDecision,
-  PendingApproval,
-  RunFilter,
-  WorkflowContext,
-  WorkflowRun,
-} from "../types.ts";
-import { projectPendingApproval } from "../runtime/pending-approval-metadata.ts";
+import type { ApprovalDecision, RunFilter } from "../types.ts";
+import { DEFAULT_WORKFLOW_RUN_LIST_LIMIT } from "../limits.ts";
+import { projectWorkflowRunSummary } from "./run-summary.ts";
 
 /** Options for {@linkcode createWorkflowHandler}. */
 export interface WorkflowHandlerOptions {
   /**
    * Authorize a request and return the authenticated approver identity.
    * Return null to deny access. The handler uses this server-derived identity
-   * for approval decisions instead of trusting the request body.
+   * for approval decisions instead of trusting the request body. This callback
+   * does not add per-run ownership filtering. Only authorize identities allowed
+   * to read every run summary and approval payload visible to this client.
    */
   authorize: (request: Request) => string | null | Promise<string | null>;
   /** Maximum number of active event streams for this handler instance. */
@@ -143,7 +146,7 @@ async function answering(work: () => Promise<Response>): Promise<Response> {
 /** Parse the list filter that useWorkflowList encodes into the query string. */
 function readFilter(url: URL): RunFilter {
   const params = url.searchParams;
-  const filter: Record<string, unknown> = {};
+  const filter: Record<string, unknown> = { limit: DEFAULT_WORKFLOW_RUN_LIST_LIMIT };
 
   const workflowId = params.get("workflowId");
   if (workflowId) filter.workflowId = workflowId;
@@ -185,37 +188,6 @@ async function readJson(request: Request): Promise<Record<string, unknown>> {
     throw new WorkflowRequestError("Request body must be a JSON object");
   }
   return body as Record<string, unknown>;
-}
-
-function projectContext(context: WorkflowContext): WorkflowContext {
-  const { env: _env, _tenant: _tenant, _loop: _loop, ...publicContext } = context;
-  return publicContext as WorkflowContext;
-}
-
-function projectRun(
-  run: WorkflowRun,
-  pendingApprovals: PendingApproval[] = run.pendingApprovals,
-): Record<string, unknown> & Pick<WorkflowRun, "status"> {
-  const {
-    _tenant: _tenant,
-    _runtimeStateVersion: _runtimeStateVersion,
-    _workflowProjection: _workflowProjection,
-    _traceContext: _traceContext,
-    checkpoints: _checkpoints,
-    workerId: _workerId,
-    heartbeatAt: _heartbeatAt,
-    error,
-    context,
-    pendingApprovals: _pendingApprovals,
-    ...publicRun
-  } = run;
-
-  return {
-    ...publicRun,
-    context: projectContext(context),
-    pendingApprovals: pendingApprovals.map(projectPendingApproval),
-    ...(error ? { error: { message: error.message, nodeId: error.nodeId } } : {}),
-  };
 }
 
 /**
@@ -312,7 +284,7 @@ function runEventStream(
       if (snapshotPending) {
         snapshotPending = false;
         try {
-          const snapshot = projectRun(observation.initial);
+          const snapshot = projectWorkflowRunSummary(observation.initial);
           controller.enqueue(encode("snapshot", snapshot));
           if (isTerminalRunStatus(snapshot.status)) close();
         } catch {
@@ -382,7 +354,7 @@ function runEventStream(
  * those runs.
  *
  * `GET {basePath}/runs/{runId}/events` returns a Server-Sent Events stream. It
- * sends the current public run as `snapshot`, followed by persisted step and
+ * sends the current run summary as `snapshot`, followed by persisted step and
  * run-status events, and closes on a terminal run. Missing runs return 404.
  * Custom backends without atomic run observation return 501. Observation
  * failures send one sanitized `error` event with `retryable: true`, then close.
@@ -451,13 +423,16 @@ export function createWorkflowHandler(
         const cursor = filter.limit && runs.length === filter.limit
           ? String(offset + runs.length)
           : undefined;
-        return Response.json({ runs: runs.map((run) => projectRun(run)), cursor });
+        return Response.json({
+          runs: runs.map((run) => projectWorkflowRunSummary(run)),
+          cursor,
+        });
       }
 
       if (segments.length === 2 && first === "runs" && runId) {
         const run = await client.getRun(runId);
         if (!run) return problem(`No workflow run ${runId}`, 404);
-        return Response.json(projectRun(run));
+        return Response.json(projectWorkflowRunSummary(run));
       }
 
       if (segments.length === 3 && first === "runs" && runId && third === "events") {
