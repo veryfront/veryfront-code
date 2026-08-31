@@ -293,6 +293,7 @@ const ArrayIsArray = Array.isArray;
 const cloneStructuredValue = globalThis.structuredClone;
 const IntrinsicWeakMap = WeakMap;
 const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicReadableStream = ReadableStream;
 const PromiseThen = Promise.prototype.then;
 const ObjectCreate = Object.create;
 const ObjectDefineProperty = Object.defineProperty;
@@ -1674,7 +1675,7 @@ export class AgentRuntime {
       // an unhandled rejection under Deno (#2334).
       let inFlight: Promise<AgentResponse> | undefined;
 
-      const runtimeStream = new ReadableStream<Uint8Array>({
+      const runtimeStream = new IntrinsicReadableStream<Uint8Array>({
         start: async (controller) => {
           try {
             throwIfAborted(streamAbortSignal);

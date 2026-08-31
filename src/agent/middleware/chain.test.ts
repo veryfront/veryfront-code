@@ -51,6 +51,27 @@ describe("agent/middleware/chain", () => {
     assertEquals(finalHandlerCalls, 0);
   });
 
+  it("rejects a synchronous continuation when middleware returns its own response", async () => {
+    let continuation: Promise<AgentResponse> | undefined;
+    let finalHandlerCalls = 0;
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        continuation = next();
+        return Promise.resolve(response);
+      },
+    ]);
+
+    assertEquals(
+      await chain.execute(context, () => {
+        finalHandlerCalls += 1;
+        return Promise.resolve(response);
+      }),
+      response,
+    );
+    await assertRejects(() => continuation!, Error, replayError);
+    assertEquals(finalHandlerCalls, 0);
+  });
+
   it("rejects a pre-registered continuation reaction after middleware settles", async () => {
     let replay: Promise<AgentResponse> | undefined;
     let finalHandlerCalls = 0;

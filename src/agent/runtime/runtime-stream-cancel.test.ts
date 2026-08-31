@@ -413,6 +413,10 @@ describe("agent runtime stream cancellation (#2334)", () => {
         false,
         "the frames delivered before the disconnect must not be an error frame",
       );
+      await waitFor(
+        () => model.calls[0]?.abortSignal !== undefined,
+        { message: "the provider call must be in flight before cancelling" },
+      );
       // The client disconnects: cancel with a foreign AbortError reason, exactly
       // as Deno hands to the stream's cancel algorithm.
       await reader.cancel(new DOMException("client disconnected", "AbortError"));
@@ -536,6 +540,10 @@ describe("agent runtime stream cancellation (#2334)", () => {
     const reader = body.getReader();
     const first = await reader.read();
     assertEquals(first.done, false, "the run must be mid-stream before cancelling");
+    await waitFor(
+      () => model.calls[0]?.abortSignal !== undefined,
+      { message: "the provider call must be in flight before cancelling" },
+    );
     await reader.cancel(new DOMException("client disconnected", "AbortError"));
 
     assertEquals((await reader.read()).done, true, "the body must close on cancel");

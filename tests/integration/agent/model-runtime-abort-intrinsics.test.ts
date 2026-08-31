@@ -15,6 +15,7 @@ import {
   createModelRuntimeResolverAbortGuard,
   createModelRuntimeResolverAbortScope,
   registerModelRuntimeResolverRevoker,
+  revokeModelRuntimeResolver,
 } from "#veryfront/agent/runtime/model-transport.ts";
 
 function createModel(modelId: string): ModelRuntime {
@@ -35,6 +36,59 @@ function createModel(modelId: string): ModelRuntime {
 }
 
 describe("run-scoped model cancellation intrinsics", () => {
+  it("uses the captured ReadableStream constructor for signed inference", async () => {
+    const model = scriptedModel([
+      { parts: [{ type: "text-delta", text: "complete" }] },
+    ], { modelId: "veryfront-cloud/openai/captured-stream-model", only: "stream" });
+    let resolverActive = true;
+    const resolver: AgentModelRuntimeResolver = () => resolverActive ? model : undefined;
+    registerModelRuntimeResolverRevoker(resolver, () => {
+      resolverActive = false;
+    });
+    const runtime = new AgentRuntime(
+      "captured-stream-runtime",
+      {
+        model: "veryfront-cloud/openai/captured-stream-model",
+        system: "captured stream constructor test",
+        maxSteps: 1,
+      },
+      { resolveModelRuntime: resolver },
+    );
+    const NativeReadableStream = ReadableStream;
+    const streamDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ReadableStream");
+    assert(streamDescriptor, "ReadableStream must have a global property descriptor");
+    let replacementCalls = 0;
+    let stream: ReadableStream<Uint8Array> | undefined;
+
+    try {
+      class RetainedReadableStream {
+        constructor() {
+          replacementCalls++;
+        }
+      }
+      Object.defineProperty(globalThis, "ReadableStream", {
+        ...streamDescriptor,
+        value: RetainedReadableStream,
+      });
+      stream = await runtime.stream([{
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Hello" }],
+      }]);
+    } finally {
+      Object.defineProperty(globalThis, "ReadableStream", streamDescriptor);
+    }
+
+    try {
+      assert(stream instanceof NativeReadableStream);
+      await new Response(stream).arrayBuffer();
+      assertEquals(replacementCalls, 0);
+      assertEquals(resolverActive, false);
+    } finally {
+      revokeModelRuntimeResolver(resolver);
+    }
+  });
+
   it("revokes stream authority when Promise.prototype.catch is replaced", async () => {
     const model = scriptedModel([
       { hangUntilAbort: true, parts: [{ type: "text-delta", text: "thinking" }] },

@@ -2,6 +2,8 @@ import type { AgentContext, AgentMiddleware, AgentResponse } from "../types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { MIDDLEWARE_ERROR } from "#veryfront/errors";
 
+const MIDDLEWARE_SETTLEMENT_YIELD = Promise.resolve();
+
 export class MiddlewareChain {
   private middleware: AgentMiddleware[];
 
@@ -38,8 +40,10 @@ export class MiddlewareChain {
                 nextCalled = true;
                 // A reaction registered by the middleware can enter next()
                 // before our await observes that middleware's settled promise.
-                // Yield once so the enclosing finally closes the continuation.
-                await Promise.resolve();
+                // Two intrinsic yields let an already-settled short-circuit run
+                // the enclosing finally before this continuation dispatches.
+                await MIDDLEWARE_SETTLEMENT_YIELD;
+                await MIDDLEWARE_SETTLEMENT_YIELD;
                 if (middlewareSettled) {
                   throw createReplayError();
                 }
