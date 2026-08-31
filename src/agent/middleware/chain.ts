@@ -32,25 +32,13 @@ type ContinuationRejectionHandler = (
 ) => void;
 
 class ObservedContinuationPromise<T> extends Promise<T> {
-  private static pendingRejectionHandler: ContinuationRejectionHandler | undefined;
   private observed = false;
-  private readonly rejectionHandler?: ContinuationRejectionHandler;
 
   constructor(
     executor: ContinuationExecutor<T>,
-    onRejection?: ContinuationRejectionHandler,
+    private readonly onRejection?: ContinuationRejectionHandler,
   ) {
-    const inheritedRejectionHandler = ObservedContinuationPromise.pendingRejectionHandler;
-    ObservedContinuationPromise.pendingRejectionHandler = undefined;
     super(executor);
-    this.rejectionHandler = onRejection ?? inheritedRejectionHandler;
-    if (this.rejectionHandler) {
-      observeContinuationRejection(
-        this,
-        this.rejectionHandler,
-        () => this.observed,
-      );
-    }
   }
 
   override then<TResult1 = T, TResult2 = never>( // NOSONAR: tracks Promise observation for detached-error diagnostics.
@@ -58,12 +46,20 @@ class ObservedContinuationPromise<T> extends Promise<T> {
     onRejected?: ContinuationThenHandler<unknown, TResult2>,
   ): Promise<TResult1 | TResult2> {
     this.observed = true;
-    ObservedContinuationPromise.pendingRejectionHandler = this.rejectionHandler;
-    try {
-      return super.then(onFulfilled, onRejected);
-    } finally {
-      ObservedContinuationPromise.pendingRejectionHandler = undefined;
+    const derived = super.then(onFulfilled, onRejected);
+    if (this.onRejection) {
+      const observedDerived = derived as ObservedContinuationPromise<TResult1 | TResult2>;
+      observeContinuationRejection(
+        derived,
+        this.onRejection,
+        () => observedDerived.isObserved(),
+      );
     }
+    return derived;
+  }
+
+  isObserved(): boolean {
+    return this.observed;
   }
 }
 
@@ -71,7 +67,23 @@ function createObservedContinuation<T>(
   executor: ContinuationExecutor<T>,
   onRejection?: ContinuationRejectionHandler,
 ): Promise<T> {
-  return new ObservedContinuationPromise<T>(executor, onRejection);
+  const continuation = new ObservedContinuationPromise<T>(executor, onRejection);
+  if (onRejection) {
+    const DerivedContinuationPromise = class extends ObservedContinuationPromise<T> {
+      constructor(derivedExecutor: ContinuationExecutor<T>) {
+        super(derivedExecutor, onRejection);
+      }
+    };
+    Object.defineProperty(continuation, "constructor", {
+      value: DerivedContinuationPromise,
+    });
+    observeContinuationRejection(
+      continuation,
+      onRejection,
+      () => continuation.isObserved(),
+    );
+  }
+  return continuation;
 }
 
 function adoptContinuationResult(
