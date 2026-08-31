@@ -1945,15 +1945,27 @@ interface CsiRestorationStates {
 type CsiUrlPayloadKind = "generic" | "special" | "none";
 
 const MAX_GENERIC_URL_SCHEME_LENGTH = 32;
+const MAX_CSI_LITERAL_GAP = MAX_GENERIC_URL_SCHEME_LENGTH * 2;
 const GENERIC_URL_SCHEME_FIRST_CHARACTER = /[A-Za-z]/;
 const GENERIC_URL_SCHEME_CHARACTER = /[A-Za-z0-9+.-]/;
 const CSI_URL_PAYLOAD_CHARACTER = /[^\s"'\\]/u;
 
 function appendCsiSchemeMatch(path: readonly number[], matchIndex: number): readonly number[] {
   const appended: number[] = [];
-  for (let index = 0; index < path.length; index++) appended[index] = path[index]!;
-  appended[path.length] = matchIndex;
+  for (let index = 0; index < path.length; index++) {
+    defineOwnArrayElement(appended, index, path[index]!);
+  }
+  defineOwnArrayElement(appended, path.length, matchIndex);
   return appended;
+}
+
+function defineOwnArrayElement<T>(target: T[], index: number, value: T): void {
+  const descriptor = createNullPrototypeDescriptor();
+  descriptor.value = value;
+  descriptor.writable = true;
+  descriptor.enumerable = true;
+  descriptor.configurable = true;
+  ReflectApply(ObjectDefineProperty, Object, [target, index, descriptor]);
 }
 
 function keepShorterCsiSchemePath(
@@ -1989,14 +2001,16 @@ function keepPreferredGenericCsiPath(
 
 function createDenseCsiPathStates(length: number): Array<readonly number[] | undefined> {
   const states: Array<readonly number[] | undefined> = [];
-  for (let index = 0; index <= length; index++) states[index] = undefined;
+  for (let index = 0; index <= length; index++) {
+    defineOwnArrayElement(states, index, undefined);
+  }
   return states;
 }
 
 function createDenseGenericCsiStates(): CsiGenericSchemeStates {
   const states: CsiGenericSchemeStates = [];
   for (let index = 0; index <= MAX_GENERIC_URL_SCHEME_LENGTH; index++) {
-    states[index] = undefined;
+    defineOwnArrayElement(states, index, undefined);
   }
   return states;
 }
@@ -2004,7 +2018,11 @@ function createDenseGenericCsiStates(): CsiGenericSchemeStates {
 function createCsiSchemeStates(): CsiSchemeStates {
   const states: CsiSchemeStates = [];
   for (let index = 0; index < CSI_SPLITTABLE_URL_SCHEMES.length; index++) {
-    states[index] = createDenseCsiPathStates(CSI_SPLITTABLE_URL_SCHEMES[index]!.length);
+    defineOwnArrayElement(
+      states,
+      index,
+      createDenseCsiPathStates(CSI_SPLITTABLE_URL_SCHEMES[index]!.length),
+    );
   }
   return states;
 }
@@ -2197,6 +2215,24 @@ function advanceCsiSchemeSequence(
   return { special, generic };
 }
 
+function advanceCsiLiteralRange(
+  states: CsiRestorationStates,
+  value: string,
+  startIndex: number,
+  endIndex: number,
+  restoreMatches: Set<number>,
+): CsiRestorationStates {
+  for (let index = startIndex; index < endIndex; index++) {
+    const literal = ReflectApply(
+      StringPrototypeToLowerCase,
+      stringSlice(value, index, index + 1),
+      [],
+    ) as string;
+    states = advanceCsiSchemeLiteral(states, literal, value, index, restoreMatches);
+  }
+  return states;
+}
+
 /**
  * Restore a URL-scheme character consumed as a CSI final byte.
  *
@@ -2225,13 +2261,33 @@ function restoreCsiSplitUrlSchemes(value: string): string {
     let inputOffset = 0;
     while (match !== null) {
       const matched = match[0];
-      for (let index = inputOffset; index < match.index; index++) {
-        const literal = ReflectApply(
-          StringPrototypeToLowerCase,
-          stringSlice(value, index, index + 1),
-          [],
-        ) as string;
-        states = advanceCsiSchemeLiteral(states, literal, value, index, restoreMatches);
+      const gapLength = match.index - inputOffset;
+      if (gapLength > MAX_CSI_LITERAL_GAP) {
+        if (matches.length > 0) {
+          states = advanceCsiLiteralRange(
+            states,
+            value,
+            inputOffset,
+            inputOffset + MAX_GENERIC_URL_SCHEME_LENGTH,
+            restoreMatches,
+          );
+        }
+        states = createCsiRestorationStates();
+        states = advanceCsiLiteralRange(
+          states,
+          value,
+          match.index - MAX_GENERIC_URL_SCHEME_LENGTH,
+          match.index,
+          restoreMatches,
+        );
+      } else {
+        states = advanceCsiLiteralRange(
+          states,
+          value,
+          inputOffset,
+          match.index,
+          restoreMatches,
+        );
       }
       const finalByte = ReflectApply(
         StringPrototypeToLowerCase,
@@ -2239,11 +2295,11 @@ function restoreCsiSplitUrlSchemes(value: string): string {
         [],
       ) as string;
       const matchIndex = matches.length;
-      matches[matchIndex] = {
+      defineOwnArrayElement(matches, matchIndex, {
         matched,
         inputIndex: match.index,
         inputEnd: ANSI_CSI_SEQUENCE.lastIndex,
-      };
+      });
       states = advanceCsiSchemeSequence(states, finalByte, matchIndex, match.index);
       inputOffset = ANSI_CSI_SEQUENCE.lastIndex;
       match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE, [value]) as
@@ -2251,14 +2307,10 @@ function restoreCsiSplitUrlSchemes(value: string): string {
         | null;
     }
 
-    for (let index = inputOffset; index < value.length; index++) {
-      const literal = ReflectApply(
-        StringPrototypeToLowerCase,
-        stringSlice(value, index, index + 1),
-        [],
-      ) as string;
-      states = advanceCsiSchemeLiteral(states, literal, value, index, restoreMatches);
-    }
+    const tailWindowEnd = inputOffset + MAX_GENERIC_URL_SCHEME_LENGTH < value.length
+      ? inputOffset + MAX_GENERIC_URL_SCHEME_LENGTH
+      : value.length;
+    advanceCsiLiteralRange(states, value, inputOffset, tailWindowEnd, restoreMatches);
 
     let output = "";
     let outputOffset = 0;

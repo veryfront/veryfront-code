@@ -5845,6 +5845,26 @@ export default config as const;
         assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
       });
 
+      it("bounds CSI scheme reconstruction after an ordinary sequence", async () => {
+        const size = 200000;
+        const control = await fastestLoad(
+          "vf-config-long-csi-control-",
+          `throw new Error("a".repeat(${size}));\n`,
+        );
+        const controlMs = Math.max(1, control.ms);
+        const { ms: probeMs, error } = await fastestLoad(
+          "vf-config-long-csi-probe-",
+          `throw new Error(String.fromCharCode(27) + "[31m" + "a".repeat(${size}));\n`,
+        );
+
+        assertEquals(
+          probeMs < controlMs * 3,
+          true,
+          `probe ${probeMs}ms vs control ${controlMs}ms`,
+        );
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+      });
+
       it("redacts a path with a CSI introducer glued to its first character", async () => {
         const posix = await loadFailure(
           "vf-config-csi-glued-posix-",
@@ -6874,6 +6894,27 @@ export default config as const;
         );
 
         assertStringIncludes(prose.message, "Status h ttps: retry");
+      });
+
+      it("creates CSI reconstruction slots without inherited setters", async () => {
+        const original = TestObjectGetOwnPropertyDescriptor(Array.prototype, "32");
+        try {
+          const error = await loadFailure(
+            "vf-config-csi-array-setter-",
+            `Object.defineProperty(Array.prototype, "32", {
+              configurable: true,
+              set() { throw new Error("poisoned indexed setter"); },
+            });
+            throw new Error("Load h" + String.fromCharCode(27) + "[ttps://registry.internal/config.ts");\n`,
+          );
+
+          assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+          assertEquals(error.message.includes("registry.internal"), false);
+          assertStringIncludes(error.message, "Load [url]");
+        } finally {
+          if (original) TestObjectDefineProperty(Array.prototype, "32", original);
+          else TestReflectApply(TestReflectDeleteProperty, Reflect, [Array.prototype, "32"]);
+        }
       });
 
       it("redacts credentials both before and after stripping CSI sequences", async () => {
