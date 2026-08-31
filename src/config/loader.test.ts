@@ -5865,6 +5865,28 @@ export default config as const;
         assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
       });
 
+      it("bounds reconstruction for a CSI-dense config error", async () => {
+        const repeats = 20000;
+        const control = await fastestLoad(
+          "vf-config-dense-csi-control-",
+          `throw new Error("aaaaa".repeat(${repeats}));\n`,
+          1,
+        );
+        const controlMs = Math.max(1, control.ms);
+        const { ms: probeMs, error } = await fastestLoad(
+          "vf-config-dense-csi-probe-",
+          `throw new Error((String.fromCharCode(27) + "[31m").repeat(${repeats}));\n`,
+          1,
+        );
+
+        assertEquals(
+          probeMs < controlMs * 20,
+          true,
+          `probe ${probeMs}ms vs control ${controlMs}ms`,
+        );
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+      });
+
       it("redacts a path with a CSI introducer glued to its first character", async () => {
         const posix = await loadFailure(
           "vf-config-csi-glued-posix-",
@@ -6942,6 +6964,41 @@ export default config as const;
 
         assertStringIncludes(error.message, "Status İ [path]");
         assertEquals(error.message.includes("Status İa [path]"), false);
+      });
+
+      it("redacts a zero-slash URL whose colon is consumed by CSI", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-consumed-zero-slash-colon-",
+          `throw new Error(${
+            JSON.stringify(`Load http${escape}[:@registry.internal/config.ts`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("redacts a file URL whose path delimiters are consumed by CSI", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-consumed-file-delimiters-",
+          `throw new Error(${JSON.stringify(`Load file:${escape}[///home/alice/config.ts`)});\n`,
+        );
+
+        assertEquals(error.message.includes("alice"), false);
+        assertStringIncludes(error.message, "Load [path]");
+      });
+
+      it("does not restore file before an unsupported malformed payload", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-malformed-file-payload-",
+          `throw new Error(${JSON.stringify(`Status fil${escape}[e:value`)});\n`,
+        );
+
+        assertStringIncludes(error.message, "Status fil:value");
+        assertEquals(error.message.includes("file:value"), false);
       });
 
       it("creates CSI reconstruction slots without inherited setters", async () => {
