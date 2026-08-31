@@ -292,5 +292,27 @@ describe("server/handlers/response/cors", () => {
         "Authorization, X-App-Trace",
       );
     });
+
+    it("does not advertise dynamically denied application identity headers", async () => {
+      const result = await new CorsHandler().handle(
+        new Request("http://localhost/webhook", {
+          method: "OPTIONS",
+          headers: {
+            Origin: "https://app.example",
+            "access-control-request-method": "POST",
+            "access-control-request-headers": "Authorization, X-Auth-Subject, X-App-Trace",
+          },
+        }),
+        makeCtx({
+          applicationIdentityHeaderNames: ["x-auth-subject"],
+          securityConfig: { cors: { origin: ["https://app.example"] } } as never,
+        }),
+      );
+
+      assertEquals(
+        result.response?.headers.get("access-control-allow-headers"),
+        "Authorization, X-App-Trace",
+      );
+    });
   });
 });
