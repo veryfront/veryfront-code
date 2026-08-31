@@ -252,15 +252,17 @@ export class APIRouteHandler {
     request: Request,
     ctx?: HandlerContext,
   ): Promise<{ frameworkOwned: boolean; response?: Response }> {
-    if (!isPreflightRequest(request)) return { frameworkOwned: false };
+    if (request.method.toUpperCase() !== "OPTIONS") return { frameworkOwned: false };
+    const isBrowserPreflight = isPreflightRequest(request);
     if (requiresIsolatedProjectRuntime(ctx)) {
       // The denied-execution wrapper creates the public fallback response.
-      return { frameworkOwned: true };
+      return { frameworkOwned: isBrowserPreflight };
     }
 
     const { pathname } = new URL(request.url);
     const match = this.router.match(pathname);
     if (!match) {
+      if (!isBrowserPreflight) return { frameworkOwned: false };
       return {
         frameworkOwned: true,
         response: await this.automaticPreflight(request, undefined, ctx),
@@ -279,17 +281,17 @@ export class APIRouteHandler {
       return { frameworkOwned: false };
     }
 
-    return {
-      frameworkOwned: true,
-      response: await this.automaticPreflight(
+    const response = isBrowserPreflight
+      ? await this.automaticPreflight(
         request,
         await resolveStaticRouteMethodsFromSource(
           source,
           this.requestedPreflightMethod(request),
         ),
         ctx,
-      ),
-    };
+      )
+      : undefined;
+    return { frameworkOwned: true, ...(response ? { response } : {}) };
   }
 
   /**
@@ -701,7 +703,7 @@ export class APIRouteHandler {
       : DEFAULT_CORS_METHODS.join(", ");
     const response = await handleCORSPreflight({
       request,
-      config: this.corsConfig ?? undefined,
+      config: ctx?.securityConfig?.cors ?? this.corsConfig ?? undefined,
       allowMethods,
       allowHeaders: getApplicationPreflightHeaders(request, {
         denyHeaders: ctx?.applicationIdentityHeaderNames,

@@ -71,10 +71,11 @@ export class ApiHandlerWrapper extends BaseHandler {
   }
 
   async prepareFrameworkOwnedPreflight(req: Request, ctx: HandlerContext): Promise<boolean> {
-    if (!isPreflightRequest(req)) return false;
+    if (req.method.toUpperCase() !== "OPTIONS") return false;
+    const isBrowserPreflight = isPreflightRequest(req);
     if (requiresIsolatedProjectRuntime(ctx)) {
-      ctx.frameworkOwnedPreflight = true;
-      return true;
+      if (isBrowserPreflight) ctx.frameworkOwnedPreflight = true;
+      return isBrowserPreflight;
     }
 
     const fsWrapper = ctx.adapter.fs as FsWrapper;

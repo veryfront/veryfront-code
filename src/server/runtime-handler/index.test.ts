@@ -28,7 +28,6 @@ import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/run
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createMockOidcProvider } from "#veryfront/security/application-auth/mock-oidc-provider.ts";
 import { createSessionCookie } from "#veryfront/security/application-auth/cookies.ts";
-import { createMockAdapter as createRouteMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { MiddlewareFunction } from "#veryfront/server/dev-server/middleware.ts";
 import { ProjectMiddlewareRuntime } from "./project-middleware.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
@@ -761,7 +760,7 @@ describe("server/runtime-handler/index", () => {
       runInRequestProjectEnv: (operation) => operation(),
     });
 
-    assertEquals(admission, "bypass-middleware-retained");
+    assertEquals(admission, "not-applicable");
     sourceVersion++;
 
     const runtime = new ProjectMiddlewareRuntime({ loadMiddleware: () => Promise.resolve([]) });
@@ -776,33 +775,6 @@ describe("server/runtime-handler/index", () => {
       Error,
       "changed after request configuration was derived",
     );
-  });
-
-  it("keeps unmatched API OPTIONS public before project middleware", async () => {
-    let middlewareCalls = 0;
-    const handler = createVeryfrontHandler(
-      "/tmp/test-unmatched-options-public",
-      createMockAdapter(),
-      {
-        projectDir: "/tmp/test-unmatched-options-public",
-        config: {
-          middleware: {
-            custom: [() => {
-              middlewareCalls++;
-              return new Response("middleware ran", { status: 403 });
-            }],
-          },
-        } satisfies VeryfrontConfig,
-        allowHostProjectCodeExecution: true,
-      },
-    );
-
-    const response = await handler(
-      new Request("http://localhost/api/missing", { method: "OPTIONS" }),
-    );
-
-    assertEquals(response.status, 204);
-    assertEquals(middlewareCalls, 0);
   });
 
   it("does not replay project middleware after a downstream snapshot failure", async () => {

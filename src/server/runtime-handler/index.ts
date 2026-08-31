@@ -202,11 +202,6 @@ export async function prepareOptionsBeforeProjectMiddleware(input: {
       },
     )
   );
-  if (admission === "not-applicable") {
-    const pathname = new URL(input.request.url).pathname;
-    const isApiPath = pathname === "/api" || pathname.startsWith("/api/");
-    if (isApiPath) return "bypass-middleware-retained";
-  }
   return admission === "bypass-middleware" ? "bypass-middleware-retained" : admission;
 }
 
@@ -838,13 +833,15 @@ export function createVeryfrontHandler(
             skipProjectMiddleware = authOutcome.skipProjectMiddleware;
           }
 
-          const optionsAdmission = await prepareOptionsBeforeProjectMiddleware({
-            request,
-            ctx,
-            sourceIntegrationPolicy,
-            runInFilesystemContext,
-            runInRequestProjectEnv,
-          });
+          const optionsAdmission = isFrameworkOwnedPreflight
+            ? "not-applicable"
+            : await prepareOptionsBeforeProjectMiddleware({
+              request,
+              ctx,
+              sourceIntegrationPolicy,
+              runInFilesystemContext,
+              runInRequestProjectEnv,
+            });
 
           const executeRegistry = async () => (await registry.execute(request, ctx)) ?? undefined;
           const executeRegistryWithRetainedSnapshot = () =>
