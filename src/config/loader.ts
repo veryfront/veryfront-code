@@ -1913,6 +1913,10 @@ const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/g;
 // Strip complete CSI sequences before matching paths and URLs.
 // deno-lint-ignore no-control-regex
 const ANSI_CSI_SEQUENCE = /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\u0040-\u007E]/g;
+// Keep payload lookahead independent from the global reconstruction cursor.
+const ANSI_CSI_SEQUENCE_AT_INDEX =
+  // deno-lint-ignore no-control-regex
+  /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\u0040-\u007E]/y;
 const CSI_SPLITTABLE_URL_SCHEMES = freezeObject([
   "http",
   "https",
@@ -2062,8 +2066,23 @@ function markCsiSchemePath(path: readonly number[] | undefined, restoreMatches: 
   }
 }
 
+function skipCompleteCsiSequences(value: string, index: number): number {
+  try {
+    while (index < value.length) {
+      ANSI_CSI_SEQUENCE_AT_INDEX.lastIndex = index;
+      const match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE_AT_INDEX, [value]);
+      if (match === null) break;
+      index = ANSI_CSI_SEQUENCE_AT_INDEX.lastIndex;
+    }
+    return index;
+  } finally {
+    ANSI_CSI_SEQUENCE_AT_INDEX.lastIndex = 0;
+  }
+}
+
 function hasCsiUrlPayloadCharacter(value: string, index: number): boolean {
-  const character = stringSlice(value, index, index + 1);
+  const payloadIndex = skipCompleteCsiSequences(value, index);
+  const character = stringSlice(value, payloadIndex, payloadIndex + 1);
   return character !== "" &&
     ReflectApply(RegExpPrototypeExec, CSI_URL_PAYLOAD_CHARACTER, [character]) !== null;
 }

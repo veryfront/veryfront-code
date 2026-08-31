@@ -6896,6 +6896,19 @@ export default config as const;
         assertStringIncludes(prose.message, "Status h ttps: retry");
       });
 
+      it("does not restore a split scheme before an empty colorized payload", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-split-empty-payload-",
+          `throw new Error(${
+            JSON.stringify(`Status htt${escape}[p:${escape}[31m unavailable`)
+          });\n`,
+        );
+
+        assertStringIncludes(error.message, "Status htt: unavailable");
+        assertEquals(error.message.includes("http: unavailable"), false);
+      });
+
       it("creates CSI reconstruction slots without inherited setters", async () => {
         const original = TestObjectGetOwnPropertyDescriptor(Array.prototype, "32");
         try {
