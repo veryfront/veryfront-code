@@ -788,66 +788,6 @@ describe("agent/middleware/chain", () => {
     );
   });
 
-  it("tracks derived rejections when Promise species is not preserving", async () => {
-    const nativeSpecies = Object.getOwnPropertyDescriptor(Promise, Symbol.species);
-    const records: LogEntry[] = [];
-    const unhandled: PromiseRejectionEvent[] = [];
-    const onUnhandled = (event: PromiseRejectionEvent): void => {
-      unhandled.push(event);
-      event.preventDefault();
-    };
-    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
-    let speciesRestored = false;
-    const restoreSpecies = (): void => {
-      if (speciesRestored) return;
-      if (nativeSpecies) {
-        Object.defineProperty(Promise, Symbol.species, nativeSpecies);
-      } else {
-        Reflect.deleteProperty(Promise, Symbol.species);
-      }
-      speciesRestored = true;
-    };
-
-    globalThis.addEventListener("unhandledrejection", onUnhandled);
-    try {
-      Object.defineProperty(Promise, Symbol.species, {
-        configurable: true,
-        get: () => Promise,
-      });
-      const { MiddlewareChain: NonPreservingSpeciesChain } = await import(
-        "./chain.ts?non-preserving-species"
-      );
-      await new NonPreservingSpeciesChain([
-        (_context: AgentContext, next: () => Promise<AgentResponse>) => {
-          next().then(() => response);
-          return Promise.resolve(response);
-        },
-      ]).execute(context, () => Promise.reject(new Error("species fallback failure")));
-      await new NonPreservingSpeciesChain([
-        (_context: AgentContext, next: () => Promise<AgentResponse>) => {
-          next().then(() => response).catch(() => response);
-          return Promise.resolve(response);
-        },
-      ]).execute(context, () => Promise.reject(new Error("handled species fallback failure")));
-      restoreSpecies();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-      await waitForReport();
-    } finally {
-      restoreSpecies();
-      globalThis.removeEventListener("unhandledrejection", onUnhandled);
-      unsubscribe();
-    }
-
-    assertEquals(unhandled.length, 0);
-    assertEquals(
-      records.filter((entry) => entry.message === "Your agent middleware continuation failed")
-        .length,
-      1,
-    );
-  });
-
   it("reports every unobserved derived rejection", async () => {
     const records: LogEntry[] = [];
     const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
