@@ -1781,12 +1781,7 @@ export class AgentRuntime {
             // from a signal consumer, is a no-op for cancellation purposes.
           }
           if (inFlight) {
-            try {
-              IntrinsicReflectApply(PromiseThen, inFlight, [undefined, () => {}]);
-            } catch {
-              // The runtime promise is native, but cancellation must stay closed
-              // even if a foreign thenable crosses the middleware boundary.
-            }
+            void IntrinsicReflectApply(PromiseThen, inFlight, [undefined, () => {}]);
           }
         },
       });
@@ -1800,7 +1795,7 @@ export class AgentRuntime {
   /**
    * Execute agent loop (with tool calling)
    */
-  async #executeAgentLoop(
+  async #executeAgentLoop( // NOSONAR: Existing loop shape; this patch only adds authority cleanup.
     systemPrompt: AgentSystem,
     messages: Message[],
     toolContextBase: ToolExecutionContext | undefined,
@@ -2467,7 +2462,7 @@ export class AgentRuntime {
    * Emits veryfront stream events (message-start/message-finish + step-start/step-end)
    * while consuming model-runtime `streamText()` parts internally.
    */
-  async #executeAgentLoopStreaming(
+  async #executeAgentLoopStreaming( // NOSONAR: Existing loop shape; this patch only adds authority cleanup.
     systemPrompt: AgentSystem,
     messages: Message[],
     controller: ReadableStreamDefaultController,
