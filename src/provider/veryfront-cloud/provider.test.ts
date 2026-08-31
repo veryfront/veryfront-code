@@ -256,7 +256,9 @@ describe("provider/veryfront-cloud", () => {
 
     Object.create = ((prototype: object | null, properties?: PropertyDescriptorMap) => {
       observe(prototype);
-      return originalCreate(prototype, properties);
+      return properties === undefined
+        ? originalCreate(prototype)
+        : originalCreate(prototype, properties);
     }) as typeof Object.create;
     Object.defineProperties = ((object: object, properties: PropertyDescriptorMap) => {
       observe(object);
