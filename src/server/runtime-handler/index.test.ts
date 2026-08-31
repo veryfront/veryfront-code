@@ -29,7 +29,7 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createMockOidcProvider } from "#veryfront/security/application-auth/mock-oidc-provider.ts";
 import { createSessionCookie } from "#veryfront/security/application-auth/cookies.ts";
 import type { MiddlewareFunction } from "#veryfront/server/dev-server/middleware.ts";
-import { ProjectMiddlewareRuntime } from "./project-middleware.ts";
+import { ProjectMiddlewareRuntime } from "#veryfront/server/runtime-handler/project-middleware.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import {
   createSnapshot,
@@ -45,7 +45,16 @@ import {
   getCurrentRequestContext,
   runWithRequestContext,
 } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
-import { seedPreviewDocumentSourceSnapshot } from "../handlers/request/source-snapshot-freshness.ts";
+import { seedPreviewDocumentSourceSnapshot } from "#veryfront/server/handlers/request/source-snapshot-freshness.ts";
+import { fromFileUrl, join } from "#veryfront/compat/path/index.ts";
+
+const TEST_FIXTURES_ROOT = fromFileUrl(
+  new URL("../../../test-fixtures/", import.meta.url),
+);
+
+function testProjectDir(name: string): string {
+  return join(TEST_FIXTURES_ROOT, name);
+}
 
 function createMockAdapter(
   envValues: Record<string, string> = {},
@@ -741,7 +750,7 @@ describe("server/runtime-handler/index", () => {
     fs.getSourceSnapshotIdentity = () => "branch:unmatched-options:main";
     fs.getSourceSnapshotVersion = () => sourceVersion;
     const context: HandlerContext = {
-      projectDir: "/tmp/test-unmatched-options",
+      projectDir: testProjectDir("unmatched-options"),
       adapter,
       config: {},
       securityConfig: null,
@@ -856,7 +865,7 @@ describe("server/runtime-handler/index", () => {
   });
 
   it("admits an explicit OPTIONS route before identity-gated project middleware", async () => {
-    const projectDir = "/tmp/test-options-middleware-auth";
+    const projectDir = testProjectDir("options-middleware-auth");
     let middlewareCalls = 0;
     const identityMiddleware: MiddlewareFunction = async (context, next) => {
       middlewareCalls++;
@@ -885,7 +894,7 @@ describe("server/runtime-handler/index", () => {
   });
 
   it("keeps automatic OPTIONS public before identity-gated project middleware", async () => {
-    const projectDir = "/tmp/test-options-middleware-fallback";
+    const projectDir = testProjectDir("options-middleware-fallback");
     let middlewareCalls = 0;
     const identityGate: MiddlewareFunction = () => {
       middlewareCalls++;
@@ -907,7 +916,7 @@ describe("server/runtime-handler/index", () => {
   });
 
   it("keeps authenticated automatic preflight ahead of project middleware", async () => {
-    const projectDir = "/tmp/test-options-authenticated-preflight";
+    const projectDir = testProjectDir("options-authenticated-preflight");
     let middlewareCalls = 0;
     const middleware: MiddlewareFunction = () => {
       middlewareCalls++;
@@ -938,7 +947,7 @@ describe("server/runtime-handler/index", () => {
   });
 
   it("short-circuits rejected explicit OPTIONS auth before project middleware", async () => {
-    const projectDir = "/tmp/test-options-middleware-rejection";
+    const projectDir = testProjectDir("options-middleware-rejection");
     let middlewareCalls = 0;
     const middleware: MiddlewareFunction = () => {
       middlewareCalls++;
@@ -964,7 +973,7 @@ describe("server/runtime-handler/index", () => {
   });
 
   it("keeps unauthenticated App-route preflight public before project middleware", async () => {
-    const projectDir = "/tmp/test-options-app-route-preflight";
+    const projectDir = testProjectDir("options-app-route-preflight");
     let middlewareCalls = 0;
     const middleware: MiddlewareFunction = () => {
       middlewareCalls++;
@@ -1663,7 +1672,7 @@ describe("server/runtime-handler/index", () => {
   });
 
   it("keeps shared-runtime automatic OPTIONS ahead of project middleware", async () => {
-    const projectDir = "/tmp/test-shared-options-fallback";
+    const projectDir = testProjectDir("shared-options-fallback");
     const adapter = createRouteMockAdapter();
     adapter.fs.files.set(
       `${projectDir}/veryfront.config.ts`,
