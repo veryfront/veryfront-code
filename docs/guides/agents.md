@@ -563,20 +563,22 @@ export default agent({
 | `middleware`          | `AgentMiddleware[]`                                                                                    | Execution middleware                                                                                  |
 | `allowedModels`       | `string[]`                                                                                             | Restrict runtime model overrides to these `provider/model` strings                                    |
 
-Each agent middleware invocation receives a single-use `next()` continuation. You
-must call `next()` at most once while the middleware is active.
-The continuation becomes invalid when that middleware's returned promise
-settles. Calling it again or after settlement rejects with the registered
-`middleware-error`.
-If you call `next()` after the middleware function returns, downstream dispatch
-starts on the next microtask so settlement revocation wins races with an
-already-fulfilled middleware promise.
-If you intentionally detach that promise, attach its rejection handler in the
-same turn or a microtask; detached-failure reporting runs on the next
-macrotask after that grace window.
-Handlers attached after the macrotask grace window will not suppress the
-report. Synchronous throws also settle the middleware invocation and revoke
-its continuation.
+Each agent middleware invocation receives a single-use `next()` continuation.
+Its lifecycle is:
+
+- Call `next()` at most once while the middleware is active.
+- The continuation becomes invalid when that middleware's returned promise
+  settles. Calling it again or after settlement rejects with the registered
+  `middleware-error`.
+- If you call `next()` after the middleware function returns, downstream
+  dispatch starts on the next microtask so settlement revocation wins races
+  with an already-fulfilled middleware promise.
+- If you intentionally detach that promise, attach its rejection handler in
+  the same turn or a microtask; detached-failure reporting runs on the next
+  macrotask after that grace window.
+- Handlers attached after the macrotask grace window will not suppress the
+  report. Synchronous throws also settle the middleware invocation and revoke
+  its continuation.
 
 ## Verify it worked
 

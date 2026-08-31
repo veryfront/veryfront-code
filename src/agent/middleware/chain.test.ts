@@ -12,6 +12,7 @@ const replayError =
   "You must call agent middleware next() at most once while the middleware is active";
 
 function waitForReport(): Promise<void> {
+  // The implementation queues its setTimeout(0) before this test helper.
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 

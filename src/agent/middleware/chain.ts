@@ -89,6 +89,8 @@ function createObservedContinuation<T>(
     );
     if (!PROMISE_SPECIES_SUPPORTED) return continuation;
 
+    // Per-continuation class: species requires a distinct constructor per
+    // observed chain.
     const DerivedContinuationPromise = class extends ObservedContinuationPromise<T> {
       static override get [Symbol.species](): PromiseConstructor {
         return this as PromiseConstructor;
