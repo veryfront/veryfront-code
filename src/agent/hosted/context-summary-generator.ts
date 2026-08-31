@@ -12,7 +12,7 @@ import type { AgentRuntimeMessage, AgentRuntimeMessagePart } from "../runtime/me
 import type { ContextSummaryGenerator } from "./context-budget-manager.ts";
 import {
   type AgentModelRuntimeResolver,
-  revokeModelRuntimeResolver,
+  createModelRuntimeResolverAbortScope,
 } from "../runtime/model-transport.ts";
 
 const DEFAULT_MAX_SERIALIZED_PART_CHARACTERS = 20_000;
@@ -226,7 +226,7 @@ export function createRunScopedVeryfrontCloudContextSummaryGenerator(
   options: Omit<VeryfrontCloudContextSummaryGeneratorOptions, "resolveModel">,
   createModelResolver: () => AgentModelRuntimeResolver | undefined,
 ): ContextSummaryGenerator {
-  const { authToken, ...baseOptions } = options;
+  const { authToken, abortSignal, ...baseOptions } = options;
   let used = false;
   return async (input) => {
     if (used) {
@@ -235,9 +235,14 @@ export function createRunScopedVeryfrontCloudContextSummaryGenerator(
     used = true;
 
     const resolveModelRuntime = createModelResolver();
+    const abortScope = createModelRuntimeResolverAbortScope(
+      resolveModelRuntime,
+      abortSignal,
+    );
     try {
       return await createVeryfrontCloudContextSummaryGenerator({
         ...baseOptions,
+        abortSignal: abortScope.signal,
         ...(resolveModelRuntime
           ? {
             resolveModel: (modelId: string) => {
@@ -253,7 +258,7 @@ export function createRunScopedVeryfrontCloudContextSummaryGenerator(
           : { authToken }),
       })(input);
     } finally {
-      revokeModelRuntimeResolver(resolveModelRuntime);
+      abortScope.dispose();
     }
   };
 }

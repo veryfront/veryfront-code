@@ -64,6 +64,58 @@ export function revokeModelRuntimeResolver(resolver: AgentModelRuntimeResolver |
   state.revoke();
 }
 
+/** @internal Revoke private model authority before caller abort listeners run. */
+export function createModelRuntimeResolverAbortGuard(
+  resolver: AgentModelRuntimeResolver | undefined,
+  signal?: AbortSignal,
+): {
+  revoke: () => void;
+  dispose: () => void;
+} {
+  const revoke = () => revokeModelRuntimeResolver(resolver);
+  signal?.addEventListener("abort", revoke, { once: true });
+
+  return {
+    revoke,
+    dispose: () => {
+      signal?.removeEventListener("abort", revoke);
+      revoke();
+    },
+  };
+}
+
+/** @internal Couple private model authority to a child cancellation signal. */
+export function createModelRuntimeResolverAbortScope(
+  resolver: AgentModelRuntimeResolver | undefined,
+  upstreamSignal?: AbortSignal,
+): {
+  signal: AbortSignal;
+  abort: (reason?: unknown) => void;
+  revoke: () => void;
+  dispose: () => void;
+} {
+  const controller = new AbortController();
+  const revoke = () => revokeModelRuntimeResolver(resolver);
+  const abort = (reason?: unknown) => {
+    revoke();
+    if (!controller.signal.aborted) controller.abort(reason);
+  };
+  const abortFromUpstream = () => abort(upstreamSignal?.reason);
+
+  if (upstreamSignal?.aborted) abortFromUpstream();
+  else upstreamSignal?.addEventListener("abort", abortFromUpstream, { once: true });
+
+  return {
+    signal: controller.signal,
+    abort,
+    revoke,
+    dispose: () => {
+      upstreamSignal?.removeEventListener("abort", abortFromUpstream);
+      revoke();
+    },
+  };
+}
+
 export interface ResolveAgentModelTransportInput {
   agentId: string;
   config: AgentConfig;

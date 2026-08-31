@@ -269,6 +269,8 @@ import { resolveTemperatureParameter } from "./model-capabilities.ts";
 import { applySkillDelegationOverridesToToolInput } from "./skill-delegation-overrides.ts";
 import {
   type AgentModelRuntimeResolver,
+  createModelRuntimeResolverAbortGuard,
+  createModelRuntimeResolverAbortScope,
   resolveAgentModelTransport,
   type ResolvedModelTransport,
   revokeModelRuntimeResolver,
@@ -1485,6 +1487,7 @@ export class AgentRuntime {
       modelOverride,
       "generate",
     );
+    const abortGuard = createModelRuntimeResolverAbortGuard(resolveModelRuntime, abortSignal);
     try {
       throwIfAborted(abortSignal);
       const outputSchema = this.resolveOutputSchema(options?.outputSchema);
@@ -1520,41 +1523,46 @@ export class AgentRuntime {
         const chain = new MiddlewareChain(this.config.middleware);
         return chain.execute(
           agentContext,
-          () =>
-            runWithRemoteIntegrationToolDiscoveryScope(() =>
-              this.#executeAgentLoop(
-                systemPrompt,
-                messages,
-                {
-                  agentId: this.id,
-                  projectId: tryGetCacheKeyContext()?.projectId,
-                },
-                context,
-                runRuntimeContext,
-                supportsToolCalling,
-                providerReplayCheckpointEmission,
-                resolvedModelString,
-                transport.languageModel,
-                transport.headers,
-                transport.providerOptions,
-                transport.reasoning,
-                maxOutputTokensOverride,
-                requestedModel,
-                this.createGenerateReplacementTools(
-                  options?.toolReplacements,
-                  options?.retainSkillLoaderTools,
-                ),
-                abortSignal,
-                outputSchema,
-              )
-            ),
+          async () => {
+            try {
+              return await runWithRemoteIntegrationToolDiscoveryScope(() =>
+                this.#executeAgentLoop(
+                  systemPrompt,
+                  messages,
+                  {
+                    agentId: this.id,
+                    projectId: tryGetCacheKeyContext()?.projectId,
+                  },
+                  context,
+                  runRuntimeContext,
+                  supportsToolCalling,
+                  providerReplayCheckpointEmission,
+                  resolvedModelString,
+                  transport.languageModel,
+                  transport.headers,
+                  transport.providerOptions,
+                  transport.reasoning,
+                  maxOutputTokensOverride,
+                  requestedModel,
+                  this.createGenerateReplacementTools(
+                    options?.toolReplacements,
+                    options?.retainSkillLoaderTools,
+                  ),
+                  abortSignal,
+                  outputSchema,
+                )
+              );
+            } finally {
+              abortGuard.revoke();
+            }
+          },
         );
       }).catch(async (error) => {
         await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission);
         throw error;
       });
     } finally {
-      revokeModelRuntimeResolver(resolveModelRuntime);
+      abortGuard.dispose();
     }
   }
 
@@ -1601,6 +1609,7 @@ export class AgentRuntime {
       modelOverride,
       "stream",
     );
+    const abortScope = createModelRuntimeResolverAbortScope(resolveModelRuntime, abortSignal);
     try {
       const outputSchema = this.resolveOutputSchema(options?.outputSchema);
       const requestedModel = transport.requestedModel;
@@ -1613,19 +1622,7 @@ export class AgentRuntime {
       const systemPrompt = await this.resolveSystemPrompt(transport.providerOptionKey);
 
       const encoder = new TextEncoder();
-      const streamAbortController = new AbortController();
-      const forwardAbort = () => {
-        revokeModelRuntimeResolver(resolveModelRuntime);
-        streamAbortController.abort(abortSignal?.reason);
-      };
-      if (abortSignal) {
-        if (abortSignal.aborted) {
-          forwardAbort();
-        } else {
-          abortSignal.addEventListener("abort", forwardAbort, { once: true });
-        }
-      }
-      const streamAbortSignal = streamAbortController.signal;
+      const streamAbortSignal = abortScope.signal;
       const streamCacheCtx = tryGetCacheKeyContext();
       const toolContext = {
         agentId: this.id,
@@ -1699,31 +1696,36 @@ export class AgentRuntime {
             });
             inFlight = chain.execute(
               agentContext,
-              () =>
-                runWithRemoteIntegrationToolDiscoveryScope(() =>
-                  this.#executeAgentLoopStreaming(
-                    systemPrompt,
-                    memoryMessages,
-                    controller,
-                    encoder,
-                    callbacks,
-                    textPartId,
-                    toolContext,
-                    context,
-                    runRuntimeContext,
-                    supportsToolCalling,
-                    providerReplayCheckpointEmission,
-                    resolvedModelString,
-                    languageModel,
-                    transport.headers,
-                    transport.providerOptions,
-                    transport.reasoning,
-                    maxOutputTokensOverride,
-                    streamAbortSignal,
-                    requestedModel,
-                    outputSchema,
-                  )
-                ),
+              async () => {
+                try {
+                  return await runWithRemoteIntegrationToolDiscoveryScope(() =>
+                    this.#executeAgentLoopStreaming(
+                      systemPrompt,
+                      memoryMessages,
+                      controller,
+                      encoder,
+                      callbacks,
+                      textPartId,
+                      toolContext,
+                      context,
+                      runRuntimeContext,
+                      supportsToolCalling,
+                      providerReplayCheckpointEmission,
+                      resolvedModelString,
+                      languageModel,
+                      transport.headers,
+                      transport.providerOptions,
+                      transport.reasoning,
+                      maxOutputTokensOverride,
+                      streamAbortSignal,
+                      requestedModel,
+                      outputSchema,
+                    )
+                  );
+                } finally {
+                  abortScope.revoke();
+                }
+              },
             );
             const response = await inFlight;
             throwIfAborted(streamAbortSignal);
@@ -1762,8 +1764,7 @@ export class AgentRuntime {
             });
             closeSSEStream(controller);
           } finally {
-            abortSignal?.removeEventListener("abort", forwardAbort);
-            revokeModelRuntimeResolver(resolveModelRuntime);
+            abortScope.dispose();
           }
         },
         cancel(reason) {
@@ -1773,9 +1774,8 @@ export class AgentRuntime {
           // an unhandled rejection, then abort. Guard the abort itself so a
           // synchronous signal-abort rejection can never escape here (#2334).
           inFlight?.catch(() => {});
-          revokeModelRuntimeResolver(resolveModelRuntime);
           try {
-            streamAbortController.abort(reason);
+            abortScope.abort(reason);
           } catch {
             // Aborting an already-aborted controller, or a synchronous reject
             // from a signal consumer, is a no-op for cancellation purposes.
@@ -1784,7 +1784,7 @@ export class AgentRuntime {
       });
       return runtimeStream;
     } catch (error) {
-      revokeModelRuntimeResolver(resolveModelRuntime);
+      abortScope.dispose();
       throw error;
     }
   }

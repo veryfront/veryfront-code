@@ -5,6 +5,7 @@ import { delay, waitFor } from "#veryfront/testing/deno-compat.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { ModelRuntime } from "#veryfront/provider";
 import { agent } from "../index.ts";
 import { AgentRuntime } from "./index.ts";
 import { scriptedModel } from "./model-runtime.test-helpers.ts";
@@ -185,6 +186,148 @@ describe("agent runtime stream cancellation (#2334)", () => {
     assertEquals(replayedDuringAbort, undefined);
     assertEquals(resolverActive, false);
     await reader.cancel();
+  });
+
+  it("revokes generation authority before forwarding caller aborts", async () => {
+    const modelStarted = Promise.withResolvers<void>();
+    let modelAbortSignal: AbortSignal | undefined;
+    let replayedDuringAbort: unknown;
+    let resolverActive = true;
+    const resolver: AgentModelRuntimeResolver = () => resolverActive ? model : undefined;
+    const model: ModelRuntime = {
+      provider: "test",
+      modelId: "veryfront-cloud/openai/generate-caller-abort-model",
+      doGenerate(options) {
+        const abortSignal = (options as { abortSignal?: AbortSignal }).abortSignal;
+        modelAbortSignal = abortSignal;
+        modelStarted.resolve();
+        return new Promise((_, reject) => {
+          abortSignal?.addEventListener("abort", () => {
+            replayedDuringAbort = resolver(
+              "veryfront-cloud/openai/generate-caller-abort-model",
+            );
+            reject(abortSignal.reason);
+          }, { once: true });
+        });
+      },
+      doStream() {
+        throw new Error("Expected generation path");
+      },
+    };
+    registerModelRuntimeResolverRevoker(resolver, () => {
+      resolverActive = false;
+    });
+    const runtime = new AgentRuntime(
+      "generate-caller-abort-runtime",
+      {
+        model: "veryfront-cloud/openai/generate-caller-abort-model",
+        system: "generate caller abort lease test",
+        maxSteps: 1,
+      },
+      { resolveModelRuntime: resolver },
+    );
+    const abortController = new AbortController();
+    const aborted = assertRejects(
+      async () =>
+        await runtime.generate(
+          "Hello",
+          undefined,
+          undefined,
+          undefined,
+          abortController.signal,
+        ),
+      DOMException,
+      "caller aborted",
+    );
+
+    await modelStarted.promise;
+    assert(modelAbortSignal !== undefined, "the model must receive an abort signal");
+    abortController.abort(new DOMException("caller aborted", "AbortError"));
+
+    await aborted;
+    assertEquals(replayedDuringAbort, undefined);
+    assertEquals(resolverActive, false);
+  });
+
+  it("revokes generation authority when the inference handler settles", async () => {
+    const middlewarePostProcessing = Promise.withResolvers<void>();
+    const releaseMiddleware = Promise.withResolvers<void>();
+    const model = scriptedModel([{ text: "complete" }], {
+      modelId: "veryfront-cloud/openai/generate-settlement-model",
+      only: "generate",
+    });
+    let resolverActive = true;
+    const resolver: AgentModelRuntimeResolver = () => resolverActive ? model : undefined;
+    registerModelRuntimeResolverRevoker(resolver, () => {
+      resolverActive = false;
+    });
+    const runtime = new AgentRuntime(
+      "generate-settlement-runtime",
+      {
+        model: "veryfront-cloud/openai/generate-settlement-model",
+        system: "generate settlement lease test",
+        maxSteps: 1,
+        middleware: [async (_context, next) => {
+          const response = await next();
+          middlewarePostProcessing.resolve();
+          await releaseMiddleware.promise;
+          return response;
+        }],
+      },
+      { resolveModelRuntime: resolver },
+    );
+
+    const generation = runtime.generate("Hello");
+    await middlewarePostProcessing.promise;
+    try {
+      assertEquals(resolver("veryfront-cloud/openai/generate-settlement-model"), undefined);
+    } finally {
+      releaseMiddleware.resolve();
+      assertEquals((await generation).text, "complete");
+    }
+  });
+
+  it("revokes stream authority when the inference handler settles", async () => {
+    const middlewarePostProcessing = Promise.withResolvers<void>();
+    const releaseMiddleware = Promise.withResolvers<void>();
+    const model = scriptedModel([{ text: "complete" }], {
+      modelId: "veryfront-cloud/openai/stream-settlement-model",
+      only: "stream",
+    });
+    let resolverActive = true;
+    const resolver: AgentModelRuntimeResolver = () => resolverActive ? model : undefined;
+    registerModelRuntimeResolverRevoker(resolver, () => {
+      resolverActive = false;
+    });
+    const runtime = new AgentRuntime(
+      "stream-settlement-runtime",
+      {
+        model: "veryfront-cloud/openai/stream-settlement-model",
+        system: "stream settlement lease test",
+        maxSteps: 1,
+        middleware: [async (_context, next) => {
+          const response = await next();
+          middlewarePostProcessing.resolve();
+          await releaseMiddleware.promise;
+          return response;
+        }],
+      },
+      { resolveModelRuntime: resolver },
+    );
+
+    const stream = await runtime.stream([{
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "Hello" }],
+    }]);
+    const consumed = new Response(stream).text();
+    await middlewarePostProcessing.promise;
+    try {
+      assertEquals(resolver("veryfront-cloud/openai/stream-settlement-model"), undefined);
+    } finally {
+      releaseMiddleware.resolve();
+      assert((await consumed).includes("complete"));
+    }
   });
 
   it("revokes run-scoped model authority before dispatching cancellation abort", async () => {

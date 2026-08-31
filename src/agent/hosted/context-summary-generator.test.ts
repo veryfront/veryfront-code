@@ -346,6 +346,48 @@ describe("createRunScopedVeryfrontCloudContextSummaryGenerator", () => {
     assertEquals(revocations, 1);
   });
 
+  it("revokes private authority before forwarding compaction aborts", async () => {
+    const modelStarted = Promise.withResolvers<void>();
+    let replayedDuringAbort: unknown;
+    let resolverActive = true;
+    const model = createModel();
+    const resolver = () => resolverActive ? model : undefined;
+    registerModelRuntimeResolverRevoker(resolver, () => {
+      resolverActive = false;
+    });
+    const abortController = new AbortController();
+    const generator = createRunScopedVeryfrontCloudContextSummaryGenerator(
+      {
+        apiUrl: "https://api.example.com",
+        model: "openai/gpt-test",
+        maxOutputTokens: 500,
+        maxInputTokens: 1_000,
+        abortSignal: abortController.signal,
+        generateText: (options) =>
+          new Promise((_, reject) => {
+            options.abortSignal?.addEventListener("abort", () => {
+              replayedDuringAbort = resolver();
+              reject(options.abortSignal?.reason);
+            }, { once: true });
+            modelStarted.resolve();
+          }),
+      },
+      () => resolver,
+    );
+    const aborted = assertRejects(
+      async () => await generator(summaryInput),
+      DOMException,
+      "caller aborted",
+    );
+
+    await modelStarted.promise;
+    abortController.abort(new DOMException("caller aborted", "AbortError"));
+
+    await aborted;
+    assertEquals(replayedDuringAbort, undefined);
+    assertEquals(resolverActive, false);
+  });
+
   it("falls back to the supplied token when no private resolver exists", async () => {
     const visibleTokens: Array<string | undefined> = [];
     const generator = createRunScopedVeryfrontCloudContextSummaryGenerator(
