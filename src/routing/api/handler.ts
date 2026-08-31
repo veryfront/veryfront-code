@@ -703,7 +703,7 @@ export class APIRouteHandler {
       : DEFAULT_CORS_METHODS.join(", ");
     const response = await handleCORSPreflight({
       request,
-      config: this.corsConfig ?? undefined,
+      config: this.corsConfig ?? ctx?.config?.security?.cors ?? undefined,
       allowMethods,
       allowHeaders: getApplicationPreflightHeaders(request, {
         denyHeaders: ctx?.applicationIdentityHeaderNames,
