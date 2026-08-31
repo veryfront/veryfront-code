@@ -17,7 +17,9 @@ const REQUEST_KEY = /^[a-z0-9-]{1,64}$/i;
 const MAX_ITEMS_PER_SOURCE = 500;
 const MAX_TIMEOUT_TARGETS_PER_RUN = 25;
 const MAX_TIMEOUT_DISCOVERY_PAGES = 20;
+const TIMEOUT_DISCOVERY_ROTATION_MS = 10 * 60 * 1000;
 const REVIEW_PROPAGATION_RETRY_SUFFIX = "; queue retry pending";
+const REVIEW_RETRY_FINALIZED_SUFFIX = "; retry finalized";
 const REVIEW_FAILURE_DETAILS = new Map([
   ["rate-limited", "automated review rate limited"],
   ["timed-out", "automated review timed out"],
@@ -1405,10 +1407,13 @@ export async function publishAutomatedReviewStatus({
         runBoundRequest?.requestKey ??
         reviewRequestKeyFromBoundary(reviewBoundary);
       reviewRequestEpochTime = runBoundRequest?.epochTime;
+      const evidenceBoundary = runBoundRequest === undefined
+        ? reviewBoundary
+        : { time: runBoundRequest.createdAt, kind: "status" };
       if (
         !pendingStatusBelongsToReviewEpoch(
           existingPendingStatus,
-          reviewBoundary,
+          evidenceBoundary,
           pullNumber,
           baseBinding,
         )
@@ -1416,7 +1421,7 @@ export async function publishAutomatedReviewStatus({
       existingTerminalStatus = latestTerminalReviewStatus(
         statuses,
         pullNumber,
-        reviewBoundary,
+        evidenceBoundary,
         comments,
         timeline,
         headSha,
@@ -1426,7 +1431,7 @@ export async function publishAutomatedReviewStatus({
       const propagationRetry = latestReviewPropagationRetryStatus(
         statuses,
         pullNumber,
-        reviewBoundary,
+        evidenceBoundary,
         comments,
         timeline,
         headSha,
@@ -1468,7 +1473,7 @@ export async function publishAutomatedReviewStatus({
           } else {
             const usageLimit = latestCodexUsageLimit(
               comments,
-              reviewBoundary,
+              evidenceBoundary,
               reviewFailureCommentId,
               timeline,
               headSha,
@@ -1813,9 +1818,20 @@ function appendTimedOutReviewTargets(
   for (const pull of pulls) {
     const target = timedOutReviewTarget(pull, now, reviewTimeoutMs);
     if (target) targets.push(target);
-    if (targets.length >= MAX_TIMEOUT_TARGETS_PER_RUN) return true;
   }
-  return false;
+}
+
+function boundedRotatingTimeoutTargets(targets, now) {
+  if (targets.length <= MAX_TIMEOUT_TARGETS_PER_RUN) return targets;
+  const batchCount = Math.ceil(
+    targets.length / MAX_TIMEOUT_TARGETS_PER_RUN,
+  );
+  const batch = Math.floor(now / TIMEOUT_DISCOVERY_ROTATION_MS) % batchCount;
+  const start = batch * MAX_TIMEOUT_TARGETS_PER_RUN;
+  return Array.from(
+    { length: MAX_TIMEOUT_TARGETS_PER_RUN },
+    (_, index) => targets[(start + index) % targets.length],
+  );
 }
 
 export async function findTimedOutAutomatedReviews({
@@ -1835,15 +1851,15 @@ export async function findTimedOutAutomatedReviews({
       cursor,
     });
     const pageResult = timeoutDiscoveryPage(response);
-    if (
-      appendTimedOutReviewTargets(
-        targets,
-        pageResult.nodes,
-        now,
-        reviewTimeoutMs,
-      )
-    ) return targets;
-    if (pageResult.cursor === undefined) return targets;
+    appendTimedOutReviewTargets(
+      targets,
+      pageResult.nodes,
+      now,
+      reviewTimeoutMs,
+    );
+    if (pageResult.cursor === undefined) {
+      return boundedRotatingTimeoutTargets(targets, now);
+    }
     cursor = pageResult.cursor;
   }
   throw new Error("Timeout discovery exceeded 1,000 open pull requests");
@@ -1888,13 +1904,15 @@ function storedReviewPropagationRetry(statuses, pullNumber) {
 
 function reviewPropagationRetryHasBoundaryProof(
   retry,
-  statuses,
-  pullNumber,
-  boundary,
-  comments,
-  timeline,
-  headSha,
-  reviewRequestKey,
+  {
+    statuses,
+    pullNumber,
+    boundary,
+    comments,
+    timeline,
+    headSha,
+    reviewRequestKey,
+  },
 ) {
   if (boundary === undefined) return true;
   if (retry.failureKind === "rate-limited") {
@@ -1938,13 +1956,15 @@ function latestReviewPropagationRetryStatus(
   return retry &&
       reviewPropagationRetryHasBoundaryProof(
         retry,
-        statuses,
-        pullNumber,
-        boundary,
-        comments,
-        timeline,
-        headSha,
-        reviewRequestKey,
+        {
+          statuses,
+          pullNumber,
+          boundary,
+          comments,
+          timeline,
+          headSha,
+          reviewRequestKey,
+        },
       )
     ? retry
     : undefined;
@@ -1959,7 +1979,9 @@ async function finalizeReviewFailureStatus({
   failureKind,
   targetUrl,
 }) {
-  const description = reviewFailureDescription(pullNumber, failureKind);
+  const description = failureKind === "unavailable"
+    ? `${reviewFailureDescription(pullNumber, failureKind)}${REVIEW_RETRY_FINALIZED_SUFFIX}`
+    : reviewFailureDescription(pullNumber, failureKind);
   const response = await github.rest.repos.createCommitStatus({
     owner,
     repo,
@@ -3146,7 +3168,7 @@ function pullSnapshotAdvanced(snapshotUpdatedAt, response) {
   const snapshot = Date.parse(snapshotUpdatedAt);
   const current = Date.parse(response?.data?.updated_at ?? "");
   if (!Number.isFinite(snapshot) || !Number.isFinite(current)) {
-    throw new Error("Could not verify the pull request lifecycle snapshot");
+    throw new TypeError("Could not verify the pull request lifecycle snapshot");
   }
   return current > snapshot;
 }

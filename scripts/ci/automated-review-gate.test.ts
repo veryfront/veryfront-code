@@ -2722,6 +2722,45 @@ describe("automated review publication", () => {
     assertEquals(fixture.published, []);
   });
 
+  it("applies a run-bound reset when validating terminal failures", async () => {
+    const reset = automatedReviewResetStatus("2026-08-25T10:00:00Z", {
+      id: 106,
+      description: `PR#1 reset base:${
+        reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
+      } key:ready-run-9001-at-1787644800000-event-41`,
+    });
+    const fixture = githubFixture({
+      pages: {
+        events: [[{
+          event: "ready_for_review",
+          id: 41,
+          created_at: "2026-08-25T08:00:00Z",
+        }]],
+        statuses: [[
+          reset,
+          automatedReviewStatus({
+            id: 105,
+            state: "failure",
+            description: "PR#1 automated review timed out",
+            created_at: "2026-08-25T09:00:00Z",
+          }),
+          pendingAutomatedReviewStatus("2026-08-25T08:30:00Z"),
+        ]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+
+    assertEquals(result.state, "pending");
+    assertEquals(result.statusId, 106);
+  });
+
   it("prefers a newly visible epoch over a superseded run-bound reset", async () => {
     const reset = automatedReviewResetStatus("2026-08-25T08:00:00Z", {
       id: 104,
@@ -3505,7 +3544,39 @@ describe("automated review timeout watchdog", () => {
       reviewTimeoutMs: 1_800_000,
     });
     assertEquals(targets.length, 25);
-    assertEquals(targets.at(-1)?.pullNumber, 25);
+  });
+
+  it("rotates bounded discovery across eligible pull requests", async () => {
+    const pulls = Array.from({ length: 30 }, (_, index) =>
+      timeoutPull(index + 1, "2026-08-25T08:00:00Z")
+    );
+    const discover = (now: string) =>
+      findTimedOutAutomatedReviews({
+        github: timeoutDiscoveryFixture([pulls]),
+        owner: "veryfront",
+        repo: "veryfront-code",
+        now: Date.parse(now),
+        reviewTimeoutMs: 1_800_000,
+      });
+    const first = await discover("2026-08-25T08:30:00Z");
+    const second = await discover("2026-08-25T08:40:00Z");
+
+    assertEquals(first.length, 25);
+    assertEquals(second.length, 25);
+    assert(
+      first.some((target: { pullNumber: number }, index: number) =>
+        target.pullNumber !== second[index]?.pullNumber
+      ),
+      "successive watchdog intervals must not select the same bounded batch",
+    );
+    assertEquals(
+      new Set(
+        [...first, ...second].map((target: { pullNumber: number }) =>
+          target.pullNumber
+        ),
+      ).size,
+      30,
+    );
   });
 
   it("does not let spoofed pending statuses starve the timeout batch", async () => {
@@ -4047,6 +4118,41 @@ describe("automated review timeout watchdog", () => {
     assertEquals(
       requestOutage.published.at(-1)?.description,
       "PR#1 review status unavailable; epoch:9f2e6d33a371; queue retry pending",
+    );
+  });
+
+  it("marks a propagated unavailable retry as finalized", async () => {
+    const retryStatus = automatedReviewStatus({
+      id: 1001,
+      state: "failure",
+      description:
+        "PR#1 review status unavailable; epoch:9f2e6d33a371; queue retry pending",
+      target_url: "https://example.test/pr/1",
+      created_at: "2026-08-25T08:00:00Z",
+    });
+    const fixture = githubFixture({
+      pages: {
+        statuses: [[retryStatus]],
+        refs: [[]],
+      },
+      commit: HEAD,
+      statusIds: [1002],
+    });
+    const result = await completeReviewFailurePropagation({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      sourceStatusId: 1001,
+      description: retryStatus.description,
+      targetUrl: retryStatus.target_url,
+    });
+
+    assertEquals(result.finalized, true);
+    assertEquals(
+      fixture.published.at(-1)?.description,
+      "PR#1 review status unavailable; retry finalized",
     );
   });
 
