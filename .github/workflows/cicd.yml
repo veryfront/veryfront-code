@@ -854,16 +854,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The darwin binaries cross-compile on Linux: deno compile --target
-          # downloads the matching denort runtime and ad-hoc signs the output,
-          # and no step here codesigns, notarizes, or smoke-tests on macOS.
-          # macOS runners bill at 10x the Linux rate for the same compile.
-          - os: ubuntu-latest
+          - os: macos-latest
             target: aarch64-apple-darwin
             name: veryfront-macos-arm64
             entrypoint: cli/main.ts
             profile: full
-          - os: ubuntu-latest
+          - os: macos-latest
             target: x86_64-apple-darwin
             name: veryfront-macos-x64
             entrypoint: cli/main.ts
