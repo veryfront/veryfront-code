@@ -4,6 +4,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter, RuntimeId } from "#veryfront/platform/adapters/base.ts";
+import { createMockAdapter as createRouteMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE } from "#veryfront/errors";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
@@ -397,6 +398,51 @@ describe("server/runtime-handler/index", () => {
     assertEquals(response.status, 200);
     assertEquals(await response.json(), { subject: "user-123" });
     assertEquals(middlewareCalls, 1);
+  });
+
+  it("defers terminal application auth to automatic preflight", async () => {
+    const projectDir = `/tmp/test-options-public-${crypto.randomUUID()}`;
+    const adapter = createRouteMockAdapter();
+    adapter.fs.files.set(
+      `${projectDir}/pages/api/options.ts`,
+      "export function OPTIONS() { return new Response('must not run'); }",
+    );
+    let middlewareCalls = 0;
+    const handler = createVeryfrontHandler(projectDir, adapter, {
+      projectDir,
+      config: {
+        security: {
+          auth: {
+            trustedProxy: {
+              trustedPeers: ["127.0.0.1"],
+              headers: { subject: "x-auth-subject" },
+            },
+          },
+        },
+        middleware: {
+          custom: [
+            () => {
+              middlewareCalls++;
+              return new Response("middleware must not run", { status: 401 });
+            },
+          ],
+        },
+      } as any,
+      allowHostProjectCodeExecution: true,
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/options", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://client.example",
+          "access-control-request-method": "GET",
+        },
+      }),
+    );
+
+    assertEquals(response.status, 204);
+    assertEquals(middlewareCalls, 0);
   });
 
   it("short-circuits terminal application auth responses before project middleware", async () => {

@@ -268,7 +268,7 @@ export class ApiHandlerWrapper extends BaseHandler {
             ctx,
           );
 
-          const finalRes = this.finalizeResponse(req, ctx, apiRes);
+          const finalRes = this.finalizeApiResponse(req, ctx, apiRes);
 
           return this.respond(finalRes);
         } catch (error) {
@@ -306,7 +306,7 @@ export class ApiHandlerWrapper extends BaseHandler {
         allowMethods: DEFAULT_CORS_METHODS.join(", "),
       });
       response.headers.set("Allow", DEFAULT_CORS_METHODS.join(", "));
-      return this.respond(this.finalizeResponse(req, ctx, response));
+      return this.respond(this.finalizePreflightResponse(ctx, response));
     }
     // A shared runtime without an explicit execution grant cannot serve any
     // project-owned route. Reject before refreshing or classifying tenant
@@ -319,7 +319,7 @@ export class ApiHandlerWrapper extends BaseHandler {
     ctx: HandlerContext,
   ): HandlerResult | null {
     if (req.method.toUpperCase() !== "OPTIONS" || !ctx.frameworkPreflightResponse) return null;
-    return this.respond(this.finalizeResponse(req, ctx, ctx.frameworkPreflightResponse));
+    return this.respond(this.finalizePreflightResponse(ctx, ctx.frameworkPreflightResponse));
   }
 
   private projectExecutionUnavailable(
@@ -345,7 +345,14 @@ export class ApiHandlerWrapper extends BaseHandler {
     return this.respond(response, { executionTopology: "dedicated-runtime-required" });
   }
 
-  private finalizeResponse(req: Request, ctx: HandlerContext, response: Response): Response {
+  private finalizePreflightResponse(ctx: HandlerContext, response: Response): Response {
+    return this.createResponseBuilder(ctx)
+      .withSecurity(ctx.securityConfig ?? undefined)
+      .withHeaders(response.headers)
+      .build(response.body, response.status);
+  }
+
+  private finalizeApiResponse(req: Request, ctx: HandlerContext, response: Response): Response {
     return this.createResponseBuilder(ctx)
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined, req)
