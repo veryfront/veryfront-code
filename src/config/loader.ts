@@ -1955,7 +1955,7 @@ function markCompletedCsiSchemes(states: CsiSchemeStates, restoreMatches: boolea
     const scheme = CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!;
     const path = states[schemeIndex]?.[scheme.length];
     if (path === undefined) continue;
-    for (let pathIndex = 0; pathIndex < path.length; pathIndex++) {
+    for (let pathIndex = 0; pathIndex < path.length; pathIndex++) { // NOSONAR: Avoid mutable iterator hooks.
       restoreMatches[path[pathIndex]!] = true;
     }
   }
