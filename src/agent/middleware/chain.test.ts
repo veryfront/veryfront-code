@@ -507,6 +507,62 @@ describe("agent/middleware/chain", () => {
     );
   });
 
+  it("contains discarded derived invalid-continuation rejections", async () => {
+    let retainedThen: (() => Promise<AgentResponse>) | undefined;
+    let retainedFinally: (() => Promise<AgentResponse>) | undefined;
+    const thenChain = new MiddlewareChain([
+      (_context, next) => {
+        retainedThen = next;
+        return Promise.resolve(response);
+      },
+    ]);
+    const finallyChain = new MiddlewareChain([
+      (_context, next) => {
+        retainedFinally = next;
+        return Promise.resolve(response);
+      },
+    ]);
+
+    await thenChain.execute(context, () => Promise.resolve(response));
+    retainedThen!().then(() => response);
+    await finallyChain.execute(context, () => Promise.resolve(response));
+    retainedFinally!().finally(() => undefined);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  it("allows a late rejection handler before detached reporting", async () => {
+    const records: LogEntry[] = [];
+    let deferredContinuation: Promise<AgentResponse> | undefined;
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+    try {
+      const chain = new MiddlewareChain([
+        (_context, next) => {
+          queueMicrotask(() => {
+            deferredContinuation = next();
+            queueMicrotask(() => {
+              deferredContinuation?.catch(() => response);
+            });
+          });
+          return Promise.resolve(response);
+        },
+      ]);
+
+      await chain.execute(context, () => Promise.reject(new Error("late handled failure")));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(
+      records.some((entry) => entry.message === "Your agent middleware continuation failed"),
+      false,
+    );
+  });
+
   it("supports standard Promise composition on continuations", async () => {
     assertEquals(
       await new MiddlewareChain([
@@ -559,6 +615,8 @@ describe("agent/middleware/chain", () => {
         },
       ]);
       await finallyChain.execute(context, () => Promise.reject(new Error("finally failed")));
+      await Promise.resolve();
+      await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
     } finally {

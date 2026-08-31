@@ -1,7 +1,10 @@
 import type { AgentContext, AgentMiddleware, AgentResponse } from "../types.ts";
 import { MIDDLEWARE_ERROR } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
+import {
+  isErrorAcrossRealms,
+  readNativeErrorNameWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
 import { agentLogger } from "#veryfront/utils/logger/index.ts";
 
 const INVALID_CONTINUATION_MESSAGE =
@@ -93,7 +96,7 @@ function isInvalidContinuationError(error: unknown): boolean {
 
 function isAbortError(error: unknown): boolean {
   try {
-    return isErrorAcrossRealms(error) && error.name === "AbortError";
+    return isErrorAcrossRealms(error) && readNativeErrorNameWithoutHooks(error) === "AbortError";
   } catch {
     return false;
   }
@@ -121,10 +124,16 @@ function reportDetachedContinuationFailure(): void {
   );
 }
 
+function scheduleDetachedContinuationFailureReport(isObserved: () => boolean): void {
+  queueMicrotask(() => {
+    if (!isObserved()) reportDetachedContinuationFailure();
+  });
+}
+
 function rejectInvalidContinuation(): Promise<AgentResponse> {
-  const rejection = Promise.reject<AgentResponse>(createInvalidContinuationError());
-  observeContinuationRejection(rejection);
-  return rejection;
+  return createObservedContinuation<AgentResponse>((_resolve, reject) => {
+    reject(createInvalidContinuationError());
+  }, () => {});
 }
 
 function createDeferredContinuation(
@@ -167,7 +176,7 @@ function createMiddlewareContinuation(
       return;
     }
     if (isObserved() || middlewareSettlementError === error) return;
-    reportDetachedContinuationFailure();
+    scheduleDetachedContinuationFailureReport(isObserved);
   };
 
   const next = (): Promise<AgentResponse> => {
@@ -200,7 +209,7 @@ function createMiddlewareContinuation(
       const rejection = continuationRejection;
       continuationRejection = undefined;
       if (rejection && !rejection.isObserved() && middlewareSettlementError !== rejection.error) {
-        reportDetachedContinuationFailure();
+        scheduleDetachedContinuationFailureReport(rejection.isObserved);
       }
     },
   };
