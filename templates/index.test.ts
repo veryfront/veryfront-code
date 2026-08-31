@@ -720,10 +720,8 @@ describe("templates", () => {
     const docsScopeRow = setup.content.split("\n").find((line) => line.startsWith("| Docs"));
     assertExists(docsScopeRow);
     assertEquals(
-      docsGoogleConfig.defaultScopes.every((scope) =>
-        docsScopeRow.includes(`\`${scope.split("/").at(-1)}\``)
-      ),
-      true,
+      [...docsScopeRow.matchAll(/`([^`]+)`/g)].map((match) => match[1]),
+      docsGoogleConfig.defaultScopes.map((scope) => scope.slice(scope.lastIndexOf("/") + 1)),
     );
   });
 
