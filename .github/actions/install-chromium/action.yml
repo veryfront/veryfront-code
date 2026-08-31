@@ -17,9 +17,9 @@ runs:
     - name: Configure apt sources, retries, and mirrors
       shell: bash
       run: |
-        sudo sed -i \
-          -e 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
-          -e 's|http://security.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
+        sudo sed -E -i \
+          -e 's|[[:alpha:]]*://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
+          -e 's|[[:alpha:]]*://security.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
           /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
         {
           echo 'Acquire::ForceIPv4 "true";'
