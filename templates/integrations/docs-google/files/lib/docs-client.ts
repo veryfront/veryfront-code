@@ -330,9 +330,7 @@ export const docsOAuthProvider = {
   clientId: getEnv("GOOGLE_CLIENT_ID") ?? "",
   clientSecret: getEnv("GOOGLE_CLIENT_SECRET") ?? "",
   scopes: [
-    "https://www.googleapis.com/auth/documents.readonly",
     "https://www.googleapis.com/auth/documents",
-    "https://www.googleapis.com/auth/docs",
     "https://www.googleapis.com/auth/drive.readonly",
   ],
   callbackPath: "/api/auth/docs-google/callback",

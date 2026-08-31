@@ -77,7 +77,7 @@ GOOGLE_CLIENT_SECRET=your-client-secret
 | Gmail    | `gmail.readonly`, `gmail.send`, `gmail.modify`, `gmail.labels`, `gmail.compose`, `https://mail.google.com/` for permanent delete |
 | Calendar | `calendar.readonly`, `calendar.events`                                                                                           |
 | Drive    | `drive.readonly`, `drive.file`                                                                                                   |
-| Docs     | `documents.readonly`, `documents`                                                                                                |
+| Docs     | `documents`                                                                                                |
 | Sheets   | `spreadsheets.readonly`, `spreadsheets`                                                                                          |
 
 ---

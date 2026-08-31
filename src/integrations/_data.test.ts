@@ -1199,7 +1199,6 @@ describe("integration endpoint specs", () => {
     const docsCreateDocument = getTool("docs-google", "create_document");
     const googleDocs = getConnector("docs-google");
     assertEquals(googleDocs.auth.scopes, [
-      "https://www.googleapis.com/auth/documents.readonly",
       "https://www.googleapis.com/auth/documents",
       "https://www.googleapis.com/auth/drive.readonly",
     ]);
@@ -1209,7 +1208,7 @@ describe("integration endpoint specs", () => {
     );
     assertEquals(
       googleDocsConsentStep?.description,
-      "Authorize exactly https://www.googleapis.com/auth/documents.readonly, https://www.googleapis.com/auth/documents, and https://www.googleapis.com/auth/drive.readonly.",
+      "Authorize exactly https://www.googleapis.com/auth/documents and https://www.googleapis.com/auth/drive.readonly.",
     );
     assertEquals(
       docsCreateDocument.endpoint?.url,

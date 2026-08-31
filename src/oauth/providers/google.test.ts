@@ -18,7 +18,6 @@ describe("Google OAuth provider configs", () => {
     assertEquals(docsGoogleConfig.serviceId, "docs-google");
     assertEquals(docsGoogleConfig.apiBaseUrl, "https://docs.googleapis.com/v1");
     assertEquals(docsGoogleConfig.defaultScopes, [
-      "https://www.googleapis.com/auth/documents.readonly",
       "https://www.googleapis.com/auth/documents",
       "https://www.googleapis.com/auth/drive.readonly",
     ]);

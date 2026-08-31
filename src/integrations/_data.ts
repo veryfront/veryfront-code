@@ -15018,7 +15018,6 @@ export const connectors: IntegrationConfig[] = [
       "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
       "tokenUrl": "https://oauth2.googleapis.com/token",
       "scopes": [
-        "https://www.googleapis.com/auth/documents.readonly",
         "https://www.googleapis.com/auth/documents",
         "https://www.googleapis.com/auth/drive.readonly",
       ],
@@ -15207,7 +15206,7 @@ export const connectors: IntegrationConfig[] = [
       }, {
         "title": "Configure the OAuth consent screen",
         "description":
-          "Authorize exactly https://www.googleapis.com/auth/documents.readonly, https://www.googleapis.com/auth/documents, and https://www.googleapis.com/auth/drive.readonly.",
+          "Authorize exactly https://www.googleapis.com/auth/documents and https://www.googleapis.com/auth/drive.readonly.",
         "url": "https://console.cloud.google.com/apis/credentials/consent",
       }, {
         "title": "Create a web OAuth client",

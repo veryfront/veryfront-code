@@ -81,7 +81,6 @@ export const docsGoogleConfig: OAuthServiceConfig = {
   displayName: "Google Docs",
   apiBaseUrl: "https://docs.googleapis.com/v1",
   defaultScopes: [
-    "https://www.googleapis.com/auth/documents.readonly",
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/drive.readonly",
   ],
