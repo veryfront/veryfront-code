@@ -4,9 +4,12 @@ import { createDetachedRunTracker } from "#veryfront/agent/service/detached-run-
 import { createHostedAgentServiceRouteSet } from "#veryfront/agent/service/routes.ts";
 import type { HostedServiceAuthenticatedRequest } from "#veryfront/agent/service/auth.ts";
 import type { AgUiResumeValue } from "#veryfront/agent/ag-ui/tool-shared.ts";
-import { createHostedInferenceModelResolver } from "#veryfront/agent/hosted/inference-credential.ts";
+import {
+  createHostedInferenceModelResolver,
+  registerHostedInferenceCredential,
+} from "#veryfront/agent/hosted/inference-credential.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
-import { clearModelProviders, resolveModel } from "#veryfront/provider";
+import { clearModelProviders, registerModelProvider, resolveModel } from "#veryfront/provider";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import {
   createRuntimeAgentStreamResponse,
@@ -136,6 +139,28 @@ describe("run-scoped inference credential", () => {
       "Bearer broader-project-runtime-token",
       "Bearer run-scoped-inference-token",
     ]);
+  });
+
+  it("bypasses project model overrides for credentialed Veryfront Cloud resolution", () => {
+    setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
+    const request = {} as Parameters<typeof registerHostedInferenceCredential>[0];
+    registerHostedInferenceCredential(request, "run-scoped-inference-token");
+    let projectResolverCalls = 0;
+    const unregister = registerModelProvider("veryfront-cloud", () => {
+      projectResolverCalls += 1;
+      throw new Error("Project model override must not handle signed inference");
+    });
+
+    try {
+      const resolver = createHostedInferenceModelResolver(request);
+      const model = resolver?.("veryfront-cloud/openai/gpt-test");
+      assertEquals(typeof model?.doStream, "function");
+    } finally {
+      unregister();
+    }
+
+    assertEquals(projectResolverCalls, 0);
   });
 
   it("routes a serialized standalone AgentService invocation to gateway Authorization", async () => {
