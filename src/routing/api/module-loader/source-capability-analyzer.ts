@@ -5004,6 +5004,17 @@ export async function analyzeSourceCapabilities(
 
 export type StaticRouteOptionsCapability = "present" | "absent" | "unknown";
 
+const STATIC_STANDARD_ROUTE_METHODS = [
+  "GET",
+  "HEAD",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "OPTIONS",
+] as const;
+const STATIC_HTTP_METHOD_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Z]+$/;
+
 function staticExportName(node: ASTNode | undefined): string | null {
   if (!isNode(node)) return null;
   if (node.type === "Identifier" && typeof node.name === "string") return node.name;
@@ -5049,6 +5060,107 @@ function isTypeOnlyExportDeclaration(node: ASTNode | undefined): boolean {
     node.type === "TSInterfaceDeclaration" ||
     node.type === "TSTypeAliasDeclaration" ||
     node.type === "TSDeclareFunction";
+}
+
+function isStaticHttpMethodName(value: string | null): value is string {
+  return value !== null && STATIC_HTTP_METHOD_PATTERN.test(value);
+}
+
+function addStaticRouteMethod(methods: string[], method: string): void {
+  if (!methods.includes(method)) methods.push(method);
+}
+
+function orderStaticRouteMethods(methods: string[]): string[] {
+  const ordered: string[] = [];
+  for (const method of STATIC_STANDARD_ROUTE_METHODS) {
+    if (methods.includes(method)) ordered.push(method);
+  }
+  for (const method of methods.toSorted()) {
+    if (
+      !STATIC_STANDARD_ROUTE_METHODS.includes(
+        method as typeof STATIC_STANDARD_ROUTE_METHODS[number],
+      )
+    ) {
+      ordered.push(method);
+    }
+  }
+  return ordered;
+}
+
+/**
+ * Resolve only route methods that are proven by export syntax, without
+ * evaluating the route module. `undefined` means the source is too dynamic to
+ * safely narrow a preflight response; callers must use their conservative
+ * default in that case.
+ */
+export async function resolveStaticRouteMethods(
+  source: string,
+): Promise<readonly string[] | undefined> {
+  if (COMMONJS_EXPORT_PATTERN.test(source)) return undefined;
+
+  const program = await parseSource(source);
+  if (program === null) return undefined;
+
+  const methods: string[] = [];
+  for (const statement of Array.isArray(program.body) ? program.body : []) {
+    if (!isNode(statement)) continue;
+
+    if (statement.type === "ExportDefaultDeclaration") {
+      const defaultCapability = staticDefaultRouteCapability(
+        statement.declaration as ASTNode | undefined,
+      );
+      if (defaultCapability === "unknown") return undefined;
+      if (defaultCapability === "present") {
+        for (const method of STATIC_STANDARD_ROUTE_METHODS) addStaticRouteMethod(methods, method);
+      }
+      continue;
+    }
+
+    if (statement.type === "ExportAllDeclaration") {
+      if (statement.exportKind !== "type") return undefined;
+      continue;
+    }
+
+    if (statement.type !== "ExportNamedDeclaration" || statement.exportKind === "type") continue;
+
+    const declaration = statement.declaration as ASTNode | undefined;
+    if (isNode(declaration)) {
+      if (
+        declaration.type === "FunctionDeclaration" || declaration.type === "ClassDeclaration"
+      ) {
+        const method = staticExportName(declaration.id as ASTNode | undefined);
+        if (isStaticHttpMethodName(method)) addStaticRouteMethod(methods, method);
+      } else if (declaration.type === "VariableDeclaration") {
+        for (
+          const declarator of Array.isArray(declaration.declarations)
+            ? declaration.declarations.filter((item): item is ASTNode => isNode(item))
+            : []
+        ) {
+          const method = staticExportName(declarator.id as ASTNode | undefined);
+          if (method === null) return undefined;
+          if (isStaticHttpMethodName(method)) {
+            if (!isStaticCallableRouteValue(declarator.init as ASTNode | undefined)) {
+              return undefined;
+            }
+            addStaticRouteMethod(methods, method);
+          }
+        }
+      }
+    }
+
+    for (
+      const specifier of Array.isArray(statement.specifiers)
+        ? statement.specifiers.filter((item): item is ASTNode => isNode(item))
+        : []
+    ) {
+      if (specifier.exportKind === "type") continue;
+      const exportedName = staticExportName(specifier.exported as ASTNode | undefined);
+      if (isStaticHttpMethodName(exportedName)) return undefined;
+    }
+  }
+
+  if (methods.includes("GET")) addStaticRouteMethod(methods, "HEAD");
+  return orderStaticRouteMethods(methods);
 }
 
 /**

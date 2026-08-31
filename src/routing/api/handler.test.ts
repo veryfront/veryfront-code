@@ -1015,6 +1015,49 @@ describe("APIRouteHandler", () => {
       );
     });
 
+    it("preserves matched methods on an unauthenticated protected preflight", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/protected-get-only-preflight.ts",
+        "export function GET() { return new Response('unused'); }",
+      );
+      let moduleLoads = 0;
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          moduleLoads++;
+          return Promise.resolve({ GET: () => new Response("get") });
+        },
+      });
+      const securityConfig = {
+        cors: { origin: ["https://client.example"] },
+        auth: { basic: { username: "admin", password: "secret" } },
+      } as HandlerContext["securityConfig"];
+      const handler = await createInitializedHandler(
+        "/test/project",
+        adapter,
+        { security: securityConfig } as HandlerConfig,
+      );
+
+      const response = await handler.handle(
+        new Request("http://localhost/api/protected-get-only-preflight", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://client.example",
+            "access-control-request-method": "POST",
+          },
+        }),
+        {
+          ...localContext(adapter),
+          securityConfig,
+        },
+      );
+
+      assertEquals(response?.status, 204);
+      assertEquals(response?.headers.get("access-control-allow-methods"), "GET, HEAD, OPTIONS");
+      assertEquals(response?.headers.get("allow"), "GET, HEAD, OPTIONS");
+      assertEquals(moduleLoads, 0);
+    });
+
     it("applies preflight policy headers to an explicit OPTIONS response", async () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set(

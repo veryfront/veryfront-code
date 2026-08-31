@@ -17,6 +17,7 @@ import { ApiRouteMatcher, type RouteMatch } from "./api-route-matcher.ts";
 import type { APIRoute } from "./module-loader/types.ts";
 import { loadHandlerModule, prepareHandlerModule } from "./module-loader/loader.ts";
 import {
+  resolveStaticRouteMethods as resolveStaticRouteMethodsFromSource,
   resolveStaticRouteOptionsCapability,
   type StaticRouteOptionsCapability,
 } from "./module-loader/source-capability-analyzer.ts";
@@ -304,7 +305,11 @@ export class APIRouteHandler {
           const authResponse = await this.authenticateOptionsRoute(request, ctx);
           if (authResponse) {
             if (isPreflightRequest(request)) {
-              return this.automaticPreflight(request, undefined, ctx);
+              return this.automaticPreflight(
+                request,
+                await this.resolveStaticRouteMethods(match.route.page, adapter),
+                ctx,
+              );
             }
             return await applyCORSHeaders({
               request,
@@ -576,6 +581,18 @@ export class APIRouteHandler {
       // source cannot be read or parsed, retain the safe auth-before-evaluation
       // fallback and let the canonical route path decide after admission.
       return "unknown";
+    }
+  }
+
+  private async resolveStaticRouteMethods(
+    modulePath: string,
+    adapter: RuntimeAdapter,
+  ): Promise<readonly string[] | undefined> {
+    try {
+      const source = await adapter.fs.readFile(modulePath);
+      return await resolveStaticRouteMethodsFromSource(source);
+    } catch {
+      return undefined;
     }
   }
 

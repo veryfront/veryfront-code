@@ -10,6 +10,7 @@ import {
 } from "./http-validator.ts";
 import {
   __setSourceCapabilityParserLoaderForTests,
+  resolveStaticRouteMethods,
   resolveStaticRouteOptionsCapability,
   rewriteImportMetaLocations,
   rewriteUnboundCommonJsDynamicRequire,
@@ -70,6 +71,28 @@ describe("resolveStaticRouteOptionsCapability", () => {
     for (const source of sources) {
       assertEquals(await resolveStaticRouteOptionsCapability(source), "unknown", source);
     }
+  });
+});
+
+describe("resolveStaticRouteMethods", () => {
+  it("returns the proven method surface without evaluating the route", async () => {
+    assertEquals(
+      await resolveStaticRouteMethods(
+        "export function GET() {}\nexport function POST() {}",
+      ),
+      ["GET", "HEAD", "POST"],
+    );
+  });
+
+  it("keeps dynamic method exports on the conservative fallback", async () => {
+    assertEquals(
+      await resolveStaticRouteMethods("export const GET = handler;"),
+      undefined,
+    );
+    assertEquals(
+      await resolveStaticRouteMethods("export { GET } from './handler.ts';"),
+      undefined,
+    );
   });
 });
 
