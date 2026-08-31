@@ -161,6 +161,22 @@ describe("agent/middleware/chain", () => {
     await Promise.resolve();
   });
 
+  it("dispatches a continuation deferred after middleware returns", async () => {
+    let finalHandlerCalls = 0;
+    const chain = new MiddlewareChain([
+      (_context, next) => Promise.resolve().then(() => next()),
+    ]);
+
+    assertEquals(
+      await chain.execute(context, () => {
+        finalHandlerCalls += 1;
+        return Promise.resolve(response);
+      }),
+      response,
+    );
+    assertEquals(finalHandlerCalls, 1);
+  });
+
   it("propagates downstream rejection through an awaited continuation", async () => {
     let observedError: unknown;
     const downstreamError = new Error("downstream failed");

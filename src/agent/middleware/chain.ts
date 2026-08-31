@@ -30,6 +30,7 @@ function createDeferredContinuation(
     queueMicrotask(() => {
       if (isSettled()) {
         reject(createInvalidContinuationError());
+        // queueMicrotask runs after the promise has been assigned.
         consumeRejectedPromise(deferredContinuation!);
         return;
       }
