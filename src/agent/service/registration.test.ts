@@ -329,16 +329,22 @@ function scriptedHeartbeatFetch(
   statuses: readonly number[],
   options: {
     heartbeatResponse?: (input: RequestInfo | URL, attempt: number) => Response;
-    registrationResponse?: (attempt: number) => Response;
+    registrationResponse?: (
+      attempt: number,
+      signal: AbortSignal | undefined,
+    ) => Response | Promise<Response>;
   } = {},
 ) {
   let heartbeatAttempts = 0;
   let registrationAttempts = 0;
-  const fetch: typeof globalThis.fetch = (input) => {
+  const fetch: typeof globalThis.fetch = (input, init) => {
     if (!input.toString().endsWith("/heartbeat")) {
       registrationAttempts++;
       return Promise.resolve(
-        options.registrationResponse?.(registrationAttempts) ?? jsonResponse(serviceResponse),
+        options.registrationResponse?.(
+          registrationAttempts,
+          init?.signal ?? undefined,
+        ) ?? jsonResponse(serviceResponse),
       );
     }
     const heartbeatResponse = options.heartbeatResponse?.(input, heartbeatAttempts + 1);
@@ -1191,6 +1197,45 @@ describe("agent/agent-service-registration heartbeat recovery", () => {
       log.errors[0]?.metadata?.consecutiveFailures,
       3,
       "failed re-registration must escalate on the third failed tick",
+    );
+    assertEquals(
+      log.errors[0]?.metadata?.error,
+      "Agent runtime registration request failed with HTTP 500",
+      "the escalation must report the recovery failure rather than the original heartbeat 404",
+    );
+  });
+
+  it("times out a hung re-registration so persistent failures still escalate", async () => {
+    using time = new FakeTime();
+    let registrationAborts = 0;
+    const script = scriptedHeartbeatFetch([404], {
+      registrationResponse: (attempt, signal) => {
+        if (attempt === 1) return jsonResponse(serviceResponse);
+        assert(signal, "re-registration requests must carry a bounded abort signal");
+        return new Promise<Response>((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            registrationAborts++;
+            reject(signal.reason);
+          }, { once: true });
+        });
+      },
+    });
+    const log = recordingLogger();
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(script.fetch, { heartbeatIntervalMs: 20, logger: log.logger }),
+    );
+
+    for (let step = 0; step < 10 && log.errors.length === 0; step++) {
+      await time.tickAsync(5_020);
+      await time.tickAsync(0);
+    }
+    lifecycle.stop();
+
+    assertEquals(registrationAborts, 3, "each hung recovery must time out before escalation");
+    assertEquals(
+      log.errors[0]?.metadata?.consecutiveFailures,
+      3,
+      "hung recovery must escalate on the third failed tick",
     );
   });
 });

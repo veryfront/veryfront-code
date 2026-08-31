@@ -576,7 +576,17 @@ export async function createAgentServiceRegistrationLifecycle(
           // is exempted: another 404 before any heartbeat succeeds means the
           // control plane is repeatedly losing registrations and must escalate.
           try {
-            service = await registerAgentPushRuntimeService(input, fetchImpl, teardown.signal);
+            service = await retryWithBackoff(
+              (signal) => registerAgentPushRuntimeService(input, fetchImpl, signal),
+              {
+                maxAttempts: 1,
+                abortSignal: teardown.signal,
+                timeoutMs: Math.max(
+                  input.heartbeatIntervalMs,
+                  HEARTBEAT_MIN_ATTEMPT_TIMEOUT_MS,
+                ),
+              },
+            );
             recoveredLostRegistration = !awaitingHeartbeatAfterReregistration;
             awaitingHeartbeatAfterReregistration = true;
             options.logger?.info?.(
@@ -593,7 +603,7 @@ export async function createAgentServiceRegistrationLifecycle(
               serviceId: service.id,
               error: getErrorMessage(registrationError),
             });
-            throw error;
+            throw registrationError;
           }
           if (stopped) {
             return;
