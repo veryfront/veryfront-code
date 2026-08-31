@@ -23,6 +23,7 @@ const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectIsExtensible = Object.isExtensible;
 const PromiseThen = Promise.prototype.then;
 const ReflectApply = Reflect.apply;
+const SetTimeout = globalThis.setTimeout;
 const SymbolSpecies = Symbol.species;
 const WeakSetAdd = WeakSet.prototype.add;
 const WeakSetHas = WeakSet.prototype.has;
@@ -152,6 +153,7 @@ function trackEagerContinuation<T>(
 ): Promise<T> {
   registerEagerObservation(promise, onRejection, suppressedInvalidErrors);
   if (ReflectApply(WeakSetHas, TRACKED_CONTINUATIONS, [promise]) as boolean) return promise;
+  ReflectApply(WeakSetAdd, TRACKED_CONTINUATIONS, [promise]);
   if (!isNativePromiseWithoutHooks(promise) || !ObjectIsExtensible(promise)) {
     return promise;
   }
@@ -160,8 +162,6 @@ function trackEagerContinuation<T>(
   if (ownThen?.configurable === false || ownConstructor?.configurable === false) {
     return promise;
   }
-  ReflectApply(WeakSetAdd, TRACKED_CONTINUATIONS, [promise]);
-
   const trackedThen = function <TResult1 = T, TResult2 = never>(
     onFulfilled?: ContinuationThenHandler<T, TResult1>,
     onRejected?: ContinuationThenHandler<unknown, TResult2>,
@@ -289,7 +289,8 @@ function createInvalidContinuationError() {
 }
 
 function isInvalidContinuationError(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
+  if (error === null) return false;
+  if (typeof error !== "object") return false;
   if (ReflectApply(WeakSetHas, INVALID_CONTINUATION_ERRORS, [error]) as boolean) return true;
   if (!canIdentifyProxyWithoutHooks) return false;
   if (isProxyWithoutHooks(error)) return false;
@@ -399,7 +400,7 @@ function scheduleDetachedContinuationFailureReport(record: {
   isObserved: () => boolean;
   reported: boolean;
 }): void {
-  setTimeout(() => {
+  SetTimeout(() => {
     try {
       if (!record.isObserved() && !record.reported) {
         record.reported = true;
