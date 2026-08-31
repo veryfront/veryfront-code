@@ -17,6 +17,7 @@ import {
   registerRuntimeInferenceCredential,
 } from "#veryfront/internal-agents/run-stream.ts";
 import { AgentRuntime } from "#veryfront/agent/runtime/index.ts";
+import { RuntimeAgentRunInvocationSchema } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -350,7 +351,9 @@ describe("run-scoped inference credential", () => {
       },
     );
     const originalRequestJson = Request.prototype.json;
+    const originalObjectEntries = Object.entries;
     const observedJsonCredentials: unknown[] = [];
+    const observedEntriesCredentials: unknown[] = [];
     Request.prototype.json = function (): Promise<unknown> {
       return originalRequestJson.call(this).then((payload) => {
         observedJsonCredentials.push(
@@ -360,6 +363,12 @@ describe("run-scoped inference credential", () => {
         return payload;
       });
     };
+    Object.entries = ((value: object) => {
+      observedEntriesCredentials.push(
+        (value as { inferenceAuthToken?: unknown }).inferenceAuthToken,
+      );
+      return originalObjectEntries(value);
+    }) as typeof Object.entries;
     let response: Response;
     try {
       response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
@@ -368,6 +377,7 @@ describe("run-scoped inference credential", () => {
       });
     } finally {
       Request.prototype.json = originalRequestJson;
+      Object.entries = originalObjectEntries;
     }
 
     assertEquals(response.status, 202, JSON.stringify(setupFailure));
@@ -378,6 +388,7 @@ describe("run-scoped inference credential", () => {
     assertEquals(serializedPreparedRequest.includes("run-scoped-inference-token"), false);
     assertEquals(detachedRequestBody.includes("run-scoped-inference-token"), false);
     assertEquals(observedJsonCredentials, []);
+    assertEquals(observedEntriesCredentials.includes("run-scoped-inference-token"), false);
   });
 
   it("ignores an inference credential without a verified run-event token", async () => {
@@ -610,6 +621,7 @@ describe("run-scoped inference credential", () => {
 
     let capturedAuthorization: string | null = null;
     try {
+      RuntimeAgentRunInvocationSchema.parse(runtimeAgentInvocation(inferenceToken));
       const wrappedFetch = createVeryfrontCloudFetch(
         inferenceToken,
         "https://93.184.216.34/ai/gateway/openai/v1",

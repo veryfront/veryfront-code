@@ -242,7 +242,9 @@ describe("provider/veryfront-cloud", () => {
     const originalGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
     const originalGetPrototypeOf = Object.getPrototypeOf;
     const originalOwnKeys = Reflect.ownKeys;
+    const originalRandomUuid = Crypto.prototype.randomUUID;
     let retainedModelCapability = false;
+    let mutableRandomUuidCalled = false;
     const observe = (value: unknown): void => {
       if (
         value !== null && typeof value === "object" &&
@@ -276,6 +278,10 @@ describe("provider/veryfront-cloud", () => {
       observe(target);
       return originalOwnKeys(target);
     }) as typeof Reflect.ownKeys;
+    Crypto.prototype.randomUUID = function (): `${string}-${string}-${string}-${string}-${string}` {
+      mutableRandomUuidCalled = true;
+      return "00000000-0000-4000-8000-000000000000";
+    };
 
     try {
       createVeryfrontCloudInferenceModel(
@@ -289,9 +295,11 @@ describe("provider/veryfront-cloud", () => {
       Object.getOwnPropertyDescriptor = originalGetOwnPropertyDescriptor;
       Object.getPrototypeOf = originalGetPrototypeOf;
       Reflect.ownKeys = originalOwnKeys;
+      Crypto.prototype.randomUUID = originalRandomUuid;
     }
 
     assertEquals(retainedModelCapability, false);
+    assertEquals(mutableRandomUuidCalled, false);
   });
 
   it("does not make explicit inference authority ambient to ordinary model resolution", async () => {

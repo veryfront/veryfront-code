@@ -40,11 +40,20 @@ const NativeHeaders = Headers;
 const NativeRequest = Request;
 const RequestClone = Request.prototype.clone;
 const RequestJson = Request.prototype.json;
+const RequestHeadersGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "headers")?.get;
+const RequestMethodGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "method")?.get;
+const RequestSignalGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "signal")?.get;
+const RequestUrlGet = Object.getOwnPropertyDescriptor(NativeRequest.prototype, "url")?.get;
 const HeadersDelete = NativeHeaders.prototype.delete;
 const ObjectEntries = Object.entries;
 const ObjectFromEntries = Object.fromEntries;
 const ArrayFilter = Array.prototype.filter;
 const ArrayIsArray = Array.isArray;
+
+function readRequestValue<T>(request: Request, getter: (() => T) | undefined): T {
+  if (!getter) throw new TypeError("Request accessor is unavailable");
+  return IntrinsicReflectApply(getter, request, []) as T;
+}
 
 function withoutInferenceCredential(credentials: object): Record<string, unknown> {
   const entries = IntrinsicReflectApply(ObjectEntries, Object, [credentials]);
@@ -209,14 +218,14 @@ async function createRuntimeInvocationApplicationRequest(request: Request): Prom
       credentials: withoutInferenceCredential(credentials),
     }
     : payload;
-  const headers = new NativeHeaders(request.headers);
+  const headers = new NativeHeaders(readRequestValue<Headers>(request, RequestHeadersGet));
   IntrinsicReflectApply(HeadersDelete, headers, ["content-length"]);
   return createApplicationRequest(
-    new NativeRequest(request.url, {
+    new NativeRequest(readRequestValue<string>(request, RequestUrlGet), {
       body: JSON.stringify(sanitizedPayload),
       headers,
-      method: request.method,
-      signal: request.signal,
+      method: readRequestValue<string>(request, RequestMethodGet),
+      signal: readRequestValue<AbortSignal>(request, RequestSignalGet),
     }),
   );
 }

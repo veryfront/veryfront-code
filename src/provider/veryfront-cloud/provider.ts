@@ -22,6 +22,7 @@ import {
 } from "./model-catalog.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
+const CryptoRandomUuid = Crypto.prototype.randomUUID;
 const FunctionBind = Function.prototype.bind;
 const ObjectCreate = Object.create;
 const ObjectDefineProperties = Object.defineProperties;
@@ -97,7 +98,9 @@ function createVeryfrontCloudModelInternal(
   });
   // Native provider request builders require a credential, but the guarded
   // gateway fetch owns the real run-scoped token and replaces native auth.
-  const providerCredential = inferenceCredential ? `vf-${crypto.randomUUID()}` : apiToken;
+  const providerCredential = inferenceCredential
+    ? `vf-${IntrinsicReflectApply(CryptoRandomUuid, crypto, []) as string}`
+    : apiToken;
   // Project extensions may replace registry providers. A signed inference
   // credential therefore uses only first-party transports that project code
   // cannot replace; ordinary project credentials retain extension behavior.

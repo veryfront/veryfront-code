@@ -14,6 +14,10 @@ const MAX_AGENT_CONFIG_BYTES = 65_536;
 const MAX_FORWARDED_PROPS_BYTES = 196_608;
 const MAX_CREDENTIAL_BYTES = MAX_RUNTIME_INFERENCE_CREDENTIAL_BYTES;
 const encoder = new TextEncoder();
+const IntrinsicReflectApply = Reflect.apply;
+const RegExpPrototypeTest = RegExp.prototype.test;
+const TextEncoderEncode = TextEncoder.prototype.encode;
+const INFERENCE_CREDENTIAL_PATTERN = /^[\x21-\x7e]+$/;
 
 function isWithinJsonSizeLimit(value: unknown, maxBytes: number): boolean {
   try {
@@ -24,7 +28,8 @@ function isWithinJsonSizeLimit(value: unknown, maxBytes: number): boolean {
 }
 
 function isWithinUtf8SizeLimit(value: string, maxBytes: number): boolean {
-  return encoder.encode(value).byteLength <= maxBytes;
+  return (IntrinsicReflectApply(TextEncoderEncode, encoder, [value]) as Uint8Array).byteLength <=
+    maxBytes;
 }
 
 export const getRuntimeAgentRunIdSchema = defineSchema((v) =>
@@ -351,7 +356,10 @@ export const getRuntimeAgentCredentialsSchema = defineSchema((v) => {
   const credential = () => v.string().min(1).max(MAX_CREDENTIAL_BYTES);
   const inferenceCredential = () =>
     credential().refine(
-      (value) => /^[\x21-\x7e]+$/.test(value),
+      (value) =>
+        IntrinsicReflectApply(RegExpPrototypeTest, INFERENCE_CREDENTIAL_PATTERN, [
+          value,
+        ]) as boolean,
       { message: "Credential must be a non-empty visible ASCII string" },
     ).refine(
       (value) => isWithinUtf8SizeLimit(value, MAX_CREDENTIAL_BYTES),
