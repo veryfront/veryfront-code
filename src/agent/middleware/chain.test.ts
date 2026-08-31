@@ -557,6 +557,8 @@ describe("agent/middleware/chain", () => {
   });
 
   it("contains discarded derived invalid-continuation rejections", async () => {
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
     let retainedThen: (() => Promise<AgentResponse>) | undefined;
     let retainedFinally: (() => Promise<AgentResponse>) | undefined;
     const thenChain = new MiddlewareChain([
@@ -572,13 +574,22 @@ describe("agent/middleware/chain", () => {
       },
     ]);
 
-    await thenChain.execute(context, () => Promise.resolve(response));
-    retainedThen!().then(() => response);
-    await finallyChain.execute(context, () => Promise.resolve(response));
-    retainedFinally!().finally(() => undefined);
-    await Promise.resolve();
-    await Promise.resolve();
-    await waitForReport();
+    try {
+      await thenChain.execute(context, () => Promise.resolve(response));
+      retainedThen!().then(() => response);
+      await finallyChain.execute(context, () => Promise.resolve(response));
+      retainedFinally!().finally(() => undefined);
+      await Promise.resolve();
+      await Promise.resolve();
+      await waitForReport();
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(
+      records.some((entry) => entry.message === "Your agent middleware continuation failed"),
+      false,
+    );
   });
 
   it("allows a late rejection handler before detached reporting", async () => {
