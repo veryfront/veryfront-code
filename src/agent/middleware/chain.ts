@@ -86,6 +86,9 @@ function createObservedContinuation<T>(
     Object.defineProperty(continuation, "constructor", {
       value: DerivedContinuationPromise,
     });
+    // Promise species currently keeps every derived branch on this
+    // per-continuation constructor. If a future engine removes that hook, the
+    // guarded isObserved() fallback reports the rejection instead of hiding it.
     observeContinuationRejection(
       continuation,
       onRejection,
