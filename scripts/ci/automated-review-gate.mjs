@@ -312,7 +312,10 @@ function durableReviewRequestKey(
       !/^[1-9]\d*$/.test(reviewEpochRunKey)
     ) throw new Error("Review epoch run key is malformed");
     const eventIdentity = reviewEpochEventIdentity(latestEpoch);
-    const compactRunKey = BigInt(reviewEpochRunKey).toString(36);
+    const compactRunKey = Number.isSafeInteger(latestEpoch.id) &&
+        latestEpoch.id > 0
+      ? latestEpoch.id.toString(36)
+      : BigInt(reviewEpochRunKey).toString(36);
     return `${requestKey}-r-${compactRunKey}-t-${notBefore.toString(36)}${eventIdentity}`;
   }
   if (!Number.isSafeInteger(latestEpoch.id) || latestEpoch.id < 1) {

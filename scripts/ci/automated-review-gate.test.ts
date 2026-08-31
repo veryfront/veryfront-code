@@ -2651,7 +2651,7 @@ describe("automated review publication", () => {
       fixture.published[0]?.description,
       `PR#1 reset base:${
         reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-      } key:ready-r-6y1-t-mt8fp9c0-e-15`,
+      } key:ready-r-15-t-mt8fp9c0-e-15`,
     );
   });
 
@@ -2968,7 +2968,7 @@ describe("automated review publication", () => {
       tiedFixture.published[0]?.description,
       `PR#1 reset base:${
         reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-      } key:reopen-r-6y1-t-mt8fp9c0-e-15`,
+      } key:reopen-r-15-t-mt8fp9c0-e-15`,
     );
 
     const runReset = automatedReviewResetStatus(
@@ -2977,7 +2977,7 @@ describe("automated review publication", () => {
         id: 101,
         description: `PR#1 reset base:${
           reviewBaseBinding(BASE_REPOSITORY_ID, BASE_REF)
-        } key:reopen-r-6y1-t-mt8fp9c0-e-15`,
+        } key:reopen-r-15-t-mt8fp9c0-e-15`,
       },
     );
 
@@ -5841,6 +5841,37 @@ describe("automated review request", () => {
     assertEquals(tiedRunResult.requested, false);
     assertEquals(tiedRunResult.reason, "stale-epoch");
     assertEquals(tiedRunBound.posted, []);
+  });
+
+  it("coalesces same-second runs on the same durable event", async () => {
+    const fixture = requestFixture({
+      events: [{
+        event: "base_ref_changed",
+        id: 42,
+        created_at: "2026-08-25T08:00:00Z",
+      }],
+    });
+    const request = (reviewEpochRunKey: string) =>
+      requestAutomatedReview({
+        github: fixture.github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha: HEAD,
+        requestKey: "base",
+        reviewEpochNotBefore: "2026-08-25T08:00:00Z",
+        reviewEpochRunKey,
+      });
+    const first = await request("9001");
+    fixture.state.comments.push({
+      user: bot("github-actions[bot]", GITHUB_ACTIONS_ID),
+      body: fixture.posted[0]?.body,
+    });
+    const second = await request("9002");
+
+    assertEquals(first.requested, true);
+    assertEquals(second.requested, false);
+    assertEquals(fixture.posted.length, 1);
   });
 
   it("refuses to request a review of a malformed head commit", async () => {
