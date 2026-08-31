@@ -899,6 +899,23 @@ describe("agent/middleware/chain", () => {
     assertEquals(error instanceof TypeError, true);
   });
 
+  it("preserves self-resolution rejection for deferred continuations", async () => {
+    let continuation: Promise<AgentResponse> | undefined;
+    const chain = new MiddlewareChain([
+      async (_context, next) => {
+        await Promise.resolve();
+        continuation = next();
+        return await continuation;
+      },
+    ]);
+
+    const error = await assertRejects(
+      () => chain.execute(context, () => continuation!),
+      TypeError,
+    );
+    assertEquals(error instanceof TypeError, true);
+  });
+
   it("invokes the final handler for an empty middleware chain", async () => {
     let finalHandlerCalls = 0;
     assertEquals(

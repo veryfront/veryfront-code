@@ -90,8 +90,13 @@ function adoptContinuationResult(
   dispatch: () => Promise<AgentResponse>,
   resolve: (value: AgentResponse | PromiseLike<AgentResponse>) => void,
   reject: (reason?: unknown) => void,
+  continuation?: Promise<AgentResponse>,
 ): void {
   const dispatched = dispatch();
+  if (dispatched === continuation) {
+    reject(new TypeError("Chaining cycle detected for promise"));
+    return;
+  }
   void Promise.prototype.then.call(dispatched, resolve, reject);
 }
 
@@ -205,7 +210,7 @@ function createDeferredContinuation(
         reject(createInvalidContinuationError());
         return;
       }
-      adoptContinuationResult(dispatch, resolve, reject);
+      adoptContinuationResult(dispatch, resolve, reject, continuation);
     }).catch(reject);
   }, onUnexpectedRejection);
   return continuation;
