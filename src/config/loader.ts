@@ -2134,16 +2134,15 @@ function advanceCsiSchemeLiteral(
   };
 }
 
-function advanceCsiSchemeSequence(
-  states: CsiRestorationStates,
+function advanceSpecialCsiSequence(
+  states: CsiSchemeStates,
   value: string,
   matchIndex: number,
-  inputIndex: number,
-): CsiRestorationStates {
+): CsiSchemeStates {
   const next = createCsiSchemeStates();
   for (let schemeIndex = 0; schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length; schemeIndex++) {
     const scheme = CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!;
-    const current = states.special[schemeIndex]!;
+    const current = states[schemeIndex]!;
     const advanced = next[schemeIndex]!;
     for (let characterIndex = 1; characterIndex <= scheme.length; characterIndex++) {
       const path = current[characterIndex];
@@ -2164,7 +2163,16 @@ function advanceCsiSchemeSequence(
       advanced[1] = keepShorterCsiSchemePath(advanced[1], [matchIndex]);
     }
   }
+  return next;
+}
 
+function advanceCsiSchemeSequence(
+  states: CsiRestorationStates,
+  value: string,
+  matchIndex: number,
+  inputIndex: number,
+): CsiRestorationStates {
+  const special = advanceSpecialCsiSequence(states.special, value, matchIndex);
   const generic = createDenseGenericCsiStates();
   const isSchemeCharacter = ReflectApply(
     RegExpPrototypeExec,
@@ -2186,7 +2194,7 @@ function advanceCsiSchemeSequence(
       startIndex: inputIndex,
     });
   }
-  return { special: next, generic };
+  return { special, generic };
 }
 
 /**
