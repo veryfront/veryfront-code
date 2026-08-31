@@ -307,7 +307,11 @@ export class APIRouteHandler {
             if (isPreflightRequest(request)) {
               return this.automaticPreflight(
                 request,
-                await this.resolveStaticRouteMethods(match.route.page, adapter),
+                await this.resolveStaticRouteMethods(
+                  match.route.page,
+                  adapter,
+                  this.requestedPreflightMethod(request),
+                ),
                 ctx,
               );
             }
@@ -587,10 +591,11 @@ export class APIRouteHandler {
   private async resolveStaticRouteMethods(
     modulePath: string,
     adapter: RuntimeAdapter,
+    requestedMethod?: string,
   ): Promise<readonly string[] | undefined> {
     try {
       const source = await adapter.fs.readFile(modulePath);
-      return await resolveStaticRouteMethodsFromSource(source);
+      return await resolveStaticRouteMethodsFromSource(source, requestedMethod);
     } catch {
       return undefined;
     }

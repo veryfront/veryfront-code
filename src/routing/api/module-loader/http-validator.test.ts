@@ -82,6 +82,10 @@ describe("resolveStaticRouteMethods", () => {
       ),
       ["GET", "HEAD", "POST"],
     );
+    assertEquals(
+      await resolveStaticRouteMethods("export default function route() {}", "PROPFIND"),
+      ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "PROPFIND"],
+    );
   });
 
   it("keeps dynamic method exports on the conservative fallback", async () => {

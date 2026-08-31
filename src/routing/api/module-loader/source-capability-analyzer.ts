@@ -5095,6 +5095,7 @@ function orderStaticRouteMethods(methods: string[]): string[] {
  */
 export async function resolveStaticRouteMethods(
   source: string,
+  requestedMethod?: unknown,
 ): Promise<readonly string[] | undefined> {
   if (COMMONJS_EXPORT_PATTERN.test(source)) return undefined;
 
@@ -5112,6 +5113,9 @@ export async function resolveStaticRouteMethods(
       if (defaultCapability === "unknown") return undefined;
       if (defaultCapability === "present") {
         for (const method of STATIC_STANDARD_ROUTE_METHODS) addStaticRouteMethod(methods, method);
+        if (isStaticHttpMethodName(requestedMethod as string | null)) {
+          addStaticRouteMethod(methods, requestedMethod as string);
+        }
       }
       continue;
     }
