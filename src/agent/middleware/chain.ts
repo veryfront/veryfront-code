@@ -22,6 +22,7 @@ const ObjectDefineProperty = Object.defineProperty;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectIsExtensible = Object.isExtensible;
 const PromiseThen = Promise.prototype.then;
+const SetTimeout = setTimeout;
 const ReflectApply = Reflect.apply;
 const SymbolSpecies = Symbol.species;
 const WeakSetAdd = WeakSet.prototype.add;
@@ -33,7 +34,7 @@ const WeakMapSet = WeakMap.prototype.set;
 const INVALID_CONTINUATION_ERRORS = new IntrinsicWeakSet<object>();
 const TRACKED_CONTINUATIONS = new IntrinsicWeakSet<object>();
 const OBSERVED_CONTINUATIONS = new IntrinsicWeakSet<object>();
-const CONTINUATION_SPECIES_HOLDER = ReflectApply(ObjectCreate, Object, [null]) as object;
+const CONTINUATION_SPECIES_HOLDER = ObjectCreate(null) as object;
 ObjectDefineProperty(CONTINUATION_SPECIES_HOLDER, SymbolSpecies, {
   value: IntrinsicPromise,
 });
@@ -418,7 +419,7 @@ function scheduleDetachedContinuationFailureReport(record: {
   isObserved: () => boolean;
   reported: boolean;
 }): void {
-  setTimeout(() => {
+  SetTimeout(() => {
     try {
       if (!record.isObserved() && !record.reported) {
         record.reported = true;
