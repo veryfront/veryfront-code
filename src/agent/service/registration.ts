@@ -418,11 +418,13 @@ function buildRegistrationRequest(
 async function registerAgentPushRuntimeService(
   input: ResolvedAgentServiceRegistrationInput,
   fetchImpl: typeof globalThis.fetch,
+  abortSignal?: AbortSignal,
 ): Promise<AgentPushRuntimeServiceRest> {
   const response = await fetchImpl(getRegistrationEndpoint(input.apiUrl), {
     method: "POST",
     headers: createHeaders(input.authToken),
     body: JSON.stringify(buildRegistrationRequest(input)),
+    signal: abortSignal,
   });
   return await readAgentPushRuntimeServiceResponse(response);
 }
@@ -485,6 +487,17 @@ function isRetryableHeartbeatFailure(error: unknown): boolean {
   return httpStatus === undefined || (httpStatus >= 500 && httpStatus <= 599);
 }
 
+/**
+ * A heartbeat 404 means the control plane no longer knows this service id: the
+ * registry row was evicted, the environment was reset, or a redeploy wiped it.
+ * Repeating the heartbeat can never succeed, so the lifecycle registers again
+ * instead of counting the tick toward the persistent-failure escalation.
+ */
+function isLostRegistrationHeartbeatFailure(error: unknown): boolean {
+  if (!isVeryfrontError(error) || error.slug !== NETWORK_ERROR.slug) return false;
+  return readUpstreamHttpStatus(error.context) === 404;
+}
+
 async function heartbeatAgentPushRuntimeService(
   input: HeartbeatRequest,
   fetchImpl: typeof globalThis.fetch,
@@ -522,11 +535,13 @@ export async function createAgentServiceRegistrationLifecycle(
 ): Promise<AgentServiceRegistrationLifecycle> {
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const input = resolvedAgentServiceRegistrationInputSchema.parse(options);
-  const service = await registerAgentPushRuntimeService(input, fetchImpl);
+  let service = await registerAgentPushRuntimeService(input, fetchImpl);
   let stopped = false;
   const teardown = new AbortController();
   let heartbeatInFlight: Promise<void> | undefined;
   let heartbeatSkipLogged = false;
+  let awaitingHeartbeatAfterReregistration = false;
+  const recoveredHeartbeats = new WeakSet<Promise<void>>();
 
   const heartbeat = () => {
     if (heartbeatInFlight) return heartbeatInFlight;
@@ -547,11 +562,59 @@ export async function createAgentServiceRegistrationLifecycle(
           fetchImpl,
           { logger: options.logger, abortSignal: teardown.signal },
         );
+        awaitingHeartbeatAfterReregistration = false;
       } catch (error) {
         // stop() aborts the in-flight request and any pending backoff. That is a
         // teardown, not a heartbeat failure, so it must not reach the counter.
         if (stopped) {
           return;
+        }
+        if (isLostRegistrationHeartbeatFailure(error)) {
+          // The service_key upsert makes registering again idempotent, and the
+          // next tick heartbeats against the adopted id. Only the first recovery
+          // is exempted: another 404 before any heartbeat succeeds means the
+          // control plane is repeatedly losing registrations and must escalate.
+          try {
+            const registeredService = await retryWithBackoff(
+              (signal) => registerAgentPushRuntimeService(input, fetchImpl, signal),
+              {
+                maxAttempts: 1,
+                abortSignal: teardown.signal,
+                timeoutMs: Math.max(
+                  input.heartbeatIntervalMs,
+                  HEARTBEAT_MIN_ATTEMPT_TIMEOUT_MS,
+                ),
+              },
+            );
+            if (stopped) {
+              return;
+            }
+            if (!awaitingHeartbeatAfterReregistration && heartbeatInFlight) {
+              recoveredHeartbeats.add(heartbeatInFlight);
+            }
+            awaitingHeartbeatAfterReregistration = true;
+            service = registeredService;
+            lifecycle.serviceId = registeredService.id;
+            lifecycle.service = registeredService;
+            options.logger?.info?.(
+              "Agent service re-registered after the control plane lost its registration",
+              { serviceId: service.id },
+            );
+          } catch (registrationError) {
+            if (stopped) {
+              return;
+            }
+            // A failed re-registration keeps counting toward the escalation, so
+            // a genuinely dead control plane still surfaces persistently.
+            options.logger?.warn?.("Agent service re-registration failed", {
+              serviceId: service.id,
+              error: getErrorMessage(registrationError),
+            });
+            throw registrationError;
+          }
+          if (stopped) {
+            return;
+          }
         }
         throw error;
       }
@@ -578,9 +641,14 @@ export async function createAgentServiceRegistrationLifecycle(
       }
       return;
     }
-    void heartbeat().then(() => {
+    const scheduledHeartbeat = heartbeat();
+    void scheduledHeartbeat.then(() => {
       consecutiveHeartbeatFailures = 0;
     }).catch((error: unknown) => {
+      if (recoveredHeartbeats.has(scheduledHeartbeat)) {
+        consecutiveHeartbeatFailures = 0;
+        return;
+      }
       consecutiveHeartbeatFailures++;
       // Escalate from warn to error after repeated failures — persistent heartbeat
       // loss means the control plane considers this service dead while it keeps running.
@@ -599,14 +667,7 @@ export async function createAgentServiceRegistrationLifecycle(
     });
   }, input.heartbeatIntervalMs);
 
-  options.logger?.info?.("Agent service registered with control plane", {
-    serviceId: service.id,
-    serviceName: service.service_name,
-    scopeKind: service.scope_kind,
-    projectId: service.project_id,
-  });
-
-  return {
+  const lifecycle: AgentServiceRegistrationLifecycle = {
     serviceId: service.id,
     service,
     heartbeat,
@@ -616,4 +677,13 @@ export async function createAgentServiceRegistrationLifecycle(
       teardown.abort();
     },
   };
+
+  options.logger?.info?.("Agent service registered with control plane", {
+    serviceId: service.id,
+    serviceName: service.service_name,
+    scopeKind: service.scope_kind,
+    projectId: service.project_id,
+  });
+
+  return lifecycle;
 }

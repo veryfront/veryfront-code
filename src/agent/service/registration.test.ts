@@ -306,13 +306,16 @@ describe("agent/agent-service-registration", () => {
 type LogEntry = { message: string; metadata?: Record<string, unknown> };
 
 function recordingLogger() {
+  const infos: LogEntry[] = [];
   const warnings: LogEntry[] = [];
   const errors: LogEntry[] = [];
   return {
+    infos,
     warnings,
     errors,
     logger: {
-      info: () => {},
+      info: (message: string, metadata?: Record<string, unknown>) =>
+        void infos.push({ message, metadata }),
       warn: (message: string, metadata?: Record<string, unknown>) =>
         void warnings.push({ message, metadata }),
       error: (message: string, metadata?: Record<string, unknown>) =>
@@ -325,19 +328,44 @@ function recordingLogger() {
  * Answers registration with 200 and each heartbeat with the next scripted
  * status, repeating the last one once the script runs out.
  */
-function scriptedHeartbeatFetch(statuses: readonly number[]) {
+function scriptedHeartbeatFetch(
+  statuses: readonly number[],
+  options: {
+    heartbeatResponse?: (
+      input: RequestInfo | URL,
+      attempt: number,
+    ) => Response | Promise<Response> | undefined;
+    registrationResponse?: (
+      attempt: number,
+      signal: AbortSignal | undefined,
+    ) => Response | Promise<Response>;
+  } = {},
+) {
   let heartbeatAttempts = 0;
-  const fetch: typeof globalThis.fetch = (input) => {
+  let registrationAttempts = 0;
+  const fetch: typeof globalThis.fetch = (input, init) => {
     if (!input.toString().endsWith("/heartbeat")) {
-      return Promise.resolve(jsonResponse(serviceResponse));
+      registrationAttempts++;
+      return Promise.resolve(
+        options.registrationResponse?.(
+          registrationAttempts,
+          init?.signal ?? undefined,
+        ) ?? jsonResponse(serviceResponse),
+      );
     }
+    const heartbeatResponse = options.heartbeatResponse?.(input, heartbeatAttempts + 1);
     const status = statuses[Math.min(heartbeatAttempts, statuses.length - 1)] ?? 200;
     heartbeatAttempts++;
     return Promise.resolve(
-      status === 200 ? jsonResponse(serviceResponse) : jsonResponse({ error: "boom" }, status),
+      heartbeatResponse ??
+        (status === 200 ? jsonResponse(serviceResponse) : jsonResponse({ error: "boom" }, status)),
     );
   };
-  return { fetch, heartbeatAttempts: () => heartbeatAttempts };
+  return {
+    fetch,
+    heartbeatAttempts: () => heartbeatAttempts,
+    registrationAttempts: () => registrationAttempts,
+  };
 }
 
 function lifecycleOptions(
@@ -1043,6 +1071,265 @@ describe("agent/agent-service-registration heartbeat retry", () => {
       log.errors[0]?.metadata?.consecutiveFailures,
       3,
       "escalation must still trip on the third consecutive failed tick",
+    );
+  });
+});
+
+describe("agent/agent-service-registration heartbeat recovery", () => {
+  // Sentry VERYFRONT-AGENT-E (issue-inbox#873): the control plane forgets a
+  // registered service (row deleted, environment reset, registry wiped by a
+  // redeploy) and answers every heartbeat for the stale id with HTTP 404. A
+  // 404 is a non-retryable client error, so three ticks later the lifecycle
+  // logs "Agent service heartbeat failing persistently" and then repeats that
+  // forever: nothing ever registers the service again, and the control plane
+  // considers it dead while it keeps running.
+  it("re-registers a service the control plane no longer knows instead of failing persistently", async () => {
+    let recoveredHeartbeats = 0;
+    const recoveredServiceId = "33333333-3333-4333-a333-333333333333";
+    const script = scriptedHeartbeatFetch([404], {
+      heartbeatResponse: (input) => {
+        if (!input.toString().includes(recoveredServiceId)) {
+          return jsonResponse({ error: "Agent push runtime service not found" }, 404);
+        }
+        recoveredHeartbeats++;
+        return jsonResponse(serviceResponse);
+      },
+      registrationResponse: (attempt) =>
+        jsonResponse(
+          attempt === 1 ? serviceResponse : {
+            service: { ...serviceResponse.service, id: recoveredServiceId },
+          },
+        ),
+    });
+    const log = recordingLogger();
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(script.fetch, { heartbeatIntervalMs: 40, logger: log.logger }),
+    );
+
+    try {
+      // Recovery and escalation race here: wait until the lifecycle either
+      // heartbeats successfully again or emits the persistent-failure error.
+      await waitFor(() => recoveredHeartbeats > 0 || log.errors.length > 0, {
+        timeout: 2_000,
+        interval: 10,
+        message: "the lifecycle neither recovered nor escalated after heartbeat 404s",
+      });
+    } finally {
+      lifecycle.stop();
+    }
+
+    assertEquals(
+      log.errors.map((entry) => entry.message),
+      [],
+      "a lost registration must trigger re-registration, not the persistent-failure escalation",
+    );
+    assert(
+      script.registrationAttempts() >= 2,
+      "a heartbeat 404 must make the lifecycle register the service again",
+    );
+    assert(
+      recoveredHeartbeats > 0,
+      "heartbeats must succeed again once the service is re-registered",
+    );
+    assertEquals(
+      lifecycle.serviceId,
+      recoveredServiceId,
+      "the lifecycle must expose the adopted registration id",
+    );
+    assertEquals(
+      lifecycle.service.id,
+      recoveredServiceId,
+      "the lifecycle must expose the adopted registration row",
+    );
+    const assignedServiceId = "44444444-4444-4444-a444-444444444444";
+    const assignedService: typeof lifecycle.service = {
+      ...serviceResponse.service,
+      id: assignedServiceId,
+      scope_kind: "project",
+      status: "active",
+    };
+    lifecycle.serviceId = assignedServiceId;
+    lifecycle.service = assignedService;
+    assertEquals(lifecycle.serviceId, assignedServiceId, "serviceId must remain writable");
+    assertEquals(lifecycle.service, assignedService, "service must remain writable");
+  });
+
+  it("escalates when the control plane repeatedly loses successful re-registrations", async () => {
+    const script = scriptedHeartbeatFetch([404]);
+    const log = recordingLogger();
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(script.fetch, { heartbeatIntervalMs: 40, logger: log.logger }),
+    );
+
+    try {
+      await waitFor(() => log.errors.length > 0, {
+        timeout: 2_000,
+        interval: 10,
+        message: "repeatedly lost re-registrations never reached the persistent-failure log",
+      });
+    } finally {
+      lifecycle.stop();
+    }
+
+    assert(
+      script.registrationAttempts() >= 4,
+      "each lost registration must still attempt recovery before escalation",
+    );
+    assertEquals(
+      log.errors[0]?.metadata?.consecutiveFailures,
+      3,
+      "repeatedly lost registrations must escalate on the third failed tick",
+    );
+  });
+
+  it("counts failed re-registration attempts toward persistent-failure escalation", async () => {
+    const script = scriptedHeartbeatFetch([404], {
+      registrationResponse: (attempt) =>
+        attempt === 1
+          ? jsonResponse(serviceResponse)
+          : jsonResponse({ error: "registration unavailable" }, 500),
+    });
+    const log = recordingLogger();
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(script.fetch, { heartbeatIntervalMs: 40, logger: log.logger }),
+    );
+
+    try {
+      await waitFor(() => log.errors.length > 0, {
+        timeout: 2_000,
+        interval: 10,
+        message: "failed re-registration never reached the persistent-failure log",
+      });
+    } finally {
+      lifecycle.stop();
+    }
+
+    assertEquals(
+      log.warnings.filter((entry) => entry.message === "Agent service re-registration failed")
+        .length,
+      3,
+      "each failed re-registration must be reported before escalation",
+    );
+    assertEquals(
+      log.errors[0]?.metadata?.consecutiveFailures,
+      3,
+      "failed re-registration must escalate on the third failed tick",
+    );
+    assertEquals(
+      log.errors[0]?.metadata?.error,
+      "Agent runtime registration request failed with HTTP 500",
+      "the escalation must report the recovery failure rather than the original heartbeat 404",
+    );
+  });
+
+  it("times out a hung re-registration so persistent failures still escalate", async () => {
+    using time = new FakeTime();
+    let registrationAborts = 0;
+    const script = scriptedHeartbeatFetch([404], {
+      registrationResponse: (attempt, signal) => {
+        if (attempt === 1) return jsonResponse(serviceResponse);
+        assert(signal, "re-registration requests must carry a bounded abort signal");
+        return new Promise<Response>((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            registrationAborts++;
+            reject(signal.reason);
+          }, { once: true });
+        });
+      },
+    });
+    const log = recordingLogger();
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(script.fetch, { heartbeatIntervalMs: 20, logger: log.logger }),
+    );
+
+    for (let step = 0; step < 10 && log.errors.length === 0; step++) {
+      await time.tickAsync(5_020);
+      await time.tickAsync(0);
+    }
+    lifecycle.stop();
+
+    assertEquals(registrationAborts, 3, "each hung recovery must time out before escalation");
+    assertEquals(
+      log.errors[0]?.metadata?.consecutiveFailures,
+      3,
+      "hung recovery must escalate on the third failed tick",
+    );
+  });
+
+  it("keeps recovery scoped to the scheduled heartbeat when a direct caller starts the next one", async () => {
+    let releaseLostHeartbeat!: () => void;
+    const lostHeartbeat = new Promise<Response>((resolve) => {
+      releaseLostHeartbeat = () =>
+        resolve(jsonResponse({ error: "Agent push runtime service not found" }, 404));
+    });
+    const script = scriptedHeartbeatFetch([400, 400, 404, 200], {
+      heartbeatResponse: (_input, attempt) => attempt === 3 ? lostHeartbeat : undefined,
+    });
+    const log = recordingLogger();
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(script.fetch, { heartbeatIntervalMs: 30, logger: log.logger }),
+    );
+
+    await waitFor(
+      () =>
+        log.warnings.filter((entry) => entry.message === "Agent service heartbeat failed")
+            .length === 2 && script.heartbeatAttempts() === 3,
+      { timeout: 1_000, interval: 5, message: "the third scheduled heartbeat did not start" },
+    );
+    const directCaller = lifecycle.heartbeat().catch(() => lifecycle.heartbeat());
+    releaseLostHeartbeat();
+    await directCaller;
+    await waitFor(() => script.heartbeatAttempts() >= 4, {
+      timeout: 1_000,
+      interval: 5,
+      message: "the direct caller did not start the next heartbeat",
+    });
+    lifecycle.stop();
+
+    assertEquals(
+      log.errors,
+      [],
+      "a recovered scheduled heartbeat must not become the third failure when another call starts",
+    );
+  });
+
+  it("does not adopt or publish a re-registration that finishes after stop", async () => {
+    const recoveredServiceId = "33333333-3333-4333-a333-333333333333";
+    let finishReregistration!: () => void;
+    const pendingReregistration = new Promise<Response>((resolve) => {
+      finishReregistration = () =>
+        resolve(jsonResponse({
+          service: { ...serviceResponse.service, id: recoveredServiceId },
+        }));
+    });
+    const script = scriptedHeartbeatFetch([404], {
+      registrationResponse: (attempt) =>
+        attempt === 1 ? jsonResponse(serviceResponse) : pendingReregistration,
+    });
+    const log = recordingLogger();
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(script.fetch, { heartbeatIntervalMs: 60_000, logger: log.logger }),
+    );
+
+    const heartbeat = lifecycle.heartbeat().catch(() => undefined);
+    await waitFor(() => script.registrationAttempts() === 2, {
+      timeout: 1_000,
+      interval: 5,
+      message: "re-registration did not start",
+    });
+    lifecycle.stop();
+    finishReregistration();
+    await heartbeat;
+
+    assertEquals(
+      lifecycle.serviceId,
+      serviceResponse.service.id,
+      "a stopped lifecycle must retain its last active registration",
+    );
+    assertEquals(
+      log.infos.filter((entry) => entry.message.includes("re-registered")),
+      [],
+      "a stopped lifecycle must not publish a successful recovery",
     );
   });
 });
