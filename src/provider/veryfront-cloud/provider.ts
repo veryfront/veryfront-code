@@ -108,7 +108,9 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
     inferenceCredential,
   );
   const baseURL = getVeryfrontCloudGatewayBaseUrl(apiBaseUrl, provider);
-  const fetch = createVeryfrontCloudFetch(apiToken, baseURL, projectSlug);
+  const fetch = createVeryfrontCloudFetch(apiToken, baseURL, projectSlug, {
+    inferenceCredential: inferenceCredential !== undefined,
+  });
   // Project extensions may replace registry providers. A signed inference
   // credential therefore uses only first-party transports that project code
   // cannot replace; ordinary project credentials retain extension behavior.

@@ -2,6 +2,7 @@ const ANTHROPIC_FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-
 const ANTHROPIC_MCP_CLIENT_BETA = "mcp-client-2025-11-20";
 const DEPRECATED_ANTHROPIC_MCP_CLIENT_BETA = "mcp-client-2025-04-04";
 const MAX_PROVIDER_CREDENTIAL_BYTES = 8 * 1024;
+const MAX_INFERENCE_CREDENTIAL_BYTES = 16 * 1024;
 const PROVIDER_CREDENTIAL_ENCODER = new TextEncoder();
 
 /**
@@ -15,6 +16,7 @@ const ANTHROPIC_API_VERSION = "2023-06-01";
 export function requireProviderCredential(
   value: unknown,
   credentialName: string,
+  maxBytes = MAX_PROVIDER_CREDENTIAL_BYTES,
 ): string {
   if (
     typeof value !== "string" ||
@@ -27,14 +29,21 @@ export function requireProviderCredential(
     );
   }
   if (
-    PROVIDER_CREDENTIAL_ENCODER.encode(value).byteLength >
-      MAX_PROVIDER_CREDENTIAL_BYTES
+    PROVIDER_CREDENTIAL_ENCODER.encode(value).byteLength > maxBytes
   ) {
     throw new RangeError(
-      `${credentialName} must not exceed ${MAX_PROVIDER_CREDENTIAL_BYTES} bytes`,
+      `${credentialName} must not exceed ${maxBytes} bytes`,
     );
   }
   return value;
+}
+
+/** @internal Validate signed inference credentials at their larger transport bound. */
+export function requireInferenceProviderCredential(
+  value: unknown,
+  credentialName: string,
+): string {
+  return requireProviderCredential(value, credentialName, MAX_INFERENCE_CREDENTIAL_BYTES);
 }
 
 export function createRequestHeaders(options: {

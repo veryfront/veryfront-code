@@ -13,7 +13,10 @@ import {
   normalizeVeryfrontCloudProviderAlias,
   type VeryfrontCloudProviderId,
 } from "./model-catalog.ts";
-import { requireProviderCredential } from "../runtime-loader/provider-request-init.ts";
+import {
+  requireInferenceProviderCredential,
+  requireProviderCredential,
+} from "../runtime-loader/provider-request-init.ts";
 
 export type { VeryfrontCloudProviderId } from "./model-catalog.ts";
 
@@ -187,11 +190,11 @@ export function createVeryfrontCloudFetch(
   apiToken: string,
   apiBaseUrl: string,
   projectSlug?: string,
+  options?: { inferenceCredential?: boolean },
 ): typeof fetch {
-  const trustedApiToken = requireProviderCredential(
-    apiToken,
-    "Veryfront Cloud API token",
-  );
+  const trustedApiToken = options?.inferenceCredential
+    ? requireInferenceProviderCredential(apiToken, "Veryfront Cloud API token")
+    : requireProviderCredential(apiToken, "Veryfront Cloud API token");
   const authorizedOrigin = parseVeryfrontCloudApiBaseUrl(apiBaseUrl).origin;
   return (input, init) => {
     const request = new Request(input, init);

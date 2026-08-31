@@ -110,8 +110,9 @@ describe("agent/runtime-agent-invocation-contract", () => {
   });
 
   it("bounds runtime credentials by UTF-8 bytes", () => {
-    const exactByteLimit = "é".repeat(8_192);
-    const overByteLimit = "é".repeat(8_193);
+    const exactByteLimit = "x".repeat(16_384);
+    const overByteLimit = "x".repeat(16_385);
+    const legacyOverByteLimit = "é".repeat(8_193);
 
     const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
       credentials: {
@@ -123,9 +124,9 @@ describe("agent/runtime-agent-invocation-contract", () => {
     assertEquals(parsed.credentials?.inferenceAuthToken, exactByteLimit);
 
     const legacyParsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
-      credentials: { authToken: overByteLimit },
+      credentials: { authToken: legacyOverByteLimit },
     }));
-    assertEquals(legacyParsed.credentials?.authToken, overByteLimit);
+    assertEquals(legacyParsed.credentials?.authToken, legacyOverByteLimit);
 
     assertThrows(() =>
       RuntimeAgentRunInvocationSchema.parse(createInvocation({

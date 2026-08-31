@@ -264,6 +264,16 @@ describe("run-scoped inference credential", () => {
     assertEquals(capturedAuthorization, "Bearer broader-project-runtime-token");
   });
 
+  it("accepts inference credentials through the full provider transport bound", () => {
+    setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
+    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
+    const model = createVeryfrontCloudInferenceModelResolver("x".repeat(8_193))(
+      "veryfront-cloud/openai/gpt-test",
+    );
+
+    assertEquals(typeof model.doStream, "function");
+  });
+
   it("routes a serialized standalone AgentService invocation to gateway Authorization", async () => {
     setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
     setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");

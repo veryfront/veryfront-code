@@ -350,6 +350,9 @@ export const getRuntimeAgentCredentialsSchema = defineSchema((v) => {
   const credential = () => v.string().min(1).max(MAX_CREDENTIAL_BYTES);
   const inferenceCredential = () =>
     credential().refine(
+      (value) => /^[\x21-\x7e]+$/.test(value),
+      { message: "Credential must be a non-empty visible ASCII string" },
+    ).refine(
       (value) => isWithinUtf8SizeLimit(value, MAX_CREDENTIAL_BYTES),
       { message: "Credential must not exceed 16 KB" },
     );
