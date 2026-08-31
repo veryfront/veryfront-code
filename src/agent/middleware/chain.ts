@@ -187,7 +187,18 @@ function classifyContinuationFailure(error: unknown): string {
         return "error";
     }
   }
-  return typeof error;
+  switch (typeof error) {
+    case "bigint":
+    case "boolean":
+    case "function":
+    case "number":
+    case "string":
+    case "symbol":
+    case "undefined":
+      return "primitive";
+    default:
+      return "object";
+  }
 }
 
 function scheduleDetachedContinuationFailureReport(record: {
