@@ -616,15 +616,26 @@ describe("agent/middleware/chain", () => {
   it("reports detached primitive rejection reasons", async () => {
     const records: LogEntry[] = [];
     const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+    const cases = [
+      [undefined, "primitive"],
+      [null, "null"],
+      ["primitive downstream failure", "primitive"],
+      [42, "primitive"],
+      [true, "primitive"],
+      [1n, "primitive"],
+      [Symbol("primitive"), "primitive"],
+      [() => undefined, "primitive"],
+      [{}, "object"],
+    ] as const;
     try {
-      for (const reason of [undefined, null, "primitive downstream failure"] as const) {
+      for (const [reason] of cases) {
         const chain = new MiddlewareChain([
           async (_context, next) => {
             next();
             return response;
           },
         ]);
-        await chain.execute(context, () => Promise.reject<AgentResponse>(reason));
+        await chain.execute(context, () => Promise.reject<AgentResponse>(reason as AgentResponse));
         await waitForReport();
       }
     } finally {
@@ -634,7 +645,12 @@ describe("agent/middleware/chain", () => {
     assertEquals(
       records.filter((entry) => entry.message === "Your agent middleware continuation failed")
         .length,
-      3,
+      cases.length,
+    );
+    assertEquals(
+      records.filter((entry) => entry.message === "Your agent middleware continuation failed")
+        .map((entry) => entry.context?.failure_type),
+      cases.map(([, failureType]) => failureType),
     );
   });
 

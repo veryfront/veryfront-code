@@ -12,6 +12,8 @@ const INVALID_CONTINUATION_MESSAGE =
   "You must call agent middleware next() at most once while the middleware is active";
 const DETACHED_CONTINUATION_FAILURE = "downstream continuation rejected";
 const INVALID_CONTINUATION_ERRORS = new WeakSet<object>();
+// A global symbol lets independently loaded package copies recognize the
+// expected internal error; the WeakSet remains the primary local check.
 const INVALID_CONTINUATION_MARKER = Symbol.for(
   "veryfront.agent.middleware.invalid-continuation",
 );
@@ -307,6 +309,8 @@ function createMiddlewareContinuation(
       );
     }
 
+    // The executor does not expose the continuation until construction
+    // completes, so native Promise resolution handles eager self-resolution.
     const continuation = createObservedContinuation<AgentResponse>((resolve, reject) => {
       adoptContinuationResult(dispatch, resolve, reject);
     }, reportContinuationFailure);
