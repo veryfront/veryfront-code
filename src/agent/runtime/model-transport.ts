@@ -22,7 +22,31 @@ import {
 import { hasDisabledThinking } from "./model-capabilities.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const StringStartsWith = String.prototype.startsWith;
+const NativeAbortController = AbortController;
+const AbortControllerAbort = AbortController.prototype.abort;
+const EventTargetAddEventListener = EventTarget.prototype.addEventListener;
+const EventTargetRemoveEventListener = EventTarget.prototype.removeEventListener;
+
+function captureIntrinsicGetter<T>(prototype: object, property: string): () => T {
+  const getter = IntrinsicObjectGetOwnPropertyDescriptor(prototype, property)?.get;
+  if (!getter) throw new TypeError(`Abort intrinsic ${property} is unavailable`);
+  return getter;
+}
+
+const AbortControllerSignalGetter = captureIntrinsicGetter<AbortSignal>(
+  AbortController.prototype,
+  "signal",
+);
+const AbortSignalAbortedGetter = captureIntrinsicGetter<boolean>(
+  AbortSignal.prototype,
+  "aborted",
+);
+const AbortSignalReasonGetter = captureIntrinsicGetter<unknown>(
+  AbortSignal.prototype,
+  "reason",
+);
 
 export type ResolvedModelTransport = {
   requestedModel: string;
@@ -73,12 +97,16 @@ export function createModelRuntimeResolverAbortGuard(
   dispose: () => void;
 } {
   const revoke = () => revokeModelRuntimeResolver(resolver);
-  signal?.addEventListener("abort", revoke, { once: true });
+  if (signal) {
+    IntrinsicReflectApply(EventTargetAddEventListener, signal, ["abort", revoke, { once: true }]);
+  }
 
   return {
     revoke,
     dispose: () => {
-      signal?.removeEventListener("abort", revoke);
+      if (signal) {
+        IntrinsicReflectApply(EventTargetRemoveEventListener, signal, ["abort", revoke]);
+      }
       revoke();
     },
   };
@@ -94,23 +122,50 @@ export function createModelRuntimeResolverAbortScope(
   revoke: () => void;
   dispose: () => void;
 } {
-  const controller = new AbortController();
+  const controller = new NativeAbortController();
+  const signal: AbortSignal = IntrinsicReflectApply(AbortControllerSignalGetter, controller, []);
   const revoke = () => revokeModelRuntimeResolver(resolver);
   const abort = (reason?: unknown) => {
     revoke();
-    if (!controller.signal.aborted) controller.abort(reason);
+    const aborted: boolean = IntrinsicReflectApply(AbortSignalAbortedGetter, signal, []);
+    if (!aborted) {
+      IntrinsicReflectApply(AbortControllerAbort, controller, [reason]);
+    }
   };
-  const abortFromUpstream = () => abort(upstreamSignal?.reason);
+  const abortFromUpstream = () => {
+    const reason = upstreamSignal
+      ? IntrinsicReflectApply(AbortSignalReasonGetter, upstreamSignal, [])
+      : undefined;
+    abort(reason);
+  };
 
-  if (upstreamSignal?.aborted) abortFromUpstream();
-  else upstreamSignal?.addEventListener("abort", abortFromUpstream, { once: true });
+  if (upstreamSignal) {
+    const upstreamAborted: boolean = IntrinsicReflectApply(
+      AbortSignalAbortedGetter,
+      upstreamSignal,
+      [],
+    );
+    if (upstreamAborted) abortFromUpstream();
+    else {
+      IntrinsicReflectApply(EventTargetAddEventListener, upstreamSignal, [
+        "abort",
+        abortFromUpstream,
+        { once: true },
+      ]);
+    }
+  }
 
   return {
-    signal: controller.signal,
+    signal,
     abort,
     revoke,
     dispose: () => {
-      upstreamSignal?.removeEventListener("abort", abortFromUpstream);
+      if (upstreamSignal) {
+        IntrinsicReflectApply(EventTargetRemoveEventListener, upstreamSignal, [
+          "abort",
+          abortFromUpstream,
+        ]);
+      }
       revoke();
     },
   };
