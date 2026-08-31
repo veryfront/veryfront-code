@@ -17,6 +17,11 @@ import {
   resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
   resolveVeryfrontCloudOpenAITransport,
 } from "./model-catalog.ts";
+import { AnthropicProvider } from "@veryfront/ext-llm-anthropic";
+import { GoogleProvider } from "@veryfront/ext-llm-google";
+
+const trustedAnthropicProvider = new AnthropicProvider();
+const trustedGoogleProvider = new GoogleProvider();
 
 const inferenceCredentialStorage = new AsyncLocalStorage<string>();
 const IntrinsicReflectApply = Reflect.apply;
@@ -99,16 +104,20 @@ function shouldUseOpenAIResponsesRuntime(upstreamModelId: string): boolean {
 
 export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "language");
+  const inferenceCredential = getCurrentInferenceCredential();
   const { apiBaseUrl, apiToken, projectSlug } = requireVeryfrontCloudBootstrap(
-    getCurrentInferenceCredential(),
+    inferenceCredential,
   );
   const baseURL = getVeryfrontCloudGatewayBaseUrl(apiBaseUrl, provider);
   const fetch = createVeryfrontCloudFetch(apiToken, baseURL, projectSlug);
-  const registry = ensureBuiltinLLMProviders();
+  // Project extensions may replace registry providers. A signed inference
+  // credential therefore uses only first-party transports that project code
+  // cannot replace; ordinary project credentials retain extension behavior.
+  const registry = inferenceCredential ? undefined : ensureBuiltinLLMProviders();
 
   switch (provider) {
     case "anthropic": {
-      const anthropic = registry.get("anthropic");
+      const anthropic = inferenceCredential ? trustedAnthropicProvider : registry?.get("anthropic");
       if (anthropic) {
         return wrapVeryfrontCloudModel(
           anthropic.createModel(upstreamModelId, {
@@ -125,7 +134,7 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
     }
 
     case "google": {
-      const google = registry.get("google");
+      const google = inferenceCredential ? trustedGoogleProvider : registry?.get("google");
       if (google) {
         return wrapVeryfrontCloudModel(
           google.createModel(upstreamModelId, {
@@ -141,7 +150,7 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
     }
 
     case "openai": {
-      const openai = registry.get("openai");
+      const openai = registry?.get("openai");
       const openAITransport = resolveVeryfrontCloudOpenAITransport(
         `openai/${upstreamModelId}`,
       );
@@ -200,7 +209,7 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
 
     case "mistral":
     case "moonshotai": {
-      const openai = registry.get("openai");
+      const openai = registry?.get("openai");
       if (openai) {
         return wrapVeryfrontCloudModel(
           openai.createModel(upstreamModelId, {

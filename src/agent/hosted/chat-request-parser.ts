@@ -30,6 +30,7 @@ import {
 } from "./runtime-source-binding.ts";
 import { getHostedChatUiToolIdentity } from "./chat-request-tool-part.ts";
 import { registerHostedRunEventWriterToken } from "./child-run-event-writer-token.ts";
+import { registerHostedInferenceCredential } from "./inference-credential.ts";
 import {
   MAX_GRANTED_INTEGRATION_TOOL_NAMES,
   MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH,
@@ -705,5 +706,11 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
   if (verifiedRequest.serverEnvelopeVerified === true && invocation.data.taskId) {
     verifiedRequest.taskId = invocation.data.taskId;
   }
+  registerHostedInferenceCredential(
+    verifiedRequest,
+    verifiedRequest.serverEnvelopeVerified === true
+      ? invocation.data.credentials?.inferenceAuthToken
+      : undefined,
+  );
   return verifiedRequest;
 }

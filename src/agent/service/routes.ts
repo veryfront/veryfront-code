@@ -34,6 +34,7 @@ import { runWithHostedRequestPreparationSignal } from "./request-preparation-con
 import {
   runWithVerifiedHostedRunEventWriterRequest,
 } from "../hosted/child-run-event-writer-token.ts";
+import { runWithHostedInferenceCredential } from "../hosted/inference-credential.ts";
 
 /** Public API contract for hosted agent service routes logger. */
 export type HostedAgentServiceRoutesLogger = {
@@ -312,10 +313,18 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
           () =>
             runWithVerifiedHostedRunEventWriterRequest(
               input.req,
-              () => options.prepareExecution(request),
+              () =>
+                runWithHostedInferenceCredential(
+                  input.req,
+                  () => options.prepareExecution(request),
+                ),
             ),
         ),
-      startDetachedExecution: options.startDetachedExecution,
+      startDetachedExecution: (executionInput) =>
+        runWithHostedInferenceCredential(
+          input.req,
+          () => options.startDetachedExecution(executionInput),
+        ),
       cleanupExecution: options.cleanupExecution,
       resolveAuthError: (error) =>
         error instanceof HostedServiceAuthError

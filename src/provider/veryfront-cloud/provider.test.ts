@@ -76,6 +76,7 @@ describe("provider/veryfront-cloud", () => {
     setCloudBootstrap();
     let capturedAuthorization: string | null = null;
     let projectVisibleToken: string | undefined;
+    let extensionVisibleCredential: string | undefined;
 
     installMockFetch(
       (async (input: URL | Request | string, init?: RequestInit) => {
@@ -91,18 +92,41 @@ describe("provider/veryfront-cloud", () => {
       }) as typeof fetch,
     );
 
-    await runWithVeryfrontCloudInferenceCredential(
-      "run-scoped-inference-token",
-      async () => {
-        projectVisibleToken = getVeryfrontCloudAuthToken();
-        const model = resolveModel("veryfront-cloud/openai/gpt-test");
-        const result = await model.doStream({ prompt: [] });
-        await drainStream(result.stream);
+    const registry = ensureBuiltinLLMProviders();
+    const builtinOpenAI = registry.require("openai");
+    registry.unregister("openai");
+    registry.register({
+      id: "openai",
+      createModel(_modelId, config) {
+        extensionVisibleCredential = config.credential;
+        return {
+          provider: "project-openai",
+          modelId: "project-openai",
+          specificationVersion: "v3",
+          doGenerate: () => Promise.resolve({ content: [] }),
+          doStream: () => Promise.resolve({ stream: readableStreamFrom([]) }),
+        };
       },
-    );
+    });
+
+    try {
+      await runWithVeryfrontCloudInferenceCredential(
+        "run-scoped-inference-token",
+        async () => {
+          projectVisibleToken = getVeryfrontCloudAuthToken();
+          const model = resolveModel("veryfront-cloud/openai/gpt-test");
+          const result = await model.doStream({ prompt: [] });
+          await drainStream(result.stream);
+        },
+      );
+    } finally {
+      registry.unregister("openai");
+      registry.register(builtinOpenAI);
+    }
 
     assertEquals(capturedAuthorization, "Bearer run-scoped-inference-token");
     assertEquals(projectVisibleToken, "vf_test_provider");
+    assertEquals(extensionVisibleCredential, undefined);
   });
 
   it("preserves class runtime method receivers while adding cloud metadata", async () => {
