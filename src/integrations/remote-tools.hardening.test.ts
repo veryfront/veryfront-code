@@ -6,6 +6,12 @@ import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
+  __subscribeLogRecordEmitter,
+  LogLevel,
+  refreshLoggerConfig,
+  setLogLevel,
+} from "#veryfront/utils/logger/logger.ts";
+import {
   INTEGRATION_REQUEST_TIMEOUT_MS,
   MAX_INTEGRATION_API_ERROR_RESPONSE_BYTES,
   MAX_INTEGRATION_CALL_REQUEST_BYTES,
@@ -223,6 +229,43 @@ describe("integrations/remote-tools hardening", () => {
     caller.abort(reason);
 
     assertStrictEquals(await operation, reason);
+  });
+
+  it("cancels discovery during retry backoff without another request", async () => {
+    configureRemoteTools();
+    const caller = new AbortController();
+    const reason = new DOMException("caller stopped retry", "AbortError");
+    const retryStarted = Promise.withResolvers<void>();
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+      if (
+        entry.message === "Retrying remote integration tool discovery after a transient failure"
+      ) {
+        retryStarted.resolve();
+      }
+    });
+    setLogLevel(LogLevel.DEBUG);
+    let fetchCalls = 0;
+
+    try {
+      const operation = withMockFetch(
+        async () => {
+          fetchCalls++;
+          return new Response(undefined, { status: 503, statusText: "Service Unavailable" });
+        },
+        () =>
+          captureRejection(() =>
+            getRemoteIntegrationToolDefinitions({ abortSignal: caller.signal })
+          ),
+      );
+      await retryStarted.promise;
+      caller.abort(reason);
+
+      assertStrictEquals(await operation, reason);
+      assertEquals(fetchCalls, 1);
+    } finally {
+      unsubscribe();
+      refreshLoggerConfig();
+    }
   });
 
   it("cancels an in-flight response body with the caller reason", async () => {

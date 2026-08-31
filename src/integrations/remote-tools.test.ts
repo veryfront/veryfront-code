@@ -134,6 +134,80 @@ describe("integrations/remote-tools", () => {
     ]);
   });
 
+  it("shares one retry sequence across concurrent discovery callers", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    let fetchCalls = 0;
+    let results: RemoteIntegrationToolDiscoveryResult[] = [];
+    const records = await captureIntegrationDiscoveryLogs(async () => {
+      results = await withMockFetch(async () => {
+        fetchCalls++;
+        if (fetchCalls === 1) {
+          throw new TypeError("error trying to connect: connection reset");
+        }
+        return Response.json({
+          tools: [{
+            name: "github__list_issues",
+            description: "List issues",
+            inputSchema: { type: "object", properties: {} },
+          }],
+        });
+      }, () =>
+        runWithRemoteIntegrationToolDiscoveryScope(() =>
+          Promise.all([
+            getRemoteIntegrationToolDiscovery(),
+            getRemoteIntegrationToolDiscovery(),
+          ])
+        ));
+    });
+
+    assertEquals(fetchCalls, 2);
+    assertEquals(results, [
+      {
+        status: "ok",
+        tools: [{
+          name: "github__list_issues",
+          description: "List issues",
+          parameters: { type: "object", properties: {} },
+        }],
+      },
+      {
+        status: "ok",
+        tools: [{
+          name: "github__list_issues",
+          description: "List issues",
+          parameters: { type: "object", properties: {} },
+        }],
+      },
+    ]);
+    assertEquals(records.map((entry) => entry.level), ["debug"]);
+  });
+
+  it("retries a server failure without logging an error when discovery recovers", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    let fetchCalls = 0;
+    let result: RemoteIntegrationToolDiscoveryResult | undefined;
+    const records = await captureIntegrationDiscoveryLogs(async () => {
+      result = await withMockFetch(async () => {
+        fetchCalls++;
+        return fetchCalls === 1
+          ? new Response(undefined, { status: 503, statusText: "Service Unavailable" })
+          : Response.json({ tools: [] });
+      }, () => getRemoteIntegrationToolDiscovery());
+    });
+
+    assertEquals(fetchCalls, 2);
+    assertEquals(result, { status: "ok", tools: [] });
+    assertEquals(records.map((entry) => entry.level), ["debug"]);
+  });
+
   it("keys the per-run discovery cache by credential and project", async () => {
     setRemoteToolEnv({
       VERYFRONT_API_BASE_URL: "https://api.test",
@@ -1175,14 +1249,24 @@ describe("integrations/remote-tools", () => {
       VERYFRONT_API_TOKEN: "env-token",
     });
 
-    const records = await captureIntegrationDiscoveryLogs(() =>
-      withMockFetch(
-        async () => new Response(undefined, { status: 500, statusText: "Internal Server Error" }),
+    let fetchCalls = 0;
+    let result: RemoteIntegrationToolDiscoveryResult | undefined;
+    const records = await captureIntegrationDiscoveryLogs(async () => {
+      result = await withMockFetch(
+        async () => {
+          fetchCalls++;
+          return new Response(undefined, {
+            status: 500,
+            statusText: "Internal Server Error",
+          });
+        },
         () => getRemoteIntegrationToolDiscovery(),
-      )
-    );
+      );
+    });
 
     // Bounded retries emit debug breadcrumbs before the failure is reported.
+    assertEquals(fetchCalls, MAX_INTEGRATION_TOOL_LIST_ATTEMPTS);
+    assertEquals(result, { status: "unavailable", reason: "request_failed" });
     assertEquals(
       records.filter((entry) => entry.level === "error").length,
       1,
