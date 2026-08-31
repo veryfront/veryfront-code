@@ -96,7 +96,7 @@ function createVeryfrontCloudModelInternal(
   // Native provider request builders require a credential, but the guarded
   // gateway fetch owns the real run-scoped token and replaces native auth.
   const providerCredential = inferenceCredential
-    ? `vf-${IntrinsicReflectApply(CryptoRandomUuid, HostCrypto, []) as string}`
+    ? `vf-placeholder-${IntrinsicReflectApply(CryptoRandomUuid, HostCrypto, []) as string}`
     : apiToken;
   // Project extensions may replace registry providers. A signed inference
   // credential therefore uses only first-party transports that project code
