@@ -1,4 +1,5 @@
 import { runWithVeryfrontCloudInferenceCredential } from "#veryfront/provider/veryfront-cloud/provider.ts";
+import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 
 const inferenceCredentials = new WeakMap<object, string>();
 const IntrinsicReflectApply = Reflect.apply;
@@ -7,7 +8,7 @@ const WeakMapSet = WeakMap.prototype.set;
 
 /** @internal Bind a verified control-plane inference credential without exposing it on the request. */
 export function registerHostedInferenceCredential(
-  request: object,
+  request: ParsedHostedChatRequest,
   credential: string | undefined,
 ): void {
   if (!credential) return;
@@ -15,7 +16,10 @@ export function registerHostedInferenceCredential(
 }
 
 /** @internal Run hosted setup or execution with its private gateway credential. */
-export function runWithHostedInferenceCredential<T>(request: object, operation: () => T): T {
+export function runWithHostedInferenceCredential<T>(
+  request: ParsedHostedChatRequest,
+  operation: () => T,
+): T {
   const storedCredential: unknown = IntrinsicReflectApply(
     WeakMapGet,
     inferenceCredentials,
