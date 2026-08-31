@@ -435,6 +435,47 @@ describe("agent/middleware/chain", () => {
     assertEquals(error, downstreamError);
   });
 
+  it("contains cross-realm aborts and hostile error accessors", async () => {
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+    try {
+      const crossRealmAbort = new Error("cross-realm cancellation");
+      Object.setPrototypeOf(crossRealmAbort, { name: "AbortError" });
+      const abortChain = new MiddlewareChain([
+        async (_context, next) => {
+          next();
+          return response;
+        },
+      ]);
+      await abortChain.execute(context, () => Promise.reject(crossRealmAbort));
+
+      const hostileError = new Error("hostile cancellation");
+      Object.defineProperty(hostileError, "name", {
+        configurable: true,
+        get() {
+          throw new Error("name getter failed");
+        },
+      });
+      const hostileChain = new MiddlewareChain([
+        async (_context, next) => {
+          next();
+          return response;
+        },
+      ]);
+      await hostileChain.execute(context, () => Promise.reject(hostileError));
+      await Promise.resolve();
+      await Promise.resolve();
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(
+      records.filter((entry) => entry.message === "Your agent middleware continuation failed")
+        .length,
+      1,
+    );
+  });
+
   it("supports standard Promise composition on continuations", async () => {
     assertEquals(
       await new MiddlewareChain([

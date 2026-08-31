@@ -1,6 +1,7 @@
 import type { AgentContext, AgentMiddleware, AgentResponse } from "../types.ts";
 import { MIDDLEWARE_ERROR } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 import { agentLogger } from "#veryfront/utils/logger/index.ts";
 
 const INVALID_CONTINUATION_MESSAGE =
@@ -91,7 +92,11 @@ function isInvalidContinuationError(error: unknown): boolean {
 }
 
 function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
+  try {
+    return isErrorAcrossRealms(error) && error.name === "AbortError";
+  } catch {
+    return false;
+  }
 }
 
 function observeContinuationRejection(
@@ -100,8 +105,12 @@ function observeContinuationRejection(
   isObserved: () => boolean = () => false,
 ): void {
   void Promise.prototype.then.call(promise, undefined, (error: unknown) => {
-    if (isInvalidContinuationError(error) || isAbortError(error)) return;
-    onUnexpectedRejection?.(error, isObserved);
+    try {
+      if (isInvalidContinuationError(error) || isAbortError(error)) return;
+      onUnexpectedRejection?.(error, isObserved);
+    } catch {
+      // Rejection observers must not create a second unhandled rejection.
+    }
   });
 }
 
