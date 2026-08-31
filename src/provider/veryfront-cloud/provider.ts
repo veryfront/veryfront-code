@@ -21,8 +21,6 @@ import {
   resolveVeryfrontCloudOpenAITransport,
 } from "./model-catalog.ts";
 
-const GATEWAY_PROVIDER_CREDENTIAL = "veryfront-cloud-gateway";
-
 function wrapVeryfrontCloudModel(
   model: ModelRuntime,
   modelProvider: string,
@@ -80,7 +78,7 @@ function createVeryfrontCloudModelInternal(
   });
   // Native provider request builders require a credential, but the guarded
   // gateway fetch owns the real run-scoped token and replaces native auth.
-  const providerCredential = inferenceCredential ? GATEWAY_PROVIDER_CREDENTIAL : apiToken;
+  const providerCredential = inferenceCredential ? `vf-${crypto.randomUUID()}` : apiToken;
   // Project extensions may replace registry providers. A signed inference
   // credential therefore uses only first-party transports that project code
   // cannot replace; ordinary project credentials retain extension behavior.
