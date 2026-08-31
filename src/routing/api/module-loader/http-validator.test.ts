@@ -33,7 +33,6 @@ describe("resolveStaticRouteOptionsCapability", () => {
       "const handler = () => {}; export { handler as OPTIONS };",
       'export { handler as OPTIONS } from "./handler.ts";',
       "export const OPTIONS = () => new Response();",
-      "export const { OPTIONS } = handlers;",
     ];
 
     for (const source of sources) {
@@ -46,6 +45,7 @@ describe("resolveStaticRouteOptionsCapability", () => {
       'export * from "./handler.ts";',
       "module.exports = { OPTIONS() {} };",
       "export const OPTIONS = handler;",
+      "export const { OPTIONS } = handlers;",
       "export function OPTIONS(",
     ];
 
