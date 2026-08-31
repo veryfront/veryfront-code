@@ -177,6 +177,53 @@ describe("agent/middleware/chain", () => {
     assertEquals(finalHandlerCalls, 1);
   });
 
+  it("rejects deferred dispatch when the middleware settles after calling next", async () => {
+    let retainedNext: (() => Promise<AgentResponse>) | undefined;
+    let resolveMiddleware: ((value: AgentResponse) => void) | undefined;
+    let finalHandlerCalls = 0;
+    const middlewareResult = new Promise<AgentResponse>((resolve) => {
+      resolveMiddleware = resolve;
+    });
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        retainedNext = next;
+        queueMicrotask(() => {
+          retainedNext!();
+          resolveMiddleware!(response);
+        });
+        return middlewareResult;
+      },
+    ]);
+
+    assertEquals(
+      await chain.execute(context, () => {
+        finalHandlerCalls += 1;
+        return Promise.resolve(response);
+      }),
+      response,
+    );
+    assertEquals(finalHandlerCalls, 0);
+  });
+
+  it("dispatches next immediately after an async middleware await", async () => {
+    let finalHandlerCalls = 0;
+    const chain = new MiddlewareChain([
+      async (_context, next) => {
+        await Promise.resolve();
+        return next();
+      },
+    ]);
+
+    assertEquals(
+      await chain.execute(context, () => {
+        finalHandlerCalls += 1;
+        return Promise.resolve(response);
+      }),
+      response,
+    );
+    assertEquals(finalHandlerCalls, 1);
+  });
+
   it("propagates downstream rejection through an awaited continuation", async () => {
     let observedError: unknown;
     const downstreamError = new Error("downstream failed");

@@ -26,9 +26,17 @@ function createDeferredContinuation(
   isSettled: () => boolean,
   dispatch: () => Promise<AgentResponse>,
 ): Promise<AgentResponse> {
-  const deferredContinuation = Promise.resolve().then(() => {
-    if (isSettled()) throw createInvalidContinuationError();
-    return dispatch();
+  const deferredContinuation = new Promise<AgentResponse>((resolve, reject) => {
+    queueMicrotask(() => {
+      queueMicrotask(() => {
+        void Promise.resolve()
+          .then(() => {
+            if (isSettled()) throw createInvalidContinuationError();
+            return dispatch();
+          })
+          .then(resolve, reject);
+      });
+    });
   });
   consumeRejectedPromise(deferredContinuation);
   return deferredContinuation;
@@ -42,6 +50,7 @@ interface MiddlewareContinuation {
 
 function createMiddlewareContinuation(
   dispatch: () => Promise<AgentResponse>,
+  deferPostInvocation: boolean,
 ): MiddlewareContinuation {
   let nextCalled = false;
   let middlewareInvoking = true;
@@ -51,7 +60,7 @@ function createMiddlewareContinuation(
     if (nextCalled || middlewareSettled) return rejectInvalidContinuation();
     nextCalled = true;
 
-    if (!middlewareInvoking) {
+    if (!middlewareInvoking && deferPostInvocation) {
       return createDeferredContinuation(() => middlewareSettled, dispatch);
     }
 
@@ -92,8 +101,9 @@ export class MiddlewareChain {
           return withSpan(
             `agent.middleware.chain.dispatch.${middlewareIndex + 1}`,
             async () => {
-              const continuation = createMiddlewareContinuation(() =>
-                dispatch(middlewareIndex + 1)
+              const continuation = createMiddlewareContinuation(
+                () => dispatch(middlewareIndex + 1),
+                currentMiddleware.constructor.name !== "AsyncFunction",
               );
 
               try {
