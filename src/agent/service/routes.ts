@@ -36,8 +36,25 @@ import {
 } from "../hosted/child-run-event-writer-token.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
+const NativeHeaders = Headers;
+const NativeRequest = Request;
 const RequestClone = Request.prototype.clone;
 const RequestJson = Request.prototype.json;
+const HeadersDelete = NativeHeaders.prototype.delete;
+const ObjectEntries = Object.entries;
+const ObjectFromEntries = Object.fromEntries;
+const ArrayFilter = Array.prototype.filter;
+const ArrayIsArray = Array.isArray;
+
+function withoutInferenceCredential(credentials: object): Record<string, unknown> {
+  const entries = IntrinsicReflectApply(ObjectEntries, Object, [credentials]);
+  const retained = IntrinsicReflectApply(
+    ArrayFilter,
+    entries,
+    [([key]: [string, unknown]) => key !== "inferenceAuthToken"],
+  );
+  return IntrinsicReflectApply(ObjectFromEntries, Object, [retained]) as Record<string, unknown>;
+}
 
 /** Public API contract for hosted agent service routes logger. */
 export type HostedAgentServiceRoutesLogger = {
@@ -186,18 +203,16 @@ async function createRuntimeInvocationApplicationRequest(request: Request): Prom
   const payload = await IntrinsicReflectApply(RequestJson, request, []) as Record<string, unknown>;
   const credentials = payload.credentials;
   const sanitizedPayload = credentials && typeof credentials === "object" &&
-      !Array.isArray(credentials)
+      !IntrinsicReflectApply(ArrayIsArray, Array, [credentials])
     ? {
       ...payload,
-      credentials: Object.fromEntries(
-        Object.entries(credentials).filter(([key]) => key !== "inferenceAuthToken"),
-      ),
+      credentials: withoutInferenceCredential(credentials),
     }
     : payload;
-  const headers = new Headers(request.headers);
-  headers.delete("content-length");
+  const headers = new NativeHeaders(request.headers);
+  IntrinsicReflectApply(HeadersDelete, headers, ["content-length"]);
   return createApplicationRequest(
-    new Request(request.url, {
+    new NativeRequest(request.url, {
       body: JSON.stringify(sanitizedPayload),
       headers,
       method: request.method,
