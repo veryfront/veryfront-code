@@ -122,6 +122,11 @@ describe("agent/runtime-agent-invocation-contract", () => {
     assertEquals(parsed.credentials?.authToken, exactByteLimit);
     assertEquals(parsed.credentials?.inferenceAuthToken, exactByteLimit);
 
+    const legacyParsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      credentials: { authToken: overByteLimit },
+    }));
+    assertEquals(legacyParsed.credentials?.authToken, overByteLimit);
+
     assertThrows(() =>
       RuntimeAgentRunInvocationSchema.parse(createInvocation({
         credentials: {
