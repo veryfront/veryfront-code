@@ -52,7 +52,12 @@ class ObservedContinuationPromise<T> extends Promise<T> {
       observeContinuationRejection(
         derived,
         this.onRejection,
-        () => observedDerived.isObserved(),
+        () => {
+          // Keep a safe fallback if a future engine stops honoring Promise
+          // species: report rather than suppress a derived rejection.
+          return typeof observedDerived.isObserved === "function" &&
+            observedDerived.isObserved();
+        },
       );
     }
     return derived;
@@ -188,9 +193,13 @@ function scheduleDetachedContinuationFailureReport(record: {
   reported: boolean;
 }): void {
   setTimeout(() => {
-    if (!record.isObserved() && !record.reported) {
-      record.reported = true;
-      reportDetachedContinuationFailure(record.error);
+    try {
+      if (!record.isObserved() && !record.reported) {
+        record.reported = true;
+        reportDetachedContinuationFailure(record.error);
+      }
+    } catch {
+      // A diagnostic callback must not become a new unhandled failure.
     }
   }, 0);
 }
@@ -233,16 +242,16 @@ function createMiddlewareContinuation(
   let middlewareInvoking = true;
   let middlewareSettled = false;
 
-  const reportContinuationFailure = (_error: unknown, isObserved: () => boolean): void => {
+  const reportContinuationFailure = (error: unknown, isObserved: () => boolean): void => {
     if (!middlewareSettled) {
       if (!isObserved()) {
-        const record = { error: _error, isObserved, reported: false };
+        const record = { error, isObserved, reported: false };
         scheduleDetachedContinuationFailureReport(record);
       }
       return;
     }
     if (isObserved()) return;
-    scheduleDetachedContinuationFailureReport({ error: _error, isObserved, reported: false });
+    scheduleDetachedContinuationFailureReport({ error, isObserved, reported: false });
   };
 
   const next = (): Promise<AgentResponse> => {

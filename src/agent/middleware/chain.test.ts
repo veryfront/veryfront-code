@@ -613,7 +613,7 @@ describe("agent/middleware/chain", () => {
     const records: LogEntry[] = [];
     const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
     try {
-      for (const reason of [undefined, "primitive downstream failure"] as const) {
+      for (const reason of [undefined, null, "primitive downstream failure"] as const) {
         const chain = new MiddlewareChain([
           async (_context, next) => {
             next();
@@ -630,7 +630,7 @@ describe("agent/middleware/chain", () => {
     assertEquals(
       records.filter((entry) => entry.message === "Your agent middleware continuation failed")
         .length,
-      2,
+      3,
     );
   });
 
