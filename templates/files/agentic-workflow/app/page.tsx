@@ -72,8 +72,8 @@ export default function WorkflowDashboard(): React.JSX.Element {
                 >
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="font-medium text-neutral-900 dark:text-white text-sm">{wf.workflowId}</p>
-                      <p className="text-xs text-neutral-500 mt-1">{new Date(wf.createdAt).toLocaleString()}</p>
+                      <p className="font-medium text-neutral-900 dark:text-white text-sm">{wf.id}</p>
+                      <p className="text-xs text-neutral-500 mt-1">{wf.workflowId} &middot; {new Date(wf.createdAt).toLocaleString()}</p>
                     </div>
                     <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${STATUS_STYLES[wf.status] || STATUS_STYLES.pending}`}>
                       {wf.status.replace(/_/g, ' ')}

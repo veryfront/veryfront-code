@@ -60,8 +60,8 @@ export default function WorkflowDetail(): React.JSX.Element {
       <div className="max-w-2xl mx-auto px-4 py-12">
         <a href="/" className="text-sm text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 mb-6 inline-block">&larr; Back</a>
 
-        <h1 className="text-2xl font-bold text-neutral-900 dark:text-white mb-1">{run.workflowId}</h1>
-        <p className="text-sm text-neutral-500 dark:text-neutral-400 mb-8">Started {new Date(run.createdAt).toLocaleString()}</p>
+        <h1 className="text-2xl font-bold text-neutral-900 dark:text-white mb-1">{run.id}</h1>
+        <p className="text-sm text-neutral-500 dark:text-neutral-400 mb-8">{run.workflowId} &middot; Started {new Date(run.createdAt).toLocaleString()}</p>
 
         {/* One card per workflow node, in definition order */}
         <div className="space-y-4 mb-8">
