@@ -1121,6 +1121,42 @@ describe("agent/middleware/chain", () => {
     assertEquals(error instanceof TypeError, true);
   });
 
+  it("preserves native self-resolution through pass-through middleware", async () => {
+    let continuation: Promise<AgentResponse> | undefined;
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        continuation = next();
+        return continuation;
+      },
+      (_context, next) => next(),
+    ]);
+    let timeoutId: number | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timeoutId = setTimeout(
+        () => reject(new Error("pass-through continuation cycle did not settle")),
+        20,
+      );
+    });
+
+    let error: unknown;
+    try {
+      error = await Promise.race([
+        assertRejects(
+          () =>
+            chain.execute(context, async () => {
+              await Promise.resolve();
+              return continuation!;
+            }),
+          TypeError,
+        ),
+        timeout,
+      ]);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+    assertEquals(error instanceof TypeError, true);
+  });
+
   it("preserves self-resolution rejection for deferred continuations", async () => {
     let continuation: Promise<AgentResponse> | undefined;
     const chain = new MiddlewareChain([
