@@ -597,9 +597,13 @@ describe("run-scoped inference credential", () => {
       if (value === inferenceToken) observedValidationTokens.push("regexp");
       return Reflect.apply(originalRegExpTest, this, [value]);
     };
-    TextEncoder.prototype.encode = function (value = ""): Uint8Array {
+    TextEncoder.prototype.encode = function (
+      value = "",
+    ): ReturnType<TextEncoder["encode"]> {
       if (value === inferenceToken) observedValidationTokens.push("encode");
-      return Reflect.apply(originalTextEncoderEncode, this, [value]);
+      return Reflect.apply(originalTextEncoderEncode, this, [value]) as ReturnType<
+        TextEncoder["encode"]
+      >;
     };
     Object.defineProperty(NativeRequest.prototype, "headers", {
       ...originalRequestHeaders,
@@ -677,7 +681,7 @@ describe("run-scoped inference credential", () => {
         observeHeaders(this.headers);
       }
 
-      static [Symbol.hasInstance](value: unknown): boolean {
+      static override [Symbol.hasInstance](value: unknown): boolean {
         if (intrinsicReflectApply(nativeHasInstance, NativeRequest, [value])) {
           observeHeaders((value as Request).headers);
         }
