@@ -72,7 +72,7 @@ import { ProdHydrationModuleHandler } from "../handlers/request/prod-hydration-m
 import { CSSHandler } from "../handlers/request/css.handler.ts";
 import { RSCHandler } from "../handlers/request/rsc/index.ts";
 import { ModuleHandler } from "../handlers/request/module/index.ts";
-import { ApiHandlerWrapper, withApiHandler } from "../handlers/request/api/index.ts";
+import { ApiHandlerWrapper, withApiHandler } from "#veryfront/server/handlers/request/api/index.ts";
 import { SSRHandler } from "../handlers/request/ssr/index.ts";
 import { NotFoundHandler } from "../handlers/response/not-found.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
