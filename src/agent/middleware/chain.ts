@@ -89,7 +89,7 @@ function createObservedContinuation<T>(
     // Promise species currently keeps every derived branch on this
     // per-continuation constructor. If a future engine removes that hook, the
     // guarded isObserved() fallback reports the rejection instead of hiding it.
-    // TODO: Revisit this fallback if Promise species semantics change.
+    // NOTE: Revisit this fallback if Promise species semantics change.
     observeContinuationRejection(
       continuation,
       onRejection,
