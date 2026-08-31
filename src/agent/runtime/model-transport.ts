@@ -31,7 +31,7 @@ export type ResolvedModelTransport = {
 };
 
 /** @internal Framework-owned model resolver for private transport authority. */
-export type AgentModelRuntimeResolver = (modelId: string) => ModelRuntime;
+export type AgentModelRuntimeResolver = (modelId: string) => ModelRuntime | undefined;
 
 export interface ResolveAgentModelTransportInput {
   agentId: string;
@@ -87,9 +87,6 @@ export async function resolveAgentModelTransport(
     transport?.providerOptions,
   );
   const languageModel = privatelyResolvedModel ?? transport?.model ??
-    // The private resolver intentionally returns undefined for non-cloud models,
-    // so custom project providers remain the final fallback for those models.
-    input.resolveModelRuntime?.(resolvedModelString) ??
     resolveModel(resolvedModelString);
   const providerOptionKey = resolveModelProviderOptionKey(resolvedModelString, languageModel);
 

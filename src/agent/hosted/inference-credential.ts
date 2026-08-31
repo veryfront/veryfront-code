@@ -1,4 +1,3 @@
-import { resolveModel } from "#veryfront/provider";
 import { createVeryfrontCloudInferenceModel } from "#veryfront/provider/veryfront-cloud/provider.ts";
 
 import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
@@ -25,14 +24,14 @@ export function createVeryfrontCloudInferenceModelResolver(
   credential: string,
 ): AgentModelRuntimeResolver {
   return (modelId) => {
-    if (modelId.startsWith(VERYFRONT_CLOUD_MODEL_PREFIX)) {
-      return createVeryfrontCloudInferenceModel(
-        modelId.slice(VERYFRONT_CLOUD_MODEL_PREFIX.length),
-        credential,
-      );
+    if (!modelId.startsWith(VERYFRONT_CLOUD_MODEL_PREFIX)) {
+      return undefined;
     }
 
-    return resolveModel(modelId);
+    return createVeryfrontCloudInferenceModel(
+      modelId.slice(VERYFRONT_CLOUD_MODEL_PREFIX.length),
+      credential,
+    );
   };
 }
 

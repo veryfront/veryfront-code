@@ -224,44 +224,13 @@ describe("run-scoped inference credential", () => {
     assertEquals(projectTransportResolverCalls, 0);
   });
 
-  it("clears inference authority before non-cloud project model resolution", async () => {
-    setEnv("VERYFRONT_API_TOKEN", "broader-project-runtime-token");
-    setEnv("VERYFRONT_PROJECT_SLUG", "provider-test-project");
-    let capturedAuthorization: string | null = null;
-    installMockFetch(
-      (async (input: URL | Request | string, init?: RequestInit) => {
-        const request = new Request(input, init);
-        capturedAuthorization = request.headers.get("Authorization");
-        return new Response(
-          new ReadableStream({
-            start(controller) {
-              controller.enqueue(
-                new TextEncoder().encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
-              );
-              controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
-              controller.close();
-            },
-          }),
-          { status: 200, headers: { "content-type": "text/event-stream" } },
-        );
-      }) as typeof fetch,
-    );
-
-    const unregister = registerModelProvider(
-      "project-test",
-      () => resolveModel("veryfront-cloud/openai/gpt-nested"),
-    );
-    try {
-      const model = createVeryfrontCloudInferenceModelResolver("run-scoped-inference-token")(
+  it("does not resolve non-cloud models through the private resolver", () => {
+    assertEquals(
+      createVeryfrontCloudInferenceModelResolver("run-scoped-inference-token")(
         "project-test/model",
-      );
-      const result = await model.doStream({ prompt: [] });
-      await drainStream(result.stream);
-    } finally {
-      unregister();
-    }
-
-    assertEquals(capturedAuthorization, "Bearer broader-project-runtime-token");
+      ),
+      undefined,
+    );
   });
 
   it("accepts inference credentials through the full provider transport bound", () => {
@@ -270,6 +239,7 @@ describe("run-scoped inference credential", () => {
     const model = createVeryfrontCloudInferenceModelResolver("x".repeat(8_193))(
       "veryfront-cloud/openai/gpt-test",
     );
+    if (!model) throw new TypeError("Expected Veryfront Cloud model");
 
     assertEquals(typeof model.doStream, "function");
   });
