@@ -143,6 +143,12 @@ the browser request. Non-canonical route encodings are rejected before this
 callback runs, so route-specific policies cannot authorize a different path
 from the operation the handler dispatches.
 
+The built-in handler does not apply per-run ownership filtering. Only authorize
+an identity when it can read every run summary visible to the supplied client.
+The approval-by-ID route returns the approval payload, so the identity must also
+be allowed to read and decide those approvals. Use separate clients or separate
+route authorization when users have different run visibility.
+
 The handler covers every path the hooks call:
 
 | Method        | Path                                   | Hook               |
@@ -157,6 +163,73 @@ The handler covers every path the hooks call:
 
 Mounting somewhere else means telling both sides. Pass `basePath` to the handler
 and the matching `apiBase` to every hook.
+
+### Understand run summaries
+
+`GET /runs`, `GET /runs/{runId}`, and the first SSE `snapshot` frame return the
+same `WorkflowRunSummary` shape. The built-in handler constructs this response
+from an allowlist:
+
+```ts
+type WorkflowStatus =
+  | "pending"
+  | "running"
+  | "waiting"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+type NodeStatus = "pending" | "running" | "completed" | "failed" | "skipped";
+
+interface WorkflowNodeStateSummary {
+  nodeId: string;
+  status: NodeStatus;
+  attempt: number;
+  startedAt?: string;
+  completedAt?: string;
+  error?: string;
+}
+
+interface WorkflowApprovalSummary {
+  id: string;
+  nodeId: string;
+  status: "pending";
+  message: string;
+  requestedAt: string;
+  expiresAt?: string;
+}
+
+interface WorkflowRunSummary {
+  id: string;
+  workflowId: string;
+  version?: string;
+  status: WorkflowStatus;
+  currentNodes: string[];
+  nodeStates: Record<string, WorkflowNodeStateSummary>;
+  pendingApprovals: WorkflowApprovalSummary[];
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  error?: { message: string; nodeId?: string };
+}
+```
+
+The summary omits run input, output, context, checkpoints, source integration
+policy, node input and output, approval payload and decision metadata, and
+framework runtime metadata. The dedicated approval-by-ID route remains the
+explicit way for `useApproval` to fetch an approval payload.
+
+Errors and approval request messages remain visible because the hooks and SSE
+events use them for operations. Do not place secrets, tokens, customer payloads,
+or private model output in developer-authored errors or approval messages. The
+summary is data-minimized, not guaranteed secret-free.
+
+`WorkflowClient` remains a trusted server-side API and returns the durable full
+run state. Do not serialize its run values directly to a browser. If existing
+browser code reads `run.input`, `run.output`, `run.context`, node payloads, or
+approval payloads from `useWorkflow`, `useWorkflowList`, or the built-in run
+routes, move that read to a separately authorized server endpoint. Select only
+the fields the application needs. Use `useApproval` for approval payloads.
 
 ### Call the hooks across origins
 
@@ -282,7 +355,7 @@ allow credentialed CORS on the workflow origin. Native `EventSource` cannot set
 an `Authorization` header. Bearer-token clients must use a fetch-based SSE
 client and pass the same authorization header used by the workflow hooks.
 
-The first frame is normally `snapshot`, using the same public run projection as
+The first frame is normally `snapshot`, using the same run summary as
 `GET /runs/{runId}`. When the stored run cannot be serialized, the stream opens
 with a single `error` frame instead and closes; reconnecting re-reads the same
 stored run, so that error is marked not retryable. Later frames use these

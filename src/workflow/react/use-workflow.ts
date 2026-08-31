@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { WorkflowStatus } from "#veryfront/workflow/types.ts";
 import type {
-  NodeState,
-  PendingApproval,
-  WorkflowRun,
-  WorkflowStatus,
-} from "#veryfront/workflow/types.ts";
+  WorkflowApprovalSummary,
+  WorkflowNodeStateSummary,
+  WorkflowRunSummary,
+} from "#veryfront/workflow/http/run-summary.ts";
 import { ORCHESTRATION_ERROR, REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
 import {
   encodeWorkflowPathSegment,
@@ -27,19 +27,19 @@ export interface UseWorkflowOptions {
   pollInterval?: number;
   autoRefresh?: boolean;
   onStatusChange?: (status: WorkflowStatus, previousStatus: WorkflowStatus) => void;
-  onComplete?: (run: WorkflowRun) => void;
-  onError?: (error: Error, run?: WorkflowRun) => void;
-  onApprovalRequired?: (approval: PendingApproval) => void;
+  onComplete?: (run: WorkflowRunSummary) => void;
+  onError?: (error: Error, run?: WorkflowRunSummary) => void;
+  onApprovalRequired?: (approval: WorkflowApprovalSummary) => void;
 }
 
 /** Result returned from use workflow. */
 export interface UseWorkflowResult {
-  run: WorkflowRun | null;
+  run: WorkflowRunSummary | null;
   status: WorkflowStatus;
   progress: number;
   currentNodes: string[];
-  nodeStates: Record<string, NodeState>;
-  pendingApprovals: PendingApproval[];
+  nodeStates: Record<string, WorkflowNodeStateSummary>;
+  pendingApprovals: WorkflowApprovalSummary[];
   refresh: () => Promise<void>;
   cancel: () => Promise<void>;
   retry: () => Promise<void>;
@@ -70,7 +70,7 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
   const currentRequestContext = useRef(requestContext);
   currentRequestContext.current = requestContext;
 
-  const [run, setRun] = useState<WorkflowRun | null>(null);
+  const [run, setRun] = useState<WorkflowRunSummary | null>(null);
   const [runRequestContext, setRunRequestContext] = useState(requestContext);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -88,7 +88,7 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     previousApprovalsRef.current.clear();
   }, [requestContext]);
 
-  const calculateProgress = useCallback((workflowRun: WorkflowRun | null): number => {
+  const calculateProgress = useCallback((workflowRun: WorkflowRunSummary | null): number => {
     const states = Object.values(workflowRun?.nodeStates ?? {});
     if (states.length === 0) return 0;
 
@@ -119,7 +119,7 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
         });
       }
 
-      const workflowRun = (await response.json()) as WorkflowRun;
+      const workflowRun = (await response.json()) as WorkflowRunSummary;
       if (currentRequestContext.current !== requestContext) return;
 
       const previousStatus = previousStatusRef.current;

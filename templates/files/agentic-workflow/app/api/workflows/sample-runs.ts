@@ -1,5 +1,7 @@
+import type { WorkflowRunSummary } from "veryfront/workflow";
+
 /** Node statuses the framework reports; the UI keys its icons off these. */
-export type DemoNodeStatus = "pending" | "running" | "completed" | "failed" | "skipped";
+export type DemoNodeStatus = WorkflowRunSummary["nodeStates"][string]["status"];
 
 export interface DemoNodeState {
   nodeId: string;
@@ -11,12 +13,12 @@ export interface DemoNodeState {
 export interface DemoWorkflowRun {
   id: string;
   workflowId: string;
-  status: "pending" | "running" | "completed" | "waiting_for_approval" | "failed";
+  status: WorkflowRunSummary["status"];
   input: { topic: string };
   createdAt: string;
   currentNodes: string[];
   nodeStates: Record<string, DemoNodeState>;
-  pendingApprovals: Array<{ id: string; status: "pending" | "approved" | "rejected" }>;
+  pendingApprovals: WorkflowRunSummary["pendingApprovals"];
 }
 
 const globalStore = globalThis as typeof globalThis & {
@@ -70,6 +72,25 @@ export function createDemoWorkflowRun(
 
 export function getDemoWorkflowRun(id: string): DemoWorkflowRun {
   return demoRuns.get(id) ?? createDemoWorkflowRun(id);
+}
+
+/** Project server-owned demo state into the same summary the hooks consume. */
+export function projectDemoWorkflowRunSummary(run: DemoWorkflowRun): WorkflowRunSummary {
+  return {
+    id: run.id,
+    workflowId: run.workflowId,
+    status: run.status,
+    currentNodes: [...run.currentNodes],
+    nodeStates: Object.fromEntries(
+      Object.entries(run.nodeStates).map(([nodeId, node]) => [nodeId, {
+        nodeId: node.nodeId,
+        status: node.status,
+        attempt: node.attempt,
+      }]),
+    ),
+    pendingApprovals: run.pendingApprovals.map((approval) => ({ ...approval })),
+    createdAt: run.createdAt,
+  };
 }
 
 export function listDemoWorkflowRuns(options: {

@@ -5,10 +5,20 @@ import { JSDOM } from "npm:jsdom@28.0.0";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { useApproval, type UseApprovalResult } from "./use-approval.ts";
-import { useWorkflow, type UseWorkflowResult } from "./use-workflow.ts";
-import { useWorkflowList, type UseWorkflowListResult } from "./use-workflow-list.ts";
-import { useWorkflowStart, type UseWorkflowStartResult } from "./use-workflow-start.ts";
+import { useApproval, type UseApprovalResult } from "#veryfront/workflow/react/use-approval.ts";
+import {
+  useWorkflow,
+  type UseWorkflowOptions,
+  type UseWorkflowResult,
+} from "#veryfront/workflow/react/use-workflow.ts";
+import {
+  useWorkflowList,
+  type UseWorkflowListResult,
+} from "#veryfront/workflow/react/use-workflow-list.ts";
+import {
+  useWorkflowStart,
+  type UseWorkflowStartResult,
+} from "#veryfront/workflow/react/use-workflow-start.ts";
 
 function installDom(): () => void {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
@@ -560,6 +570,90 @@ describe("useWorkflowStart", () => {
     }
   });
 
+  it("treats a bare-array workflow list response as a complete page", async () => {
+    const restoreDom = installDom();
+    let requestCount = 0;
+    let hook: UseWorkflowListResult | null = null;
+    const summaries = ["run-1", "run-2"].map((id) => ({
+      id,
+      workflowId: "pipeline",
+      status: "completed",
+      currentNodes: [],
+      nodeStates: {},
+      pendingApprovals: [],
+      createdAt: "2026-08-30T10:00:00.000Z",
+      completedAt: "2026-08-30T10:01:00.000Z",
+    }));
+
+    installMockFetch(
+      (() => {
+        requestCount++;
+        return Promise.resolve(Response.json(summaries));
+      }) as typeof fetch,
+    );
+
+    function Capture(): null {
+      hook = useWorkflowList({ autoRefresh: false, pageSize: 2 });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      assertEquals(hook!.runs.map((run) => run.id), ["run-1", "run-2"]);
+      assertEquals(hook!.hasMore, false);
+      await hook!.loadMore();
+      assertEquals(requestCount, 1);
+    } finally {
+      flushSync(() => root.unmount());
+      restoreDom();
+    }
+  });
+
+  it("treats a cursorless workflow list envelope as a complete page", async () => {
+    const restoreDom = installDom();
+    let requestCount = 0;
+    let hook: UseWorkflowListResult | null = null;
+    const summaries = ["run-1", "run-2"].map((id) => ({
+      id,
+      workflowId: "pipeline",
+      status: "completed",
+      currentNodes: [],
+      nodeStates: {},
+      pendingApprovals: [],
+      createdAt: "2026-08-30T10:00:00.000Z",
+      completedAt: "2026-08-30T10:01:00.000Z",
+    }));
+
+    installMockFetch(
+      (() => {
+        requestCount++;
+        return Promise.resolve(Response.json({ runs: summaries }));
+      }) as typeof fetch,
+    );
+
+    function Capture(): null {
+      hook = useWorkflowList({ autoRefresh: false, pageSize: 2 });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      assertEquals(hook!.runs.map((run) => run.id), ["run-1", "run-2"]);
+      assertEquals(hook!.hasMore, false);
+      await hook!.loadMore();
+      assertEquals(requestCount, 1);
+    } finally {
+      flushSync(() => root.unmount());
+      restoreDom();
+    }
+  });
+
   it("keeps loading active when an obsolete refresh finishes during replacement loading", async () => {
     const restoreDom = installDom();
     const oldRefreshResponse = Promise.withResolvers<Response>();
@@ -746,6 +840,73 @@ describe("useWorkflowStart", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       assertEquals(hook!.run, null);
       assertEquals(hook!.error !== null, true);
+    } finally {
+      flushSync(() => root.unmount());
+      restoreDom();
+    }
+  });
+
+  it("derives workflow state and callbacks from a run summary", async () => {
+    const restoreDom = installDom();
+    let hook: UseWorkflowResult | null = null;
+    const completedRunIds: string[] = [];
+    const approvalMessages: string[] = [];
+    const onComplete: NonNullable<UseWorkflowOptions["onComplete"]> = (run) => {
+      completedRunIds.push(run.id);
+    };
+    const onApprovalRequired: NonNullable<UseWorkflowOptions["onApprovalRequired"]> = (
+      approval,
+    ) => {
+      approvalMessages.push(approval.message);
+    };
+
+    installMockFetch(
+      (() =>
+        Promise.resolve(Response.json({
+          id: "run-summary",
+          workflowId: "pipeline",
+          status: "completed",
+          currentNodes: [],
+          nodeStates: {
+            first: { nodeId: "first", status: "completed", attempt: 1 },
+            second: { nodeId: "second", status: "skipped", attempt: 0 },
+          },
+          pendingApprovals: [{
+            id: "approval-summary",
+            nodeId: "review",
+            status: "pending",
+            message: "Review the result",
+            requestedAt: "2026-08-30T10:01:00.000Z",
+          }],
+          createdAt: "2026-08-30T10:00:00.000Z",
+          completedAt: "2026-08-30T10:02:00.000Z",
+        }))) as typeof fetch,
+    );
+
+    function Capture(): null {
+      hook = useWorkflow({
+        runId: "run-summary",
+        autoRefresh: false,
+        onComplete,
+        onApprovalRequired,
+      });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      assertEquals(hook!.run?.id, "run-summary");
+      assertEquals(hook!.status, "completed");
+      assertEquals(hook!.progress, 100);
+      assertEquals(hook!.nodeStates.second?.status, "skipped");
+      assertEquals(hook!.pendingApprovals.map((approval) => approval.id), [
+        "approval-summary",
+      ]);
+      assertEquals(completedRunIds, ["run-summary"]);
+      assertEquals(approvalMessages, ["Review the result"]);
     } finally {
       flushSync(() => root.unmount());
       restoreDom();

@@ -4,7 +4,7 @@ import { delay } from "#std/async.ts";
 import { expect } from "#std/expect.ts";
 
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import type { Tool } from "#veryfront/tool";
@@ -288,8 +288,9 @@ describe("createWorkflowHandler", () => {
 
     const run = await response.json() as Record<string, unknown>;
     expect(run.id).toBe(runId);
-    const context = run.context as Record<string, unknown>;
-    expect(context.env).toBeUndefined();
+    assertEquals(run.input, undefined);
+    assertEquals(run.output, undefined);
+    assertEquals(run.context, undefined);
     expect(run._tenant).toBeUndefined();
     // Trace identity names internal infrastructure and belongs to telemetry,
     // not to anyone polling a run.
@@ -297,9 +298,13 @@ describe("createWorkflowHandler", () => {
     expect(run.workerId).toBeUndefined();
     expect(run.heartbeatAt).toBeUndefined();
     expect(run.checkpoints).toBeUndefined();
+    assertEquals(run.sourceIntegrationPolicy, undefined);
     // useWorkflow derives status, progress and approvals from exactly these.
     expect(run.status).toBeDefined();
     expect(run.nodeStates).toBeDefined();
+    assertExists(run.currentNodes);
+    assertExists(run.pendingApprovals);
+    assertEquals(typeof run.createdAt, "string");
   });
 
   it("uses the approvals hydrated by the run read", async () => {
@@ -343,6 +348,22 @@ describe("createWorkflowHandler", () => {
     expect(listed?._traceContext).toBeUndefined();
     expect(listed?.workerId).toBeUndefined();
     expect(listed?.checkpoints).toBeUndefined();
+  });
+
+  it("bounds list requests that omit a limit", async () => {
+    let receivedFilter: RunFilter | undefined;
+    Object.defineProperty(client, "listRuns", {
+      configurable: true,
+      value: (filter: RunFilter) => {
+        receivedFilter = filter;
+        return Promise.resolve([]);
+      },
+    });
+
+    const response = await handlers.GET(get("/api/workflows/runs"));
+
+    assertEquals(response.status, 200);
+    assertEquals(receivedFilter, { limit: 100 });
   });
 
   it("pages runs with the cursor useWorkflowList round-trips", async () => {
@@ -698,6 +719,154 @@ describe("createWorkflowHandler", () => {
       if (!name || !data) throw new Error(`Invalid SSE frame: ${frame}`);
       return [name, JSON.parse(data) as Record<string, unknown>];
     }
+
+    it("returns one data-minimized summary for list, detail, and snapshot", async () => {
+      const runId = await startRun();
+      const persisted = await client.getRun(runId);
+      if (!persisted) throw new Error("expected the run to exist");
+
+      const privateMarker = "workflow-run-private-marker";
+      const nodeStates = { ...persisted.nodeStates };
+      Object.defineProperty(nodeStates, "__proto__", {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: {
+          nodeId: "__proto__",
+          status: "failed",
+          attempt: 2,
+          input: { privateMarker },
+          output: { privateMarker },
+          error: "Operational node failure",
+          startedAt: new Date("2026-08-30T10:01:00.000Z"),
+          completedAt: new Date("2026-08-30T10:02:00.000Z"),
+        },
+      });
+      const exposedRun = {
+        ...persisted,
+        version: "v1",
+        status: "failed" as const,
+        input: { privateMarker },
+        output: { privateMarker },
+        context: { input: { privateMarker }, privateMarker },
+        checkpoints: [{ privateMarker }],
+        nodeStates,
+        currentNodes: ["__proto__"],
+        pendingApprovals: [{
+          id: "approval-1",
+          nodeId: "__proto__",
+          message: "Operational approval message",
+          payload: { privateMarker },
+          approvers: [privateMarker],
+          requestedAt: new Date("2026-08-30T10:03:00.000Z"),
+          expiresAt: new Date("2026-08-30T11:03:00.000Z"),
+          status: "pending" as const,
+          decidedBy: privateMarker,
+          decidedAt: new Date("2026-08-30T10:03:30.000Z"),
+          comment: privateMarker,
+          notificationError: privateMarker,
+        }],
+        error: {
+          message: "Operational run failure",
+          nodeId: "__proto__",
+          stack: privateMarker,
+        },
+        sourceIntegrationPolicy: { privateMarker },
+        workerId: privateMarker,
+        heartbeatAt: new Date("2026-08-30T10:04:00.000Z"),
+        _traceContext: privateMarker,
+        _tenant: { privateMarker },
+        _runtimeStateVersion: 1,
+        _workflowProjection: { privateMarker },
+        createdAt: new Date("2026-08-30T10:00:00.000Z"),
+        startedAt: new Date("2026-08-30T10:00:30.000Z"),
+        completedAt: new Date("2026-08-30T10:05:00.000Z"),
+      } as unknown as WorkflowRun;
+
+      Object.defineProperty(client, "getRun", {
+        configurable: true,
+        value: () => Promise.resolve(exposedRun),
+      });
+      Object.defineProperty(client, "listRuns", {
+        configurable: true,
+        value: () => Promise.resolve([exposedRun]),
+      });
+      replaceObservation({
+        supported: true,
+        initial: exposedRun,
+        events: {
+          [Symbol.asyncIterator]: () => ({
+            next: () => Promise.resolve({ value: undefined, done: true as const }),
+          }),
+        },
+        close: () => Promise.resolve(),
+      });
+
+      const detailResponse = await handlers.GET(get(`/api/workflows/runs/${runId}`));
+      const listResponse = await handlers.GET(get("/api/workflows/runs?limit=1"));
+      const snapshotResponse = await handlers.GET(
+        get(`/api/workflows/runs/${runId}/events`),
+      );
+      const detailText = await detailResponse.text();
+      const listText = await listResponse.text();
+      const snapshotText = await snapshotResponse.text();
+
+      assertEquals(detailText.includes(privateMarker), false);
+      assertEquals(listText.includes(privateMarker), false);
+      assertEquals(snapshotText.includes(privateMarker), false);
+
+      const detail = JSON.parse(detailText) as Record<string, unknown>;
+      const list = JSON.parse(listText) as { runs: Array<Record<string, unknown>> };
+      const snapshotData = /^data: (.+)$/m.exec(snapshotText)?.[1];
+      if (!snapshotData) throw new Error("expected an SSE snapshot frame");
+      const snapshot = JSON.parse(snapshotData) as Record<string, unknown>;
+
+      assertEquals(list.runs, [detail]);
+      assertEquals(snapshot, detail);
+      assertEquals(detail, {
+        id: runId,
+        workflowId: persisted.workflowId,
+        version: "v1",
+        status: "failed",
+        currentNodes: ["__proto__"],
+        nodeStates: {
+          ...Object.fromEntries(
+            Object.entries(persisted.nodeStates).map(([nodeId, state]) => [nodeId, {
+              nodeId: state.nodeId,
+              status: state.status,
+              attempt: state.attempt,
+              ...(state.startedAt ? { startedAt: state.startedAt.toISOString() } : {}),
+              ...(state.completedAt ? { completedAt: state.completedAt.toISOString() } : {}),
+              ...(state.error ? { error: state.error } : {}),
+            }]),
+          ),
+          ["__proto__"]: {
+            nodeId: "__proto__",
+            status: "failed",
+            attempt: 2,
+            error: "Operational node failure",
+            startedAt: "2026-08-30T10:01:00.000Z",
+            completedAt: "2026-08-30T10:02:00.000Z",
+          },
+        },
+        pendingApprovals: [{
+          id: "approval-1",
+          nodeId: "__proto__",
+          status: "pending",
+          message: "Operational approval message",
+          requestedAt: "2026-08-30T10:03:00.000Z",
+          expiresAt: "2026-08-30T11:03:00.000Z",
+        }],
+        createdAt: "2026-08-30T10:00:00.000Z",
+        startedAt: "2026-08-30T10:00:30.000Z",
+        completedAt: "2026-08-30T10:05:00.000Z",
+        error: { message: "Operational run failure", nodeId: "__proto__" },
+      });
+
+      assertEquals(exposedRun.input, { privateMarker });
+      assertEquals(exposedRun.pendingApprovals[0]?.payload, { privateMarker });
+      assertEquals(exposedRun.nodeStates.__proto__?.output, { privateMarker });
+    });
 
     it("bounds the number of active event streams and releases cancelled streams", async () => {
       const closeCalls: number[] = [];
@@ -1330,7 +1499,7 @@ describe("createWorkflowHandler", () => {
         initial: {
           ...persisted,
           status: "running",
-          input: 1n,
+          currentNodes: [1n] as unknown as string[],
         },
         events: {
           [Symbol.asyncIterator]: () => ({
