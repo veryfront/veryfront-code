@@ -28,13 +28,10 @@ export class CorsHandler extends BaseHandler {
 
   private static readonly DEFAULT_METHODS = "GET,POST,PUT,PATCH,DELETE,OPTIONS";
   private readonly resolveAppRouteFile: AppRouteResolver;
-  private readonly loadAppRouteModule: AppRouteModuleLoader;
 
   constructor(dependencies: CorsHandlerDependencies = {}) {
     super();
     this.resolveAppRouteFile = dependencies.resolveAppRouteFile ?? resolveAppRouteFile;
-    this.loadAppRouteModule = dependencies.loadAppRouteModule ??
-      ((file) => import(`file://${file}`) as Promise<Record<string, unknown>>);
   }
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
