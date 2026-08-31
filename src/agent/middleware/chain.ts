@@ -5,6 +5,77 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 const INVALID_CONTINUATION_MESSAGE =
   "Agent middleware next() can only be called once while middleware is active";
 
+function createInvalidContinuationError() {
+  return MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE });
+}
+
+function consumeRejectedPromise(promise: Promise<AgentResponse>): void {
+  void promise.then(
+    () => undefined,
+    () => undefined,
+  );
+}
+
+function rejectInvalidContinuation(): Promise<AgentResponse> {
+  const rejection = Promise.reject<AgentResponse>(createInvalidContinuationError());
+  consumeRejectedPromise(rejection);
+  return rejection;
+}
+
+function createDeferredContinuation(
+  isSettled: () => boolean,
+  dispatch: () => Promise<AgentResponse>,
+): Promise<AgentResponse> {
+  const deferredContinuation = new Promise<AgentResponse>((resolve, reject) => {
+    queueMicrotask(() => {
+      if (isSettled()) {
+        reject(createInvalidContinuationError());
+        consumeRejectedPromise(deferredContinuation!);
+        return;
+      }
+
+      void Promise.resolve().then(dispatch).then(resolve, reject);
+    });
+  });
+  return deferredContinuation;
+}
+
+interface MiddlewareContinuation {
+  next: () => Promise<AgentResponse>;
+  finishInvocation: () => void;
+  settle: () => void;
+}
+
+function createMiddlewareContinuation(
+  dispatch: () => Promise<AgentResponse>,
+): MiddlewareContinuation {
+  let nextCalled = false;
+  let middlewareInvoking = true;
+  let middlewareSettled = false;
+
+  const next = (): Promise<AgentResponse> => {
+    if (nextCalled || middlewareSettled) return rejectInvalidContinuation();
+    nextCalled = true;
+
+    if (!middlewareInvoking) {
+      return createDeferredContinuation(() => middlewareSettled, dispatch);
+    }
+
+    return dispatch();
+  };
+
+  return {
+    next,
+    finishInvocation: () => {
+      middlewareInvoking = false;
+    },
+    settle: () => {
+      middlewareInvoking = false;
+      middlewareSettled = true;
+    },
+  };
+}
+
 export class MiddlewareChain {
   private middleware: AgentMiddleware[];
 
@@ -27,61 +98,16 @@ export class MiddlewareChain {
           return withSpan(
             `agent.middleware.chain.dispatch.${middlewareIndex + 1}`,
             async () => {
-              let nextCalled = false;
-              let middlewareInvoking = true;
-              let middlewareSettled = false;
-
-              const createInvalidContinuationError = (): Error =>
-                MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE });
-
-              const consumeRejectedPromise = (promise: Promise<AgentResponse>): void => {
-                void promise.then(
-                  () => undefined,
-                  () => undefined,
-                );
-              };
-
-              const rejectInvalidContinuation = (): Promise<AgentResponse> => {
-                const rejection = Promise.reject<AgentResponse>(createInvalidContinuationError());
-                consumeRejectedPromise(rejection);
-                return rejection;
-              };
-
-              const next = (): Promise<AgentResponse> => {
-                if (nextCalled || middlewareSettled) {
-                  return rejectInvalidContinuation();
-                }
-                nextCalled = true;
-
-                if (!middlewareInvoking) {
-                  const deferredContinuation = new Promise<AgentResponse>((resolve, reject) => {
-                    queueMicrotask(() => {
-                      if (middlewareSettled) {
-                        reject(createInvalidContinuationError());
-                        consumeRejectedPromise(deferredContinuation);
-                        return;
-                      }
-
-                      try {
-                        void dispatch(middlewareIndex + 1).then(resolve, reject);
-                      } catch (error) {
-                        reject(error);
-                      }
-                    });
-                  });
-                  return deferredContinuation;
-                }
-
-                return dispatch(middlewareIndex + 1);
-              };
+              const continuation = createMiddlewareContinuation(() =>
+                dispatch(middlewareIndex + 1)
+              );
 
               try {
-                const result = currentMiddleware(context, next);
-                middlewareInvoking = false;
+                const result = currentMiddleware(context, continuation.next);
+                continuation.finishInvocation();
                 return await result;
               } finally {
-                middlewareInvoking = false;
-                middlewareSettled = true;
+                continuation.settle();
               }
             },
             { "middleware.index": middlewareIndex },
