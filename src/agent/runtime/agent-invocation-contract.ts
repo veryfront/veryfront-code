@@ -359,7 +359,8 @@ export const getRuntimeAgentCredentialsSchema = defineSchema((v) => {
 
   return v.object({
     // Preserve the legacy character-count contract for authToken; the byte
-    // refinement is intentionally limited to the new inference credential.
+    // refinement and transport-safe character set are intentionally limited to
+    // the new inference credential.
     authToken: credential(),
     inferenceAuthToken: inferenceCredential().optional(),
   }).strict();

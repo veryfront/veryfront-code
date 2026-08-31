@@ -128,6 +128,18 @@ describe("agent/runtime-agent-invocation-contract", () => {
     }));
     assertEquals(legacyParsed.credentials?.authToken, legacyOverByteLimit);
 
+    assertThrows(
+      () =>
+        RuntimeAgentRunInvocationSchema.parse(createInvocation({
+          credentials: {
+            authToken: "request-scoped-user-token",
+            inferenceAuthToken: "é",
+          },
+        })),
+      Error,
+      "visible ASCII",
+    );
+
     assertThrows(() =>
       RuntimeAgentRunInvocationSchema.parse(createInvocation({
         credentials: {
