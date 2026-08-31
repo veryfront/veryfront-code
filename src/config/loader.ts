@@ -1921,6 +1921,14 @@ const CSI_SPLITTABLE_URL_SCHEMES = freezeObject([
   "ftp",
   "file",
 ]) as readonly string[];
+const CSI_SPLITTABLE_URL_SCHEME_LOOKAROUND = (() => {
+  let longest = 0;
+  for (let index = 0; index < CSI_SPLITTABLE_URL_SCHEMES.length; index++) {
+    const length = CSI_SPLITTABLE_URL_SCHEMES[index]!.length;
+    if (length > longest) longest = length;
+  }
+  return longest;
+})();
 
 /**
  * Restore a URL-scheme character consumed as a CSI final byte.
@@ -1953,7 +1961,9 @@ function restoreCsiSplitUrlSchemes(value: string): string {
         stringSlice(matched, -1),
         [],
       ) as string;
-      const prefixStart = match.index > 5 ? match.index - 5 : 0;
+      const prefixStart = match.index > CSI_SPLITTABLE_URL_SCHEME_LOOKAROUND
+        ? match.index - CSI_SPLITTABLE_URL_SCHEME_LOOKAROUND
+        : 0;
       const preceding = ReflectApply(
         StringPrototypeToLowerCase,
         stringSlice(value, prefixStart, match.index),
@@ -1961,7 +1971,11 @@ function restoreCsiSplitUrlSchemes(value: string): string {
       ) as string;
       const following = ReflectApply(
         StringPrototypeToLowerCase,
-        stringSlice(value, ANSI_CSI_SEQUENCE.lastIndex, ANSI_CSI_SEQUENCE.lastIndex + 5),
+        stringSlice(
+          value,
+          ANSI_CSI_SEQUENCE.lastIndex,
+          ANSI_CSI_SEQUENCE.lastIndex + CSI_SPLITTABLE_URL_SCHEME_LOOKAROUND,
+        ),
         [],
       ) as string;
 
