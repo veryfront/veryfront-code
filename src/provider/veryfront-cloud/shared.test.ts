@@ -30,6 +30,13 @@ describe("provider/veryfront-cloud/shared", () => {
       ),
       "run-scoped-inference-token",
     );
+    assertEquals(
+      runWithVeryfrontCloudContext(
+        { apiBaseUrl: "http://[::1]:4000", apiToken: "broader-token" },
+        () => requireVeryfrontCloudBootstrap("run-scoped-inference-token").apiToken,
+      ),
+      "run-scoped-inference-token",
+    );
   });
 
   it("normalizes provider aliases when parsing model IDs", () => {

@@ -3,6 +3,7 @@ import type { InferSchema, RefinementCtx } from "#veryfront/extensions/schema/in
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-extensions.ts";
 import { parseAgUiJsonBody, parseAgUiJsonRequestOrError } from "../ag-ui/request-shared.ts";
 import { getRuntimeAgentMarkdownDefinitionSchema } from "./agent-definition.ts";
+import { MAX_RUNTIME_INFERENCE_CREDENTIAL_BYTES } from "#veryfront/security/credential-limits.ts";
 
 ensureBuiltinSchemaValidator();
 
@@ -11,7 +12,7 @@ const MAX_CONTEXT_ITEM_BYTES = 16_384;
 const MAX_CONTEXT_TOTAL_BYTES = 65_536;
 const MAX_AGENT_CONFIG_BYTES = 65_536;
 const MAX_FORWARDED_PROPS_BYTES = 196_608;
-const MAX_CREDENTIAL_BYTES = 16_384;
+const MAX_CREDENTIAL_BYTES = MAX_RUNTIME_INFERENCE_CREDENTIAL_BYTES;
 const encoder = new TextEncoder();
 
 function isWithinJsonSizeLimit(value: unknown, maxBytes: number): boolean {
