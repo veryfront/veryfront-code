@@ -51,7 +51,7 @@ class ObservedContinuationPromise<T> extends Promise<T> {
     super(executor);
   }
 
-  override then<TResult1 = T, TResult2 = never>( // NOSONAR: tracks Promise observation for detached-error diagnostics.
+  override then<TResult1 = T, TResult2 = never>( // NOSONAR: tracks rejection observation; catch/finally delegate here.
     onFulfilled?: ContinuationThenHandler<T, TResult1>,
     onRejected?: ContinuationThenHandler<unknown, TResult2>,
   ): Promise<TResult1 | TResult2> {
@@ -217,7 +217,6 @@ function classifyContinuationFailure(error: unknown): string {
   switch (typeof error) {
     case "bigint":
     case "boolean":
-    case "function":
     case "number":
     case "string":
     case "symbol":

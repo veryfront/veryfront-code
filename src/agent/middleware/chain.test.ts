@@ -13,7 +13,7 @@ const replayError =
 
 function waitForReport(): Promise<void> {
   // The implementation queues its setTimeout(0) before this test helper.
-  return new Promise((resolve) => setTimeout(resolve, 0));
+  return new Promise((resolve) => setTimeout(resolve, 1));
 }
 
 describe("agent/middleware/chain", () => {
@@ -635,8 +635,10 @@ describe("agent/middleware/chain", () => {
       [true, "primitive"],
       [1n, "primitive"],
       [Symbol("primitive"), "primitive"],
-      [() => undefined, "primitive"],
+      [() => undefined, "object"],
       [{}, "object"],
+      [new AggregateError([]), "aggregateerror"],
+      [new DOMException("not found", "NotFoundError"), "domexception"],
     ] as const;
     try {
       for (const [reason] of cases) {
