@@ -761,7 +761,7 @@ describe("server/runtime-handler/index", () => {
       runInRequestProjectEnv: (operation) => operation(),
     });
 
-    assertEquals(admission, "not-applicable");
+    assertEquals(admission, "bypass-middleware-retained");
     sourceVersion++;
 
     const runtime = new ProjectMiddlewareRuntime({ loadMiddleware: () => Promise.resolve([]) });
@@ -776,6 +776,33 @@ describe("server/runtime-handler/index", () => {
       Error,
       "changed after request configuration was derived",
     );
+  });
+
+  it("keeps unmatched API OPTIONS public before project middleware", async () => {
+    let middlewareCalls = 0;
+    const handler = createVeryfrontHandler(
+      "/tmp/test-unmatched-options-public",
+      createMockAdapter(),
+      {
+        projectDir: "/tmp/test-unmatched-options-public",
+        config: {
+          middleware: {
+            custom: [() => {
+              middlewareCalls++;
+              return new Response("middleware ran", { status: 403 });
+            }],
+          },
+        } satisfies VeryfrontConfig,
+        allowHostProjectCodeExecution: true,
+      },
+    );
+
+    const response = await handler(
+      new Request("http://localhost/api/missing", { method: "OPTIONS" }),
+    );
+
+    assertEquals(response.status, 204);
+    assertEquals(middlewareCalls, 0);
   });
 
   it("does not replay project middleware after a downstream snapshot failure", async () => {
