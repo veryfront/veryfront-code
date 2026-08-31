@@ -1950,9 +1950,8 @@ type CsiUrlPayloadKind = "generic" | "special" | "none";
 
 const MAX_GENERIC_URL_SCHEME_LENGTH = 32;
 const MAX_CSI_LITERAL_GAP = MAX_GENERIC_URL_SCHEME_LENGTH * 2;
-const GENERIC_URL_SCHEME_FIRST_CHARACTER = /[A-Za-z]/;
-const GENERIC_URL_SCHEME_CHARACTER = /[A-Za-z0-9+.-]/;
-const CSI_URL_PAYLOAD_CHARACTER = /[^\s"'\\]/u;
+const GENERIC_URL_SCHEME_FIRST_CHARACTER = /^[A-Za-z]$/;
+const GENERIC_URL_SCHEME_CHARACTER = /^[A-Za-z0-9+.-]$/;
 
 function appendCsiSchemeMatch(path: readonly number[], matchIndex: number): readonly number[] {
   const appended: number[] = [];
@@ -2080,21 +2079,63 @@ function skipCompleteCsiSequences(value: string, index: number): number {
   }
 }
 
-function hasCsiUrlPayloadCharacter(value: string, index: number): boolean {
+function hasRedactableCsiUrlPayload(value: string, index: number): boolean {
   const payloadIndex = skipCompleteCsiSequences(value, index);
-  const character = stringSlice(value, payloadIndex, payloadIndex + 1);
-  return character !== "" &&
-    ReflectApply(RegExpPrototypeExec, CSI_URL_PAYLOAD_CHARACTER, [character]) !== null;
+  URL_TOKEN_TAIL_AT_INDEX.lastIndex = payloadIndex;
+  try {
+    return ReflectApply(RegExpPrototypeExec, URL_TOKEN_TAIL_AT_INDEX, [value]) !== null;
+  } finally {
+    URL_TOKEN_TAIL_AT_INDEX.lastIndex = 0;
+  }
 }
 
-function classifyCsiUrlPayload(value: string, colonIndex: number): CsiUrlPayloadKind {
-  if (stringSlice(value, colonIndex + 1, colonIndex + 2) !== "/") {
-    return hasCsiUrlPayloadCharacter(value, colonIndex + 1) ? "special" : "none";
+function markCompleteCsiSequenceStarts(
+  value: string,
+  startIndex: number,
+  endIndex: number,
+  stripSequenceStarts: Set<number>,
+): void {
+  while (startIndex < endIndex) {
+    const nextIndex = skipCompleteCsiSequences(value, startIndex);
+    if (nextIndex === startIndex) {
+      startIndex += 1;
+      continue;
+    }
+    setAdd(stripSequenceStarts, startIndex);
+    startIndex = nextIndex;
   }
-  if (stringSlice(value, colonIndex + 2, colonIndex + 3) !== "/") {
-    return hasCsiUrlPayloadCharacter(value, colonIndex + 2) ? "special" : "none";
+}
+
+function classifyCsiUrlPayload(
+  value: string,
+  colonIndex: number,
+  stripSequenceStarts: Set<number>,
+): CsiUrlPayloadKind {
+  const firstSlashIndex = skipCompleteCsiSequences(value, colonIndex + 1);
+  let payloadIndex: number;
+  let payload: CsiUrlPayloadKind;
+  if (stringSlice(value, firstSlashIndex, firstSlashIndex + 1) !== "/") {
+    payloadIndex = firstSlashIndex;
+    payload = hasRedactableCsiUrlPayload(value, payloadIndex) ? "special" : "none";
+  } else {
+    const secondSlashIndex = skipCompleteCsiSequences(value, firstSlashIndex + 1);
+    if (stringSlice(value, secondSlashIndex, secondSlashIndex + 1) !== "/") {
+      payloadIndex = secondSlashIndex;
+      payload = hasRedactableCsiUrlPayload(value, payloadIndex) ? "special" : "none";
+    } else {
+      payloadIndex = skipCompleteCsiSequences(value, secondSlashIndex + 1);
+      payload = hasRedactableCsiUrlPayload(value, payloadIndex) ? "generic" : "none";
+    }
   }
-  return hasCsiUrlPayloadCharacter(value, colonIndex + 3) ? "generic" : "none";
+  if (payload !== "none") {
+    markCompleteCsiSequenceStarts(
+      value,
+      colonIndex + 1,
+      payloadIndex,
+      stripSequenceStarts,
+    );
+  }
+  return payload;
 }
 
 function advanceGenericCsiLiteral(
@@ -2131,9 +2172,10 @@ function advanceCsiSchemeLiteral(
   input: string,
   inputIndex: number,
   restoreMatches: Set<number>,
+  stripSequenceStarts: Set<number>,
 ): CsiRestorationStates {
   if (value === ":") {
-    const payload = classifyCsiUrlPayload(input, inputIndex);
+    const payload = classifyCsiUrlPayload(input, inputIndex, stripSequenceStarts);
     if (payload === "generic") {
       const special = chooseCompletedSpecialCsiPath(states.special);
       const path = special ?? chooseCompletedGenericCsiPath(states.generic)?.matches;
@@ -2240,6 +2282,7 @@ function advanceCsiLiteralRange(
   startIndex: number,
   endIndex: number,
   restoreMatches: Set<number>,
+  stripSequenceStarts: Set<number>,
 ): CsiRestorationStates {
   for (let index = startIndex; index < endIndex; index++) {
     const literal = ReflectApply(
@@ -2247,7 +2290,14 @@ function advanceCsiLiteralRange(
       stringSlice(value, index, index + 1),
       [],
     ) as string;
-    states = advanceCsiSchemeLiteral(states, literal, value, index, restoreMatches);
+    states = advanceCsiSchemeLiteral(
+      states,
+      literal,
+      value,
+      index,
+      restoreMatches,
+      stripSequenceStarts,
+    );
   }
   return states;
 }
@@ -2276,6 +2326,7 @@ function restoreCsiSplitUrlSchemes(value: string): string {
 
     const matches: CsiSchemeMatch[] = [];
     const restoreMatches = new IntrinsicSet<number>();
+    const stripSequenceStarts = new IntrinsicSet<number>();
     let states = createCsiRestorationStates();
     let inputOffset = 0;
     while (match !== null) {
@@ -2283,12 +2334,13 @@ function restoreCsiSplitUrlSchemes(value: string): string {
       const gapLength = match.index - inputOffset;
       if (gapLength > MAX_CSI_LITERAL_GAP) {
         if (matches.length > 0) {
-          states = advanceCsiLiteralRange(
+          advanceCsiLiteralRange(
             states,
             value,
             inputOffset,
             inputOffset + MAX_GENERIC_URL_SCHEME_LENGTH,
             restoreMatches,
+            stripSequenceStarts,
           );
         }
         states = createCsiRestorationStates();
@@ -2298,6 +2350,7 @@ function restoreCsiSplitUrlSchemes(value: string): string {
           match.index - MAX_GENERIC_URL_SCHEME_LENGTH,
           match.index,
           restoreMatches,
+          stripSequenceStarts,
         );
       } else {
         states = advanceCsiLiteralRange(
@@ -2306,6 +2359,7 @@ function restoreCsiSplitUrlSchemes(value: string): string {
           inputOffset,
           match.index,
           restoreMatches,
+          stripSequenceStarts,
         );
       }
       const finalByte = ReflectApply(
@@ -2329,14 +2383,25 @@ function restoreCsiSplitUrlSchemes(value: string): string {
     const tailWindowEnd = inputOffset + MAX_GENERIC_URL_SCHEME_LENGTH < value.length
       ? inputOffset + MAX_GENERIC_URL_SCHEME_LENGTH
       : value.length;
-    advanceCsiLiteralRange(states, value, inputOffset, tailWindowEnd, restoreMatches);
+    advanceCsiLiteralRange(
+      states,
+      value,
+      inputOffset,
+      tailWindowEnd,
+      restoreMatches,
+      stripSequenceStarts,
+    );
 
     let output = "";
     let outputOffset = 0;
     for (let matchIndex = 0; matchIndex < matches.length; matchIndex++) {
       const match = matches[matchIndex]!;
       output += stringSlice(value, outputOffset, match.inputIndex);
-      output += setHas(restoreMatches, matchIndex) ? stringSlice(match.matched, -1) : match.matched;
+      output += setHas(stripSequenceStarts, match.inputIndex)
+        ? ""
+        : setHas(restoreMatches, matchIndex)
+        ? stringSlice(match.matched, -1)
+        : match.matched;
       outputOffset = match.inputEnd;
     }
     return output + stringSlice(value, outputOffset);
@@ -2363,6 +2428,7 @@ const URI_PAREN_INTERIOR_SOURCE = String.raw`[A-Za-z0-9\-._~:/?#\[\]@!$&()*+,;=%
 const URL_BALANCED_PAREN_SEGMENT_SOURCE = String.raw`\([^\s"']{0,512}\)`;
 const URL_TOKEN_TAIL_SOURCE = String
   .raw`(?:${URI_TOKEN_CHARACTER_SOURCE}|${URL_BALANCED_PAREN_SEGMENT_SOURCE}|\((?=(?:${URI_PAREN_INTERIOR_SOURCE}|\P{ASCII}))|\)(?=${URI_PAREN_INTERIOR_SOURCE})(?![\p{P}\p{S}\p{M}\p{Cf}]{0,16}(?:[\s"']|$)))+`;
+const URL_TOKEN_TAIL_AT_INDEX = new RegExp(URL_TOKEN_TAIL_SOURCE, "uy");
 // Require a bounded, multi-character scheme so drive-letter paths remain paths.
 const SCHEME_URL = new RegExp(
   String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,

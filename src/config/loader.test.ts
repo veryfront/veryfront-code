@@ -6909,6 +6909,41 @@ export default config as const;
         assertEquals(error.message.includes("http: unavailable"), false);
       });
 
+      it("classifies generic slash payloads after stripping CSI", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-before-generic-slashes-",
+          `throw new Error(${
+            JSON.stringify(`${escape}[s3:${escape}[31m//registry.internal/config`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertStringIncludes(error.message, "[url]");
+      });
+
+      it("does not restore a split scheme before non-URL punctuation", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-split-punctuation-payload-",
+          `throw new Error(${JSON.stringify(`Status htt${escape}[p:( unavailable`)});\n`,
+        );
+
+        assertStringIncludes(error.message, "Status htt:( unavailable");
+        assertEquals(error.message.includes("http:( unavailable"), false);
+      });
+
+      it("does not treat a Unicode case expansion as an ASCII scheme character", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-unicode-scheme-expansion-",
+          `throw new Error(${JSON.stringify(`Status İ${escape}[a://retry`)});\n`,
+        );
+
+        assertStringIncludes(error.message, "Status İ [path]");
+        assertEquals(error.message.includes("Status İa [path]"), false);
+      });
+
       it("creates CSI reconstruction slots without inherited setters", async () => {
         const original = TestObjectGetOwnPropertyDescriptor(Array.prototype, "32");
         try {
