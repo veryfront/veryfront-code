@@ -38,9 +38,10 @@ export interface RedisBackendConfig extends BackendConfig {
    * @deprecated No-op retained for source compatibility.
    *
    * Creation-time expiry can remove an active or waiting run while leaving its
-   * checkpoints, approvals, and shared index memberships behind. Call
-   * `RedisBackend.deleteRun()` only after your application has made the run
-   * ineligible for retry or resume.
+   * checkpoints, approvals, and shared index memberships behind. After an
+   * upgrade, call `RedisBackend.clearLegacyRunTtlExpirations()` before removing
+   * this option. Call `RedisBackend.deleteRun()` only after your application has
+   * made the run ineligible for retry or resume.
    */
   runTtl?: number;
   /** Enable debug logging */
