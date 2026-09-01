@@ -678,7 +678,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: ["../../api-reference/veryfront/integrations.md"],
     snippets: [
       "Create a Jira service account",
-      "Atlassian Guard Standard",
+      "five free service accounts",
       "ATLASSIAN_SERVICE_ACCOUNT_CLIENT_ID",
       "ATLASSIAN_SERVICE_ACCOUNT_CLIENT_SECRET",
       "ATLASSIAN_SERVICE_ACCOUNT_CLOUD_ID",
