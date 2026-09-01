@@ -1399,6 +1399,7 @@ export class RedisBackend implements WorkflowBackend {
   private terminalRetentionRunBackfillComplete = false;
   private terminalRetentionQueueBackfillCursor = "-";
   private terminalRetentionQueueBackfillComplete = false;
+  private terminalRetentionRepairInFlight: Promise<boolean> | null = null;
 
   constructor(config: RedisBackendConfig = {}) {
     const resolvedConfig: RedisBackendInternalConfig = {
@@ -2223,7 +2224,7 @@ export class RedisBackend implements WorkflowBackend {
     return false;
   }
 
-  private async repairTerminalRetentionIndexes(
+  private async performTerminalRetentionIndexRepair(
     client: RedisAdapter,
     limit: number,
   ): Promise<boolean> {
@@ -2246,6 +2247,23 @@ export class RedisBackend implements WorkflowBackend {
     this.terminalRetentionRunBackfillComplete = false;
     this.terminalRetentionQueueBackfillComplete = false;
     return true;
+  }
+
+  private async repairTerminalRetentionIndexes(
+    client: RedisAdapter,
+    limit: number,
+  ): Promise<boolean> {
+    const inFlight = this.terminalRetentionRepairInFlight;
+    if (inFlight !== null) return await inFlight;
+    const repair = this.performTerminalRetentionIndexRepair(client, limit);
+    this.terminalRetentionRepairInFlight = repair;
+    try {
+      return await repair;
+    } finally {
+      if (this.terminalRetentionRepairInFlight === repair) {
+        this.terminalRetentionRepairInFlight = null;
+      }
+    }
   }
 
   /** Return a bounded oldest-first batch without hydrating run payloads. */

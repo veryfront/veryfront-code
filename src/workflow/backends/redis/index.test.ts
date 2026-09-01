@@ -63,6 +63,8 @@ class MockRedisAdapter implements RedisAdapter {
   queueCleanupAcks: string[] = [];
   queueConsumerGroupMissing = false;
   scanPageSize?: number;
+  scanGate?: Promise<void>;
+  onScan?: () => void;
   scanCalls: Array<{
     cursor: number;
     options?: { MATCH?: string; COUNT?: number };
@@ -1118,15 +1120,17 @@ class MockRedisAdapter implements RedisAdapter {
     return Promise.resolve(ids.length);
   }
 
-  scan(
+  async scan(
     cursor: number,
     options?: { MATCH?: string; COUNT?: number },
   ): Promise<{ cursor: number; keys: string[] }> {
     this.scanCalls.push({ cursor, options });
+    this.onScan?.();
+    await this.scanGate;
     const keys = this.matchingKeys(options?.MATCH ?? "*");
     const pageSize = Math.max(1, this.scanPageSize ?? options?.COUNT ?? keys.length);
     const nextCursor = cursor + pageSize < keys.length ? cursor + pageSize : 0;
-    return Promise.resolve({ cursor: nextCursor, keys: keys.slice(cursor, cursor + pageSize) });
+    return { cursor: nextCursor, keys: keys.slice(cursor, cursor + pageSize) };
   }
 
   quit(): Promise<void> {
@@ -3535,6 +3539,28 @@ describe("RedisBackend", () => {
         found = batch.candidates.some((candidate) => candidate.runId === legacyRunId);
       }
       assertEquals(found, true);
+    });
+
+    it("coalesces concurrent retention repair on one backend instance", async () => {
+      let releaseScan!: () => void;
+      mockRedis.scanGate = new Promise<void>((resolve) => {
+        releaseScan = resolve;
+      });
+      let reportScanStarted!: () => void;
+      const scanStarted = new Promise<void>((resolve) => {
+        reportScanStarted = resolve;
+      });
+      mockRedis.onScan = reportScanStarted;
+
+      const first = backend.listTerminalRunRetentionCandidates(new Date(10), 1);
+      await scanStarted;
+      const second = backend.listTerminalRunRetentionCandidates(new Date(10), 1);
+      const scansBeforeRelease = mockRedis.scanCalls.length;
+      releaseScan();
+
+      const [firstBatch, secondBatch] = await Promise.all([first, second]);
+      assertEquals(scansBeforeRelease, 1);
+      assertEquals(firstBatch, secondBatch);
     });
   });
 
