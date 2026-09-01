@@ -2597,7 +2597,7 @@ type CsiConsumedSpecialPrefixStates = Array<
 >;
 type CsiConsumedGenericPrefixStates = Array<CsiConsumedUrlPrefix | undefined>;
 
-const STRONG_CSI_CONSUMED_URL_PAYLOAD_CHARACTERS = "./@?#\\[]:";
+const STRONG_CSI_CONSUMED_URL_PAYLOAD_CHARACTERS = String.raw`./@?#\[]:`;
 
 function createCsiConsumedSpecialPrefixStates(): CsiConsumedSpecialPrefixStates {
   const states: CsiConsumedSpecialPrefixStates = [];
@@ -3020,7 +3020,7 @@ function hasStrongCsiConsumedUrlPayload(value: string, endIndex: number): boolea
   if (colon === -1 || colon >= endIndex) return false;
   const payload = stringSlice(value, colon + 1, endIndex);
   if (containsNonAscii(payload)) return true;
-  for (let index = 0; index < payload.length; index++) {
+  for (let index = 0; index < payload.length; index++) { // NOSONAR: Avoid mutable iterator hooks.
     if (stringIncludes(STRONG_CSI_CONSUMED_URL_PAYLOAD_CHARACTERS, payload[index]!)) return true;
   }
   return false;
