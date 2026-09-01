@@ -2645,8 +2645,8 @@ export class RedisBackend implements WorkflowBackend {
     }
     const localPendingIds: string[] = [];
     for (const messageIds of this.pendingMessageIds.values()) {
-      for (let index = 0; index < messageIds.length; index++) {
-        reflectApply(arrayPush, localPendingIds, [messageIds[index]!]);
+      for (const messageId of messageIds) {
+        reflectApply(arrayPush, localPendingIds, [messageId]);
       }
     }
     const raw = await client.eval(
