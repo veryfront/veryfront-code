@@ -2057,11 +2057,9 @@ function chooseCompletedSpecialCsiPath(
   allowFile: boolean,
 ): readonly number[] | undefined {
   let selected: readonly number[] | undefined;
-  const schemeCount = allowFile
-    ? CSI_SPLITTABLE_URL_SCHEMES.length
-    : CSI_SPLITTABLE_URL_SCHEMES.length - 1;
-  for (let schemeIndex = 0; schemeIndex < schemeCount; schemeIndex++) {
+  for (let schemeIndex = 0; schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length; schemeIndex++) {
     const scheme = CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!;
+    if (!allowFile && scheme === "file") continue;
     const path = states[schemeIndex]![scheme.length];
     if (path !== undefined) selected = keepShorterCsiSchemePath(selected, path);
   }
