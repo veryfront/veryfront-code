@@ -4747,6 +4747,16 @@ describe("RedisBackend", () => {
       assertEquals(candidate?.runId, runId);
     });
 
+    it("caps repair pages independently of the public sweep limit", async () => {
+      await backend.listTerminalRunRetentionCandidates(new Date(10), 1_000);
+
+      const repairCall = mockRedis.scriptCalls.find(({ script }) =>
+        script.includes("backfill-workflow-queue-message-index")
+      );
+      assertExists(repairCall);
+      assertEquals(repairCall.args[1], "100");
+    });
+
     it("coalesces concurrent retention repair on one backend instance", async () => {
       let releaseScan!: () => void;
       mockRedis.scanGate = new Promise<void>((resolve) => {

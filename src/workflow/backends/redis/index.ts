@@ -80,6 +80,8 @@ const RUN_OBSERVATION_POLL_INTERVAL_MS = 20;
 const APPROVAL_RECOVERY_SCAN_COUNT = 100;
 // Bound one Lua turn even when a retry-heavy run owns an unusually large queue.
 const TERMINAL_RETENTION_QUEUE_CLEANUP_LIMIT = 100;
+// Bound migration repair independently of the caller's candidate batch size.
+const TERMINAL_RETENTION_REPAIR_PAGE_LIMIT = 100;
 const CLEAR_LEGACY_RUN_TTL_SCRIPT =
   "-- clear-legacy-run-ttl\nreturn redis.call('persist', KEYS[1])";
 
@@ -2729,7 +2731,10 @@ export class RedisBackend implements WorkflowBackend {
       return { candidates: [], hasMore: false };
     }
     const client = await this.ensureClient();
-    const backfillComplete = await this.repairTerminalRetentionIndexes(client, limit);
+    const backfillComplete = await this.repairTerminalRetentionIndexes(
+      client,
+      TERMINAL_RETENTION_REPAIR_PAGE_LIMIT,
+    );
     if (!backfillComplete) return { candidates: [], hasMore: true };
     const raw = await client.eval(
       LIST_TERMINAL_RETENTION_CANDIDATES_SCRIPT,

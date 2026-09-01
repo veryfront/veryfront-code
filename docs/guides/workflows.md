@@ -615,8 +615,8 @@ records per sweep without hydrating run input, output, or context. Completion
 times use numeric Redis scores, so ordering stays chronological for every valid
 JavaScript `Date`. One deletion script cleans at most 100 indexed stream
 messages for a run, then defers final deletion if more remain. Each call
-requests one run-key `SCAN` page with `COUNT limit` and reads at most `limit`
-queue entries during repair. Redis completes both repair cycles before
+requests one run-key `SCAN` page with `COUNT 100` and reads at most 100 queue
+entries during repair. Redis completes both repair cycles before
 returning candidates. Once both finish, that backend instance queries the
 completed index directly and does not restart repair between deletion batches.
 A new backend instance performs its own bounded repair. The queue cycle uses a
