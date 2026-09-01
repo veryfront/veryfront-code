@@ -10,6 +10,8 @@ const response = {} as AgentResponse;
 const replayError =
   "You must call agent middleware next() at most once while the middleware is active";
 
+class PromiseSubclass<T> extends Promise<T> {}
+
 describe("agent/middleware/chain", () => {
   it("rejects replay after a continuation completes", async () => {
     let retainedNext: (() => Promise<AgentResponse>) | undefined;
@@ -142,6 +144,57 @@ describe("agent/middleware/chain", () => {
           queuedNext = next();
         });
         return Promise.reject(middlewareError);
+      },
+    ]);
+
+    await assertRejects(
+      () =>
+        chain.execute(context, () => {
+          finalHandlerCalls += 1;
+          return Promise.resolve(response);
+        }),
+      Error,
+      "middleware failed",
+    );
+    await assertRejects(() => queuedNext!, VeryfrontError, replayError);
+    assertEquals(finalHandlerCalls, 0);
+  });
+
+  it("revokes a continuation queued before a fulfilled promise subclass settles", async () => {
+    let queuedNext: Promise<AgentResponse> | undefined;
+    let finalHandlerCalls = 0;
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        queueMicrotask(() => {
+          queuedNext = next();
+        });
+        return new PromiseSubclass((resolve) => resolve(response));
+      },
+    ]);
+
+    assertEquals(
+      await chain.execute(context, () => {
+        finalHandlerCalls += 1;
+        return Promise.resolve(response);
+      }),
+      response,
+    );
+    await assertRejects(() => queuedNext!, VeryfrontError, replayError);
+    assertEquals(finalHandlerCalls, 0);
+  });
+
+  it("revokes a continuation queued before a rejected promise subclass settles", async () => {
+    let queuedNext: Promise<AgentResponse> | undefined;
+    let finalHandlerCalls = 0;
+    const middlewareError = new Error("middleware failed");
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        queueMicrotask(() => {
+          queuedNext = next();
+        });
+        return new PromiseSubclass<AgentResponse>((_resolve, reject) => {
+          reject(middlewareError);
+        });
       },
     ]);
 

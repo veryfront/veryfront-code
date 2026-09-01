@@ -4,6 +4,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const INVALID_CONTINUATION_MESSAGE =
   "You must call agent middleware next() at most once while the middleware is active";
+const IntrinsicPromiseThen = Promise.prototype.then;
 
 class InvalidContinuationPromise extends Promise<AgentResponse> {
   override then<TResult1 = AgentResponse, TResult2 = never>(
@@ -14,12 +15,12 @@ class InvalidContinuationPromise extends Promise<AgentResponse> {
       | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
       | null,
   ): Promise<TResult1 | TResult2> {
-    const derived = Promise.prototype.then.call(
+    const derived = IntrinsicPromiseThen.call(
       this,
       onFulfilled,
       onRejected,
     ) as Promise<TResult1 | TResult2>;
-    void Promise.prototype.then.call(derived, undefined, () => undefined);
+    void IntrinsicPromiseThen.call(derived, undefined, () => undefined);
     return derived;
   }
 }
@@ -29,7 +30,7 @@ function rejectInvalidContinuation(): Promise<AgentResponse> {
     (_resolve, reject) =>
       reject(MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE })),
   );
-  void Promise.prototype.then.call(rejection, undefined, () => undefined);
+  void IntrinsicPromiseThen.call(rejection, undefined, () => undefined);
   return rejection;
 }
 
@@ -58,14 +59,17 @@ export class MiddlewareChain {
               let nextCalled = false;
               let middlewareInvoking = true;
               let middlewareSettled = false;
+              let middlewareResultSettled = false;
               const next = (): Promise<AgentResponse> => {
-                if (nextCalled || middlewareSettled) {
+                if (nextCalled || middlewareSettled || middlewareResultSettled) {
                   return rejectInvalidContinuation();
                 }
                 nextCalled = true;
                 if (!middlewareInvoking) {
                   return Promise.resolve().then(() => {
-                    if (middlewareSettled) return rejectInvalidContinuation();
+                    if (middlewareSettled || middlewareResultSettled) {
+                      return rejectInvalidContinuation();
+                    }
                     return dispatch(middlewareIndex + 1);
                   });
                 }
@@ -75,6 +79,15 @@ export class MiddlewareChain {
               try {
                 const result = currentMiddleware(context, next);
                 middlewareInvoking = false;
+                void IntrinsicPromiseThen.call(
+                  result,
+                  () => {
+                    middlewareResultSettled = true;
+                  },
+                  () => {
+                    middlewareResultSettled = true;
+                  },
+                );
                 return await result;
               } finally {
                 middlewareSettled = true;
