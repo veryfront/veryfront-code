@@ -363,7 +363,7 @@ local function updateTerminalRetentionIndex(
     return 1
   end
   local completedAtMs = redis.call('hget', runKey, '${TERMINAL_COMPLETED_AT_MS_FIELD}')
-  if (not completedAtMs or completedAtMs == '') and backfillCompletedAtMs ~= '' then
+  if backfillCompletedAtMs ~= '' then
     completedAtMs = backfillCompletedAtMs
     redis.call('hset', runKey, '${TERMINAL_COMPLETED_AT_MS_FIELD}', completedAtMs)
   end
@@ -2249,14 +2249,9 @@ export class RedisBackend implements WorkflowBackend {
     return true;
   }
 
-  private async repairTerminalRetentionIndexes(
-    client: RedisAdapter,
-    limit: number,
+  private async finishTerminalRetentionIndexRepair(
+    repair: Promise<boolean>,
   ): Promise<boolean> {
-    const inFlight = this.terminalRetentionRepairInFlight;
-    if (inFlight !== null) return await inFlight;
-    const repair = this.performTerminalRetentionIndexRepair(client, limit);
-    this.terminalRetentionRepairInFlight = repair;
     try {
       return await repair;
     } finally {
@@ -2264,6 +2259,17 @@ export class RedisBackend implements WorkflowBackend {
         this.terminalRetentionRepairInFlight = null;
       }
     }
+  }
+
+  private repairTerminalRetentionIndexes(
+    client: RedisAdapter,
+    limit: number,
+  ): Promise<boolean> {
+    const inFlight = this.terminalRetentionRepairInFlight;
+    if (inFlight !== null) return inFlight;
+    const repair = this.performTerminalRetentionIndexRepair(client, limit);
+    this.terminalRetentionRepairInFlight = repair;
+    return this.finishTerminalRetentionIndexRepair(repair);
   }
 
   /** Return a bounded oldest-first batch without hydrating run payloads. */

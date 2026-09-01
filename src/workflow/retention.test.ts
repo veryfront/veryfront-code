@@ -132,18 +132,23 @@ describe("workflow terminal-run retention", () => {
 
     const result = await reapTerminalRuns(backend, { completedBefore: new Date(10) });
 
-    assertEquals(result, { supported: true, examined: 1, deleted: 0, hasMore: false });
+    assertEquals(result, { supported: true, examined: 1, deleted: 0, hasMore: true });
     assertEquals((await backend.getRun("retrying"))?.status, "pending");
   });
 
   it("does not delete terminal state changed after candidate discovery", async () => {
     class LatePatchBackend extends MemoryBackend {
+      private patched = false;
+
       override async deleteTerminalRunIfUnchanged(
         candidate: TerminalRunRetentionCandidate,
       ): Promise<boolean> {
-        await this.updateRun(candidate.runId, {
-          error: { message: "Late diagnostic" },
-        });
+        if (!this.patched) {
+          this.patched = true;
+          await this.updateRun(candidate.runId, {
+            error: { message: "Late diagnostic" },
+          });
+        }
         return await super.deleteTerminalRunIfUnchanged(candidate);
       }
     }
@@ -153,8 +158,12 @@ describe("workflow terminal-run retention", () => {
 
     const result = await reapTerminalRuns(backend, { completedBefore: new Date(10) });
 
-    assertEquals(result, { supported: true, examined: 1, deleted: 0, hasMore: false });
+    assertEquals(result, { supported: true, examined: 1, deleted: 0, hasMore: true });
     assertEquals((await backend.getRun("late-patch"))?.error?.message, "Late diagnostic");
+    assertEquals(
+      await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
+      { supported: true, examined: 1, deleted: 1, hasMore: false },
+    );
   });
 
   it("uses the bounded retention query instead of hydrating every run", async () => {

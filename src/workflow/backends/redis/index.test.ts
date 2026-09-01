@@ -296,7 +296,7 @@ class MockRedisAdapter implements RedisAdapter {
       if (args[2] === "-" ? completedAt !== "" : args[2] && completedAt !== args[2]) {
         return Promise.resolve(0);
       }
-      if (!hash.get("__terminalCompletedAtMs") && args[3]) {
+      if (args[3]) {
         hash.set("__terminalCompletedAtMs", args[3]);
       }
       return Promise.resolve(
@@ -3389,6 +3389,23 @@ describe("RedisBackend", () => {
       assertEquals(batch.candidates.map((candidate) => candidate.runId), [
         "retention-normal-year",
       ]);
+    });
+
+    it("repairs a completion score changed by a rolling-upgrade writer", async () => {
+      const runId = "retention-legacy-retry-score";
+      await backend.createRun({
+        ...createTestRun(runId),
+        status: "failed",
+        completedAt: new Date(2),
+      });
+      const hash = mockRedis.hashes.get(`test:schema-v1:run:${runId}`)!;
+      hash.set("completedAt", new Date(20).toISOString());
+      hash.set("__runObservationRevision", "1");
+
+      const batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 1);
+
+      assertEquals(batch.candidates, []);
+      assertEquals(hash.get("__terminalCompletedAtMs"), "20");
     });
 
     it("fences retention against a same-status patch after discovery", async () => {

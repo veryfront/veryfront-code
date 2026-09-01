@@ -77,13 +77,15 @@ export async function reapTerminalRuns(
   );
   const examined = mathMin(limit, batch.candidates.length);
   let deleted = 0;
+  let deletionDeferred = false;
   for (let index = 0; index < examined; index++) {
     if (await backend.deleteTerminalRunIfUnchanged(batch.candidates[index]!)) deleted += 1;
+    else deletionDeferred = true;
   }
   return {
     supported: true,
     examined,
     deleted,
-    hasMore: batch.hasMore,
+    hasMore: batch.hasMore || deletionDeferred,
   };
 }
