@@ -129,6 +129,23 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "return cors(request, await handlers.POST(request));");
   });
 
+  it("documents who owns automatic and route-specific CORS preflight", async () => {
+    const guide = await Deno.readTextFile(
+      new URL("docs/guides/middleware.md", repoRoot),
+    );
+
+    assertStringIncludes(guide, "Global `security.cors` owns automatic preflight");
+    assertStringIncludes(
+      guide,
+      "Method-local `cors()` middleware runs only inside the handler that calls it",
+    );
+    assertStringIncludes(guide, "An explicit `OPTIONS` export is authoritative");
+    assertStringIncludes(guide, "A callable default Pages route is also authoritative");
+    assertStringIncludes(guide, "export function OPTIONS(request: Request): Promise<Response>");
+    assertStringIncludes(guide, "handleCORSPreflight({ request, config: corsConfig })");
+    assertStringIncludes(guide, "applyCORSHeaders({ request, response, config: corsConfig })");
+  });
+
   it("describes the server-bound workflow approval identity", async () => {
     const guide = await Deno.readTextFile(
       new URL("docs/guides/workflows.md", repoRoot),

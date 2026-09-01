@@ -32,6 +32,11 @@ import {
 } from "../../src/chat/index.ts";
 import { createUploadHandler, ragStore } from "../../src/embedding/index.ts";
 import { defineConfig } from "../../src/config/index.ts";
+import {
+  applyCORSHeaders,
+  type CORSConfig,
+  handleCORSPreflight,
+} from "../../src/security/index.ts";
 import { buildCSP } from "../../src/security/http/response/security-handler.ts";
 import { datasets, evalAgent, evalDataset, metrics, runEval } from "../../src/eval/index.ts";
 import { metrics as projectMetrics } from "../../src/metrics/index.ts";
@@ -196,6 +201,36 @@ describe("Guide code example coverage", () => {
     const guideFiles = new Set(await guideFilesWithCodeFences());
     const stale = [...GUIDE_CODE_EXAMPLE_COVERAGE].filter((name) => !guideFiles.has(name));
     assertEquals(stale, []);
+  });
+});
+
+describe("Guide: middleware.md", () => {
+  it("uses one route-specific CORS policy for preflight and the actual response", async () => {
+    const corsConfig: CORSConfig = {
+      origin: "https://example.com",
+      methods: ["GET", "OPTIONS"],
+      allowedHeaders: ["Authorization"],
+      maxAge: 86400,
+    };
+    const preflight = await handleCORSPreflight({
+      request: new Request("http://localhost/api/report", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://example.com",
+          "access-control-request-method": "GET",
+          "access-control-request-headers": "Authorization",
+        },
+      }),
+      config: corsConfig,
+    });
+    assertEquals(preflight.headers.get("access-control-allow-origin"), "https://example.com");
+
+    const request = new Request("http://localhost/api/report", {
+      headers: { origin: "https://example.com" },
+    });
+    const response = Response.json({ report: "ready" });
+    const actual = await applyCORSHeaders({ request, response, config: corsConfig }) ?? response;
+    assertEquals(actual.headers.get("access-control-allow-origin"), "https://example.com");
   });
 });
 
