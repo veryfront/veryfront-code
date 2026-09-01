@@ -207,8 +207,9 @@ describe("browser-server-exports-strip", () => {
 
     it("parses embedded TSX framework source before deciding it has no server hooks", async () => {
       const code = [
+        `const ids = "tooltip label".trim().split(/\\s+/);`,
         `export function TooltipProvider({ children }: { children: React.ReactNode }) {`,
-        `  return <TooltipContext.Provider value={{}}>{children}</TooltipContext.Provider>;`,
+        `  return <TooltipContext.Provider value={{ ids }}>{children}</TooltipContext.Provider>;`,
         `}`,
       ].join("\n");
 
