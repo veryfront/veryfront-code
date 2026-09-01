@@ -1965,7 +1965,7 @@ const MAX_GENERIC_URL_SCHEME_LENGTH = 32;
 const MAX_CSI_LITERAL_GAP = MAX_GENERIC_URL_SCHEME_LENGTH * 2;
 const MAX_CSI_RECONSTRUCTION_MATCHES = 64;
 const MAX_CSI_CONSUMED_URL_LOOKAHEAD = 4096;
-const MAX_CSI_PREFIX_RECONSTRUCTION_CHARACTERS = MAX_CSI_CONSUMED_URL_LOOKAHEAD * 2;
+const MAX_CSI_PREFIX_RECONSTRUCTION_CHARACTERS = 1024;
 const GENERIC_URL_SCHEME_FIRST_CHARACTER = /^[A-Za-z]$/;
 const GENERIC_URL_SCHEME_CHARACTER = /^[A-Za-z0-9+.-]$/;
 
@@ -2935,6 +2935,11 @@ function extendCsiConsumedUrlMatch(value: string, endIndex: number): number {
   return rawUrlMatchEnd(value, stringSlice(value, 0, endIndex), endIndex);
 }
 
+function extendCsiConsumedFileMatch(value: string, endIndex: number): number {
+  const iriEnd = stickyMatchEnd(RAW_IRI_REMAINDER, value, endIndex);
+  return iriEnd === endIndex ? extendCsiConsumedUrlMatch(value, endIndex) : iriEnd;
+}
+
 function matchCsiConsumedUrlCandidate(value: string): CsiConsumedUrlRedaction | undefined {
   const hasNonAscii = containsNonAscii(value);
   const fileEndIndex = hasNonAscii
@@ -2943,7 +2948,7 @@ function matchCsiConsumedUrlCandidate(value: string): CsiConsumedUrlRedaction | 
     : matchPatternAtStart(FILE_URL_ABSOLUTE_PATH, value);
   if (fileEndIndex !== 0) {
     return {
-      endIndex: extendCsiConsumedUrlMatch(value, fileEndIndex),
+      endIndex: extendCsiConsumedFileMatch(value, fileEndIndex),
       marker: "[path]",
     };
   }
@@ -3103,7 +3108,7 @@ function csiConsumedUrlSpan(
   };
 }
 
-function exceedsCsiReconstructionLimit(value: string): boolean {
+function csiReconstructionLimitIndex(value: string): number | undefined {
   ANSI_CSI_SEQUENCE_FOR_URL_REDACTION.lastIndex = 0;
   let matchCount = 0;
   let prefixReconstructionCharacters = 0;
@@ -3116,48 +3121,56 @@ function exceedsCsiReconstructionLimit(value: string): boolean {
       if (
         matchCount > MAX_CSI_RECONSTRUCTION_MATCHES ||
         match[0].length > MAX_CSI_CONSUMED_URL_LOOKAHEAD
-      ) return true;
+      ) return match.index;
       if (csiConsumedUrlStructure(match[0]) !== undefined) {
         prefixReconstructionCharacters += MathMin(
           match.index,
           MAX_CSI_CONSUMED_URL_LOOKAHEAD,
         );
         if (prefixReconstructionCharacters > MAX_CSI_PREFIX_RECONSTRUCTION_CHARACTERS) {
-          return true;
+          return match.index;
         }
       }
       match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE_FOR_URL_REDACTION, [value]) as
         | RegExpExecArray
         | null;
     }
-    return false;
+    return undefined;
   } finally {
     ANSI_CSI_SEQUENCE_FOR_URL_REDACTION.lastIndex = 0;
   }
 }
 
 function redactCsiConsumedUrls(value: string): string {
-  if (exceedsCsiReconstructionLimit(value)) return "[REDACTED]";
+  const reconstructionLimitIndex = csiReconstructionLimitIndex(value);
+  const reconstructionValue = reconstructionLimitIndex === undefined
+    ? value
+    : stringSlice(value, 0, reconstructionLimitIndex);
   ANSI_CSI_SEQUENCE_FOR_URL_REDACTION.lastIndex = 0;
   try {
     let output = "";
     let outputOffset = 0;
-    let match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE_FOR_URL_REDACTION, [value]) as
+    let match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE_FOR_URL_REDACTION, [
+      reconstructionValue,
+    ]) as
       | RegExpExecArray
       | null;
     while (match !== null) {
       const matchEnd = ANSI_CSI_SEQUENCE_FOR_URL_REDACTION.lastIndex;
-      const span = csiConsumedUrlSpan(value, match, matchEnd, outputOffset);
+      const span = csiConsumedUrlSpan(reconstructionValue, match, matchEnd, outputOffset);
       if (span) {
-        output += stringSlice(value, outputOffset, span.startIndex) + span.marker;
+        output += stringSlice(reconstructionValue, outputOffset, span.startIndex) + span.marker;
         outputOffset = span.endIndex;
         ANSI_CSI_SEQUENCE_FOR_URL_REDACTION.lastIndex = span.endIndex;
       }
-      match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE_FOR_URL_REDACTION, [value]) as
+      match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE_FOR_URL_REDACTION, [
+        reconstructionValue,
+      ]) as
         | RegExpExecArray
         | null;
     }
-    return output + stringSlice(value, outputOffset);
+    const redactedPrefix = output + stringSlice(reconstructionValue, outputOffset);
+    return reconstructionLimitIndex === undefined ? redactedPrefix : redactedPrefix + "[REDACTED]";
   } finally {
     ANSI_CSI_SEQUENCE_FOR_URL_REDACTION.lastIndex = 0;
   }

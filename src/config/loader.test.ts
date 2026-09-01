@@ -5930,7 +5930,7 @@ export default config as const;
           true,
           `probe ${probeMs}ms vs control ${controlMs}ms`,
         );
-        assertStringIncludes(error.message, "[REDACTED]");
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
       });
 
       it("ignores dense CSI content after the retained first line", async () => {
@@ -5941,6 +5941,25 @@ export default config as const;
 
         assertStringIncludes(error.message, "actionable failure");
         assertEquals(error.message.includes("[REDACTED]"), false);
+      });
+
+      it("keeps the retained prefix when later same-line CSI exceeds reconstruction limits", async () => {
+        const escape = String.fromCharCode(27);
+        const overlong = await loadFailure(
+          "vf-config-late-overlong-csi-",
+          `throw new Error("actionable failure " + "a".repeat(256) + String.fromCharCode(27) + "[" + "1;".repeat(2050) + "m");\n`,
+        );
+        const structural = await loadFailure(
+          "vf-config-late-structural-csi-",
+          `throw new Error(${JSON.stringify("actionable failure " + "a".repeat(4096))} + ${
+            JSON.stringify(`${escape}[:H${escape}[:H${escape}[:H`)
+          });\n`,
+        );
+
+        for (const error of [overlong, structural]) {
+          assertStringIncludes(error.message, "actionable failure");
+          assertEquals(error.message.includes("[REDACTED]"), false);
+        }
       });
 
       it("redacts a path with a CSI introducer glued to its first character", async () => {
@@ -7315,6 +7334,17 @@ export default config as const;
         assertEquals(error.message.includes("registry.internal"), false);
         assertEquals(error.message.includes("秘密"), false);
         assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("redacts a mixed ASCII and Unicode file segment after consumed delimiters", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-consumed-mixed-file-segment-",
+          `throw new Error(${JSON.stringify(`Load file:${escape}[///h秘密`)});\n`,
+        );
+
+        assertEquals(error.message.includes("秘密"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load [path]");
       });
 
       it("does not manufacture a scheme from an ordinary SGR sequence", async () => {
