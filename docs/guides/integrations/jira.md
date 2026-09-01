@@ -80,7 +80,7 @@ The OAuth access token expires after 60 minutes; Veryfront mints a replacement a
 OAuth client credential remains usable until it is revoked. If it is revoked or replaced, create a
 new OAuth 2.0 credential, update both service-account credential variables, and redeploy the
 environment before the next run. Do not select **API token** instead: API-token credentials have a
-separate 1–365-day expiry and are not used by these client ID and client secret variables.
+separate 1-365-day expiry and are not used by these client ID and client secret variables.
 
 ## 4. Find the Jira Cloud ID
 
