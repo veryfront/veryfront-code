@@ -544,7 +544,15 @@ for _, entry in ipairs(entries) do
   local fields = entry[2]
   for index = 1, #fields, 2 do
     if fields[index] == 'runId' and fields[index + 1] ~= '' then
-      redis.call('sadd', ARGV[3] .. fields[index + 1], id)
+      local runId = fields[index + 1]
+      redis.call('sadd', ARGV[3] .. runId, id)
+      local runKey = ARGV[5] .. runId
+      local status = redis.call('hget', runKey, 'status')
+      if status == 'completed' or status == 'failed' or status == 'cancelled' then
+        redis.call('hset', runKey, '${TERMINAL_RETRY_QUEUED_FIELD}', '1')
+        local metadataRaw = redis.call('hget', KEYS[3], runId)
+        if metadataRaw then redis.call('zrem', KEYS[2], cjson.decode(metadataRaw).member) end
+      end
       break
     end
   end
@@ -582,7 +590,8 @@ return id`;
 
 const REMOVE_ACKNOWLEDGED_QUEUE_MESSAGES_SCRIPT = `-- remove-acknowledged-queue-messages
 ${UPDATE_TERMINAL_RETENTION_INDEX_LUA}
-for index = 2, #ARGV do
+for index = 3, #ARGV do
+  redis.pcall('xack', KEYS[1], ARGV[2], ARGV[index])
   redis.call('xdel', KEYS[1], ARGV[index])
   redis.call('srem', KEYS[2], ARGV[index])
 end
@@ -591,7 +600,7 @@ if redis.call('scard', KEYS[2]) == 0 then
   redis.call('hdel', KEYS[3], '${TERMINAL_RETRY_QUEUED_FIELD}')
   updateTerminalRetentionIndex(KEYS[3], KEYS[4], KEYS[5], ARGV[1], '')
 end
-return #ARGV - 1`;
+return #ARGV - 2`;
 
 const CLEAR_RUN_QUEUE_MESSAGES_SCRIPT = `-- clear-run-queue-messages
 local ids = redis.call('spop', KEYS[2], tonumber(ARGV[2]))
@@ -2446,12 +2455,17 @@ export class RedisBackend implements WorkflowBackend {
     }
     const raw = await client.eval(
       BACKFILL_QUEUE_MESSAGE_INDEX_SCRIPT,
-      [this.config.streamKey],
+      [
+        this.config.streamKey,
+        this.terminalRunRetentionIndexKey(),
+        this.terminalRunRetentionMembersKey(),
+      ],
       [
         this.terminalRetentionQueueBackfillCursor,
         String(limit),
         `${this.storagePrefix()}queue-messages:`,
         this.terminalRetentionQueueBackfillHighWater,
+        `${this.storagePrefix()}run:`,
       ],
     );
     if (
@@ -3136,7 +3150,6 @@ export class RedisBackend implements WorkflowBackend {
     }
 
     const client = await this.ensureClient();
-    await client.xack(this.config.streamKey, this.config.groupName, ...messageIds);
     await client.eval(
       REMOVE_ACKNOWLEDGED_QUEUE_MESSAGES_SCRIPT,
       [
@@ -3146,7 +3159,7 @@ export class RedisBackend implements WorkflowBackend {
         this.terminalRunRetentionIndexKey(),
         this.terminalRunRetentionMembersKey(),
       ],
-      [runId, ...messageIds],
+      [runId, this.config.groupName, ...messageIds],
     );
     this.pendingMessageIds.delete(runId);
 

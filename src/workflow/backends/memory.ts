@@ -457,6 +457,7 @@ export class MemoryBackend implements WorkflowBackend {
   private runRevisions = new Map<string, number>();
   private runRetentionRevisions = new Map<string, number>();
   private terminalRetryQueued = new Set<string>();
+  private terminalRetryPending = new Map<string, number>();
   private nextRunRetentionGeneration = 0;
   private runObservers = new Map<string, Set<MemoryRunObserver>>();
   private config: MemoryBackendConfig;
@@ -496,6 +497,7 @@ export class MemoryBackend implements WorkflowBackend {
       cloneWorkflowRunWithContext(runForClone, context),
     );
     this.terminalRetryQueued.delete(run.id);
+    this.terminalRetryPending.delete(run.id);
     this.runRevisions.set(run.id, 0);
     this.runRetentionRevisions.set(run.id, this.nextRunRetentionGeneration++);
     return Promise.resolve();
@@ -727,6 +729,7 @@ export class MemoryBackend implements WorkflowBackend {
       this.locks.has(runId) || this.stalledClaims.has(runId) ||
       this.runRevisions.has(runId) || this.runRetentionRevisions.has(runId) ||
       this.terminalRetryQueued.has(runId) ||
+      this.terminalRetryPending.has(runId) ||
       this.runObservers.has(runId) ||
       reflectApply(arraySome, this.queue, [(item: WorkflowQueueItem) => item.runId === runId]);
     this.closeRunObservers(runId);
@@ -741,6 +744,7 @@ export class MemoryBackend implements WorkflowBackend {
     this.runRevisions.delete(runId);
     this.runRetentionRevisions.delete(runId);
     this.terminalRetryQueued.delete(runId);
+    this.terminalRetryPending.delete(runId);
     this.queue = reflectApply(arrayFilter, this.queue, [
       (item: WorkflowQueueItem) => item.runId !== runId,
     ]) as WorkflowQueueItem[];
@@ -1797,19 +1801,31 @@ export class MemoryBackend implements WorkflowBackend {
 
   dequeue(): Promise<WorkflowQueueItem | null> {
     const job = this.queue.shift();
+    if (job && this.terminalRetryQueued.has(job.runId)) {
+      this.terminalRetryPending.set(
+        job.runId,
+        (this.terminalRetryPending.get(job.runId) ?? 0) + 1,
+      );
+    }
     return Promise.resolve(job ? structuredClone(job) : null);
   }
 
   acknowledge(runId: string): Promise<void> {
     logger.debug(`Acknowledging job: ${runId}`);
+    const pending = this.terminalRetryPending.get(runId) ?? 0;
+    if (pending > 1) this.terminalRetryPending.set(runId, pending - 1);
+    else this.terminalRetryPending.delete(runId);
     const stillQueued = reflectApply(arraySome, this.queue, [
       (item: WorkflowQueueItem) => item.runId === runId,
     ]) as boolean;
-    if (!stillQueued) this.terminalRetryQueued.delete(runId);
+    if (!stillQueued && !this.terminalRetryPending.has(runId)) {
+      this.terminalRetryQueued.delete(runId);
+    }
     return Promise.resolve();
   }
 
   async nack(runId: string): Promise<void> {
+    await this.acknowledge(runId);
     await requeueRun(this, runId);
   }
 

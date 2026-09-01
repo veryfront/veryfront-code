@@ -117,17 +117,29 @@ describe("workflow terminal-run retention", () => {
       input: {},
       createdAt: new Date(3),
     });
+    await backend.enqueue({
+      runId: retained.id,
+      workflowId: retained.workflowId,
+      input: { attempt: 2 },
+      createdAt: new Date(4),
+    });
 
     assertEquals(
       await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
       { supported: true, examined: 0, deleted: 0, hasMore: false },
     );
     assertEquals((await backend.dequeue())?.runId, retained.id);
+    assertEquals((await backend.dequeue())?.runId, retained.id);
     assertEquals(
       await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
       { supported: true, examined: 0, deleted: 0, hasMore: false },
     );
 
+    await backend.acknowledge(retained.id);
+    assertEquals(
+      await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
+      { supported: true, examined: 0, deleted: 0, hasMore: false },
+    );
     await backend.acknowledge(retained.id);
     assertEquals(
       await reapTerminalRuns(backend, { completedBefore: new Date(10) }),

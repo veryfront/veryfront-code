@@ -289,7 +289,8 @@ class MockRedisAdapter implements RedisAdapter {
 
     if (script.includes("remove-acknowledged-queue-messages")) {
       const runId = args[0]!;
-      const acknowledgedIds = args.slice(1);
+      const acknowledgedIds = args.slice(2);
+      this.queueCleanupAcks.push(...acknowledgedIds);
       const ids = new Set(acknowledgedIds);
       const stream = this.streams.get(key);
       if (stream) this.streams.set(key, stream.filter(({ id }) => !ids.has(id)));
@@ -344,6 +345,18 @@ class MockRedisAdapter implements RedisAdapter {
           this.sets.set(indexKey, messageIds);
         }
         messageIds.add(entry.id);
+        const hash = this.hashes.get(`${args[4]}${entry.data.runId}`);
+        if (
+          hash?.get("status") === "completed" || hash?.get("status") === "failed" ||
+          hash?.get("status") === "cancelled"
+        ) {
+          hash.set("__terminalRetryQueued", "1");
+          const metadataRaw = this.hashes.get(keys[2]!)?.get(entry.data.runId);
+          if (metadataRaw) {
+            const metadata = JSON.parse(metadataRaw) as { member: string };
+            this.sortedSets.get(keys[1]!)?.delete(metadata.member);
+          }
+        }
       }
       return Promise.resolve([
         entries.length < limit || entries.at(-1)?.id === highWater ? "1" : "0",
@@ -3490,7 +3503,7 @@ describe("RedisBackend", () => {
       );
     });
 
-    it("backfills and removes queue entries written before the side index existed", async () => {
+    it("backfills and preserves live legacy retry entries", async () => {
       const runId = "run-retention-legacy-queue";
       const completedAt = new Date(2);
       await backend.createRun({
@@ -3507,15 +3520,21 @@ describe("RedisBackend", () => {
       });
       assertEquals(mockRedis.sets.has(`test:schema-v1:queue-messages:${runId}`), false);
 
-      let candidate: TerminalRunRetentionCandidate | undefined;
-      for (let page = 0; page < 10 && candidate === undefined; page++) {
-        candidate = (await backend.listTerminalRunRetentionCandidates(new Date(10), 2))
-          .candidates[0];
+      let batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      for (let page = 0; page < 10 && batch.hasMore; page++) {
+        batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
       }
-      assertEquals(candidate?.runId, runId);
-      assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate!), true);
-      assertEquals(mockRedis.streams.get("test:stream:schema-v1"), []);
-      assertEquals(mockRedis.sets.has(`test:schema-v1:queue-messages:${runId}`), false);
+      assertEquals(batch.candidates, []);
+      assertEquals(
+        mockRedis.hashes.get(`test:schema-v1:run:${runId}`)?.get("__terminalRetryQueued"),
+        "1",
+      );
+      assertEquals(mockRedis.sets.has(`test:schema-v1:queue-messages:${runId}`), true);
+
+      assertEquals((await backend.dequeue())?.runId, runId);
+      await backend.acknowledge(runId);
+      batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      assertEquals(batch.candidates.map((candidate) => candidate.runId), [runId]);
     });
 
     it("cleans queued terminal state before its consumer group exists", async () => {
@@ -3634,7 +3653,8 @@ describe("RedisBackend", () => {
       assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), false);
       await backend.acknowledge(runId);
       await backend.releaseLock(runId);
-      assertEquals(acknowledgedIds.length, 1);
+      assertEquals(acknowledgedIds.length, 0);
+      assertEquals(mockRedis.queueCleanupAcks.length, 1);
       assertExists(lockId);
       assertEquals(mockRedis.store.has(`test:schema-v1:lock:${runId}`), false);
     });
@@ -5925,7 +5945,7 @@ describe("RedisBackend", () => {
       await backend.acknowledge("run-ack");
     });
 
-    it("should XACK the exact stream message read by dequeue", async () => {
+    it("atomically acknowledges the exact stream message read by dequeue", async () => {
       const ackCalls: Array<{ key: string; group: string; ids: string[] }> = [];
       const realXack = mockRedis.xack.bind(mockRedis);
       mockRedis.xack = (key: string, group: string, ...ids: string[]) => {
@@ -5946,14 +5966,16 @@ describe("RedisBackend", () => {
 
       await backend.acknowledge("run-ackx");
 
-      assertEquals(ackCalls.length, 1);
-      assertEquals(ackCalls[0]!.key, "test:stream:schema-v1");
-      assertEquals(ackCalls[0]!.group, "test:group:schema-v1");
-      assertEquals(ackCalls[0]!.ids.length, 1);
+      assertEquals(ackCalls.length, 0);
+      const atomicCall = mockRedis.scriptCalls.at(-1)!;
+      assertStringIncludes(atomicCall.script, "redis.pcall('xack', KEYS[1], ARGV[2]");
+      assertEquals(atomicCall.args[0], "run-ackx");
+      assertEquals(atomicCall.args[1], "test:group:schema-v1");
+      assertEquals(atomicCall.args.length, 3);
 
       // Second acknowledge is a no-op (already acked, nothing tracked).
       await backend.acknowledge("run-ackx");
-      assertEquals(ackCalls.length, 1);
+      assertEquals(ackCalls.length, 0);
     });
 
     it("nack XACKs the consumed message before re-enqueueing", async () => {
@@ -5975,8 +5997,14 @@ describe("RedisBackend", () => {
       await backend.dequeue();
       await backend.nack("run-nack-ack");
 
-      // Old PEL entry acked exactly once, and a fresh job is queued.
-      assertEquals(ackCalls.length, 1);
+      // Old PEL entry is acked inside one Lua cleanup, and a fresh job is queued.
+      assertEquals(ackCalls.length, 0);
+      assertEquals(
+        mockRedis.scriptCalls.filter(({ script }) =>
+          script.includes("remove-acknowledged-queue-messages")
+        ).length,
+        1,
+      );
       const requeued = await backend.dequeue();
       assertExists(requeued);
       assertEquals(requeued.runId, "run-nack-ack");
