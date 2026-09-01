@@ -57,6 +57,8 @@ class MockRedisAdapter implements RedisAdapter {
   lastArgs: string[] = [];
   scriptCalls: Array<{ script: string; keys: string[]; args: string[] }> = [];
   groups = new Map<string, Set<string>>();
+  deliveredStreamIds = new Set<string>();
+  pendingStreamIds = new Set<string>();
   nextStreamSequence = 1;
   hgetallCallCount = 0;
   keysCallCount = 0;
@@ -291,6 +293,10 @@ class MockRedisAdapter implements RedisAdapter {
       const runId = args[0]!;
       const acknowledgedIds = args.slice(2);
       this.queueCleanupAcks.push(...acknowledgedIds);
+      for (const id of acknowledgedIds) {
+        this.pendingStreamIds.delete(id);
+        this.deliveredStreamIds.delete(id);
+      }
       const ids = new Set(acknowledgedIds);
       const stream = this.streams.get(key);
       if (stream) this.streams.set(key, stream.filter(({ id }) => !ids.has(id)));
@@ -315,6 +321,10 @@ class MockRedisAdapter implements RedisAdapter {
       const messageIdSet = this.sets.get(keys[1]!);
       const messageIds = [...(messageIdSet ?? [])].slice(0, Number(args[1]));
       for (const messageId of messageIds) messageIdSet?.delete(messageId);
+      for (const messageId of messageIds) {
+        this.pendingStreamIds.delete(messageId);
+        this.deliveredStreamIds.delete(messageId);
+      }
       this.queueCleanupAcks.push(...messageIds);
       const ids = new Set(messageIds);
       const stream = this.streams.get(key);
@@ -338,6 +348,10 @@ class MockRedisAdapter implements RedisAdapter {
         .slice(0, limit);
       for (const entry of entries) {
         if (!entry.data.runId) continue;
+        if (
+          this.deliveredStreamIds.has(entry.id) &&
+          !this.pendingStreamIds.has(entry.id)
+        ) continue;
         const indexKey = `${args[2]}${entry.data.runId}`;
         let messageIds = this.sets.get(indexKey);
         if (!messageIds) {
@@ -519,6 +533,10 @@ class MockRedisAdapter implements RedisAdapter {
       const queueMessageSet = this.sets.get(keys[17]!);
       const queueMessageIds = [...(queueMessageSet ?? [])].slice(0, Number(args[7]));
       for (const queueMessageId of queueMessageIds) queueMessageSet?.delete(queueMessageId);
+      for (const queueMessageId of queueMessageIds) {
+        this.pendingStreamIds.delete(queueMessageId);
+        this.deliveredStreamIds.delete(queueMessageId);
+      }
       this.queueCleanupAcks.push(...queueMessageIds);
       const queuedIds = new Set(queueMessageIds);
       const queueStream = this.streams.get(keys[18]!);
@@ -1185,7 +1203,6 @@ class MockRedisAdapter implements RedisAdapter {
     if (!Number.isFinite(revision)) return false;
     const member = JSON.stringify([completedAt, runId]);
     if (oldMember && oldMember !== member) index.delete(oldMember);
-    index.set(member, completedAtMs);
     members.set(
       runId,
       JSON.stringify({
@@ -1197,6 +1214,8 @@ class MockRedisAdapter implements RedisAdapter {
         revision,
       }),
     );
+    if (hash.get("__terminalRetryQueued") === "1") index.delete(member);
+    else index.set(member, completedAtMs);
     return true;
   }
 
@@ -1271,7 +1290,10 @@ class MockRedisAdapter implements RedisAdapter {
     const streamData = this.streams.get(streamKey);
     if (!streamData?.length) return Promise.resolve([]);
 
-    const msg = streamData.shift()!;
+    const msg = streamData.find(({ id }) => !this.deliveredStreamIds.has(id));
+    if (!msg) return Promise.resolve([]);
+    this.deliveredStreamIds.add(msg.id);
+    this.pendingStreamIds.add(msg.id);
     return Promise.resolve([{ key: streamKey, messages: [{ id: msg.id, data: msg.data }] }]);
   }
 
@@ -1286,6 +1308,7 @@ class MockRedisAdapter implements RedisAdapter {
   }
 
   xack(_key: string, _group: string, ...ids: string[]): Promise<number> {
+    for (const id of ids) this.pendingStreamIds.delete(id);
     return Promise.resolve(ids.length);
   }
 
@@ -3537,6 +3560,36 @@ describe("RedisBackend", () => {
       assertEquals(batch.candidates.map((candidate) => candidate.runId), [runId]);
     });
 
+    it("ignores acknowledged legacy stream history during queue repair", async () => {
+      const runId = "run-retention-legacy-acknowledged";
+      await backend.createRun({
+        ...createTestRun(runId),
+        status: "completed",
+        completedAt: new Date(2),
+      });
+      const messageId = await mockRedis.xadd("test:stream:schema-v1", "*", {
+        runId,
+        workflowId: "wf-1",
+        input: "{}",
+        priority: "0",
+        createdAt: new Date(3).toISOString(),
+      });
+      mockRedis.deliveredStreamIds.add(messageId);
+      mockRedis.pendingStreamIds.add(messageId);
+      await mockRedis.xack("test:stream:schema-v1", "test:group:schema-v1", messageId);
+
+      let batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      for (let page = 0; page < 10 && batch.hasMore; page++) {
+        batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      }
+
+      assertEquals(batch.candidates.map((candidate) => candidate.runId), [runId]);
+      assertEquals(
+        mockRedis.hashes.get(`test:schema-v1:run:${runId}`)?.get("__terminalRetryQueued"),
+        undefined,
+      );
+    });
+
     it("cleans queued terminal state before its consumer group exists", async () => {
       const runId = "run-retention-no-consumer-group";
       await backend.createRun({
@@ -3783,6 +3836,12 @@ describe("RedisBackend", () => {
         input: {},
         createdAt: new Date(4),
       });
+      await backend.enqueue({
+        runId: queuedRunId,
+        workflowId: "wf-1",
+        input: { attempt: 2 },
+        createdAt: new Date(5),
+      });
 
       let batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
       for (let page = 0; page < 10 && batch.candidates.length === 0; page++) {
@@ -3791,6 +3850,21 @@ describe("RedisBackend", () => {
       assertEquals(batch.candidates.map(({ runId }) => runId), [controlRunId]);
 
       assertEquals((await backend.dequeue())?.runId, queuedRunId);
+      assertEquals((await backend.dequeue())?.runId, queuedRunId);
+      batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      assertEquals(batch.candidates.map(({ runId }) => runId), [controlRunId]);
+
+      await backend.acknowledge(queuedRunId);
+      assertEquals(
+        mockRedis.hashes.get(`test:schema-v1:run:${queuedRunId}`)?.get(
+          "__terminalRetryQueued",
+        ),
+        "1",
+      );
+      assertEquals(
+        mockRedis.sets.get(`test:schema-v1:queue-messages:${queuedRunId}`)?.size,
+        1,
+      );
       batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
       assertEquals(batch.candidates.map(({ runId }) => runId), [controlRunId]);
 
@@ -3810,6 +3884,38 @@ describe("RedisBackend", () => {
         batch.candidates.map(({ runId }) => runId).sort(),
         [controlRunId, queuedRunId].sort(),
       );
+    });
+
+    it("keeps patched accepted retries out of the completion index", async () => {
+      await backend.listTerminalRunRetentionCandidates(new Date(20), 1000);
+      for (let index = 0; index < 3; index++) {
+        const runId = `retention-marked-patch-${index}`;
+        await backend.createRun({
+          ...createTestRun(runId),
+          status: "failed",
+          completedAt: new Date(index + 1),
+        });
+        await backend.enqueue({
+          runId,
+          workflowId: "wf-1",
+          input: {},
+          createdAt: new Date(10 + index),
+        });
+        await backend.updateRun(runId, { error: { message: "late diagnostic" } });
+      }
+      const controlRunId = "retention-marked-patch-control";
+      await backend.createRun({
+        ...createTestRun(controlRunId),
+        status: "completed",
+        completedAt: new Date(4),
+      });
+
+      let batch = await backend.listTerminalRunRetentionCandidates(new Date(20), 1);
+      for (let page = 0; page < 10 && batch.candidates.length === 0; page++) {
+        batch = await backend.listTerminalRunRetentionCandidates(new Date(20), 1);
+      }
+
+      assertEquals(batch.candidates.map(({ runId }) => runId), [controlRunId]);
     });
 
     it("orders retention candidates by timestamp across extended ISO years", async () => {

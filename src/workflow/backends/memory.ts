@@ -1985,6 +1985,8 @@ export class MemoryBackend implements WorkflowBackend {
     this.stalledClaims.clear();
     this.runRevisions.clear();
     this.runRetentionRevisions.clear();
+    this.terminalRetryQueued.clear();
+    this.terminalRetryPending.clear();
     return Promise.resolve();
   }
 }

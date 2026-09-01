@@ -147,6 +147,28 @@ describe("workflow terminal-run retention", () => {
     );
   });
 
+  it("clears terminal retry bookkeeping during a backend reset", async () => {
+    const backend = new MemoryBackend();
+    const retained = run("reset-retry", "failed", new Date(2));
+    await backend.createRun(retained);
+    await backend.enqueue({
+      runId: retained.id,
+      workflowId: retained.workflowId,
+      input: {},
+      createdAt: new Date(3),
+    });
+    await backend.dequeue();
+
+    await backend.clear();
+
+    const internal = backend as unknown as {
+      terminalRetryPending: Map<string, number>;
+      terminalRetryQueued: Set<string>;
+    };
+    assertEquals(internal.terminalRetryPending.size, 0);
+    assertEquals(internal.terminalRetryQueued.size, 0);
+  });
+
   it("does not delete a failed run that reactivates before the fenced delete", async () => {
     class RetryRaceBackend extends MemoryBackend {
       override async deleteTerminalRunIfUnchanged(

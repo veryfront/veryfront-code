@@ -57,6 +57,7 @@ import type { RedisBackendConfig, RedisBackendInternalConfig } from "./types.ts"
 const logger = agentLogger.component("redis-backend");
 const arrayIsArray = Array.isArray;
 const arrayPush = Array.prototype.push;
+const arraySlice = Array.prototype.slice;
 const DateConstructor = Date;
 const dateGetTime = Date.prototype.getTime;
 const dateToISOString = Date.prototype.toISOString;
@@ -391,15 +392,20 @@ local function updateTerminalRetentionIndex(
   if not revision then return 0 end
   local member = cjson.encode({ completedAt, runId })
   if oldMember and oldMember ~= member then redis.call('zrem', indexKey, oldMember) end
-  redis.call('zadd', indexKey, score, member)
-  redis.call('hset', membersKey, runId, cjson.encode({
+  local metadata = cjson.encode({
     member = member,
     workflowId = workflowId,
     createdAt = createdAt,
     status = status,
     completedAt = completedAt,
     revision = revision
-  }))
+  })
+  redis.call('hset', membersKey, runId, metadata)
+  if redis.call('hget', runKey, '${TERMINAL_RETRY_QUEUED_FIELD}') == '1' then
+    redis.call('zrem', indexKey, member)
+    return 1
+  end
+  redis.call('zadd', indexKey, score, member)
   return 1
 end`;
 
@@ -536,6 +542,41 @@ end
 return result`;
 
 const BACKFILL_QUEUE_MESSAGE_INDEX_SCRIPT = `-- backfill-workflow-queue-message-index
+local function decimalGreaterThan(left, right)
+  if #left ~= #right then return #left > #right end
+  return left > right
+end
+local function streamIdGreaterThan(left, right)
+  local leftTime, leftSequence = string.match(left, '^(%d+)%-(%d+)$')
+  local rightTime, rightSequence = string.match(right, '^(%d+)%-(%d+)$')
+  if not leftTime or not rightTime then return true end
+  if leftTime ~= rightTime then return decimalGreaterThan(leftTime, rightTime) end
+  return decimalGreaterThan(leftSequence, rightSequence)
+end
+local groupFound = false
+local lastDeliveredId = '0-0'
+local groups = redis.pcall('xinfo', 'groups', KEYS[1])
+if type(groups) == 'table' and not groups.err then
+  for _, group in ipairs(groups) do
+    local groupName = nil
+    local deliveredId = nil
+    for index = 1, #group, 2 do
+      if group[index] == 'name' then groupName = group[index + 1] end
+      if group[index] == 'last-delivered-id' then deliveredId = group[index + 1] end
+    end
+    if groupName == ARGV[6] then
+      groupFound = true
+      lastDeliveredId = deliveredId or '0-0'
+      break
+    end
+  end
+end
+local function isLiveQueueEntry(id)
+  if not groupFound then return true end
+  local pending = redis.call('xpending', KEYS[1], ARGV[6], id, id, 1)
+  if #pending > 0 then return true end
+  return streamIdGreaterThan(id, lastDeliveredId)
+end
 if ARGV[4] == '0-0' then return { '1', '' } end
 local entries = redis.call('xrange', KEYS[1], ARGV[1], ARGV[4], 'COUNT', ARGV[2])
 local lastId = ''
@@ -543,7 +584,7 @@ for _, entry in ipairs(entries) do
   local id = entry[1]
   local fields = entry[2]
   for index = 1, #fields, 2 do
-    if fields[index] == 'runId' and fields[index + 1] ~= '' then
+    if fields[index] == 'runId' and fields[index + 1] ~= '' and isLiveQueueEntry(id) then
       local runId = fields[index + 1]
       redis.call('sadd', ARGV[3] .. runId, id)
       local runKey = ARGV[5] .. runId
@@ -2466,6 +2507,7 @@ export class RedisBackend implements WorkflowBackend {
         `${this.storagePrefix()}queue-messages:`,
         this.terminalRetentionQueueBackfillHighWater,
         `${this.storagePrefix()}run:`,
+        this.config.groupName,
       ],
     );
     if (
@@ -3149,22 +3191,32 @@ export class RedisBackend implements WorkflowBackend {
       return;
     }
 
+    const messageId = messageIds[0]!;
+    const remainingIds = reflectApply(arraySlice, messageIds, [1]) as string[];
+    if (remainingIds.length === 0) this.pendingMessageIds.delete(runId);
+    else this.pendingMessageIds.set(runId, remainingIds);
+
     const client = await this.ensureClient();
-    await client.eval(
-      REMOVE_ACKNOWLEDGED_QUEUE_MESSAGES_SCRIPT,
-      [
-        this.config.streamKey,
-        this.queueMessagesKey(runId),
-        this.runKey(runId),
-        this.terminalRunRetentionIndexKey(),
-        this.terminalRunRetentionMembersKey(),
-      ],
-      [runId, this.config.groupName, ...messageIds],
-    );
-    this.pendingMessageIds.delete(runId);
+    try {
+      await client.eval(
+        REMOVE_ACKNOWLEDGED_QUEUE_MESSAGES_SCRIPT,
+        [
+          this.config.streamKey,
+          this.queueMessagesKey(runId),
+          this.runKey(runId),
+          this.terminalRunRetentionIndexKey(),
+          this.terminalRunRetentionMembersKey(),
+        ],
+        [runId, this.config.groupName, messageId],
+      );
+    } catch (error) {
+      const currentIds = this.pendingMessageIds.get(runId) ?? [];
+      this.pendingMessageIds.set(runId, [messageId, ...currentIds]);
+      throw error;
+    }
 
     if (this.config.debug) {
-      logger.debug(`[RedisBackend] Acknowledged ${messageIds.length} message(s): ${runId}`);
+      logger.debug(`[RedisBackend] Acknowledged message for run: ${runId}`);
     }
   }
 
