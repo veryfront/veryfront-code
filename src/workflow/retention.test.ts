@@ -197,6 +197,39 @@ describe("workflow terminal-run retention", () => {
     assertEquals((await backend.getRun("approval-race"))?.status, "failed");
   });
 
+  it("does not delete approval metadata patched after discovery", async () => {
+    class ApprovalPatchRaceBackend extends MemoryBackend {
+      override async deleteTerminalRunIfUnchanged(
+        candidate: TerminalRunRetentionCandidate,
+      ): Promise<boolean> {
+        await this.updatePendingApproval(candidate.runId, "approval", {
+          notificationError: "late delivery failure",
+        });
+        return await super.deleteTerminalRunIfUnchanged(candidate);
+      }
+    }
+
+    const backend = new ApprovalPatchRaceBackend();
+    await backend.createRun(run("approval-patch-race", "failed", new Date(2)));
+    await backend.savePendingApproval("approval-patch-race", {
+      id: "approval",
+      nodeId: "gate",
+      status: "pending",
+      message: "Continue?",
+      requestedAt: new Date(1),
+    });
+
+    assertEquals(
+      await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
+      { supported: true, examined: 1, deleted: 0, hasMore: true },
+    );
+    assertEquals(
+      (await backend.getPendingApproval("approval-patch-race", "approval"))
+        ?.notificationError,
+      "late delivery failure",
+    );
+  });
+
   it("does not delete a failed run when an event is buffered after discovery", async () => {
     class EventRaceBackend extends MemoryBackend {
       override async deleteTerminalRunIfUnchanged(

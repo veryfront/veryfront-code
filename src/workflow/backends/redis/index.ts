@@ -1007,6 +1007,27 @@ const JOURNAL_APPROVAL_PROJECTION_LUA = `local function journalApprovalProjectio
   if runTtl > 0 then redis.call('pexpire', key, runTtl) end
 end`;
 
+const ADVANCE_RUN_RETENTION_REVISION_LUA = `local function advanceRunRetentionRevision(
+  runKey,
+  membersKey,
+  runId
+)
+  local metadataRaw = redis.call('hget', membersKey, runId)
+  local revision = nil
+  if redis.call('exists', runKey) == 1 then
+    revision = redis.call('hincrby', runKey, '${RUN_RETENTION_REVISION_FIELD}', 1)
+  elseif metadataRaw then
+    local metadata = cjson.decode(metadataRaw)
+    revision = (tonumber(metadata.revision) or 0) + 1
+  end
+  if revision and metadataRaw then
+    local metadata = cjson.decode(metadataRaw)
+    metadata.revision = revision
+    redis.call('hset', membersKey, runId, cjson.encode(metadata))
+  end
+  return revision
+end`;
+
 /**
  * Read observation stream records and their companion approval projections in
  * one Redis turn. Without this script, a writer can prune a revision from the
@@ -1103,6 +1124,7 @@ const SAVE_PENDING_APPROVAL_SCRIPT = `-- observable-approval-append
 ${JSON_OBJECT_PATCH_LUA}
 ${RETAIN_APPROVALS_LUA}
 ${JOURNAL_APPROVAL_PROJECTION_LUA}
+${ADVANCE_RUN_RETENTION_REVISION_LUA}
 local approval = parseJsonObject(ARGV[1])
 if ARGV[5] == '1' then
   local existingApprovals = redis.call('lrange', KEYS[2], 0, -1)
@@ -1121,9 +1143,12 @@ if ARGV[5] == '1' then
 end
 if not retainApprovals(KEYS[2], tonumber(ARGV[2])) then return 2 end
 redis.call('rpush', KEYS[2], ARGV[1])
-if redis.call('exists', KEYS[1]) == 0 then return 0 end
+if redis.call('exists', KEYS[1]) == 0 then
+  advanceRunRetentionRevision(KEYS[1], KEYS[4], ARGV[6])
+  return 0
+end
 local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
-redis.call('hincrby', KEYS[1], '${RUN_RETENTION_REVISION_FIELD}', 1)
+advanceRunRetentionRevision(KEYS[1], KEYS[4], ARGV[6])
 local status = redis.call('hget', KEYS[1], 'status')
 local sourceNodes = cjson.decode(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
 local nodes = {}
@@ -1185,6 +1210,7 @@ const SAVE_PENDING_APPROVAL_IF_OWNED_SCRIPT = `-- conditional-owned-approval-app
 ${JSON_OBJECT_PATCH_LUA}
 ${RETAIN_APPROVALS_LUA}
 ${JOURNAL_APPROVAL_PROJECTION_LUA}
+${ADVANCE_RUN_RETENTION_REVISION_LUA}
 local status = redis.call('hget', KEYS[1], 'status')
 local expectedCount = tonumber(ARGV[1])
 local allowed = false
@@ -1216,7 +1242,7 @@ if not retainApprovals(KEYS[2], tonumber(ARGV[expectedCount + 4])) then
 end
 redis.call('rpush', KEYS[2], ARGV[expectedCount + 3])
 local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
-redis.call('hincrby', KEYS[1], '${RUN_RETENTION_REVISION_FIELD}', 1)
+advanceRunRetentionRevision(KEYS[1], KEYS[4], ARGV[expectedCount + 7])
 local sourceNodes = cjson.decode(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
 local nodes = {}
 for nodeId, node in pairs(sourceNodes) do
@@ -1274,6 +1300,7 @@ return 1`;
  * Returns 1 when the approval was found and patched, 0 when the id is absent.
  */
 const UPDATE_PENDING_APPROVAL_SCRIPT = `${JSON_OBJECT_PATCH_LUA}
+${ADVANCE_RUN_RETENTION_REVISION_LUA}
 -- conditional-approval-patch
 local approvalId = ARGV[1]
 local len = redis.call('llen', KEYS[1])
@@ -1283,6 +1310,7 @@ for i = 0, len - 1 do
     local approval = parseJsonObject(raw)
     if decodeJsonObjectField(approval, 'id') == approvalId then
       redis.call('lset', KEYS[1], i, mergeJsonObjects(raw, ARGV[2], true))
+      advanceRunRetentionRevision(KEYS[2], KEYS[3], ARGV[3])
       return 1
     end
   end
@@ -1304,6 +1332,7 @@ return 0`;
  * (a lost race), 0 when the id is absent.
  */
 const UPDATE_APPROVAL_SCRIPT = `${JSON_OBJECT_PATCH_LUA}
+${ADVANCE_RUN_RETENTION_REVISION_LUA}
 -- conditional-approval-decision
 local approvalId = ARGV[1]
 local len = redis.call('llen', KEYS[1])
@@ -1316,9 +1345,7 @@ for i = 0, len - 1 do
       local updated = mergeJsonObjects(raw, ARGV[2], true)
       updated = deleteJsonObjectFields(updated, ARGV[3], true)
       redis.call('lset', KEYS[1], i, updated)
-      if redis.call('exists', KEYS[2]) == 1 then
-        redis.call('hincrby', KEYS[2], '${RUN_RETENTION_REVISION_FIELD}', 1)
-      end
+      advanceRunRetentionRevision(KEYS[2], KEYS[3], ARGV[4])
       return 1
     end
   end
@@ -1327,6 +1354,7 @@ return 0`;
 
 /** Lease one approval decision claim to one recovery process. */
 const RESERVE_APPROVAL_DECISION_SCRIPT = `${JSON_OBJECT_PATCH_LUA}
+${ADVANCE_RUN_RETENTION_REVISION_LUA}
 -- reserve-approval-decision
 local approvalId = ARGV[1]
 local recoveryClaimId = ARGV[2]
@@ -1346,6 +1374,7 @@ for i = 0, len - 1 do
         return 2
       end
       redis.call('lset', KEYS[1], i, mergeJsonObjects(raw, patch, true))
+      advanceRunRetentionRevision(KEYS[2], KEYS[3], ARGV[5])
       return 1
     end
   end
@@ -1354,6 +1383,7 @@ return 0`;
 
 /** Release one recovery lease without consuming the decision claim. */
 const RELEASE_APPROVAL_DECISION_CLAIM_SCRIPT = `${JSON_OBJECT_PATCH_LUA}
+${ADVANCE_RUN_RETENTION_REVISION_LUA}
 -- release-approval-decision-claim
 local approvalId = ARGV[1]
 local recoveryClaimId = ARGV[2]
@@ -1366,6 +1396,7 @@ for i = 0, len - 1 do
       if decodeJsonObjectField(approval, 'recoveryClaimId') ~= recoveryClaimId then return 2 end
       redis.call('lset', KEYS[1], i,
         deleteJsonObjectFields(raw, '["recoveryClaimId","recoveryClaimedAt"]', true))
+      advanceRunRetentionRevision(KEYS[2], KEYS[3], ARGV[3])
       return 1
     end
   end
@@ -1374,6 +1405,7 @@ return 0`;
 
 /** Release one approval decision reservation after its node outcome commits. */
 const FINALIZE_APPROVAL_DECISION_SCRIPT = `${JSON_OBJECT_PATCH_LUA}
+${ADVANCE_RUN_RETENTION_REVISION_LUA}
 -- finalize-approval-decision
 local approvalId = ARGV[1]
 local recoveryClaimId = ARGV[2]
@@ -1395,6 +1427,7 @@ for i = 0, len - 1 do
           '["reconciliationPending","recoveryClaimId","recoveryClaimedAt"]',
           true
         ))
+      advanceRunRetentionRevision(KEYS[2], KEYS[3], ARGV[3])
       return 1
     end
   end
@@ -2570,6 +2603,7 @@ export class RedisBackend implements WorkflowBackend {
         this.runKey(runId),
         this.approvalsKey(runId),
         this.runObservationApprovalsKey(runId),
+        this.terminalRunRetentionMembersKey(),
       ],
       [
         this.serializeApproval(approval),
@@ -2577,6 +2611,7 @@ export class RedisBackend implements WorkflowBackend {
         this.runObservationKey(runId),
         String(RUN_OBSERVATION_STREAM_MAX_LENGTH),
         rejectDuplicate ? "1" : "0",
+        runId,
       ],
     );
     if (Number(result) === 2) {
@@ -2606,6 +2641,7 @@ export class RedisBackend implements WorkflowBackend {
         this.runKey(runId),
         this.approvalsKey(runId),
         this.runObservationApprovalsKey(runId),
+        this.terminalRunRetentionMembersKey(),
       ],
       [
         String(expectedStatuses.length),
@@ -2615,6 +2651,7 @@ export class RedisBackend implements WorkflowBackend {
         String(MAX_WORKFLOW_PENDING_APPROVAL_ENTRIES),
         this.runObservationKey(runId),
         String(RUN_OBSERVATION_STREAM_MAX_LENGTH),
+        runId,
       ],
     );
     if (Number(result) === 2) {
@@ -2664,8 +2701,12 @@ export class RedisBackend implements WorkflowBackend {
     // serializeApproval.
     const result = await client.eval(
       UPDATE_PENDING_APPROVAL_SCRIPT,
-      [this.approvalsKey(runId)],
-      [approvalId, JSON.stringify({ ...patch, id: approvalId })],
+      [
+        this.approvalsKey(runId),
+        this.runKey(runId),
+        this.terminalRunRetentionMembersKey(),
+      ],
+      [approvalId, JSON.stringify({ ...patch, id: approvalId }), runId],
     );
     if (Number(result) !== 1) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Approval not found: ${approvalId}` });
@@ -2718,7 +2759,11 @@ export class RedisBackend implements WorkflowBackend {
       },"decisionData":${serializedDecisionData}}`;
     const result = await client.eval(
       UPDATE_APPROVAL_SCRIPT,
-      [this.approvalsKey(runId), this.runKey(runId)],
+      [
+        this.approvalsKey(runId),
+        this.runKey(runId),
+        this.terminalRunRetentionMembersKey(),
+      ],
       [
         approvalId,
         serializedPatch,
@@ -2726,6 +2771,7 @@ export class RedisBackend implements WorkflowBackend {
           ...(hasComment ? [] : ["comment"]),
           ...(hasData ? [] : ["decisionData"]),
         ]),
+        runId,
       ],
     );
     const code = Number(result);
@@ -2781,7 +2827,11 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
     const result = await client.eval(
       RESERVE_APPROVAL_DECISION_SCRIPT,
-      [this.approvalsKey(runId)],
+      [
+        this.approvalsKey(runId),
+        this.runKey(runId),
+        this.terminalRunRetentionMembersKey(),
+      ],
       [
         approvalId,
         recoveryClaimId,
@@ -2790,6 +2840,7 @@ export class RedisBackend implements WorkflowBackend {
           recoveryClaimId,
           recoveryClaimedAt: claimedAt.toISOString(),
         }),
+        runId,
       ],
     );
     return Number(result) === 1;
@@ -2803,8 +2854,12 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
     await client.eval(
       RELEASE_APPROVAL_DECISION_CLAIM_SCRIPT,
-      [this.approvalsKey(runId)],
-      [approvalId, recoveryClaimId],
+      [
+        this.approvalsKey(runId),
+        this.runKey(runId),
+        this.terminalRunRetentionMembersKey(),
+      ],
+      [approvalId, recoveryClaimId, runId],
     );
   }
 
@@ -2816,8 +2871,12 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
     await client.eval(
       FINALIZE_APPROVAL_DECISION_SCRIPT,
-      [this.approvalsKey(runId)],
-      [approvalId, recoveryClaimId ?? ""],
+      [
+        this.approvalsKey(runId),
+        this.runKey(runId),
+        this.terminalRunRetentionMembersKey(),
+      ],
+      [approvalId, recoveryClaimId ?? "", runId],
     );
   }
 

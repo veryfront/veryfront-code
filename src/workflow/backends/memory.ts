@@ -455,6 +455,7 @@ export class MemoryBackend implements WorkflowBackend {
   private locks = new Map<string, { lockId: string; expiresAt: number }>();
   private stalledClaims = new Map<string, { workerId: string; expiresAt: number }>();
   private runRevisions = new Map<string, number>();
+  private runRetentionRevisions = new Map<string, number>();
   private runObservers = new Map<string, Set<MemoryRunObserver>>();
   private config: MemoryBackendConfig;
 
@@ -493,6 +494,7 @@ export class MemoryBackend implements WorkflowBackend {
       cloneWorkflowRunWithContext(runForClone, context),
     );
     this.runRevisions.set(run.id, 0);
+    this.runRetentionRevisions.set(run.id, 0);
     return Promise.resolve();
   }
 
@@ -720,7 +722,8 @@ export class MemoryBackend implements WorkflowBackend {
       this.approvals.has(runId) || this.eventWaits.has(runId) ||
       this.runEvents.has(runId) || this.runEventClaims.has(runId) ||
       this.locks.has(runId) || this.stalledClaims.has(runId) ||
-      this.runRevisions.has(runId) || this.runObservers.has(runId) ||
+      this.runRevisions.has(runId) || this.runRetentionRevisions.has(runId) ||
+      this.runObservers.has(runId) ||
       reflectApply(arraySome, this.queue, [(item: WorkflowQueueItem) => item.runId === runId]);
     this.closeRunObservers(runId);
     this.runs.delete(runId);
@@ -732,6 +735,7 @@ export class MemoryBackend implements WorkflowBackend {
     this.locks.delete(runId);
     this.stalledClaims.delete(runId);
     this.runRevisions.delete(runId);
+    this.runRetentionRevisions.delete(runId);
     this.queue = reflectApply(arrayFilter, this.queue, [
       (item: WorkflowQueueItem) => item.runId !== runId,
     ]) as WorkflowQueueItem[];
@@ -769,7 +773,7 @@ export class MemoryBackend implements WorkflowBackend {
       if (
         run.workflowId !== candidate.workflowId || run.status !== candidate.status ||
         createdAt !== expectedCreatedAt || completedAt !== expectedCompletedAt ||
-        this.runRevisions.get(candidate.runId) !== candidate.revision ||
+        this.runRetentionRevisions.get(candidate.runId) !== candidate.revision ||
         (run.status !== "completed" && run.status !== "failed" && run.status !== "cancelled")
       ) {
         return Promise.resolve(false);
@@ -798,7 +802,7 @@ export class MemoryBackend implements WorkflowBackend {
       const candidate = memoryTerminalRetentionCandidate(
         run,
         cutoff,
-        this.runRevisions.get(run.id) ?? 0,
+        this.runRetentionRevisions.get(run.id) ?? 0,
       );
       if (candidate === undefined) continue;
       if (insertBoundedTerminalRetentionCandidate(candidates, candidate, limit)) hasMore = true;
@@ -853,11 +857,11 @@ export class MemoryBackend implements WorkflowBackend {
     });
   }
 
-  private advanceRunRevision(runId: string): number {
-    const currentRevision = this.runRevisions.get(runId);
+  private advanceRunRetentionRevision(runId: string): number {
+    const currentRevision = this.runRetentionRevisions.get(runId);
     if (currentRevision === undefined) return 0;
     const revision = currentRevision + 1;
-    this.runRevisions.set(runId, revision);
+    this.runRetentionRevisions.set(runId, revision);
     return revision;
   }
 
@@ -866,7 +870,9 @@ export class MemoryBackend implements WorkflowBackend {
     run: WorkflowRun,
     options: { includeApprovals?: boolean } = {},
   ): void {
-    const revision = this.advanceRunRevision(runId);
+    const revision = (this.runRevisions.get(runId) ?? 0) + 1;
+    this.runRevisions.set(runId, revision);
+    this.advanceRunRetentionRevision(runId);
     const observers = this.runObservers.get(runId);
     if (!observers?.size) return;
     const nodes: WorkflowRunObservedState["nodes"] = {};
@@ -1161,6 +1167,7 @@ export class MemoryBackend implements WorkflowBackend {
       ...structuredClone(patch),
       id: approvalId,
     };
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve();
   }
 
@@ -1239,7 +1246,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (sourceDecisionData === undefined) delete currentApproval.decisionData;
     else currentApproval.decisionData = decisionData;
     currentApproval.reconciliationPending = true;
-    this.advanceRunRevision(runId);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1275,6 +1282,7 @@ export class MemoryBackend implements WorkflowBackend {
     }
     approval.recoveryClaimId = recoveryClaimId;
     approval.recoveryClaimedAt = new Date(claimedAt);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1287,6 +1295,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (approval?.recoveryClaimId === recoveryClaimId) {
       delete approval.recoveryClaimId;
       delete approval.recoveryClaimedAt;
+      this.advanceRunRetentionRevision(runId);
     }
     return Promise.resolve();
   }
@@ -1306,6 +1315,7 @@ export class MemoryBackend implements WorkflowBackend {
     delete approval.reconciliationPending;
     delete approval.recoveryClaimId;
     delete approval.recoveryClaimedAt;
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve();
   }
 
@@ -1367,7 +1377,7 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.reject(error);
     }
     this.eventWaits.set(runId, waits);
-    this.advanceRunRevision(runId);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve();
   }
 
@@ -1406,7 +1416,7 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.reject(error);
     }
     this.eventWaits.set(runId, waits);
-    this.advanceRunRevision(runId);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1440,7 +1450,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (wait?.status !== "pending") return Promise.resolve(false);
     wait.status = status;
     if (status === "delivered" || status === "expired") wait.claimedAt = new Date();
-    this.advanceRunRevision(runId);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1457,7 +1467,7 @@ export class MemoryBackend implements WorkflowBackend {
     delete wait.claimedAt;
     delete wait.recoveryClaimedAt;
     delete wait.claimedEventId;
-    this.advanceRunRevision(runId);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1493,7 +1503,7 @@ export class MemoryBackend implements WorkflowBackend {
       (wait.recoveryClaimedAt !== undefined && wait.recoveryClaimedAt > staleBefore)
     ) return Promise.resolve(false);
     wait.recoveryClaimedAt = new Date(claimedAt);
-    this.advanceRunRevision(runId);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1502,7 +1512,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (wait) {
       delete wait.claimedAt;
       delete wait.recoveryClaimedAt;
-      this.advanceRunRevision(runId);
+      this.advanceRunRetentionRevision(runId);
     }
     return Promise.resolve();
   }
@@ -1527,7 +1537,7 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.reject(error);
     }
     this.runEvents.set(runId, mailbox);
-    this.advanceRunRevision(runId);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve();
   }
 
@@ -1538,7 +1548,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (index < 0) return Promise.resolve(false);
     mailbox.splice(index, 1);
     this.deleteEmptyRunEventMailbox(runId, mailbox);
-    this.advanceRunRevision(runId);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1577,7 +1587,7 @@ export class MemoryBackend implements WorkflowBackend {
     // one atomic step for this in-memory backend.
     const taken = takeRetainedRunEvent(mailbox, eventName);
     this.deleteEmptyRunEventMailbox(runId, mailbox);
-    if (taken) this.advanceRunRevision(runId);
+    if (taken) this.advanceRunRetentionRevision(runId);
     return Promise.resolve(taken);
   }
 
@@ -1612,7 +1622,7 @@ export class MemoryBackend implements WorkflowBackend {
     // Keep an empty mailbox as the claimed event's capacity reservation. The
     // asynchronous delivery may still roll back, and another run must not take
     // this slot before restoreRunEventDelivery puts the event back.
-    this.advanceRunRevision(runId);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve(taken);
   }
 
@@ -1643,7 +1653,7 @@ export class MemoryBackend implements WorkflowBackend {
     claim.wait.recoveryClaimedAt = new Date(claimedAt);
     const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
     if (wait) wait.recoveryClaimedAt = new Date(claimedAt);
-    this.advanceRunRevision(runId);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1652,7 +1662,7 @@ export class MemoryBackend implements WorkflowBackend {
     restoreRetainedRunEvent(mailbox, event);
     this.runEvents.set(runId, mailbox);
     this.releaseRunEventClaim(runId, event.id);
-    this.advanceRunRevision(runId);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve();
   }
 
@@ -1686,7 +1696,7 @@ export class MemoryBackend implements WorkflowBackend {
     restoreRetainedRunEvent(mailbox, claim.event);
     this.runEvents.set(runId, mailbox);
     this.releaseRunEventClaim(runId, event.id);
-    this.advanceRunRevision(runId);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve(restored);
   }
 
@@ -1704,7 +1714,7 @@ export class MemoryBackend implements WorkflowBackend {
         delete wait.claimedEventId;
         if (delivered) wait.deliveredEventId = eventId;
       }
-      this.advanceRunRevision(runId);
+      this.advanceRunRetentionRevision(runId);
     }
     this.releaseRunEventClaim(runId, eventId);
     const mailbox = this.runEvents.get(runId);
@@ -1944,6 +1954,7 @@ export class MemoryBackend implements WorkflowBackend {
     this.locks.clear();
     this.stalledClaims.clear();
     this.runRevisions.clear();
+    this.runRetentionRevisions.clear();
     return Promise.resolve();
   }
 }

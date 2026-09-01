@@ -175,6 +175,33 @@ describe("MemoryBackend", () => {
       await observation.close();
     });
 
+    it("keeps observation revisions contiguous across an unobserved approval decision", async () => {
+      const run = createTestRun("run-approval-decision-revision");
+      await backend.createRun(run);
+      const observation = await backend.openRunObservation(run.id);
+      assertExists(observation);
+      const iterator = observation.changes[Symbol.asyncIterator]();
+
+      await backend.updateRun(run.id, { status: "waiting" });
+      await backend.savePendingApproval(run.id, {
+        id: "approval",
+        nodeId: "gate",
+        status: "pending",
+        message: "Continue?",
+        requestedAt: new Date(1),
+      });
+      await backend.updateApproval(run.id, "approval", {
+        approved: true,
+        approver: "operator",
+      });
+      await backend.updateRun(run.id, { status: "failed", completedAt: new Date(2) });
+
+      assertEquals((await nextWithin(iterator)).value?.revision, 1);
+      assertEquals((await nextWithin(iterator)).value?.revision, 2);
+      assertEquals((await nextWithin(iterator)).value?.revision, 3);
+      await observation.close();
+    });
+
     it("publishes owned approval appends only when ownership holds", async () => {
       const run = createTestRun("run-owned-approval", { status: "waiting", workerId: "w1" });
       await backend.createRun(run);
