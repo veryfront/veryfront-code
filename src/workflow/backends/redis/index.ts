@@ -628,7 +628,7 @@ function serializeCompletionInstant(value: Date | undefined): {
 
 function escapeRedisGlobLiteral(value: string): string {
   let escaped = "";
-  for (let index = 0; index < value.length; index++) {
+  for (let index = 0; index < value.length; index++) { // NOSONAR: Avoid mutable iterator hooks.
     const character = value[index]!;
     if (
       character === "\\" || character === "*" || character === "?" ||
