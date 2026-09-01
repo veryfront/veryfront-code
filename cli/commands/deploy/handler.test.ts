@@ -26,6 +26,23 @@ describe("Deploy Handler", () => {
     it("accepts a single ParsedArgs parameter", () => {
       assertEquals(handleDeployCommand.length, 1);
     });
+
+    it("registers the builtin bundler before deploying", async () => {
+      const calls: string[] = [];
+
+      await handleDeployCommand(createArgs(), {
+        ensureBundlerContracts: () => {
+          calls.push("ensure");
+          return Promise.resolve();
+        },
+        deploy: () => {
+          calls.push("deploy");
+          return Promise.resolve(null);
+        },
+      });
+
+      assertEquals(calls, ["ensure", "deploy"]);
+    });
   });
 
   describe("parseDeployArgs via handler", () => {
