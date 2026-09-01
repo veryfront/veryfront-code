@@ -50,6 +50,10 @@ Use Jira's [project-permission documentation](https://support.atlassian.com/jira
 and permission helper to verify the service account. For Jira Service Management workflows, also
 grant the appropriate service-desk agent permissions.
 
+The permissions in the table are cumulative with the project's permission scheme and issue
+security settings. `Browse Projects` is required in addition to every issue-operation permission
+listed below; an issue can still be hidden by its issue-security level.
+
 `Browse users and groups` is a Jira global permission, not a project role. Grant it in Jira
 administration when the agent uses `jira__search_users`; the `read:jira-user` OAuth scope is also
 required for that tool. If a tool sets `assignee`, the target user must also be assignable in the
@@ -77,9 +81,12 @@ credential documentation](https://support.atlassian.com/user-management/docs/cre
 The Cloud ID identifies the Jira site. It is not the Jira hostname, project key, project ID, or
 Veryfront project ID.
 
-Use the service-account access token with Atlassian’s `accessible-resources` endpoint and copy
-the `id` for the target Jira site. See [Making calls to the Jira API](https://developer.atlassian.com/cloud/oauth/getting-started/making-calls-to-api/)
-for the gateway URL and Cloud ID format.
+Open `https://<your-site>.atlassian.net/_edge/tenant_info` and copy the `cloudId` value from the
+JSON response. This endpoint identifies that specific Jira site without an OAuth consent flow. You
+can also open Atlassian Administration → **Apps → Sites**, select the site, and copy the value
+after `/s/` in the URL: `https://admin.atlassian.com/s/<cloud-id>/...`. Atlassian documents both
+the [Cloud ID lookup methods](https://support.atlassian.com/jira/kb/retrieve-my-atlassian-sites-cloud-id/)
+in Atlassian Administration.
 
 ## 5. Configure the Veryfront project
 
@@ -105,8 +112,10 @@ project key before sending the request to Jira.
 
 ## Verify it worked
 
-1. Start a new agent run that calls `jira__list_sites` or `jira__list_projects`.
-2. Confirm the result is from the configured Cloud ID.
+1. Start a new agent run that calls `jira__list_projects` or another read tool against a known
+   project. Do not use `jira__list_sites` alone as proof of connectivity: in service-identity mode
+   that result is synthesized from the configured Cloud ID.
+2. Confirm the returned projects or issues belong to the target site and project.
 3. If write access is configured, test one write tool against the configured project.
 4. If a write was tested, confirm Jira's audit history attributes the action to the service account.
 
