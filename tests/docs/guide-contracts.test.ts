@@ -684,6 +684,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "ATLASSIAN_SERVICE_ACCOUNT_CLOUD_ID",
       "JIRA_SERVICE_PROJECT_KEY",
       "client_credentials",
+      "60 minutes",
+      "API-token credentials",
       "/_edge/tenant_info",
       "jira__list_projects",
       "Project settings → People",

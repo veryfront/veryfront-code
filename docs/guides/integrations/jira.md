@@ -73,8 +73,14 @@ project.
 
 This is a service-account credential, not an OAuth 2.0 app credential from the Atlassian
 Developer Console. It uses the non-interactive `client_credentials` grant. The access token is
-short-lived and Veryfront mints and caches it as needed. See Atlassian’s [OAuth 2.0 service-account
+short-lived and Veryfront mints and caches it as needed. See Atlassian's [OAuth 2.0 service-account
 credential documentation](https://support.atlassian.com/user-management/docs/create-oauth-2-0-credential-for-service-accounts/).
+
+The OAuth access token expires after 60 minutes; Veryfront mints a replacement automatically. The
+OAuth client credential remains usable until it is revoked. If it is revoked or replaced, create a
+new OAuth 2.0 credential, update both service-account credential variables, and redeploy the
+environment before the next run. Do not select **API token** instead: API-token credentials have a
+separate 1–365-day expiry and are not used by these client ID and client secret variables.
 
 ## 4. Find the Jira Cloud ID
 
