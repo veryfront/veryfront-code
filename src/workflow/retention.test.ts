@@ -62,7 +62,7 @@ describe("workflow terminal-run retention", () => {
     assertEquals(await backend.getRun("old-cancelled"), null);
   });
 
-  it("removes every in-memory record owned by a retained run", async () => {
+  it("removes in-memory auxiliary state owned by a retained run", async () => {
     const backend = new MemoryBackend();
     const retained = run("with-state", "failed", new Date(2));
     await backend.createRun(retained);
@@ -95,12 +95,6 @@ describe("workflow terminal-run retention", () => {
       payload: {},
       publishedAt: new Date(1),
     });
-    await backend.enqueue({
-      runId: retained.id,
-      workflowId: retained.workflowId,
-      input: {},
-      createdAt: new Date(1),
-    });
     await backend.acquireLock(retained.id, 60_000);
 
     await reapTerminalRuns(backend, { completedBefore: new Date(10) });
@@ -110,8 +104,35 @@ describe("workflow terminal-run retention", () => {
     assertEquals(await backend.getPendingApprovals(retained.id), []);
     assertEquals(await backend.getPendingEventWaits(retained.id), []);
     assertEquals(await backend.peekRunEvent(retained.id, "continue"), null);
-    assertEquals(await backend.dequeue(), null);
     assertEquals(await backend.isLocked(retained.id), false);
+  });
+
+  it("does not select a terminal run with an accepted retry queued or pending", async () => {
+    const backend = new MemoryBackend();
+    const retained = run("accepted-retry", "failed", new Date(2));
+    await backend.createRun(retained);
+    await backend.enqueue({
+      runId: retained.id,
+      workflowId: retained.workflowId,
+      input: {},
+      createdAt: new Date(3),
+    });
+
+    assertEquals(
+      await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
+      { supported: true, examined: 0, deleted: 0, hasMore: false },
+    );
+    assertEquals((await backend.dequeue())?.runId, retained.id);
+    assertEquals(
+      await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
+      { supported: true, examined: 0, deleted: 0, hasMore: false },
+    );
+
+    await backend.acknowledge(retained.id);
+    assertEquals(
+      await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
+      { supported: true, examined: 1, deleted: 1, hasMore: false },
+    );
   });
 
   it("does not delete a failed run that reactivates before the fenced delete", async () => {

@@ -456,6 +456,7 @@ export class MemoryBackend implements WorkflowBackend {
   private stalledClaims = new Map<string, { workerId: string; expiresAt: number }>();
   private runRevisions = new Map<string, number>();
   private runRetentionRevisions = new Map<string, number>();
+  private terminalRetryQueued = new Set<string>();
   private nextRunRetentionGeneration = 0;
   private runObservers = new Map<string, Set<MemoryRunObserver>>();
   private config: MemoryBackendConfig;
@@ -494,6 +495,7 @@ export class MemoryBackend implements WorkflowBackend {
       run.id,
       cloneWorkflowRunWithContext(runForClone, context),
     );
+    this.terminalRetryQueued.delete(run.id);
     this.runRevisions.set(run.id, 0);
     this.runRetentionRevisions.set(run.id, this.nextRunRetentionGeneration++);
     return Promise.resolve();
@@ -724,6 +726,7 @@ export class MemoryBackend implements WorkflowBackend {
       this.runEvents.has(runId) || this.runEventClaims.has(runId) ||
       this.locks.has(runId) || this.stalledClaims.has(runId) ||
       this.runRevisions.has(runId) || this.runRetentionRevisions.has(runId) ||
+      this.terminalRetryQueued.has(runId) ||
       this.runObservers.has(runId) ||
       reflectApply(arraySome, this.queue, [(item: WorkflowQueueItem) => item.runId === runId]);
     this.closeRunObservers(runId);
@@ -737,6 +740,7 @@ export class MemoryBackend implements WorkflowBackend {
     this.stalledClaims.delete(runId);
     this.runRevisions.delete(runId);
     this.runRetentionRevisions.delete(runId);
+    this.terminalRetryQueued.delete(runId);
     this.queue = reflectApply(arrayFilter, this.queue, [
       (item: WorkflowQueueItem) => item.runId !== runId,
     ]) as WorkflowQueueItem[];
@@ -799,6 +803,7 @@ export class MemoryBackend implements WorkflowBackend {
     const candidates: TerminalRunRetentionCandidate[] = [];
     let hasMore = false;
     for (const run of this.runs.values()) {
+      if (this.terminalRetryQueued.has(run.id)) continue;
       const candidate = memoryTerminalRetentionCandidate(
         run,
         cutoff,
@@ -1779,6 +1784,13 @@ export class MemoryBackend implements WorkflowBackend {
 
     if (insertIndex === -1) this.queue.push(cloned);
     else this.queue.splice(insertIndex, 0, cloned);
+    const run = this.runs.get(job.runId);
+    if (
+      run?.status === "completed" || run?.status === "failed" ||
+      run?.status === "cancelled"
+    ) {
+      this.terminalRetryQueued.add(job.runId);
+    }
     this.advanceRunRetentionRevision(job.runId);
     return Promise.resolve();
   }
@@ -1790,6 +1802,10 @@ export class MemoryBackend implements WorkflowBackend {
 
   acknowledge(runId: string): Promise<void> {
     logger.debug(`Acknowledging job: ${runId}`);
+    const stillQueued = reflectApply(arraySome, this.queue, [
+      (item: WorkflowQueueItem) => item.runId === runId,
+    ]) as boolean;
+    if (!stillQueued) this.terminalRetryQueued.delete(runId);
     return Promise.resolve();
   }
 

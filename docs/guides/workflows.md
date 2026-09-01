@@ -603,7 +603,8 @@ try {
 The backend verifies the run identity, terminal status, completion time, and
 mutation revision in the same operation that deletes its state. A failed run
 that starts retrying, or receives another state patch after the sweep reads it,
-is retained. In that case, or when Redis must resume bounded queue cleanup,
+is retained. A failed run with accepted retry work still queued or pending is
+not selected. In that case, or when Redis must resume bounded queue cleanup,
 `hasMore` is `false` so the loop does not immediately reselect the refreshed
 run. The next scheduled maintenance invocation can retry it. After deletion,
 reads return the existing not-found result; this retention API does not create

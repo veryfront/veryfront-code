@@ -69,6 +69,7 @@ const REDIS_STORAGE_SCHEMA_NAMESPACE = `${REDIS_STORAGE_SCHEMA_VERSION}:`;
 const RUN_OBSERVATION_APPROVAL_SCHEMA_VERSION = "approvals-v1";
 const RUN_OBSERVATION_REVISION_FIELD = "__runObservationRevision";
 const RUN_RETENTION_REVISION_FIELD = "__runRetentionRevision";
+const TERMINAL_RETRY_QUEUED_FIELD = "__terminalRetryQueued";
 const TERMINAL_COMPLETED_AT_MS_FIELD = "__terminalCompletedAtMs";
 const RUN_OBSERVATION_STREAM_MAX_LENGTH = 64;
 const RUN_OBSERVATION_POLL_INTERVAL_MS = 20;
@@ -495,7 +496,8 @@ for _, member in ipairs(members) do
     'createdAt',
     'status',
     'completedAt',
-    '${RUN_RETENTION_REVISION_FIELD}'
+    '${RUN_RETENTION_REVISION_FIELD}',
+    '${TERMINAL_RETRY_QUEUED_FIELD}'
   )
   local terminal = values[3] == 'completed' or values[3] == 'failed' or
     values[3] == 'cancelled'
@@ -504,14 +506,16 @@ for _, member in ipairs(members) do
   )
   if mapped and mapped.member == member and values[1] and values[2] and terminal and
       values[4] == decoded[1] and values[5] then
-    table.insert(result, {
-      runId,
-      values[1],
-      values[2],
-      values[3],
-      values[4],
-      values[5]
-    })
+    if values[6] ~= '1' then
+      table.insert(result, {
+        runId,
+        values[1],
+        values[2],
+        values[3],
+        values[4],
+        values[5]
+      })
+    end
   elseif mapped and mapped.member == member and not values[1] and mapped.workflowId and
       mapped.createdAt and mappedTerminal and mapped.completedAt == decoded[1] and
       mapped.revision ~= nil then
@@ -567,16 +571,27 @@ local id = redis.call(
   'createdAt', ARGV[5]
 )
 redis.call('sadd', KEYS[2], id)
+local status = redis.call('hget', KEYS[3], 'status')
+if status == 'completed' or status == 'failed' or status == 'cancelled' then
+  redis.call('hset', KEYS[3], '${TERMINAL_RETRY_QUEUED_FIELD}', '1')
+  local metadataRaw = redis.call('hget', KEYS[4], ARGV[1])
+  if metadataRaw then redis.call('zrem', KEYS[6], cjson.decode(metadataRaw).member) end
+end
 advanceRunRetentionRevision(KEYS[3], KEYS[4], KEYS[5], ARGV[1])
 return id`;
 
 const REMOVE_ACKNOWLEDGED_QUEUE_MESSAGES_SCRIPT = `-- remove-acknowledged-queue-messages
-for index = 1, #ARGV do
+${UPDATE_TERMINAL_RETENTION_INDEX_LUA}
+for index = 2, #ARGV do
   redis.call('xdel', KEYS[1], ARGV[index])
   redis.call('srem', KEYS[2], ARGV[index])
 end
-if redis.call('scard', KEYS[2]) == 0 then redis.call('del', KEYS[2]) end
-return #ARGV`;
+if redis.call('scard', KEYS[2]) == 0 then
+  redis.call('del', KEYS[2])
+  redis.call('hdel', KEYS[3], '${TERMINAL_RETRY_QUEUED_FIELD}')
+  updateTerminalRetentionIndex(KEYS[3], KEYS[4], KEYS[5], ARGV[1], '')
+end
+return #ARGV - 1`;
 
 const CLEAR_RUN_QUEUE_MESSAGES_SCRIPT = `-- clear-run-queue-messages
 local ids = redis.call('spop', KEYS[2], tonumber(ARGV[2]))
@@ -628,11 +643,15 @@ function serializeCompletionInstant(value: Date | undefined): {
 } {
   if (value === undefined) return { completedAt: "", completedAtMs: "" };
   const timestamp = reflectApply(dateGetTime, value, []) as number;
-  const canonical = new DateConstructor(timestamp);
   return {
-    completedAt: reflectApply(dateToISOString, canonical, []) as string,
+    completedAt: serializeDateInstant(value),
     completedAtMs: String(timestamp),
   };
+}
+
+function serializeDateInstant(value: Date): string {
+  const timestamp = reflectApply(dateGetTime, value, []) as number;
+  return reflectApply(dateToISOString, new DateConstructor(timestamp), []) as string;
 }
 
 function escapeRedisGlobLiteral(value: string): string {
@@ -1665,7 +1684,7 @@ export class RedisBackend implements WorkflowBackend {
       currentNodes: JSON.stringify(run.currentNodes),
       context,
       error: run.error ? JSON.stringify(run.error) : "",
-      createdAt: run.createdAt.toISOString(),
+      createdAt: serializeDateInstant(run.createdAt),
       startedAt: run.startedAt?.toISOString() || "",
       heartbeatAt: run.heartbeatAt?.toISOString() || "",
       completedAt: completion.completedAt,
@@ -3060,6 +3079,7 @@ export class RedisBackend implements WorkflowBackend {
         this.runKey(job.runId),
         this.terminalRunRetentionMembersKey(),
         this.terminalRunRetentionGenerationKey(),
+        this.terminalRunRetentionIndexKey(),
       ],
       [
         job.runId,
@@ -3119,8 +3139,14 @@ export class RedisBackend implements WorkflowBackend {
     await client.xack(this.config.streamKey, this.config.groupName, ...messageIds);
     await client.eval(
       REMOVE_ACKNOWLEDGED_QUEUE_MESSAGES_SCRIPT,
-      [this.config.streamKey, this.queueMessagesKey(runId)],
-      messageIds,
+      [
+        this.config.streamKey,
+        this.queueMessagesKey(runId),
+        this.runKey(runId),
+        this.terminalRunRetentionIndexKey(),
+        this.terminalRunRetentionMembersKey(),
+      ],
+      [runId, ...messageIds],
     );
     this.pendingMessageIds.delete(runId);
 

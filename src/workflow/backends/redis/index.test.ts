@@ -271,18 +271,37 @@ class MockRedisAdapter implements RedisAdapter {
         this.sets.set(keys[1]!, messageIds);
       }
       messageIds.add(id);
+      const hash = this.hashes.get(keys[2]!);
+      if (
+        hash?.get("status") === "completed" || hash?.get("status") === "failed" ||
+        hash?.get("status") === "cancelled"
+      ) {
+        hash.set("__terminalRetryQueued", "1");
+        const metadataRaw = this.hashes.get(keys[3]!)?.get(args[0]!);
+        if (metadataRaw) {
+          const metadata = JSON.parse(metadataRaw) as { member: string };
+          this.sortedSets.get(keys[5]!)?.delete(metadata.member);
+        }
+      }
       this.advanceRunRetentionRevision(keys[2]!, keys[3]!, keys[4]!, args[0]!);
       return Promise.resolve(id);
     }
 
     if (script.includes("remove-acknowledged-queue-messages")) {
-      const ids = new Set(args);
+      const runId = args[0]!;
+      const acknowledgedIds = args.slice(1);
+      const ids = new Set(acknowledgedIds);
       const stream = this.streams.get(key);
       if (stream) this.streams.set(key, stream.filter(({ id }) => !ids.has(id)));
       const messageIds = this.sets.get(keys[1]!);
-      for (const id of args) messageIds?.delete(id);
-      if (messageIds?.size === 0) this.sets.delete(keys[1]!);
-      return Promise.resolve(args.length);
+      for (const id of acknowledgedIds) messageIds?.delete(id);
+      if (messageIds?.size === 0) {
+        this.sets.delete(keys[1]!);
+        const hash = this.hashes.get(keys[2]!);
+        hash?.delete("__terminalRetryQueued");
+        if (hash) this.refreshTerminalRetentionIndexFromHash(runId, hash, keys[3]!, keys[4]!);
+      }
+      return Promise.resolve(acknowledgedIds.length);
     }
 
     if (script.includes("clear-run-queue-messages")) {
@@ -414,14 +433,16 @@ class MockRedisAdapter implements RedisAdapter {
           hash.get("createdAt") && terminal && hash.get("completedAt") === completedAt &&
           hash.get("__runRetentionRevision")
         ) {
-          result.push([
-            runId,
-            hash.get("workflowId"),
-            hash.get("createdAt"),
-            status,
-            completedAt,
-            hash.get("__runRetentionRevision"),
-          ]);
+          if (hash.get("__terminalRetryQueued") !== "1") {
+            result.push([
+              runId,
+              hash.get("workflowId"),
+              hash.get("createdAt"),
+              status,
+              completedAt,
+              hash.get("__runRetentionRevision"),
+            ]);
+          }
         } else if (
           mapped?.member === member && !hash && mapped.workflowId && mapped.createdAt &&
           (mapped.status === "completed" || mapped.status === "failed" ||
@@ -1454,6 +1475,31 @@ describe("RedisBackend", () => {
         ),
         ["run-canonical-completion-create", "run-canonical-completion-patch"],
       );
+    });
+
+    it("canonicalizes createdAt before using it as a retention fence", async () => {
+      class OffsetDate extends Date {
+        override toISOString(): string {
+          return "1970-01-01T00:00:00.001+00:00";
+        }
+      }
+      const runId = "run-canonical-created-at";
+      await backend.createRun({
+        ...createTestRun(runId),
+        status: "failed",
+        createdAt: new OffsetDate(1),
+        completedAt: new Date(2),
+      });
+
+      const candidate = (await backend.listTerminalRunRetentionCandidates(new Date(10), 1))
+        .candidates[0]!;
+
+      assertEquals(
+        mockRedis.hashes.get(`test:schema-v1:run:${runId}`)?.get("createdAt"),
+        "1970-01-01T00:00:00.001Z",
+      );
+      assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), true);
+      assertEquals(await backend.getRun(runId), null);
     });
 
     it("observes cross-instance run transitions in exact revision order", async () => {
@@ -3486,8 +3532,19 @@ describe("RedisBackend", () => {
         createdAt: new Date(1),
       });
       mockRedis.queueConsumerGroupMissing = true;
-      const candidate = (await backend.listTerminalRunRetentionCandidates(new Date(10), 2))
-        .candidates[0]!;
+      const retained = (await backend.getRun(runId))!;
+      const candidate: TerminalRunRetentionCandidate = {
+        runId,
+        workflowId: retained.workflowId,
+        createdAt: retained.createdAt,
+        status: "cancelled",
+        completedAt: retained.completedAt!,
+        revision: Number(
+          mockRedis.hashes.get(`test:schema-v1:run:${runId}`)?.get(
+            "__runRetentionRevision",
+          ),
+        ),
+      };
 
       assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), true);
       assertEquals(mockRedis.queueConsumerGroupMissingAckAttempts, 1);
@@ -3597,12 +3654,19 @@ describe("RedisBackend", () => {
           createdAt: new Date(3 + index),
         });
       }
-      let candidate: TerminalRunRetentionCandidate | undefined;
-      for (let attempt = 0; attempt < 3 && candidate === undefined; attempt++) {
-        candidate = (await backend.listTerminalRunRetentionCandidates(new Date(200), 1000))
-          .candidates[0];
-      }
-      assertExists(candidate);
+      const retained = (await backend.getRun(runId))!;
+      const candidate: TerminalRunRetentionCandidate = {
+        runId,
+        workflowId: retained.workflowId,
+        createdAt: retained.createdAt,
+        status: "failed",
+        completedAt: retained.completedAt!,
+        revision: Number(
+          mockRedis.hashes.get(`test:schema-v1:run:${runId}`)?.get(
+            "__runRetentionRevision",
+          ),
+        ),
+      };
 
       assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), false);
       assertExists(await backend.getRun(runId));
@@ -3678,6 +3742,54 @@ describe("RedisBackend", () => {
       assertEquals(mockRedis.hgetallCallCount, readsBefore);
       assertStringIncludes(mockRedis.lastScript, "zrangebyscore");
       assertEquals(mockRedis.lastArgs[1], "3");
+    });
+
+    it("excludes accepted retries while their queue work is queued or pending", async () => {
+      const queuedRunId = "retention-accepted-retry";
+      const controlRunId = "retention-accepted-retry-control";
+      await backend.createRun({
+        ...createTestRun(queuedRunId),
+        status: "failed",
+        completedAt: new Date(2),
+      });
+      await backend.createRun({
+        ...createTestRun(controlRunId),
+        status: "failed",
+        completedAt: new Date(3),
+      });
+      await backend.enqueue({
+        runId: queuedRunId,
+        workflowId: "wf-1",
+        input: {},
+        createdAt: new Date(4),
+      });
+
+      let batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      for (let page = 0; page < 10 && batch.candidates.length === 0; page++) {
+        batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      }
+      assertEquals(batch.candidates.map(({ runId }) => runId), [controlRunId]);
+
+      assertEquals((await backend.dequeue())?.runId, queuedRunId);
+      batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      assertEquals(batch.candidates.map(({ runId }) => runId), [controlRunId]);
+
+      await backend.acknowledge(queuedRunId);
+      assertEquals(
+        mockRedis.hashes.get(`test:schema-v1:run:${queuedRunId}`)?.get(
+          "__terminalRetryQueued",
+        ),
+        undefined,
+      );
+      assertEquals(
+        mockRedis.sets.has(`test:schema-v1:queue-messages:${queuedRunId}`),
+        false,
+      );
+      batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      assertEquals(
+        batch.candidates.map(({ runId }) => runId).sort(),
+        [controlRunId, queuedRunId].sort(),
+      );
     });
 
     it("orders retention candidates by timestamp across extended ISO years", async () => {
