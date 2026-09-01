@@ -12,6 +12,61 @@ const noopLog = {
 } as const;
 
 describe("module-fetcher/source-transform", () => {
+  it("recursively transforms public framework entries before caching them", async () => {
+    const calls: string[] = [];
+    const importMap = { imports: {} };
+    const result = await transformResolvedModuleSource({
+      sourceCode: `import { useServerRenderContext } from "../server-render-context.js";`,
+      actualFilePath: "/node_modules/veryfront/esm/src/react/runtime/core.js",
+      projectDir: "/project",
+      projectId: "project-1",
+      normalizedPath: "_vf_modules/_veryfront/react/runtime/core.js",
+      projectSlug: "docs",
+      reactVersion: "19.2.4",
+      dev: false,
+      adapter: {} as RuntimeAdapter,
+      log: noopLog,
+      loadImportMap: (projectDir) => {
+        calls.push("loadImportMap");
+        assertEquals(projectDir, "/project");
+        return Promise.resolve(importMap);
+      },
+      transformFrameworkSource: (
+        source,
+        sourcePath,
+        reactVersion,
+        projectDir,
+        _fs,
+        _onProgress,
+        receivedImportMap,
+      ) => {
+        calls.push("transformFrameworkSource");
+        assertEquals(
+          { source, sourcePath, reactVersion, projectDir },
+          {
+            source: `import { useServerRenderContext } from "../server-render-context.js";`,
+            sourcePath: "/node_modules/veryfront/esm/src/react/runtime/core.js",
+            reactVersion: "19.2.4",
+            projectDir: "/project",
+          },
+        );
+        assertEquals(receivedImportMap, importMap);
+        return Promise.resolve(
+          `import { useServerRenderContext } from "file:///cache/server-render-context.mjs";`,
+        );
+      },
+      transformToEsm: () => {
+        throw new Error("generic tenant transform must not handle framework entries");
+      },
+    });
+
+    assertEquals(calls, ["loadImportMap", "transformFrameworkSource"]);
+    assertEquals(
+      result,
+      `import { useServerRenderContext } from "file:///cache/server-render-context.mjs";`,
+    );
+  });
+
   it("preprocesses veryfront imports before transform and caches HTTP imports after transform", async () => {
     const calls: string[] = [];
     const adapter = {} as RuntimeAdapter;

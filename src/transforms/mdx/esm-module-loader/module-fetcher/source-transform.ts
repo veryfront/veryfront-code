@@ -7,17 +7,26 @@
 import { cacheHttpImportsToLocal } from "../../../esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { transformToESM } from "../../../esm-transform.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import type { Logger } from "#veryfront/utils";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { rewriteDntImports, rewriteVeryfrontImports } from "./import-rewriter.ts";
+import { transformFrameworkSource } from "#veryfront/transforms/pipeline/stages/ssr-vf-modules/transform.ts";
 
 type TransformToEsmFn = typeof transformToESM;
 type LoadImportMapFn = typeof loadImportMap;
 type CacheHttpImportsToLocalFn = typeof cacheHttpImportsToLocal;
+type TransformFrameworkSourceFn = typeof transformFrameworkSource;
 type SourceTransformLogger = Pick<Logger, "debug" | "error">;
+
+function isFrameworkEntry(normalizedPath: string): boolean {
+  const path = normalizedPath.split(/[?#]/, 1)[0] ?? normalizedPath;
+  return path.startsWith("_vf_modules/_veryfront/") || path.startsWith("_veryfront/");
+}
 
 export interface TransformResolvedModuleSourceInput {
   sourceCode: string;
@@ -43,6 +52,7 @@ export interface TransformResolvedModuleSourceInput {
   transformToEsm?: TransformToEsmFn;
   loadImportMap?: LoadImportMapFn;
   cacheHttpImportsToLocal?: CacheHttpImportsToLocalFn;
+  transformFrameworkSource?: TransformFrameworkSourceFn;
 }
 
 /**
@@ -57,6 +67,24 @@ export async function transformResolvedModuleSource(
     actualFilePath: input.actualFilePath,
     sourceLength: input.sourceCode.length,
   });
+
+  // Framework entries must keep their full dependency graph on one transformed
+  // React runtime. The generic tenant transform can leave npm package file URLs
+  // intact, which loads a second React instance during static MDX rendering.
+  if (isFrameworkEntry(input.normalizedPath)) {
+    const readImportMap = input.loadImportMap ?? loadImportMap;
+    const importMap = await readImportMap(input.projectDir);
+    const transformFramework = input.transformFrameworkSource ?? transformFrameworkSource;
+    return await transformFramework(
+      input.sourceCode,
+      input.actualFilePath,
+      input.reactVersion ?? REACT_DEFAULT_VERSION,
+      input.projectDir,
+      createFileSystem(),
+      undefined,
+      importMap,
+    );
+  }
 
   const preprocessedSource = rewriteVeryfrontImports(input.sourceCode);
   const transform = input.transformToEsm ?? transformToESM;
