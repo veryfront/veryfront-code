@@ -3880,6 +3880,87 @@ describe("release asset build executor", () => {
     assert(!pageUpload.text.includes(frameworkUrl));
   });
 
+  it("finalizes dependency-pinned project module paths", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const pinnedChild = "/_vf_modules/_pins/on%3Asnapshot-a/components/Child.js";
+    const files = [
+      {
+        path: "pages/index.tsx",
+        content: 'import Child from "@/components/Child"; export default Child;',
+      },
+      {
+        path: "components/Child.tsx",
+        content: "export default function Child() { return null; }",
+      },
+    ];
+    const client = makeClient(files, rec);
+    const transform = (_source: string, sourceFile: string) =>
+      Promise.resolve(
+        sourceFile.endsWith("pages/index.tsx")
+          ? `import Child from ${JSON.stringify(pinnedChild)}; export default Child;`
+          : "export default function Child() { return null; }",
+      );
+
+    const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertEquals(result.success, true);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    const childHash = manifest.modules["components/Child.tsx"]?.contentHash;
+    const pageHash = manifest.modules["pages/index.tsx"]?.contentHash;
+    assertExists(childHash);
+    assertExists(pageHash);
+    const pageUpload = rec.uploads.find((upload) => upload.hash === pageHash);
+    assertExists(pageUpload);
+    assertStringIncludes(pageUpload.text, `"/_vf/assets/${childHash}.js"`);
+    assertEquals(pageUpload.text.includes("/_vf_modules/_pins/"), false);
+  });
+
+  it("discovers dependency-pinned framework module paths", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const pinnedHead = "/_vf_modules/_pins/on%3Asnapshot-a/_veryfront/react/runtime/core.js";
+    const pinnedUi = "/_vf_modules/_pins/on%3Asnapshot-a/_veryfront/react/components/ui/index.js";
+    const files = [{
+      path: "pages/index.tsx",
+      content: 'import { Head } from "veryfront/head"; export default Head;',
+    }];
+    const client = makeClient(files, rec);
+    const transform = (_source: string, sourceFile: string) => {
+      if (sourceFile.endsWith("pages/index.tsx")) {
+        return Promise.resolve(
+          `import { Head } from ${JSON.stringify(pinnedHead)}; export default Head;`,
+        );
+      }
+      if (sourceFile.endsWith("src/react/runtime/core.ts")) {
+        return Promise.resolve(
+          `import { ColorModeProvider } from ${JSON.stringify(pinnedUi)}; ` +
+            "export function Head() { return ColorModeProvider; }",
+        );
+      }
+      return Promise.resolve("export function ColorModeProvider() { return null; }");
+    };
+
+    const result = await runReleaseAssetBuild(baseInput(client, transform), await tmp());
+
+    assertEquals(result.success, true);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    const headHash = manifest.dependencies["veryfront/head"]?.contentHash;
+    const pageHash = manifest.modules["pages/index.tsx"]?.contentHash;
+    assertExists(headHash);
+    assertExists(pageHash);
+    const pageUpload = rec.uploads.find((upload) => upload.hash === pageHash);
+    const headUpload = rec.uploads.find((upload) => upload.hash === headHash);
+    assertExists(pageUpload);
+    assertExists(headUpload);
+    assertStringIncludes(pageUpload.text, `"/_vf/assets/${headHash}.js"`);
+    assertEquals(pageUpload.text.includes("/_vf_modules/_pins/"), false);
+    const headSpecifiers = await moduleSpecifiers(headUpload.text);
+    assertEquals(headSpecifiers.length, 1);
+    assert(headSpecifiers[0]?.startsWith("/_vf/assets/"));
+    assertEquals(headUpload.text.includes("/_vf_modules/_pins/"), false);
+  });
+
   it("rewrites transitive framework dependency imports to immutable assets", async () => {
     enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
