@@ -4,12 +4,12 @@
  * @module transforms/mdx/esm-module-loader/module-fetcher/source-transform
  */
 
-import { cacheHttpImportsToLocal } from "../../../esm/http-cache.ts";
-import { fingerprintImportMap } from "../../../esm/http-cache-helpers.ts";
+import { fingerprintImportMap } from "#veryfront/transforms/esm/http-cache-helpers.ts";
+import { cacheHttpImportsToLocal } from "#veryfront/transforms/esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { transformToESM } from "../../../esm-transform.ts";
+import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import type { Logger } from "#veryfront/utils";
