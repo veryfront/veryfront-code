@@ -719,6 +719,17 @@ function escapeRedisGlobLiteral(value: string): string {
   return escaped;
 }
 
+function findPendingMessageIndex(
+  messageIds: readonly string[],
+  deliveryId: string | undefined,
+): number {
+  if (deliveryId === undefined) return 0;
+  for (let index = 0; index < messageIds.length; index++) { // NOSONAR: Avoid mutable iterator hooks.
+    if (messageIds[index] === deliveryId) return index;
+  }
+  return -1;
+}
+
 /**
  * Atomically claim a still-stalled running run. The caller supplies the exact
  * activity timestamp it validated as stale; any heartbeat or terminal update
@@ -3194,21 +3205,12 @@ export class RedisBackend implements WorkflowBackend {
       return;
     }
 
-    let messageIndex = 0;
-    if (deliveryId !== undefined) {
-      messageIndex = -1;
-      for (let index = 0; index < messageIds.length; index++) { // NOSONAR: Avoid mutable iterator hooks.
-        if (messageIds[index] === deliveryId) {
-          messageIndex = index;
-          break;
-        }
+    const messageIndex = findPendingMessageIndex(messageIds, deliveryId);
+    if (messageIndex < 0) {
+      if (this.config.debug) {
+        logger.debug(`[RedisBackend] Acknowledge (delivery not pending): ${runId}`);
       }
-      if (messageIndex < 0) {
-        if (this.config.debug) {
-          logger.debug(`[RedisBackend] Acknowledge (delivery not pending): ${runId}`);
-        }
-        return;
-      }
+      return;
     }
 
     const messageId = messageIds[messageIndex]!;
