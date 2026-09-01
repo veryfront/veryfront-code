@@ -10,6 +10,7 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { cwd } from "veryfront/platform";
+import { resolve } from "veryfront/platform/path";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { exitProcess, isVerbose, logInfo, logSuccess, logWarning } from "#cli/utils";
 import { UNKNOWN_ERROR, VeryfrontError } from "veryfront/errors";
@@ -94,7 +95,7 @@ function toDeployRequest(options: DeployOptions) {
   // the directory is unrelated to that project by construction.
   const promoteOnly = options.skipSourcePush || options.projectSlug !== undefined;
   return {
-    projectDir: options.projectDir ?? cwd(),
+    projectDir: resolve(options.projectDir ?? cwd()),
     ...(options.projectSlug === undefined ? {} : { projectSlug: options.projectSlug }),
     branch: options.branch,
     environment: options.env,

@@ -19,6 +19,7 @@ import { DeployArgsSchema, parseDeployArgs } from "./index.ts";
 import { deployCommand } from "./command.ts";
 import { parseCliArgs } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
+import { resolve } from "veryfront/platform/path";
 
 // Never touched: the fake executor records the request without reading it.
 // Named rather than inlined so it cannot be mistaken for a real checkout.
@@ -43,6 +44,40 @@ async function captureConsole<T>(fn: () => Promise<T>): Promise<{ result: T; out
 }
 
 describe("deploy command adapters", () => {
+  it("normalizes relative project directories before deployment", async () => {
+    let observedRequest: DeployProjectRequest | undefined;
+    const deployProject: DeployProject = {
+      execute(request) {
+        observedRequest = request;
+        return Promise.resolve({
+          kind: "dry-run",
+          plan: {
+            branch: "main",
+            projectId: null,
+            projectSlug: "demo",
+            environment: "staging",
+            environmentId: null,
+            controlPlane: "https://control.example.test/api",
+            plannedActions: ["create-release", "deploy"],
+          },
+        });
+      },
+    };
+
+    await deployCommand({
+      projectDir: ".",
+      projectSlug: "demo",
+      branch: "main",
+      env: "staging",
+      dryRun: true,
+      force: false,
+      quiet: true,
+      deployProject,
+    });
+
+    assertEquals(observedRequest?.projectDir, resolve("."));
+  });
+
   it("render human and JSON output from one injected deployment executor", async () => {
     const sentinelResult: DeployResult = {
       projectId: "project-sentinel",
@@ -123,7 +158,7 @@ describe("deploy command adapters", () => {
     assertEquals(observedRequests.length, 2);
     assertEquals(observedRequests[0], observedRequests[1]);
     assertEquals(observedRequests[0], {
-      projectDir: "adapter-must-not-read",
+      projectDir: resolve("adapter-must-not-read"),
       branch: "main",
       environment: "production",
       releaseName: "release-from-options",
