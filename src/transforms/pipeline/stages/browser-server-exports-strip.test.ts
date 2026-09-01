@@ -205,6 +205,20 @@ describe("browser-server-exports-strip", () => {
       assertEquals(await stripServerOnlyExports(code), code);
     });
 
+    it("parses embedded TSX framework source before deciding it has no server hooks", async () => {
+      const code = [
+        `const ids = "tooltip label".trim().split(/\\s+/);`,
+        `export function TooltipProvider({ children }: { children: React.ReactNode }) {`,
+        `  return <TooltipContext.Provider value={{ ids }}>{children}</TooltipContext.Provider>;`,
+        `}`,
+      ].join("\n");
+
+      assertEquals(
+        await stripServerOnlyExports(code, "react/components/ui/tooltip.tsx.src"),
+        code,
+      );
+    });
+
     it("does not treat a same-named string as a declaration", async () => {
       const code =
         `const label = "getServerData";\nexport default function Page() { return label; }`;

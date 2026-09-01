@@ -48,6 +48,30 @@ describe("BabelParseOnlyParser", () => {
     assertEquals(parsed.map((ast) => ast.type), ["File", "File", "File"]);
   });
 
+  it("uses the original grammar for embedded framework source suffixes", async () => {
+    const typedJsx = await parser.parse({
+      code: "export const view: JSX.Element = <main />;",
+      filePath: "tooltip.tsx.src",
+    });
+    const typeAssertion = await parser.parse({
+      code: "const value = <string> input;",
+      filePath: "helper.ts.src",
+    });
+    const commonJs = await Promise.all(
+      ["entry.js.src", "entry.cjs.src"].map((filePath) =>
+        parser.parse({
+          code: "if (module.parent) return; module.exports = true;",
+          filePath,
+        })
+      ),
+    );
+
+    assertEquals(
+      [typedJsx.type, typeAssertion.type, ...commonJs.map((ast) => ast.type)],
+      ["File", "File", "File", "File"],
+    );
+  });
+
   it("keeps `<T>x` a type assertion for a `.ts` path", async () => {
     const asserted = await parser.parse({
       code: "const value = <string> input;",
