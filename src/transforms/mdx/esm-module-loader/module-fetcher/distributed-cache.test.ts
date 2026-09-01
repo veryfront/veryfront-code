@@ -326,18 +326,23 @@ describe("module-fetcher/distributed-cache", () => {
       log,
     );
 
-    const primary = cache.values.get("transform:write");
-    const recovery = cache.setCalls.find((call) => call.key.endsWith(":vfmod"));
-
     // dependency-recovery.ts looks the entry up by the file name cacheModule
     // writes locally, so the two producers must agree on that name.
     const localPath = await withTempDir((esmCacheDir) =>
       cacheModule("app/page.mdx", moduleCode, esmCacheDir, new Map<string, string>(), log)
     );
     assertEquals(typeof localPath, "string", "cacheModule must write the module locally");
+    const expectedRecoveryKey = buildMdxEsmModuleRecoveryCacheKey(
+      "project-a",
+      "preview-main",
+      basename(localPath!),
+    );
+    await waitForSetKeys(cache, ["transform:write", expectedRecoveryKey]);
+    const primary = cache.values.get("transform:write");
+    const recovery = cache.setCalls.find((call) => call.key === expectedRecoveryKey);
     assertEquals(
       recovery?.key,
-      buildMdxEsmModuleRecoveryCacheKey("project-a", "preview-main", basename(localPath!)),
+      expectedRecoveryKey,
       "recovery key must carry the same file name cacheModule writes locally",
     );
 
@@ -349,6 +354,95 @@ describe("module-fetcher/distributed-cache", () => {
     assertEquals(cache.setCalls[0]?.ttlSeconds, TRANSFORM_DISTRIBUTED_TTL_SEC);
     assertEquals(recovery?.ttlSeconds, TRANSFORM_DISTRIBUTED_TTL_SEC);
     assertEquals(recovery?.value, primary);
+  });
+
+  it("publishes recursive framework vfmods for fresh-worker recovery", async () => {
+    await withTempDir(async (tempDir) => {
+      await runWithCacheDir(tempDir, async () => {
+        const cacheDir = join(getMdxEsmCacheDir(), "framework");
+        const tenantCacheDir = join(getMdxEsmCacheDir(), "project-a");
+        const childPath = join(cacheDir, "vfmod-child.mjs");
+        const grandchildPath = join(cacheDir, "vfmod-grandchild.mjs");
+        const tenantPath = join(tenantCacheDir, "vfmod-tenant.mjs");
+        const privatePath = join(tempDir, "private.mjs");
+        const escapedPrivatePath = `${cacheDir}/../../private.mjs`;
+        await Deno.mkdir(cacheDir, { recursive: true });
+        await Deno.mkdir(tenantCacheDir, { recursive: true });
+        await Deno.writeTextFile(grandchildPath, `export const value = 1;`);
+        await Deno.writeTextFile(tenantPath, `export const tenant = true;`);
+        await Deno.writeTextFile(privatePath, `export const privateValue = true;`);
+        await Deno.writeTextFile(
+          childPath,
+          `import { value } from "file://${grandchildPath}"; export default value;`,
+        );
+
+        const cache = new FakeDistributedCache();
+        const { log } = createCapturingLogger();
+        const parentCode = [
+          `import child from "file://${childPath}";`,
+          `import { tenant } from "file://${tenantPath}";`,
+          `import "file://${escapedPrivatePath}";`,
+          `const decoy = "file://${escapedPrivatePath}";`,
+          `export default tenant ? child : decoy;`,
+        ].join("\n");
+        writeDistributedCache(
+          cache,
+          "transform:framework-entry",
+          "project-a",
+          "preview-main",
+          parentCode,
+          "_vf_modules/_veryfront/react/runtime/core.js",
+          log,
+        );
+
+        const childKey = buildMdxEsmModuleRecoveryCacheKey(
+          "project-a",
+          "preview-main",
+          basename(childPath),
+        );
+        const grandchildKey = buildMdxEsmModuleRecoveryCacheKey(
+          "project-a",
+          "preview-main",
+          basename(grandchildPath),
+        );
+        await waitForSetKeys(cache, [
+          grandchildKey,
+          childKey,
+          "transform:framework-entry",
+        ]);
+        assertEquals(cache.values.has(childKey), true);
+        assertEquals(cache.values.has(grandchildKey), true);
+        for (const excludedPath of [tenantPath, privatePath]) {
+          assertEquals(
+            cache.values.has(
+              buildMdxEsmModuleRecoveryCacheKey(
+                "project-a",
+                "preview-main",
+                basename(excludedPath),
+              ),
+            ),
+            false,
+          );
+        }
+        assertEquals(cache.values.get(childKey)?.includes(tempDir), false);
+        assertEquals(
+          cache.values.get(childKey)?.includes(
+            "file://__VF_CACHE_DIR__/veryfront-mdx-esm/framework/vfmod-grandchild.mjs",
+          ),
+          true,
+        );
+        assertEquals(
+          cache.setCalls.every((call) => call.ttlSeconds === TRANSFORM_DISTRIBUTED_TTL_SEC),
+          true,
+        );
+        const publishedKeys = cache.setCalls.map((call) => call.key);
+        assertEquals(publishedKeys.indexOf(grandchildKey) < publishedKeys.indexOf(childKey), true);
+        assertEquals(
+          publishedKeys.indexOf(childKey) < publishedKeys.indexOf("transform:framework-entry"),
+          true,
+        );
+      });
+    });
   });
 
   it("hashes keys whose fully prefixed identity exceeds API constraints", async () => {

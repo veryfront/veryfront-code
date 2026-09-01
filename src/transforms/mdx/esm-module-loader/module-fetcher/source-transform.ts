@@ -4,20 +4,32 @@
  * @module transforms/mdx/esm-module-loader/module-fetcher/source-transform
  */
 
-import { cacheHttpImportsToLocal } from "../../../esm/http-cache.ts";
+import { fingerprintImportMap } from "#veryfront/transforms/esm/http-cache-helpers.ts";
+import { cacheHttpImportsToLocal } from "#veryfront/transforms/esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { transformToESM } from "../../../esm-transform.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import type { Logger } from "#veryfront/utils";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
+import { frameworkSourceKeyOf } from "../resolution/module-path.ts";
 import { rewriteDntImports, rewriteVeryfrontImports } from "./import-rewriter.ts";
+import { transformFrameworkSource } from "#veryfront/transforms/pipeline/stages/ssr-vf-modules/transform.ts";
 
 type TransformToEsmFn = typeof transformToESM;
 type LoadImportMapFn = typeof loadImportMap;
 type CacheHttpImportsToLocalFn = typeof cacheHttpImportsToLocal;
+type TransformFrameworkSourceFn = typeof transformFrameworkSource;
 type SourceTransformLogger = Pick<Logger, "debug" | "error">;
+
+const RECURSIVE_REACT_RUNTIME_SOURCE_KEY = "react/runtime/core.js";
+
+function isRecursiveReactRuntimeEntry(normalizedPath: string): boolean {
+  return frameworkSourceKeyOf(normalizedPath) === RECURSIVE_REACT_RUNTIME_SOURCE_KEY;
+}
 
 export interface TransformResolvedModuleSourceInput {
   sourceCode: string;
@@ -43,6 +55,20 @@ export interface TransformResolvedModuleSourceInput {
   transformToEsm?: TransformToEsmFn;
   loadImportMap?: LoadImportMapFn;
   cacheHttpImportsToLocal?: CacheHttpImportsToLocalFn;
+  transformFrameworkSource?: TransformFrameworkSourceFn;
+}
+
+function logTransformFailure(
+  input: TransformResolvedModuleSourceInput,
+  transformError: unknown,
+): void {
+  input.log.error(`${LOG_PREFIX_MDX_LOADER} Transform failed for module`, {
+    normalizedPath: input.normalizedPath,
+    actualFilePath: input.actualFilePath,
+    sourceLength: input.sourceCode.length,
+    sourcePreview: input.sourceCode.slice(0, 200),
+    error: transformError instanceof Error ? transformError.message : String(transformError),
+  });
 }
 
 /**
@@ -57,6 +83,31 @@ export async function transformResolvedModuleSource(
     actualFilePath: input.actualFilePath,
     sourceLength: input.sourceCode.length,
   });
+
+  // Head, Router, and context share this public runtime entry. Keep its full
+  // framework graph on one transformed React runtime. Other framework entries
+  // retain the generic path because it applies the project's dependency pins.
+  if (isRecursiveReactRuntimeEntry(input.normalizedPath)) {
+    const readImportMap = input.loadImportMap ?? loadImportMap;
+    const importMap = await readImportMap(input.projectDir);
+    const importMapFingerprint = await fingerprintImportMap(importMap);
+    const transformFramework = input.transformFrameworkSource ?? transformFrameworkSource;
+    try {
+      return await transformFramework(
+        input.sourceCode,
+        input.actualFilePath,
+        input.reactVersion ?? REACT_DEFAULT_VERSION,
+        input.projectDir,
+        createFileSystem(),
+        undefined,
+        importMap,
+        importMapFingerprint,
+      );
+    } catch (transformError) {
+      logTransformFailure(input, transformError);
+      throw transformError;
+    }
+  }
 
   const preprocessedSource = rewriteVeryfrontImports(input.sourceCode);
   const transform = input.transformToEsm ?? transformToESM;
@@ -85,13 +136,7 @@ export async function transformResolvedModuleSource(
       },
     );
   } catch (transformError) {
-    input.log.error(`${LOG_PREFIX_MDX_LOADER} Transform failed for module`, {
-      normalizedPath: input.normalizedPath,
-      actualFilePath: input.actualFilePath,
-      sourceLength: input.sourceCode.length,
-      sourcePreview: input.sourceCode.slice(0, 200),
-      error: transformError instanceof Error ? transformError.message : String(transformError),
-    });
+    logTransformFailure(input, transformError);
     throw transformError;
   }
 

@@ -8,13 +8,15 @@
  */
 
 import type { Logger } from "#veryfront/utils";
+import { basename, fromFileUrl, join, resolve } from "#veryfront/compat/path/index.ts";
 import { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "#veryfront/cache/paths.ts";
+import { isPathContainedBy } from "#veryfront/platform/adapters/path-containment.ts";
 import { cacheHttpImportsToLocal } from "../../../esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import { createBundleManifest, storeBundleManifest } from "../../../esm/bundle-manifest.ts";
 import { validateCachedBundlesByManifestOrCode } from "../../../esm/cached-bundle-validation.ts";
-import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { FRAMEWORK_ROOT, LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { getDistributedTransformBackend } from "#veryfront/transforms/esm/transform-cache.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
@@ -27,6 +29,8 @@ import { ensureMdxModuleDependencies } from "./dependency-recovery.ts";
 import { buildMdxEsmModuleFileName, buildMdxEsmModuleRecoveryCacheKey } from "../cache-format.ts";
 import { hashString } from "../utils/hash.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { getLocalFs } from "../cache/local-fs.ts";
+import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 
 /** TTL for cached transforms (uses centralized config) */
 const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
@@ -263,6 +267,41 @@ export function writeDistributedCache(
   normalizedPath: string,
   log: Logger,
 ): void {
+  void writeDistributedCacheEntries(
+    distributedCache,
+    transformCacheKey,
+    projectId,
+    contentSourceId,
+    moduleCode,
+    normalizedPath,
+    log,
+  ).catch((error) => {
+    log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed dependency recovery publish failed`, {
+      normalizedPath,
+      error,
+    });
+  });
+}
+
+async function writeDistributedCacheEntries(
+  distributedCache: DistributedCache,
+  transformCacheKey: string,
+  projectId: string,
+  contentSourceId: string,
+  moduleCode: string,
+  normalizedPath: string,
+  log: Logger,
+): Promise<void> {
+  // A fresh worker must be able to restore every recursively materialized
+  // framework file before it accepts the parent transform cache entry.
+  await publishFrameworkModuleRecoveryDependencies(
+    distributedCache,
+    projectId,
+    contentSourceId,
+    moduleCode,
+    log,
+  );
+
   // Tokenize all cache paths for cross-environment portability
   // Uses aggressive tokenization to catch paths from ANY environment (build server, other pods)
   const portableCode = tokenizeAllVeryFrontPaths(moduleCode);
@@ -319,4 +358,82 @@ export function writeDistributedCache(
       }
     })();
   }
+}
+
+/** Publish locally materialized vfmod dependencies for recovery on fresh workers. */
+async function extractFrameworkModuleDependencyPaths(code: string): Promise<string[]> {
+  const frameworkCacheRoot = resolve(join(getMdxEsmCacheDir(), "framework"));
+  const dependencies: string[] = [];
+  const seen = new Set<string>();
+
+  for (const imported of await parseImports(code)) {
+    const specifier = imported.n;
+    if (!specifier?.startsWith("file:")) continue;
+
+    try {
+      const url = new URL(specifier);
+      if (url.protocol !== "file:") continue;
+      url.search = "";
+      url.hash = "";
+      const dependencyPath = resolve(fromFileUrl(url));
+      if (
+        dependencyPath === frameworkCacheRoot ||
+        !isPathContainedBy(dependencyPath, frameworkCacheRoot) ||
+        !dependencyPath.endsWith(".mjs") ||
+        seen.has(dependencyPath)
+      ) {
+        continue;
+      }
+      seen.add(dependencyPath);
+      dependencies.push(dependencyPath);
+    } catch {
+      // Ignore malformed and non-local file URLs. The module validator reports
+      // unresolved imports separately without expanding filesystem access.
+    }
+  }
+
+  return dependencies;
+}
+
+async function publishFrameworkModuleRecoveryDependencies(
+  distributedCache: DistributedCache,
+  projectId: string,
+  contentSourceId: string,
+  moduleCode: string,
+  log: Logger,
+): Promise<void> {
+  const localFs = getLocalFs();
+  const visited = new Set<string>();
+
+  const publishCodeDependencies = async (code: string): Promise<void> => {
+    for (const dependencyPath of await extractFrameworkModuleDependencyPaths(code)) {
+      if (visited.has(dependencyPath)) continue;
+      visited.add(dependencyPath);
+
+      let dependencyCode: string;
+      try {
+        dependencyCode = await localFs.readTextFile(dependencyPath);
+      } catch (error) {
+        log.debug(`${LOG_PREFIX_MDX_LOADER} Local vfmod dependency unavailable for recovery`, {
+          dependencyFile: basename(dependencyPath),
+          error,
+        });
+        throw error;
+      }
+
+      await publishCodeDependencies(dependencyCode);
+      const recoveryKey = buildMdxEsmModuleRecoveryCacheKey(
+        projectId,
+        contentSourceId,
+        basename(dependencyPath),
+      );
+      await distributedCache.set(
+        recoveryKey,
+        tokenizeAllVeryFrontPaths(dependencyCode),
+        TRANSFORM_CACHE_TTL_SECONDS,
+      );
+    }
+  };
+
+  await publishCodeDependencies(moduleCode);
 }
