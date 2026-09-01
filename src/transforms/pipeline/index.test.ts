@@ -56,6 +56,7 @@ describe(
         const readCalls: string[] = [];
         const adapter = {
           fs: {
+            symlinkSemantics: "none" as const,
             readFile: async (path: string): Promise<string> => {
               readCalls.push(path);
               return await readTextFile(path);
@@ -96,6 +97,7 @@ describe(
         const readCalls: string[] = [];
         const readFile = pipelineInternals.buildReadFile({
           fs: {
+            symlinkSemantics: "none" as const,
             readFile: async (path: string): Promise<string> => {
               readCalls.push(path);
               return await readTextFile(path);
@@ -110,6 +112,33 @@ describe(
       }
     });
 
+    it("rejects a canonically escaping project path before reading it", async () => {
+      const projectDir = await makeTempDir({ prefix: "vf-pipeline-canonical-" });
+      const externalDir = await makeTempDir({ prefix: "vf-pipeline-canonical-ext-" });
+      const linkedPath = join(projectDir, "linked.ts");
+      const externalPath = join(externalDir, "outside.ts");
+      const readCalls: string[] = [];
+
+      try {
+        const readFile = pipelineInternals.buildReadFile({
+          fs: {
+            readFile: (path: string): Promise<string> => {
+              readCalls.push(path);
+              return Promise.resolve("must-not-be-read");
+            },
+            realPath: (path: string): Promise<string> =>
+              Promise.resolve(path === linkedPath ? externalPath : path),
+          },
+        }, projectDir);
+
+        await assertRejects(() => readFile(linkedPath), Error, "outside project root");
+        assertEquals(readCalls, []);
+      } finally {
+        await remove(projectDir, { recursive: true });
+        await remove(externalDir, { recursive: true });
+      }
+    });
+
     it("reads verified framework sources locally without using the project adapter", async () => {
       const projectDir = await makeTempDir({ prefix: "vf-pipeline-framework-" });
       const frameworkFile = join(FRAMEWORK_SRC_DIR, "transforms/pipeline/index.ts");
@@ -118,6 +147,7 @@ describe(
       try {
         const readFile = pipelineInternals.buildReadFile({
           fs: {
+            symlinkSemantics: "none" as const,
             readFile: (path: string): Promise<string> => {
               readCalls.push(path);
               return Promise.reject(new Error("Framework source reached project adapter"));
@@ -127,6 +157,39 @@ describe(
 
         assertStringIncludes(await readFile(frameworkFile), "function buildReadFile");
         assertEquals(readCalls, []);
+      } finally {
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("wires contained dependency reads through transformToESM", async () => {
+      const projectDir = await makeTempDir({ prefix: "vf-pipeline-contained-" });
+      const mainFile = join(projectDir, "main.tsx");
+      const dependencyFile = join(projectDir, "dep.js");
+      const mainSource = 'import { dep } from "./dep.js"; export const value = dep;';
+      const readCalls: string[] = [];
+
+      try {
+        await writeTextFile(mainFile, mainSource);
+        await writeTextFile(dependencyFile, "export const dep = 1;");
+        const adapter = {
+          fs: {
+            symlinkSemantics: "none" as const,
+            readFile: async (path: string): Promise<string> => {
+              readCalls.push(path);
+              return await readTextFile(path);
+            },
+          },
+        };
+
+        await transformToESM(mainSource, mainFile, projectDir, adapter, {
+          ssr: true,
+          dev: true,
+          projectId: "contained-read-project",
+        });
+
+        assertEquals(readCalls.includes(mainFile), true);
+        assertEquals(readCalls.includes(dependencyFile), true);
       } finally {
         await remove(projectDir, { recursive: true });
       }

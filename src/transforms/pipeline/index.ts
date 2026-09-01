@@ -31,7 +31,11 @@ import {
   ssrHttpStubPlugin,
   ssrVfModulesPlugin,
 } from "./stages/index.ts";
-import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
+import {
+  createFileSystem,
+  exists,
+  realPath as nativeRealPath,
+} from "#veryfront/platform/compat/fs.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { validateCachedBundlesByManifestOrCode } from "../esm/cached-bundle-validation.ts";
 import { findMissingFrameworkBundlePaths } from "../shared/framework-bundle-paths.ts";
@@ -45,8 +49,9 @@ import { getDependencyResolutionObservations } from "./stages/resolve-imports.ts
 import { loadImportMap, preloadImportMap } from "#veryfront/modules/import-map/index.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { isAbsolute, relative, resolve } from "#veryfront/compat/path/index.ts";
+import { resolve } from "#veryfront/compat/path/index.ts";
 import { isFrameworkSourcePath } from "#veryfront/platform/compat/framework-source-resolver.ts";
+import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 import {
   computePipelineConfigIdentity,
   fingerprintPipelineImportMap,
@@ -481,33 +486,80 @@ function extractReadFile(adapter: unknown): ((path: string) => Promise<string>) 
   return (path: string) => readFile.call(a!.fs, path);
 }
 
+function extractRealPath(adapter: unknown): ((path: string) => Promise<string>) | undefined {
+  const a = adapter as { fs?: { realPath?: (path: string) => Promise<string> } } | null;
+  const realPath = a?.fs?.realPath;
+  if (typeof realPath !== "function") return undefined;
+  return (path: string) => realPath.call(a!.fs, path);
+}
+
+function hasSymlinkFreeSemantics(adapter: unknown): boolean {
+  const fs = (adapter as { fs?: object } | null)?.fs;
+  if (!fs) return false;
+  const descriptor = Object.getOwnPropertyDescriptor(fs, "symlinkSemantics");
+  return descriptor !== undefined && "value" in descriptor && descriptor.value === "none";
+}
+
 /**
  * Build a readFile helper that avoids routing local framework paths
  * through the remote adapter.
  *
- * This prevents API fetches for file:// or absolute paths outside projectDir
- * (e.g. framework files under /usr/local/lib/node_modules/veryfront).
+ * Project dependencies must remain inside `projectDir`. Verified framework
+ * source roots are the only native-read exception. Every other outside path
+ * rejects before either filesystem can inspect it.
  */
 function buildReadFile(adapter: unknown, projectDir: string): (path: string) => Promise<string> {
   const adapterRead = extractReadFile(adapter);
+  const adapterRealPath = extractRealPath(adapter);
+  const adapterIsSymlinkFree = hasSymlinkFreeSemantics(adapter);
   const fs = createFileSystem();
   const projectRoot = resolve(projectDir);
+  let canonicalProjectRoot: Promise<string> | undefined;
+
+  const rejectOutsideProject = (): never => {
+    throw new Error("Transform dependency path is outside project root");
+  };
+
+  const canonicalizeProjectPath = async (candidatePath: string): Promise<string> => {
+    if (adapterIsSymlinkFree) return candidatePath;
+    const canonicalize = adapterRead ? adapterRealPath : nativeRealPath;
+    if (!canonicalize) {
+      throw new Error("Transform dependency reader cannot verify project containment");
+    }
+    let canonicalRoot: string;
+    let canonicalCandidate: string;
+    try {
+      canonicalProjectRoot ??= canonicalize(projectRoot);
+      [canonicalRoot, canonicalCandidate] = await Promise.all([
+        canonicalProjectRoot,
+        canonicalize(candidatePath),
+      ]);
+    } catch {
+      throw new Error("Transform dependency reader cannot verify project containment");
+    }
+    if (!isWithinDirectory(canonicalRoot, canonicalCandidate)) rejectOutsideProject();
+    return canonicalCandidate;
+  };
 
   return async (path: string): Promise<string> => {
     const normalizedPath = path.startsWith("file://") ? path.slice("file://".length) : path;
     const candidatePath = resolve(projectRoot, normalizedPath);
-    const projectRelativePath = relative(projectRoot, candidatePath);
-    const isOutsideProject = projectRelativePath === ".." ||
-      projectRelativePath.startsWith("../") ||
-      projectRelativePath.startsWith("..\\") ||
-      isAbsolute(projectRelativePath);
-
-    if (isOutsideProject) {
-      if (isFrameworkSourcePath(candidatePath)) return fs.readTextFile(candidatePath);
-      throw new Error("Transform dependency path is outside project root");
+    if (!isWithinDirectory(projectRoot, candidatePath)) {
+      if (isFrameworkSourcePath(candidatePath)) {
+        try {
+          const canonicalFrameworkPath = await nativeRealPath(candidatePath);
+          if (isFrameworkSourcePath(canonicalFrameworkPath)) {
+            return await fs.readTextFile(canonicalFrameworkPath);
+          }
+        } catch {
+          // Treat an unverifiable framework path like every other external path.
+        }
+      }
+      rejectOutsideProject();
     }
-    if (adapterRead) return adapterRead(normalizedPath);
-    return fs.readTextFile(candidatePath);
+    const readPath = await canonicalizeProjectPath(candidatePath);
+    if (adapterRead) return adapterRead(adapterIsSymlinkFree ? normalizedPath : readPath);
+    return fs.readTextFile(readPath);
   };
 }
 
