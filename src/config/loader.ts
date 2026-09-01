@@ -2531,6 +2531,10 @@ const ZERO_SLASH_SCHEME_URL = new RegExp(
   String.raw`${ASCII_SPECIAL_SCHEME_SOURCE}:(?![/\s])(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
   "gu",
 );
+const CSI_CONSUMED_ZERO_SLASH_SCHEME_URL = new RegExp(
+  String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}:(?![/\s])(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
+  "gu",
+);
 // Mirror the single-slash and zero-slash forms for raw IRI hosts and paths.
 const NON_ASCII_MALFORMED_AUTHORITY_URL = new RegExp(
   String
@@ -2591,12 +2595,9 @@ interface CsiConsumedUrlPrefix {
 type CsiConsumedSpecialPrefixStates = Array<
   Array<CsiConsumedUrlPrefix | undefined>
 >;
+type CsiConsumedGenericPrefixStates = Array<CsiConsumedUrlPrefix | undefined>;
 
-const STRONG_CSI_CONSUMED_URL_PAYLOAD = /[.\/@?#\\]/u;
-
-function createCsiConsumedUrlPrefix(startIndex: number): CsiConsumedUrlPrefix {
-  return { startIndex, inputEnds: [], value: "" };
-}
+const STRONG_CSI_CONSUMED_URL_PAYLOAD = /[.\/@?#\\[\]:]/u;
 
 function createCsiConsumedSpecialPrefixStates(): CsiConsumedSpecialPrefixStates {
   const states: CsiConsumedSpecialPrefixStates = [];
@@ -2740,49 +2741,95 @@ function chooseCsiConsumedSpecialPrefix(
   return selected;
 }
 
-function advanceCsiConsumedSchemePrefix(
-  prefix: CsiConsumedUrlPrefix,
-  character: string,
-  index: number,
-  matchIndex: number,
-): CsiConsumedUrlPrefix {
-  if (
-    prefix.value === "" || stringEndsWith(prefix.value, ":") ||
-    prefix.value.length >= MAX_GENERIC_URL_SCHEME_LENGTH
-  ) {
-    const restarted = createCsiConsumedUrlPrefix(matchIndex);
-    const canStart = ReflectApply(RegExpPrototypeExec, GENERIC_URL_SCHEME_FIRST_CHARACTER, [
-      character,
-    ]) !== null;
-    if (!canStart) return restarted;
-    restarted.startIndex = index;
-    restarted.value = character;
-    defineOwnArrayElement(restarted.inputEnds, 0, index + 1);
-    return restarted;
+function createCsiConsumedGenericPrefixStates(): CsiConsumedGenericPrefixStates {
+  const states: CsiConsumedGenericPrefixStates = [];
+  for (let length = 0; length <= MAX_GENERIC_URL_SCHEME_LENGTH; length++) {
+    defineOwnArrayElement(states, length, undefined);
   }
-  prefix.value += character;
-  defineOwnArrayElement(prefix.inputEnds, prefix.inputEnds.length, index + 1);
-  return prefix;
+  return states;
 }
 
-function advanceCsiConsumedUrlPrefix(
-  prefix: CsiConsumedUrlPrefix,
+function advanceCsiConsumedGenericLiteral(
+  states: CsiConsumedGenericPrefixStates,
   character: string,
-  index: number,
-  matchIndex: number,
-): CsiConsumedUrlPrefix {
+  inputIndex: number,
+): CsiConsumedGenericPrefixStates {
+  const next = createCsiConsumedGenericPrefixStates();
   const isSchemeCharacter = ReflectApply(RegExpPrototypeExec, GENERIC_URL_SCHEME_CHARACTER, [
     character,
   ]) !== null;
   if (isSchemeCharacter) {
-    return advanceCsiConsumedSchemePrefix(prefix, character, index, matchIndex);
+    for (let length = 1; length < MAX_GENERIC_URL_SCHEME_LENGTH; length++) {
+      const prefix = states[length];
+      if (prefix !== undefined) {
+        next[length + 1] = appendCsiConsumedSpecialPrefix(
+          prefix,
+          character,
+          inputIndex + 1,
+        );
+      }
+    }
   }
-  if (character === ":" && prefix.value !== "" && !stringEndsWith(prefix.value, ":")) {
-    prefix.value += character;
-    defineOwnArrayElement(prefix.inputEnds, prefix.inputEnds.length, index + 1);
-    return prefix;
+  const canStart = ReflectApply(RegExpPrototypeExec, GENERIC_URL_SCHEME_FIRST_CHARACTER, [
+    character,
+  ]) !== null;
+  if (canStart) {
+    next[1] = {
+      startIndex: inputIndex,
+      inputEnds: [inputIndex + 1],
+      value: character,
+    };
   }
-  return createCsiConsumedUrlPrefix(matchIndex);
+  return next;
+}
+
+function advanceCsiConsumedGenericSequence(
+  states: CsiConsumedGenericPrefixStates,
+  matched: string,
+  inputIndex: number,
+  inputEnd: number,
+): CsiConsumedGenericPrefixStates {
+  const next = createCsiConsumedGenericPrefixStates();
+  const isSgr = ReflectApply(RegExpPrototypeExec, ANSI_SGR_SEQUENCE, [matched]) !== null;
+  const finalByte = stringSlice(matched, -1);
+  const isSchemeCharacter = !isSgr &&
+    ReflectApply(RegExpPrototypeExec, GENERIC_URL_SCHEME_CHARACTER, [finalByte]) !== null;
+  for (let length = 1; length <= MAX_GENERIC_URL_SCHEME_LENGTH; length++) {
+    const prefix = states[length];
+    if (prefix === undefined) continue;
+    next[length] = prefix;
+    if (isSchemeCharacter && length < MAX_GENERIC_URL_SCHEME_LENGTH) {
+      next[length + 1] = appendCsiConsumedSpecialPrefix(prefix, finalByte, inputEnd);
+    }
+  }
+  const canStart = !isSgr &&
+    ReflectApply(RegExpPrototypeExec, GENERIC_URL_SCHEME_FIRST_CHARACTER, [finalByte]) !== null;
+  if (canStart) {
+    next[1] = {
+      startIndex: inputIndex,
+      inputEnds: [inputEnd],
+      value: finalByte,
+    };
+  }
+  return next;
+}
+
+function chooseCsiConsumedGenericPrefix(
+  states: CsiConsumedGenericPrefixStates,
+): CsiConsumedUrlPrefix | undefined {
+  let selected: CsiConsumedUrlPrefix | undefined;
+  for (let length = 2; length <= MAX_GENERIC_URL_SCHEME_LENGTH; length++) {
+    const candidate = states[length];
+    if (
+      candidate !== undefined &&
+      (selected === undefined || candidate.startIndex < selected.startIndex ||
+        (candidate.startIndex === selected.startIndex &&
+          candidate.value.length > selected.value.length))
+    ) {
+      selected = candidate;
+    }
+  }
+  return selected;
 }
 
 function csiConsumedUrlPrefix(
@@ -2792,8 +2839,9 @@ function csiConsumedUrlPrefix(
   const windowStart = matchIndex > MAX_CSI_CONSUMED_URL_LOOKAHEAD
     ? matchIndex - MAX_CSI_CONSUMED_URL_LOOKAHEAD
     : 0;
-  let prefix = createCsiConsumedUrlPrefix(matchIndex);
   let specialStates = createCsiConsumedSpecialPrefixStates();
+  let genericStates = createCsiConsumedGenericPrefixStates();
+  let literalColonPrefix: CsiConsumedUrlPrefix | undefined;
   let index = windowStart;
   while (index < matchIndex) {
     const sequenceEnd = completeCsiSequenceEndAtIndex(value, index, matchIndex);
@@ -2804,18 +2852,34 @@ function csiConsumedUrlPrefix(
         index,
         sequenceEnd,
       );
+      genericStates = advanceCsiConsumedGenericSequence(
+        genericStates,
+        stringSlice(value, index, sequenceEnd),
+        index,
+        sequenceEnd,
+      );
       index = sequenceEnd;
       continue;
     }
 
     const character = stringSlice(value, index, index + 1);
+    if (character === ":") {
+      const completed = chooseCsiConsumedSpecialPrefix(specialStates) ??
+        chooseCsiConsumedGenericPrefix(genericStates);
+      literalColonPrefix = completed === undefined
+        ? undefined
+        : appendCsiConsumedSpecialPrefix(completed, character, index + 1);
+    } else {
+      literalColonPrefix = undefined;
+    }
     specialStates = advanceCsiConsumedSpecialLiteral(specialStates, character, index);
-    prefix = advanceCsiConsumedUrlPrefix(prefix, character, index, matchIndex);
+    genericStates = advanceCsiConsumedGenericLiteral(genericStates, character, index);
     index += 1;
   }
+  if (literalColonPrefix !== undefined) return literalColonPrefix;
   const special = chooseCsiConsumedSpecialPrefix(specialStates);
   if (special !== undefined) return special;
-  return prefix.value === "" ? undefined : prefix;
+  return chooseCsiConsumedGenericPrefix(genericStates);
 }
 
 function matchPatternAtStart(
@@ -2840,7 +2904,8 @@ function matchPatternAtStart(
 function matchCsiConsumedAsciiUrl(value: string): number {
   return matchPatternAtStart(SCHEME_URL, value) ||
     matchPatternAtStart(MALFORMED_SCHEME_URL, value) ||
-    matchPatternAtStart(ZERO_SLASH_SCHEME_URL, value);
+    matchPatternAtStart(ZERO_SLASH_SCHEME_URL, value) ||
+    matchPatternAtStart(CSI_CONSUMED_ZERO_SLASH_SCHEME_URL, value);
 }
 
 function matchCsiConsumedNonAsciiUrl(value: string): number {

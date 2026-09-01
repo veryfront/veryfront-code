@@ -7072,6 +7072,30 @@ export default config as const;
         assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
       });
 
+      it("preserves an earlier CSI-supplied generic scheme byte", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-generic-split-prefix-before-consumed-colon-",
+          `throw new Error(${
+            JSON.stringify(`Load x${escape}[y${escape}[:@registry.internal/config.ts`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
+      });
+
+      it("redacts bracketed IPv6 after a CSI-consumed colon", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-consumed-colon-ipv6-",
+          `throw new Error(${JSON.stringify(`Load http${escape}[:@[fd00::1]`)});\n`,
+        );
+
+        assertEquals(error.message.includes("fd00"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
+      });
+
       it("redacts a consumed colon before an excluded CSI final", async () => {
         const escape = String.fromCharCode(27);
         const error = await loadFailure(
