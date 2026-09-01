@@ -117,7 +117,8 @@ project key before sending the request to Jira.
    that result is synthesized from the configured Cloud ID.
 2. Confirm the returned projects or issues belong to the target site and project.
 3. If write access is configured, test one write tool against the configured project.
-4. If a write was tested, confirm Jira's audit history attributes the action to the service account.
+4. If a write was tested, open the affected issue's **Activity/History** and confirm the action is
+   attributed to the service account. For comments, confirm the displayed author.
 
 No browser or Atlassian consent page should open. If it does, check the variable names, selected
 Veryfront environment, Jira project integration, and tool policy. A Cloud ID by itself does not

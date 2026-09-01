@@ -690,6 +690,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Browse users and groups",
       "Assign Issues",
       "read:jira-user",
+      "Activity/History",
       "/api/auth/jira/callback",
       "offline_access",
       "JIRA_CLOUD_ID",
