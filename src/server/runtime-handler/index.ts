@@ -20,9 +20,11 @@ import {
   UNKNOWN_ERROR,
 } from "#veryfront/errors";
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
+import type { OptionsMiddlewareAdmission as ApiOptionsMiddlewareAdmission } from "#veryfront/routing/api/handler.ts";
 import type { Handler } from "#veryfront/types";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
+import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import {
@@ -30,9 +32,13 @@ import {
   isSignedChannelDispatch,
   isSignedControlPlaneDispatch,
 } from "#veryfront/channels/control-plane.ts";
-import { createApplicationAuthRequestHandler } from "#veryfront/security/application-auth/application-auth-runtime.ts";
+import {
+  type ApplicationAuthHandlerResult,
+  createApplicationAuthRequestHandler,
+} from "#veryfront/security/application-auth/application-auth-runtime.ts";
 import { applyCORSHeaders } from "#veryfront/security/http/cors/headers.ts";
 import { isCspReportRequest } from "#veryfront/security/http/csp-report-endpoint.ts";
+import { isPreflightRequest } from "#veryfront/security/http/cors/preflight.ts";
 import { getEffectiveRequestOrigin } from "../utils/request-host.ts";
 
 // Re-export is at the bottom of the file
@@ -68,7 +74,7 @@ import { ProdHydrationModuleHandler } from "../handlers/request/prod-hydration-m
 import { CSSHandler } from "../handlers/request/css.handler.ts";
 import { RSCHandler } from "../handlers/request/rsc/index.ts";
 import { ModuleHandler } from "../handlers/request/module/index.ts";
-import { ApiHandlerWrapper } from "../handlers/request/api/index.ts";
+import { ApiHandlerWrapper, withApiHandler } from "#veryfront/server/handlers/request/api/index.ts";
 import { SSRHandler } from "../handlers/request/ssr/index.ts";
 import { NotFoundHandler } from "../handlers/response/not-found.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
@@ -144,6 +150,7 @@ import {
   resolveProjectRuntimeContext,
 } from "./project-runtime-context.ts";
 import { runWithRetainedPreviewDocumentSourceSnapshot } from "#veryfront/server/handlers/request/source-snapshot-freshness.ts";
+import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
@@ -154,25 +161,94 @@ const logger = baseLogger.component("runtime-handler");
 
 const SOURCE_SNAPSHOT_FRESHNESS_RETRY_LIMIT = 1;
 
-function shouldRetrySourceSnapshotFreshness(
+type RuntimeOptionsMiddlewareAdmission =
+  | ApiOptionsMiddlewareAdmission
+  | "bypass-middleware-retained";
+
+type ProjectEnvironmentRunner = <T>(operation: () => T) => T;
+
+/** @internal Exported for the runtime admission regression tests. */
+export async function prepareOptionsBeforeProjectMiddleware(input: {
+  request: Request;
+  ctx: _HandlerContext;
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
+  runInFilesystemContext: <T>(operation: () => Promise<T>) => Promise<T>;
+  runInRequestProjectEnv: ProjectEnvironmentRunner;
+}): Promise<RuntimeOptionsMiddlewareAdmission> {
+  if (input.request.method !== "OPTIONS") return "not-applicable";
+  if (requiresIsolatedProjectRuntime(input.ctx)) return "bypass-middleware";
+
+  const prepareApiAdmission = () =>
+    withApiHandler(
+      input.ctx,
+      (api) => api.prepareOptionsMiddlewareAdmission(input.request, input.ctx),
+      { sourceSnapshotReady: true },
+    );
+  const prepareInProjectEnv = () => input.runInRequestProjectEnv(prepareApiAdmission);
+  const prepareWithSourcePolicy = () =>
+    runWithExactSourceIntegrationPolicy(
+      input.sourceIntegrationPolicy,
+      prepareInProjectEnv,
+    );
+
+  const admission = await input.runInFilesystemContext(() =>
+    runWithRetainedPreviewDocumentSourceSnapshot(
+      input.ctx,
+      prepareWithSourcePolicy,
+      {
+        retainAfterOperation: () => true,
+        runDeferredOperation: input.runInFilesystemContext,
+      },
+    )
+  );
+  return admission === "bypass-middleware" ? "bypass-middleware-retained" : admission;
+}
+
+/** Whether a request can be replayed before project middleware has started. */
+export function shouldRetrySourceSnapshotFreshness(
   request: Request,
   error: unknown,
   retries: number,
   projectMiddlewareStarted: boolean,
+  isFrameworkOwnedPreflight = false,
 ): boolean {
+  const methodCanRetry = request.method === "GET" || request.method === "HEAD" ||
+    (request.method === "OPTIONS" && isFrameworkOwnedPreflight);
   return retries < SOURCE_SNAPSHOT_FRESHNESS_RETRY_LIMIT &&
     !projectMiddlewareStarted &&
-    (request.method === "GET" || request.method === "HEAD") &&
+    methodCanRetry &&
     isVeryfrontError(error) &&
     error.slug === SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.slug;
 }
 
-function skipsApplicationAuth(request: Request, pathname: string): boolean {
-  return request.method === "OPTIONS" ||
+function skipsApplicationAuth(
+  request: Request,
+  pathname: string,
+  isFrameworkOwnedPreflight = false,
+): boolean {
+  return (request.method === "OPTIONS" && isFrameworkOwnedPreflight) ||
     isCspReportRequest(request.method, pathname) ||
     isSignedControlPlaneDispatch(request) ||
     isSignedChannelDispatch(request) ||
     isConfigOptionalControlPlaneRunRequest(request.method, pathname);
+}
+
+function applyApplicationAuthResult(
+  authResult: ApplicationAuthHandlerResult | Response | null,
+  ctx: _HandlerContext,
+  isOptionsRequest: boolean,
+  isBrowserPreflight: boolean,
+): { response: Response | null; skipProjectMiddleware: boolean } {
+  if (authResult instanceof Response) {
+    if (!isBrowserPreflight) return { response: authResult, skipProjectMiddleware: false };
+    ctx.applicationAuthResult = { response: authResult };
+    return { response: null, skipProjectMiddleware: true };
+  }
+
+  if (isOptionsRequest) ctx.applicationAuthResult = authResult;
+  ctx.applicationIdentity = authResult?.metadata?.applicationIdentity ?? null;
+  ctx.applicationIdentityHeaderNames = authResult?.metadata?.applicationIdentityHeaderNames ?? [];
+  return { response: null, skipProjectMiddleware: false };
 }
 
 /** Handler names in registration order. */
@@ -437,8 +513,16 @@ export function createVeryfrontHandler(
         await readyPromise;
         if (!isProxyMode) await securityLoader.ensureLoaded();
 
+        // Monitoring endpoints are always framework-owned; their browser
+        // preflights stay public without project or application auth.
+        const isFrameworkOwnedMonitoringPreflight = req.method.toUpperCase() === "OPTIONS" &&
+          isPreflightRequest(req);
         const requiresApplicationAuth = !isPlatformLivenessProbe(req.method, url.pathname) &&
-          !skipsApplicationAuth(req, url.pathname);
+          !skipsApplicationAuth(
+            req,
+            url.pathname,
+            isFrameworkOwnedMonitoringPreflight,
+          );
         let requestOrigin: string | null | undefined;
         if (requiresApplicationAuth) {
           const preparedMonitoringRequest = await prepareProjectRequest({
@@ -577,10 +661,12 @@ export function createVeryfrontHandler(
 
         let requestMetricsIncremented = false;
         let projectMiddlewareStarted = false;
+        let isFrameworkOwnedPreflightForRetry = false;
         const markProjectMiddlewareStarted = () => {
           projectMiddlewareStarted = true;
         };
         const executeHandlerAttempt = async (request: Request): Promise<Response> => {
+          isFrameworkOwnedPreflightForRetry = false;
           // Fast rejection of vulnerability scanner probes before any async work
           if (SCANNER_PATH_PATTERN.test(url.pathname)) {
             return new Response("Not Found", { status: 404 });
@@ -694,14 +780,27 @@ export function createVeryfrontHandler(
               ? operation()
               : runWithProjectEnv(isolatedEnvForRequest, operation);
 
+          const runInFilesystemContext = <T>(operation: () => Promise<T>) =>
+            runInProjectFilesystemContext(ctx, isProxyMode, operation);
+          const sourceIntegrationPolicy = runtimeContext.sourceIntegrationPolicy;
+
           if (!requestMetricsIncremented) {
             await incrementRequestMetrics();
             requestMetricsIncremented = true;
           }
 
-          if (!skipsApplicationAuth(request, url.pathname)) {
-            const runInFilesystemContext = <T>(operation: () => Promise<T>) =>
-              runInProjectFilesystemContext(ctx, isProxyMode, operation);
+          // This parser-only inspection intentionally precedes application
+          // auth: it never evaluates project code and keeps framework-owned
+          // automatic preflight public without widening authored-route access.
+          const isFrameworkOwnedPreflight = await apiHandler.prepareFrameworkOwnedPreflight(
+            request,
+            ctx,
+          );
+          isFrameworkOwnedPreflightForRetry = isFrameworkOwnedPreflight;
+          const isOptionsRequest = request.method.toUpperCase() === "OPTIONS";
+          const isBrowserPreflight = isOptionsRequest && isPreflightRequest(request);
+          let skipProjectMiddleware = false;
+          if (!skipsApplicationAuth(request, url.pathname, isFrameworkOwnedPreflight)) {
             const authResult = await runInFilesystemContext(
               () =>
                 runWithRetainedPreviewDocumentSourceSnapshot(
@@ -729,21 +828,50 @@ export function createVeryfrontHandler(
                   },
                 ),
             );
-            if (authResult instanceof Response) return authResult;
-            ctx.applicationIdentity = authResult?.metadata?.applicationIdentity ?? null;
-            ctx.applicationIdentityHeaderNames =
-              authResult?.metadata?.applicationIdentityHeaderNames ?? [];
+            const authOutcome = applyApplicationAuthResult(
+              authResult,
+              ctx,
+              isOptionsRequest,
+              isBrowserPreflight,
+            );
+            if (authOutcome.response) return authOutcome.response;
+            skipProjectMiddleware = authOutcome.skipProjectMiddleware;
           }
 
-          const sourceIntegrationPolicy = runtimeContext.sourceIntegrationPolicy;
-          const executeProjectRoute = () =>
-            projectMiddlewareRuntime.execute({
+          const optionsAdmission = isFrameworkOwnedPreflight
+            ? "not-applicable"
+            : await prepareOptionsBeforeProjectMiddleware({
+              request,
+              ctx,
+              sourceIntegrationPolicy,
+              runInFilesystemContext,
+              runInRequestProjectEnv,
+            });
+
+          const executeRegistry = async () => (await registry.execute(request, ctx)) ?? undefined;
+          const executeRegistryWithRetainedSnapshot = () =>
+            runInFilesystemContext(() =>
+              runWithRetainedPreviewDocumentSourceSnapshot(
+                ctx,
+                executeRegistry,
+                { runDeferredOperation: runInFilesystemContext },
+              )
+            );
+          const executeProjectRoute = () => {
+            if (optionsAdmission === "bypass-middleware") return executeRegistry();
+            if (optionsAdmission === "bypass-middleware-retained") {
+              return executeRegistryWithRetainedSnapshot();
+            }
+            return projectMiddlewareRuntime.execute({
               request,
               handlerContext: ctx,
               isSharedProxy: isProxyMode,
-              next: async () => (await registry.execute(request, ctx)) ?? undefined,
+              isFrameworkOwnedPreflight,
+              skipProjectMiddleware,
+              next: executeRegistry,
               onMiddlewareStart: markProjectMiddlewareStarted,
             });
+          };
           const executeRoute = () =>
             runWithExactSourceIntegrationPolicy(
               sourceIntegrationPolicy,
@@ -787,6 +915,7 @@ export function createVeryfrontHandler(
                   error,
                   retries,
                   projectMiddlewareStarted,
+                  isFrameworkOwnedPreflightForRetry,
                 )
               ) throw error;
               retries++;

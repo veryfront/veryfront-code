@@ -87,6 +87,7 @@ function shouldUseOpenAIResponsesRuntime(upstreamModelId: string): boolean {
 function createVeryfrontCloudModelInternal(
   modelId: string,
   inferenceCredential?: string,
+  options: { assertInferenceCredentialActive?: () => void } = {},
 ): ModelRuntime {
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "language");
   const { apiBaseUrl, apiToken, projectSlug } = requireVeryfrontCloudBootstrap(
@@ -95,6 +96,9 @@ function createVeryfrontCloudModelInternal(
   const baseURL = getVeryfrontCloudGatewayBaseUrl(apiBaseUrl, provider);
   const fetch = createVeryfrontCloudFetch(apiToken, baseURL, projectSlug, {
     inferenceCredential: inferenceCredential !== undefined,
+    ...(options.assertInferenceCredentialActive
+      ? { assertInferenceCredentialActive: options.assertInferenceCredentialActive }
+      : {}),
   });
   // Native provider request builders require a credential, but the guarded
   // gateway fetch owns the real run-scoped token and replaces native auth.
@@ -306,6 +310,7 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
 export function createVeryfrontCloudInferenceModel(
   modelId: string,
   inferenceCredential: string,
+  options: { assertInferenceCredentialActive?: () => void } = {},
 ): ModelRuntime {
-  return createVeryfrontCloudModelInternal(modelId, inferenceCredential);
+  return createVeryfrontCloudModelInternal(modelId, inferenceCredential, options);
 }

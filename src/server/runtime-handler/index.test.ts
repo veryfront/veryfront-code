@@ -1,9 +1,11 @@
 // Deno-only end-to-end runtime-handler coverage. Node and Bun planners
 // intentionally exclude this file because it exercises Deno.env and the Deno adapter.
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
-import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { afterAll, afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter, RuntimeId } from "#veryfront/platform/adapters/base.ts";
+import { createMockAdapter as createRouteMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import type { HandlerContext } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE } from "#veryfront/errors";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
@@ -15,7 +17,11 @@ import {
 } from "#veryfront/utils/logger/logger.ts";
 import { HMRHandler } from "../handlers/preview/hmr.handler.ts";
 import { runWithProjectEnv } from "../project-env/storage.ts";
-import { createVeryfrontHandler } from "./index.ts";
+import {
+  createVeryfrontHandler,
+  prepareOptionsBeforeProjectMiddleware,
+  shouldRetrySourceSnapshotFreshness,
+} from "./index.ts";
 import { __injectDepsForTests as injectIsolationDepsForTests } from "./isolation.ts";
 import { requestTracker } from "./request-tracker.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
@@ -23,6 +29,8 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { createMockOidcProvider } from "#veryfront/security/application-auth/mock-oidc-provider.ts";
 import { createSessionCookie } from "#veryfront/security/application-auth/cookies.ts";
 import type { MiddlewareFunction } from "#veryfront/server/dev-server/middleware.ts";
+import { ProjectMiddlewareRuntime } from "#veryfront/server/runtime-handler/project-middleware.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import {
   createSnapshot,
   resetMetrics,
@@ -37,6 +45,16 @@ import {
   getCurrentRequestContext,
   runWithRequestContext,
 } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { seedPreviewDocumentSourceSnapshot } from "#veryfront/server/handlers/request/source-snapshot-freshness.ts";
+import { fromFileUrl, join } from "#veryfront/compat/path/index.ts";
+
+const TEST_FIXTURES_ROOT = fromFileUrl(
+  new URL("../../../test-fixtures/", import.meta.url),
+);
+
+function testProjectDir(name: string): string {
+  return join(TEST_FIXTURES_ROOT, name);
+}
 
 function createMockAdapter(
   envValues: Record<string, string> = {},
@@ -175,6 +193,36 @@ function withTrustedPeer(request: Request): Request {
   return request;
 }
 
+function createTrustedOptionsMiddlewareHandler(options: {
+  projectDir: string;
+  routePath: string;
+  routeSource: string;
+  middleware: MiddlewareFunction;
+  corsOrigin?: string;
+}) {
+  const adapter = createRouteMockAdapter();
+  adapter.fs.files.set(
+    `${options.projectDir}/${options.routePath}`,
+    options.routeSource,
+  );
+  return createVeryfrontHandler(options.projectDir, adapter, {
+    projectDir: options.projectDir,
+    config: {
+      security: {
+        ...(options.corsOrigin ? { cors: { origin: [options.corsOrigin] } } : {}),
+        auth: {
+          trustedProxy: {
+            trustedPeers: ["127.0.0.1"],
+            headers: { subject: "x-auth-subject" },
+          },
+        },
+      },
+      middleware: { custom: [options.middleware] },
+    } as any,
+    allowHostProjectCodeExecution: true,
+  });
+}
+
 function captureOtelHttpRequestCount(): { count: () => number } {
   let count = 0;
   const meter = {
@@ -200,6 +248,11 @@ function captureOtelHttpRequestCount(): { count: () => number } {
 }
 
 describe("server/runtime-handler/index", () => {
+  afterAll(async () => {
+    const { stop } = await import("veryfront/extensions/bundler");
+    await stop();
+  });
+
   beforeEach(() => {
     resetMetrics();
     resetOtelInstruments();
@@ -360,6 +413,88 @@ describe("server/runtime-handler/index", () => {
       subjectHeader: null,
       emailHeader: null,
     });
+  });
+
+  it("runs application auth admission before project middleware for plain OPTIONS", async () => {
+    let middlewareCalls = 0;
+    const handler = createVeryfrontHandler("/tmp/test-project", createMockAdapter(), {
+      projectDir: "/tmp/test-project",
+      config: {
+        security: {
+          auth: {
+            trustedProxy: {
+              trustedPeers: ["127.0.0.1"],
+              headers: { subject: "x-auth-subject" },
+            },
+          },
+        },
+        middleware: {
+          custom: [
+            (c: { identity: { subject?: string } | null }) => {
+              middlewareCalls++;
+              return Response.json({ subject: c.identity?.subject ?? null });
+            },
+          ],
+        },
+      } as any,
+      allowHostProjectCodeExecution: true,
+    });
+
+    const response = await handler(withTrustedPeer(
+      new Request("http://localhost/api/options", {
+        method: "OPTIONS",
+        headers: { "x-auth-subject": "user-123" },
+      }),
+    ));
+
+    assertEquals(response.status, 200);
+    assertEquals(await response.json(), { subject: "user-123" });
+    assertEquals(middlewareCalls, 1);
+  });
+
+  it("defers terminal application auth to automatic preflight", async () => {
+    const projectDir = `/tmp/test-options-public-${crypto.randomUUID()}`;
+    const adapter = createRouteMockAdapter();
+    adapter.fs.files.set(
+      `${projectDir}/pages/api/options.ts`,
+      "export function OPTIONS() { return new Response('must not run'); }",
+    );
+    let middlewareCalls = 0;
+    const handler = createVeryfrontHandler(projectDir, adapter, {
+      projectDir,
+      config: {
+        security: {
+          auth: {
+            trustedProxy: {
+              trustedPeers: ["127.0.0.1"],
+              headers: { subject: "x-auth-subject" },
+            },
+          },
+        },
+        middleware: {
+          custom: [
+            () => {
+              middlewareCalls++;
+              return new Response("middleware must not run", { status: 401 });
+            },
+          ],
+        },
+      } as any,
+      allowHostProjectCodeExecution: true,
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/options", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://client.example",
+          "access-control-request-method": "GET",
+        },
+      }),
+    );
+
+    assertEquals(response.status, 204);
+    assertEquals(middlewareCalls, 0);
   });
 
   it("short-circuits terminal application auth responses before project middleware", async () => {
@@ -580,6 +715,88 @@ describe("server/runtime-handler/index", () => {
     assertEquals(otelRequestCount, 1);
   });
 
+  it("allows automatic OPTIONS snapshot failures to retry before middleware", () => {
+    const error = SOURCE_SNAPSHOT_FRESHNESS_UNAVAILABLE.create({ detail: "snapshot changed" });
+
+    assertEquals(
+      shouldRetrySourceSnapshotFreshness(
+        new Request("http://localhost/api/protected", { method: "OPTIONS" }),
+        error,
+        0,
+        false,
+        true,
+      ),
+      true,
+    );
+    assertEquals(
+      shouldRetrySourceSnapshotFreshness(
+        new Request("http://localhost/api/protected", { method: "OPTIONS" }),
+        error,
+        0,
+        false,
+        false,
+      ),
+      false,
+    );
+  });
+
+  it("retains an unmatched OPTIONS admission snapshot through middleware dispatch", async () => {
+    let sourceVersion = 1;
+    const adapter = createRouteMockAdapter();
+    const fs = adapter.fs as typeof adapter.fs & {
+      getSourceSnapshotIdentity: () => string;
+      getSourceSnapshotVersion: () => number;
+    };
+    fs.getSourceSnapshotIdentity = () => "branch:unmatched-options:main";
+    fs.getSourceSnapshotVersion = () => sourceVersion;
+    const context: HandlerContext = {
+      projectDir: testProjectDir("unmatched-options"),
+      adapter,
+      config: {},
+      securityConfig: null,
+      projectSlug: "unmatched-options",
+      projectId: "project-unmatched-options",
+      proxyToken: "proxy-token",
+      resolvedEnvironment: "preview",
+      requestContext: {
+        token: "proxy-token",
+        slug: "unmatched-options",
+        branch: "main",
+        mode: "preview",
+      },
+      isLocalProject: false,
+    };
+    const request = new Request("http://localhost/api/late-route", { method: "OPTIONS" });
+    seedPreviewDocumentSourceSnapshot(context, {
+      identity: "branch:unmatched-options:main",
+      version: sourceVersion,
+    });
+
+    const admission = await prepareOptionsBeforeProjectMiddleware({
+      request,
+      ctx: context,
+      sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
+      runInFilesystemContext: (operation) => operation(),
+      runInRequestProjectEnv: (operation) => operation(),
+    });
+
+    assertEquals(admission, "not-applicable");
+    sourceVersion++;
+
+    const runtime = new ProjectMiddlewareRuntime({ loadMiddleware: () => Promise.resolve([]) });
+    await assertRejects(
+      () =>
+        runtime.execute({
+          request,
+          handlerContext: context,
+          isSharedProxy: false,
+          next: () => Promise.resolve(new Response("late route")),
+        }),
+      Error,
+      "changed after request configuration was derived",
+    );
+  });
+
   it("does not replay project middleware after a downstream snapshot failure", async () => {
     const otelRequests = captureOtelHttpRequestCount();
     let middlewareCalls = 0;
@@ -625,7 +842,7 @@ describe("server/runtime-handler/index", () => {
           custom: [
             () => {
               middlewareCalls++;
-              return new Response(null, { status: 204 });
+              return new Response("middleware must not run", { status: 401 });
             },
           ],
         },
@@ -634,11 +851,155 @@ describe("server/runtime-handler/index", () => {
     });
 
     const response = await handler(
-      new Request("http://localhost/dashboard", { method: "OPTIONS" }),
+      new Request("http://localhost/dashboard", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://client.example",
+          "access-control-request-method": "GET",
+        },
+      }),
     );
 
     assertEquals(response.status, 204);
+    assertEquals(middlewareCalls, 0);
+  });
+
+  it("admits an explicit OPTIONS route before identity-gated project middleware", async () => {
+    const projectDir = testProjectDir("options-middleware-auth");
+    let middlewareCalls = 0;
+    const identityMiddleware: MiddlewareFunction = async (context, next) => {
+      middlewareCalls++;
+      if (context.identity?.subject !== "user-123") {
+        return new Response("middleware unauthorized", { status: 403 });
+      }
+      return await next();
+    };
+    const handler = createTrustedOptionsMiddlewareHandler({
+      projectDir,
+      routePath: "pages/api/protected-options.ts",
+      routeSource: 'export function OPTIONS() { return new Response("route options"); }',
+      middleware: identityMiddleware,
+    });
+
+    const response = await handler(withTrustedPeer(
+      new Request("http://localhost/api/protected-options", {
+        method: "OPTIONS",
+        headers: { "x-auth-subject": "user-123" },
+      }),
+    ));
+
+    assertEquals(response.status, 200);
+    assertEquals(await response.text(), "route options");
     assertEquals(middlewareCalls, 1);
+  });
+
+  it("keeps automatic OPTIONS public before identity-gated project middleware", async () => {
+    const projectDir = testProjectDir("options-middleware-fallback");
+    let middlewareCalls = 0;
+    const identityGate: MiddlewareFunction = () => {
+      middlewareCalls++;
+      return new Response("middleware unauthorized", { status: 403 });
+    };
+    const handler = createTrustedOptionsMiddlewareHandler({
+      projectDir,
+      routePath: "pages/api/protected-get-only.ts",
+      routeSource: 'export function GET() { return new Response("get"); }',
+      middleware: identityGate,
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/protected-get-only", { method: "OPTIONS" }),
+    );
+
+    assertEquals(response.status, 204);
+    assertEquals(middlewareCalls, 0);
+  });
+
+  it("keeps authenticated automatic preflight ahead of project middleware", async () => {
+    const projectDir = testProjectDir("options-authenticated-preflight");
+    let middlewareCalls = 0;
+    const middleware: MiddlewareFunction = () => {
+      middlewareCalls++;
+      return new Response("middleware ran", { status: 403 });
+    };
+    const handler = createTrustedOptionsMiddlewareHandler({
+      projectDir,
+      routePath: "pages/api/protected-get-only.ts",
+      routeSource: 'export function GET() { return new Response("get"); }',
+      middleware,
+      corsOrigin: "https://client.example",
+    });
+
+    const response = await handler(withTrustedPeer(
+      new Request("http://localhost/api/protected-get-only", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://client.example",
+          "access-control-request-method": "GET",
+          "x-auth-subject": "user-123",
+        },
+      }),
+    ));
+
+    assertEquals(response.status, 204);
+    assertEquals(response.headers.get("access-control-allow-origin"), "https://client.example");
+    assertEquals(middlewareCalls, 0);
+  });
+
+  it("short-circuits rejected explicit OPTIONS auth before project middleware", async () => {
+    const projectDir = testProjectDir("options-middleware-rejection");
+    let middlewareCalls = 0;
+    const middleware: MiddlewareFunction = () => {
+      middlewareCalls++;
+      return new Response("middleware ran", { status: 418 });
+    };
+    const handler = createTrustedOptionsMiddlewareHandler({
+      projectDir,
+      routePath: "pages/api/protected-options.ts",
+      routeSource: 'export function OPTIONS() { return new Response("must not run"); }',
+      middleware,
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/protected-options", {
+        method: "OPTIONS",
+        headers: { "x-auth-subject": "forged-user" },
+      }),
+    );
+
+    assertEquals(response.status, 401);
+    assertEquals(await response.text(), "Unauthorized");
+    assertEquals(middlewareCalls, 0);
+  });
+
+  it("keeps unauthenticated App-route preflight public before project middleware", async () => {
+    const projectDir = testProjectDir("options-app-route-preflight");
+    let middlewareCalls = 0;
+    const middleware: MiddlewareFunction = () => {
+      middlewareCalls++;
+      return new Response("middleware ran", { status: 418 });
+    };
+    const handler = createTrustedOptionsMiddlewareHandler({
+      projectDir,
+      routePath: "app/webhooks/github/route.ts",
+      routeSource: 'export function OPTIONS() { return new Response("must not run"); }',
+      middleware,
+      corsOrigin: "https://client.example",
+    });
+
+    const response = await handler(
+      new Request("http://localhost/webhooks/github", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://client.example",
+          "access-control-request-method": "POST",
+        },
+      }),
+    );
+
+    assertEquals(response.status, 204);
+    assertEquals(response.headers.get("access-control-allow-origin"), "https://client.example");
+    assertEquals(middlewareCalls, 0);
   });
 
   it("keeps CSP reports ahead of application auth admission", async () => {
@@ -996,6 +1357,19 @@ describe("server/runtime-handler/index", () => {
 
     assertEquals(response.status, 200);
     assertEquals(middlewareCalls, 0);
+
+    const preflight = await handler(
+      new Request("http://localhost/healthz", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://client.example",
+          "access-control-request-method": "GET",
+        },
+      }),
+    );
+
+    assertEquals(preflight.status, 204);
+    assertEquals(middlewareCalls, 0);
   });
 
   it("admits authenticated requests on the gated monitoring fast path", async () => {
@@ -1295,6 +1669,63 @@ describe("server/runtime-handler/index", () => {
       error: "Missing authentication context",
       detail: "x-token header is required in proxy mode",
     });
+  });
+
+  it("keeps shared-runtime automatic OPTIONS ahead of project middleware", async () => {
+    const projectDir = testProjectDir("shared-options-fallback");
+    const adapter = createRouteMockAdapter();
+    adapter.fs.files.set(
+      `${projectDir}/veryfront.config.ts`,
+      "export default {};",
+    );
+    const fs = adapter.fs as typeof adapter.fs & {
+      isVeryfrontAdapter: () => boolean;
+      getUnderlyingAdapter: () => typeof adapter.fs;
+      isMultiProjectMode: () => boolean;
+      isContextualMode: () => boolean;
+      runWithContext: <T>(
+        slug: string,
+        token: string,
+        operation: () => Promise<T>,
+        projectId?: string,
+        options?: { branch?: string | null },
+      ) => Promise<T>;
+      sourceSnapshotFreshnessOptionsVersion: 1;
+      ensureSourceSnapshotFresh: () => Promise<void>;
+      getSourceSnapshotIdentity: () => string;
+      getSourceSnapshotVersion: () => number;
+    };
+    fs.isVeryfrontAdapter = () => true;
+    fs.getUnderlyingAdapter = () => fs;
+    fs.isMultiProjectMode = () => true;
+    fs.isContextualMode = () => true;
+    fs.runWithContext = (slug, token, operation, projectId, options) =>
+      runWithRequestContext({ projectSlug: slug, token, projectId, ...options }, operation);
+    fs.sourceSnapshotFreshnessOptionsVersion = 1;
+    fs.ensureSourceSnapshotFresh = () => Promise.resolve();
+    fs.getSourceSnapshotIdentity = () => "branch:shared-options:main";
+    fs.getSourceSnapshotVersion = () => 1;
+    const handler = createVeryfrontHandler(projectDir, adapter, {
+      projectDir,
+      config: { fs: { veryfront: { proxyMode: true } } } as any,
+    });
+    Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+
+    const response = await handler(
+      new Request("http://runtime.internal/api/private", {
+        method: "OPTIONS",
+        headers: {
+          "x-project-slug": "shared-options",
+          "x-project-id": "project-shared-options",
+          "x-token": "proxy-token",
+          "x-environment": "preview",
+          "x-forwarded-host": "shared-options.preview.veryfront.com",
+          "x-forwarded-proto": "https",
+        },
+      }),
+    );
+
+    assertEquals(response.status, 204);
   });
 
   it("allows proxy context only behind the operator-trusted topology", async () => {

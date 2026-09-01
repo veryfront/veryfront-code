@@ -19,6 +19,9 @@ import {
   PROJECT_EXECUTION_UNAVAILABLE,
 } from "#veryfront/errors";
 import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
+import { isPreflightRequest } from "#veryfront/security/http/cors/preflight.ts";
+import { getApplicationPreflightHeaders } from "#veryfront/security/http/application-request.ts";
+import { DEFAULT_CORS_METHODS, handleCORSPreflight } from "#veryfront/security";
 
 type FsWrapper = {
   isMultiProjectMode?: () => boolean;
@@ -65,6 +68,51 @@ export class ApiHandlerWrapper extends BaseHandler {
     })();
 
     await this.initPromise;
+  }
+
+  async prepareFrameworkOwnedPreflight(req: Request, ctx: HandlerContext): Promise<boolean> {
+    if (req.method.toUpperCase() !== "OPTIONS") return false;
+    const isBrowserPreflight = isPreflightRequest(req);
+    if (requiresIsolatedProjectRuntime(ctx)) {
+      if (isBrowserPreflight) ctx.frameworkOwnedPreflight = true;
+      return isBrowserPreflight;
+    }
+
+    const fsWrapper = ctx.adapter.fs as FsWrapper;
+    const isMultiProject = !!ctx.projectSlug &&
+      typeof fsWrapper.isMultiProjectMode === "function" &&
+      fsWrapper.isMultiProjectMode();
+    const inspect = async (): Promise<boolean> => {
+      await preparePreviewDocumentSourceSnapshot(ctx);
+      const result = await withApiHandler(
+        ctx,
+        (api) => api.prepareFrameworkOwnedPreflight(req, ctx),
+        { sourceSnapshotReady: true },
+      );
+      ctx.frameworkOwnedPreflight = result.frameworkOwned;
+      if (result.response) ctx.frameworkPreflightResponse = result.response;
+      return result.frameworkOwned;
+    };
+
+    if (!isMultiProject) {
+      if (fsWrapper.isContextualMode?.() === true) return false;
+      return await inspect();
+    }
+
+    return await fsWrapper.runWithContext!(
+      ctx.projectSlug!,
+      ctx.proxyToken ?? "",
+      inspect,
+      ctx.projectId,
+      {
+        productionMode: ctx.requestContext?.mode === "production",
+        releaseId: ctx.releaseId,
+        branch: ctx.requestContext?.mode === "production"
+          ? null
+          : ctx.requestContext?.branch ?? ctx.parsedDomain?.branch ?? null,
+        environmentName: ctx.environmentName,
+      },
+    );
   }
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
@@ -145,11 +193,11 @@ export class ApiHandlerWrapper extends BaseHandler {
         if (req.signal.aborted) throw req.signal.reason;
 
         if (mustDenyProjectExecution) {
-          // A shared runtime without an explicit execution grant cannot serve
-          // any project-owned route. Reject before refreshing or classifying
-          // tenant source that no downstream handler is allowed to execute.
-          return this.projectExecutionUnavailable(req, ctx, pathname);
+          return await this.handleDeniedProjectExecution(req, ctx, pathname);
         }
+
+        const preparedResponse = this.handlePreparedFrameworkPreflight(req, ctx);
+        if (preparedResponse) return preparedResponse;
 
         const canResolveAsPage = pathname !== "/api" &&
           !pathname.startsWith("/api/") &&
@@ -222,12 +270,7 @@ export class ApiHandlerWrapper extends BaseHandler {
             ctx,
           );
 
-          const builder = this.createResponseBuilder(ctx);
-          const finalRes = builder
-            .withCORS(req, ctx.securityConfig?.cors)
-            .withSecurity(ctx.securityConfig ?? undefined, req)
-            .withHeaders(apiRes.headers)
-            .build(apiRes.body, apiRes.status);
+          const finalRes = this.finalizeApiResponse(req, ctx, apiRes);
 
           return this.respond(finalRes);
         } catch (error) {
@@ -253,6 +296,37 @@ export class ApiHandlerWrapper extends BaseHandler {
     );
   }
 
+  private async handleDeniedProjectExecution(
+    req: Request,
+    ctx: HandlerContext,
+    pathname: string,
+  ): Promise<HandlerResult> {
+    if (isPreflightRequest(req)) {
+      const response = await handleCORSPreflight({
+        request: req,
+        config: ctx.securityConfig?.cors,
+        allowMethods: DEFAULT_CORS_METHODS.join(", "),
+        allowHeaders: getApplicationPreflightHeaders(req, {
+          denyHeaders: ctx.applicationIdentityHeaderNames ?? [],
+        }),
+      });
+      response.headers.set("Allow", DEFAULT_CORS_METHODS.join(", "));
+      return this.respond(this.finalizePreflightResponse(req, ctx, response));
+    }
+    // A shared runtime without an explicit execution grant cannot serve any
+    // project-owned route. Reject before refreshing or classifying tenant
+    // source that no downstream handler is allowed to execute.
+    return this.projectExecutionUnavailable(req, ctx, pathname);
+  }
+
+  private handlePreparedFrameworkPreflight(
+    req: Request,
+    ctx: HandlerContext,
+  ): HandlerResult | null {
+    if (req.method.toUpperCase() !== "OPTIONS" || !ctx.frameworkPreflightResponse) return null;
+    return this.respond(this.finalizePreflightResponse(req, ctx, ctx.frameworkPreflightResponse));
+  }
+
   private projectExecutionUnavailable(
     req: Request,
     ctx: HandlerContext,
@@ -274,6 +348,27 @@ export class ApiHandlerWrapper extends BaseHandler {
       .withHeaders(problem.headers)
       .build(req.method === "HEAD" ? null : problem.body, problem.status);
     return this.respond(response, { executionTopology: "dedicated-runtime-required" });
+  }
+
+  private finalizePreflightResponse(
+    req: Request,
+    ctx: HandlerContext,
+    response: Response,
+  ): Response {
+    // The prepared response already carries the validated CORS policy headers;
+    // only security and response headers are added here.
+    return this.createResponseBuilder(ctx)
+      .withSecurity(ctx.securityConfig ?? undefined, req)
+      .withHeaders(response.headers)
+      .build(response.body, response.status);
+  }
+
+  private finalizeApiResponse(req: Request, ctx: HandlerContext, response: Response): Response {
+    return this.createResponseBuilder(ctx)
+      .withCORS(req, ctx.securityConfig?.cors)
+      .withSecurity(ctx.securityConfig ?? undefined, req)
+      .withHeaders(response.headers)
+      .build(response.body, response.status);
   }
 
   private async isPageRequest(

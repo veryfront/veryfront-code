@@ -10,6 +10,10 @@ import { redactSensitive, sanitizeUrlCredentials } from "#veryfront/utils";
 import type { TextGenerationRuntimeMessage } from "../runtime/text-generation-runtime-message-types.ts";
 import type { AgentRuntimeMessage, AgentRuntimeMessagePart } from "../runtime/message-adapter.ts";
 import type { ContextSummaryGenerator } from "./context-budget-manager.ts";
+import {
+  type AgentModelRuntimeResolver,
+  createModelRuntimeResolverAbortScope,
+} from "../runtime/model-transport.ts";
 
 const DEFAULT_MAX_SERIALIZED_PART_CHARACTERS = 20_000;
 const DEFAULT_MAX_SERIALIZED_MESSAGE_CHARACTERS = 60_000;
@@ -214,5 +218,47 @@ export function createVeryfrontCloudContextSummaryGenerator(
     }
 
     return { text: summary };
+  };
+}
+
+/** @internal Bind context-compaction inference authority to one generator invocation. */
+export function createRunScopedVeryfrontCloudContextSummaryGenerator(
+  options: Omit<VeryfrontCloudContextSummaryGeneratorOptions, "resolveModel">,
+  createModelResolver: () => AgentModelRuntimeResolver | undefined,
+): ContextSummaryGenerator {
+  const { authToken, abortSignal, ...baseOptions } = options;
+  let used = false;
+  return async (input) => {
+    if (used) {
+      throw new TypeError("Context compaction inference authority has already been used");
+    }
+    used = true;
+
+    const resolveModelRuntime = createModelResolver();
+    const abortScope = createModelRuntimeResolverAbortScope(
+      resolveModelRuntime,
+      abortSignal,
+    );
+    try {
+      return await createVeryfrontCloudContextSummaryGenerator({
+        ...baseOptions,
+        abortSignal: abortScope.signal,
+        ...(resolveModelRuntime
+          ? {
+            resolveModel: (modelId: string) => {
+              const model = resolveModelRuntime(modelId);
+              if (!model) {
+                throw new TypeError(
+                  `Context compaction requires a Veryfront Cloud model, received "${modelId}"`,
+                );
+              }
+              return model;
+            },
+          }
+          : { authToken }),
+      })(input);
+    } finally {
+      abortScope.dispose();
+    }
   };
 }

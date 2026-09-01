@@ -570,9 +570,15 @@ Its lifecycle is:
 - The continuation becomes invalid when that middleware's returned promise
   settles. Calling it again or after settlement rejects with the registered
   `middleware-error`.
-- Calling `next()` after the middleware function returns is valid until the
-  returned promise settles. Synchronous throws also settle the invocation and
-  revoke its continuation.
+- If you call `next()` after the middleware function returns, downstream
+  dispatch starts on the next microtask so settlement revocation wins races
+  with an already-fulfilled middleware promise.
+- If you intentionally detach that promise, attach its rejection handler in
+  the same turn or a microtask; detached-failure reporting runs on the next
+  macrotask after that grace window.
+- Handlers attached after the macrotask grace window will not suppress the
+  report. Synchronous throws also settle the middleware invocation and revoke
+  its continuation.
 - Direct self-resolution of a continuation is rejected with `TypeError`.
   Indirect promise-adoption cycles are outside this middleware contract and are
   not diagnosed by the chain.

@@ -11,7 +11,12 @@ import type {
   Message,
   ResolvedAgentConfig,
 } from "./types.ts";
-import { AgentRuntime, type AgentRuntimeInternalOptions } from "./runtime/index.ts";
+import {
+  AgentRuntime,
+  type AgentRuntimeInternalOptions,
+  generateWithAgentRuntimeDispatch,
+  streamWithAgentRuntimeDispatch,
+} from "./runtime/index.ts";
 import { isRuntimeLocalTool } from "./runtime/local-tool.ts";
 import {
   detectPlatform,
@@ -187,7 +192,8 @@ function createAgentInstance(deps: AgentInstanceDeps): Agent {
       "agent.factory.generate",
       () => {
         const skillSnapshot = resolveSkillSnapshot();
-        return runtime.generate(
+        return generateWithAgentRuntimeDispatch(
+          runtime,
           input.input,
           withAllowedSkillIdsContext(
             input.context,
@@ -231,7 +237,8 @@ function createAgentInstance(deps: AgentInstanceDeps): Agent {
             : (input.messages ?? []);
 
           const skillSnapshot = resolveSkillSnapshot();
-          const stream = await runtime.stream(
+          const stream = await streamWithAgentRuntimeDispatch(
+            runtime,
             inputMessages,
             withAllowedSkillIdsContext(
               input.context,
@@ -279,7 +286,8 @@ function createAgentInstance(deps: AgentInstanceDeps): Agent {
 
           const messages = body.messages;
           const skillSnapshot = resolveSkillSnapshot();
-          const stream = await runtime.stream(
+          const stream = await streamWithAgentRuntimeDispatch(
+            runtime,
             messages,
             withAllowedSkillIdsContext(
               body.context,

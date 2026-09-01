@@ -15,6 +15,7 @@ import { HOST_PROJECT_EXECUTION_OVERRIDE_ENV } from "#veryfront/security/host-ex
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import type { ApplicationIdentity } from "#veryfront/security/application-auth/types.ts";
+import { markTrustedProxyApplicationAuthAdmittedRequest } from "#veryfront/security/application-auth/trusted-proxy.ts";
 import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
@@ -843,6 +844,72 @@ describe("APIRouteHandler", () => {
       assertEquals(await response?.text(), "named options");
     });
 
+    it("prepares an automatic preflight for an unmatched route", async () => {
+      const adapter = createMockAdapter();
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const preparation = await handler.prepareFrameworkOwnedPreflight(
+        new Request("http://localhost/api/missing", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://client.example",
+            "access-control-request-method": "GET",
+          },
+        }),
+        localContext(adapter),
+      );
+
+      assertEquals(preparation.frameworkOwned, true);
+      assertEquals(preparation.response?.status, 204);
+    });
+
+    it("prepares a static automatic preflight from the same route source", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/get-only.ts",
+        "export function GET() { return new Response('get'); }",
+      );
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const preparation = await handler.prepareFrameworkOwnedPreflight(
+        new Request("http://localhost/api/get-only", {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://client.example",
+            "access-control-request-method": "POST",
+          },
+        }),
+        localContext(adapter),
+      );
+
+      assertEquals(preparation.frameworkOwned, true);
+      assertEquals(preparation.response?.status, 204);
+      assertEquals(preparation.response?.headers.get("Allow"), "GET, HEAD, OPTIONS");
+    });
+
+    it("keeps authored and uninspectable preflights in the middleware path", async () => {
+      const adapter = createMockAdapter();
+      const authoredPath = "/test/project/pages/api/authored.ts";
+      adapter.fs.files.set(authoredPath, "export function OPTIONS() {}\n");
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const request = new Request("http://localhost/api/authored", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://client.example",
+          "access-control-request-method": "GET",
+        },
+      });
+
+      const authored = await handler.prepareFrameworkOwnedPreflight(request, localContext(adapter));
+      assertEquals(authored.frameworkOwned, false);
+      assertEquals(authored.response, undefined);
+
+      adapter.fs.readFile = () => Promise.reject(new Error("source unavailable"));
+      const uninspectable = await handler.prepareFrameworkOwnedPreflight(
+        request,
+        localContext(adapter),
+      );
+      assertEquals(uninspectable.frameworkOwned, false);
+    });
+
     it("discovers project primitives after OPTIONS auth and before dispatch", async () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set(
@@ -1197,6 +1264,48 @@ describe("APIRouteHandler", () => {
       assertEquals(routeCalls, 1);
       assertEquals(moduleLoads, 1);
       assertEquals(discoveryCalls, 1);
+    });
+
+    it("reuses application auth admitted before middleware", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/pages/api/precomputed-auth.ts",
+        "export function OPTIONS() { return new Response('dispatched'); }",
+      );
+      __injectDepsForTests({
+        loadHandlerModule: () => Promise.resolve({ OPTIONS: () => new Response("dispatched") }),
+      });
+      const securityConfig = {
+        auth: {
+          trustedProxy: {
+            trustedPeers: ["127.0.0.1"],
+            headers: { subject: "x-auth-subject" },
+          },
+        },
+      } as HandlerContext["securityConfig"];
+      const handler = await createInitializedHandler(
+        "/test/project",
+        adapter,
+        { security: securityConfig } as HandlerConfig,
+      );
+      const request = new Request("http://localhost/api/precomputed-auth", { method: "OPTIONS" });
+      markTrustedProxyApplicationAuthAdmittedRequest(request);
+      const response = await handler.handle(
+        request,
+        {
+          ...localContext(adapter),
+          securityConfig,
+          applicationAuthResult: {
+            metadata: {
+              applicationIdentity: createIdentity(),
+              applicationIdentityHeaderNames: ["x-auth-subject"],
+            },
+          },
+        },
+      );
+
+      assertEquals(response?.status, 200);
+      assertEquals(await response?.text(), "dispatched");
     });
 
     it("keeps plain OPTIONS automatic when a protected route has no OPTIONS export", async () => {
