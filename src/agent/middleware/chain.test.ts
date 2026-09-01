@@ -213,13 +213,21 @@ describe("agent/middleware/chain", () => {
 
     try {
       await Promise.race([finalStarted.promise, timeout]);
+      const firstFullObserver = deferred!.then(() => response, () => response);
+      const secondFullObserver = deferred!.then(() => response, () => response);
       const thenResult = deferred!.then(() => response);
       const catchResult = deferred!.catch(() => response);
       const finallyResult = deferred!.finally(() => undefined);
       releaseFinal!(response);
       releaseMiddleware!(response);
       await execution;
-      await Promise.all([thenResult, catchResult, finallyResult]);
+      await Promise.all([
+        firstFullObserver,
+        secondFullObserver,
+        thenResult,
+        catchResult,
+        finallyResult,
+      ]);
     } finally {
       clearTimeout(timeoutId);
     }
