@@ -48,9 +48,8 @@ function pickPlugins(
   filePath: string | undefined,
   syntax: "javascript" | "typescript",
 ): parser.ParserPlugin[] {
-  const normalizedPath = filePath?.toLowerCase() ?? "";
   const supportsJsx = !filePath ||
-    /\.(?:tsx|jsx|js|mjs|cjs)$/.test(normalizedPath);
+    /\.(?:tsx|jsx|js|mjs|cjs)$/.test(filePath);
   const plugins: parser.ParserPlugin[] = [
     "classProperties",
     "classPrivateProperties",

@@ -57,12 +57,19 @@ describe("BabelParseOnlyParser", () => {
       code: "const value = <string> input;",
       filePath: "helper.ts.src",
     });
-    const commonJs = await parser.parse({
-      code: "if (module.parent) return; module.exports = true;",
-      filePath: "entry.js.src",
-    });
+    const commonJs = await Promise.all(
+      ["entry.js.src", "entry.cjs.src"].map((filePath) =>
+        parser.parse({
+          code: "if (module.parent) return; module.exports = true;",
+          filePath,
+        })
+      ),
+    );
 
-    assertEquals([typedJsx.type, typeAssertion.type, commonJs.type], ["File", "File", "File"]);
+    assertEquals(
+      [typedJsx.type, typeAssertion.type, ...commonJs.map((ast) => ast.type)],
+      ["File", "File", "File", "File"],
+    );
   });
 
   it("keeps `<T>x` a type assertion for a `.ts` path", async () => {
