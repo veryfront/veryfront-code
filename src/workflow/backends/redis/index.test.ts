@@ -469,6 +469,10 @@ class MockRedisAdapter implements RedisAdapter {
       return Promise.resolve(hash === undefined ? 2 : 0);
     }
 
+    if (script.includes("clear-legacy-run-ttl")) {
+      return Promise.resolve(this.expiries.delete(key) ? 1 : 0);
+    }
+
     if (script.includes("open-run-observation")) {
       const hash = this.hashes.get(key);
       if (!hash) return Promise.resolve(null);
@@ -5418,18 +5422,73 @@ describe("RedisBackend", () => {
   });
 
   describe("runTtl config", () => {
-    it("should set expire when runTtl is configured", async () => {
+    it("does not apply partial creation-time expiry to live run state", async () => {
       const ttlBackend = new RedisBackend({
         client: mockRedis as unknown as RedisAdapter,
         prefix: "ttl:",
         runTtl: 3600,
       });
       await ttlBackend.createRun(createTestRun("run-ttl"));
+      await ttlBackend.updateRun("run-ttl", { status: "waiting" });
+      await ttlBackend.saveCheckpoint("run-ttl", {
+        id: "cp-ttl",
+        nodeId: "gate",
+        timestamp: new Date("2026-01-01T00:00:00Z"),
+        context: { input: {} },
+        nodeStates: {},
+      });
+      await ttlBackend.savePendingApproval("run-ttl", {
+        id: "approval-ttl",
+        nodeId: "gate",
+        status: "pending",
+        message: "Continue?",
+        requestedAt: new Date("2026-01-01T00:00:00Z"),
+      });
 
-      assertEquals(mockRedis.expiries.has("ttl:schema-v1:run:run-ttl"), true);
+      assertEquals(mockRedis.expiries.size, 0);
+      assertEquals((await ttlBackend.getRun("run-ttl"))?.status, "waiting");
+      assertEquals((await ttlBackend.getCheckpoints("run-ttl")).length, 1);
+      assertEquals((await ttlBackend.getPendingApprovals("run-ttl")).length, 1);
+      assertEquals(await ttlBackend.countRuns({}), 1);
+    });
+
+    it("clears legacy run expiries without persisting lock leases", async () => {
+      const ttlBackend = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "ttl-migration:",
+      });
+      mockRedis.scanPageSize = 1;
+      for (const runId of ["legacy-a", "legacy-b"]) {
+        await ttlBackend.createRun(createTestRun(runId));
+        await ttlBackend.savePendingApproval(runId, {
+          id: `approval-${runId}`,
+          nodeId: "gate",
+          status: "pending",
+          message: "Continue?",
+          requestedAt: new Date("2026-01-01T00:00:00Z"),
+        });
+        mockRedis.expiries.set(`ttl-migration:schema-v1:run:${runId}`, 3600);
+        mockRedis.expiries.set(`ttl-migration:schema-v1:run-observation:${runId}`, 3600);
+        mockRedis.expiries.set(
+          `ttl-migration:schema-v1:run-observation-approvals-v1:${runId}`,
+          3600,
+        );
+      }
+      await ttlBackend.acquireLock("legacy-a", 60_000);
+      mockRedis.expiries.set("ttl-migration:schema-v1:lock:legacy-a", 60_000);
+
+      assertEquals(await ttlBackend.clearLegacyRunTtlExpirations(), 6);
       assertEquals(
-        mockRedis.expiries.get("ttl:schema-v1:run-observation:run-ttl"),
-        3600,
+        [...mockRedis.expiries.keys()],
+        ["ttl-migration:schema-v1:lock:legacy-a"],
+      );
+      assertEquals(mockRedis.scanCalls.length > 1, true);
+      assertEquals(
+        mockRedis.scanCalls.every((call) =>
+          call.options?.MATCH === "ttl-migration:schema-v1:run:*" &&
+          call.options.COUNT === 100
+        ),
+        true,
       );
     });
   });

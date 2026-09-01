@@ -121,8 +121,8 @@ export interface BackendConfig {
   /**
    * @deprecated No-op retained for source compatibility.
    *
-   * Backends ignore this field. Use backend-specific TTL options, such as
-   * `RedisBackendConfig.runTtl`, when retention behavior is required.
+   * Backends ignore this field. Delete terminal runs explicitly when retention
+   * behavior is required.
    */
   defaultTtl?: number;
   debug?: boolean;
