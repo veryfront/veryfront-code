@@ -6,6 +6,26 @@ versions are listed at
 
 ## Unreleased
 
+### Breaking: Redis workflow `runTtl` no longer expires runs
+
+`RedisBackendConfig.runTtl` is now a deprecated no-op. It previously started a
+fixed expiry when a run was created. That expiry could remove an active or
+approval-waiting run while leaving its checkpoints, approvals, and shared Redis
+index memberships behind.
+
+If you set `runTtl`, drain and stop old workers, deploy the new framework, then
+call `RedisBackend.clearLegacyRunTtlExpirations()` before removing the option
+from deployment configuration. The migration scans run keys incrementally and
+removes existing TTLs from run hashes, observation streams, and approval
+journals. It does not change lock or stalled-claim lease TTLs. You can run it
+again safely; it returns the number of TTLs removed.
+
+No Veryfront runtime or CLI entrypoint sets `runTtl` automatically. To remove a
+run intentionally, call `RedisBackend.deleteRun(runId)` only after your
+application has made the run ineligible for retry or resume. The option remains
+in the public type so your existing configuration continues to compile while
+you migrate.
+
 ### Breaking: workflow HTTP reads return summaries
 
 The built-in workflow handler now returns `WorkflowRunSummary` from

@@ -61,6 +61,8 @@ const RUN_OBSERVATION_REVISION_FIELD = "__runObservationRevision";
 const RUN_OBSERVATION_STREAM_MAX_LENGTH = 64;
 const RUN_OBSERVATION_POLL_INTERVAL_MS = 20;
 const APPROVAL_RECOVERY_SCAN_COUNT = 100;
+const CLEAR_LEGACY_RUN_TTL_SCRIPT =
+  "-- clear-legacy-run-ttl\nreturn redis.call('persist', KEYS[1])";
 
 /**
  * Merge top-level JSON objects without decoding their values through Redis's
@@ -1545,11 +1547,50 @@ export class RedisBackend implements WorkflowBackend {
     await client.sadd(this.workflowIndexKey(run.workflowId), run.id);
     await client.sadd(this.allRunsIndexKey(), run.id);
     await client.xadd(this.runObservationKey(run.id), "*", serializeInitialRunObservation(run));
+  }
 
-    if (this.config.runTtl) {
-      await client.expire(this.runKey(run.id), this.config.runTtl);
-      await client.expire(this.runObservationKey(run.id), this.config.runTtl);
-    }
+  /**
+   * Remove TTLs written by the deprecated creation-time `runTtl` behavior.
+   *
+   * Run this once after old workers have drained and before removing `runTtl`
+   * from deployment configuration. The cursor scan avoids blocking Redis with
+   * a keyspace-wide `KEYS` command. Lock and stalled-claim TTLs remain intact
+   * because they are execution leases, not run-retention state.
+   *
+   * @returns Number of legacy TTLs removed.
+   */
+  async clearLegacyRunTtlExpirations(): Promise<number> {
+    const client = await this.ensureClient();
+    const runPrefix = `${this.storagePrefix()}run:`;
+    let cursor = 0;
+    let cleared = 0;
+    do {
+      const page = await client.scan(cursor, {
+        MATCH: `${runPrefix}*`,
+        COUNT: APPROVAL_RECOVERY_SCAN_COUNT,
+      });
+      cursor = page.cursor;
+      for (let index = 0; index < page.keys.length; index++) {
+        const runKey = page.keys[index]!;
+        const runId = runKey.slice(runPrefix.length);
+        cleared += Number(await client.eval(CLEAR_LEGACY_RUN_TTL_SCRIPT, [runKey], []));
+        cleared += Number(
+          await client.eval(
+            CLEAR_LEGACY_RUN_TTL_SCRIPT,
+            [this.runObservationKey(runId)],
+            [],
+          ),
+        );
+        cleared += Number(
+          await client.eval(
+            CLEAR_LEGACY_RUN_TTL_SCRIPT,
+            [this.runObservationApprovalsKey(runId)],
+            [],
+          ),
+        );
+      }
+    } while (cursor !== 0);
+    return cleared;
   }
 
   async getRun(runId: string): Promise<WorkflowRun | null> {
