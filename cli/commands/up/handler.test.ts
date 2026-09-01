@@ -25,6 +25,23 @@ describe("Up Handler", () => {
     it("accepts a single ParsedArgs parameter", () => {
       assertEquals(handleUpCommand.length, 1);
     });
+
+    it("registers the builtin bundler before publishing the preview", async () => {
+      const calls: string[] = [];
+
+      await handleUpCommand(createArgs(), {
+        ensureBundlerContracts: () => {
+          calls.push("ensure");
+          return Promise.resolve();
+        },
+        up: () => {
+          calls.push("up");
+          return Promise.resolve();
+        },
+      });
+
+      assertEquals(calls, ["ensure", "up"]);
+    });
   });
 
   describe("parseUpArgs via handler", () => {
