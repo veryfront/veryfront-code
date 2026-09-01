@@ -6,6 +6,7 @@ const INVALID_CONTINUATION_MESSAGE =
   "You must call agent middleware next() at most once while the middleware is active";
 const IntrinsicPromiseThen = Promise.prototype.then;
 const INVALID_CONTINUATION_ERRORS = new WeakSet<object>();
+const CONTINUATION_OBSERVATIONS = new WeakMap<object, { observed: boolean }>();
 
 function createInvalidContinuationError(): VeryfrontError {
   const error = MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE });
@@ -17,8 +18,24 @@ function isInvalidContinuationError(error: unknown): boolean {
   return typeof error === "object" && error !== null && INVALID_CONTINUATION_ERRORS.has(error);
 }
 
+function registerContinuation(promise: Promise<unknown>): void {
+  CONTINUATION_OBSERVATIONS.set(promise, { observed: false });
+}
+
+function markContinuationObserved(promise: Promise<unknown>): void {
+  const observation = CONTINUATION_OBSERVATIONS.get(promise);
+  if (observation) observation.observed = true;
+}
+
 function containRejection(promise: Promise<unknown>): void {
-  void IntrinsicPromiseThen.call(promise, undefined, () => undefined);
+  const observation = CONTINUATION_OBSERVATIONS.get(promise);
+  void IntrinsicPromiseThen.call(promise, undefined, (error: unknown) => {
+    if (isInvalidContinuationError(error) || observation?.observed) return undefined;
+    setTimeout(() => {
+      if (!observation?.observed) void Promise.reject(error);
+    }, 0);
+    return undefined;
+  });
 }
 
 class InvalidContinuationPromise extends Promise<AgentResponse> {
@@ -30,11 +47,13 @@ class InvalidContinuationPromise extends Promise<AgentResponse> {
       | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
       | null,
   ): Promise<TResult1 | TResult2> {
+    markContinuationObserved(this);
     const derived = IntrinsicPromiseThen.call(
       this,
       onFulfilled,
       onRejected,
     ) as Promise<TResult1 | TResult2>;
+    registerContinuation(derived);
     containRejection(derived);
     return derived;
   }
@@ -44,6 +63,7 @@ function rejectInvalidContinuation(): Promise<AgentResponse> {
   const rejection = new InvalidContinuationPromise(
     (_resolve, reject) => reject(createInvalidContinuationError()),
   );
+  registerContinuation(rejection);
   containRejection(rejection);
   return rejection;
 }
@@ -60,11 +80,13 @@ class DeferredContinuationPromise extends Promise<AgentResponse> {
       | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
       | null,
   ): Promise<TResult1 | TResult2> {
+    markContinuationObserved(this);
     const derived = IntrinsicPromiseThen.call(
       this,
       onFulfilled,
       onRejected,
     ) as Promise<TResult1 | TResult2>;
+    registerContinuation(derived);
     if (this.settlement === "invalid") {
       containRejection(derived);
     } else if (this.settlement === "pending") {
@@ -115,6 +137,7 @@ function createDeferredContinuation(
       if (isInvalidContinuationError(error)) containRejection(continuation);
     });
   });
+  registerContinuation(continuation);
   return continuation;
 }
 

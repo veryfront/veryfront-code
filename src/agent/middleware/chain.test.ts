@@ -248,4 +248,28 @@ describe("agent/middleware/chain", () => {
     void invalid.finally(() => undefined);
     await Promise.resolve();
   });
+
+  it("preserves errors introduced by continuation rejection handlers", async () => {
+    let retainedNext: (() => Promise<AgentResponse>) | undefined;
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        retainedNext = next;
+        return Promise.resolve(response);
+      },
+    ]);
+
+    await chain.execute(context, () => Promise.resolve(response));
+
+    const callbackError = new Error("continuation callback failed");
+    const callbackResult = retainedNext!().catch(() => {
+      throw callbackError;
+    });
+    assertEquals(await assertRejects(() => callbackResult), callbackError);
+
+    const cleanupError = new Error("continuation cleanup failed");
+    const cleanupResult = retainedNext!().finally(() => {
+      throw cleanupError;
+    });
+    assertEquals(await assertRejects(() => cleanupResult), cleanupError);
+  });
 });
