@@ -72,12 +72,18 @@ type RunSession<T> = {
 };
 
 const DEFAULT_WAITING_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_CANCELLATION_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_MAX_CANCELLATION_TOMBSTONES = 1_000;
 const DEFAULT_MAX_CONCURRENT_SESSIONS = 100;
 
 /** Options accepted by run resume session manager. */
 export interface RunResumeSessionManagerOptions<T> {
   waitingTtlMs?: number;
   sessionTtlMs?: number | null;
+  /** How long an explicit cancellation can reject a delayed start for the same run. */
+  cancellationTtlMs?: number;
+  /** Maximum delayed-start cancellations retained by one manager instance. */
+  maxCancellationTombstones?: number;
   maxConcurrentSessions?: number;
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
@@ -91,6 +97,7 @@ function defaultConflictKey(value: unknown): string {
 /** Implement run resume session manager. */
 export class RunResumeSessionManager<T> {
   private readonly sessions = new Map<string, RunSession<T>>();
+  private readonly cancellationTombstones = new Map<string, number>();
 
   constructor(
     private readonly options: RunResumeSessionManagerOptions<T> = {},
@@ -102,6 +109,17 @@ export class RunResumeSessionManager<T> {
 
   private get sessionTtlMs(): number | null {
     return this.options.sessionTtlMs ?? null;
+  }
+
+  private get cancellationTtlMs(): number {
+    return Math.max(1, this.options.cancellationTtlMs ?? DEFAULT_CANCELLATION_TTL_MS);
+  }
+
+  private get maxCancellationTombstones(): number {
+    return Math.max(
+      1,
+      this.options.maxCancellationTombstones ?? DEFAULT_MAX_CANCELLATION_TOMBSTONES,
+    );
   }
 
   private get maxConcurrentSessions(): number {
@@ -116,9 +134,42 @@ export class RunResumeSessionManager<T> {
     return this.options.clearTimeoutFn ?? globalThis.clearTimeout.bind(globalThis);
   }
 
+  private get nowMs(): number {
+    return Date.now();
+  }
+
   private getConflictKey(value: T): string {
     const createConflictKey = this.options.getConflictKey ?? defaultConflictKey;
     return createConflictKey(value);
+  }
+
+  private rememberCancellation(runId: string): void {
+    const now = this.nowMs;
+    for (const [candidateRunId, expiresAt] of this.cancellationTombstones) {
+      if (expiresAt <= now) {
+        this.cancellationTombstones.delete(candidateRunId);
+      }
+    }
+
+    this.cancellationTombstones.delete(runId);
+
+    while (this.cancellationTombstones.size >= this.maxCancellationTombstones) {
+      const oldestRunId = this.cancellationTombstones.keys().next().value;
+      if (oldestRunId === undefined) break;
+      this.cancellationTombstones.delete(oldestRunId);
+    }
+
+    this.cancellationTombstones.set(runId, now + this.cancellationTtlMs);
+  }
+
+  private hasCancellationTombstone(runId: string): boolean {
+    const expiresAt = this.cancellationTombstones.get(runId);
+    if (expiresAt === undefined) return false;
+    if (expiresAt <= this.nowMs) {
+      this.cancellationTombstones.delete(runId);
+      return false;
+    }
+    return true;
   }
 
   private clearWaitingTimeout(session: RunSession<T>): void {
@@ -166,6 +217,10 @@ export class RunResumeSessionManager<T> {
   }
 
   startRun(input: { runId: string; threadId: string }): AbortSignal {
+    if (this.hasCancellationTombstone(input.runId)) {
+      throw new RunCancelledError(`Run "${input.runId}" was cancelled before start`);
+    }
+
     const existing = this.sessions.get(input.runId);
     if (existing && (existing.status === "running" || existing.status === "waiting")) {
       throw new RunAlreadyExistsError(input.runId);
@@ -315,9 +370,18 @@ export class RunResumeSessionManager<T> {
     return { accepted: true };
   }
 
-  cancelRun(runId: string): boolean {
+  cancelRun(runId: string, options: { rememberIfMissing?: boolean } = {}): boolean {
     const session = this.sessions.get(runId);
-    if (!session) return false;
+    if (!session) {
+      if (options.rememberIfMissing) {
+        this.rememberCancellation(runId);
+      }
+      return false;
+    }
+
+    if (options.rememberIfMissing) {
+      this.rememberCancellation(runId);
+    }
 
     if (
       session.status === "completed" || session.status === "failed" ||
@@ -357,5 +421,6 @@ export class RunResumeSessionManager<T> {
     for (const runId of [...this.sessions.keys()]) {
       this.cancelRun(runId);
     }
+    this.cancellationTombstones.clear();
   }
 }

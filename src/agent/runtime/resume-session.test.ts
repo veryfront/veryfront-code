@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { FakeTime } from "#std/testing/time";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -89,6 +90,61 @@ describe("agent/runtime/resume-session", () => {
       undefined,
       "the original parked waiter must still be settled by the cancel",
     );
+  });
+
+  it("rejects a start that arrives after cancellation and expires the cancellation tombstone", () => {
+    using time = new FakeTime(1_000);
+    const manager = new RunResumeSessionManager<{ ok: boolean }>({
+      cancellationTtlMs: 1,
+    });
+
+    assertEquals(manager.cancelRun("run_1", { rememberIfMissing: true }), false);
+    assertThrows(
+      () => manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() }),
+      RunCancelledError,
+      "cancelled before start",
+    );
+
+    time.tick(2);
+
+    const signal = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    assertEquals(signal.aborted, false);
+  });
+
+  it("bounds remembered cancellations while preserving the newest tombstone", () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>({
+      maxCancellationTombstones: 1,
+    });
+
+    assertEquals(manager.cancelRun("run_1", { rememberIfMissing: true }), false);
+    assertEquals(manager.cancelRun("run_2", { rememberIfMissing: true }), false);
+
+    const first = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    assertEquals(first.aborted, false);
+    assertThrows(
+      () => manager.startRun({ runId: "run_2", threadId: crypto.randomUUID() }),
+      RunCancelledError,
+      "cancelled before start",
+    );
+  });
+
+  it("keeps an ordinary missing-run cancellation as a no-op", () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+
+    assertEquals(manager.cancelRun("run_1"), false);
+
+    const signal = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    assertEquals(signal.aborted, false);
+  });
+
+  it("does not remember an ordinary active-run cancellation", () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+
+    assertEquals(manager.cancelRun("run_1"), true);
+
+    const signal = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    assertEquals(signal.aborted, false);
   });
 
   it("rejects submissions for wait keys that are not currently pending", () => {

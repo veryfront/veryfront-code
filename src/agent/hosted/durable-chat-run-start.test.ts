@@ -12,6 +12,7 @@ import {
   type AgUiResumeValue,
   createDetachedRunTracker,
   type ParsedHostedChatRequest,
+  RunResumeSessionManager,
 } from "../index.ts";
 import {
   durableChatRunStartInternals,
@@ -232,6 +233,61 @@ describe("agent/hosted-durable-chat-run-start", () => {
       [{ execution, runId, conversationId }],
       "duplicate detected after prepare must release the prepared execution",
     );
+  });
+
+  it("releases a prepared execution when cancellation wins before start", async () => {
+    const tracker = createDetachedRunTracker<AgUiResumeValue>();
+    const req = createParsedRequest();
+    if (!req.durableRootRun || !req.conversationId) {
+      throw new Error("Expected durable request");
+    }
+    const runId = req.durableRootRun.runId;
+    const conversationId = req.conversationId;
+    const execution = { id: "execution-1" };
+    const cleanupCalls: unknown[] = [];
+    tracker.sessionManager.cancelRun(runId, { rememberIfMissing: true });
+
+    const response = await executeHostedDurableChatRun({
+      req,
+      rawRequest: createRequest(),
+      tracker,
+      prepareExecution: async () => execution,
+      cleanupExecution: async (input) => {
+        cleanupCalls.push(input);
+      },
+      startDetachedExecution: async () => {},
+    });
+
+    assertEquals(response.status, 410);
+    assertEquals(
+      cleanupCalls,
+      [{ execution, runId, conversationId }],
+      "cancel-before-start must release the prepared execution",
+    );
+  });
+
+  it("releases a prepared execution when detached admission throws", async () => {
+    const sessionManager = new RunResumeSessionManager<AgUiResumeValue>({
+      maxConcurrentSessions: 1,
+    });
+    sessionManager.startRun({ runId: "existing-run", threadId: crypto.randomUUID() });
+    const tracker = createDetachedRunTracker<AgUiResumeValue>({ sessionManager });
+    const execution = { id: "execution-1" };
+    const cleanupCalls: unknown[] = [];
+
+    const response = await executeHostedDurableChatRun({
+      req: createParsedRequest(),
+      rawRequest: createRequest(),
+      tracker,
+      prepareExecution: async () => execution,
+      cleanupExecution: async (input) => {
+        cleanupCalls.push(input);
+      },
+      startDetachedExecution: async () => {},
+    });
+
+    assertEquals(response.status, 500);
+    assertEquals(cleanupCalls.length, 1);
   });
 
   it("returns a stable error when durable conversation context is missing", async () => {

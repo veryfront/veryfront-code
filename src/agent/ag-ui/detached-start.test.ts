@@ -365,6 +365,28 @@ describe("agent/ag-ui-detached-start", () => {
     sessionManager.cancelRun("run_1");
   });
 
+  it("rejects a detached start that arrives after its cancellation", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    let started = false;
+    sessionManager.cancelRun("run_1", { rememberIfMissing: true });
+
+    const handler = createAgUiDetachedStartHandler({
+      sessionManager,
+      startDetachedExecution: async () => {
+        started = true;
+      },
+    });
+
+    const response = await handler(createDetachedRequest());
+
+    assertEquals(response.status, 410);
+    assertEquals(await response.json(), { errorCode: "RUN_CANCELLED" });
+    assertEquals(started, false);
+  });
+
   it("returns 400 for malformed detached start payloads", async () => {
     const handler = createAgUiDetachedStartHandler({
       agent: createTestAgent(),
