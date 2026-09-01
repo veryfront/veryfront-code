@@ -3019,6 +3019,16 @@ function csiConsumedUrlStructure(matched: string): CsiConsumedUrlStructure | und
   return colon === -1 && slash === -1 ? undefined : { colon, slash };
 }
 
+function appendMappedCsiUrlFinal(
+  candidate: MappedCsiUrlCandidate,
+  input: string,
+  finalIndex: number,
+): void {
+  if (hasStickyMatchAtIndex(URL_TOKEN_TAIL_AT_INDEX, input, finalIndex)) {
+    appendMappedInputRange(candidate, input, finalIndex, finalIndex + 1);
+  }
+}
+
 function appendMappedCsiUrlStructure(
   candidate: MappedCsiUrlCandidate,
   input: string,
@@ -3033,21 +3043,25 @@ function appendMappedCsiUrlStructure(
       appendMappedInputRange(candidate, input, inputStart + colon, inputStart + colon + 1);
     }
     if (slash !== -1) {
+      const finalIndex = inputStart + matched.length - 1;
       appendMappedInputRange(
         candidate,
         input,
         inputStart + slash,
-        inputStart + matched.length,
+        finalIndex,
       );
+      appendMappedCsiUrlFinal(candidate, input, finalIndex);
     }
     return true;
   }
+  const finalIndex = inputStart + matched.length - 1;
   appendMappedInputRange(
     candidate,
     input,
     inputStart + slash,
-    inputStart + matched.length,
+    finalIndex,
   );
+  appendMappedCsiUrlFinal(candidate, input, finalIndex);
   return true;
 }
 

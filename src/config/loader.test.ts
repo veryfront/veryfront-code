@@ -7250,6 +7250,20 @@ export default config as const;
         assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
       });
 
+      it("redacts consumed URL slashes before an excluded CSI final", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-consumed-slashes-excluded-final-",
+          `throw new Error(${
+            JSON.stringify(`Load http${escape}[://\\registry.internal/SECRET`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message.includes("SECRET"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
+      });
+
       it("preserves a CSI-glued local path when no URL scheme is selected", async () => {
         const escape = String.fromCharCode(27);
         const error = await loadFailure(
