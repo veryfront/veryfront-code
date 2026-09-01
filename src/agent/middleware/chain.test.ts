@@ -144,6 +144,24 @@ describe("agent/middleware/chain", () => {
     assertInstanceOf(error, TypeError);
   });
 
+  it("revokes a retained continuation after a synchronous middleware throw", async () => {
+    let retainedNext: (() => Promise<AgentResponse>) | undefined;
+    const middlewareError = new Error("middleware failed synchronously");
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        retainedNext = next;
+        throw middlewareError;
+      },
+    ]);
+
+    await assertRejects(
+      () => chain.execute(context, () => Promise.resolve(response)),
+      Error,
+      "middleware failed synchronously",
+    );
+    await assertRejects(() => retainedNext!(), VeryfrontError, replayError);
+  });
+
   it("revokes a continuation queued before an already-settled middleware promise", async () => {
     let queuedNext: Promise<AgentResponse> | undefined;
     let finalHandlerCalls = 0;

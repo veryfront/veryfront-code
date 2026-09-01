@@ -7,9 +7,8 @@ const INVALID_CONTINUATION_MESSAGE =
 const IntrinsicPromiseThen = Promise.prototype.then;
 const INVALID_CONTINUATION_ERRORS = new WeakSet<object>();
 const CONTINUATION_OBSERVATIONS = new WeakMap<object, { observed: boolean }>();
-type DeferredSettlement = "pending" | "valid" | "invalid";
 type ContinuationSpeciesHolder = { [Symbol.species]: PromiseConstructor };
-const DEFERRED_SETTLEMENTS = new WeakMap<object, DeferredSettlement>();
+const SETTLED_DEFERRED_CONTINUATIONS = new WeakSet<object>();
 
 function createInvalidContinuationError(): VeryfrontError {
   const error = MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE });
@@ -30,16 +29,9 @@ function markContinuationObserved(promise: Promise<unknown>): void {
   if (observation) observation.observed = true;
 }
 
-function registerDeferredContinuation(promise: Promise<unknown>): void {
-  DEFERRED_SETTLEMENTS.set(promise, "pending");
-}
-
-function markDeferredSettled(promise: Promise<unknown>, error: unknown): void {
-  if (DEFERRED_SETTLEMENTS.get(promise) !== "pending") return;
-  DEFERRED_SETTLEMENTS.set(
-    promise,
-    isInvalidContinuationError(error) ? "invalid" : "valid",
-  );
+function markDeferredSettled(promise: Promise<unknown>, _error: unknown): void {
+  if (SETTLED_DEFERRED_CONTINUATIONS.has(promise)) return;
+  SETTLED_DEFERRED_CONTINUATIONS.add(promise);
 }
 
 function containRejection(promise: Promise<unknown>): void {
@@ -103,7 +95,6 @@ class DeferredContinuationPromise extends Promise<AgentResponse> {
     ) as Promise<TResult1 | TResult2>;
     lockContinuationSpecies(derived, DEFERRED_CONTINUATION_SPECIES_HOLDER);
     registerContinuation(derived);
-    registerDeferredContinuation(derived);
     observeDeferredSettlement(derived);
     return derived;
   }
@@ -186,7 +177,6 @@ function createDeferredContinuation(
   });
   lockContinuationSpecies(continuation, DEFERRED_CONTINUATION_SPECIES_HOLDER);
   registerContinuation(continuation);
-  registerDeferredContinuation(continuation);
   observeDeferredSettlement(continuation);
   return continuation;
 }
