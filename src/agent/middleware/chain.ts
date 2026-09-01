@@ -34,6 +34,12 @@ function isNativePromiseHandler(handler: unknown): boolean {
     IntrinsicFunctionToString.call(handler).includes("[native code]");
 }
 
+function isPromiseCombinatorObserver(): boolean {
+  const stack = new Error().stack;
+  return typeof stack === "string" &&
+    /at async Promise\.(?:all|allSettled|any|race) \(index \d+\)/.test(stack);
+}
+
 function registerContinuation(promise: Promise<unknown>): void {
   CONTINUATION_OBSERVATIONS.set(promise, { observed: false });
 }
@@ -134,16 +140,21 @@ class DeferredContinuationPromise extends Promise<AgentResponse> {
       state && state.dispatchStarted && !state.settled && !state.skipAdoptionCheck &&
       isNativePromiseHandler(onFulfilled) && isNativePromiseHandler(onRejected)
     ) {
-      const isLaterAdoption = state.adoptionCalls > 0 && !state.adoptionTurnOpen;
-      state.adoptionCalls += 1;
-      if (isLaterAdoption) {
-        state.reject?.(new TypeError("Your middleware continuation cannot resolve to itself"));
-      }
-      if (!state.adoptionTurnOpen) {
-        state.adoptionTurnOpen = true;
-        queueMicrotask(() => {
-          state.adoptionTurnOpen = false;
-        });
+      if (isPromiseCombinatorObserver()) {
+        state.adoptionCalls = 0;
+        state.adoptionTurnOpen = false;
+      } else {
+        const isLaterAdoption = state.adoptionCalls > 0 && !state.adoptionTurnOpen;
+        state.adoptionCalls += 1;
+        if (isLaterAdoption) {
+          state.reject?.(new TypeError("Your middleware continuation cannot resolve to itself"));
+        }
+        if (!state.adoptionTurnOpen) {
+          state.adoptionTurnOpen = true;
+          queueMicrotask(() => {
+            state.adoptionTurnOpen = false;
+          });
+        }
       }
     }
     const derived = IntrinsicPromiseThen.call(

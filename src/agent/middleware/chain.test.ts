@@ -217,6 +217,9 @@ describe("agent/middleware/chain", () => {
       await Promise.resolve();
       const secondFullObserver = deferred!.then(() => response, () => response);
       const allObserver = Promise.all([deferred!, deferred!]);
+      const firstLaterAllObserver = Promise.all([deferred!]);
+      await Promise.resolve();
+      const secondLaterAllObserver = Promise.all([deferred!]);
       const thenResult = deferred!.then(() => response);
       const catchResult = deferred!.catch(() => response);
       const finallyResult = deferred!.finally(() => undefined);
@@ -227,6 +230,8 @@ describe("agent/middleware/chain", () => {
         firstFullObserver,
         secondFullObserver,
         allObserver,
+        firstLaterAllObserver,
+        secondLaterAllObserver,
         thenResult,
         catchResult,
         finallyResult,
