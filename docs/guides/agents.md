@@ -573,6 +573,9 @@ Its lifecycle is:
 - Calling `next()` after the middleware function returns is valid until the
   returned promise settles. Synchronous throws also settle the invocation and
   revoke its continuation.
+- Direct self-resolution of a continuation is rejected with `TypeError`.
+  Indirect promise-adoption cycles are outside this middleware contract and are
+  not diagnosed by the chain.
 
 ## Verify it worked
 
