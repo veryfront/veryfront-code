@@ -340,6 +340,53 @@ class MockRedisAdapter implements RedisAdapter {
       return Promise.resolve(id);
     }
 
+    if (script.includes("indexed-workflow-nack")) {
+      const hash = this.hashes.get(keys[2]!);
+      const liveMessageIds = this.sets.get(keys[6]!);
+      const deliveryId = args[6]!;
+      if (
+        hash?.get("__runDeleting") === "1" ||
+        !liveMessageIds?.has(deliveryId)
+      ) return Promise.resolve("");
+      const id = `${this.nextStreamSequence++}-0`;
+      const stream = this.streams.get(key) ?? [];
+      this.streams.set(
+        key,
+        stream.filter((entry) => entry.id !== deliveryId).concat({
+          id,
+          data: {
+            runId: args[0]!,
+            workflowId: args[1]!,
+            input: args[2]!,
+            priority: args[3]!,
+            createdAt: args[4]!,
+          },
+        }),
+      );
+      let cleanupMessageIds = this.sets.get(keys[1]!);
+      if (!cleanupMessageIds) {
+        cleanupMessageIds = new Set();
+        this.sets.set(keys[1]!, cleanupMessageIds);
+      }
+      cleanupMessageIds.delete(deliveryId);
+      cleanupMessageIds.add(id);
+      liveMessageIds.delete(deliveryId);
+      liveMessageIds.add(id);
+      this.pendingStreamIds.delete(deliveryId);
+      this.deliveredStreamIds.delete(deliveryId);
+      this.queueCleanupAcks.push(deliveryId);
+      if (hash) {
+        hash.set("__terminalRetryQueued", "1");
+        const metadataRaw = this.hashes.get(keys[3]!)?.get(args[0]!);
+        if (metadataRaw) {
+          const metadata = JSON.parse(metadataRaw) as { member: string };
+          this.sortedSets.get(keys[5]!)?.delete(metadata.member);
+        }
+      }
+      this.advanceRunRetentionRevision(keys[2]!, keys[3]!, keys[4]!, args[0]!);
+      return Promise.resolve(id);
+    }
+
     if (script.includes("remove-acknowledged-queue-messages")) {
       const runId = args[0]!;
       const acknowledgedIds = args.slice(2);
@@ -6366,6 +6413,57 @@ describe("RedisBackend", () => {
 
     it("should no-op for non-existent run", async () => {
       await backend.nack("missing");
+    });
+
+    it("atomically requeues only the exact live delivery", async () => {
+      const runId = "run-nack-exact";
+      await backend.createRun({
+        ...createTestRun(runId),
+        status: "failed",
+        completedAt: new Date(2),
+      });
+      await backend.enqueue({
+        runId,
+        workflowId: "wf-1",
+        input: {},
+        createdAt: new Date(3),
+      });
+      const delivery = await backend.dequeue();
+      assertExists(delivery);
+      assertExists(delivery.deliveryId);
+      const callsBeforeNack = mockRedis.scriptCalls.length;
+
+      await backend.nack(runId, delivery.deliveryId);
+
+      const nackCalls = mockRedis.scriptCalls.slice(callsBeforeNack);
+      assertEquals(nackCalls.length, 1);
+      assertStringIncludes(nackCalls[0]!.script, "indexed-workflow-nack");
+      const entries = mockRedis.streams.get("test:stream:schema-v1") ?? [];
+      assertEquals(entries.length, 1);
+      assertEquals(entries[0]?.data.runId, runId);
+      assertEquals(entries[0]?.id === delivery.deliveryId, false);
+
+      await backend.nack(runId, delivery.deliveryId);
+      assertEquals(mockRedis.streams.get("test:stream:schema-v1")?.length, 1);
+    });
+
+    it("does not requeue an already acknowledged delivery receipt", async () => {
+      const runId = "run-nack-stale";
+      await backend.createRun(createTestRun(runId));
+      await backend.enqueue({
+        runId,
+        workflowId: "wf-1",
+        input: {},
+        createdAt: new Date(1),
+      });
+      const delivery = await backend.dequeue();
+      assertExists(delivery);
+      assertExists(delivery.deliveryId);
+      await backend.acknowledge(runId, delivery.deliveryId);
+
+      await backend.nack(runId, delivery.deliveryId);
+
+      assertEquals(mockRedis.streams.get("test:stream:schema-v1") ?? [], []);
     });
   });
 

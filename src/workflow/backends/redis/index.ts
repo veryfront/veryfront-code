@@ -672,6 +672,34 @@ end
 advanceRunRetentionRevision(KEYS[3], KEYS[4], KEYS[5], ARGV[1])
 return id`;
 
+const NACK_RUN_SCRIPT = `-- indexed-workflow-nack
+${ADVANCE_RUN_RETENTION_REVISION_LUA}
+if redis.call('hget', KEYS[3], '${RUN_DELETING_FIELD}') == '1' then return '' end
+if redis.call('sismember', KEYS[7], ARGV[7]) == 0 then return '' end
+local id = redis.call(
+  'xadd',
+  KEYS[1],
+  '*',
+  'runId', ARGV[1],
+  'workflowId', ARGV[2],
+  'input', ARGV[3],
+  'priority', ARGV[4],
+  'createdAt', ARGV[5]
+)
+redis.call('sadd', KEYS[2], id)
+redis.call('sadd', KEYS[7], id)
+redis.pcall('xack', KEYS[1], ARGV[6], ARGV[7])
+redis.call('xdel', KEYS[1], ARGV[7])
+redis.call('srem', KEYS[2], ARGV[7])
+redis.call('srem', KEYS[7], ARGV[7])
+if redis.call('exists', KEYS[3]) == 1 then
+  redis.call('hset', KEYS[3], '${TERMINAL_RETRY_QUEUED_FIELD}', '1')
+  local metadataRaw = redis.call('hget', KEYS[4], ARGV[1])
+  if metadataRaw then redis.call('zrem', KEYS[6], cjson.decode(metadataRaw).member) end
+end
+advanceRunRetentionRevision(KEYS[3], KEYS[4], KEYS[5], ARGV[1])
+return id`;
+
 const REMOVE_ACKNOWLEDGED_QUEUE_MESSAGES_SCRIPT = `-- remove-acknowledged-queue-messages
 ${UPDATE_TERMINAL_RETENTION_INDEX_LUA}
 for index = 3, #ARGV do
@@ -3333,12 +3361,54 @@ export class RedisBackend implements WorkflowBackend {
     }
   }
 
+  private forgetPendingMessageId(runId: string, deliveryId: string): void {
+    const messageIds = this.pendingMessageIds.get(runId);
+    if (!messageIds) return;
+    const messageIndex = findPendingMessageIndex(messageIds, deliveryId);
+    if (messageIndex < 0) return;
+    const remainingIds = reflectApply(arraySlice, messageIds, []) as string[];
+    reflectApply(arraySplice, remainingIds, [messageIndex, 1]);
+    if (remainingIds.length === 0) this.pendingMessageIds.delete(runId);
+    else this.pendingMessageIds.set(runId, remainingIds);
+  }
+
   async nack(runId: string, deliveryId?: string): Promise<void> {
-    // Commit the replacement before acknowledging the old delivery. The
-    // existing retry marker then remains continuous across both Redis turns;
-    // an enqueue failure leaves the original PEL entry available for recovery.
-    await requeueRun(this, runId);
-    await this.acknowledge(runId, deliveryId);
+    if (deliveryId === undefined) {
+      // Preserve the historical no-receipt fallback for custom callers.
+      await requeueRun(this, runId);
+      await this.acknowledge(runId);
+      return;
+    }
+
+    const run = await this.getRun(runId);
+    if (!run) return;
+    const client = await this.ensureClient();
+    const replacementId = await client.eval(
+      NACK_RUN_SCRIPT,
+      [
+        this.config.streamKey,
+        this.queueMessagesKey(runId),
+        this.runKey(runId),
+        this.terminalRunRetentionMembersKey(),
+        this.terminalRunRetentionGenerationKey(),
+        this.terminalRunRetentionIndexKey(),
+        this.liveQueueMessagesKey(runId),
+      ],
+      [
+        run.id,
+        run.workflowId,
+        JSON.stringify(run.input),
+        "0",
+        serializeDateInstant(new DateConstructor()),
+        this.config.groupName,
+        deliveryId,
+      ],
+    );
+    if (replacementId === "") return;
+    if (typeof replacementId !== "string") {
+      throw ORCHESTRATION_ERROR.create({ detail: "Redis returned an invalid nack message ID" });
+    }
+    this.forgetPendingMessageId(runId, deliveryId);
   }
 
   async acquireLock(runId: string, duration: number): Promise<string | null> {
