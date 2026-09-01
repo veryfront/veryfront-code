@@ -34,7 +34,13 @@ export interface RedisBackendConfig extends BackendConfig {
   groupName?: string;
   /** Consumer name (unique per worker) */
   consumerName?: string;
-  /** Default TTL for runs (in seconds) */
+  /**
+   * @deprecated No-op retained for source compatibility.
+   *
+   * Creation-time expiry can remove an active or waiting run while leaving its
+   * checkpoints, approvals, and shared index memberships behind. Delete
+   * terminal runs explicitly instead.
+   */
   runTtl?: number;
   /** Enable debug logging */
   debug?: boolean;

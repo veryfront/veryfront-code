@@ -4514,19 +4514,33 @@ describe("RedisBackend", () => {
   });
 
   describe("runTtl config", () => {
-    it("should set expire when runTtl is configured", async () => {
+    it("does not apply partial creation-time expiry to live run state", async () => {
       const ttlBackend = new RedisBackend({
         client: mockRedis as unknown as RedisAdapter,
         prefix: "ttl:",
         runTtl: 3600,
       });
       await ttlBackend.createRun(createTestRun("run-ttl"));
+      await ttlBackend.updateRun("run-ttl", { status: "waiting" });
+      await ttlBackend.saveCheckpoint("run-ttl", {
+        id: "cp-ttl",
+        nodeId: "gate",
+        timestamp: new Date("2026-01-01T00:00:00Z"),
+        context: { input: {} },
+        nodeStates: {},
+      });
+      await ttlBackend.savePendingApproval("run-ttl", {
+        id: "approval-ttl",
+        nodeId: "gate",
+        status: "pending",
+        requestedAt: new Date("2026-01-01T00:00:00Z"),
+      });
 
-      assertEquals(mockRedis.expiries.has("ttl:schema-v1:run:run-ttl"), true);
-      assertEquals(
-        mockRedis.expiries.get("ttl:schema-v1:run-observation:run-ttl"),
-        3600,
-      );
+      assertEquals(mockRedis.expiries.size, 0);
+      assertEquals((await ttlBackend.getRun("run-ttl"))?.status, "waiting");
+      assertEquals((await ttlBackend.getCheckpoints("run-ttl")).length, 1);
+      assertEquals((await ttlBackend.getPendingApprovals("run-ttl")).length, 1);
+      assertEquals(await ttlBackend.countRuns({}), 1);
     });
   });
 

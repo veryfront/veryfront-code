@@ -1545,11 +1545,6 @@ export class RedisBackend implements WorkflowBackend {
     await client.sadd(this.workflowIndexKey(run.workflowId), run.id);
     await client.sadd(this.allRunsIndexKey(), run.id);
     await client.xadd(this.runObservationKey(run.id), "*", serializeInitialRunObservation(run));
-
-    if (this.config.runTtl) {
-      await client.expire(this.runKey(run.id), this.config.runTtl);
-      await client.expire(this.runObservationKey(run.id), this.config.runTtl);
-    }
   }
 
   async getRun(runId: string): Promise<WorkflowRun | null> {
