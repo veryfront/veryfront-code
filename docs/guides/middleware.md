@@ -33,8 +33,8 @@ const corsMiddleware = cors({
 
 #### Choose who owns preflight
 
-Global `security.cors` owns automatic preflight. Use it when every matching
-route can share one policy:
+Global `security.cors` is authoritative for CORS headers on automatic
+preflight, explicit `OPTIONS`, and actual route responses:
 
 ```ts
 // veryfront.config.ts
@@ -53,37 +53,15 @@ export default defineConfig({
 ```
 
 Method-local `cors()` middleware runs only inside the handler that calls it.
-It does not configure the framework-generated automatic `OPTIONS` response.
+It does not configure the framework-generated automatic `OPTIONS` response and
+cannot override the global policy after route dispatch.
 
-For a route-specific policy, export `OPTIONS` and apply the same policy to the
-actual response. An explicit `OPTIONS` export is authoritative. Veryfront uses
-automatic preflight only when the matched route has no executable `OPTIONS`
-handler. A callable default Pages route is also authoritative for `OPTIONS` and
-must branch on `ctx.request.method` when it owns multiple methods.
-
-```ts
-// app/api/report/route.ts
-import { applyCORSHeaders, type CORSConfig, handleCORSPreflight } from "veryfront/security";
-
-const corsConfig: CORSConfig = {
-  origin: "https://example.com",
-  methods: ["GET", "OPTIONS"],
-  allowedHeaders: ["Authorization"],
-  maxAge: 86400,
-};
-
-export function OPTIONS(request: Request): Promise<Response> {
-  return handleCORSPreflight({ request, config: corsConfig });
-}
-
-export async function GET(request: Request): Promise<Response> {
-  const response = Response.json({ report: "ready" });
-  return await applyCORSHeaders({ request, response, config: corsConfig }) ?? response;
-}
-```
-
-In a Pages API route, use the same exports and policy, accept `APIContext`, and
-pass `ctx.request` to `handleCORSPreflight` and `applyCORSHeaders`.
+An explicit `OPTIONS` export is authoritative for the response status, body,
+and non-CORS headers. Veryfront uses automatic preflight only when the matched
+route has no executable `OPTIONS` handler. A callable default Pages route is
+also authoritative for `OPTIONS` and must branch on `ctx.request.method` when
+it owns multiple methods. Veryfront replaces policy-owned CORS headers on both
+forms with the validated global `security.cors` policy.
 
 ### Rate limiting
 

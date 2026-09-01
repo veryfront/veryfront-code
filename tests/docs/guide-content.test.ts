@@ -134,16 +134,18 @@ describe("guide content contracts", () => {
       new URL("docs/guides/middleware.md", repoRoot),
     );
 
-    assertStringIncludes(guide, "Global `security.cors` owns automatic preflight");
+    assertStringIncludes(
+      guide,
+      "Global `security.cors` is authoritative for CORS headers",
+    );
     assertStringIncludes(
       guide,
       "Method-local `cors()` middleware runs only inside the handler that calls it",
     );
     assertStringIncludes(guide, "An explicit `OPTIONS` export is authoritative");
-    assertStringIncludes(guide, "A callable default Pages route is also authoritative");
-    assertStringIncludes(guide, "export function OPTIONS(request: Request): Promise<Response>");
-    assertStringIncludes(guide, "handleCORSPreflight({ request, config: corsConfig })");
-    assertStringIncludes(guide, "applyCORSHeaders({ request, response, config: corsConfig })");
+    assertStringIncludes(guide, "A callable default Pages route is");
+    assertStringIncludes(guide, "cannot override the global policy after route dispatch");
+    assertStringIncludes(guide, "validated global `security.cors` policy");
   });
 
   it("describes the server-bound workflow approval identity", async () => {

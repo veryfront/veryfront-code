@@ -205,13 +205,18 @@ describe("Guide code example coverage", () => {
 });
 
 describe("Guide: middleware.md", () => {
-  it("uses one route-specific CORS policy for preflight and the actual response", async () => {
-    const corsConfig: CORSConfig = {
-      origin: "https://example.com",
-      methods: ["GET", "OPTIONS"],
-      allowedHeaders: ["Authorization"],
-      maxAge: 86400,
-    };
+  it("uses the global CORS policy for preflight and the actual response", async () => {
+    const config = defineConfig({
+      security: {
+        cors: {
+          origin: "https://example.com",
+          methods: ["GET", "OPTIONS"],
+          allowedHeaders: ["Authorization"],
+          maxAge: 86400,
+        } satisfies CORSConfig,
+      },
+    });
+    const corsConfig = config.security?.cors;
     const preflight = await handleCORSPreflight({
       request: new Request("http://localhost/api/report", {
         method: "OPTIONS",
