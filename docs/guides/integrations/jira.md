@@ -15,7 +15,8 @@ Veryfront API; they are not settings for the generic local `veryfront-code` conn
 ## Before you start
 
 - You are an Atlassian organization administrator using [centralized user management](https://support.atlassian.com/user-management/docs/understand-service-accounts/).
-- You have a Jira Cloud site and the target Jira project key.
+- You have a Jira Cloud site and a company-managed target Jira project key. This walkthrough does
+  not cover team-managed projects, which use a different project-access and role model.
 - Your Veryfront project has Jira enabled and includes the Jira tools the agent may call.
 
 ## 1. Create a Jira service account
@@ -42,6 +43,7 @@ contains the current account-management steps.
 | Edit issues | Edit Issues |
 | Add comments | Add Comments |
 | Change status | Transition Issues |
+| Assign issues | Assign Issues |
 | Search Jira users | Browse users and groups |
 
 Use Jira's [project-permission documentation](https://support.atlassian.com/jira-cloud-administration/docs/permissions-for-company-managed-projects/)
@@ -50,7 +52,8 @@ grant the appropriate service-desk agent permissions.
 
 `Browse users and groups` is a Jira global permission, not a project role. Grant it in Jira
 administration when the agent uses `jira__search_users`; the `read:jira-user` OAuth scope is also
-required for that tool.
+required for that tool. If a tool sets `assignee`, the target user must also be assignable in the
+project.
 
 ## 3. Create the service-account credential
 
@@ -104,8 +107,8 @@ project key before sending the request to Jira.
 
 1. Start a new agent run that calls `jira__list_sites` or `jira__list_projects`.
 2. Confirm the result is from the configured Cloud ID.
-3. After the read check passes, test one write tool against the configured project.
-4. Confirm Jira’s audit history attributes the action to the service account.
+3. If write access is configured, test one write tool against the configured project.
+4. If a write was tested, confirm Jira's audit history attributes the action to the service account.
 
 No browser or Atlassian consent page should open. If it does, check the variable names, selected
 Veryfront environment, Jira project integration, and tool policy. A Cloud ID by itself does not
@@ -117,7 +120,15 @@ For hosted projects, managed Atlassian OAuth does not require project client cre
 Jira connection from the project's integration settings and complete the Atlassian consent flow.
 
 For a self-hosted framework deployment using a custom Atlassian OAuth app, register the deployment
-callback and set these project variables:
+callback as `https://<your-deployment-host>/api/auth/jira/callback`, then grant the scopes used by
+the Jira connector:
+
+- `read:jira-work` for Jira reads.
+- `write:jira-work` for write tools.
+- `read:jira-user` for `jira__search_users`.
+- `offline_access` so the user connection can refresh after the access token expires.
+
+Set these project variables:
 
 | Variable | Value |
 | --- | --- |
