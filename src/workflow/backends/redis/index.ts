@@ -1943,7 +1943,7 @@ export class RedisBackend implements WorkflowBackend {
         COUNT: APPROVAL_RECOVERY_SCAN_COUNT,
       });
       cursor = page.cursor;
-      for (let index = 0; index < page.keys.length; index++) {
+      for (let index = 0; index < page.keys.length; index++) { // NOSONAR: Avoid mutable iterator hooks.
         const runKey = page.keys[index]!;
         const runId = runKey.slice(runPrefix.length);
         cleared += Number(await client.eval(CLEAR_LEGACY_RUN_TTL_SCRIPT, [runKey], []));
