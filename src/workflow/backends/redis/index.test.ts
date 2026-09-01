@@ -61,6 +61,7 @@ class MockRedisAdapter implements RedisAdapter {
   hgetallCallCount = 0;
   keysCallCount = 0;
   queueCleanupAcks: string[] = [];
+  queueConsumerGroupMissing = false;
   scanPageSize?: number;
   scanCalls: Array<{
     cursor: number;
@@ -249,6 +250,9 @@ class MockRedisAdapter implements RedisAdapter {
     }
 
     if (script.includes("clear-run-queue-messages")) {
+      if (this.queueConsumerGroupMissing && script.includes("redis.call('xack'")) {
+        throw new Error("NOGROUP No such key or consumer group");
+      }
       const messageIds = [...(this.sets.get(keys[1]!) ?? [])];
       this.queueCleanupAcks.push(...messageIds);
       const ids = new Set(messageIds);
@@ -391,6 +395,9 @@ class MockRedisAdapter implements RedisAdapter {
     }
 
     if (script.includes("conditional-terminal-run-delete")) {
+      if (this.queueConsumerGroupMissing && script.includes("redis.call('xack'")) {
+        throw new Error("NOGROUP No such key or consumer group");
+      }
       const hash = this.hashes.get(key);
       const retentionMembers = this.hashes.get(keys[16]!);
       const retentionRaw = retentionMembers?.get(args[5]!);
@@ -3165,7 +3172,7 @@ describe("RedisBackend", () => {
       assertStringIncludes(mockRedis.lastScript, "for index = 1, 7");
       assertStringIncludes(mockRedis.lastScript, "for index = 8, 15");
       assertStringIncludes(mockRedis.lastScript, "redis.call('zrem', KEYS[16]");
-      assertStringIncludes(mockRedis.lastScript, "redis.call('xack', KEYS[19]");
+      assertStringIncludes(mockRedis.lastScript, "redis.pcall('xack', KEYS[19]");
       assertStringIncludes(mockRedis.lastScript, "redis.call('xdel', KEYS[19]");
       assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), false);
       assertEquals(await backend.getRun(runId), null);
@@ -3211,6 +3218,28 @@ describe("RedisBackend", () => {
       }
       assertEquals(candidate?.runId, runId);
       assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate!), true);
+      assertEquals(mockRedis.streams.get("test:stream:schema-v1"), []);
+      assertEquals(mockRedis.sets.has(`test:schema-v1:queue-messages:${runId}`), false);
+    });
+
+    it("cleans queued terminal state before its consumer group exists", async () => {
+      const runId = "run-retention-no-consumer-group";
+      await backend.createRun({
+        ...createTestRun(runId),
+        status: "cancelled",
+        completedAt: new Date(2),
+      });
+      await backend.enqueue({
+        runId,
+        workflowId: "wf-1",
+        input: {},
+        createdAt: new Date(1),
+      });
+      mockRedis.queueConsumerGroupMissing = true;
+      const candidate = (await backend.listTerminalRunRetentionCandidates(new Date(10), 2))
+        .candidates[0]!;
+
+      assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), true);
       assertEquals(mockRedis.streams.get("test:stream:schema-v1"), []);
       assertEquals(mockRedis.sets.has(`test:schema-v1:queue-messages:${runId}`), false);
     });

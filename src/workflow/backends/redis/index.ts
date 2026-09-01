@@ -335,7 +335,7 @@ if retentionMetadata then
 end
 local queueIds = redis.call('smembers', KEYS[18])
 for _, queueId in ipairs(queueIds) do
-  redis.call('xack', KEYS[19], ARGV[7], queueId)
+  redis.pcall('xack', KEYS[19], ARGV[7], queueId)
   removed = removed + redis.call('xdel', KEYS[19], queueId)
 end
 removed = removed + redis.call('del', KEYS[18])
@@ -516,7 +516,7 @@ return #ARGV`;
 const CLEAR_RUN_QUEUE_MESSAGES_SCRIPT = `-- clear-run-queue-messages
 local ids = redis.call('smembers', KEYS[2])
 for _, id in ipairs(ids) do
-  redis.call('xack', KEYS[1], ARGV[1], id)
+  redis.pcall('xack', KEYS[1], ARGV[1], id)
   redis.call('xdel', KEYS[1], id)
 end
 redis.call('del', KEYS[2])
