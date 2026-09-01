@@ -7024,6 +7024,17 @@ export default config as const;
         assertStringIncludes(error.message, "Load [path]");
       });
 
+      it("ignores CSI parameters between a consumed colon and URL slashes", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-parameter-after-url-colon-",
+          `throw new Error(${JSON.stringify(`Load s3${escape}[:31//registry.internal/config`)});\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
+      });
+
       it("redacts the full Unicode path after a Unicode authority", async () => {
         const escape = String.fromCharCode(27);
         const error = await loadFailure(
@@ -7061,6 +7072,33 @@ export default config as const;
         assertEquals(error.message.includes("registry"), false);
         assertEquals(error.message.includes("internal"), false);
         assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("extends a reconstructed URL through an accepted raw ASCII tail", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-accepted-raw-url-tail-",
+          `throw new Error(${
+            JSON.stringify(
+              `Load http${escape}[://registry.internal/config/<PRIVATE_SEGMENT>`,
+            )
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message.includes("PRIVATE_SEGMENT"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
+      });
+
+      it("treats colon-separated SGR as zero-width during URL reconstruction", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-colon-sgr-scheme-",
+          `throw new Error(${JSON.stringify(`Status http${escape}[38:5:1mretry`)});\n`,
+        );
+
+        assertStringIncludes(error.message, "Status httpretry");
+        assertEquals(error.message.includes("[url]"), false);
       });
 
       it("fails closed when a CSI-consumed file URL reaches the lookahead bound", async () => {

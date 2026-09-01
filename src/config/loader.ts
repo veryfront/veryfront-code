@@ -2676,18 +2676,30 @@ function matchCsiConsumedNonAsciiUrl(value: string): number {
   return longest;
 }
 
+function extendCsiConsumedUrlMatch(value: string, endIndex: number): number {
+  return rawUrlMatchEnd(value, stringSlice(value, 0, endIndex), endIndex);
+}
+
 function matchCsiConsumedUrlCandidate(value: string): CsiConsumedUrlRedaction | undefined {
   const hasNonAscii = containsNonAscii(value);
   const fileEndIndex = hasNonAscii
     ? matchPatternAtStart(NON_ASCII_FILE_URL_PATH, value) ||
       matchPatternAtStart(FILE_URL_ABSOLUTE_PATH, value)
     : matchPatternAtStart(FILE_URL_ABSOLUTE_PATH, value);
-  if (fileEndIndex !== 0) return { endIndex: fileEndIndex, marker: "[path]" };
+  if (fileEndIndex !== 0) {
+    return {
+      endIndex: extendCsiConsumedUrlMatch(value, fileEndIndex),
+      marker: "[path]",
+    };
+  }
 
   const urlEndIndex = hasNonAscii
     ? matchCsiConsumedNonAsciiUrl(value) || matchCsiConsumedAsciiUrl(value)
     : matchCsiConsumedAsciiUrl(value);
-  return urlEndIndex === 0 ? undefined : { endIndex: urlEndIndex, marker: "[url]" };
+  return urlEndIndex === 0 ? undefined : {
+    endIndex: extendCsiConsumedUrlMatch(value, urlEndIndex),
+    marker: "[url]",
+  };
 }
 
 interface CsiConsumedUrlSpan extends CsiConsumedUrlRedaction {
@@ -2711,13 +2723,35 @@ function appendMappedInputRange(
   }
 }
 
-function csiUrlStructureStart(matched: string): number {
+function appendMappedCsiUrlStructure(
+  candidate: MappedCsiUrlCandidate,
+  input: string,
+  inputStart: number,
+  matched: string,
+): boolean {
+  if (ReflectApply(RegExpPrototypeExec, ANSI_SGR_SEQUENCE, [matched]) !== null) return false;
   const introducerLength = stringSlice(matched, 0, 1) === "\u001B" ? 2 : 1;
   const colon = stringIndexOf(matched, ":", introducerLength);
   const slash = stringIndexOf(matched, "/", introducerLength);
-  if (colon === -1) return slash;
-  if (slash === -1) return colon;
-  return colon < slash ? colon : slash;
+  if (colon === -1 && slash === -1) return false;
+  if (colon !== -1) {
+    appendMappedInputRange(candidate, input, inputStart + colon, inputStart + colon + 1);
+    const suffixStart = slash === -1 ? matched.length - 1 : slash;
+    appendMappedInputRange(
+      candidate,
+      input,
+      inputStart + suffixStart,
+      inputStart + matched.length,
+    );
+    return true;
+  }
+  appendMappedInputRange(
+    candidate,
+    input,
+    inputStart + slash,
+    inputStart + matched.length,
+  );
+  return true;
 }
 
 function appendMappedCsiUrlTail(
@@ -2735,15 +2769,7 @@ function appendMappedCsiUrlTail(
         | null;
       const sequenceEnd = ANSI_CSI_SEQUENCE_AT_INDEX.lastIndex;
       if (sequence !== null && sequenceEnd <= end) {
-        const structureStart = csiUrlStructureStart(sequence[0]);
-        if (structureStart !== -1) {
-          appendMappedInputRange(
-            candidate,
-            input,
-            index + structureStart,
-            sequenceEnd,
-          );
-        }
+        appendMappedCsiUrlStructure(candidate, input, index, sequence[0]);
         index = sequenceEnd;
         continue;
       }
@@ -2767,19 +2793,12 @@ function csiConsumedUrlSpan(
   if (prefix === undefined || prefix.startIndex < outputOffset) return undefined;
 
   const matched = match[0];
-  const structureStart = csiUrlStructureStart(matched);
-  if (structureStart === -1) return undefined;
   const lookaheadEnd = MathMin(value.length, matchEnd + MAX_CSI_CONSUMED_URL_LOOKAHEAD);
   const candidate: MappedCsiUrlCandidate = {
     inputEnds: prefix.inputEnds,
     value: prefix.value,
   };
-  appendMappedInputRange(
-    candidate,
-    value,
-    match.index + structureStart,
-    matchEnd,
-  );
+  if (!appendMappedCsiUrlStructure(candidate, value, match.index, matched)) return undefined;
   appendMappedCsiUrlTail(candidate, value, matchEnd, lookaheadEnd);
   const redaction = matchCsiConsumedUrlCandidate(candidate.value);
   const reachesLookaheadBound = redaction?.endIndex === candidate.value.length &&
