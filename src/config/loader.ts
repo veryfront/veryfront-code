@@ -1956,6 +1956,11 @@ interface CsiRestorationStates {
 
 type CsiUrlPayloadKind = "generic" | "special" | "none";
 
+interface ClassifiedCsiUrlPayload {
+  kind: CsiUrlPayloadKind;
+  payloadIndex: number;
+}
+
 const MAX_GENERIC_URL_SCHEME_LENGTH = 32;
 const MAX_CSI_LITERAL_GAP = MAX_GENERIC_URL_SCHEME_LENGTH * 2;
 const MAX_CSI_RECONSTRUCTION_MATCHES = 64;
@@ -2141,8 +2146,7 @@ function markCompleteCsiSequenceStarts(
 function classifyCsiUrlPayload(
   value: string,
   colonIndex: number,
-  stripSequenceStarts: Set<number>,
-): CsiUrlPayloadKind {
+): ClassifiedCsiUrlPayload {
   const firstSlashIndex = skipCompleteCsiSequences(value, colonIndex + 1);
   let payloadIndex: number;
   let payload: CsiUrlPayloadKind;
@@ -2159,15 +2163,7 @@ function classifyCsiUrlPayload(
       payload = hasRedactableCsiUrlPayload(value, payloadIndex) ? "generic" : "none";
     }
   }
-  if (payload !== "none") {
-    markCompleteCsiSequenceStarts(
-      value,
-      colonIndex + 1,
-      payloadIndex,
-      stripSequenceStarts,
-    );
-  }
-  return payload;
+  return { kind: payload, payloadIndex };
 }
 
 function advanceGenericCsiLiteral(
@@ -2207,13 +2203,22 @@ function advanceCsiSchemeLiteral(
   stripSequenceStarts: Set<number>,
 ): CsiRestorationStates {
   if (value === ":") {
-    const payload = classifyCsiUrlPayload(input, inputIndex, stripSequenceStarts);
-    if (payload === "generic") {
+    const payload = classifyCsiUrlPayload(input, inputIndex);
+    let path: readonly number[] | undefined;
+    if (payload.kind === "generic") {
       const special = chooseCompletedSpecialCsiPath(states.special, true);
-      const path = special ?? chooseCompletedGenericCsiPath(states.generic)?.matches;
+      path = special ?? chooseCompletedGenericCsiPath(states.generic)?.matches;
+    } else if (payload.kind === "special") {
+      path = chooseCompletedSpecialCsiPath(states.special, false);
+    }
+    if (path !== undefined) {
       markCsiSchemePath(path, restoreMatches);
-    } else if (payload === "special") {
-      markCsiSchemePath(chooseCompletedSpecialCsiPath(states.special, false), restoreMatches);
+      markCompleteCsiSequenceStarts(
+        input,
+        inputIndex + 1,
+        payload.payloadIndex,
+        stripSequenceStarts,
+      );
     }
     return createCsiRestorationStates();
   }
@@ -2735,7 +2740,9 @@ function appendMappedCsiUrlStructure(
   const slash = stringIndexOf(matched, "/", introducerLength);
   if (colon === -1 && slash === -1) return false;
   if (colon !== -1) {
-    appendMappedInputRange(candidate, input, inputStart + colon, inputStart + colon + 1);
+    if (!stringEndsWith(candidate.value, ":")) {
+      appendMappedInputRange(candidate, input, inputStart + colon, inputStart + colon + 1);
+    }
     const suffixStart = slash === -1 ? matched.length - 1 : slash;
     appendMappedInputRange(
       candidate,

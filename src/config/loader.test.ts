@@ -7035,6 +7035,31 @@ export default config as const;
         assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
       });
 
+      it("reuses a literal generic colon before CSI-consumed slashes", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-literal-colon-before-consumed-slashes-",
+          `throw new Error(${
+            JSON.stringify(`Load s3:${escape}[:31//registry.internal/config`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
+      });
+
+      it("preserves a CSI-glued local path when no URL scheme is selected", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-non-url-colon-before-glued-path-",
+          `throw new Error(${JSON.stringify(`Load C:${escape}[/Users/alice/config.ts`)});\n`,
+        );
+
+        assertEquals(error.message.includes("Users"), false);
+        assertEquals(error.message.includes("alice"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load C: [path]");
+      });
+
       it("redacts the full Unicode path after a Unicode authority", async () => {
         const escape = String.fromCharCode(27);
         const error = await loadFailure(
