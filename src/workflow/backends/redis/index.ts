@@ -68,6 +68,7 @@ const REDIS_STORAGE_SCHEMA_VERSION = "schema-v1";
 const REDIS_STORAGE_SCHEMA_NAMESPACE = `${REDIS_STORAGE_SCHEMA_VERSION}:`;
 const RUN_OBSERVATION_APPROVAL_SCHEMA_VERSION = "approvals-v1";
 const RUN_OBSERVATION_REVISION_FIELD = "__runObservationRevision";
+const RUN_RETENTION_REVISION_FIELD = "__runRetentionRevision";
 const TERMINAL_COMPLETED_AT_MS_FIELD = "__terminalCompletedAtMs";
 const RUN_OBSERVATION_STREAM_MAX_LENGTH = 64;
 const RUN_OBSERVATION_POLL_INTERVAL_MS = 20;
@@ -313,7 +314,7 @@ if runExists ~= 0 then
   local workflowId = redis.call('hget', KEYS[1], 'workflowId')
   local createdAt = redis.call('hget', KEYS[1], 'createdAt')
   local completedAt = redis.call('hget', KEYS[1], 'completedAt')
-  local revision = redis.call('hget', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}') or '0'
+  local revision = redis.call('hget', KEYS[1], '${RUN_RETENTION_REVISION_FIELD}') or '0'
   if status ~= ARGV[1] or workflowId ~= ARGV[2] or createdAt ~= ARGV[3] or
       completedAt ~= ARGV[4] or revision ~= ARGV[5] then return 0 end
   if status ~= 'completed' and status ~= 'failed' and status ~= 'cancelled' then return 0 end
@@ -371,7 +372,7 @@ local function updateTerminalRetentionIndex(
   if not score then return 0 end
   local workflowId = redis.call('hget', runKey, 'workflowId')
   local createdAt = redis.call('hget', runKey, 'createdAt')
-  local revision = tonumber(redis.call('hget', runKey, '${RUN_OBSERVATION_REVISION_FIELD}') or '0')
+  local revision = tonumber(redis.call('hget', runKey, '${RUN_RETENTION_REVISION_FIELD}') or '0')
   if not workflowId or not createdAt then return 0 end
   local member = cjson.encode({ completedAt, runId })
   if oldMember and oldMember ~= member then redis.call('zrem', indexKey, oldMember) end
@@ -416,7 +417,7 @@ return redis.call(
   'createdAt',
   'status',
   'completedAt',
-  '${RUN_OBSERVATION_REVISION_FIELD}'
+  '${RUN_RETENTION_REVISION_FIELD}'
 )`;
 
 const SCAN_TERMINAL_RUN_KEYS_SCRIPT = `-- scan-terminal-retention-run-keys
@@ -438,7 +439,7 @@ for _, member in ipairs(members) do
     'createdAt',
     'status',
     'completedAt',
-    '${RUN_OBSERVATION_REVISION_FIELD}'
+    '${RUN_RETENTION_REVISION_FIELD}'
   )
   local terminal = values[3] == 'completed' or values[3] == 'failed' or
     values[3] == 'cancelled'
@@ -475,7 +476,8 @@ end
 return result`;
 
 const BACKFILL_QUEUE_MESSAGE_INDEX_SCRIPT = `-- backfill-workflow-queue-message-index
-local entries = redis.call('xrange', KEYS[1], ARGV[1], '+', 'COUNT', ARGV[2])
+if ARGV[4] == '0-0' then return { '1', '' } end
+local entries = redis.call('xrange', KEYS[1], ARGV[1], ARGV[4], 'COUNT', ARGV[2])
 local lastId = ''
 for _, entry in ipairs(entries) do
   local id = entry[1]
@@ -488,8 +490,13 @@ for _, entry in ipairs(entries) do
   end
   lastId = id
 end
-local complete = #entries < tonumber(ARGV[2]) and '1' or '0'
+local complete = (#entries < tonumber(ARGV[2]) or lastId == ARGV[4]) and '1' or '0'
 return { complete, lastId }`;
+
+const READ_QUEUE_HIGH_WATER_SCRIPT = `-- read-workflow-queue-high-water
+local entries = redis.call('xrevrange', KEYS[1], '+', '-', 'COUNT', 1)
+if #entries == 0 then return '0-0' end
+return entries[1][1]`;
 
 const ENQUEUE_RUN_SCRIPT = `-- indexed-workflow-enqueue
 local id = redis.call(
@@ -582,6 +589,7 @@ if not claimed then return 0 end
 redis.call('hset', KEYS[1], 'workerId', ARGV[2], 'heartbeatAt', ARGV[4])
 if not started or started == '' then redis.call('hset', KEYS[1], 'startedAt', ARGV[4]) end
 local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
+redis.call('hincrby', KEYS[1], '${RUN_RETENTION_REVISION_FIELD}', 1)
 local status = redis.call('hget', KEYS[1], 'status')
 local sourceNodes = cjson.decode(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
 local nodes = {}
@@ -650,6 +658,7 @@ if nextStatus ~= '' and old ~= nextStatus then
 end
 for i = 6, #ARGV, 2 do applyPatchField(ARGV[i], ARGV[i + 1]) end
 local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
+redis.call('hincrby', KEYS[1], '${RUN_RETENTION_REVISION_FIELD}', 1)
 local status = redis.call('hget', KEYS[1], 'status')
 updateTerminalRetentionIndex(KEYS[1], KEYS[2], KEYS[3], ARGV[1], '')
 local rawNodes = redis.call('hget', KEYS[1], 'nodeStates') or '{}'
@@ -728,6 +737,7 @@ for i = expectedCount + 9, #ARGV, 2 do
   applyPatchField(ARGV[i], ARGV[i + 1])
 end
 local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
+redis.call('hincrby', KEYS[1], '${RUN_RETENTION_REVISION_FIELD}', 1)
 local status = redis.call('hget', KEYS[1], 'status')
 updateTerminalRetentionIndex(KEYS[1], KEYS[2], KEYS[3], runId, '')
 local sourceNodes = cjson.decode(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
@@ -1105,6 +1115,7 @@ if not retainApprovals(KEYS[2], tonumber(ARGV[2])) then return 2 end
 redis.call('rpush', KEYS[2], ARGV[1])
 if redis.call('exists', KEYS[1]) == 0 then return 0 end
 local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
+redis.call('hincrby', KEYS[1], '${RUN_RETENTION_REVISION_FIELD}', 1)
 local status = redis.call('hget', KEYS[1], 'status')
 local sourceNodes = cjson.decode(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
 local nodes = {}
@@ -1197,6 +1208,7 @@ if not retainApprovals(KEYS[2], tonumber(ARGV[expectedCount + 4])) then
 end
 redis.call('rpush', KEYS[2], ARGV[expectedCount + 3])
 local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
+redis.call('hincrby', KEYS[1], '${RUN_RETENTION_REVISION_FIELD}', 1)
 local sourceNodes = cjson.decode(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
 local nodes = {}
 for nodeId, node in pairs(sourceNodes) do
@@ -1247,6 +1259,7 @@ return 1`;
  * the LSET would clobber the wrong element.
  *
  * KEYS[1] = approvals list key
+ * KEYS[2] = run hash key
  * ARGV[1] = approval id
  * ARGV[2] = patch, JSON-encoded (date fields already ISO strings via toJSON)
  *
@@ -1295,6 +1308,7 @@ for i = 0, len - 1 do
       local updated = mergeJsonObjects(raw, ARGV[2], true)
       updated = deleteJsonObjectFields(updated, ARGV[3], true)
       redis.call('lset', KEYS[1], i, updated)
+      redis.call('hincrby', KEYS[2], '${RUN_RETENTION_REVISION_FIELD}', 1)
       return 1
     end
   end
@@ -1398,6 +1412,7 @@ export class RedisBackend implements WorkflowBackend {
   private terminalRetentionBackfillCursor = "0";
   private terminalRetentionRunBackfillComplete = false;
   private terminalRetentionQueueBackfillCursor = "-";
+  private terminalRetentionQueueBackfillHighWater: string | null = null;
   private terminalRetentionQueueBackfillComplete = false;
   private terminalRetentionRepairInFlight: Promise<boolean> | null = null;
 
@@ -1535,6 +1550,7 @@ export class RedisBackend implements WorkflowBackend {
         ? ""
         : String(reflectApply(dateGetTime, run.completedAt, []) as number),
       [RUN_OBSERVATION_REVISION_FIELD]: "0",
+      [RUN_RETENTION_REVISION_FIELD]: "0",
     };
   }
 
@@ -2194,6 +2210,19 @@ export class RedisBackend implements WorkflowBackend {
     client: RedisAdapter,
     limit: number,
   ): Promise<boolean> {
+    if (this.terminalRetentionQueueBackfillHighWater === null) {
+      const highWater = await client.eval(
+        READ_QUEUE_HIGH_WATER_SCRIPT,
+        [this.config.streamKey],
+        [],
+      );
+      if (typeof highWater !== "string") {
+        throw ORCHESTRATION_ERROR.create({
+          detail: "Redis returned an invalid workflow queue high-water mark",
+        });
+      }
+      this.terminalRetentionQueueBackfillHighWater = highWater;
+    }
     const raw = await client.eval(
       BACKFILL_QUEUE_MESSAGE_INDEX_SCRIPT,
       [this.config.streamKey],
@@ -2201,6 +2230,7 @@ export class RedisBackend implements WorkflowBackend {
         this.terminalRetentionQueueBackfillCursor,
         String(limit),
         `${this.storagePrefix()}queue-messages:`,
+        this.terminalRetentionQueueBackfillHighWater,
       ],
     );
     if (
@@ -2246,6 +2276,7 @@ export class RedisBackend implements WorkflowBackend {
     ) return false;
     this.terminalRetentionRunBackfillComplete = false;
     this.terminalRetentionQueueBackfillComplete = false;
+    this.terminalRetentionQueueBackfillHighWater = null;
     return true;
   }
 
@@ -2631,7 +2662,7 @@ export class RedisBackend implements WorkflowBackend {
       },"decisionData":${serializedDecisionData}}`;
     const result = await client.eval(
       UPDATE_APPROVAL_SCRIPT,
-      [this.approvalsKey(runId)],
+      [this.approvalsKey(runId), this.runKey(runId)],
       [
         approvalId,
         serializedPatch,

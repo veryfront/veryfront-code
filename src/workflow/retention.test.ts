@@ -166,6 +166,37 @@ describe("workflow terminal-run retention", () => {
     );
   });
 
+  it("does not delete an approval decision accepted after discovery", async () => {
+    class ApprovalRaceBackend extends MemoryBackend {
+      override async deleteTerminalRunIfUnchanged(
+        candidate: TerminalRunRetentionCandidate,
+      ): Promise<boolean> {
+        await this.updateApproval(candidate.runId, "approval", {
+          approved: true,
+          approver: "operator",
+        });
+        return await super.deleteTerminalRunIfUnchanged(candidate);
+      }
+    }
+
+    const backend = new ApprovalRaceBackend();
+    await backend.createRun(run("approval-race", "failed", new Date(2)));
+    await backend.savePendingApproval("approval-race", {
+      id: "approval",
+      nodeId: "gate",
+      status: "pending",
+      message: "Continue?",
+      requestedAt: new Date(1),
+    });
+
+    assertEquals(
+      await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
+      { supported: true, examined: 1, deleted: 0, hasMore: true },
+    );
+    assertEquals((await backend.getPendingApprovals("approval-race")).length, 0);
+    assertEquals((await backend.getRun("approval-race"))?.status, "failed");
+  });
+
   it("uses the bounded retention query instead of hydrating every run", async () => {
     class NoFullListBackend extends MemoryBackend {
       override listRuns(): Promise<WorkflowRun[]> {

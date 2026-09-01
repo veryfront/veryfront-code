@@ -1232,6 +1232,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (sourceDecisionData === undefined) delete currentApproval.decisionData;
     else currentApproval.decisionData = decisionData;
     currentApproval.reconciliationPending = true;
+    this.runRevisions.set(runId, (this.runRevisions.get(runId) ?? 0) + 1);
     return Promise.resolve(true);
   }
 

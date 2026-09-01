@@ -267,9 +267,14 @@ class MockRedisAdapter implements RedisAdapter {
     if (script.includes("backfill-workflow-queue-message-index")) {
       const start = args[0]!;
       const limit = Number(args[1]);
+      const highWater = args[3]!;
       const startSequence = start === "-" ? -1 : Number(start.replace("(", "").split("-")[0]);
+      const highWaterSequence = Number(highWater.split("-")[0]);
       const entries = (this.streams.get(key) ?? [])
-        .filter(({ id }) => Number(id.split("-")[0]) > startSequence)
+        .filter(({ id }) => {
+          const sequence = Number(id.split("-")[0]);
+          return sequence > startSequence && sequence <= highWaterSequence;
+        })
         .slice(0, limit);
       for (const entry of entries) {
         if (!entry.data.runId) continue;
@@ -282,9 +287,13 @@ class MockRedisAdapter implements RedisAdapter {
         messageIds.add(entry.id);
       }
       return Promise.resolve([
-        entries.length < limit ? "1" : "0",
+        entries.length < limit || entries.at(-1)?.id === highWater ? "1" : "0",
         entries.at(-1)?.id ?? "",
       ]);
+    }
+
+    if (script.includes("read-workflow-queue-high-water")) {
+      return Promise.resolve(this.streams.get(key)?.at(-1)?.id ?? "0-0");
     }
 
     if (script.includes("refresh-terminal-retention-index")) {
@@ -328,7 +337,7 @@ class MockRedisAdapter implements RedisAdapter {
         hash?.get("createdAt") ?? null,
         hash?.get("status") ?? null,
         hash?.get("completedAt") ?? null,
-        hash?.get("__runObservationRevision") ?? null,
+        hash?.get("__runRetentionRevision") ?? null,
       ]);
     }
 
@@ -363,7 +372,7 @@ class MockRedisAdapter implements RedisAdapter {
         if (
           mapped?.member === member && hash?.get("workflowId") &&
           hash.get("createdAt") && terminal && hash.get("completedAt") === completedAt &&
-          hash.get("__runObservationRevision")
+          hash.get("__runRetentionRevision")
         ) {
           result.push([
             runId,
@@ -371,7 +380,7 @@ class MockRedisAdapter implements RedisAdapter {
             hash.get("createdAt"),
             status,
             completedAt,
-            hash.get("__runObservationRevision"),
+            hash.get("__runRetentionRevision"),
           ]);
         } else if (
           mapped?.member === member && !hash && mapped.workflowId && mapped.createdAt &&
@@ -417,7 +426,7 @@ class MockRedisAdapter implements RedisAdapter {
         hash !== undefined &&
         (hash.get("status") !== args[0] || hash.get("workflowId") !== args[1] ||
           hash.get("createdAt") !== args[2] || hash.get("completedAt") !== args[3] ||
-          (hash.get("__runObservationRevision") ?? "0") !== args[4])
+          (hash.get("__runRetentionRevision") ?? "0") !== args[4])
       ) {
         return Promise.resolve(0);
       }
@@ -702,6 +711,11 @@ class MockRedisAdapter implements RedisAdapter {
             Object.assign(approval, patch);
             for (const field of deletedFields) delete approval[field];
             list[i] = serializeWorkflowJson(approval, "approval");
+            const runHash = this.hashes.get(keys[1]!);
+            if (runHash) {
+              const revision = Number(runHash.get("__runRetentionRevision") ?? "0") + 1;
+              runHash.set("__runRetentionRevision", String(revision));
+            }
             return Promise.resolve(1);
           }
         }
@@ -1025,7 +1039,7 @@ class MockRedisAdapter implements RedisAdapter {
         createdAt: hash.get("createdAt"),
         status,
         completedAt,
-        revision: Number(hash.get("__runObservationRevision") ?? "0"),
+        revision: Number(hash.get("__runRetentionRevision") ?? "0"),
       }),
     );
     return true;
@@ -1038,6 +1052,8 @@ class MockRedisAdapter implements RedisAdapter {
   ): number {
     const revision = Number(hash.get("__runObservationRevision") ?? "0") + 1;
     hash.set("__runObservationRevision", String(revision));
+    const retentionRevision = Number(hash.get("__runRetentionRevision") ?? "0") + 1;
+    hash.set("__runRetentionRevision", String(retentionRevision));
     const sourceNodes = JSON.parse(hash.get("nodeStates") ?? "{}") as Record<
       string,
       { status: string; attempt: number; error?: string }
@@ -3401,6 +3417,7 @@ describe("RedisBackend", () => {
       const hash = mockRedis.hashes.get(`test:schema-v1:run:${runId}`)!;
       hash.set("completedAt", new Date(20).toISOString());
       hash.set("__runObservationRevision", "1");
+      hash.set("__runRetentionRevision", "1");
 
       const batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 1);
 
@@ -3424,6 +3441,36 @@ describe("RedisBackend", () => {
 
       assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), false);
       assertEquals((await backend.getRun(runId))?.error?.message, "Late diagnostic");
+    });
+
+    it("fences retention against an approval decision after discovery", async () => {
+      const runId = "retention-approval-decision";
+      await backend.createRun({
+        ...createTestRun(runId),
+        status: "failed",
+        completedAt: new Date(2),
+      });
+      await backend.savePendingApproval(runId, {
+        id: "approval",
+        nodeId: "gate",
+        status: "pending",
+        message: "Continue?",
+        requestedAt: new Date(1),
+      });
+      const candidate = (await backend.listTerminalRunRetentionCandidates(new Date(10), 1))
+        .candidates[0]!;
+
+      assertEquals(
+        await backend.updateApproval(runId, "approval", {
+          approved: true,
+          approver: "operator",
+        }),
+        true,
+      );
+
+      assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), false);
+      assertEquals((await backend.getRun(runId))?.status, "failed");
+      assertEquals((await backend.getPendingApprovals(runId)).length, 0);
     });
 
     it("indexes terminal transitions and removes a retried run", async () => {
@@ -3556,6 +3603,37 @@ describe("RedisBackend", () => {
         found = batch.candidates.some((candidate) => candidate.runId === legacyRunId);
       }
       assertEquals(found, true);
+    });
+
+    it("bounds queue repair at a fixed stream high-water mark", async () => {
+      const runId = "retention-busy-queue";
+      await backend.createRun({
+        ...createTestRun(runId),
+        status: "completed",
+        completedAt: new Date(2),
+      });
+      await mockRedis.xadd("test:stream:schema-v1", "*", {
+        runId: "legacy-unrelated",
+        workflowId: "wf-1",
+        input: "{}",
+        priority: "0",
+        createdAt: new Date(1).toISOString(),
+      });
+
+      let candidate: TerminalRunRetentionCandidate | undefined;
+      for (let attempt = 0; attempt < 10 && candidate === undefined; attempt++) {
+        candidate = (await backend.listTerminalRunRetentionCandidates(new Date(10), 1))
+          .candidates[0];
+        await mockRedis.xadd("test:stream:schema-v1", "*", {
+          runId: `current-${attempt}`,
+          workflowId: "wf-1",
+          input: "{}",
+          priority: "0",
+          createdAt: new Date(1).toISOString(),
+        });
+      }
+
+      assertEquals(candidate?.runId, runId);
     });
 
     it("coalesces concurrent retention repair on one backend instance", async () => {
