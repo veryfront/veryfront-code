@@ -292,13 +292,16 @@ class MockRedisAdapter implements RedisAdapter {
           throw new Error("NOGROUP No such key or consumer group");
         }
       }
-      const messageIds = [...(this.sets.get(keys[1]!) ?? [])];
+      const messageIdSet = this.sets.get(keys[1]!);
+      const messageIds = [...(messageIdSet ?? [])].slice(0, Number(args[1]));
+      for (const messageId of messageIds) messageIdSet?.delete(messageId);
       this.queueCleanupAcks.push(...messageIds);
       const ids = new Set(messageIds);
       const stream = this.streams.get(key);
       if (stream) this.streams.set(key, stream.filter(({ id }) => !ids.has(id)));
-      this.sets.delete(keys[1]!);
-      return Promise.resolve(messageIds.length);
+      const hasMore = (messageIdSet?.size ?? 0) > 0;
+      if (!hasMore) this.sets.delete(keys[1]!);
+      return Promise.resolve([String(messageIds.length), hasMore ? "1" : "0"]);
     }
 
     if (script.includes("backfill-workflow-queue-message-index")) {
@@ -3243,6 +3246,66 @@ describe("RedisBackend", () => {
         mockRedis.streams.has("test:schema-v1:run-observation:run-d1"),
         false,
       );
+    });
+
+    it("cleans a direct-deletion queue in bounded Redis turns", async () => {
+      const runId = "run-direct-bounded-queue-cleanup";
+      await backend.createRun(createTestRun(runId));
+      for (let index = 0; index < 101; index++) {
+        await backend.enqueue({
+          runId,
+          workflowId: "wf-1",
+          input: { index },
+          createdAt: new Date(index),
+        });
+      }
+
+      await backend.deleteRun(runId);
+
+      const cleanupCalls = mockRedis.scriptCalls.filter(({ script }) =>
+        script.includes("clear-run-queue-messages")
+      );
+      assertEquals(cleanupCalls.length, 2);
+      for (const call of cleanupCalls) {
+        assertEquals(call.script.includes("smembers"), false);
+        assertStringIncludes(call.script, "spop");
+        assertEquals(call.args, ["test:group:schema-v1", "100"]);
+      }
+      assertEquals(await backend.getRun(runId), null);
+      assertEquals(mockRedis.streams.get("test:stream:schema-v1"), []);
+    });
+
+    it("keeps direct-deletion run state when bounded queue cleanup is interrupted", async () => {
+      const runId = "run-direct-interrupted-queue-cleanup";
+      await backend.createRun(createTestRun(runId));
+      for (let index = 0; index < 101; index++) {
+        await backend.enqueue({
+          runId,
+          workflowId: "wf-1",
+          input: { index },
+          createdAt: new Date(index),
+        });
+      }
+      const realEval = mockRedis.eval.bind(mockRedis);
+      let cleanupTurns = 0;
+      mockRedis.eval = (script: string, keys: string[], args: string[]) => {
+        if (script.includes("clear-run-queue-messages") && ++cleanupTurns === 2) {
+          return Promise.reject(new Error("queue cleanup interrupted"));
+        }
+        return realEval(script, keys, args);
+      };
+
+      await assertRejects(
+        () => backend.deleteRun(runId),
+        Error,
+        "queue cleanup interrupted",
+      );
+      assertExists(await backend.getRun(runId));
+
+      mockRedis.eval = realEval;
+      await backend.deleteRun(runId);
+      assertEquals(await backend.getRun(runId), null);
+      assertEquals(mockRedis.streams.get("test:stream:schema-v1"), []);
     });
 
     it("should no-op for non-existent run", async () => {

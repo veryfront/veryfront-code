@@ -579,13 +579,14 @@ if redis.call('scard', KEYS[2]) == 0 then redis.call('del', KEYS[2]) end
 return #ARGV`;
 
 const CLEAR_RUN_QUEUE_MESSAGES_SCRIPT = `-- clear-run-queue-messages
-local ids = redis.call('smembers', KEYS[2])
+local ids = redis.call('spop', KEYS[2], tonumber(ARGV[2]))
 for _, id in ipairs(ids) do
   redis.pcall('xack', KEYS[1], ARGV[1], id)
   redis.call('xdel', KEYS[1], id)
 end
-redis.call('del', KEYS[2])
-return #ids`;
+local hasMore = redis.call('scard', KEYS[2]) > 0 and '1' or '0'
+if hasMore == '0' then redis.call('del', KEYS[2]) end
+return { tostring(#ids), hasMore }`;
 
 function parseRedisTerminalRetentionCandidate(row: unknown): TerminalRunRetentionCandidate {
   if (
@@ -2239,6 +2240,7 @@ export class RedisBackend implements WorkflowBackend {
     const run = await this.getRun(runId);
     if (!run) return;
 
+    await this.clearRunQueueMessages(client, runId);
     await client.del(
       this.runKey(runId),
       this.checkpointsKey(runId),
@@ -2255,12 +2257,37 @@ export class RedisBackend implements WorkflowBackend {
       [this.terminalRunRetentionIndexKey(), this.terminalRunRetentionMembersKey()],
       [runId],
     );
-    await client.eval(
-      CLEAR_RUN_QUEUE_MESSAGES_SCRIPT,
-      [this.config.streamKey, this.queueMessagesKey(runId)],
-      [this.config.groupName],
-    );
     this.pendingMessageIds.delete(runId);
+  }
+
+  private async clearRunQueueMessages(client: RedisAdapter, runId: string): Promise<void> {
+    let hasMore = true;
+    while (hasMore) {
+      const raw = await client.eval(
+        CLEAR_RUN_QUEUE_MESSAGES_SCRIPT,
+        [this.config.streamKey, this.queueMessagesKey(runId)],
+        [this.config.groupName, String(TERMINAL_RETENTION_QUEUE_CLEANUP_LIMIT)],
+      );
+      if (
+        !arrayIsArray(raw) || raw.length !== 2 || typeof raw[0] !== "string" ||
+        (raw[1] !== "0" && raw[1] !== "1")
+      ) {
+        throw ORCHESTRATION_ERROR.create({
+          detail: "Redis returned an invalid run queue cleanup result",
+        });
+      }
+      const cleaned = Number(raw[0]);
+      if (
+        !numberIsSafeInteger(cleaned) || cleaned < 0 ||
+        cleaned > TERMINAL_RETENTION_QUEUE_CLEANUP_LIMIT ||
+        (cleaned === 0 && raw[1] === "1")
+      ) {
+        throw ORCHESTRATION_ERROR.create({
+          detail: "Redis returned an invalid run queue cleanup count",
+        });
+      }
+      hasMore = raw[1] === "1";
+    }
   }
 
   async deleteTerminalRunIfUnchanged(
