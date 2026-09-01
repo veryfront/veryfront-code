@@ -26,7 +26,9 @@ import { VERSION } from "#veryfront/utils/version.ts";
 import { createFileSystem, isNotFoundError, realPath } from "#veryfront/platform/compat/fs.ts";
 import { getOsType } from "#veryfront/platform/compat/process.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { STAT_OPERATION_EXTENSION_PRIORITY } from "#veryfront/platform/adapters/fs/veryfront/extension-priority.ts";
+import { wrapAdapterWithSecurity } from "#veryfront/security/secure-fs.ts";
 import {
   dirname,
   fromFileUrl,
@@ -864,6 +866,34 @@ function releaseLogicalPathFromMaterializedPath(
 export const releaseAssetBuildInternals = Object.freeze({
   releaseLogicalPathFromMaterializedPath,
 });
+
+/**
+ * Bind transforms to the immutable source snapshot materialized for this build.
+ *
+ * Hosted execution enters through a request-scoped Veryfront API adapter. That
+ * adapter remains the authority used to fetch the release once, but absolute
+ * paths beneath `tempDir` belong to the build-owned local snapshot. Sending
+ * those paths back to the project API returns 404 and leaves aliases or
+ * relative imports unresolved during finalization.
+ */
+async function createMaterializedReleaseTransformAdapter(
+  adapter: RuntimeAdapter,
+  tempDir: string,
+): Promise<RuntimeAdapter> {
+  const localAdapter = await getLocalAdapter();
+  const securedLocalAdapter = wrapAdapterWithSecurity(localAdapter, {
+    baseDir: tempDir,
+    context: "module-loading",
+  });
+  return {
+    ...adapter,
+    fs: Object.freeze({
+      ...securedLocalAdapter.fs,
+      symlinkSemantics: "none" as const,
+      projectContextSemantics: "fixed" as const,
+    }),
+  };
+}
 
 /**
  * Import edges of an App Router server module, read from its authored source.
@@ -3200,6 +3230,7 @@ async function runBuildInner(
   // Bytes are held per-hash only until uploaded, then dropped (M3).
   const pendingBytes = createPendingAssetStore();
   const knownPaths = new Set(sourceByPath.keys());
+  const transformAdapter = await createMaterializedReleaseTransformAdapter(input.adapter, tempDir);
   const vendorDependencies = input.dependencyMode === "immutable";
   const configuredVendor = input.vendorHttpImports;
   const vendorHttpImports = vendorDependencies ? configuredVendor : undefined;
@@ -3329,7 +3360,7 @@ async function runBuildInner(
           tempDir,
           knownPaths,
           projectImportAliases,
-          input.adapter,
+          transformAdapter,
         );
         serverModuleImports.set(logicalPath, imports);
         // Everything a server module reaches is server code by default. A
@@ -3369,7 +3400,7 @@ async function runBuildInner(
     }
     let code: string;
     try {
-      code = await transform(source, sourceFile, tempDir, input.adapter, {
+      code = await transform(source, sourceFile, tempDir, transformAdapter, {
         projectId: input.projectId,
         dev: false,
         ssr: false,
@@ -3647,7 +3678,7 @@ async function runBuildInner(
   const frameworkDependencies = await buildFrameworkDependencies(
     {
       projectId: input.projectId,
-      adapter: input.adapter,
+      adapter: transformAdapter,
       reactVersion: releaseReactVersion,
       allowHttp: !vendorDependencies,
       requestedSpecifiers: requestedFrameworkSpecifiers,

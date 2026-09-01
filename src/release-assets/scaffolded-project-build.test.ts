@@ -351,4 +351,74 @@ describe("release assets: scaffolded project build", () => {
       );
     });
   }
+
+  it("resolves project imports from the materialized release instead of the remote adapter", async () => {
+    const outsideDir = await tmp();
+    const outsidePath = `${outsideDir}/outside-project.ts`;
+    await Deno.writeTextFile(outsidePath, 'export const outside = "must-not-be-read";');
+    const sources = [
+      {
+        path: "pages/index.mdx",
+        content: 'import { Card } from "@/components/Card"\n\n<Card />',
+      },
+      {
+        path: "components/Card.tsx",
+        content: 'export function Card() { return <div className="p-4">ready</div>; }',
+      },
+      {
+        path: "package.json",
+        content: JSON.stringify({ dependencies: { react: "19.2.4", "react-dom": "19.2.4" } }),
+      },
+    ];
+    const remoteReads: string[] = [];
+    const remoteAdapter = {
+      ...fsAdapter,
+      fs: {
+        ...fsAdapter.fs,
+        readFile(path: string): Promise<string> {
+          remoteReads.push(path);
+          return Promise.reject(new Error(`Unexpected remote release read: ${path}`));
+        },
+      },
+    } as RuntimeAdapter;
+    const rec: Recorded = { uploads: [], manifest: null, states: [] };
+    let escapedRead = false;
+
+    const result = await runReleaseAssetBuild({
+      projectReference: "remote-project",
+      projectId: "proj-uuid",
+      releaseId: "rel-uuid",
+      releaseVersion: 1,
+      releaseVersionRef: "rel-uuid",
+      adapter: remoteAdapter,
+      dependencyMode: "source",
+      loadConfig: () => Promise.resolve({ experimental: { rsc: true } } as VeryfrontConfig),
+      client: makeClient(sources, rec, "remote-project"),
+      transform: async (source, sourceFile, projectDir, adapter, options) => {
+        try {
+          escapedRead ||= (await adapter.fs.readFile(outsidePath)).includes("must-not-be-read");
+        } catch {
+          // The materialized adapter must reject paths outside this release.
+        }
+        return await transformToESM(source, sourceFile, projectDir, adapter, {
+          projectId: options.projectId,
+          dev: options.dev,
+          ssr: options.ssr,
+          reactVersion: options.reactVersion,
+        });
+      },
+    }, await tmp());
+
+    assertEquals(result.error, undefined);
+    assertEquals(result.success, true);
+    assertEquals(result.state, "ready");
+    assertEquals(remoteReads, []);
+    assertEquals(escapedRead, false);
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    assertEquals(
+      Object.keys(manifest.modules).sort(),
+      ["components/Card.tsx", "pages/index.mdx"],
+    );
+  });
 });
