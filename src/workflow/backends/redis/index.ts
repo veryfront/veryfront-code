@@ -1576,16 +1576,19 @@ export class RedisBackend implements WorkflowBackend {
     const setNonEmptyArrayField = (fieldKey: string, value: unknown[] | undefined) => {
       if (value !== undefined && value.length > 0) fields[fieldKey] = JSON.stringify(value);
     };
+    const setDefinedField = (fieldKey: string, value: unknown, serialized: string) => {
+      if (value !== undefined) fields[fieldKey] = serialized;
+    };
     setOwnedField("workerId", "workerId", patch.workerId ?? "");
     setOwnedField(
       "output",
       "output",
       patch.output !== undefined ? JSON.stringify(patch.output) : "",
     );
-    if (patch.nodeStates !== undefined) fields.nodeStates = JSON.stringify(patch.nodeStates);
+    setDefinedField("nodeStates", patch.nodeStates, JSON.stringify(patch.nodeStates));
     setNonEmptyArrayField("nodeStateDeletes", patch.nodeStateDeletes);
-    if (patch.currentNodes !== undefined) fields.currentNodes = JSON.stringify(patch.currentNodes);
-    if (preparedContext !== undefined) fields.context = preparedContext.serialized;
+    setDefinedField("currentNodes", patch.currentNodes, JSON.stringify(patch.currentNodes));
+    setDefinedField("context", preparedContext, preparedContext?.serialized ?? "");
     const contextDeletes = [...patch.contextDeletes ?? []];
     if (preparedContext !== undefined) {
       const normalizedContext = preparedContext.normalized as Record<string, unknown>;
@@ -1600,11 +1603,13 @@ export class RedisBackend implements WorkflowBackend {
     setOwnedField("startedAt", "startedAt", patch.startedAt?.toISOString() ?? "");
     setOwnedField("heartbeatAt", "heartbeatAt", patch.heartbeatAt?.toISOString() ?? "");
     setOwnedField("completedAt", "completedAt", patch.completedAt?.toISOString() ?? "");
-    if (Object.hasOwn(patch, "completedAt")) {
-      fields[TERMINAL_COMPLETED_AT_MS_FIELD] = patch.completedAt === undefined
+    setOwnedField(
+      "completedAt",
+      TERMINAL_COMPLETED_AT_MS_FIELD,
+      patch.completedAt === undefined
         ? ""
-        : String(reflectApply(dateGetTime, patch.completedAt, []) as number);
-    }
+        : String(reflectApply(dateGetTime, patch.completedAt, []) as number),
+    );
     setOwnedField("_traceContext", "traceContext", patch._traceContext ?? "");
     return fields;
   }
@@ -2173,11 +2178,13 @@ export class RedisBackend implements WorkflowBackend {
       });
     }
     const [nextCursor, keys] = page;
-    for (let index = 0; index < keys.length; index++) {
-      if (typeof keys[index] !== "string") continue;
+    let keyIndex = 0;
+    while (keyIndex < keys.length) {
+      const key = keys[keyIndex++];
+      if (typeof key !== "string") continue;
       const values = await client.eval(
         READ_TERMINAL_RETENTION_FIELDS_SCRIPT,
-        [keys[index]],
+        [key],
         [],
       );
       if (!arrayIsArray(values) || values.length !== 6) continue;
