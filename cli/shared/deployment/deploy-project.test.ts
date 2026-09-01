@@ -17,7 +17,7 @@ import {
   VeryfrontError,
 } from "veryfront/errors";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { relative } from "veryfront/platform/path";
+import { fromFileUrl, relative } from "veryfront/platform/path";
 import { createApiClient } from "../config.ts";
 import { computeSourceDigest, writePushReceipt } from "../deployment-provenance.ts";
 import {
@@ -124,6 +124,7 @@ async function executeApply(
 const EXCHANGED_SESSION_TOKEN =
   "eyJhbGciOiJSUzI1NiJ9.eyJ1c2VySWQiOiJ1XzEiLCJ0b2tlblVzZSI6ImVudmlyb25tZW50X2FjY2VzcyJ9.sig";
 const API_KEY_TOKEN = "vf_d157f0000000000000000000000000000000000";
+const REPOSITORY_ROOT = fromFileUrl(new URL("../../../", import.meta.url));
 
 describe("DeployProject", () => {
   it("prefers the request projectSlug over configured project references", async () => {
@@ -303,7 +304,7 @@ describe("DeployProject", () => {
         const deployment = createDeployProject({
           controlPlaneFactory: () => controlPlane,
         });
-        const relativeProjectDir = relative(Deno.cwd(), projectDir);
+        const relativeProjectDir = relative(REPOSITORY_ROOT, projectDir);
 
         const outcome = await deployment.execute({
           projectDir: relativeProjectDir,

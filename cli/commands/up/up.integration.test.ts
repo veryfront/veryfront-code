@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
-import { join, relative } from "#veryfront/compat/path/index.ts";
+import { fromFileUrl, join, relative } from "#veryfront/compat/path/index.ts";
 import {
   exists,
   makeTempDir,
@@ -36,6 +36,8 @@ import { stripAnsi } from "../../ui/ansi.ts";
 function getSlug(dirName: string): string {
   return dirName.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
 }
+
+const REPOSITORY_ROOT = fromFileUrl(new URL("../../../", import.meta.url));
 
 async function listDirNames(
   dir: string,
@@ -313,7 +315,7 @@ async function runUp(options: UpRunOptions = {}): Promise<UpRun> {
       }, () =>
         upCommand(
           {
-            projectDir: relativeProjectDir ? relative(Deno.cwd(), projectDir) : projectDir,
+            projectDir: relativeProjectDir ? relative(REPOSITORY_ROOT, projectDir) : projectDir,
             dryRun,
           },
           undefined,
