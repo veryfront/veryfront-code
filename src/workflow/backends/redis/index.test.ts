@@ -222,6 +222,9 @@ class MockRedisAdapter implements RedisAdapter {
       for (let index = 3; index < args.length; index += 2) {
         hash.set(args[index]!, args[index + 1]!);
       }
+      const generation = Number(this.store.get(keys[7]!) ?? "0") + 1;
+      this.store.set(keys[7]!, String(generation));
+      hash.set("__runRetentionRevision", String(generation));
       this.hashes.set(key, hash);
       for (let index = 1; index <= 3; index++) {
         let members = this.sets.get(keys[index]!);
@@ -3459,26 +3462,15 @@ describe("RedisBackend", () => {
         completedAt,
       } as const;
       await backend.createRun(original);
+      const candidate = (await backend.listTerminalRunRetentionCandidates(
+        new Date("2027-01-01T00:00:00Z"),
+        1,
+      )).candidates[0]!;
       await backend.deleteRun(runId);
-      const replacement = {
-        ...createTestRun(runId),
-        createdAt: new Date(original.createdAt.getTime() + 1),
-        status: "completed",
-        completedAt,
-      } as const;
+      const replacement = { ...original };
       await backend.createRun(replacement);
 
-      assertEquals(
-        await backend.deleteTerminalRunIfUnchanged({
-          runId,
-          workflowId: "wf-1",
-          createdAt: original.createdAt,
-          status: "completed",
-          completedAt,
-          revision: 0,
-        }),
-        false,
-      );
+      assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), false);
       assertEquals((await backend.getRun(runId))?.createdAt, replacement.createdAt);
     });
 

@@ -419,9 +419,11 @@ end`;
 
 const CREATE_RUN_SCRIPT = `-- indexed-run-create
 ${UPDATE_TERMINAL_RETENTION_INDEX_LUA}
+local generation = redis.call('incr', KEYS[8])
 for index = 4, #ARGV, 2 do
   redis.call('hset', KEYS[1], ARGV[index], ARGV[index + 1])
 end
+redis.call('hset', KEYS[1], '${RUN_RETENTION_REVISION_FIELD}', tostring(generation))
 redis.call('sadd', KEYS[2], ARGV[1])
 redis.call('sadd', KEYS[3], ARGV[1])
 redis.call('sadd', KEYS[4], ARGV[1])
@@ -1576,6 +1578,10 @@ export class RedisBackend implements WorkflowBackend {
     return `${this.storagePrefix()}index:terminal-completed-at-members`;
   }
 
+  private terminalRunRetentionGenerationKey(): string {
+    return `${this.storagePrefix()}index:terminal-retention-generation`;
+  }
+
   /** Enumerate only runs explicitly indexed in the current storage schema. */
   private enumerateAllRunIds(client: RedisAdapter): Promise<string[]> {
     return client.smembers(this.allRunsIndexKey());
@@ -1997,6 +2003,7 @@ export class RedisBackend implements WorkflowBackend {
         this.runObservationKey(run.id),
         this.terminalRunRetentionIndexKey(),
         this.terminalRunRetentionMembersKey(),
+        this.terminalRunRetentionGenerationKey(),
       ],
       [
         run.id,

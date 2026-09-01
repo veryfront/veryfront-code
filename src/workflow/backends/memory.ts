@@ -456,6 +456,7 @@ export class MemoryBackend implements WorkflowBackend {
   private stalledClaims = new Map<string, { workerId: string; expiresAt: number }>();
   private runRevisions = new Map<string, number>();
   private runRetentionRevisions = new Map<string, number>();
+  private nextRunRetentionGeneration = 0;
   private runObservers = new Map<string, Set<MemoryRunObserver>>();
   private config: MemoryBackendConfig;
 
@@ -494,7 +495,7 @@ export class MemoryBackend implements WorkflowBackend {
       cloneWorkflowRunWithContext(runForClone, context),
     );
     this.runRevisions.set(run.id, 0);
-    this.runRetentionRevisions.set(run.id, 0);
+    this.runRetentionRevisions.set(run.id, this.nextRunRetentionGeneration++);
     return Promise.resolve();
   }
 
@@ -765,19 +766,18 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.resolve(false);
     }
     const run = this.runs.get(candidate.runId);
-    if (run !== undefined) {
-      const createdAt = reflectApply(dateGetTime, run.createdAt, []) as number;
-      const completedAt = run.completedAt === undefined
-        ? undefined
-        : reflectApply(dateGetTime, run.completedAt, []) as number;
-      if (
-        run.workflowId !== candidate.workflowId || run.status !== candidate.status ||
-        createdAt !== expectedCreatedAt || completedAt !== expectedCompletedAt ||
-        this.runRetentionRevisions.get(candidate.runId) !== candidate.revision ||
-        (run.status !== "completed" && run.status !== "failed" && run.status !== "cancelled")
-      ) {
-        return Promise.resolve(false);
-      }
+    if (run === undefined) return Promise.resolve(false);
+    const createdAt = reflectApply(dateGetTime, run.createdAt, []) as number;
+    const completedAt = run.completedAt === undefined
+      ? undefined
+      : reflectApply(dateGetTime, run.completedAt, []) as number;
+    if (
+      run.workflowId !== candidate.workflowId || run.status !== candidate.status ||
+      createdAt !== expectedCreatedAt || completedAt !== expectedCompletedAt ||
+      this.runRetentionRevisions.get(candidate.runId) !== candidate.revision ||
+      (run.status !== "completed" && run.status !== "failed" && run.status !== "cancelled")
+    ) {
+      return Promise.resolve(false);
     }
     return Promise.resolve(this.deleteRunState(candidate.runId));
   }

@@ -307,6 +307,37 @@ describe("workflow terminal-run retention", () => {
     assertEquals((await backend.getRun("event-race"))?.status, "failed");
   });
 
+  it("does not delete an exact recreation through a stale candidate", async () => {
+    const backend = new MemoryBackend();
+    const retained = run("memory-reused-id", "failed", new Date(2));
+    await backend.createRun(retained);
+    const candidate = (await backend.listTerminalRunRetentionCandidates(new Date(10), 1))
+      .candidates[0]!;
+    await backend.deleteRun(retained.id);
+    await backend.createRun(retained);
+
+    assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), false);
+    assertEquals((await backend.getRun(retained.id))?.status, "failed");
+  });
+
+  it("does not delete orphan state accepted after the selected run disappeared", async () => {
+    const backend = new MemoryBackend();
+    const retained = run("memory-stale-orphan", "failed", new Date(2));
+    await backend.createRun(retained);
+    const candidate = (await backend.listTerminalRunRetentionCandidates(new Date(10), 1))
+      .candidates[0]!;
+    await backend.deleteRun(retained.id);
+    await backend.appendRunEvent(retained.id, {
+      id: "orphan-event",
+      eventName: "retry.ready",
+      payload: {},
+      publishedAt: new Date(3),
+    });
+
+    assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), false);
+    assertEquals((await backend.peekRunEvent(retained.id, "retry.ready"))?.id, "orphan-event");
+  });
+
   it("uses the bounded retention query instead of hydrating every run", async () => {
     class NoFullListBackend extends MemoryBackend {
       override listRuns(): Promise<WorkflowRun[]> {

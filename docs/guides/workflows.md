@@ -611,13 +611,15 @@ records per sweep without hydrating run input, output, or context. Completion
 times use numeric Redis scores, so ordering stays chronological for every valid
 JavaScript `Date`. Each call requests one run-key `SCAN` page with `COUNT limit`
 and reads at most `limit` queue entries. Redis completes both repair cycles
-before returning candidates and starts new cycles on later maintenance calls.
-The queue cycle uses a fixed stream high-water mark, so current queue traffic
-does not keep a repair cycle open forever.
+before returning candidates. Once both finish, that backend instance queries
+the completed index directly and does not restart repair between deletion
+batches. A new backend instance performs its own bounded repair. The queue
+cycle uses a fixed stream high-water mark, so current queue traffic does not
+keep the one-time repair open forever.
 
 Deploy the version that provides retention to every workflow worker, and stop
-older workers, before starting this maintenance loop. The repair cycles backfill
-terminal states and queue entries written before deployment, but they are not a
+older workers, before starting this maintenance loop. The one-time repair backfills
+terminal states and queue entries written before deployment, but it is not a
 synchronization boundary for a legacy writer that remains active. During a
-repair cycle, `hasMore` can be `true` even when one sweep examines no eligible
+repair, `hasMore` can be `true` even when one sweep examines no eligible
 runs, so continue until it becomes `false` as shown above.
