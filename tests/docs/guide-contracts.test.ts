@@ -692,7 +692,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "jira__list_projects",
       "Project settings → People",
       "Browse users and groups",
-      "Assign Issues",
+      "Edit Issues + Assign Issues",
       "read:jira-user",
       "Activity/History",
       "/api/auth/jira/callback",

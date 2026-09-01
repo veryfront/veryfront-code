@@ -43,7 +43,7 @@ contains the current account-management steps.
 | Edit issues | Edit Issues |
 | Add comments | Add Comments |
 | Change status | Transition Issues |
-| Assign issues | Assign Issues |
+| Set or change an assignee | Edit Issues + Assign Issues |
 | Search Jira users | Browse users and groups |
 
 Use Jira's [project-permission documentation](https://support.atlassian.com/jira-cloud-administration/docs/permissions-for-company-managed-projects/)
@@ -57,7 +57,7 @@ listed in the table; an issue can still be hidden by its issue-security level.
 `Browse users and groups` is a Jira global permission, not a project role. Grant it in Jira
 administration when the agent uses `jira__search_users`; the `read:jira-user` OAuth scope is also
 required for that tool. If a tool sets `assignee`, the target user must also be assignable in the
-project.
+project; assigning an issue therefore requires both `Edit Issues` and `Assign Issues`.
 
 ## 3. Create the service-account credential
 
