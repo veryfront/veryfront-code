@@ -9,10 +9,11 @@ const INVALID_CONTINUATION_ERRORS = new WeakSet<object>();
 const CONTINUATION_OBSERVATIONS = new WeakMap<object, { observed: boolean }>();
 type ContinuationSpeciesHolder = { [Symbol.species]: PromiseConstructor };
 interface DeferredContinuationState {
+  adoptionCalls: number;
   dispatchStarted: boolean;
   reject?: (reason?: unknown) => void;
   settled: boolean;
-  thenCalls: number;
+  skipAdoptionCheck: boolean;
 }
 const DEFERRED_CONTINUATION_STATES = new WeakMap<object, DeferredContinuationState>();
 
@@ -104,9 +105,10 @@ class DeferredContinuationPromise extends Promise<AgentResponse> {
     });
     DEFERRED_CONTINUATION_STATES.set(this, {
       dispatchStarted: false,
+      adoptionCalls: 0,
       reject: rejectCapability,
       settled: false,
-      thenCalls: 0,
+      skipAdoptionCheck: false,
     });
   }
 
@@ -120,9 +122,12 @@ class DeferredContinuationPromise extends Promise<AgentResponse> {
   ): Promise<TResult1 | TResult2> {
     markContinuationObserved(this);
     const state = DEFERRED_CONTINUATION_STATES.get(this);
-    if (state && state.dispatchStarted && !state.settled) {
-      state.thenCalls += 1;
-      if (state.thenCalls > 1) {
+    if (
+      state && state.dispatchStarted && !state.settled && !state.skipAdoptionCheck &&
+      onFulfilled && onRejected
+    ) {
+      state.adoptionCalls += 1;
+      if (state.adoptionCalls > 1) {
         state.reject?.(new TypeError("Your middleware continuation cannot resolve to itself"));
       }
     }
@@ -135,6 +140,16 @@ class DeferredContinuationPromise extends Promise<AgentResponse> {
     registerContinuation(derived);
     observeDeferredSettlement(derived);
     return derived;
+  }
+
+  override finally(onFinally?: (() => void | PromiseLike<void>) | null): Promise<AgentResponse> {
+    const state = DEFERRED_CONTINUATION_STATES.get(this);
+    if (state) state.skipAdoptionCheck = true;
+    try {
+      return Promise.prototype.finally.call(this, onFinally);
+    } finally {
+      if (state) state.skipAdoptionCheck = false;
+    }
   }
 }
 
@@ -182,9 +197,10 @@ function observeDeferredSettlement(promise: Promise<unknown>): void {
 function createDeferredContinuation(
   isSettled: () => boolean,
   dispatch: () => Promise<AgentResponse>,
+  waitForSettlementObservation = false,
 ): Promise<AgentResponse> {
   const continuation = new DeferredContinuationPromise((resolve, reject) => {
-    const scheduled = IntrinsicPromiseThen.call(Promise.resolve(), () => {
+    const schedule = () => {
       if (isSettled()) {
         const error = createInvalidContinuationError();
         markDeferredSettled(continuation, error);
@@ -208,7 +224,14 @@ function createDeferredContinuation(
           reject(error);
         },
       );
-    });
+    };
+    const schedulingPromise = Promise.resolve();
+    const scheduled = waitForSettlementObservation
+      ? IntrinsicPromiseThen.call(
+        IntrinsicPromiseThen.call(schedulingPromise, () => undefined),
+        schedule,
+      )
+      : IntrinsicPromiseThen.call(schedulingPromise, schedule);
     void IntrinsicPromiseThen.call(scheduled, undefined, (error: unknown) => {
       markDeferredSettled(continuation, error);
       reject(error);
@@ -248,10 +271,7 @@ export class MiddlewareChain {
               let middlewareResultSettled = false;
               let middlewareObservingResult = false;
               const next = (): Promise<AgentResponse> => {
-                if (
-                  nextCalled || middlewareSettled || middlewareResultSettled ||
-                  middlewareObservingResult
-                ) {
+                if (nextCalled || middlewareSettled || middlewareResultSettled) {
                   return rejectInvalidContinuation();
                 }
                 nextCalled = true;
@@ -259,6 +279,7 @@ export class MiddlewareChain {
                   return createDeferredContinuation(
                     () => middlewareSettled || middlewareResultSettled,
                     () => dispatch(middlewareIndex + 1),
+                    middlewareObservingResult,
                   );
                 }
                 return dispatch(middlewareIndex + 1);

@@ -181,6 +181,50 @@ describe("agent/middleware/chain", () => {
     assertInstanceOf(error, TypeError);
   });
 
+  it("allows multiple observers on a deferred continuation", async () => {
+    let deferred: Promise<AgentResponse> | undefined;
+    let releaseMiddleware: ((value: AgentResponse) => void) | undefined;
+    let releaseFinal: ((value: AgentResponse) => void) | undefined;
+    const finalStarted = Promise.withResolvers<void>();
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        queueMicrotask(() => {
+          deferred = next();
+        });
+        return new Promise<AgentResponse>((resolve) => {
+          releaseMiddleware = resolve;
+        });
+      },
+    ]);
+
+    const execution = chain.execute(context, () => {
+      finalStarted.resolve();
+      return new Promise<AgentResponse>((resolve) => {
+        releaseFinal = resolve;
+      });
+    });
+    let timeoutId: number | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timeoutId = setTimeout(
+        () => reject(new Error("deferred continuation observers did not dispatch")),
+        100,
+      );
+    });
+
+    try {
+      await Promise.race([finalStarted.promise, timeout]);
+      const thenResult = deferred!.then(() => response);
+      const catchResult = deferred!.catch(() => response);
+      const finallyResult = deferred!.finally(() => undefined);
+      releaseFinal!(response);
+      releaseMiddleware!(response);
+      await execution;
+      await Promise.all([thenResult, catchResult, finallyResult]);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  });
+
   it("revokes a retained continuation after a synchronous middleware throw", async () => {
     let retainedNext: (() => Promise<AgentResponse>) | undefined;
     const middlewareError = new Error("middleware failed synchronously");
@@ -278,6 +322,46 @@ describe("agent/middleware/chain", () => {
     );
     await assertRejects(() => queuedNext!, VeryfrontError, replayError);
     assertEquals(finalHandlerCalls, 0);
+  });
+
+  it("allows a species-hook continuation while the middleware result is pending", async () => {
+    let retainedNext: (() => Promise<AgentResponse>) | undefined;
+    let releaseResult: ((value: AgentResponse) => void) | undefined;
+    const finalStarted = Promise.withResolvers<void>();
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        retainedNext = next;
+        class PendingSpeciesPromise<T> extends Promise<T> {
+          static override get [Symbol.species](): PromiseConstructor {
+            retainedNext?.();
+            return Promise;
+          }
+        }
+        return new PendingSpeciesPromise<AgentResponse>((resolve) => {
+          releaseResult = resolve;
+        });
+      },
+    ]);
+
+    const execution = chain.execute(context, () => {
+      finalStarted.resolve();
+      return Promise.resolve(response);
+    });
+    let timeoutId: number | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timeoutId = setTimeout(
+        () => reject(new Error("pending species continuation did not dispatch")),
+        100,
+      );
+    });
+
+    try {
+      await Promise.race([finalStarted.promise, timeout]);
+      releaseResult!(response);
+      assertEquals(await execution, response);
+    } finally {
+      clearTimeout(timeoutId);
+    }
   });
 
   it("revokes a continuation queued before a rejected promise subclass settles", async () => {
