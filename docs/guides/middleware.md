@@ -22,7 +22,8 @@ The pipeline works in both router styles. The route module wrapper changes:
 
 For App and Pages API routes, configure CORS globally.
 Global `security.cors` is authoritative for CORS headers on automatic
-preflight, explicit `OPTIONS`, and actual route responses:
+preflight, explicit `OPTIONS`, and actual route responses. This authority applies
+at the API router boundary:
 
 ```ts
 // veryfront.config.ts
@@ -49,6 +50,10 @@ cannot override the global policy after route dispatch.
 Use method-local `cors()` only in a lower-level pipeline whose response does
 not return through the Veryfront API router, such as a custom server adapter.
 Do not use it to configure CORS for an App or Pages API route.
+
+Root middleware resumes after the route returns and can change the final wire
+response after this boundary. Do not set policy-owned CORS headers in root
+middleware unless it deliberately owns the final CORS policy for that request.
 
 An explicit `OPTIONS` export is authoritative for the response status, body,
 and non-CORS headers. Veryfront uses automatic preflight only when the matched
@@ -151,7 +156,8 @@ curl -i http://localhost:3000/api/users
 
 The response includes non-CORS headers added by the middleware that matched the
 request. The API router replaces policy-owned CORS headers with the global
-`security.cors` policy after the handler returns.
+`security.cors` policy after the handler returns. Root middleware can
+subsequently change the response, so keep CORS ownership in one layer.
 
 > **`handle()` vs `execute()`.** `execute()` is a lower-level variant with **no terminal handler**: it returns the short-circuiting middleware's `Response`, or a synthesized **404 Not Found** when the chain passes through. It always resolves to a `Response` (never `undefined`), so `if (await pipeline.execute(request))` is always truthy; use `execute()` only when a middleware is always expected to produce the response. For the common "middleware, then my route handler" case, prefer `handle()`.
 

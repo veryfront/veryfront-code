@@ -117,16 +117,18 @@ describe("guide content contracts", () => {
       new URL("docs/guides/workflows-advanced.md", repoRoot),
     );
 
-    assertStringIncludes(guide, "export function OPTIONS(request: Request): Response");
-    assertStringIncludes(guide, '"Access-Control-Allow-Origin": applicationOrigin');
-    assertStringIncludes(guide, '"Access-Control-Allow-Credentials": "true"');
-    assertStringIncludes(guide, '"Access-Control-Allow-Methods": "GET, POST, OPTIONS"');
+    assertStringIncludes(guide, "security: {");
+    assertStringIncludes(guide, 'origin: "https://app.example.com"');
+    assertStringIncludes(guide, 'methods: ["GET", "POST", "OPTIONS"]');
     assertStringIncludes(
       guide,
-      '"Access-Control-Allow-Headers": "Authorization, Content-Type, X-CSRF-Token"',
+      'allowedHeaders: ["Authorization", "Content-Type", "X-CSRF-Token"]',
     );
-    assertStringIncludes(guide, "return cors(request, await handlers.GET(request));");
-    assertStringIncludes(guide, "return cors(request, await handlers.POST(request));");
+    assertStringIncludes(guide, "credentials: true");
+    assertStringIncludes(guide, "export const GET = handlers.GET;");
+    assertStringIncludes(guide, "export const POST = handlers.POST;");
+    assertEquals(guide.includes("export function OPTIONS"), false);
+    assertEquals(guide.includes("return cors(request"), false);
   });
 
   it("documents who owns automatic and route-specific CORS preflight", async () => {
@@ -155,6 +157,8 @@ describe("guide content contracts", () => {
       "An unauthenticated preflight for an auth-protected route is the exception",
     );
     assertStringIncludes(guide, "without executing the explicit handler");
+    assertStringIncludes(guide, "at the API router boundary");
+    assertStringIncludes(guide, "Root middleware resumes after the route returns");
     assertEquals(
       guide.includes('import { cors } from "veryfront/middleware";'),
       false,
