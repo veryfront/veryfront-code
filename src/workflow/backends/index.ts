@@ -6,6 +6,7 @@ export type {
   BackendConfig,
   Lock,
   WorkflowBackend,
+  WorkflowQueueDelivery,
   WorkflowRunObservation,
   WorkflowRunObservedState,
   WorkflowRunUpdate,

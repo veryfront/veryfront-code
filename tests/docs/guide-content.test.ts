@@ -171,6 +171,20 @@ describe("guide content contracts", () => {
     );
   });
 
+  it("requires a worker drain and a long-lived Redis retention backend", async () => {
+    const guide = await Deno.readTextFile(
+      new URL("docs/guides/workflows.md", repoRoot),
+    );
+
+    assertStringIncludes(guide, "stop every workflow worker");
+    assertStringIncludes(guide, "Repeat this drain if you replace the maintenance backend");
+    assertStringIncludes(guide, "running it beside active workers can duplicate their work");
+    assertStringIncludes(guide, "async function runScheduler(): Promise<never>");
+    assertStringIncludes(guide, "await runSweep();");
+    assertStringIncludes(guide, "await runScheduler();");
+    assertStringIncludes(guide, "every scheduled sweep reuses");
+  });
+
   it("describes the server-bound workflow approval identity", async () => {
     const guide = await Deno.readTextFile(
       new URL("docs/guides/workflows.md", repoRoot),

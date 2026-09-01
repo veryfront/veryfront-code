@@ -27,6 +27,8 @@ import {
   type PersistedPendingEventWait,
   type RunEventDeliveryClaim,
   type RunEventEnvelope,
+  type TerminalRunRetentionBatch,
+  type TerminalRunRetentionCandidate,
   type WorkflowBackend,
   type WorkflowRunObservation,
   type WorkflowRunObservedState,
@@ -53,6 +55,12 @@ import { requireWorkflowSourceIntegrationPolicy } from "../source-integration-po
 const logger = baseLogger.component("memory-backend");
 const ArrayConstructor = Array;
 const arrayIsArray = Array.isArray;
+const arrayFilter = Array.prototype.filter;
+const arrayPop = Array.prototype.pop;
+const arraySome = Array.prototype.some;
+const arraySplice = Array.prototype.splice;
+const DateConstructor = Date;
+const dateGetTime = Date.prototype.getTime;
 const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -61,7 +69,9 @@ const objectKeys = Object.keys;
 const objectPrototype = Object.prototype;
 const jsonParse = JSON.parse;
 const mathFloor = Math.floor;
+const numberIsFinite = Number.isFinite;
 const numberIsNaN = Number.isNaN;
+const numberIsSafeInteger = Number.isSafeInteger;
 const NUMBER_MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
 const reflectApply = Reflect.apply;
 const SetConstructor = Set;
@@ -89,6 +99,58 @@ interface MaterializedMemoryRunUpdate {
   readonly nodeStatePatch: WorkflowRun["nodeStates"] | undefined;
   readonly nodeStateDeleteKeys: string[];
   readonly storedPatch: WorkflowRunUpdate;
+}
+
+function memoryTerminalRetentionCandidate(
+  run: WorkflowRun,
+  cutoff: number,
+  revision: number,
+): TerminalRunRetentionCandidate | undefined {
+  if (
+    run.status !== "completed" && run.status !== "failed" &&
+    run.status !== "cancelled"
+  ) return undefined;
+  if (run.completedAt === undefined) return undefined;
+  const completedAt = reflectApply(dateGetTime, run.completedAt, []) as number;
+  const createdAt = reflectApply(dateGetTime, run.createdAt, []) as number;
+  if (!numberIsFinite(completedAt) || !numberIsFinite(createdAt) || completedAt >= cutoff) {
+    return undefined;
+  }
+  return {
+    runId: run.id,
+    workflowId: run.workflowId,
+    createdAt: new DateConstructor(createdAt),
+    status: run.status,
+    completedAt: new DateConstructor(completedAt),
+    revision,
+  };
+}
+
+function compareTerminalRetentionCandidates(
+  left: TerminalRunRetentionCandidate,
+  right: TerminalRunRetentionCandidate,
+): number {
+  const leftCompletedAt = reflectApply(dateGetTime, left.completedAt, []) as number;
+  const rightCompletedAt = reflectApply(dateGetTime, right.completedAt, []) as number;
+  if (leftCompletedAt !== rightCompletedAt) return leftCompletedAt - rightCompletedAt;
+  if (left.runId === right.runId) return 0;
+  return left.runId < right.runId ? -1 : 1;
+}
+
+function insertBoundedTerminalRetentionCandidate(
+  candidates: TerminalRunRetentionCandidate[],
+  candidate: TerminalRunRetentionCandidate,
+  limit: number,
+): boolean {
+  let insertAt = 0;
+  while (
+    insertAt < candidates.length &&
+    compareTerminalRetentionCandidates(candidates[insertAt]!, candidate) <= 0
+  ) insertAt += 1;
+  reflectApply(arraySplice, candidates, [insertAt, 0, candidate]);
+  if (candidates.length <= limit) return false;
+  reflectApply(arrayPop, candidates, []);
+  return true;
 }
 
 interface PreparedMemoryRunCondition {
@@ -393,6 +455,10 @@ export class MemoryBackend implements WorkflowBackend {
   private locks = new Map<string, { lockId: string; expiresAt: number }>();
   private stalledClaims = new Map<string, { workerId: string; expiresAt: number }>();
   private runRevisions = new Map<string, number>();
+  private runRetentionRevisions = new Map<string, number>();
+  private terminalRetryQueued = new Set<string>();
+  private terminalRetryPending = new Map<string, number>();
+  private nextRunRetentionGeneration = 0;
   private runObservers = new Map<string, Set<MemoryRunObserver>>();
   private config: MemoryBackendConfig;
 
@@ -431,6 +497,7 @@ export class MemoryBackend implements WorkflowBackend {
       cloneWorkflowRunWithContext(runForClone, context),
     );
     this.runRevisions.set(run.id, 0);
+    this.runRetentionRevisions.set(run.id, this.nextRunRetentionGeneration++);
     return Promise.resolve();
   }
 
@@ -653,7 +720,16 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve(true);
   }
 
-  deleteRun(runId: string): Promise<void> {
+  private deleteRunState(runId: string): boolean {
+    const hadState = this.runs.has(runId) || this.checkpoints.has(runId) ||
+      this.approvals.has(runId) || this.eventWaits.has(runId) ||
+      this.runEvents.has(runId) || this.runEventClaims.has(runId) ||
+      this.locks.has(runId) || this.stalledClaims.has(runId) ||
+      this.runRevisions.has(runId) || this.runRetentionRevisions.has(runId) ||
+      this.terminalRetryQueued.has(runId) ||
+      this.terminalRetryPending.has(runId) ||
+      this.runObservers.has(runId) ||
+      reflectApply(arraySome, this.queue, [(item: WorkflowQueueItem) => item.runId === runId]);
     this.closeRunObservers(runId);
     this.runs.delete(runId);
     this.checkpoints.delete(runId);
@@ -661,9 +737,87 @@ export class MemoryBackend implements WorkflowBackend {
     this.eventWaits.delete(runId);
     this.runEvents.delete(runId);
     this.runEventClaims.delete(runId);
+    this.locks.delete(runId);
     this.stalledClaims.delete(runId);
     this.runRevisions.delete(runId);
+    this.runRetentionRevisions.delete(runId);
+    this.terminalRetryQueued.delete(runId);
+    this.terminalRetryPending.delete(runId);
+    this.queue = reflectApply(arrayFilter, this.queue, [
+      (item: WorkflowQueueItem) => item.runId !== runId,
+    ]) as WorkflowQueueItem[];
+    return hadState;
+  }
+
+  deleteRun(runId: string): Promise<void> {
+    this.deleteRunState(runId);
     return Promise.resolve();
+  }
+
+  deleteTerminalRunIfUnchanged(
+    candidate: TerminalRunRetentionCandidate,
+  ): Promise<boolean> {
+    let expectedCreatedAt: number;
+    let expectedCompletedAt: number;
+    try {
+      expectedCreatedAt = reflectApply(dateGetTime, candidate.createdAt, []) as number;
+      expectedCompletedAt = reflectApply(dateGetTime, candidate.completedAt, []) as number;
+    } catch {
+      return Promise.resolve(false);
+    }
+    if (
+      !numberIsFinite(expectedCreatedAt) || !numberIsFinite(expectedCompletedAt) ||
+      !numberIsSafeInteger(candidate.revision) || candidate.revision < 0
+    ) {
+      return Promise.resolve(false);
+    }
+    const run = this.runs.get(candidate.runId);
+    if (run === undefined) return Promise.resolve(false);
+    const createdAt = reflectApply(dateGetTime, run.createdAt, []) as number;
+    const completedAt = run.completedAt === undefined
+      ? undefined
+      : reflectApply(dateGetTime, run.completedAt, []) as number;
+    if (
+      run.workflowId !== candidate.workflowId || run.status !== candidate.status ||
+      createdAt !== expectedCreatedAt || completedAt !== expectedCompletedAt ||
+      this.runRetentionRevisions.get(candidate.runId) !== candidate.revision ||
+      (run.status !== "completed" && run.status !== "failed" && run.status !== "cancelled")
+    ) {
+      return Promise.resolve(false);
+    }
+    return Promise.resolve(this.deleteRunState(candidate.runId));
+  }
+
+  listTerminalRunRetentionCandidates(
+    completedBefore: Date,
+    limit: number,
+  ): Promise<TerminalRunRetentionBatch> {
+    let cutoff: number;
+    try {
+      cutoff = reflectApply(dateGetTime, completedBefore, []) as number;
+    } catch {
+      return Promise.resolve({ candidates: [], hasMore: false });
+    }
+    if (!numberIsFinite(cutoff) || !numberIsSafeInteger(limit) || limit <= 0) {
+      return Promise.resolve({ candidates: [], hasMore: false });
+    }
+
+    const candidates: TerminalRunRetentionCandidate[] = [];
+    let hasMore = false;
+    for (const run of this.runs.values()) {
+      if (
+        this.terminalRetryQueued.has(run.id) ||
+        this.terminalRetryPending.has(run.id)
+      ) continue;
+      const candidate = memoryTerminalRetentionCandidate(
+        run,
+        cutoff,
+        this.runRetentionRevisions.get(run.id) ?? 0,
+      );
+      if (candidate === undefined) continue;
+      if (insertBoundedTerminalRetentionCandidate(candidates, candidate, limit)) hasMore = true;
+    }
+    return Promise.resolve({ candidates, hasMore });
   }
 
   openRunObservation(
@@ -713,6 +867,13 @@ export class MemoryBackend implements WorkflowBackend {
     });
   }
 
+  private advanceRunRetentionRevision(runId: string): number {
+    if (!this.runRetentionRevisions.has(runId)) return 0;
+    const revision = this.nextRunRetentionGeneration++;
+    this.runRetentionRevisions.set(runId, revision);
+    return revision;
+  }
+
   private publishRunObservation(
     runId: string,
     run: WorkflowRun,
@@ -720,6 +881,7 @@ export class MemoryBackend implements WorkflowBackend {
   ): void {
     const revision = (this.runRevisions.get(runId) ?? 0) + 1;
     this.runRevisions.set(runId, revision);
+    this.advanceRunRetentionRevision(runId);
     const observers = this.runObservers.get(runId);
     if (!observers?.size) return;
     const nodes: WorkflowRunObservedState["nodes"] = {};
@@ -835,6 +997,7 @@ export class MemoryBackend implements WorkflowBackend {
     }
     appendRetainedCheckpoint(checkpoints, { ...checkpoint, context });
     this.checkpoints.set(runId, checkpoints);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve();
   }
 
@@ -877,6 +1040,7 @@ export class MemoryBackend implements WorkflowBackend {
     const checkpoints = this.checkpoints.get(storageRunId) ?? [];
     appendRetainedCheckpoint(checkpoints, persistedCheckpoint);
     this.checkpoints.set(storageRunId, checkpoints);
+    this.advanceRunRetentionRevision(storageRunId);
     return Promise.resolve(true);
   }
 
@@ -1014,6 +1178,7 @@ export class MemoryBackend implements WorkflowBackend {
       ...structuredClone(patch),
       id: approvalId,
     };
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve();
   }
 
@@ -1092,6 +1257,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (sourceDecisionData === undefined) delete currentApproval.decisionData;
     else currentApproval.decisionData = decisionData;
     currentApproval.reconciliationPending = true;
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1127,6 +1293,7 @@ export class MemoryBackend implements WorkflowBackend {
     }
     approval.recoveryClaimId = recoveryClaimId;
     approval.recoveryClaimedAt = new Date(claimedAt);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1139,6 +1306,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (approval?.recoveryClaimId === recoveryClaimId) {
       delete approval.recoveryClaimId;
       delete approval.recoveryClaimedAt;
+      this.advanceRunRetentionRevision(runId);
     }
     return Promise.resolve();
   }
@@ -1158,6 +1326,7 @@ export class MemoryBackend implements WorkflowBackend {
     delete approval.reconciliationPending;
     delete approval.recoveryClaimId;
     delete approval.recoveryClaimedAt;
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve();
   }
 
@@ -1219,6 +1388,7 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.reject(error);
     }
     this.eventWaits.set(runId, waits);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve();
   }
 
@@ -1257,6 +1427,7 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.reject(error);
     }
     this.eventWaits.set(runId, waits);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1290,6 +1461,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (wait?.status !== "pending") return Promise.resolve(false);
     wait.status = status;
     if (status === "delivered" || status === "expired") wait.claimedAt = new Date();
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1306,6 +1478,7 @@ export class MemoryBackend implements WorkflowBackend {
     delete wait.claimedAt;
     delete wait.recoveryClaimedAt;
     delete wait.claimedEventId;
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1341,6 +1514,7 @@ export class MemoryBackend implements WorkflowBackend {
       (wait.recoveryClaimedAt !== undefined && wait.recoveryClaimedAt > staleBefore)
     ) return Promise.resolve(false);
     wait.recoveryClaimedAt = new Date(claimedAt);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1349,6 +1523,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (wait) {
       delete wait.claimedAt;
       delete wait.recoveryClaimedAt;
+      this.advanceRunRetentionRevision(runId);
     }
     return Promise.resolve();
   }
@@ -1373,6 +1548,7 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.reject(error);
     }
     this.runEvents.set(runId, mailbox);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve();
   }
 
@@ -1383,6 +1559,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (index < 0) return Promise.resolve(false);
     mailbox.splice(index, 1);
     this.deleteEmptyRunEventMailbox(runId, mailbox);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1421,6 +1598,7 @@ export class MemoryBackend implements WorkflowBackend {
     // one atomic step for this in-memory backend.
     const taken = takeRetainedRunEvent(mailbox, eventName);
     this.deleteEmptyRunEventMailbox(runId, mailbox);
+    if (taken) this.advanceRunRetentionRevision(runId);
     return Promise.resolve(taken);
   }
 
@@ -1455,6 +1633,7 @@ export class MemoryBackend implements WorkflowBackend {
     // Keep an empty mailbox as the claimed event's capacity reservation. The
     // asynchronous delivery may still roll back, and another run must not take
     // this slot before restoreRunEventDelivery puts the event back.
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve(taken);
   }
 
@@ -1485,6 +1664,7 @@ export class MemoryBackend implements WorkflowBackend {
     claim.wait.recoveryClaimedAt = new Date(claimedAt);
     const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
     if (wait) wait.recoveryClaimedAt = new Date(claimedAt);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1493,6 +1673,7 @@ export class MemoryBackend implements WorkflowBackend {
     restoreRetainedRunEvent(mailbox, event);
     this.runEvents.set(runId, mailbox);
     this.releaseRunEventClaim(runId, event.id);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve();
   }
 
@@ -1526,6 +1707,7 @@ export class MemoryBackend implements WorkflowBackend {
     restoreRetainedRunEvent(mailbox, claim.event);
     this.runEvents.set(runId, mailbox);
     this.releaseRunEventClaim(runId, event.id);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve(restored);
   }
 
@@ -1543,6 +1725,7 @@ export class MemoryBackend implements WorkflowBackend {
         delete wait.claimedEventId;
         if (delivered) wait.deliveredEventId = eventId;
       }
+      this.advanceRunRetentionRevision(runId);
     }
     this.releaseRunEventClaim(runId, eventId);
     const mailbox = this.runEvents.get(runId);
@@ -1604,27 +1787,41 @@ export class MemoryBackend implements WorkflowBackend {
     const insertIndex = this.queue.findIndex((j) => (j.priority ?? 0) < priority);
     const cloned = structuredClone(job);
 
-    if (insertIndex === -1) {
-      this.queue.push(cloned);
-      return Promise.resolve();
-    }
-
-    this.queue.splice(insertIndex, 0, cloned);
+    if (insertIndex === -1) this.queue.push(cloned);
+    else this.queue.splice(insertIndex, 0, cloned);
+    this.terminalRetryQueued.add(job.runId);
+    this.advanceRunRetentionRevision(job.runId);
     return Promise.resolve();
   }
 
   dequeue(): Promise<WorkflowQueueItem | null> {
     const job = this.queue.shift();
+    if (job && this.terminalRetryQueued.has(job.runId)) {
+      this.terminalRetryPending.set(
+        job.runId,
+        (this.terminalRetryPending.get(job.runId) ?? 0) + 1,
+      );
+    }
     return Promise.resolve(job ? structuredClone(job) : null);
   }
 
   acknowledge(runId: string): Promise<void> {
     logger.debug(`Acknowledging job: ${runId}`);
+    const pending = this.terminalRetryPending.get(runId) ?? 0;
+    if (pending > 1) this.terminalRetryPending.set(runId, pending - 1);
+    else this.terminalRetryPending.delete(runId);
+    const stillQueued = reflectApply(arraySome, this.queue, [
+      (item: WorkflowQueueItem) => item.runId === runId,
+    ]) as boolean;
+    if (!stillQueued && !this.terminalRetryPending.has(runId)) {
+      this.terminalRetryQueued.delete(runId);
+    }
     return Promise.resolve();
   }
 
   async nack(runId: string): Promise<void> {
     await requeueRun(this, runId);
+    await this.acknowledge(runId);
   }
 
   // =========================================================================
@@ -1782,6 +1979,9 @@ export class MemoryBackend implements WorkflowBackend {
     this.locks.clear();
     this.stalledClaims.clear();
     this.runRevisions.clear();
+    this.runRetentionRevisions.clear();
+    this.terminalRetryQueued.clear();
+    this.terminalRetryPending.clear();
     return Promise.resolve();
   }
 }

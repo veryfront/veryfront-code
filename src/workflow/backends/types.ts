@@ -8,8 +8,15 @@ import type {
   WorkflowRun,
   WorkflowStatus,
 } from "../types.ts";
+
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+
+/** Queue work returned for processing, with an optional backend-scoped receipt. */
+export type WorkflowQueueDelivery = WorkflowQueueItem & {
+  /** Pass this opaque value back when acknowledging or rejecting this exact delivery. */
+  readonly deliveryId?: string;
+};
 
 /** Run state that may change after the immutable run snapshot is created. */
 type WorkflowRunScalarUpdate = Partial<
@@ -53,6 +60,36 @@ export type WorkflowRunStateSnapshot = WorkflowRunScalarUpdate & {
   nodeStates: WorkflowRun["nodeStates"];
   context: WorkflowRun["context"];
 };
+
+/** Workflow status whose execution has ended. */
+export type TerminalWorkflowStatus = Extract<
+  WorkflowStatus,
+  "completed" | "failed" | "cancelled"
+>;
+
+/** Exact terminal snapshot a backend must still observe before deleting a run. */
+export interface TerminalRunRetentionCandidate {
+  /** Run selected by a retention sweep. */
+  runId: string;
+  /** Immutable workflow identity used to remove and fence its shared index. */
+  workflowId: string;
+  /** Immutable creation time that prevents deletion after run-ID reuse. */
+  createdAt: Date;
+  /** Terminal status observed by the sweep. */
+  status: TerminalWorkflowStatus;
+  /** Terminal completion time observed by the sweep. */
+  completedAt: Date;
+  /** Run mutation revision observed by the sweep. */
+  revision: number;
+}
+
+/** Bounded oldest-first terminal snapshots returned by a retention backend. */
+export interface TerminalRunRetentionBatch {
+  /** Oldest eligible snapshots, never exceeding the requested limit. */
+  candidates: TerminalRunRetentionCandidate[];
+  /** Whether another query may return more eligible or backfill work. */
+  hasMore: boolean;
+}
 
 const WORKFLOW_RUN_UPDATE_FIELDS = new Set<keyof WorkflowRunUpdate>([
   "status",
@@ -252,6 +289,20 @@ export interface WorkflowBackend {
     expectedWorkerId?: string,
   ): Promise<boolean>;
   deleteRun?(runId: string): Promise<void>;
+  /**
+   * Delete a run and all backend-owned state only if its terminal snapshot is
+   * unchanged. Returns false when a retry or another transition made the
+   * candidate stale, or when no backend state remains. Built-in backends
+   * perform the comparison and deletion in one atomic backend operation.
+   */
+  deleteTerminalRunIfUnchanged?(
+    candidate: TerminalRunRetentionCandidate,
+  ): Promise<boolean>;
+  /** Return at most `limit` oldest terminal snapshots before the cutoff. */
+  listTerminalRunRetentionCandidates?(
+    completedBefore: Date,
+    limit: number,
+  ): Promise<TerminalRunRetentionBatch>;
   listRuns(filter: RunFilter): Promise<WorkflowRun[]>;
   countRuns?(filter: RunFilter): Promise<number>;
 
@@ -350,9 +401,9 @@ export interface WorkflowBackend {
   }): Promise<Array<{ runId: string; approval: PersistedPendingApproval }>>;
 
   enqueue?(job: WorkflowQueueItem): Promise<void>;
-  dequeue?(): Promise<WorkflowQueueItem | null>;
-  acknowledge?(runId: string): Promise<void>;
-  nack?(runId: string): Promise<void>;
+  dequeue?(): Promise<WorkflowQueueDelivery | null>;
+  acknowledge?(runId: string, deliveryId?: string): Promise<void>;
+  nack?(runId: string, deliveryId?: string): Promise<void>;
 
   /** Acquire a lock, returning the owned lockId token on success or null on failure. */
   acquireLock?(runId: string, duration: number): Promise<string | null>;
@@ -666,6 +717,16 @@ type WithRunObservationSupport =
   & WorkflowBackend
   & Required<Pick<WorkflowBackend, "openRunObservation">>;
 
+/** Workflow backend with atomic terminal-run retention support. */
+export type WithTerminalRunRetentionSupport =
+  & WorkflowBackend
+  & Required<
+    Pick<
+      WorkflowBackend,
+      "deleteTerminalRunIfUnchanged" | "listTerminalRunRetentionCandidates"
+    >
+  >;
+
 export function hasQueueSupport(backend: WorkflowBackend): backend is WithQueueSupport {
   return (
     typeof backend.enqueue === "function" &&
@@ -686,6 +747,14 @@ export function hasRunObservationSupport(
   backend: WorkflowBackend,
 ): backend is WithRunObservationSupport {
   return typeof backend.openRunObservation === "function";
+}
+
+/** Check whether fenced terminal-run deletion is available. */
+export function hasTerminalRunRetentionSupport(
+  backend: WorkflowBackend,
+): backend is WithTerminalRunRetentionSupport {
+  return typeof backend.deleteTerminalRunIfUnchanged === "function" &&
+    typeof backend.listTerminalRunRetentionCandidates === "function";
 }
 
 type WithEventWaitSupport =
