@@ -132,8 +132,9 @@ function compareTerminalRetentionCandidates(
 ): number {
   const leftCompletedAt = reflectApply(dateGetTime, left.completedAt, []) as number;
   const rightCompletedAt = reflectApply(dateGetTime, right.completedAt, []) as number;
-  return leftCompletedAt - rightCompletedAt ||
-    (left.runId === right.runId ? 0 : left.runId < right.runId ? -1 : 1);
+  if (leftCompletedAt !== rightCompletedAt) return leftCompletedAt - rightCompletedAt;
+  if (left.runId === right.runId) return 0;
+  return left.runId < right.runId ? -1 : 1;
 }
 
 function insertBoundedTerminalRetentionCandidate(
