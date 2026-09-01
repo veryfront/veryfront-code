@@ -21,7 +21,10 @@ import type { ModuleFetcherContext } from "../types.ts";
 import { getModulePathCache } from "../cache/index.ts";
 import { hashString } from "../utils/hash.ts";
 import { resolveModuleFile } from "../resolution/file-finder.ts";
-import { canonicalizeContainedModulePath } from "../resolution/module-path.ts";
+import {
+  canonicalizeContainedModulePath,
+  frameworkSourceKeyOf,
+} from "../resolution/module-path.ts";
 import {
   isPublicFrameworkSourceKey,
 } from "#veryfront/platform/compat/framework-source-resolver.ts";
@@ -153,18 +156,6 @@ function unwrapDependencyPinningPath(
   // implies SSR and the cache variant comes from the context's snapshot key,
   // not from the URL. An unpinned path keeps its query untouched.
   return extracted.pathname;
-}
-
-/**
- * Return the framework-relative source key for a `_veryfront/` module path,
- * or null when the path does not address framework source.
- */
-function frameworkSourceKeyOf(modulePath: string): string | null {
-  const withoutVfModules = modulePath.startsWith("_vf_modules/")
-    ? modulePath.slice("_vf_modules/".length)
-    : modulePath;
-  if (!withoutVfModules.startsWith("_veryfront/")) return null;
-  return withoutVfModules.slice("_veryfront/".length);
 }
 
 /**

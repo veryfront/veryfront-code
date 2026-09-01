@@ -4,6 +4,18 @@ const VF_MODULE_ROOT = "_vf_modules";
 const VF_MODULE_PREFIX = `${VF_MODULE_ROOT}/`;
 
 /**
+ * Return the framework-relative source key for a `_veryfront/` module path,
+ * or null when the path does not address framework source.
+ */
+export function frameworkSourceKeyOf(modulePath: string): string | null {
+  const withoutVfModules = modulePath.startsWith(VF_MODULE_PREFIX)
+    ? modulePath.slice(VF_MODULE_PREFIX.length)
+    : modulePath;
+  if (!withoutVfModules.startsWith("_veryfront/")) return null;
+  return withoutVfModules.slice("_veryfront/".length);
+}
+
+/**
  * Canonicalize a module path only when it remains project-relative and, when
  * rooted in `_vf_modules`, remains below that virtual root.
  */

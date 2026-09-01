@@ -1,7 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { fingerprintImportMap } from "#veryfront/transforms/esm/http-cache-helpers.ts";
+import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { transformResolvedModuleSource } from "./source-transform.ts";
 
 const noopLog = {
@@ -15,6 +17,7 @@ describe("module-fetcher/source-transform", () => {
   it("recursively transforms public framework entries before caching them", async () => {
     const calls: string[] = [];
     const importMap = { imports: {} };
+    const expectedImportMapFingerprint = await fingerprintImportMap(importMap);
     const result = await transformResolvedModuleSource({
       sourceCode: `import { useServerRenderContext } from "../server-render-context.js";`,
       actualFilePath: "/node_modules/veryfront/esm/src/react/runtime/core.js",
@@ -39,6 +42,7 @@ describe("module-fetcher/source-transform", () => {
         _fs,
         _onProgress,
         receivedImportMap,
+        importMapFingerprint,
       ) => {
         calls.push("transformFrameworkSource");
         assertEquals(
@@ -51,6 +55,7 @@ describe("module-fetcher/source-transform", () => {
           },
         );
         assertEquals(receivedImportMap, importMap);
+        assertEquals(importMapFingerprint, expectedImportMapFingerprint);
         return Promise.resolve(
           `import { useServerRenderContext } from "file:///cache/server-render-context.mjs";`,
         );
@@ -65,6 +70,70 @@ describe("module-fetcher/source-transform", () => {
       result,
       `import { useServerRenderContext } from "file:///cache/server-render-context.mjs";`,
     );
+  });
+
+  it("recognizes bare framework paths and defaults the React version", async () => {
+    const reactVersions: string[] = [];
+    await transformResolvedModuleSource({
+      sourceCode: `export const value = 1;`,
+      actualFilePath: "/node_modules/veryfront/esm/src/value.js",
+      projectDir: "/project",
+      projectId: "project-1",
+      normalizedPath: "_veryfront/value.js",
+      projectSlug: "docs",
+      dev: false,
+      adapter: {} as RuntimeAdapter,
+      log: noopLog,
+      loadImportMap: () => Promise.resolve({ imports: {} }),
+      transformFrameworkSource: (_source, _path, reactVersion) => {
+        reactVersions.push(reactVersion);
+        return Promise.resolve(`export const value = 1;`);
+      },
+      transformToEsm: () => {
+        throw new Error("generic tenant transform must not handle framework entries");
+      },
+    });
+
+    assertEquals(reactVersions, [REACT_DEFAULT_VERSION]);
+  });
+
+  it("logs module context when a framework transform fails", async () => {
+    const errorCalls: unknown[] = [];
+    const sourceCode = `export const broken = true;`;
+    const failure = new Error("framework transform failed");
+
+    await assertRejects(
+      () =>
+        transformResolvedModuleSource({
+          sourceCode,
+          actualFilePath: "/node_modules/veryfront/esm/src/broken.js",
+          projectDir: "/project",
+          projectId: "project-1",
+          normalizedPath: "_vf_modules/_veryfront/broken.js",
+          projectSlug: "docs",
+          dev: false,
+          adapter: {} as RuntimeAdapter,
+          log: {
+            ...noopLog,
+            error: (message, context) => errorCalls.push([message, context]),
+          },
+          loadImportMap: () => Promise.resolve({ imports: {} }),
+          transformFrameworkSource: () => Promise.reject(failure),
+        }),
+      Error,
+      failure.message,
+    );
+
+    assertEquals(errorCalls, [[
+      "[mdx-loader] Transform failed for module",
+      {
+        normalizedPath: "_vf_modules/_veryfront/broken.js",
+        actualFilePath: "/node_modules/veryfront/esm/src/broken.js",
+        sourceLength: sourceCode.length,
+        sourcePreview: sourceCode,
+        error: failure.message,
+      },
+    ]]);
   });
 
   it("preprocesses veryfront imports before transform and caches HTTP imports after transform", async () => {
