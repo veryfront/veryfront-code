@@ -162,8 +162,13 @@ function createDeferredContinuation(
         reject(error);
         return;
       }
+      const dispatched = dispatch();
+      if (dispatched === continuation) {
+        reject(new TypeError("Your middleware continuation cannot resolve to itself"));
+        return;
+      }
       void IntrinsicPromiseThen.call(
-        dispatch(),
+        dispatched,
         (value: AgentResponse) => {
           markDeferredSettled(continuation, undefined);
           resolve(value);

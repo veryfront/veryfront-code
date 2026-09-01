@@ -111,6 +111,39 @@ describe("agent/middleware/chain", () => {
     ]);
   });
 
+  it("rejects deferred continuation cycles", async () => {
+    let continuation: Promise<AgentResponse> | undefined;
+    const chain = new MiddlewareChain([
+      async (_context, next) => {
+        await Promise.resolve();
+        continuation = next();
+        return await continuation;
+      },
+    ]);
+    let timeoutId: number | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timeoutId = setTimeout(
+        () => reject(new Error("deferred continuation cycle did not settle")),
+        20,
+      );
+    });
+
+    let error: unknown;
+    try {
+      error = await Promise.race([
+        assertRejects(
+          () => chain.execute(context, () => continuation!),
+          TypeError,
+          "Your middleware continuation cannot resolve to itself",
+        ),
+        timeout,
+      ]);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+    assertInstanceOf(error, TypeError);
+  });
+
   it("revokes a continuation queued before an already-settled middleware promise", async () => {
     let queuedNext: Promise<AgentResponse> | undefined;
     let finalHandlerCalls = 0;
