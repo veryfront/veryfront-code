@@ -374,8 +374,14 @@ local function updateTerminalRetentionIndex(
   if not score then return 0 end
   local workflowId = redis.call('hget', runKey, 'workflowId')
   local createdAt = redis.call('hget', runKey, 'createdAt')
-  local revision = tonumber(redis.call('hget', runKey, '${RUN_RETENTION_REVISION_FIELD}') or '0')
   if not workflowId or not createdAt then return 0 end
+  local revisionValue = redis.call('hget', runKey, '${RUN_RETENTION_REVISION_FIELD}')
+  if not revisionValue then
+    revisionValue = '0'
+    redis.call('hset', runKey, '${RUN_RETENTION_REVISION_FIELD}', revisionValue)
+  end
+  local revision = tonumber(revisionValue)
+  if not revision then return 0 end
   local member = cjson.encode({ completedAt, runId })
   if oldMember and oldMember ~= member then redis.call('zrem', indexKey, oldMember) end
   redis.call('zadd', indexKey, score, member)
@@ -1310,7 +1316,9 @@ for i = 0, len - 1 do
       local updated = mergeJsonObjects(raw, ARGV[2], true)
       updated = deleteJsonObjectFields(updated, ARGV[3], true)
       redis.call('lset', KEYS[1], i, updated)
-      redis.call('hincrby', KEYS[2], '${RUN_RETENTION_REVISION_FIELD}', 1)
+      if redis.call('exists', KEYS[2]) == 1 then
+        redis.call('hincrby', KEYS[2], '${RUN_RETENTION_REVISION_FIELD}', 1)
+      end
       return 1
     end
   end

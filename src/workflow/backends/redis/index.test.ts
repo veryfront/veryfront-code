@@ -62,6 +62,7 @@ class MockRedisAdapter implements RedisAdapter {
   keysCallCount = 0;
   queueCleanupAcks: string[] = [];
   queueConsumerGroupMissing = false;
+  queueConsumerGroupMissingAckAttempts = 0;
   scanPageSize?: number;
   scanGate?: Promise<void>;
   onScan?: () => void;
@@ -252,8 +253,11 @@ class MockRedisAdapter implements RedisAdapter {
     }
 
     if (script.includes("clear-run-queue-messages")) {
-      if (this.queueConsumerGroupMissing && script.includes("redis.call('xack'")) {
-        throw new Error("NOGROUP No such key or consumer group");
+      if (this.queueConsumerGroupMissing && script.includes("'xack'")) {
+        this.queueConsumerGroupMissingAckAttempts++;
+        if (!script.includes("redis.pcall('xack'")) {
+          throw new Error("NOGROUP No such key or consumer group");
+        }
       }
       const messageIds = [...(this.sets.get(keys[1]!) ?? [])];
       this.queueCleanupAcks.push(...messageIds);
@@ -406,8 +410,11 @@ class MockRedisAdapter implements RedisAdapter {
     }
 
     if (script.includes("conditional-terminal-run-delete")) {
-      if (this.queueConsumerGroupMissing && script.includes("redis.call('xack'")) {
-        throw new Error("NOGROUP No such key or consumer group");
+      if (this.queueConsumerGroupMissing && script.includes("'xack'")) {
+        this.queueConsumerGroupMissingAckAttempts++;
+        if (!script.includes("redis.pcall('xack'")) {
+          throw new Error("NOGROUP No such key or consumer group");
+        }
       }
       const hash = this.hashes.get(key);
       const retentionMembers = this.hashes.get(keys[16]!);
@@ -1032,6 +1039,16 @@ class MockRedisAdapter implements RedisAdapter {
     if (!rawCompletedAtMs) return false;
     const completedAtMs = Number(rawCompletedAtMs);
     if (!Number.isFinite(completedAtMs)) return false;
+    const workflowId = hash.get("workflowId");
+    const createdAt = hash.get("createdAt");
+    if (!workflowId || !createdAt) return false;
+    let revisionValue = hash.get("__runRetentionRevision");
+    if (revisionValue === undefined) {
+      revisionValue = "0";
+      hash.set("__runRetentionRevision", revisionValue);
+    }
+    const revision = Number(revisionValue);
+    if (!Number.isFinite(revision)) return false;
     const member = JSON.stringify([completedAt, runId]);
     if (oldMember && oldMember !== member) index.delete(oldMember);
     index.set(member, completedAtMs);
@@ -1039,11 +1056,11 @@ class MockRedisAdapter implements RedisAdapter {
       runId,
       JSON.stringify({
         member,
-        workflowId: hash.get("workflowId"),
-        createdAt: hash.get("createdAt"),
+        workflowId,
+        createdAt,
         status,
         completedAt,
-        revision: Number(hash.get("__runRetentionRevision") ?? "0"),
+        revision,
       }),
     );
     return true;
@@ -3264,6 +3281,7 @@ describe("RedisBackend", () => {
         .candidates[0]!;
 
       assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), true);
+      assertEquals(mockRedis.queueConsumerGroupMissingAckAttempts, 1);
       assertEquals(mockRedis.streams.get("test:stream:schema-v1"), []);
       assertEquals(mockRedis.sets.has(`test:schema-v1:queue-messages:${runId}`), false);
     });
@@ -3409,6 +3427,27 @@ describe("RedisBackend", () => {
       assertEquals(batch.candidates.map((candidate) => candidate.runId), [
         "retention-normal-year",
       ]);
+    });
+
+    it("persists a retention revision while backfilling a pre-existing terminal run", async () => {
+      const runId = "retention-legacy-missing-revision";
+      await backend.createRun({
+        ...createTestRun(runId),
+        status: "completed",
+        completedAt: new Date(2),
+      });
+      const hash = mockRedis.hashes.get(`test:schema-v1:run:${runId}`)!;
+      hash.delete("__runRetentionRevision");
+      mockRedis.sortedSets.delete("test:schema-v1:index:terminal-completed-at");
+      mockRedis.hashes.delete("test:schema-v1:index:terminal-completed-at-members");
+
+      let batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 1);
+      for (let page = 0; page < 10 && batch.candidates.length === 0; page++) {
+        batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 1);
+      }
+
+      assertEquals(batch.candidates.map((candidate) => candidate.runId), [runId]);
+      assertEquals(hash.get("__runRetentionRevision"), "0");
     });
 
     it("repairs a completion score changed by a rolling-upgrade writer", async () => {
@@ -4668,6 +4707,27 @@ describe("RedisBackend", () => {
       assertEquals(stored.decidedBy, "admin");
       assertEquals(stored.comment, "looks good");
       assertEquals(stored.decisionData, { confirmed: true });
+    });
+
+    it("does not recreate a missing run hash when deciding an orphaned approval", async () => {
+      const runId = "run-ap-orphaned";
+      await backend.createRun(createTestRun(runId));
+      await backend.savePendingApproval(runId, makeApproval("ap-orphaned"));
+      const runKey = `test:schema-v1:run:${runId}`;
+      mockRedis.hashes.delete(runKey);
+
+      assertEquals(
+        await backend.updateApproval(runId, "ap-orphaned", {
+          approved: true,
+          approver: "admin",
+        }),
+        true,
+      );
+      assertEquals(mockRedis.hashes.has(runKey), false);
+      assertStringIncludes(
+        mockRedis.lastScript,
+        "if redis.call('exists', KEYS[2]) == 1 then",
+      );
     });
 
     it("rejects strict approval decision data before mutating the approval", async () => {
