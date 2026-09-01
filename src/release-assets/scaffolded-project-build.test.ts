@@ -353,6 +353,9 @@ describe("release assets: scaffolded project build", () => {
   }
 
   it("resolves project imports from the materialized release instead of the remote adapter", async () => {
+    const outsideDir = await tmp();
+    const outsidePath = `${outsideDir}/outside-project.ts`;
+    await Deno.writeTextFile(outsidePath, 'export const outside = "must-not-be-read";');
     const sources = [
       {
         path: "pages/index.mdx",
@@ -379,6 +382,7 @@ describe("release assets: scaffolded project build", () => {
       },
     } as RuntimeAdapter;
     const rec: Recorded = { uploads: [], manifest: null, states: [] };
+    let escapedRead = false;
 
     const result = await runReleaseAssetBuild({
       projectReference: "remote-project",
@@ -390,19 +394,26 @@ describe("release assets: scaffolded project build", () => {
       dependencyMode: "source",
       loadConfig: () => Promise.resolve({ experimental: { rsc: true } } as VeryfrontConfig),
       client: makeClient(sources, rec, "remote-project"),
-      transform: (source, sourceFile, projectDir, adapter, options) =>
-        transformToESM(source, sourceFile, projectDir, adapter, {
+      transform: async (source, sourceFile, projectDir, adapter, options) => {
+        try {
+          escapedRead ||= (await adapter.fs.readFile(outsidePath)).includes("must-not-be-read");
+        } catch {
+          // The materialized adapter must reject paths outside this release.
+        }
+        return await transformToESM(source, sourceFile, projectDir, adapter, {
           projectId: options.projectId,
           dev: options.dev,
           ssr: options.ssr,
           reactVersion: options.reactVersion,
-        }),
+        });
+      },
     }, await tmp());
 
     assertEquals(result.error, undefined);
     assertEquals(result.success, true);
     assertEquals(result.state, "ready");
     assertEquals(remoteReads, []);
+    assertEquals(escapedRead, false);
     const manifest = parseReleaseAssetManifest(rec.manifest);
     assertExists(manifest);
     assertEquals(

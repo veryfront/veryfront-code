@@ -28,6 +28,7 @@ import { getOsType } from "#veryfront/platform/compat/process.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { STAT_OPERATION_EXTENSION_PRIORITY } from "#veryfront/platform/adapters/fs/veryfront/extension-priority.ts";
+import { wrapAdapterWithSecurity } from "#veryfront/security/secure-fs.ts";
 import {
   dirname,
   fromFileUrl,
@@ -877,9 +878,21 @@ export const releaseAssetBuildInternals = Object.freeze({
  */
 async function createMaterializedReleaseTransformAdapter(
   adapter: RuntimeAdapter,
+  tempDir: string,
 ): Promise<RuntimeAdapter> {
   const localAdapter = await getLocalAdapter();
-  return { ...adapter, fs: localAdapter.fs };
+  const securedLocalAdapter = wrapAdapterWithSecurity(localAdapter, {
+    baseDir: tempDir,
+    context: "module-loading",
+  });
+  return {
+    ...adapter,
+    fs: Object.freeze({
+      ...securedLocalAdapter.fs,
+      symlinkSemantics: "none" as const,
+      projectContextSemantics: "fixed" as const,
+    }),
+  };
 }
 
 /**
@@ -3217,7 +3230,7 @@ async function runBuildInner(
   // Bytes are held per-hash only until uploaded, then dropped (M3).
   const pendingBytes = createPendingAssetStore();
   const knownPaths = new Set(sourceByPath.keys());
-  const transformAdapter = await createMaterializedReleaseTransformAdapter(input.adapter);
+  const transformAdapter = await createMaterializedReleaseTransformAdapter(input.adapter, tempDir);
   const vendorDependencies = input.dependencyMode === "immutable";
   const configuredVendor = input.vendorHttpImports;
   const vendorHttpImports = vendorDependencies ? configuredVendor : undefined;
