@@ -988,6 +988,7 @@ export class MemoryBackend implements WorkflowBackend {
     }
     appendRetainedCheckpoint(checkpoints, { ...checkpoint, context });
     this.checkpoints.set(runId, checkpoints);
+    this.advanceRunRetentionRevision(runId);
     return Promise.resolve();
   }
 
@@ -1030,6 +1031,7 @@ export class MemoryBackend implements WorkflowBackend {
     const checkpoints = this.checkpoints.get(storageRunId) ?? [];
     appendRetainedCheckpoint(checkpoints, persistedCheckpoint);
     this.checkpoints.set(storageRunId, checkpoints);
+    this.advanceRunRetentionRevision(storageRunId);
     return Promise.resolve(true);
   }
 
@@ -1776,12 +1778,9 @@ export class MemoryBackend implements WorkflowBackend {
     const insertIndex = this.queue.findIndex((j) => (j.priority ?? 0) < priority);
     const cloned = structuredClone(job);
 
-    if (insertIndex === -1) {
-      this.queue.push(cloned);
-      return Promise.resolve();
-    }
-
-    this.queue.splice(insertIndex, 0, cloned);
+    if (insertIndex === -1) this.queue.push(cloned);
+    else this.queue.splice(insertIndex, 0, cloned);
+    this.advanceRunRetentionRevision(job.runId);
     return Promise.resolve();
   }
 

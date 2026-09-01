@@ -216,6 +216,35 @@ class MockRedisAdapter implements RedisAdapter {
     this.lastArgs = [...args];
     this.scriptCalls.push({ script, keys: [...keys], args: [...args] });
 
+    if (script.includes("indexed-run-create")) {
+      const runId = args[0]!;
+      const hash = new Map<string, string>();
+      for (let index = 3; index < args.length; index += 2) {
+        hash.set(args[index]!, args[index + 1]!);
+      }
+      this.hashes.set(key, hash);
+      for (let index = 1; index <= 3; index++) {
+        let members = this.sets.get(keys[index]!);
+        if (!members) {
+          members = new Set();
+          this.sets.set(keys[index]!, members);
+        }
+        members.add(runId);
+      }
+      let observations = this.streams.get(keys[4]!);
+      if (!observations) {
+        observations = [];
+        this.streams.set(keys[4]!, observations);
+      }
+      observations.push({
+        id: `${this.nextStreamSequence++}-0`,
+        data: JSON.parse(args[2]!) as Record<string, string>,
+      });
+      if (args[1]) hash.set("__terminalCompletedAtMs", args[1]!);
+      this.refreshTerminalRetentionIndexFromHash(runId, hash, keys[5]!, keys[6]!);
+      return Promise.resolve(1);
+    }
+
     if (script.includes("indexed-workflow-enqueue")) {
       let stream = this.streams.get(key);
       if (!stream) {
@@ -239,6 +268,7 @@ class MockRedisAdapter implements RedisAdapter {
         this.sets.set(keys[1]!, messageIds);
       }
       messageIds.add(id);
+      this.advanceRunRetentionRevision(keys[2]!, keys[3]!, args[0]!);
       return Promise.resolve(id);
     }
 
@@ -541,6 +571,7 @@ class MockRedisAdapter implements RedisAdapter {
       list.push(args[0]!);
       const maxEntries = Number(args[1]);
       if (list.length > maxEntries) list.splice(0, list.length - maxEntries);
+      this.advanceRunRetentionRevision(keys[1]!, keys[2]!, args[2]!);
       return Promise.resolve(list.length);
     }
 
@@ -590,6 +621,11 @@ class MockRedisAdapter implements RedisAdapter {
       if (Number.isSafeInteger(maxEntries) && maxEntries > 0 && list.length > maxEntries) {
         list.splice(0, list.length - maxEntries);
       }
+      this.advanceRunRetentionRevision(
+        keys[1]!,
+        keys[2]!,
+        args[expectedCount + 5]!,
+      );
       return Promise.resolve(1);
     }
 
@@ -1356,6 +1392,22 @@ describe("RedisBackend", () => {
   });
 
   describe("createRun / getRun", () => {
+    it("creates a terminal run and its indexes in one retention-aware script", async () => {
+      const scriptCallsBefore = mockRedis.scriptCalls.length;
+      await backend.createRun({
+        ...createTestRun("run-terminal-atomic-create"),
+        status: "completed",
+        completedAt: new Date(2),
+      });
+
+      assertEquals(mockRedis.scriptCalls.length, scriptCallsBefore + 1);
+      assertStringIncludes(mockRedis.lastScript, "indexed-run-create");
+      assertStringIncludes(mockRedis.lastScript, "redis.call('hset', KEYS[1]");
+      assertStringIncludes(mockRedis.lastScript, "redis.call('sadd', KEYS[4]");
+      assertStringIncludes(mockRedis.lastScript, "redis.call('xadd', KEYS[5]");
+      assertStringIncludes(mockRedis.lastScript, "updateTerminalRetentionIndex");
+    });
+
     it("observes cross-instance run transitions in exact revision order", async () => {
       const writer = new RedisBackend({ client: mockRedis, prefix: "test:" });
       const reader = new RedisBackend({ client: mockRedis, prefix: "test:" });
@@ -3232,7 +3284,7 @@ describe("RedisBackend", () => {
         completedAt,
         revision: Number(
           mockRedis.hashes.get(`test:schema-v1:run:${runId}`)?.get(
-            "__runObservationRevision",
+            "__runRetentionRevision",
           ) ?? "0",
         ),
       };
@@ -3618,6 +3670,49 @@ describe("RedisBackend", () => {
 
       assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), false);
       assertEquals(mockRedis.lists.has(`test:schema-v1:approvals:${runId}`), true);
+    });
+
+    it("fences retention against a checkpoint appended after discovery", async () => {
+      const runId = "retention-late-checkpoint";
+      await backend.createRun({
+        ...createTestRun(runId),
+        status: "failed",
+        completedAt: new Date(2),
+      });
+      const candidate = (await backend.listTerminalRunRetentionCandidates(new Date(10), 1))
+        .candidates[0]!;
+
+      await backend.saveCheckpoint(runId, {
+        id: "late-checkpoint",
+        nodeId: "retry",
+        timestamp: new Date(3),
+        context: { input: {} },
+        nodeStates: {},
+      });
+
+      assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), false);
+      assertEquals((await backend.getLatestCheckpoint(runId))?.id, "late-checkpoint");
+    });
+
+    it("fences retention against a retry enqueued after discovery", async () => {
+      const runId = "retention-late-retry";
+      await backend.createRun({
+        ...createTestRun(runId),
+        status: "failed",
+        completedAt: new Date(2),
+      });
+      const candidate = (await backend.listTerminalRunRetentionCandidates(new Date(10), 1))
+        .candidates[0]!;
+
+      await backend.enqueue({
+        runId,
+        workflowId: "wf-1",
+        input: {},
+        createdAt: new Date(3),
+      });
+
+      assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), false);
+      assertEquals(mockRedis.streams.get("test:stream:schema-v1")?.length, 1);
     });
 
     it("indexes terminal transitions and removes a retried run", async () => {

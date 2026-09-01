@@ -396,6 +396,44 @@ local function updateTerminalRetentionIndex(
   return 1
 end`;
 
+const ADVANCE_RUN_RETENTION_REVISION_LUA = `local function advanceRunRetentionRevision(
+  runKey,
+  membersKey,
+  runId
+)
+  local metadataRaw = redis.call('hget', membersKey, runId)
+  local revision = nil
+  if redis.call('exists', runKey) == 1 then
+    revision = redis.call('hincrby', runKey, '${RUN_RETENTION_REVISION_FIELD}', 1)
+  elseif metadataRaw then
+    local metadata = cjson.decode(metadataRaw)
+    revision = (tonumber(metadata.revision) or 0) + 1
+  end
+  if revision and metadataRaw then
+    local metadata = cjson.decode(metadataRaw)
+    metadata.revision = revision
+    redis.call('hset', membersKey, runId, cjson.encode(metadata))
+  end
+  return revision
+end`;
+
+const CREATE_RUN_SCRIPT = `-- indexed-run-create
+${UPDATE_TERMINAL_RETENTION_INDEX_LUA}
+for index = 4, #ARGV, 2 do
+  redis.call('hset', KEYS[1], ARGV[index], ARGV[index + 1])
+end
+redis.call('sadd', KEYS[2], ARGV[1])
+redis.call('sadd', KEYS[3], ARGV[1])
+redis.call('sadd', KEYS[4], ARGV[1])
+local observation = cjson.decode(ARGV[3])
+local observationFields = {}
+for field, value in pairs(observation) do
+  table.insert(observationFields, field)
+  table.insert(observationFields, value)
+end
+redis.call('xadd', KEYS[5], '*', unpack(observationFields))
+return updateTerminalRetentionIndex(KEYS[1], KEYS[6], KEYS[7], ARGV[1], ARGV[2])`;
+
 const REFRESH_TERMINAL_RETENTION_INDEX_SCRIPT = `-- refresh-terminal-retention-index
 ${UPDATE_TERMINAL_RETENTION_INDEX_LUA}
 local status = redis.call('hget', KEYS[1], 'status')
@@ -507,6 +545,7 @@ if #entries == 0 then return '0-0' end
 return entries[1][1]`;
 
 const ENQUEUE_RUN_SCRIPT = `-- indexed-workflow-enqueue
+${ADVANCE_RUN_RETENTION_REVISION_LUA}
 local id = redis.call(
   'xadd',
   KEYS[1],
@@ -518,6 +557,7 @@ local id = redis.call(
   'createdAt', ARGV[5]
 )
 redis.call('sadd', KEYS[2], id)
+advanceRunRetentionRevision(KEYS[3], KEYS[4], ARGV[1])
 return id`;
 
 const REMOVE_ACKNOWLEDGED_QUEUE_MESSAGES_SCRIPT = `-- remove-acknowledged-queue-messages
@@ -908,8 +948,10 @@ function waitForObservationPoll(signal: AbortSignal): Promise<void> {
 
 /** Atomically append and retain only the newest bounded list entries. */
 const APPEND_RETAINED_LIST_SCRIPT = `-- retained-list-append
+${ADVANCE_RUN_RETENTION_REVISION_LUA}
 redis.call('rpush', KEYS[1], ARGV[1])
 redis.call('ltrim', KEYS[1], -tonumber(ARGV[2]), -1)
+advanceRunRetentionRevision(KEYS[2], KEYS[3], ARGV[3])
 return redis.call('llen', KEYS[1])`;
 
 /** Read only the run fields needed to reject stale owner-fenced work early. */
@@ -933,6 +975,7 @@ return 1`;
 
 /** Atomically verify canonical run ownership before appending auxiliary run state. */
 const APPEND_IF_STATUS_AND_WORKER_SCRIPT = `-- conditional-owned-append
+${ADVANCE_RUN_RETENTION_REVISION_LUA}
 local status = redis.call('hget', KEYS[1], 'status')
 local expectedCount = tonumber(ARGV[1])
 local allowed = false
@@ -949,6 +992,7 @@ local storageKey = ARGV[expectedCount + 3]
 redis.call('rpush', storageKey, ARGV[expectedCount + 4])
 local maxEntries = tonumber(ARGV[expectedCount + 5])
 if maxEntries then redis.call('ltrim', storageKey, -maxEntries, -1) end
+advanceRunRetentionRevision(KEYS[2], KEYS[3], ARGV[expectedCount + 6])
 return 1`;
 
 /**
@@ -1005,27 +1049,6 @@ const JOURNAL_APPROVAL_PROJECTION_LUA = `local function journalApprovalProjectio
   end
   local runTtl = redis.call('pttl', runKey)
   if runTtl > 0 then redis.call('pexpire', key, runTtl) end
-end`;
-
-const ADVANCE_RUN_RETENTION_REVISION_LUA = `local function advanceRunRetentionRevision(
-  runKey,
-  membersKey,
-  runId
-)
-  local metadataRaw = redis.call('hget', membersKey, runId)
-  local revision = nil
-  if redis.call('exists', runKey) == 1 then
-    revision = redis.call('hincrby', runKey, '${RUN_RETENTION_REVISION_FIELD}', 1)
-  elseif metadataRaw then
-    local metadata = cjson.decode(metadataRaw)
-    revision = (tonumber(metadata.revision) or 0) + 1
-  end
-  if revision and metadataRaw then
-    local metadata = cjson.decode(metadataRaw)
-    metadata.revision = revision
-    redis.call('hset', membersKey, runId, cjson.encode(metadata))
-  end
-  return revision
 end`;
 
 /**
@@ -1737,6 +1760,7 @@ export class RedisBackend implements WorkflowBackend {
 
   private async appendIfStatusAndWorker(
     ownershipRunId: string,
+    storageRunId: string,
     expectedStatuses: WorkflowStatus[],
     expectedWorkerId: string,
     storageKey: string,
@@ -1746,7 +1770,11 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
     const result = await client.eval(
       APPEND_IF_STATUS_AND_WORKER_SCRIPT,
-      [this.runKey(ownershipRunId)],
+      [
+        this.runKey(ownershipRunId),
+        this.runKey(storageRunId),
+        this.terminalRunRetentionMembersKey(),
+      ],
       [
         String(expectedStatuses.length),
         ...expectedStatuses,
@@ -1754,6 +1782,7 @@ export class RedisBackend implements WorkflowBackend {
         storageKey,
         value,
         maxEntries === undefined ? "" : String(maxEntries),
+        storageRunId,
       ],
     );
     return Number(result) === 1;
@@ -1934,25 +1963,24 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
 
     if (this.config.debug) logger.debug(`[RedisBackend] Creating run: ${run.id}`);
-
-    await client.hset(this.runKey(run.id), serializedRun);
-    await client.sadd(this.statusIndexKey(run.status), run.id);
-    await client.sadd(this.workflowIndexKey(run.workflowId), run.id);
-    await client.sadd(this.allRunsIndexKey(), run.id);
-    await client.xadd(this.runObservationKey(run.id), "*", serializeInitialRunObservation(run));
-    if (
-      run.completedAt !== undefined &&
-      (run.status === "completed" || run.status === "failed" || run.status === "cancelled")
-    ) {
-      const completedAt = reflectApply(dateToISOString, run.completedAt, []) as string;
-      await this.refreshTerminalRetentionIndex(
-        client,
+    await client.eval(
+      CREATE_RUN_SCRIPT,
+      [
+        this.runKey(run.id),
+        this.statusIndexKey(run.status),
+        this.workflowIndexKey(run.workflowId),
+        this.allRunsIndexKey(),
+        this.runObservationKey(run.id),
+        this.terminalRunRetentionIndexKey(),
+        this.terminalRunRetentionMembersKey(),
+      ],
+      [
         run.id,
-        run.status,
-        completedAt,
-        String(reflectApply(dateGetTime, run.completedAt, []) as number),
-      );
-    }
+        serializedRun[TERMINAL_COMPLETED_AT_MS_FIELD] ?? "",
+        JSON.stringify(serializeInitialRunObservation(run)),
+        ...Object.entries(serializedRun).flatMap(([field, value]) => [field, value]),
+      ],
+    );
   }
 
   /**
@@ -2512,10 +2540,15 @@ export class RedisBackend implements WorkflowBackend {
 
     await client.eval(
       APPEND_RETAINED_LIST_SCRIPT,
-      [this.checkpointsKey(runId)],
+      [
+        this.checkpointsKey(runId),
+        this.runKey(runId),
+        this.terminalRunRetentionMembersKey(),
+      ],
       [
         this.serializeCheckpoint(runId, checkpoint),
         String(MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES),
+        runId,
       ],
     );
   }
@@ -2546,6 +2579,7 @@ export class RedisBackend implements WorkflowBackend {
     }
     return await this.appendIfStatusAndWorker(
       ownershipRunId,
+      storageRunId,
       expectedStatuses,
       expectedWorkerId,
       this.checkpointsKey(storageRunId),
@@ -2930,7 +2964,12 @@ export class RedisBackend implements WorkflowBackend {
 
     await client.eval(
       ENQUEUE_RUN_SCRIPT,
-      [this.config.streamKey, this.queueMessagesKey(job.runId)],
+      [
+        this.config.streamKey,
+        this.queueMessagesKey(job.runId),
+        this.runKey(job.runId),
+        this.terminalRunRetentionMembersKey(),
+      ],
       [
         job.runId,
         job.workflowId,

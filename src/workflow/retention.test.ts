@@ -230,6 +230,57 @@ describe("workflow terminal-run retention", () => {
     );
   });
 
+  it("does not delete a checkpoint appended after discovery", async () => {
+    class CheckpointRaceBackend extends MemoryBackend {
+      override async deleteTerminalRunIfUnchanged(
+        candidate: TerminalRunRetentionCandidate,
+      ): Promise<boolean> {
+        await this.saveCheckpoint(candidate.runId, {
+          id: "late-checkpoint",
+          nodeId: "retry",
+          timestamp: new Date(3),
+          context: { input: {} },
+          nodeStates: {},
+        });
+        return await super.deleteTerminalRunIfUnchanged(candidate);
+      }
+    }
+
+    const backend = new CheckpointRaceBackend();
+    await backend.createRun(run("checkpoint-race", "failed", new Date(2)));
+
+    assertEquals(
+      await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
+      { supported: true, examined: 1, deleted: 0, hasMore: true },
+    );
+    assertEquals((await backend.getLatestCheckpoint("checkpoint-race"))?.id, "late-checkpoint");
+  });
+
+  it("does not delete a retry queued after discovery", async () => {
+    class QueueRaceBackend extends MemoryBackend {
+      override async deleteTerminalRunIfUnchanged(
+        candidate: TerminalRunRetentionCandidate,
+      ): Promise<boolean> {
+        await this.enqueue({
+          runId: candidate.runId,
+          workflowId: candidate.workflowId,
+          input: {},
+          createdAt: new Date(3),
+        });
+        return await super.deleteTerminalRunIfUnchanged(candidate);
+      }
+    }
+
+    const backend = new QueueRaceBackend();
+    await backend.createRun(run("queue-race", "failed", new Date(2)));
+
+    assertEquals(
+      await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
+      { supported: true, examined: 1, deleted: 0, hasMore: true },
+    );
+    assertEquals((await backend.dequeue())?.runId, "queue-race");
+  });
+
   it("does not delete a failed run when an event is buffered after discovery", async () => {
     class EventRaceBackend extends MemoryBackend {
       override async deleteTerminalRunIfUnchanged(
