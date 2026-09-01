@@ -2138,7 +2138,7 @@ function markCompleteCsiSequenceStarts(
   stripSequenceStarts: Set<number>,
 ): void {
   while (startIndex < endIndex) {
-    const nextIndex = skipCompleteCsiSequences(value, startIndex);
+    const nextIndex = completeCsiSequenceEndAtIndex(value, startIndex);
     if (nextIndex === startIndex) {
       startIndex += 1;
       continue;
@@ -2569,6 +2569,16 @@ const NON_ASCII_ZERO_SLASH_URL_PATH = new RegExp(
     .raw`${ASCII_SPECIAL_SCHEME_SOURCE}:(?![/\s])(?:[^\s"/]{0,512}@)?[^\s"/]{1,512}(?:/${URI_TOKEN_CHARACTER_SOURCE}{0,2048})?/(?=[^\x00-\x7F])[^\s"']*`,
   "gu",
 );
+const NON_ASCII_CSI_CONSUMED_ZERO_SLASH_AUTHORITY_URL = new RegExp(
+  String
+    .raw`[A-Za-z][A-Za-z0-9+.-]{1,31}:(?![/\s])(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}(?:${URL_TOKEN_TAIL_SOURCE})?`,
+  "gu",
+);
+const NON_ASCII_CSI_CONSUMED_ZERO_SLASH_URL_PATH = new RegExp(
+  String
+    .raw`[A-Za-z][A-Za-z0-9+.-]{1,31}:(?![/\s])(?:[^\s"/]{0,512}@)?[^\s"/]{1,512}(?:/${URI_TOKEN_CHARACTER_SOURCE}{0,2048})?/(?=[^\x00-\x7F])[^\s"']*`,
+  "gu",
+);
 const NON_ASCII_AUTHORITY_PAYLOAD_AT_INDEX = new RegExp(
   String.raw`(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}(?:${URL_TOKEN_TAIL_SOURCE})?`,
   "uy",
@@ -2933,6 +2943,14 @@ function matchCsiConsumedNonAsciiUrl(value: string): number {
   if (candidate > longest) longest = candidate;
   candidate = matchPatternAtStart(NON_ASCII_ZERO_SLASH_URL_PATH, value);
   if (candidate > longest) longest = candidate;
+  candidate = matchPatternAtStart(
+    NON_ASCII_CSI_CONSUMED_ZERO_SLASH_AUTHORITY_URL,
+    value,
+    true,
+  );
+  if (candidate > longest) longest = candidate;
+  candidate = matchPatternAtStart(NON_ASCII_CSI_CONSUMED_ZERO_SLASH_URL_PATH, value);
+  if (candidate > longest) longest = candidate;
   return longest;
 }
 
@@ -3049,8 +3067,9 @@ function appendMappedCsiUrlTail(
   input: string,
   start: number,
   end: number,
-): void {
+): boolean {
   let index = start;
+  let crossedBoundary = false;
   try {
     while (index < end) {
       ANSI_CSI_SEQUENCE_AT_INDEX.lastIndex = index;
@@ -3058,7 +3077,8 @@ function appendMappedCsiUrlTail(
         | RegExpExecArray
         | null;
       const sequenceEnd = ANSI_CSI_SEQUENCE_AT_INDEX.lastIndex;
-      if (sequence !== null && sequenceEnd <= end) {
+      if (sequence !== null) {
+        if (sequenceEnd > end) crossedBoundary = true;
         appendMappedCsiUrlStructure(candidate, input, index, sequence[0]);
         index = sequenceEnd;
         continue;
@@ -3067,6 +3087,7 @@ function appendMappedCsiUrlTail(
       appendMappedInputRange(candidate, input, index, index + 1);
       index += 1;
     }
+    return crossedBoundary;
   } finally {
     ANSI_CSI_SEQUENCE_AT_INDEX.lastIndex = 0;
   }
@@ -3091,7 +3112,7 @@ function csiConsumedUrlSpan(
     value: prefix.value,
   };
   appendMappedCsiUrlStructure(candidate, value, match.index, matched, structure);
-  appendMappedCsiUrlTail(candidate, value, matchEnd, lookaheadEnd);
+  const tailCrossedBoundary = appendMappedCsiUrlTail(candidate, value, matchEnd, lookaheadEnd);
   const introducerLength = stringSlice(matched, 0, 1) === "\u001B" ? 2 : 1;
   const colon = stringIndexOf(matched, ":", introducerLength);
   const slash = stringIndexOf(matched, "/", introducerLength);
@@ -3100,8 +3121,8 @@ function csiConsumedUrlSpan(
     redaction !== undefined && colon !== -1 && slash === -1 &&
     !hasStrongCsiConsumedUrlPayload(candidate.value, redaction.endIndex)
   ) return undefined;
-  const reachesLookaheadBound = redaction?.endIndex === candidate.value.length &&
-    lookaheadEnd < value.length;
+  const reachesLookaheadBound = tailCrossedBoundary ||
+    (redaction?.endIndex === candidate.value.length && lookaheadEnd < value.length);
   const mappedEnd = redaction === undefined
     ? undefined
     : candidate.inputEnds[redaction.endIndex - 1];
@@ -3252,13 +3273,19 @@ function mappedRestoredCsiUrlRedaction(
   const candidate: MappedCsiUrlCandidate = { inputEnds: [], value: "" };
   appendMappedInputRange(candidate, value, match.index, matchEnd);
   const lookaheadEnd = MathMin(value.length, matchEnd + MAX_CSI_CONSUMED_URL_LOOKAHEAD);
-  appendMappedCsiUrlTail(candidate, value, matchEnd, lookaheadEnd);
+  const tailCrossedBoundary = appendMappedCsiUrlTail(
+    candidate,
+    value,
+    matchEnd,
+    lookaheadEnd,
+  );
   const redaction = matchCsiConsumedUrlCandidate(candidate.value);
   if (redaction === undefined) return undefined;
   const mappedEnd = candidate.inputEnds[redaction.endIndex - 1];
   if (mappedEnd === undefined) return undefined;
   return {
-    endIndex: redaction.endIndex === candidate.value.length && lookaheadEnd < value.length
+    endIndex: tailCrossedBoundary ||
+        (redaction.endIndex === candidate.value.length && lookaheadEnd < value.length)
       ? value.length
       : mappedEnd,
     marker: redaction.marker,

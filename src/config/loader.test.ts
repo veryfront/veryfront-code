@@ -7035,6 +7035,17 @@ export default config as const;
         assertStringIncludes(error.message, "Load [url]");
       });
 
+      it("fails closed when restored-URL lookahead bisects a later CSI", async () => {
+        const error = await loadFailure(
+          "vf-config-csi-restored-tail-boundary-sequence-",
+          `throw new Error("Load ht" + String.fromCharCode(27) + "[tp://reg" + String.fromCharCode(27) + "[31m" + "a".repeat(4088) + String.fromCharCode(27) + "[31mistry.internal/SECRET");\n`,
+        );
+
+        assertEquals(error.message.includes("istry.internal"), false);
+        assertEquals(error.message.includes("SECRET"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
       it("does not restore a split scheme before an empty colorized payload", async () => {
         const escape = String.fromCharCode(27);
         const error = await loadFailure(
@@ -7201,6 +7212,18 @@ export default config as const;
 
         assertEquals(error.message.includes("registry.internal"), false);
         assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
+      });
+
+      it("redacts a generic reconstructed URL with a Unicode authority", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-generic-unicode-authority-",
+          `throw new Error(${JSON.stringify(`Load x${escape}[y${escape}[:@r例.internal/秘密`)});\n`,
+        );
+
+        assertEquals(error.message.includes("例.internal"), false);
+        assertEquals(error.message.includes("秘密"), false);
+        assertStringIncludes(error.message, "Load [url]");
       });
 
       it("redacts bracketed IPv6 after a CSI-consumed colon", async () => {
@@ -7383,6 +7406,22 @@ export default config as const;
         );
 
         assertEquals(error.message.includes("例.internal"), false);
+        assertEquals(error.message.includes("秘密"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("strips every consecutive CSI before a restored Unicode payload", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-consecutive-restored-payload-",
+          `throw new Error(${
+            JSON.stringify(
+              `Load htt${escape}[p://${escape}[31m${escape}[31mregistry.internal/x秘密`,
+            )
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
         assertEquals(error.message.includes("秘密"), false);
         assertStringIncludes(error.message, "Load [url]");
       });
