@@ -607,10 +607,12 @@ is retained. After deletion, reads return the existing not-found result; this
 retention API does not create tombstones.
 
 Redis stores a completion-time index and reads at most `limit + 1` candidate
-records per sweep without hydrating run input, output, or context. It scans at
-most one `limit`-sized key page per call, completes that scan cycle before
-returning candidates, and starts another scan cycle on later maintenance calls.
-This bounded repair also discovers terminal states written by older workers
-during a rolling upgrade. During a scan, `hasMore` can be `true` even when one
-sweep examines no eligible runs, so continue until it becomes `false` as shown
-above.
+records per sweep without hydrating run input, output, or context. Completion
+times use numeric Redis scores, so ordering stays chronological for every valid
+JavaScript `Date`. Each call requests one run-key `SCAN` page with `COUNT limit`
+and reads at most `limit` queue entries. Redis completes both repair cycles
+before returning candidates and starts new cycles on later maintenance calls.
+This bounded repair discovers terminal states and queue entries written by older
+workers during a rolling upgrade. During a scan, `hasMore` can be `true` even
+when one sweep examines no eligible runs, so continue until it becomes `false`
+as shown above.
