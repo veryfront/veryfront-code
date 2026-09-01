@@ -446,6 +446,7 @@ class MockRedisAdapter implements RedisAdapter {
       const start = args[0]!;
       const limit = Number(args[1]);
       const highWater = args[3]!;
+      const localPending = new Set(JSON.parse(args[7]!) as string[]);
       const startSequence = start === "-" ? -1 : Number(start.replace("(", "").split("-")[0]);
       const highWaterSequence = Number(highWater.split("-")[0]);
       const entries = (this.streams.get(key) ?? [])
@@ -468,8 +469,7 @@ class MockRedisAdapter implements RedisAdapter {
         const live = !this.deliveredStreamIds.has(entry.id) || pending;
         let liveId = entry.id;
         let liveMessageIds = this.sets.get(liveIndexKey);
-        const alreadyTrackedLive = liveMessageIds?.has(entry.id) ?? false;
-        if (pending && !alreadyTrackedLive) {
+        if (pending && !localPending.has(entry.id)) {
           liveId = `${this.nextStreamSequence++}-0`;
           const stream = this.streams.get(key) ?? [];
           this.streams.set(
@@ -483,6 +483,7 @@ class MockRedisAdapter implements RedisAdapter {
           this.deliveredStreamIds.delete(entry.id);
           messageIds.delete(entry.id);
           messageIds.add(liveId);
+          liveMessageIds?.delete(entry.id);
         }
         if (live) {
           if (!liveMessageIds) {
@@ -602,14 +603,16 @@ class MockRedisAdapter implements RedisAdapter {
             mapped.status === "cancelled") &&
           mapped.completedAt === completedAt
         ) {
-          result.push([
-            runId,
-            mapped.workflowId,
-            mapped.createdAt,
-            mapped.status,
-            mapped.completedAt,
-            String(mapped.revision),
-          ]);
+          if ((this.sets.get(`${args[3]}${runId}`)?.size ?? 0) === 0) {
+            result.push([
+              runId,
+              mapped.workflowId,
+              mapped.createdAt,
+              mapped.status,
+              mapped.completedAt,
+              String(mapped.revision),
+            ]);
+          }
         } else {
           this.sortedSets.get(key)?.delete(member);
           if (mapped?.member === member) members!.delete(runId);
@@ -3922,6 +3925,74 @@ describe("RedisBackend", () => {
         [delivery.deliveryId],
       );
 
+      await backend.acknowledge(runId, delivery.deliveryId);
+      batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      assertEquals(batch.candidates.map((candidate) => candidate.runId), [runId]);
+    });
+
+    it("requeues an indexed pending delivery after its backend restarts", async () => {
+      const runId = "run-retention-restarted-pending";
+      await backend.initialize();
+      await backend.createRun({
+        ...createTestRun(runId),
+        status: "failed",
+        completedAt: new Date(2),
+      });
+      await backend.enqueue({
+        runId,
+        workflowId: "wf-1",
+        input: {},
+        createdAt: new Date(3),
+      });
+      const abandoned = await backend.dequeue();
+      assertExists(abandoned);
+
+      const restarted = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "test:",
+        streamKey: "test:stream",
+        groupName: "test:group",
+        consumerName: "worker-restarted",
+      });
+      await restarted.initialize();
+      let batch = await restarted.listTerminalRunRetentionCandidates(new Date(10), 2);
+      for (let page = 0; page < 10 && batch.hasMore; page++) {
+        batch = await restarted.listTerminalRunRetentionCandidates(new Date(10), 2);
+      }
+      assertEquals(batch.candidates, []);
+      const replacement = await restarted.dequeue();
+      assertExists(replacement);
+      assertEquals(replacement.runId, runId);
+      assertEquals(replacement.deliveryId === abandoned.deliveryId, false);
+
+      await restarted.acknowledge(runId, replacement.deliveryId);
+      batch = await restarted.listTerminalRunRetentionCandidates(new Date(10), 2);
+      assertEquals(batch.candidates.map((candidate) => candidate.runId), [runId]);
+    });
+
+    it("excludes orphan retention metadata while new work is live", async () => {
+      const runId = "run-retention-orphan-live";
+      await backend.createRun({
+        ...createTestRun(runId),
+        status: "failed",
+        completedAt: new Date(2),
+      });
+      mockRedis.hashes.delete(`test:schema-v1:run:${runId}`);
+      await backend.enqueue({
+        runId,
+        workflowId: "wf-1",
+        input: {},
+        createdAt: new Date(3),
+      });
+
+      let batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      for (let page = 0; page < 10 && batch.hasMore; page++) {
+        batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      }
+      assertEquals(batch.candidates, []);
+
+      const delivery = await backend.dequeue();
+      assertExists(delivery);
       await backend.acknowledge(runId, delivery.deliveryId);
       batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
       assertEquals(batch.candidates.map((candidate) => candidate.runId), [runId]);

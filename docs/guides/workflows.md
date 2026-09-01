@@ -623,9 +623,10 @@ A new backend instance performs its own bounded repair. The queue cycle uses a
 fixed stream high-water mark, so current queue traffic does not keep the
 one-time repair open forever.
 
-Deploy the version that provides retention to every workflow worker, and stop
-older workers, before starting this maintenance loop. The one-time repair backfills
-terminal states and queue entries written before deployment, but it is not a
-synchronization boundary for a legacy writer that remains active. During a
-repair, `hasMore` can be `true` even when one sweep examines no eligible
-runs, so continue until it becomes `false` as shown above.
+Before a new Redis maintenance backend starts its first retention sweep,
+stop every workflow worker. Run the repair until `hasMore` becomes `false`, then
+restart workers on the version that provides retention and keep the maintenance
+backend long-lived. Repeat this drain if you replace the maintenance backend.
+The repair requeues Redis pending deliveries that the maintenance process does
+not own, so running it beside active workers can duplicate their work. During
+repair, `hasMore` can be `true` even when one sweep examines no eligible runs.

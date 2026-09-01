@@ -129,6 +129,16 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "return cors(request, await handlers.POST(request));");
   });
 
+  it("requires a worker drain for each Redis retention repair", async () => {
+    const guide = await Deno.readTextFile(
+      new URL("docs/guides/workflows.md", repoRoot),
+    );
+
+    assertStringIncludes(guide, "stop every workflow worker");
+    assertStringIncludes(guide, "Repeat this drain if you replace the maintenance backend");
+    assertStringIncludes(guide, "running it beside active workers can duplicate their work");
+  });
+
   it("describes the server-bound workflow approval identity", async () => {
     const guide = await Deno.readTextFile(
       new URL("docs/guides/workflows.md", repoRoot),

@@ -550,14 +550,16 @@ for _, member in ipairs(members) do
   elseif mapped and mapped.member == member and not values[1] and mapped.workflowId and
       mapped.createdAt and mappedTerminal and mapped.completedAt == decoded[1] and
       mapped.revision ~= nil then
-    table.insert(result, {
-      runId,
-      mapped.workflowId,
-      mapped.createdAt,
-      mapped.status,
-      mapped.completedAt,
-      tostring(mapped.revision)
-    })
+    if redis.call('scard', ARGV[4] .. runId) == 0 then
+      table.insert(result, {
+        runId,
+        mapped.workflowId,
+        mapped.createdAt,
+        mapped.status,
+        mapped.completedAt,
+        tostring(mapped.revision)
+      })
+    end
   else
     redis.call('zrem', KEYS[1], member)
     if mapped and mapped.member == member then redis.call('hdel', KEYS[2], runId) end
@@ -604,6 +606,8 @@ local function queueEntryState(id)
   if streamIdGreaterThan(id, lastDeliveredId) then return 'unread' end
   return 'acknowledged'
 end
+local localPending = {}
+for _, pendingId in ipairs(cjson.decode(ARGV[8])) do localPending[pendingId] = true end
 if ARGV[4] == '0-0' then return { '1', '' } end
 local entries = redis.call('xrange', KEYS[1], ARGV[1], ARGV[4], 'COUNT', ARGV[2])
 local lastId = ''
@@ -619,7 +623,7 @@ for _, entry in ipairs(entries) do
       redis.call('sadd', cleanupKey, id)
       if state ~= 'acknowledged' then
         local liveId = id
-        if state == 'pending' and redis.call('sismember', liveKey, id) == 0 then
+        if state == 'pending' and not localPending[id] then
           liveId = redis.call('xadd', KEYS[1], '*', unpack(fields))
           redis.pcall('xack', KEYS[1], ARGV[6], id)
           redis.call('xdel', KEYS[1], id)
@@ -714,7 +718,9 @@ end
 if redis.call('scard', KEYS[6]) == 0 then
   redis.call('del', KEYS[6])
   redis.call('hdel', KEYS[3], '${TERMINAL_RETRY_QUEUED_FIELD}')
-  updateTerminalRetentionIndex(KEYS[3], KEYS[4], KEYS[5], ARGV[1], '')
+  if redis.call('exists', KEYS[3]) == 1 then
+    updateTerminalRetentionIndex(KEYS[3], KEYS[4], KEYS[5], ARGV[1], '')
+  end
 end
 return #ARGV - 2`;
 
@@ -2615,6 +2621,12 @@ export class RedisBackend implements WorkflowBackend {
       }
       this.terminalRetentionQueueBackfillHighWater = highWater;
     }
+    const localPendingIds: string[] = [];
+    for (const messageIds of this.pendingMessageIds.values()) {
+      for (let index = 0; index < messageIds.length; index++) {
+        reflectApply(arrayPush, localPendingIds, [messageIds[index]!]);
+      }
+    }
     const raw = await client.eval(
       BACKFILL_QUEUE_MESSAGE_INDEX_SCRIPT,
       [
@@ -2631,6 +2643,7 @@ export class RedisBackend implements WorkflowBackend {
         `${this.storagePrefix()}run:`,
         this.config.groupName,
         `${this.storagePrefix()}queue-live-messages:`,
+        JSON.stringify(localPendingIds),
       ],
     );
     if (
@@ -2725,6 +2738,7 @@ export class RedisBackend implements WorkflowBackend {
         String(cutoffMs),
         String(limit + 1),
         `${this.storagePrefix()}run:`,
+        `${this.storagePrefix()}queue-live-messages:`,
       ],
     );
     if (!arrayIsArray(raw) || raw.length === 0) {
