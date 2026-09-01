@@ -166,7 +166,11 @@ describe("agent/middleware/chain", () => {
     const chain = new MiddlewareChain([
       (_context, next) => {
         queueMicrotask(() => {
-          queuedNext = next();
+          const deferred = next();
+          queuedNext = deferred;
+          void deferred.then(() => response);
+          void deferred.catch(() => response);
+          void deferred.finally(() => undefined);
         });
         return new PromiseSubclass((resolve) => resolve(response));
       },
@@ -190,7 +194,11 @@ describe("agent/middleware/chain", () => {
     const chain = new MiddlewareChain([
       (_context, next) => {
         queueMicrotask(() => {
-          queuedNext = next();
+          const deferred = next();
+          queuedNext = deferred;
+          void deferred.then(() => response);
+          void deferred.catch(() => response);
+          void deferred.finally(() => undefined);
         });
         return new PromiseSubclass<AgentResponse>((_resolve, reject) => {
           reject(middlewareError);
