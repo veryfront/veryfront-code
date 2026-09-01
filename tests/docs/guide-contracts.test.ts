@@ -689,6 +689,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "read:jira-user",
       "/api/auth/jira/callback",
       "offline_access",
+      "JIRA_CLOUD_ID",
+      "jira__list_sites",
       "company-managed",
       "No browser or Atlassian consent page should open",
       "Verify it worked",

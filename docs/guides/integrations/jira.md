@@ -135,6 +135,9 @@ Set these project variables:
 | `ATLASSIAN_CLIENT_ID` | Atlassian OAuth app client ID |
 | `ATLASSIAN_CLIENT_SECRET` | Atlassian OAuth app client secret |
 
+If the user can access more than one Atlassian site, also set `JIRA_CLOUD_ID` to the target site's
+Cloud ID. Obtain it from the `jira__list_sites` result.
+
 That is the interactive authorization-code (3LO) path used by the generic `veryfront-code` Jira
 connector. See [managed OAuth and custom app overrides](../integrations.md#managed-oauth-and-custom-app-overrides)
 for the distinction between hosted and self-hosted setups.
