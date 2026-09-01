@@ -156,7 +156,7 @@ export function createAgUiCancelHandler<T = unknown>(
       return Response.json({ error: "Run not found" }, { status: 404 });
     }
 
-    const accepted = options.sessionManager.cancelRun(runId);
+    const accepted = options.sessionManager.cancelRun(runId, { rememberIfMissing: true });
     if (accepted) {
       return Response.json({ accepted: true }, { status: 202 });
     }

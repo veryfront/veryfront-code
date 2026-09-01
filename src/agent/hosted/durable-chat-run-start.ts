@@ -194,6 +194,16 @@ async function executeHostedDurableChatRunStart<TExecution>(
   }
 
   const execution = await input.prepareExecution(input.req);
+  let executionDisposition: "prepared" | "transferred" | "released" = "prepared";
+  const releasePreparedExecution = async (): Promise<void> => {
+    if (executionDisposition !== "prepared") return;
+    executionDisposition = "released";
+    await input.cleanupExecution?.({
+      execution,
+      runId: durableRootRun.runId,
+      conversationId,
+    });
+  };
   const historicalToolInputCompactions: HistoricalToolInputCompactionDiagnostic[] = [];
   const detachedStartRequest = buildDetachedAgUiStartRequest({
     runId: durableRootRun.runId,
@@ -213,49 +223,53 @@ async function executeHostedDurableChatRunStart<TExecution>(
       toolInputCompactions: historicalToolInputCompactions,
     });
   }
-  const detachedStartResponse = await executeAgUiDetachedStart(
-    {
-      sessionManager: input.tracker.sessionManager,
-      startDetachedExecution: async ({ abortSignal, rawRequest }) => {
-        const detachedExecution = input.startDetachedExecution({
-          execution,
-          abortSignal,
-          rawRequest,
-        });
-        input.tracker.registerExecution(durableRootRun.runId, detachedExecution);
-        await detachedExecution;
+  try {
+    const detachedStartResponse = await executeAgUiDetachedStart(
+      {
+        sessionManager: input.tracker.sessionManager,
+        startDetachedExecution: async ({ abortSignal, rawRequest }) => {
+          const detachedExecution = input.startDetachedExecution({
+            execution,
+            abortSignal,
+            rawRequest,
+          });
+          input.tracker.registerExecution(durableRootRun.runId, detachedExecution);
+          await detachedExecution;
+        },
+        onDuplicate: releasePreparedExecution,
+        onAccepted: async () => {
+          executionDisposition = "transferred";
+          input.tracker.trackRun(durableRootRun.runId);
+        },
+        onError: async ({ error }) => {
+          input.tracker.untrackRun(durableRootRun.runId);
+          input.logger?.error("Detached durable run execution failed", {
+            runId: durableRootRun.runId,
+            conversationId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        },
       },
-      onDuplicate: async () => {
-        await input.cleanupExecution?.({
-          execution,
-          runId: durableRootRun.runId,
-          conversationId,
-        });
+      {
+        request: detachedStartRequest,
+        rawRequest: input.rawRequest,
+        requestOrCtx: input.requestOrCtx ?? input.rawRequest,
       },
-      onAccepted: async () => {
-        input.tracker.trackRun(durableRootRun.runId);
-      },
-      onError: async ({ error }) => {
-        input.tracker.untrackRun(durableRootRun.runId);
-        input.logger?.error("Detached durable run execution failed", {
-          runId: durableRootRun.runId,
-          conversationId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      },
-    },
-    {
-      request: detachedStartRequest,
-      rawRequest: input.rawRequest,
-      requestOrCtx: input.requestOrCtx ?? input.rawRequest,
-    },
-  );
+    );
 
-  if (detachedStartResponse.status !== 202) {
-    return detachedStartResponse;
+    if (detachedStartResponse.status !== 202) {
+      await releasePreparedExecution();
+      if (detachedStartResponse.status === 410) {
+        return Response.json({ errorCode: "RUN_CANCELLED" }, { status: 410 });
+      }
+      return detachedStartResponse;
+    }
+
+    return await parseAcceptedDetachedStartResponse(detachedStartResponse);
+  } catch (error) {
+    await releasePreparedExecution();
+    throw error;
   }
-
-  return await parseAcceptedDetachedStartResponse(detachedStartResponse);
 }
 
 /** Test-only internals for durable chat run start behavior. */

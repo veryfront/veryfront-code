@@ -13,6 +13,7 @@ import { type AgUiResumeValue, buildMergedAgUiTools } from "./tool-shared.ts";
 import {
   AgentRuntime,
   RunAlreadyExistsError,
+  RunCancelledError,
   type RunResumeSessionManager,
 } from "../runtime/index.ts";
 import type { Agent } from "../types.ts";
@@ -380,6 +381,10 @@ export async function executeAgUiDetachedStart(
       { status: 202 },
     );
   } catch (error) {
+    if (error instanceof RunCancelledError) {
+      return Response.json({ error: "RUN_CANCELLED" }, { status: 410 });
+    }
+
     if (error instanceof RunAlreadyExistsError) {
       await options.onDuplicate?.({
         request: input.request,

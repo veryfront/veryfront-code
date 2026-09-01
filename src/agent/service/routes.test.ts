@@ -787,6 +787,39 @@ Deno.test("agent service routes cancel AG-UI runs", async () => {
   assertEquals(response.status, 204);
 });
 
+it("agent service routes reject a durable start that arrives after cancellation", async () => {
+  let starts = 0;
+  const { routeSet } = createRouteSet({
+    startDetachedExecution: async () => {
+      starts += 1;
+    },
+  });
+  const cancelResponse = await routeSet.handleDurableChatRunCancelRequest({
+    request: createAuthenticatedRequest("/api/runs/run-1", {}, "DELETE"),
+    runId: "run-1",
+  });
+
+  const startResponse = await routeSet.handleDurableChatRunExecuteRequest({
+    request: createAuthenticatedRequest("/api/runs", {
+      messages: [],
+      context: {
+        conversationId: "00000000-0000-4000-8000-000000000001",
+        projectId: "00000000-0000-4000-8000-000000000005",
+        branchId: null,
+      },
+      durableRootRun: {
+        runId: "run-1",
+        messageId: "00000000-0000-4000-8000-000000000002",
+      },
+    }),
+  });
+
+  assertEquals(cancelResponse.status, 204);
+  assertEquals(startResponse.status, 410);
+  assertEquals(await startResponse.json(), { errorCode: "RUN_CANCELLED" });
+  assertEquals(starts, 0);
+});
+
 it("agent service routes accept cancellation of a live AG-UI run", async () => {
   const { routeSet, tracker } = createRouteSet();
   tracker.sessionManager.startRun({ runId: "run-1", threadId: crypto.randomUUID() });
