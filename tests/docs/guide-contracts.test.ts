@@ -679,6 +679,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     snippets: [
       "Create a Jira service account",
       "five free service accounts",
+      "up to 250",
+      "up to 1,000",
       "ATLASSIAN_SERVICE_ACCOUNT_CLIENT_ID",
       "ATLASSIAN_SERVICE_ACCOUNT_CLIENT_SECRET",
       "ATLASSIAN_SERVICE_ACCOUNT_CLOUD_ID",

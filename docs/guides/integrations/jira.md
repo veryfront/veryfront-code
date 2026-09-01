@@ -14,7 +14,7 @@ Veryfront API; they are not settings for the generic local `veryfront-code` conn
 
 ## Before you start
 
-- You are an Atlassian organization administrator using [centralized user management](https://support.atlassian.com/user-management/docs/understand-service-accounts/). Atlassian Cloud organizations receive up to five free service accounts; Atlassian Guard Standard or Enterprise provides higher limits. Service accounts are not available in Atlassian Government Cloud.
+- You are an Atlassian organization administrator using [centralized user management](https://support.atlassian.com/user-management/docs/understand-service-accounts/). Atlassian Cloud organizations receive up to five free service accounts; Atlassian Guard Standard supports up to 250 and Enterprise supports up to 1,000. Service accounts are not available in Atlassian Government Cloud.
 - You have a Jira Cloud site and a company-managed target Jira project key. This walkthrough does
   not cover team-managed projects, which use a different project-access and role model.
 - Your Veryfront project has Jira enabled and includes the Jira tools the agent may call.
@@ -66,7 +66,7 @@ project.
 2. Select **Create credentials → OAuth 2.0**.
 3. Select the Jira scopes required by the agent. Start with:
    - `read:jira-work`
-   - `write:jira-work` only when the agent creates, edits, comments on, or transitions issues
+   - `write:jira-work` only when the agent creates, edits, comments on, assigns, or transitions issues
    - `read:jira-user` only when the agent uses `jira__search_users`
 4. Create the credential and copy the client ID and client secret into your approved secret
    manager. Atlassian does not show the secret again.
