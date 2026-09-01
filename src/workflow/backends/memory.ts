@@ -1789,7 +1789,7 @@ export class MemoryBackend implements WorkflowBackend {
 
     if (insertIndex === -1) this.queue.push(cloned);
     else this.queue.splice(insertIndex, 0, cloned);
-    if (this.runs.has(job.runId)) this.terminalRetryQueued.add(job.runId);
+    this.terminalRetryQueued.add(job.runId);
     this.advanceRunRetentionRevision(job.runId);
     return Promise.resolve();
   }

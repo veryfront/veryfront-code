@@ -74,6 +74,7 @@ const RUN_OBSERVATION_REVISION_FIELD = "__runObservationRevision";
 const RUN_RETENTION_REVISION_FIELD = "__runRetentionRevision";
 const TERMINAL_RETRY_QUEUED_FIELD = "__terminalRetryQueued";
 const TERMINAL_COMPLETED_AT_MS_FIELD = "__terminalCompletedAtMs";
+const RUN_DELETING_FIELD = "__runDeleting";
 const RUN_OBSERVATION_STREAM_MAX_LENGTH = 64;
 const RUN_OBSERVATION_POLL_INTERVAL_MS = 20;
 const APPROVAL_RECOVERY_SCAN_COUNT = 100;
@@ -304,8 +305,9 @@ const EXTEND_LOCK_SCRIPT =
  *
  * KEYS[1..7] are the run hash and per-run keys. KEYS[8] is the all-runs
  * index, KEYS[9] the expected workflow index, KEYS[10..15] every status index,
- * KEYS[16..17] the terminal completion index and member map, and KEYS[18..19]
- * the run's queue-message index and shared stream. ARGV contains status,
+ * KEYS[16..17] the terminal completion index and member map, KEYS[18..19]
+ * the run's cleanup queue-message index and shared stream, and KEYS[20] the
+ * live queue-message index. ARGV contains status,
  * workflowId, createdAt, completedAt, revision, runId, consumer group, and
  * the queue cleanup limit.
  * Like the existing status-update scripts, this requires one logical Redis
@@ -320,6 +322,7 @@ local retentionMetadataRaw = redis.call('hget', KEYS[17], ARGV[6])
 local retentionMetadata = nil
 if retentionMetadataRaw then retentionMetadata = cjson.decode(retentionMetadataRaw) end
 if runExists ~= 0 then
+  if redis.call('hget', KEYS[1], '${RUN_DELETING_FIELD}') == '1' then return 0 end
   local status = redis.call('hget', KEYS[1], 'status')
   local workflowId = redis.call('hget', KEYS[1], 'workflowId')
   local createdAt = redis.call('hget', KEYS[1], 'createdAt')
@@ -341,6 +344,7 @@ local queueIds = redis.call('spop', KEYS[18], tonumber(ARGV[8]))
 for _, queueId in ipairs(queueIds) do
   redis.pcall('xack', KEYS[19], ARGV[7], queueId)
   redis.call('xdel', KEYS[19], queueId)
+  redis.call('srem', KEYS[20], queueId)
 end
 if redis.call('scard', KEYS[18]) > 0 then return 3 end
 
@@ -351,7 +355,7 @@ if retentionMetadata then
   removed = removed + redis.call('zrem', KEYS[16], retentionMetadata.member)
   removed = removed + redis.call('hdel', KEYS[17], ARGV[6])
 end
-removed = removed + redis.call('del', KEYS[18])
+removed = removed + redis.call('del', KEYS[18], KEYS[20])
 if removed > 0 then return 1 end
 if runExists == 0 then return 2 end
 return 0`;
@@ -436,6 +440,7 @@ end`;
 
 const CREATE_RUN_SCRIPT = `-- indexed-run-create
 ${UPDATE_TERMINAL_RETENTION_INDEX_LUA}
+if redis.call('hget', KEYS[1], '${RUN_DELETING_FIELD}') == '1' then return -1 end
 local generation = redis.call('incr', KEYS[8])
 for index = 4, #ARGV, 2 do
   redis.call('hset', KEYS[1], ARGV[index], ARGV[index + 1])
@@ -451,6 +456,9 @@ for field, value in pairs(observation) do
   table.insert(observationFields, value)
 end
 redis.call('xadd', KEYS[5], '*', unpack(observationFields))
+if redis.call('scard', KEYS[9]) > 0 then
+  redis.call('hset', KEYS[1], '${TERMINAL_RETRY_QUEUED_FIELD}', '1')
+end
 return updateTerminalRetentionIndex(KEYS[1], KEYS[6], KEYS[7], ARGV[1], ARGV[2])`;
 
 const REFRESH_TERMINAL_RETENTION_INDEX_SCRIPT = `-- refresh-terminal-retention-index
@@ -466,11 +474,26 @@ elseif ARGV[3] ~= '' and completedAt ~= ARGV[3] then
 end
 return updateTerminalRetentionIndex(KEYS[1], KEYS[2], KEYS[3], ARGV[1], ARGV[4])`;
 
-const REMOVE_TERMINAL_RETENTION_INDEX_SCRIPT = `-- remove-terminal-retention-index
-local metadata = redis.call('hget', KEYS[2], ARGV[1])
-if not metadata then return 0 end
-redis.call('zrem', KEYS[1], cjson.decode(metadata).member)
-redis.call('hdel', KEYS[2], ARGV[1])
+const MARK_RUN_DELETING_SCRIPT = `-- mark-run-deleting
+if redis.call('exists', KEYS[1]) == 0 then return {} end
+local workflowId = redis.call('hget', KEYS[1], 'workflowId')
+local status = redis.call('hget', KEYS[1], 'status')
+if not workflowId or not status then return { '', '' } end
+redis.call('hset', KEYS[1], '${RUN_DELETING_FIELD}', '1')
+return { workflowId, status }`;
+
+const FINALIZE_RUN_DELETE_SCRIPT = `-- finalize-run-delete
+if redis.call('hget', KEYS[1], '${RUN_DELETING_FIELD}') ~= '1' then return 0 end
+if redis.call('scard', KEYS[18]) > 0 or redis.call('scard', KEYS[19]) > 0 then return 0 end
+local removed = 0
+for index = 1, 7 do removed = removed + redis.call('del', KEYS[index]) end
+for index = 8, 15 do removed = removed + redis.call('srem', KEYS[index], ARGV[1]) end
+local metadataRaw = redis.call('hget', KEYS[17], ARGV[1])
+if metadataRaw then
+  removed = removed + redis.call('zrem', KEYS[16], cjson.decode(metadataRaw).member)
+  removed = removed + redis.call('hdel', KEYS[17], ARGV[1])
+end
+removed = removed + redis.call('del', KEYS[18], KEYS[19])
 return 1`;
 
 const READ_TERMINAL_RETENTION_FIELDS_SCRIPT = `-- read-terminal-retention-fields
@@ -544,6 +567,7 @@ end
 return result`;
 
 const BACKFILL_QUEUE_MESSAGE_INDEX_SCRIPT = `-- backfill-workflow-queue-message-index
+${ADVANCE_RUN_RETENTION_REVISION_LUA}
 local function decimalGreaterThan(left, right)
   if #left ~= #right then return #left > #right end
   return left > right
@@ -573,11 +597,12 @@ if type(groups) == 'table' and not groups.err then
     end
   end
 end
-local function isLiveQueueEntry(id)
-  if not groupFound then return true end
+local function queueEntryState(id)
+  if not groupFound then return 'unread' end
   local pending = redis.call('xpending', KEYS[1], ARGV[6], id, id, 1)
-  if #pending > 0 then return true end
-  return streamIdGreaterThan(id, lastDeliveredId)
+  if #pending > 0 then return 'pending' end
+  if streamIdGreaterThan(id, lastDeliveredId) then return 'unread' end
+  return 'acknowledged'
 end
 if ARGV[4] == '0-0' then return { '1', '' } end
 local entries = redis.call('xrange', KEYS[1], ARGV[1], ARGV[4], 'COUNT', ARGV[2])
@@ -588,13 +613,27 @@ for _, entry in ipairs(entries) do
   for index = 1, #fields, 2 do
     if fields[index] == 'runId' and fields[index + 1] ~= '' then
       local runId = fields[index + 1]
-      redis.call('sadd', ARGV[3] .. runId, id)
-      if isLiveQueueEntry(id) then
+      local cleanupKey = ARGV[3] .. runId
+      local liveKey = ARGV[7] .. runId
+      local state = queueEntryState(id)
+      redis.call('sadd', cleanupKey, id)
+      if state ~= 'acknowledged' then
+        local liveId = id
+        if state == 'pending' and redis.call('sismember', liveKey, id) == 0 then
+          liveId = redis.call('xadd', KEYS[1], '*', unpack(fields))
+          redis.pcall('xack', KEYS[1], ARGV[6], id)
+          redis.call('xdel', KEYS[1], id)
+          redis.call('srem', cleanupKey, id)
+          redis.call('srem', liveKey, id)
+          redis.call('sadd', cleanupKey, liveId)
+        end
+        redis.call('sadd', liveKey, liveId)
         local runKey = ARGV[5] .. runId
         if redis.call('exists', runKey) == 1 then
           redis.call('hset', runKey, '${TERMINAL_RETRY_QUEUED_FIELD}', '1')
           local metadataRaw = redis.call('hget', KEYS[3], runId)
           if metadataRaw then redis.call('zrem', KEYS[2], cjson.decode(metadataRaw).member) end
+          advanceRunRetentionRevision(runKey, KEYS[3], KEYS[4], runId)
         end
       end
       break
@@ -612,6 +651,7 @@ return entries[1][1]`;
 
 const ENQUEUE_RUN_SCRIPT = `-- indexed-workflow-enqueue
 ${ADVANCE_RUN_RETENTION_REVISION_LUA}
+if redis.call('hget', KEYS[3], '${RUN_DELETING_FIELD}') == '1' then return '' end
 local id = redis.call(
   'xadd',
   KEYS[1],
@@ -623,6 +663,7 @@ local id = redis.call(
   'createdAt', ARGV[5]
 )
 redis.call('sadd', KEYS[2], id)
+redis.call('sadd', KEYS[7], id)
 if redis.call('exists', KEYS[3]) == 1 then
   redis.call('hset', KEYS[3], '${TERMINAL_RETRY_QUEUED_FIELD}', '1')
   local metadataRaw = redis.call('hget', KEYS[4], ARGV[1])
@@ -637,9 +678,13 @@ for index = 3, #ARGV do
   redis.pcall('xack', KEYS[1], ARGV[2], ARGV[index])
   redis.call('xdel', KEYS[1], ARGV[index])
   redis.call('srem', KEYS[2], ARGV[index])
+  redis.call('srem', KEYS[6], ARGV[index])
 end
 if redis.call('scard', KEYS[2]) == 0 then
   redis.call('del', KEYS[2])
+end
+if redis.call('scard', KEYS[6]) == 0 then
+  redis.call('del', KEYS[6])
   redis.call('hdel', KEYS[3], '${TERMINAL_RETRY_QUEUED_FIELD}')
   updateTerminalRetentionIndex(KEYS[3], KEYS[4], KEYS[5], ARGV[1], '')
 end
@@ -650,9 +695,10 @@ local ids = redis.call('spop', KEYS[2], tonumber(ARGV[2]))
 for _, id in ipairs(ids) do
   redis.pcall('xack', KEYS[1], ARGV[1], id)
   redis.call('xdel', KEYS[1], id)
+  redis.call('srem', KEYS[3], id)
 end
 local hasMore = redis.call('scard', KEYS[2]) > 0 and '1' or '0'
-if hasMore == '0' then redis.call('del', KEYS[2]) end
+if hasMore == '0' then redis.call('del', KEYS[2], KEYS[3]) end
 return { tostring(#ids), hasMore }`;
 
 function parseRedisTerminalRetentionCandidate(row: unknown): TerminalRunRetentionCandidate {
@@ -1705,6 +1751,10 @@ export class RedisBackend implements WorkflowBackend {
     return `${this.storagePrefix()}queue-messages:${runId}`;
   }
 
+  private liveQueueMessagesKey(runId: string): string {
+    return `${this.storagePrefix()}queue-live-messages:${runId}`;
+  }
+
   private async refreshTerminalRetentionIndex(
     client: RedisAdapter,
     runId: string,
@@ -2100,7 +2150,7 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
 
     if (this.config.debug) logger.debug(`[RedisBackend] Creating run: ${run.id}`);
-    await client.eval(
+    const created = await client.eval(
       CREATE_RUN_SCRIPT,
       [
         this.runKey(run.id),
@@ -2111,6 +2161,7 @@ export class RedisBackend implements WorkflowBackend {
         this.terminalRunRetentionIndexKey(),
         this.terminalRunRetentionMembersKey(),
         this.terminalRunRetentionGenerationKey(),
+        this.liveQueueMessagesKey(run.id),
       ],
       [
         run.id,
@@ -2119,6 +2170,9 @@ export class RedisBackend implements WorkflowBackend {
         ...Object.entries(serializedRun).flatMap(([field, value]) => [field, value]),
       ],
     );
+    if (Number(created) === -1) {
+      throw ORCHESTRATION_ERROR.create({ detail: `Run is being deleted: ${run.id}` });
+    }
   }
 
   /**
@@ -2319,26 +2373,47 @@ export class RedisBackend implements WorkflowBackend {
   async deleteRun(runId: string): Promise<void> {
     const client = await this.ensureClient();
 
-    const run = await this.getRun(runId);
-    if (!run) return;
+    const identity = await client.eval(MARK_RUN_DELETING_SCRIPT, [this.runKey(runId)], []);
+    if (arrayIsArray(identity) && identity.length === 0) return;
+    if (
+      !arrayIsArray(identity) || identity.length !== 2 ||
+      typeof identity[0] !== "string" || identity[0] === "" ||
+      typeof identity[1] !== "string" || identity[1] === ""
+    ) {
+      throw ORCHESTRATION_ERROR.create({ detail: "Redis returned invalid run deletion state" });
+    }
+    const workflowId = identity[0];
 
     await this.clearRunQueueMessages(client, runId);
-    await client.del(
-      this.runKey(runId),
-      this.checkpointsKey(runId),
-      this.approvalsKey(runId),
-      this.claimKey(runId),
-      this.runObservationKey(runId),
-      this.runObservationApprovalsKey(runId),
-    );
-    await client.srem(this.statusIndexKey(run.status), runId);
-    await client.srem(this.workflowIndexKey(run.workflowId), runId);
-    await client.srem(this.allRunsIndexKey(), runId);
-    await client.eval(
-      REMOVE_TERMINAL_RETENTION_INDEX_SCRIPT,
-      [this.terminalRunRetentionIndexKey(), this.terminalRunRetentionMembersKey()],
+    const deleted = await client.eval(
+      FINALIZE_RUN_DELETE_SCRIPT,
+      [
+        this.runKey(runId),
+        this.checkpointsKey(runId),
+        this.approvalsKey(runId),
+        this.claimKey(runId),
+        this.runObservationKey(runId),
+        this.runObservationApprovalsKey(runId),
+        this.lockKey(runId),
+        this.allRunsIndexKey(),
+        this.workflowIndexKey(workflowId),
+        this.statusIndexKey("pending"),
+        this.statusIndexKey("running"),
+        this.statusIndexKey("waiting"),
+        this.statusIndexKey("completed"),
+        this.statusIndexKey("failed"),
+        this.statusIndexKey("cancelled"),
+        this.terminalRunRetentionIndexKey(),
+        this.terminalRunRetentionMembersKey(),
+        this.queueMessagesKey(runId),
+        this.liveQueueMessagesKey(runId),
+      ],
       [runId],
     );
+    if (Number(deleted) !== 1) {
+      throw ORCHESTRATION_ERROR.create({ detail: "Redis could not finalize run deletion" });
+    }
+    this.lockValues.delete(runId);
     this.pendingMessageIds.delete(runId);
   }
 
@@ -2347,7 +2422,11 @@ export class RedisBackend implements WorkflowBackend {
     while (hasMore) {
       const raw = await client.eval(
         CLEAR_RUN_QUEUE_MESSAGES_SCRIPT,
-        [this.config.streamKey, this.queueMessagesKey(runId)],
+        [
+          this.config.streamKey,
+          this.queueMessagesKey(runId),
+          this.liveQueueMessagesKey(runId),
+        ],
         [this.config.groupName, String(TERMINAL_RETENTION_QUEUE_CLEANUP_LIMIT)],
       );
       if (
@@ -2413,6 +2492,7 @@ export class RedisBackend implements WorkflowBackend {
         this.terminalRunRetentionMembersKey(),
         this.queueMessagesKey(candidate.runId),
         this.config.streamKey,
+        this.liveQueueMessagesKey(candidate.runId),
       ],
       [
         candidate.status,
@@ -2513,6 +2593,7 @@ export class RedisBackend implements WorkflowBackend {
         this.config.streamKey,
         this.terminalRunRetentionIndexKey(),
         this.terminalRunRetentionMembersKey(),
+        this.terminalRunRetentionGenerationKey(),
       ],
       [
         this.terminalRetentionQueueBackfillCursor,
@@ -2521,6 +2602,7 @@ export class RedisBackend implements WorkflowBackend {
         this.terminalRetentionQueueBackfillHighWater,
         `${this.storagePrefix()}run:`,
         this.config.groupName,
+        `${this.storagePrefix()}queue-live-messages:`,
       ],
     );
     if (
@@ -3140,7 +3222,7 @@ export class RedisBackend implements WorkflowBackend {
 
     if (this.config.debug) logger.debug(`[RedisBackend] Enqueueing job: ${job.runId}`);
 
-    await client.eval(
+    const messageId = await client.eval(
       ENQUEUE_RUN_SCRIPT,
       [
         this.config.streamKey,
@@ -3149,6 +3231,7 @@ export class RedisBackend implements WorkflowBackend {
         this.terminalRunRetentionMembersKey(),
         this.terminalRunRetentionGenerationKey(),
         this.terminalRunRetentionIndexKey(),
+        this.liveQueueMessagesKey(job.runId),
       ],
       [
         job.runId,
@@ -3158,6 +3241,12 @@ export class RedisBackend implements WorkflowBackend {
         job.createdAt.toISOString(),
       ],
     );
+    if (messageId === "") {
+      throw ORCHESTRATION_ERROR.create({ detail: `Run is being deleted: ${job.runId}` });
+    }
+    if (typeof messageId !== "string") {
+      throw ORCHESTRATION_ERROR.create({ detail: "Redis returned an invalid queue message ID" });
+    }
   }
 
   async dequeue(): Promise<WorkflowQueueDelivery | null> {
@@ -3229,6 +3318,7 @@ export class RedisBackend implements WorkflowBackend {
           this.runKey(runId),
           this.terminalRunRetentionIndexKey(),
           this.terminalRunRetentionMembersKey(),
+          this.liveQueueMessagesKey(runId),
         ],
         [runId, this.config.groupName, messageId],
       );
