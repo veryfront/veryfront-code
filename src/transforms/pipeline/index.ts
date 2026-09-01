@@ -45,6 +45,8 @@ import { getDependencyResolutionObservations } from "./stages/resolve-imports.ts
 import { loadImportMap, preloadImportMap } from "#veryfront/modules/import-map/index.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isAbsolute, relative, resolve } from "#veryfront/compat/path/index.ts";
+import { isFrameworkSourcePath } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import {
   computePipelineConfigIdentity,
   fingerprintPipelineImportMap,
@@ -489,20 +491,28 @@ function extractReadFile(adapter: unknown): ((path: string) => Promise<string>) 
 function buildReadFile(adapter: unknown, projectDir: string): (path: string) => Promise<string> {
   const adapterRead = extractReadFile(adapter);
   const fs = createFileSystem();
-  const normalizedProjectDir = projectDir.replace(/\/+$/, "");
+  const projectRoot = resolve(projectDir);
 
   return async (path: string): Promise<string> => {
     const normalizedPath = path.startsWith("file://") ? path.slice("file://".length) : path;
+    const candidatePath = resolve(projectRoot, normalizedPath);
+    const projectRelativePath = relative(projectRoot, candidatePath);
+    const isOutsideProject = projectRelativePath === ".." ||
+      projectRelativePath.startsWith("../") ||
+      projectRelativePath.startsWith("..\\") ||
+      isAbsolute(projectRelativePath);
 
-    const isOutsideProject = normalizedPath.startsWith("/") &&
-      normalizedProjectDir.length > 0 &&
-      !normalizedPath.startsWith(normalizedProjectDir);
-
-    if (isOutsideProject) return fs.readTextFile(normalizedPath);
+    if (isOutsideProject) {
+      if (isFrameworkSourcePath(candidatePath)) return fs.readTextFile(candidatePath);
+      throw new Error("Transform dependency path is outside project root");
+    }
     if (adapterRead) return adapterRead(normalizedPath);
-    return fs.readTextFile(normalizedPath);
+    return fs.readTextFile(candidatePath);
   };
 }
+
+/** @internal Test seams for transform dependency read routing. */
+export const pipelineInternals = Object.freeze({ buildReadFile });
 
 export type {
   PipelineConfig,

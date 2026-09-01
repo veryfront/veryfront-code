@@ -1,17 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
 /** @module transforms/pipeline/index.test */
 
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   makeTempDir,
+  mkdir,
   readTextFile,
   remove,
   writeTextFile,
 } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path";
 import * as esbuild from "veryfront/extensions/bundler";
-import { runPipeline, TransformStage, transformToESM } from "./index.ts";
+import { pipelineInternals, runPipeline, TransformStage, transformToESM } from "./index.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
 import {
@@ -33,6 +34,7 @@ import {
 } from "../esm/npm-registry-client.ts";
 import { computeConfigHash } from "../../cache/config-hash.ts";
 import { computeShortContentHash } from "../esm/transform-utils.ts";
+import { FRAMEWORK_SRC_DIR } from "#veryfront/platform/compat/framework-source-resolver.ts";
 
 describe(
   "transformToESM readFile routing",
@@ -41,17 +43,14 @@ describe(
       await esbuild.stop();
     });
 
-    it("uses local fs for file:// deps outside projectDir", async () => {
+    it("rejects dependency reads outside projectDir before reaching any filesystem", async () => {
       const projectDir = await makeTempDir({ prefix: "vf-pipeline-proj-" });
       const externalDir = await makeTempDir({ prefix: "vf-pipeline-ext-" });
       const mainFile = join(projectDir, "main.tsx");
       const externalFile = join(externalDir, "dep.ts");
 
       try {
-        const mainSource = `import { dep } from "file://${externalFile}";
-export default function App() { return dep; }`;
-
-        await writeTextFile(mainFile, mainSource);
+        await writeTextFile(mainFile, "export const value = 1;");
         await writeTextFile(externalFile, "export const dep = 1;");
 
         const readCalls: string[] = [];
@@ -59,26 +58,19 @@ export default function App() { return dep; }`;
           fs: {
             readFile: async (path: string): Promise<string> => {
               readCalls.push(path);
-              if (path === externalFile) {
-                throw new Error(
-                  "Adapter should not read external file:// dependency",
-                );
-              }
               return await readTextFile(path);
             },
           },
         };
+        const readFile = pipelineInternals.buildReadFile(adapter, projectDir);
 
-        await transformToESM(mainSource, mainFile, projectDir, adapter, {
-          ssr: true,
-          dev: true,
-          projectId: "test-project",
-        });
+        assertEquals(await readFile(mainFile), "export const value = 1;");
+        await assertRejects(() => readFile(externalFile), Error, "outside project root");
 
         assertEquals(
           readCalls.includes(externalFile),
           false,
-          "external file:// deps must bypass the adapter",
+          "an escaping dependency must not reach the adapter",
         );
         assertEquals(
           readCalls.includes(mainFile),
@@ -88,6 +80,55 @@ export default function App() { return dep; }`;
       } finally {
         await remove(projectDir, { recursive: true });
         await remove(externalDir, { recursive: true });
+      }
+    });
+
+    it("does not treat a project-directory prefix collision as contained", async () => {
+      const parentDir = await makeTempDir({ prefix: "vf-pipeline-prefix-" });
+      const projectDir = join(parentDir, "project");
+      const collisionDir = join(parentDir, "project-external");
+      const collisionFile = join(collisionDir, "dep.ts");
+
+      try {
+        await mkdir(projectDir);
+        await mkdir(collisionDir);
+        await writeTextFile(collisionFile, "export const dep = 1;");
+        const readCalls: string[] = [];
+        const readFile = pipelineInternals.buildReadFile({
+          fs: {
+            readFile: async (path: string): Promise<string> => {
+              readCalls.push(path);
+              return await readTextFile(path);
+            },
+          },
+        }, projectDir);
+
+        await assertRejects(() => readFile(collisionFile), Error, "outside project root");
+        assertEquals(readCalls, []);
+      } finally {
+        await remove(parentDir, { recursive: true });
+      }
+    });
+
+    it("reads verified framework sources locally without using the project adapter", async () => {
+      const projectDir = await makeTempDir({ prefix: "vf-pipeline-framework-" });
+      const frameworkFile = join(FRAMEWORK_SRC_DIR, "transforms/pipeline/index.ts");
+      const readCalls: string[] = [];
+
+      try {
+        const readFile = pipelineInternals.buildReadFile({
+          fs: {
+            readFile: (path: string): Promise<string> => {
+              readCalls.push(path);
+              return Promise.reject(new Error("Framework source reached project adapter"));
+            },
+          },
+        }, projectDir);
+
+        assertStringIncludes(await readFile(frameworkFile), "function buildReadFile");
+        assertEquals(readCalls, []);
+      } finally {
+        await remove(projectDir, { recursive: true });
       }
     });
 
