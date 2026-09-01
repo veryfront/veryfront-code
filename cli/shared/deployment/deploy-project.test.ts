@@ -17,6 +17,7 @@ import {
   VeryfrontError,
 } from "veryfront/errors";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { relative } from "veryfront/platform/path";
 import { createApiClient } from "../config.ts";
 import { computeSourceDigest, writePushReceipt } from "../deployment-provenance.ts";
 import {
@@ -280,6 +281,32 @@ describe("DeployProject", () => {
 
         const outcome = await deployment.execute({
           projectDir,
+          environment: "production",
+          mode: "dry-run",
+          source: { kind: "already-pushed" },
+        });
+
+        assertEquals(outcome.kind, "dry-run");
+        assertEquals(controlPlane.createdReleases, []);
+        assertEquals(controlPlane.createdDeployments, []);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("normalizes relative project directories at the execution boundary", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      try {
+        const deployment = createDeployProject({
+          controlPlaneFactory: () => controlPlane,
+        });
+        const relativeProjectDir = relative(Deno.cwd(), projectDir);
+
+        const outcome = await deployment.execute({
+          projectDir: relativeProjectDir,
           environment: "production",
           mode: "dry-run",
           source: { kind: "already-pushed" },

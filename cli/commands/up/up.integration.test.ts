@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
-import { join } from "#veryfront/compat/path/index.ts";
+import { join, relative } from "#veryfront/compat/path/index.ts";
 import {
   exists,
   makeTempDir,
@@ -214,6 +214,7 @@ interface UpRun {
 interface UpRunOptions {
   dryRun?: boolean;
   jsonMode?: boolean;
+  relativeProjectDir?: boolean;
   /**
    * Seed a linked project plus a push receipt for this branch, so the deploy
    * meets a receipt that does not describe the branch up targets.
@@ -227,7 +228,7 @@ interface UpRunOptions {
  * and deployments go through the in-memory control plane.
  */
 async function runUp(options: UpRunOptions = {}): Promise<UpRun> {
-  const { dryRun = false, jsonMode = false, receiptBranch } = options;
+  const { dryRun = false, jsonMode = false, receiptBranch, relativeProjectDir = false } = options;
   const projectDir = await makeTempDir({ prefix: "vf-up-e2e-" });
   const pushedFiles = new Map<string, string>();
   const controlPlane = new PreviewControlPlane(pushedFiles);
@@ -310,17 +311,24 @@ async function runUp(options: UpRunOptions = {}): Promise<UpRun> {
         // into a timeout instead of naming it.
         throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
       }, () =>
-        upCommand({ projectDir, dryRun }, undefined, {
-          deployProject: createDeployProject({
-            polling: {
-              assetManifestPollIntervalMs: 1,
-              assetManifestTimeoutMs: 100,
-              environmentPollIntervalMs: 1,
-              environmentTimeoutMs: 1_000,
-            },
-            controlPlaneFactory: () => controlPlane,
-          }),
-        }));
+        upCommand(
+          {
+            projectDir: relativeProjectDir ? relative(Deno.cwd(), projectDir) : projectDir,
+            dryRun,
+          },
+          undefined,
+          {
+            deployProject: createDeployProject({
+              polling: {
+                assetManifestPollIntervalMs: 1,
+                assetManifestTimeoutMs: 100,
+                environmentPollIntervalMs: 1,
+                environmentTimeoutMs: 1_000,
+              },
+              controlPlaneFactory: () => controlPlane,
+            }),
+          },
+        ));
 
     try {
       await withDeployEnv(run);
@@ -338,6 +346,14 @@ async function runUp(options: UpRunOptions = {}): Promise<UpRun> {
 }
 
 describe("up end to end", () => {
+  it("accepts a relative project directory", async () => {
+    const run = await runUp({ relativeProjectDir: true });
+
+    assertEquals(run.failure, null);
+    assertEquals(run.controlPlane.createdReleases.length, 1);
+    assertEquals(run.controlPlane.createdDeployments.length, 1);
+  });
+
   it("creates the project, pushes source, and prints the verified preview URL", async () => {
     const run = await runUp();
 

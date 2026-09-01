@@ -1423,7 +1423,11 @@ export function createDeployProject(options: {
   const createControlPlane = options.controlPlaneFactory ?? createHttpDeployControlPlane;
 
   return {
-    async execute(request, observer) {
+    async execute(unresolvedRequest, observer) {
+      const request = {
+        ...unresolvedRequest,
+        projectDir: resolve(unresolvedRequest.projectDir),
+      };
       if (request.projectSlug && request.source.kind === "ensure-pushed") {
         throw DEPLOYMENT_ERROR.create({
           detail:
