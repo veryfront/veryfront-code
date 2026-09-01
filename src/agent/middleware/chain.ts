@@ -27,16 +27,10 @@ function markContinuationObserved(promise: Promise<unknown>): void {
   if (observation) observation.observed = true;
 }
 
-function containRejection(
-  promise: Promise<unknown>,
-  onInvalid?: (error: unknown) => void,
-): void {
+function containRejection(promise: Promise<unknown>): void {
   const observation = CONTINUATION_OBSERVATIONS.get(promise);
   void IntrinsicPromiseThen.call(promise, undefined, (error: unknown) => {
-    if (isInvalidContinuationError(error)) {
-      onInvalid?.(error);
-      return undefined;
-    }
+    if (isInvalidContinuationError(error)) return undefined;
     if (observation?.observed) return undefined;
     setTimeout(() => {
       if (!observation?.observed) void Promise.reject(error);
@@ -60,6 +54,7 @@ class InvalidContinuationPromise extends Promise<AgentResponse> {
       onFulfilled,
       onRejected,
     ) as Promise<TResult1 | TResult2>;
+    lockContinuationSpecies(derived, INVALID_CONTINUATION_SPECIES_HOLDER);
     registerContinuation(derived);
     containRejection(derived);
     return derived;
@@ -70,6 +65,7 @@ function rejectInvalidContinuation(): Promise<AgentResponse> {
   const rejection = new InvalidContinuationPromise(
     (_resolve, reject) => reject(createInvalidContinuationError()),
   );
+  lockContinuationSpecies(rejection, INVALID_CONTINUATION_SPECIES_HOLDER);
   registerContinuation(rejection);
   containRejection(rejection);
   return rejection;
@@ -77,7 +73,6 @@ function rejectInvalidContinuation(): Promise<AgentResponse> {
 
 class DeferredContinuationPromise extends Promise<AgentResponse> {
   private settlement: "pending" | "valid" | "invalid" = "pending";
-  private readonly derived = new Set<Promise<unknown>>();
 
   override then<TResult1 = AgentResponse, TResult2 = never>(
     onFulfilled?:
@@ -93,29 +88,54 @@ class DeferredContinuationPromise extends Promise<AgentResponse> {
       onFulfilled,
       onRejected,
     ) as Promise<TResult1 | TResult2>;
+    lockContinuationSpecies(derived, DEFERRED_CONTINUATION_SPECIES_HOLDER);
     registerContinuation(derived);
-    if (this.settlement === "invalid") {
-      containRejection(derived, (error) => {
-        (derived as unknown as DeferredContinuationPromise).markSettled(error);
-      });
-    } else if (this.settlement === "pending") {
-      this.derived.add(derived);
-    }
+    observeDeferredSettlement(derived as unknown as DeferredContinuationPromise);
     return derived;
   }
 
   markSettled(error: unknown): void {
     if (this.settlement !== "pending") return;
     this.settlement = isInvalidContinuationError(error) ? "invalid" : "valid";
-    if (this.settlement === "invalid") {
-      for (const derived of this.derived) {
-        containRejection(derived, (invalidError) => {
-          (derived as unknown as DeferredContinuationPromise).markSettled(invalidError);
-        });
-      }
-    }
-    this.derived.clear();
   }
+}
+
+const INVALID_CONTINUATION_SPECIES_HOLDER = Object.create(null);
+Object.defineProperty(INVALID_CONTINUATION_SPECIES_HOLDER, Symbol.species, {
+  value: InvalidContinuationPromise,
+});
+Object.freeze(INVALID_CONTINUATION_SPECIES_HOLDER);
+
+const DEFERRED_CONTINUATION_SPECIES_HOLDER = Object.create(null);
+Object.defineProperty(DEFERRED_CONTINUATION_SPECIES_HOLDER, Symbol.species, {
+  value: DeferredContinuationPromise,
+});
+Object.freeze(DEFERRED_CONTINUATION_SPECIES_HOLDER);
+
+function lockContinuationSpecies(promise: Promise<unknown>, holder: object): void {
+  Object.defineProperty(promise, "constructor", {
+    configurable: false,
+    value: holder,
+    writable: false,
+  });
+}
+
+function observeDeferredSettlement(promise: DeferredContinuationPromise): void {
+  const observation = CONTINUATION_OBSERVATIONS.get(promise);
+  void IntrinsicPromiseThen.call(
+    promise,
+    () => {
+      promise.markSettled(undefined);
+    },
+    (error: unknown) => {
+      promise.markSettled(error);
+      if (isInvalidContinuationError(error) || observation?.observed) return undefined;
+      setTimeout(() => {
+        if (!observation?.observed) void Promise.reject(error);
+      }, 0);
+      return undefined;
+    },
+  );
 }
 
 function createDeferredContinuation(
@@ -128,7 +148,6 @@ function createDeferredContinuation(
         const error = createInvalidContinuationError();
         continuation.markSettled(error);
         reject(error);
-        containRejection(continuation);
         return;
       }
       void IntrinsicPromiseThen.call(
@@ -140,17 +159,17 @@ function createDeferredContinuation(
         (error: unknown) => {
           continuation.markSettled(error);
           reject(error);
-          if (isInvalidContinuationError(error)) containRejection(continuation);
         },
       );
     });
     void IntrinsicPromiseThen.call(scheduled, undefined, (error: unknown) => {
       continuation.markSettled(error);
       reject(error);
-      if (isInvalidContinuationError(error)) containRejection(continuation);
     });
   });
+  lockContinuationSpecies(continuation, DEFERRED_CONTINUATION_SPECIES_HOLDER);
   registerContinuation(continuation);
+  observeDeferredSettlement(continuation);
   return continuation;
 }
 

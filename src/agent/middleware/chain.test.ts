@@ -167,6 +167,11 @@ describe("agent/middleware/chain", () => {
       (_context, next) => {
         queueMicrotask(() => {
           const deferred = next();
+          try {
+            Object.defineProperty(deferred, "constructor", { value: Promise });
+          } catch {
+            // Internal continuation species are intentionally immutable.
+          }
           queuedNext = deferred;
           void deferred.then(() => response).then(() => response);
           void deferred.catch(() => response);
@@ -195,6 +200,11 @@ describe("agent/middleware/chain", () => {
       (_context, next) => {
         queueMicrotask(() => {
           const deferred = next();
+          try {
+            Object.defineProperty(deferred, "constructor", { value: Promise });
+          } catch {
+            // Internal continuation species are intentionally immutable.
+          }
           queuedNext = deferred;
           void deferred.then(() => response).then(() => response);
           void deferred.catch(() => response);
