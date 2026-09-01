@@ -1,14 +1,16 @@
 ---
 title: "Set up Jira service-account access"
-description: "Run Veryfront Jira tools as a dedicated Atlassian service account without browser consent."
+description: "Run hosted Veryfront Jira tools as a dedicated Atlassian service account without browser consent."
 order: 52
 ---
 
-Use a dedicated Atlassian service account when a project-owned or scheduled agent must read and
-update Jira without acting as a person's Atlassian user.
+This guide is for hosted Veryfront projects using the platform Jira service-identity path. Use a
+dedicated Atlassian service account when a project-owned or scheduled agent must read and update
+Jira without acting as a person's Atlassian user.
 
 This setup uses Atlassian OAuth 2.0 client credentials (2LO). It does not open a browser or use
-the interactive user OAuth flow.
+the interactive user OAuth flow. The service-account variables below are consumed by the hosted
+Veryfront API; they are not settings for the generic local `veryfront-code` connector.
 
 ## Before you start
 
@@ -40,11 +42,15 @@ contains the current account-management steps.
 | Edit issues | Edit Issues |
 | Add comments | Add Comments |
 | Change status | Transition Issues |
-| Search Jira users | User-profile access |
+| Search Jira users | Browse users and groups |
 
-Use Jira’s [project-permission documentation](https://support.atlassian.com/jira-cloud-administration/docs/permissions-for-company-managed-projects/)
+Use Jira's [project-permission documentation](https://support.atlassian.com/jira-cloud-administration/docs/permissions-for-company-managed-projects/)
 and permission helper to verify the service account. For Jira Service Management workflows, also
 grant the appropriate service-desk agent permissions.
+
+`Browse users and groups` is a Jira global permission, not a project role. Grant it in Jira
+administration when the agent uses `jira__search_users`; the `read:jira-user` OAuth scope is also
+required for that tool.
 
 ## 3. Create the service-account credential
 
@@ -53,8 +59,8 @@ grant the appropriate service-desk agent permissions.
 2. Select **Create credentials → OAuth 2.0**.
 3. Select the Jira scopes required by the agent. Start with:
    - `read:jira-work`
-   - `write:jira-work`
-   - `read:jira-user` when the agent uses `jira__search_users`
+   - `write:jira-work` only when the agent creates, edits, comments on, or transitions issues
+   - `read:jira-user` only when the agent uses `jira__search_users`
 4. Create the credential and copy the client ID and client secret into your approved secret
    manager. Atlassian does not show the secret again.
 
@@ -91,8 +97,8 @@ select the interactive user-consent OAuth flow. Do not put the service-account s
 files, prompts, tickets, browser code, URLs, or logs.
 
 `JIRA_SERVICE_PROJECT_KEY` is optional for read-only tools and required for write tools. For
-writes, Veryfront checks that the issue belongs to the configured Jira project before sending the
-request.
+writes, Veryfront rejects the call unless the target issue or project belongs to the configured
+project key before sending the request to Jira.
 
 ## Verify it worked
 
@@ -101,9 +107,26 @@ request.
 3. After the read check passes, test one write tool against the configured project.
 4. Confirm Jira’s audit history attributes the action to the service account.
 
-No Atlassian consent page should open. If it does, check the variable names, selected Veryfront
-environment, Jira project integration, and tool policy. A Cloud ID by itself does not activate
-service-account mode.
+No browser or Atlassian consent page should open. If it does, check the variable names, selected
+Veryfront environment, Jira project integration, and tool policy. A Cloud ID by itself does not
+activate service-account mode.
+
+## If you need user OAuth instead
+
+For hosted projects, managed Atlassian OAuth does not require project client credentials. Start the
+Jira connection from the project's integration settings and complete the Atlassian consent flow.
+
+For a self-hosted framework deployment using a custom Atlassian OAuth app, register the deployment
+callback and set these project variables:
+
+| Variable | Value |
+| --- | --- |
+| `ATLASSIAN_CLIENT_ID` | Atlassian OAuth app client ID |
+| `ATLASSIAN_CLIENT_SECRET` | Atlassian OAuth app client secret |
+
+That is the interactive authorization-code (3LO) path used by the generic `veryfront-code` Jira
+connector. See [managed OAuth and custom app overrides](../integrations.md#managed-oauth-and-custom-app-overrides)
+for the distinction between hosted and self-hosted setups.
 
 ## Service account versus user OAuth
 
@@ -111,7 +134,7 @@ service-account mode.
 | --- | --- | --- |
 | Browser consent | Not used | Required |
 | Identity | Dedicated Atlassian account | Individual Atlassian user |
-| Variables | `ATLASSIAN_SERVICE_ACCOUNT_*` | `ATLASSIAN_CLIENT_*` |
+| Variables | `ATLASSIAN_SERVICE_ACCOUNT_*` | Managed OAuth: none; custom app: `ATLASSIAN_CLIENT_*` |
 | Token grant | `client_credentials` (2LO) | `authorization_code` (3LO) |
 | Best for | Scheduled or project-owned automation | Actions that must act as the person |
 

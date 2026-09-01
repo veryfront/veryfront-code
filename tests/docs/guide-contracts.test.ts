@@ -684,6 +684,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "JIRA_SERVICE_PROJECT_KEY",
       "client_credentials",
       "Project settings → People",
+      "Browse users and groups",
       "read:jira-user",
       "No browser or Atlassian consent page should open",
       "Verify it worked",
