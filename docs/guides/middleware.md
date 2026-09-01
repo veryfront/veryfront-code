@@ -63,6 +63,11 @@ also authoritative for `OPTIONS` and must branch on `ctx.request.method` when
 it owns multiple methods. Veryfront replaces policy-owned CORS headers on both
 forms with the validated global `security.cors` policy.
 
+An unauthenticated preflight for an auth-protected route is the exception.
+Veryfront returns automatic preflight without executing the explicit handler,
+so the browser can evaluate the global CORS policy before the actual request
+performs application authentication.
+
 ### Rate limiting
 
 ```ts

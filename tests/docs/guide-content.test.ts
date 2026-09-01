@@ -146,6 +146,11 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "A callable default Pages route is");
     assertStringIncludes(guide, "cannot override the global policy after route dispatch");
     assertStringIncludes(guide, "validated global `security.cors` policy");
+    assertStringIncludes(
+      guide,
+      "An unauthenticated preflight for an auth-protected route is the exception",
+    );
+    assertStringIncludes(guide, "without executing the explicit handler");
   });
 
   it("describes the server-bound workflow approval identity", async () => {
