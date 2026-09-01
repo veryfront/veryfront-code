@@ -561,6 +561,15 @@ for _, member in ipairs(members) do
         mapped.completedAt,
         tostring(mapped.revision)
       })
+    else
+      -- Defer live orphans so a bounded page can reach later candidates.
+      local score = redis.call('zscore', KEYS[1], member)
+      if score then
+        mapped.liveWorkScore = score
+        redis.call('hset', KEYS[2], runId, cjson.encode(mapped))
+        redis.call('zrem', KEYS[1], member)
+        result[1] = '1'
+      end
     end
   else
     redis.call('zrem', KEYS[1], member)
@@ -722,6 +731,17 @@ if redis.call('scard', KEYS[6]) == 0 then
   redis.call('hdel', KEYS[3], '${TERMINAL_RETRY_QUEUED_FIELD}')
   if redis.call('exists', KEYS[3]) == 1 then
     updateTerminalRetentionIndex(KEYS[3], KEYS[4], KEYS[5], ARGV[1], '')
+  else
+    local metadataRaw = redis.call('hget', KEYS[5], ARGV[1])
+    if metadataRaw then
+      local metadata = cjson.decode(metadataRaw)
+      if metadata.liveWorkScore and metadata.member then
+        -- Restore the exact score after the last live delivery leaves.
+        redis.call('zadd', KEYS[4], tonumber(metadata.liveWorkScore), metadata.member)
+        metadata.liveWorkScore = nil
+        redis.call('hset', KEYS[5], ARGV[1], cjson.encode(metadata))
+      end
+    end
   end
 end
 return #ARGV - 2`;

@@ -409,7 +409,25 @@ class MockRedisAdapter implements RedisAdapter {
         this.sets.delete(keys[5]!);
         const hash = this.hashes.get(keys[2]!);
         hash?.delete("__terminalRetryQueued");
-        if (hash) this.refreshTerminalRetentionIndexFromHash(runId, hash, keys[3]!, keys[4]!);
+        if (hash) {
+          this.refreshTerminalRetentionIndexFromHash(runId, hash, keys[3]!, keys[4]!);
+        } else {
+          const members = this.hashes.get(keys[4]!);
+          const metadataRaw = members?.get(runId);
+          if (metadataRaw) {
+            const metadata = JSON.parse(metadataRaw) as {
+              member: string;
+              liveWorkScore?: string;
+            };
+            if (metadata.liveWorkScore !== undefined) {
+              const index = this.sortedSets.get(keys[3]!) ?? new Map<string, number>();
+              index.set(metadata.member, Number(metadata.liveWorkScore));
+              this.sortedSets.set(keys[3]!, index);
+              delete metadata.liveWorkScore;
+              members!.set(runId, JSON.stringify(metadata));
+            }
+          }
+        }
       }
       return Promise.resolve(acknowledgedIds.length);
     }
@@ -577,6 +595,7 @@ class MockRedisAdapter implements RedisAdapter {
             status: string;
             completedAt: string;
             revision: number;
+            liveWorkScore?: string;
           }
           : undefined;
         const hash = this.hashes.get(`${args[2]}${runId}`);
@@ -612,6 +631,14 @@ class MockRedisAdapter implements RedisAdapter {
               mapped.completedAt,
               String(mapped.revision),
             ]);
+          } else {
+            const score = this.sortedSets.get(key)?.get(member);
+            if (score !== undefined) {
+              mapped.liveWorkScore = String(score);
+              members!.set(runId, JSON.stringify(mapped));
+              this.sortedSets.get(key)?.delete(member);
+              result[0] = "1";
+            }
           }
         } else {
           this.sortedSets.get(key)?.delete(member);
@@ -3996,6 +4023,40 @@ describe("RedisBackend", () => {
       await backend.acknowledge(runId, delivery.deliveryId);
       batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
       assertEquals(batch.candidates.map((candidate) => candidate.runId), [runId]);
+    });
+
+    it("paginates past orphan retention metadata with live work", async () => {
+      for (let index = 1; index <= 3; index++) {
+        const runId = `run-retention-orphan-live-${index}`;
+        await backend.createRun({
+          ...createTestRun(runId),
+          status: "failed",
+          completedAt: new Date(index),
+        });
+        mockRedis.hashes.delete(`test:schema-v1:run:${runId}`);
+        await backend.enqueue({
+          runId,
+          workflowId: "wf-1",
+          input: {},
+          createdAt: new Date(10 + index),
+        });
+      }
+      await backend.createRun({
+        ...createTestRun("run-retention-after-live-orphans"),
+        status: "completed",
+        completedAt: new Date(4),
+      });
+
+      let batch = await backend.listTerminalRunRetentionCandidates(new Date(20), 2);
+      assertEquals(batch.candidates, []);
+      assertEquals(batch.hasMore, true);
+      for (let page = 0; page < 10 && batch.candidates.length === 0; page++) {
+        batch = await backend.listTerminalRunRetentionCandidates(new Date(20), 2);
+      }
+
+      assertEquals(batch.candidates.map((candidate) => candidate.runId), [
+        "run-retention-after-live-orphans",
+      ]);
     });
 
     it("cleans queued terminal state before its consumer group exists", async () => {
