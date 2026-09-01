@@ -14,7 +14,7 @@ Veryfront API; they are not settings for the generic local `veryfront-code` conn
 
 ## Before you start
 
-- You are an Atlassian organization administrator using [centralized user management](https://support.atlassian.com/user-management/docs/understand-service-accounts/).
+- You are an Atlassian organization administrator using [centralized user management](https://support.atlassian.com/user-management/docs/understand-service-accounts/), with Atlassian Guard Standard or Enterprise. Service accounts are not available in Atlassian Government Cloud.
 - You have a Jira Cloud site and a company-managed target Jira project key. This walkthrough does
   not cover team-managed projects, which use a different project-access and role model.
 - Your Veryfront project has Jira enabled and includes the Jira tools the agent may call.
