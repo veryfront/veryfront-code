@@ -1825,8 +1825,8 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   async nack(runId: string): Promise<void> {
-    await this.acknowledge(runId);
     await requeueRun(this, runId);
+    await this.acknowledge(runId);
   }
 
   // =========================================================================

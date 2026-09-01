@@ -3221,11 +3221,11 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   async nack(runId: string): Promise<void> {
-    // XACK the consumed message first so it leaves the PEL; requeueRun then adds
-    // a fresh stream entry. Skipping the ack would leave the old entry pending
-    // AND the requeued copy, growing the PEL unbounded.
-    await this.acknowledge(runId);
+    // Commit the replacement before acknowledging the old delivery. The
+    // existing retry marker then remains continuous across both Redis turns;
+    // an enqueue failure leaves the original PEL entry available for recovery.
     await requeueRun(this, runId);
+    await this.acknowledge(runId);
   }
 
   async acquireLock(runId: string, duration: number): Promise<string | null> {

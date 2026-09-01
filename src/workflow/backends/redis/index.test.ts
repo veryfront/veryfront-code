@@ -6101,10 +6101,18 @@ describe("RedisBackend", () => {
       });
 
       await backend.dequeue();
+      const callsBeforeNack = mockRedis.scriptCalls.length;
       await backend.nack("run-nack-ack");
 
       // Old PEL entry is acked inside one Lua cleanup, and a fresh job is queued.
       assertEquals(ackCalls.length, 0);
+      assertEquals(
+        mockRedis.scriptCalls.slice(callsBeforeNack).filter(({ script }) =>
+          script.includes("indexed-workflow-enqueue") ||
+          script.includes("remove-acknowledged-queue-messages")
+        ).map(({ script }) => script.includes("indexed-workflow-enqueue") ? "enqueue" : "ack"),
+        ["enqueue", "ack"],
+      );
       assertEquals(
         mockRedis.scriptCalls.filter(({ script }) =>
           script.includes("remove-acknowledged-queue-messages")
