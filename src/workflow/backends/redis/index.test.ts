@@ -271,7 +271,7 @@ class MockRedisAdapter implements RedisAdapter {
         this.sets.set(keys[1]!, messageIds);
       }
       messageIds.add(id);
-      this.advanceRunRetentionRevision(keys[2]!, keys[3]!, args[0]!);
+      this.advanceRunRetentionRevision(keys[2]!, keys[3]!, keys[4]!, args[0]!);
       return Promise.resolve(id);
     }
 
@@ -479,6 +479,20 @@ class MockRedisAdapter implements RedisAdapter {
         ) return Promise.resolve(0);
       }
 
+      const queueMessageSet = this.sets.get(keys[17]!);
+      const queueMessageIds = [...(queueMessageSet ?? [])].slice(0, Number(args[7]));
+      for (const queueMessageId of queueMessageIds) queueMessageSet?.delete(queueMessageId);
+      this.queueCleanupAcks.push(...queueMessageIds);
+      const queuedIds = new Set(queueMessageIds);
+      const queueStream = this.streams.get(keys[18]!);
+      if (queueStream) {
+        this.streams.set(
+          keys[18]!,
+          queueStream.filter(({ id }) => !queuedIds.has(id)),
+        );
+      }
+      if ((queueMessageSet?.size ?? 0) > 0) return Promise.resolve(3);
+
       let removed = 0;
       for (const dataKey of keys.slice(0, 7)) {
         if (this.store.delete(dataKey)) removed += 1;
@@ -493,16 +507,6 @@ class MockRedisAdapter implements RedisAdapter {
       if (retentionMetadata) {
         if (this.sortedSets.get(keys[15]!)?.delete(retentionMetadata.member)) removed += 1;
         if (retentionMembers!.delete(args[5]!)) removed += 1;
-      }
-      const queueMessageIds = [...(this.sets.get(keys[17]!) ?? [])];
-      this.queueCleanupAcks.push(...queueMessageIds);
-      const queuedIds = new Set(queueMessageIds);
-      const queueStream = this.streams.get(keys[18]!);
-      if (queueStream) {
-        this.streams.set(
-          keys[18]!,
-          queueStream.filter(({ id }) => !queuedIds.has(id)),
-        );
       }
       if (this.sets.delete(keys[17]!)) removed += 1;
       if (removed > 0) return Promise.resolve(1);
@@ -561,6 +565,7 @@ class MockRedisAdapter implements RedisAdapter {
         this.applyRunPatchField(hash, args[i]!, args[i + 1]!);
       }
       this.appendRunObservation(hash, streamKey, maxLength);
+      this.advanceRunRetentionRevision(key, keys[2]!, keys[3]!, runId);
       this.refreshTerminalRetentionIndexFromHash(runId, hash, keys[1]!, keys[2]!);
       return Promise.resolve(1);
     }
@@ -574,7 +579,7 @@ class MockRedisAdapter implements RedisAdapter {
       list.push(args[0]!);
       const maxEntries = Number(args[1]);
       if (list.length > maxEntries) list.splice(0, list.length - maxEntries);
-      this.advanceRunRetentionRevision(keys[1]!, keys[2]!, args[2]!);
+      this.advanceRunRetentionRevision(keys[1]!, keys[2]!, keys[3]!, args[2]!);
       return Promise.resolve(list.length);
     }
 
@@ -597,6 +602,7 @@ class MockRedisAdapter implements RedisAdapter {
       hash.set("heartbeatAt", now);
       if (!hash.get("startedAt")) hash.set("startedAt", now);
       this.appendRunObservation(hash, streamKey, maxLength);
+      this.advanceHashRunRetentionRevision(hash, keys[2]!);
       return Promise.resolve(1);
     }
 
@@ -627,6 +633,7 @@ class MockRedisAdapter implements RedisAdapter {
       this.advanceRunRetentionRevision(
         keys[1]!,
         keys[2]!,
+        keys[3]!,
         args[expectedCount + 5]!,
       );
       return Promise.resolve(1);
@@ -668,7 +675,7 @@ class MockRedisAdapter implements RedisAdapter {
       list.push(args[0]!);
       const hash = this.hashes.get(key);
       if (!hash) {
-        this.advanceRunRetentionRevision(key, keys[3]!, args[5]!);
+        this.advanceRunRetentionRevision(key, keys[3]!, keys[4]!, args[5]!);
         return Promise.resolve(0);
       }
       const revision = this.appendRunObservation(
@@ -676,11 +683,7 @@ class MockRedisAdapter implements RedisAdapter {
         args[2]!,
         Number(args[3]),
       );
-      this.synchronizeRunRetentionMetadata(
-        args[5]!,
-        keys[3]!,
-        Number(hash.get("__runRetentionRevision")),
-      );
+      this.advanceRunRetentionRevision(key, keys[3]!, keys[4]!, args[5]!);
       this.appendApprovalProjection(
         keys[2]!,
         revision,
@@ -728,10 +731,11 @@ class MockRedisAdapter implements RedisAdapter {
         streamKey,
         maxLength,
       );
-      this.synchronizeRunRetentionMetadata(
-        args[expectedCount + 6]!,
+      this.advanceRunRetentionRevision(
+        key,
         keys[3]!,
-        Number(hash.get("__runRetentionRevision")),
+        keys[4]!,
+        args[expectedCount + 6]!,
       );
       this.appendApprovalProjection(
         keys[2]!,
@@ -754,7 +758,7 @@ class MockRedisAdapter implements RedisAdapter {
               { ...approval, ...patch, id: approvalId },
               "approval",
             );
-            this.advanceRunRetentionRevision(keys[1]!, keys[2]!, args[2]!);
+            this.advanceRunRetentionRevision(keys[1]!, keys[2]!, keys[3]!, args[2]!);
             return Promise.resolve(1);
           }
         }
@@ -775,7 +779,7 @@ class MockRedisAdapter implements RedisAdapter {
             Object.assign(approval, patch);
             for (const field of deletedFields) delete approval[field];
             list[i] = serializeWorkflowJson(approval, "approval");
-            this.advanceRunRetentionRevision(keys[1]!, keys[2]!, args[3]!);
+            this.advanceRunRetentionRevision(keys[1]!, keys[2]!, keys[3]!, args[3]!);
             return Promise.resolve(1);
           }
         }
@@ -801,7 +805,7 @@ class MockRedisAdapter implements RedisAdapter {
           ) return Promise.resolve(2);
           Object.assign(approval, patch, { recoveryClaimId });
           list[i] = serializeWorkflowJson(approval, "approval");
-          this.advanceRunRetentionRevision(keys[1]!, keys[2]!, args[4]!);
+          this.advanceRunRetentionRevision(keys[1]!, keys[2]!, keys[3]!, args[4]!);
           return Promise.resolve(1);
         }
       }
@@ -820,7 +824,7 @@ class MockRedisAdapter implements RedisAdapter {
           delete approval.recoveryClaimId;
           delete approval.recoveryClaimedAt;
           list[i] = serializeWorkflowJson(approval, "approval");
-          this.advanceRunRetentionRevision(keys[1]!, keys[2]!, args[2]!);
+          this.advanceRunRetentionRevision(keys[1]!, keys[2]!, keys[3]!, args[2]!);
           return Promise.resolve(1);
         }
       }
@@ -844,7 +848,7 @@ class MockRedisAdapter implements RedisAdapter {
             delete approval.recoveryClaimId;
             delete approval.recoveryClaimedAt;
             list[i] = serializeWorkflowJson(approval, "approval");
-            this.advanceRunRetentionRevision(keys[1]!, keys[2]!, args[2]!);
+            this.advanceRunRetentionRevision(keys[1]!, keys[2]!, keys[3]!, args[2]!);
             return Promise.resolve(1);
           }
         }
@@ -886,6 +890,7 @@ class MockRedisAdapter implements RedisAdapter {
         this.applyRunPatchField(hash, args[i]!, args[i + 1]!, replaceMaps);
       }
       this.appendRunObservation(hash, streamKey, maxLength);
+      this.advanceRunRetentionRevision(key, keys[2]!, keys[3]!, runId);
       this.refreshTerminalRetentionIndexFromHash(runId, hash, keys[1]!, keys[2]!);
       return Promise.resolve(1);
     }
@@ -1075,22 +1080,27 @@ class MockRedisAdapter implements RedisAdapter {
   private advanceRunRetentionRevision(
     runKey: string,
     membersKey: string,
+    generationKey: string,
     runId: string,
   ): number | undefined {
     const hash = this.hashes.get(runKey);
     const members = this.hashes.get(membersKey);
     const metadataRaw = members?.get(runId);
-    let revision: number | undefined;
-    if (hash) {
-      revision = Number(hash.get("__runRetentionRevision") ?? "0") + 1;
-      hash.set("__runRetentionRevision", String(revision));
-    } else if (metadataRaw) {
-      const metadata = JSON.parse(metadataRaw) as { revision?: number };
-      revision = Number(metadata.revision ?? 0) + 1;
-    }
-    if (revision !== undefined) {
-      this.synchronizeRunRetentionMetadata(runId, membersKey, revision);
-    }
+    if (!hash && !metadataRaw) return undefined;
+    const revision = Number(this.store.get(generationKey) ?? "0") + 1;
+    this.store.set(generationKey, String(revision));
+    if (hash) hash.set("__runRetentionRevision", String(revision));
+    this.synchronizeRunRetentionMetadata(runId, membersKey, revision);
+    return revision;
+  }
+
+  private advanceHashRunRetentionRevision(
+    hash: Map<string, string>,
+    generationKey: string,
+  ): number {
+    const revision = Number(this.store.get(generationKey) ?? "0") + 1;
+    this.store.set(generationKey, String(revision));
+    hash.set("__runRetentionRevision", String(revision));
     return revision;
   }
 
@@ -1160,8 +1170,6 @@ class MockRedisAdapter implements RedisAdapter {
   ): number {
     const revision = Number(hash.get("__runObservationRevision") ?? "0") + 1;
     hash.set("__runObservationRevision", String(revision));
-    const retentionRevision = Number(hash.get("__runRetentionRevision") ?? "0") + 1;
-    hash.set("__runRetentionRevision", String(retentionRevision));
     const sourceNodes = JSON.parse(hash.get("nodeStates") ?? "{}") as Record<
       string,
       { status: string; attempt: number; error?: string }
@@ -3275,6 +3283,7 @@ describe("RedisBackend", () => {
         "0",
         "run-retention-race",
         "test:group:schema-v1",
+        "100",
       ]);
       assertEquals((await backend.getRun("run-retention-race"))?.status, "pending");
     });
@@ -3462,16 +3471,91 @@ describe("RedisBackend", () => {
         completedAt,
       } as const;
       await backend.createRun(original);
+      await backend.updateRun(runId, { error: { message: "first mutation" } });
+      await backend.updateRun(runId, { error: { message: "second mutation" } });
       const candidate = (await backend.listTerminalRunRetentionCandidates(
         new Date("2027-01-01T00:00:00Z"),
         1,
       )).candidates[0]!;
       await backend.deleteRun(runId);
+      await backend.createRun(createTestRun("run-retention-generation-filler"));
       const replacement = { ...original };
       await backend.createRun(replacement);
 
       assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), false);
       assertEquals((await backend.getRun(runId))?.createdAt, replacement.createdAt);
+    });
+
+    it("preserves client state when stale deletion finds newer orphan state", async () => {
+      const runId = "run-retention-newer-orphan-state";
+      const acknowledgedIds: string[] = [];
+      const realXack = mockRedis.xack.bind(mockRedis);
+      mockRedis.xack = (key: string, group: string, ...ids: string[]) => {
+        acknowledgedIds.push(...ids);
+        return realXack(key, group, ...ids);
+      };
+      await backend.createRun({
+        ...createTestRun(runId),
+        status: "failed",
+        completedAt: new Date(2),
+      });
+      const candidate = (await backend.listTerminalRunRetentionCandidates(new Date(10), 1))
+        .candidates[0]!;
+      await backend.deleteRun(runId);
+      await backend.enqueue({
+        runId,
+        workflowId: "wf-1",
+        input: {},
+        createdAt: new Date(3),
+      });
+      await backend.dequeue();
+      const lockId = await backend.acquireLock(runId, 60_000);
+
+      assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), false);
+      await backend.acknowledge(runId);
+      await backend.releaseLock(runId);
+      assertEquals(acknowledgedIds.length, 1);
+      assertExists(lockId);
+      assertEquals(mockRedis.store.has(`test:schema-v1:lock:${runId}`), false);
+    });
+
+    it("cleans a retained run queue in bounded resumable batches", async () => {
+      const runId = "run-retention-bounded-queue-cleanup";
+      await backend.createRun({
+        ...createTestRun(runId),
+        status: "failed",
+        completedAt: new Date(2),
+      });
+      for (let index = 0; index < 101; index++) {
+        await backend.enqueue({
+          runId,
+          workflowId: "wf-1",
+          input: { index },
+          createdAt: new Date(3 + index),
+        });
+      }
+      let candidate: TerminalRunRetentionCandidate | undefined;
+      for (let attempt = 0; attempt < 3 && candidate === undefined; attempt++) {
+        candidate = (await backend.listTerminalRunRetentionCandidates(new Date(200), 1000))
+          .candidates[0];
+      }
+      assertExists(candidate);
+
+      assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), false);
+      assertExists(await backend.getRun(runId));
+      assertEquals(
+        mockRedis.sets.get(`test:schema-v1:queue-messages:${runId}`)?.size,
+        1,
+      );
+      const cleanupCall = mockRedis.scriptCalls.at(-1)!;
+      assertEquals(cleanupCall.script.includes("smembers"), false);
+      assertStringIncludes(cleanupCall.script, "spop");
+      assertEquals(cleanupCall.args.at(-1), "100");
+
+      assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), true);
+      assertEquals(await backend.getRun(runId), null);
+      assertEquals(mockRedis.sets.has(`test:schema-v1:queue-messages:${runId}`), false);
+      assertEquals(mockRedis.streams.get("test:stream:schema-v1"), []);
     });
 
     it("returns false for an invalid terminal deletion timestamp", async () => {
@@ -4968,9 +5052,9 @@ describe("RedisBackend", () => {
       assertEquals(mockRedis.hashes.has(runKey), false);
       assertStringIncludes(
         mockRedis.lastScript,
-        "if redis.call('exists', runKey) == 1 then",
+        "if not runExists and not metadataRaw then return nil end",
       );
-      assertStringIncludes(mockRedis.lastScript, "elseif metadataRaw then");
+      assertStringIncludes(mockRedis.lastScript, "if runExists then");
     });
 
     it("rejects strict approval decision data before mutating the approval", async () => {

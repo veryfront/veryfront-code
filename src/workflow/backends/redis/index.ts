@@ -73,6 +73,8 @@ const TERMINAL_COMPLETED_AT_MS_FIELD = "__terminalCompletedAtMs";
 const RUN_OBSERVATION_STREAM_MAX_LENGTH = 64;
 const RUN_OBSERVATION_POLL_INTERVAL_MS = 20;
 const APPROVAL_RECOVERY_SCAN_COUNT = 100;
+// Bound one Lua turn even when a retry-heavy run owns an unusually large queue.
+const TERMINAL_RETENTION_QUEUE_CLEANUP_LIMIT = 100;
 const CLEAR_LEGACY_RUN_TTL_SCRIPT =
   "-- clear-legacy-run-ttl\nreturn redis.call('persist', KEYS[1])";
 
@@ -300,11 +302,13 @@ const EXTEND_LOCK_SCRIPT =
  * index, KEYS[9] the expected workflow index, KEYS[10..15] every status index,
  * KEYS[16..17] the terminal completion index and member map, and KEYS[18..19]
  * the run's queue-message index and shared stream. ARGV contains status,
- * workflowId, createdAt, completedAt, revision, runId, and consumer group.
+ * workflowId, createdAt, completedAt, revision, runId, consumer group, and
+ * the queue cleanup limit.
  * Like the existing status-update scripts, this requires one logical Redis
  * because the keys are not cluster hash-tagged. Returns 1 when Redis state was
- * removed, 2 when the run was already fully absent, and 0 when an extant run
- * no longer matches the candidate.
+ * removed, 2 when the run was already fully absent, 3 when bounded queue
+ * cleanup must resume later, and 0 when an extant run no longer matches the
+ * candidate.
  */
 const DELETE_TERMINAL_RUN_IF_UNCHANGED_SCRIPT = `-- conditional-terminal-run-delete
 local runExists = redis.call('exists', KEYS[1])
@@ -329,17 +333,19 @@ elseif retentionMetadata.workflowId ~= ARGV[2] or
   return 0
 end
 
+local queueIds = redis.call('spop', KEYS[18], tonumber(ARGV[8]))
+for _, queueId in ipairs(queueIds) do
+  redis.pcall('xack', KEYS[19], ARGV[7], queueId)
+  redis.call('xdel', KEYS[19], queueId)
+end
+if redis.call('scard', KEYS[18]) > 0 then return 3 end
+
 local removed = 0
 for index = 1, 7 do removed = removed + redis.call('del', KEYS[index]) end
 for index = 8, 15 do removed = removed + redis.call('srem', KEYS[index], ARGV[6]) end
 if retentionMetadata then
   removed = removed + redis.call('zrem', KEYS[16], retentionMetadata.member)
   removed = removed + redis.call('hdel', KEYS[17], ARGV[6])
-end
-local queueIds = redis.call('smembers', KEYS[18])
-for _, queueId in ipairs(queueIds) do
-  redis.pcall('xack', KEYS[19], ARGV[7], queueId)
-  removed = removed + redis.call('xdel', KEYS[19], queueId)
 end
 removed = removed + redis.call('del', KEYS[18])
 if removed > 0 then return 1 end
@@ -396,20 +402,22 @@ local function updateTerminalRetentionIndex(
   return 1
 end`;
 
+// Allocate every mutation from the same global sequence used by run creation.
+// A stale incarnation can then never collide with a later recreation's fence.
 const ADVANCE_RUN_RETENTION_REVISION_LUA = `local function advanceRunRetentionRevision(
   runKey,
   membersKey,
+  generationKey,
   runId
 )
   local metadataRaw = redis.call('hget', membersKey, runId)
-  local revision = nil
-  if redis.call('exists', runKey) == 1 then
-    revision = redis.call('hincrby', runKey, '${RUN_RETENTION_REVISION_FIELD}', 1)
-  elseif metadataRaw then
-    local metadata = cjson.decode(metadataRaw)
-    revision = (tonumber(metadata.revision) or 0) + 1
+  local runExists = redis.call('exists', runKey) == 1
+  if not runExists and not metadataRaw then return nil end
+  local revision = redis.call('incr', generationKey)
+  if runExists then
+    redis.call('hset', runKey, '${RUN_RETENTION_REVISION_FIELD}', tostring(revision))
   end
-  if revision and metadataRaw then
+  if metadataRaw then
     local metadata = cjson.decode(metadataRaw)
     metadata.revision = revision
     redis.call('hset', membersKey, runId, cjson.encode(metadata))
@@ -559,7 +567,7 @@ local id = redis.call(
   'createdAt', ARGV[5]
 )
 redis.call('sadd', KEYS[2], id)
-advanceRunRetentionRevision(KEYS[3], KEYS[4], ARGV[1])
+advanceRunRetentionRevision(KEYS[3], KEYS[4], KEYS[5], ARGV[1])
 return id`;
 
 const REMOVE_ACKNOWLEDGED_QUEUE_MESSAGES_SCRIPT = `-- remove-acknowledged-queue-messages
@@ -665,7 +673,12 @@ if not claimed then return 0 end
 redis.call('hset', KEYS[1], 'workerId', ARGV[2], 'heartbeatAt', ARGV[4])
 if not started or started == '' then redis.call('hset', KEYS[1], 'startedAt', ARGV[4]) end
 local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
-redis.call('hincrby', KEYS[1], '${RUN_RETENTION_REVISION_FIELD}', 1)
+redis.call(
+  'hset',
+  KEYS[1],
+  '${RUN_RETENTION_REVISION_FIELD}',
+  tostring(redis.call('incr', KEYS[3]))
+)
 local status = redis.call('hget', KEYS[1], 'status')
 local sourceNodes = cjson.decode(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
 local nodes = {}
@@ -734,7 +747,12 @@ if nextStatus ~= '' and old ~= nextStatus then
 end
 for i = 6, #ARGV, 2 do applyPatchField(ARGV[i], ARGV[i + 1]) end
 local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
-redis.call('hincrby', KEYS[1], '${RUN_RETENTION_REVISION_FIELD}', 1)
+redis.call(
+  'hset',
+  KEYS[1],
+  '${RUN_RETENTION_REVISION_FIELD}',
+  tostring(redis.call('incr', KEYS[4]))
+)
 local status = redis.call('hget', KEYS[1], 'status')
 updateTerminalRetentionIndex(KEYS[1], KEYS[2], KEYS[3], ARGV[1], '')
 local rawNodes = redis.call('hget', KEYS[1], 'nodeStates') or '{}'
@@ -813,7 +831,12 @@ for i = expectedCount + 9, #ARGV, 2 do
   applyPatchField(ARGV[i], ARGV[i + 1])
 end
 local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
-redis.call('hincrby', KEYS[1], '${RUN_RETENTION_REVISION_FIELD}', 1)
+redis.call(
+  'hset',
+  KEYS[1],
+  '${RUN_RETENTION_REVISION_FIELD}',
+  tostring(redis.call('incr', KEYS[4]))
+)
 local status = redis.call('hget', KEYS[1], 'status')
 updateTerminalRetentionIndex(KEYS[1], KEYS[2], KEYS[3], runId, '')
 local sourceNodes = cjson.decode(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
@@ -979,7 +1002,7 @@ const APPEND_RETAINED_LIST_SCRIPT = `-- retained-list-append
 ${ADVANCE_RUN_RETENTION_REVISION_LUA}
 redis.call('rpush', KEYS[1], ARGV[1])
 redis.call('ltrim', KEYS[1], -tonumber(ARGV[2]), -1)
-advanceRunRetentionRevision(KEYS[2], KEYS[3], ARGV[3])
+advanceRunRetentionRevision(KEYS[2], KEYS[3], KEYS[4], ARGV[3])
 return redis.call('llen', KEYS[1])`;
 
 /** Read only the run fields needed to reject stale owner-fenced work early. */
@@ -1020,7 +1043,7 @@ local storageKey = ARGV[expectedCount + 3]
 redis.call('rpush', storageKey, ARGV[expectedCount + 4])
 local maxEntries = tonumber(ARGV[expectedCount + 5])
 if maxEntries then redis.call('ltrim', storageKey, -maxEntries, -1) end
-advanceRunRetentionRevision(KEYS[2], KEYS[3], ARGV[expectedCount + 6])
+advanceRunRetentionRevision(KEYS[2], KEYS[3], KEYS[4], ARGV[expectedCount + 6])
 return 1`;
 
 /**
@@ -1195,11 +1218,11 @@ end
 if not retainApprovals(KEYS[2], tonumber(ARGV[2])) then return 2 end
 redis.call('rpush', KEYS[2], ARGV[1])
 if redis.call('exists', KEYS[1]) == 0 then
-  advanceRunRetentionRevision(KEYS[1], KEYS[4], ARGV[6])
+  advanceRunRetentionRevision(KEYS[1], KEYS[4], KEYS[5], ARGV[6])
   return 0
 end
 local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
-advanceRunRetentionRevision(KEYS[1], KEYS[4], ARGV[6])
+advanceRunRetentionRevision(KEYS[1], KEYS[4], KEYS[5], ARGV[6])
 local status = redis.call('hget', KEYS[1], 'status')
 local sourceNodes = cjson.decode(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
 local nodes = {}
@@ -1293,7 +1316,7 @@ if not retainApprovals(KEYS[2], tonumber(ARGV[expectedCount + 4])) then
 end
 redis.call('rpush', KEYS[2], ARGV[expectedCount + 3])
 local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
-advanceRunRetentionRevision(KEYS[1], KEYS[4], ARGV[expectedCount + 7])
+advanceRunRetentionRevision(KEYS[1], KEYS[4], KEYS[5], ARGV[expectedCount + 7])
 local sourceNodes = cjson.decode(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
 local nodes = {}
 for nodeId, node in pairs(sourceNodes) do
@@ -1361,7 +1384,7 @@ for i = 0, len - 1 do
     local approval = parseJsonObject(raw)
     if decodeJsonObjectField(approval, 'id') == approvalId then
       redis.call('lset', KEYS[1], i, mergeJsonObjects(raw, ARGV[2], true))
-      advanceRunRetentionRevision(KEYS[2], KEYS[3], ARGV[3])
+      advanceRunRetentionRevision(KEYS[2], KEYS[3], KEYS[4], ARGV[3])
       return 1
     end
   end
@@ -1396,7 +1419,7 @@ for i = 0, len - 1 do
       local updated = mergeJsonObjects(raw, ARGV[2], true)
       updated = deleteJsonObjectFields(updated, ARGV[3], true)
       redis.call('lset', KEYS[1], i, updated)
-      advanceRunRetentionRevision(KEYS[2], KEYS[3], ARGV[4])
+      advanceRunRetentionRevision(KEYS[2], KEYS[3], KEYS[4], ARGV[4])
       return 1
     end
   end
@@ -1425,7 +1448,7 @@ for i = 0, len - 1 do
         return 2
       end
       redis.call('lset', KEYS[1], i, mergeJsonObjects(raw, patch, true))
-      advanceRunRetentionRevision(KEYS[2], KEYS[3], ARGV[5])
+      advanceRunRetentionRevision(KEYS[2], KEYS[3], KEYS[4], ARGV[5])
       return 1
     end
   end
@@ -1447,7 +1470,7 @@ for i = 0, len - 1 do
       if decodeJsonObjectField(approval, 'recoveryClaimId') ~= recoveryClaimId then return 2 end
       redis.call('lset', KEYS[1], i,
         deleteJsonObjectFields(raw, '["recoveryClaimId","recoveryClaimedAt"]', true))
-      advanceRunRetentionRevision(KEYS[2], KEYS[3], ARGV[3])
+      advanceRunRetentionRevision(KEYS[2], KEYS[3], KEYS[4], ARGV[3])
       return 1
     end
   end
@@ -1478,7 +1501,7 @@ for i = 0, len - 1 do
           '["reconciliationPending","recoveryClaimId","recoveryClaimedAt"]',
           true
         ))
-      advanceRunRetentionRevision(KEYS[2], KEYS[3], ARGV[3])
+      advanceRunRetentionRevision(KEYS[2], KEYS[3], KEYS[4], ARGV[3])
       return 1
     end
   end
@@ -1804,6 +1827,7 @@ export class RedisBackend implements WorkflowBackend {
         this.runKey(ownershipRunId),
         this.runKey(storageRunId),
         this.terminalRunRetentionMembersKey(),
+        this.terminalRunRetentionGenerationKey(),
       ],
       [
         String(expectedStatuses.length),
@@ -2093,6 +2117,7 @@ export class RedisBackend implements WorkflowBackend {
         runKey,
         this.terminalRunRetentionIndexKey(),
         this.terminalRunRetentionMembersKey(),
+        this.terminalRunRetentionGenerationKey(),
       ],
       [
         runId,
@@ -2185,6 +2210,7 @@ export class RedisBackend implements WorkflowBackend {
         this.runKey(runId),
         this.terminalRunRetentionIndexKey(),
         this.terminalRunRetentionMembersKey(),
+        this.terminalRunRetentionGenerationKey(),
       ],
       [
         String(expectedStatuses.length),
@@ -2287,11 +2313,12 @@ export class RedisBackend implements WorkflowBackend {
         String(candidate.revision),
         candidate.runId,
         this.config.groupName,
+        String(TERMINAL_RETENTION_QUEUE_CLEANUP_LIMIT),
       ],
     );
     const resultCode = Number(result);
     const deleted = resultCode === 1;
-    if (resultCode !== 0) {
+    if (resultCode === 1) {
       this.lockValues.delete(candidate.runId);
       this.pendingMessageIds.delete(candidate.runId);
     }
@@ -2572,6 +2599,7 @@ export class RedisBackend implements WorkflowBackend {
         this.checkpointsKey(runId),
         this.runKey(runId),
         this.terminalRunRetentionMembersKey(),
+        this.terminalRunRetentionGenerationKey(),
       ],
       [
         this.serializeCheckpoint(runId, checkpoint),
@@ -2666,6 +2694,7 @@ export class RedisBackend implements WorkflowBackend {
         this.approvalsKey(runId),
         this.runObservationApprovalsKey(runId),
         this.terminalRunRetentionMembersKey(),
+        this.terminalRunRetentionGenerationKey(),
       ],
       [
         this.serializeApproval(approval),
@@ -2704,6 +2733,7 @@ export class RedisBackend implements WorkflowBackend {
         this.approvalsKey(runId),
         this.runObservationApprovalsKey(runId),
         this.terminalRunRetentionMembersKey(),
+        this.terminalRunRetentionGenerationKey(),
       ],
       [
         String(expectedStatuses.length),
@@ -2767,6 +2797,7 @@ export class RedisBackend implements WorkflowBackend {
         this.approvalsKey(runId),
         this.runKey(runId),
         this.terminalRunRetentionMembersKey(),
+        this.terminalRunRetentionGenerationKey(),
       ],
       [approvalId, JSON.stringify({ ...patch, id: approvalId }), runId],
     );
@@ -2825,6 +2856,7 @@ export class RedisBackend implements WorkflowBackend {
         this.approvalsKey(runId),
         this.runKey(runId),
         this.terminalRunRetentionMembersKey(),
+        this.terminalRunRetentionGenerationKey(),
       ],
       [
         approvalId,
@@ -2893,6 +2925,7 @@ export class RedisBackend implements WorkflowBackend {
         this.approvalsKey(runId),
         this.runKey(runId),
         this.terminalRunRetentionMembersKey(),
+        this.terminalRunRetentionGenerationKey(),
       ],
       [
         approvalId,
@@ -2920,6 +2953,7 @@ export class RedisBackend implements WorkflowBackend {
         this.approvalsKey(runId),
         this.runKey(runId),
         this.terminalRunRetentionMembersKey(),
+        this.terminalRunRetentionGenerationKey(),
       ],
       [approvalId, recoveryClaimId, runId],
     );
@@ -2937,6 +2971,7 @@ export class RedisBackend implements WorkflowBackend {
         this.approvalsKey(runId),
         this.runKey(runId),
         this.terminalRunRetentionMembersKey(),
+        this.terminalRunRetentionGenerationKey(),
       ],
       [approvalId, recoveryClaimId ?? "", runId],
     );
@@ -2997,6 +3032,7 @@ export class RedisBackend implements WorkflowBackend {
         this.queueMessagesKey(job.runId),
         this.runKey(job.runId),
         this.terminalRunRetentionMembersKey(),
+        this.terminalRunRetentionGenerationKey(),
       ],
       [
         job.runId,
@@ -3156,7 +3192,11 @@ export class RedisBackend implements WorkflowBackend {
     const observedActivity = (run.heartbeatAt ?? run.startedAt ?? run.createdAt).toISOString();
     const claimed = await client.eval(
       CLAIM_STALLED_RUN_SCRIPT,
-      [this.runKey(runId), this.claimKey(runId)],
+      [
+        this.runKey(runId),
+        this.claimKey(runId),
+        this.terminalRunRetentionGenerationKey(),
+      ],
       [
         observedActivity,
         workerId,

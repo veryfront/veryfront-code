@@ -23,6 +23,7 @@ export type TerminalRunRetentionResult =
     supported: true;
     examined: number;
     deleted: number;
+    /** Whether another sweep can continue without retrying a deferred candidate. */
     hasMore: boolean;
   };
 
@@ -86,6 +87,6 @@ export async function reapTerminalRuns(
     supported: true,
     examined,
     deleted,
-    hasMore: batch.hasMore || deletionDeferred,
+    hasMore: !deletionDeferred && batch.hasMore,
   };
 }

@@ -858,9 +858,8 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   private advanceRunRetentionRevision(runId: string): number {
-    const currentRevision = this.runRetentionRevisions.get(runId);
-    if (currentRevision === undefined) return 0;
-    const revision = currentRevision + 1;
+    if (!this.runRetentionRevisions.has(runId)) return 0;
+    const revision = this.nextRunRetentionGeneration++;
     this.runRetentionRevisions.set(runId, revision);
     return revision;
   }

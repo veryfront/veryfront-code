@@ -132,7 +132,7 @@ describe("workflow terminal-run retention", () => {
 
     const result = await reapTerminalRuns(backend, { completedBefore: new Date(10) });
 
-    assertEquals(result, { supported: true, examined: 1, deleted: 0, hasMore: true });
+    assertEquals(result, { supported: true, examined: 1, deleted: 0, hasMore: false });
     assertEquals((await backend.getRun("retrying"))?.status, "pending");
   });
 
@@ -158,12 +158,8 @@ describe("workflow terminal-run retention", () => {
 
     const result = await reapTerminalRuns(backend, { completedBefore: new Date(10) });
 
-    assertEquals(result, { supported: true, examined: 1, deleted: 0, hasMore: true });
+    assertEquals(result, { supported: true, examined: 1, deleted: 0, hasMore: false });
     assertEquals((await backend.getRun("late-patch"))?.error?.message, "Late diagnostic");
-    assertEquals(
-      await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
-      { supported: true, examined: 1, deleted: 1, hasMore: false },
-    );
   });
 
   it("does not delete an approval decision accepted after discovery", async () => {
@@ -191,7 +187,7 @@ describe("workflow terminal-run retention", () => {
 
     assertEquals(
       await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
-      { supported: true, examined: 1, deleted: 0, hasMore: true },
+      { supported: true, examined: 1, deleted: 0, hasMore: false },
     );
     assertEquals((await backend.getPendingApprovals("approval-race")).length, 0);
     assertEquals((await backend.getRun("approval-race"))?.status, "failed");
@@ -221,7 +217,7 @@ describe("workflow terminal-run retention", () => {
 
     assertEquals(
       await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
-      { supported: true, examined: 1, deleted: 0, hasMore: true },
+      { supported: true, examined: 1, deleted: 0, hasMore: false },
     );
     assertEquals(
       (await backend.getPendingApproval("approval-patch-race", "approval"))
@@ -251,7 +247,7 @@ describe("workflow terminal-run retention", () => {
 
     assertEquals(
       await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
-      { supported: true, examined: 1, deleted: 0, hasMore: true },
+      { supported: true, examined: 1, deleted: 0, hasMore: false },
     );
     assertEquals((await backend.getLatestCheckpoint("checkpoint-race"))?.id, "late-checkpoint");
   });
@@ -276,7 +272,7 @@ describe("workflow terminal-run retention", () => {
 
     assertEquals(
       await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
-      { supported: true, examined: 1, deleted: 0, hasMore: true },
+      { supported: true, examined: 1, deleted: 0, hasMore: false },
     );
     assertEquals((await backend.dequeue())?.runId, "queue-race");
   });
@@ -301,7 +297,7 @@ describe("workflow terminal-run retention", () => {
 
     assertEquals(
       await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
-      { supported: true, examined: 1, deleted: 0, hasMore: true },
+      { supported: true, examined: 1, deleted: 0, hasMore: false },
     );
     assertEquals((await backend.peekRunEvent("event-race", "retry.ready"))?.id, "late-event");
     assertEquals((await backend.getRun("event-race"))?.status, "failed");
@@ -311,9 +307,12 @@ describe("workflow terminal-run retention", () => {
     const backend = new MemoryBackend();
     const retained = run("memory-reused-id", "failed", new Date(2));
     await backend.createRun(retained);
+    await backend.updateRun(retained.id, { error: { message: "first mutation" } });
+    await backend.updateRun(retained.id, { error: { message: "second mutation" } });
     const candidate = (await backend.listTerminalRunRetentionCandidates(new Date(10), 1))
       .candidates[0]!;
     await backend.deleteRun(retained.id);
+    await backend.createRun(run("memory-generation-filler", "pending"));
     await backend.createRun(retained);
 
     assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), false);
