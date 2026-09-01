@@ -296,12 +296,13 @@ const EXTEND_LOCK_SCRIPT =
  *
  * KEYS[1..7] are the run hash and per-run keys. KEYS[8] is the all-runs
  * index, KEYS[9] the expected workflow index, KEYS[10..15] every status index,
- * and KEYS[16..17] the terminal completion index and member map. ARGV contains
- * status, workflowId, createdAt, completedAt, and runId. Like the existing
- * status-update scripts, this requires one logical Redis because the keys are
- * not cluster hash-tagged. Returns 1 when Redis state was removed, 2 when the
- * run was already fully absent, and 0 when an extant run no longer matches the
- * candidate.
+ * KEYS[16..17] the terminal completion index and member map, and KEYS[18..19]
+ * the run's queue-message index and shared stream. ARGV contains status,
+ * workflowId, createdAt, completedAt, runId, and consumer group. Like the
+ * existing status-update scripts, this requires one logical Redis because the
+ * keys are not cluster hash-tagged. Returns 1 when Redis state was removed, 2
+ * when the run was already fully absent, and 0 when an extant run no longer
+ * matches the candidate.
  */
 const DELETE_TERMINAL_RUN_IF_UNCHANGED_SCRIPT = `-- conditional-terminal-run-delete
 local runExists = redis.call('exists', KEYS[1])
@@ -318,11 +319,18 @@ end
 local removed = 0
 for index = 1, 7 do removed = removed + redis.call('del', KEYS[index]) end
 for index = 8, 15 do removed = removed + redis.call('srem', KEYS[index], ARGV[5]) end
-local retentionMember = redis.call('hget', KEYS[17], ARGV[5])
-if retentionMember then
+local retentionMetadata = redis.call('hget', KEYS[17], ARGV[5])
+if retentionMetadata then
+  local retentionMember = cjson.decode(retentionMetadata).member
   removed = removed + redis.call('zrem', KEYS[16], retentionMember)
   removed = removed + redis.call('hdel', KEYS[17], ARGV[5])
 end
+local queueIds = redis.call('smembers', KEYS[18])
+for _, queueId in ipairs(queueIds) do
+  redis.call('xack', KEYS[19], ARGV[6], queueId)
+  removed = removed + redis.call('xdel', KEYS[19], queueId)
+end
+removed = removed + redis.call('del', KEYS[18])
 if removed > 0 then return 1 end
 if runExists == 0 then return 2 end
 return 0`;
@@ -337,23 +345,45 @@ if ARGV[3] == '-' then
 elseif ARGV[3] ~= '' and completedAt ~= ARGV[3] then
   return 0
 end
-local oldMember = redis.call('hget', KEYS[3], ARGV[1])
+local oldMetadata = redis.call('hget', KEYS[3], ARGV[1])
+local oldMember = nil
+if oldMetadata then oldMember = cjson.decode(oldMetadata).member end
 local terminal = status == 'completed' or status == 'failed' or status == 'cancelled'
 if not terminal or completedAt == '' then
   if oldMember then redis.call('zrem', KEYS[2], oldMember) end
   redis.call('hdel', KEYS[3], ARGV[1])
   return 1
 end
-if ARGV[4] == '' then return 1 end
+local workflowId = redis.call('hget', KEYS[1], 'workflowId')
+local createdAt = redis.call('hget', KEYS[1], 'createdAt')
+if not workflowId or not createdAt then return 0 end
+if ARGV[4] == '' then
+  if oldMember then
+    redis.call('hset', KEYS[3], ARGV[1], cjson.encode({
+      member = oldMember,
+      workflowId = workflowId,
+      createdAt = createdAt,
+      status = status,
+      completedAt = completedAt
+    }))
+  end
+  return 1
+end
 if oldMember and oldMember ~= ARGV[4] then redis.call('zrem', KEYS[2], oldMember) end
 redis.call('zadd', KEYS[2], 0, ARGV[4])
-redis.call('hset', KEYS[3], ARGV[1], ARGV[4])
+redis.call('hset', KEYS[3], ARGV[1], cjson.encode({
+  member = ARGV[4],
+  workflowId = workflowId,
+  createdAt = createdAt,
+  status = status,
+  completedAt = completedAt
+}))
 return 1`;
 
 const REMOVE_TERMINAL_RETENTION_INDEX_SCRIPT = `-- remove-terminal-retention-index
-local member = redis.call('hget', KEYS[2], ARGV[1])
-if not member then return 0 end
-redis.call('zrem', KEYS[1], member)
+local metadata = redis.call('hget', KEYS[2], ARGV[1])
+if not metadata then return 0 end
+redis.call('zrem', KEYS[1], cjson.decode(metadata).member)
 redis.call('hdel', KEYS[2], ARGV[1])
 return 1`;
 
@@ -374,7 +404,9 @@ local result = { '0' }
 for _, member in ipairs(members) do
   local decoded = cjson.decode(member)
   local runId = decoded[2]
-  local mapped = redis.call('hget', KEYS[2], runId)
+  local mappedRaw = redis.call('hget', KEYS[2], runId)
+  local mapped = nil
+  if mappedRaw then mapped = cjson.decode(mappedRaw) end
   local values = redis.call(
     'hmget',
     ARGV[3] .. runId,
@@ -385,16 +417,59 @@ for _, member in ipairs(members) do
   )
   local terminal = values[3] == 'completed' or values[3] == 'failed' or
     values[3] == 'cancelled'
-  if mapped == member and values[1] and values[2] and terminal and
+  local mappedTerminal = mapped and (
+    mapped.status == 'completed' or mapped.status == 'failed' or mapped.status == 'cancelled'
+  )
+  if mapped and mapped.member == member and values[1] and values[2] and terminal and
       values[4] == decoded[1] then
     table.insert(result, { runId, values[1], values[2], values[3], values[4] })
+  elseif mapped and mapped.member == member and not values[1] and mapped.workflowId and
+      mapped.createdAt and mappedTerminal and mapped.completedAt == decoded[1] then
+    table.insert(result, {
+      runId,
+      mapped.workflowId,
+      mapped.createdAt,
+      mapped.status,
+      mapped.completedAt
+    })
   else
     redis.call('zrem', KEYS[1], member)
-    if mapped == member then redis.call('hdel', KEYS[2], runId) end
+    if mapped and mapped.member == member then redis.call('hdel', KEYS[2], runId) end
     result[1] = '1'
   end
 end
 return result`;
+
+const ENQUEUE_RUN_SCRIPT = `-- indexed-workflow-enqueue
+local id = redis.call(
+  'xadd',
+  KEYS[1],
+  '*',
+  'runId', ARGV[1],
+  'workflowId', ARGV[2],
+  'input', ARGV[3],
+  'priority', ARGV[4],
+  'createdAt', ARGV[5]
+)
+redis.call('sadd', KEYS[2], id)
+return id`;
+
+const REMOVE_ACKNOWLEDGED_QUEUE_MESSAGES_SCRIPT = `-- remove-acknowledged-queue-messages
+for index = 1, #ARGV do
+  redis.call('xdel', KEYS[1], ARGV[index])
+  redis.call('srem', KEYS[2], ARGV[index])
+end
+if redis.call('scard', KEYS[2]) == 0 then redis.call('del', KEYS[2]) end
+return #ARGV`;
+
+const CLEAR_RUN_QUEUE_MESSAGES_SCRIPT = `-- clear-run-queue-messages
+local ids = redis.call('smembers', KEYS[2])
+for _, id in ipairs(ids) do
+  redis.call('xack', KEYS[1], ARGV[1], id)
+  redis.call('xdel', KEYS[1], id)
+end
+redis.call('del', KEYS[2])
+return #ids`;
 
 function parseRedisTerminalRetentionCandidate(row: unknown): TerminalRunRetentionCandidate {
   if (
@@ -1349,6 +1424,10 @@ export class RedisBackend implements WorkflowBackend {
     return `${this.storagePrefix()}claim:${runId}`;
   }
 
+  private queueMessagesKey(runId: string): string {
+    return `${this.storagePrefix()}queue-messages:${runId}`;
+  }
+
   private terminalRetentionMember(runId: string, completedAt: string): string {
     return reflectApply(jsonStringify, JSON, [[completedAt, runId]]) as string;
   }
@@ -1948,6 +2027,11 @@ export class RedisBackend implements WorkflowBackend {
       [this.terminalRunRetentionIndexKey(), this.terminalRunRetentionMembersKey()],
       [runId],
     );
+    await client.eval(
+      CLEAR_RUN_QUEUE_MESSAGES_SCRIPT,
+      [this.config.streamKey, this.queueMessagesKey(runId)],
+      [this.config.groupName],
+    );
     this.pendingMessageIds.delete(runId);
   }
 
@@ -1988,8 +2072,17 @@ export class RedisBackend implements WorkflowBackend {
         this.statusIndexKey("cancelled"),
         this.terminalRunRetentionIndexKey(),
         this.terminalRunRetentionMembersKey(),
+        this.queueMessagesKey(candidate.runId),
+        this.config.streamKey,
       ],
-      [candidate.status, candidate.workflowId, createdAt, completedAt, candidate.runId],
+      [
+        candidate.status,
+        candidate.workflowId,
+        createdAt,
+        completedAt,
+        candidate.runId,
+        this.config.groupName,
+      ],
     );
     const resultCode = Number(result);
     const deleted = resultCode === 1;
@@ -2555,13 +2648,17 @@ export class RedisBackend implements WorkflowBackend {
 
     if (this.config.debug) logger.debug(`[RedisBackend] Enqueueing job: ${job.runId}`);
 
-    await client.xadd(this.config.streamKey, "*", {
-      runId: job.runId,
-      workflowId: job.workflowId,
-      input: JSON.stringify(job.input),
-      priority: String(job.priority || 0),
-      createdAt: job.createdAt.toISOString(),
-    });
+    await client.eval(
+      ENQUEUE_RUN_SCRIPT,
+      [this.config.streamKey, this.queueMessagesKey(job.runId)],
+      [
+        job.runId,
+        job.workflowId,
+        JSON.stringify(job.input),
+        String(job.priority || 0),
+        job.createdAt.toISOString(),
+      ],
+    );
   }
 
   async dequeue(): Promise<WorkflowQueueItem | null> {
@@ -2610,6 +2707,11 @@ export class RedisBackend implements WorkflowBackend {
 
     const client = await this.ensureClient();
     await client.xack(this.config.streamKey, this.config.groupName, ...messageIds);
+    await client.eval(
+      REMOVE_ACKNOWLEDGED_QUEUE_MESSAGES_SCRIPT,
+      [this.config.streamKey, this.queueMessagesKey(runId)],
+      messageIds,
+    );
     this.pendingMessageIds.delete(runId);
 
     if (this.config.debug) {
