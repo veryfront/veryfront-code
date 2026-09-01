@@ -11,6 +11,7 @@ const CONTINUATION_OBSERVATIONS = new WeakMap<object, { observed: boolean }>();
 type ContinuationSpeciesHolder = { [Symbol.species]: PromiseConstructor };
 interface DeferredContinuationState {
   adoptionCalls: number;
+  adoptionTurnOpen: boolean;
   dispatchStarted: boolean;
   reject?: (reason?: unknown) => void;
   settled: boolean;
@@ -112,6 +113,7 @@ class DeferredContinuationPromise extends Promise<AgentResponse> {
     DEFERRED_CONTINUATION_STATES.set(this, {
       dispatchStarted: false,
       adoptionCalls: 0,
+      adoptionTurnOpen: false,
       reject: rejectCapability,
       settled: false,
       skipAdoptionCheck: false,
@@ -132,9 +134,16 @@ class DeferredContinuationPromise extends Promise<AgentResponse> {
       state && state.dispatchStarted && !state.settled && !state.skipAdoptionCheck &&
       isNativePromiseHandler(onFulfilled) && isNativePromiseHandler(onRejected)
     ) {
+      const isLaterAdoption = state.adoptionCalls > 0 && !state.adoptionTurnOpen;
       state.adoptionCalls += 1;
-      if (state.adoptionCalls > 1) {
+      if (isLaterAdoption) {
         state.reject?.(new TypeError("Your middleware continuation cannot resolve to itself"));
+      }
+      if (!state.adoptionTurnOpen) {
+        state.adoptionTurnOpen = true;
+        queueMicrotask(() => {
+          state.adoptionTurnOpen = false;
+        });
       }
     }
     const derived = IntrinsicPromiseThen.call(
