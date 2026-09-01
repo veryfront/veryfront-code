@@ -27,10 +27,17 @@ function markContinuationObserved(promise: Promise<unknown>): void {
   if (observation) observation.observed = true;
 }
 
-function containRejection(promise: Promise<unknown>): void {
+function containRejection(
+  promise: Promise<unknown>,
+  onInvalid?: (error: unknown) => void,
+): void {
   const observation = CONTINUATION_OBSERVATIONS.get(promise);
   void IntrinsicPromiseThen.call(promise, undefined, (error: unknown) => {
-    if (isInvalidContinuationError(error) || observation?.observed) return undefined;
+    if (isInvalidContinuationError(error)) {
+      onInvalid?.(error);
+      return undefined;
+    }
+    if (observation?.observed) return undefined;
     setTimeout(() => {
       if (!observation?.observed) void Promise.reject(error);
     }, 0);
@@ -88,7 +95,9 @@ class DeferredContinuationPromise extends Promise<AgentResponse> {
     ) as Promise<TResult1 | TResult2>;
     registerContinuation(derived);
     if (this.settlement === "invalid") {
-      containRejection(derived);
+      containRejection(derived, (error) => {
+        (derived as unknown as DeferredContinuationPromise).markSettled(error);
+      });
     } else if (this.settlement === "pending") {
       this.derived.add(derived);
     }
@@ -99,7 +108,11 @@ class DeferredContinuationPromise extends Promise<AgentResponse> {
     if (this.settlement !== "pending") return;
     this.settlement = isInvalidContinuationError(error) ? "invalid" : "valid";
     if (this.settlement === "invalid") {
-      for (const derived of this.derived) containRejection(derived);
+      for (const derived of this.derived) {
+        containRejection(derived, (invalidError) => {
+          (derived as unknown as DeferredContinuationPromise).markSettled(invalidError);
+        });
+      }
     }
     this.derived.clear();
   }
@@ -167,8 +180,12 @@ export class MiddlewareChain {
               let middlewareInvoking = true;
               let middlewareSettled = false;
               let middlewareResultSettled = false;
+              let middlewareObservingResult = false;
               const next = (): Promise<AgentResponse> => {
-                if (nextCalled || middlewareSettled || middlewareResultSettled) {
+                if (
+                  nextCalled || middlewareSettled || middlewareResultSettled ||
+                  middlewareObservingResult
+                ) {
                   return rejectInvalidContinuation();
                 }
                 nextCalled = true;
@@ -184,16 +201,27 @@ export class MiddlewareChain {
               try {
                 const result = currentMiddleware(context, next);
                 middlewareInvoking = false;
-                void IntrinsicPromiseThen.call(
-                  result,
-                  () => {
+                middlewareObservingResult = true;
+                const observedResult = new Promise<AgentResponse>((resolve, reject) => {
+                  try {
+                    void IntrinsicPromiseThen.call(
+                      result,
+                      (value: AgentResponse) => {
+                        middlewareResultSettled = true;
+                        resolve(value);
+                      },
+                      (error: unknown) => {
+                        middlewareResultSettled = true;
+                        reject(error);
+                      },
+                    );
+                  } catch (error) {
                     middlewareResultSettled = true;
-                  },
-                  () => {
-                    middlewareResultSettled = true;
-                  },
-                );
-                return await result;
+                    reject(error);
+                  }
+                });
+                middlewareObservingResult = false;
+                return await observedResult;
               } finally {
                 middlewareSettled = true;
               }

@@ -168,7 +168,7 @@ describe("agent/middleware/chain", () => {
         queueMicrotask(() => {
           const deferred = next();
           queuedNext = deferred;
-          void deferred.then(() => response);
+          void deferred.then(() => response).then(() => response);
           void deferred.catch(() => response);
           void deferred.finally(() => undefined);
         });
@@ -196,7 +196,7 @@ describe("agent/middleware/chain", () => {
         queueMicrotask(() => {
           const deferred = next();
           queuedNext = deferred;
-          void deferred.then(() => response);
+          void deferred.then(() => response).then(() => response);
           void deferred.catch(() => response);
           void deferred.finally(() => undefined);
         });
@@ -214,6 +214,37 @@ describe("agent/middleware/chain", () => {
         }),
       Error,
       "middleware failed",
+    );
+    await assertRejects(() => queuedNext!, VeryfrontError, replayError);
+    assertEquals(finalHandlerCalls, 0);
+  });
+
+  it("blocks continuation dispatch from promise species hooks", async () => {
+    let retainedNext: (() => Promise<AgentResponse>) | undefined;
+    let queuedNext: Promise<AgentResponse> | undefined;
+    let finalHandlerCalls = 0;
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        retainedNext = next;
+        queueMicrotask(() => {
+          queuedNext = next();
+        });
+        class SpeciesPromise<T> extends Promise<T> {
+          static override get [Symbol.species](): PromiseConstructor {
+            retainedNext?.();
+            return Promise;
+          }
+        }
+        return new SpeciesPromise((resolve) => resolve(response));
+      },
+    ]);
+
+    assertEquals(
+      await chain.execute(context, () => {
+        finalHandlerCalls += 1;
+        return Promise.resolve(response);
+      }),
+      response,
     );
     await assertRejects(() => queuedNext!, VeryfrontError, replayError);
     assertEquals(finalHandlerCalls, 0);
