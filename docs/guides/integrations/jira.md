@@ -52,7 +52,7 @@ grant the appropriate service-desk agent permissions.
 
 The permissions in the table are cumulative with the project's permission scheme and issue
 security settings. `Browse Projects` is required in addition to every issue-operation permission
-listed below; an issue can still be hidden by its issue-security level.
+listed in the table; an issue can still be hidden by its issue-security level.
 
 `Browse users and groups` is a Jira global permission, not a project role. Grant it in Jira
 administration when the agent uses `jira__search_users`; the `read:jira-user` OAuth scope is also
