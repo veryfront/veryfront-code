@@ -37,7 +37,7 @@ interface EnsureMdxModuleDependenciesResult {
   missing: string[];
 }
 
-export function extractMdxModuleDependencyPaths(code: string): string[] {
+function extractMdxModuleDependencyPaths(code: string): string[] {
   const paths: string[] = [];
   const seen = new Set<string>();
   let match: RegExpExecArray | null;

@@ -358,81 +358,90 @@ describe("module-fetcher/distributed-cache", () => {
 
   it("publishes recursive framework vfmods for fresh-worker recovery", async () => {
     await withTempDir(async (tempDir) => {
-      const cacheDir = join(tempDir, ".cache", "veryfront-mdx-esm", "framework");
-      const tenantCacheDir = join(tempDir, ".cache", "veryfront-mdx-esm", "project-a");
-      const childPath = join(cacheDir, "vfmod-child.mjs");
-      const grandchildPath = join(cacheDir, "vfmod-grandchild.mjs");
-      const tenantPath = join(tenantCacheDir, "vfmod-tenant.mjs");
-      await Deno.mkdir(cacheDir, { recursive: true });
-      await Deno.mkdir(tenantCacheDir, { recursive: true });
-      await Deno.writeTextFile(grandchildPath, `export const value = 1;`);
-      await Deno.writeTextFile(tenantPath, `export const tenant = true;`);
-      await Deno.writeTextFile(
-        childPath,
-        `import { value } from "file://${grandchildPath}"; export default value;`,
-      );
+      await runWithCacheDir(tempDir, async () => {
+        const cacheDir = join(getMdxEsmCacheDir(), "framework");
+        const tenantCacheDir = join(getMdxEsmCacheDir(), "project-a");
+        const childPath = join(cacheDir, "vfmod-child.mjs");
+        const grandchildPath = join(cacheDir, "vfmod-grandchild.mjs");
+        const tenantPath = join(tenantCacheDir, "vfmod-tenant.mjs");
+        const privatePath = join(tempDir, "private.mjs");
+        const escapedPrivatePath = `${cacheDir}/../../private.mjs`;
+        await Deno.mkdir(cacheDir, { recursive: true });
+        await Deno.mkdir(tenantCacheDir, { recursive: true });
+        await Deno.writeTextFile(grandchildPath, `export const value = 1;`);
+        await Deno.writeTextFile(tenantPath, `export const tenant = true;`);
+        await Deno.writeTextFile(privatePath, `export const privateValue = true;`);
+        await Deno.writeTextFile(
+          childPath,
+          `import { value } from "file://${grandchildPath}"; export default value;`,
+        );
 
-      const cache = new FakeDistributedCache();
-      const { log } = createCapturingLogger();
-      const parentCode = [
-        `import child from "file://${childPath}";`,
-        `import { tenant } from "file://${tenantPath}";`,
-        `export default tenant ? child : null;`,
-      ].join("\n");
-      writeDistributedCache(
-        cache,
-        "transform:framework-entry",
-        "project-a",
-        "preview-main",
-        parentCode,
-        "_vf_modules/_veryfront/react/runtime/core.js",
-        log,
-      );
+        const cache = new FakeDistributedCache();
+        const { log } = createCapturingLogger();
+        const parentCode = [
+          `import child from "file://${childPath}";`,
+          `import { tenant } from "file://${tenantPath}";`,
+          `import "file://${escapedPrivatePath}";`,
+          `const decoy = "file://${escapedPrivatePath}";`,
+          `export default tenant ? child : decoy;`,
+        ].join("\n");
+        writeDistributedCache(
+          cache,
+          "transform:framework-entry",
+          "project-a",
+          "preview-main",
+          parentCode,
+          "_vf_modules/_veryfront/react/runtime/core.js",
+          log,
+        );
 
-      const childKey = buildMdxEsmModuleRecoveryCacheKey(
-        "project-a",
-        "preview-main",
-        basename(childPath),
-      );
-      const grandchildKey = buildMdxEsmModuleRecoveryCacheKey(
-        "project-a",
-        "preview-main",
-        basename(grandchildPath),
-      );
-      await waitForSetKeys(cache, [
-        grandchildKey,
-        childKey,
-        "transform:framework-entry",
-      ]);
-      assertEquals(cache.values.has(childKey), true);
-      assertEquals(cache.values.has(grandchildKey), true);
-      assertEquals(
-        cache.values.has(
-          buildMdxEsmModuleRecoveryCacheKey(
-            "project-a",
-            "preview-main",
-            basename(tenantPath),
+        const childKey = buildMdxEsmModuleRecoveryCacheKey(
+          "project-a",
+          "preview-main",
+          basename(childPath),
+        );
+        const grandchildKey = buildMdxEsmModuleRecoveryCacheKey(
+          "project-a",
+          "preview-main",
+          basename(grandchildPath),
+        );
+        await waitForSetKeys(cache, [
+          grandchildKey,
+          childKey,
+          "transform:framework-entry",
+        ]);
+        assertEquals(cache.values.has(childKey), true);
+        assertEquals(cache.values.has(grandchildKey), true);
+        for (const excludedPath of [tenantPath, privatePath]) {
+          assertEquals(
+            cache.values.has(
+              buildMdxEsmModuleRecoveryCacheKey(
+                "project-a",
+                "preview-main",
+                basename(excludedPath),
+              ),
+            ),
+            false,
+          );
+        }
+        assertEquals(cache.values.get(childKey)?.includes(tempDir), false);
+        assertEquals(
+          cache.values.get(childKey)?.includes(
+            "file://__VF_CACHE_DIR__/veryfront-mdx-esm/framework/vfmod-grandchild.mjs",
           ),
-        ),
-        false,
-      );
-      assertEquals(cache.values.get(childKey)?.includes(tempDir), false);
-      assertEquals(
-        cache.values.get(childKey)?.includes(
-          "file://__VF_CACHE_DIR__/veryfront-mdx-esm/framework/vfmod-grandchild.mjs",
-        ),
-        true,
-      );
-      assertEquals(
-        cache.setCalls.every((call) => call.ttlSeconds === TRANSFORM_DISTRIBUTED_TTL_SEC),
-        true,
-      );
-      const publishedKeys = cache.setCalls.map((call) => call.key);
-      assertEquals(publishedKeys.indexOf(grandchildKey) < publishedKeys.indexOf(childKey), true);
-      assertEquals(
-        publishedKeys.indexOf(childKey) < publishedKeys.indexOf("transform:framework-entry"),
-        true,
-      );
+          true,
+        );
+        assertEquals(
+          cache.setCalls.every((call) => call.ttlSeconds === TRANSFORM_DISTRIBUTED_TTL_SEC),
+          true,
+        );
+        const publishedKeys = cache.setCalls.map((call) => call.key);
+        assertEquals(publishedKeys.indexOf(grandchildKey) < publishedKeys.indexOf(childKey), true);
+        assertEquals(
+          publishedKeys.indexOf(childKey) < publishedKeys.indexOf("transform:framework-entry"),
+          true,
+        );
+      });
     });
   });
 
