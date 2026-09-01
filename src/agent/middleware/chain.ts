@@ -155,7 +155,7 @@ function createDeferredContinuation(
   dispatch: () => Promise<AgentResponse>,
 ): Promise<AgentResponse> {
   const continuation = new DeferredContinuationPromise((resolve, reject) => {
-    const scheduled = Promise.resolve().then(() => {
+    const scheduled = IntrinsicPromiseThen.call(Promise.resolve(), () => {
       if (isSettled()) {
         const error = createInvalidContinuationError();
         markDeferredSettled(continuation, error);
