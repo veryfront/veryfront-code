@@ -72,6 +72,8 @@ export interface TerminalRunRetentionCandidate {
   status: TerminalWorkflowStatus;
   /** Terminal completion time observed by the sweep. */
   completedAt: Date;
+  /** Run mutation revision observed by the sweep. */
+  revision: number;
 }
 
 /** Bounded oldest-first terminal snapshots returned by a retention backend. */

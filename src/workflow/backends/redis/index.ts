@@ -72,7 +72,6 @@ const RUN_OBSERVATION_REVISION_FIELD = "__runObservationRevision";
 const RUN_OBSERVATION_STREAM_MAX_LENGTH = 64;
 const RUN_OBSERVATION_POLL_INTERVAL_MS = 20;
 const APPROVAL_RECOVERY_SCAN_COUNT = 100;
-const TERMINAL_RETENTION_BACKFILL_VERSION = "v1";
 
 /**
  * Merge top-level JSON objects without decoding their values through Redis's
@@ -298,36 +297,45 @@ const EXTEND_LOCK_SCRIPT =
  * index, KEYS[9] the expected workflow index, KEYS[10..15] every status index,
  * KEYS[16..17] the terminal completion index and member map, and KEYS[18..19]
  * the run's queue-message index and shared stream. ARGV contains status,
- * workflowId, createdAt, completedAt, runId, and consumer group. Like the
- * existing status-update scripts, this requires one logical Redis because the
- * keys are not cluster hash-tagged. Returns 1 when Redis state was removed, 2
- * when the run was already fully absent, and 0 when an extant run no longer
- * matches the candidate.
+ * workflowId, createdAt, completedAt, revision, runId, and consumer group.
+ * Like the existing status-update scripts, this requires one logical Redis
+ * because the keys are not cluster hash-tagged. Returns 1 when Redis state was
+ * removed, 2 when the run was already fully absent, and 0 when an extant run
+ * no longer matches the candidate.
  */
 const DELETE_TERMINAL_RUN_IF_UNCHANGED_SCRIPT = `-- conditional-terminal-run-delete
 local runExists = redis.call('exists', KEYS[1])
+local retentionMetadataRaw = redis.call('hget', KEYS[17], ARGV[6])
+local retentionMetadata = nil
+if retentionMetadataRaw then retentionMetadata = cjson.decode(retentionMetadataRaw) end
 if runExists ~= 0 then
   local status = redis.call('hget', KEYS[1], 'status')
   local workflowId = redis.call('hget', KEYS[1], 'workflowId')
   local createdAt = redis.call('hget', KEYS[1], 'createdAt')
   local completedAt = redis.call('hget', KEYS[1], 'completedAt')
+  local revision = redis.call('hget', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}') or '0'
   if status ~= ARGV[1] or workflowId ~= ARGV[2] or createdAt ~= ARGV[3] or
-      completedAt ~= ARGV[4] then return 0 end
+      completedAt ~= ARGV[4] or revision ~= ARGV[5] then return 0 end
   if status ~= 'completed' and status ~= 'failed' and status ~= 'cancelled' then return 0 end
+elseif not retentionMetadata then
+  return 2
+elseif retentionMetadata.workflowId ~= ARGV[2] or
+    retentionMetadata.createdAt ~= ARGV[3] or retentionMetadata.status ~= ARGV[1] or
+    retentionMetadata.completedAt ~= ARGV[4] or
+    tostring(retentionMetadata.revision) ~= ARGV[5] then
+  return 0
 end
 
 local removed = 0
 for index = 1, 7 do removed = removed + redis.call('del', KEYS[index]) end
-for index = 8, 15 do removed = removed + redis.call('srem', KEYS[index], ARGV[5]) end
-local retentionMetadata = redis.call('hget', KEYS[17], ARGV[5])
+for index = 8, 15 do removed = removed + redis.call('srem', KEYS[index], ARGV[6]) end
 if retentionMetadata then
-  local retentionMember = cjson.decode(retentionMetadata).member
-  removed = removed + redis.call('zrem', KEYS[16], retentionMember)
-  removed = removed + redis.call('hdel', KEYS[17], ARGV[5])
+  removed = removed + redis.call('zrem', KEYS[16], retentionMetadata.member)
+  removed = removed + redis.call('hdel', KEYS[17], ARGV[6])
 end
 local queueIds = redis.call('smembers', KEYS[18])
 for _, queueId in ipairs(queueIds) do
-  redis.call('xack', KEYS[19], ARGV[6], queueId)
+  redis.call('xack', KEYS[19], ARGV[7], queueId)
   removed = removed + redis.call('xdel', KEYS[19], queueId)
 end
 removed = removed + redis.call('del', KEYS[18])
@@ -356,27 +364,19 @@ if not terminal or completedAt == '' then
 end
 local workflowId = redis.call('hget', KEYS[1], 'workflowId')
 local createdAt = redis.call('hget', KEYS[1], 'createdAt')
+local revision = tonumber(redis.call('hget', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}') or '0')
 if not workflowId or not createdAt then return 0 end
-if ARGV[4] == '' then
-  if oldMember then
-    redis.call('hset', KEYS[3], ARGV[1], cjson.encode({
-      member = oldMember,
-      workflowId = workflowId,
-      createdAt = createdAt,
-      status = status,
-      completedAt = completedAt
-    }))
-  end
-  return 1
-end
-if oldMember and oldMember ~= ARGV[4] then redis.call('zrem', KEYS[2], oldMember) end
-redis.call('zadd', KEYS[2], 0, ARGV[4])
+local member = ARGV[4]
+if member == '' then member = cjson.encode({ completedAt, ARGV[1] }) end
+if oldMember and oldMember ~= member then redis.call('zrem', KEYS[2], oldMember) end
+redis.call('zadd', KEYS[2], 0, member)
 redis.call('hset', KEYS[3], ARGV[1], cjson.encode({
-  member = ARGV[4],
+  member = member,
   workflowId = workflowId,
   createdAt = createdAt,
   status = status,
-  completedAt = completedAt
+  completedAt = completedAt,
+  revision = revision
 }))
 return 1`;
 
@@ -395,7 +395,8 @@ return redis.call(
   'workflowId',
   'createdAt',
   'status',
-  'completedAt'
+  'completedAt',
+  '${RUN_OBSERVATION_REVISION_FIELD}'
 )`;
 
 const LIST_TERMINAL_RETENTION_CANDIDATES_SCRIPT = `-- list-terminal-retention-candidates
@@ -413,7 +414,8 @@ for _, member in ipairs(members) do
     'workflowId',
     'createdAt',
     'status',
-    'completedAt'
+    'completedAt',
+    '${RUN_OBSERVATION_REVISION_FIELD}'
   )
   local terminal = values[3] == 'completed' or values[3] == 'failed' or
     values[3] == 'cancelled'
@@ -421,16 +423,25 @@ for _, member in ipairs(members) do
     mapped.status == 'completed' or mapped.status == 'failed' or mapped.status == 'cancelled'
   )
   if mapped and mapped.member == member and values[1] and values[2] and terminal and
-      values[4] == decoded[1] then
-    table.insert(result, { runId, values[1], values[2], values[3], values[4] })
+      values[4] == decoded[1] and values[5] then
+    table.insert(result, {
+      runId,
+      values[1],
+      values[2],
+      values[3],
+      values[4],
+      values[5]
+    })
   elseif mapped and mapped.member == member and not values[1] and mapped.workflowId and
-      mapped.createdAt and mappedTerminal and mapped.completedAt == decoded[1] then
+      mapped.createdAt and mappedTerminal and mapped.completedAt == decoded[1] and
+      mapped.revision ~= nil then
     table.insert(result, {
       runId,
       mapped.workflowId,
       mapped.createdAt,
       mapped.status,
-      mapped.completedAt
+      mapped.completedAt,
+      tostring(mapped.revision)
     })
   else
     redis.call('zrem', KEYS[1], member)
@@ -473,11 +484,11 @@ return #ids`;
 
 function parseRedisTerminalRetentionCandidate(row: unknown): TerminalRunRetentionCandidate {
   if (
-    !arrayIsArray(row) || row.length !== 5 ||
+    !arrayIsArray(row) || row.length !== 6 ||
     typeof row[0] !== "string" || typeof row[1] !== "string" ||
     typeof row[2] !== "string" ||
     (row[3] !== "completed" && row[3] !== "failed" && row[3] !== "cancelled") ||
-    typeof row[4] !== "string"
+    typeof row[4] !== "string" || typeof row[5] !== "string"
   ) {
     throw ORCHESTRATION_ERROR.create({
       detail: "Redis returned an invalid terminal-run retention candidate",
@@ -485,9 +496,11 @@ function parseRedisTerminalRetentionCandidate(row: unknown): TerminalRunRetentio
   }
   const createdAt = new DateConstructor(row[2]);
   const completedAt = new DateConstructor(row[4]);
+  const revision = Number(row[5]);
   if (
     !numberIsFinite(reflectApply(dateGetTime, createdAt, []) as number) ||
-    !numberIsFinite(reflectApply(dateGetTime, completedAt, []) as number)
+    !numberIsFinite(reflectApply(dateGetTime, completedAt, []) as number) ||
+    !numberIsSafeInteger(revision) || revision < 0
   ) {
     throw ORCHESTRATION_ERROR.create({
       detail: "Redis returned an invalid terminal-run retention timestamp",
@@ -499,6 +512,7 @@ function parseRedisTerminalRetentionCandidate(row: unknown): TerminalRunRetentio
     createdAt,
     status: row[3],
     completedAt,
+    revision,
   };
 }
 
@@ -1336,8 +1350,7 @@ export class RedisBackend implements WorkflowBackend {
    */
   private pendingMessageIds = new Map<string, string[]>();
   private runObservationClosers = new Set<() => void>();
-  private terminalRetentionBackfillChecked = false;
-  private terminalRetentionBackfillCursor: number | null = 0;
+  private terminalRetentionBackfillCursor = 0;
 
   constructor(config: RedisBackendConfig = {}) {
     const resolvedConfig: RedisBackendInternalConfig = {
@@ -1405,10 +1418,6 @@ export class RedisBackend implements WorkflowBackend {
 
   private terminalRunRetentionMembersKey(): string {
     return `${this.storagePrefix()}index:terminal-completed-at-members`;
-  }
-
-  private terminalRunRetentionBackfillMarkerKey(): string {
-    return `${this.storagePrefix()}index:terminal-completed-at-backfill-${TERMINAL_RETENTION_BACKFILL_VERSION}`;
   }
 
   /** Enumerate only runs explicitly indexed in the current storage schema. */
@@ -2040,7 +2049,9 @@ export class RedisBackend implements WorkflowBackend {
   ): Promise<boolean> {
     if (
       candidate.status !== "completed" && candidate.status !== "failed" &&
-      candidate.status !== "cancelled"
+        candidate.status !== "cancelled" ||
+      !numberIsSafeInteger(candidate.revision) ||
+      candidate.revision < 0
     ) return false;
 
     let createdAt: string;
@@ -2080,6 +2091,7 @@ export class RedisBackend implements WorkflowBackend {
         candidate.workflowId,
         createdAt,
         completedAt,
+        String(candidate.revision),
         candidate.runId,
         this.config.groupName,
       ],
@@ -2097,14 +2109,7 @@ export class RedisBackend implements WorkflowBackend {
     client: RedisAdapter,
     limit: number,
   ): Promise<boolean> {
-    if (!this.terminalRetentionBackfillChecked) {
-      this.terminalRetentionBackfillChecked = true;
-      if (await client.get(this.terminalRunRetentionBackfillMarkerKey()) === "1") {
-        this.terminalRetentionBackfillCursor = null;
-      }
-    }
     const cursor = this.terminalRetentionBackfillCursor;
-    if (cursor === null) return false;
 
     const runPrefix = `${this.storagePrefix()}run:`;
     const page = await client.scan(cursor, {
@@ -2117,7 +2122,7 @@ export class RedisBackend implements WorkflowBackend {
         [page.keys[index]!],
         [],
       );
-      if (!arrayIsArray(values) || values.length !== 5) continue;
+      if (!arrayIsArray(values) || values.length !== 6) continue;
       const [runId, _workflowId, _createdAt, status, completedAt] = values;
       if (
         typeof runId !== "string" || typeof completedAt !== "string" ||
@@ -2132,12 +2137,8 @@ export class RedisBackend implements WorkflowBackend {
       );
     }
 
-    this.terminalRetentionBackfillCursor = page.cursor === 0 ? null : page.cursor;
-    if (this.terminalRetentionBackfillCursor === null) {
-      await client.set(this.terminalRunRetentionBackfillMarkerKey(), "1");
-      return false;
-    }
-    return true;
+    this.terminalRetentionBackfillCursor = page.cursor;
+    return page.cursor === 0;
   }
 
   /** Return a bounded oldest-first batch without hydrating run payloads. */
@@ -2155,7 +2156,8 @@ export class RedisBackend implements WorkflowBackend {
       return { candidates: [], hasMore: false };
     }
     const client = await this.ensureClient();
-    const backfillIncomplete = await this.backfillTerminalRetentionIndex(client, limit);
+    const backfillComplete = await this.backfillTerminalRetentionIndex(client, limit);
+    if (!backfillComplete) return { candidates: [], hasMore: true };
     const raw = await client.eval(
       LIST_TERMINAL_RETENTION_CANDIDATES_SCRIPT,
       [this.terminalRunRetentionIndexKey(), this.terminalRunRetentionMembersKey()],
@@ -2174,7 +2176,7 @@ export class RedisBackend implements WorkflowBackend {
     for (let index = 1; index < raw.length; index++) {
       reflectApply(arrayPush, candidates, [parseRedisTerminalRetentionCandidate(raw[index])]);
     }
-    const hasMore = backfillIncomplete || raw[0] === "1" || candidates.length > limit;
+    const hasMore = raw[0] === "1" || candidates.length > limit;
     if (candidates.length > limit) candidates.length = limit;
     return { candidates, hasMore };
   }

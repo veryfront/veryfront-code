@@ -104,6 +104,7 @@ interface MaterializedMemoryRunUpdate {
 function memoryTerminalRetentionCandidate(
   run: WorkflowRun,
   cutoff: number,
+  revision: number,
 ): TerminalRunRetentionCandidate | undefined {
   if (
     run.status !== "completed" && run.status !== "failed" &&
@@ -121,6 +122,7 @@ function memoryTerminalRetentionCandidate(
     createdAt: new DateConstructor(createdAt),
     status: run.status,
     completedAt: new DateConstructor(completedAt),
+    revision,
   };
 }
 
@@ -751,7 +753,10 @@ export class MemoryBackend implements WorkflowBackend {
     } catch {
       return Promise.resolve(false);
     }
-    if (!numberIsFinite(expectedCreatedAt) || !numberIsFinite(expectedCompletedAt)) {
+    if (
+      !numberIsFinite(expectedCreatedAt) || !numberIsFinite(expectedCompletedAt) ||
+      !numberIsSafeInteger(candidate.revision) || candidate.revision < 0
+    ) {
       return Promise.resolve(false);
     }
     const run = this.runs.get(candidate.runId);
@@ -763,6 +768,7 @@ export class MemoryBackend implements WorkflowBackend {
       if (
         run.workflowId !== candidate.workflowId || run.status !== candidate.status ||
         createdAt !== expectedCreatedAt || completedAt !== expectedCompletedAt ||
+        this.runRevisions.get(candidate.runId) !== candidate.revision ||
         (run.status !== "completed" && run.status !== "failed" && run.status !== "cancelled")
       ) {
         return Promise.resolve(false);
@@ -788,7 +794,11 @@ export class MemoryBackend implements WorkflowBackend {
     const candidates: TerminalRunRetentionCandidate[] = [];
     let hasMore = false;
     for (const run of this.runs.values()) {
-      const candidate = memoryTerminalRetentionCandidate(run, cutoff);
+      const candidate = memoryTerminalRetentionCandidate(
+        run,
+        cutoff,
+        this.runRevisions.get(run.id) ?? 0,
+      );
       if (candidate === undefined) continue;
       if (insertBoundedTerminalRetentionCandidate(candidates, candidate, limit)) hasMore = true;
     }

@@ -287,31 +287,18 @@ class MockRedisAdapter implements RedisAdapter {
         members.delete(args[0]!);
         return Promise.resolve(1);
       }
-      if (!args[3]) {
-        if (oldMember) {
-          members.set(
-            args[0]!,
-            JSON.stringify({
-              member: oldMember,
-              workflowId: hash.get("workflowId"),
-              createdAt: hash.get("createdAt"),
-              status,
-              completedAt,
-            }),
-          );
-        }
-        return Promise.resolve(1);
-      }
-      if (oldMember && oldMember !== args[3]) index.delete(oldMember);
-      index.set(args[3], 0);
+      const member = args[3] || JSON.stringify([completedAt, args[0]]);
+      if (oldMember && oldMember !== member) index.delete(oldMember);
+      index.set(member, 0);
       members.set(
         args[0]!,
         JSON.stringify({
-          member: args[3],
+          member,
           workflowId: hash.get("workflowId"),
           createdAt: hash.get("createdAt"),
           status,
           completedAt,
+          revision: Number(hash.get("__runObservationRevision") ?? "0"),
         }),
       );
       return Promise.resolve(1);
@@ -334,6 +321,7 @@ class MockRedisAdapter implements RedisAdapter {
         hash?.get("createdAt") ?? null,
         hash?.get("status") ?? null,
         hash?.get("completedAt") ?? null,
+        hash?.get("__runObservationRevision") ?? null,
       ]);
     }
 
@@ -355,6 +343,7 @@ class MockRedisAdapter implements RedisAdapter {
             createdAt: string;
             status: string;
             completedAt: string;
+            revision: number;
           }
           : undefined;
         const hash = this.hashes.get(`${args[2]}${runId}`);
@@ -362,7 +351,8 @@ class MockRedisAdapter implements RedisAdapter {
         const terminal = status === "completed" || status === "failed" || status === "cancelled";
         if (
           mapped?.member === member && hash?.get("workflowId") &&
-          hash.get("createdAt") && terminal && hash.get("completedAt") === completedAt
+          hash.get("createdAt") && terminal && hash.get("completedAt") === completedAt &&
+          hash.get("__runObservationRevision")
         ) {
           result.push([
             runId,
@@ -370,6 +360,7 @@ class MockRedisAdapter implements RedisAdapter {
             hash.get("createdAt"),
             status,
             completedAt,
+            hash.get("__runObservationRevision"),
           ]);
         } else if (
           mapped?.member === member && !hash && mapped.workflowId && mapped.createdAt &&
@@ -383,6 +374,7 @@ class MockRedisAdapter implements RedisAdapter {
             mapped.createdAt,
             mapped.status,
             mapped.completedAt,
+            String(mapped.revision),
           ]);
         } else {
           this.sortedSets.get(key)?.delete(member);
@@ -395,12 +387,33 @@ class MockRedisAdapter implements RedisAdapter {
 
     if (script.includes("conditional-terminal-run-delete")) {
       const hash = this.hashes.get(key);
+      const retentionMembers = this.hashes.get(keys[16]!);
+      const retentionRaw = retentionMembers?.get(args[5]!);
+      const retentionMetadata = retentionRaw
+        ? JSON.parse(retentionRaw) as {
+          member: string;
+          workflowId: string;
+          createdAt: string;
+          status: string;
+          completedAt: string;
+          revision: number;
+        }
+        : undefined;
       if (
         hash !== undefined &&
         (hash.get("status") !== args[0] || hash.get("workflowId") !== args[1] ||
-          hash.get("createdAt") !== args[2] || hash.get("completedAt") !== args[3])
+          hash.get("createdAt") !== args[2] || hash.get("completedAt") !== args[3] ||
+          (hash.get("__runObservationRevision") ?? "0") !== args[4])
       ) {
         return Promise.resolve(0);
+      }
+      if (hash === undefined) {
+        if (!retentionMetadata) return Promise.resolve(2);
+        if (
+          retentionMetadata.workflowId !== args[1] || retentionMetadata.createdAt !== args[2] ||
+          retentionMetadata.status !== args[0] || retentionMetadata.completedAt !== args[3] ||
+          String(retentionMetadata.revision) !== args[4]
+        ) return Promise.resolve(0);
       }
 
       let removed = 0;
@@ -412,14 +425,11 @@ class MockRedisAdapter implements RedisAdapter {
         this.expiries.delete(dataKey);
       }
       for (const indexKey of keys.slice(7, 15)) {
-        if (this.sets.get(indexKey)?.delete(args[4]!)) removed += 1;
+        if (this.sets.get(indexKey)?.delete(args[5]!)) removed += 1;
       }
-      const retentionMembers = this.hashes.get(keys[16]!);
-      const retentionMetadata = retentionMembers?.get(args[4]!);
       if (retentionMetadata) {
-        const retentionMember = (JSON.parse(retentionMetadata) as { member: string }).member;
-        if (this.sortedSets.get(keys[15]!)?.delete(retentionMember)) removed += 1;
-        if (retentionMembers!.delete(args[4]!)) removed += 1;
+        if (this.sortedSets.get(keys[15]!)?.delete(retentionMetadata.member)) removed += 1;
+        if (retentionMembers!.delete(args[5]!)) removed += 1;
       }
       const queueMessageIds = [...(this.sets.get(keys[17]!) ?? [])];
       this.queueCleanupAcks.push(...queueMessageIds);
@@ -3010,6 +3020,7 @@ describe("RedisBackend", () => {
           createdAt: retained.createdAt,
           status: "failed",
           completedAt,
+          revision: 0,
         }),
         false,
       );
@@ -3020,6 +3031,7 @@ describe("RedisBackend", () => {
         "wf-1",
         retained.createdAt.toISOString(),
         completedAt.toISOString(),
+        "0",
         "run-retention-race",
         "test:group:schema-v1",
       ]);
@@ -3066,6 +3078,11 @@ describe("RedisBackend", () => {
         createdAt: (await backend.getRun(runId))!.createdAt,
         status: "failed" as const,
         completedAt,
+        revision: Number(
+          mockRedis.hashes.get(`test:schema-v1:run:${runId}`)?.get(
+            "__runObservationRevision",
+          ) ?? "0",
+        ),
       };
       assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), true);
       assertEquals(mockRedis.lastKeys, [
@@ -3169,6 +3186,7 @@ describe("RedisBackend", () => {
           createdAt: original.createdAt,
           status: "completed",
           completedAt,
+          revision: 0,
         }),
         false,
       );
@@ -3191,6 +3209,7 @@ describe("RedisBackend", () => {
           createdAt: undefined as unknown as Date,
           status: "completed",
           completedAt: retained.completedAt,
+          revision: 0,
         }),
         false,
       );
@@ -3214,7 +3233,10 @@ describe("RedisBackend", () => {
       }
 
       const readsBefore = mockRedis.hgetallCallCount;
-      const batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      let batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      for (let page = 0; page < 10 && batch.candidates.length === 0; page++) {
+        batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      }
 
       assertEquals(batch.hasMore, true);
       assertEquals(batch.candidates.map(({ runId }) => runId), [
@@ -3222,12 +3244,30 @@ describe("RedisBackend", () => {
         "retention-middle",
       ]);
       assertEquals(
-        batch.candidates.every((candidate) => Object.keys(candidate).length === 5),
+        batch.candidates.every((candidate) => Object.keys(candidate).length === 6),
         true,
       );
       assertEquals(mockRedis.hgetallCallCount, readsBefore);
       assertStringIncludes(mockRedis.lastScript, "zrangebylex");
       assertEquals(mockRedis.lastArgs[1], "3");
+    });
+
+    it("fences retention against a same-status patch after discovery", async () => {
+      const runId = "retention-late-patch";
+      await backend.createRun({
+        ...createTestRun(runId),
+        status: "failed",
+        completedAt: new Date(2),
+      });
+      const candidate = (await backend.listTerminalRunRetentionCandidates(
+        new Date(10),
+        1,
+      )).candidates[0]!;
+
+      await backend.updateRun(runId, { error: { message: "Late diagnostic" } });
+
+      assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), false);
+      assertEquals((await backend.getRun(runId))?.error?.message, "Late diagnostic");
     });
 
     it("indexes terminal transitions and removes a retried run", async () => {
@@ -3254,10 +3294,33 @@ describe("RedisBackend", () => {
       );
     });
 
-    it("incrementally backfills terminal runs created before the retention index", async () => {
-      const runId = "retention-backfill";
+    it("indexes a terminal status patched after its completion time", async () => {
+      const runId = "retention-split-terminal-patch";
+      const completedAt = new Date(2);
+      await backend.createRun(createTestRun(runId));
+
+      await backend.updateRun(runId, { completedAt });
+      await backend.updateRun(runId, { status: "failed" });
+      assertStringIncludes(mockRedis.lastScript, "redis.call('zadd', KEYS[2]");
+
+      assertEquals(
+        (await backend.listTerminalRunRetentionCandidates(new Date(10), 1)).candidates.map(
+          (candidate) => candidate.runId,
+        ),
+        [runId],
+      );
+    });
+
+    it("finishes bounded backfill before returning globally oldest candidates", async () => {
+      const newerRunId = "retention-backfill-newer";
+      const olderRunId = "retention-backfill-older";
       await backend.createRun({
-        ...createTestRun(runId),
+        ...createTestRun(newerRunId),
+        status: "completed",
+        completedAt: new Date(3),
+      });
+      await backend.createRun({
+        ...createTestRun(olderRunId),
         status: "completed",
         completedAt: new Date(2),
       });
@@ -3270,18 +3333,53 @@ describe("RedisBackend", () => {
         prefix: "test:",
       });
 
+      const partial = await reader.listTerminalRunRetentionCandidates(new Date(10), 1);
+      assertEquals(partial, { candidates: [], hasMore: true });
+
+      const complete = await reader.listTerminalRunRetentionCandidates(new Date(10), 1);
+      assertEquals(complete.candidates.map((candidate) => candidate.runId), [olderRunId]);
+      assertEquals(complete.hasMore, true);
+    });
+
+    it("continues bounded backfill for terminal writes from rolling-upgrade workers", async () => {
+      const initialRunId = "retention-backfill-initial";
+      await backend.createRun({
+        ...createTestRun(initialRunId),
+        status: "completed",
+        completedAt: new Date(3),
+      });
+      mockRedis.sortedSets.clear();
+      mockRedis.hashes.delete("test:schema-v1:index:terminal-completed-at-members");
+      mockRedis.scanPageSize = 1;
+      const reader = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "test:",
+      });
+      await reader.listTerminalRunRetentionCandidates(new Date(10), 1);
+
+      const legacyRunId = "retention-backfill-legacy-writer";
+      await backend.createRun({
+        ...createTestRun(legacyRunId),
+        status: "completed",
+        completedAt: new Date(2),
+      });
+      const retentionMembers = mockRedis.hashes.get(
+        "test:schema-v1:index:terminal-completed-at-members",
+      )!;
+      const legacyMetadata = JSON.parse(retentionMembers.get(legacyRunId)!) as {
+        member: string;
+      };
+      retentionMembers.delete(legacyRunId);
+      mockRedis.sortedSets.get("test:schema-v1:index:terminal-completed-at")?.delete(
+        legacyMetadata.member,
+      );
+
       let found = false;
       for (let page = 0; page < 20 && !found; page++) {
         const batch = await reader.listTerminalRunRetentionCandidates(new Date(10), 1);
-        found = batch.candidates.some((candidate) => candidate.runId === runId);
-        if (!batch.hasMore) break;
+        found = batch.candidates.some((candidate) => candidate.runId === legacyRunId);
       }
-
       assertEquals(found, true);
-      assertEquals(
-        mockRedis.store.get("test:schema-v1:index:terminal-completed-at-backfill-v1"),
-        "1",
-      );
     });
   });
 

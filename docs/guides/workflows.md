@@ -600,13 +600,17 @@ try {
 }
 ```
 
-The backend verifies the run identity, terminal status, and completion time in
-the same operation that deletes its state. A failed run that starts retrying
-after the sweep reads it is retained. After deletion, reads return the existing
-not-found result; this retention API does not create tombstones.
+The backend verifies the run identity, terminal status, completion time, and
+mutation revision in the same operation that deletes its state. A failed run
+that starts retrying, or receives another state patch after the sweep reads it,
+is retained. After deletion, reads return the existing not-found result; this
+retention API does not create tombstones.
 
 Redis stores a completion-time index and reads at most `limit + 1` candidate
-records per sweep without hydrating run input, output, or context. The first
-sweeps incrementally backfill terminal runs written before the index existed.
-During that backfill, `hasMore` can be `true` even when one sweep examines no
-eligible runs, so continue until it becomes `false` as shown above.
+records per sweep without hydrating run input, output, or context. It scans at
+most one `limit`-sized key page per call, completes that scan cycle before
+returning candidates, and starts another scan cycle on later maintenance calls.
+This bounded repair also discovers terminal states written by older workers
+during a rolling upgrade. During a scan, `hasMore` can be `true` even when one
+sweep examines no eligible runs, so continue until it becomes `false` as shown
+above.
