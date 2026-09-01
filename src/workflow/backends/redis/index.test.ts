@@ -274,10 +274,7 @@ class MockRedisAdapter implements RedisAdapter {
       }
       messageIds.add(id);
       const hash = this.hashes.get(keys[2]!);
-      if (
-        hash?.get("status") === "completed" || hash?.get("status") === "failed" ||
-        hash?.get("status") === "cancelled"
-      ) {
+      if (hash) {
         hash.set("__terminalRetryQueued", "1");
         const metadataRaw = this.hashes.get(keys[3]!)?.get(args[0]!);
         if (metadataRaw) {
@@ -348,10 +345,6 @@ class MockRedisAdapter implements RedisAdapter {
         .slice(0, limit);
       for (const entry of entries) {
         if (!entry.data.runId) continue;
-        if (
-          this.deliveredStreamIds.has(entry.id) &&
-          !this.pendingStreamIds.has(entry.id)
-        ) continue;
         const indexKey = `${args[2]}${entry.data.runId}`;
         let messageIds = this.sets.get(indexKey);
         if (!messageIds) {
@@ -359,11 +352,10 @@ class MockRedisAdapter implements RedisAdapter {
           this.sets.set(indexKey, messageIds);
         }
         messageIds.add(entry.id);
+        const live = !this.deliveredStreamIds.has(entry.id) ||
+          this.pendingStreamIds.has(entry.id);
         const hash = this.hashes.get(`${args[4]}${entry.data.runId}`);
-        if (
-          hash?.get("status") === "completed" || hash?.get("status") === "failed" ||
-          hash?.get("status") === "cancelled"
-        ) {
+        if (live && hash) {
           hash.set("__terminalRetryQueued", "1");
           const metadataRaw = this.hashes.get(keys[2]!)?.get(entry.data.runId);
           if (metadataRaw) {
@@ -3560,7 +3552,34 @@ describe("RedisBackend", () => {
       assertEquals(batch.candidates.map((candidate) => candidate.runId), [runId]);
     });
 
-    it("ignores acknowledged legacy stream history during queue repair", async () => {
+    it("keeps work accepted before a terminal transition out of retention", async () => {
+      const runId = "run-retention-accepted-before-terminal";
+      await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      await backend.createRun(createTestRun(runId));
+      await backend.enqueue({
+        runId,
+        workflowId: "wf-1",
+        input: {},
+        createdAt: new Date(1),
+      });
+      await backend.updateRun(runId, {
+        status: "failed",
+        completedAt: new Date(2),
+      });
+
+      let batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      for (let page = 0; page < 10 && batch.hasMore; page++) {
+        batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      }
+      assertEquals(batch.candidates, []);
+
+      assertEquals((await backend.dequeue())?.runId, runId);
+      await backend.acknowledge(runId);
+      batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      assertEquals(batch.candidates.map((candidate) => candidate.runId), [runId]);
+    });
+
+    it("indexes acknowledged legacy stream history for cleanup without treating it as live work", async () => {
       const runId = "run-retention-legacy-acknowledged";
       await backend.createRun({
         ...createTestRun(runId),
@@ -3587,6 +3606,16 @@ describe("RedisBackend", () => {
       assertEquals(
         mockRedis.hashes.get(`test:schema-v1:run:${runId}`)?.get("__terminalRetryQueued"),
         undefined,
+      );
+      assertEquals(
+        mockRedis.sets.get(`test:schema-v1:queue-messages:${runId}`),
+        new Set([messageId]),
+      );
+
+      assertEquals(await backend.deleteTerminalRunIfUnchanged(batch.candidates[0]!), true);
+      assertEquals(
+        mockRedis.streams.get("test:stream:schema-v1")?.some(({ id }) => id === messageId),
+        false,
       );
     });
 
@@ -6084,7 +6113,7 @@ describe("RedisBackend", () => {
       assertEquals(ackCalls.length, 0);
     });
 
-    it("nack XACKs the consumed message before re-enqueueing", async () => {
+    it("nack enqueues the replacement before XACKing the consumed message", async () => {
       const ackCalls: string[][] = [];
       const realXack = mockRedis.xack.bind(mockRedis);
       mockRedis.xack = (key: string, group: string, ...ids: string[]) => {

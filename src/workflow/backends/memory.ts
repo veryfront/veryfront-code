@@ -807,7 +807,10 @@ export class MemoryBackend implements WorkflowBackend {
     const candidates: TerminalRunRetentionCandidate[] = [];
     let hasMore = false;
     for (const run of this.runs.values()) {
-      if (this.terminalRetryQueued.has(run.id)) continue;
+      if (
+        this.terminalRetryQueued.has(run.id) ||
+        this.terminalRetryPending.has(run.id)
+      ) continue;
       const candidate = memoryTerminalRetentionCandidate(
         run,
         cutoff,
@@ -1788,13 +1791,7 @@ export class MemoryBackend implements WorkflowBackend {
 
     if (insertIndex === -1) this.queue.push(cloned);
     else this.queue.splice(insertIndex, 0, cloned);
-    const run = this.runs.get(job.runId);
-    if (
-      run?.status === "completed" || run?.status === "failed" ||
-      run?.status === "cancelled"
-    ) {
-      this.terminalRetryQueued.add(job.runId);
-    }
+    if (this.runs.has(job.runId)) this.terminalRetryQueued.add(job.runId);
     this.advanceRunRetentionRevision(job.runId);
     return Promise.resolve();
   }

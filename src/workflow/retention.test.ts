@@ -147,6 +147,38 @@ describe("workflow terminal-run retention", () => {
     );
   });
 
+  it("keeps work accepted before a terminal transition out of retention", async () => {
+    const backend = new MemoryBackend();
+    const retained = run("accepted-before-terminal", "pending");
+    await backend.createRun(retained);
+    await backend.enqueue({
+      runId: retained.id,
+      workflowId: retained.workflowId,
+      input: {},
+      createdAt: new Date(1),
+    });
+    await backend.updateRun(retained.id, {
+      status: "failed",
+      completedAt: new Date(2),
+    });
+
+    assertEquals(
+      await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
+      { supported: true, examined: 0, deleted: 0, hasMore: false },
+    );
+    assertEquals((await backend.dequeue())?.runId, retained.id);
+    assertEquals(
+      await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
+      { supported: true, examined: 0, deleted: 0, hasMore: false },
+    );
+
+    await backend.acknowledge(retained.id);
+    assertEquals(
+      await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
+      { supported: true, examined: 1, deleted: 1, hasMore: false },
+    );
+  });
+
   it("clears terminal retry bookkeeping during a backend reset", async () => {
     const backend = new MemoryBackend();
     const retained = run("reset-retry", "failed", new Date(2));

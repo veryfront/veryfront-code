@@ -584,15 +584,16 @@ for _, entry in ipairs(entries) do
   local id = entry[1]
   local fields = entry[2]
   for index = 1, #fields, 2 do
-    if fields[index] == 'runId' and fields[index + 1] ~= '' and isLiveQueueEntry(id) then
+    if fields[index] == 'runId' and fields[index + 1] ~= '' then
       local runId = fields[index + 1]
       redis.call('sadd', ARGV[3] .. runId, id)
-      local runKey = ARGV[5] .. runId
-      local status = redis.call('hget', runKey, 'status')
-      if status == 'completed' or status == 'failed' or status == 'cancelled' then
-        redis.call('hset', runKey, '${TERMINAL_RETRY_QUEUED_FIELD}', '1')
-        local metadataRaw = redis.call('hget', KEYS[3], runId)
-        if metadataRaw then redis.call('zrem', KEYS[2], cjson.decode(metadataRaw).member) end
+      if isLiveQueueEntry(id) then
+        local runKey = ARGV[5] .. runId
+        if redis.call('exists', runKey) == 1 then
+          redis.call('hset', runKey, '${TERMINAL_RETRY_QUEUED_FIELD}', '1')
+          local metadataRaw = redis.call('hget', KEYS[3], runId)
+          if metadataRaw then redis.call('zrem', KEYS[2], cjson.decode(metadataRaw).member) end
+        end
       end
       break
     end
@@ -620,8 +621,7 @@ local id = redis.call(
   'createdAt', ARGV[5]
 )
 redis.call('sadd', KEYS[2], id)
-local status = redis.call('hget', KEYS[3], 'status')
-if status == 'completed' or status == 'failed' or status == 'cancelled' then
+if redis.call('exists', KEYS[3]) == 1 then
   redis.call('hset', KEYS[3], '${TERMINAL_RETRY_QUEUED_FIELD}', '1')
   local metadataRaw = redis.call('hget', KEYS[4], ARGV[1])
   if metadataRaw then redis.call('zrem', KEYS[6], cjson.decode(metadataRaw).member) end
