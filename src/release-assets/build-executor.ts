@@ -63,7 +63,10 @@ import {
   resolveEsmShThroughImportMap,
 } from "#veryfront/transforms/shared/esm-sh-import-map.ts";
 import { isRuntimeImportMapSpecifier } from "#veryfront/transforms/import-rewriter/strategies/import-map-strategy.ts";
-import { isEsmShUrl } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import {
+  extractDependencyPinningPathKey,
+  isEsmShUrl,
+} from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { CodeParser } from "#veryfront/extensions/parser/code-parser.ts";
 import { ensureDefaultParserContracts } from "#veryfront/extensions/parser/defaults.ts";
@@ -703,30 +706,58 @@ function normalizeLogicalPath(path: string): string | null {
   return parts.length > 0 ? parts.join("/") : null;
 }
 
+function normalizeReleaseModuleSpecifier(specifier: string): string | null {
+  const { path } = splitSpecifierSuffix(specifier);
+  let pathname = path;
+  if (/^https?:\/\//i.test(path) || path.startsWith("//")) {
+    try {
+      const absolute = new URL(path, "https://veryfront.invalid");
+      if (
+        (absolute.protocol !== "http:" && absolute.protocol !== "https:") ||
+        absolute.username !== "" ||
+        absolute.password !== ""
+      ) {
+        return specifier;
+      }
+      pathname = absolute.pathname;
+    } catch {
+      return specifier;
+    }
+  }
+
+  const extracted = extractDependencyPinningPathKey(pathname);
+  if (extracted.malformed) return null;
+  return extracted.found ? extracted.pathname : specifier;
+}
+
 function normalizeProjectSpecifier(specifier: string, logicalPath: string): string | null {
+  const normalizedSpecifier = normalizeReleaseModuleSpecifier(specifier);
+  if (normalizedSpecifier === null) return null;
   if (
-    specifier.startsWith("//") ||
-    /^[A-Za-z][A-Za-z0-9+.-]*:/.test(specifier) ||
-    specifier.startsWith("#")
+    normalizedSpecifier.startsWith("//") ||
+    /^[A-Za-z][A-Za-z0-9+.-]*:/.test(normalizedSpecifier) ||
+    normalizedSpecifier.startsWith("#")
   ) {
     return null;
   }
 
-  if (specifier.startsWith("/_vf_modules/_veryfront/")) return null;
-  if (specifier.startsWith("/_vf_modules/")) return specifier;
-  if (specifier.startsWith("_veryfront/")) return null;
-  if (specifier.startsWith("@/")) return specifier.slice(2);
+  if (normalizedSpecifier.startsWith("/_vf_modules/_veryfront/")) return null;
+  if (normalizedSpecifier.startsWith("/_vf_modules/")) return normalizedSpecifier;
+  if (normalizedSpecifier.startsWith("_veryfront/")) return null;
+  if (normalizedSpecifier.startsWith("@/")) return normalizedSpecifier.slice(2);
 
-  if (specifier.startsWith("./") || specifier.startsWith("../")) {
+  if (normalizedSpecifier.startsWith("./") || normalizedSpecifier.startsWith("../")) {
     const dir = logicalPath.includes("/")
       ? logicalPath.slice(0, logicalPath.lastIndexOf("/"))
       : ".";
-    return `${dir}/${specifier}`;
+    return `${dir}/${normalizedSpecifier}`;
   }
 
-  if (specifier.startsWith("/")) return specifier;
+  if (normalizedSpecifier.startsWith("/")) return normalizedSpecifier;
 
-  if (PROJECT_IMPORT_ROOTS.some((dir) => specifier.startsWith(dir))) return specifier;
+  if (PROJECT_IMPORT_ROOTS.some((dir) => normalizedSpecifier.startsWith(dir))) {
+    return normalizedSpecifier;
+  }
 
   return null;
 }
@@ -1464,12 +1495,19 @@ function dependencyUrlForSpecifier(
   dependencyUrls: Map<string, string>,
   specifier: string,
 ): string | null {
+  const normalizedReleaseSpecifier = normalizeReleaseModuleSpecifier(specifier);
+  if (normalizedReleaseSpecifier === null) return null;
   const direct = dependencyUrls.get(specifier) ??
-    dependencyUrls.get(normalizeDependencySpecifier(specifier));
+    dependencyUrls.get(normalizeDependencySpecifier(specifier)) ??
+    dependencyUrls.get(normalizedReleaseSpecifier) ??
+    dependencyUrls.get(normalizeDependencySpecifier(normalizedReleaseSpecifier));
   if (direct) return direct;
 
-  if (specifier.startsWith("http://") || specifier.startsWith("https://")) {
-    const normalized = normalizeHttpUrl(specifier);
+  if (
+    normalizedReleaseSpecifier.startsWith("http://") ||
+    normalizedReleaseSpecifier.startsWith("https://")
+  ) {
+    const normalized = normalizeHttpUrl(normalizedReleaseSpecifier);
     return dependencyUrls.get(normalized) ??
       dependencyUrls.get(normalizeDependencySpecifier(normalized)) ?? null;
   }
@@ -2698,8 +2736,13 @@ async function buildFrameworkDependencies(
     specifier: string,
     fromSourcePath: string,
   ): Promise<string | null> {
-    if (specifier.startsWith("./") || specifier.startsWith("../")) {
-      const resolvedPath = await resolveRelativeFrameworkSourceImport(specifier, fromSourcePath);
+    const normalizedSpecifier = normalizeReleaseModuleSpecifier(specifier);
+    if (normalizedSpecifier === null) return null;
+    if (normalizedSpecifier.startsWith("./") || normalizedSpecifier.startsWith("../")) {
+      const resolvedPath = await resolveRelativeFrameworkSourceImport(
+        normalizedSpecifier,
+        fromSourcePath,
+      );
       if (!resolvedPath) return null;
       const helperName = matchPublishedRuntimeHelper(resolvedPath, fromSourcePath);
       if (helperName) {
@@ -2717,8 +2760,8 @@ async function buildFrameworkDependencies(
       return frameworkSourcePathToSourceKey(resolvedPath, lookupDirs);
     }
 
-    if (specifier.startsWith(FRAMEWORK_MODULE_URL_PREFIX)) {
-      return frameworkModuleUrlToSourceKey(specifier);
+    if (normalizedSpecifier.startsWith(FRAMEWORK_MODULE_URL_PREFIX)) {
+      return frameworkModuleUrlToSourceKey(normalizedSpecifier);
     }
 
     return null;
@@ -2847,8 +2890,10 @@ async function collectRequestedFrameworkSpecifiers(
   for (const transformed of transformedModules.values()) {
     for (const imp of await parseImports(transformed.code)) {
       if (!imp.n) continue;
-      if (Object.hasOwn(PLATFORM_UTILITIES, imp.n)) requested.add(imp.n);
-      for (const alias of specifiersByModuleUrl.get(imp.n) ?? []) requested.add(alias);
+      const specifier = normalizeReleaseModuleSpecifier(imp.n);
+      if (specifier === null) continue;
+      if (Object.hasOwn(PLATFORM_UTILITIES, specifier)) requested.add(specifier);
+      for (const alias of specifiersByModuleUrl.get(specifier) ?? []) requested.add(alias);
     }
   }
 
