@@ -124,7 +124,6 @@ function observeDeferredSettlement(promise: Promise<unknown>): void {
 function createDeferredContinuation(
   isSettled: () => boolean,
   dispatch: () => Promise<AgentResponse>,
-  waitForSettlementObservation = false,
 ): Promise<AgentResponse> {
   const continuation = new DeferredContinuationPromise((resolve, reject) => {
     const schedule = () => {
@@ -148,13 +147,7 @@ function createDeferredContinuation(
         },
       );
     };
-    const schedulingPromise = Promise.resolve();
-    const scheduled = waitForSettlementObservation
-      ? IntrinsicPromiseThen.call(
-        IntrinsicPromiseThen.call(schedulingPromise, () => undefined),
-        schedule,
-      )
-      : IntrinsicPromiseThen.call(schedulingPromise, schedule);
+    const scheduled = IntrinsicPromiseThen.call(Promise.resolve(), schedule);
     void IntrinsicPromiseThen.call(scheduled, undefined, (error: unknown) => {
       reject(error);
     });
@@ -193,7 +186,10 @@ export class MiddlewareChain {
               let middlewareResultSettled = false;
               let middlewareObservingResult = false;
               const next = (): Promise<AgentResponse> => {
-                if (nextCalled || middlewareSettled || middlewareResultSettled) {
+                if (
+                  nextCalled || middlewareSettled || middlewareResultSettled ||
+                  middlewareObservingResult
+                ) {
                   return rejectInvalidContinuation();
                 }
                 nextCalled = true;
@@ -201,7 +197,6 @@ export class MiddlewareChain {
                   return createDeferredContinuation(
                     () => middlewareSettled || middlewareResultSettled,
                     () => dispatch(middlewareIndex + 1),
-                    middlewareObservingResult,
                   );
                 }
                 return dispatch(middlewareIndex + 1);

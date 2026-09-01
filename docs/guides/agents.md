@@ -576,6 +576,8 @@ Its lifecycle is:
 - Direct self-resolution of a continuation is rejected with `TypeError`.
   Indirect promise-adoption cycles are outside this middleware contract and are
   not diagnosed by the chain.
+- Re-entrant `next()` calls made by Promise species or other framework-internal
+  result-observation hooks are rejected; they are not middleware-body calls.
 
 ## Verify it worked
 

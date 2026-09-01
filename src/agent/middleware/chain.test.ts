@@ -303,46 +303,6 @@ describe("agent/middleware/chain", () => {
     assertEquals(finalHandlerCalls, 0);
   });
 
-  it("allows a species-hook continuation while the middleware result is pending", async () => {
-    let retainedNext: (() => Promise<AgentResponse>) | undefined;
-    let releaseResult: ((value: AgentResponse) => void) | undefined;
-    const finalStarted = Promise.withResolvers<void>();
-    const chain = new MiddlewareChain([
-      (_context, next) => {
-        retainedNext = next;
-        class PendingSpeciesPromise<T> extends Promise<T> {
-          static override get [Symbol.species](): PromiseConstructor {
-            retainedNext?.();
-            return Promise;
-          }
-        }
-        return new PendingSpeciesPromise<AgentResponse>((resolve) => {
-          releaseResult = resolve;
-        });
-      },
-    ]);
-
-    const execution = chain.execute(context, () => {
-      finalStarted.resolve();
-      return Promise.resolve(response);
-    });
-    let timeoutId: number | undefined;
-    const timeout = new Promise<never>((_resolve, reject) => {
-      timeoutId = setTimeout(
-        () => reject(new Error("pending species continuation did not dispatch")),
-        100,
-      );
-    });
-
-    try {
-      await Promise.race([finalStarted.promise, timeout]);
-      releaseResult!(response);
-      assertEquals(await execution, response);
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  });
-
   it("revokes a continuation queued before a rejected promise subclass settles", async () => {
     let queuedNext: Promise<AgentResponse> | undefined;
     let finalHandlerCalls = 0;
