@@ -2591,6 +2591,55 @@ interface CsiConsumedUrlPrefix {
   value: string;
 }
 
+function createCsiConsumedUrlPrefix(startIndex: number): CsiConsumedUrlPrefix {
+  return { startIndex, inputEnds: [], value: "" };
+}
+
+function advanceCsiConsumedSchemePrefix(
+  prefix: CsiConsumedUrlPrefix,
+  character: string,
+  index: number,
+  matchIndex: number,
+): CsiConsumedUrlPrefix {
+  if (
+    prefix.value === "" || stringEndsWith(prefix.value, ":") ||
+    prefix.value.length >= MAX_GENERIC_URL_SCHEME_LENGTH
+  ) {
+    const restarted = createCsiConsumedUrlPrefix(matchIndex);
+    const canStart = ReflectApply(RegExpPrototypeExec, GENERIC_URL_SCHEME_FIRST_CHARACTER, [
+      character,
+    ]) !== null;
+    if (!canStart) return restarted;
+    restarted.startIndex = index;
+    restarted.value = character;
+    defineOwnArrayElement(restarted.inputEnds, 0, index + 1);
+    return restarted;
+  }
+  prefix.value += character;
+  defineOwnArrayElement(prefix.inputEnds, prefix.inputEnds.length, index + 1);
+  return prefix;
+}
+
+function advanceCsiConsumedUrlPrefix(
+  prefix: CsiConsumedUrlPrefix,
+  character: string,
+  index: number,
+  matchIndex: number,
+): CsiConsumedUrlPrefix {
+  const isSchemeCharacter = ReflectApply(RegExpPrototypeExec, GENERIC_URL_SCHEME_CHARACTER, [
+    character,
+  ]) !== null;
+  if (isSchemeCharacter) {
+    return advanceCsiConsumedSchemePrefix(prefix, character, index, matchIndex);
+  }
+  if (character === ":" && prefix.value !== "" && !stringEndsWith(prefix.value, ":")) {
+    prefix.value += character;
+    defineOwnArrayElement(prefix.inputEnds, prefix.inputEnds.length, index + 1);
+    return prefix;
+  }
+  return createCsiConsumedUrlPrefix(matchIndex);
+}
+
 function csiConsumedUrlPrefix(
   value: string,
   matchIndex: number,
@@ -2598,9 +2647,7 @@ function csiConsumedUrlPrefix(
   const windowStart = matchIndex > MAX_CSI_CONSUMED_URL_LOOKAHEAD
     ? matchIndex - MAX_CSI_CONSUMED_URL_LOOKAHEAD
     : 0;
-  let startIndex = matchIndex;
-  let inputEnds: number[] = [];
-  let prefix = "";
+  let prefix = createCsiConsumedUrlPrefix(matchIndex);
   let index = windowStart;
   while (index < matchIndex) {
     const sequenceEnd = completeCsiSequenceEndAtIndex(value, index, matchIndex);
@@ -2610,35 +2657,10 @@ function csiConsumedUrlPrefix(
     }
 
     const character = stringSlice(value, index, index + 1);
-    const isSchemeCharacter = ReflectApply(RegExpPrototypeExec, GENERIC_URL_SCHEME_CHARACTER, [
-      character,
-    ]) !== null;
-    if (isSchemeCharacter) {
-      const canStart = ReflectApply(RegExpPrototypeExec, GENERIC_URL_SCHEME_FIRST_CHARACTER, [
-        character,
-      ]) !== null;
-      if (
-        prefix === "" || stringEndsWith(prefix, ":") ||
-        prefix.length >= MAX_GENERIC_URL_SCHEME_LENGTH
-      ) {
-        prefix = canStart ? character : "";
-        startIndex = canStart ? index : matchIndex;
-        inputEnds = [];
-      } else {
-        prefix += character;
-      }
-      if (prefix !== "") defineOwnArrayElement(inputEnds, inputEnds.length, index + 1);
-    } else if (character === ":" && prefix !== "" && !stringEndsWith(prefix, ":")) {
-      prefix += character;
-      defineOwnArrayElement(inputEnds, inputEnds.length, index + 1);
-    } else {
-      prefix = "";
-      startIndex = matchIndex;
-      inputEnds = [];
-    }
+    prefix = advanceCsiConsumedUrlPrefix(prefix, character, index, matchIndex);
     index += 1;
   }
-  return prefix === "" ? undefined : { startIndex, inputEnds, value: prefix };
+  return prefix.value === "" ? undefined : prefix;
 }
 
 function matchPatternAtStart(
