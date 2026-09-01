@@ -6,6 +6,7 @@ const INVALID_CONTINUATION_MESSAGE =
   "You must call agent middleware next() at most once while the middleware is active";
 const IntrinsicPromiseThen = Promise.prototype.then;
 const INVALID_CONTINUATION_ERRORS = new WeakSet<object>();
+const INVALID_CONTINUATION_ORIGINS = new WeakMap<object, VeryfrontError>();
 const CONTINUATION_OBSERVATIONS = new WeakMap<object, { observed: boolean }>();
 type ContinuationSpeciesHolder = { [Symbol.species]: PromiseConstructor };
 
@@ -17,6 +18,13 @@ function createInvalidContinuationError(): VeryfrontError {
 
 function isInvalidContinuationError(error: unknown): boolean {
   return typeof error === "object" && error !== null && INVALID_CONTINUATION_ERRORS.has(error);
+}
+
+function registerInvalidContinuationOrigin(
+  promise: Promise<unknown>,
+  error: VeryfrontError,
+): void {
+  INVALID_CONTINUATION_ORIGINS.set(promise, error);
 }
 
 function registerContinuation(promise: Promise<unknown>): void {
@@ -31,7 +39,10 @@ function markContinuationObserved(promise: Promise<unknown>): void {
 function containRejection(promise: Promise<unknown>): void {
   const observation = CONTINUATION_OBSERVATIONS.get(promise);
   void IntrinsicPromiseThen.call(promise, undefined, (error: unknown) => {
-    if (isInvalidContinuationError(error)) return undefined;
+    if (
+      isInvalidContinuationError(error) &&
+      INVALID_CONTINUATION_ORIGINS.get(promise) === error
+    ) return undefined;
     if (observation?.observed) return undefined;
     setTimeout(() => {
       if (!observation?.observed) void Promise.reject(error);
@@ -57,17 +68,21 @@ class InvalidContinuationPromise extends Promise<AgentResponse> {
     ) as Promise<TResult1 | TResult2>;
     lockContinuationSpecies(derived, INVALID_CONTINUATION_SPECIES_HOLDER);
     registerContinuation(derived);
+    const origin = INVALID_CONTINUATION_ORIGINS.get(this);
+    if (origin) registerInvalidContinuationOrigin(derived, origin);
     containRejection(derived);
     return derived;
   }
 }
 
 function rejectInvalidContinuation(): Promise<AgentResponse> {
+  const error = createInvalidContinuationError();
   const rejection = new InvalidContinuationPromise(
-    (_resolve, reject) => reject(createInvalidContinuationError()),
+    (_resolve, reject) => reject(error),
   );
   lockContinuationSpecies(rejection, INVALID_CONTINUATION_SPECIES_HOLDER);
   registerContinuation(rejection);
+  registerInvalidContinuationOrigin(rejection, error);
   containRejection(rejection);
   return rejection;
 }
@@ -89,6 +104,8 @@ class DeferredContinuationPromise extends Promise<AgentResponse> {
     ) as Promise<TResult1 | TResult2>;
     lockContinuationSpecies(derived, DEFERRED_CONTINUATION_SPECIES_HOLDER);
     registerContinuation(derived);
+    const origin = INVALID_CONTINUATION_ORIGINS.get(this);
+    if (origin) registerInvalidContinuationOrigin(derived, origin);
     observeDeferredSettlement(derived);
     return derived;
   }
@@ -125,11 +142,11 @@ function createDeferredContinuation(
   isSettled: () => boolean,
   dispatch: () => Promise<AgentResponse>,
 ): Promise<AgentResponse> {
+  const invalidError = createInvalidContinuationError();
   const continuation = new DeferredContinuationPromise((resolve, reject) => {
     const schedule = () => {
       if (isSettled()) {
-        const error = createInvalidContinuationError();
-        reject(error);
+        reject(invalidError);
         return;
       }
       const dispatched = dispatch();
@@ -154,6 +171,7 @@ function createDeferredContinuation(
   });
   lockContinuationSpecies(continuation, DEFERRED_CONTINUATION_SPECIES_HOLDER);
   registerContinuation(continuation);
+  registerInvalidContinuationOrigin(continuation, invalidError);
   observeDeferredSettlement(continuation);
   return continuation;
 }
