@@ -575,6 +575,11 @@ never eligible. The cutoff is exclusive, and each call deletes at most `limit`
 runs. The sweep does not modify workflow definitions, schedules, tasks,
 webhooks, or prompts.
 
+Run the scheduler as one long-lived maintenance process. Before its first
+start, stop every workflow worker. Restart the workers only after the initial
+repair finishes, and keep this process running so every scheduled sweep reuses
+the same backend.
+
 ```ts
 import { reapTerminalRuns, RedisBackend } from "veryfront/workflow";
 
@@ -582,9 +587,11 @@ const redisUrl = Deno.env.get("REDIS_URL");
 if (!redisUrl) throw new Error("Set REDIS_URL before running workflow retention");
 
 const backend = new RedisBackend({ url: redisUrl });
-const completedBefore = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+const retentionAgeMs = 30 * 24 * 60 * 60 * 1000;
+const sweepIntervalMs = 24 * 60 * 60 * 1000;
 
-try {
+async function runSweep(): Promise<void> {
+  const completedBefore = new Date(Date.now() - retentionAgeMs);
   while (true) {
     const result = await reapTerminalRuns(backend, {
       completedBefore,
@@ -595,6 +602,17 @@ try {
     }
     if (!result.hasMore) break;
   }
+}
+
+async function runScheduler(): Promise<never> {
+  while (true) {
+    await runSweep();
+    await new Promise<void>((resolve) => setTimeout(resolve, sweepIntervalMs));
+  }
+}
+
+try {
+  await runScheduler();
 } finally {
   await backend.destroy();
 }

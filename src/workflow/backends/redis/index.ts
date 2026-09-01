@@ -468,13 +468,12 @@ ${UPDATE_TERMINAL_RETENTION_INDEX_LUA}
 local status = redis.call('hget', KEYS[1], 'status')
 if not status then return 0 end
 if ARGV[2] ~= '' and status ~= ARGV[2] then return 0 end
+local createdAt = redis.call('hget', KEYS[1], 'createdAt') or ''
+if createdAt ~= ARGV[3] then return 0 end
 local completedAt = redis.call('hget', KEYS[1], 'completedAt') or ''
-if ARGV[3] == '-' then
-  if completedAt ~= '' then return 0 end
-elseif ARGV[3] ~= '' and completedAt ~= ARGV[3] then
-  return 0
-end
-return updateTerminalRetentionIndex(KEYS[1], KEYS[2], KEYS[3], ARGV[1], ARGV[4])`;
+if completedAt ~= ARGV[4] then return 0 end
+redis.call('hset', KEYS[1], 'createdAt', ARGV[5], 'completedAt', ARGV[6])
+return updateTerminalRetentionIndex(KEYS[1], KEYS[2], KEYS[3], ARGV[1], ARGV[7])`;
 
 const MARK_RUN_DELETING_SCRIPT = `-- mark-run-deleting
 if redis.call('exists', KEYS[1]) == 0 then return {} end
@@ -1815,7 +1814,10 @@ export class RedisBackend implements WorkflowBackend {
     client: RedisAdapter,
     runId: string,
     expectedStatus: string,
+    expectedCreatedAt: string,
     expectedCompletedAt: string,
+    canonicalCreatedAt: string,
+    canonicalCompletedAt: string,
     completedAtMs: string,
   ): Promise<void> {
     await client.eval(
@@ -1825,7 +1827,15 @@ export class RedisBackend implements WorkflowBackend {
         this.terminalRunRetentionIndexKey(),
         this.terminalRunRetentionMembersKey(),
       ],
-      [runId, expectedStatus, expectedCompletedAt, completedAtMs],
+      [
+        runId,
+        expectedStatus,
+        expectedCreatedAt,
+        expectedCompletedAt,
+        canonicalCreatedAt,
+        canonicalCompletedAt,
+        completedAtMs,
+      ],
     );
   }
 
@@ -2601,23 +2611,35 @@ export class RedisBackend implements WorkflowBackend {
         [],
       );
       if (!arrayIsArray(values) || values.length !== 6) continue;
-      const [runId, _workflowId, _createdAt, status, completedAt] = values;
+      const [runId, _workflowId, createdAt, status, completedAt] = values;
+      let canonicalCreatedAt: string | undefined;
+      let canonicalCompletedAt: string | undefined;
       let completedAtMs: number | undefined;
-      if (typeof completedAt === "string") {
+      if (typeof createdAt === "string" && typeof completedAt === "string") {
+        const parsedCreatedAt = new DateConstructor(createdAt);
         const parsedCompletedAt = new DateConstructor(completedAt);
+        const createdTimestamp = reflectApply(dateGetTime, parsedCreatedAt, []) as number;
         const timestamp = reflectApply(dateGetTime, parsedCompletedAt, []) as number;
-        if (numberIsFinite(timestamp)) completedAtMs = timestamp;
+        if (numberIsFinite(createdTimestamp) && numberIsFinite(timestamp)) {
+          canonicalCreatedAt = serializeDateInstant(parsedCreatedAt);
+          canonicalCompletedAt = serializeDateInstant(parsedCompletedAt);
+          completedAtMs = timestamp;
+        }
       }
       if (
-        typeof runId !== "string" || typeof completedAt !== "string" ||
-        completedAtMs === undefined ||
+        typeof runId !== "string" || typeof createdAt !== "string" ||
+        typeof completedAt !== "string" || canonicalCreatedAt === undefined ||
+        canonicalCompletedAt === undefined || completedAtMs === undefined ||
         (status !== "completed" && status !== "failed" && status !== "cancelled")
       ) continue;
       await this.refreshTerminalRetentionIndex(
         client,
         runId,
         status,
+        createdAt,
         completedAt,
+        canonicalCreatedAt,
+        canonicalCompletedAt,
         String(completedAtMs),
       );
     }

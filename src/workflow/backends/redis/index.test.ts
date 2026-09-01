@@ -540,13 +540,14 @@ class MockRedisAdapter implements RedisAdapter {
       const hash = this.hashes.get(key);
       if (!hash) return Promise.resolve(0);
       const status = hash.get("status") ?? "";
+      const createdAt = hash.get("createdAt") ?? "";
       const completedAt = hash.get("completedAt") ?? "";
       if (args[1] && status !== args[1]) return Promise.resolve(0);
-      if (args[2] === "-" ? completedAt !== "" : args[2] && completedAt !== args[2]) {
-        return Promise.resolve(0);
-      }
-      if (args[3]) {
-        hash.set("__terminalCompletedAtMs", args[3]);
+      if (createdAt !== args[2] || completedAt !== args[3]) return Promise.resolve(0);
+      hash.set("createdAt", args[4]!);
+      hash.set("completedAt", args[5]!);
+      if (args[6]) {
+        hash.set("__terminalCompletedAtMs", args[6]);
       }
       return Promise.resolve(
         this.refreshTerminalRetentionIndexFromHash(args[0]!, hash, keys[1]!, keys[2]!) ? 1 : 0,
@@ -4461,6 +4462,30 @@ describe("RedisBackend", () => {
 
       assertEquals(batch.candidates.map((candidate) => candidate.runId), [runId]);
       assertEquals(hash.get("__runRetentionRevision"), "0");
+    });
+
+    it("canonicalizes legacy fence timestamps while repairing retention", async () => {
+      const runId = "retention-legacy-noncanonical-timestamps";
+      await backend.createRun({
+        ...createTestRun(runId),
+        status: "completed",
+        completedAt: new Date(2),
+      });
+      const hash = mockRedis.hashes.get(`test:schema-v1:run:${runId}`)!;
+      hash.set("createdAt", "2025-01-01T00:00:00.000+00:00");
+      hash.set("completedAt", "1970-01-01T00:00:00.002+00:00");
+      mockRedis.sortedSets.delete("test:schema-v1:index:terminal-completed-at");
+      mockRedis.hashes.delete("test:schema-v1:index:terminal-completed-at-members");
+
+      let batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 1);
+      for (let page = 0; page < 10 && batch.candidates.length === 0; page++) {
+        batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 1);
+      }
+
+      assertEquals(hash.get("createdAt"), "2025-01-01T00:00:00.000Z");
+      assertEquals(hash.get("completedAt"), "1970-01-01T00:00:00.002Z");
+      assertEquals(await backend.deleteTerminalRunIfUnchanged(batch.candidates[0]!), true);
+      assertEquals(await backend.getRun(runId), null);
     });
 
     it("repairs a completion score changed by a rolling-upgrade writer", async () => {
