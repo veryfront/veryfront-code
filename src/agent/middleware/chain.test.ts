@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
 
@@ -29,6 +29,7 @@ describe("agent/middleware/chain", () => {
       response,
     );
     const error = await assertRejects(() => retainedNext!(), VeryfrontError, replayError);
+    assertInstanceOf(error, VeryfrontError);
     assertEquals(error.slug, "middleware-error");
     assertEquals(finalHandlerCalls, 1);
   });
@@ -106,5 +107,54 @@ describe("agent/middleware/chain", () => {
       "inner-after",
       "outer-after",
     ]);
+  });
+
+  it("revokes a continuation queued before an already-settled middleware promise", async () => {
+    let queuedNext: Promise<AgentResponse> | undefined;
+    let finalHandlerCalls = 0;
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        queueMicrotask(() => {
+          queuedNext = next();
+        });
+        return Promise.resolve(response);
+      },
+    ]);
+
+    assertEquals(
+      await chain.execute(context, () => {
+        finalHandlerCalls += 1;
+        return Promise.resolve(response);
+      }),
+      response,
+    );
+    await assertRejects(() => queuedNext!, VeryfrontError, replayError);
+    assertEquals(finalHandlerCalls, 0);
+  });
+
+  it("revokes a continuation queued before an already-rejected middleware promise", async () => {
+    let queuedNext: Promise<AgentResponse> | undefined;
+    let finalHandlerCalls = 0;
+    const middlewareError = new Error("middleware failed");
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        queueMicrotask(() => {
+          queuedNext = next();
+        });
+        return Promise.reject(middlewareError);
+      },
+    ]);
+
+    await assertRejects(
+      () =>
+        chain.execute(context, () => {
+          finalHandlerCalls += 1;
+          return Promise.resolve(response);
+        }),
+      Error,
+      "middleware failed",
+    );
+    await assertRejects(() => queuedNext!, VeryfrontError, replayError);
+    assertEquals(finalHandlerCalls, 0);
   });
 });
