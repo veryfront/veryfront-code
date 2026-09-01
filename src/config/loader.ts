@@ -110,6 +110,7 @@ const MapPrototypeDelete = Map.prototype.delete;
 const MapPrototypeForEach = Map.prototype.forEach;
 const MapPrototypeGet = Map.prototype.get;
 const MapPrototypeSet = Map.prototype.set;
+const MathMin = Math.min;
 const NumberPrototypeToString = Number.prototype.toString;
 const ObjectCreate = Object.create;
 const ObjectDefineProperty = Object.defineProperty;
@@ -1913,6 +1914,554 @@ const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/g;
 // Strip complete CSI sequences before matching paths and URLs.
 // deno-lint-ignore no-control-regex
 const ANSI_CSI_SEQUENCE = /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\u0040-\u007E]/g;
+// Keep payload lookahead independent from the global reconstruction cursor.
+const ANSI_CSI_SEQUENCE_AT_INDEX =
+  // deno-lint-ignore no-control-regex
+  /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\u0040-\u007E]/y;
+// Use a separate cursor while detecting URLs that CSI swallowed intact.
+const ANSI_CSI_SEQUENCE_FOR_URL_REDACTION =
+  // deno-lint-ignore no-control-regex
+  /(?:\u001B\[|\u009B)[\u0030-\u003F]*[\u0020-\u002F]*[\u0040-\u007E]/g;
+// Numeric SGR changes presentation only; its final `m` is not source text.
+// deno-lint-ignore no-control-regex
+const ANSI_SGR_SEQUENCE = /^(?:\u001B\[|\u009B)[0-9:;]*m$/u;
+const CSI_SPLITTABLE_URL_SCHEMES = freezeObject([
+  "http",
+  "https",
+  "ws",
+  "wss",
+  "ftp",
+  "file",
+]) as readonly string[];
+
+interface CsiSchemeMatch {
+  matched: string;
+  inputIndex: number;
+  inputEnd: number;
+}
+
+type CsiSchemeStates = Array<Array<readonly number[] | undefined>>;
+
+interface CsiGenericSchemePath {
+  matches: readonly number[];
+  startIndex: number;
+}
+
+type CsiGenericSchemeStates = Array<CsiGenericSchemePath | undefined>;
+
+interface CsiRestorationStates {
+  special: CsiSchemeStates;
+  generic: CsiGenericSchemeStates;
+}
+
+type CsiUrlPayloadKind = "generic" | "special" | "none";
+
+interface ClassifiedCsiUrlPayload {
+  kind: CsiUrlPayloadKind;
+  payloadIndex: number;
+}
+
+const MAX_GENERIC_URL_SCHEME_LENGTH = 32;
+const MAX_CSI_LITERAL_GAP = MAX_GENERIC_URL_SCHEME_LENGTH * 2;
+const MAX_CSI_RECONSTRUCTION_MATCHES = 64;
+const MAX_CSI_CONSUMED_URL_LOOKAHEAD = 4096;
+const MAX_CSI_PREFIX_RECONSTRUCTION_CHARACTERS = 1024;
+const GENERIC_URL_SCHEME_FIRST_CHARACTER = /^[A-Za-z]$/;
+const GENERIC_URL_SCHEME_CHARACTER = /^[A-Za-z0-9+.-]$/;
+
+function appendCsiSchemeMatch(path: readonly number[], matchIndex: number): readonly number[] {
+  const appended: number[] = [];
+  for (let index = 0; index < path.length; index++) {
+    defineOwnArrayElement(appended, index, path[index]!);
+  }
+  defineOwnArrayElement(appended, path.length, matchIndex);
+  return appended;
+}
+
+function defineOwnArrayElement<T>(target: T[], index: number, value: T): void {
+  const descriptor = createNullPrototypeDescriptor();
+  descriptor.value = value;
+  descriptor.writable = true;
+  descriptor.enumerable = true;
+  descriptor.configurable = true;
+  ReflectApply(ObjectDefineProperty, Object, [target, index, descriptor]);
+}
+
+function keepShorterCsiSchemePath(
+  current: readonly number[] | undefined,
+  candidate: readonly number[],
+): readonly number[] {
+  return current === undefined || candidate.length < current.length ? candidate : current;
+}
+
+function appendGenericCsiSchemeMatch(
+  path: CsiGenericSchemePath,
+  matchIndex: number,
+): CsiGenericSchemePath {
+  return {
+    matches: appendCsiSchemeMatch(path.matches, matchIndex),
+    startIndex: path.startIndex,
+  };
+}
+
+function keepPreferredGenericCsiPath(
+  current: CsiGenericSchemePath | undefined,
+  candidate: CsiGenericSchemePath,
+): CsiGenericSchemePath {
+  if (current === undefined || candidate.startIndex < current.startIndex) return candidate;
+  if (
+    candidate.startIndex === current.startIndex &&
+    candidate.matches.length < current.matches.length
+  ) {
+    return candidate;
+  }
+  return current;
+}
+
+function createDenseCsiPathStates(length: number): Array<readonly number[] | undefined> {
+  const states: Array<readonly number[] | undefined> = [];
+  for (let index = 0; index <= length; index++) {
+    defineOwnArrayElement(states, index, undefined);
+  }
+  return states;
+}
+
+function createDenseGenericCsiStates(): CsiGenericSchemeStates {
+  const states: CsiGenericSchemeStates = [];
+  for (let index = 0; index <= MAX_GENERIC_URL_SCHEME_LENGTH; index++) {
+    defineOwnArrayElement(states, index, undefined);
+  }
+  return states;
+}
+
+function createCsiSchemeStates(): CsiSchemeStates {
+  const states: CsiSchemeStates = [];
+  for (let index = 0; index < CSI_SPLITTABLE_URL_SCHEMES.length; index++) {
+    defineOwnArrayElement(
+      states,
+      index,
+      createDenseCsiPathStates(CSI_SPLITTABLE_URL_SCHEMES[index]!.length),
+    );
+  }
+  return states;
+}
+
+function createCsiRestorationStates(): CsiRestorationStates {
+  return {
+    special: createCsiSchemeStates(),
+    generic: createDenseGenericCsiStates(),
+  };
+}
+
+function chooseCompletedSpecialCsiPath(
+  states: CsiSchemeStates,
+  allowFile: boolean,
+): readonly number[] | undefined {
+  let selected: readonly number[] | undefined;
+  let selectedSchemeLength = 0;
+  for (let schemeIndex = 0; schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length; schemeIndex++) {
+    const scheme = CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!;
+    if (!allowFile && scheme === "file") continue;
+    const path = states[schemeIndex]![scheme.length];
+    if (path === undefined) continue;
+    if (scheme.length > selectedSchemeLength) {
+      selected = path;
+      selectedSchemeLength = scheme.length;
+    } else if (scheme.length === selectedSchemeLength) {
+      selected = keepShorterCsiSchemePath(selected, path);
+    }
+  }
+  return selected;
+}
+
+function chooseCompletedGenericCsiPath(
+  states: CsiGenericSchemeStates,
+): CsiGenericSchemePath | undefined {
+  let selected: CsiGenericSchemePath | undefined;
+  for (let length = 2; length <= MAX_GENERIC_URL_SCHEME_LENGTH; length++) {
+    const path = states[length];
+    if (path !== undefined) selected = keepPreferredGenericCsiPath(selected, path);
+  }
+  return selected;
+}
+
+function markCsiSchemePath(path: readonly number[], restoreMatches: Set<number>): void {
+  for (let pathIndex = 0; pathIndex < path.length; pathIndex++) { // NOSONAR: Avoid mutable iterator hooks.
+    setAdd(restoreMatches, path[pathIndex]!);
+  }
+}
+
+function completeCsiSequenceEndAtIndex(
+  value: string,
+  index: number,
+  maximumEnd = value.length,
+): number {
+  try {
+    ANSI_CSI_SEQUENCE_AT_INDEX.lastIndex = index;
+    const match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE_AT_INDEX, [value]);
+    const sequenceEnd = ANSI_CSI_SEQUENCE_AT_INDEX.lastIndex;
+    return match !== null && sequenceEnd <= maximumEnd ? sequenceEnd : index;
+  } finally {
+    ANSI_CSI_SEQUENCE_AT_INDEX.lastIndex = 0;
+  }
+}
+
+function skipCompleteCsiSequences(value: string, index: number): number {
+  let sequenceEnd = completeCsiSequenceEndAtIndex(value, index);
+  while (sequenceEnd !== index) {
+    index = sequenceEnd;
+    sequenceEnd = completeCsiSequenceEndAtIndex(value, index);
+  }
+  return index;
+}
+
+function hasStickyMatchAtIndex(pattern: RegExp, value: string, index: number): boolean {
+  pattern.lastIndex = index;
+  try {
+    return ReflectApply(RegExpPrototypeExec, pattern, [value]) !== null;
+  } finally {
+    pattern.lastIndex = 0;
+  }
+}
+
+function hasRedactableCsiUrlPayload(value: string, index: number): boolean {
+  const payloadIndex = skipCompleteCsiSequences(value, index);
+  return hasStickyMatchAtIndex(URL_TOKEN_TAIL_AT_INDEX, value, payloadIndex) ||
+    hasStickyMatchAtIndex(NON_ASCII_AUTHORITY_PAYLOAD_AT_INDEX, value, payloadIndex) ||
+    hasStickyMatchAtIndex(NON_ASCII_PATH_PAYLOAD_AT_INDEX, value, payloadIndex);
+}
+
+function markCompleteCsiSequenceStarts(
+  value: string,
+  startIndex: number,
+  endIndex: number,
+  stripSequenceStarts: Set<number>,
+): void {
+  while (startIndex < endIndex) {
+    const nextIndex = completeCsiSequenceEndAtIndex(value, startIndex);
+    if (nextIndex === startIndex) {
+      startIndex += 1;
+      continue;
+    }
+    setAdd(stripSequenceStarts, startIndex);
+    startIndex = nextIndex;
+  }
+}
+
+function classifyCsiUrlPayload(
+  value: string,
+  colonIndex: number,
+): ClassifiedCsiUrlPayload {
+  const firstSlashIndex = skipCompleteCsiSequences(value, colonIndex + 1);
+  let payloadIndex: number;
+  let payload: CsiUrlPayloadKind;
+  if (stringSlice(value, firstSlashIndex, firstSlashIndex + 1) !== "/") {
+    payloadIndex = firstSlashIndex;
+    payload = hasRedactableCsiUrlPayload(value, payloadIndex) ? "special" : "none";
+  } else {
+    const secondSlashIndex = skipCompleteCsiSequences(value, firstSlashIndex + 1);
+    if (stringSlice(value, secondSlashIndex, secondSlashIndex + 1) !== "/") {
+      payloadIndex = secondSlashIndex;
+      payload = hasRedactableCsiUrlPayload(value, payloadIndex) ? "special" : "none";
+    } else {
+      payloadIndex = skipCompleteCsiSequences(value, secondSlashIndex + 1);
+      payload = hasRedactableCsiUrlPayload(value, payloadIndex) ? "generic" : "none";
+    }
+  }
+  return { kind: payload, payloadIndex };
+}
+
+function advanceGenericCsiLiteral(
+  current: CsiGenericSchemeStates,
+  value: string,
+  inputIndex: number,
+): CsiGenericSchemeStates {
+  const advanced = createDenseGenericCsiStates();
+  const isSchemeCharacter = ReflectApply(
+    RegExpPrototypeExec,
+    GENERIC_URL_SCHEME_CHARACTER,
+    [value],
+  ) !== null;
+  if (isSchemeCharacter) {
+    for (let length = 1; length < MAX_GENERIC_URL_SCHEME_LENGTH; length++) {
+      const path = current[length];
+      if (path !== undefined) {
+        advanced[length + 1] = keepPreferredGenericCsiPath(advanced[length + 1], path);
+      }
+    }
+  }
+  if (ReflectApply(RegExpPrototypeExec, GENERIC_URL_SCHEME_FIRST_CHARACTER, [value]) !== null) {
+    advanced[1] = keepPreferredGenericCsiPath(advanced[1], {
+      matches: [],
+      startIndex: inputIndex,
+    });
+  }
+  return advanced;
+}
+
+function advanceCsiSchemeLiteral(
+  states: CsiRestorationStates,
+  value: string,
+  input: string,
+  inputIndex: number,
+  restoreMatches: Set<number>,
+  stripSequenceStarts: Set<number>,
+): CsiRestorationStates {
+  if (value === ":") {
+    const payload = classifyCsiUrlPayload(input, inputIndex);
+    let path: readonly number[] | undefined;
+    if (payload.kind === "generic") {
+      const special = chooseCompletedSpecialCsiPath(states.special, true);
+      path = special ?? chooseCompletedGenericCsiPath(states.generic)?.matches;
+    } else if (payload.kind === "special") {
+      path = chooseCompletedSpecialCsiPath(states.special, false);
+    }
+    if (path !== undefined) {
+      markCsiSchemePath(path, restoreMatches);
+      markCompleteCsiSequenceStarts(
+        input,
+        inputIndex + 1,
+        payload.payloadIndex,
+        stripSequenceStarts,
+      );
+    }
+    return createCsiRestorationStates();
+  }
+
+  const next = createCsiSchemeStates();
+  for (let schemeIndex = 0; schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length; schemeIndex++) {
+    const scheme = CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!;
+    const current = states.special[schemeIndex]!;
+    const advanced = next[schemeIndex]!;
+    for (let characterIndex = 1; characterIndex < scheme.length; characterIndex++) {
+      const path = current[characterIndex];
+      if (
+        path !== undefined &&
+        stringSlice(scheme, characterIndex, characterIndex + 1) === value
+      ) {
+        advanced[characterIndex + 1] = keepShorterCsiSchemePath(
+          advanced[characterIndex + 1],
+          path,
+        );
+      }
+    }
+    if (stringSlice(scheme, 0, 1) === value) {
+      advanced[1] = keepShorterCsiSchemePath(advanced[1], []);
+    }
+  }
+  return {
+    special: next,
+    generic: advanceGenericCsiLiteral(states.generic, value, inputIndex),
+  };
+}
+
+function advanceSpecialCsiSequence(
+  states: CsiSchemeStates,
+  value: string,
+  matchIndex: number,
+): CsiSchemeStates {
+  const next = createCsiSchemeStates();
+  for (let schemeIndex = 0; schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length; schemeIndex++) {
+    const scheme = CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!;
+    const current = states[schemeIndex]!;
+    const advanced = next[schemeIndex]!;
+    for (let characterIndex = 1; characterIndex <= scheme.length; characterIndex++) {
+      const path = current[characterIndex];
+      if (path === undefined) continue;
+      advanced[characterIndex] = keepShorterCsiSchemePath(advanced[characterIndex], path);
+      if (
+        characterIndex < scheme.length &&
+        stringSlice(scheme, characterIndex, characterIndex + 1) === value
+      ) {
+        const restored = appendCsiSchemeMatch(path, matchIndex);
+        advanced[characterIndex + 1] = keepShorterCsiSchemePath(
+          advanced[characterIndex + 1],
+          restored,
+        );
+      }
+    }
+    if (stringSlice(scheme, 0, 1) === value) {
+      advanced[1] = keepShorterCsiSchemePath(advanced[1], [matchIndex]);
+    }
+  }
+  return next;
+}
+
+function advanceCsiSchemeSequence(
+  states: CsiRestorationStates,
+  value: string,
+  matchIndex: number,
+  inputIndex: number,
+): CsiRestorationStates {
+  const special = advanceSpecialCsiSequence(states.special, value, matchIndex);
+  const generic = createDenseGenericCsiStates();
+  const isSchemeCharacter = ReflectApply(
+    RegExpPrototypeExec,
+    GENERIC_URL_SCHEME_CHARACTER,
+    [value],
+  ) !== null;
+  for (let length = 1; length <= MAX_GENERIC_URL_SCHEME_LENGTH; length++) {
+    const path = states.generic[length];
+    if (path === undefined) continue;
+    generic[length] = keepPreferredGenericCsiPath(generic[length], path);
+    if (isSchemeCharacter && length < MAX_GENERIC_URL_SCHEME_LENGTH) {
+      const restored = appendGenericCsiSchemeMatch(path, matchIndex);
+      generic[length + 1] = keepPreferredGenericCsiPath(generic[length + 1], restored);
+    }
+  }
+  if (ReflectApply(RegExpPrototypeExec, GENERIC_URL_SCHEME_FIRST_CHARACTER, [value]) !== null) {
+    generic[1] = keepPreferredGenericCsiPath(generic[1], {
+      matches: [matchIndex],
+      startIndex: inputIndex,
+    });
+  }
+  return { special, generic };
+}
+
+function advanceCsiLiteralRange(
+  states: CsiRestorationStates,
+  value: string,
+  startIndex: number,
+  endIndex: number,
+  restoreMatches: Set<number>,
+  stripSequenceStarts: Set<number>,
+): CsiRestorationStates {
+  for (let index = startIndex; index < endIndex; index++) {
+    const literal = ReflectApply(
+      StringPrototypeToLowerCase,
+      stringSlice(value, index, index + 1),
+      [],
+    ) as string;
+    states = advanceCsiSchemeLiteral(
+      states,
+      literal,
+      value,
+      index,
+      restoreMatches,
+      stripSequenceStarts,
+    );
+  }
+  return states;
+}
+
+/**
+ * Restore a URL-scheme character consumed as a CSI final byte.
+ *
+ * In `h<ESC>[ttps:host/path`, `t` is both a legal CSI final byte and the
+ * second character of `https`. Ordinary de-colorization therefore leaves the
+ * unrecognized token `htps:host/path`. Restore the final byte only when the
+ * bounded text immediately before and after the sequence completes a scheme
+ * the URL redactor already recognizes. The normal redaction pass then removes
+ * the whole URL.
+ *
+ * Keep the CSI grammar unchanged. Restricting its final byte would leave real
+ * sequences behind, while matching arbitrary damaged schemes would erase
+ * ordinary colon-delimited prose.
+ */
+function restoreCsiSplitUrlSchemes(value: string): string {
+  ANSI_CSI_SEQUENCE.lastIndex = 0;
+  try {
+    let match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE, [value]) as
+      | RegExpExecArray
+      | null;
+    if (match === null) return value;
+
+    const matches: CsiSchemeMatch[] = [];
+    const restoreMatches = new IntrinsicSet<number>();
+    const stripSequenceStarts = new IntrinsicSet<number>();
+    let states = createCsiRestorationStates();
+    let inputOffset = 0;
+    while (match !== null) {
+      const matched = match[0];
+      const gapLength = match.index - inputOffset;
+      if (gapLength > MAX_CSI_LITERAL_GAP) {
+        if (matches.length > 0) {
+          advanceCsiLiteralRange(
+            states,
+            value,
+            inputOffset,
+            inputOffset + MAX_GENERIC_URL_SCHEME_LENGTH,
+            restoreMatches,
+            stripSequenceStarts,
+          );
+        }
+        states = createCsiRestorationStates();
+        states = advanceCsiLiteralRange(
+          states,
+          value,
+          match.index - MAX_GENERIC_URL_SCHEME_LENGTH,
+          match.index,
+          restoreMatches,
+          stripSequenceStarts,
+        );
+      } else {
+        states = advanceCsiLiteralRange(
+          states,
+          value,
+          inputOffset,
+          match.index,
+          restoreMatches,
+          stripSequenceStarts,
+        );
+      }
+      const finalByte = ReflectApply(
+        StringPrototypeToLowerCase,
+        stringSlice(matched, -1),
+        [],
+      ) as string;
+      const schemeByte = ReflectApply(RegExpPrototypeExec, ANSI_SGR_SEQUENCE, [matched]) === null
+        ? finalByte
+        : "";
+      const matchIndex = matches.length;
+      defineOwnArrayElement(matches, matchIndex, {
+        matched,
+        inputIndex: match.index,
+        inputEnd: ANSI_CSI_SEQUENCE.lastIndex,
+      });
+      states = advanceCsiSchemeSequence(states, schemeByte, matchIndex, match.index);
+      inputOffset = ANSI_CSI_SEQUENCE.lastIndex;
+      match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE, [value]) as
+        | RegExpExecArray
+        | null;
+    }
+
+    const tailWindowEnd = MathMin(
+      inputOffset + MAX_GENERIC_URL_SCHEME_LENGTH,
+      value.length,
+    );
+    advanceCsiLiteralRange(
+      states,
+      value,
+      inputOffset,
+      tailWindowEnd,
+      restoreMatches,
+      stripSequenceStarts,
+    );
+
+    let output = "";
+    let outputOffset = 0;
+    const restoredOutputIndexes: number[] = [];
+    for (let matchIndex = 0; matchIndex < matches.length; matchIndex++) {
+      const match = matches[matchIndex]!;
+      output += stringSlice(value, outputOffset, match.inputIndex);
+      let replacement = match.matched;
+      if (setHas(stripSequenceStarts, match.inputIndex)) {
+        replacement = "";
+      } else if (setHas(restoreMatches, matchIndex)) {
+        replacement = stringSlice(match.matched, -1);
+        defineOwnArrayElement(restoredOutputIndexes, restoredOutputIndexes.length, output.length);
+      }
+      output += replacement;
+      outputOffset = match.inputEnd;
+    }
+    return redactRestoredCsiSchemeUrls(
+      output + stringSlice(value, outputOffset),
+      restoredOutputIndexes,
+    );
+  } finally {
+    ANSI_CSI_SEQUENCE.lastIndex = 0;
+  }
+}
 // Remove a CSI prefix separately when its grammar could consume the first path
 // byte. Preserve `/`, both UNC separators, and drive-letter starts for redaction.
 const CSI_GLUED_PATH =
@@ -1932,6 +2481,7 @@ const URI_PAREN_INTERIOR_SOURCE = String.raw`[A-Za-z0-9\-._~:/?#\[\]@!$&()*+,;=%
 const URL_BALANCED_PAREN_SEGMENT_SOURCE = String.raw`\([^\s"']{0,512}\)`;
 const URL_TOKEN_TAIL_SOURCE = String
   .raw`(?:${URI_TOKEN_CHARACTER_SOURCE}|${URL_BALANCED_PAREN_SEGMENT_SOURCE}|\((?=(?:${URI_PAREN_INTERIOR_SOURCE}|\P{ASCII}))|\)(?=${URI_PAREN_INTERIOR_SOURCE})(?![\p{P}\p{S}\p{M}\p{Cf}]{0,16}(?:[\s"']|$)))+`;
+const URL_TOKEN_TAIL_AT_INDEX = new RegExp(URL_TOKEN_TAIL_SOURCE, "uy");
 // Require a bounded, multi-character scheme so drive-letter paths remain paths.
 const SCHEME_URL = new RegExp(
   String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}://(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
@@ -1994,6 +2544,10 @@ const ZERO_SLASH_SCHEME_URL = new RegExp(
   String.raw`${ASCII_SPECIAL_SCHEME_SOURCE}:(?![/\s])(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
   "gu",
 );
+const CSI_CONSUMED_ZERO_SLASH_SCHEME_URL = new RegExp(
+  String.raw`[A-Za-z][A-Za-z0-9+.-]{1,31}:(?![/\s])(?:[^\s"/]{0,512}@)?${URL_TOKEN_TAIL_SOURCE}`,
+  "gu",
+);
 // Mirror the single-slash and zero-slash forms for raw IRI hosts and paths.
 const NON_ASCII_MALFORMED_AUTHORITY_URL = new RegExp(
   String
@@ -2015,6 +2569,25 @@ const NON_ASCII_ZERO_SLASH_URL_PATH = new RegExp(
     .raw`${ASCII_SPECIAL_SCHEME_SOURCE}:(?![/\s])(?:[^\s"/]{0,512}@)?[^\s"/]{1,512}(?:/${URI_TOKEN_CHARACTER_SOURCE}{0,2048})?/(?=[^\x00-\x7F])[^\s"']*`,
   "gu",
 );
+const NON_ASCII_CSI_CONSUMED_ZERO_SLASH_AUTHORITY_URL = new RegExp(
+  String
+    .raw`[A-Za-z][A-Za-z0-9+.-]{1,31}:(?![/\s])(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}(?:${URL_TOKEN_TAIL_SOURCE})?`,
+  "gu",
+);
+const NON_ASCII_CSI_CONSUMED_ZERO_SLASH_URL_PATH = new RegExp(
+  String
+    .raw`[A-Za-z][A-Za-z0-9+.-]{1,31}:(?![/\s])(?:[^\s"/]{0,512}@)?[^\s"/]{1,512}(?:/${URI_TOKEN_CHARACTER_SOURCE}{0,2048})?/(?=[^\x00-\x7F])[^\s"']*`,
+  "gu",
+);
+const NON_ASCII_AUTHORITY_PAYLOAD_AT_INDEX = new RegExp(
+  String.raw`(?:[^\s"/]{0,512}@)?${NON_ASCII_HOST_SOURCE}(?:${URL_TOKEN_TAIL_SOURCE})?`,
+  "uy",
+);
+const NON_ASCII_PATH_PAYLOAD_AT_INDEX = new RegExp(
+  String
+    .raw`(?:[^\s"/]{0,512}@)?[^\s"/]{1,512}(?:/${URI_TOKEN_CHARACTER_SOURCE}{0,2048})?/(?=[^\x00-\x7F])[^\s"']*`,
+  "uy",
+);
 const QUOTED_WINDOWS_ABSOLUTE_PATH = /(?<=["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]+(?=["'])/g;
 const QUOTED_POSIX_ABSOLUTE_PATH = /(?<=["'])\/[^"'\r\n]+(?=["'])/g;
 // Match case-insensitively so uppercase file URLs remain paths, not remote URLs.
@@ -2030,6 +2603,618 @@ const NON_ASCII_FILE_URL_PATH = new RegExp(
 // Stay unanchored so paths glued to preceding diagnostic text are still removed.
 const WINDOWS_ABSOLUTE_PATH = /(?:[A-Za-z]:[\\/]|\\\\)[^\s"'()]+/g;
 const POSIX_ABSOLUTE_PATH = /(?<![A-Za-z0-9:/.\\])\/[^\s"'()]+/g;
+
+interface CsiConsumedUrlRedaction {
+  endIndex: number;
+  marker: "[path]" | "[url]";
+}
+
+interface CsiConsumedUrlPrefix {
+  startIndex: number;
+  inputEnds: number[];
+  value: string;
+}
+
+type CsiConsumedSpecialPrefixStates = Array<
+  Array<CsiConsumedUrlPrefix | undefined>
+>;
+type CsiConsumedGenericPrefixStates = Array<CsiConsumedUrlPrefix | undefined>;
+
+const STRONG_CSI_CONSUMED_URL_PAYLOAD_CHARACTERS = String.raw`./@?#\[]:`;
+
+function createCsiConsumedSpecialPrefixStates(): CsiConsumedSpecialPrefixStates {
+  const states: CsiConsumedSpecialPrefixStates = [];
+  for (let schemeIndex = 0; schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length; schemeIndex++) {
+    const paths: Array<CsiConsumedUrlPrefix | undefined> = [];
+    for (
+      let characterIndex = 0;
+      characterIndex <= CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!.length;
+      characterIndex++
+    ) {
+      defineOwnArrayElement(paths, characterIndex, undefined);
+    }
+    defineOwnArrayElement(
+      states,
+      schemeIndex,
+      paths,
+    );
+  }
+  return states;
+}
+
+function appendCsiConsumedSpecialPrefix(
+  prefix: CsiConsumedUrlPrefix,
+  character: string,
+  inputEnd: number,
+): CsiConsumedUrlPrefix {
+  const inputEnds: number[] = [];
+  for (let index = 0; index < prefix.inputEnds.length; index++) {
+    defineOwnArrayElement(inputEnds, index, prefix.inputEnds[index]!);
+  }
+  defineOwnArrayElement(inputEnds, inputEnds.length, inputEnd);
+  return {
+    startIndex: prefix.startIndex,
+    inputEnds,
+    value: prefix.value + character,
+  };
+}
+
+function keepCsiConsumedSpecialPrefix(
+  current: CsiConsumedUrlPrefix | undefined,
+  candidate: CsiConsumedUrlPrefix,
+): CsiConsumedUrlPrefix {
+  return current === undefined || candidate.startIndex < current.startIndex ? candidate : current;
+}
+
+function advanceCsiConsumedSpecialLiteral(
+  states: CsiConsumedSpecialPrefixStates,
+  character: string,
+  inputIndex: number,
+): CsiConsumedSpecialPrefixStates {
+  const next = createCsiConsumedSpecialPrefixStates();
+  const lower = ReflectApply(StringPrototypeToLowerCase, character, []) as string;
+  for (let schemeIndex = 0; schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length; schemeIndex++) {
+    const scheme = CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!;
+    for (let characterIndex = 1; characterIndex < scheme.length; characterIndex++) {
+      const prefix = states[schemeIndex]![characterIndex];
+      if (
+        prefix === undefined || stringSlice(scheme, characterIndex, characterIndex + 1) !== lower
+      ) {
+        continue;
+      }
+      next[schemeIndex]![characterIndex + 1] = appendCsiConsumedSpecialPrefix(
+        prefix,
+        character,
+        inputIndex + 1,
+      );
+    }
+    if (stringSlice(scheme, 0, 1) === lower) {
+      next[schemeIndex]![1] = {
+        startIndex: inputIndex,
+        inputEnds: [inputIndex + 1],
+        value: character,
+      };
+    }
+  }
+  return next;
+}
+
+function advanceCsiConsumedSpecialSequence(
+  states: CsiConsumedSpecialPrefixStates,
+  matched: string,
+  inputIndex: number,
+  inputEnd: number,
+): CsiConsumedSpecialPrefixStates {
+  const next = createCsiConsumedSpecialPrefixStates();
+  const isSgr = ReflectApply(RegExpPrototypeExec, ANSI_SGR_SEQUENCE, [matched]) !== null;
+  const finalByte = ReflectApply(
+    StringPrototypeToLowerCase,
+    stringSlice(matched, -1),
+    [],
+  ) as string;
+  for (let schemeIndex = 0; schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length; schemeIndex++) {
+    const scheme = CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!;
+    for (let characterIndex = 1; characterIndex <= scheme.length; characterIndex++) {
+      const prefix = states[schemeIndex]![characterIndex];
+      if (prefix === undefined) continue;
+      next[schemeIndex]![characterIndex] = keepCsiConsumedSpecialPrefix(
+        next[schemeIndex]![characterIndex],
+        prefix,
+      );
+      if (
+        !isSgr && characterIndex < scheme.length &&
+        stringSlice(scheme, characterIndex, characterIndex + 1) === finalByte
+      ) {
+        const restored = appendCsiConsumedSpecialPrefix(
+          prefix,
+          stringSlice(matched, -1),
+          inputEnd,
+        );
+        next[schemeIndex]![characterIndex + 1] = keepCsiConsumedSpecialPrefix(
+          next[schemeIndex]![characterIndex + 1],
+          restored,
+        );
+      }
+    }
+    if (!isSgr && stringSlice(scheme, 0, 1) === finalByte) {
+      next[schemeIndex]![1] = keepCsiConsumedSpecialPrefix(
+        next[schemeIndex]![1],
+        {
+          startIndex: inputIndex,
+          inputEnds: [inputEnd],
+          value: stringSlice(matched, -1),
+        },
+      );
+    }
+  }
+  return next;
+}
+
+function chooseCsiConsumedSpecialPrefix(
+  states: CsiConsumedSpecialPrefixStates,
+): CsiConsumedUrlPrefix | undefined {
+  let selected: CsiConsumedUrlPrefix | undefined;
+  for (let schemeIndex = 0; schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length; schemeIndex++) {
+    const scheme = CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!;
+    const candidate = states[schemeIndex]![scheme.length];
+    if (candidate !== undefined) {
+      selected = keepCsiConsumedSpecialPrefix(selected, candidate);
+    }
+  }
+  return selected;
+}
+
+function createCsiConsumedGenericPrefixStates(): CsiConsumedGenericPrefixStates {
+  const states: CsiConsumedGenericPrefixStates = [];
+  for (let length = 0; length <= MAX_GENERIC_URL_SCHEME_LENGTH; length++) {
+    defineOwnArrayElement(states, length, undefined);
+  }
+  return states;
+}
+
+function advanceCsiConsumedGenericLiteral(
+  states: CsiConsumedGenericPrefixStates,
+  character: string,
+  inputIndex: number,
+): CsiConsumedGenericPrefixStates {
+  const next = createCsiConsumedGenericPrefixStates();
+  const isSchemeCharacter = ReflectApply(RegExpPrototypeExec, GENERIC_URL_SCHEME_CHARACTER, [
+    character,
+  ]) !== null;
+  if (isSchemeCharacter) {
+    for (let length = 1; length < MAX_GENERIC_URL_SCHEME_LENGTH; length++) {
+      const prefix = states[length];
+      if (prefix !== undefined) {
+        next[length + 1] = appendCsiConsumedSpecialPrefix(
+          prefix,
+          character,
+          inputIndex + 1,
+        );
+      }
+    }
+  }
+  const canStart = ReflectApply(RegExpPrototypeExec, GENERIC_URL_SCHEME_FIRST_CHARACTER, [
+    character,
+  ]) !== null;
+  if (canStart) {
+    next[1] = {
+      startIndex: inputIndex,
+      inputEnds: [inputIndex + 1],
+      value: character,
+    };
+  }
+  return next;
+}
+
+function advanceCsiConsumedGenericSequence(
+  states: CsiConsumedGenericPrefixStates,
+  matched: string,
+  inputIndex: number,
+  inputEnd: number,
+): CsiConsumedGenericPrefixStates {
+  const next = createCsiConsumedGenericPrefixStates();
+  const isSgr = ReflectApply(RegExpPrototypeExec, ANSI_SGR_SEQUENCE, [matched]) !== null;
+  const finalByte = stringSlice(matched, -1);
+  const isSchemeCharacter = !isSgr &&
+    ReflectApply(RegExpPrototypeExec, GENERIC_URL_SCHEME_CHARACTER, [finalByte]) !== null;
+  for (let length = 1; length <= MAX_GENERIC_URL_SCHEME_LENGTH; length++) {
+    const prefix = states[length];
+    if (prefix === undefined) continue;
+    next[length] = prefix;
+    if (isSchemeCharacter && length < MAX_GENERIC_URL_SCHEME_LENGTH) {
+      next[length + 1] = appendCsiConsumedSpecialPrefix(prefix, finalByte, inputEnd);
+    }
+  }
+  const canStart = !isSgr &&
+    ReflectApply(RegExpPrototypeExec, GENERIC_URL_SCHEME_FIRST_CHARACTER, [finalByte]) !== null;
+  if (canStart) {
+    next[1] = {
+      startIndex: inputIndex,
+      inputEnds: [inputEnd],
+      value: finalByte,
+    };
+  }
+  return next;
+}
+
+function chooseCsiConsumedGenericPrefix(
+  states: CsiConsumedGenericPrefixStates,
+): CsiConsumedUrlPrefix | undefined {
+  let selected: CsiConsumedUrlPrefix | undefined;
+  for (let length = 2; length <= MAX_GENERIC_URL_SCHEME_LENGTH; length++) {
+    const candidate = states[length];
+    if (
+      candidate !== undefined &&
+      (selected === undefined || candidate.startIndex < selected.startIndex ||
+        (candidate.startIndex === selected.startIndex &&
+          candidate.value.length > selected.value.length))
+    ) {
+      selected = candidate;
+    }
+  }
+  return selected;
+}
+
+function csiConsumedUrlPrefix(
+  value: string,
+  matchIndex: number,
+): CsiConsumedUrlPrefix | undefined {
+  const windowStart = matchIndex > MAX_CSI_CONSUMED_URL_LOOKAHEAD
+    ? matchIndex - MAX_CSI_CONSUMED_URL_LOOKAHEAD
+    : 0;
+  let specialStates = createCsiConsumedSpecialPrefixStates();
+  let genericStates = createCsiConsumedGenericPrefixStates();
+  let literalColonPrefix: CsiConsumedUrlPrefix | undefined;
+  let index = windowStart;
+  while (index < matchIndex) {
+    const sequenceEnd = completeCsiSequenceEndAtIndex(value, index, matchIndex);
+    if (sequenceEnd !== index) {
+      specialStates = advanceCsiConsumedSpecialSequence(
+        specialStates,
+        stringSlice(value, index, sequenceEnd),
+        index,
+        sequenceEnd,
+      );
+      genericStates = advanceCsiConsumedGenericSequence(
+        genericStates,
+        stringSlice(value, index, sequenceEnd),
+        index,
+        sequenceEnd,
+      );
+      index = sequenceEnd;
+      continue;
+    }
+
+    const character = stringSlice(value, index, index + 1);
+    if (character === ":") {
+      const completed = chooseCsiConsumedSpecialPrefix(specialStates) ??
+        chooseCsiConsumedGenericPrefix(genericStates);
+      literalColonPrefix = completed === undefined
+        ? undefined
+        : appendCsiConsumedSpecialPrefix(completed, character, index + 1);
+    } else {
+      literalColonPrefix = undefined;
+    }
+    specialStates = advanceCsiConsumedSpecialLiteral(specialStates, character, index);
+    genericStates = advanceCsiConsumedGenericLiteral(genericStates, character, index);
+    index += 1;
+  }
+  if (literalColonPrefix !== undefined) return literalColonPrefix;
+  const special = chooseCsiConsumedSpecialPrefix(specialStates);
+  if (special !== undefined) return special;
+  return chooseCsiConsumedGenericPrefix(genericStates);
+}
+
+function matchPatternAtStart(
+  pattern: RegExp,
+  value: string,
+  validateUnicodeHostBoundary = false,
+): number {
+  pattern.lastIndex = 0;
+  try {
+    const match = ReflectApply(RegExpPrototypeExec, pattern, [value]) as
+      | RegExpExecArray
+      | null;
+    if (match?.index !== 0) return 0;
+    return validateUnicodeHostBoundary
+      ? acceptedUnicodeHostMatchEnd(match[0], 0)
+      : pattern.lastIndex;
+  } finally {
+    pattern.lastIndex = 0;
+  }
+}
+
+function matchCsiConsumedAsciiUrl(value: string): number {
+  return matchPatternAtStart(SCHEME_URL, value) ||
+    matchPatternAtStart(MALFORMED_SCHEME_URL, value) ||
+    matchPatternAtStart(ZERO_SLASH_SCHEME_URL, value) ||
+    matchPatternAtStart(CSI_CONSUMED_ZERO_SLASH_SCHEME_URL, value);
+}
+
+function matchCsiConsumedNonAsciiUrl(value: string): number {
+  let longest = matchPatternAtStart(NON_ASCII_AUTHORITY_URL, value, true);
+  let candidate = matchPatternAtStart(NON_ASCII_URL_PATH, value);
+  if (candidate > longest) longest = candidate;
+  candidate = matchPatternAtStart(NON_ASCII_MALFORMED_AUTHORITY_URL, value, true);
+  if (candidate > longest) longest = candidate;
+  candidate = matchPatternAtStart(NON_ASCII_MALFORMED_URL_PATH, value);
+  if (candidate > longest) longest = candidate;
+  candidate = matchPatternAtStart(NON_ASCII_ZERO_SLASH_AUTHORITY_URL, value, true);
+  if (candidate > longest) longest = candidate;
+  candidate = matchPatternAtStart(NON_ASCII_ZERO_SLASH_URL_PATH, value);
+  if (candidate > longest) longest = candidate;
+  candidate = matchPatternAtStart(
+    NON_ASCII_CSI_CONSUMED_ZERO_SLASH_AUTHORITY_URL,
+    value,
+    true,
+  );
+  if (candidate > longest) longest = candidate;
+  candidate = matchPatternAtStart(NON_ASCII_CSI_CONSUMED_ZERO_SLASH_URL_PATH, value);
+  if (candidate > longest) longest = candidate;
+  return longest;
+}
+
+function extendCsiConsumedUrlMatch(value: string, endIndex: number): number {
+  return mixedSlashedUrlMatchEnd(value, stringSlice(value, 0, endIndex), endIndex);
+}
+
+function extendCsiConsumedFileMatch(value: string, endIndex: number): number {
+  const iriEnd = stickyMatchEnd(RAW_IRI_REMAINDER, value, endIndex);
+  return iriEnd === endIndex ? extendCsiConsumedUrlMatch(value, endIndex) : iriEnd;
+}
+
+function matchCsiConsumedUrlCandidate(value: string): CsiConsumedUrlRedaction | undefined {
+  const hasNonAscii = containsNonAscii(value);
+  const fileEndIndex = hasNonAscii
+    ? matchPatternAtStart(NON_ASCII_FILE_URL_PATH, value) ||
+      matchPatternAtStart(FILE_URL_ABSOLUTE_PATH, value)
+    : matchPatternAtStart(FILE_URL_ABSOLUTE_PATH, value);
+  if (fileEndIndex !== 0) {
+    return {
+      endIndex: extendCsiConsumedFileMatch(value, fileEndIndex),
+      marker: "[path]",
+    };
+  }
+
+  const urlEndIndex = hasNonAscii
+    ? matchCsiConsumedNonAsciiUrl(value) || matchCsiConsumedAsciiUrl(value)
+    : matchCsiConsumedAsciiUrl(value);
+  return urlEndIndex === 0 ? undefined : {
+    endIndex: extendCsiConsumedUrlMatch(value, urlEndIndex),
+    marker: "[url]",
+  };
+}
+
+interface CsiConsumedUrlSpan extends CsiConsumedUrlRedaction {
+  startIndex: number;
+}
+
+interface MappedCsiUrlCandidate {
+  inputEnds: number[];
+  value: string;
+}
+
+interface CsiConsumedUrlStructure {
+  colon: number;
+  slash: number;
+}
+
+function appendMappedInputRange(
+  candidate: MappedCsiUrlCandidate,
+  input: string,
+  start: number,
+  end: number,
+): void {
+  for (let index = start; index < end; index++) {
+    candidate.value += stringSlice(input, index, index + 1);
+    defineOwnArrayElement(candidate.inputEnds, candidate.inputEnds.length, index + 1);
+  }
+}
+
+function csiConsumedUrlStructure(matched: string): CsiConsumedUrlStructure | undefined {
+  if (ReflectApply(RegExpPrototypeExec, ANSI_SGR_SEQUENCE, [matched]) !== null) return undefined;
+  const introducerLength = stringSlice(matched, 0, 1) === "\u001B" ? 2 : 1;
+  const colon = stringIndexOf(matched, ":", introducerLength);
+  const slash = stringIndexOf(matched, "/", introducerLength);
+  return colon === -1 && slash === -1 ? undefined : { colon, slash };
+}
+
+function appendMappedCsiUrlFinal(
+  candidate: MappedCsiUrlCandidate,
+  input: string,
+  finalIndex: number,
+): void {
+  if (hasStickyMatchAtIndex(URL_TOKEN_TAIL_AT_INDEX, input, finalIndex)) {
+    appendMappedInputRange(candidate, input, finalIndex, finalIndex + 1);
+  }
+}
+
+function appendMappedCsiUrlStructure(
+  candidate: MappedCsiUrlCandidate,
+  input: string,
+  inputStart: number,
+  matched: string,
+  structure = csiConsumedUrlStructure(matched),
+): boolean {
+  if (structure === undefined) return false;
+  const { colon, slash } = structure;
+  if (colon !== -1) {
+    if (!stringEndsWith(candidate.value, ":")) {
+      appendMappedInputRange(candidate, input, inputStart + colon, inputStart + colon + 1);
+    }
+    if (slash !== -1) {
+      const finalIndex = inputStart + matched.length - 1;
+      appendMappedInputRange(
+        candidate,
+        input,
+        inputStart + slash,
+        finalIndex,
+      );
+      appendMappedCsiUrlFinal(candidate, input, finalIndex);
+    }
+    return true;
+  }
+  const finalIndex = inputStart + matched.length - 1;
+  appendMappedInputRange(
+    candidate,
+    input,
+    inputStart + slash,
+    finalIndex,
+  );
+  appendMappedCsiUrlFinal(candidate, input, finalIndex);
+  return true;
+}
+
+function hasStrongCsiConsumedUrlPayload(value: string, endIndex: number): boolean {
+  const colon = stringIndexOf(value, ":");
+  if (colon === -1 || colon >= endIndex) return false;
+  const payload = stringSlice(value, colon + 1, endIndex);
+  if (containsNonAscii(payload)) return true;
+  for (let index = 0; index < payload.length; index++) { // NOSONAR: Avoid mutable iterator hooks.
+    if (stringIncludes(STRONG_CSI_CONSUMED_URL_PAYLOAD_CHARACTERS, payload[index]!)) return true;
+  }
+  return false;
+}
+
+function appendMappedCsiUrlTail(
+  candidate: MappedCsiUrlCandidate,
+  input: string,
+  start: number,
+  end: number,
+): boolean {
+  let index = start;
+  let crossedBoundary = false;
+  try {
+    while (index < end) {
+      ANSI_CSI_SEQUENCE_AT_INDEX.lastIndex = index;
+      const sequence = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE_AT_INDEX, [input]) as
+        | RegExpExecArray
+        | null;
+      const sequenceEnd = ANSI_CSI_SEQUENCE_AT_INDEX.lastIndex;
+      if (sequence !== null) {
+        if (sequenceEnd > end) crossedBoundary = true;
+        appendMappedCsiUrlStructure(candidate, input, index, sequence[0]);
+        index = sequenceEnd;
+        continue;
+      }
+
+      appendMappedInputRange(candidate, input, index, index + 1);
+      index += 1;
+    }
+    return crossedBoundary;
+  } finally {
+    ANSI_CSI_SEQUENCE_AT_INDEX.lastIndex = 0;
+  }
+}
+
+function csiConsumedUrlSpan(
+  value: string,
+  match: RegExpExecArray,
+  matchEnd: number,
+  outputOffset: number,
+): CsiConsumedUrlSpan | undefined {
+  if (match.index < outputOffset) return undefined;
+  const matched = match[0];
+  const structure = csiConsumedUrlStructure(matched);
+  if (structure === undefined) return undefined;
+  const prefix = csiConsumedUrlPrefix(value, match.index);
+  if (prefix === undefined || prefix.startIndex < outputOffset) return undefined;
+
+  const lookaheadEnd = MathMin(value.length, matchEnd + MAX_CSI_CONSUMED_URL_LOOKAHEAD);
+  const candidate: MappedCsiUrlCandidate = {
+    inputEnds: prefix.inputEnds,
+    value: prefix.value,
+  };
+  appendMappedCsiUrlStructure(candidate, value, match.index, matched, structure);
+  const tailCrossedBoundary = appendMappedCsiUrlTail(candidate, value, matchEnd, lookaheadEnd);
+  const introducerLength = stringSlice(matched, 0, 1) === "\u001B" ? 2 : 1;
+  const colon = stringIndexOf(matched, ":", introducerLength);
+  const slash = stringIndexOf(matched, "/", introducerLength);
+  const redaction = matchCsiConsumedUrlCandidate(candidate.value);
+  if (
+    redaction !== undefined && colon !== -1 && slash === -1 &&
+    !hasStrongCsiConsumedUrlPayload(candidate.value, redaction.endIndex)
+  ) return undefined;
+  const reachesLookaheadBound = tailCrossedBoundary ||
+    (redaction?.endIndex === candidate.value.length && lookaheadEnd < value.length);
+  const mappedEnd = redaction === undefined
+    ? undefined
+    : candidate.inputEnds[redaction.endIndex - 1];
+  if (redaction === undefined || mappedEnd === undefined) return undefined;
+  return {
+    startIndex: prefix.startIndex,
+    endIndex: reachesLookaheadBound ? value.length : mappedEnd,
+    marker: redaction.marker,
+  };
+}
+
+function csiReconstructionLimitIndex(value: string): number | undefined {
+  ANSI_CSI_SEQUENCE_FOR_URL_REDACTION.lastIndex = 0;
+  let matchCount = 0;
+  let prefixReconstructionCharacters = 0;
+  try {
+    let match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE_FOR_URL_REDACTION, [value]) as
+      | RegExpExecArray
+      | null;
+    while (match !== null) {
+      matchCount += 1;
+      if (
+        matchCount > MAX_CSI_RECONSTRUCTION_MATCHES ||
+        match[0].length > MAX_CSI_CONSUMED_URL_LOOKAHEAD
+      ) return match.index;
+      if (csiConsumedUrlStructure(match[0]) !== undefined) {
+        prefixReconstructionCharacters += MathMin(
+          match.index,
+          MAX_CSI_CONSUMED_URL_LOOKAHEAD,
+        );
+        if (prefixReconstructionCharacters > MAX_CSI_PREFIX_RECONSTRUCTION_CHARACTERS) {
+          return match.index;
+        }
+      }
+      match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE_FOR_URL_REDACTION, [value]) as
+        | RegExpExecArray
+        | null;
+    }
+    return undefined;
+  } finally {
+    ANSI_CSI_SEQUENCE_FOR_URL_REDACTION.lastIndex = 0;
+  }
+}
+
+function redactCsiConsumedUrls(value: string): string {
+  const reconstructionLimitIndex = csiReconstructionLimitIndex(value);
+  const reconstructionValue = reconstructionLimitIndex === undefined
+    ? value
+    : stringSlice(value, 0, reconstructionLimitIndex);
+  ANSI_CSI_SEQUENCE_FOR_URL_REDACTION.lastIndex = 0;
+  try {
+    let output = "";
+    let outputOffset = 0;
+    let match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE_FOR_URL_REDACTION, [
+      reconstructionValue,
+    ]) as
+      | RegExpExecArray
+      | null;
+    while (match !== null) {
+      const matchEnd = ANSI_CSI_SEQUENCE_FOR_URL_REDACTION.lastIndex;
+      const span = csiConsumedUrlSpan(reconstructionValue, match, matchEnd, outputOffset);
+      if (span) {
+        output += stringSlice(reconstructionValue, outputOffset, span.startIndex) + span.marker;
+        outputOffset = span.endIndex;
+        ANSI_CSI_SEQUENCE_FOR_URL_REDACTION.lastIndex = span.endIndex;
+      }
+      match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE_FOR_URL_REDACTION, [
+        reconstructionValue,
+      ]) as
+        | RegExpExecArray
+        | null;
+    }
+    const redactedPrefix = output + stringSlice(reconstructionValue, outputOffset);
+    return reconstructionLimitIndex === undefined ? redactedPrefix : redactedPrefix + "[REDACTED]";
+  } finally {
+    ANSI_CSI_SEQUENCE_FOR_URL_REDACTION.lastIndex = 0;
+  }
+}
 
 function stickyMatchEnd(pattern: RegExp, value: string, offset: number): number {
   pattern.lastIndex = offset;
@@ -2072,6 +3257,88 @@ function rawUrlMatchEnd(value: string, matched: string, offset: number): number 
     (ReflectApply(StringPrototypeIncludes, acceptedRemainder, ["/"]) as boolean) ||
     ReflectApply(RegExpPrototypeExec, RAW_ACCEPTED_URL_PAYLOAD, [acceptedRemainder]) !== null;
   return structurallyDelimited ? acceptedEnd : offset;
+}
+
+function mixedSlashedUrlMatchEnd(value: string, matched: string, offset: number): number {
+  if (ReflectApply(StringPrototypeIncludes, matched, ["/"]) as boolean) {
+    const iriEnd = stickyMatchEnd(RAW_IRI_REMAINDER, value, offset);
+    if (iriEnd !== offset) return iriEnd;
+  }
+  return rawUrlMatchEnd(value, matched, offset);
+}
+
+function restoredIndexFallsWithin(
+  restoredIndexes: readonly number[],
+  startIndex: number,
+  endIndex: number,
+): boolean {
+  for (let index = 0; index < restoredIndexes.length; index++) {
+    const restoredIndex = restoredIndexes[index]!;
+    if (restoredIndex >= startIndex && restoredIndex < endIndex) return true;
+  }
+  return false;
+}
+
+function mappedRestoredCsiUrlRedaction(
+  value: string,
+  match: RegExpExecArray,
+  matchEnd: number,
+): CsiConsumedUrlRedaction | undefined {
+  const candidate: MappedCsiUrlCandidate = { inputEnds: [], value: "" };
+  appendMappedInputRange(candidate, value, match.index, matchEnd);
+  const lookaheadEnd = MathMin(value.length, matchEnd + MAX_CSI_CONSUMED_URL_LOOKAHEAD);
+  const tailCrossedBoundary = appendMappedCsiUrlTail(
+    candidate,
+    value,
+    matchEnd,
+    lookaheadEnd,
+  );
+  const redaction = matchCsiConsumedUrlCandidate(candidate.value);
+  if (redaction === undefined) return undefined;
+  const mappedEnd = candidate.inputEnds[redaction.endIndex - 1];
+  if (mappedEnd === undefined) return undefined;
+  return {
+    endIndex: tailCrossedBoundary ||
+        (redaction.endIndex === candidate.value.length && lookaheadEnd < value.length)
+      ? value.length
+      : mappedEnd,
+    marker: redaction.marker,
+  };
+}
+
+function redactRestoredCsiSchemeUrls(
+  value: string,
+  restoredIndexes: readonly number[],
+): string {
+  if (restoredIndexes.length === 0) return value;
+  SCHEME_URL.lastIndex = 0;
+  let output = "";
+  let outputOffset = 0;
+  try {
+    let match = ReflectApply(RegExpPrototypeExec, SCHEME_URL, [value]) as RegExpExecArray | null;
+    while (match !== null) {
+      const matchEnd = SCHEME_URL.lastIndex;
+      if (restoredIndexFallsWithin(restoredIndexes, match.index, matchEnd)) {
+        const mapped = mappedRestoredCsiUrlRedaction(value, match, matchEnd);
+        const endIndex = mapped?.endIndex ?? mixedSlashedUrlMatchEnd(value, match[0], matchEnd);
+        const scheme = mapped === undefined
+          ? ReflectApply(
+            StringPrototypeToLowerCase,
+            stringSlice(match[0], 0, 5),
+            [],
+          ) as string
+          : "";
+        output += stringSlice(value, outputOffset, match.index) +
+          (mapped?.marker ?? (scheme === "file:" ? "[path]" : "[url]"));
+        outputOffset = endIndex;
+        SCHEME_URL.lastIndex = endIndex;
+      }
+      match = ReflectApply(RegExpPrototypeExec, SCHEME_URL, [value]) as RegExpExecArray | null;
+    }
+    return output + stringSlice(value, outputOffset);
+  } finally {
+    SCHEME_URL.lastIndex = 0;
+  }
 }
 
 const URL_BOUNDARY_PROSE_REMAINDER = /^(?:[A-Za-z0-9!(),;-]|(?!\s)\P{ASCII})+$/u;
@@ -2233,11 +3500,15 @@ function summarizeConfigLoadCause(error: unknown): string | undefined {
     ? readOwnDataString(error, "message")
     : undefined;
   if (message === undefined) return undefined;
+  const retainedLine = (ReflectApply(StringPrototypeSplit, message, ["\n", 1]) as string[])[0] ??
+    "";
   // Sanitize on both sides because stripping CSI can join or consume credential bytes.
-  const initiallyRedacted = sanitizeUrlCredentials(message);
+  const initiallyRedacted = sanitizeUrlCredentials(retainedLine);
+  const intactUrlRedacted = redactCsiConsumedUrls(initiallyRedacted);
+  const restoredUrlSchemes = restoreCsiSplitUrlSchemes(intactUrlRedacted);
   // Replacing a glued CSI introducer with space preserves the path or scheme start
   // without joining it to preceding prose. Machine paths are redacted afterward.
-  const unglued = replaceMatchesWithCapturedExec(initiallyRedacted, CSI_GLUED_PATH, " ");
+  const unglued = replaceMatchesWithCapturedExec(restoredUrlSchemes, CSI_GLUED_PATH, " ");
   const ungluedUrl = replaceMatchesWithCapturedExec(unglued, CSI_GLUED_URL, " ");
   const deColorized = replaceMatchesWithCapturedExec(
     ungluedUrl,
@@ -2245,9 +3516,7 @@ function summarizeConfigLoadCause(error: unknown): string | undefined {
     "",
   );
   const redacted = sanitizeUrlCredentials(deColorized);
-  const firstLine = (ReflectApply(StringPrototypeSplit, redacted, ["\n", 1]) as string[])[0] ??
-    "";
-  const replaced = replaceMatchesWithCapturedExec(firstLine, CONTROL_CHARACTERS, " ");
+  const replaced = replaceMatchesWithCapturedExec(redacted, CONTROL_CHARACTERS, " ");
   const clean = ReflectApply(StringPrototypeTrim, redactMachinePaths(replaced), []) as string;
   if (clean.length === 0) return undefined;
   return clean.length > MAX_CONFIG_LOAD_CAUSE_CHARACTERS

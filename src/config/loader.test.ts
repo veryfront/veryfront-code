@@ -5845,6 +5845,123 @@ export default config as const;
         assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
       });
 
+      it("bounds CSI scheme reconstruction after an ordinary sequence", async () => {
+        const size = 200000;
+        const control = await fastestLoad(
+          "vf-config-long-csi-control-",
+          `throw new Error("a".repeat(${size}));\n`,
+        );
+        const controlMs = Math.max(1, control.ms);
+        const { ms: probeMs, error } = await fastestLoad(
+          "vf-config-long-csi-probe-",
+          `throw new Error(String.fromCharCode(27) + "[31m" + "a".repeat(${size}));\n`,
+        );
+
+        assertEquals(
+          probeMs < controlMs * 3,
+          true,
+          `probe ${probeMs}ms vs control ${controlMs}ms`,
+        );
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+      });
+
+      it("bounds reconstruction for a CSI-dense config error", async () => {
+        const repeats = 20000;
+        const control = await fastestLoad(
+          "vf-config-dense-csi-control-",
+          `throw new Error("aaaaa".repeat(${repeats}));\n`,
+          1,
+        );
+        const controlMs = Math.max(1, control.ms);
+        const { ms: probeMs, error } = await fastestLoad(
+          "vf-config-dense-csi-probe-",
+          `throw new Error((String.fromCharCode(27) + "[31m").repeat(${repeats}));\n`,
+          1,
+        );
+
+        assertEquals(
+          probeMs < controlMs * 20,
+          true,
+          `probe ${probeMs}ms vs control ${controlMs}ms`,
+        );
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+      });
+
+      it("skips reconstruction for formatting CSI after long literal spans", async () => {
+        const gap = 4096;
+        const repeats = 32;
+        const control = await fastestLoad(
+          "vf-config-spaced-csi-control-",
+          `throw new Error("a".repeat(${gap + 5}).repeat(${repeats}));\n`,
+          1,
+        );
+        const controlMs = Math.max(1, control.ms);
+        const { ms: probeMs, error } = await fastestLoad(
+          "vf-config-spaced-csi-probe-",
+          `throw new Error(("a".repeat(${gap}) + String.fromCharCode(27) + "[31m").repeat(${repeats}));\n`,
+          1,
+        );
+
+        assertEquals(
+          probeMs < controlMs * 20,
+          true,
+          `probe ${probeMs}ms vs control ${controlMs}ms`,
+        );
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+      });
+
+      it("bounds total prefix reconstruction for colon-bearing CSI", async () => {
+        const gap = 4096;
+        const repeats = 32;
+        const control = await fastestLoad(
+          "vf-config-spaced-colon-csi-control-",
+          `throw new Error("a".repeat(${gap + 4}).repeat(${repeats}));\n`,
+          1,
+        );
+        const controlMs = Math.max(1, control.ms);
+        const { ms: probeMs, error } = await fastestLoad(
+          "vf-config-spaced-colon-csi-probe-",
+          `throw new Error(("a".repeat(${gap}) + String.fromCharCode(27) + "[:H").repeat(${repeats}));\n`,
+          1,
+        );
+
+        assertEquals(
+          probeMs < controlMs * 20,
+          true,
+          `probe ${probeMs}ms vs control ${controlMs}ms`,
+        );
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+      });
+
+      it("ignores dense CSI content after the retained first line", async () => {
+        const error = await loadFailure(
+          "vf-config-dense-csi-second-line-",
+          `throw new Error("actionable failure\\n" + (String.fromCharCode(27) + "[31m").repeat(65));\n`,
+        );
+
+        assertStringIncludes(error.message, "actionable failure");
+        assertEquals(error.message.includes("[REDACTED]"), false);
+      });
+
+      it("keeps the retained prefix when later same-line CSI exceeds reconstruction limits", async () => {
+        const escape = String.fromCharCode(27);
+        const overlong = await loadFailure(
+          "vf-config-late-overlong-csi-",
+          `throw new Error("actionable failure " + "a".repeat(256) + String.fromCharCode(27) + "[" + "1;".repeat(2050) + "m");\n`,
+        );
+        const structural = await loadFailure(
+          "vf-config-late-structural-csi-",
+          `throw new Error(${JSON.stringify("actionable failure " + "a".repeat(4096))} + ${
+            JSON.stringify(`${escape}[:H${escape}[:H${escape}[:H`)
+          });\n`,
+        );
+
+        for (const error of [overlong, structural]) {
+          assertStringIncludes(error.message, "actionable failure");
+          assertEquals(error.message.includes("[REDACTED]"), false);
+        }
+      });
+
       it("redacts a path with a CSI introducer glued to its first character", async () => {
         const posix = await loadFailure(
           "vf-config-csi-glued-posix-",
@@ -5954,6 +6071,54 @@ export default config as const;
 
         assertEquals(eightBit.message.includes("registry.internal"), false);
         assertStringIncludes(eightBit.message, "[url]");
+
+        const multiple = await loadFailure(
+          "vf-config-csi-zero-slash-multiple-",
+          `throw new Error("h" + String.fromCharCode(27) + "[t" + String.fromCharCode(27) + "[tps:registry.internal/veryfront.config.ts");\n`,
+        );
+
+        assertEquals(multiple.message.includes("registry.internal"), false);
+        assertStringIncludes(multiple.message, "[url]");
+
+        const firstAndLater = await loadFailure(
+          "vf-config-csi-zero-slash-first-and-later-",
+          `throw new Error(String.fromCharCode(27) + "[ht" + String.fromCharCode(27) + "[tps:registry.internal/veryfront.config.ts");\n`,
+        );
+
+        assertEquals(firstAndLater.message.includes("registry.internal"), false);
+        assertStringIncludes(firstAndLater.message, "[url]");
+
+        const colorAndSplit = await loadFailure(
+          "vf-config-csi-zero-slash-color-and-split-",
+          `throw new Error("h" + String.fromCharCode(27) + "[31m" + String.fromCharCode(27) + "[ttps:registry.internal/veryfront.config.ts");\n`,
+        );
+
+        assertEquals(colorAndSplit.message.includes("registry.internal"), false);
+        assertStringIncludes(colorAndSplit.message, "[url]");
+
+        const generic = await loadFailure(
+          "vf-config-csi-zero-slash-generic-",
+          `throw new Error(String.fromCharCode(27) + "[s3://internal-bucket/config.ts");\n`,
+        );
+
+        assertEquals(generic.message.includes("internal-bucket"), false);
+        assertStringIncludes(generic.message, "[url]");
+
+        const ambiguous = await loadFailure(
+          "vf-config-csi-zero-slash-ambiguous-",
+          `throw new Error(String.fromCharCode(27) + "[h" + String.fromCharCode(27) + "[f" + String.fromCharCode(27) + "[t" + String.fromCharCode(27) + "[t" + String.fromCharCode(27) + "[p:registry.internal/config.ts");\n`,
+        );
+
+        assertEquals(ambiguous.message.includes("registry.internal"), false);
+        assertStringIncludes(ambiguous.message, "[url]");
+
+        const schemeProse = await loadFailure(
+          "vf-config-csi-zero-slash-prose-payload-",
+          `throw new Error("http" + String.fromCharCode(27) + "[s: unavailable");\n`,
+        );
+
+        assertStringIncludes(schemeProse.message, "http: unavailable");
+        assertEquals(schemeProse.message.includes("https: unavailable"), false);
 
         const singleSlash = await loadFailure(
           "vf-config-csi-single-slash-url-",
@@ -6783,6 +6948,550 @@ export default config as const;
         assertStringIncludes(error.message, "[path]");
         assertEquals(error.message.includes("/home/example"), false);
         assertEquals(error.message.includes("31m"), false);
+      });
+
+      it("redacts a URL whose scheme is split by a CSI sequence", async () => {
+        const escape = String.fromCharCode(27);
+        const csi = String.fromCharCode(0x9b);
+        const cases = [
+          ["https-after-h", `h${escape}[ttps:`],
+          ["https-after-ht", `ht${escape}[tps:`],
+          ["https-after-htt", `htt${escape}[ps:`],
+          ["https-before-s", `http${escape}[s:`],
+          ["parameterized", `h${escape}[31ttps:`],
+          ["eight-bit", `h${csi}ttps:`],
+          ["uppercase", `H${escape}[TTPS:`],
+          ["websocket", `w${escape}[ss:`],
+          ["ftp", `f${escape}[tp:`],
+        ] as const;
+
+        for (const [label, splitScheme] of cases) {
+          const error = await loadFailure(
+            `vf-config-csi-split-url-scheme-${label}-`,
+            `throw new Error(${
+              JSON.stringify(`Load ${splitScheme}registry.internal/config.ts`)
+            });\n`,
+          );
+
+          assertEquals(error.message.includes("registry.internal"), false, label);
+          assertStringIncludes(error.message, "Load [url]", label);
+        }
+
+        const fileUrl = await loadFailure(
+          "vf-config-csi-split-file-url-scheme-",
+          `throw new Error(${JSON.stringify(`Load fi${escape}[le:///home/alice/config.ts`)});\n`,
+        );
+        assertEquals(fileUrl.message.includes("alice"), false);
+        assertEquals(fileUrl.message.includes("[url]"), false);
+        assertStringIncludes(fileUrl.message, "Load [path]");
+
+        const prose = await loadFailure(
+          "vf-config-csi-before-scheme-like-prose-",
+          `throw new Error("Status h${escape}[31m ttps: retry");\n`,
+        );
+
+        assertStringIncludes(prose.message, "Status h ttps: retry");
+      });
+
+      it("prefers a CSI suffix that completes the longer special scheme", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-longer-special-scheme-",
+          `throw new Error(${
+            JSON.stringify(`Load http${escape}[s://registry.internal/config/(PRIVATE)`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message.includes("PRIVATE"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("redacts a mixed Unicode tail after restoring a split scheme", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-restored-mixed-unicode-tail-",
+          `throw new Error(${JSON.stringify(`Load ht${escape}[tp://registry.internal/x秘密`)});\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message.includes("秘密"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("redacts a restored URL through later formatting CSI", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-restored-formatting-tail-",
+          `throw new Error(${
+            JSON.stringify(
+              `Load ht${escape}[tp://reg${escape}[31mistry.internal/config/PRIVATE`,
+            )
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message.includes("PRIVATE"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("fails closed when restored-URL lookahead bisects a later CSI", async () => {
+        const error = await loadFailure(
+          "vf-config-csi-restored-tail-boundary-sequence-",
+          `throw new Error("Load ht" + String.fromCharCode(27) + "[tp://reg" + String.fromCharCode(27) + "[31m" + "a".repeat(4088) + String.fromCharCode(27) + "[31mistry.internal/SECRET");\n`,
+        );
+
+        assertEquals(error.message.includes("istry.internal"), false);
+        assertEquals(error.message.includes("SECRET"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("does not restore a split scheme before an empty colorized payload", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-split-empty-payload-",
+          `throw new Error(${
+            JSON.stringify(`Status htt${escape}[p:${escape}[31m unavailable`)
+          });\n`,
+        );
+
+        assertStringIncludes(error.message, "Status htt: unavailable");
+        assertEquals(error.message.includes("http: unavailable"), false);
+      });
+
+      it("classifies generic slash payloads after stripping CSI", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-before-generic-slashes-",
+          `throw new Error(${
+            JSON.stringify(`${escape}[s3:${escape}[31m//registry.internal/config`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertStringIncludes(error.message, "[url]");
+      });
+
+      it("does not restore a split scheme before non-URL punctuation", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-split-punctuation-payload-",
+          `throw new Error(${JSON.stringify(`Status htt${escape}[p:( unavailable`)});\n`,
+        );
+
+        assertStringIncludes(error.message, "Status htt:( unavailable");
+        assertEquals(error.message.includes("http:( unavailable"), false);
+      });
+
+      it("does not treat a Unicode case expansion as an ASCII scheme character", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-unicode-scheme-expansion-",
+          `throw new Error(${JSON.stringify(`Status İ${escape}[a://retry`)});\n`,
+        );
+
+        assertStringIncludes(error.message, "Status İ [path]");
+        assertEquals(error.message.includes("Status İa [path]"), false);
+      });
+
+      it("redacts a zero-slash URL whose colon is consumed by CSI", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-consumed-zero-slash-colon-",
+          `throw new Error(${
+            JSON.stringify(`Load http${escape}[:@registry.internal/config.ts`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("redacts a split zero-slash URL with a Unicode hostname", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-split-unicode-host-",
+          `throw new Error(${JSON.stringify(`Load htt${escape}[p:内部.example/config.ts`)});\n`,
+        );
+
+        assertEquals(error.message.includes("内部.example"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("preserves scheme context across ordinary CSI before a consumed colon", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-context-before-consumed-colon-",
+          `throw new Error(${
+            JSON.stringify(`Load ht${escape}[31mtp${escape}[:@registry.internal/config.ts`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
+      });
+
+      it("ignores CSI parameters before consumed file URL delimiters", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-parameter-before-file-delimiters-",
+          `throw new Error(${JSON.stringify(`Load file:${escape}[31///home/alice/config.ts`)});\n`,
+        );
+
+        assertEquals(error.message.includes("alice"), false);
+        assertStringIncludes(error.message, "Load [path]");
+      });
+
+      it("ignores CSI parameters between a consumed colon and URL slashes", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-parameter-after-url-colon-",
+          `throw new Error(${JSON.stringify(`Load s3${escape}[:31//registry.internal/config`)});\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
+      });
+
+      it("reuses a literal generic colon before CSI-consumed slashes", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-literal-colon-before-consumed-slashes-",
+          `throw new Error(${
+            JSON.stringify(`Load s3:${escape}[:31//registry.internal/config`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
+      });
+
+      it("keeps non-SGR CSI parameter colons out of ordinary prose", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-non-sgr-parameter-colon-",
+          `throw new Error(${JSON.stringify(`Status http${escape}[:Hretry`)});\n`,
+        );
+
+        assertEquals(error.message, "Failed to load veryfront.config.js: Status httpretry");
+        assertEquals(error.message.includes("[url]"), false);
+      });
+
+      it("limits consumed-colon evidence to the matched URL token", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-consumed-colon-later-path-",
+          `throw new Error(${JSON.stringify(`Status http${escape}[:Hretry, see /docs`)});\n`,
+        );
+
+        assertEquals(error.message.includes("[url]"), false);
+        assertStringIncludes(error.message, "Status httpretry, see [path]");
+      });
+
+      it("preserves an earlier CSI-supplied split-scheme byte", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-split-prefix-before-consumed-colon-",
+          `throw new Error(${
+            JSON.stringify(`Load h${escape}[ttp${escape}[:@registry.internal/config.ts`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
+      });
+
+      it("preserves an earlier CSI-supplied generic scheme byte", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-generic-split-prefix-before-consumed-colon-",
+          `throw new Error(${
+            JSON.stringify(`Load x${escape}[y${escape}[:@registry.internal/config.ts`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
+      });
+
+      it("redacts a generic reconstructed URL with a Unicode authority", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-generic-unicode-authority-",
+          `throw new Error(${JSON.stringify(`Load x${escape}[y${escape}[:@r例.internal/秘密`)});\n`,
+        );
+
+        assertEquals(error.message.includes("例.internal"), false);
+        assertEquals(error.message.includes("秘密"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("redacts bracketed IPv6 after a CSI-consumed colon", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-consumed-colon-ipv6-",
+          `throw new Error(${JSON.stringify(`Load http${escape}[:@[fd00::1]`)});\n`,
+        );
+
+        assertEquals(error.message.includes("fd00"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
+      });
+
+      it("redacts a consumed colon before an excluded CSI final", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-consumed-colon-excluded-final-",
+          `throw new Error(${
+            JSON.stringify(`Load http${escape}[:\\registry.internal/config.ts`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
+      });
+
+      it("redacts consumed URL slashes before an excluded CSI final", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-consumed-slashes-excluded-final-",
+          `throw new Error(${
+            JSON.stringify(`Load http${escape}[://\\registry.internal/SECRET`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message.includes("SECRET"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
+      });
+
+      it("preserves a CSI-glued local path when no URL scheme is selected", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-non-url-colon-before-glued-path-",
+          `throw new Error(${JSON.stringify(`Load C:${escape}[/Users/alice/config.ts`)});\n`,
+        );
+
+        assertEquals(error.message.includes("Users"), false);
+        assertEquals(error.message.includes("alice"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load C: [path]");
+      });
+
+      it("redacts the full Unicode path after a Unicode authority", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-unicode-authority-and-path-",
+          `throw new Error(${JSON.stringify(`Load http${escape}[://r例.internal/秘密`)});\n`,
+        );
+
+        assertEquals(error.message.includes("r例.internal"), false);
+        assertEquals(error.message.includes("秘密"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("preserves a generic scheme colon across formatting CSI", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-context-after-generic-colon-",
+          `throw new Error(${
+            JSON.stringify(`Load s3:${escape}[31m${escape}[//registry.internal/config`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("redacts through formatting CSI inside a reconstructed URL tail", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-formatting-inside-url-tail-",
+          `throw new Error(${
+            JSON.stringify(`Load http${escape}[://registry${escape}[31m.internal/config`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry"), false);
+        assertEquals(error.message.includes("internal"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("fails closed when an overlong formatting CSI separates a URL scheme", async () => {
+        const error = await loadFailure(
+          "vf-config-csi-overlong-prefix-sequence-",
+          `throw new Error("http" + String.fromCharCode(27) + "[" + "1;".repeat(2050) + "m" + String.fromCharCode(27) + "[:@registry.internal/config.ts");\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertStringIncludes(error.message, "[REDACTED]");
+      });
+
+      it("fails closed when URL-tail lookahead ends inside an overlong CSI", async () => {
+        const error = await loadFailure(
+          "vf-config-csi-overlong-tail-sequence-",
+          `throw new Error("http" + String.fromCharCode(27) + "[://reg" + String.fromCharCode(27) + "[" + "1;".repeat(2050) + "mistry.internal/config.ts");\n`,
+        );
+
+        assertEquals(error.message.includes("istry.internal"), false);
+        assertStringIncludes(error.message, "[REDACTED]");
+      });
+
+      it("extends a reconstructed URL through an accepted raw ASCII tail", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-accepted-raw-url-tail-",
+          `throw new Error(${
+            JSON.stringify(
+              `Load http${escape}[://registry.internal/config/<PRIVATE_SEGMENT>`,
+            )
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message.includes("PRIVATE_SEGMENT"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
+      });
+
+      it("treats colon-separated SGR as zero-width during URL reconstruction", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-colon-sgr-scheme-",
+          `throw new Error(${JSON.stringify(`Status http${escape}[38:5:1mretry`)});\n`,
+        );
+
+        assertStringIncludes(error.message, "Status httpretry");
+        assertEquals(error.message.includes("[url]"), false);
+      });
+
+      it("fails closed when a CSI-consumed file URL reaches the lookahead bound", async () => {
+        const error = await loadFailure(
+          "vf-config-csi-file-lookahead-bound-",
+          `throw new Error("Load file:" + String.fromCharCode(27) + "[///h" + "a".repeat(4096) + "alice/config.ts");\n`,
+        );
+
+        assertEquals(error.message.includes("alice"), false);
+        assertStringIncludes(error.message, "[path]");
+      });
+
+      it("preserves rejected Unicode prose after a CSI-rebuilt URL", async () => {
+        const escape = String.fromCharCode(27);
+        const control = await loadFailure(
+          "vf-config-csi-unicode-boundary-control-",
+          `throw new Error(${JSON.stringify("Load https:a例え.internal…Retry")});\n`,
+        );
+        const split = await loadFailure(
+          "vf-config-csi-unicode-boundary-split-",
+          `throw new Error(${JSON.stringify(`Load https${escape}[:a例え.internal…Retry`)});\n`,
+        );
+
+        assertEquals(split.message, control.message);
+        assertStringIncludes(split.message, "…Retry");
+      });
+
+      it("redacts a raw Unicode path after CSI-consumed URL delimiters", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-consumed-unicode-path-",
+          `throw new Error(${
+            JSON.stringify(`Load http${escape}[://registry.internal/config/秘密`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message.includes("秘密"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("redacts a mixed ASCII and Unicode file segment after consumed delimiters", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-consumed-mixed-file-segment-",
+          `throw new Error(${JSON.stringify(`Load file:${escape}[///h秘密`)});\n`,
+        );
+
+        assertEquals(error.message.includes("秘密"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load [path]");
+      });
+
+      it("redacts a mixed Unicode authority after consumed triple slashes", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-consumed-triple-slash-unicode-authority-",
+          `throw new Error(${JSON.stringify(`Load http${escape}[:///r例.internal/秘密`)});\n`,
+        );
+
+        assertEquals(error.message.includes("例.internal"), false);
+        assertEquals(error.message.includes("秘密"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("strips every consecutive CSI before a restored Unicode payload", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-consecutive-restored-payload-",
+          `throw new Error(${
+            JSON.stringify(
+              `Load htt${escape}[p://${escape}[31m${escape}[31mregistry.internal/x秘密`,
+            )
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message.includes("秘密"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("does not manufacture a scheme from an ordinary SGR sequence", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-ordinary-sgr-scheme-",
+          `throw new Error(${JSON.stringify(`Status a${escape}[31m://retry`)});\n`,
+        );
+
+        assertStringIncludes(error.message, "Status a [path]");
+        assertEquals(error.message.includes("[url]"), false);
+      });
+
+      it("redacts a file URL whose path delimiters are consumed by CSI", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-consumed-file-delimiters-",
+          `throw new Error(${JSON.stringify(`Load file:${escape}[///home/alice/config.ts`)});\n`,
+        );
+
+        assertEquals(error.message.includes("alice"), false);
+        assertStringIncludes(error.message, "Load [path]");
+      });
+
+      it("does not restore file before an unsupported malformed payload", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-malformed-file-payload-",
+          `throw new Error(${JSON.stringify(`Status fil${escape}[e:value`)});\n`,
+        );
+
+        assertStringIncludes(error.message, "Status fil:value");
+        assertEquals(error.message.includes("file:value"), false);
+      });
+
+      it("creates CSI reconstruction slots without inherited setters", async () => {
+        const original = TestObjectGetOwnPropertyDescriptor(Array.prototype, "32");
+        try {
+          const error = await loadFailure(
+            "vf-config-csi-array-setter-",
+            `Object.defineProperty(Array.prototype, "32", {
+              configurable: true,
+              set() { throw new Error("poisoned indexed setter"); },
+            });
+            throw new Error("Load h" + String.fromCharCode(27) + "[ttps://registry.internal/config.ts");\n`,
+          );
+
+          assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+          assertEquals(error.message.includes("registry.internal"), false);
+          assertStringIncludes(error.message, "Load [url]");
+        } finally {
+          if (original) TestObjectDefineProperty(Array.prototype, "32", original);
+          else TestReflectApply(TestReflectDeleteProperty, Reflect, [Array.prototype, "32"]);
+        }
       });
 
       it("redacts credentials both before and after stripping CSI sequences", async () => {
