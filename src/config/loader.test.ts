@@ -7048,6 +7048,43 @@ export default config as const;
         assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
       });
 
+      it("keeps non-SGR CSI parameter colons out of ordinary prose", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-non-sgr-parameter-colon-",
+          `throw new Error(${JSON.stringify(`Status http${escape}[:Hretry`)});\n`,
+        );
+
+        assertEquals(error.message, "Failed to load veryfront.config.js: Status httpretry");
+        assertEquals(error.message.includes("[url]"), false);
+      });
+
+      it("preserves an earlier CSI-supplied split-scheme byte", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-split-prefix-before-consumed-colon-",
+          `throw new Error(${
+            JSON.stringify(`Load h${escape}[ttp${escape}[:@registry.internal/config.ts`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
+      });
+
+      it("redacts a consumed colon before an excluded CSI final", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-consumed-colon-excluded-final-",
+          `throw new Error(${
+            JSON.stringify(`Load http${escape}[:\\registry.internal/config.ts`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
+      });
+
       it("preserves a CSI-glued local path when no URL scheme is selected", async () => {
         const escape = String.fromCharCode(27);
         const error = await loadFailure(

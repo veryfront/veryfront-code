@@ -2079,8 +2079,7 @@ function chooseCompletedGenericCsiPath(
   return selected;
 }
 
-function markCsiSchemePath(path: readonly number[] | undefined, restoreMatches: Set<number>): void {
-  if (path === undefined) return;
+function markCsiSchemePath(path: readonly number[], restoreMatches: Set<number>): void {
   for (let pathIndex = 0; pathIndex < path.length; pathIndex++) { // NOSONAR: Avoid mutable iterator hooks.
     setAdd(restoreMatches, path[pathIndex]!);
   }
@@ -2591,8 +2590,156 @@ interface CsiConsumedUrlPrefix {
   value: string;
 }
 
+type CsiConsumedSpecialPrefixStates = Array<
+  Array<CsiConsumedUrlPrefix | undefined>
+>;
+
+const STRONG_CSI_CONSUMED_URL_PAYLOAD = /[.\/@?#\\]/u;
+
 function createCsiConsumedUrlPrefix(startIndex: number): CsiConsumedUrlPrefix {
   return { startIndex, inputEnds: [], value: "" };
+}
+
+function createCsiConsumedSpecialPrefixStates(): CsiConsumedSpecialPrefixStates {
+  const states: CsiConsumedSpecialPrefixStates = [];
+  for (let schemeIndex = 0; schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length; schemeIndex++) {
+    const paths: Array<CsiConsumedUrlPrefix | undefined> = [];
+    for (
+      let characterIndex = 0;
+      characterIndex <= CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!.length;
+      characterIndex++
+    ) {
+      defineOwnArrayElement(paths, characterIndex, undefined);
+    }
+    defineOwnArrayElement(
+      states,
+      schemeIndex,
+      paths,
+    );
+  }
+  return states;
+}
+
+function appendCsiConsumedSpecialPrefix(
+  prefix: CsiConsumedUrlPrefix,
+  character: string,
+  inputEnd: number,
+): CsiConsumedUrlPrefix {
+  const inputEnds: number[] = [];
+  for (let index = 0; index < prefix.inputEnds.length; index++) {
+    defineOwnArrayElement(inputEnds, index, prefix.inputEnds[index]!);
+  }
+  defineOwnArrayElement(inputEnds, inputEnds.length, inputEnd);
+  return {
+    startIndex: prefix.startIndex,
+    inputEnds,
+    value: prefix.value + character,
+  };
+}
+
+function keepCsiConsumedSpecialPrefix(
+  current: CsiConsumedUrlPrefix | undefined,
+  candidate: CsiConsumedUrlPrefix,
+): CsiConsumedUrlPrefix {
+  return current === undefined || candidate.startIndex < current.startIndex ? candidate : current;
+}
+
+function advanceCsiConsumedSpecialLiteral(
+  states: CsiConsumedSpecialPrefixStates,
+  character: string,
+  inputIndex: number,
+): CsiConsumedSpecialPrefixStates {
+  const next = createCsiConsumedSpecialPrefixStates();
+  const lower = ReflectApply(StringPrototypeToLowerCase, character, []) as string;
+  for (let schemeIndex = 0; schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length; schemeIndex++) {
+    const scheme = CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!;
+    for (let characterIndex = 1; characterIndex < scheme.length; characterIndex++) {
+      const prefix = states[schemeIndex]![characterIndex];
+      if (
+        prefix === undefined || stringSlice(scheme, characterIndex, characterIndex + 1) !== lower
+      ) {
+        continue;
+      }
+      next[schemeIndex]![characterIndex + 1] = appendCsiConsumedSpecialPrefix(
+        prefix,
+        character,
+        inputIndex + 1,
+      );
+    }
+    if (stringSlice(scheme, 0, 1) === lower) {
+      next[schemeIndex]![1] = {
+        startIndex: inputIndex,
+        inputEnds: [inputIndex + 1],
+        value: character,
+      };
+    }
+  }
+  return next;
+}
+
+function advanceCsiConsumedSpecialSequence(
+  states: CsiConsumedSpecialPrefixStates,
+  matched: string,
+  inputIndex: number,
+  inputEnd: number,
+): CsiConsumedSpecialPrefixStates {
+  const next = createCsiConsumedSpecialPrefixStates();
+  const isSgr = ReflectApply(RegExpPrototypeExec, ANSI_SGR_SEQUENCE, [matched]) !== null;
+  const finalByte = ReflectApply(
+    StringPrototypeToLowerCase,
+    stringSlice(matched, -1),
+    [],
+  ) as string;
+  for (let schemeIndex = 0; schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length; schemeIndex++) {
+    const scheme = CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!;
+    for (let characterIndex = 1; characterIndex <= scheme.length; characterIndex++) {
+      const prefix = states[schemeIndex]![characterIndex];
+      if (prefix === undefined) continue;
+      next[schemeIndex]![characterIndex] = keepCsiConsumedSpecialPrefix(
+        next[schemeIndex]![characterIndex],
+        prefix,
+      );
+      if (
+        !isSgr && characterIndex < scheme.length &&
+        stringSlice(scheme, characterIndex, characterIndex + 1) === finalByte
+      ) {
+        const restored = appendCsiConsumedSpecialPrefix(
+          prefix,
+          stringSlice(matched, -1),
+          inputEnd,
+        );
+        next[schemeIndex]![characterIndex + 1] = keepCsiConsumedSpecialPrefix(
+          next[schemeIndex]![characterIndex + 1],
+          restored,
+        );
+      }
+    }
+    if (!isSgr && stringSlice(scheme, 0, 1) === finalByte) {
+      next[schemeIndex]![1] = keepCsiConsumedSpecialPrefix(
+        next[schemeIndex]![1],
+        {
+          startIndex: inputIndex,
+          inputEnds: [inputEnd],
+          value: stringSlice(matched, -1),
+        },
+      );
+    }
+  }
+  return next;
+}
+
+function chooseCsiConsumedSpecialPrefix(
+  states: CsiConsumedSpecialPrefixStates,
+): CsiConsumedUrlPrefix | undefined {
+  let selected: CsiConsumedUrlPrefix | undefined;
+  for (let schemeIndex = 0; schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length; schemeIndex++) {
+    const scheme = CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!;
+    const candidate = states[schemeIndex]![scheme.length];
+    if (candidate !== undefined) {
+      selected = keepCsiConsumedSpecialPrefix(selected, candidate);
+    }
+  }
+  return selected;
 }
 
 function advanceCsiConsumedSchemePrefix(
@@ -2648,18 +2795,28 @@ function csiConsumedUrlPrefix(
     ? matchIndex - MAX_CSI_CONSUMED_URL_LOOKAHEAD
     : 0;
   let prefix = createCsiConsumedUrlPrefix(matchIndex);
+  let specialStates = createCsiConsumedSpecialPrefixStates();
   let index = windowStart;
   while (index < matchIndex) {
     const sequenceEnd = completeCsiSequenceEndAtIndex(value, index, matchIndex);
     if (sequenceEnd !== index) {
+      specialStates = advanceCsiConsumedSpecialSequence(
+        specialStates,
+        stringSlice(value, index, sequenceEnd),
+        index,
+        sequenceEnd,
+      );
       index = sequenceEnd;
       continue;
     }
 
     const character = stringSlice(value, index, index + 1);
+    specialStates = advanceCsiConsumedSpecialLiteral(specialStates, character, index);
     prefix = advanceCsiConsumedUrlPrefix(prefix, character, index, matchIndex);
     index += 1;
   }
+  const special = chooseCsiConsumedSpecialPrefix(specialStates);
+  if (special !== undefined) return special;
   return prefix.value === "" ? undefined : prefix;
 }
 
@@ -2765,13 +2922,14 @@ function appendMappedCsiUrlStructure(
     if (!stringEndsWith(candidate.value, ":")) {
       appendMappedInputRange(candidate, input, inputStart + colon, inputStart + colon + 1);
     }
-    const suffixStart = slash === -1 ? matched.length - 1 : slash;
-    appendMappedInputRange(
-      candidate,
-      input,
-      inputStart + suffixStart,
-      inputStart + matched.length,
-    );
+    if (slash !== -1) {
+      appendMappedInputRange(
+        candidate,
+        input,
+        inputStart + slash,
+        inputStart + matched.length,
+      );
+    }
     return true;
   }
   appendMappedInputRange(
@@ -2781,6 +2939,14 @@ function appendMappedCsiUrlStructure(
     inputStart + matched.length,
   );
   return true;
+}
+
+function hasStrongCsiConsumedUrlPayload(value: string): boolean {
+  const colon = stringIndexOf(value, ":");
+  if (colon === -1) return false;
+  const payload = stringSlice(value, colon + 1);
+  return containsNonAscii(payload) ||
+    ReflectApply(RegExpPrototypeExec, STRONG_CSI_CONSUMED_URL_PAYLOAD, [payload]) !== null;
 }
 
 function appendMappedCsiUrlTail(
@@ -2829,6 +2995,12 @@ function csiConsumedUrlSpan(
   };
   if (!appendMappedCsiUrlStructure(candidate, value, match.index, matched)) return undefined;
   appendMappedCsiUrlTail(candidate, value, matchEnd, lookaheadEnd);
+  const introducerLength = stringSlice(matched, 0, 1) === "\u001B" ? 2 : 1;
+  const colon = stringIndexOf(matched, ":", introducerLength);
+  const slash = stringIndexOf(matched, "/", introducerLength);
+  if (colon !== -1 && slash === -1 && !hasStrongCsiConsumedUrlPayload(candidate.value)) {
+    return undefined;
+  }
   const redaction = matchCsiConsumedUrlCandidate(candidate.value);
   const reachesLookaheadBound = redaction?.endIndex === candidate.value.length &&
     lookaheadEnd < value.length;
