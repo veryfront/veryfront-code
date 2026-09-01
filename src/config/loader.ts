@@ -1965,6 +1965,7 @@ const MAX_GENERIC_URL_SCHEME_LENGTH = 32;
 const MAX_CSI_LITERAL_GAP = MAX_GENERIC_URL_SCHEME_LENGTH * 2;
 const MAX_CSI_RECONSTRUCTION_MATCHES = 64;
 const MAX_CSI_CONSUMED_URL_LOOKAHEAD = 4096;
+const MAX_CSI_PREFIX_RECONSTRUCTION_CHARACTERS = MAX_CSI_CONSUMED_URL_LOOKAHEAD * 2;
 const GENERIC_URL_SCHEME_FIRST_CHARACTER = /^[A-Za-z]$/;
 const GENERIC_URL_SCHEME_CHARACTER = /^[A-Za-z0-9+.-]$/;
 
@@ -2057,11 +2058,18 @@ function chooseCompletedSpecialCsiPath(
   allowFile: boolean,
 ): readonly number[] | undefined {
   let selected: readonly number[] | undefined;
+  let selectedSchemeLength = 0;
   for (let schemeIndex = 0; schemeIndex < CSI_SPLITTABLE_URL_SCHEMES.length; schemeIndex++) {
     const scheme = CSI_SPLITTABLE_URL_SCHEMES[schemeIndex]!;
     if (!allowFile && scheme === "file") continue;
     const path = states[schemeIndex]![scheme.length];
-    if (path !== undefined) selected = keepShorterCsiSchemePath(selected, path);
+    if (path === undefined) continue;
+    if (scheme.length > selectedSchemeLength) {
+      selected = path;
+      selectedSchemeLength = scheme.length;
+    } else if (scheme.length === selectedSchemeLength) {
+      selected = keepShorterCsiSchemePath(selected, path);
+    }
   }
   return selected;
 }
@@ -3098,6 +3106,7 @@ function csiConsumedUrlSpan(
 function exceedsCsiReconstructionLimit(value: string): boolean {
   ANSI_CSI_SEQUENCE_FOR_URL_REDACTION.lastIndex = 0;
   let matchCount = 0;
+  let prefixReconstructionCharacters = 0;
   try {
     let match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE_FOR_URL_REDACTION, [value]) as
       | RegExpExecArray
@@ -3108,6 +3117,15 @@ function exceedsCsiReconstructionLimit(value: string): boolean {
         matchCount > MAX_CSI_RECONSTRUCTION_MATCHES ||
         match[0].length > MAX_CSI_CONSUMED_URL_LOOKAHEAD
       ) return true;
+      if (csiConsumedUrlStructure(match[0]) !== undefined) {
+        prefixReconstructionCharacters += MathMin(
+          match.index,
+          MAX_CSI_CONSUMED_URL_LOOKAHEAD,
+        );
+        if (prefixReconstructionCharacters > MAX_CSI_PREFIX_RECONSTRUCTION_CHARACTERS) {
+          return true;
+        }
+      }
       match = ReflectApply(RegExpPrototypeExec, ANSI_CSI_SEQUENCE_FOR_URL_REDACTION, [value]) as
         | RegExpExecArray
         | null;

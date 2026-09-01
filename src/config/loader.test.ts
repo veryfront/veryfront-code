@@ -5910,6 +5910,29 @@ export default config as const;
         assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
       });
 
+      it("bounds total prefix reconstruction for colon-bearing CSI", async () => {
+        const gap = 4096;
+        const repeats = 32;
+        const control = await fastestLoad(
+          "vf-config-spaced-colon-csi-control-",
+          `throw new Error("a".repeat(${gap + 4}).repeat(${repeats}));\n`,
+          1,
+        );
+        const controlMs = Math.max(1, control.ms);
+        const { ms: probeMs, error } = await fastestLoad(
+          "vf-config-spaced-colon-csi-probe-",
+          `throw new Error(("a".repeat(${gap}) + String.fromCharCode(27) + "[:H").repeat(${repeats}));\n`,
+          1,
+        );
+
+        assertEquals(
+          probeMs < controlMs * 20,
+          true,
+          `probe ${probeMs}ms vs control ${controlMs}ms`,
+        );
+        assertStringIncludes(error.message, "[REDACTED]");
+      });
+
       it("ignores dense CSI content after the retained first line", async () => {
         const error = await loadFailure(
           "vf-config-dense-csi-second-line-",
@@ -6949,6 +6972,20 @@ export default config as const;
         );
 
         assertStringIncludes(prose.message, "Status h ttps: retry");
+      });
+
+      it("prefers a CSI suffix that completes the longer special scheme", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-longer-special-scheme-",
+          `throw new Error(${
+            JSON.stringify(`Load http${escape}[s://registry.internal/config/(PRIVATE)`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message.includes("PRIVATE"), false);
+        assertStringIncludes(error.message, "Load [url]");
       });
 
       it("does not restore a split scheme before an empty colorized payload", async () => {
