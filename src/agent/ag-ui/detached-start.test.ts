@@ -383,7 +383,7 @@ describe("agent/ag-ui-detached-start", () => {
     const response = await handler(createDetachedRequest());
 
     assertEquals(response.status, 410);
-    assertEquals(await response.json(), { error: "RUN_CANCELLED" });
+    assertEquals(await response.json(), { errorCode: "RUN_CANCELLED" });
     assertEquals(started, false);
   });
 

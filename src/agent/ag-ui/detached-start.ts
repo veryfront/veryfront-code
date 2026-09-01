@@ -382,7 +382,7 @@ export async function executeAgUiDetachedStart(
     );
   } catch (error) {
     if (error instanceof RunCancelledError) {
-      return Response.json({ error: "RUN_CANCELLED" }, { status: 410 });
+      return Response.json({ errorCode: "RUN_CANCELLED" }, { status: 410 });
     }
 
     if (error instanceof RunAlreadyExistsError) {

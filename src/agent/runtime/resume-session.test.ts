@@ -137,6 +137,16 @@ describe("agent/runtime/resume-session", () => {
     assertEquals(signal.aborted, false);
   });
 
+  it("does not remember an ordinary active-run cancellation", () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+
+    assertEquals(manager.cancelRun("run_1"), true);
+
+    const signal = manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    assertEquals(signal.aborted, false);
+  });
+
   it("rejects submissions for wait keys that are not currently pending", () => {
     const manager = new RunResumeSessionManager<{ ok: boolean }>();
     manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });

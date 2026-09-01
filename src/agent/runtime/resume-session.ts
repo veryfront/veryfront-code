@@ -379,7 +379,9 @@ export class RunResumeSessionManager<T> {
       return false;
     }
 
-    this.rememberCancellation(runId);
+    if (options.rememberIfMissing) {
+      this.rememberCancellation(runId);
+    }
 
     if (
       session.status === "completed" || session.status === "failed" ||
