@@ -197,6 +197,32 @@ describe("workflow terminal-run retention", () => {
     assertEquals((await backend.getRun("approval-race"))?.status, "failed");
   });
 
+  it("does not delete a failed run when an event is buffered after discovery", async () => {
+    class EventRaceBackend extends MemoryBackend {
+      override async deleteTerminalRunIfUnchanged(
+        candidate: TerminalRunRetentionCandidate,
+      ): Promise<boolean> {
+        await this.appendRunEvent(candidate.runId, {
+          id: "late-event",
+          eventName: "retry.ready",
+          payload: { attempt: 2 },
+          publishedAt: new Date(3),
+        });
+        return await super.deleteTerminalRunIfUnchanged(candidate);
+      }
+    }
+
+    const backend = new EventRaceBackend();
+    await backend.createRun(run("event-race", "failed", new Date(2)));
+
+    assertEquals(
+      await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
+      { supported: true, examined: 1, deleted: 0, hasMore: true },
+    );
+    assertEquals((await backend.peekRunEvent("event-race", "retry.ready"))?.id, "late-event");
+    assertEquals((await backend.getRun("event-race"))?.status, "failed");
+  });
+
   it("uses the bounded retention query instead of hydrating every run", async () => {
     class NoFullListBackend extends MemoryBackend {
       override listRuns(): Promise<WorkflowRun[]> {

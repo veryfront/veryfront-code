@@ -853,13 +853,20 @@ export class MemoryBackend implements WorkflowBackend {
     });
   }
 
+  private advanceRunRevision(runId: string): number {
+    const currentRevision = this.runRevisions.get(runId);
+    if (currentRevision === undefined) return 0;
+    const revision = currentRevision + 1;
+    this.runRevisions.set(runId, revision);
+    return revision;
+  }
+
   private publishRunObservation(
     runId: string,
     run: WorkflowRun,
     options: { includeApprovals?: boolean } = {},
   ): void {
-    const revision = (this.runRevisions.get(runId) ?? 0) + 1;
-    this.runRevisions.set(runId, revision);
+    const revision = this.advanceRunRevision(runId);
     const observers = this.runObservers.get(runId);
     if (!observers?.size) return;
     const nodes: WorkflowRunObservedState["nodes"] = {};
@@ -1232,7 +1239,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (sourceDecisionData === undefined) delete currentApproval.decisionData;
     else currentApproval.decisionData = decisionData;
     currentApproval.reconciliationPending = true;
-    this.runRevisions.set(runId, (this.runRevisions.get(runId) ?? 0) + 1);
+    this.advanceRunRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1360,6 +1367,7 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.reject(error);
     }
     this.eventWaits.set(runId, waits);
+    this.advanceRunRevision(runId);
     return Promise.resolve();
   }
 
@@ -1398,6 +1406,7 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.reject(error);
     }
     this.eventWaits.set(runId, waits);
+    this.advanceRunRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1431,6 +1440,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (wait?.status !== "pending") return Promise.resolve(false);
     wait.status = status;
     if (status === "delivered" || status === "expired") wait.claimedAt = new Date();
+    this.advanceRunRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1447,6 +1457,7 @@ export class MemoryBackend implements WorkflowBackend {
     delete wait.claimedAt;
     delete wait.recoveryClaimedAt;
     delete wait.claimedEventId;
+    this.advanceRunRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1482,6 +1493,7 @@ export class MemoryBackend implements WorkflowBackend {
       (wait.recoveryClaimedAt !== undefined && wait.recoveryClaimedAt > staleBefore)
     ) return Promise.resolve(false);
     wait.recoveryClaimedAt = new Date(claimedAt);
+    this.advanceRunRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1490,6 +1502,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (wait) {
       delete wait.claimedAt;
       delete wait.recoveryClaimedAt;
+      this.advanceRunRevision(runId);
     }
     return Promise.resolve();
   }
@@ -1514,6 +1527,7 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.reject(error);
     }
     this.runEvents.set(runId, mailbox);
+    this.advanceRunRevision(runId);
     return Promise.resolve();
   }
 
@@ -1524,6 +1538,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (index < 0) return Promise.resolve(false);
     mailbox.splice(index, 1);
     this.deleteEmptyRunEventMailbox(runId, mailbox);
+    this.advanceRunRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1562,6 +1577,7 @@ export class MemoryBackend implements WorkflowBackend {
     // one atomic step for this in-memory backend.
     const taken = takeRetainedRunEvent(mailbox, eventName);
     this.deleteEmptyRunEventMailbox(runId, mailbox);
+    if (taken) this.advanceRunRevision(runId);
     return Promise.resolve(taken);
   }
 
@@ -1596,6 +1612,7 @@ export class MemoryBackend implements WorkflowBackend {
     // Keep an empty mailbox as the claimed event's capacity reservation. The
     // asynchronous delivery may still roll back, and another run must not take
     // this slot before restoreRunEventDelivery puts the event back.
+    this.advanceRunRevision(runId);
     return Promise.resolve(taken);
   }
 
@@ -1626,6 +1643,7 @@ export class MemoryBackend implements WorkflowBackend {
     claim.wait.recoveryClaimedAt = new Date(claimedAt);
     const wait = this.eventWaits.get(runId)?.find((candidate) => candidate.id === waitId);
     if (wait) wait.recoveryClaimedAt = new Date(claimedAt);
+    this.advanceRunRevision(runId);
     return Promise.resolve(true);
   }
 
@@ -1634,6 +1652,7 @@ export class MemoryBackend implements WorkflowBackend {
     restoreRetainedRunEvent(mailbox, event);
     this.runEvents.set(runId, mailbox);
     this.releaseRunEventClaim(runId, event.id);
+    this.advanceRunRevision(runId);
     return Promise.resolve();
   }
 
@@ -1667,6 +1686,7 @@ export class MemoryBackend implements WorkflowBackend {
     restoreRetainedRunEvent(mailbox, claim.event);
     this.runEvents.set(runId, mailbox);
     this.releaseRunEventClaim(runId, event.id);
+    this.advanceRunRevision(runId);
     return Promise.resolve(restored);
   }
 
@@ -1684,6 +1704,7 @@ export class MemoryBackend implements WorkflowBackend {
         delete wait.claimedEventId;
         if (delivered) wait.deliveredEventId = eventId;
       }
+      this.advanceRunRevision(runId);
     }
     this.releaseRunEventClaim(runId, eventId);
     const mailbox = this.runEvents.get(runId);
