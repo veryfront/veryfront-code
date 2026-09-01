@@ -7,6 +7,9 @@ const INVALID_CONTINUATION_MESSAGE =
 const IntrinsicPromiseThen = Promise.prototype.then;
 const INVALID_CONTINUATION_ERRORS = new WeakSet<object>();
 const CONTINUATION_OBSERVATIONS = new WeakMap<object, { observed: boolean }>();
+type DeferredSettlement = "pending" | "valid" | "invalid";
+type ContinuationSpeciesHolder = { [Symbol.species]: PromiseConstructor };
+const DEFERRED_SETTLEMENTS = new WeakMap<object, DeferredSettlement>();
 
 function createInvalidContinuationError(): VeryfrontError {
   const error = MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE });
@@ -25,6 +28,18 @@ function registerContinuation(promise: Promise<unknown>): void {
 function markContinuationObserved(promise: Promise<unknown>): void {
   const observation = CONTINUATION_OBSERVATIONS.get(promise);
   if (observation) observation.observed = true;
+}
+
+function registerDeferredContinuation(promise: Promise<unknown>): void {
+  DEFERRED_SETTLEMENTS.set(promise, "pending");
+}
+
+function markDeferredSettled(promise: Promise<unknown>, error: unknown): void {
+  if (DEFERRED_SETTLEMENTS.get(promise) !== "pending") return;
+  DEFERRED_SETTLEMENTS.set(
+    promise,
+    isInvalidContinuationError(error) ? "invalid" : "valid",
+  );
 }
 
 function containRejection(promise: Promise<unknown>): void {
@@ -72,8 +87,6 @@ function rejectInvalidContinuation(): Promise<AgentResponse> {
 }
 
 class DeferredContinuationPromise extends Promise<AgentResponse> {
-  private settlement: "pending" | "valid" | "invalid" = "pending";
-
   override then<TResult1 = AgentResponse, TResult2 = never>(
     onFulfilled?:
       | ((value: AgentResponse) => TResult1 | PromiseLike<TResult1>)
@@ -90,13 +103,9 @@ class DeferredContinuationPromise extends Promise<AgentResponse> {
     ) as Promise<TResult1 | TResult2>;
     lockContinuationSpecies(derived, DEFERRED_CONTINUATION_SPECIES_HOLDER);
     registerContinuation(derived);
-    observeDeferredSettlement(derived as unknown as DeferredContinuationPromise);
+    registerDeferredContinuation(derived);
+    observeDeferredSettlement(derived);
     return derived;
-  }
-
-  markSettled(error: unknown): void {
-    if (this.settlement !== "pending") return;
-    this.settlement = isInvalidContinuationError(error) ? "invalid" : "valid";
   }
 }
 
@@ -112,7 +121,10 @@ Object.defineProperty(DEFERRED_CONTINUATION_SPECIES_HOLDER, Symbol.species, {
 });
 Object.freeze(DEFERRED_CONTINUATION_SPECIES_HOLDER);
 
-function lockContinuationSpecies(promise: Promise<unknown>, holder: object): void {
+function lockContinuationSpecies(
+  promise: Promise<unknown>,
+  holder: ContinuationSpeciesHolder,
+): void {
   Object.defineProperty(promise, "constructor", {
     configurable: false,
     value: holder,
@@ -120,15 +132,15 @@ function lockContinuationSpecies(promise: Promise<unknown>, holder: object): voi
   });
 }
 
-function observeDeferredSettlement(promise: DeferredContinuationPromise): void {
+function observeDeferredSettlement(promise: Promise<unknown>): void {
   const observation = CONTINUATION_OBSERVATIONS.get(promise);
   void IntrinsicPromiseThen.call(
     promise,
     () => {
-      promise.markSettled(undefined);
+      markDeferredSettled(promise, undefined);
     },
     (error: unknown) => {
-      promise.markSettled(error);
+      markDeferredSettled(promise, error);
       if (isInvalidContinuationError(error) || observation?.observed) return undefined;
       setTimeout(() => {
         if (!observation?.observed) void Promise.reject(error);
@@ -146,29 +158,30 @@ function createDeferredContinuation(
     const scheduled = Promise.resolve().then(() => {
       if (isSettled()) {
         const error = createInvalidContinuationError();
-        continuation.markSettled(error);
+        markDeferredSettled(continuation, error);
         reject(error);
         return;
       }
       void IntrinsicPromiseThen.call(
         dispatch(),
         (value: AgentResponse) => {
-          continuation.markSettled(undefined);
+          markDeferredSettled(continuation, undefined);
           resolve(value);
         },
         (error: unknown) => {
-          continuation.markSettled(error);
+          markDeferredSettled(continuation, error);
           reject(error);
         },
       );
     });
     void IntrinsicPromiseThen.call(scheduled, undefined, (error: unknown) => {
-      continuation.markSettled(error);
+      markDeferredSettled(continuation, error);
       reject(error);
     });
   });
   lockContinuationSpecies(continuation, DEFERRED_CONTINUATION_SPECIES_HOLDER);
   registerContinuation(continuation);
+  registerDeferredContinuation(continuation);
   observeDeferredSettlement(continuation);
   return continuation;
 }
