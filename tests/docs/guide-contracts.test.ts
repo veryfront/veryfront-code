@@ -677,11 +677,16 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "guides/integrations/jira.md": {
     references: ["../../api-reference/veryfront/integrations.md"],
     snippets: [
-      "Connect a Jira user",
-      "/api/auth/jira/callback",
+      "Create a Jira service account",
+      "ATLASSIAN_SERVICE_ACCOUNT_CLIENT_ID",
+      "ATLASSIAN_SERVICE_ACCOUNT_CLIENT_SECRET",
+      "ATLASSIAN_SERVICE_ACCOUNT_CLOUD_ID",
+      "JIRA_SERVICE_PROJECT_KEY",
+      "client_credentials",
+      "Project settings → People",
       "read:jira-user",
-      "ATLASSIAN_CLIENT_ID",
-      "JIRA_CLOUD_ID",
+      "No browser or Atlassian consent page should open",
+      "Verify it worked",
     ],
   },
   "guides/integrations/salesforce.md": {
