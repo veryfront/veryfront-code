@@ -76,10 +76,10 @@ describe("module-fetcher/source-transform", () => {
     const reactVersions: string[] = [];
     await transformResolvedModuleSource({
       sourceCode: `export const value = 1;`,
-      actualFilePath: "/node_modules/veryfront/esm/src/value.js",
+      actualFilePath: "/node_modules/veryfront/esm/src/react/runtime/core.js",
       projectDir: "/project",
       projectId: "project-1",
-      normalizedPath: "_veryfront/value.js",
+      normalizedPath: "_veryfront/react/runtime/core.js",
       projectSlug: "docs",
       dev: false,
       adapter: {} as RuntimeAdapter,
@@ -97,6 +97,39 @@ describe("module-fetcher/source-transform", () => {
     assertEquals(reactVersions, [REACT_DEFAULT_VERSION]);
   });
 
+  it("keeps other framework entries on the dependency-pinned generic path", async () => {
+    const calls: string[] = [];
+    const result = await transformResolvedModuleSource({
+      sourceCode: `import { createOpenAIProviderModel } from "@veryfront/ext-llm-openai";`,
+      actualFilePath: "/node_modules/veryfront/esm/src/provider/index.js",
+      projectDir: "/project",
+      projectId: "project-1",
+      normalizedPath: "_vf_modules/_veryfront/provider/index.js",
+      projectSlug: "docs",
+      dependencyPinningCacheKey: "on:snapshot-a",
+      dependencyPinningDependencies: { "@veryfront/ext-llm-openai": "0.1.1200" },
+      dev: false,
+      adapter: {} as RuntimeAdapter,
+      log: noopLog,
+      transformToEsm: (_source, _path, _projectDir, _adapter, options) => {
+        calls.push("transformToEsm");
+        assertEquals(options.dependencyPinningCacheKey, "on:snapshot-a");
+        assertEquals(options.dependencyPinningDependencies, {
+          "@veryfront/ext-llm-openai": "0.1.1200",
+        });
+        return Promise.resolve(`export const provider = true;`);
+      },
+      loadImportMap: () => Promise.resolve({ imports: {} }),
+      cacheHttpImportsToLocal: (code) => Promise.resolve({ code }),
+      transformFrameworkSource: () => {
+        throw new Error("non-runtime framework entries must retain dependency pinning");
+      },
+    });
+
+    assertEquals(calls, ["transformToEsm"]);
+    assertEquals(result, `export const provider = true;`);
+  });
+
   it("logs module context when a framework transform fails", async () => {
     const errorCalls: unknown[] = [];
     const sourceCode = `export const broken = true;`;
@@ -106,10 +139,10 @@ describe("module-fetcher/source-transform", () => {
       () =>
         transformResolvedModuleSource({
           sourceCode,
-          actualFilePath: "/node_modules/veryfront/esm/src/broken.js",
+          actualFilePath: "/node_modules/veryfront/esm/src/react/runtime/core.js",
           projectDir: "/project",
           projectId: "project-1",
-          normalizedPath: "_vf_modules/_veryfront/broken.js",
+          normalizedPath: "_vf_modules/_veryfront/react/runtime/core.js",
           projectSlug: "docs",
           dev: false,
           adapter: {} as RuntimeAdapter,
@@ -127,8 +160,8 @@ describe("module-fetcher/source-transform", () => {
     assertEquals(errorCalls, [[
       "[mdx-loader] Transform failed for module",
       {
-        normalizedPath: "_vf_modules/_veryfront/broken.js",
-        actualFilePath: "/node_modules/veryfront/esm/src/broken.js",
+        normalizedPath: "_vf_modules/_veryfront/react/runtime/core.js",
+        actualFilePath: "/node_modules/veryfront/esm/src/react/runtime/core.js",
         sourceLength: sourceCode.length,
         sourcePreview: sourceCode,
         error: failure.message,

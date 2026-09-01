@@ -25,6 +25,12 @@ type CacheHttpImportsToLocalFn = typeof cacheHttpImportsToLocal;
 type TransformFrameworkSourceFn = typeof transformFrameworkSource;
 type SourceTransformLogger = Pick<Logger, "debug" | "error">;
 
+const RECURSIVE_REACT_RUNTIME_SOURCE_KEY = "react/runtime/core.js";
+
+function isRecursiveReactRuntimeEntry(normalizedPath: string): boolean {
+  return frameworkSourceKeyOf(normalizedPath) === RECURSIVE_REACT_RUNTIME_SOURCE_KEY;
+}
+
 export interface TransformResolvedModuleSourceInput {
   sourceCode: string;
   actualFilePath: string;
@@ -78,10 +84,10 @@ export async function transformResolvedModuleSource(
     sourceLength: input.sourceCode.length,
   });
 
-  // Framework entries must keep their full dependency graph on one transformed
-  // React runtime. The generic tenant transform can leave npm package file URLs
-  // intact, which loads a second React instance during static MDX rendering.
-  if (frameworkSourceKeyOf(input.normalizedPath) !== null) {
+  // Head, Router, and context share this public runtime entry. Keep its full
+  // framework graph on one transformed React runtime. Other framework entries
+  // retain the generic path because it applies the project's dependency pins.
+  if (isRecursiveReactRuntimeEntry(input.normalizedPath)) {
     const readImportMap = input.loadImportMap ?? loadImportMap;
     const importMap = await readImportMap(input.projectDir);
     const importMapFingerprint = await fingerprintImportMap(importMap);
