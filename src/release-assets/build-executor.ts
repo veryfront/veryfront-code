@@ -707,8 +707,27 @@ function normalizeLogicalPath(path: string): string | null {
 }
 
 function normalizeReleaseModuleSpecifier(specifier: string): string | null {
-  const extracted = extractDependencyPinningPathKey(specifier);
-  return extracted.malformed ? null : extracted.pathname;
+  const { path } = splitSpecifierSuffix(specifier);
+  let pathname = path;
+  if (/^https?:\/\//i.test(path) || path.startsWith("//")) {
+    try {
+      const absolute = new URL(path, "https://veryfront.invalid");
+      if (
+        (absolute.protocol !== "http:" && absolute.protocol !== "https:") ||
+        absolute.username !== "" ||
+        absolute.password !== ""
+      ) {
+        return specifier;
+      }
+      pathname = absolute.pathname;
+    } catch {
+      return specifier;
+    }
+  }
+
+  const extracted = extractDependencyPinningPathKey(pathname);
+  if (extracted.malformed) return null;
+  return extracted.found ? extracted.pathname : specifier;
 }
 
 function normalizeProjectSpecifier(specifier: string, logicalPath: string): string | null {

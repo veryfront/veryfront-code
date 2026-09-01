@@ -3882,7 +3882,8 @@ describe("release asset build executor", () => {
 
   it("finalizes dependency-pinned project module paths", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
-    const pinnedChild = "/_vf_modules/_pins/on%3Asnapshot-a/components/Child.js";
+    const pinnedChild =
+      "https://preview.example.test/_vf_modules/_pins/on%3Asnapshot-a/components/Child.js?v=1#child";
     const files = [
       {
         path: "pages/index.tsx",
@@ -3918,8 +3919,10 @@ describe("release asset build executor", () => {
 
   it("discovers dependency-pinned framework module paths", async () => {
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
-    const pinnedHead = "/_vf_modules/_pins/on%3Asnapshot-a/_veryfront/react/runtime/core.js";
-    const pinnedUi = "/_vf_modules/_pins/on%3Asnapshot-a/_veryfront/react/components/ui/index.js";
+    const pinnedHead =
+      "/_vf_modules/_pins/on%3Asnapshot-a/_veryfront/react/runtime/core.js?v=1#head";
+    const pinnedUi =
+      "https://preview.example.test/_vf_modules/_pins/on%3Asnapshot-a/_veryfront/react/components/ui/index.js?v=1#ui";
     const files = [{
       path: "pages/index.tsx",
       content: 'import { Head } from "veryfront/head"; export default Head;',
@@ -3959,6 +3962,26 @@ describe("release asset build executor", () => {
     assertEquals(headSpecifiers.length, 1);
     assert(headSpecifiers[0]?.startsWith("/_vf/assets/"));
     assertEquals(headUpload.text.includes("/_vf_modules/_pins/"), false);
+  });
+
+  it("fails closed on malformed dependency-pinning module paths", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [{
+      path: "pages/index.tsx",
+      content: 'import Child from "@/components/Child"; export default Child;',
+    }];
+    const transform = () =>
+      Promise.resolve(
+        'import Child from "/_vf_modules/_pins/%E0%A4%A/components/Child.js"; ' +
+          "export default Child;",
+      );
+
+    const result = await runReleaseAssetBuild(
+      baseInput(makeClient(files, rec), transform),
+      await tmp(),
+    );
+
+    assertCoverageFailure(result, rec, "module-rewrite-failed:pages/index.tsx");
   });
 
   it("rewrites transitive framework dependency imports to immutable assets", async () => {
