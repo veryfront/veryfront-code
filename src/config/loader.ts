@@ -3244,6 +3244,27 @@ function restoredIndexFallsWithin(
   return false;
 }
 
+function mappedRestoredCsiUrlRedaction(
+  value: string,
+  match: RegExpExecArray,
+  matchEnd: number,
+): CsiConsumedUrlRedaction | undefined {
+  const candidate: MappedCsiUrlCandidate = { inputEnds: [], value: "" };
+  appendMappedInputRange(candidate, value, match.index, matchEnd);
+  const lookaheadEnd = MathMin(value.length, matchEnd + MAX_CSI_CONSUMED_URL_LOOKAHEAD);
+  appendMappedCsiUrlTail(candidate, value, matchEnd, lookaheadEnd);
+  const redaction = matchCsiConsumedUrlCandidate(candidate.value);
+  if (redaction === undefined) return undefined;
+  const mappedEnd = candidate.inputEnds[redaction.endIndex - 1];
+  if (mappedEnd === undefined) return undefined;
+  return {
+    endIndex: redaction.endIndex === candidate.value.length && lookaheadEnd < value.length
+      ? value.length
+      : mappedEnd,
+    marker: redaction.marker,
+  };
+}
+
 function redactRestoredCsiSchemeUrls(
   value: string,
   restoredIndexes: readonly number[],
@@ -3257,14 +3278,17 @@ function redactRestoredCsiSchemeUrls(
     while (match !== null) {
       const matchEnd = SCHEME_URL.lastIndex;
       if (restoredIndexFallsWithin(restoredIndexes, match.index, matchEnd)) {
-        const endIndex = mixedSlashedUrlMatchEnd(value, match[0], matchEnd);
-        const scheme = ReflectApply(
-          StringPrototypeToLowerCase,
-          stringSlice(match[0], 0, 5),
-          [],
-        ) as string;
+        const mapped = mappedRestoredCsiUrlRedaction(value, match, matchEnd);
+        const endIndex = mapped?.endIndex ?? mixedSlashedUrlMatchEnd(value, match[0], matchEnd);
+        const scheme = mapped === undefined
+          ? ReflectApply(
+            StringPrototypeToLowerCase,
+            stringSlice(match[0], 0, 5),
+            [],
+          ) as string
+          : "";
         output += stringSlice(value, outputOffset, match.index) +
-          (scheme === "file:" ? "[path]" : "[url]");
+          (mapped?.marker ?? (scheme === "file:" ? "[path]" : "[url]"));
         outputOffset = endIndex;
         SCHEME_URL.lastIndex = endIndex;
       }
