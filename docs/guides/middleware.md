@@ -4,7 +4,7 @@ description: "CORS, rate limiting, logging, and custom middleware pipelines."
 order: 15
 ---
 
-Middleware runs before your route handler. Use it for CORS headers, rate limits, logging, timeouts, and auth checks. A `MiddlewarePipeline` chains middleware together and short-circuits to a `Response` when one rejects the request.
+Middleware runs before your route handler. Use it for rate limits, logging, timeouts, and auth checks. A `MiddlewarePipeline` chains middleware together and short-circuits to a `Response` when one rejects the request.
 
 The pipeline works in both router styles. The route module wrapper changes:
 
@@ -20,19 +20,7 @@ The pipeline works in both router styles. The route module wrapper changes:
 
 ### CORS
 
-```ts
-import { cors } from "veryfront/middleware";
-
-const corsMiddleware = cors({
-  origin: "https://example.com", // or "*" or ["https://a.com", "https://b.com"]
-  methods: ["GET", "POST"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-  maxAge: 86400,
-});
-```
-
-#### Choose who owns preflight
-
+For App and Pages API routes, configure CORS globally.
 Global `security.cors` is authoritative for CORS headers on automatic
 preflight, explicit `OPTIONS`, and actual route responses:
 
@@ -52,9 +40,15 @@ export default defineConfig({
 });
 ```
 
+#### Ownership rules
+
 Method-local `cors()` middleware runs only inside the handler that calls it.
 It does not configure the framework-generated automatic `OPTIONS` response and
 cannot override the global policy after route dispatch.
+
+Use method-local `cors()` only in a lower-level pipeline whose response does
+not return through the Veryfront API router, such as a custom server adapter.
+Do not use it to configure CORS for an App or Pages API route.
 
 An explicit `OPTIONS` export is authoritative for the response status, body,
 and non-CORS headers. Veryfront uses automatic preflight only when the matched
@@ -105,10 +99,9 @@ const timer = timeout({ timeoutMs: 30_000 }); // 30 seconds
 Combine middleware into a pipeline:
 
 ```ts
-import { cors, logger, MiddlewarePipeline, rateLimit, timeout } from "veryfront/middleware";
+import { logger, MiddlewarePipeline, rateLimit, timeout } from "veryfront/middleware";
 
 const pipeline = new MiddlewarePipeline()
-  .use(cors({ origin: "*" }))
   .use(rateLimit({ maxRequests: 100, windowMs: 60_000 }))
   .use(logger({ format: "short" }))
   .use(timeout({ timeoutMs: 30_000 }));
@@ -120,7 +113,6 @@ Apply middleware only to matching URL patterns:
 
 ```ts
 const pipeline = new MiddlewarePipeline()
-  .use(cors({ origin: "*" }))
   .useFor(/^\/api\//, rateLimit({ maxRequests: 50, windowMs: 60_000 }))
   .useFor(/^\/api\/chat\//, timeout({ timeoutMs: 120_000 }));
 ```
@@ -157,7 +149,9 @@ Try it with the dev server running:
 curl -i http://localhost:3000/api/users
 ```
 
-The response includes any headers added by the middleware that matched the request.
+The response includes non-CORS headers added by the middleware that matched the
+request. The API router replaces policy-owned CORS headers with the global
+`security.cors` policy after the handler returns.
 
 > **`handle()` vs `execute()`.** `execute()` is a lower-level variant with **no terminal handler**: it returns the short-circuiting middleware's `Response`, or a synthesized **404 Not Found** when the chain passes through. It always resolves to a `Response` (never `undefined`), so `if (await pipeline.execute(request))` is always truthy; use `execute()` only when a middleware is always expected to produce the response. For the common "middleware, then my route handler" case, prefer `handle()`.
 
@@ -213,9 +207,7 @@ const auth: MiddlewareHandler = async (c, next) => {
 Add it to a pipeline:
 
 ```ts
-const pipeline = new MiddlewarePipeline()
-  .use(auth)
-  .use(cors({ origin: "*" }));
+const pipeline = new MiddlewarePipeline().use(auth);
 ```
 
 ## Project-wide root middleware
@@ -398,5 +390,5 @@ curl -i http://localhost:3000/api/protected \
   -H "Authorization: Bearer <TOKEN>"
 ```
 
-For CORS, include an `Origin` header and confirm
-`Access-Control-Allow-Origin` is set on the response.
+For global CORS, include an `Origin` header and confirm the configured
+`Access-Control-Allow-Origin` value is set on the response.

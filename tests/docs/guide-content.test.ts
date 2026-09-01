@@ -140,6 +140,10 @@ describe("guide content contracts", () => {
     );
     assertStringIncludes(
       guide,
+      "For App and Pages API routes, configure CORS globally",
+    );
+    assertStringIncludes(
+      guide,
       "Method-local `cors()` middleware runs only inside the handler that calls it",
     );
     assertStringIncludes(guide, "An explicit `OPTIONS` export is authoritative");
@@ -151,6 +155,16 @@ describe("guide content contracts", () => {
       "An unauthenticated preflight for an auth-protected route is the exception",
     );
     assertStringIncludes(guide, "without executing the explicit handler");
+    assertEquals(
+      guide.includes('import { cors } from "veryfront/middleware";'),
+      false,
+      "the API route guide must not present method-local CORS as a working router policy",
+    );
+    assertEquals(
+      guide.includes(".use(cors("),
+      false,
+      "API route pipeline recipes must leave CORS ownership to security.cors",
+    );
   });
 
   it("describes the server-bound workflow approval identity", async () => {
