@@ -144,43 +144,6 @@ describe("agent/middleware/chain", () => {
     assertInstanceOf(error, TypeError);
   });
 
-  it("rejects indirect deferred continuation cycles", async () => {
-    let continuation: Promise<AgentResponse> | undefined;
-    const chain = new MiddlewareChain([
-      async (_context, next) => {
-        await Promise.resolve();
-        continuation = next();
-        return await continuation;
-      },
-    ]);
-    let timeoutId: number | undefined;
-    const timeout = new Promise<never>((_resolve, reject) => {
-      timeoutId = setTimeout(
-        () => reject(new Error("indirect deferred continuation cycle did not settle")),
-        100,
-      );
-    });
-
-    let error: unknown;
-    try {
-      error = await Promise.race([
-        assertRejects(
-          () =>
-            chain.execute(context, async () => {
-              await Promise.resolve();
-              return continuation!;
-            }),
-          TypeError,
-          "Your middleware continuation cannot resolve to itself",
-        ),
-        timeout,
-      ]);
-    } finally {
-      clearTimeout(timeoutId);
-    }
-    assertInstanceOf(error, TypeError);
-  });
-
   it("allows multiple observers on a deferred continuation", async () => {
     let deferred: Promise<AgentResponse> | undefined;
     let releaseMiddleware: ((value: AgentResponse) => void) | undefined;
