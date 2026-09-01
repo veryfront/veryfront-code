@@ -7007,6 +7007,18 @@ export default config as const;
         assertStringIncludes(error.message, "Load [url]");
       });
 
+      it("redacts a mixed Unicode tail after restoring a split scheme", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-restored-mixed-unicode-tail-",
+          `throw new Error(${JSON.stringify(`Load ht${escape}[tp://registry.internal/x秘密`)});\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message.includes("秘密"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
       it("does not restore a split scheme before an empty colorized payload", async () => {
         const escape = String.fromCharCode(27);
         const error = await loadFailure(
@@ -7345,6 +7357,18 @@ export default config as const;
 
         assertEquals(error.message.includes("秘密"), false);
         assertEquals(error.message, "Failed to load veryfront.config.js: Load [path]");
+      });
+
+      it("redacts a mixed Unicode authority after consumed triple slashes", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-consumed-triple-slash-unicode-authority-",
+          `throw new Error(${JSON.stringify(`Load http${escape}[:///r例.internal/秘密`)});\n`,
+        );
+
+        assertEquals(error.message.includes("例.internal"), false);
+        assertEquals(error.message.includes("秘密"), false);
+        assertStringIncludes(error.message, "Load [url]");
       });
 
       it("does not manufacture a scheme from an ordinary SGR sequence", async () => {

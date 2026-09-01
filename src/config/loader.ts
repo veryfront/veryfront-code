@@ -2440,6 +2440,7 @@ function restoreCsiSplitUrlSchemes(value: string): string {
 
     let output = "";
     let outputOffset = 0;
+    const restoredOutputIndexes: number[] = [];
     for (let matchIndex = 0; matchIndex < matches.length; matchIndex++) {
       const match = matches[matchIndex]!;
       output += stringSlice(value, outputOffset, match.inputIndex);
@@ -2448,11 +2449,15 @@ function restoreCsiSplitUrlSchemes(value: string): string {
         replacement = "";
       } else if (setHas(restoreMatches, matchIndex)) {
         replacement = stringSlice(match.matched, -1);
+        defineOwnArrayElement(restoredOutputIndexes, restoredOutputIndexes.length, output.length);
       }
       output += replacement;
       outputOffset = match.inputEnd;
     }
-    return output + stringSlice(value, outputOffset);
+    return redactRestoredCsiSchemeUrls(
+      output + stringSlice(value, outputOffset),
+      restoredOutputIndexes,
+    );
   } finally {
     ANSI_CSI_SEQUENCE.lastIndex = 0;
   }
@@ -2932,7 +2937,7 @@ function matchCsiConsumedNonAsciiUrl(value: string): number {
 }
 
 function extendCsiConsumedUrlMatch(value: string, endIndex: number): number {
-  return rawUrlMatchEnd(value, stringSlice(value, 0, endIndex), endIndex);
+  return mixedSlashedUrlMatchEnd(value, stringSlice(value, 0, endIndex), endIndex);
 }
 
 function extendCsiConsumedFileMatch(value: string, endIndex: number): number {
@@ -3217,6 +3222,58 @@ function rawUrlMatchEnd(value: string, matched: string, offset: number): number 
     (ReflectApply(StringPrototypeIncludes, acceptedRemainder, ["/"]) as boolean) ||
     ReflectApply(RegExpPrototypeExec, RAW_ACCEPTED_URL_PAYLOAD, [acceptedRemainder]) !== null;
   return structurallyDelimited ? acceptedEnd : offset;
+}
+
+function mixedSlashedUrlMatchEnd(value: string, matched: string, offset: number): number {
+  if (ReflectApply(StringPrototypeIncludes, matched, ["/"]) as boolean) {
+    const iriEnd = stickyMatchEnd(RAW_IRI_REMAINDER, value, offset);
+    if (iriEnd !== offset) return iriEnd;
+  }
+  return rawUrlMatchEnd(value, matched, offset);
+}
+
+function restoredIndexFallsWithin(
+  restoredIndexes: readonly number[],
+  startIndex: number,
+  endIndex: number,
+): boolean {
+  for (let index = 0; index < restoredIndexes.length; index++) {
+    const restoredIndex = restoredIndexes[index]!;
+    if (restoredIndex >= startIndex && restoredIndex < endIndex) return true;
+  }
+  return false;
+}
+
+function redactRestoredCsiSchemeUrls(
+  value: string,
+  restoredIndexes: readonly number[],
+): string {
+  if (restoredIndexes.length === 0) return value;
+  SCHEME_URL.lastIndex = 0;
+  let output = "";
+  let outputOffset = 0;
+  try {
+    let match = ReflectApply(RegExpPrototypeExec, SCHEME_URL, [value]) as RegExpExecArray | null;
+    while (match !== null) {
+      const matchEnd = SCHEME_URL.lastIndex;
+      if (restoredIndexFallsWithin(restoredIndexes, match.index, matchEnd)) {
+        const endIndex = mixedSlashedUrlMatchEnd(value, match[0], matchEnd);
+        const scheme = ReflectApply(
+          StringPrototypeToLowerCase,
+          stringSlice(match[0], 0, 5),
+          [],
+        ) as string;
+        output += stringSlice(value, outputOffset, match.index) +
+          (scheme === "file:" ? "[path]" : "[url]");
+        outputOffset = endIndex;
+        SCHEME_URL.lastIndex = endIndex;
+      }
+      match = ReflectApply(RegExpPrototypeExec, SCHEME_URL, [value]) as RegExpExecArray | null;
+    }
+    return output + stringSlice(value, outputOffset);
+  } finally {
+    SCHEME_URL.lastIndex = 0;
+  }
 }
 
 const URL_BOUNDARY_PROSE_REMAINDER = /^(?:[A-Za-z0-9!(),;-]|(?!\s)\P{ASCII})+$/u;
