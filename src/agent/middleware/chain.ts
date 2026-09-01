@@ -5,12 +5,12 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 const INVALID_CONTINUATION_MESSAGE =
   "You must call agent middleware next() at most once while the middleware is active";
 const IntrinsicPromiseThen = Promise.prototype.then;
+const IntrinsicFunctionToString = Function.prototype.toString;
 const INVALID_CONTINUATION_ERRORS = new WeakSet<object>();
 const CONTINUATION_OBSERVATIONS = new WeakMap<object, { observed: boolean }>();
 type ContinuationSpeciesHolder = { [Symbol.species]: PromiseConstructor };
 interface DeferredContinuationState {
   adoptionCalls: number;
-  adoptionTurnOpen: boolean;
   dispatchStarted: boolean;
   reject?: (reason?: unknown) => void;
   settled: boolean;
@@ -28,6 +28,11 @@ function isInvalidContinuationError(error: unknown): boolean {
   return typeof error === "object" && error !== null && INVALID_CONTINUATION_ERRORS.has(error);
 }
 
+function isNativePromiseHandler(handler: unknown): boolean {
+  return typeof handler === "function" &&
+    IntrinsicFunctionToString.call(handler).includes("[native code]");
+}
+
 function registerContinuation(promise: Promise<unknown>): void {
   CONTINUATION_OBSERVATIONS.set(promise, { observed: false });
 }
@@ -37,7 +42,7 @@ function markContinuationObserved(promise: Promise<unknown>): void {
   if (observation) observation.observed = true;
 }
 
-function markDeferredSettled(promise: Promise<unknown>, _error: unknown): void {
+function markDeferredSettled(promise: Promise<unknown>): void {
   const state = DEFERRED_CONTINUATION_STATES.get(promise);
   if (!state || state.settled) return;
   state.settled = true;
@@ -107,7 +112,6 @@ class DeferredContinuationPromise extends Promise<AgentResponse> {
     DEFERRED_CONTINUATION_STATES.set(this, {
       dispatchStarted: false,
       adoptionCalls: 0,
-      adoptionTurnOpen: false,
       reject: rejectCapability,
       settled: false,
       skipAdoptionCheck: false,
@@ -126,18 +130,11 @@ class DeferredContinuationPromise extends Promise<AgentResponse> {
     const state = DEFERRED_CONTINUATION_STATES.get(this);
     if (
       state && state.dispatchStarted && !state.settled && !state.skipAdoptionCheck &&
-      onFulfilled && onRejected
+      isNativePromiseHandler(onFulfilled) && isNativePromiseHandler(onRejected)
     ) {
-      const isLaterAdoption = state.adoptionCalls > 0 && !state.adoptionTurnOpen;
       state.adoptionCalls += 1;
-      if (isLaterAdoption) {
+      if (state.adoptionCalls > 1) {
         state.reject?.(new TypeError("Your middleware continuation cannot resolve to itself"));
-      }
-      if (!state.adoptionTurnOpen) {
-        state.adoptionTurnOpen = true;
-        queueMicrotask(() => {
-          state.adoptionTurnOpen = false;
-        });
       }
     }
     const derived = IntrinsicPromiseThen.call(
@@ -190,10 +187,10 @@ function observeDeferredSettlement(promise: Promise<unknown>): void {
   void IntrinsicPromiseThen.call(
     promise,
     () => {
-      markDeferredSettled(promise, undefined);
+      markDeferredSettled(promise);
     },
     (error: unknown) => {
-      markDeferredSettled(promise, error);
+      markDeferredSettled(promise);
       if (isInvalidContinuationError(error) || observation?.observed) return undefined;
       setTimeout(() => {
         if (!observation?.observed) void Promise.reject(error);
@@ -212,7 +209,7 @@ function createDeferredContinuation(
     const schedule = () => {
       if (isSettled()) {
         const error = createInvalidContinuationError();
-        markDeferredSettled(continuation, error);
+        markDeferredSettled(continuation);
         reject(error);
         return;
       }
@@ -225,11 +222,11 @@ function createDeferredContinuation(
       void IntrinsicPromiseThen.call(
         dispatched,
         (value: AgentResponse) => {
-          markDeferredSettled(continuation, undefined);
+          markDeferredSettled(continuation);
           resolve(value);
         },
         (error: unknown) => {
-          markDeferredSettled(continuation, error);
+          markDeferredSettled(continuation);
           reject(error);
         },
       );
@@ -242,7 +239,7 @@ function createDeferredContinuation(
       )
       : IntrinsicPromiseThen.call(schedulingPromise, schedule);
     void IntrinsicPromiseThen.call(scheduled, undefined, (error: unknown) => {
-      markDeferredSettled(continuation, error);
+      markDeferredSettled(continuation);
       reject(error);
     });
   });
