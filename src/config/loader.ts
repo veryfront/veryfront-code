@@ -2597,7 +2597,7 @@ type CsiConsumedSpecialPrefixStates = Array<
 >;
 type CsiConsumedGenericPrefixStates = Array<CsiConsumedUrlPrefix | undefined>;
 
-const STRONG_CSI_CONSUMED_URL_PAYLOAD = /[.\/@?#\\[\]:]/u;
+const STRONG_CSI_CONSUMED_URL_PAYLOAD_CHARACTERS = "./@?#\\[]:";
 
 function createCsiConsumedSpecialPrefixStates(): CsiConsumedSpecialPrefixStates {
   const states: CsiConsumedSpecialPrefixStates = [];
@@ -3008,8 +3008,11 @@ function hasStrongCsiConsumedUrlPayload(value: string): boolean {
   const colon = stringIndexOf(value, ":");
   if (colon === -1) return false;
   const payload = stringSlice(value, colon + 1);
-  return containsNonAscii(payload) ||
-    ReflectApply(RegExpPrototypeExec, STRONG_CSI_CONSUMED_URL_PAYLOAD, [payload]) !== null;
+  if (containsNonAscii(payload)) return true;
+  for (let index = 0; index < payload.length; index++) {
+    if (stringIncludes(STRONG_CSI_CONSUMED_URL_PAYLOAD_CHARACTERS, payload[index]!)) return true;
+  }
+  return false;
 }
 
 function appendMappedCsiUrlTail(
