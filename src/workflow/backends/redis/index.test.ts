@@ -1408,6 +1408,40 @@ describe("RedisBackend", () => {
       assertStringIncludes(mockRedis.lastScript, "updateTerminalRetentionIndex");
     });
 
+    it("derives stored completion text and score from the same intrinsic instant", async () => {
+      class MisleadingDate extends Date {
+        override toISOString(): string {
+          return new Date(20).toISOString();
+        }
+      }
+
+      await backend.createRun({
+        ...createTestRun("run-canonical-completion-create"),
+        status: "failed",
+        completedAt: new MisleadingDate(2),
+      });
+      await backend.createRun(createTestRun("run-canonical-completion-patch"));
+      await backend.updateRun("run-canonical-completion-patch", {
+        status: "failed",
+        completedAt: new MisleadingDate(3),
+      });
+
+      assertEquals(
+        (await backend.getRun("run-canonical-completion-create"))?.completedAt?.getTime(),
+        2,
+      );
+      assertEquals(
+        (await backend.getRun("run-canonical-completion-patch"))?.completedAt?.getTime(),
+        3,
+      );
+      assertEquals(
+        (await backend.listTerminalRunRetentionCandidates(new Date(10), 2)).candidates.map(
+          ({ runId }) => runId,
+        ),
+        ["run-canonical-completion-create", "run-canonical-completion-patch"],
+      );
+    });
+
     it("observes cross-instance run transitions in exact revision order", async () => {
       const writer = new RedisBackend({ client: mockRedis, prefix: "test:" });
       const reader = new RedisBackend({ client: mockRedis, prefix: "test:" });
@@ -3806,13 +3840,19 @@ describe("RedisBackend", () => {
       assertEquals(complete.hasMore, true);
     });
 
-    it("continues bounded backfill for terminal writes from rolling-upgrade workers", async () => {
-      const initialRunId = "retention-backfill-initial";
-      await backend.createRun({
-        ...createTestRun(initialRunId),
-        status: "completed",
-        completedAt: new Date(3),
-      });
+    it("does not restart coordinated repair between indexed candidate batches", async () => {
+      for (
+        const [runId, completedAt] of [
+          ["retention-repair-once-a", new Date(2)],
+          ["retention-repair-once-b", new Date(3)],
+        ] as const
+      ) {
+        await backend.createRun({
+          ...createTestRun(runId),
+          status: "completed",
+          completedAt,
+        });
+      }
       mockRedis.sortedSets.clear();
       mockRedis.hashes.delete("test:schema-v1:index:terminal-completed-at-members");
       mockRedis.scanPageSize = 1;
@@ -3820,31 +3860,42 @@ describe("RedisBackend", () => {
         client: mockRedis as unknown as RedisAdapter,
         prefix: "test:",
       });
-      await reader.listTerminalRunRetentionCandidates(new Date(10), 1);
+      let batch = await reader.listTerminalRunRetentionCandidates(new Date(10), 1);
+      for (let page = 0; page < 20 && batch.candidates.length === 0; page++) {
+        batch = await reader.listTerminalRunRetentionCandidates(new Date(10), 1);
+      }
+      assertEquals(batch.candidates.length, 1);
+      const scanCount = mockRedis.scanCalls.length;
 
-      const legacyRunId = "retention-backfill-legacy-writer";
-      await backend.createRun({
-        ...createTestRun(legacyRunId),
+      await reader.listTerminalRunRetentionCandidates(new Date(10), 1);
+      await reader.listTerminalRunRetentionCandidates(new Date(10), 1);
+      assertEquals(mockRedis.scanCalls.length, scanCount);
+    });
+
+    it("escapes configured Redis glob characters during run repair", async () => {
+      const prefix = "tenant[1]?*\\:";
+      const writer = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix,
+      });
+      await writer.createRun({
+        ...createTestRun("retention-glob-prefix"),
         status: "completed",
         completedAt: new Date(2),
       });
-      const retentionMembers = mockRedis.hashes.get(
-        "test:schema-v1:index:terminal-completed-at-members",
-      )!;
-      const legacyMetadata = JSON.parse(retentionMembers.get(legacyRunId)!) as {
-        member: string;
-      };
-      retentionMembers.delete(legacyRunId);
-      mockRedis.sortedSets.get("test:schema-v1:index:terminal-completed-at")?.delete(
-        legacyMetadata.member,
-      );
+      mockRedis.sortedSets.clear();
+      mockRedis.hashes.delete(`${prefix}schema-v1:index:terminal-completed-at-members`);
+      const reader = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix,
+      });
 
-      let found = false;
-      for (let page = 0; page < 20 && !found; page++) {
-        const batch = await reader.listTerminalRunRetentionCandidates(new Date(10), 1);
-        found = batch.candidates.some((candidate) => candidate.runId === legacyRunId);
-      }
-      assertEquals(found, true);
+      await reader.listTerminalRunRetentionCandidates(new Date(10), 1);
+
+      assertEquals(
+        mockRedis.scanCalls.at(-1)?.options?.MATCH,
+        String.raw`tenant\[1\]\?\*\\:schema-v1:run:*`,
+      );
     });
 
     it("bounds queue repair at a fixed stream high-water mark", async () => {

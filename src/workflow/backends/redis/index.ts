@@ -611,6 +611,32 @@ function parseRedisTerminalRetentionCandidate(row: unknown): TerminalRunRetentio
   };
 }
 
+function serializeCompletionInstant(value: Date | undefined): {
+  completedAt: string;
+  completedAtMs: string;
+} {
+  if (value === undefined) return { completedAt: "", completedAtMs: "" };
+  const timestamp = reflectApply(dateGetTime, value, []) as number;
+  const canonical = new DateConstructor(timestamp);
+  return {
+    completedAt: reflectApply(dateToISOString, canonical, []) as string,
+    completedAtMs: String(timestamp),
+  };
+}
+
+function escapeRedisGlobLiteral(value: string): string {
+  let escaped = "";
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index]!;
+    if (
+      character === "\\" || character === "*" || character === "?" ||
+      character === "[" || character === "]"
+    ) escaped += "\\";
+    escaped += character;
+  }
+  return escaped;
+}
+
 /**
  * Atomically claim a still-stalled running run. The caller supplies the exact
  * activity timestamp it validated as stale; any heartbeat or terminal update
@@ -1587,6 +1613,7 @@ export class RedisBackend implements WorkflowBackend {
 
   private serializeRun(run: WorkflowRun): Record<string, string> {
     const sourceIntegrationPolicy = requireWorkflowSourceIntegrationPolicy(run);
+    const completion = serializeCompletionInstant(run.completedAt);
     // Encoded before the fields below, on purpose. A step's return value reaches
     // `input`, `output`, and `nodeStates` as well, and those are encoded by
     // `JSON.stringify`, so whichever runs first decides the error a caller sees.
@@ -1611,10 +1638,8 @@ export class RedisBackend implements WorkflowBackend {
       createdAt: run.createdAt.toISOString(),
       startedAt: run.startedAt?.toISOString() || "",
       heartbeatAt: run.heartbeatAt?.toISOString() || "",
-      completedAt: run.completedAt?.toISOString() || "",
-      [TERMINAL_COMPLETED_AT_MS_FIELD]: run.completedAt === undefined
-        ? ""
-        : String(reflectApply(dateGetTime, run.completedAt, []) as number),
+      completedAt: completion.completedAt,
+      [TERMINAL_COMPLETED_AT_MS_FIELD]: completion.completedAtMs,
       [RUN_OBSERVATION_REVISION_FIELD]: "0",
       [RUN_RETENTION_REVISION_FIELD]: "0",
     };
@@ -1636,6 +1661,9 @@ export class RedisBackend implements WorkflowBackend {
       })
       : undefined;
     const fields: Record<string, string> = {};
+    const completion = Object.hasOwn(patch, "completedAt")
+      ? serializeCompletionInstant(patch.completedAt)
+      : undefined;
     const setOwnedField = (patchKey: keyof WorkflowRunUpdate, fieldKey: string, value: string) => {
       if (Object.hasOwn(patch, patchKey)) fields[fieldKey] = value;
     };
@@ -1668,14 +1696,10 @@ export class RedisBackend implements WorkflowBackend {
     setOwnedField("error", "error", patch.error ? JSON.stringify(patch.error) : "");
     setOwnedField("startedAt", "startedAt", patch.startedAt?.toISOString() ?? "");
     setOwnedField("heartbeatAt", "heartbeatAt", patch.heartbeatAt?.toISOString() ?? "");
-    setOwnedField("completedAt", "completedAt", patch.completedAt?.toISOString() ?? "");
-    setOwnedField(
-      "completedAt",
-      TERMINAL_COMPLETED_AT_MS_FIELD,
-      patch.completedAt === undefined
-        ? ""
-        : String(reflectApply(dateGetTime, patch.completedAt, []) as number),
-    );
+    if (completion !== undefined) {
+      fields.completedAt = completion.completedAt;
+      fields[TERMINAL_COMPLETED_AT_MS_FIELD] = completion.completedAtMs;
+    }
     setOwnedField("_traceContext", "traceContext", patch._traceContext ?? "");
     return fields;
   }
@@ -2277,7 +2301,7 @@ export class RedisBackend implements WorkflowBackend {
     const page = await client.eval(
       SCAN_TERMINAL_RUN_KEYS_SCRIPT,
       [],
-      [cursor, `${runPrefix}*`, String(limit)],
+      [cursor, `${escapeRedisGlobLiteral(runPrefix)}*`, String(limit)],
     );
     if (
       !arrayIsArray(page) || page.length !== 2 || typeof page[0] !== "string" ||
@@ -2391,9 +2415,6 @@ export class RedisBackend implements WorkflowBackend {
       !this.terminalRetentionRunBackfillComplete ||
       !this.terminalRetentionQueueBackfillComplete
     ) return false;
-    this.terminalRetentionRunBackfillComplete = false;
-    this.terminalRetentionQueueBackfillComplete = false;
-    this.terminalRetentionQueueBackfillHighWater = null;
     return true;
   }
 
