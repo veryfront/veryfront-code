@@ -6,7 +6,11 @@ const INVALID_CONTINUATION_MESSAGE =
   "You must call agent middleware next() at most once while the middleware is active";
 
 function rejectInvalidContinuation(): Promise<AgentResponse> {
-  return Promise.reject(MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE }));
+  const rejection = Promise.reject<AgentResponse>(
+    MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE }),
+  );
+  void rejection.catch(() => undefined);
+  return rejection;
 }
 
 export class MiddlewareChain {

@@ -157,4 +157,18 @@ describe("agent/middleware/chain", () => {
     await assertRejects(() => queuedNext!, VeryfrontError, replayError);
     assertEquals(finalHandlerCalls, 0);
   });
+
+  it("contains a discarded invalid continuation rejection", async () => {
+    let retainedNext: (() => Promise<AgentResponse>) | undefined;
+    const chain = new MiddlewareChain([
+      (_context, next) => {
+        retainedNext = next;
+        return Promise.resolve(response);
+      },
+    ]);
+
+    await chain.execute(context, () => Promise.resolve(response));
+    retainedNext!();
+    await Promise.resolve();
+  });
 });
