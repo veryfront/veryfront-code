@@ -7010,6 +7010,56 @@ export default config as const;
         );
 
         assertEquals(error.message.includes("registry.internal"), false);
+        assertEquals(error.message, "Failed to load veryfront.config.js: Load [url]");
+      });
+
+      it("ignores CSI parameters before consumed file URL delimiters", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-parameter-before-file-delimiters-",
+          `throw new Error(${JSON.stringify(`Load file:${escape}[31///home/alice/config.ts`)});\n`,
+        );
+
+        assertEquals(error.message.includes("alice"), false);
+        assertStringIncludes(error.message, "Load [path]");
+      });
+
+      it("redacts the full Unicode path after a Unicode authority", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-unicode-authority-and-path-",
+          `throw new Error(${JSON.stringify(`Load http${escape}[://r例.internal/秘密`)});\n`,
+        );
+
+        assertEquals(error.message.includes("r例.internal"), false);
+        assertEquals(error.message.includes("秘密"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("preserves a generic scheme colon across formatting CSI", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-context-after-generic-colon-",
+          `throw new Error(${
+            JSON.stringify(`Load s3:${escape}[31m${escape}[//registry.internal/config`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("redacts through formatting CSI inside a reconstructed URL tail", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-formatting-inside-url-tail-",
+          `throw new Error(${
+            JSON.stringify(`Load http${escape}[://registry${escape}[31m.internal/config`)
+          });\n`,
+        );
+
+        assertEquals(error.message.includes("registry"), false);
+        assertEquals(error.message.includes("internal"), false);
         assertStringIncludes(error.message, "Load [url]");
       });
 
