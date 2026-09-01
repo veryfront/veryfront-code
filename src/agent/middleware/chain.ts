@@ -5,11 +5,31 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 const INVALID_CONTINUATION_MESSAGE =
   "You must call agent middleware next() at most once while the middleware is active";
 
+class InvalidContinuationPromise extends Promise<AgentResponse> {
+  override then<TResult1 = AgentResponse, TResult2 = never>(
+    onFulfilled?:
+      | ((value: AgentResponse) => TResult1 | PromiseLike<TResult1>)
+      | null,
+    onRejected?:
+      | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
+      | null,
+  ): Promise<TResult1 | TResult2> {
+    const derived = Promise.prototype.then.call(
+      this,
+      onFulfilled,
+      onRejected,
+    ) as Promise<TResult1 | TResult2>;
+    void Promise.prototype.then.call(derived, undefined, () => undefined);
+    return derived;
+  }
+}
+
 function rejectInvalidContinuation(): Promise<AgentResponse> {
-  const rejection = Promise.reject<AgentResponse>(
-    MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE }),
+  const rejection = new InvalidContinuationPromise(
+    (_resolve, reject) =>
+      reject(MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE })),
   );
-  void rejection.catch(() => undefined);
+  void Promise.prototype.then.call(rejection, undefined, () => undefined);
   return rejection;
 }
 
