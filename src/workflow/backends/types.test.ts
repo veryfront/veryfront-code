@@ -2,7 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { BackendConfig, RedisBackendConfig } from "#veryfront/workflow";
-import { hasEventWaitSupport, type WorkflowBackend } from "./types.ts";
+import {
+  hasEventWaitSupport,
+  hasTerminalRunRetentionSupport,
+  type WorkflowBackend,
+} from "./types.ts";
 import { MemoryBackend } from "./memory.ts";
 
 describe("workflow backend public config types", () => {
@@ -146,5 +150,15 @@ describe("hasEventWaitSupport", () => {
       "an ownerless backend persists waits through the plain append and may " +
         "omit the owner-fenced variant",
     );
+  });
+});
+
+describe("hasTerminalRunRetentionSupport", () => {
+  it("requires the atomic terminal deletion capability", () => {
+    const backend = new MemoryBackend();
+    assertEquals(hasTerminalRunRetentionSupport(backend), true);
+
+    Object.defineProperty(backend, "deleteTerminalRunIfUnchanged", { value: undefined });
+    assertEquals(hasTerminalRunRetentionSupport(backend), false);
   });
 });

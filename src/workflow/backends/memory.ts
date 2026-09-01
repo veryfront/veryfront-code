@@ -27,6 +27,7 @@ import {
   type PersistedPendingEventWait,
   type RunEventDeliveryClaim,
   type RunEventEnvelope,
+  type TerminalRunRetentionCandidate,
   type WorkflowBackend,
   type WorkflowRunObservation,
   type WorkflowRunObservedState,
@@ -53,6 +54,9 @@ import { requireWorkflowSourceIntegrationPolicy } from "../source-integration-po
 const logger = baseLogger.component("memory-backend");
 const ArrayConstructor = Array;
 const arrayIsArray = Array.isArray;
+const arrayFilter = Array.prototype.filter;
+const arraySome = Array.prototype.some;
+const dateGetTime = Date.prototype.getTime;
 const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -653,7 +657,13 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve(true);
   }
 
-  deleteRun(runId: string): Promise<void> {
+  private deleteRunState(runId: string): boolean {
+    const hadState = this.runs.has(runId) || this.checkpoints.has(runId) ||
+      this.approvals.has(runId) || this.eventWaits.has(runId) ||
+      this.runEvents.has(runId) || this.runEventClaims.has(runId) ||
+      this.locks.has(runId) || this.stalledClaims.has(runId) ||
+      this.runRevisions.has(runId) || this.runObservers.has(runId) ||
+      reflectApply(arraySome, this.queue, [(item: WorkflowQueueItem) => item.runId === runId]);
     this.closeRunObservers(runId);
     this.runs.delete(runId);
     this.checkpoints.delete(runId);
@@ -661,9 +671,40 @@ export class MemoryBackend implements WorkflowBackend {
     this.eventWaits.delete(runId);
     this.runEvents.delete(runId);
     this.runEventClaims.delete(runId);
+    this.locks.delete(runId);
     this.stalledClaims.delete(runId);
     this.runRevisions.delete(runId);
+    this.queue = reflectApply(arrayFilter, this.queue, [
+      (item: WorkflowQueueItem) => item.runId !== runId,
+    ]) as WorkflowQueueItem[];
+    return hadState;
+  }
+
+  deleteRun(runId: string): Promise<void> {
+    this.deleteRunState(runId);
     return Promise.resolve();
+  }
+
+  deleteTerminalRunIfUnchanged(
+    candidate: TerminalRunRetentionCandidate,
+  ): Promise<boolean> {
+    const run = this.runs.get(candidate.runId);
+    if (run !== undefined) {
+      const createdAt = reflectApply(dateGetTime, run.createdAt, []) as number;
+      const expectedCreatedAt = reflectApply(dateGetTime, candidate.createdAt, []) as number;
+      const completedAt = run.completedAt === undefined
+        ? undefined
+        : reflectApply(dateGetTime, run.completedAt, []) as number;
+      const expectedCompletedAt = reflectApply(dateGetTime, candidate.completedAt, []) as number;
+      if (
+        run.workflowId !== candidate.workflowId || run.status !== candidate.status ||
+        createdAt !== expectedCreatedAt || completedAt !== expectedCompletedAt ||
+        (run.status !== "completed" && run.status !== "failed" && run.status !== "cancelled")
+      ) {
+        return Promise.resolve(false);
+      }
+    }
+    return Promise.resolve(this.deleteRunState(candidate.runId));
   }
 
   openRunObservation(

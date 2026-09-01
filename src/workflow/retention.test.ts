@@ -1,0 +1,173 @@
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { MemoryBackend } from "./backends/memory.ts";
+import {
+  hasTerminalRunRetentionSupport,
+  type TerminalRunRetentionCandidate,
+  type WorkflowBackend,
+} from "./backends/types.ts";
+import { reapTerminalRuns } from "./retention.ts";
+import type { WorkflowRun, WorkflowStatus } from "./types.ts";
+
+const SOURCE_POLICY = normalizeSourceIntegrationPolicy(undefined);
+
+function run(
+  id: string,
+  status: WorkflowStatus,
+  completedAt?: Date,
+): WorkflowRun {
+  return {
+    id,
+    workflowId: "retention-workflow",
+    status,
+    input: {},
+    nodeStates: {},
+    currentNodes: [],
+    context: { input: {} },
+    checkpoints: [],
+    pendingApprovals: [],
+    createdAt: new Date(0),
+    completedAt,
+    sourceIntegrationPolicy: SOURCE_POLICY,
+  };
+}
+
+describe("workflow terminal-run retention", () => {
+  it("reaps only old terminal runs in bounded oldest-first batches", async () => {
+    const backend = new MemoryBackend();
+    await backend.createRun(run("active", "waiting", new Date(1)));
+    await backend.createRun(run("old-failed", "failed", new Date(2)));
+    await backend.createRun(run("old-completed", "completed", new Date(3)));
+    await backend.createRun(run("old-cancelled", "cancelled", new Date(4)));
+    await backend.createRun(run("recent", "completed", new Date(20)));
+
+    const first = await reapTerminalRuns(backend, {
+      completedBefore: new Date(10),
+      limit: 2,
+    });
+
+    assertEquals(first, { supported: true, examined: 2, deleted: 2, hasMore: true });
+    assertEquals(await backend.getRun("old-failed"), null);
+    assertEquals(await backend.getRun("old-completed"), null);
+    assertEquals((await backend.getRun("old-cancelled"))?.status, "cancelled");
+    assertEquals((await backend.getRun("active"))?.status, "waiting");
+    assertEquals((await backend.getRun("recent"))?.status, "completed");
+
+    const second = await reapTerminalRuns(backend, {
+      completedBefore: new Date(10),
+      limit: 2,
+    });
+    assertEquals(second, { supported: true, examined: 1, deleted: 1, hasMore: false });
+    assertEquals(await backend.getRun("old-cancelled"), null);
+  });
+
+  it("removes every in-memory record owned by a retained run", async () => {
+    const backend = new MemoryBackend();
+    const retained = run("with-state", "failed", new Date(2));
+    await backend.createRun(retained);
+    await backend.saveCheckpoint(retained.id, {
+      id: "checkpoint",
+      nodeId: "gate",
+      timestamp: new Date(1),
+      context: { input: {} },
+      nodeStates: {},
+    });
+    await backend.savePendingApproval(retained.id, {
+      id: "approval",
+      nodeId: "gate",
+      status: "pending",
+      message: "Continue?",
+      requestedAt: new Date(1),
+    });
+    await backend.savePendingEventWait(retained.id, {
+      id: "wait",
+      runId: retained.id,
+      nodeId: "gate",
+      eventName: "continue",
+      waitKind: "event",
+      requestedAt: new Date(1),
+      status: "pending",
+    });
+    await backend.appendRunEvent(retained.id, {
+      id: "event",
+      eventName: "continue",
+      payload: {},
+      publishedAt: new Date(1),
+    });
+    await backend.enqueue({
+      runId: retained.id,
+      workflowId: retained.workflowId,
+      input: {},
+      createdAt: new Date(1),
+    });
+    await backend.acquireLock(retained.id, 60_000);
+
+    await reapTerminalRuns(backend, { completedBefore: new Date(10) });
+
+    assertEquals(await backend.getRun(retained.id), null);
+    assertEquals(await backend.getCheckpoints(retained.id), []);
+    assertEquals(await backend.getPendingApprovals(retained.id), []);
+    assertEquals(await backend.getPendingEventWaits(retained.id), []);
+    assertEquals(await backend.peekRunEvent(retained.id, "continue"), null);
+    assertEquals(await backend.dequeue(), null);
+    assertEquals(await backend.isLocked(retained.id), false);
+  });
+
+  it("does not delete a failed run that reactivates before the fenced delete", async () => {
+    class RetryRaceBackend extends MemoryBackend {
+      override async deleteTerminalRunIfUnchanged(
+        candidate: TerminalRunRetentionCandidate,
+      ): Promise<boolean> {
+        await this.updateRun(candidate.runId, {
+          status: "pending",
+          completedAt: undefined,
+        });
+        return await super.deleteTerminalRunIfUnchanged(candidate);
+      }
+    }
+
+    const backend = new RetryRaceBackend();
+    await backend.createRun(run("retrying", "failed", new Date(2)));
+
+    const result = await reapTerminalRuns(backend, { completedBefore: new Date(10) });
+
+    assertEquals(result, { supported: true, examined: 1, deleted: 0, hasMore: false });
+    assertEquals((await backend.getRun("retrying"))?.status, "pending");
+  });
+
+  it("reports unsupported backends without invoking partial cleanup", async () => {
+    const backend = new MemoryBackend();
+    Object.defineProperty(backend, "deleteTerminalRunIfUnchanged", { value: undefined });
+    const unsupported = backend as WorkflowBackend;
+    await backend.createRun(run("retained", "completed", new Date(1)));
+
+    assertEquals(hasTerminalRunRetentionSupport(unsupported), false);
+    assertEquals(
+      await reapTerminalRuns(unsupported, { completedBefore: new Date(10) }),
+      { supported: false, reason: "unsupported" },
+    );
+    assertEquals((await backend.getRun("retained"))?.status, "completed");
+  });
+
+  it("validates sweep bounds and treats completedBefore as exclusive", async () => {
+    const backend = new MemoryBackend();
+    await backend.createRun(run("boundary", "completed", new Date(10)));
+
+    await assertRejects(
+      () => reapTerminalRuns(backend, { completedBefore: new Date(20), limit: 0 }),
+      Error,
+      "limit must be an integer",
+    );
+    await assertRejects(
+      () => reapTerminalRuns(backend, { completedBefore: new Date(Number.NaN) }),
+      Error,
+      "must be a valid Date",
+    );
+    assertEquals(
+      await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
+      { supported: true, examined: 0, deleted: 0, hasMore: false },
+    );
+    assertEquals((await backend.getRun("boundary"))?.status, "completed");
+  });
+});

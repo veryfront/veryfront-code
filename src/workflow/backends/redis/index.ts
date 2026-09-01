@@ -19,6 +19,7 @@ import type {
 import {
   assertWorkflowRunUpdate,
   type PersistedPendingApproval,
+  type TerminalRunRetentionCandidate,
   type WorkflowBackend,
   type WorkflowRunObservation,
   type WorkflowRunObservedState,
@@ -53,7 +54,9 @@ export type { RedisBackendConfig } from "./types.ts";
 import type { RedisBackendConfig, RedisBackendInternalConfig } from "./types.ts";
 
 const logger = agentLogger.component("redis-backend");
+const dateToISOString = Date.prototype.toISOString;
 const objectDefineProperty = Object.defineProperty;
+const reflectApply = Reflect.apply;
 const REDIS_STORAGE_SCHEMA_VERSION = "schema-v1";
 const REDIS_STORAGE_SCHEMA_NAMESPACE = `${REDIS_STORAGE_SCHEMA_VERSION}:`;
 const RUN_OBSERVATION_APPROVAL_SCHEMA_VERSION = "approvals-v1";
@@ -272,6 +275,42 @@ const RELEASE_LOCK_SCRIPT =
  */
 const EXTEND_LOCK_SCRIPT =
   "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end";
+
+/**
+ * Delete one exact terminal snapshot and every key or shared index membership
+ * owned by it. A failed run may be retried, so status and completedAt must
+ * still match inside the same Redis turn that deletes the state.
+ *
+ * When an earlier partial TTL already removed the hash, the supplied snapshot
+ * still identifies its workflow index. In that case the script finishes the
+ * orphan cleanup but never deletes a different extant run.
+ *
+ * KEYS[1..7] are the run hash and per-run keys. KEYS[8] is the all-runs
+ * index, KEYS[9] the expected workflow index, and the remaining keys are every
+ * status index. ARGV contains status, workflowId, createdAt, completedAt, and
+ * runId. Like the existing status-update scripts, this requires one logical
+ * Redis because the keys are not cluster hash-tagged. Returns 1 when Redis
+ * state was removed, 2 when the run was already fully absent, and 0 when an
+ * extant run no longer matches the candidate.
+ */
+const DELETE_TERMINAL_RUN_IF_UNCHANGED_SCRIPT = `-- conditional-terminal-run-delete
+local runExists = redis.call('exists', KEYS[1])
+if runExists ~= 0 then
+  local status = redis.call('hget', KEYS[1], 'status')
+  local workflowId = redis.call('hget', KEYS[1], 'workflowId')
+  local createdAt = redis.call('hget', KEYS[1], 'createdAt')
+  local completedAt = redis.call('hget', KEYS[1], 'completedAt')
+  if status ~= ARGV[1] or workflowId ~= ARGV[2] or createdAt ~= ARGV[3] or
+      completedAt ~= ARGV[4] then return 0 end
+  if status ~= 'completed' and status ~= 'failed' and status ~= 'cancelled' then return 0 end
+end
+
+local removed = 0
+for index = 1, 7 do removed = removed + redis.call('del', KEYS[index]) end
+for index = 8, #KEYS do removed = removed + redis.call('srem', KEYS[index], ARGV[5]) end
+if removed > 0 then return 1 end
+if runExists == 0 then return 2 end
+return 0`;
 
 /**
  * Atomically claim a still-stalled running run. The caller supplies the exact
@@ -1712,6 +1751,53 @@ export class RedisBackend implements WorkflowBackend {
     await client.srem(this.workflowIndexKey(run.workflowId), runId);
     await client.srem(this.allRunsIndexKey(), runId);
     this.pendingMessageIds.delete(runId);
+  }
+
+  async deleteTerminalRunIfUnchanged(
+    candidate: TerminalRunRetentionCandidate,
+  ): Promise<boolean> {
+    if (
+      candidate.status !== "completed" && candidate.status !== "failed" &&
+      candidate.status !== "cancelled"
+    ) return false;
+
+    let createdAt: string;
+    let completedAt: string;
+    try {
+      createdAt = reflectApply(dateToISOString, candidate.createdAt, []) as string;
+      completedAt = reflectApply(dateToISOString, candidate.completedAt, []) as string;
+    } catch {
+      return false;
+    }
+    const client = await this.ensureClient();
+    const result = await client.eval(
+      DELETE_TERMINAL_RUN_IF_UNCHANGED_SCRIPT,
+      [
+        this.runKey(candidate.runId),
+        this.checkpointsKey(candidate.runId),
+        this.approvalsKey(candidate.runId),
+        this.claimKey(candidate.runId),
+        this.runObservationKey(candidate.runId),
+        this.runObservationApprovalsKey(candidate.runId),
+        this.lockKey(candidate.runId),
+        this.allRunsIndexKey(),
+        this.workflowIndexKey(candidate.workflowId),
+        this.statusIndexKey("pending"),
+        this.statusIndexKey("running"),
+        this.statusIndexKey("waiting"),
+        this.statusIndexKey("completed"),
+        this.statusIndexKey("failed"),
+        this.statusIndexKey("cancelled"),
+      ],
+      [candidate.status, candidate.workflowId, createdAt, completedAt, candidate.runId],
+    );
+    const resultCode = Number(result);
+    const deleted = resultCode === 1;
+    if (resultCode !== 0) {
+      this.lockValues.delete(candidate.runId);
+      this.pendingMessageIds.delete(candidate.runId);
+    }
+    return deleted;
   }
 
   async listRuns(filter: RunFilter): Promise<WorkflowRun[]> {

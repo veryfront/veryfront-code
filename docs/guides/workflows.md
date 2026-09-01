@@ -566,3 +566,41 @@ To read run state from a different request (a status endpoint, a dashboard, or
 the `useWorkflow` hook), give every client the same persistent backend, such as
 `RedisBackend`, instead of the default in-memory one. Run state written by one
 in-memory client is not readable from any other.
+
+## Remove old terminal workflow runs
+
+Use `reapTerminalRuns` from a periodic maintenance process to delete old
+completed, failed, and cancelled workflow runs. Waiting and active runs are
+never eligible. The cutoff is exclusive, and each call deletes at most `limit`
+runs. The sweep does not modify workflow definitions, schedules, tasks,
+webhooks, or prompts.
+
+```ts
+import { reapTerminalRuns, RedisBackend } from "veryfront/workflow";
+
+const redisUrl = Deno.env.get("REDIS_URL");
+if (!redisUrl) throw new Error("Set REDIS_URL before running workflow retention");
+
+const backend = new RedisBackend({ url: redisUrl });
+const completedBefore = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+try {
+  while (true) {
+    const result = await reapTerminalRuns(backend, {
+      completedBefore,
+      limit: 100,
+    });
+    if (!result.supported) {
+      throw new Error("The configured workflow backend does not support terminal-run retention");
+    }
+    if (!result.hasMore) break;
+  }
+} finally {
+  await backend.destroy();
+}
+```
+
+The backend verifies the run identity, terminal status, and completion time in
+the same operation that deletes its state. A failed run that starts retrying
+after the sweep reads it is retained. After deletion, reads return the existing
+not-found result; this retention API does not create tombstones.

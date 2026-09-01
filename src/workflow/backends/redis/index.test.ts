@@ -52,6 +52,7 @@ class MockRedisAdapter implements RedisAdapter {
   expiries = new Map<string, number>();
   streams = new Map<string, Array<{ id: string; data: Record<string, string> }>>();
   lastScript = "";
+  lastKeys: string[] = [];
   lastArgs: string[] = [];
   groups = new Map<string, Set<string>>();
   nextStreamSequence = 1;
@@ -201,7 +202,33 @@ class MockRedisAdapter implements RedisAdapter {
     // Lua itself still carries its guards. Record what the backend actually sent so
     // tests can assert against the script source and its ARGV layout.
     this.lastScript = script;
+    this.lastKeys = [...keys];
     this.lastArgs = [...args];
+
+    if (script.includes("conditional-terminal-run-delete")) {
+      const hash = this.hashes.get(key);
+      if (
+        hash !== undefined &&
+        (hash.get("status") !== args[0] || hash.get("workflowId") !== args[1] ||
+          hash.get("createdAt") !== args[2] || hash.get("completedAt") !== args[3])
+      ) {
+        return Promise.resolve(0);
+      }
+
+      let removed = 0;
+      for (const dataKey of keys.slice(0, 7)) {
+        if (this.store.delete(dataKey)) removed += 1;
+        if (this.hashes.delete(dataKey)) removed += 1;
+        if (this.lists.delete(dataKey)) removed += 1;
+        if (this.streams.delete(dataKey)) removed += 1;
+        this.expiries.delete(dataKey);
+      }
+      for (const indexKey of keys.slice(7)) {
+        if (this.sets.get(indexKey)?.delete(args[4]!)) removed += 1;
+      }
+      if (removed > 0) return Promise.resolve(1);
+      return Promise.resolve(hash === undefined ? 2 : 0);
+    }
 
     if (script.includes("open-run-observation")) {
       const hash = this.hashes.get(key);
@@ -2752,6 +2779,168 @@ describe("RedisBackend", () => {
 
     it("should no-op for non-existent run", async () => {
       await backend.deleteRun("missing");
+    });
+
+    it("fences terminal retention against a reactivated failed run", async () => {
+      const completedAt = new Date("2026-01-01T00:00:00Z");
+      const retained = {
+        ...createTestRun("run-retention-race"),
+        status: "failed",
+        completedAt,
+      } as const;
+      await backend.createRun(retained);
+      await backend.updateRun("run-retention-race", {
+        status: "pending",
+        completedAt: undefined,
+      });
+
+      assertEquals(
+        await backend.deleteTerminalRunIfUnchanged({
+          runId: "run-retention-race",
+          workflowId: "wf-1",
+          createdAt: retained.createdAt,
+          status: "failed",
+          completedAt,
+        }),
+        false,
+      );
+      assertStringIncludes(mockRedis.lastScript, "createdAt ~= ARGV[3]");
+      assertStringIncludes(mockRedis.lastScript, "completedAt ~= ARGV[4]");
+      assertEquals(mockRedis.lastArgs, [
+        "failed",
+        "wf-1",
+        retained.createdAt.toISOString(),
+        completedAt.toISOString(),
+        "run-retention-race",
+      ]);
+      assertEquals((await backend.getRun("run-retention-race"))?.status, "pending");
+    });
+
+    it("atomically removes terminal state, locks, and every shared index membership", async () => {
+      const runId = "run-retention-delete";
+      const completedAt = new Date("2026-01-01T00:00:00Z");
+      await backend.createRun({ ...createTestRun(runId), status: "failed", completedAt });
+      await backend.saveCheckpoint(runId, {
+        id: "checkpoint",
+        nodeId: "gate",
+        timestamp: completedAt,
+        context: { input: {} },
+        nodeStates: {},
+      });
+      await backend.savePendingApproval(runId, {
+        id: "approval",
+        nodeId: "gate",
+        status: "pending",
+        message: "Continue?",
+        requestedAt: completedAt,
+      });
+      await backend.acquireLock(runId, 60_000);
+      mockRedis.store.set(`test:schema-v1:claim:${runId}`, "worker");
+
+      const candidate = {
+        runId,
+        workflowId: "wf-1",
+        createdAt: (await backend.getRun(runId))!.createdAt,
+        status: "failed" as const,
+        completedAt,
+      };
+      assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), true);
+      assertEquals(mockRedis.lastKeys, [
+        `test:schema-v1:run:${runId}`,
+        `test:schema-v1:checkpoints:${runId}`,
+        `test:schema-v1:approvals:${runId}`,
+        `test:schema-v1:claim:${runId}`,
+        `test:schema-v1:run-observation:${runId}`,
+        `test:schema-v1:run-observation-approvals-v1:${runId}`,
+        `test:schema-v1:lock:${runId}`,
+        "test:schema-v1:index:runs",
+        "test:schema-v1:index:workflow:wf-1",
+        "test:schema-v1:index:status:pending",
+        "test:schema-v1:index:status:running",
+        "test:schema-v1:index:status:waiting",
+        "test:schema-v1:index:status:completed",
+        "test:schema-v1:index:status:failed",
+        "test:schema-v1:index:status:cancelled",
+      ]);
+      assertStringIncludes(mockRedis.lastScript, "for index = 1, 7");
+      assertStringIncludes(mockRedis.lastScript, "for index = 8, #KEYS");
+      assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), false);
+      assertEquals(await backend.getRun(runId), null);
+      assertEquals(await backend.getCheckpoints(runId), []);
+      assertEquals(await backend.getPendingApprovals(runId), []);
+      assertEquals(mockRedis.store.has(`test:schema-v1:lock:${runId}`), false);
+      assertEquals(mockRedis.store.has(`test:schema-v1:claim:${runId}`), false);
+      assertEquals(mockRedis.streams.has(`test:schema-v1:run-observation:${runId}`), false);
+      assertEquals(
+        mockRedis.hashes.has(`test:schema-v1:run-observation-approvals-v1:${runId}`),
+        false,
+      );
+      assertEquals(
+        [...mockRedis.sets.values()].some((members) => members.has(runId)),
+        false,
+      );
+    });
+
+    it("finishes cleanup if the old TTL removed the run hash first", async () => {
+      const runId = "run-retention-partial";
+      const completedAt = new Date("2026-01-01T00:00:00Z");
+      const retained = { ...createTestRun(runId), status: "completed", completedAt } as const;
+      await backend.createRun(retained);
+      await backend.saveCheckpoint(runId, {
+        id: "checkpoint",
+        nodeId: "done",
+        timestamp: completedAt,
+        context: { input: {} },
+        nodeStates: {},
+      });
+      mockRedis.hashes.delete(`test:schema-v1:run:${runId}`);
+
+      assertEquals(
+        await backend.deleteTerminalRunIfUnchanged({
+          runId,
+          workflowId: "wf-1",
+          createdAt: retained.createdAt,
+          status: "completed",
+          completedAt,
+        }),
+        true,
+      );
+      assertEquals(mockRedis.lists.has(`test:schema-v1:checkpoints:${runId}`), false);
+      assertEquals(
+        [...mockRedis.sets.values()].some((members) => members.has(runId)),
+        false,
+      );
+    });
+
+    it("does not delete a later run that reused a retained run id", async () => {
+      const runId = "run-retention-reused-id";
+      const completedAt = new Date("2026-01-01T00:00:00Z");
+      const original = {
+        ...createTestRun(runId),
+        status: "completed",
+        completedAt,
+      } as const;
+      await backend.createRun(original);
+      await backend.deleteRun(runId);
+      const replacement = {
+        ...createTestRun(runId),
+        createdAt: new Date(original.createdAt.getTime() + 1),
+        status: "completed",
+        completedAt,
+      } as const;
+      await backend.createRun(replacement);
+
+      assertEquals(
+        await backend.deleteTerminalRunIfUnchanged({
+          runId,
+          workflowId: "wf-1",
+          createdAt: original.createdAt,
+          status: "completed",
+          completedAt,
+        }),
+        false,
+      );
+      assertEquals((await backend.getRun(runId))?.createdAt, replacement.createdAt);
     });
   });
 

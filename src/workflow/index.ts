@@ -98,6 +98,9 @@ export type {
 export type {
   BackendConfig,
   RunEventEnvelope,
+  TerminalRunRetentionCandidate,
+  TerminalWorkflowStatus,
+  WithTerminalRunRetentionSupport,
   WorkflowBackend,
   WorkflowRunObservation,
   WorkflowRunObservedState,
@@ -106,8 +109,12 @@ export type {
 export {
   hasEventWaitSupport,
   hasRunObservationSupport,
+  hasTerminalRunRetentionSupport,
   hasWorkerSupport,
 } from "./backends/types.ts";
+
+export { reapTerminalRuns } from "./retention.ts";
+export type { TerminalRunRetentionOptions, TerminalRunRetentionResult } from "./retention.ts";
 
 export { MemoryBackend } from "./backends/memory.ts";
 

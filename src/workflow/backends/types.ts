@@ -54,6 +54,26 @@ export type WorkflowRunStateSnapshot = WorkflowRunScalarUpdate & {
   context: WorkflowRun["context"];
 };
 
+/** Workflow status whose execution has ended. */
+export type TerminalWorkflowStatus = Extract<
+  WorkflowStatus,
+  "completed" | "failed" | "cancelled"
+>;
+
+/** Exact terminal snapshot a backend must still observe before deleting a run. */
+export interface TerminalRunRetentionCandidate {
+  /** Run selected by a retention sweep. */
+  runId: string;
+  /** Immutable workflow identity used to remove and fence its shared index. */
+  workflowId: string;
+  /** Immutable creation time that prevents deletion after run-ID reuse. */
+  createdAt: Date;
+  /** Terminal status observed by the sweep. */
+  status: TerminalWorkflowStatus;
+  /** Terminal completion time observed by the sweep. */
+  completedAt: Date;
+}
+
 const WORKFLOW_RUN_UPDATE_FIELDS = new Set<keyof WorkflowRunUpdate>([
   "status",
   "output",
@@ -252,6 +272,15 @@ export interface WorkflowBackend {
     expectedWorkerId?: string,
   ): Promise<boolean>;
   deleteRun?(runId: string): Promise<void>;
+  /**
+   * Delete a run and all backend-owned state only if its terminal snapshot is
+   * unchanged. Returns false when a retry or another transition made the
+   * candidate stale. Built-in backends perform the comparison and deletion in
+   * one atomic backend operation.
+   */
+  deleteTerminalRunIfUnchanged?(
+    candidate: TerminalRunRetentionCandidate,
+  ): Promise<boolean>;
   listRuns(filter: RunFilter): Promise<WorkflowRun[]>;
   countRuns?(filter: RunFilter): Promise<number>;
 
@@ -666,6 +695,11 @@ type WithRunObservationSupport =
   & WorkflowBackend
   & Required<Pick<WorkflowBackend, "openRunObservation">>;
 
+/** Workflow backend with atomic terminal-run retention support. */
+export type WithTerminalRunRetentionSupport =
+  & WorkflowBackend
+  & Required<Pick<WorkflowBackend, "deleteTerminalRunIfUnchanged">>;
+
 export function hasQueueSupport(backend: WorkflowBackend): backend is WithQueueSupport {
   return (
     typeof backend.enqueue === "function" &&
@@ -686,6 +720,13 @@ export function hasRunObservationSupport(
   backend: WorkflowBackend,
 ): backend is WithRunObservationSupport {
   return typeof backend.openRunObservation === "function";
+}
+
+/** Check whether fenced terminal-run deletion is available. */
+export function hasTerminalRunRetentionSupport(
+  backend: WorkflowBackend,
+): backend is WithTerminalRunRetentionSupport {
+  return typeof backend.deleteTerminalRunIfUnchanged === "function";
 }
 
 type WithEventWaitSupport =
