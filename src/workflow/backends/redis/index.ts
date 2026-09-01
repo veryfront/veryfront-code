@@ -22,6 +22,7 @@ import {
   type TerminalRunRetentionBatch,
   type TerminalRunRetentionCandidate,
   type WorkflowBackend,
+  type WorkflowQueueDelivery,
   type WorkflowRunObservation,
   type WorkflowRunObservedState,
   type WorkflowRunStateSnapshot,
@@ -58,6 +59,7 @@ const logger = agentLogger.component("redis-backend");
 const arrayIsArray = Array.isArray;
 const arrayPush = Array.prototype.push;
 const arraySlice = Array.prototype.slice;
+const arraySplice = Array.prototype.splice;
 const DateConstructor = Date;
 const dateGetTime = Date.prototype.getTime;
 const dateToISOString = Date.prototype.toISOString;
@@ -3147,7 +3149,7 @@ export class RedisBackend implements WorkflowBackend {
     );
   }
 
-  async dequeue(): Promise<WorkflowQueueItem | null> {
+  async dequeue(): Promise<WorkflowQueueDelivery | null> {
     const client = await this.ensureClient();
 
     const streams = await client.xreadgroup([{ key: this.config.streamKey, xid: ">" }], {
@@ -3178,10 +3180,11 @@ export class RedisBackend implements WorkflowBackend {
       input: data.input ? JSON.parse(data.input) : undefined,
       priority: data.priority ? parseInt(data.priority) : undefined,
       createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
+      deliveryId: message.id,
     };
   }
 
-  async acknowledge(runId: string): Promise<void> {
+  async acknowledge(runId: string, deliveryId?: string): Promise<void> {
     const messageIds = this.pendingMessageIds.get(runId);
     if (!messageIds || messageIds.length === 0) {
       // Nothing tracked in this process — the message was either already acked
@@ -3191,8 +3194,26 @@ export class RedisBackend implements WorkflowBackend {
       return;
     }
 
-    const messageId = messageIds[0]!;
-    const remainingIds = reflectApply(arraySlice, messageIds, [1]) as string[];
+    let messageIndex = 0;
+    if (deliveryId !== undefined) {
+      messageIndex = -1;
+      for (let index = 0; index < messageIds.length; index++) { // NOSONAR: Avoid mutable iterator hooks.
+        if (messageIds[index] === deliveryId) {
+          messageIndex = index;
+          break;
+        }
+      }
+      if (messageIndex < 0) {
+        if (this.config.debug) {
+          logger.debug(`[RedisBackend] Acknowledge (delivery not pending): ${runId}`);
+        }
+        return;
+      }
+    }
+
+    const messageId = messageIds[messageIndex]!;
+    const remainingIds = reflectApply(arraySlice, messageIds, []) as string[];
+    reflectApply(arraySplice, remainingIds, [messageIndex, 1]);
     if (remainingIds.length === 0) this.pendingMessageIds.delete(runId);
     else this.pendingMessageIds.set(runId, remainingIds);
 
@@ -3220,12 +3241,12 @@ export class RedisBackend implements WorkflowBackend {
     }
   }
 
-  async nack(runId: string): Promise<void> {
+  async nack(runId: string, deliveryId?: string): Promise<void> {
     // Commit the replacement before acknowledging the old delivery. The
     // existing retry marker then remains continuous across both Redis turns;
     // an enqueue failure leaves the original PEL entry available for recovery.
     await requeueRun(this, runId);
-    await this.acknowledge(runId);
+    await this.acknowledge(runId, deliveryId);
   }
 
   async acquireLock(runId: string, duration: number): Promise<string | null> {

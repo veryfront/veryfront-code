@@ -406,6 +406,39 @@ describe("workflow terminal-run retention", () => {
     assertEquals((await backend.getRun(retained.id))?.status, "failed");
   });
 
+  it("preserves accepted work when recreating a run without deleting it", async () => {
+    const backend = new MemoryBackend();
+    const retained = run("memory-live-recreation", "failed", new Date(2));
+    await backend.createRun(retained);
+    await backend.enqueue({
+      runId: retained.id,
+      workflowId: retained.workflowId,
+      input: { attempt: 1 },
+      createdAt: new Date(3),
+    });
+    await backend.enqueue({
+      runId: retained.id,
+      workflowId: retained.workflowId,
+      input: { attempt: 2 },
+      createdAt: new Date(4),
+    });
+    assertEquals((await backend.dequeue())?.runId, retained.id);
+
+    await backend.createRun({ ...retained, completedAt: new Date(5) });
+    assertEquals(
+      await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
+      { supported: true, examined: 0, deleted: 0, hasMore: false },
+    );
+
+    await backend.acknowledge(retained.id);
+    assertEquals((await backend.dequeue())?.runId, retained.id);
+    await backend.acknowledge(retained.id);
+    assertEquals(
+      await reapTerminalRuns(backend, { completedBefore: new Date(10) }),
+      { supported: true, examined: 1, deleted: 1, hasMore: false },
+    );
+  });
+
   it("does not delete orphan state accepted after the selected run disappeared", async () => {
     const backend = new MemoryBackend();
     const retained = run("memory-stale-orphan", "failed", new Date(2));

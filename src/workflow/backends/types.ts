@@ -8,8 +8,15 @@ import type {
   WorkflowRun,
   WorkflowStatus,
 } from "../types.ts";
+
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { compareStrings } from "#veryfront/utils/compare.ts";
+
+/** Queue work returned for processing, with an optional backend-scoped receipt. */
+export type WorkflowQueueDelivery = WorkflowQueueItem & {
+  /** Pass this opaque value back when acknowledging or rejecting this exact delivery. */
+  readonly deliveryId?: string;
+};
 
 /** Run state that may change after the immutable run snapshot is created. */
 type WorkflowRunScalarUpdate = Partial<
@@ -394,9 +401,9 @@ export interface WorkflowBackend {
   }): Promise<Array<{ runId: string; approval: PersistedPendingApproval }>>;
 
   enqueue?(job: WorkflowQueueItem): Promise<void>;
-  dequeue?(): Promise<WorkflowQueueItem | null>;
-  acknowledge?(runId: string): Promise<void>;
-  nack?(runId: string): Promise<void>;
+  dequeue?(): Promise<WorkflowQueueDelivery | null>;
+  acknowledge?(runId: string, deliveryId?: string): Promise<void>;
+  nack?(runId: string, deliveryId?: string): Promise<void>;
 
   /** Acquire a lock, returning the owned lockId token on success or null on failure. */
   acquireLock?(runId: string, duration: number): Promise<string | null>;

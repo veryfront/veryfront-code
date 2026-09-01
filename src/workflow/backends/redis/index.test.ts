@@ -220,6 +220,7 @@ class MockRedisAdapter implements RedisAdapter {
 
     if (script.includes("indexed-run-create")) {
       const runId = args[0]!;
+      const retryQueued = this.hashes.get(key)?.get("__terminalRetryQueued");
       const hash = new Map<string, string>();
       for (let index = 3; index < args.length; index += 2) {
         hash.set(args[index]!, args[index + 1]!);
@@ -227,6 +228,7 @@ class MockRedisAdapter implements RedisAdapter {
       const generation = Number(this.store.get(keys[7]!) ?? "0") + 1;
       this.store.set(keys[7]!, String(generation));
       hash.set("__runRetentionRevision", String(generation));
+      if (retryQueued) hash.set("__terminalRetryQueued", retryQueued);
       this.hashes.set(key, hash);
       for (let index = 1; index <= 3; index++) {
         let members = this.sets.get(keys[index]!);
@@ -3810,6 +3812,39 @@ describe("RedisBackend", () => {
       assertEquals((await backend.getRun(runId))?.status, "completed");
     });
 
+    it("preserves accepted work when recreating a run without deleting it", async () => {
+      const runId = "run-retention-live-recreation";
+      await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      await backend.createRun({
+        ...createTestRun(runId),
+        status: "failed",
+        completedAt: new Date(2),
+      });
+      await backend.enqueue({
+        runId,
+        workflowId: "wf-1",
+        input: {},
+        createdAt: new Date(3),
+      });
+      const delivery = await backend.dequeue();
+      assertExists(delivery);
+
+      await backend.createRun({
+        ...createTestRun(runId),
+        status: "failed",
+        completedAt: new Date(4),
+      });
+      let batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      for (let page = 0; page < 10 && batch.hasMore; page++) {
+        batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      }
+      assertEquals(batch.candidates, []);
+
+      await backend.acknowledge(runId, delivery.deliveryId);
+      batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+      assertEquals(batch.candidates.map((candidate) => candidate.runId), [runId]);
+    });
+
     it("returns a bounded oldest-first terminal retention batch", async () => {
       for (
         const [runId, status, completedAt] of [
@@ -6111,6 +6146,41 @@ describe("RedisBackend", () => {
       // Second acknowledge is a no-op (already acked, nothing tracked).
       await backend.acknowledge("run-ackx");
       assertEquals(ackCalls.length, 0);
+    });
+
+    it("acknowledges the exact same-run delivery that completed", async () => {
+      const runId = "run-ack-out-of-order";
+      await backend.createRun({
+        ...createTestRun(runId),
+        status: "failed",
+        completedAt: new Date(2),
+      });
+      for (const attempt of [1, 2]) {
+        await backend.enqueue({
+          runId,
+          workflowId: "wf-1",
+          input: { attempt },
+          createdAt: new Date(attempt),
+        });
+      }
+      const first = await backend.dequeue();
+      const second = await backend.dequeue();
+      assertExists(first);
+      assertExists(second);
+      assertExists(first.deliveryId);
+      assertExists(second.deliveryId);
+
+      await backend.acknowledge(runId, second.deliveryId);
+      assertEquals(mockRedis.queueCleanupAcks.at(-1), second.deliveryId);
+      assertEquals(mockRedis.sets.get(`test:schema-v1:queue-messages:${runId}`)?.size, 1);
+      assertEquals(
+        mockRedis.hashes.get(`test:schema-v1:run:${runId}`)?.get("__terminalRetryQueued"),
+        "1",
+      );
+
+      await backend.acknowledge(runId, first.deliveryId);
+      assertEquals(mockRedis.queueCleanupAcks.at(-1), first.deliveryId);
+      assertEquals(mockRedis.sets.has(`test:schema-v1:queue-messages:${runId}`), false);
     });
 
     it("nack enqueues the replacement before XACKing the consumed message", async () => {

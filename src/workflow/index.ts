@@ -103,6 +103,7 @@ export type {
   TerminalWorkflowStatus,
   WithTerminalRunRetentionSupport,
   WorkflowBackend,
+  WorkflowQueueDelivery,
   WorkflowRunObservation,
   WorkflowRunObservedState,
   WorkflowRunUpdate,

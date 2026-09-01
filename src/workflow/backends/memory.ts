@@ -496,8 +496,6 @@ export class MemoryBackend implements WorkflowBackend {
       run.id,
       cloneWorkflowRunWithContext(runForClone, context),
     );
-    this.terminalRetryQueued.delete(run.id);
-    this.terminalRetryPending.delete(run.id);
     this.runRevisions.set(run.id, 0);
     this.runRetentionRevisions.set(run.id, this.nextRunRetentionGeneration++);
     return Promise.resolve();
