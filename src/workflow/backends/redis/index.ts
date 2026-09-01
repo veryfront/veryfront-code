@@ -19,6 +19,7 @@ import type {
 import {
   assertWorkflowRunUpdate,
   type PersistedPendingApproval,
+  type TerminalRunRetentionBatch,
   type TerminalRunRetentionCandidate,
   type WorkflowBackend,
   type WorkflowRunObservation,
@@ -54,7 +55,14 @@ export type { RedisBackendConfig } from "./types.ts";
 import type { RedisBackendConfig, RedisBackendInternalConfig } from "./types.ts";
 
 const logger = agentLogger.component("redis-backend");
+const arrayIsArray = Array.isArray;
+const arrayPush = Array.prototype.push;
+const DateConstructor = Date;
+const dateGetTime = Date.prototype.getTime;
 const dateToISOString = Date.prototype.toISOString;
+const jsonStringify = JSON.stringify;
+const numberIsFinite = Number.isFinite;
+const numberIsSafeInteger = Number.isSafeInteger;
 const objectDefineProperty = Object.defineProperty;
 const reflectApply = Reflect.apply;
 const REDIS_STORAGE_SCHEMA_VERSION = "schema-v1";
@@ -64,6 +72,7 @@ const RUN_OBSERVATION_REVISION_FIELD = "__runObservationRevision";
 const RUN_OBSERVATION_STREAM_MAX_LENGTH = 64;
 const RUN_OBSERVATION_POLL_INTERVAL_MS = 20;
 const APPROVAL_RECOVERY_SCAN_COUNT = 100;
+const TERMINAL_RETENTION_BACKFILL_VERSION = "v1";
 
 /**
  * Merge top-level JSON objects without decoding their values through Redis's
@@ -286,12 +295,13 @@ const EXTEND_LOCK_SCRIPT =
  * orphan cleanup but never deletes a different extant run.
  *
  * KEYS[1..7] are the run hash and per-run keys. KEYS[8] is the all-runs
- * index, KEYS[9] the expected workflow index, and the remaining keys are every
- * status index. ARGV contains status, workflowId, createdAt, completedAt, and
- * runId. Like the existing status-update scripts, this requires one logical
- * Redis because the keys are not cluster hash-tagged. Returns 1 when Redis
- * state was removed, 2 when the run was already fully absent, and 0 when an
- * extant run no longer matches the candidate.
+ * index, KEYS[9] the expected workflow index, KEYS[10..15] every status index,
+ * and KEYS[16..17] the terminal completion index and member map. ARGV contains
+ * status, workflowId, createdAt, completedAt, and runId. Like the existing
+ * status-update scripts, this requires one logical Redis because the keys are
+ * not cluster hash-tagged. Returns 1 when Redis state was removed, 2 when the
+ * run was already fully absent, and 0 when an extant run no longer matches the
+ * candidate.
  */
 const DELETE_TERMINAL_RUN_IF_UNCHANGED_SCRIPT = `-- conditional-terminal-run-delete
 local runExists = redis.call('exists', KEYS[1])
@@ -307,10 +317,115 @@ end
 
 local removed = 0
 for index = 1, 7 do removed = removed + redis.call('del', KEYS[index]) end
-for index = 8, #KEYS do removed = removed + redis.call('srem', KEYS[index], ARGV[5]) end
+for index = 8, 15 do removed = removed + redis.call('srem', KEYS[index], ARGV[5]) end
+local retentionMember = redis.call('hget', KEYS[17], ARGV[5])
+if retentionMember then
+  removed = removed + redis.call('zrem', KEYS[16], retentionMember)
+  removed = removed + redis.call('hdel', KEYS[17], ARGV[5])
+end
 if removed > 0 then return 1 end
 if runExists == 0 then return 2 end
 return 0`;
+
+const REFRESH_TERMINAL_RETENTION_INDEX_SCRIPT = `-- refresh-terminal-retention-index
+local status = redis.call('hget', KEYS[1], 'status')
+if not status then return 0 end
+if ARGV[2] ~= '' and status ~= ARGV[2] then return 0 end
+local completedAt = redis.call('hget', KEYS[1], 'completedAt') or ''
+if ARGV[3] == '-' then
+  if completedAt ~= '' then return 0 end
+elseif ARGV[3] ~= '' and completedAt ~= ARGV[3] then
+  return 0
+end
+local oldMember = redis.call('hget', KEYS[3], ARGV[1])
+local terminal = status == 'completed' or status == 'failed' or status == 'cancelled'
+if not terminal or completedAt == '' then
+  if oldMember then redis.call('zrem', KEYS[2], oldMember) end
+  redis.call('hdel', KEYS[3], ARGV[1])
+  return 1
+end
+if ARGV[4] == '' then return 1 end
+if oldMember and oldMember ~= ARGV[4] then redis.call('zrem', KEYS[2], oldMember) end
+redis.call('zadd', KEYS[2], 0, ARGV[4])
+redis.call('hset', KEYS[3], ARGV[1], ARGV[4])
+return 1`;
+
+const REMOVE_TERMINAL_RETENTION_INDEX_SCRIPT = `-- remove-terminal-retention-index
+local member = redis.call('hget', KEYS[2], ARGV[1])
+if not member then return 0 end
+redis.call('zrem', KEYS[1], member)
+redis.call('hdel', KEYS[2], ARGV[1])
+return 1`;
+
+const READ_TERMINAL_RETENTION_FIELDS_SCRIPT = `-- read-terminal-retention-fields
+return redis.call(
+  'hmget',
+  KEYS[1],
+  'id',
+  'workflowId',
+  'createdAt',
+  'status',
+  'completedAt'
+)`;
+
+const LIST_TERMINAL_RETENTION_CANDIDATES_SCRIPT = `-- list-terminal-retention-candidates
+local members = redis.call('zrangebylex', KEYS[1], '-', '(' .. ARGV[1], 'LIMIT', 0, ARGV[2])
+local result = { '0' }
+for _, member in ipairs(members) do
+  local decoded = cjson.decode(member)
+  local runId = decoded[2]
+  local mapped = redis.call('hget', KEYS[2], runId)
+  local values = redis.call(
+    'hmget',
+    ARGV[3] .. runId,
+    'workflowId',
+    'createdAt',
+    'status',
+    'completedAt'
+  )
+  local terminal = values[3] == 'completed' or values[3] == 'failed' or
+    values[3] == 'cancelled'
+  if mapped == member and values[1] and values[2] and terminal and
+      values[4] == decoded[1] then
+    table.insert(result, { runId, values[1], values[2], values[3], values[4] })
+  else
+    redis.call('zrem', KEYS[1], member)
+    if mapped == member then redis.call('hdel', KEYS[2], runId) end
+    result[1] = '1'
+  end
+end
+return result`;
+
+function parseRedisTerminalRetentionCandidate(row: unknown): TerminalRunRetentionCandidate {
+  if (
+    !arrayIsArray(row) || row.length !== 5 ||
+    typeof row[0] !== "string" || typeof row[1] !== "string" ||
+    typeof row[2] !== "string" ||
+    (row[3] !== "completed" && row[3] !== "failed" && row[3] !== "cancelled") ||
+    typeof row[4] !== "string"
+  ) {
+    throw ORCHESTRATION_ERROR.create({
+      detail: "Redis returned an invalid terminal-run retention candidate",
+    });
+  }
+  const createdAt = new DateConstructor(row[2]);
+  const completedAt = new DateConstructor(row[4]);
+  if (
+    !numberIsFinite(reflectApply(dateGetTime, createdAt, []) as number) ||
+    !numberIsFinite(reflectApply(dateGetTime, completedAt, []) as number)
+  ) {
+    throw ORCHESTRATION_ERROR.create({
+      detail: "Redis returned an invalid terminal-run retention timestamp",
+    });
+  }
+  return {
+    runId: row[0],
+    workflowId: row[1],
+    createdAt,
+    status: row[3],
+    completedAt,
+  };
+}
 
 /**
  * Atomically claim a still-stalled running run. The caller supplies the exact
@@ -1146,6 +1261,8 @@ export class RedisBackend implements WorkflowBackend {
    */
   private pendingMessageIds = new Map<string, string[]>();
   private runObservationClosers = new Set<() => void>();
+  private terminalRetentionBackfillChecked = false;
+  private terminalRetentionBackfillCursor: number | null = 0;
 
   constructor(config: RedisBackendConfig = {}) {
     const resolvedConfig: RedisBackendInternalConfig = {
@@ -1207,6 +1324,18 @@ export class RedisBackend implements WorkflowBackend {
     return `${this.storagePrefix()}index:runs`;
   }
 
+  private terminalRunRetentionIndexKey(): string {
+    return `${this.storagePrefix()}index:terminal-completed-at`;
+  }
+
+  private terminalRunRetentionMembersKey(): string {
+    return `${this.storagePrefix()}index:terminal-completed-at-members`;
+  }
+
+  private terminalRunRetentionBackfillMarkerKey(): string {
+    return `${this.storagePrefix()}index:terminal-completed-at-backfill-${TERMINAL_RETENTION_BACKFILL_VERSION}`;
+  }
+
   /** Enumerate only runs explicitly indexed in the current storage schema. */
   private enumerateAllRunIds(client: RedisAdapter): Promise<string[]> {
     return client.smembers(this.allRunsIndexKey());
@@ -1218,6 +1347,54 @@ export class RedisBackend implements WorkflowBackend {
 
   private claimKey(runId: string): string {
     return `${this.storagePrefix()}claim:${runId}`;
+  }
+
+  private terminalRetentionMember(runId: string, completedAt: string): string {
+    return reflectApply(jsonStringify, JSON, [[completedAt, runId]]) as string;
+  }
+
+  private async refreshTerminalRetentionIndex(
+    client: RedisAdapter,
+    runId: string,
+    expectedStatus: string,
+    expectedCompletedAt: string,
+    member: string,
+  ): Promise<void> {
+    await client.eval(
+      REFRESH_TERMINAL_RETENTION_INDEX_SCRIPT,
+      [
+        this.runKey(runId),
+        this.terminalRunRetentionIndexKey(),
+        this.terminalRunRetentionMembersKey(),
+      ],
+      [runId, expectedStatus, expectedCompletedAt, member],
+    );
+  }
+
+  private async refreshTerminalRetentionIndexForPatch(
+    client: RedisAdapter,
+    runId: string,
+    patch: WorkflowRunUpdate,
+  ): Promise<void> {
+    const ownsCompletedAt = Object.hasOwn(patch, "completedAt");
+    if (patch.status === undefined && !ownsCompletedAt) return;
+    let expectedCompletedAt = "";
+    let member = "";
+    if (ownsCompletedAt) {
+      if (patch.completedAt === undefined) {
+        expectedCompletedAt = "-";
+      } else {
+        expectedCompletedAt = reflectApply(dateToISOString, patch.completedAt, []) as string;
+        member = this.terminalRetentionMember(runId, expectedCompletedAt);
+      }
+    }
+    await this.refreshTerminalRetentionIndex(
+      client,
+      runId,
+      patch.status ?? "",
+      expectedCompletedAt,
+      member,
+    );
   }
 
   private serializeRun(run: WorkflowRun): Record<string, string> {
@@ -1584,6 +1761,19 @@ export class RedisBackend implements WorkflowBackend {
     await client.sadd(this.workflowIndexKey(run.workflowId), run.id);
     await client.sadd(this.allRunsIndexKey(), run.id);
     await client.xadd(this.runObservationKey(run.id), "*", serializeInitialRunObservation(run));
+    if (
+      run.completedAt !== undefined &&
+      (run.status === "completed" || run.status === "failed" || run.status === "cancelled")
+    ) {
+      const completedAt = reflectApply(dateToISOString, run.completedAt, []) as string;
+      await this.refreshTerminalRetentionIndex(
+        client,
+        run.id,
+        run.status,
+        completedAt,
+        this.terminalRetentionMember(run.id, completedAt),
+      );
+    }
 
     if (this.config.runTtl) {
       await client.expire(this.runKey(run.id), this.config.runTtl);
@@ -1635,6 +1825,7 @@ export class RedisBackend implements WorkflowBackend {
     if (Number(result) === 0) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
     }
+    await this.refreshTerminalRetentionIndexForPatch(client, runId, patch);
 
     // Terminal states should clear stale-claim markers.
     if (patch.status && patch.status !== "running") {
@@ -1727,6 +1918,8 @@ export class RedisBackend implements WorkflowBackend {
     );
     const updated = Number(result) === 1;
 
+    if (updated) await this.refreshTerminalRetentionIndexForPatch(client, runId, patch);
+
     if (updated && patch.status && patch.status !== "running") {
       await client.del(this.claimKey(runId));
     }
@@ -1750,6 +1943,11 @@ export class RedisBackend implements WorkflowBackend {
     await client.srem(this.statusIndexKey(run.status), runId);
     await client.srem(this.workflowIndexKey(run.workflowId), runId);
     await client.srem(this.allRunsIndexKey(), runId);
+    await client.eval(
+      REMOVE_TERMINAL_RETENTION_INDEX_SCRIPT,
+      [this.terminalRunRetentionIndexKey(), this.terminalRunRetentionMembersKey()],
+      [runId],
+    );
     this.pendingMessageIds.delete(runId);
   }
 
@@ -1788,6 +1986,8 @@ export class RedisBackend implements WorkflowBackend {
         this.statusIndexKey("completed"),
         this.statusIndexKey("failed"),
         this.statusIndexKey("cancelled"),
+        this.terminalRunRetentionIndexKey(),
+        this.terminalRunRetentionMembersKey(),
       ],
       [candidate.status, candidate.workflowId, createdAt, completedAt, candidate.runId],
     );
@@ -1798,6 +1998,92 @@ export class RedisBackend implements WorkflowBackend {
       this.pendingMessageIds.delete(candidate.runId);
     }
     return deleted;
+  }
+
+  private async backfillTerminalRetentionIndex(
+    client: RedisAdapter,
+    limit: number,
+  ): Promise<boolean> {
+    if (!this.terminalRetentionBackfillChecked) {
+      this.terminalRetentionBackfillChecked = true;
+      if (await client.get(this.terminalRunRetentionBackfillMarkerKey()) === "1") {
+        this.terminalRetentionBackfillCursor = null;
+      }
+    }
+    const cursor = this.terminalRetentionBackfillCursor;
+    if (cursor === null) return false;
+
+    const runPrefix = `${this.storagePrefix()}run:`;
+    const page = await client.scan(cursor, {
+      MATCH: `${runPrefix}*`,
+      COUNT: limit,
+    });
+    for (let index = 0; index < page.keys.length; index++) {
+      const values = await client.eval(
+        READ_TERMINAL_RETENTION_FIELDS_SCRIPT,
+        [page.keys[index]!],
+        [],
+      );
+      if (!arrayIsArray(values) || values.length !== 5) continue;
+      const [runId, _workflowId, _createdAt, status, completedAt] = values;
+      if (
+        typeof runId !== "string" || typeof completedAt !== "string" ||
+        (status !== "completed" && status !== "failed" && status !== "cancelled")
+      ) continue;
+      await this.refreshTerminalRetentionIndex(
+        client,
+        runId,
+        status,
+        completedAt,
+        this.terminalRetentionMember(runId, completedAt),
+      );
+    }
+
+    this.terminalRetentionBackfillCursor = page.cursor === 0 ? null : page.cursor;
+    if (this.terminalRetentionBackfillCursor === null) {
+      await client.set(this.terminalRunRetentionBackfillMarkerKey(), "1");
+      return false;
+    }
+    return true;
+  }
+
+  /** Return a bounded oldest-first batch without hydrating run payloads. */
+  async listTerminalRunRetentionCandidates(
+    completedBefore: Date,
+    limit: number,
+  ): Promise<TerminalRunRetentionBatch> {
+    let cutoff: string;
+    try {
+      cutoff = reflectApply(dateToISOString, completedBefore, []) as string;
+    } catch {
+      return { candidates: [], hasMore: false };
+    }
+    if (!numberIsSafeInteger(limit) || limit <= 0) {
+      return { candidates: [], hasMore: false };
+    }
+    const client = await this.ensureClient();
+    const backfillIncomplete = await this.backfillTerminalRetentionIndex(client, limit);
+    const raw = await client.eval(
+      LIST_TERMINAL_RETENTION_CANDIDATES_SCRIPT,
+      [this.terminalRunRetentionIndexKey(), this.terminalRunRetentionMembersKey()],
+      [
+        this.terminalRetentionMember("", cutoff),
+        String(limit + 1),
+        `${this.storagePrefix()}run:`,
+      ],
+    );
+    if (!arrayIsArray(raw) || raw.length === 0) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Redis returned an invalid terminal-run retention batch",
+      });
+    }
+    const candidates: TerminalRunRetentionCandidate[] = [];
+    for (let index = 1; index < raw.length; index++) {
+      reflectApply(arrayPush, candidates, [parseRedisTerminalRetentionCandidate(raw[index])]);
+    }
+    const hasMore = backfillIncomplete || raw[0] === "1" || candidates.length > limit;
+    if (candidates.length > limit) candidates.length = limit;
+    return { candidates, hasMore };
   }
 
   async listRuns(filter: RunFilter): Promise<WorkflowRun[]> {

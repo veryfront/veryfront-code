@@ -604,3 +604,9 @@ The backend verifies the run identity, terminal status, and completion time in
 the same operation that deletes its state. A failed run that starts retrying
 after the sweep reads it is retained. After deletion, reads return the existing
 not-found result; this retention API does not create tombstones.
+
+Redis stores a completion-time index and reads at most `limit + 1` candidate
+records per sweep without hydrating run input, output, or context. The first
+sweeps incrementally backfill terminal runs written before the index existed.
+During that backfill, `hasMore` can be `true` even when one sweep examines no
+eligible runs, so continue until it becomes `false` as shown above.

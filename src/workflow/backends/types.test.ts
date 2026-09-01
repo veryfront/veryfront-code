@@ -160,5 +160,11 @@ describe("hasTerminalRunRetentionSupport", () => {
 
     Object.defineProperty(backend, "deleteTerminalRunIfUnchanged", { value: undefined });
     assertEquals(hasTerminalRunRetentionSupport(backend), false);
+
+    const incomplete = new MemoryBackend();
+    Object.defineProperty(incomplete, "listTerminalRunRetentionCandidates", {
+      value: undefined,
+    });
+    assertEquals(hasTerminalRunRetentionSupport(incomplete), false);
   });
 });

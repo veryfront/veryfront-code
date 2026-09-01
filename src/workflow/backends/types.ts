@@ -74,6 +74,14 @@ export interface TerminalRunRetentionCandidate {
   completedAt: Date;
 }
 
+/** Bounded oldest-first terminal snapshots returned by a retention backend. */
+export interface TerminalRunRetentionBatch {
+  /** Oldest eligible snapshots, never exceeding the requested limit. */
+  candidates: TerminalRunRetentionCandidate[];
+  /** Whether another query may return more eligible or backfill work. */
+  hasMore: boolean;
+}
+
 const WORKFLOW_RUN_UPDATE_FIELDS = new Set<keyof WorkflowRunUpdate>([
   "status",
   "output",
@@ -275,12 +283,17 @@ export interface WorkflowBackend {
   /**
    * Delete a run and all backend-owned state only if its terminal snapshot is
    * unchanged. Returns false when a retry or another transition made the
-   * candidate stale. Built-in backends perform the comparison and deletion in
-   * one atomic backend operation.
+   * candidate stale, or when no backend state remains. Built-in backends
+   * perform the comparison and deletion in one atomic backend operation.
    */
   deleteTerminalRunIfUnchanged?(
     candidate: TerminalRunRetentionCandidate,
   ): Promise<boolean>;
+  /** Return at most `limit` oldest terminal snapshots before the cutoff. */
+  listTerminalRunRetentionCandidates?(
+    completedBefore: Date,
+    limit: number,
+  ): Promise<TerminalRunRetentionBatch>;
   listRuns(filter: RunFilter): Promise<WorkflowRun[]>;
   countRuns?(filter: RunFilter): Promise<number>;
 
@@ -698,7 +711,12 @@ type WithRunObservationSupport =
 /** Workflow backend with atomic terminal-run retention support. */
 export type WithTerminalRunRetentionSupport =
   & WorkflowBackend
-  & Required<Pick<WorkflowBackend, "deleteTerminalRunIfUnchanged">>;
+  & Required<
+    Pick<
+      WorkflowBackend,
+      "deleteTerminalRunIfUnchanged" | "listTerminalRunRetentionCandidates"
+    >
+  >;
 
 export function hasQueueSupport(backend: WorkflowBackend): backend is WithQueueSupport {
   return (
@@ -726,7 +744,8 @@ export function hasRunObservationSupport(
 export function hasTerminalRunRetentionSupport(
   backend: WorkflowBackend,
 ): backend is WithTerminalRunRetentionSupport {
-  return typeof backend.deleteTerminalRunIfUnchanged === "function";
+  return typeof backend.deleteTerminalRunIfUnchanged === "function" &&
+    typeof backend.listTerminalRunRetentionCandidates === "function";
 }
 
 type WithEventWaitSupport =

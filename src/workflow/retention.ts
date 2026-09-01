@@ -1,14 +1,7 @@
-import {
-  hasTerminalRunRetentionSupport,
-  type TerminalRunRetentionCandidate,
-  type TerminalWorkflowStatus,
-  type WorkflowBackend,
-} from "./backends/types.ts";
+import { hasTerminalRunRetentionSupport, type WorkflowBackend } from "./backends/types.ts";
 import { DEFAULT_WORKFLOW_RUN_LIST_LIMIT, MAX_WORKFLOW_RUN_LIST_LIMIT } from "./limits.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
-const arraySort = Array.prototype.sort;
-const arrayPush = Array.prototype.push;
 const dateGetTime = Date.prototype.getTime;
 const mathMin = Math.min;
 const numberIsFinite = Number.isFinite;
@@ -40,10 +33,6 @@ function dateTimestamp(value: Date): number | undefined {
   } catch {
     return undefined;
   }
-}
-
-function isTerminalStatus(status: string): status is TerminalWorkflowStatus {
-  return status === "completed" || status === "failed" || status === "cancelled";
 }
 
 function retentionLimit(limit: number | undefined): number {
@@ -82,43 +71,19 @@ export async function reapTerminalRuns(
     });
   }
   const limit = retentionLimit(options.limit);
-  const runs = await backend.listRuns({
-    status: ["completed", "failed", "cancelled"],
-  });
-  const eligible: Array<TerminalRunRetentionCandidate & { timestamp: number }> = [];
-  for (let index = 0; index < runs.length; index++) {
-    const run = runs[index]!;
-    if (!isTerminalStatus(run.status) || run.completedAt === undefined) continue;
-    const timestamp = dateTimestamp(run.completedAt);
-    if (timestamp === undefined || timestamp >= cutoff) continue;
-    reflectApply(arrayPush, eligible, [{
-      runId: run.id,
-      workflowId: run.workflowId,
-      createdAt: run.createdAt,
-      status: run.status,
-      completedAt: run.completedAt,
-      timestamp,
-    }]);
-  }
-  reflectApply(arraySort, eligible, [
-    (
-      left: TerminalRunRetentionCandidate & { timestamp: number },
-      right: TerminalRunRetentionCandidate & { timestamp: number },
-    ) =>
-      left.timestamp - right.timestamp ||
-      (left.runId === right.runId ? 0 : left.runId < right.runId ? -1 : 1),
-  ]);
-
-  const examined = mathMin(limit, eligible.length);
+  const batch = await backend.listTerminalRunRetentionCandidates(
+    options.completedBefore,
+    limit,
+  );
+  const examined = mathMin(limit, batch.candidates.length);
   let deleted = 0;
   for (let index = 0; index < examined; index++) {
-    const { timestamp: _timestamp, ...candidate } = eligible[index]!;
-    if (await backend.deleteTerminalRunIfUnchanged(candidate)) deleted += 1;
+    if (await backend.deleteTerminalRunIfUnchanged(batch.candidates[index]!)) deleted += 1;
   }
   return {
     supported: true,
     examined,
     deleted,
-    hasMore: eligible.length > examined,
+    hasMore: batch.hasMore,
   };
 }

@@ -136,6 +136,40 @@ describe("workflow terminal-run retention", () => {
     assertEquals((await backend.getRun("retrying"))?.status, "pending");
   });
 
+  it("uses the bounded retention query instead of hydrating every run", async () => {
+    class NoFullListBackend extends MemoryBackend {
+      override listRuns(): Promise<WorkflowRun[]> {
+        throw new Error("full run listing must not be used by retention");
+      }
+    }
+
+    const backend = new NoFullListBackend();
+    await backend.createRun(run("bounded", "completed", new Date(1)));
+
+    assertEquals(
+      await reapTerminalRuns(backend, { completedBefore: new Date(10), limit: 1 }),
+      { supported: true, examined: 1, deleted: 1, hasMore: false },
+    );
+  });
+
+  it("returns false for an invalid direct deletion candidate", async () => {
+    const backend = new MemoryBackend();
+    const retained = run("invalid-candidate", "completed", new Date(1));
+    await backend.createRun(retained);
+
+    assertEquals(
+      await backend.deleteTerminalRunIfUnchanged({
+        runId: retained.id,
+        workflowId: retained.workflowId,
+        createdAt: undefined as unknown as Date,
+        status: "completed",
+        completedAt: retained.completedAt!,
+      }),
+      false,
+    );
+    assertEquals((await backend.getRun(retained.id))?.status, "completed");
+  });
+
   it("reports unsupported backends without invoking partial cleanup", async () => {
     const backend = new MemoryBackend();
     Object.defineProperty(backend, "deleteTerminalRunIfUnchanged", { value: undefined });

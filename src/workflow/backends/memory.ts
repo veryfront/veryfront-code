@@ -27,6 +27,7 @@ import {
   type PersistedPendingEventWait,
   type RunEventDeliveryClaim,
   type RunEventEnvelope,
+  type TerminalRunRetentionBatch,
   type TerminalRunRetentionCandidate,
   type WorkflowBackend,
   type WorkflowRunObservation,
@@ -55,7 +56,10 @@ const logger = baseLogger.component("memory-backend");
 const ArrayConstructor = Array;
 const arrayIsArray = Array.isArray;
 const arrayFilter = Array.prototype.filter;
+const arrayPop = Array.prototype.pop;
 const arraySome = Array.prototype.some;
+const arraySplice = Array.prototype.splice;
+const DateConstructor = Date;
 const dateGetTime = Date.prototype.getTime;
 const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
@@ -65,7 +69,9 @@ const objectKeys = Object.keys;
 const objectPrototype = Object.prototype;
 const jsonParse = JSON.parse;
 const mathFloor = Math.floor;
+const numberIsFinite = Number.isFinite;
 const numberIsNaN = Number.isNaN;
+const numberIsSafeInteger = Number.isSafeInteger;
 const NUMBER_MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
 const reflectApply = Reflect.apply;
 const SetConstructor = Set;
@@ -93,6 +99,55 @@ interface MaterializedMemoryRunUpdate {
   readonly nodeStatePatch: WorkflowRun["nodeStates"] | undefined;
   readonly nodeStateDeleteKeys: string[];
   readonly storedPatch: WorkflowRunUpdate;
+}
+
+function memoryTerminalRetentionCandidate(
+  run: WorkflowRun,
+  cutoff: number,
+): TerminalRunRetentionCandidate | undefined {
+  if (
+    run.status !== "completed" && run.status !== "failed" &&
+    run.status !== "cancelled"
+  ) return undefined;
+  if (run.completedAt === undefined) return undefined;
+  const completedAt = reflectApply(dateGetTime, run.completedAt, []) as number;
+  const createdAt = reflectApply(dateGetTime, run.createdAt, []) as number;
+  if (!numberIsFinite(completedAt) || !numberIsFinite(createdAt) || completedAt >= cutoff) {
+    return undefined;
+  }
+  return {
+    runId: run.id,
+    workflowId: run.workflowId,
+    createdAt: new DateConstructor(createdAt),
+    status: run.status,
+    completedAt: new DateConstructor(completedAt),
+  };
+}
+
+function compareTerminalRetentionCandidates(
+  left: TerminalRunRetentionCandidate,
+  right: TerminalRunRetentionCandidate,
+): number {
+  const leftCompletedAt = reflectApply(dateGetTime, left.completedAt, []) as number;
+  const rightCompletedAt = reflectApply(dateGetTime, right.completedAt, []) as number;
+  return leftCompletedAt - rightCompletedAt ||
+    (left.runId === right.runId ? 0 : left.runId < right.runId ? -1 : 1);
+}
+
+function insertBoundedTerminalRetentionCandidate(
+  candidates: TerminalRunRetentionCandidate[],
+  candidate: TerminalRunRetentionCandidate,
+  limit: number,
+): boolean {
+  let insertAt = 0;
+  while (
+    insertAt < candidates.length &&
+    compareTerminalRetentionCandidates(candidates[insertAt]!, candidate) <= 0
+  ) insertAt += 1;
+  reflectApply(arraySplice, candidates, [insertAt, 0, candidate]);
+  if (candidates.length <= limit) return false;
+  reflectApply(arrayPop, candidates, []);
+  return true;
 }
 
 interface PreparedMemoryRunCondition {
@@ -688,14 +743,23 @@ export class MemoryBackend implements WorkflowBackend {
   deleteTerminalRunIfUnchanged(
     candidate: TerminalRunRetentionCandidate,
   ): Promise<boolean> {
+    let expectedCreatedAt: number;
+    let expectedCompletedAt: number;
+    try {
+      expectedCreatedAt = reflectApply(dateGetTime, candidate.createdAt, []) as number;
+      expectedCompletedAt = reflectApply(dateGetTime, candidate.completedAt, []) as number;
+    } catch {
+      return Promise.resolve(false);
+    }
+    if (!numberIsFinite(expectedCreatedAt) || !numberIsFinite(expectedCompletedAt)) {
+      return Promise.resolve(false);
+    }
     const run = this.runs.get(candidate.runId);
     if (run !== undefined) {
       const createdAt = reflectApply(dateGetTime, run.createdAt, []) as number;
-      const expectedCreatedAt = reflectApply(dateGetTime, candidate.createdAt, []) as number;
       const completedAt = run.completedAt === undefined
         ? undefined
         : reflectApply(dateGetTime, run.completedAt, []) as number;
-      const expectedCompletedAt = reflectApply(dateGetTime, candidate.completedAt, []) as number;
       if (
         run.workflowId !== candidate.workflowId || run.status !== candidate.status ||
         createdAt !== expectedCreatedAt || completedAt !== expectedCompletedAt ||
@@ -705,6 +769,30 @@ export class MemoryBackend implements WorkflowBackend {
       }
     }
     return Promise.resolve(this.deleteRunState(candidate.runId));
+  }
+
+  listTerminalRunRetentionCandidates(
+    completedBefore: Date,
+    limit: number,
+  ): Promise<TerminalRunRetentionBatch> {
+    let cutoff: number;
+    try {
+      cutoff = reflectApply(dateGetTime, completedBefore, []) as number;
+    } catch {
+      return Promise.resolve({ candidates: [], hasMore: false });
+    }
+    if (!numberIsFinite(cutoff) || !numberIsSafeInteger(limit) || limit <= 0) {
+      return Promise.resolve({ candidates: [], hasMore: false });
+    }
+
+    const candidates: TerminalRunRetentionCandidate[] = [];
+    let hasMore = false;
+    for (const run of this.runs.values()) {
+      const candidate = memoryTerminalRetentionCandidate(run, cutoff);
+      if (candidate === undefined) continue;
+      if (insertBoundedTerminalRetentionCandidate(candidates, candidate, limit)) hasMore = true;
+    }
+    return Promise.resolve({ candidates, hasMore });
   }
 
   openRunObservation(

@@ -98,6 +98,7 @@ export type {
 export type {
   BackendConfig,
   RunEventEnvelope,
+  TerminalRunRetentionBatch,
   TerminalRunRetentionCandidate,
   TerminalWorkflowStatus,
   WithTerminalRunRetentionSupport,

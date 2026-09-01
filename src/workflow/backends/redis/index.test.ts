@@ -49,13 +49,16 @@ class MockRedisAdapter implements RedisAdapter {
   hashes = new Map<string, Map<string, string>>();
   lists = new Map<string, string[]>();
   sets = new Map<string, Set<string>>();
+  sortedSets = new Map<string, Map<string, number>>();
   expiries = new Map<string, number>();
   streams = new Map<string, Array<{ id: string; data: Record<string, string> }>>();
   lastScript = "";
   lastKeys: string[] = [];
   lastArgs: string[] = [];
+  scriptCalls: Array<{ script: string; keys: string[]; args: string[] }> = [];
   groups = new Map<string, Set<string>>();
   nextStreamSequence = 1;
+  hgetallCallCount = 0;
   keysCallCount = 0;
   scanPageSize?: number;
   scanCalls: Array<{
@@ -110,6 +113,7 @@ class MockRedisAdapter implements RedisAdapter {
   }
 
   hgetall(key: string): Promise<Record<string, string>> {
+    this.hgetallCallCount += 1;
     const map = this.hashes.get(key);
     return Promise.resolve(map ? Object.fromEntries(map) : {});
   }
@@ -164,6 +168,7 @@ class MockRedisAdapter implements RedisAdapter {
       if (this.hashes.delete(key)) count++;
       if (this.lists.delete(key)) count++;
       if (this.sets.delete(key)) count++;
+      if (this.sortedSets.delete(key)) count++;
       if (this.streams.delete(key)) count++;
     }
     return Promise.resolve(count);
@@ -204,6 +209,93 @@ class MockRedisAdapter implements RedisAdapter {
     this.lastScript = script;
     this.lastKeys = [...keys];
     this.lastArgs = [...args];
+    this.scriptCalls.push({ script, keys: [...keys], args: [...args] });
+
+    if (script.includes("refresh-terminal-retention-index")) {
+      const hash = this.hashes.get(key);
+      if (!hash) return Promise.resolve(0);
+      const status = hash.get("status") ?? "";
+      const completedAt = hash.get("completedAt") ?? "";
+      if (args[1] && status !== args[1]) return Promise.resolve(0);
+      if (args[2] === "-" ? completedAt !== "" : args[2] && completedAt !== args[2]) {
+        return Promise.resolve(0);
+      }
+      let members = this.hashes.get(keys[2]!);
+      if (!members) {
+        members = new Map();
+        this.hashes.set(keys[2]!, members);
+      }
+      let index = this.sortedSets.get(keys[1]!);
+      if (!index) {
+        index = new Map();
+        this.sortedSets.set(keys[1]!, index);
+      }
+      const oldMember = members.get(args[0]!);
+      const terminal = status === "completed" || status === "failed" || status === "cancelled";
+      if (!terminal || completedAt === "") {
+        if (oldMember) index.delete(oldMember);
+        members.delete(args[0]!);
+        return Promise.resolve(1);
+      }
+      if (!args[3]) return Promise.resolve(1);
+      if (oldMember && oldMember !== args[3]) index.delete(oldMember);
+      index.set(args[3], 0);
+      members.set(args[0]!, args[3]);
+      return Promise.resolve(1);
+    }
+
+    if (script.includes("remove-terminal-retention-index")) {
+      const members = this.hashes.get(keys[1]!);
+      const member = members?.get(args[0]!);
+      if (!member) return Promise.resolve(0);
+      this.sortedSets.get(key)?.delete(member);
+      members!.delete(args[0]!);
+      return Promise.resolve(1);
+    }
+
+    if (script.includes("read-terminal-retention-fields")) {
+      const hash = this.hashes.get(key);
+      return Promise.resolve([
+        hash?.get("id") ?? null,
+        hash?.get("workflowId") ?? null,
+        hash?.get("createdAt") ?? null,
+        hash?.get("status") ?? null,
+        hash?.get("completedAt") ?? null,
+      ]);
+    }
+
+    if (script.includes("list-terminal-retention-candidates")) {
+      const members = this.hashes.get(keys[1]!);
+      const ordered = [...(this.sortedSets.get(key)?.keys() ?? [])]
+        .filter((member) => member < args[0]!)
+        .sort()
+        .slice(0, Number(args[1]));
+      const result: unknown[] = ["0"];
+      for (const member of ordered) {
+        const decoded = JSON.parse(member) as [string, string];
+        const [completedAt, runId] = decoded;
+        const hash = this.hashes.get(`${args[2]}${runId}`);
+        const status = hash?.get("status");
+        const terminal = status === "completed" || status === "failed" || status === "cancelled";
+        if (
+          members?.get(runId) === member && hash?.get("workflowId") &&
+          hash.get("createdAt") && terminal && hash.get("completedAt") === completedAt
+        ) {
+          result.push([
+            runId,
+            hash.get("workflowId"),
+            hash.get("createdAt"),
+            status,
+            completedAt,
+          ]);
+        } else {
+          this.sortedSets.get(key)?.delete(member);
+          if (members?.get(runId) === member) members.delete(runId);
+          result[0] = "1";
+        }
+      }
+      return Promise.resolve(result);
+    }
 
     if (script.includes("conditional-terminal-run-delete")) {
       const hash = this.hashes.get(key);
@@ -223,8 +315,14 @@ class MockRedisAdapter implements RedisAdapter {
         if (this.streams.delete(dataKey)) removed += 1;
         this.expiries.delete(dataKey);
       }
-      for (const indexKey of keys.slice(7)) {
+      for (const indexKey of keys.slice(7, 15)) {
         if (this.sets.get(indexKey)?.delete(args[4]!)) removed += 1;
+      }
+      const retentionMembers = this.hashes.get(keys[16]!);
+      const retentionMember = retentionMembers?.get(args[4]!);
+      if (retentionMember) {
+        if (this.sortedSets.get(keys[15]!)?.delete(retentionMember)) removed += 1;
+        if (retentionMembers!.delete(args[4]!)) removed += 1;
       }
       if (removed > 0) return Promise.resolve(1);
       return Promise.resolve(hash === undefined ? 2 : 0);
@@ -2466,14 +2564,17 @@ describe("RedisBackend", () => {
 
       // The replace flag must sit at the fixed ARGV slot the Lua reads, and
       // the script must branch on it rather than always merging.
+      const restoreCall = mockRedis.scriptCalls.findLast(({ script }) =>
+        script.includes("conditional-run-update")
+      )!;
       assertStringIncludes(
-        mockRedis.lastScript,
+        restoreCall.script,
         "local replaceMaps = ARGV[expectedCount + 8] == '1'",
         "the replacement flag must live in the Lua the backend executes, not only in the mock",
       );
-      const restoreArgvCount = Number(mockRedis.lastArgs[0]);
+      const restoreArgvCount = Number(restoreCall.args[0]);
       assertEquals(
-        mockRedis.lastArgs[restoreArgvCount + 7],
+        restoreCall.args[restoreArgvCount + 7],
         "1",
         "the snapshot restore must set the replace-maps flag at the ARGV index the Lua reads",
       );
@@ -2861,9 +2962,12 @@ describe("RedisBackend", () => {
         "test:schema-v1:index:status:completed",
         "test:schema-v1:index:status:failed",
         "test:schema-v1:index:status:cancelled",
+        "test:schema-v1:index:terminal-completed-at",
+        "test:schema-v1:index:terminal-completed-at-members",
       ]);
       assertStringIncludes(mockRedis.lastScript, "for index = 1, 7");
-      assertStringIncludes(mockRedis.lastScript, "for index = 8, #KEYS");
+      assertStringIncludes(mockRedis.lastScript, "for index = 8, 15");
+      assertStringIncludes(mockRedis.lastScript, "redis.call('zrem', KEYS[16]");
       assertEquals(await backend.deleteTerminalRunIfUnchanged(candidate), false);
       assertEquals(await backend.getRun(runId), null);
       assertEquals(await backend.getCheckpoints(runId), []);
@@ -2941,6 +3045,115 @@ describe("RedisBackend", () => {
         false,
       );
       assertEquals((await backend.getRun(runId))?.createdAt, replacement.createdAt);
+    });
+
+    it("returns false for an invalid terminal deletion timestamp", async () => {
+      const runId = "run-retention-invalid-date";
+      const retained = {
+        ...createTestRun(runId),
+        status: "completed",
+        completedAt: new Date(2),
+      } as const;
+      await backend.createRun(retained);
+
+      assertEquals(
+        await backend.deleteTerminalRunIfUnchanged({
+          runId,
+          workflowId: retained.workflowId,
+          createdAt: undefined as unknown as Date,
+          status: "completed",
+          completedAt: retained.completedAt,
+        }),
+        false,
+      );
+      assertEquals((await backend.getRun(runId))?.status, "completed");
+    });
+
+    it("returns a bounded oldest-first terminal retention batch", async () => {
+      for (
+        const [runId, status, completedAt] of [
+          ["retention-oldest", "completed", new Date(1)],
+          ["retention-middle", "failed", new Date(2)],
+          ["retention-newest", "cancelled", new Date(3)],
+          ["retention-active", "waiting", undefined],
+        ] as const
+      ) {
+        await backend.createRun({
+          ...createTestRun(runId),
+          status,
+          completedAt,
+        });
+      }
+
+      const readsBefore = mockRedis.hgetallCallCount;
+      const batch = await backend.listTerminalRunRetentionCandidates(new Date(10), 2);
+
+      assertEquals(batch.hasMore, true);
+      assertEquals(batch.candidates.map(({ runId }) => runId), [
+        "retention-oldest",
+        "retention-middle",
+      ]);
+      assertEquals(
+        batch.candidates.every((candidate) => Object.keys(candidate).length === 5),
+        true,
+      );
+      assertEquals(mockRedis.hgetallCallCount, readsBefore);
+      assertStringIncludes(mockRedis.lastScript, "zrangebylex");
+      assertEquals(mockRedis.lastArgs[1], "3");
+    });
+
+    it("indexes terminal transitions and removes a retried run", async () => {
+      const runId = "retention-transition";
+      const completedAt = new Date(2);
+      await backend.createRun(createTestRun(runId));
+      await backend.updateRun(runId, { status: "failed", completedAt });
+      assertStringIncludes(mockRedis.lastScript, "status ~= ARGV[2]");
+      assertStringIncludes(mockRedis.lastScript, "completedAt ~= ARGV[3]");
+      assertStringIncludes(mockRedis.lastScript, "redis.call('zadd', KEYS[2]");
+
+      assertEquals(
+        (await backend.listTerminalRunRetentionCandidates(new Date(10), 1)).candidates.map(
+          (candidate) => candidate.runId,
+        ),
+        [runId],
+      );
+
+      await backend.updateRun(runId, { status: "pending", completedAt: undefined });
+      assertStringIncludes(mockRedis.lastScript, "redis.call('zrem', KEYS[2]");
+      assertEquals(
+        (await backend.listTerminalRunRetentionCandidates(new Date(10), 1)).candidates,
+        [],
+      );
+    });
+
+    it("incrementally backfills terminal runs created before the retention index", async () => {
+      const runId = "retention-backfill";
+      await backend.createRun({
+        ...createTestRun(runId),
+        status: "completed",
+        completedAt: new Date(2),
+      });
+      mockRedis.sortedSets.clear();
+      mockRedis.hashes.delete("test:schema-v1:index:terminal-completed-at-members");
+      mockRedis.store.delete("test:schema-v1:index:terminal-completed-at-backfill-v1");
+      mockRedis.scanPageSize = 1;
+      const reader = new RedisBackend({
+        client: mockRedis as unknown as RedisAdapter,
+        prefix: "test:",
+      });
+
+      let found = false;
+      for (let page = 0; page < 20 && !found; page++) {
+        const batch = await reader.listTerminalRunRetentionCandidates(new Date(10), 1);
+        found = batch.candidates.some((candidate) => candidate.runId === runId);
+        if (!batch.hasMore) break;
+      }
+
+      assertEquals(found, true);
+      assertEquals(
+        mockRedis.store.get("test:schema-v1:index:terminal-completed-at-backfill-v1"),
+        "1",
+      );
     });
   });
 
