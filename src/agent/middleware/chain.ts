@@ -8,7 +8,13 @@ const IntrinsicPromiseThen = Promise.prototype.then;
 const INVALID_CONTINUATION_ERRORS = new WeakSet<object>();
 const CONTINUATION_OBSERVATIONS = new WeakMap<object, { observed: boolean }>();
 type ContinuationSpeciesHolder = { [Symbol.species]: PromiseConstructor };
-const SETTLED_DEFERRED_CONTINUATIONS = new WeakSet<object>();
+interface DeferredContinuationState {
+  dispatchStarted: boolean;
+  reject?: (reason?: unknown) => void;
+  settled: boolean;
+  thenCalls: number;
+}
+const DEFERRED_CONTINUATION_STATES = new WeakMap<object, DeferredContinuationState>();
 
 function createInvalidContinuationError(): VeryfrontError {
   const error = MIDDLEWARE_ERROR.create({ message: INVALID_CONTINUATION_MESSAGE });
@@ -30,8 +36,14 @@ function markContinuationObserved(promise: Promise<unknown>): void {
 }
 
 function markDeferredSettled(promise: Promise<unknown>, _error: unknown): void {
-  if (SETTLED_DEFERRED_CONTINUATIONS.has(promise)) return;
-  SETTLED_DEFERRED_CONTINUATIONS.add(promise);
+  const state = DEFERRED_CONTINUATION_STATES.get(promise);
+  if (!state || state.settled) return;
+  state.settled = true;
+}
+
+function markDeferredDispatchStarted(promise: Promise<unknown>): void {
+  const state = DEFERRED_CONTINUATION_STATES.get(promise);
+  if (state && !state.settled) state.dispatchStarted = true;
 }
 
 function containRejection(promise: Promise<unknown>): void {
@@ -79,6 +91,25 @@ function rejectInvalidContinuation(): Promise<AgentResponse> {
 }
 
 class DeferredContinuationPromise extends Promise<AgentResponse> {
+  constructor(
+    executor: (
+      resolve: (value: AgentResponse | PromiseLike<AgentResponse>) => void,
+      reject: (reason?: unknown) => void,
+    ) => void,
+  ) {
+    let rejectCapability: ((reason?: unknown) => void) | undefined;
+    super((resolve, reject) => {
+      rejectCapability = reject;
+      executor(resolve, reject);
+    });
+    DEFERRED_CONTINUATION_STATES.set(this, {
+      dispatchStarted: false,
+      reject: rejectCapability,
+      settled: false,
+      thenCalls: 0,
+    });
+  }
+
   override then<TResult1 = AgentResponse, TResult2 = never>(
     onFulfilled?:
       | ((value: AgentResponse) => TResult1 | PromiseLike<TResult1>)
@@ -88,6 +119,13 @@ class DeferredContinuationPromise extends Promise<AgentResponse> {
       | null,
   ): Promise<TResult1 | TResult2> {
     markContinuationObserved(this);
+    const state = DEFERRED_CONTINUATION_STATES.get(this);
+    if (state && state.dispatchStarted && !state.settled) {
+      state.thenCalls += 1;
+      if (state.thenCalls > 1) {
+        state.reject?.(new TypeError("Your middleware continuation cannot resolve to itself"));
+      }
+    }
     const derived = IntrinsicPromiseThen.call(
       this,
       onFulfilled,
@@ -153,6 +191,7 @@ function createDeferredContinuation(
         reject(error);
         return;
       }
+      markDeferredDispatchStarted(continuation);
       const dispatched = dispatch();
       if (dispatched === continuation) {
         reject(new TypeError("Your middleware continuation cannot resolve to itself"));
