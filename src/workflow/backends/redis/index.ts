@@ -807,6 +807,42 @@ function serializeDateInstant(value: Date): string {
   return reflectApply(dateToISOString, new DateConstructor(timestamp), []) as string;
 }
 
+interface TerminalRunRetentionIndexRepair {
+  runId: string;
+  status: "completed" | "failed" | "cancelled";
+  expectedCreatedAt: string;
+  expectedCompletedAt: string;
+  canonicalCreatedAt: string;
+  canonicalCompletedAt: string;
+  completedAtMs: string;
+}
+
+function parseTerminalRunRetentionIndexRepair(
+  values: unknown,
+): TerminalRunRetentionIndexRepair | null {
+  if (!arrayIsArray(values) || values.length !== 6) return null;
+  const [runId, _workflowId, createdAt, status, completedAt] = values;
+  if (
+    typeof runId !== "string" || typeof createdAt !== "string" ||
+    typeof completedAt !== "string" ||
+    (status !== "completed" && status !== "failed" && status !== "cancelled")
+  ) return null;
+  const parsedCreatedAt = new DateConstructor(createdAt);
+  const parsedCompletedAt = new DateConstructor(completedAt);
+  const createdTimestamp = reflectApply(dateGetTime, parsedCreatedAt, []) as number;
+  const completedTimestamp = reflectApply(dateGetTime, parsedCompletedAt, []) as number;
+  if (!numberIsFinite(createdTimestamp) || !numberIsFinite(completedTimestamp)) return null;
+  return {
+    runId,
+    status,
+    expectedCreatedAt: createdAt,
+    expectedCompletedAt: completedAt,
+    canonicalCreatedAt: serializeDateInstant(parsedCreatedAt),
+    canonicalCompletedAt: serializeDateInstant(parsedCompletedAt),
+    completedAtMs: String(completedTimestamp),
+  };
+}
+
 function escapeRedisGlobLiteral(value: string): string {
   let escaped = "";
   for (let index = 0; index < value.length; index++) { // NOSONAR: Avoid mutable iterator hooks.
@@ -1812,29 +1848,23 @@ export class RedisBackend implements WorkflowBackend {
 
   private async refreshTerminalRetentionIndex(
     client: RedisAdapter,
-    runId: string,
-    expectedStatus: string,
-    expectedCreatedAt: string,
-    expectedCompletedAt: string,
-    canonicalCreatedAt: string,
-    canonicalCompletedAt: string,
-    completedAtMs: string,
+    repair: TerminalRunRetentionIndexRepair,
   ): Promise<void> {
     await client.eval(
       REFRESH_TERMINAL_RETENTION_INDEX_SCRIPT,
       [
-        this.runKey(runId),
+        this.runKey(repair.runId),
         this.terminalRunRetentionIndexKey(),
         this.terminalRunRetentionMembersKey(),
       ],
       [
-        runId,
-        expectedStatus,
-        expectedCreatedAt,
-        expectedCompletedAt,
-        canonicalCreatedAt,
-        canonicalCompletedAt,
-        completedAtMs,
+        repair.runId,
+        repair.status,
+        repair.expectedCreatedAt,
+        repair.expectedCompletedAt,
+        repair.canonicalCreatedAt,
+        repair.canonicalCompletedAt,
+        repair.completedAtMs,
       ],
     );
   }
@@ -2610,38 +2640,9 @@ export class RedisBackend implements WorkflowBackend {
         [key],
         [],
       );
-      if (!arrayIsArray(values) || values.length !== 6) continue;
-      const [runId, _workflowId, createdAt, status, completedAt] = values;
-      let canonicalCreatedAt: string | undefined;
-      let canonicalCompletedAt: string | undefined;
-      let completedAtMs: number | undefined;
-      if (typeof createdAt === "string" && typeof completedAt === "string") {
-        const parsedCreatedAt = new DateConstructor(createdAt);
-        const parsedCompletedAt = new DateConstructor(completedAt);
-        const createdTimestamp = reflectApply(dateGetTime, parsedCreatedAt, []) as number;
-        const timestamp = reflectApply(dateGetTime, parsedCompletedAt, []) as number;
-        if (numberIsFinite(createdTimestamp) && numberIsFinite(timestamp)) {
-          canonicalCreatedAt = serializeDateInstant(parsedCreatedAt);
-          canonicalCompletedAt = serializeDateInstant(parsedCompletedAt);
-          completedAtMs = timestamp;
-        }
-      }
-      if (
-        typeof runId !== "string" || typeof createdAt !== "string" ||
-        typeof completedAt !== "string" || canonicalCreatedAt === undefined ||
-        canonicalCompletedAt === undefined || completedAtMs === undefined ||
-        (status !== "completed" && status !== "failed" && status !== "cancelled")
-      ) continue;
-      await this.refreshTerminalRetentionIndex(
-        client,
-        runId,
-        status,
-        createdAt,
-        completedAt,
-        canonicalCreatedAt,
-        canonicalCompletedAt,
-        String(completedAtMs),
-      );
+      const repair = parseTerminalRunRetentionIndexRepair(values);
+      if (repair === null) continue;
+      await this.refreshTerminalRetentionIndex(client, repair);
     }
 
     this.terminalRetentionBackfillCursor = nextCursor;
