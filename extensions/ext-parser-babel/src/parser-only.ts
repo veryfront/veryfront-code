@@ -28,19 +28,20 @@ export interface BabelParseOnlyOptions extends ParseOptions {
 /**
  * The path the plugin choice reasons about.
  *
- * Markdown and MDX can reach this parser as compiled JSX, and the authored
- * `.md` or `.mdx` extension would switch JSX off, so the emitted markup parses
- * as a regular expression and throws "Unterminated regular expression". Map
- * them onto a `.tsx` path for the plugin choice only. Nothing else reads this
- * value, and `.ts` keeps `<T>x` a type assertion because only Markdown paths
- * are rewritten.
+ * Embedded framework sources add a terminal `.src` to the original extension,
+ * so remove that wrapper before selecting syntax. Markdown and MDX can reach
+ * this parser as compiled JSX, and their authored extension would switch JSX
+ * off, so map them onto a JSX-capable path after unwrapping. Nothing else reads
+ * this value, and `.ts` keeps `<T>x` as a type assertion.
  */
 function parseablePath(
   filePath: string | undefined,
   syntax: "javascript" | "typescript",
 ): string | undefined {
   if (filePath === undefined) return undefined;
-  return filePath.replace(/\.mdx?$/i, syntax === "typescript" ? ".tsx" : ".jsx");
+  return filePath
+    .replace(/\.src$/i, "")
+    .replace(/\.mdx?$/i, syntax === "typescript" ? ".tsx" : ".jsx");
 }
 
 function pickPlugins(
@@ -96,14 +97,14 @@ function isAstNode(value: unknown): value is ASTNode {
  */
 export class BabelParseOnlyParser implements BabelParseOnlyParserContract {
   async parse(options: BabelParseOnlyOptions): Promise<ASTNode> {
-    const filePath = options.filePath?.toLowerCase() ?? "";
     const decoratorMode = options.decoratorMode ?? "compatible";
     const syntax = options.syntax ?? "typescript";
+    const filePath = parseablePath(options.filePath, syntax)?.toLowerCase() ?? "";
     const parseOptions: parser.ParserOptions = {
       sourceType: "unambiguous",
       allowReturnOutsideFunction: options.allowReturnOutsideFunction === true ||
         /\.(?:cjs|js)$/.test(filePath),
-      plugins: pickPlugins(parseablePath(options.filePath, syntax), syntax),
+      plugins: pickPlugins(filePath, syntax),
     };
     const ast = (() => {
       try {
@@ -116,7 +117,7 @@ export class BabelParseOnlyParser implements BabelParseOnlyParserContract {
           return parser.parse(options.code, {
             ...parseOptions,
             plugins: pickLegacyDecoratorPlugins(
-              parseablePath(options.filePath, syntax),
+              filePath,
               syntax,
             ),
           });
