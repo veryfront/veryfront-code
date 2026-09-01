@@ -5887,6 +5887,29 @@ export default config as const;
         assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
       });
 
+      it("skips reconstruction for formatting CSI after long literal spans", async () => {
+        const gap = 4096;
+        const repeats = 32;
+        const control = await fastestLoad(
+          "vf-config-spaced-csi-control-",
+          `throw new Error("a".repeat(${gap + 5}).repeat(${repeats}));\n`,
+          1,
+        );
+        const controlMs = Math.max(1, control.ms);
+        const { ms: probeMs, error } = await fastestLoad(
+          "vf-config-spaced-csi-probe-",
+          `throw new Error(("a".repeat(${gap}) + String.fromCharCode(27) + "[31m").repeat(${repeats}));\n`,
+          1,
+        );
+
+        assertEquals(
+          probeMs < controlMs * 20,
+          true,
+          `probe ${probeMs}ms vs control ${controlMs}ms`,
+        );
+        assertEquals(error.slug, CONFIG_PARSE_ERROR_SLUG);
+      });
+
       it("ignores dense CSI content after the retained first line", async () => {
         const error = await loadFailure(
           "vf-config-dense-csi-second-line-",
@@ -7059,6 +7082,17 @@ export default config as const;
         assertEquals(error.message.includes("[url]"), false);
       });
 
+      it("limits consumed-colon evidence to the matched URL token", async () => {
+        const escape = String.fromCharCode(27);
+        const error = await loadFailure(
+          "vf-config-csi-consumed-colon-later-path-",
+          `throw new Error(${JSON.stringify(`Status http${escape}[:Hretry, see /docs`)});\n`,
+        );
+
+        assertEquals(error.message.includes("[url]"), false);
+        assertStringIncludes(error.message, "Status httpretry, see [path]");
+      });
+
       it("preserves an earlier CSI-supplied split-scheme byte", async () => {
         const escape = String.fromCharCode(27);
         const error = await loadFailure(
@@ -7158,6 +7192,26 @@ export default config as const;
         assertEquals(error.message.includes("registry"), false);
         assertEquals(error.message.includes("internal"), false);
         assertStringIncludes(error.message, "Load [url]");
+      });
+
+      it("fails closed when an overlong formatting CSI separates a URL scheme", async () => {
+        const error = await loadFailure(
+          "vf-config-csi-overlong-prefix-sequence-",
+          `throw new Error("http" + String.fromCharCode(27) + "[" + "1;".repeat(2050) + "m" + String.fromCharCode(27) + "[:@registry.internal/config.ts");\n`,
+        );
+
+        assertEquals(error.message.includes("registry.internal"), false);
+        assertStringIncludes(error.message, "[REDACTED]");
+      });
+
+      it("fails closed when URL-tail lookahead ends inside an overlong CSI", async () => {
+        const error = await loadFailure(
+          "vf-config-csi-overlong-tail-sequence-",
+          `throw new Error("http" + String.fromCharCode(27) + "[://reg" + String.fromCharCode(27) + "[" + "1;".repeat(2050) + "mistry.internal/config.ts");\n`,
+        );
+
+        assertEquals(error.message.includes("istry.internal"), false);
+        assertStringIncludes(error.message, "[REDACTED]");
       });
 
       it("extends a reconstructed URL through an accepted raw ASCII tail", async () => {
