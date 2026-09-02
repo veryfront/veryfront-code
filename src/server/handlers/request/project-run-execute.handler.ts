@@ -146,7 +146,8 @@ export interface ProjectRunExecuteHandlerDeps {
     },
   ): Promise<DiscoveredEval | null>;
   createWorkflowClient(
-    config?: WorkflowClientConfig,
+    config: WorkflowClientConfig | undefined,
+    options: { projectId: string },
   ): WorkflowClientView | Promise<WorkflowClientView>;
   runEval(definition: EvalDefinition, options: RunEvalOptions): Promise<EvalReport>;
   createEvalAgentAdapter(config: AgentServiceEvalAdapterConfig): EvalAgentAdapter;
@@ -313,8 +314,27 @@ function createExecutionFailure(error: unknown, durationMs: number): ProjectRunE
   };
 }
 
+/**
+ * Build the Redis key prefix for one project's durable workflow state.
+ *
+ * Hosted project runtimes share a single Redis instance, so every durable
+ * workflow key must be namespaced per project. Without this isolation the
+ * approval decision claim recovery scan in one project's runtime can
+ * enumerate and resume runs that belong to a different project. Characters
+ * outside a conservative allowlist are escaped so distinct project ids can
+ * never produce colliding prefixes or Redis SCAN glob metacharacters.
+ */
+export function projectWorkflowRedisPrefix(projectId: string): string {
+  const scope = projectId.replace(
+    /[^A-Za-z0-9_-]/g,
+    (char) => `.${char.codePointAt(0)!.toString(16)}.`,
+  );
+  return `vf:workflow:project:${scope}:`;
+}
+
 async function createRuntimeWorkflowClient(
-  config?: WorkflowClientConfig,
+  config: WorkflowClientConfig | undefined,
+  options: { projectId: string },
 ): Promise<WorkflowClientView> {
   const clientConfig = withRuntimeStepRegistries(config);
   const redisUrl = getHostEnv("REDIS_URL")?.trim();
@@ -324,7 +344,21 @@ async function createRuntimeWorkflowClient(
     });
   }
 
-  const backend = new RedisBackend({ url: redisUrl, debug: config?.debug });
+  const projectId = options.projectId?.trim();
+  if (!projectId) {
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: "Durable workflow persistence requires a project scope",
+    });
+  }
+
+  const prefix = projectWorkflowRedisPrefix(projectId);
+  const backend = new RedisBackend({
+    url: redisUrl,
+    prefix,
+    streamKey: `${prefix}stream`,
+    groupName: `${prefix}workers`,
+    debug: config?.debug,
+  });
   if (backend.initialize) {
     await backend.initialize();
   }
@@ -444,7 +478,10 @@ async function executeWorkflowRun(
     };
   }
 
-  const client = await deps.createWorkflowClient(withRuntimeStepRegistries({ debug: ctx.debug }));
+  const client = await deps.createWorkflowClient(
+    withRuntimeStepRegistries({ debug: ctx.debug }),
+    { projectId: request.projectId },
+  );
   try {
     client.register(workflow.definition);
     const handle = await client.start(workflow.id, request.input ?? {}, { runId: request.runId });

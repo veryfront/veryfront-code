@@ -20,6 +20,7 @@ import {
   createKnowledgeEventLogger,
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
+  projectWorkflowRedisPrefix,
 } from "./project-run-execute.handler.ts";
 import { createControlPlaneSignature, createCtx } from "./internal-agent-run.test-helpers.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
@@ -49,6 +50,27 @@ describe("createKnowledgeEventLogger", () => {
 
     assertEquals(encoder.encode(lines.join("\n")).byteLength <= 256 * 1_024, true);
     assertStringIncludes(lines.at(-1) ?? "", "Knowledge ingest logs were truncated");
+  });
+});
+
+describe("projectWorkflowRedisPrefix", () => {
+  it("namespaces durable workflow state per project", () => {
+    assertEquals(projectWorkflowRedisPrefix("proj-1"), "vf:workflow:project:proj-1:");
+    assertEquals(
+      projectWorkflowRedisPrefix("proj-1") === projectWorkflowRedisPrefix("proj-2"),
+      false,
+    );
+  });
+
+  it("escapes characters that could collide or match Redis SCAN globs", () => {
+    const prefix = projectWorkflowRedisPrefix("proj*:[a]?");
+    assertEquals(/^[A-Za-z0-9_.:-]+$/.test(prefix), true);
+    // Escaping is injective: ids that differ only in escaped characters
+    // never produce the same namespace.
+    assertEquals(
+      projectWorkflowRedisPrefix("a.b") === projectWorkflowRedisPrefix("a.2e.b"),
+      false,
+    );
   });
 });
 
@@ -1574,6 +1596,45 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(hasAgentRegistry, true);
     assertEquals(hasToolRegistry, true);
     assertEquals(order, ["discover", "create-client", "start"]);
+  });
+
+  it("scopes the workflow client to the verified request project", async () => {
+    let clientProjectId: string | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: (_config, options) => {
+        clientProjectId = options.projectId;
+        return {
+          register: () => {},
+          start: async (
+            _workflowId: string,
+            _input: unknown,
+            startOptions?: { runId?: string },
+          ) => ({ runId: startOptions?.runId ?? "workflow-run" }),
+          getRun: async () => ({
+            status: "completed",
+            output: { deployed: true },
+          }),
+          destroy: async () => {},
+        };
+      },
+    }));
+    const body = {
+      runId: "run_workflow_scope_1",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_scope_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals((await result.response.json()).success, true);
+    assertEquals(clientProjectId, "proj-1");
   });
 
   it("executes discovered project tool steps from control-plane workflow runs", async () => {
