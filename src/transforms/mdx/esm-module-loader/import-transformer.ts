@@ -37,11 +37,15 @@ import {
   LOG_PREFIX_MDX_LOADER,
 } from "./constants.ts";
 import { getLocalFs } from "./cache/index.ts";
-import { buildMdxJsxCacheFileName } from "./cache-format.ts";
+import { buildMdxJsxCacheFileName, buildMdxJsxCacheFileNamePrefix } from "./cache-format.ts";
 import { rewriteDntImports } from "./module-fetcher/index.ts";
 import {
   assertMdxModuleImportCount,
+  assertMdxModuleSourceSize,
+  MAX_MDX_MODULE_CODE_BYTES,
   MAX_MDX_MODULE_TRANSFORM_CONCURRENCY,
+  ModuleSourceLimitError,
+  utf8ByteLength,
 } from "./module-fetcher/limits.ts";
 import { ensureCachedJsxModulePatched } from "./jsx-cache.ts";
 import type { ESMLoaderContext } from "./types.ts";
@@ -227,6 +231,69 @@ async function hasReactImport(code: string): Promise<boolean> {
 }
 
 /**
+ * Read one project JSX/TSX source without materializing more than the
+ * MDX module source limit.
+ *
+ * Project source is tenant-controlled, and every render of a page that imports
+ * it pays a full read plus a content hash before the cache can be consulted.
+ * Bounding the read here keeps an oversized file from turning that lookup into
+ * unbounded memory, CPU and I/O, the same ceiling `fetchAndCacheModule`
+ * already enforces on the modules it resolves.
+ */
+async function readProjectJsxSourceWithinLimit(
+  fs: NonNullable<ESMLoaderContext["adapter"]>["fs"],
+  filePath: string,
+): Promise<string> {
+  if (fs.readFileBytesBounded) {
+    // One byte past the ceiling distinguishes an exactly-sized file from an
+    // oversized one without reading the rest of an oversized file.
+    const bytes = await fs.readFileBytesBounded(filePath, MAX_MDX_MODULE_CODE_BYTES + 1);
+    assertMdxModuleSourceSize(filePath, bytes.byteLength);
+    return new TextDecoder().decode(bytes);
+  }
+
+  const raw = await fs.readFile(filePath);
+  const sourceCode = typeof raw === "string" ? raw : new TextDecoder().decode(raw);
+  assertMdxModuleSourceSize(filePath, utf8ByteLength(sourceCode));
+  return sourceCode;
+}
+
+/**
+ * Drop the cached artifacts left by earlier content variants of one source path.
+ *
+ * Artifact names are content-keyed, so a project that keeps changing the same
+ * path would otherwise accumulate one persistent `jsx-*.mjs` file per variant
+ * in the shared cache directory. Keeping only the artifact just written bounds
+ * that growth to the project's current source.
+ */
+async function pruneSupersededJsxArtifacts(
+  esmCacheDir: string,
+  filePath: string,
+  currentFileName: string,
+): Promise<void> {
+  const prefix = buildMdxJsxCacheFileNamePrefix(filePath);
+  const localFs = getLocalFs();
+
+  try {
+    for await (const entry of localFs.readDir(esmCacheDir)) {
+      if (!entry.isFile) continue;
+      if (!entry.name.startsWith(prefix) || entry.name === currentFileName) continue;
+
+      try {
+        await localFs.remove(join(esmCacheDir, entry.name));
+      } catch (_) {
+        /* expected: a concurrent transform may have removed the variant already */
+      }
+    }
+  } catch (error) {
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to prune superseded JSX cache artifacts`, {
+      filePath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
  * Transform JSX/TSX imports using esbuild.
  * Optimized to process all imports in parallel batches for better performance.
  */
@@ -268,11 +335,11 @@ export async function transformJsxImports(
     async ({ specifier, filePath, ext }) => {
       try {
         const isFrameworkFile = filePath.startsWith(FRAMEWORK_ROOT);
-        let jsxCode: string | Uint8Array;
+        let sourceCode: string;
         if (isFrameworkFile) {
-          jsxCode = await getLocalFs().readTextFile(filePath);
+          sourceCode = await getLocalFs().readTextFile(filePath);
         } else if (adapter) {
-          jsxCode = await adapter.fs.readFile(filePath);
+          sourceCode = await readProjectJsxSourceWithinLimit(adapter.fs, filePath);
         } else {
           logger.warn(
             `${LOG_PREFIX_MDX_LOADER} No adapter available to read JSX file: ${filePath}`,
@@ -280,9 +347,6 @@ export async function transformJsxImports(
           return null;
         }
 
-        const sourceCode = typeof jsxCode === "string"
-          ? jsxCode
-          : new TextDecoder().decode(jsxCode);
         const transformedFileName = buildMdxJsxCacheFileName(filePath, sourceCode);
         const transformedPath = join(esmCacheDir, transformedFileName);
 
@@ -329,6 +393,7 @@ export async function transformJsxImports(
         transformed = await rewriteDntImports(transformed, filePath);
 
         await getLocalFs().writeTextFile(transformedPath, transformed);
+        await pruneSupersededJsxArtifacts(esmCacheDir, filePath, transformedFileName);
 
         return {
           specifier,
@@ -336,6 +401,10 @@ export async function transformJsxImports(
           cached: false,
         };
       } catch (error) {
+        // An oversized source is an admission failure, not a transform that can
+        // be skipped: surface it the way the other MDX module limits do instead
+        // of leaving an untransformed file:// specifier behind.
+        if (error instanceof ModuleSourceLimitError) throw error;
         logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to transform JSX import: ${filePath}`, error);
         return null;
       }

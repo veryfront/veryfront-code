@@ -54,3 +54,9 @@ export function assertMdxModuleImportCount(modulePath: string, count: number): v
     throw new ModuleImportLimitError(modulePath, count);
   }
 }
+
+export function assertMdxModuleSourceSize(modulePath: string, sizeBytes: number): void {
+  if (sizeBytes > MAX_MDX_MODULE_CODE_BYTES) {
+    throw new ModuleSourceLimitError(modulePath, sizeBytes, MAX_MDX_MODULE_CODE_BYTES);
+  }
+}

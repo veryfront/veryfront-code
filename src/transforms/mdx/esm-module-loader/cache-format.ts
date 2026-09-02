@@ -93,12 +93,25 @@ function formatMdxEsmModuleRecoveryCacheKey(
   return `${namespace}:${projectId}:${contentSourceId}:${fileName}:vfmod`;
 }
 
+/**
+ * Path-scoped prefix shared by every content variant of one source file.
+ *
+ * The artifact name stays content-keyed, so a tenant that keeps changing the
+ * same path would otherwise leave one persistent `jsx-*.mjs` file per variant.
+ * Grouping the variants under a per-path prefix lets the writer delete the
+ * superseded ones and bound the cache to the project's current source.
+ */
+function formatMdxJsxCacheFileNamePrefix(namespace: string, filePath: string): string {
+  return `jsx-${namespace}-${hashString(filePath)}-`;
+}
+
 function formatMdxJsxCacheFileName(
   namespace: string,
   filePath: string,
   sourceCode: string,
 ): string {
-  return `jsx-${namespace}-${hashString(`${filePath}\0${sourceCode}`)}.mjs`;
+  const prefix = formatMdxJsxCacheFileNamePrefix(namespace, filePath);
+  return `${prefix}${hashString(`${filePath}\0${sourceCode}`)}.mjs`;
 }
 
 function formatFrameworkVfModuleCacheFileName(
@@ -150,6 +163,13 @@ export function buildMdxEsmCacheSchemaSample() {
       CACHE_NAMESPACE_SENTINEL,
       "/tmp/project/Button.tsx",
       "export default function Button() {}",
+    ),
+    // The per-path prefix is what makes superseded content variants findable
+    // for deletion. Naming it here rolls the namespace so entries written under
+    // the unprefixed shape, which nothing can group or evict, stay unreachable.
+    jsxFilePrefix: formatMdxJsxCacheFileNamePrefix(
+      CACHE_NAMESPACE_SENTINEL,
+      "/tmp/project/Button.tsx",
     ),
     unresolvedVfModulesPattern: UNRESOLVED_VF_MODULES_PATTERN.source,
     allFileUrlPattern: ALL_FILE_URL_PATTERN_SOURCE,
@@ -248,6 +268,11 @@ export function buildMdxEsmModuleRecoveryCacheKey(
 
 export function buildMdxJsxCacheFileName(filePath: string, sourceCode: string): string {
   return formatMdxJsxCacheFileName(MDX_ESM_CACHE_NAMESPACE, filePath, sourceCode);
+}
+
+/** Name prefix every cached JSX artifact for `filePath` shares. */
+export function buildMdxJsxCacheFileNamePrefix(filePath: string): string {
+  return formatMdxJsxCacheFileNamePrefix(MDX_ESM_CACHE_NAMESPACE, filePath);
 }
 
 export function buildFrameworkVfModuleCacheFileName(
