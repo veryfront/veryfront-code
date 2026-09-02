@@ -3,6 +3,7 @@ const CHILD_RUN_VALUE_STRING_LIMIT = 500;
 const CHILD_RUN_VALUE_SUMMARY_MAX_DEPTH = 5;
 const CHILD_RUN_CONTRACT_FACT_LIMIT = 50;
 const CHILD_RUN_CONTRACT_FACT_VALUE_MAX_LENGTH = 200;
+const CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT = 128_000;
 const MALFORMED_TOOL_RESPONSE_PATTERN = /<tool_response(?:\s[^>]*)?>([\s\S]*?)<\/tool_response>/gi;
 const MALFORMED_TOOL_COMMAND_PREFIX_PATTERN =
   /<(?:tool_call|function_calls|invoke)(?:\s[^>]*)?>[\s\S]*?(?=<(?:tool_response|function_result)(?:\s[^>]*)?>)/gi;
@@ -22,9 +23,10 @@ const ROOT_RESPONSE_PROCESS_PREFIX_PATTERNS = [
 const MODEL_FIELD_PATTERN = /(?:^|[,{(\s])["']?model["']?\s*[:=]\s*["']([^"'`\s]+)["']/gim;
 const MODEL_ID_PATTERN =
   /\b(?:veryfront-cloud\/)?(?:anthropic|openai|google|google-ai-studio|mistral|xai|deepseek|moonshot|moonshotai|cohere|perplexity|groq|azure)\/[A-Za-z0-9._:-]+\b/g;
-const TOOL_IDS_FIELD_PATTERN = /(?:^|[,{(\s])["']?(tool_ids|tools)["']?\s*[:=]\s*\[([\s\S]*?)\]/gim;
+const TOOL_IDS_FIELD_PATTERN =
+  /(?:^|[,{(\s])["']?(tool_ids|tools)["']?\s*[:=]\s*\[([^\]]{0,2000})\]/gim;
 const PROVIDER_TOOL_IDS_FIELD_PATTERN =
-  /(?:^|[,{(\s])["']?provider_tool_ids["']?\s*[:=]\s*\[([\s\S]*?)\]/gim;
+  /(?:^|[,{(\s])["']?provider_tool_ids["']?\s*[:=]\s*\[([^\]]{0,2000})\]/gim;
 const INTEGRATION_TOOL_ID_PATTERN = /\b[a-z][a-z0-9-]*__[a-z][a-z0-9_-]*\b/g;
 const TOOL_ID_VALUE_PATTERN = /^[a-z][a-z0-9]*(?:(?:__|[_-])[a-z0-9]+)+$/;
 const OBJECT_TOOL_ID_FIELD_PATTERN = /["'](?:id|name)["']\s*:\s*["']([^"']+)["']/g;
@@ -270,19 +272,22 @@ function contractFactsOrUndefined(input: {
 
 /** Extract structured contract facts from delegated result text. */
 export function extractChildRunContractFacts(text: string): ChildRunContractFacts | undefined {
+  const boundedText = text.length > CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT
+    ? text.slice(0, CHILD_RUN_CONTRACT_FACT_INPUT_LIMIT)
+    : text;
   const modelIds: string[] = [];
   const toolIds: string[] = [];
   const providerToolIds: string[] = [];
   const importPaths: string[] = [];
 
-  addPatternMatches(modelIds, text, MODEL_FIELD_PATTERN, 1);
-  addPatternMatches(modelIds, text, MODEL_ID_PATTERN);
-  addToolArrayFieldValues(toolIds, text, TOOL_IDS_FIELD_PATTERN);
-  addProviderToolArrayFieldValues(providerToolIds, text, PROVIDER_TOOL_IDS_FIELD_PATTERN);
-  addPatternMatches(toolIds, text, INTEGRATION_TOOL_ID_PATTERN);
-  addPatternMatches(importPaths, text, IMPORT_FROM_PATTERN, 1);
-  addPatternMatches(importPaths, text, BARE_IMPORT_PATTERN, 1);
-  addPatternMatches(importPaths, text, DYNAMIC_IMPORT_PATTERN, 1);
+  addPatternMatches(modelIds, boundedText, MODEL_FIELD_PATTERN, 1);
+  addPatternMatches(modelIds, boundedText, MODEL_ID_PATTERN);
+  addToolArrayFieldValues(toolIds, boundedText, TOOL_IDS_FIELD_PATTERN);
+  addProviderToolArrayFieldValues(providerToolIds, boundedText, PROVIDER_TOOL_IDS_FIELD_PATTERN);
+  addPatternMatches(toolIds, boundedText, INTEGRATION_TOOL_ID_PATTERN);
+  addPatternMatches(importPaths, boundedText, IMPORT_FROM_PATTERN, 1);
+  addPatternMatches(importPaths, boundedText, BARE_IMPORT_PATTERN, 1);
+  addPatternMatches(importPaths, boundedText, DYNAMIC_IMPORT_PATTERN, 1);
 
   return contractFactsOrUndefined({
     modelIds,

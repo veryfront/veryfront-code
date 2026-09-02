@@ -126,6 +126,48 @@ describe("child-run-result-summary", () => {
       });
     });
 
+    it("extracts structured facts from hostile unclosed tool array text without quadratic scans", () => {
+      const hostileText = " tools:[".repeat(64_000);
+      const start = performance.now();
+
+      const result = buildChildRunResultSummary(hostileText, { mode: "structured" });
+
+      const elapsedMs = performance.now() - start;
+      assertEquals(result.truncated, true);
+      assertEquals(result.contractFacts, undefined);
+      assertEquals(
+        elapsedMs < 2_000,
+        true,
+        `structured fact extraction took ${elapsedMs}ms on unclosed tool array text`,
+      );
+    });
+
+    it("skips structured facts that appear beyond the fact extraction input limit", () => {
+      const text = [
+        "x".repeat(130_000),
+        '"provider_tool_ids": ["web_fetch"]',
+      ].join("\n");
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.truncated, true);
+      assertEquals(result.contractFacts, undefined);
+    });
+
+    it("ignores tool array bodies longer than the array field body limit", () => {
+      const text = [
+        '"tool_ids": ["gmail__list_messages", "' + "a".repeat(2_500) + '"]',
+        '"provider_tool_ids": ["web_fetch"]',
+      ].join("\n");
+
+      const result = buildChildRunResultSummary(text, { mode: "structured" });
+
+      assertEquals(result.contractFacts, {
+        toolIds: ["gmail__list_messages"],
+        providerToolIds: ["web_fetch"],
+      });
+    });
+
     it("extracts current Veryfront Cloud model prefixes from text beyond the summary cutoff", () => {
       const text = [
         "The delegated docs page starts here.",
