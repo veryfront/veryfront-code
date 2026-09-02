@@ -53,6 +53,8 @@ import {
   ProjectBoundaryViolationError,
   type ProjectSourceSnapshot,
 } from "./project-source-snapshot.ts";
+import { tryGetRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
+import { getProjectEnvSnapshot } from "#veryfront/server/project-env/storage.ts";
 export {
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
@@ -1781,7 +1783,11 @@ async function loadAndTranspileModule(
     decoratorOptions,
     allowHostTypeScriptConfigReads,
   );
-  return await loadModuleFromCode(source, fs, `${projectDir}\u0000${modulePath}`);
+  return await loadModuleFromCode(
+    source,
+    fs,
+    `${projectDir}\u0000${modulePath}\u0000${await bundledModuleScopeDiscriminator()}`,
+  );
 }
 
 function buildTranspiledModuleSource(
@@ -2067,12 +2073,45 @@ export function getUserDependencies(
  *
  * The key carries the project and route path as well as the code, so two
  * projects that happen to bundle byte-identical output never share a module,
- * and with it module state.
+ * and with it module state. Hosted projects can share one virtual project dir,
+ * so the owner also carries the request's scope discriminator: the registry
+ * scope (project, mode, version) and a digest of the active project-env
+ * overlay. A module whose top-level init ran under one tenant's or
+ * environment's env overlay is never reused under another.
  */
 const bundledModules = new Map<string, Promise<APIRoute>>();
 
 /** Bundled routes a dev session can hold before the oldest is dropped. */
 const MAX_BUNDLED_MODULES = 64;
+
+/**
+ * Identity of the scope a bundled module may be reused within.
+ *
+ * In proxy mode every hosted project resolves to the host runtime's shared
+ * project dir, and per-request env isolation (`runWithProjectEnv`) hands each
+ * scope its own env overlay, so `projectDir`/`modulePath`/code alone would let
+ * a module initialized under one project's or environment's overlay serve a
+ * later request in a different scope — leaking module-level clients, secrets,
+ * and mutable state across tenants. Fold the ambient registry scope (project,
+ * mode, version) and a digest of the active env overlay into the owner so
+ * reuse stays within one scope. Local single-tenant loads carry neither and
+ * keep their current key.
+ */
+async function bundledModuleScopeDiscriminator(): Promise<string> {
+  const scopeId = tryGetRegistryScopeId() ?? "";
+  const envSnapshot = getProjectEnvSnapshot();
+  let envDigest = "";
+  if (envSnapshot) {
+    // Snapshot keys are sorted and contain no NUL or "=", and values contain
+    // no NUL, so this serialization is canonical and collision-free.
+    const entries: string[] = [];
+    for (const key of Object.keys(envSnapshot)) {
+      entries.push(`${key}=${envSnapshot[key]}`);
+    }
+    envDigest = await computeHash(entries.join("\u0000"));
+  }
+  return `${scopeId}\u0000${envDigest}`;
+}
 
 async function bundledModuleKey(owner: string, code: string): Promise<string> {
   return await computeHash(`${owner}\u0000${code}`);

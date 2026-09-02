@@ -44,6 +44,8 @@ import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/sou
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import type { APIRoute, AppRouteContext, AppRouteHandler } from "./types.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
+import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 
 const fs = createFileSystem();
 const appRouteContext: AppRouteContext = { params: {}, identity: null, env: {} };
@@ -874,6 +876,93 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       await getText(after),
       "after",
       "a bundled route must not keep serving a stale module after its source changes",
+    );
+  });
+
+  // Hosted proxy execution resolves every project to the host runtime's shared
+  // project dir and applies per-request env isolation with runWithProjectEnv.
+  // Without a scope discriminator in the cache owner, a module whose top-level
+  // init captured one scope's env overlay would be served from cache to a later
+  // request in a different scope with matching path and generated source,
+  // leaking module-level clients, secrets, and mutable state across tenants.
+  it("does not reuse a bundled module across different project env overlays", async () => {
+    const projectDir = await makeTempDir();
+    await fs.mkdir(join(projectDir, "lib"), { recursive: true });
+    await fs.mkdir(join(projectDir, "pages", "api"), { recursive: true });
+
+    await fs.writeTextFile(
+      join(projectDir, "lib", "counter.ts"),
+      `let count = 0;\nexport const bump = () => ++count;`,
+    );
+    const modulePath = join(projectDir, "pages", "api", "env-scoped.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { bump } from "@/lib/counter.ts";`,
+        `export function GET() { return new Response(String(bump())); }`,
+      ].join("\n"),
+    );
+
+    const config: VeryfrontConfig = {
+      resolve: { importMap: { imports: { "@/": "./" } } },
+    };
+    const load = () => loadHandlerModule({ projectDir, modulePath, adapter, config });
+
+    const tenantA = await runWithProjectEnv({ TENANT_SECRET: "a" }, load);
+    assertEquals(await getText(tenantA), "1");
+
+    const tenantB = await runWithProjectEnv({ TENANT_SECRET: "b" }, load);
+    assertEquals(
+      await getText(tenantB),
+      "1",
+      "a module initialized under one env overlay must not be reused under another",
+    );
+
+    const tenantAAgain = await runWithProjectEnv({ TENANT_SECRET: "a" }, load);
+    assertEquals(
+      await getText(tenantAAgain),
+      "2",
+      "the same env scope must keep reusing its own module",
+    );
+  });
+
+  it("does not reuse a bundled module across different hosted project scopes", async () => {
+    const projectDir = await makeTempDir();
+    await fs.mkdir(join(projectDir, "lib"), { recursive: true });
+    await fs.mkdir(join(projectDir, "pages", "api"), { recursive: true });
+
+    await fs.writeTextFile(
+      join(projectDir, "lib", "counter.ts"),
+      `let count = 0;\nexport const bump = () => ++count;`,
+    );
+    const modulePath = join(projectDir, "pages", "api", "project-scoped.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { bump } from "@/lib/counter.ts";`,
+        `export function GET() { return new Response(String(bump())); }`,
+      ].join("\n"),
+    );
+
+    const config: VeryfrontConfig = {
+      resolve: { importMap: { imports: { "@/": "./" } } },
+    };
+    const load = () => loadHandlerModule({ projectDir, modulePath, adapter, config });
+
+    const projectOne = await runWithCacheKeyContext(
+      { projectId: "project-one", mode: "production", versionId: "rel_1" },
+      load,
+    );
+    assertEquals(await getText(projectOne), "1");
+
+    const projectTwo = await runWithCacheKeyContext(
+      { projectId: "project-two", mode: "production", versionId: "rel_1" },
+      load,
+    );
+    assertEquals(
+      await getText(projectTwo),
+      "1",
+      "two hosted projects sharing a path and byte-identical output must not share a module",
     );
   });
 
