@@ -698,7 +698,11 @@ export interface EvalReportDatasetMetadata {
   kind: EvalDataset["kind"];
   path?: string;
   examples: number;
-  hash: string;
+  /**
+   * Deterministic dataset content hash. Always present on locally created reports; removed
+   * from external exports unless redaction explicitly includes it.
+   */
+  hash?: string;
 }
 
 /** Per-model row in an eval model comparison report. */

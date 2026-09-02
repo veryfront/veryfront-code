@@ -150,7 +150,22 @@ describe("EvalReportExporterRegistry", () => {
     // `evidence` carries, so it must not survive redaction either.
     assertEquals(exportedRecord.metrics?.[0]?.label, undefined);
     assertEquals(exportedReport.summary.metrics[0]?.label, undefined);
+    // The dataset hash is a deterministic digest of every example's id, input, reference, and
+    // metadata, so it identifies dataset content across runs and must not survive redaction.
     assertEquals(exportedReport.dataset, {
+      kind: "json",
+      examples: 1,
+    });
+  });
+
+  it("strips the dataset content hash unless export redaction explicitly allows it", () => {
+    const defaultRedacted = redactEvalReportForExport(createReport());
+    assertEquals(defaultRedacted.dataset, { kind: "json", examples: 1 });
+
+    const hashAllowed = redactEvalReportForExport(createReport(), {
+      includeDatasetHash: true,
+    });
+    assertEquals(hashAllowed.dataset, {
       kind: "json",
       examples: 1,
       hash: "sha256:fixture-dataset",
@@ -412,6 +427,7 @@ describe("EvalReportExporterRegistry", () => {
       includeMetricEvidence: true,
       includeMetricExplanations: true,
       includeDatasetPath: true,
+      includeDatasetHash: true,
       metadataAllowlist: ["topic", "tenantId"],
     });
     const record = redacted.records[0];

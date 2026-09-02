@@ -44,6 +44,12 @@ export interface EvalReportExportRedaction {
   includeMetricEvidence?: boolean;
   /** Include dataset source paths. Defaults to false. */
   includeDatasetPath?: boolean;
+  /**
+   * Include the deterministic dataset content hash. Defaults to false. The hash is computed
+   * over every example's id, input, reference, and metadata without a salt, so it identifies
+   * dataset content across projects and runs and can be brute-forced for low-entropy datasets.
+   */
+  includeDatasetHash?: boolean;
   /** Record and export context metadata keys that can be exported. Defaults to none. */
   metadataAllowlist?: string[];
 }
@@ -214,11 +220,10 @@ function redactDatasetMetadata(
   dataset: EvalReport["dataset"],
   redaction: EvalReportExportRedaction,
 ): EvalReport["dataset"] {
-  if (!dataset || redaction.includeDatasetPath || !Object.hasOwn(dataset, "path")) {
-    return dataset;
-  }
+  if (!dataset) return dataset;
   const redactedDataset = { ...dataset };
-  delete redactedDataset.path;
+  if (!redaction.includeDatasetPath) delete redactedDataset.path;
+  if (!redaction.includeDatasetHash) delete redactedDataset.hash;
   return redactedDataset;
 }
 
