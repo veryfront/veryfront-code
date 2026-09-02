@@ -121,6 +121,12 @@ const DEFAULT_RENDER_PREWARM_MAX_ROUTES = 12;
 const DEFAULT_RENDER_PREWARM_CONCURRENCY = 1;
 /** Bound remembered release contexts so multi-tenant processes cannot grow without limit. */
 const RENDER_PREWARM_CONTEXT_MAX_ENTRIES = 500;
+/**
+ * Bound resolver probes per prewarm run to a small multiple of the route cap.
+ * Tenant-controlled sources can surface many page-like candidates that never
+ * resolve, so validation work must stay bounded alongside the render count.
+ */
+const RENDER_PREWARM_PROBE_MULTIPLIER = 4;
 
 type RenderAdmission = "foreground" | "background";
 
@@ -1205,9 +1211,10 @@ export class Renderer {
   ): Promise<string[]> {
     if (maxRoutes <= 0) return [];
 
+    const maxProbes = maxRoutes * RENDER_PREWARM_PROBE_MULTIPLIER;
     const resolvable: string[] = [];
 
-    for (const slug of slugs) {
+    for (const slug of slugs.slice(0, maxProbes)) {
       try {
         if (await this.pageExists(slug, ctx)) {
           resolvable.push(slug);

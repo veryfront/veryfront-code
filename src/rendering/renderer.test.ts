@@ -1813,6 +1813,40 @@ describe("Renderer release asset cache isolation", () => {
     }
   });
 
+  it("bounds resolver probes while validating prewarm candidates", async () => {
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let probeCount = 0;
+    (renderer as unknown as {
+      pageExists: (slug: string) => Promise<boolean>;
+    }).pageExists = () => {
+      probeCount++;
+      return Promise.resolve(false);
+    };
+
+    // Tenant-shaped worst case: many page-like candidates that never resolve.
+    const doomedSlugs = Array.from({ length: 500 }, (_, index) => `/doomed-${index}`);
+    const maxRoutes = 12;
+    const resolvable = await (renderer as unknown as {
+      filterResolvablePrewarmSlugs: (
+        ctx: RenderContext,
+        slugs: string[],
+        maxRoutes: number,
+      ) => Promise<string[]>;
+    }).filterResolvablePrewarmSlugs(makeRenderContext(), doomedSlugs, maxRoutes);
+
+    try {
+      assertEquals(resolvable, []);
+      assertEquals(
+        probeCount <= maxRoutes * 4,
+        true,
+        `resolver probes must stay bounded even when no candidate resolves (got ${probeCount})`,
+      );
+    } finally {
+      await renderer.destroy();
+    }
+  });
+
   it("prioritizes route-family siblings when prewarming production routes", async () => {
     const store = createInMemoryStore();
     const renderedSlugs: string[] = [];
