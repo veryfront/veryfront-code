@@ -1,4 +1,8 @@
 import {
+  MAX_PROVIDER_REPLAY_RAW_METADATA_DEPTH,
+  MAX_PROVIDER_REPLAY_RAW_METADATA_NODES,
+} from "#veryfront/agent/runtime/provider-replay-limits.ts";
+import {
   createProviderReplayCheckpointEvent,
   type ProviderReplayCheckpoint,
 } from "#veryfront/agent/runtime/provider-replay.ts";
@@ -33,6 +37,113 @@ if (typeof typedArrayByteLengthGetterCandidate !== "function") {
   throw new TypeError("Required Uint8Array byteLength intrinsic is unavailable");
 }
 const typedArrayByteLengthGetter = typedArrayByteLengthGetterCandidate;
+
+// Capturing JSON.stringify is not enough on its own: it performs a dynamic
+// `toJSON` lookup on every object and array it visits and reads properties
+// through their getters. The append body must therefore be rebuilt out of
+// null-prototype containers before it is serialized, so project code loaded
+// during discovery cannot install Object.prototype.toJSON, observe the private
+// checkpoint, and substitute the bytes appended under the run event token.
+const objectCreate = Object.create;
+const setPrototypeOf = Object.setPrototypeOf;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const reflectOwnKeys = Reflect.ownKeys;
+const isArray = Array.isArray;
+
+/** Marks values JSON.stringify drops, so detaching reproduces its output. */
+const OMITTED = Symbol("omitted-json-value");
+
+function createDetachedObject(): Record<string, unknown> {
+  return apply(objectCreate, Object, [null]) as Record<string, unknown>;
+}
+
+function createDetachedArray(): unknown[] {
+  // Detach before writing: a poisoned Array.prototype index accessor would
+  // otherwise observe or rewrite entries as they are assigned.
+  return apply(setPrototypeOf, Object, [[], null]) as unknown[];
+}
+
+/** A JSON container the copier reads own data properties from. */
+type DetachableContainer = Record<string, unknown> | readonly unknown[];
+
+/** Read an own enumerable data property; accessors are never invoked. */
+function readDetachableProperty(target: DetachableContainer, key: string): unknown {
+  const descriptor = apply(getOwnPropertyDescriptor, Object, [target, key]) as
+    | PropertyDescriptor
+    | undefined;
+  if (descriptor === undefined || descriptor.enumerable !== true) return OMITTED;
+  if (typeof descriptor.get === "function" || typeof descriptor.set === "function") {
+    return OMITTED;
+  }
+  return descriptor.value;
+}
+
+/** Copy a validated JSON value into containers no tenant prototype can reach. */
+function detachJsonValue(value: unknown, depth: number, budget: { nodes: number }): unknown {
+  if (value === null) return null;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (
+    typeof value === "undefined" || typeof value === "function" || typeof value === "symbol"
+  ) {
+    return OMITTED;
+  }
+  if (typeof value !== "object") {
+    // bigint, and any other primitive JSON.stringify refuses to represent.
+    throw persistenceFailure("Provider replay checkpoint carries a non-serializable value");
+  }
+  if (depth >= MAX_PROVIDER_REPLAY_RAW_METADATA_DEPTH) {
+    throw persistenceFailure("Provider replay checkpoint exceeds the serializable depth bound");
+  }
+  if (budget.nodes <= 0) {
+    throw persistenceFailure("Provider replay checkpoint exceeds the serializable node bound");
+  }
+  budget.nodes -= 1;
+
+  if (isArray(value)) {
+    const detached = createDetachedArray();
+    // `length` is a non-enumerable own data property on every array exotic
+    // object, so it is read directly rather than through the enumerable check.
+    const lengthDescriptor = apply(getOwnPropertyDescriptor, Object, [value, "length"]) as
+      | PropertyDescriptor
+      | undefined;
+    const length = typeof lengthDescriptor?.value === "number" ? lengthDescriptor.value : 0;
+    for (let index = 0; index < length; index += 1) {
+      const entry = detachJsonValue(readDetachableProperty(value, `${index}`), depth + 1, budget);
+      // JSON.stringify writes null for array entries it cannot represent.
+      detached[index] = entry === OMITTED ? null : entry;
+    }
+    return detached;
+  }
+
+  const record = value as Record<string, unknown>;
+  const detached = createDetachedObject();
+  for (const key of apply(reflectOwnKeys, Reflect, [record]) as (string | symbol)[]) {
+    // JSON.stringify only serializes string keys.
+    if (typeof key !== "string") continue;
+    const property = readDetachableProperty(record, key);
+    if (property === OMITTED) continue;
+    const detachedProperty = detachJsonValue(property, depth + 1, budget);
+    if (detachedProperty === OMITTED) continue;
+    detached[key] = detachedProperty;
+  }
+  return detached;
+}
+
+/** Serialize the privileged append body without touching a shared prototype. */
+function serializeCheckpointAppendBody(checkpoint: ProviderReplayCheckpoint): string {
+  const budget = { nodes: MAX_PROVIDER_REPLAY_RAW_METADATA_NODES };
+  const event = detachJsonValue(createProviderReplayCheckpointEvent(checkpoint), 0, budget);
+  if (event === OMITTED || event === null) {
+    throw persistenceFailure("Provider replay checkpoint is not serializable");
+  }
+  const events = createDetachedArray();
+  events[0] = event;
+  const body = createDetachedObject();
+  body.events = events;
+  return apply(jsonStringify, JSON, [body]) as string;
+}
 
 function snapshotFetch(fetchImpl: Fetch): Fetch {
   return (input, init) => apply(fetchImpl, undefined, [input, init]) as Promise<Response>;
@@ -88,6 +199,7 @@ export function createRunScopedProviderReplayCheckpointPersister(input: {
   return async (checkpoint, abortSignal) => {
     if (abortSignal?.aborted) throw getAbortReason(abortSignal);
 
+    const body = serializeCheckpointAppendBody(checkpoint);
     const controller = new AbortController();
     const timeoutError = persistenceFailure("Provider replay checkpoint persistence timed out");
     const timeout = setTimeout(() => controller.abort(timeoutError), timeoutMs);
@@ -103,9 +215,7 @@ export function createRunScopedProviderReplayCheckpointPersister(input: {
           "Cache-Control": "no-store",
           "Content-Type": "application/json; charset=utf-8",
         },
-        body: apply(jsonStringify, JSON, [{
-          events: [createProviderReplayCheckpointEvent(checkpoint)],
-        }]) as string,
+        body,
         cache: "no-store",
         signal: controller.signal,
       });

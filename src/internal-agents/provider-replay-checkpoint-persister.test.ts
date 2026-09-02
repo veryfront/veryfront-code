@@ -124,6 +124,81 @@ describe("run-scoped provider replay checkpoint persistence", () => {
     assertEquals(requestSignal?.aborted, true);
   });
 
+  it("never resolves an inherited toJSON hook while building the append body", async () => {
+    const bodies: string[] = [];
+    const persist = createRunScopedProviderReplayCheckpointPersister({
+      apiUrl: "https://api.example.test",
+      runId: RUN_ID,
+      runEventAppendToken: "<TOKEN>",
+      fetch: (_input, init) => {
+        bodies.push(String(init?.body));
+        return Promise.resolve(new Response(null, { status: 200 }));
+      },
+    });
+    if (!persist) throw new Error("Expected a checkpoint persister");
+
+    await persist(checkpoint());
+
+    // Project code shares this realm after discovery, so it can reach the
+    // prototype chain of every object the checkpoint carries. JSON.stringify
+    // looks `toJSON` up dynamically along that chain, which would both hand
+    // the private replay state to the hook and let it replace the bytes
+    // appended under the run event token.
+    const observed: unknown[] = [];
+    const poisonedPrototype = {
+      toJSON(this: unknown) {
+        observed.push(this);
+        return { type: "FORGED_BY_PROJECT_CODE" };
+      },
+    };
+    const poisoned = checkpoint();
+    Object.setPrototypeOf(poisoned.providerBlocks, poisonedPrototype);
+    Object.setPrototypeOf(poisoned.providerBlockPositions, poisonedPrototype);
+    Object.setPrototypeOf(poisoned.providerBlocks[0]!, poisonedPrototype);
+    Object.setPrototypeOf(poisoned.providerBlocks[0]!.block, poisonedPrototype);
+    await persist(poisoned);
+
+    assertEquals(observed.length, 0);
+    assertEquals(bodies.length, 2);
+    assertEquals(bodies[1], bodies[0]);
+    assertEquals(bodies[1]?.includes("FORGED_BY_PROJECT_CODE"), false);
+    const body = JSON.parse(String(bodies[1])) as {
+      events: Array<Record<string, unknown>>;
+    };
+    assertEquals(body.events[0]?.type, "AGENT_RUN_PROVIDER_REPLAY_CHECKPOINT");
+    assertEquals(body.events[0]?.messageId, MESSAGE_ID);
+  });
+
+  it("never invokes a getter reachable from the checkpoint while serializing", async () => {
+    let getterCalls = 0;
+    const poisonedCheckpoint = checkpoint();
+    Object.defineProperty(poisonedCheckpoint.providerBlocks[0]!.block, "signature", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return "<LEAKED>";
+      },
+    });
+
+    let capturedBody: string | undefined;
+    const persist = createRunScopedProviderReplayCheckpointPersister({
+      apiUrl: "https://api.example.test",
+      runId: RUN_ID,
+      runEventAppendToken: "<TOKEN>",
+      fetch: (_input, init) => {
+        capturedBody = String(init?.body);
+        return Promise.resolve(new Response(null, { status: 200 }));
+      },
+    });
+    if (!persist) throw new Error("Expected a checkpoint persister");
+
+    await persist(poisonedCheckpoint);
+
+    assertEquals(getterCalls, 0);
+    assertEquals(String(capturedBody).includes("<LEAKED>"), false);
+  });
+
   it("does not create a writer for a missing or malformed credential", () => {
     for (const runEventAppendToken of [null, " token-with-whitespace "]) {
       assertEquals(
