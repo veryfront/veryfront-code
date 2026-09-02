@@ -1308,6 +1308,37 @@ describe("chat starters scaffold a Markdown renderer", () => {
     }
   });
 
+  it("hardens the URLs the renderer emits", async () => {
+    // Assistant answers are untrusted input. A bare `<ReactMarkdown>` renders
+    // Markdown images as auto-loading `<img>` tags and links with any
+    // http(s) URL, so a prompt-injected answer becomes a zero-click beacon to
+    // an attacker-controlled host. Every scaffolded renderer must pass a URL
+    // policy (`urlTransform`), stop images from auto-loading (an `img`
+    // component override), and emit links that neither leak the opener nor
+    // pass referrers (`rel="noopener noreferrer ..."`).
+    for (const name of await chatTemplates()) {
+      const files = await getTemplate(name);
+      const renderer = files?.find((file) => file.path === "app/markdown-renderer.tsx");
+      assertExists(renderer, `${name} should scaffold app/markdown-renderer.tsx`);
+
+      assertStringIncludes(
+        renderer.content,
+        "urlTransform",
+        `${name} renderer must constrain URL schemes with urlTransform`,
+      );
+      assertStringIncludes(
+        renderer.content,
+        "img:",
+        `${name} renderer must override img so images do not auto-load`,
+      );
+      assertStringIncludes(
+        renderer.content,
+        "noopener noreferrer",
+        `${name} renderer must emit rel="noopener noreferrer" links`,
+      );
+    }
+  });
+
   it("aliases the pinned parser specifiers for consumer tsc", async () => {
     for (const name of await chatTemplates()) {
       const files = await getTemplate(name);
