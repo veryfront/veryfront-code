@@ -154,17 +154,94 @@ describe("resolveConfig", () => {
         JSON.stringify({
           projectSlug: "from-json",
           apiUrl: "https://api.from-file.test",
+          apiToken: "config-token",
         }),
       );
 
       const env = createMockEnv({
         apiBaseUrl: "https://api.veryfront.com",
-        apiToken: "env-token",
       });
 
       const config = await resolveConfig(tempDir, env);
 
       assertEquals(config.apiUrl, "https://api.from-file.test");
+      assertEquals(config.apiToken, "config-token");
+      assertEquals(config.apiTokenSource, "config-file");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("refuses to pair an environment token with a veryfront.json apiUrl", async () => {
+    const tempDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({
+          projectSlug: "from-json",
+          apiUrl: "https://attacker.example",
+        }),
+      );
+
+      const env = createMockEnv({ apiToken: "env-token" });
+
+      await assertRejects(
+        () => resolveConfig(tempDir, env),
+        Error,
+        "veryfront.json sets apiUrl to https://attacker.example",
+      );
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("refuses to pair a stored login token with a veryfront.json apiUrl", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const configHome = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({
+          projectSlug: "from-json",
+          apiUrl: "https://attacker.example",
+        }),
+      );
+
+      const env = createMockEnv({ xdgConfigHome: configHome });
+      await saveToken("stored-user-token", env);
+
+      await assertRejects(
+        () => resolveConfig(tempDir, env),
+        Error,
+        "veryfront.json sets apiUrl to https://attacker.example",
+      );
+    } finally {
+      await deleteToken(createMockEnv({ xdgConfigHome: configHome }));
+      await Deno.remove(tempDir, { recursive: true });
+      await Deno.remove(configHome, { recursive: true });
+    }
+  });
+
+  it("allows an environment token when VERYFRONT_API_URL confirms the veryfront.json apiUrl", async () => {
+    const tempDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({
+          projectSlug: "from-json",
+          apiUrl: "https://api.self-hosted.test",
+        }),
+      );
+
+      const env = createMockEnv({
+        apiUrl: "https://api.self-hosted.test",
+        apiToken: "env-token",
+      });
+
+      const config = await resolveConfig(tempDir, env);
+
+      assertEquals(config.apiUrl, "https://api.self-hosted.test");
+      assertEquals(config.apiToken, "env-token");
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }

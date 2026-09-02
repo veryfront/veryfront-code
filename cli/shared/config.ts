@@ -223,8 +223,17 @@ async function resolveApiTokenForMode(
   env: EnvironmentConfig,
   configFile: VeryfrontConfig | null,
   interactive: boolean,
+  configFileApiUrlActive: boolean,
 ): Promise<{ apiToken: string | null; apiTokenSource?: ApiTokenSource }> {
-  const [candidate] = await resolveApiCredentialCandidates(env, configFile, interactive, env);
+  const candidates = await resolveApiCredentialCandidates(env, configFile, interactive, env);
+  // A checked-in veryfront.json apiUrl must never receive credentials the
+  // config file did not also supply: pairing it with an environment, .env,
+  // or token-store token would let a cloned repository exfiltrate the
+  // developer's Veryfront credential to an attacker-controlled host.
+  const eligible = configFileApiUrlActive
+    ? candidates.filter((entry) => entry.apiTokenSource === "config-file")
+    : candidates;
+  const [candidate] = eligible;
   if (candidate) {
     return {
       apiToken: candidate.apiToken,
@@ -322,8 +331,24 @@ async function resolveConfigBase(
   const configFile = configFileResolution.config;
 
   const apiUrl = resolveCliApiUrl(env, configFile?.apiUrl);
+  // True when the checked-in config file supplied the effective API host
+  // (no VERYFRONT_API_URL / non-default VERYFRONT_API_BASE_URL override).
+  const configFileApiUrlActive = configFile?.apiUrl !== undefined &&
+    apiUrl !== resolveCliApiUrl(env);
 
-  let { apiToken, apiTokenSource } = await resolveApiTokenForMode(env, configFile, interactive);
+  let { apiToken, apiTokenSource } = await resolveApiTokenForMode(
+    env,
+    configFile,
+    interactive,
+    configFileApiUrlActive,
+  );
+
+  if (!apiToken && configFileApiUrlActive) {
+    throw new Error(
+      `veryfront.json sets apiUrl to ${apiUrl}; refusing to send credentials from the environment or 'veryfront login' to it. ` +
+        `Add a matching apiToken to veryfront.json, or set VERYFRONT_API_URL=${apiUrl} to confirm this API host.`,
+    );
+  }
 
   if (!apiToken && interactive) {
     const userInfo = await ensureAuthenticated(env, dir);
