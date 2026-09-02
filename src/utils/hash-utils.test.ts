@@ -4,7 +4,15 @@ import process from "node:process";
 import { isNode } from "#veryfront/platform/compat/runtime.ts";
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { computeCodeHash, computeHash, fnv1aHash, shortHash, simpleHash } from "./hash-utils.ts";
+import {
+  cacheNamespaceSegment,
+  computeCodeHash,
+  computeHash,
+  fnv1aHash,
+  hashCodeHex,
+  shortHash,
+  simpleHash,
+} from "./hash-utils.ts";
 
 const POISONED_DIGEST_SCRIPT = String.raw`
 import { computeHash } from "./src/utils/hash-utils.ts";
@@ -244,6 +252,65 @@ describe("hash-utils", () => {
   describe("fnv1aHash", () => {
     it("includes every UTF-16 code unit for non-BMP characters", () => {
       assertNotEquals(fnv1aHash("😀"), fnv1aHash("😁"));
+    });
+  });
+
+  describe("cacheNamespaceSegment", () => {
+    it("separates identifiers whose 32-bit hashCodeHex digests collide", () => {
+      // These SSR cache namespace keys previously used hashCodeHex, letting
+      // two content sources with colliding ids share one cache directory.
+      assertEquals(hashCodeHex("preview-58x4ga9b"), hashCodeHex("preview-5icz6rpk"));
+      assertNotEquals(
+        cacheNamespaceSegment("preview-58x4ga9b"),
+        cacheNamespaceSegment("preview-5icz6rpk"),
+      );
+    });
+
+    it("is deterministic", () => {
+      assertEquals(cacheNamespaceSegment("branch-main"), cacheNamespaceSegment("branch-main"));
+    });
+
+    it("produces filesystem- and URL-safe segments", () => {
+      for (const id of ["my/project", "a b\\c%2F", "preview-feature/refactor", "こんにちは", ""]) {
+        const segment = cacheNamespaceSegment(id);
+        assertEquals(
+          /^[a-z0-9-]+$/.test(segment),
+          true,
+          `segment must be path-safe and case-insensitive: ${segment}`,
+        );
+      }
+    });
+
+    it("keeps segments distinct on case-insensitive filesystems", () => {
+      // Directory names fold by case on macOS/Windows, so a case-sensitive
+      // encoding could hand two content sources the same cache directory.
+      const ids = ["Preview-A", "preview-a", "PREVIEW-A", "release/v1", "RELEASE/V1"];
+      const folded = new Set(ids.map((id) => cacheNamespaceSegment(id).toLowerCase()));
+      assertEquals(folded.size, ids.length);
+    });
+
+    it("does not nest slash-containing identifiers under their prefixes", () => {
+      const parent = cacheNamespaceSegment("preview-feature");
+      const child = cacheNamespaceSegment("preview-feature/refactor");
+      assertEquals(child.includes("/"), false);
+      assertNotEquals(parent, child);
+    });
+
+    it("bounds segment length for oversized identifiers while keeping them distinct", () => {
+      const base = "x".repeat(4096);
+      const first = cacheNamespaceSegment(`${base}a`);
+      const second = cacheNamespaceSegment(`${base}b`);
+
+      assertEquals(first.length <= 160, true, `oversized segment must stay bounded: ${first}`);
+      assertEquals(/^[a-z0-9-]+$/.test(first), true);
+      assertNotEquals(first, second);
+    });
+
+    it("keeps inline and hashed forms in disjoint namespaces", () => {
+      const inline = cacheNamespaceSegment("short-id");
+      const hashed = cacheNamespaceSegment("y".repeat(4096));
+      assertEquals(inline.startsWith("id-"), true);
+      assertEquals(hashed.startsWith("h-"), true);
     });
   });
 });

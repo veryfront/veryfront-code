@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join, toFileUrl } from "#veryfront/compat/path";
 import {
@@ -34,7 +34,7 @@ import {
 } from "../cache-format.ts";
 import { getCacheStats } from "#veryfront/utils/memory/index.ts";
 import { formatCacheVersionSegment } from "#veryfront/utils/cache-version.ts";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { cacheNamespaceSegment, hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 
 describe("MDX module path cache", () => {
@@ -45,8 +45,10 @@ describe("MDX module path cache", () => {
 
     try {
       await runWithCacheDir(cacheBase, () => {
-        const projectKey = hashCodeHex(projectId);
-        const sourceKey = hashCodeHex(contentSourceId);
+        const projectKey = cacheNamespaceSegment(projectId);
+        const sourceKey = cacheNamespaceSegment(contentSourceId);
+        const legacyProjectKey = hashCodeHex(projectId);
+        const legacySourceKey = hashCodeHex(contentSourceId);
         const versionKey = formatCacheVersionSegment(RUNTIME_VERSION);
         const currentDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
 
@@ -58,9 +60,30 @@ describe("MDX module path cache", () => {
           getMdxEsmSsrCacheDirs(projectId, contentSourceId),
           [
             currentDir,
-            join(cacheBase, "veryfront-mdx-esm", projectKey, sourceKey),
-            join(cacheBase, "veryfront-mdx-esm", projectKey, contentSourceId),
+            join(cacheBase, "veryfront-mdx-esm", versionKey, legacyProjectKey, legacySourceKey),
+            join(cacheBase, "veryfront-mdx-esm", legacyProjectKey, legacySourceKey),
+            join(cacheBase, "veryfront-mdx-esm", legacyProjectKey, contentSourceId),
           ],
+        );
+      });
+    } finally {
+      await remove(cacheBase, { recursive: true });
+    }
+  });
+
+  it("keeps content source ids with colliding 32-bit hashes in distinct SSR cache dirs", async () => {
+    const cacheBase = await makeTempDir({ prefix: "vf-mdx-collision-isolation-" });
+    const projectId = "project-collision-isolation";
+
+    try {
+      await runWithCacheDir(cacheBase, () => {
+        // Regression: hashCodeHex is a 32-bit hash and these two preview
+        // source ids collide under it. With hash-keyed namespaces one source
+        // served the other's transformed modules for the same file path.
+        assertEquals(hashCodeHex("preview-58x4ga9b"), hashCodeHex("preview-5icz6rpk"));
+        assertNotEquals(
+          getMdxEsmSsrCacheDir(projectId, "preview-58x4ga9b"),
+          getMdxEsmSsrCacheDir(projectId, "preview-5icz6rpk"),
         );
       });
     } finally {

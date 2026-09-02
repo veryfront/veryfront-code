@@ -509,16 +509,23 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
       const legacyKey = `${baseCacheDir}|${hashCodeHex("project-1")}|${
         hashCodeHex("preview-main")
       }`;
+      // Keys written before the namespace segments became collision-free still
+      // carry the weak 32-bit project hash and must still be cleared.
+      const legacyWeakHashKey = `${baseCacheDir}|v0-1-7|${hashCodeHex("project-1")}|${
+        hashCodeHex("preview-main")
+      }`;
 
       globalTmpDirs.set(key1, "/tmp/proj1");
       globalTmpDirs.set(key2, "/tmp/proj2");
       globalTmpDirs.set(legacyKey, "/tmp/proj1-legacy");
+      globalTmpDirs.set(legacyWeakHashKey, "/tmp/proj1-legacy-weak-hash");
 
       clearSSRModuleCacheForProject("project-1");
 
       assertEquals(globalTmpDirs.has(key1), false);
       assertEquals(globalTmpDirs.has(key2), true);
       assertEquals(globalTmpDirs.has(legacyKey), false);
+      assertEquals(globalTmpDirs.has(legacyWeakHashKey), false);
 
       globalTmpDirs.clear();
     });

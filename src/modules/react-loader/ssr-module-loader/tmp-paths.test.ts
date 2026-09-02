@@ -3,23 +3,42 @@ import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildTempModulePath, buildTmpDirPath, getTmpDirCacheKey } from "./tmp-paths.ts";
 import { formatCacheVersionSegment } from "#veryfront/utils/cache-version.ts";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { cacheNamespaceSegment, hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 
 describe("modules/react-loader/ssr-module-loader/tmp-paths", () => {
-  it("builds a stable tmp dir cache key with hashed project id", () => {
+  it("builds a stable tmp dir cache key with encoded project id", () => {
     const key = getTmpDirCacheKey("/cache/mdx", "my/project", "release-1", "0.1.7");
     assertEquals(
       key,
-      `/cache/mdx|v0-1-7|${hashCodeHex("my/project")}|${hashCodeHex("release-1")}`,
+      `/cache/mdx|v0-1-7|${cacheNamespaceSegment("my/project")}|${
+        cacheNamespaceSegment("release-1")
+      }`,
     );
   });
 
-  it("builds tmp dir path with hashed project id", () => {
+  it("builds tmp dir path with encoded project id", () => {
     const path = buildTmpDirPath("/cache/mdx", "my/project", "branch-main", "0.1.7");
     assertEquals(
       path,
-      `/cache/mdx/v0-1-7/${hashCodeHex("my/project")}/${hashCodeHex("branch-main")}`,
+      `/cache/mdx/v0-1-7/${cacheNamespaceSegment("my/project")}/${
+        cacheNamespaceSegment("branch-main")
+      }`,
     );
+  });
+
+  it("keeps content source ids with colliding 32-bit hashes in distinct namespaces", () => {
+    // Regression: hashCodeHex is a 32-bit hash, and these two preview source
+    // ids collide under it. Sharing a namespace lets one content source serve
+    // the other's transformed modules for the same file path.
+    assertEquals(hashCodeHex("preview-58x4ga9b"), hashCodeHex("preview-5icz6rpk"));
+
+    const first = buildTmpDirPath("/cache/mdx", "my/project", "preview-58x4ga9b", "0.1.7");
+    const second = buildTmpDirPath("/cache/mdx", "my/project", "preview-5icz6rpk", "0.1.7");
+    assert(first !== second, "colliding source ids must not share an SSR cache dir");
+
+    const firstKey = getTmpDirCacheKey("/cache/mdx", "my/project", "preview-58x4ga9b", "0.1.7");
+    const secondKey = getTmpDirCacheKey("/cache/mdx", "my/project", "preview-5icz6rpk", "0.1.7");
+    assert(firstKey !== secondKey, "colliding source ids must not share a tmp dir cache key");
   });
 
   it("isolates tmp directories by runtime version", () => {

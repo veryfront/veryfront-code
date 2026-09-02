@@ -20,7 +20,7 @@ import { getDenoRuntime } from "#veryfront/platform/compat/runtime.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
-import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { cacheNamespaceSegment, hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import {
   buildMdxEsmPathCacheKey,
   CYCLE_MANIFEST_SIDECAR_SUFFIX,
@@ -250,6 +250,20 @@ export async function registerCycleManifestSources(
 }
 
 export function getMdxEsmSsrCacheDir(projectId: string, contentSourceId: string): string {
+  // Must stay in sync with buildTmpDirPath in
+  // modules/react-loader/ssr-module-loader/tmp-paths.ts. The segments are
+  // collision-free: the previous 32-bit hashCodeHex keying let two content
+  // sources of one project share an SSR cache namespace and serve each
+  // other's transformed modules.
+  return join(
+    getMdxEsmCacheDir(),
+    formatCacheVersionSegment(RUNTIME_VERSION),
+    cacheNamespaceSegment(projectId),
+    cacheNamespaceSegment(contentSourceId),
+  );
+}
+
+function getLegacyWeakHashMdxEsmSsrCacheDir(projectId: string, contentSourceId: string): string {
   return join(
     getMdxEsmCacheDir(),
     formatCacheVersionSegment(RUNTIME_VERSION),
@@ -269,6 +283,7 @@ function getLegacyRawMdxEsmSsrCacheDir(projectId: string, contentSourceId: strin
 export function getMdxEsmSsrCacheDirs(projectId: string, contentSourceId: string): string[] {
   return [
     getMdxEsmSsrCacheDir(projectId, contentSourceId),
+    getLegacyWeakHashMdxEsmSsrCacheDir(projectId, contentSourceId),
     getLegacyHashedMdxEsmSsrCacheDir(projectId, contentSourceId),
     getLegacyRawMdxEsmSsrCacheDir(projectId, contentSourceId),
   ].filter((cacheDir, index, cacheDirs) => cacheDirs.indexOf(cacheDir) === index);
