@@ -20,6 +20,7 @@ import {
   createKnowledgeEventLogger,
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
+  projectWorkflowRedisConfig,
   projectWorkflowRedisPrefix,
 } from "./project-run-execute.handler.ts";
 import { createControlPlaneSignature, createCtx } from "./internal-agent-run.test-helpers.ts";
@@ -71,6 +72,22 @@ describe("projectWorkflowRedisPrefix", () => {
       projectWorkflowRedisPrefix("a.b") === projectWorkflowRedisPrefix("a.2e.b"),
       false,
     );
+  });
+
+  it("preserves whitespace in the verified project id when configuring Redis", () => {
+    const canonical = projectWorkflowRedisConfig("proj-1");
+    const whitespacePrefixed = projectWorkflowRedisConfig(" proj-1");
+
+    assertEquals(canonical, {
+      prefix: "vf:workflow:project:proj-1:",
+      streamKey: "vf:workflow:project:proj-1:stream",
+      groupName: "vf:workflow:project:proj-1:workers",
+    });
+    assertEquals(whitespacePrefixed, {
+      prefix: "vf:workflow:project:.20.proj-1:",
+      streamKey: "vf:workflow:project:.20.proj-1:stream",
+      groupName: "vf:workflow:project:.20.proj-1:workers",
+    });
   });
 });
 

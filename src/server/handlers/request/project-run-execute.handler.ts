@@ -332,6 +332,25 @@ export function projectWorkflowRedisPrefix(projectId: string): string {
   return `vf:workflow:project:${scope}:`;
 }
 
+export function projectWorkflowRedisConfig(projectId: string): {
+  prefix: string;
+  streamKey: string;
+  groupName: string;
+} {
+  if (!projectId) {
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: "Durable workflow persistence requires a project scope",
+    });
+  }
+
+  const prefix = projectWorkflowRedisPrefix(projectId);
+  return {
+    prefix,
+    streamKey: `${prefix}stream`,
+    groupName: `${prefix}workers`,
+  };
+}
+
 async function createRuntimeWorkflowClient(
   config: WorkflowClientConfig | undefined,
   options: { projectId: string },
@@ -344,19 +363,9 @@ async function createRuntimeWorkflowClient(
     });
   }
 
-  const projectId = options.projectId?.trim();
-  if (!projectId) {
-    throw INPUT_VALIDATION_FAILED.create({
-      detail: "Durable workflow persistence requires a project scope",
-    });
-  }
-
-  const prefix = projectWorkflowRedisPrefix(projectId);
   const backend = new RedisBackend({
     url: redisUrl,
-    prefix,
-    streamKey: `${prefix}stream`,
-    groupName: `${prefix}workers`,
+    ...projectWorkflowRedisConfig(options.projectId),
     debug: config?.debug,
   });
   if (backend.initialize) {
