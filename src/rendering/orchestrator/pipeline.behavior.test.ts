@@ -821,6 +821,50 @@ describe("RenderPipeline behavior", () => {
     assertEquals(persists, [], "personalized HTML must never be persisted");
   });
 
+  it("never caches HTML rendered for an admitted application identity", async () => {
+    const checks: Array<string | undefined> = [];
+    const persists: Array<string | undefined> = [];
+    const pipeline = createPipeline("/project/pages/index.mdx", {
+      cacheCoordinator: {
+        checkCache: async (slug, cacheKey) => {
+          checks.push(cacheKey);
+          return {
+            depAwareSlug: slug,
+            moduleCacheKey: cacheKey ?? slug,
+            cacheStatus: "miss",
+            lookupDurationMs: 0,
+          };
+        },
+        persistResult: async (_result, _slug, cacheKey) => {
+          persists.push(cacheKey);
+        },
+      },
+    } as Partial<RenderPipelineConfig>);
+
+    // Trusted-proxy auth strips identity headers from the application request,
+    // so the request itself carries no cache-sensitive state; only the
+    // admitted identity marks this render as personalized.
+    await pipeline.renderPage("", {
+      delivery: "string",
+      request: new Request("http://localhost/"),
+      applicationIdentity: {
+        issuer: "https://issuer.example.test",
+        subject: "user-123",
+        groups: ["engineering"],
+        roles: ["reader"],
+        groupsComplete: true,
+        claims: { sub: "user-123" },
+      },
+    });
+
+    assertEquals(
+      checks,
+      [],
+      "identity-scoped HTML must never be read from the shared render cache",
+    );
+    assertEquals(persists, [], "identity-scoped HTML must never be persisted");
+  });
+
   it("bounds the complete API render key for a flag-off override", () => {
     const cachePrefix = "project:preview:branch:v1";
     const pipeline = createPipeline("/project/pages/index.mdx", {
