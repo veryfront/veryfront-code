@@ -156,10 +156,31 @@ async function resolveSpecifier(
   // result already ends in a JS-like or CSS extension. A different shape here
   // would resolve one specifier to two different module URLs.
   if (stringStartsWith(specifier, "@/")) {
+    const { path: pathOnly, suffix } = splitSpecifierSuffix(stringSlice(specifier, 2));
+    // The alias path is tenant-authored. Dot segments — raw, percent-encoded
+    // ("%2e%2e"), or backslash-separated (WHATWG parsing maps "\" to "/") —
+    // survive into the URL resolution below, where parsing collapses them and
+    // can move the resolved path out of `/_vf_modules/`, turning the import
+    // into a same-origin fetch of an arbitrary path that is then cached as an
+    // executable module. Refuse them outright — the same containment the MDX
+    // loader enforces via `canonicalizeContainedModulePath`, checked here with
+    // this module's snapshotted intrinsics so poisoned prototypes cannot
+    // defeat the guard, and as a pure guard so accepted paths keep the exact
+    // `AliasStrategy.rewrite` byte shape composed below.
+    if (
+      pathOnly === "" ||
+      regexpTest(/(^|\/)\.\.?(\/|$)/, pathOnly) ||
+      regexpTest(/%2e/i, pathOnly) ||
+      regexpTest(/[\\\0]/, pathOnly)
+    ) {
+      throw new Error(
+        `Refusing to resolve project alias ${specifier}: its path escapes the /_vf_modules/ module transport`,
+      );
+    }
+
     const mappedAlias = resolveImport(specifier, options.importMap);
     if (mappedAlias !== specifier && isLocalMappedSpecifier(mappedAlias)) return mappedAlias;
 
-    const { path: pathOnly, suffix } = splitSpecifierSuffix(stringSlice(specifier, 2));
     const normalizedPath = normalizeExtension(pathOnly);
     const jsPath = regexpTest(/\.(js|mjs|cjs|css)$/, normalizedPath)
       ? normalizedPath
@@ -168,8 +189,15 @@ async function resolveSpecifier(
     const moduleServerOrigin = parseHttpBase(options.moduleServerOrigin);
     if (!moduleServerOrigin) return projectModulePath;
 
+    const projectModuleUrl = new URL(projectModulePath, moduleServerOrigin);
+    if (!stringStartsWith(projectModuleUrl.pathname, "/_vf_modules/")) {
+      throw new Error(
+        `Refusing to resolve project alias ${specifier}: it resolved outside the /_vf_modules/ module transport`,
+      );
+    }
+
     return resolveSpecifier(
-      new URL(projectModulePath, moduleServerOrigin).toString(),
+      projectModuleUrl.toString(),
       baseUrl,
       options,
       cacheHttpModule,

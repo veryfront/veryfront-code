@@ -373,6 +373,94 @@ describe("transforms/esm/specifier-resolver", () => {
       );
     });
 
+    it("rejects @/ alias imports whose dot segments escape the module transport", async () => {
+      // URL resolution removes dot segments, so without containment an
+      // authored "@/../_veryfront/modules/foo" would resolve to
+      // https://<origin>/_veryfront/modules/foo — outside `/_vf_modules/` —
+      // and the resolver would fetch and cache an arbitrary same-origin path
+      // as an executable module.
+      const code = `import escape from "@/../_veryfront/modules/foo";`;
+      const cacheCalls: string[] = [];
+      await assertRejects(
+        () =>
+          buildReplacements(
+            code,
+            undefined,
+            { ...defaultOptions, moduleServerOrigin: "https://preview.example" },
+            async (url) => {
+              cacheCalls.push(url);
+              return "/tmp/cache/http-alias.mjs";
+            },
+          ),
+        Error,
+        "escapes the /_vf_modules/ module transport",
+      );
+      assertEquals(cacheCalls, []);
+    });
+
+    it("rejects percent-encoded dot segments in @/ alias imports", async () => {
+      // WHATWG URL parsing also collapses "%2e%2e" dot segments, so the
+      // encoded form must be refused before the path reaches URL resolution.
+      const code = `import escape from "@/%2e%2e/_veryfront/modules/foo";`;
+      const cacheCalls: string[] = [];
+      await assertRejects(
+        () =>
+          buildReplacements(
+            code,
+            undefined,
+            { ...defaultOptions, moduleServerOrigin: "https://preview.example" },
+            async (url) => {
+              cacheCalls.push(url);
+              return "/tmp/cache/http-alias.mjs";
+            },
+          ),
+        Error,
+        "escapes the /_vf_modules/ module transport",
+      );
+      assertEquals(cacheCalls, []);
+    });
+
+    it("rejects backslash traversal in @/ alias imports", async () => {
+      // Special-scheme URL parsing treats "\" as "/", so "..\\" is a dot
+      // segment too.
+      const code = `import escape from "@/..\\\\_veryfront/modules/foo";`;
+      await assertRejects(
+        () => buildReplacements(code, undefined, defaultOptions, noopCache),
+        Error,
+        "escapes the /_vf_modules/ module transport",
+      );
+    });
+
+    it("rejects dot-segment @/ aliases even without a module-server origin", async () => {
+      // Without an origin the composed "/_vf_modules/../..." path is returned
+      // verbatim and the importing runtime collapses the dot segments instead,
+      // so the origin-less branch must fail closed too.
+      const code = `import escape from "@/../_veryfront/modules/foo";`;
+      await assertRejects(
+        () => buildReplacements(code, undefined, defaultOptions, noopCache),
+        Error,
+        "escapes the /_vf_modules/ module transport",
+      );
+    });
+
+    it("rejects dot-segment @/ aliases before configured prefix mappings apply", async () => {
+      // A configured "@/" -> "/_vf_modules/" prefix mapping would otherwise
+      // emit "/_vf_modules/../..." as a local specifier and hand the escape to
+      // the importing runtime.
+      const code = `import escape from "@/../_veryfront/modules/foo";`;
+      await assertRejects(
+        () =>
+          buildReplacements(
+            code,
+            undefined,
+            { ...defaultOptions, importMap: { imports: { "@/": "/_vf_modules/" } } },
+            noopCache,
+          ),
+        Error,
+        "escapes the /_vf_modules/ module transport",
+      );
+    });
+
     // The URL shape is not chosen here. `AliasStrategy` is the framework's
     // canonical "@/" rewriter and emits this exact shape for both its `ssr` and
     // its browser target, so this resolver — a late fallback for an alias that
