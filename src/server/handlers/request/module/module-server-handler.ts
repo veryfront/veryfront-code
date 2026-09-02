@@ -1,5 +1,5 @@
 import type { HandlerContext, HandlerResult } from "../../types.ts";
-import { ResponseBuilder } from "#veryfront/security/index.ts";
+import { isAuthGateEnabled, ResponseBuilder } from "#veryfront/security/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { profilePhase } from "#veryfront/observability";
 import {
@@ -42,6 +42,11 @@ export function handleModuleServer(
             allowedImportDirs: ctx.config?.security?.allowedImportDirs,
             config: ctx.config,
             mode: ctx.requestContext?.mode,
+            // AuthHandler has already admitted this request, but it runs inside
+            // the runtime while shared caches sit in front of it. A gated
+            // project's module source must not be marked `public`, or one
+            // authorized load seeds a CDN entry served to everyone else.
+            authGateEnabled: isAuthGateEnabled(ctx),
           });
         });
 

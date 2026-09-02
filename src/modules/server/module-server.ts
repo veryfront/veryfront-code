@@ -370,6 +370,16 @@ export interface ModuleServerOptions {
   mode?: string;
   /** Optional operator tightening for request-triggered browser graph compilation. */
   browserModuleBundleLimits?: BrowserModuleBundleLimitOverrides;
+  /**
+   * Whether the project gates requests behind a credential (`security.auth`, or
+   * the `VERYFRONT_BASIC_*` / `VERYFRONT_BEARER_TOKEN` env fallbacks).
+   *
+   * Only the cache directive depends on this: a gated project's module source
+   * must never be announced to shared caches as `public`. Defaults to `true`
+   * so an omitted flag withholds the shared-cache directive rather than
+   * publishing protected sources on a caller's behalf.
+   */
+  authGateEnabled?: boolean;
 }
 
 interface ModuleDependencyState {
@@ -405,6 +415,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       } = options;
 
       const effectiveProjectId = projectUUID ?? projectId;
+      // Fail closed: an omitted flag withholds the shared-cache directive.
+      const authGateEnabled = options.authGateEnabled !== false;
       const method = req.method.toUpperCase();
       const isHeadRequest = method === "HEAD";
       if (method !== "GET" && method !== "HEAD") {
@@ -874,11 +886,21 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             if (cachedResponse.source === "distributed") {
               markRequestProfilePhase("module.response_cache_distributed_hit");
             }
+            // The entry was stored under whatever gate the project carried at
+            // write time, and the response cache key does not distinguish the
+            // two. Restate the directive for this request so a hit can never
+            // replay a `public` header a since-enabled gate has revoked.
+            const cachedHeaders = Object.fromEntries(
+              cachedResponse.entry.headers.filter(
+                ([name]) => name.toLowerCase() !== "cache-control",
+              ),
+            );
+            cachedHeaders["Cache-Control"] = getModuleCacheControl(true, authGateEnabled);
             return createModuleResponse(
               method,
               cachedResponse.entry.body,
               cachedResponse.entry.status,
-              Object.fromEntries(cachedResponse.entry.headers),
+              cachedHeaders,
             );
           }
           markRequestProfilePhase("module.response_cache_dependency_blocked");
@@ -1220,6 +1242,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         }
         const headers = getModuleHeaders(modulePath, {
           cacheable: canCacheModuleResponse,
+          authGated: authGateEnabled,
         });
         logger.debug("Request complete", {
           path: modulePath,
@@ -1626,15 +1649,36 @@ export function isModuleRequest(req: Request): boolean {
   return classifyModuleRequest(url).kind !== "not-module";
 }
 
+/**
+ * The `Cache-Control` directive for a module response.
+ *
+ * `public` lets a shared cache in front of the runtime store the response even
+ * though the request carried `Authorization` (RFC 9111 §3.5). On a project
+ * behind `security.auth` that turns one authorized load into a CDN entry
+ * serving protected module source to unauthenticated clients for a year, past
+ * `AuthHandler` entirely. A gated project therefore gets `private`, which keeps
+ * the browser's own year-long reuse while barring every shared cache.
+ *
+ * `private` rather than `Vary: Authorization`: the OIDC and trusted-proxy
+ * gates admit on a cookie, so varying on `Authorization` would not separate
+ * their entries at all.
+ */
+function getModuleCacheControl(cacheable: boolean, authGated: boolean): string {
+  if (!cacheable) return "no-cache";
+  const reuse = `max-age=${RELEASE_ASSET_IMMUTABLE_MAX_AGE_SECONDS}, immutable`;
+  return authGated ? `private, ${reuse}` : `public, ${reuse}`;
+}
+
 function getModuleHeaders(
   modulePath: string,
-  options: { cacheable?: boolean } = {},
+  options: { cacheable?: boolean; authGated?: boolean } = {},
 ): Record<string, string> {
   return {
     "Content-Type": getDevModuleContentType(modulePath),
-    "Cache-Control": options.cacheable
-      ? `public, max-age=${RELEASE_ASSET_IMMUTABLE_MAX_AGE_SECONDS}, immutable`
-      : "no-cache",
+    "Cache-Control": getModuleCacheControl(
+      options.cacheable === true,
+      options.authGated !== false,
+    ),
   };
 }
 

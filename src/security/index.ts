@@ -49,7 +49,7 @@ export type {
   ValidatedHandlerFunction,
 } from "./input-validation/index.ts";
 
-export { AuthHandler } from "./http/auth.ts";
+export { AuthHandler, isAuthGateEnabled } from "./http/auth.ts";
 export { isValidSecurityConfig, loadSecurityConfig, SecurityConfigLoader } from "./http/config.ts";
 export { setCors } from "./http/middleware/index.ts";
 export type {
