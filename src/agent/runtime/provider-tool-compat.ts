@@ -23,6 +23,10 @@ export interface ProviderToolCompatOptions {
 }
 
 const OPENAI_MAX_TOOLS = 128;
+/** Maximum nesting of inlined Moonshot `$ref` targets before references are left in place. */
+const MOONSHOT_MAX_REF_INLINE_DEPTH = 32;
+/** Node budget for one Moonshot schema sanitization pass, bounding `$ref` inlining growth. */
+const MOONSHOT_MAX_INLINED_SCHEMA_NODES = 20_000;
 const PERMISSIVE_TOOL_INPUT_SCHEMA: JsonSchema = {
   type: "object",
   properties: {},
@@ -329,13 +333,30 @@ function resolveLocalJsonPointer(root: unknown, ref: string): unknown {
   return current;
 }
 
+interface MoonshotInlineBudget {
+  remainingNodes: number;
+}
+
+function createMoonshotInlineBudget(): MoonshotInlineBudget {
+  return { remainingNodes: MOONSHOT_MAX_INLINED_SCHEMA_NODES };
+}
+
 function sanitizeMoonshotSchemaValue(
   value: unknown,
   root: unknown = value,
   seenRefs: ReadonlySet<string> = new Set(),
+  inlineDepth = 0,
+  budget: MoonshotInlineBudget = createMoonshotInlineBudget(),
 ): unknown {
+  // `seenRefs` only blocks cycles along the current path, so sibling references to the
+  // same target still re-expand. A shared node budget and depth cap keep a hostile
+  // (or merely dense) schema from expanding exponentially during inlining.
+  budget.remainingNodes -= 1;
+
   if (Array.isArray(value)) {
-    return value.map((item) => sanitizeMoonshotSchemaValue(item, root, seenRefs));
+    return value.map((item) =>
+      sanitizeMoonshotSchemaValue(item, root, seenRefs, inlineDepth, budget)
+    );
   }
 
   if (!isPlainRecord(value)) {
@@ -346,16 +367,25 @@ function sanitizeMoonshotSchemaValue(
     typeof value.$ref === "string" &&
     !value.$ref.startsWith("#/$defs/") &&
     !value.$ref.startsWith("#/definitions/") &&
-    !seenRefs.has(value.$ref)
+    !seenRefs.has(value.$ref) &&
+    inlineDepth < MOONSHOT_MAX_REF_INLINE_DEPTH &&
+    budget.remainingNodes > 0
   ) {
     const resolved = resolveLocalJsonPointer(root, value.$ref);
     if (resolved !== undefined && resolved !== value) {
       const nextSeenRefs = new Set(seenRefs);
       nextSeenRefs.add(value.$ref);
-      const sanitizedResolved = sanitizeMoonshotSchemaValue(resolved, root, nextSeenRefs);
+      const nextInlineDepth = inlineDepth + 1;
+      const sanitizedResolved = sanitizeMoonshotSchemaValue(
+        resolved,
+        root,
+        nextSeenRefs,
+        nextInlineDepth,
+        budget,
+      );
       const { $ref: _ref, ...siblings } = value;
       const sanitizedSiblings = Object.keys(siblings).length > 0
-        ? sanitizeMoonshotSchemaValue(siblings, root, nextSeenRefs)
+        ? sanitizeMoonshotSchemaValue(siblings, root, nextSeenRefs, nextInlineDepth, budget)
         : undefined;
 
       return isPlainRecord(sanitizedResolved) && isPlainRecord(sanitizedSiblings)
@@ -373,7 +403,7 @@ function sanitizeMoonshotSchemaValue(
     }
 
     if (key === "definitions") {
-      sanitized.$defs = sanitizeMoonshotSchemaValue(child, root, seenRefs);
+      sanitized.$defs = sanitizeMoonshotSchemaValue(child, root, seenRefs, inlineDepth, budget);
       continue;
     }
 
@@ -381,13 +411,13 @@ function sanitizeMoonshotSchemaValue(
       sanitized.properties = Object.fromEntries(
         Object.entries(child).map(([propertyName, propertySchema]) => [
           propertyName,
-          sanitizeMoonshotSchemaValue(propertySchema, root, seenRefs),
+          sanitizeMoonshotSchemaValue(propertySchema, root, seenRefs, inlineDepth, budget),
         ]),
       );
       continue;
     }
 
-    sanitized[key] = sanitizeMoonshotSchemaValue(child, root, seenRefs);
+    sanitized[key] = sanitizeMoonshotSchemaValue(child, root, seenRefs, inlineDepth, budget);
   }
 
   return sanitized;

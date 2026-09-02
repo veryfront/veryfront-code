@@ -17,6 +17,14 @@ function dummyTool(name: string): ToolDefinition {
   };
 }
 
+function countNodes(value: unknown): number {
+  if (Array.isArray(value)) {
+    return value.reduce<number>((total, item) => total + countNodes(item), 1);
+  }
+  if (!value || typeof value !== "object") return 1;
+  return Object.values(value).reduce<number>((total, item) => total + countNodes(item), 1);
+}
+
 function containsKey(value: unknown, key: string): boolean {
   if (!value || typeof value !== "object") return false;
   if (Object.hasOwn(value, key)) return true;
@@ -304,6 +312,33 @@ describe("provider-tool-compat", () => {
     assertEquals(properties.acceptance_criteria?.$ref, undefined);
     assertEquals(properties.acceptance_criteria?.type, "array");
     assertEquals(JSON.stringify(sanitized).includes("#/properties/"), false);
+  });
+
+  it("bounds Moonshot ref inlining for fan-out ref chains", () => {
+    const levelCount = 40;
+    const properties: Record<string, unknown> = {
+      [`level${levelCount}`]: { type: "string" },
+    };
+    for (let level = levelCount - 1; level >= 0; level -= 1) {
+      properties[`level${level}`] = {
+        type: "object",
+        properties: {
+          left: { $ref: `#/properties/level${level + 1}` },
+          right: { $ref: `#/properties/level${level + 1}` },
+        },
+      };
+    }
+
+    const sanitized = sanitizeProviderToolSchema(
+      { type: "object", properties } as never,
+      { model: "veryfront-cloud/moonshotai/kimi-k2.6" },
+    );
+
+    // Without a shared expansion budget every sibling ref re-expands, so this compact
+    // schema would grow to roughly 2^40 nodes before the model call is even made.
+    assertEquals(countNodes(sanitized) < 200_000, true);
+    // The budget stops inlining rather than expanding, so deep refs stay as references.
+    assertEquals(JSON.stringify(sanitized).includes("#/properties/level"), true);
   });
 
   it("preserves Moonshot tool properties named definitions", () => {
