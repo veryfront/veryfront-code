@@ -34,6 +34,13 @@ const DEFAULT_IGNORE_PATTERNS: readonly string[] = [
   "*~",
 ];
 
+/**
+ * Safety patterns that project-controlled `.vfignore` rules can never re-include.
+ * They hold credentials and local CLI state, so a negation such as `!.env*.json`
+ * must not make `veryfront push` read and upload them.
+ */
+const PROTECTED_IGNORE_PATTERNS: readonly string[] = [".env*", ".veryfront", ".git"];
+
 /** Supported file extensions for sync */
 const SUPPORTED_EXTENSIONS = new Set([
   ".ts",
@@ -179,14 +186,24 @@ function patternToRule(rawPattern: string): IgnoreRule | null {
   };
 }
 
+function toRules(patterns: readonly string[]): IgnoreRule[] {
+  return patterns.flatMap((pattern) => {
+    const rule = patternToRule(pattern);
+    return rule ? [rule] : [];
+  });
+}
+
+const PROTECTED_RULES = toRules(PROTECTED_IGNORE_PATTERNS);
+
+function isProtectedPath(normalizedPath: string): boolean {
+  return PROTECTED_RULES.some((rule) => rule.regex.test(normalizedPath));
+}
+
 /**
  * Create an ignore checker with loaded patterns
  */
 export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker {
-  const rules = patterns.flatMap((pattern) => {
-    const rule = patternToRule(pattern);
-    return rule ? [rule] : [];
-  });
+  const rules = toRules(patterns);
 
   function isIgnored(relativePath: string): boolean {
     const normalizedPath = relativePath.replace(/\\/g, "/");
@@ -195,6 +212,11 @@ export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker 
     for (const rule of rules) {
       if (!rule.regex.test(normalizedPath)) continue;
       ignored = !rule.negated;
+    }
+
+    if (!ignored && isProtectedPath(normalizedPath)) {
+      cliLogger.debug(`Keeping ${normalizedPath} ignored: .vfignore cannot re-include this path.`);
+      return true;
     }
 
     return ignored;

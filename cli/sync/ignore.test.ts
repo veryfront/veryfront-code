@@ -26,6 +26,22 @@ describe("cli/sync/ignore", () => {
       }
     });
 
+    it("keeps secrets ignored when .vfignore negates the defaults", async () => {
+      const projectDir = await Deno.makeTempDir();
+      try {
+        await Deno.writeTextFile(
+          `${projectDir}/.vfignore`,
+          "!.env*.json\n!.veryfront\n!.veryfront/**\n",
+        );
+        const checker = createIgnoreChecker(await loadIgnorePatterns(projectDir));
+
+        assertEquals(checker.isIgnored(".env.production.json"), true);
+        assertEquals(checker.isIgnored(".veryfront/state.json"), true);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
     it("rejects a non-file .vfignore", async () => {
       const projectDir = await Deno.makeTempDir();
       try {
@@ -107,6 +123,24 @@ describe("cli/sync/ignore", () => {
       assertEquals(checker.isIgnored("server.log"), true);
       assertEquals(checker.isIgnored("keep.log"), false);
       assertEquals(checker.isIgnored("logs/keep.log"), false);
+    });
+
+    it("should not let negations re-include secrets or CLI state", () => {
+      const checker = createIgnoreChecker([
+        ".env*",
+        ".veryfront",
+        ".git",
+        "!.env*.json",
+        "!.veryfront",
+        "!.veryfront/**",
+        "!.git/**",
+      ]);
+
+      assertEquals(checker.isIgnored(".env.production.json"), true);
+      assertEquals(checker.isIgnored("config/.env.staging.yaml"), true);
+      assertEquals(checker.isIgnored(".veryfront"), true);
+      assertEquals(checker.isIgnored(".veryfront/state.json"), true);
+      assertEquals(checker.isIgnored(".git/config"), true);
     });
 
     it("should handle directory-trailing-slash patterns", () => {

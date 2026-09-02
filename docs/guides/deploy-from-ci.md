@@ -62,7 +62,9 @@ Binary images, fonts, archives, and other unsupported files remain outside
 this handoff. Manage those files through another reviewed delivery path.
 
 Both commands use the same `.vfignore` rules. Ignored files and unsupported
-extensions are not reconciled with Veryfront.
+extensions are not reconciled with Veryfront. A `.vfignore` negation cannot
+re-include `.env*`, `.veryfront`, or `.git` paths: those stay ignored so local
+secrets and CLI state are never uploaded.
 
 If the project has a `.vfignore`, keep it as a regular file inside the project
 and commit it to Git so the managed source set is reproducible. Symlinked
