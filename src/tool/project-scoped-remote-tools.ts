@@ -196,10 +196,21 @@ export function hydrateProjectScopedRemoteToolInput(input: {
   toolDefinition: ToolDefinition | undefined;
   activeProjectId: string | null;
   toolInput: Record<string, unknown>;
+  projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
 }): Record<string, unknown> {
   if (
     !input.toolDefinition || !input.activeProjectId ||
     !acceptsProjectReference(input.toolDefinition)
+  ) {
+    return input.toolInput;
+  }
+
+  // Project-navigation tools legitimately target a model-chosen project.
+  if (
+    isProjectNavigationRemoteTool(
+      input.toolDefinition.name,
+      input.projectScopedRemoteToolOptions ?? {},
+    )
   ) {
     return input.toolInput;
   }
@@ -211,7 +222,7 @@ export function hydrateProjectScopedRemoteToolInput(input: {
   if (
     projectReferenceDescriptor &&
     "value" in projectReferenceDescriptor &&
-    !isMissingRequiredToolInput(projectReferenceDescriptor.value)
+    projectReferenceDescriptor.value === input.activeProjectId
   ) {
     return input.toolInput;
   }
@@ -413,6 +424,7 @@ export function createProjectScopedRemoteToolCatalog(
         toolDefinition,
         activeProjectId,
         toolInput: snapshotToolInput(executionInput.toolName, executionInput.toolInput),
+        projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
       });
       validateRequiredToolInput({ toolDefinition, toolInput });
 
