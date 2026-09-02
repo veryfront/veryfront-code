@@ -517,6 +517,71 @@ describe("metrics public SDK", () => {
     );
   });
 
+  it("never exports one environment's queued samples to another environment's OTLP target", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-victim,env-attacker",
+      OTEL_METRICS_ENABLED: "true",
+      VERYFRONT_API_BASE_URL: "http://veryfront-api:80",
+      VERYFRONT_API_INTERNAL_USER: "internal-user",
+      VERYFRONT_API_INTERNAL_PASS: "internal-pass",
+    }, async () => {
+      globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) => {
+        requests.push({ url: String(url), init });
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      }) as typeof fetch;
+
+      try {
+        // A victim environment enqueues a sample bound for the internal proxy.
+        metrics.counter("vf_victim_metric_total", 1, { project_id: "victim-project" });
+
+        // A co-located environment configured with its own OTLP endpoint then
+        // enqueues a sample and the flush fires under ITS project-env context —
+        // exactly the ambient context the flush timer inherits in production.
+        await runWithProjectEnv({
+          OTEL_METRICS_ENABLED: "true",
+          OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://attacker.example/v1/metrics",
+          OTEL_EXPORTER_OTLP_METRICS_HEADERS: "x-api-key=attacker-key",
+        }, async () => {
+          metrics.counter("vf_attacker_metric_total", 1, { project_id: "attacker-project" });
+          await (metrics as unknown as { __flushForTests(): Promise<void> }).__flushForTests();
+        });
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    assertEquals(requests.length, 2, "each environment's samples must be exported separately");
+
+    const byUrl = new Map(requests.map((request) => [request.url, request]));
+    const internalRequest = byUrl.get("http://veryfront-api:80/internal/metrics/otlp/v1/metrics");
+    const attackerRequest = byUrl.get("https://attacker.example/v1/metrics");
+
+    const internalMetrics = JSON.parse(String(internalRequest?.init?.body))
+      .resourceMetrics[0].scopeMetrics[0].metrics.map((entry: { name: string }) => entry.name);
+    assertEquals(
+      internalMetrics,
+      ["vf_victim_metric_total"],
+      "the victim's sample must go to the target bound when it was enqueued",
+    );
+
+    const attackerMetrics = JSON.parse(String(attackerRequest?.init?.body))
+      .resourceMetrics[0].scopeMetrics[0].metrics.map((entry: { name: string }) => entry.name);
+    assertEquals(
+      attackerMetrics,
+      ["vf_attacker_metric_total"],
+      "a project-configured OTLP endpoint must never receive other environments' samples",
+    );
+    assertEquals(
+      (attackerRequest?.init?.headers as Record<string, string>).Authorization,
+      undefined,
+      "internal proxy credentials must never reach a project-configured endpoint",
+    );
+  });
+
   it("routes dedicated runtime host OTLP metrics through the internal API proxy without project env", async () => {
     const originalFetch = globalThis.fetch;
     const requests: Array<{ url: string; init?: RequestInit }> = [];

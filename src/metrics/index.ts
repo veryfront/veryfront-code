@@ -41,17 +41,25 @@ interface GaugeSample {
 
 type DirectMetricKind = "counter" | "histogram" | "gauge";
 
+interface DirectMetricsTarget {
+  url: string;
+  headers: Record<string, string>;
+  serviceName: string;
+  serviceVersion: string;
+}
+
 interface DirectMetricSample {
   kind: DirectMetricKind;
   name: string;
   value: number;
   attributes: Record<string, AttributeValue>;
   timestampUnixNano: string;
-}
-
-interface DirectMetricsTarget {
-  url: string;
-  headers: Record<string, string>;
+  // Export target captured at enqueue time. Samples from concurrent project
+  // environments share one process-global queue, so the flush must never
+  // resolve the target from whichever AsyncLocalStorage context it happens
+  // to inherit — that would let one environment's OTLP endpoint receive
+  // another environment's queued samples.
+  target: DirectMetricsTarget;
 }
 
 const counters = new Map<string, Counter>();
@@ -266,6 +274,18 @@ function parseHeaders(headerInput: string | undefined): Record<string, string> {
   return result;
 }
 
+function resolveDirectServiceIdentity(): Pick<
+  DirectMetricsTarget,
+  "serviceName" | "serviceVersion"
+> {
+  return {
+    serviceName: readEnv("OTEL_SERVICE_NAME") ?? "veryfront",
+    serviceVersion: readEnv("VERYFRONT_VERSION") ??
+      readEnv("RELEASE_VERSION") ??
+      "unknown",
+  };
+}
+
 function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
   const projectOtlpUrl = resolveProjectOtlpMetricsUrl();
   if (isDedicatedRuntime() && projectOtlpUrl) {
@@ -275,6 +295,7 @@ function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
         readProjectEnv("OTEL_EXPORTER_OTLP_METRICS_HEADERS") ??
           readProjectEnv("OTEL_EXPORTER_OTLP_HEADERS"),
       ),
+      ...resolveDirectServiceIdentity(),
     };
   }
 
@@ -288,6 +309,7 @@ function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
           readHostEnv("VERYFRONT_API_INTERNAL_PASS") ?? "",
         ),
       },
+      ...resolveDirectServiceIdentity(),
     };
   }
 
@@ -299,7 +321,17 @@ function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
       readEnv("OTEL_EXPORTER_OTLP_METRICS_HEADERS") ??
         readEnv("OTEL_EXPORTER_OTLP_HEADERS"),
     ),
+    ...resolveDirectServiceIdentity(),
   };
+}
+
+function directTargetKey(target: DirectMetricsTarget): string {
+  return JSON.stringify([
+    target.url,
+    Object.entries(target.headers).sort(([left], [right]) => left.localeCompare(right)),
+    target.serviceName,
+    target.serviceVersion,
+  ]);
 }
 
 function toOtlpValue(value: AttributeValue) {
@@ -326,10 +358,10 @@ function buildHistogramBuckets(value: number): number[] {
   return counts;
 }
 
-function buildDirectMetric(sample: DirectMetricSample) {
+function buildDirectMetric(sample: DirectMetricSample, targetKey: string) {
   const attributes = toOtlpAttributes(sample.attributes);
   if (sample.kind === "counter") {
-    const key = `${sample.name}:${attributesKey(sample.attributes)}`;
+    const key = `${targetKey}:${sample.name}:${attributesKey(sample.attributes)}`;
     const total = directCounterTotals.get(key) ?? {
       value: 0,
       startTimeUnixNano: sample.timestampUnixNano,
@@ -353,7 +385,7 @@ function buildDirectMetric(sample: DirectMetricSample) {
   }
 
   if (sample.kind === "histogram") {
-    const key = `${sample.name}:${attributesKey(sample.attributes)}`;
+    const key = `${targetKey}:${sample.name}:${attributesKey(sample.attributes)}`;
     const total = directHistogramTotals.get(key) ?? {
       count: 0,
       sum: 0,
@@ -395,22 +427,26 @@ function buildDirectMetric(sample: DirectMetricSample) {
   };
 }
 
-function buildDirectOtlpBody(samples: DirectMetricSample[]) {
+function buildDirectOtlpBody(
+  samples: DirectMetricSample[],
+  target: DirectMetricsTarget,
+  targetKey: string,
+) {
   return {
     resourceMetrics: [{
       resource: {
+        // Resolved at enqueue time alongside the target — never from the
+        // ambient context of whichever environment happens to run the flush.
         attributes: toOtlpAttributes({
-          "service.name": readEnv("OTEL_SERVICE_NAME") ?? "veryfront",
-          "service.version": readEnv("VERYFRONT_VERSION") ??
-            readEnv("RELEASE_VERSION") ??
-            "unknown",
+          "service.name": target.serviceName,
+          "service.version": target.serviceVersion,
         }),
       },
       scopeMetrics: [{
         scope: {
           name: "veryfront.project.metrics",
         },
-        metrics: samples.map(buildDirectMetric),
+        metrics: samples.map((sample) => buildDirectMetric(sample, targetKey)),
       }],
     }],
   };
@@ -430,30 +466,40 @@ async function flushDirectMetrics(): Promise<void> {
     directFlushTimer = null;
   }
 
-  const target = resolveDirectMetricsTarget();
-  if (!target || directQueue.length === 0) {
-    directQueue.length = 0;
-    return;
+  if (directQueue.length === 0) return;
+
+  // Group by the target each sample was bound to when it was enqueued. The
+  // queue is shared across concurrent project environments, so a single
+  // ambient-context target resolution here would misroute other tenants'
+  // samples.
+  const batch = directQueue.splice(0, DIRECT_MAX_BATCH_SIZE);
+  const groups = new Map<string, { target: DirectMetricsTarget; samples: DirectMetricSample[] }>();
+  for (const sample of batch) {
+    const key = directTargetKey(sample.target);
+    const group = groups.get(key) ?? { target: sample.target, samples: [] };
+    group.samples.push(sample);
+    groups.set(key, group);
   }
 
-  const batch = directQueue.splice(0, DIRECT_MAX_BATCH_SIZE);
-  try {
-    const response = await (useAmbientFetchForTests ? globalThis.fetch : hostFetch)(
-      target.url,
-      {
-        method: "POST",
-        headers: {
-          ...target.headers,
-          "Content-Type": "application/json",
+  for (const [targetKey, group] of groups) {
+    try {
+      const response = await (useAmbientFetchForTests ? globalThis.fetch : hostFetch)(
+        group.target.url,
+        {
+          method: "POST",
+          headers: {
+            ...group.target.headers,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(buildDirectOtlpBody(group.samples, group.target, targetKey)),
         },
-        body: JSON.stringify(buildDirectOtlpBody(batch)),
-      },
-    );
-    if (!response.ok) {
-      logDirectExportFailure(`HTTP ${response.status}`);
+      );
+      if (!response.ok) {
+        logDirectExportFailure(`HTTP ${response.status}`);
+      }
+    } catch (error) {
+      logDirectExportFailure(error);
     }
-  } catch (error) {
-    logDirectExportFailure(error);
   }
 
   if (directQueue.length > 0) {
@@ -462,7 +508,7 @@ async function flushDirectMetrics(): Promise<void> {
 }
 
 function scheduleDirectFlush(): void {
-  if (directFlushTimer || resolveDirectMetricsTarget() === null) return;
+  if (directFlushTimer) return;
   directFlushTimer = setTimeout(() => {
     void flushDirectMetrics();
   }, DIRECT_FLUSH_DELAY_MS);
@@ -483,13 +529,15 @@ function enqueueDirectMetric(
   value: number,
   attributes: Record<string, AttributeValue>,
 ): void {
-  if (resolveDirectMetricsTarget() === null) return;
+  const target = resolveDirectMetricsTarget();
+  if (target === null) return;
   directQueue.push({
     kind,
     name,
     value,
     attributes,
     timestampUnixNano: getUnixNanoTimestamp(),
+    target,
   });
   if (directQueue.length >= DIRECT_MAX_BATCH_SIZE) {
     void flushDirectMetrics();
