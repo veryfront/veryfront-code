@@ -165,11 +165,17 @@ describe("schedule command", () => {
     ];
     const output: string[] = [];
 
+    const configExecutedSentinel = `${projectDir}/config-executed.sentinel`;
+
     try {
       await Deno.mkdir(`${projectDir}/schedules`, { recursive: true });
+      // Detect execution two ways: a side effect (sentinel file) and a
+      // competing projectSlug that would win over veryfront.json if the
+      // module were ever imported.
       await Deno.writeTextFile(
         `${projectDir}/veryfront.config.ts`,
-        'throw new Error("remote schedules must not import local runtime config");\n',
+        `Deno.writeTextFileSync(${JSON.stringify(configExecutedSentinel)}, "executed");\n` +
+          'export default { projectSlug: "module-config-must-not-run" };\n',
       );
       await Deno.writeTextFile(
         `${projectDir}/veryfront.json`,
@@ -226,6 +232,11 @@ describe("schedule command", () => {
       }
 
       assertEquals(exitCode, 0);
+      assertEquals(
+        await Deno.stat(configExecutedSentinel).then(() => true, () => false),
+        false,
+        "remote schedule run must not execute local veryfront.config.ts",
+      );
       assertEquals(requests.map((request) => request.url), [
         `${TEST_PUBLIC_API_ORIGIN}/projects/json-only-project/schedules?status=active&source_trigger_id=process-job-submissions`,
         `${TEST_PUBLIC_API_ORIGIN}/projects/json-only-project/schedules/${scheduleId}/runs`,

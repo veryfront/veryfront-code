@@ -109,27 +109,35 @@ export const ENVIRONMENT_PROJECT_REFERENCE_NAMES = [
 
 export type EnvironmentProjectReferenceName = typeof ENVIRONMENT_PROJECT_REFERENCE_NAMES[number];
 
-async function readConfigFileResolution(projectDir: string): Promise<ConfigFileResolution> {
+async function readConfigFileResolution(
+  projectDir: string,
+  allowModuleConfigExecution = true,
+): Promise<ConfigFileResolution> {
   const fs = createFileSystem();
 
   let moduleProjectSlug: string | undefined;
   let moduleProjectSlugFile: string | undefined;
-  for (const ext of [".ts", ".js"]) {
-    const configPath = join(projectDir, `veryfront.config${ext}`);
+  // Importing veryfront.config.ts/.js executes arbitrary code from the working
+  // tree with full CLI process permissions. Callers that must not run local
+  // project code (remote-mode commands) disable this lane entirely.
+  if (allowModuleConfigExecution) {
+    for (const ext of [".ts", ".js"]) {
+      const configPath = join(projectDir, `veryfront.config${ext}`);
 
-    try {
-      if (!(await fs.exists(configPath))) continue;
+      try {
+        if (!(await fs.exists(configPath))) continue;
 
-      const module = await import(`file://${configPath}`);
-      const config = module.default ?? module;
+        const module = await import(`file://${configPath}`);
+        const config = module.default ?? module;
 
-      if (config?.projectSlug) {
-        moduleProjectSlug = config.projectSlug;
-        moduleProjectSlugFile = `veryfront.config${ext}`;
-        break;
+        if (config?.projectSlug) {
+          moduleProjectSlug = config.projectSlug;
+          moduleProjectSlugFile = `veryfront.config${ext}`;
+          break;
+        }
+      } catch (error) {
+        cliLogger.debug(`Failed to import config file ${configPath}:`, error);
       }
-    } catch (error) {
-      cliLogger.debug(`Failed to import config file ${configPath}:`, error);
     }
   }
 
@@ -316,9 +324,10 @@ async function resolveConfigBase(
   projectDir: string | undefined,
   env: EnvironmentConfig,
   interactive: boolean,
+  allowModuleConfigExecution: boolean,
 ): Promise<ResolvedConfigDetails> {
   const dir = projectDir ?? cwd();
-  const configFileResolution = await readConfigFileResolution(dir);
+  const configFileResolution = await readConfigFileResolution(dir, allowModuleConfigExecution);
   const configFile = configFileResolution.config;
 
   const apiUrl = resolveCliApiUrl(env, configFile?.apiUrl);
@@ -395,9 +404,9 @@ async function resolveConfigBase(
   };
 }
 
-function createConfigResolver(interactive: boolean) {
+function createConfigResolver(interactive: boolean, allowModuleConfigExecution = true) {
   return async (projectDir?: string, env?: EnvironmentConfig): Promise<ResolvedConfig> =>
-    (await resolveConfigByMode(projectDir, env, interactive)).config;
+    (await resolveConfigByMode(projectDir, env, interactive, allowModuleConfigExecution)).config;
 }
 
 export const resolveConfig = createConfigResolver(false);
@@ -410,6 +419,18 @@ export const resolveConfig = createConfigResolver(false);
  */
 export const resolveConfigWithAuth = createConfigResolver(true);
 
+/**
+ * Resolve config with interactive authentication without executing any local
+ * project code.
+ *
+ * Never imports veryfront.config.ts/.js from the working tree. Remote-mode
+ * commands run source already pushed to Veryfront, so resolving credentials
+ * for them must not execute code from a possibly untrusted local checkout.
+ * Project identity comes only from veryfront.json, environment variables, the
+ * local project link, or inference from project files.
+ */
+export const resolveConfigWithAuthNoModule = createConfigResolver(true, false);
+
 export function resolveConfigWithAuthDetails(
   projectDir?: string,
   env?: EnvironmentConfig,
@@ -421,8 +442,14 @@ function resolveConfigByMode(
   projectDir: string | undefined,
   env: EnvironmentConfig | undefined,
   interactive: boolean,
+  allowModuleConfigExecution = true,
 ): Promise<ResolvedConfigDetails> {
-  return resolveConfigBase(projectDir, env ?? getEnvironmentConfig(), interactive);
+  return resolveConfigBase(
+    projectDir,
+    env ?? getEnvironmentConfig(),
+    interactive,
+    allowModuleConfigExecution,
+  );
 }
 
 export interface ApiReadOptions {
