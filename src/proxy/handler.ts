@@ -1371,16 +1371,18 @@ export function createProxyContextHeaders(
   const headers = createProxyEndToEndHeaders(sourceHeaders);
   for (const header of INTERNAL_PROXY_HEADERS) headers.delete(header);
 
-  // The `authToken` cookie carries the caller's Veryfront credential (a user
-  // session JWT, or an exchanged environment access token). The proxy has
-  // already consumed it (resolveProxyRequestToken) and forwards the resolved
-  // identity via `x-token`; the raw credential must never reach
-  // tenant-controlled project code. Application cookies pass through intact.
-  const cookieHeader = headers.get("cookie");
-  if (cookieHeader !== null) {
-    const remainingCookies = stripUserTokenCookie(cookieHeader);
-    if (remainingCookies === undefined) headers.delete("cookie");
-    else headers.set("cookie", remainingCookies);
+  // For hosted projects, the `authToken` cookie carries the caller's Veryfront
+  // credential. The proxy has already consumed it (resolveProxyRequestToken)
+  // and forwards the resolved identity via `x-token`, so the raw credential
+  // must not reach tenant-controlled project code. Local projects skip that
+  // token flow, where the same cookie name belongs to the application.
+  if (!ctx.isLocalProject) {
+    const cookieHeader = headers.get("cookie");
+    if (cookieHeader !== null) {
+      const remainingCookies = stripUserTokenCookie(cookieHeader);
+      if (remainingCookies === undefined) headers.delete("cookie");
+      else headers.set("cookie", remainingCookies);
+    }
   }
 
   // The `x-veryfront-*-jws` signature headers are deliberately NOT stripped:

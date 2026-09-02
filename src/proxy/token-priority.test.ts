@@ -7,7 +7,7 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import { createProxyHandler } from "./handler.ts";
+import { createProxyHandler, injectContextHeaders } from "./handler.ts";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
 
 function createHandler(port: number) {
@@ -378,7 +378,7 @@ describe("Token Priority Cascade", () => {
   });
 
   describe("local project bypasses token fetch", () => {
-    it("skips token fetch for local projects", async () => {
+    it("skips token consumption and preserves application authToken cookies", async () => {
       const handler = createProxyHandler({
         config: {
           apiBaseUrl: "http://localhost:9999",
@@ -392,7 +392,10 @@ describe("Token Priority Cascade", () => {
       });
 
       const req = new Request("http://local-proj.preview.veryfront.com/page", {
-        headers: { host: "local-proj.preview.veryfront.com" },
+        headers: {
+          host: "local-proj.preview.veryfront.com",
+          cookie: "session=abc; authToken=application-session; theme=dark",
+        },
       });
 
       const ctx = await handler.processRequest(req);
@@ -401,6 +404,10 @@ describe("Token Priority Cascade", () => {
       assertEquals(ctx.isLocalProject, true);
       assertEquals(ctx.localPath, "/tmp/local-proj");
       assertEquals(ctx.error, undefined);
+      assertEquals(
+        injectContextHeaders(req, ctx).headers.get("cookie"),
+        "session=abc; authToken=application-session; theme=dark",
+      );
 
       await handler.close();
     });
