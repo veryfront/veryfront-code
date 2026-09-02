@@ -42,6 +42,7 @@ import {
   runWithVeryfrontCloudContextAsync,
 } from "../../../src/provider/veryfront-cloud/context.ts";
 import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
+import { getHostEnv } from "#cli/process-env";
 import { brand, dim } from "#cli/ui";
 import { cliLogger, exitProcess, isQuiet, VERSION } from "#cli/utils";
 import {
@@ -603,7 +604,9 @@ function createEvalToolExecutionContext(
   config: EvalRuntimeAuthConfig | null | undefined,
 ): ToolExecutionContext {
   const projectSlug = resolveEvalRuntimeProjectSlug(config);
-  const authToken = Deno.env.get("VERYFRONT_API_TOKEN");
+  // Host-scoped: `hydrateEvalRuntimeAuth` keeps a stored CLI login token out of
+  // the process environment, so `Deno.env` no longer carries it.
+  const authToken = getHostEnv("VERYFRONT_API_TOKEN");
   return {
     ...(projectSlug ? { projectSlug } : {}),
     ...(authToken ? { authToken } : {}),

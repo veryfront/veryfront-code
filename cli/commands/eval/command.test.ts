@@ -60,6 +60,7 @@ import {
   runEvalWithGatewayBillingGroup,
 } from "./command.ts";
 import { parseEvalArgs } from "./handler.ts";
+import { deleteHostSecret, getHostEnv } from "#cli/process-env";
 
 const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
 const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
@@ -85,6 +86,7 @@ const originalRedactionEnv = Object.fromEntries(
 ) as Record<(typeof redactionEnvNames)[number], string | undefined>;
 
 function restoreEnv(): void {
+  deleteHostSecret("VERYFRONT_API_TOKEN");
   if (originalApiToken === undefined) {
     Deno.env.delete("VERYFRONT_API_TOKEN");
   } else {
@@ -1954,7 +1956,9 @@ describe("eval CLI command helpers", () => {
         projectSlug: "configured-eval-project",
       });
 
-      assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), "stored-token");
+      // The stored login token never enters the process environment.
+      assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), undefined);
+      assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "stored-token");
       assertEquals(Deno.env.get("VERYFRONT_PROJECT_SLUG"), "configured-eval-project");
       assertEquals(Deno.env.get("VERYFRONT_SERVICE_LAYER"), "cloud");
     } finally {

@@ -16,6 +16,13 @@ it("keeps host and trusted-snapshot readers outside veryfront/platform/env", () 
   assertEquals("registerTrustedProjectEnvSnapshot" in publicEnv, false);
 });
 
+it("keeps host-private credential accessors off both public surfaces", () => {
+  for (const name of ["setHostSecret", "getHostSecret", "deleteHostSecret"]) {
+    assertEquals(name in publicEnv, false);
+    assertEquals(name in publicPlatform, false);
+  }
+});
+
 it("keeps process-wide env mutators outside veryfront/platform/env", () => {
   assertEquals("setEnv" in publicEnv, false);
   assertEquals("deleteEnv" in publicEnv, false);

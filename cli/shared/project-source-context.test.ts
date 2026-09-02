@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import type { VeryfrontConfig } from "veryfront/config";
+import { deleteHostSecret, getHostEnv } from "#cli/process-env";
 import { saveToken } from "../auth/token-store.ts";
 import {
   applyProjectSourceRuntimeAuth,
@@ -30,6 +31,7 @@ function restoreEnv(): void {
       Deno.env.set(key, value);
     }
   }
+  deleteHostSecret("VERYFRONT_API_TOKEN");
 }
 
 describe("getProxyProjectSourceContext", () => {
@@ -88,7 +90,10 @@ describe("project source runtime auth", () => {
 
       await applyProjectSourceRuntimeAuth(projectDir, config);
 
-      assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), "stored-token");
+      // The stored login token stays out of the process environment that
+      // locally imported project modules can read.
+      assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), undefined);
+      assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "stored-token");
       assertEquals(Deno.env.get("VERYFRONT_PROJECT_SLUG"), "configured-fs-project");
       assertEquals(Deno.env.get("VERYFRONT_SERVICE_LAYER"), "cloud");
     } finally {
@@ -113,7 +118,8 @@ describe("project source runtime auth", () => {
       );
 
       await withProjectSourceContext(projectDir, async () => {
-        assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), "stored-token");
+        assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), undefined);
+        assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "stored-token");
         assertEquals(Deno.env.get("VERYFRONT_PROJECT_SLUG"), "configured-source-project");
       });
     } finally {

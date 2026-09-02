@@ -5,6 +5,7 @@ import {
   isExtendedFSAdapter,
   type RuntimeAdapter,
 } from "veryfront/platform";
+import { getHostEnv } from "#cli/process-env";
 import { runtime } from "#cli/runtime-adapter";
 import { applyRuntimeAuthContext, resolveLinkedProjectSlug } from "./runtime-auth.ts";
 
@@ -26,7 +27,9 @@ export interface ProjectSourceExecutionContext {
 
 export function getProxyProjectSourceContext(): ProxyProjectSourceContext | null {
   const projectSlug = getEnv("VERYFRONT_PROJECT_SLUG")?.trim();
-  const token = getEnv("VERYFRONT_API_TOKEN")?.trim();
+  // Host-scoped: `applyRuntimeAuthContext` keeps the CLI login token out of the
+  // process environment, so it resolves through `getHostEnv` and not `getEnv`.
+  const token = getHostEnv("VERYFRONT_API_TOKEN")?.trim();
 
   if (!projectSlug || !token) {
     return null;

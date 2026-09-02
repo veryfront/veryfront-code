@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
+import { deleteEnv, env, getEnv, setEnv } from "#veryfront/compat/process.ts";
+import { deleteHostSecret, getHostEnv } from "#cli/process-env";
 import { join } from "veryfront/platform/path";
 import { saveToken } from "../auth/token-store.ts";
 import {
@@ -26,6 +27,7 @@ function clearEnv(): void {
       // expected: env may already be unset
     }
   }
+  deleteHostSecret("VERYFRONT_API_TOKEN");
 }
 
 async function writeRawProjectLink(projectDir: string, projectSlug: string): Promise<void> {
@@ -89,9 +91,35 @@ describe("cli/shared/runtime-auth", () => {
       apiToken: "stored-token",
       serviceLayer: "cloud",
     });
-    assertEquals(getEnv("VERYFRONT_API_TOKEN"), "stored-token");
+    assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "stored-token");
     assertEquals(getEnv("VERYFRONT_PROJECT_SLUG"), undefined);
     assertEquals(getEnv("VERYFRONT_SERVICE_LAYER"), "cloud");
+  });
+
+  it("keeps the stored login token out of the environment project code reads", async () => {
+    await useTempConfigHome();
+    await saveToken("stored-token");
+
+    await applyRuntimeAuthContext({ linkedProjectSlug: "linked-project" });
+
+    // `dev` and `start` import project route modules into this process, so a
+    // process-wide token would be readable by project-authored code.
+    assertEquals(getEnv("VERYFRONT_API_TOKEN"), undefined);
+    assertEquals(env()["VERYFRONT_API_TOKEN"], undefined);
+    // Framework code still resolves it through the host-scoped reader.
+    assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "stored-token");
+  });
+
+  it("leaves an explicitly exported token in the environment", async () => {
+    await useTempConfigHome();
+    await saveToken("stored-token");
+    setEnv("VERYFRONT_API_TOKEN", "env-token");
+
+    const context = await applyRuntimeAuthContext({});
+
+    assertEquals(context.apiToken, "env-token");
+    assertEquals(getEnv("VERYFRONT_API_TOKEN"), "env-token");
+    assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), "env-token");
   });
 
   it("keeps an explicitly linked project scoped to cloud requests", async () => {
@@ -131,6 +159,7 @@ describe("cli/shared/runtime-auth", () => {
 
     assertEquals(context, {});
     assertEquals(getEnv("VERYFRONT_API_TOKEN"), undefined);
+    assertEquals(getHostEnv("VERYFRONT_API_TOKEN"), undefined);
     assertEquals(getEnv("VERYFRONT_PROJECT_SLUG"), undefined);
     assertEquals(getEnv("VERYFRONT_SERVICE_LAYER"), undefined);
   });

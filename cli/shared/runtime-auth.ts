@@ -1,4 +1,4 @@
-import { getEnv, setEnv } from "#cli/process-env";
+import { getEnv, setEnv, setHostSecret } from "#cli/process-env";
 import { readToken } from "../auth/token-store.ts";
 import { readConfigFile } from "./config.ts";
 import { readProjectLink } from "./project-link.ts";
@@ -55,8 +55,15 @@ export async function applyRuntimeAuthContext(
 ): Promise<RuntimeAuthContext> {
   const context = await resolveRuntimeAuthContext(options);
 
+  // The token is registered host-privately rather than with `setEnv`. `dev`
+  // and `start` import project route modules into this very process, so a
+  // process-wide `VERYFRONT_API_TOKEN` would hand the developer's stored
+  // Veryfront Cloud login token to any project-authored code that reads
+  // `Deno.env.get()` or `getEnv()`. Framework code reads it back through
+  // `getHostEnv()`/`getHostSecret()`, neither of which project code can reach.
+  // A token the developer exported themselves stays in the environment.
   if (context.apiToken && !normalizeEnvValue(getEnv("VERYFRONT_API_TOKEN"))) {
-    setEnv("VERYFRONT_API_TOKEN", context.apiToken);
+    setHostSecret("VERYFRONT_API_TOKEN", context.apiToken);
   }
 
   if (

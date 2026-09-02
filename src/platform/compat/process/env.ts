@@ -30,9 +30,25 @@ const allowHostEnvTestOverlay = (() => {
   return hostProcessEnv?.DENO_TESTING === "1";
 })();
 const MapConstructor = Map;
+const mapDelete = Map.prototype.delete;
 const mapEntries = Map.prototype.entries;
 const mapGet = Map.prototype.get;
 const mapHas = Map.prototype.has;
+const mapSet = Map.prototype.set;
+
+/**
+ * Host-private credentials, deliberately kept out of the process environment.
+ *
+ * The CLI resolves the developer's stored login token before it starts a
+ * server. In local development project route modules are imported into that
+ * same process, so anything placed in the environment — `Deno.env`,
+ * `process.env`, a spawned child's inherited env, or `getEnv()` — is readable
+ * by project-authored code, and a hostile project could exfiltrate the token
+ * just by being served. Values registered here are resolved only through
+ * {@link getHostEnv}, which `veryfront/platform` does not export, so framework
+ * code can still read them while project code cannot.
+ */
+const hostSecrets: Map<string, string> = new MapConstructor();
 
 export type EnvOverlayStorage = {
   getStore: () => unknown;
@@ -90,10 +106,43 @@ export function env(): Record<string, string> {
 }
 
 /**
+ * Register a host-private credential under `key`.
+ *
+ * The value is held in memory only: it never reaches `Deno.env`,
+ * `process.env`, a child process environment, or {@link getEnv}, so project
+ * code running in the same process cannot read it. {@link getHostEnv} resolves
+ * it after the real environment, so an explicitly exported variable still wins.
+ */
+export function setHostSecret(key: string, value: string): void {
+  apply(mapSet, hostSecrets, [key, value]);
+}
+
+/** Read a host-private credential registered by {@link setHostSecret}. */
+export function getHostSecret(key: string): string | undefined {
+  return apply(mapGet, hostSecrets, [key]);
+}
+
+/** Forget a host-private credential registered by {@link setHostSecret}. */
+export function deleteHostSecret(key: string): void {
+  apply(mapDelete, hostSecrets, [key]);
+}
+
+/**
  * Read outside the project snapshot. Test overlays require a captured host DENO_TESTING=1.
  * Tenant project scopes and later global mutations cannot shadow this read.
+ *
+ * Host-private credentials registered with {@link setHostSecret} resolve here
+ * and only here, so framework code reaches them while `getEnv()` — the reader
+ * project code can reach — does not.
  */
 export function getHostEnv(key: string): string | undefined {
+  const value = readHostProcessEnv(key);
+  if (value !== undefined) return value;
+  return getHostSecret(key);
+}
+
+/** The host process environment alone, without host-private credentials. */
+function readHostProcessEnv(key: string): string | undefined {
   if (denoRuntime && denoEnv && denoEnvGet) {
     let value: string | undefined;
     try {
@@ -237,7 +286,10 @@ export function getEnv(key: string): string | undefined {
     return readProjectScopedEnv(projectEnv, key);
   }
 
-  return getHostEnv(key);
+  // Host process environment only. Host-private credentials stay out of this
+  // reader: local development imports project route modules into this process,
+  // and `getEnv()` is the accessor those modules can call.
+  return readHostProcessEnv(key);
 }
 
 const DEFAULT_ENV_TRUE_VALUES = ["1", "true", "yes"] as const;

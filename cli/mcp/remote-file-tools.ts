@@ -13,6 +13,7 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "./tools.ts";
 import { getEnvironmentConfig } from "veryfront/config";
+import { getHostEnv } from "#cli/process-env";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { randomSuffix } from "#cli/shared/slug";
 
@@ -29,7 +30,10 @@ function getApiBaseUrl(): string {
 }
 
 function getApiToken(): string | undefined {
-  return getEnvironmentConfig().apiToken;
+  // The environment snapshot only carries an explicitly exported token; a
+  // stored CLI login token is held host-privately so project code served by
+  // `veryfront dev` cannot read it out of the process environment.
+  return getEnvironmentConfig().apiToken ?? getHostEnv("VERYFRONT_API_TOKEN");
 }
 
 async function apiRequest<T>(

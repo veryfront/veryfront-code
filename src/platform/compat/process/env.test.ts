@@ -2,12 +2,53 @@ import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { fromFileUrl } from "#std/path";
-import { registerTrustedProjectEnvSnapshot } from "./env.ts";
+import {
+  deleteEnv,
+  deleteHostSecret,
+  env,
+  getEnv,
+  getHostEnv,
+  registerTrustedProjectEnvSnapshot,
+  setEnv,
+  setHostSecret,
+} from "./env.ts";
 import { createProjectScopedDenoEnvView } from "./scoped-process-env.ts";
 
 const denoOnlyIt = isDeno ? it : it.skip;
 
 describe("host environment access", () => {
+  it("hides a host-private credential from every project-reachable reader", () => {
+    const key = "VF_HOST_SECRET_TEST_TOKEN";
+    setHostSecret(key, "host-private-token");
+
+    try {
+      // Framework code reads it; project code — which reaches `getEnv()`, the
+      // bulk environment, and `Deno.env` — does not.
+      assertEquals(getHostEnv(key), "host-private-token");
+      assertEquals(getEnv(key), undefined);
+      assertEquals(env()[key], undefined);
+      if (isDeno) assertEquals(Deno.env.get(key), undefined);
+    } finally {
+      deleteHostSecret(key);
+    }
+
+    assertEquals(getHostEnv(key), undefined);
+  });
+
+  it("lets an exported variable win over a host-private credential", () => {
+    const key = "VF_HOST_SECRET_TEST_OVERRIDE";
+    setHostSecret(key, "host-private-token");
+    setEnv(key, "exported-token");
+
+    try {
+      assertEquals(getHostEnv(key), "exported-token");
+      assertEquals(getEnv(key), "exported-token");
+    } finally {
+      deleteHostSecret(key);
+      deleteEnv(key);
+    }
+  });
+
   it("creates an immutable scoped Deno environment facade", () => {
     const view = createProjectScopedDenoEnvView({
       get: () => undefined,

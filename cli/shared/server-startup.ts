@@ -1,3 +1,4 @@
+import { getHostSecret } from "#cli/process-env";
 import { runtime } from "#cli/runtime-adapter";
 import { type HostRuntime, liveHostRuntime } from "#cli/host-runtime";
 import {
@@ -57,7 +58,11 @@ export function buildDiscoveryConfig(
   options: StartCliProxyModeServerOptions,
   host: HostRuntime = liveHostRuntime(),
 ): DiscoveryOptions {
-  const token = host.env.get("VERYFRONT_API_TOKEN") ?? "";
+  // `applyRuntimeAuthContext` registers a stored CLI login token host-privately
+  // instead of exporting it, so fall back to that store when the developer has
+  // not exported `VERYFRONT_API_TOKEN` themselves.
+  const token = host.env.get("VERYFRONT_API_TOKEN") ??
+    getHostSecret("VERYFRONT_API_TOKEN") ?? "";
   const slug = host.env.get("VERYFRONT_PROJECT_SLUG") ?? options.linkedProjectSlug ?? "";
 
   return {
