@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from "#std/assert";
 import { parse } from "npm:@babel/parser@7.29.2";
 import {
+  assertPathInsideProject,
   filterNeedsResolution,
   main,
   mergeEsmShPins,
@@ -795,6 +796,146 @@ Deno.test(
     }
   },
 );
+
+// ---------------------------------------------------------------------------
+// main() integration: symlinked paths must never be followed
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  "package.json symlink pointing outside the project aborts without writing through the link",
+  async () => {
+    const project = await Deno.makeTempDir();
+    const outside = await Deno.makeTempDir();
+    const source = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
+    const outsideContent = JSON.stringify({ name: "victim", dependencies: {} }) + "\n";
+    try {
+      await Deno.writeTextFile(`${project}/app.ts`, source);
+      await Deno.writeTextFile(`${outside}/victim.json`, outsideContent);
+      await Deno.symlink(`${outside}/victim.json`, `${project}/package.json`);
+
+      let thrown: unknown;
+      try {
+        await main(["--", project]);
+      } catch (error) {
+        thrown = error;
+      }
+
+      assert(thrown instanceof Error, "main() should refuse a symlinked package.json");
+      assertStringIncludes(thrown.message, "symlink");
+      // The file outside the project must be untouched, and no source file may
+      // have been rewritten without a recorded pin.
+      assertEquals(await Deno.readTextFile(`${outside}/victim.json`), outsideContent);
+      assertEquals(await Deno.readTextFile(`${project}/app.ts`), source);
+    } finally {
+      await Deno.remove(project, { recursive: true });
+      await Deno.remove(outside, { recursive: true });
+    }
+  },
+);
+
+Deno.test(
+  "dangling package.json symlink aborts instead of creating the target file",
+  async () => {
+    const project = await Deno.makeTempDir();
+    const outside = await Deno.makeTempDir();
+    const source = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
+    const target = `${outside}/planted.json`;
+    try {
+      await Deno.writeTextFile(`${project}/app.ts`, source);
+      // Dangling symlink: lstat succeeds and reports isSymlink, the target
+      // does not exist.  Without the guard, readTextFile reports NotFound
+      // (treated as an absent manifest) and the write phase would then CREATE
+      // the target outside the project.
+      await Deno.symlink(target, `${project}/package.json`);
+
+      let thrown: unknown;
+      try {
+        await main(["--", project]);
+      } catch (error) {
+        thrown = error;
+      }
+
+      assert(thrown instanceof Error, "main() should refuse a dangling package.json symlink");
+      assertStringIncludes(thrown.message, "symlink");
+      let targetCreated = true;
+      try {
+        await Deno.lstat(target);
+      } catch (e) {
+        if (e instanceof Deno.errors.NotFound) targetCreated = false;
+      }
+      assert(!targetCreated, "the symlink target outside the project must not be created");
+      assertEquals(await Deno.readTextFile(`${project}/app.ts`), source);
+    } finally {
+      await Deno.remove(project, { recursive: true });
+      await Deno.remove(outside, { recursive: true });
+    }
+  },
+);
+
+Deno.test(
+  "symlinked source files and directories are not collected or rewritten",
+  async () => {
+    const project = await Deno.makeTempDir();
+    const outside = await Deno.makeTempDir();
+    const outsideSource = 'import { x } from "https://esm.sh/lodash@4.17.21";\n';
+    try {
+      await Deno.writeTextFile(`${outside}/victim.ts`, outsideSource);
+      await Deno.mkdir(`${outside}/victim-dir`);
+      await Deno.writeTextFile(`${outside}/victim-dir/nested.ts`, outsideSource);
+      await Deno.writeTextFile(
+        `${project}/package.json`,
+        JSON.stringify({ name: "test", dependencies: {} }) + "\n",
+      );
+      await Deno.symlink(`${outside}/victim.ts`, `${project}/linked.ts`);
+      await Deno.symlink(`${outside}/victim-dir`, `${project}/linked-dir`);
+
+      await main(["--", project]);
+
+      // Files reachable only through symlinks must keep their esm.sh URLs.
+      assertEquals(await Deno.readTextFile(`${outside}/victim.ts`), outsideSource);
+      assertEquals(await Deno.readTextFile(`${outside}/victim-dir/nested.ts`), outsideSource);
+    } finally {
+      await Deno.remove(project, { recursive: true });
+      await Deno.remove(outside, { recursive: true });
+    }
+  },
+);
+
+Deno.test("assertPathInsideProject rejects an out-of-project real path", async () => {
+  const project = await Deno.makeTempDir();
+  const outside = await Deno.makeTempDir();
+  try {
+    const projectRoot = await Deno.realPath(project);
+    await Deno.writeTextFile(`${outside}/file.txt`, "x");
+
+    let thrown: unknown;
+    try {
+      await assertPathInsideProject(`${outside}/file.txt`, projectRoot);
+    } catch (error) {
+      thrown = error;
+    }
+    assert(thrown instanceof Error, "a path outside the project root must be rejected");
+
+    // A regular file directly under the resolved root passes.
+    await Deno.writeTextFile(`${project}/inside.txt`, "x");
+    await assertPathInsideProject(`${project}/inside.txt`, projectRoot);
+
+    // A missing file is rejected unless explicitly allowed.
+    let missingThrown = false;
+    try {
+      await assertPathInsideProject(`${project}/missing.txt`, projectRoot);
+    } catch {
+      missingThrown = true;
+    }
+    assert(missingThrown, "a missing file must be rejected by default");
+    await assertPathInsideProject(`${project}/missing.txt`, projectRoot, {
+      allowMissing: true,
+    });
+  } finally {
+    await Deno.remove(project, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
 
 // ---------------------------------------------------------------------------
 // main() integration: version conflicts are preflighted

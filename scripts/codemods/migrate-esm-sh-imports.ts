@@ -452,14 +452,74 @@ function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
     Object.getPrototypeOf(value) === Object.prototype;
 }
 
+const PATH_SEPARATOR = Deno.build.os === "windows" ? "\\" : "/";
+
+/**
+ * Fail closed before reading or writing a path collected under the project
+ * directory.
+ *
+ * Deno.readTextFile/Deno.writeTextFile follow symlinks, so a malicious project
+ * could plant package.json (or swap a collected source file) as a symlink —
+ * possibly dangling — that points outside the project, turning the codemod's
+ * --allow-write into an arbitrary file create/overwrite under the operator's
+ * account.  Reject every symlink (lstat reports a dangling one too, as
+ * isSymlink) and require the resolved path to stay inside the resolved project
+ * root.
+ *
+ * `allowMissing` permits a genuinely absent file: package.json may not exist
+ * yet, and creating it directly under the already-resolved project root is
+ * safe.
+ */
+export async function assertPathInsideProject(
+  path: string,
+  projectRoot: string,
+  { allowMissing = false }: { allowMissing?: boolean } = {},
+): Promise<void> {
+  let info: Deno.FileInfo;
+  try {
+    info = await Deno.lstat(path);
+  } catch (e) {
+    if (allowMissing && e instanceof Deno.errors.NotFound) return;
+    throw new Error(
+      `Refusing to touch ${path}: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+  if (info.isSymlink) {
+    throw new Error(`Refusing to follow symlink: ${path}`);
+  }
+  const real = await Deno.realPath(path);
+  if (real !== projectRoot && !real.startsWith(projectRoot + PATH_SEPARATOR)) {
+    throw new Error(`Refusing to access path outside the project directory: ${path}`);
+  }
+}
+
 /**
  * Read and parse the project's package.json.
  *
  * Returns `parseError: null` when the file is absent (treat as empty).
  * Returns a non-null `parseError` when the file exists but cannot be read,
  * parsed, or validated. The caller must NOT overwrite the file in that case.
+ *
+ * When `projectRoot` (the real path of the project directory) is provided, a
+ * symlinked or out-of-project manifest is rejected as a `parseError` before
+ * any read, so the caller aborts without following the link.
  */
-export async function readProjectPackageJson(path: string): Promise<PackageJsonReadResult> {
+export async function readProjectPackageJson(
+  path: string,
+  projectRoot?: string,
+): Promise<PackageJsonReadResult> {
+  if (projectRoot !== undefined) {
+    try {
+      await assertPathInsideProject(path, projectRoot, { allowMissing: true });
+    } catch (e) {
+      return {
+        data: {},
+        existingDeps: {},
+        otherFieldDeps: {},
+        parseError: `package.json could not be read: ${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
+  }
   let text: string;
   try {
     text = await Deno.readTextFile(path);
@@ -613,6 +673,10 @@ export function parseCliOptions(args: string[]): CliOptions {
 async function collectSourceFiles(dir: string, files: string[]): Promise<void> {
   for await (const entry of Deno.readDir(dir)) {
     if (SKIP_DIRS.has(entry.name)) continue;
+    // Never traverse or collect symlinks (readDir does not follow them, so a
+    // link reports isSymlink rather than isFile/isDirectory): a link to a file
+    // or directory outside the project must not be rewritten through the link.
+    if (entry.isSymlink) continue;
     const path = `${dir}/${entry.name}`;
     if (entry.isDirectory) {
       await collectSourceFiles(path, files);
@@ -648,8 +712,12 @@ function pickSpecifier(
 async function main(args: string[]): Promise<void> {
   const { projectDir, dryRun, failOnConflict } = parseCliOptions(args);
 
+  // Resolve the project root once so every subsequent containment check
+  // compares against a symlink-free absolute path.
+  const projectRoot = await Deno.realPath(projectDir);
+
   const sourceFiles: string[] = [];
-  await collectSourceFiles(projectDir, sourceFiles);
+  await collectSourceFiles(projectRoot, sourceFiles);
   sourceFiles.sort(compareCodeUnits);
 
   const report: EsmShReport = {
@@ -707,14 +775,15 @@ async function main(args: string[]): Promise<void> {
     }
   }
 
-  // Read existing package.json.  A corrupt file must not be overwritten.
-  const pkgJsonPath = `${projectDir}/package.json`;
+  // Read existing package.json.  A corrupt file must not be overwritten, and
+  // a symlinked or out-of-project manifest must not be followed.
+  const pkgJsonPath = `${projectRoot}/package.json`;
   const {
     data: pkgJson,
     existingDeps,
     otherFieldDeps,
     parseError: pkgJsonParseError,
-  } = await readProjectPackageJson(pkgJsonPath);
+  } = await readProjectPackageJson(pkgJsonPath, projectRoot);
 
   const candidatePins = Object.fromEntries(
     [...allPins.entries()].map(([pkg, { version }]) => [pkg, version]),
@@ -812,10 +881,16 @@ async function main(args: string[]): Promise<void> {
     // specifiers in source files without a corresponding pin entry.
     if (JSON.stringify(updatedDeps) !== JSON.stringify(existingDeps)) {
       pkgJson["dependencies"] = updatedDeps;
+      // Re-check right before the write: writeTextFile follows symlinks, and
+      // the manifest could have been swapped for a link since it was read.
+      await assertPathInsideProject(pkgJsonPath, projectRoot, { allowMissing: true });
       await Deno.writeTextFile(pkgJsonPath, JSON.stringify(pkgJson, null, 2) + "\n");
     }
 
     for (const { file, code } of fileResults) {
+      // Collected entries were regular files, but re-check before each write
+      // in case one was swapped for a symlink after analysis.
+      await assertPathInsideProject(file, projectRoot);
       await Deno.writeTextFile(file, code);
     }
   }
