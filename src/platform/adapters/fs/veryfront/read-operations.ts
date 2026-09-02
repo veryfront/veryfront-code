@@ -185,9 +185,15 @@ export class ReadOperations {
       "fs.veryfront.readOptionalTextFile",
       async () => {
         const normalizedPath = this.normalizer.normalize(path);
-        const apiPath = this.getOriginalApiPath?.(normalizedPath) ?? normalizedPath;
-        logger.debug("readOptionalTextFile called", { path, normalizedPath, apiPath });
-        return await this.client.getOptionalFileContent(apiPath);
+        logger.debug("readOptionalTextFile called", { path, normalizedPath });
+        // Route through the cached fetchContent pipeline (request-scoped cache,
+        // persistent production cache, file-list index with fresh negative
+        // misses, and in-flight dedup) instead of an uncached API round trip,
+        // so per-render optional reads cannot amplify public traffic into
+        // repeated authenticated control-plane requests. Missing files still
+        // surface as not-found-like errors, which callers treat as the
+        // optional miss.
+        return await this.fetchContent(normalizedPath);
       },
       { "fs.path": path },
     );

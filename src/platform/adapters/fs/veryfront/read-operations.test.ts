@@ -957,6 +957,103 @@ describe("ReadOperations", () => {
     });
   });
 
+  describe("readOptionalTextFile", () => {
+    it("should hit the request-scoped cache instead of refetching per read", async () => {
+      let fetchCount = 0;
+      const client = createMockClient({
+        getFileContent: () => {
+          fetchCount++;
+          return Promise.resolve("body { color: red; }");
+        },
+      });
+
+      const readOps = createReadOps(client, false, createBranchContext());
+      readOps.setFileListReadyPromise(Promise.resolve());
+
+      const [first, second, viaReadText] = await runWithRequestContext(
+        { projectSlug: "test", token: "token-1", productionMode: false },
+        async () => {
+          const first = await readOps.readOptionalTextFile("globals.css");
+          const second = await readOps.readOptionalTextFile("globals.css");
+          const viaReadText = await readOps.readTextFile("globals.css");
+          return [first, second, viaReadText] as const;
+        },
+      );
+
+      assertEquals(first, "body { color: red; }");
+      assertEquals(second, "body { color: red; }");
+      assertEquals(viaReadText, "body { color: red; }");
+      assertEquals(fetchCount, 1, "repeated optional reads must share one fetch per request");
+    });
+
+    it("should serve optional reads from the file list cache without an API call", async () => {
+      let apiCallCount = 0;
+      const client = createMockClient({
+        getFileContent: () => {
+          apiCallCount++;
+          return Promise.resolve("api content");
+        },
+        getPublishedFileContent: () => {
+          apiCallCount++;
+          return Promise.resolve("api content");
+        },
+        resolveFileWithExtension: () => {
+          apiCallCount++;
+          return Promise.resolve(null);
+        },
+      });
+
+      const readOps = createReadyReadOps(
+        client,
+        false,
+        createReleaseContext("rel-css"),
+        (path: string) => path,
+        () => Promise.resolve([{ path: "globals.css", content: "cached stylesheet" }]),
+      );
+
+      const content = await readOps.readOptionalTextFile("globals.css");
+      assertEquals(content, "cached stylesheet");
+      assertEquals(apiCallCount, 0, "a file list hit must not reach the API");
+    });
+
+    it("should answer a fresh file-list miss without any API request", async () => {
+      let apiCallCount = 0;
+      const client = createMockClient({
+        getFileContent: () => {
+          apiCallCount++;
+          return Promise.resolve("api content");
+        },
+        getPublishedFileContent: () => {
+          apiCallCount++;
+          return Promise.resolve("api content");
+        },
+        resolveFileWithExtension: () => {
+          apiCallCount++;
+          return Promise.resolve(null);
+        },
+      });
+
+      const readOps = createReadyReadOps(
+        client,
+        false,
+        createReleaseContext("rel-no-css"),
+        (path: string) => path,
+        () => Promise.resolve([{ path: "pages/index.tsx", content: "index content" }]),
+      );
+
+      await assertRejects(
+        () => readOps.readOptionalTextFile("globals.css"),
+        Error,
+        "404 Not Found",
+      );
+      assertEquals(
+        apiCallCount,
+        0,
+        "an expected optional miss must be answered by the file list index, not the API",
+      );
+    });
+  });
+
   describe("readFile", () => {
     it("should return Uint8Array from text content", async () => {
       const client = createMockClient({
