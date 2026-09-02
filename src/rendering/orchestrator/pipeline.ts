@@ -1121,6 +1121,7 @@ export class RenderPipeline {
           contentSourceId: options?.contentSourceId,
           slug,
           pagePath: slug,
+          mode: this.config.mode,
         });
 
         if (recovered) {

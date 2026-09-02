@@ -12,7 +12,11 @@ import * as React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { type MDXLoadModuleOptions, mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import type { EntityInfo } from "#veryfront/types";
-import { handleMDXPage, prepareMDXPageBundles } from "./page-rendering.ts";
+import {
+  __resetStaleMdxEsmRecoveryStateForTests,
+  handleMDXPage,
+  prepareMDXPageBundles,
+} from "./page-rendering.ts";
 import { PageRenderer } from "./page-renderer.ts";
 import {
   __setServerModuleLoaderForTests,
@@ -40,6 +44,7 @@ describe("rendering/page-rendering", () => {
   afterEach(() => {
     resetReactCache();
     __setServerModuleLoaderForTests(null);
+    __resetStaleMdxEsmRecoveryStateForTests();
   });
 
   it("keeps SSR module code separate from the browser client bundle", async () => {
@@ -152,6 +157,145 @@ describe("rendering/page-rendering", () => {
         sourceRefreshes,
         0,
         "a render failure that is not an ESM export mismatch must not flush the preview source snapshot",
+      );
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+    }
+  });
+
+  it("does not recover preview caches for an immutable release content source", async () => {
+    const pageInfo = createMDXPageInfo("# MDX Probe");
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    let loadAttempts = 0;
+    let sourceRefreshes = 0;
+
+    const adapter = {
+      fs: {
+        refreshSourceSnapshot: () => {
+          sourceRefreshes++;
+          return Promise.resolve();
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+
+    mutableRenderer.loadModuleESM = () => {
+      loadAttempts++;
+      throw new Error(
+        "The requested module 'file:///cache/vfmod.mjs' does not provide an export named 'default'",
+      );
+    };
+
+    try {
+      const error = await assertRejects(
+        () =>
+          handleMDXPage(
+            pageInfo,
+            "probe",
+            "/project",
+            {},
+            () => Promise.resolve({ compiledCode: "", frontmatter: {}, headings: [] }),
+            adapter,
+            {
+              projectId: "project-release",
+              projectSlug: "project-slug",
+              contentSourceId: "release-abc123",
+              mode: "production",
+            },
+          ),
+        Error,
+        "Failed to import MDX page via ESM",
+      );
+      assertInstanceOf(error, Error);
+
+      assertEquals(
+        sourceRefreshes,
+        0,
+        "a released production source must never flush its source snapshot from a public render error",
+      );
+      assertEquals(
+        loadAttempts,
+        1,
+        "a released production source must not pay a cache-eviction retry for a render error",
+      );
+      assertEquals(
+        error.message.includes("after cache refresh"),
+        false,
+        "no recovery ran, so the failure must not be reported as a post-recovery failure",
+      );
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+    }
+  });
+
+  it("recovers a preview content source at most once per cooldown window", async () => {
+    const pageInfo = createMDXPageInfo("# MDX Probe");
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    let loadAttempts = 0;
+    let sourceRefreshes = 0;
+
+    const adapter = {
+      fs: {
+        refreshSourceSnapshot: () => {
+          sourceRefreshes++;
+          return Promise.resolve();
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+
+    mutableRenderer.loadModuleESM = () => {
+      loadAttempts++;
+      throw new Error(
+        "The requested module 'file:///cache/vfmod.mjs' does not provide an export named 'default'",
+      );
+    };
+
+    // No projectId, so the namespace purge is skipped and the case stays
+    // hermetic; the snapshot refresh alone proves whether recovery ran.
+    const renderOnce = () =>
+      assertRejects(
+        () =>
+          handleMDXPage(
+            pageInfo,
+            "probe",
+            "/project",
+            {},
+            () => Promise.resolve({ compiledCode: "", frontmatter: {}, headings: [] }),
+            adapter,
+            {
+              projectSlug: "project-slug",
+              contentSourceId: "preview-main",
+              mode: "production",
+            },
+          ),
+        Error,
+        "Failed to import MDX page via ESM",
+      );
+
+    try {
+      await renderOnce();
+      assertEquals(sourceRefreshes, 1, "the first preview failure must recover once");
+      assertEquals(loadAttempts, 2, "the first preview failure must retry once");
+
+      await renderOnce();
+      await renderOnce();
+
+      assertEquals(
+        sourceRefreshes,
+        1,
+        "a route that keeps failing must not refresh the source snapshot on every request",
+      );
+      assertEquals(
+        loadAttempts,
+        4,
+        "requests inside the cooldown must fail without paying a second recovery retry",
       );
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;
