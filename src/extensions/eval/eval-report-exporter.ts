@@ -189,15 +189,26 @@ function redactMetricSummaries(
   summary: EvalReport["summary"],
   redaction: EvalReportExportRedaction,
 ): EvalReport["summary"] {
-  if (redaction.includeMetricEvidence) return summary;
-  return {
-    ...summary,
-    metrics: summary.metrics.map((metric) => {
+  const redactedSummary = { ...summary };
+  if (!redaction.includeMetricEvidence) {
+    redactedSummary.metrics = summary.metrics.map((metric) => {
       const redacted = { ...metric };
       delete redacted.label;
       return redacted;
-    }),
-  };
+    });
+  }
+  if (summary.gateFailures) {
+    // Gate failures copy the failing metric's explanation and evidence verbatim (including
+    // citation and source labels from RAG metrics), so they leave the process on the same
+    // terms as the record-level metric fields they were copied from.
+    redactedSummary.gateFailures = summary.gateFailures.map((failure) => {
+      const redacted = { ...failure };
+      if (!redaction.includeMetricExplanations) delete redacted.explanation;
+      if (!redaction.includeMetricEvidence) delete redacted.evidence;
+      return redacted;
+    });
+  }
+  return redactedSummary;
 }
 
 function cloneRedaction(

@@ -39,6 +39,21 @@ function createReport(): EvalReport {
           label: 'Answer contained "the private launch codename"',
         },
       ],
+      gateFailures: [
+        {
+          recordId: "q1:1",
+          exampleId: "q1",
+          repetition: 1,
+          name: "knowledge.citationPrecision",
+          family: "knowledge",
+          severity: "gate",
+          explanation: 'Citation "[1]" did not match an expected source.',
+          evidence: {
+            citations: ["internal-doc-1"],
+            expectedSources: ["secret roadmap passage"],
+          },
+        },
+      ],
     },
     records: [
       {
@@ -150,6 +165,13 @@ describe("EvalReportExporterRegistry", () => {
     // `evidence` carries, so it must not survive redaction either.
     assertEquals(exportedRecord.metrics?.[0]?.label, undefined);
     assertEquals(exportedReport.summary.metrics[0]?.label, undefined);
+    // Gate failures copy the failing metric's explanation and evidence (citation and source
+    // labels for RAG metrics), so default redaction must strip them from the summary too.
+    const exportedGateFailure = exportedReport.summary.gateFailures?.[0];
+    assert(exportedGateFailure);
+    assertEquals(exportedGateFailure.name, "knowledge.citationPrecision");
+    assertEquals(exportedGateFailure.explanation, undefined);
+    assertEquals(exportedGateFailure.evidence, undefined);
     assertEquals(exportedReport.dataset, {
       kind: "json",
       examples: 1,
@@ -461,6 +483,19 @@ describe("EvalReportExporterRegistry", () => {
       redacted.summary.metrics[0]?.label,
       'Answer contained "the private launch codename"',
       "summary metric label must survive when includeMetricEvidence allows evidence",
+    );
+    assertEquals(
+      redacted.summary.gateFailures?.[0]?.explanation,
+      'Citation "[1]" did not match an expected source.',
+      "gate failure explanation must survive when includeMetricExplanations allows it",
+    );
+    assertEquals(
+      redacted.summary.gateFailures?.[0]?.evidence,
+      {
+        citations: ["internal-doc-1"],
+        expectedSources: ["secret roadmap passage"],
+      },
+      "gate failure evidence must survive when includeMetricEvidence allows it",
     );
     assertEquals(redacted.dataset, {
       kind: "json",
