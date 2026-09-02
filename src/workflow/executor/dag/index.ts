@@ -49,6 +49,7 @@ import {
   withSpan,
 } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { executeMapNodeStrategy } from "./map-node-strategy.ts";
+import { collectWorkflowNodeIds } from "../../dsl/validation.ts";
 import type { ChildGraphExecutionOptions } from "./node-strategy-types.ts";
 import {
   executeCompositeNodeWithPolicy,
@@ -1053,6 +1054,35 @@ export class DAGExecutor {
       : workflowDef.steps;
     abortSignal?.throwIfAborted();
 
+    // A sub-workflow is a separate definition with its own id space, so a child
+    // may legally repeat an id declared by an ancestor graph -- duplicate-id
+    // validation is per-graph. That makes the collision ambiguous here: the
+    // scheduler treats any completed or skipped state as a satisfied node, so a
+    // completed ancestor `review` would mark a nested `waitForApproval("review")`
+    // done and let its dependents publish without ever raising the approval.
+    // Refuse the run instead, matching how map and loop reject generated child
+    // ids that collide with the parent graph.
+    const childNodeIds = collectWorkflowNodeIds(steps);
+    const collidingChildId = [...childNodeIds].find((childId) =>
+      scope.declaredNodeIds.has(childId)
+    );
+    if (collidingChildId) {
+      throw INVALID_ARGUMENT.create({
+        detail: `SubWorkflow node "${node.id}" declares child id "${collidingChildId}", ` +
+          "which collides with a declared node in the parent graph",
+      });
+    }
+
+    // Carry forward only the states this sub-workflow itself produced, so a
+    // completed ancestor node can never stand in for a child that shares its id
+    // on a path the static check above cannot see (a nested loop whose steps are
+    // generated at runtime). Everything else stays out of the child keyspace.
+    const seededNodeStates: Record<string, NodeState> = {};
+    for (const [nodeId, state] of Object.entries(nodeStates)) {
+      if (scope.declaredNodeIds.has(nodeId)) continue;
+      seededNodeStates[nodeId] = state;
+    }
+
     const subRunId = `${node.id}_sub_${generateId()}`;
     // The sub-run record is synthetic and never persisted, so its id is a debugging
     // attribute only — `workflow.run_id` keeps pointing at the root run.
@@ -1068,7 +1098,7 @@ export class DAGExecutor {
         workflowId: workflowDef.id,
         status: "running",
         input,
-        nodeStates: { ...nodeStates },
+        nodeStates: seededNodeStates,
         currentNodes: [],
         context: { input },
         checkpoints: [],
@@ -1082,7 +1112,10 @@ export class DAGExecutor {
     );
     abortSignal?.throwIfAborted();
 
-    applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
+    // Diff the sub-run against the states it actually started from. Diffing the
+    // parent's whole map would report every state withheld above as deleted and
+    // strand the nodes that produced them.
+    applyRecordPatch(nodeStates, createRecordPatch(seededNodeStates, result.nodeStates));
 
     const stalledWaitingNodes = result.stalledWaitNodes ??
       (result.stalledWaitNode === undefined

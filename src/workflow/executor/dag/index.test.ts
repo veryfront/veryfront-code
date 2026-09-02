@@ -3440,6 +3440,97 @@ describe("DAGExecutor", () => {
   });
 
   describe("subWorkflow node", () => {
+    it("rejects sub-workflow child ids that collide with declared parent nodes", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: { result: node.id }, executionTime: 1 };
+        }),
+      });
+
+      const nodes: WorkflowNode[] = [
+        { id: "review", dependsOn: [], config: { type: "step" } as any },
+        {
+          id: "release",
+          dependsOn: ["review"],
+          config: {
+            type: "subWorkflow",
+            workflow: {
+              id: "release-wf",
+              steps: [
+                waitForApproval("review", { message: "Approve the release" }),
+                { id: "publish", dependsOn: ["review"], config: { type: "step" } as any },
+              ],
+            },
+          } as any,
+        },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, false);
+      assertStringIncludes(result.error ?? "", 'child id "review"');
+      // The nested approval must never be bypassed by the parent's completed
+      // "review" state, so its dependent publish step must not have run.
+      assertEquals(executed.includes("publish"), false);
+    });
+
+    it("resumes a waiting sub-workflow without re-running its completed children", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: { result: node.id }, executionTime: 1 };
+        }),
+      });
+
+      const nodes: WorkflowNode[] = [
+        {
+          id: "release",
+          dependsOn: [],
+          config: {
+            type: "subWorkflow",
+            workflow: {
+              id: "release-wf",
+              steps: [
+                { id: "build", dependsOn: [], config: { type: "step" } as any },
+                waitForApproval("approve", { message: "Approve the release" }),
+                { id: "publish", dependsOn: ["approve"], config: { type: "step" } as any },
+              ],
+            },
+          } as any,
+        },
+      ];
+
+      const first = await exec.execute(nodes, createTestRun());
+      assertEquals(first.waiting, true);
+      assertEquals(first.waitingNode, "approve");
+      assertEquals(first.nodeStates.build?.status, "completed");
+      assertEquals(executed, ["build"]);
+
+      const resumed = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          context: first.context,
+          nodeStates: {
+            ...first.nodeStates,
+            approve: {
+              ...first.nodeStates.approve!,
+              status: "completed",
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(resumed.completed, true);
+      // "build" already completed before the approval, so the resume must run
+      // only the approval's dependent.
+      assertEquals(executed, ["build", "publish"]);
+    });
+
     it("should execute a sub-workflow definition", async () => {
       const nodes: WorkflowNode[] = [
         {
