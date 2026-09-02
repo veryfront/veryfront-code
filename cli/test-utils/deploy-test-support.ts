@@ -68,16 +68,31 @@ export function projectConfigText(): string {
   return JSON.stringify({ projectSlug: PROJECT_SLUG, apiUrl: CONTROL_PLANE }, null, 2) + "\n";
 }
 
-export async function createPushedProject(): Promise<{ projectDir: string; commitSha: string }> {
+/**
+ * A committed project whose push receipt describes exactly the checked-out tree.
+ *
+ * `extraFiles` are committed with the rest of the source and folded into the
+ * receipt digest, so a suite that needs a file beyond the default two still
+ * starts from a clean checkout: writing that file after the receipt would leave
+ * uncommitted changes, which deploy now refuses as source the push never saw.
+ */
+export async function createPushedProject(
+  extraFiles: readonly DeployReleaseFile[] = [],
+): Promise<{ projectDir: string; commitSha: string; files: DeployReleaseFile[] }> {
   const projectDir = await Deno.makeTempDir();
   await Deno.mkdir(`${projectDir}/app`, { recursive: true });
   await Deno.writeTextFile(`${projectDir}/veryfront.json`, projectConfigText());
   await Deno.writeTextFile(`${projectDir}/app/page.tsx`, APP_ROUTE_CONTENT);
+  for (const file of extraFiles) {
+    await Deno.writeTextFile(`${projectDir}/${file.path}`, file.content);
+  }
   const commitSha = await commitProject(projectDir);
-  const sourceDigest = await computeSourceDigest([
+  const files: DeployReleaseFile[] = [
     { path: "app/page.tsx", content: APP_ROUTE_CONTENT },
     { path: "veryfront.json", content: projectConfigText() },
-  ]);
+    ...extraFiles,
+  ];
+  const sourceDigest = await computeSourceDigest(files);
   await writePushReceipt(projectDir, {
     controlPlane: CONTROL_PLANE,
     projectId: PROJECT_ID,
@@ -87,7 +102,7 @@ export async function createPushedProject(): Promise<{ projectDir: string; commi
     sourceDigest,
     clean: true,
   });
-  return { projectDir, commitSha };
+  return { projectDir, commitSha, files };
 }
 
 export async function createUnlinkedPushedProject(): Promise<{

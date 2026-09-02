@@ -17,6 +17,7 @@ import {
   VeryfrontError,
 } from "veryfront/errors";
 import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { fromFileUrl, relative } from "veryfront/platform/path";
 import { createApiClient } from "../config.ts";
 import { computeSourceDigest, writePushReceipt } from "../deployment-provenance.ts";
@@ -32,6 +33,7 @@ import {
   type DeployEvent,
   type DeployProjectRequest,
   type DeployStepName,
+  needsBootstrapPush,
   resolvePushedSource,
   verifyDeployment,
   verifyReleaseSource,
@@ -230,13 +232,13 @@ describe("DeployProject", () => {
 
   it("deploys a config that only uses the hosted configuration helpers", async () => {
     await withDeployEnv(async () => {
-      const { projectDir } = await createPushedProject();
-      await Deno.writeTextFile(
-        `${projectDir}/veryfront.config.ts`,
-        `import { defineConfig } from "veryfront";\n\n` +
+      const { projectDir, files } = await createPushedProject([{
+        path: "veryfront.config.ts",
+        content: `import { defineConfig } from "veryfront";\n\n` +
           `export default defineConfig({ title: "Demo" });\n`,
-      );
+      }]);
       const controlPlane = new InMemoryDeployControlPlane();
+      controlPlane.releaseFiles = files;
       try {
         const outcome = await executeApply(projectDir, controlPlane);
 
@@ -904,6 +906,17 @@ describe("DeployProject", () => {
   });
 });
 
+/** A committed single-file project whose CLI metadata directory is Git-ignored. */
+function withGitProject(
+  fn: (projectDir: string, commitSha: string) => Promise<void>,
+): Promise<void> {
+  return withTempDir(async (projectDir) => {
+    await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
+    await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
+    await fn(projectDir, await commitProject(projectDir));
+  });
+}
+
 describe("pushed source provenance", () => {
   it("accepts dirty metadata when the pushed source digest targets the current commit", async () => {
     const projectDir = await Deno.makeTempDir();
@@ -938,6 +951,112 @@ describe("pushed source provenance", () => {
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }
+  });
+
+  it("rejects a clean push receipt once the working tree has uncommitted edits", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
+      await writePushReceipt(projectDir, {
+        controlPlane: "https://control.example.test/api",
+        projectId: "550e8400-e29b-41d4-a716-446655440000",
+        projectSlug: "my-project",
+        branch: "main",
+        commitSha,
+        sourceDigest: await computeSourceDigest([
+          { path: "app.ts", content: "export const value = 1;\n" },
+        ]),
+        clean: true,
+        pushedAt: "2026-07-10T09:20:00.000Z",
+      });
+      // The edit never reaches a commit, so HEAD still matches the receipt.
+      await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 2;\n");
+
+      await assertRejects(
+        () =>
+          resolvePushedSource({
+            projectDir,
+            controlPlane: "https://control.example.test/api",
+            projectId: "550e8400-e29b-41d4-a716-446655440000",
+            projectSlug: "my-project",
+            branch: "main",
+          }),
+        Error,
+        "The latest push came from a clean checkout, but this project has uncommitted changes.",
+      );
+    });
+  });
+});
+
+describe("needsBootstrapPush", () => {
+  const receipt = {
+    version: 2 as const,
+    controlPlane: "https://control.example.test/api",
+    projectId: "550e8400-e29b-41d4-a716-446655440000",
+    projectSlug: "my-project",
+    branch: "main",
+    sourceDigest: "sha256:" + "0".repeat(64),
+    pushedAt: "2026-07-10T09:20:00.000Z",
+  };
+
+  it("skips the push only for a clean checkout parked on the pushed commit", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
+      assertEquals(
+        await needsBootstrapPush(
+          { ...receipt, commitSha, clean: true },
+          { kind: "ensure-pushed" },
+          projectDir,
+        ),
+        false,
+      );
+    });
+  });
+
+  it("pushes again when the working tree drifted from the pushed commit", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
+      await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 2;\n");
+
+      assertEquals(
+        await needsBootstrapPush(
+          { ...receipt, commitSha, clean: true },
+          { kind: "ensure-pushed" },
+          projectDir,
+        ),
+        true,
+      );
+    });
+  });
+
+  it("pushes again for receipts that never proved a clean source", async () => {
+    await withGitProject(async (projectDir, commitSha) => {
+      assertEquals(
+        await needsBootstrapPush(
+          { ...receipt, commitSha, clean: false },
+          { kind: "ensure-pushed" },
+          projectDir,
+        ),
+        true,
+      );
+      assertEquals(
+        await needsBootstrapPush(
+          { ...receipt, commitSha: null, clean: false },
+          { kind: "ensure-pushed" },
+          projectDir,
+        ),
+        true,
+      );
+      assertEquals(
+        await needsBootstrapPush(null, { kind: "ensure-pushed" }, projectDir),
+        true,
+      );
+    });
+  });
+
+  it("never pushes for an already-pushed source", async () => {
+    await withGitProject(async (projectDir) => {
+      assertEquals(
+        await needsBootstrapPush(null, { kind: "already-pushed" }, projectDir),
+        false,
+      );
+    });
   });
 });
 

@@ -63,9 +63,29 @@ describe("validatePushReceipt", () => {
       projectSlug: RECEIPT.projectSlug,
       branch: "main",
       commitSha: RECEIPT.commitSha,
+      clean: true,
     });
 
     assertEquals(result, RECEIPT.commitSha);
+  });
+
+  it("rejects a clean push once the checkout has uncommitted changes", async () => {
+    await assertRejects(
+      () =>
+        Promise.resolve().then(() =>
+          validatePushReceipt(RECEIPT, {
+            controlPlane: RECEIPT.controlPlane,
+            projectId: RECEIPT.projectId,
+            projectSlug: RECEIPT.projectSlug,
+            branch: RECEIPT.branch,
+            commitSha: RECEIPT.commitSha,
+            clean: false,
+          })
+        ),
+      Error,
+      "The latest push came from a clean checkout, but this project has uncommitted changes. " +
+        "Run veryfront push again to deploy them.",
+    );
   });
 
   it("rejects a push from another control plane", async () => {
@@ -78,6 +98,7 @@ describe("validatePushReceipt", () => {
             projectSlug: RECEIPT.projectSlug,
             branch: "main",
             commitSha: RECEIPT.commitSha,
+            clean: true,
           })
         ),
       Error,
@@ -95,6 +116,7 @@ describe("validatePushReceipt", () => {
             projectSlug: "another-project",
             branch: "feature-x",
             commitSha: RECEIPT.commitSha,
+            clean: true,
           })
         ),
       Error,
@@ -110,6 +132,7 @@ describe("validatePushReceipt", () => {
             projectSlug: RECEIPT.projectSlug,
             branch: "feature-x",
             commitSha: RECEIPT.commitSha,
+            clean: true,
           })
         ),
       Error,
@@ -129,6 +152,7 @@ describe("validatePushReceipt", () => {
             projectSlug: RECEIPT.projectSlug,
             branch: RECEIPT.branch,
             commitSha: "80719c01c1dded95a6b6df46b0fb17ea37d3ace8",
+            clean: true,
           })
         ),
       Error,

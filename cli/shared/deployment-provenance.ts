@@ -45,7 +45,8 @@ interface PushReceiptExpectation {
   projectSlug: string;
   branch: string;
   commitSha?: string | null;
-  clean?: boolean;
+  /** Whether the local checkout is clean right now, from {@link resolveGitSource}. */
+  clean: boolean;
 }
 
 function receiptPath(projectDir: string): string {
@@ -291,6 +292,18 @@ export function validatePushReceipt(
       receipt.commitSha
         ? "The latest push came from a different commit. Run veryfront push again."
         : "The latest push has no Git commit SHA. Run veryfront push again from the checked-out commit.",
+    );
+  }
+  // The commit check alone cannot see edits that never reached a commit. A
+  // receipt written from a clean checkout is a promise that the pushed source
+  // was exactly that commit, so a working tree that is no longer clean is
+  // provably not what was pushed and must not be deployed as if it were. A
+  // receipt that was already dirty proves nothing either way, so it keeps the
+  // push-then-deploy flow it has always had.
+  if (receipt.clean && !expected.clean) {
+    throw new Error(
+      "The latest push came from a clean checkout, but this project has uncommitted changes. " +
+        "Run veryfront push again to deploy them.",
     );
   }
   return receipt.commitSha;

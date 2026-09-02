@@ -320,11 +320,24 @@ async function ensureProjectLinkedForDeploy(
   };
 }
 
-function needsBootstrapPush(
+/**
+ * Whether an `ensure-pushed` deploy has to upload the local source first.
+ *
+ * Holding a receipt is not evidence that the receipt still describes the
+ * working tree: only a clean checkout parked on the receipt's own commit is.
+ * Every weaker state — no receipt, a dirty tree, a moved HEAD, or a project
+ * outside Git — counts as changed source and is pushed again, so `veryfront up`
+ * cannot deploy a stale upload while reporting the new source as live.
+ */
+export async function needsBootstrapPush(
   receipt: PushReceipt | null,
   source: DeployProjectRequest["source"],
-): boolean {
-  return source.kind === "ensure-pushed" && !receipt;
+  projectDir: string,
+): Promise<boolean> {
+  if (source.kind !== "ensure-pushed") return false;
+  if (!receipt || !receipt.clean || !receipt.commitSha) return true;
+  const gitSource = await resolveGitSource(projectDir);
+  return !gitSource.clean || gitSource.commitSha !== receipt.commitSha;
 }
 
 export function assertProjectOwnership(
@@ -1458,7 +1471,11 @@ export function createDeployProject(options: {
         request.projectSlug,
       );
       let { config, controlPlane, project } = setup;
-      const bootstrapPush = needsBootstrapPush(receipt, request.source);
+      const bootstrapPush = await needsBootstrapPush(
+        receipt,
+        request.source,
+        request.projectDir,
+      );
 
       if (request.mode === "dry-run" && !project) {
         return {
