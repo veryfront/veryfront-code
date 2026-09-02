@@ -34,7 +34,8 @@ import {
   createAgentServiceEvalAdapter,
 } from "#veryfront/eval/agent-service.ts";
 import { bindTrustedLocalEvalFetch } from "#veryfront/eval/agent-service/trusted-fetch.ts";
-import { createAgUiHandler } from "#veryfront/agent/ag-ui/handler.ts";
+import { type AgUiRuntimeRestrictions, createAgUiHandler } from "#veryfront/agent/ag-ui/handler.ts";
+import { hostedChatRuntimeOverridesSchema } from "#veryfront/agent/hosted/chat-request.ts";
 import { resolveConversationRunTargets } from "#veryfront/agent/conversation/durable-contracts.ts";
 import type {
   EvalAgentAdapter,
@@ -613,6 +614,47 @@ function resolveEvalAgUiEndpoint(
   return getLocalAgUiEndpoint(req);
 }
 
+/**
+ * Read the tool allowlist and step budget the eval adapter forwarded for a run.
+ *
+ * The hosted AG-UI path derives the same values from `runtimeOverrides` and
+ * applies them to runtime creation, so the localized path must apply them too:
+ * an eval that requests a constrained tool surface must not reach the source
+ * agent's full configured tools and MCP servers.
+ */
+async function readLocalEvalRuntimeRestrictions(
+  request: Request,
+): Promise<AgUiRuntimeRestrictions | undefined> {
+  let body: unknown;
+  try {
+    body = await request.clone().json();
+  } catch {
+    // The AG-UI handler rejects a body it cannot parse, so there is nothing to
+    // restrict here.
+    return undefined;
+  }
+
+  if (!isRecord(body) || !isRecord(body.forwardedProps)) return undefined;
+  const veryfront = body.forwardedProps.veryfront;
+  if (!isRecord(veryfront)) return undefined;
+  const runtimeOverrides = veryfront.runtimeOverrides;
+  if (runtimeOverrides === undefined) return undefined;
+
+  const parsed = hostedChatRuntimeOverridesSchema.safeParse(runtimeOverrides);
+  if (!parsed.success) {
+    // Fail closed: forwarded restrictions that cannot be read must not degrade
+    // into an unrestricted eval run.
+    throw INVALID_ARGUMENT.create({ detail: "Eval runtime overrides are invalid" });
+  }
+
+  const { allowedTools, maxSteps } = parsed.data;
+  if (allowedTools === undefined && maxSteps === undefined) return undefined;
+  return {
+    ...(allowedTools === undefined ? {} : { allowedTools }),
+    ...(maxSteps === undefined ? {} : { maxSteps }),
+  };
+}
+
 function createLocalEvalAgentFetch(input: {
   endpoint: string;
   agentId?: string;
@@ -622,13 +664,15 @@ function createLocalEvalAgentFetch(input: {
   const agent = agentRegistry.get(input.agentId);
   if (!agent) return undefined;
 
-  const handler = createAgUiHandler({
-    agent,
-    context: { runIdBindsToolAuthorization: false },
-  });
   return async (requestInput, init) => {
     const request = new Request(requestInput, init);
     if (!isLocalAgUiEndpoint(request.url)) return fetch(request);
+    const runtimeRestrictions = await readLocalEvalRuntimeRestrictions(request);
+    const handler = createAgUiHandler({
+      agent,
+      context: { runIdBindsToolAuthorization: false },
+      ...(runtimeRestrictions ? { runtimeRestrictions } : {}),
+    });
     return await handler(request);
   };
 }

@@ -1,5 +1,6 @@
 import { isResponseLike } from "../service/response-like.ts";
 import { getAgent } from "../composition/index.ts";
+import { resolveSecurityMiddleware } from "../factory.ts";
 import type { Agent, AgentResponse, Message } from "../types.ts";
 import { fromError } from "#veryfront/errors";
 import {
@@ -31,7 +32,18 @@ import {
 } from "./host-support.ts";
 import { extractRequest } from "./request-shared.ts";
 import { type AgUiResumeValue, buildMergedAgUiTools } from "./tool-shared.ts";
+import {
+  type AgUiRuntimeRestrictions,
+  applyAgUiRuntimeRestrictions,
+  hasAgUiRuntimeRestrictions,
+} from "./runtime-restrictions.ts";
 import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
+
+export {
+  type AgUiRuntimeRestrictions,
+  applyAgUiRuntimeRestrictions,
+  hasAgUiRuntimeRestrictions,
+} from "./runtime-restrictions.ts";
 
 export {
   type AgUiContextItem,
@@ -329,6 +341,7 @@ async function createAgUiDirectStreamResponse(
   baseContext: Record<string, unknown>,
   beforeStream?: AgUiBeforeStream,
   onComplete?: AgUiOnComplete,
+  restrictions?: AgUiRuntimeRestrictions,
 ): Promise<Response> {
   const threadId = request.threadId ?? crypto.randomUUID();
   const runId = request.runId ?? generateRunId();
@@ -356,21 +369,55 @@ async function createAgUiDirectStreamResponse(
 
   const toolDataEvents = createToolDataEventBridge();
   let completedResponse: AgentResponse | null = null;
-  const result = await agent.stream({
-    messages,
-    context: {
-      ...finalContext,
-      publishDataEvent: toolDataEvents.publishDataEvent,
-    },
-    ...(request.model ? { model: request.model } : {}),
-    ...(request.maxOutputTokens ? { maxOutputTokens: request.maxOutputTokens } : {}),
-    onFinish: (response) => {
-      completedResponse = response;
-    },
-  });
+  const streamContext = {
+    ...finalContext,
+    publishDataEvent: toolDataEvents.publishDataEvent,
+  };
+  const onFinish = (response: AgentResponse) => {
+    completedResponse = response;
+  };
 
-  const upstream = result.toDataStreamResponse();
-  const upstreamBody = upstream.body ? toolDataEvents.wrapStream(upstream.body) : upstream.body;
+  let upstreamBody: ReadableStream<Uint8Array> | null;
+  let upstreamStatus = 200;
+  let upstreamStatusText: string | undefined;
+
+  if (hasAgUiRuntimeRestrictions(restrictions)) {
+    // `agent.stream()` runs the agent's own runtime, which carries its full
+    // configured tool surface, so a restricted run streams through a runtime
+    // built from the narrowed configuration instead. The ceiling then binds
+    // tool exposure and execution rather than travelling as unenforced request
+    // metadata.
+    const runtime = new AgentRuntime(agent.id, {
+      ...applyAgUiRuntimeRestrictions(agent.config, restrictions),
+      // The agent's own runtime carries the security middleware the factory
+      // resolved for it, so a restricted run resolves the same chain rather
+      // than dropping input and output protection.
+      middleware: resolveSecurityMiddleware(agent.config),
+    });
+    upstreamBody = toolDataEvents.wrapStream(
+      await runtime.stream(
+        messages,
+        streamContext,
+        { onFinish },
+        request.model,
+        request.maxOutputTokens,
+      ),
+    );
+  } else {
+    const result = await agent.stream({
+      messages,
+      context: streamContext,
+      ...(request.model ? { model: request.model } : {}),
+      ...(request.maxOutputTokens ? { maxOutputTokens: request.maxOutputTokens } : {}),
+      onFinish,
+    });
+
+    const upstream = result.toDataStreamResponse();
+    upstreamBody = upstream.body ? toolDataEvents.wrapStream(upstream.body) : upstream.body;
+    upstreamStatus = upstream.status;
+    upstreamStatusText = upstream.statusText;
+  }
+
   return await createAgUiStreamResponse({
     agentId: agent.id,
     agentName: agent.config.name ?? agent.id,
@@ -379,8 +426,8 @@ async function createAgUiDirectStreamResponse(
     runId,
     threadId,
     upstreamBody,
-    upstreamStatus: upstream.status,
-    upstreamStatusText: upstream.statusText,
+    upstreamStatus,
+    upstreamStatusText,
     getCompletedResponse: () => completedResponse,
     onComplete: onComplete
       ? (response) =>
@@ -508,6 +555,16 @@ export interface AgUiHandlerOptions {
    * success / error / disconnect semantics.
    */
   onComplete?: AgUiOnComplete;
+  /**
+   * Trusted per-run ceiling for the agent's tools and step budget, set by a
+   * server caller that resolved it itself (control-plane eval execution). It
+   * only narrows the agent configuration; a request can never widen it.
+   *
+   * A restricted run streams through the agent's configuration rather than its
+   * own `stream()` implementation, so the ceiling binds tool exposure and
+   * execution.
+   */
+  runtimeRestrictions?: AgUiRuntimeRestrictions;
 }
 
 /** Public API contract for AG-UI handler config with agent. */
@@ -572,6 +629,18 @@ export function createAgUiHandler(
       }
 
       if (parsed.tools.length > 0) {
+        if (hasAgUiRuntimeRestrictions(options?.runtimeRestrictions)) {
+          // The injected-tools path merges client tool definitions into the
+          // agent runtime, which the restriction ceiling does not cover. Refuse
+          // the run rather than execute it outside the ceiling.
+          return Response.json(
+            {
+              error: "Injected AG-UI tools are not available on a restricted AG-UI run.",
+            },
+            { status: 400 },
+          );
+        }
+
         if (!options?.sessionManager) {
           return Response.json(
             {
@@ -608,6 +677,7 @@ export function createAgUiHandler(
         context,
         options?.beforeStream,
         options?.onComplete,
+        options?.runtimeRestrictions,
       );
     } catch (error) {
       if (

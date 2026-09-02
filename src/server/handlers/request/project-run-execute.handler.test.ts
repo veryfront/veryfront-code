@@ -3,7 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
-import type { Agent } from "#veryfront/agent";
+import { type Agent, AgentRuntime } from "#veryfront/agent";
 import type { Message } from "#veryfront/agent/types.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { createEmptyDiscoveryResult } from "#veryfront/discovery";
@@ -1030,8 +1030,41 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         promptTokens: 12,
         completionTokens: 8,
         totalTokens: 20,
-      }, (context) => capturedContext = context),
+      }),
     );
+    // Control-plane eval runs forward a tool allowlist, so the run streams
+    // through the restricted runtime rather than the agent's own tool surface.
+    const originalStream = AgentRuntime.prototype.stream;
+    AgentRuntime.prototype.stream = function (
+      this: AgentRuntime,
+      _messages: Message[],
+      context?: Record<string, unknown>,
+      callbacks?: { onFinish?: (response: unknown) => void },
+    ): Promise<ReadableStream<Uint8Array>> {
+      capturedContext = context;
+      return Promise.resolve(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              encodeDataStreamEvent({ type: "message-start", messageId: "msg-1" }),
+            );
+            controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
+            controller.enqueue(
+              encodeDataStreamEvent({ type: "text-delta", id: "text-1", delta: "Paris" }),
+            );
+            controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+            callbacks?.onFinish?.({
+              text: "Paris",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              usage: { promptTokens: 12, completionTokens: 8, totalTokens: 20 },
+            });
+            controller.close();
+          },
+        }),
+      );
+    } as typeof AgentRuntime.prototype.stream;
     const handler = new ProjectRunExecuteHandler(createDeps({
       findEvalById: async (target) =>
         target === "eval:deep-research"
@@ -1094,6 +1127,107 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertStringIncludes(JSON.stringify(payload.result.records[0]?.output), "Paris");
       assertEquals(capturedContext?.runIdBindsToolAuthorization, false);
     } finally {
+      AgentRuntime.prototype.stream = originalStream;
+      agentRegistry.delete("researcher");
+    }
+  });
+
+  it("applies forwarded eval tool restrictions to local source agent runs", async () => {
+    let sourceAgentStreamCalls = 0;
+    let capturedRuntimeConfig: Record<string, unknown> | undefined;
+    const sourceAgent = createStreamingAgent("researcher", "Paris", undefined, () => {
+      sourceAgentStreamCalls += 1;
+    });
+    agentRegistry.register("researcher", {
+      ...sourceAgent,
+      config: {
+        ...sourceAgent.config,
+        tools: { web_search: true, delete_project: true },
+        providerTools: ["web_fetch"],
+        mcpServers: [{ kind: "veryfront-api" }],
+        maxSteps: 20,
+      } as Agent["config"],
+    });
+    const originalStream = AgentRuntime.prototype.stream;
+
+    AgentRuntime.prototype.stream = function (
+      this: AgentRuntime,
+    ): Promise<ReadableStream<Uint8Array>> {
+      capturedRuntimeConfig = (this as unknown as { config: Record<string, unknown> }).config;
+      return Promise.resolve(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              encodeDataStreamEvent({ type: "message-start", messageId: "msg-1" }),
+            );
+            controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
+            controller.enqueue(
+              encodeDataStreamEvent({ type: "text-delta", id: "text-1", delta: "Paris" }),
+            );
+            controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+            controller.close();
+          },
+        }),
+      );
+    } as typeof AgentRuntime.prototype.stream;
+
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findEvalById: async (target) =>
+        target === "eval:deep-research"
+          ? {
+            id: "eval:deep-research",
+            name: "Deep research quality",
+            filePath: "evals/deep-research.eval.ts",
+            exportName: "default",
+            definition: evalAgent({
+              id: "eval:deep-research",
+              target: "agent:researcher",
+              dataset: datasets.inline([
+                { id: "q1", input: "France capital?", reference: "Paris" },
+              ]),
+              metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+            }),
+          }
+          : null,
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    const body = {
+      runId: "run_eval_restricted_tools",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
+      config: { allowed_tools: ["web_search"], max_steps: 2 },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_restricted_tools/execute",
+      body,
+      { "x-token": "runtime-token" },
+      "http://localhost:4311",
+    );
+
+    try {
+      const result = await withEnvValue(
+        "PORT",
+        "4311",
+        () => handler.handle(request, createCtx(publicKeyPem)),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      const payload = await result.response.json();
+      assertEquals(payload.success, true);
+      // The eval runs against the restricted configuration, not the source
+      // agent's full tool and MCP surface.
+      assertEquals(capturedRuntimeConfig?.tools, { web_search: true });
+      assertEquals(capturedRuntimeConfig?.providerTools, []);
+      assertEquals(capturedRuntimeConfig?.mcpServers, undefined);
+      assertEquals(capturedRuntimeConfig?.maxSteps, 2);
+      assertEquals(sourceAgentStreamCalls, 0);
+    } finally {
+      AgentRuntime.prototype.stream = originalStream;
       agentRegistry.delete("researcher");
     }
   });

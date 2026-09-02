@@ -485,6 +485,116 @@ describe("agent/ag-ui-handler", () => {
     }
   });
 
+  it("binds trusted runtime restrictions to the direct AG-UI run", async () => {
+    const testAgent = createTestAgent();
+    const agent: Agent = {
+      ...testAgent.agent,
+      config: {
+        ...testAgent.agent.config,
+        tools: { web_search: true, delete_project: true },
+        providerTools: ["web_fetch"],
+        mcpServers: [{ kind: "veryfront-api" }],
+        maxSteps: 20,
+      } as Agent["config"],
+    };
+    const originalStream = AgentRuntime.prototype.stream;
+    let capturedConfig: Record<string, unknown> | undefined;
+
+    AgentRuntime.prototype.stream = function (
+      this: AgentRuntime,
+    ): Promise<ReadableStream<Uint8Array>> {
+      capturedConfig = (this as unknown as { config: Record<string, unknown> }).config;
+      return Promise.resolve(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
+            );
+            controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
+            controller.enqueue(
+              encodeDataStreamEvent({ type: "text-delta", id: "text-1", delta: "restricted" }),
+            );
+            controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+            controller.close();
+          },
+        }),
+      );
+    } as typeof AgentRuntime.prototype.stream;
+
+    try {
+      const handler = createAgUiHandler({
+        agent,
+        runtimeRestrictions: { allowedTools: ["web_search"], maxSteps: 2 },
+      });
+
+      const response = await handler(
+        new Request("http://localhost/api/ag-ui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            runId: "run_restricted_1",
+            threadId: crypto.randomUUID(),
+            messages: [{
+              id: "msg-1",
+              role: "user",
+              parts: [{ type: "text", text: "hello" }],
+            }],
+            forwardedProps: {
+              veryfront: { runtimeOverrides: { allowedTools: ["delete_project"], maxSteps: 40 } },
+            },
+          }),
+        }),
+      );
+
+      const body = await response.text();
+      assertStringIncludes(body, "restricted");
+      // The run executes against the narrowed configuration, and the request's
+      // own forwarded props never widen it.
+      assertEquals(capturedConfig?.tools, { web_search: true });
+      assertEquals(capturedConfig?.providerTools, []);
+      assertEquals(capturedConfig?.mcpServers, undefined);
+      assertEquals(capturedConfig?.maxSteps, 2);
+      // The unrestricted agent surface never runs.
+      assertEquals(testAgent.capturedContext, undefined);
+      assertEquals(testAgent.capturedMessages.length, 0);
+    } finally {
+      AgentRuntime.prototype.stream = originalStream;
+    }
+  });
+
+  it("refuses injected client tools on a restricted AG-UI run", async () => {
+    const sessionManager = new RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }>();
+    const testAgent = createTestAgent();
+    const handler = createAgUiHandler({
+      agent: testAgent.agent,
+      sessionManager,
+      runtimeRestrictions: { allowedTools: [] },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: "run_restricted_injected_1",
+          threadId: crypto.randomUUID(),
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          }],
+          tools: [{ name: "client_confirm" }],
+        }),
+      }),
+    );
+
+    assertEquals(response.status, 400);
+    assertEquals(testAgent.capturedMessages.length, 0);
+  });
+
   it("runs beforeStream before direct AG-UI streaming", async () => {
     const testAgent = createTestAgent();
     const handler = createAgUiHandler({
