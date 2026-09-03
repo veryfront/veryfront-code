@@ -481,6 +481,12 @@ describe("resolveGitSource", () => {
   });
 
   it("ignores nested project metadata and reports tracked deletions relative to the project", async () => {
+    // The scratch repository below has its own HEAD, which never matches the
+    // GITHUB_SHA that CI exports for the run executing this suite. Left set,
+    // resolveGitSource reports a CI/checkout mismatch and every checkout here
+    // reads as dirty, hiding what this test is about.
+    const originalGithubSha = Deno.env.get("GITHUB_SHA");
+    Deno.env.delete("GITHUB_SHA");
     const repositoryDir = await makeTempDir();
     const projectDir = `${repositoryDir}/packages/site`;
     const runGit = async (...args: string[]) => {
@@ -514,6 +520,8 @@ describe("resolveGitSource", () => {
       assertEquals((await resolveGitSource(projectDir)).clean, false);
       assertEquals(await resolveDeletedGitSourcePaths(projectDir), ["app.ts"]);
     } finally {
+      if (originalGithubSha === undefined) Deno.env.delete("GITHUB_SHA");
+      else Deno.env.set("GITHUB_SHA", originalGithubSha);
       await Deno.remove(repositoryDir, { recursive: true });
     }
   });
