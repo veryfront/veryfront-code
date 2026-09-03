@@ -1036,6 +1036,7 @@ describe("WebSocketManager", () => {
     } ? T | undefined
       : never;
     let capturedChangedPaths: string[] | undefined;
+    const styleEvents: string[] = [];
 
     const manager = createWebSocketManager({
       client: {
@@ -1048,15 +1049,25 @@ describe("WebSocketManager", () => {
         }],
       },
       invalidationCallbacks: {
+        clearProjectCSSCache: () => {
+          styleEvents.push("invalidate");
+        },
         triggerReload: (changedPaths, project) => {
           capturedChangedPaths = changedPaths;
           capturedProject = project;
         },
       },
-      pregenerateStyles: async () => ({
-        hash: "hash-1",
-        assetPath: "/_vf/css/hash-1.css",
-      }),
+      replaceSourceSnapshot: () => {
+        styleEvents.push("replace-snapshot");
+        return Promise.resolve(1);
+      },
+      pregenerateStyles: async () => {
+        styleEvents.push("pregenerate");
+        return {
+          hash: "hash-1",
+          assetPath: "/_vf/css/hash-1.css",
+        };
+      },
     });
 
     manager.connect("project-1");
@@ -1082,6 +1093,12 @@ describe("WebSocketManager", () => {
     assertEquals(capturedChangedPaths, ["app/page.tsx"]);
     assertEquals(capturedProject?.styleArtifactHash, "hash-1");
     assertEquals(capturedProject?.styleAssetPath, "/_vf/css/hash-1.css");
+    assertEquals(styleEvents, [
+      "invalidate",
+      "replace-snapshot",
+      "invalidate",
+      "pregenerate",
+    ]);
 
     manager.dispose();
   });

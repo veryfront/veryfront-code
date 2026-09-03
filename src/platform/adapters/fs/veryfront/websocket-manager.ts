@@ -791,6 +791,9 @@ export class WebSocketManager {
           if (appliedSnapshotVersion === undefined) {
             reloadSuperseded = true;
           } else {
+            if (this.deps.invalidationCallbacks.clearProjectCSSCache && this.deps.projectSlug) {
+              await this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug);
+            }
             preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
             const currentSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
             if (
@@ -985,6 +988,9 @@ export class WebSocketManager {
           if (appliedSnapshotVersion === undefined) {
             reloadSuperseded = true;
           } else {
+            if (this.deps.invalidationCallbacks.clearProjectCSSCache && this.deps.projectSlug) {
+              await this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug);
+            }
             preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
             const currentSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
             if (
