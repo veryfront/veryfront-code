@@ -378,9 +378,12 @@ function receiptTargetsDeploy(receipt: PushReceipt, target: BootstrapPushTarget)
  * can select a push, because the push rewrites the receipt those refusals read.
  * A different control plane, project, or branch, and a HEAD that has moved off
  * the pushed commit, therefore still reach the operator as an error telling
- * them to push, exactly as they do from a clean checkout. That keeps deploy's
- * standing contract intact: committed work is never uploaded behind the
- * operator's back, and a dirty tree never converts a refusal into an upload.
+ * them to push, exactly as they do from a clean checkout. The moved-HEAD check
+ * applies to dirty receipts too: as long as a receipt names a commit, the
+ * current commit is compared against it before any refresh. That keeps
+ * deploy's standing contract intact: committed work is never uploaded behind
+ * the operator's back, and neither a dirty tree nor a dirty receipt converts a
+ * refusal into an upload.
  */
 export async function resolveBootstrapPush(
   receipt: PushReceipt | null,
@@ -391,11 +394,21 @@ export async function resolveBootstrapPush(
   if (source.kind !== "ensure-pushed") return "none";
   if (!receipt) return "bootstrap";
   if (!receiptTargetsDeploy(receipt, target)) return "none";
-  // A receipt that never recorded a clean commit proves nothing about the
-  // checkout, so there is no commit to compare and the source is refreshed.
-  if (!receipt.clean || !receipt.commitSha) return "refresh";
+  // A receipt that never recorded a commit has no HEAD to compare against, so
+  // the source is refreshed. It is the only state that skips the comparison:
+  // a dirty receipt that still names a commit gets compared like a clean one,
+  // because a HEAD that has moved off it is committed work the push never saw.
+  if (!receipt.commitSha) return "refresh";
   const gitSource = await resolveGitSource(projectDir);
-  if (gitSource.commitSha !== receipt.commitSha) return "none";
+  if (gitSource.commitSha !== receipt.commitSha) {
+    // A checkout on a different commit must reach {@link validatePushReceipt}
+    // holding the receipt that proves the mismatch; pushing here would rewrite
+    // that receipt into one that matches. When the checkout no longer resolves
+    // to any commit, a clean receipt still fails closed the same way, while a
+    // dirty one proves nothing about the upload and keeps its refresh.
+    return gitSource.commitSha || receipt.clean ? "none" : "refresh";
+  }
+  if (!receipt.clean) return "refresh";
   return gitSource.clean ? "none" : "refresh";
 }
 

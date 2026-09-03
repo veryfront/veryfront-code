@@ -326,9 +326,15 @@ export function validatePushReceipt(
   // receipt that was already dirty proves nothing either way, so it keeps the
   // push-then-deploy flow it has always had.
   if (receipt.clean && !expected.clean) {
+    // With no current commit to name, "uncommitted changes" would misdescribe
+    // a project that is no longer a Git checkout at all; the refusal is the
+    // same, only the reason shown to the operator differs.
     throw new Error(
-      "The latest push came from a clean checkout, but this project has uncommitted changes. " +
-        "Run veryfront push again to deploy them.",
+      expected.commitSha
+        ? "The latest push came from a clean checkout, but this project has uncommitted changes. " +
+          "Run veryfront push again to deploy them."
+        : "The latest push came from a clean checkout, but this project no longer resolves to a Git commit. " +
+          "Run veryfront push again to deploy the current source.",
     );
   }
   return receipt.commitSha;

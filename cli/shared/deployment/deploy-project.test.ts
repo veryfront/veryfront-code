@@ -1195,6 +1195,53 @@ describe("resolveBootstrapPush", () => {
     });
   });
 
+  it("keeps the moved-HEAD refusal when the receipt was dirty", async () => {
+    await withGitProject(async (projectDir) => {
+      // A dirty receipt that still names a commit gets the same comparison as
+      // a clean one: refreshing here would upload the new commit and rewrite
+      // the receipt validatePushReceipt reads to refuse the moved HEAD.
+      assertEquals(
+        await resolveBootstrapPush(
+          { ...receipt, commitSha: "1".repeat(40), clean: false },
+          { kind: "ensure-pushed" },
+          projectDir,
+          target,
+        ),
+        "none",
+      );
+    });
+  });
+
+  it("fails closed on a clean receipt when the project is no longer a checkout", async () => {
+    await withTempDir((projectDir) =>
+      withoutAmbientCommitSha(async () => {
+        // No current commit resolves, so the mismatch cannot be proven either
+        // way; a clean receipt must still reach validatePushReceipt's refusal
+        // rather than be silently overwritten by a push.
+        assertEquals(
+          await resolveBootstrapPush(
+            { ...receipt, commitSha: "1".repeat(40), clean: true },
+            { kind: "ensure-pushed" },
+            projectDir,
+            target,
+          ),
+          "none",
+        );
+        // A dirty receipt proves nothing about the upload and keeps its
+        // refresh, exactly as it did for a project outside Git before.
+        assertEquals(
+          await resolveBootstrapPush(
+            { ...receipt, commitSha: "1".repeat(40), clean: false },
+            { kind: "ensure-pushed" },
+            projectDir,
+            target,
+          ),
+          "refresh",
+        );
+      })
+    );
+  });
+
   it("refreshes for receipts that never proved a clean source", async () => {
     await withGitProject(async (projectDir, commitSha) => {
       assertEquals(

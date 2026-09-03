@@ -88,6 +88,28 @@ describe("validatePushReceipt", () => {
     );
   });
 
+  it("names the missing commit when the project no longer resolves to one", async () => {
+    // Same fail-closed refusal, different reason: without a current commit,
+    // "uncommitted changes" would misdescribe a project that is no longer a
+    // Git checkout at all.
+    await assertRejects(
+      () =>
+        Promise.resolve().then(() =>
+          validatePushReceipt(RECEIPT, {
+            controlPlane: RECEIPT.controlPlane,
+            projectId: RECEIPT.projectId,
+            projectSlug: RECEIPT.projectSlug,
+            branch: RECEIPT.branch,
+            commitSha: null,
+            clean: false,
+          })
+        ),
+      Error,
+      "The latest push came from a clean checkout, but this project no longer resolves to a Git commit. " +
+        "Run veryfront push again to deploy the current source.",
+    );
+  });
+
   it("rejects a push from another control plane", async () => {
     await assertRejects(
       () =>
