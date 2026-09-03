@@ -3440,6 +3440,47 @@ describe("DAGExecutor", () => {
   });
 
   describe("subWorkflow node", () => {
+    it("rejects child-id collisions before concurrent sibling sub-workflows start", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: { result: node.id }, executionTime: 1 };
+        }),
+      });
+      const nodes: WorkflowNode[] = [
+        {
+          id: "release-1",
+          dependsOn: [],
+          config: {
+            type: "subWorkflow",
+            workflow: {
+              id: "release-wf-1",
+              steps: [{ id: "review", dependsOn: [], config: { type: "step" } as any }],
+            },
+          } as any,
+        },
+        {
+          id: "release-2",
+          dependsOn: [],
+          config: {
+            type: "subWorkflow",
+            workflow: {
+              id: "release-wf-2",
+              steps: [waitForApproval("review", { message: "Approve the release" })],
+            },
+          } as any,
+        },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, false);
+      assertStringIncludes(result.error ?? "", 'both declare child id "review"');
+      assertEquals(executed, []);
+      assertEquals(result.waiting, false);
+    });
+
     it("rejects sub-workflow child ids that collide with declared parent nodes", async () => {
       const executed: string[] = [];
       const exec = new DAGExecutor({
@@ -3682,6 +3723,33 @@ describe("DAGExecutor", () => {
       assertEquals(result.waiting, true);
       assertEquals(result.waitingNode, "review");
       assertEquals(executed, ["review"]);
+    });
+
+    it("accepts sub-workflow owner ids containing lone UTF-16 surrogates", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const nodes: WorkflowNode[] = [{
+        id: "\uD800",
+        dependsOn: [],
+        config: {
+          type: "subWorkflow",
+          workflow: {
+            id: "surrogate-owner-workflow",
+            steps: [{ id: "child", dependsOn: [], config: { type: "step" } as any }],
+          },
+        } as any,
+      }];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(executed, ["child"]);
+      assertEquals(result.nodeStates.child?._subWorkflowOwnerPath, "d800");
     });
 
     it("should execute a sub-workflow definition", async () => {

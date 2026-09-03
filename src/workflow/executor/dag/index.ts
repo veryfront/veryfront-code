@@ -67,9 +67,27 @@ import {
 
 const RESUMABLE_COMPOSITE_TYPES = new Set(["branch", "parallel", "map", "loop", "subWorkflow"]);
 const MAX_STALLED_GRAPH_NODE_DETAILS = 10;
+const NumberPrototypeToString = Number.prototype.toString;
+const ReflectApply = Reflect.apply;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypePadStart = String.prototype.padStart;
 
 function encodeSubWorkflowOwnerSegment(nodeId: string): string {
-  return encodeURIComponent(nodeId);
+  // Node IDs are arbitrary canonical strings and can contain slashes or lone
+  // UTF-16 surrogates. Encode every code unit into a fixed-width segment so the
+  // mapping is total, injective, and unambiguous when owner segments are joined.
+  let encoded = "";
+  for (let index = 0; index < nodeId.length; index += 1) {
+    const codeUnit = ReflectApply(StringPrototypeCharCodeAt, nodeId, [index]) as number;
+    const hex = ReflectApply(NumberPrototypeToString, codeUnit, [16]) as string;
+    encoded += ReflectApply(StringPrototypePadStart, hex, [4, "0"]) as string;
+  }
+  return encoded;
+}
+
+function subWorkflowOwnerPath(parentPath: string, nodeId: string): string {
+  const segment = encodeSubWorkflowOwnerSegment(nodeId);
+  return parentPath ? `${parentPath}/${segment}` : segment;
 }
 
 function collectStaticSubWorkflowReservations(
@@ -98,9 +116,7 @@ function collectStaticSubWorkflowReservations(
           typeof node.config.workflow === "string" ||
           !Array.isArray(node.config.workflow.steps)
         ) break;
-        const ownerPath = parentPath
-          ? `${parentPath}/${encodeSubWorkflowOwnerSegment(node.id)}`
-          : encodeSubWorkflowOwnerSegment(node.id);
+        const ownerPath = subWorkflowOwnerPath(parentPath, node.id);
         reservations.set(ownerPath, collectWorkflowNodeIds(node.config.workflow.steps));
         collectStaticSubWorkflowReservations(node.config.workflow.steps, ownerPath, reservations);
         break;
@@ -108,6 +124,31 @@ function collectStaticSubWorkflowReservations(
     }
   }
   return reservations;
+}
+
+function findConcurrentSubWorkflowChildCollision(
+  batch: string[],
+  nodeMap: ReadonlyMap<string, WorkflowNode>,
+  scope: ExecutionScope,
+): { childId: string; firstNodeId: string; secondNodeId: string } | undefined {
+  const reservedBy = new Map<string, string>();
+  for (const nodeId of batch) {
+    const node = nodeMap.get(nodeId);
+    if (!node || node.config.type !== "subWorkflow") continue;
+
+    const ownerPath = subWorkflowOwnerPath(scope.subWorkflowPath, node.id);
+    const reservations = scope.subWorkflowNodeReservations.get(ownerPath);
+    if (!reservations) continue;
+
+    for (const childId of reservations) {
+      const firstNodeId = reservedBy.get(childId);
+      if (firstNodeId) {
+        return { childId, firstNodeId, secondNodeId: node.id };
+      }
+      reservedBy.set(childId, node.id);
+    }
+  }
+  return undefined;
 }
 
 function getUnfinishedNodeDetails(
@@ -314,6 +355,26 @@ export class DAGExecutor {
       abortSignal?.throwIfAborted();
       const batch = ready.slice(0, this.config.maxConcurrency);
       ready = ready.slice(this.config.maxConcurrency);
+
+      // Child states are persisted in the shared root node-state map. Two
+      // sub-workflows in the same concurrent batch therefore cannot safely
+      // produce the same child ID: one result would overwrite the other before
+      // either approval can be reconciled. Reject the batch before any sibling
+      // starts, while sequential siblings can continue to reuse IDs through
+      // the ownership filter below.
+      const childCollision = findConcurrentSubWorkflowChildCollision(batch, nodeMap, scope);
+      if (childCollision) {
+        return {
+          completed: false,
+          waiting: false,
+          context,
+          nodeStates,
+          contextPatch,
+          error: `Concurrent sub-workflow nodes "${childCollision.firstNodeId}" and ` +
+            `"${childCollision.secondNodeId}" both declare child id ` +
+            `"${childCollision.childId}"`,
+        };
+      }
 
       const batchStartedAt = new Date();
       const recoveredInBatch: string[] = [];
@@ -1107,9 +1168,7 @@ export class DAGExecutor {
       : workflowDef.steps;
     abortSignal?.throwIfAborted();
 
-    const ownerPath = scope.subWorkflowPath
-      ? `${scope.subWorkflowPath}/${encodeSubWorkflowOwnerSegment(node.id)}`
-      : encodeSubWorkflowOwnerSegment(node.id);
+    const ownerPath = subWorkflowOwnerPath(scope.subWorkflowPath, node.id);
 
     // A sub-workflow is a separate definition with its own id space, so a child
     // may legally repeat an id declared by an ancestor graph -- duplicate-id
