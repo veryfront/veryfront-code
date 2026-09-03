@@ -159,14 +159,12 @@ function collectNodeSubWorkflowChildIds(
         collectNodeSubWorkflowChildIds(child, parentPath, scope, childIds);
       }
       break;
-    case "branch":
-      for (const child of node.config.then) {
-        collectNodeSubWorkflowChildIds(child, parentPath, scope, childIds);
-      }
-      for (const child of node.config.else ?? []) {
-        collectNodeSubWorkflowChildIds(child, parentPath, scope, childIds);
-      }
-      break;
+    // `branch` is deliberately absent. Only one arm ever runs, and which one is
+    // decided when the node executes, so unioning both arms here would refuse a
+    // run for a collision on an arm that is never taken. A branch that can reach
+    // a sub-workflow is instead admitted alone (see
+    // `nodeHasUnknownSubWorkflowReservations`), and the arm it selects is
+    // checked by that arm's own graph pass.
     case "loop":
       if (Array.isArray(node.config.steps)) {
         for (const child of node.config.steps) {
@@ -235,13 +233,9 @@ function nodeHasUnknownSubWorkflowReservations(node: WorkflowNode): boolean {
       }
       return false;
     case "branch":
-      for (const child of node.config.then) {
-        if (nodeHasUnknownSubWorkflowReservations(child)) return true;
-      }
-      for (const child of node.config.else ?? []) {
-        if (nodeHasUnknownSubWorkflowReservations(child)) return true;
-      }
-      return false;
+      // The selected arm is resolved only at execution, so the child ids this
+      // node reserves are unknown until it runs.
+      return nodeMayExecuteSubWorkflow(node);
     case "loop":
       if (!Array.isArray(node.config.steps)) return true;
       for (const child of node.config.steps) {
@@ -512,16 +506,19 @@ export class DAGExecutor {
         // Reported through the graph result rather than thrown, like every
         // other refusal this loop raises: the states and context patch earlier
         // batches already produced must survive, or their side effects run
-        // twice on the next attempt.
+        // twice on the next attempt. `errorCause` carries the registry slug the
+        // ancestor-collision throw uses, so both refusals classify alike.
+        const detail = `Concurrent sub-workflow nodes "${childCollision.firstNodeId}" and ` +
+          `"${childCollision.secondNodeId}" both declare child id ` +
+          `"${childCollision.childId}"`;
         return {
           completed: false,
           waiting: false,
           context,
           nodeStates,
           contextPatch,
-          error: `Concurrent sub-workflow nodes "${childCollision.firstNodeId}" and ` +
-            `"${childCollision.secondNodeId}" both declare child id ` +
-            `"${childCollision.childId}"`,
+          error: detail,
+          errorCause: INVALID_ARGUMENT.create({ detail }),
         };
       }
 

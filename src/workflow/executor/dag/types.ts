@@ -6,6 +6,7 @@
  * @module ai/workflow/executor/dag/types
  */
 
+import type { VeryfrontError } from "#veryfront/errors";
 import type { NodeState, WaitNodeConfig, WorkflowContext } from "../../types.ts";
 import type { CheckpointManager, CheckpointOwnership } from "../checkpoint-manager.ts";
 import type { StepExecutor } from "../step-executor.ts";
@@ -141,6 +142,13 @@ export interface DAGExecutionResult {
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
   error?: string;
+  /**
+   * Registry-typed cause for a refusal reported through `error` rather than
+   * thrown, so a caller classifying failures by slug sees the same kind of
+   * error it would have seen from a throw. Set only where the states and
+   * context patch earlier batches produced must still be returned.
+   */
+  errorCause?: VeryfrontError;
 }
 
 /** Internal result used when a composite node executes a child graph. */

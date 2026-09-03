@@ -68,15 +68,17 @@ Two sub-workflows that can run at the same time and declare the same child ID
 fail the run before either one starts. Give them distinct child IDs, or add a
 dependency so they run in sequence, which is allowed.
 
-Veryfront can only compare child IDs it can read from the definition. When a
-sub-workflow builds its `steps` from a callback, references another workflow by
-ID, or sits inside a `map`, its child IDs exist only once the node runs. Such a
-node runs on its own: Veryfront defers it out of any batch that also contains a
-node able to produce child state, and admits it in a later batch. Nodes whose
-child IDs are visible in the definition still run in parallel with each other.
-Two consequences to expect: throughput drops around runtime-defined
-sub-workflows, and their approvals are raised one run at a time instead of
-together.
+Veryfront can only compare child IDs it can read from the definition. Child IDs
+exist only once the node runs when a `subWorkflow` builds its `steps` from a
+callback or references another workflow by ID, when a `branch` that can reach a
+sub-workflow selects its arm, when a sub-workflow sits inside a `map`, or when a
+`loop` or `map` builds its steps from a callback. Veryfront defers each such node
+out of any batch that also contains a node able to produce child state, and
+admits it in a later batch. A `loop` or `map` with callback steps is deferred
+even when it contains no sub-workflow, because its contents are unknown before it
+runs. Nodes whose child IDs are visible in the definition still run in parallel
+with each other. Two consequences to expect: throughput drops around these nodes,
+and their approvals are raised one run at a time instead of together.
 
 ## Workflow context persistence
 

@@ -34,7 +34,7 @@ import { CheckpointManager } from "../checkpoint-manager.ts";
 import type { WorkflowBackend } from "../../backends/types.ts";
 import { MemoryBackend } from "../../backends/memory.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
-import { VeryfrontError } from "#veryfront/errors";
+import { INVALID_ARGUMENT, VeryfrontError } from "#veryfront/errors";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import { serializeWorkflowContext } from "../../context-serialization.ts";
 import {
@@ -3479,6 +3479,10 @@ describe("DAGExecutor", () => {
       assertStringIncludes(result.error ?? "", 'both declare child id "review"');
       assertEquals(executed, []);
       assertEquals(result.waiting, false);
+      // The refusal is returned rather than thrown so earlier batches' states
+      // survive, but it still classifies under the slug the ancestor-collision
+      // throw uses.
+      assertEquals(result.errorCause?.slug, INVALID_ARGUMENT.slug);
     });
 
     it("admits callback-defined sibling sub-workflows one at a time", async () => {
@@ -3657,6 +3661,135 @@ describe("DAGExecutor", () => {
       // raise their approvals together. Only the callback-defined node waits.
       assertEquals(result.waitingNodes?.map((wait) => wait.nodeId), ["review-1", "review-2"]);
       assertEquals(result.nodeStates["review-dynamic"], undefined);
+    });
+
+    it("admits a branch whose untaken arm would collide with a concurrent sibling", async () => {
+      // Only one arm of a branch ever runs, and which one is decided when the
+      // node executes. Refusing the run for a collision on the arm that is
+      // never taken would fail a run halfway through for a condition that never
+      // materializes, so a branch reaching a sub-workflow is admitted alone
+      // instead and the arm it selects is checked by its own graph pass.
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: { result: node.id }, executionTime: 1 };
+        }),
+      });
+      const armRelease = (id: string, childId: string): WorkflowNode => ({
+        ...subWorkflow(id, {
+          workflow: {
+            id: `${id}-wf`,
+            steps: [{ id: childId, dependsOn: [], config: { type: "step" } as any }],
+          },
+        }),
+        dependsOn: [],
+      });
+      const nodes: WorkflowNode[] = [
+        {
+          id: "gate",
+          dependsOn: [],
+          config: {
+            type: "branch",
+            condition: () => true,
+            then: [armRelease("taken", "taken-child")],
+            else: [armRelease("untaken", "shipped")],
+          } as any,
+        },
+        {
+          ...subWorkflow("direct", {
+            workflow: {
+              id: "direct-wf",
+              steps: [{ id: "shipped", dependsOn: [], config: { type: "step" } as any }],
+            },
+          }),
+          dependsOn: [],
+        },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.error, undefined);
+      assertEquals(result.completed, true);
+      // The branch is deferred out of the batch holding "direct", so the two
+      // never produce child state at the same time.
+      assertEquals(executed, ["shipped", "taken-child"]);
+    });
+
+    it("resumes a sub-workflow nested in a loop without re-running its children", async () => {
+      // A loop keeps its iteration's child states in a private snapshot in the
+      // context, re-encoded through an explicit field whitelist. Ownership
+      // metadata has to survive that round trip, or the resumed iteration
+      // reseeds the sub-workflow through the ownerless legacy path.
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: { result: node.id }, executionTime: 1 };
+        }),
+      });
+
+      const nodes: WorkflowNode[] = [
+        {
+          id: "the-loop",
+          dependsOn: [],
+          config: {
+            type: "loop",
+            maxIterations: 1,
+            while: (_context: WorkflowContext, loopContext: LoopExecutionContext) =>
+              loopContext.iteration < 1,
+            steps: [
+              {
+                id: "release",
+                dependsOn: [],
+                config: {
+                  type: "subWorkflow",
+                  workflow: {
+                    id: "release-wf",
+                    steps: [
+                      { id: "build", dependsOn: [], config: { type: "step" } as any },
+                      waitForApproval("approve", { message: "Approve the release" }),
+                      { id: "publish", dependsOn: ["approve"], config: { type: "step" } as any },
+                    ],
+                  },
+                } as any,
+              },
+            ],
+          } as any,
+        },
+      ];
+
+      const first = await exec.execute(nodes, createTestRun());
+
+      assertEquals(first.waiting, true);
+      assertEquals(first.waitingNode, "approve");
+      assertEquals(executed, ["build"]);
+      const loopState = first.context["the-loop_loop_state"] as {
+        iterationNodeStates: Record<string, { _subWorkflowOwnerPath?: string }>;
+      };
+      const persistedBuild = loopState.iterationNodeStates["build"];
+      assertExists(persistedBuild);
+      assertExists(persistedBuild._subWorkflowOwnerPath);
+
+      const resumed = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          context: first.context,
+          nodeStates: {
+            ...first.nodeStates,
+            approve: {
+              ...first.nodeStates.approve!,
+              status: "completed",
+              output: { approved: true },
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(resumed.completed, true);
+      assertEquals(executed, ["build", "publish"]);
     });
 
     it("rejects sub-workflow child ids that collide with declared parent nodes", async () => {
