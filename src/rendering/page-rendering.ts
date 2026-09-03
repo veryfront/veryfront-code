@@ -45,10 +45,10 @@ const STALE_MDX_ESM_RECOVERY_COOLDOWN_MS = 30_000;
 /** Ceiling on remembered namespaces, so the cooldown map cannot grow without bound. */
 const STALE_MDX_ESM_RECOVERY_MAX_TRACKED_NAMESPACES = 512;
 
-/** Namespace key -> epoch ms at which its last recovery started. */
+/** Namespace key -> epoch ms at which its last recovery completed or was attempted. */
 const staleMdxEsmRecoveryAttempts = new Map<string, number>();
-/** Key -> request sequence that most recently completed recovery successfully. */
-const staleMdxEsmRecoveryCompletedBy = new Map<string, number>();
+/** Key -> latest request sequence that was already in flight when recovery completed. */
+const staleMdxEsmRecoveryCompletedThrough = new Map<string, number>();
 /** Each recovery request gets an order so delayed identity lookups can join a newer pass. */
 let nextStaleMdxEsmRecoveryRequestSequence = 0;
 
@@ -114,7 +114,15 @@ async function getStaleMdxEsmRecoveryKey(
   const namespace = options.projectId ?? options.projectSlug ?? options.projectDir;
   if (!namespace) return undefined;
 
-  const sourceSnapshotIdentity = await options.adapter.fs.getSourceSnapshotIdentity?.();
+  let sourceSnapshotIdentity: string | undefined;
+  try {
+    sourceSnapshotIdentity = await options.adapter.fs.getSourceSnapshotIdentity?.();
+  } catch {
+    // An unavailable identity must not replace the original render error or
+    // prevent cache-only recovery. The per-adapter fallback still isolates the
+    // recovery state from other identity-less adapters.
+    sourceSnapshotIdentity = undefined;
+  }
   let adapterIdentity = sourceSnapshotIdentity;
   if (adapterIdentity === undefined) {
     const fs = options.adapter.fs as object;
@@ -133,7 +141,7 @@ function pruneStaleMdxEsmRecoveryAttempts(now: number): void {
   for (const [key, attemptedAt] of staleMdxEsmRecoveryAttempts) {
     if (now - attemptedAt >= STALE_MDX_ESM_RECOVERY_COOLDOWN_MS) {
       staleMdxEsmRecoveryAttempts.delete(key);
-      staleMdxEsmRecoveryCompletedBy.delete(key);
+      staleMdxEsmRecoveryCompletedThrough.delete(key);
     }
   }
 
@@ -142,7 +150,7 @@ function pruneStaleMdxEsmRecoveryAttempts(now: number): void {
     const oldest = staleMdxEsmRecoveryAttempts.keys().next();
     if (oldest.done) break;
     staleMdxEsmRecoveryAttempts.delete(oldest.value);
-    staleMdxEsmRecoveryCompletedBy.delete(oldest.value);
+    staleMdxEsmRecoveryCompletedThrough.delete(oldest.value);
   }
 }
 
@@ -201,8 +209,8 @@ export async function recoverStaleMdxEsmPreviewCaches(
   // A negative delta means the wall clock stepped backwards; treat it as
   // "still cooling down" rather than handing out an unbounded retry budget.
   if (attemptedAt !== undefined && now - attemptedAt < STALE_MDX_ESM_RECOVERY_COOLDOWN_MS) {
-    const completedBy = staleMdxEsmRecoveryCompletedBy.get(key);
-    if (completedBy !== undefined && completedBy >= requestSequence) return true;
+    const completedThrough = staleMdxEsmRecoveryCompletedThrough.get(key);
+    if (completedThrough !== undefined && completedThrough >= requestSequence) return true;
 
     logger.debug("Skipping stale MDX ESM cache recovery still within its cooldown", {
       slug: options.slug,
@@ -227,7 +235,19 @@ export async function recoverStaleMdxEsmPreviewCaches(
 
   try {
     const recovered = await recovery.promise;
-    if (recovered) staleMdxEsmRecoveryCompletedBy.set(key, requestSequence);
+    if (recovered) {
+      // Start the cooldown after the expensive refresh/purge completes. This
+      // also records every request sequence that was already pending, so a
+      // slower identity lookup can still join this completed recovery.
+      const completedAt = Date.now();
+      staleMdxEsmRecoveryAttempts.delete(key);
+      staleMdxEsmRecoveryAttempts.set(key, completedAt);
+      staleMdxEsmRecoveryCompletedThrough.set(
+        key,
+        nextStaleMdxEsmRecoveryRequestSequence,
+      );
+      pruneStaleMdxEsmRecoveryAttempts(completedAt);
+    }
     return recovered;
   } finally {
     if (staleMdxEsmRecoveryInFlight.get(key) === recovery) {
@@ -239,7 +259,7 @@ export async function recoverStaleMdxEsmPreviewCaches(
 /** Test-only: drop the recovery cooldown so cases do not leak into each other. */
 export function __resetStaleMdxEsmRecoveryStateForTests(): void {
   staleMdxEsmRecoveryAttempts.clear();
-  staleMdxEsmRecoveryCompletedBy.clear();
+  staleMdxEsmRecoveryCompletedThrough.clear();
   staleMdxEsmRecoveryInFlight.clear();
   nextStaleMdxEsmRecoveryRequestSequence = 0;
 }

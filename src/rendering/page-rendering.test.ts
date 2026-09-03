@@ -407,6 +407,127 @@ describe("rendering/page-rendering", () => {
     assertEquals(sourceRefreshes, 1);
   });
 
+  it("lets a later identity lookup join an active recovery", async () => {
+    let sourceRefreshes = 0;
+    let refreshStarted = false;
+    let resolveRefresh!: () => void;
+    const refreshPromise = new Promise<void>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    const identityResolvers: Array<(identity: string) => void> = [];
+    const adapter = {
+      fs: {
+        getSourceSnapshotIdentity: () =>
+          new Promise<string>((resolve) => identityResolvers.push(resolve)),
+        refreshSourceSnapshot: () => {
+          sourceRefreshes++;
+          refreshStarted = true;
+          return refreshPromise;
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    const recover = () =>
+      recoverStaleMdxEsmPreviewCaches({
+        adapter,
+        projectDir: "/project",
+        projectId: "project-1",
+        contentSourceId: "preview-main",
+        slug: "probe",
+        pagePath: "/probe",
+        mode: "production",
+      });
+
+    const first = recover();
+    assertEquals(identityResolvers.length, 1);
+    identityResolvers[0]("branch:project-1:main");
+    for (let index = 0; index < 10 && !refreshStarted; index++) await Promise.resolve();
+    assertEquals(refreshStarted, true);
+
+    const later = recover();
+    assertEquals(identityResolvers.length, 2);
+    resolveRefresh();
+    assertEquals(await first, true);
+    identityResolvers[1]("branch:project-1:main");
+    assertEquals(
+      await later,
+      true,
+      "a lookup that started during recovery must retry after that recovery completes",
+    );
+    assertEquals(sourceRefreshes, 1);
+  });
+
+  it("starts the recovery cooldown after the refresh completes", async () => {
+    using time = new FakeTime();
+    let sourceRefreshes = 0;
+    let refreshStarted = false;
+    let resolveRefresh!: () => void;
+    const refreshPromise = new Promise<void>((resolve) => {
+      resolveRefresh = resolve;
+    });
+    const adapter = {
+      fs: {
+        refreshSourceSnapshot: () => {
+          sourceRefreshes++;
+          refreshStarted = true;
+          return refreshPromise;
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    const recover = () =>
+      recoverStaleMdxEsmPreviewCaches({
+        adapter,
+        projectDir: "/project",
+        projectId: "project-1",
+        contentSourceId: "preview-main",
+        slug: "probe",
+        pagePath: "/probe",
+        mode: "production",
+      });
+
+    const first = recover();
+    for (let index = 0; index < 10 && !refreshStarted; index++) await Promise.resolve();
+    assertEquals(refreshStarted, true);
+    time.tick(30_000);
+    resolveRefresh();
+    assertEquals(await first, true);
+
+    assertEquals(
+      await recover(),
+      false,
+      "a slow recovery must keep the full cooldown after it completes",
+    );
+    assertEquals(sourceRefreshes, 1);
+  });
+
+  it("falls back to adapter-scoped recovery when identity lookup rejects", async () => {
+    let sourceRefreshes = 0;
+    const adapter = {
+      fs: {
+        getSourceSnapshotIdentity: () => Promise.reject(new Error("identity unavailable")),
+        refreshSourceSnapshot: () => {
+          sourceRefreshes++;
+          return Promise.resolve();
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    assertEquals(
+      await recoverStaleMdxEsmPreviewCaches({
+        adapter,
+        projectDir: "/project",
+        projectId: "project-1",
+        contentSourceId: "preview-main",
+        slug: "probe",
+        pagePath: "/probe",
+        mode: "production",
+      }),
+      true,
+    );
+    assertEquals(sourceRefreshes, 1);
+  });
+
   it("keeps a refreshed namespace from being evicted as the oldest tracked entry", async () => {
     using time = new FakeTime();
     let sourceRefreshes = 0;
