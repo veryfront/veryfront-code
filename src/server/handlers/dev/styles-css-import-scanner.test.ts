@@ -4,8 +4,6 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { getCacheStats } from "#veryfront/utils/memory/index.ts";
-import { normalizePath } from "#veryfront/utils/path-utils.ts";
-import { join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import type { HandlerContext } from "../types.ts";
@@ -354,6 +352,74 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
     }
   });
 
+  it("does not let one project's invalidation retire another project's in-flight walk", async () => {
+    // Invalidation is per project scope, so a content push for one tenant must
+    // not force an unrelated tenant on the same runtime to re-walk its sources.
+    const other = createDeferredScanAdapter(releaseContent("rel-neighbour"));
+    const otherCtx = makeCtx(other.adapter, { projectSlug: "neighbour-project" });
+
+    try {
+      invalidateProjectCssImportScans();
+
+      const inFlight = extractProjectCssImports(otherCtx);
+      assertEquals(other.getScanCount(), 1);
+
+      // A push for an unrelated project lands mid-walk.
+      invalidateProjectCssImportScans(PROJECT_SLUG);
+      other.settleNext([LAYOUT_FILE]);
+      assertEquals(await inFlight, [IMPORTED_CSS]);
+
+      const reused = extractProjectCssImports(otherCtx);
+      const scansAfterReuse = other.getScanCount();
+      // Release the walk that only a regressed build would have started, so the
+      // assertions below report the defect instead of hanging on it.
+      other.settleNext([]);
+
+      assertEquals(await reused, [IMPORTED_CSS]);
+      assertEquals(
+        scansAfterReuse,
+        1,
+        "an unrelated project's push must not discard this project's completed walk",
+      );
+    } finally {
+      invalidateProjectCssImportScans();
+    }
+  });
+
+  it("keys the scan on the admitted tenant when the filesystem resolves no content", async () => {
+    // A shared-proxy filesystem exposes getAllSourceFiles() but no content
+    // context while every tenant keeps the same server-level projectDir, so
+    // without the admitted slug in the key project B would be served project
+    // A's imports.
+    const tenantA = createScanAdapter([LAYOUT_FILE], null);
+    const tenantB = createScanAdapter([], null);
+
+    try {
+      invalidateProjectCssImportScans();
+
+      // Both tenants are served by one runtime, so they share `projectDir`.
+      assertEquals(
+        await extractProjectCssImports(
+          makeCtx(tenantA.adapter, { projectSlug: "tenant-a" }),
+        ),
+        [IMPORTED_CSS],
+      );
+      assertEquals(
+        await extractProjectCssImports(
+          makeCtx(tenantB.adapter, { projectSlug: "tenant-b" }),
+        ),
+        [],
+      );
+      assertEquals(
+        tenantB.getScanCount(),
+        1,
+        "a second tenant must walk its own sources, not reuse the first tenant's scan",
+      );
+    } finally {
+      invalidateProjectCssImportScans();
+    }
+  });
+
   it("ignores request-supplied selectors when the filesystem resolves no content", async () => {
     // `x-release-id` reaches the handler without an identity-trust gate, so on a
     // standalone server a client could otherwise mint a distinct "immutable"
@@ -378,44 +444,9 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
     }
   });
 
-  it("keys a content-less filesystem on the local project directory", async () => {
-    // No underlying adapter at all: the scan walks ctx.projectDir from disk, so
-    // that directory — not anything the request asked for — is the identity.
-    const projectDir = Deno.makeTempDirSync();
-    Deno.mkdirSync(join(projectDir, "app"));
-    Deno.writeTextFileSync(join(projectDir, "app", "layout.tsx"), 'import "./styles.css";\n');
-
-    const mock = createMockAdapter();
-    let reads = 0;
-    const adapter = {
-      ...mock,
-      fs: {
-        ...mock.fs,
-        readFile: (path: string) => {
-          reads++;
-          return Deno.readTextFile(path);
-        },
-      },
-    } as unknown as RuntimeAdapter;
-
-    try {
-      invalidateProjectCssImportScans();
-
-      const first = await extractProjectCssImports(
-        makeCtx(adapter, { projectDir, releaseId: "rel-a" } as Partial<HandlerContext>),
-      );
-      assertEquals(first, [normalizePath(join(projectDir, "app", "styles.css"))]);
-      assertEquals(reads, 1);
-
-      await extractProjectCssImports(
-        makeCtx(adapter, { projectDir, releaseId: "rel-b" } as Partial<HandlerContext>),
-      );
-      assertEquals(reads, 1, "a different claimed release must not re-walk the same directory");
-    } finally {
-      invalidateProjectCssImportScans();
-      Deno.removeSync(projectDir, { recursive: true });
-    }
-  });
+  // The content-less (local-walk) identity case needs a real directory tree, so
+  // it lives in tests/integration/server/styles-css-import-scanner-real-filesystem.test.ts
+  // rather than here, where the unit cases stay hermetic.
 
   it("clears every project's scans when invalidated without a scope", async () => {
     const scan = createScanAdapter([LAYOUT_FILE], releaseContent("rel-global"));
