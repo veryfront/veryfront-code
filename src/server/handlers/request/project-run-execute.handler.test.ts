@@ -2074,4 +2074,83 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(result.response.status, 401);
     assertEquals(await result.response.json(), { error: "Missing control-plane signature" });
   });
+
+  it("rejects runtime targets that carry no identifier for their kind", async () => {
+    // Both selections would canonicalize to the empty identifier, so every
+    // environment run missing its environment id — and every preview run
+    // missing its branch id — would share one durable workflow namespace and
+    // could resume another target's runs and approval decision claims.
+    const handler = new ProjectRunExecuteHandler(createDeps());
+
+    for (
+      const body of [
+        {
+          runId: "run_bad_environment",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          runtimeTargetKind: "environment",
+        },
+        {
+          runId: "run_bad_preview",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          runtimeTargetKind: "preview_branch",
+        },
+      ]
+    ) {
+      const { request, publicKeyPem } = await signedRequest(
+        `/api/control-plane/runs/${body.runId}/execute`,
+        body,
+      );
+
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 400);
+    }
+  });
+
+  it("rejects runtime targets carrying an identifier from a different kind", async () => {
+    // A selection that names both an environment and a preview branch is
+    // malformed rather than a namespace: it is exactly what
+    // validateRuntimeAgentTargetSelection rejects on the agent invocation
+    // contract, and accepting it here would let one request choose which
+    // target's durable state it resumes.
+    const handler = new ProjectRunExecuteHandler(createDeps());
+
+    for (
+      const body of [
+        {
+          runId: "run_cross_environment",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: "env-1",
+          runtimeTargetBranchId: "branch-1",
+        },
+        {
+          runId: "run_cross_preview",
+          kind: "task",
+          target: "task:sync-calendar-events",
+          projectId: "proj-1",
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetEnvironmentId: "env-1",
+          runtimeTargetBranchId: "branch-1",
+        },
+      ]
+    ) {
+      const { request, publicKeyPem } = await signedRequest(
+        `/api/control-plane/runs/${body.runId}/execute`,
+        body,
+      );
+
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 400);
+    }
+  });
 });

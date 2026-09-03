@@ -221,6 +221,42 @@ function parseOptionalNullableString(value: unknown, fieldName: string): string 
   return value;
 }
 
+/**
+ * Reject runtime target selections that carry no identifier for their kind.
+ *
+ * `validateRuntimeAgentTargetSelection` already treats these combinations as
+ * invalid for the same selection, but that check runs on the agent invocation
+ * contract, not on this wire format. Without it here, an `environment` target
+ * missing its environment id — or a `preview_branch` target missing its branch
+ * id — canonicalizes to the empty identifier, so every such request shares one
+ * durable workflow namespace and can see another target's runs and approval
+ * decision claims. An identifier belonging to a different kind is rejected for
+ * the same reason: it is a malformed selection, not a namespace.
+ *
+ * A `main_branch` selection, or an omitted kind, is left alone. Omitted kinds
+ * still reach this handler alongside a `runtimeTargetEnvironmentId` that
+ * `executeTaskRun` reads as the legacy environment override, and
+ * `canonicalWorkflowRedisTarget` already drops identifiers the default branch
+ * does not own, so those cannot fork the namespace.
+ */
+function validateRuntimeTargetSelection(
+  kind: ProjectRunExecuteRequest["runtimeTargetKind"],
+  environmentId: string | null | undefined,
+  branchId: string | null | undefined,
+): void {
+  if (kind === "environment" && (!environmentId || branchId)) {
+    throw INPUT_VALIDATION_FAILED.create({
+      detail: "environment target requires runtimeTargetEnvironmentId and no runtimeTargetBranchId",
+    });
+  }
+  if (kind === "preview_branch" && (!branchId || environmentId)) {
+    throw INPUT_VALIDATION_FAILED.create({
+      detail:
+        "preview_branch target requires runtimeTargetBranchId and no runtimeTargetEnvironmentId",
+    });
+  }
+}
+
 function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecuteRequest {
   if (!isRecord(value)) throw INPUT_VALIDATION_FAILED.create({ detail: "Expected object" });
 
@@ -254,21 +290,30 @@ function parseExecuteRequest(value: unknown, pathRunId: string): ProjectRunExecu
     throw INPUT_VALIDATION_FAILED.create({ detail: "Invalid eval target" });
   }
 
+  const runtimeTargetKind = parseRuntimeTargetKind(value.runtimeTargetKind);
+  const runtimeTargetEnvironmentId = parseOptionalNullableString(
+    value.runtimeTargetEnvironmentId,
+    "runtimeTargetEnvironmentId",
+  );
+  const runtimeTargetBranchId = parseOptionalNullableString(
+    value.runtimeTargetBranchId,
+    "runtimeTargetBranchId",
+  );
+  validateRuntimeTargetSelection(
+    runtimeTargetKind,
+    runtimeTargetEnvironmentId,
+    runtimeTargetBranchId,
+  );
+
   return {
     runId,
     kind,
     target,
     projectId,
     runtimeAgUiEndpoint: parseOptionalUrl(value.runtimeAgUiEndpoint, "runtimeAgUiEndpoint"),
-    runtimeTargetKind: parseRuntimeTargetKind(value.runtimeTargetKind),
-    runtimeTargetEnvironmentId: parseOptionalNullableString(
-      value.runtimeTargetEnvironmentId,
-      "runtimeTargetEnvironmentId",
-    ),
-    runtimeTargetBranchId: parseOptionalNullableString(
-      value.runtimeTargetBranchId,
-      "runtimeTargetBranchId",
-    ),
+    runtimeTargetKind,
+    runtimeTargetEnvironmentId,
+    runtimeTargetBranchId,
     config: parseRecord(value.config),
     input: parseRecord(value.input),
   };
