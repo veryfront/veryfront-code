@@ -45,6 +45,7 @@ import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../
 import { listAllFiles, type PullSource } from "../pull/index.ts";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { isNotFoundError, lstat } from "veryfront/fs";
+import { sanitizeLogText } from "#veryfront/utils/logger/core.ts";
 import {
   areSourceFilesTracked,
   clearPushReceipt,
@@ -1283,11 +1284,12 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       // stays outside the `quiet` gate because the delete is destructive and
       // `--quiet` emits no result envelope at all.
       if (protectedDeletePaths.length > 0 && !jsonOutput) {
+        const protectedPathList = protectedDeletePaths.map(sanitizeLogText).join(", ");
         logWarning(
           `Prune ${dryRun ? "would remove" : "removes"} ${protectedDeletePaths.length} protected ` +
             `remote ${
               protectedDeletePaths.length === 1 ? "path" : "paths"
-            } that .vfignore cannot re-include: ${protectedDeletePaths.join(", ")}.`,
+            } that .vfignore cannot re-include: ${protectedPathList}.`,
         );
         if (!dryRun) {
           logInfo("Rotate any credential these paths contained.");

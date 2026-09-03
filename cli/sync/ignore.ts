@@ -5,7 +5,9 @@
 import { join } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
 import { cliLogger, logWarning } from "#cli/utils";
+import { isJsonMode } from "../shared/json-output.ts";
 import { isNotFoundError, lstat } from "veryfront/fs";
+import { sanitizeLogText } from "#veryfront/utils/logger/core.ts";
 
 /** Default patterns always ignored */
 const DEFAULT_IGNORE_PATTERNS: readonly string[] = [
@@ -242,17 +244,20 @@ export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker 
   function isIgnored(relativePath: string): boolean {
     const normalizedPath = normalizeIgnorePath(relativePath);
     let ignored = false;
+    let lastMatchedRule: IgnoreRule | undefined;
 
     for (const rule of rules) {
       if (!rule.regex.test(normalizedPath)) continue;
+      lastMatchedRule = rule;
       ignored = !rule.negated;
     }
 
     if (!ignored && isProtectedPath(normalizedPath)) {
-      if (!warnedOverrides.has(normalizedPath)) {
+      if (lastMatchedRule?.negated && !isJsonMode() && !warnedOverrides.has(normalizedPath)) {
         warnedOverrides.add(normalizedPath);
         logWarning(
-          `Ignoring protected path "${normalizedPath}". A .vfignore negation cannot re-include ` +
+          `Ignoring protected path "${sanitizeLogText(normalizedPath)}". ` +
+            "A .vfignore negation cannot re-include " +
             "a path under .env, .veryfront, or .git.",
         );
       }

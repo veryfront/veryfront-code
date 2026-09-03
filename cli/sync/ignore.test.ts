@@ -1,6 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
+import { stub } from "#std/testing/mock";
+import { scanLocalFiles } from "../commands/push/command.ts";
+import { setJsonMode } from "../shared/json-output.ts";
 import { createDefaultIgnoreChecker, createIgnoreChecker, loadIgnorePatterns } from "./ignore.ts";
 
 describe("cli/sync/ignore", () => {
@@ -153,7 +157,9 @@ describe("cli/sync/ignore", () => {
     it("should keep negations working for names that only start with .env", () => {
       const checker = createIgnoreChecker([
         ".env*",
+        "!.envoy",
         "!.envoy/**",
+        "!.environments",
         "!.environments/**",
       ]);
 
@@ -161,6 +167,59 @@ describe("cli/sync/ignore", () => {
       assertEquals(checker.isIgnored(".environments/prod.json"), false);
       assertEquals(checker.isProtected(".envoy/config.json"), false);
       assertEquals(checker.isProtected(".environments/prod.json"), false);
+    });
+
+    it("keeps negated .env-prefixed directories traversable by push", async () => {
+      await withTempDir(async (projectDir) => {
+        await Deno.mkdir(`${projectDir}/.envoy`, { recursive: true });
+        await Deno.mkdir(`${projectDir}/.environments`, { recursive: true });
+        await Deno.writeTextFile(`${projectDir}/.envoy/config.json`, "{}\n");
+        await Deno.writeTextFile(`${projectDir}/.environments/prod.json`, "{}\n");
+        const checker = createIgnoreChecker([
+          ".env*",
+          "!.envoy",
+          "!.envoy/**",
+          "!.environments",
+          "!.environments/**",
+        ]);
+
+        const files = await scanLocalFiles(projectDir, checker);
+
+        assertEquals(files.map((file) => file.path).sort(), [
+          ".environments/prod.json",
+          ".envoy/config.json",
+        ]);
+      });
+    });
+
+    it("warns only for a negated protected path and keeps JSON output clean", () => {
+      const warnings: string[] = [];
+      const warningStub = stub(console, "warn", (...values: unknown[]) => {
+        warnings.push(values.map(String).join(" "));
+      });
+      const path = ".env/credentials\u001b[31mforged.json";
+
+      try {
+        assertEquals(createIgnoreChecker([]).isIgnored(path), true);
+        assertEquals(warnings, [], "protection without a negation must stay silent");
+
+        const checker = createIgnoreChecker([`!${path}`]);
+        assertEquals(checker.isIgnored(path), true);
+        assertEquals(checker.isIgnored(path), true);
+        assertEquals(warnings.length, 1, "one dropped negation must emit one warning");
+        assertEquals(
+          warnings[0]?.includes("\u001b"),
+          false,
+          "warning text must not carry terminal controls",
+        );
+
+        setJsonMode(true);
+        assertEquals(createIgnoreChecker(["!.env/**"]).isIgnored(".env/other.json"), true);
+        assertEquals(warnings.length, 1, "JSON mode must not emit human warning text");
+      } finally {
+        setJsonMode(false);
+        warningStub.restore();
+      }
     });
 
     it("should handle directory-trailing-slash patterns", () => {
