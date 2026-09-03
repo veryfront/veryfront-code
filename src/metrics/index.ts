@@ -461,11 +461,20 @@ function takeDirectTargetForSample(
   for (let index = 0; index < internedTargets.length; index++) {
     const interned = internedTargets[index];
     if (interned?.key === key) {
-      interned.pendingSamples--;
       return { key, target: interned.target };
     }
   }
   return undefined;
+}
+
+function releaseDirectTargetSamples(targetKey: string, count: number): void {
+  for (let index = 0; index < internedTargets.length; index++) {
+    const interned = internedTargets[index];
+    if (interned?.key !== targetKey) continue;
+    const remaining = interned.pendingSamples - count;
+    interned.pendingSamples = remaining > 0 ? remaining : 0;
+    return;
+  }
 }
 
 function toOtlpValue(value: AttributeValue) {
@@ -635,6 +644,14 @@ async function exportDirectGroup(group: DirectExportGroup): Promise<void> {
   }
 }
 
+async function exportAndReleaseDirectGroup(group: DirectExportGroup): Promise<void> {
+  try {
+    await exportDirectGroup(group);
+  } finally {
+    releaseDirectTargetSamples(group.key, group.samples.length);
+  }
+}
+
 async function flushDirectMetrics(): Promise<void> {
   if (directFlushTimer) {
     clearTimeout(directFlushTimer);
@@ -679,7 +696,7 @@ async function flushDirectMetrics(): Promise<void> {
   // removed batch indefinitely.
   const exports = new Array<Promise<void>>(groups.length);
   for (let index = 0; index < groups.length; index++) {
-    exports[index] = exportDirectGroup(groups[index]!);
+    exports[index] = exportAndReleaseDirectGroup(groups[index]!);
   }
   for (let index = 0; index < exports.length; index++) {
     await exports[index];

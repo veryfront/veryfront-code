@@ -814,6 +814,47 @@ describe("metrics public SDK", () => {
     assertEquals(metrics.__getDirectTargetCountForTests(), 100);
   });
 
+  it("keeps in-flight direct targets inside the global bound", async () => {
+    const releases: Array<() => void> = [];
+
+    await withEnv({ OTEL_METRICS_ENABLED: "true" }, async () => {
+      await withMockFetch(
+        (() =>
+          new Promise<Response>((resolve) => {
+            releases.push(() => resolve(new Response("{}", { status: 200 })));
+          })) as typeof fetch,
+        async () => {
+          for (let index = 0; index < 100; index++) {
+            await runWithProjectEnv({
+              OTEL_METRICS_ENABLED: "true",
+              OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
+              OTEL_SERVICE_NAME: `first-${index}`,
+            }, () => metrics.counter("vf_project_metric_total", 1));
+          }
+          const firstFlush = metrics.__flushForTests();
+          for (let attempt = 0; attempt < 10 && releases.length < 100; attempt++) {
+            await Promise.resolve();
+          }
+
+          for (let index = 0; index < 100; index++) {
+            await runWithProjectEnv({
+              OTEL_METRICS_ENABLED: "true",
+              OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
+              OTEL_SERVICE_NAME: `second-${index}`,
+            }, () => metrics.counter("vf_project_metric_total", 1));
+          }
+          const secondFlush = metrics.__flushForTests();
+          const requestCount = releases.length;
+          for (const release of releases) release();
+          await Promise.all([firstFlush, secondFlush]);
+
+          assertEquals(requestCount, 100);
+          assertEquals(metrics.__getDirectTargetCountForTests(), 100);
+        },
+      );
+    });
+  });
+
   it("routes dedicated runtime host OTLP metrics through the internal API proxy without project env", async () => {
     const originalFetch = globalThis.fetch;
     const requests: Array<{ url: string; init?: RequestInit }> = [];
