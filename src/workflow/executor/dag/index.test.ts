@@ -3485,6 +3485,38 @@ describe("DAGExecutor", () => {
       assertEquals(result.errorCause?.slug, INVALID_ARGUMENT.slug);
     });
 
+    it("does not reject a sibling collision when one sub-workflow is skipped", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const release = (id: string, skip: boolean): WorkflowNode => ({
+        id,
+        dependsOn: [],
+        config: {
+          type: "subWorkflow",
+          skip: () => skip,
+          workflow: {
+            id: `${id}-wf`,
+            steps: [{ id: "review", dependsOn: [], config: { type: "step" } as any }],
+          },
+        } as any,
+      });
+
+      const result = await exec.execute(
+        [release("skipped-release", true), release("active-release", false)],
+        createTestRun(),
+      );
+
+      assertEquals(result.error, undefined);
+      assertEquals(result.completed, true);
+      assertEquals(result.nodeStates["skipped-release"]?.status, "skipped");
+      assertEquals(executed, ["review"]);
+    });
+
     it("admits callback-defined sibling sub-workflows one at a time", async () => {
       let definitionsResolved = 0;
       const dynamicWorkflow = (id: string): WorkflowDefinition => ({
@@ -3882,6 +3914,7 @@ describe("DAGExecutor", () => {
 
       assertEquals(result.completed, false);
       assertStringIncludes(result.error ?? "", 'child id "review"');
+      assertEquals(result.errorCause?.slug, INVALID_ARGUMENT.slug);
       // The nested approval must never be bypassed by the parent's completed
       // "review" state, so its dependent publish step must not have run.
       assertEquals(executed.includes("publish"), false);

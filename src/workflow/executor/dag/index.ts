@@ -164,6 +164,11 @@ function collectNodeSubWorkflowChildIds(
   scope: ExecutionScope,
   childIds: Set<string>,
 ): void {
+  // A runtime skip can remove this node before it produces child state. Keep
+  // it out of the static collision set and admit it separately below so the
+  // skip decision is evaluated before any sibling reservation is compared.
+  if (node.config.skip) return;
+
   switch (node.config.type) {
     case "subWorkflow": {
       const ownerPath = subWorkflowOwnerPath(parentPath, node.id);
@@ -221,6 +226,8 @@ function nodeMayExecuteSubWorkflow(node: WorkflowNode): boolean {
 }
 
 function nodeHasUnknownSubWorkflowReservations(node: WorkflowNode): boolean {
+  if (node.config.skip) return nodeMayExecuteSubWorkflow(node);
+
   switch (node.config.type) {
     case "subWorkflow":
       if (
@@ -742,7 +749,7 @@ export class DAGExecutor {
           nodeId: string;
           waitConfig?: WaitNodeConfig;
           error?: string;
-          errorCause?: DAGExecutionResult["errorCause"];
+          errorCause?: NonNullable<DAGExecutionResult["errorCause"]>;
         }
         | undefined;
       // Every node the settled batch parked, in index order. Dependency-free
