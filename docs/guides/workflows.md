@@ -56,6 +56,14 @@ Use `integrationRequirements` only for explicit access that scheduled workflow
 runs require. Veryfront does not infer integration requirements from workflow
 steps, nested workflows, agents, tools, or source text.
 
+### Nested workflows
+
+When using `subWorkflow`, child node IDs are scoped to that sub-workflow while
+the run is executing. A child ID must not collide with a node ID in an enclosing
+workflow. Keep sibling sub-workflows' child IDs distinct as well; completed child
+state is retained for resuming the owning sub-workflow and is never reused by a
+different sibling.
+
 ## Workflow context persistence
 
 Workflow context must be JSON-representable. Veryfront stores suspended workflow

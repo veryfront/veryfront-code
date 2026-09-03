@@ -3531,6 +3531,47 @@ describe("DAGExecutor", () => {
       assertEquals(executed, ["build", "publish"]);
     });
 
+    it("does not seed a sibling sub-workflow's child state", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: { result: node.id }, executionTime: 1 };
+        }),
+      });
+
+      const nodes: WorkflowNode[] = [
+        {
+          id: "release-1",
+          dependsOn: [],
+          config: {
+            type: "subWorkflow",
+            workflow: {
+              id: "release-wf-1",
+              steps: [{ id: "review", dependsOn: [], config: { type: "step" } as any }],
+            },
+          } as any,
+        },
+        {
+          id: "release-2",
+          dependsOn: ["release-1"],
+          config: {
+            type: "subWorkflow",
+            workflow: {
+              id: "release-wf-2",
+              steps: [waitForApproval("review", { message: "Approve the release" })],
+            },
+          } as any,
+        },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNode, "review");
+      assertEquals(executed, ["review"]);
+    });
+
     it("should execute a sub-workflow definition", async () => {
       const nodes: WorkflowNode[] = [
         {

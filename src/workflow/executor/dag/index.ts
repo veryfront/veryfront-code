@@ -104,6 +104,7 @@ export class DAGExecutor {
       // whose status is always "running" and would otherwise read a crash.
       resumingWait: run.status === "waiting",
       declaredNodeIds: new Set(),
+      subWorkflowNodeIds: new Map(),
       rootKeyspace: true,
       ownership,
     };
@@ -1078,8 +1079,15 @@ export class DAGExecutor {
     // on a path the static check above cannot see (a nested loop whose steps are
     // generated at runtime). Everything else stays out of the child keyspace.
     const seededNodeStates: Record<string, NodeState> = {};
+    const ownedNodeIds = scope.subWorkflowNodeIds.get(node.id) ?? new Set<string>();
+    const previouslyProducedNodeIds = new Set<string>();
+    for (const [owner, ids] of scope.subWorkflowNodeIds) {
+      if (owner === node.id) continue;
+      for (const id of ids) previouslyProducedNodeIds.add(id);
+    }
     for (const [nodeId, state] of Object.entries(nodeStates)) {
       if (scope.declaredNodeIds.has(nodeId)) continue;
+      if (previouslyProducedNodeIds.has(nodeId) && !ownedNodeIds.has(nodeId)) continue;
       seededNodeStates[nodeId] = state;
     }
 
@@ -1111,6 +1119,18 @@ export class DAGExecutor {
       abortSignal,
     );
     abortSignal?.throwIfAborted();
+
+    // Remember the ids this sub-workflow produced so a later sibling cannot
+    // accidentally inherit them. Preserve ids from earlier attempts because
+    // a waiting workflow may only expose a partial child-state snapshot.
+    const producedNodeIds = new Set(ownedNodeIds);
+    for (const childId of childNodeIds) producedNodeIds.add(childId);
+    for (const childId of Object.keys(result.nodeStates)) {
+      if (!scope.declaredNodeIds.has(childId) && !previouslyProducedNodeIds.has(childId)) {
+        producedNodeIds.add(childId);
+      }
+    }
+    scope.subWorkflowNodeIds.set(node.id, producedNodeIds);
 
     // Diff the sub-run against the states it actually started from. Diffing the
     // parent's whole map would report every state withheld above as deleted and

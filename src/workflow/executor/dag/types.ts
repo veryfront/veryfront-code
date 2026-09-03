@@ -43,6 +43,8 @@ export interface ExecutionScope {
   resumingWait: boolean;
   /** Declared node ids in this graph and every graph that contains it. */
   declaredNodeIds: ReadonlySet<string>;
+  /** Child node ids owned by each sub-workflow node, preventing sibling state leakage. */
+  subWorkflowNodeIds: Map<string, Set<string>>;
   /**
    * True while every enclosing composite carries its child states back into
    * the root run's node-state map (parallel, branch, subWorkflow, map). Loop
