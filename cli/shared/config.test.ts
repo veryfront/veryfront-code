@@ -8,11 +8,13 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createApiClient,
+  ENVIRONMENT_PROJECT_REFERENCE_NAMES,
   isRetryableApiReadError,
   readConfigFile,
   resolveConfig,
   resolveConfigWithAuth,
   resolveConfigWithAuthDetails,
+  resolveConfigWithAuthNoModule,
 } from "./config.ts";
 import type { ResolvedConfig } from "./config.ts";
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
@@ -165,6 +167,97 @@ describe("resolveConfig", () => {
       const config = await resolveConfig(tempDir, env);
 
       assertEquals(config.apiUrl, "https://api.from-file.test");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+});
+
+describe("resolveConfigWithAuthNoModule", () => {
+  function withoutTenantEnvironment<T>(run: () => Promise<T>): Promise<T> {
+    const previous = ENVIRONMENT_PROJECT_REFERENCE_NAMES.map(
+      (name) => [name, Deno.env.get(name)] as const,
+    );
+    for (const [name] of previous) Deno.env.delete(name);
+    return run().finally(() => {
+      for (const [name, value] of previous) {
+        if (value === undefined) {
+          Deno.env.delete(name);
+        } else {
+          Deno.env.set(name, value);
+        }
+      }
+    });
+  }
+
+  it("never executes veryfront.config.ts and never adopts its projectSlug", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const env = createMockEnv({ apiToken: "env-token", projectSlug: undefined });
+
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.config.js"),
+        'export default { projectSlug: "from-module" };\n',
+      );
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({ projectSlug: "from-json" }),
+      );
+
+      const config = await withoutTenantEnvironment(() =>
+        resolveConfigWithAuthNoModule(tempDir, env)
+      );
+
+      assertEquals(config.projectSlug, "from-json");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("refuses to infer a project when a skipped module config is the only reference", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "vf-inferable-project-" });
+    const env = createMockEnv({ apiToken: "env-token", projectSlug: undefined });
+
+    try {
+      // No veryfront.json, no project link, no environment reference: the only
+      // declaration lives in code this resolver must not run. Inferring from
+      // package.json would silently target a different reachable project.
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.config.ts"),
+        'export default { projectSlug: "from-module" };\n',
+      );
+      await Deno.writeTextFile(
+        join(tempDir, "package.json"),
+        JSON.stringify({ name: "some-other-project" }),
+      );
+
+      await withoutTenantEnvironment(() =>
+        assertRejects(
+          () => resolveConfigWithAuthNoModule(tempDir, env),
+          Error,
+          "veryfront.config.ts is the only project reference in this directory",
+        )
+      );
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("still infers a project when no module config exists", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const env = createMockEnv({ apiToken: "env-token", projectSlug: undefined });
+
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "package.json"),
+        JSON.stringify({ name: "inferred-project" }),
+      );
+
+      const config = await withoutTenantEnvironment(() =>
+        resolveConfigWithAuthNoModule(tempDir, env)
+      );
+
+      assertEquals(config.projectSlug, "inferred-project");
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }

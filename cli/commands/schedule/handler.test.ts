@@ -165,16 +165,17 @@ describe("schedule command", () => {
     ];
     const output: string[] = [];
 
-    const configExecutedSentinel = `${projectDir}/config-executed.sentinel`;
+    const sentinelKey = `__vfScheduleConfigExecuted_${crypto.randomUUID().replace(/-/g, "")}`;
+    const globals = globalThis as unknown as Record<string, unknown>;
 
     try {
       await Deno.mkdir(`${projectDir}/schedules`, { recursive: true });
-      // Detect execution two ways: a side effect (sentinel file) and a
-      // competing projectSlug that would win over veryfront.json if the
-      // module were ever imported.
+      // Detect execution two ways: an in-process side effect (a global the
+      // module sets on evaluation) and a competing projectSlug that would win
+      // over veryfront.json if the module were ever imported.
       await Deno.writeTextFile(
         `${projectDir}/veryfront.config.ts`,
-        `Deno.writeTextFileSync(${JSON.stringify(configExecutedSentinel)}, "executed");\n` +
+        `globalThis[${JSON.stringify(sentinelKey)}] = true;\n` +
           'export default { projectSlug: "module-config-must-not-run" };\n',
       );
       await Deno.writeTextFile(
@@ -233,7 +234,7 @@ describe("schedule command", () => {
 
       assertEquals(exitCode, 0);
       assertEquals(
-        await Deno.stat(configExecutedSentinel).then(() => true, () => false),
+        sentinelKey in globals,
         false,
         "remote schedule run must not execute local veryfront.config.ts",
       );
@@ -273,6 +274,7 @@ describe("schedule command", () => {
         },
       });
     } finally {
+      delete globals[sentinelKey];
       await stopEsbuild();
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });

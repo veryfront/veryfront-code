@@ -84,6 +84,13 @@ interface ConfigFileResolution {
   jsonProjectSlug?: string;
   moduleProjectSlug?: string;
   moduleProjectSlugFile?: string;
+  /**
+   * Name of a `veryfront.config.ts`/`.js` that exists but was deliberately not
+   * executed because the caller forbids running local project code. Its
+   * `projectSlug` (if any) is therefore unknown, so inferring a reference from
+   * project files would silently target a different project.
+   */
+  skippedModuleConfigFile?: string;
 }
 
 export type ProjectReferenceSource =
@@ -117,27 +124,33 @@ async function readConfigFileResolution(
 
   let moduleProjectSlug: string | undefined;
   let moduleProjectSlugFile: string | undefined;
+  let skippedModuleConfigFile: string | undefined;
   // Importing veryfront.config.ts/.js executes arbitrary code from the working
   // tree with full CLI process permissions. Callers that must not run local
   // project code (remote-mode commands) disable this lane entirely.
-  if (allowModuleConfigExecution) {
-    for (const ext of [".ts", ".js"]) {
-      const configPath = join(projectDir, `veryfront.config${ext}`);
+  for (const ext of [".ts", ".js"]) {
+    const configPath = join(projectDir, `veryfront.config${ext}`);
 
-      try {
-        if (!(await fs.exists(configPath))) continue;
+    try {
+      if (!(await fs.exists(configPath))) continue;
 
-        const module = await import(`file://${configPath}`);
-        const config = module.default ?? module;
-
-        if (config?.projectSlug) {
-          moduleProjectSlug = config.projectSlug;
-          moduleProjectSlugFile = `veryfront.config${ext}`;
-          break;
-        }
-      } catch (error) {
-        cliLogger.debug(`Failed to import config file ${configPath}:`, error);
+      if (!allowModuleConfigExecution) {
+        // Record that a module config exists so callers can refuse to guess a
+        // project reference rather than silently inferring a different one.
+        skippedModuleConfigFile ??= `veryfront.config${ext}`;
+        continue;
       }
+
+      const module = await import(`file://${configPath}`);
+      const config = module.default ?? module;
+
+      if (config?.projectSlug) {
+        moduleProjectSlug = config.projectSlug;
+        moduleProjectSlugFile = `veryfront.config${ext}`;
+        break;
+      }
+    } catch (error) {
+      cliLogger.debug(`Failed to import config file ${configPath}:`, error);
     }
   }
 
@@ -155,6 +168,7 @@ async function readConfigFileResolution(
     jsonProjectSlug: jsonConfig?.projectSlug,
     moduleProjectSlug,
     moduleProjectSlugFile,
+    skippedModuleConfigFile,
   };
 }
 
@@ -380,6 +394,15 @@ async function resolveConfigBase(
         projectSlug = projectLink.projectSlug;
         projectId = projectLink.projectId;
         projectReferenceSource = { kind: "local-link", name: ".veryfront/project.json" };
+      } else if (configFileResolution.skippedModuleConfigFile) {
+        // The only remaining reference would be inferred from package.json or
+        // the directory name, which can name a different project this token can
+        // reach. The project's own declaration lives in the module config we
+        // refuse to execute, so fail closed instead of guessing.
+        throw new Error(
+          `${configFileResolution.skippedModuleConfigFile} is the only project reference in this directory, and this command never executes local project code. ` +
+            "Set VERYFRONT_PROJECT_SLUG, add projectSlug to veryfront.json, or link the project with 'veryfront link'.",
+        );
       } else {
         projectSlug = await inferProjectSlug(dir);
         projectReferenceSource = { kind: "inferred", name: "project files" };
