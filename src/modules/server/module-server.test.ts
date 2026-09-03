@@ -131,6 +131,10 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     req: Request,
     projectDir: string,
     releaseId = "rel-1",
+    // The handler resolves this from the project's auth config. Default to an
+    // ungated project so these cases keep asserting the shared-cache path; the
+    // gated counterpart is asserted explicitly.
+    authGateEnabled = false,
   ): Promise<Response> {
     const { serveModule } = await import("./module-server.ts");
     return await serveModule(req, {
@@ -139,6 +143,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       adapter: denoAdapter,
       dev: false,
       releaseId,
+      authGateEnabled,
     });
   }
 
@@ -2054,6 +2059,90 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
 
       assertEquals(response.status, 200);
       assertEquals(response.headers.get("cache-control"), "public, max-age=31536000, immutable");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("withholds the shared-cache directive from release modules of a gated project", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-release-module-auth-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/App.ts`,
+        `export const secret = 1;\n`,
+      );
+
+      const request = () =>
+        new Request(
+          `http://localhost:3000/_vf_modules/components/App.js?vf_release=rel-1&vf_runtime=${VERSION}`,
+        );
+
+      const response = await serveProductionModule(request(), projectDir, "rel-1", true);
+
+      assertEquals(response.status, 200);
+      // `public` would let a CDN in front of the runtime store this response to
+      // an authorized, Authorization-bearing request (RFC 9111 3.5) and then
+      // serve protected module source to unauthenticated clients for a year,
+      // never reaching AuthHandler.
+      assertEquals(
+        response.headers.get("cache-control"),
+        "private, max-age=31536000, immutable",
+        "a project behind security.auth must not announce module source as publicly cacheable",
+      );
+
+      // The release module response cache stores the headers of the serve that
+      // filled it, and its key does not carry the gate. Fill it from an
+      // ungated serve, then read it back under the gate: the directive must be
+      // restated per request rather than replayed from the stored entry.
+      clearReleaseModuleResponseCache();
+      const ungated = await serveProductionModule(request(), projectDir, "rel-1", false);
+      assertEquals(ungated.headers.get("cache-control"), "public, max-age=31536000, immutable");
+
+      const cached = await serveProductionModule(request(), projectDir, "rel-1", true);
+
+      assertEquals(cached.status, 200);
+      assertEquals(
+        cached.headers.get("cache-control"),
+        "private, max-age=31536000, immutable",
+        "a response cache hit must not replay a shared-cache directive the gate forbids",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("treats an unstated auth gate as gated for release module cache directives", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-release-module-auth-default-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/App.ts`,
+        `export const value = 1;\n`,
+      );
+
+      const { serveModule } = await import("./module-server.ts");
+      const response = await serveModule(
+        new Request(
+          `http://localhost:3000/_vf_modules/components/App.js?vf_release=rel-1&vf_runtime=${VERSION}`,
+        ),
+        {
+          projectId: "test",
+          projectDir,
+          adapter: denoAdapter,
+          dev: false,
+          releaseId: "rel-1",
+        },
+      );
+
+      assertEquals(response.status, 200);
+      assertEquals(
+        response.headers.get("cache-control"),
+        "private, max-age=31536000, immutable",
+        "a caller that never states the gate must not publish module source to shared caches",
+      );
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }
