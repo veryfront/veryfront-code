@@ -417,18 +417,45 @@ export function createProviderDroppedMessageTracker(): (message: Message) => boo
     if (!hasProviderSendableAssistantContent(message)) return true;
 
     if (message.role === "assistant") {
-      // Mirror the assistant conversion's id bookkeeping: a caller-authored
-      // tool call supersedes a provider-executed id (`pushAssistantPart`
-      // deletes it), and a replayed provider-executed result consumes its id.
+      // Mirror the assistant conversion part by part: the sendable-content
+      // check above runs without the active id window, so a message it deems
+      // sendable can still convert to nothing when every tool call is
+      // filtered by a provider-executed id (e.g. a caller copy that shares
+      // the id of a provider-executed call). Track whether any part actually
+      // lands, with the same id bookkeeping as `pushAssistantPart`: a
+      // caller-authored tool call supersedes a provider-executed id, and a
+      // replayed provider-executed result consumes its id.
+      let produced = readAttachedProviderMetadata(message) !== undefined;
+      const pendingToolCallIds = new Set<string>();
+      const toolNamesById = new Map<string, string>();
       for (const part of message.parts) {
+        // The conversion loop re-registers each part's provider-executed id as
+        // it goes, so an id consumed by an earlier part can be re-armed by a
+        // later provider-executed part.
+        const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
+        if (providerExecutedToolCallId) {
+          providerExecutedToolCallIds.add(providerExecutedToolCallId);
+        }
+        if (isRecord(part) && part.type === "text" && "text" in part) {
+          produced = true;
+          continue;
+        }
         const toolCallPart = getTextGenerationToolCallPart(part, providerExecutedToolCallIds);
         if (toolCallPart) {
           providerExecutedToolCallIds.delete(toolCallPart.toolCallId);
+          pendingToolCallIds.add(toolCallPart.toolCallId);
+          toolNamesById.set(toolCallPart.toolCallId, toolCallPart.toolName);
+          produced = true;
           continue;
         }
-        shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds);
+        if (shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds)) continue;
+        const toolResultPart = getTextGenerationToolResultPart(part, toolNamesById);
+        if (toolResultPart && pendingToolCallIds.has(toolResultPart.toolCallId)) {
+          pendingToolCallIds.delete(toolResultPart.toolCallId);
+          produced = true;
+        }
       }
-      return false;
+      return !produced;
     }
 
     if (message.role !== "tool") return false;

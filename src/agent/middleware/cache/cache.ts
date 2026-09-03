@@ -1,5 +1,8 @@
 import type { AgentMiddleware, AgentResponse, Message } from "../../types.ts";
-import { hasSyntheticMessageId, hasSyntheticMessageTimestamp } from "../../runtime/input-utils.ts";
+import {
+  hasSyntheticMessageId,
+  hasSyntheticMessageTimestamp,
+} from "#veryfront/agent/runtime/input-utils.ts";
 import { setActiveSpanAttributes } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 

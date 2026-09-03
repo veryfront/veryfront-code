@@ -1341,7 +1341,26 @@ export class AgentRuntime {
    * provider unvalidated. Validating before the write keeps a rejected turn
    * out of memory.
    */
-  private async prepareTurnMessages(
+  private prepareTurnMessages(
+    inputMessages: Message[],
+    context?: AgentContext,
+  ): Promise<Message[]> {
+    // Serialize validate-then-write per runtime: two concurrent turns that
+    // both read the same history before either writes could each validate an
+    // individually harmless fragment whose interleaved writes become adjacent
+    // in the persisted transcript. The queue makes the second turn's
+    // validation see the first turn's write. A rejected or failed commit must
+    // not poison the queue for later turns, hence the swallowed catch on the
+    // stored chain; callers still observe the rejection through the returned
+    // promise.
+    const task = this.#turnCommitQueue.then(() => this.#commitTurnMessages(inputMessages, context));
+    this.#turnCommitQueue = task.then(() => undefined, () => undefined);
+    return task;
+  }
+
+  #turnCommitQueue: Promise<void> = Promise.resolve();
+
+  async #commitTurnMessages(
     inputMessages: Message[],
     context?: AgentContext,
   ): Promise<Message[]> {

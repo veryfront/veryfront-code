@@ -1,7 +1,7 @@
 import type { AgentContext, AgentResponse, Message } from "../../types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { getOutputSchemaParser } from "../../output-schema.ts";
-import { createProviderDroppedMessageTracker } from "../../runtime/text-generation-runtime-message-converter.ts";
+import { createProviderDroppedMessageTracker } from "#veryfront/agent/runtime/text-generation-runtime-message-converter.ts";
 
 export interface SecurityConfig {
   /** Input validation rules */
