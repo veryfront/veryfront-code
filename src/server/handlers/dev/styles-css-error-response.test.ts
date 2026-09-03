@@ -38,6 +38,8 @@ import { invalidateProjectCssImportScans } from "./styles-css-import-scanner.ts"
 import { renderCSSDiagnostic, StylesCSSHandler } from "./styles-css.handler.ts";
 
 const SLUG = "styles-css-error-project";
+/** Cache scope for a request that resolves no content context outside proxy mode. */
+const PROJECT_DIR = "/project";
 const PAGE = {
   path: "/project/pages/index.tsx",
   content: '<div className="text-cyan-500 brand-header">Hi</div>',
@@ -46,11 +48,14 @@ const PAGE = {
 function reset(): void {
   clearCSSCache();
   invalidateCompiler();
-  invalidateProjectCSS(SLUG);
-  invalidatePreparedProjectCSS(SLUG);
+  // This adapter resolves no content context and the context is not in proxy
+  // mode, so the route scopes its CSS entries by `ctx.projectDir`, not by the
+  // slug the request carries.
+  invalidateProjectCSS(PROJECT_DIR);
+  invalidatePreparedProjectCSS(PROJECT_DIR);
   invalidateProjectCandidateManifests();
   invalidateProjectCandidateScans();
-  invalidateProjectCssImportScans(SLUG);
+  invalidateProjectCssImportScans(PROJECT_DIR);
 }
 
 function makeAdapter(

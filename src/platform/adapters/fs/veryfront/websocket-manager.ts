@@ -701,6 +701,10 @@ export class WebSocketManager {
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
     let reloadSuperseded = false;
     let succeeded = false;
+    // Set before the clear is awaited, not after: the catch below is the
+    // fallback for a poke that never reached the clear, so a clear that ran and
+    // failed must not be retried there either.
+    let clearedProjectCSSCaches = false;
 
     try {
       logger.debug("Performing selective invalidation", {
@@ -802,6 +806,7 @@ export class WebSocketManager {
             files,
             sourceSnapshotVersion,
           );
+          clearedProjectCSSCaches = true;
           await this.clearProjectCSSCaches();
           if (appliedSnapshotVersion === undefined) {
             reloadSuperseded = true;
@@ -823,9 +828,12 @@ export class WebSocketManager {
             });
           }
         } catch (error) {
-          // The snapshot replacement did not complete, so nothing above cleared
-          // the CSS caches for this poke.
-          await this.clearProjectCSSCaches();
+          // Only the file fetch and the snapshot replacement run before the
+          // clear above; a throw from either means nothing cleared the CSS
+          // caches for this poke. Later steps (style pre-generation, the
+          // snapshot version re-read) throw after the clear has already run, so
+          // repeating it there would just drop the caches twice.
+          if (!clearedProjectCSSCaches) await this.clearProjectCSSCaches();
           logger.warn("Failed to fetch files during selective invalidation", {
             error,
           });
@@ -890,6 +898,9 @@ export class WebSocketManager {
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
     let reloadSuperseded = false;
     let succeeded = false;
+    // See the selective path: set before the await so a failed clear is not
+    // retried by the catch that exists for pokes which never reached it.
+    let clearedProjectCSSCaches = false;
 
     try {
       logger.debug("CACHE INVALIDATION STARTED - clearing all caches");
@@ -1000,6 +1011,7 @@ export class WebSocketManager {
             files,
             sourceSnapshotVersion,
           );
+          clearedProjectCSSCaches = true;
           await this.clearProjectCSSCaches();
           if (appliedSnapshotVersion === undefined) {
             reloadSuperseded = true;
@@ -1021,9 +1033,10 @@ export class WebSocketManager {
             });
           }
         } catch (error) {
-          // The snapshot replacement did not complete, so nothing above cleared
-          // the CSS caches for this poke.
-          await this.clearProjectCSSCaches();
+          // See the selective path: only the file fetch and the snapshot
+          // replacement run before the clear above, so a throw from a later
+          // step must not clear a second time.
+          if (!clearedProjectCSSCaches) await this.clearProjectCSSCaches();
           logger.warn("Failed to fetch files during invalidation", { error });
         }
       }

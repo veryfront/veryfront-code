@@ -33,7 +33,7 @@ const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
 const frameworkCandidates = new Set<string>(FRAMEWORK_CANDIDATES);
 
 interface SourceFileProvider {
-  getAllSourceFiles?: () =>
+  getAllSourceFiles?: (options?: { waitForWarmup?: boolean }) =>
     | Array<{ path: string; content?: string }>
     | Promise<Array<{ path: string; content?: string }>>;
 }
@@ -45,9 +45,10 @@ const candidateScanCache = createProjectScanCache("styles-project-candidate-scan
  *
  * Scope precedence matches `invalidateProjectCssImportScans`: the resolved
  * content slug for content-backed and proxy-admitted requests, and
- * `ctx.projectDir` for a content-less, non-proxy local server, whose staleness
- * is bounded by the mutable TTL because no invalidation callback is wired
- * there.
+ * `ctx.projectDir` for a content-less, non-proxy local server, which the dev
+ * server pokes itself on every HMR invalidation because
+ * `clearProjectCSSCache` is wired only for the control-plane filesystem
+ * adapter.
  */
 export function invalidateProjectCandidateScans(projectScope?: string): void {
   candidateScanCache.invalidate(projectScope);
@@ -97,9 +98,24 @@ async function scanProjectCandidates(
     return scanLocalFiles(ctx, identity);
   }
 
-  const files = await fsAdapter.getAllSourceFiles();
+  // Same warmup contract as the sibling CSS import scan: on a release-backed
+  // cold start `getAllSourceFiles()` schedules a warmup and answers empty, and
+  // nothing else populates that list. An empty result memoized under a
+  // `release:` key is immutable, so the stylesheet would be served with
+  // framework candidates only until an explicit `clearProjectCSSCache`. Wait
+  // for the warmup exactly where the key is immutable; a mutable key self-heals
+  // on the next request after the TTL, so it must not pay for the fetch.
+  const files = await fsAdapter.getAllSourceFiles({ waitForWarmup: !identity.mutable });
 
   return [...getProjectCandidates({
+    // The manifest is keyed by the same resolved scope as the scan above, so a
+    // client-supplied slug cannot mint manifest entries on a standalone server.
+    // This is narrower than the slug-first scope that `clearProjectCSSCache`
+    // pokes through `invalidateProjectCandidateManifests`: a content-less,
+    // non-proxy request scopes its entries by `ctx.projectDir`, which that poke
+    // does not match. Such a request always resolves the `live` version, so the
+    // entry is built with `developmentMode: true` and the manifest's own TTL
+    // retires it.
     projectScope: identity.scope,
     projectVersion: identity.version,
     projectDir: ctx.projectDir,

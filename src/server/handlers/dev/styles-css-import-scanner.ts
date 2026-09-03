@@ -47,9 +47,10 @@ const importScanCache = createProjectScanCache("styles-css-import-scans");
  * The scope is the resolved content slug for content-backed and proxy-admitted
  * requests, which is what `clearProjectCSSCache` passes on a content push. A
  * content-less, non-proxy scan (a local `veryfront dev` server) is scoped by
- * `ctx.projectDir` instead, and no invalidation callback is wired for that
- * mode, so its staleness is bounded by the mutable TTL alone -- the same
- * arrangement the candidate manifest already has there.
+ * `ctx.projectDir` instead, and `clearProjectCSSCache` is wired only for the
+ * control-plane filesystem adapter, so the dev server pokes that scope itself
+ * from its HMR invalidation subscription. The mutable TTL remains the backstop
+ * for a scope no poke reaches.
  */
 export function invalidateProjectCssImportScans(projectScope?: string): void {
   importScanCache.invalidate(projectScope);

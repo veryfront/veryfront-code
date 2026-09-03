@@ -9,6 +9,17 @@ import {
   type HandlerCache,
 } from "#veryfront/server/services/rsc/endpoints/handler-registry.ts";
 import type { RSCDevServerHandler } from "#veryfront/server/services/rsc/orchestrators/index.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import {
+  extractProjectCandidates,
+  invalidateProjectCandidateScans,
+} from "../handlers/dev/styles-candidate-scanner.ts";
+import {
+  extractProjectCssImports,
+  invalidateProjectCssImportScans,
+} from "../handlers/dev/styles-css-import-scanner.ts";
+import { invalidateProjectCandidateManifests } from "#veryfront/rendering/orchestrator/css-candidate-manifest.ts";
+import type { HandlerContext } from "../handlers/types.ts";
 import { RequestHandler } from "./request-handler.ts";
 
 function createHandlerCache(): HandlerCache<RSCDevServerHandler> {
@@ -47,5 +58,56 @@ describe("server/dev-server/request-handler", () => {
 
     const after = getRSCHandler("/project/a", "project-a", handlerOptions);
     assertEquals(after !== before, true);
+  });
+
+  it("drops the stylesheet route's memoized source scans for this project", async () => {
+    // The scans behind /_vf_styles/styles.css are memoized, and a local project
+    // resolves no content context, so they are scoped by the project directory
+    // and no content-push callback reaches them. A save must retire them here
+    // or the class it added is missing from the next stylesheet fetch: the
+    // reload lands well inside the scan cache's short mutable TTL.
+    __injectCacheForTests(createHandlerCache());
+    const projectDir = "/project/styles-scan";
+    let sourceWalks = 0;
+    const base = createMockAdapter();
+    const underlying = {
+      getAllSourceFiles: () => {
+        sourceWalks++;
+        return Promise.resolve([{
+          path: `${projectDir}/app/page.tsx`,
+          content: 'import "./page.css";\n<div className="text-amber-500" />',
+        }]);
+      },
+      getContentContext: () => null,
+    };
+    const ctx = {
+      projectDir,
+      adapter: { ...base, fs: { ...base.fs, getUnderlyingAdapter: () => underlying } },
+      securityConfig: null,
+    } as unknown as HandlerContext;
+    const requestHandler = new RequestHandler(projectDir, {} as RuntimeAdapter, () => true);
+    const reset = () => {
+      invalidateProjectCandidateScans();
+      invalidateProjectCssImportScans();
+      invalidateProjectCandidateManifests();
+    };
+
+    try {
+      reset();
+
+      await extractProjectCandidates(ctx);
+      await extractProjectCandidates(ctx);
+      await extractProjectCssImports(ctx);
+      await extractProjectCssImports(ctx);
+      assertEquals(sourceWalks, 2, "each scan must be memoized between requests");
+
+      requestHandler.invalidateRuntimeHandler();
+
+      await extractProjectCandidates(ctx);
+      await extractProjectCssImports(ctx);
+      assertEquals(sourceWalks, 4, "a file change must retire both memoized scans");
+    } finally {
+      reset();
+    }
   });
 });

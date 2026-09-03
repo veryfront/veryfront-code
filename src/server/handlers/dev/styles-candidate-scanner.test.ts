@@ -22,6 +22,7 @@ const PAGE_FILE = {
 interface ScanAdapter {
   adapter: RuntimeAdapter;
   getScanCount: () => number;
+  getWaitForWarmupValues: () => Array<boolean | undefined>;
   setFiles: (nextFiles: Array<{ path: string; content?: string }>) => void;
 }
 
@@ -36,10 +37,12 @@ function createScanAdapter(
   const adapter = createMockAdapter();
   let currentFiles = files;
   let scanCount = 0;
+  const waitForWarmupValues: Array<boolean | undefined> = [];
 
   const underlyingAdapter = {
-    getAllSourceFiles: async () => {
+    getAllSourceFiles: async (options?: { waitForWarmup?: boolean }) => {
       scanCount++;
+      waitForWarmupValues.push(options?.waitForWarmup);
       await Promise.resolve();
       return currentFiles;
     },
@@ -52,6 +55,7 @@ function createScanAdapter(
       fs: { ...adapter.fs, getUnderlyingAdapter: () => underlyingAdapter },
     } as unknown as RuntimeAdapter,
     getScanCount: () => scanCount,
+    getWaitForWarmupValues: () => waitForWarmupValues,
     setFiles: (nextFiles) => {
       currentFiles = nextFiles;
     },
@@ -144,6 +148,32 @@ describe("server/handlers/dev/styles-candidate-scanner", () => {
 
       assertEquals((await extractProjectCandidates(ctx)).has("text-cyan-500"), false);
       assertEquals(scan.getScanCount(), 2);
+    } finally {
+      reset();
+    }
+  });
+
+  it("waits for the file-list warmup only where the scan is frozen under a release key", async () => {
+    // On a release-backed cold start `getAllSourceFiles()` schedules a warmup
+    // and answers empty, and nothing else populates that list. An empty result
+    // memoized under a `release:` key never expires, so the stylesheet would be
+    // served with framework candidates only for the life of the process. A
+    // mutable key self-heals on the TTL and must not pay for the fetch.
+    const frozen = createScanAdapter([PAGE_FILE], releaseContent("rel-warmup"));
+    const mutable = createScanAdapter([PAGE_FILE], {
+      sourceType: "branch",
+      projectSlug: PROJECT_SLUG,
+      branch: "warmup",
+    } as ResolvedContentContext);
+
+    try {
+      reset();
+
+      await extractProjectCandidates(makeCtx(frozen.adapter));
+      await extractProjectCandidates(makeCtx(mutable.adapter));
+
+      assertEquals(frozen.getWaitForWarmupValues(), [true]);
+      assertEquals(mutable.getWaitForWarmupValues(), [false]);
     } finally {
       reset();
     }

@@ -17,6 +17,8 @@ import { clearRendererCacheForProject } from "#veryfront/rendering/renderer.ts";
 import { getErrorCollector } from "#veryfront/observability/error-collector.ts";
 import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 import { invalidateRSCHandlersForProject } from "#veryfront/server/services/rsc/endpoints/handler-registry.ts";
+import { invalidateProjectCandidateScans } from "../handlers/dev/styles-candidate-scanner.ts";
+import { invalidateProjectCssImportScans } from "../handlers/dev/styles-css-import-scanner.ts";
 
 const logger = serverLogger.component("dev");
 
@@ -149,6 +151,17 @@ export class RequestHandler {
   invalidateRuntimeHandler(): void {
     this.runtimeHandler = undefined;
     invalidateRSCHandlersForProject(this.projectDir, this.defaultProjectId);
+
+    // The stylesheet route memoizes its source-tree scans, and a local project
+    // resolves no content context, so those entries are scoped by the project
+    // directory and `clearProjectCSSCache` (wired only for the control-plane
+    // filesystem adapter) never reaches them. Without this a class or an
+    // `import "./x.css"` added by the save that triggered this invalidation
+    // could be missing from the next stylesheet fetch, because the reload
+    // usually lands inside the scan cache's short mutable TTL. The scope is the
+    // directory those entries are keyed by, so no other project is affected.
+    invalidateProjectCandidateScans(this.projectDir);
+    invalidateProjectCssImportScans(this.projectDir);
 
     resetApiHandler(this.projectDir).catch((error) => {
       logger.debug("resetApiHandler failed", error);
