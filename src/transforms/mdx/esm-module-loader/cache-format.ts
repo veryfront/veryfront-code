@@ -312,6 +312,17 @@ export function buildMdxJsxCacheFileNamePrefix(filePath: string): string {
 }
 
 /**
+ * Root prefix every cached JSX artifact of every namespace generation shares.
+ *
+ * A namespace roll changes {@link MDX_JSX_CACHE_NAMESPACE_PREFIX} and strands
+ * the artifacts written under the previous shape: nothing can reach them, so
+ * nothing keyed by the current namespace would ever delete them. This root is
+ * what lets the prune pass recognise a stranded generation's artifacts as its
+ * own dead weight and reclaim them.
+ */
+export const MDX_JSX_CACHE_ROOT_PREFIX = "jsx-";
+
+/**
  * Name prefix every cached JSX artifact shares, whatever its source path.
  *
  * Lets a cleanup pass recognise its own artifacts among unrelated cache files
@@ -319,7 +330,8 @@ export function buildMdxJsxCacheFileNamePrefix(filePath: string): string {
  * is fixed width, so {@link MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH} characters
  * of any artifact name are exactly the prefix its content variants share.
  */
-export const MDX_JSX_CACHE_NAMESPACE_PREFIX = `jsx-${MDX_ESM_CACHE_NAMESPACE}-`;
+export const MDX_JSX_CACHE_NAMESPACE_PREFIX =
+  `${MDX_JSX_CACHE_ROOT_PREFIX}${MDX_ESM_CACHE_NAMESPACE}-`;
 
 /** Length of the per-path prefix that opens every cached JSX artifact name. */
 export const MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH =

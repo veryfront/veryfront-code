@@ -12,6 +12,7 @@ import { SERVER_ONLY_IN_CLIENT } from "#veryfront/errors";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
 import { transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
+import { unrefTimer } from "#veryfront/platform/compat/process.ts";
 import { getLocalReactPaths, isReactSpecifier } from "#veryfront/platform/compat/react-paths.ts";
 import { sanitizePathForDisplay } from "#veryfront/security/path-validation.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
@@ -30,6 +31,7 @@ import {
 } from "#veryfront/transforms/shared/server-only-packages.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { parallelMap } from "#veryfront/utils/parallel.ts";
+import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 import { parseImports, replaceSpecifiers } from "../../esm/lexer.ts";
 import {
   ESBUILD_JSX_FACTORY,
@@ -44,6 +46,7 @@ import {
   buildMdxJsxCacheFileNamePrefix,
   MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH,
   MDX_JSX_CACHE_NAMESPACE_PREFIX,
+  MDX_JSX_CACHE_ROOT_PREFIX,
 } from "./cache-format.ts";
 import { rewriteDntImports } from "./module-fetcher/index.ts";
 import {
@@ -257,9 +260,15 @@ function describeProjectSource(filePath: string, projectDir?: string): string {
  * Everything beneath the project root is tenant-controlled, the dependencies
  * under its `node_modules` included, so nothing inside it may be admitted
  * through a framework exception that skips the source-size limit.
+ *
+ * The configured root arrives unnormalized (`resolveProjectDir` passes env and
+ * context values through as-is), and a trailing slash on it would make raw
+ * prefixing reject every contained file, reclassifying a project beneath
+ * `FRAMEWORK_ROOT` as framework source. Containment is therefore decided by
+ * the boundary-aware helper, which normalizes both sides.
  */
 function isProjectSourceFile(filePath: string, projectDir?: string): boolean {
-  return projectDir !== undefined && filePath.startsWith(`${projectDir}/`);
+  return projectDir !== undefined && isWithinDirectory(projectDir, filePath);
 }
 
 /**
@@ -350,8 +359,13 @@ const MAX_SERVED_ARTIFACT_MEMO_ENTRIES = 4096;
 const servedArtifactTimestamps = new Map<string, number>();
 
 function markJsxArtifactServed(transformedPath: string, servedAtMs: number = Date.now()): void {
+  // Delete-before-set keeps the map in recency order, so reaching capacity
+  // evicts the artifact served longest ago instead of wiping the whole memo
+  // and momentarily dropping the protection every in-flight hit relies on.
+  servedArtifactTimestamps.delete(transformedPath);
   if (servedArtifactTimestamps.size >= MAX_SERVED_ARTIFACT_MEMO_ENTRIES) {
-    servedArtifactTimestamps.clear();
+    const oldest = servedArtifactTimestamps.keys().next().value;
+    if (oldest !== undefined) servedArtifactTimestamps.delete(oldest);
   }
   servedArtifactTimestamps.set(transformedPath, servedAtMs);
 }
@@ -361,6 +375,38 @@ function wasJsxArtifactRecentlyServed(transformedPath: string, nowMs: number): b
   return servedAtMs !== undefined && nowMs - servedAtMs < JSX_CACHE_VARIANT_MIN_AGE_MS;
 }
 
+/**
+ * Per-artifact operation queues, dropped once the last queued operation
+ * settles, so the map holds only paths with an operation in flight.
+ */
+const jsxArtifactLocks = new Map<string, Promise<void>>();
+
+/**
+ * Serialize the operations on one artifact path that must not interleave: a
+ * cache hit verifying the file and recording it as served, a transform
+ * rewriting it, and a prune pass removing it. Without this, a hit could verify
+ * the artifact after the pruner checked the served memo but before its
+ * `remove` landed, and the rewritten parent would import a just-deleted path.
+ */
+async function withJsxArtifactLock<T>(
+  artifactPath: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = jsxArtifactLocks.get(artifactPath) ?? Promise.resolve();
+  const run = previous.then(operation);
+  const settled = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  jsxArtifactLocks.set(artifactPath, settled);
+  void settled.then(() => {
+    if (jsxArtifactLocks.get(artifactPath) === settled) {
+      jsxArtifactLocks.delete(artifactPath);
+    }
+  });
+  return await run;
+}
+
 async function readArtifactModifiedAtMs(path: string): Promise<number> {
   try {
     return (await getLocalFs().stat(path)).mtime?.getTime() ?? 0;
@@ -368,6 +414,61 @@ async function readArtifactModifiedAtMs(path: string): Promise<number> {
     /* expected: a concurrent transform may have removed the variant already */
     return 0;
   }
+}
+
+/** Slack a scheduled follow-up adds so the variants it targets have aged out. */
+const JSX_CACHE_PRUNE_RETRY_SLACK_MS = 1_000;
+
+/** At most one pending follow-up prune per cache directory. */
+const scheduledJsxCachePrunes = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * Schedule a follow-up prune for variants the grace period protected.
+ *
+ * The prune pass otherwise runs only when a transform writes an artifact, so a
+ * burst that puts a path over its window inside one grace period and then goes
+ * idle would leave the excess on disk until an unrelated future write. The
+ * timer is unref'd: cleanup of superseded cache files is never a reason to
+ * keep the process alive.
+ */
+function scheduleJsxCachePruneRetry(esmCacheDir: string, delayMs: number): void {
+  if (scheduledJsxCachePrunes.has(esmCacheDir)) return;
+  const timer = setTimeout(() => {
+    scheduledJsxCachePrunes.delete(esmCacheDir);
+    collectExcessJsxArtifacts(esmCacheDir, new Map(), Date.now()).catch((error) => {
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Scheduled JSX cache prune failed`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }, delayMs);
+  unrefTimer(timer);
+  scheduledJsxCachePrunes.set(esmCacheDir, timer);
+}
+
+/** Drop every pending follow-up prune (test isolation only). */
+function cancelScheduledJsxCachePrunes(): void {
+  for (const timer of scheduledJsxCachePrunes.values()) clearTimeout(timer);
+  scheduledJsxCachePrunes.clear();
+}
+
+/**
+ * Remove one artifact unless a hit claimed it while the removal waited.
+ *
+ * The served re-check runs under the same per-path lock the cache-hit
+ * verification runs under, so selection and removal cannot interleave: a hit
+ * that got the lock first has marked the artifact served by the time this
+ * check runs, and a removal that got there first leaves the hit a missing
+ * file, which it reports as a miss and regenerates.
+ */
+async function removeJsxArtifactUnlessServed(artifactPath: string, nowMs: number): Promise<void> {
+  await withJsxArtifactLock(artifactPath, async () => {
+    if (wasJsxArtifactRecentlyServed(artifactPath, Math.max(nowMs, Date.now()))) return;
+    try {
+      await getLocalFs().remove(artifactPath);
+    } catch (_) {
+      /* expected: a concurrent transform may have removed the variant already */
+    }
+  });
 }
 
 /**
@@ -385,7 +486,8 @@ async function readArtifactModifiedAtMs(path: string): Promise<number> {
  * the number of paths written.
  *
  * It runs only after a transform wrote something, so a render served entirely
- * from cache never pays for it.
+ * from cache never pays for it; a pass that has to leave over-window variants
+ * behind schedules its own follow-up instead of waiting for a future write.
  */
 async function pruneSupersededJsxArtifacts(
   esmCacheDir: string,
@@ -394,17 +496,38 @@ async function pruneSupersededJsxArtifacts(
 ): Promise<void> {
   if (writtenArtifacts.size === 0) return;
 
-  const localFs = getLocalFs();
   const currentByPrefix = new Map<string, string>();
   for (const [filePath, currentFileName] of writtenArtifacts) {
     currentByPrefix.set(buildMdxJsxCacheFileNamePrefix(filePath), currentFileName);
   }
+  await collectExcessJsxArtifacts(esmCacheDir, currentByPrefix, nowMs);
+}
+
+/**
+ * One prune pass over `esmCacheDir`. `currentByPrefix` protects the artifacts
+ * the caller just wrote; a scheduled follow-up passes none and relies on the
+ * grace period alone. Also reclaims artifacts stranded under a superseded
+ * cache namespace: recognisably this loader's files, but unreachable since the
+ * roll, so no variant window can ever cover them again.
+ */
+async function collectExcessJsxArtifacts(
+  esmCacheDir: string,
+  currentByPrefix: ReadonlyMap<string, string>,
+  nowMs: number,
+): Promise<void> {
+  const localFs = getLocalFs();
 
   const variantsByPrefix = new Map<string, string[]>();
+  const strandedNamespaceArtifacts: string[] = [];
   try {
     for await (const entry of localFs.readDir(esmCacheDir)) {
       if (!entry.isFile) continue;
-      if (!entry.name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX)) continue;
+      if (!entry.name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX)) {
+        if (entry.name.startsWith(MDX_JSX_CACHE_ROOT_PREFIX)) {
+          strandedNamespaceArtifacts.push(entry.name);
+        }
+        continue;
+      }
       if (entry.name.length <= MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH) continue;
 
       const prefix = entry.name.slice(0, MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH);
@@ -421,6 +544,24 @@ async function pruneSupersededJsxArtifacts(
     return;
   }
 
+  /** Earliest moment a variant this pass left behind becomes collectable. */
+  let retryAtMs: number | undefined;
+  const noteRetry = (readyAtMs: number) => {
+    retryAtMs = retryAtMs === undefined ? readyAtMs : Math.min(retryAtMs, readyAtMs);
+  };
+
+  for (const name of strandedNamespaceArtifacts) {
+    const artifactPath = join(esmCacheDir, name);
+    // The grace period still applies: during a rolling deploy a process on the
+    // previous namespace may have handed this artifact to a render moments ago.
+    const modifiedAtMs = await readArtifactModifiedAtMs(artifactPath);
+    if (nowMs - modifiedAtMs < JSX_CACHE_VARIANT_MIN_AGE_MS) {
+      noteRetry(modifiedAtMs + JSX_CACHE_VARIANT_MIN_AGE_MS);
+      continue;
+    }
+    await removeJsxArtifactUnlessServed(artifactPath, nowMs);
+  }
+
   for (const [prefix, variants] of variantsByPrefix) {
     // The artifact just written, when there is one, counts against the window.
     const retained = MAX_JSX_CACHE_VARIANTS_PER_PATH - (currentByPrefix.has(prefix) ? 1 : 0);
@@ -435,15 +576,22 @@ async function pruneSupersededJsxArtifacts(
     dated.sort((left, right) => right.modifiedAtMs - left.modifiedAtMs);
 
     for (const { name, modifiedAtMs } of dated.slice(retained)) {
-      if (nowMs - modifiedAtMs < JSX_CACHE_VARIANT_MIN_AGE_MS) continue;
       const artifactPath = join(esmCacheDir, name);
-      if (wasJsxArtifactRecentlyServed(artifactPath, nowMs)) continue;
-      try {
-        await localFs.remove(artifactPath);
-      } catch (_) {
-        /* expected: a concurrent transform may have removed the variant already */
+      const servedAtMs = servedArtifactTimestamps.get(artifactPath) ?? 0;
+      const collectableAtMs = Math.max(modifiedAtMs, servedAtMs) + JSX_CACHE_VARIANT_MIN_AGE_MS;
+      if (collectableAtMs > nowMs) {
+        noteRetry(collectableAtMs);
+        continue;
       }
+      await removeJsxArtifactUnlessServed(artifactPath, nowMs);
     }
+  }
+
+  if (retryAtMs !== undefined) {
+    scheduleJsxCachePruneRetry(
+      esmCacheDir,
+      Math.max(retryAtMs - nowMs, 0) + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
+    );
   }
 }
 
@@ -453,7 +601,11 @@ async function pruneSupersededJsxArtifacts(
  * JSX transform.
  */
 export const __importTransformerInternals = {
+  cancelScheduledJsxCachePrunes,
+  collectExcessJsxArtifacts,
   describeProjectSource,
+  hasScheduledJsxCachePrune: (esmCacheDir: string): boolean =>
+    scheduledJsxCachePrunes.has(esmCacheDir),
   isFrameworkSourceFile,
   isProjectSourceFile,
   markJsxArtifactServed,
@@ -461,6 +613,9 @@ export const __importTransformerInternals = {
   servedArtifactMemoSize: (): number => servedArtifactTimestamps.size,
   pruneSupersededJsxArtifacts,
   readArtifactModifiedAtMs,
+  removeJsxArtifactUnlessServed,
+  wasJsxArtifactRecentlyServed,
+  withJsxArtifactLock,
 };
 
 /**
@@ -542,23 +697,30 @@ export async function transformJsxImports(
         const transformedFileName = buildMdxJsxCacheFileName(filePath, sourceCode);
         const transformedPath = join(esmCacheDir, transformedFileName);
 
-        try {
-          const stat = await getLocalFs().stat(transformedPath);
-          if (stat?.isFile) {
-            const useCached = await ensureCachedJsxModulePatched(transformedPath, filePath);
-            if (useCached) {
-              // A cache hit is an active reference: record it so a concurrent
-              // prune cannot retire the artifact this render is about to import.
-              markJsxArtifactServed(transformedPath);
-              return {
-                specifier,
-                replacement: `file://${transformedPath}`,
-                cached: true,
-              };
-            }
+        // Verification and the served mark run under the artifact's lock — the
+        // same lock the prune pass removes under — so a prune either sees the
+        // mark and keeps the file, or finishes removing before the check here
+        // reports a miss and the transform below regenerates it.
+        const serveCached = await withJsxArtifactLock(transformedPath, async () => {
+          try {
+            const stat = await getLocalFs().stat(transformedPath);
+            if (!stat?.isFile) return false;
+            if (!(await ensureCachedJsxModulePatched(transformedPath, filePath))) return false;
+            // A cache hit is an active reference: record it so a concurrent
+            // prune cannot retire the artifact this render is about to import.
+            markJsxArtifactServed(transformedPath);
+            return true;
+          } catch (_) {
+            /* expected: cached JSX module may not exist yet */
+            return false;
           }
-        } catch (_) {
-          /* expected: cached JSX module may not exist yet */
+        });
+        if (serveCached) {
+          return {
+            specifier,
+            replacement: `file://${transformedPath}`,
+            cached: true,
+          };
         }
 
         const loaderMap: Record<string, "js" | "jsx" | "ts" | "tsx"> = {
@@ -587,8 +749,10 @@ export async function transformJsxImports(
         // incorrectly when cached to a different directory.
         transformed = await rewriteDntImports(transformed, filePath);
 
-        await getLocalFs().writeTextFile(transformedPath, transformed);
-        markJsxArtifactServed(transformedPath);
+        await withJsxArtifactLock(transformedPath, async () => {
+          await getLocalFs().writeTextFile(transformedPath, transformed);
+          markJsxArtifactServed(transformedPath);
+        });
         writtenArtifacts.set(filePath, transformedFileName);
 
         return {

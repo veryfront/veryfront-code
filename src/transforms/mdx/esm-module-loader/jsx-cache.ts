@@ -24,8 +24,13 @@ const MAX_NORMALIZED_MODULE_MEMO_ENTRIES = 4096;
 const normalizedModulePaths = new Set<string>();
 
 function rememberNormalizedModule(transformedPath: string): void {
+  // Delete-before-add keeps the set in recency order, so reaching capacity
+  // evicts the path normalized longest ago instead of wiping the whole memo
+  // and re-charging every hot page a read and a scan at once.
+  normalizedModulePaths.delete(transformedPath);
   if (normalizedModulePaths.size >= MAX_NORMALIZED_MODULE_MEMO_ENTRIES) {
-    normalizedModulePaths.clear();
+    const oldest = normalizedModulePaths.values().next().value;
+    if (oldest !== undefined) normalizedModulePaths.delete(oldest);
   }
   normalizedModulePaths.add(transformedPath);
 }
@@ -37,6 +42,8 @@ function rememberNormalizedModule(transformedPath: string): void {
 export const __jsxCacheInternals = {
   MAX_NORMALIZED_MODULE_MEMO_ENTRIES,
   rememberNormalizedModule,
+  isModuleRemembered: (transformedPath: string): boolean =>
+    normalizedModulePaths.has(transformedPath),
   normalizedModuleMemoSize: (): number => normalizedModulePaths.size,
 };
 
