@@ -18,6 +18,7 @@ const FNV1A_MASK_64 = (1n << 64n) - 1n;
 // Hashes participate in cache and request identities after project modules may
 // have executed in the shared realm. Capture the small set of primordials used
 // by that boundary before project code can replace their implementations.
+const IntrinsicBigInt = BigInt;
 const BigIntPrototypeToString = BigInt.prototype.toString;
 const IntrinsicTextEncoder = TextEncoder;
 const IntrinsicUint8Array = Uint8Array;
@@ -148,7 +149,7 @@ function fnv1a64Base36(input: string): string {
 
   for (let index = 0; index < input.length; index++) {
     const codeUnit = ReflectApply(StringPrototypeCharCodeAt, input, [index]) as number;
-    hash ^= BigInt(codeUnit);
+    hash ^= IntrinsicBigInt(codeUnit);
     hash = (hash * FNV1A_PRIME_64) & FNV1A_MASK_64;
   }
 

@@ -329,6 +329,7 @@ describe("hash-utils", () => {
     it("derives oversized segments without ambient hashing intrinsics", () => {
       const originalCharCodeAt = String.prototype.charCodeAt;
       const originalBigIntToString = BigInt.prototype.toString;
+      const originalBigInt = globalThis.BigInt;
       const oversized = `${"z".repeat(4096)}tail`;
 
       let segment: string | undefined;
@@ -337,9 +338,13 @@ describe("hash-utils", () => {
         (String.prototype as any).charCodeAt = () => 0x61;
         // deno-lint-ignore no-explicit-any
         (BigInt.prototype as any).toString = () => "x";
+        globalThis.BigInt = (() => {
+          throw new Error("ambient BigInt constructor must not run");
+        }) as unknown as BigIntConstructor;
         segment = cacheNamespaceSegment(oversized);
       } finally {
         String.prototype.charCodeAt = originalCharCodeAt;
+        globalThis.BigInt = originalBigInt;
         BigInt.prototype.toString = originalBigIntToString;
       }
 
