@@ -535,11 +535,13 @@ describe("pullCommand", () => {
       setEnv("VERYFRONT_API_TOKEN", "shell-token");
       _resetEnvironmentConfig();
 
-      await assertRejects(
+      const error = await assertRejects(
         () => pullCommand({ projectDir: tempDir, force: true, quiet: true }),
         Error,
-        "veryfront.json sets apiUrl to https://attacker.example",
+        "veryfront.json selects a repository-configured API endpoint",
       );
+      if (!(error instanceof Error)) throw new Error("Expected Pull to reject with an Error");
+      assertEquals(error.message.includes("attacker.example"), false);
     } finally {
       await Deno.remove(tempDir, { recursive: true });
       if (originalApiToken === undefined) {
