@@ -439,29 +439,20 @@ describe("cli/mcp/remote-file-tools", () => {
         updated_at: "2024-01-01T00:00:00.000Z",
       };
 
-      const result = await withMockFetch(async () => {
+      const result = await withMockFetch(async (input, init) => {
+        const request = new Request(input, init);
+        requestUrl = request.url;
+        requestMethod = request.method;
+        requestAuth = request.headers.get("Authorization") ?? "";
         return new Response(
           JSON.stringify(response),
           { headers: { "Content-Type": "application/json" } },
         );
       }, async () => {
-        const originalFetch = globalThis.fetch;
-        globalThis.fetch = (input: string | URL | Request, init?: RequestInit) => {
-          const request = new Request(input, init);
-          requestUrl = request.url;
-          requestMethod = request.method;
-          requestAuth = request.headers.get("Authorization") ?? "";
-          return originalFetch(input, init);
-        };
-
-        try {
-          return await vfRemoteGetFile.execute({
-            project: "my-project",
-            path: "pages/index.tsx",
-          });
-        } finally {
-          globalThis.fetch = originalFetch;
-        }
+        return await vfRemoteGetFile.execute({
+          project: "my-project",
+          path: "pages/index.tsx",
+        });
       });
 
       assertEquals(requestUrl, "https://api.remote-vf.test/api/my-project/files/pages/index.tsx");
@@ -485,7 +476,9 @@ describe("cli/mcp/remote-file-tools", () => {
 
       let requestAuth = "";
       try {
-        await withMockFetch(async () => {
+        await withMockFetch(async (input, init) => {
+          const request = new Request(input, init);
+          requestAuth = request.headers.get("Authorization") ?? "";
           return new Response(
             JSON.stringify({
               id: "1",
@@ -498,21 +491,10 @@ describe("cli/mcp/remote-file-tools", () => {
             { headers: { "Content-Type": "application/json" } },
           );
         }, async () => {
-          const originalFetch = globalThis.fetch;
-          globalThis.fetch = (input: string | URL | Request, init?: RequestInit) => {
-            const request = new Request(input, init);
-            requestAuth = request.headers.get("Authorization") ?? "";
-            return originalFetch(input, init);
-          };
-
-          try {
-            return await vfRemoteGetFile.execute({
-              project: "my-project",
-              path: "pages/index.tsx",
-            });
-          } finally {
-            globalThis.fetch = originalFetch;
-          }
+          return await vfRemoteGetFile.execute({
+            project: "my-project",
+            path: "pages/index.tsx",
+          });
         });
       } finally {
         deleteHostSecret("VERYFRONT_API_TOKEN");

@@ -21,6 +21,7 @@ import {
   parseIntegrationToolIdentity,
 } from "#veryfront/integrations/source-policy.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import { createVeryfrontApiRequestUrlResolver } from "#veryfront/platform/adapters/veryfront-api-url.ts";
 import { type BoundedJsonValue, snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { logger } from "#veryfront/utils";
@@ -242,8 +243,20 @@ function resolveRequestToken(context: RemoteIntegrationExecutionContext): string
   }
   if (getEnvironmentConfig().proxyMode) return undefined;
 
+  // Single-project runtimes may also authenticate from a stored `veryfront
+  // login`. That credential is registered host-privately rather than exported
+  // into the process environment, so it never reaches the environment snapshot
+  // `getApiTokenEnv()` reads; `getHostEnv` is the only reader that resolves it
+  // and project code cannot reach it. Without this fallback a CLI-authenticated
+  // `dev`, `start`, or `eval` run discovers no integration tools and every call
+  // fails with `no_api_token`.
+  // An unusable exported value (blank, or otherwise not a valid token) must not
+  // shadow the stored credential, so the snapshot only wins when it is valid.
   const environmentToken = getApiTokenEnv();
-  return isValidApiToken(environmentToken) ? environmentToken : undefined;
+  if (isValidApiToken(environmentToken)) return environmentToken;
+
+  const hostToken = getHostEnv("VERYFRONT_API_TOKEN");
+  return isValidApiToken(hostToken) ? hostToken : undefined;
 }
 
 function normalizeProjectSlug(projectSlug: unknown): string | undefined {

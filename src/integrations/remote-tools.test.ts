@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
+import { deleteHostSecret, setHostSecret } from "#veryfront/platform/compat/process/env.ts";
 import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
@@ -111,6 +112,52 @@ describe("integrations/remote-tools", () => {
     }, async () => await getRemoteIntegrationToolDefinitions());
 
     assertEquals(definitions, []);
+  });
+
+  it("discovers integration tools from a host-private stored login token", async () => {
+    // `applyRuntimeAuthContext` keeps a stored `veryfront login` token out of
+    // the process environment, so the environment snapshot carries nothing and
+    // only `getHostEnv` resolves the credential. Single-project runtimes must
+    // still authenticate discovery with it.
+    setRemoteToolEnv({ VERYFRONT_API_BASE_URL: "https://api.test" });
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+    let authorization = "";
+    try {
+      const discovery = await withMockFetch(async (input, init) => {
+        authorization = new Request(input, init).headers.get("Authorization") ?? "";
+        return Response.json({ tools: [] });
+      }, () => getRemoteIntegrationToolDiscovery());
+
+      assertEquals(authorization, "Bearer stored-login-token");
+      // A reached catalog returns "ok"; without the credential discovery would
+      // short-circuit to an empty catalog before any request is made.
+      assertEquals(discovery.status, "ok");
+    } finally {
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+    }
+  });
+
+  it("does not let a blank exported token shadow the stored login token", async () => {
+    // The environment snapshot keeps a whitespace-only export verbatim, and the
+    // CLI treats that as "unset" when it registers the stored token.
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "   ",
+    });
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+    let authorization = "";
+    try {
+      await withMockFetch(async (input, init) => {
+        authorization = new Request(input, init).headers.get("Authorization") ?? "";
+        return Response.json({ tools: [] });
+      }, () => getRemoteIntegrationToolDiscovery());
+
+      assertEquals(authorization, "Bearer stored-login-token");
+    } finally {
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+    }
   });
 
   it("memoizes a typed empty integration catalog for the current run", async () => {
