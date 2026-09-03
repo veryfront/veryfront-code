@@ -4,7 +4,7 @@ import { markTrustedProxyApplicationAuthAdmittedRequest } from "#veryfront/secur
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import type { HandlerContext, SecurityConfig } from "#veryfront/types";
-import { AuthHandler } from "./auth.ts";
+import { AuthHandler, isAuthGateEnabled } from "./auth.ts";
 
 /**
  * Tests that the AuthHandler sanitizes the Basic auth realm value
@@ -783,5 +783,63 @@ describe("AuthHandler signed control-plane dispatch", () => {
       createCtx(unresolvable),
     );
     expect(browser.response?.status).toBe(401);
+  });
+});
+
+/**
+ * `isAuthGateEnabled` exists so a handler emitting cache directives reads the
+ * same gate `AuthHandler` enforces. Whether a shared cache may store a response
+ * turns on this answer, so a disagreement between the two publishes protected
+ * module source to a CDN.
+ */
+describe("isAuthGateEnabled", () => {
+  function createGateCtx(
+    securityConfig: unknown,
+    env: Record<string, string> = {},
+  ): HandlerContext {
+    return {
+      projectDir: "/tmp/auth-gate-test",
+      securityConfig: securityConfig as SecurityConfig,
+      adapter: {
+        env: { get: (key: string) => env[key] },
+      } as unknown as HandlerContext["adapter"],
+      isLocalProject: false,
+    };
+  }
+
+  it("reports no gate for a project that configures none", () => {
+    expect(isAuthGateEnabled(createGateCtx(undefined))).toBe(false);
+    expect(isAuthGateEnabled(createGateCtx({}))).toBe(false);
+    expect(isAuthGateEnabled(createGateCtx({ cors: { origin: "*" } }))).toBe(false);
+  });
+
+  it("reports a gate for each configured credential kind", () => {
+    expect(
+      isAuthGateEnabled(createGateCtx({ auth: { basic: { username: "a", password: "b" } } })),
+    ).toBe(true);
+    expect(isAuthGateEnabled(createGateCtx({ auth: { bearer: { token: "t" } } }))).toBe(true);
+    expect(isAuthGateEnabled(createGateCtx({ auth: { oidc: {} } }))).toBe(true);
+    expect(isAuthGateEnabled(createGateCtx({ auth: { trustedProxy: {} } }))).toBe(true);
+  });
+
+  it("reports a gate for the environment credential fallbacks", () => {
+    expect(
+      isAuthGateEnabled(
+        createGateCtx(undefined, { VERYFRONT_BASIC_USER: "a", VERYFRONT_BASIC_PASS: "b" }),
+      ),
+    ).toBe(true);
+    expect(isAuthGateEnabled(createGateCtx(undefined, { VERYFRONT_BEARER_TOKEN: "t" }))).toBe(
+      true,
+    );
+  });
+
+  it("reports a gate for a config it cannot resolve", () => {
+    // An unresolvable auth config 401s every browser request. A response nobody
+    // may read must not be announced to shared caches as public either.
+    expect(
+      isAuthGateEnabled(createGateCtx({ auth: { basic: {}, bearer: { token: "t" } } })),
+    ).toBe(true);
+    expect(isAuthGateEnabled(createGateCtx({ auth: null }))).toBe(true);
+    expect(isAuthGateEnabled(createGateCtx(Object.create({ auth: { oidc: {} } })))).toBe(true);
   });
 });
