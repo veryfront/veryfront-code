@@ -1793,8 +1793,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.wsManager.setApiToken(this.apiToken);
   }
 
-  private invalidateRequestAuthoritySnapshot(): void {
-    this.cache.clear();
+  private invalidateRequestAuthoritySnapshot(clearFileCache = true): void {
+    if (clearFileCache) this.cache.clear();
     this.clearRetainedFileList();
     this.readOps.clearFileListIndex();
     this.statOps.clearIndex();
@@ -1814,7 +1814,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
   setRequestBranch(branch: string | null): void {
     if (branch !== this.requestBranch) {
       this.requestBranch = branch;
-      this.invalidateRequestAuthoritySnapshot();
+      // File cache keys already include the effective request branch. Retain
+      // those scoped entries, especially the process-wide immutable release
+      // L1 owned by FileCache, while resetting branch-sensitive indexes.
+      this.invalidateRequestAuthoritySnapshot(false);
     } else {
       this.requestBranch = branch;
     }
@@ -1828,7 +1831,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   clearRequestBranch(): void {
     if (this.requestBranch !== null) {
       this.requestBranch = null;
-      this.invalidateRequestAuthoritySnapshot();
+      this.invalidateRequestAuthoritySnapshot(false);
     } else {
       this.requestBranch = null;
     }

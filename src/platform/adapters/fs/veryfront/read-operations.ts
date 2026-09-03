@@ -426,7 +426,7 @@ export class ReadOperations {
       if (cachedResolvedPath) {
         const resolvedCacheKey = getResolvedCacheKey(cacheKeyPrefix, cachedResolvedPath);
         const cached = this.cache.get<string>(resolvedCacheKey) ?? this.cache.get<string>(cacheKey);
-        if (cached) {
+        if (cached !== undefined) {
           logger.debug("Extension resolution cache hit", {
             basePath: apiPath,
             resolvedPath: cachedResolvedPath,
@@ -473,7 +473,9 @@ export class ReadOperations {
   ): Promise<FileListMatchResult> {
     const candidatePaths = buildExtensionCandidatePaths(normalizedPath);
     const resolved = await this.fileListIndex.findFirstMatch(candidatePaths);
-    if (resolved.status !== "hit" || !resolved.path || !resolved.content) return resolved;
+    if (resolved.status !== "hit" || !resolved.path || resolved.content === undefined) {
+      return resolved;
+    }
 
     logContentMetric("FILE_LIST_HIT", {
       path: normalizedPath,
@@ -689,7 +691,10 @@ export class ReadOperations {
           ctx,
           isPreviewMode,
         );
-        if (resolvedFromFileList.status === "hit" && resolvedFromFileList.content) {
+        if (
+          resolvedFromFileList.status === "hit" &&
+          resolvedFromFileList.content !== undefined
+        ) {
           return resolvedFromFileList.content;
         }
 
@@ -739,7 +744,7 @@ export class ReadOperations {
         isProduction,
         skipPersistentCaches,
       );
-      if (resolved) return resolved;
+      if (resolved !== null) return resolved;
     }
 
     if (fileListMatch.status === "missing" && fileListMatch.fresh) {

@@ -497,6 +497,56 @@ describe("ReadOperations", () => {
       assertEquals(resolveExtensions, [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"]);
     });
 
+    it("should resolve empty extensionless files from the file list", async () => {
+      let resolveCalls = 0;
+      let apiFetchCalls = 0;
+      const readOps = createReadOps(
+        createMockClient({
+          resolveFileWithExtension: () => {
+            resolveCalls++;
+            return Promise.resolve({ path: "empty.ts", content: "fallback" });
+          },
+          getPublishedFileContent: () => {
+            apiFetchCalls++;
+            return Promise.resolve("fallback");
+          },
+        }),
+        true,
+        createReleaseContext("rel-empty-file-list"),
+        (path: string) => path,
+        () => Promise.resolve([{ path: "empty.ts", content: "" }]),
+      );
+
+      assertEquals(await readOps.readTextFile("empty"), "");
+      assertEquals(await readOps.readTextFile("empty"), "");
+      assertEquals(resolveCalls, 0);
+      assertEquals(apiFetchCalls, 0);
+    });
+
+    it("should preserve empty content returned by extension fallback", async () => {
+      let resolveCalls = 0;
+      let apiFetchCalls = 0;
+      const readOps = createReadyReadOps(
+        createMockClient({
+          resolveFileWithExtension: () => {
+            resolveCalls++;
+            return Promise.resolve({ path: "empty.ts", content: "" });
+          },
+          getPublishedFileContent: () => {
+            apiFetchCalls++;
+            return Promise.resolve("fallback");
+          },
+        }),
+        true,
+        createReleaseContext("rel-empty-fallback"),
+      );
+
+      assertEquals(await readOps.readTextFile("empty"), "");
+      assertEquals(await readOps.readTextFile("empty"), "");
+      assertEquals(resolveCalls, 1);
+      assertEquals(apiFetchCalls, 0);
+    });
+
     it("should resolve extensionless dotted paths directly from file list cache", async () => {
       let resolveCallCount = 0;
       let apiFetchCount = 0;

@@ -908,6 +908,24 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(adapter.getRequestBranch(), null);
     });
 
+    it("retains file-cache tiers when only the request branch changes", () => {
+      const adapter = createAdapter();
+      const cache = (adapter as unknown as { cache: { clear(): void } }).cache;
+      const originalClear = cache.clear.bind(cache);
+      let clearCalls = 0;
+      cache.clear = () => {
+        clearCalls++;
+        originalClear();
+      };
+
+      adapter.setRequestBranch("feature-branch");
+      adapter.clearRequestBranch();
+      assertEquals(clearCalls, 0);
+
+      adapter.setRequestToken("replacement-token");
+      assertEquals(clearCalls, 1, "credential changes still clear the file cache");
+    });
+
     it("names the snapshot identity after the per-request branch", () => {
       const adapter = createAdapter();
       assertEquals(
