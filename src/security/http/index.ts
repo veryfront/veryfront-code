@@ -4,7 +4,7 @@
  * @module security/http
  */
 
-export { AuthHandler, isAuthGateEnabled } from "./auth.ts";
+export { AuthHandler } from "./auth.ts";
 export {
   type ColorScheme,
   type ColorSchemeResult,

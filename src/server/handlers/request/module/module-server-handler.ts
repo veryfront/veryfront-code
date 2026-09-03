@@ -1,5 +1,8 @@
 import type { HandlerContext, HandlerResult } from "../../types.ts";
-import { isAuthGateEnabled, ResponseBuilder } from "#veryfront/security/index.ts";
+import { ResponseBuilder } from "#veryfront/security/index.ts";
+// Runtime-only helper, imported from its own module rather than the public
+// `veryfront/security` barrel so the cache directive does not widen that surface.
+import { isAuthGateEnabled } from "#veryfront/security/http/auth.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { profilePhase } from "#veryfront/observability";
 import {

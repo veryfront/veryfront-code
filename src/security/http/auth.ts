@@ -233,7 +233,7 @@ function resolveRequestAuth(ctx: HandlerContext): ResolvedAuth | null {
  * announced to shared caches as public either.
  *
  * This is a policy question about the project, not an admission decision about
- * the request — it says a gate exists, never that the caller passed it.
+ * the request: it says a gate exists, never that the caller passed it.
  */
 export function isAuthGateEnabled(ctx: HandlerContext): boolean {
   return resolveRequestAuth(ctx) !== null;
