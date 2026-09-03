@@ -98,7 +98,7 @@ function proxyContentVersionFallback(ctx: HandlerContext): {
  * Resolve the cache identity for the source tree this request is about to walk.
  */
 export function resolveScanCacheIdentity(ctx: HandlerContext): ScanCacheIdentity {
-  const contentContext = resolveScanContentContext(ctx);
+  const contentContext = ctx.isLocalProject ? null : resolveScanContentContext(ctx);
   const styleProfile = createStyleScopeProfile(ctx.config);
 
   // The cache key names the source tree that is actually about to be walked, so
@@ -123,18 +123,19 @@ export function resolveScanCacheIdentity(ctx: HandlerContext): ScanCacheIdentity
   // an unauthenticated caller mint a fresh key per request and force one full
   // source walk each time, so a content-less non-proxy scan keys on the
   // directory that is actually walked.
-  const contentScope = contentContext?.projectSlug ??
+  const contentScope = (ctx.isLocalProject ? ctx.projectDir : undefined) ??
+    contentContext?.projectSlug ??
     (ctx.isProxyMode ? ctx.projectSlug : undefined) ??
     ctx.projectDir;
   const projectVersion = resolveStyleContentVersion(
     contentContext,
-    ctx.isProxyMode ? proxyContentVersionFallback(ctx) : {},
+    ctx.isProxyMode && !ctx.isLocalProject ? proxyContentVersionFallback(ctx) : {},
   );
   // A slug can be reassigned while the old and new projects remain distinct by
   // canonical ID. The proxy admits that ID, so include it in the cache key to
   // keep same-slug projects from sharing or joining a source walk. Invalidation
   // remains slug-scoped through `scope`, matching control-plane callbacks.
-  const projectPartition = ctx.isProxyMode && ctx.projectId
+  const projectPartition = ctx.isProxyMode && !ctx.isLocalProject && ctx.projectId
     ? `${ctx.projectId}\u0000${contentScope}`
     : contentScope;
 

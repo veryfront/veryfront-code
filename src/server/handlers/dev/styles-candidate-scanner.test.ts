@@ -277,6 +277,38 @@ describe("server/handlers/dev/styles-candidate-scanner", () => {
     }
   });
 
+  it("keys a proxy-local scan on the directory it actually walks", async () => {
+    const sandboxA = createScanAdapter([{
+      ...PAGE_FILE,
+      path: "/sandbox/a/app/page.tsx",
+    }], null);
+    const sandboxB = createScanAdapter([], null);
+    const proxyIdentity = {
+      isProxyMode: true,
+      isLocalProject: true,
+      projectSlug: "local-project",
+      projectId: "project-local",
+      resolvedEnvironment: "production",
+      releaseId: "release-local",
+    } as Partial<HandlerContext>;
+
+    try {
+      reset();
+      const a = await extractProjectCandidates(
+        makeCtx(sandboxA.adapter, { ...proxyIdentity, projectDir: "/sandbox/a" }),
+      );
+      const b = await extractProjectCandidates(
+        makeCtx(sandboxB.adapter, { ...proxyIdentity, projectDir: "/sandbox/b" }),
+      );
+
+      assertEquals(a.has("text-cyan-500"), true);
+      assertEquals(b.has("text-cyan-500"), false);
+      assertEquals(sandboxB.getScanCount(), 1);
+    } finally {
+      reset();
+    }
+  });
+
   it("partitions a reassigned proxy slug by canonical project id", async () => {
     const oldProject = createScanAdapter([PAGE_FILE], null);
     const newProject = createScanAdapter([], null);
