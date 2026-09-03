@@ -65,6 +65,34 @@ describe("host environment access", () => {
     }
   });
 
+  it("classifies a blank export without a mutable String.prototype hook", () => {
+    const key = "VF_HOST_SECRET_TEST_POISONED_TRIM";
+    const originalTrim = Object.getOwnPropertyDescriptor(String.prototype, "trim")!;
+    let poisonedCalls = 0;
+    setHostSecret(key, "host-private-token");
+    setEnv(key, "   ");
+    Object.defineProperty(String.prototype, "trim", {
+      configurable: true,
+      value: () => {
+        poisonedCalls += 1;
+        throw new Error("blank-value classification must not run a project hook");
+      },
+    });
+
+    try {
+      // `getHostEnv` is on the credential path, so a project that replaces
+      // `String.prototype.trim` must neither observe the read nor steer which
+      // value wins.
+      assertEquals(getHostEnv(key), "host-private-token");
+    } finally {
+      Object.defineProperty(String.prototype, "trim", originalTrim);
+      deleteHostSecret(key);
+      deleteEnv(key);
+    }
+
+    assertEquals(poisonedCalls, 0);
+  });
+
   it("reports a blank exported variable verbatim when no credential is registered", () => {
     const key = "VF_HOST_SECRET_TEST_BLANK_ONLY";
     setEnv(key, "");

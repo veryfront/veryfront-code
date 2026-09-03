@@ -29,11 +29,23 @@ function getApiBaseUrl(): string {
   return getEnvironmentConfig().apiBaseUrl || DEFAULT_LOCAL_API_URL;
 }
 
+function normalizeToken(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
+}
+
 function getApiToken(): string | undefined {
   // The environment snapshot only carries an explicitly exported token; a
   // stored CLI login token is held host-privately so project code served by
   // `veryfront dev` cannot read it out of the process environment.
-  return getEnvironmentConfig().apiToken ?? getHostEnv("VERYFRONT_API_TOKEN");
+  //
+  // The snapshot keeps a blank export verbatim (`readEnv(...) || undefined`
+  // only drops the empty string), and the CLI treats a whitespace-only
+  // `VERYFRONT_API_TOKEN` as unset when it registers the stored login token.
+  // Normalizing here keeps an unusable blank export from shadowing that
+  // credential and being sent as a `Bearer   ` header.
+  return normalizeToken(getEnvironmentConfig().apiToken) ??
+    normalizeToken(getHostEnv("VERYFRONT_API_TOKEN"));
 }
 
 async function apiRequest<T>(

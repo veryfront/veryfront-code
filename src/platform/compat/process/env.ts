@@ -35,6 +35,10 @@ const mapEntries = Map.prototype.entries;
 const mapGet = Map.prototype.get;
 const mapHas = Map.prototype.has;
 const mapSet = Map.prototype.set;
+// Captured before project code runs: `getHostEnv` is on the credential path,
+// so a project that replaces `String.prototype.trim` must not observe — or
+// influence — how a host value is classified as blank.
+const stringTrim = String.prototype.trim;
 
 /**
  * Host-private credentials, deliberately kept out of the process environment.
@@ -143,7 +147,7 @@ export function deleteHostSecret(key: string): void {
  */
 export function getHostEnv(key: string): string | undefined {
   const value = readHostProcessEnv(key);
-  if (value !== undefined && value.trim() !== "") return value;
+  if (value !== undefined && apply(stringTrim, value, []) !== "") return value;
   // Only a registered credential displaces the blank host value; without one
   // the host environment is still reported verbatim.
   const secret = getHostSecret(key);

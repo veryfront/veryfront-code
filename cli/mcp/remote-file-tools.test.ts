@@ -5,7 +5,9 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   _resetEnvironmentConfig,
   _setEnvironmentConfigForTesting,
+  getEnvironmentConfig,
 } from "#veryfront/config/environment-config.ts";
+import { deleteHostSecret, setHostSecret } from "#cli/process-env";
 import {
   remoteFileTools,
   vfRemoteCloneProject,
@@ -468,6 +470,55 @@ describe("cli/mcp/remote-file-tools", () => {
       assertEquals(result.success, true);
       assertEquals(result.file?.path, "pages/index.tsx");
       assertEquals(result.file?.size, 42);
+    });
+
+    it("prefers the host-private credential over a blank exported token", async () => {
+      resetEnv();
+      // The environment snapshot keeps a whitespace-only export verbatim, and
+      // the CLI treats that as "unset" when it registers the stored login
+      // token host-privately. The blank export must not shadow it.
+      _setEnvironmentConfigForTesting({
+        ...getEnvironmentConfig(),
+        apiToken: "   ",
+      });
+      setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+      let requestAuth = "";
+      try {
+        await withMockFetch(async () => {
+          return new Response(
+            JSON.stringify({
+              id: "1",
+              path: "pages/index.tsx",
+              content: "export default function Page() {}",
+              size: 42,
+              type: "file",
+              updated_at: "2024-01-01T00:00:00.000Z",
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        }, async () => {
+          const originalFetch = globalThis.fetch;
+          globalThis.fetch = (input: string | URL | Request, init?: RequestInit) => {
+            const request = new Request(input, init);
+            requestAuth = request.headers.get("Authorization") ?? "";
+            return originalFetch(input, init);
+          };
+
+          try {
+            return await vfRemoteGetFile.execute({
+              project: "my-project",
+              path: "pages/index.tsx",
+            });
+          } finally {
+            globalThis.fetch = originalFetch;
+          }
+        });
+      } finally {
+        deleteHostSecret("VERYFRONT_API_TOKEN");
+      }
+
+      assertEquals(requestAuth, "Bearer stored-login-token");
     });
 
     it("returns error response when API responds with unauthorized JSON error", async () => {
