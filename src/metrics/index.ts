@@ -46,6 +46,8 @@ interface DirectMetricsTarget {
   headers: Record<string, string>;
   serviceName: string;
   serviceVersion: string;
+  capacityScope: string;
+  internal: boolean;
 }
 
 interface DirectMetricSample {
@@ -86,6 +88,9 @@ const DIRECT_FLUSH_DELAY_MS = 1_000;
 const DIRECT_EXPORT_TIMEOUT_MS = 10_000;
 const DIRECT_MAX_BATCH_SIZE = 100;
 const DIRECT_MAX_INTERNED_TARGETS = DIRECT_MAX_BATCH_SIZE;
+const DIRECT_MAX_PROJECT_TARGETS = 90;
+const DIRECT_MAX_TARGETS_PER_SCOPE = 16;
+const DIRECT_MAX_QUEUED_SAMPLES = 1_000;
 const HISTOGRAM_BOUNDS = [0, 10, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000];
 const apply = Reflect.apply;
 const NativeAbortController = AbortController;
@@ -317,6 +322,11 @@ function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
           readProjectEnv("OTEL_EXPORTER_OTLP_HEADERS"),
       ),
       ...resolveDirectServiceIdentity(),
+      capacityScope: getCurrentRequestContext()?.projectId ??
+        readProjectEnv("VERYFRONT_PROJECT_ID") ??
+        readProjectEnv("VERYFRONT_PROJECT_SLUG") ??
+        "project:unknown",
+      internal: false,
     };
   }
 
@@ -331,6 +341,8 @@ function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
         ),
       },
       ...resolveDirectServiceIdentity(),
+      capacityScope: "internal",
+      internal: true,
     };
   }
 
@@ -343,6 +355,8 @@ function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
         readEnv("OTEL_EXPORTER_OTLP_HEADERS"),
     ),
     ...resolveDirectServiceIdentity(),
+    capacityScope: "host",
+    internal: false,
   };
 }
 
@@ -399,13 +413,15 @@ function deleteDirectTotalsForTarget(targetKey: string): void {
   apply(mapForEach, directHistogramTotals, [deleteMatching]);
 }
 
-function evictUnusedDirectTarget(): boolean {
+function evictUnusedDirectTarget(
+  predicate: (target: DirectMetricsTarget) => boolean = () => true,
+): boolean {
   let candidateIndex = -1;
   let candidateUse = Number.POSITIVE_INFINITY;
   for (let index = 0; index < internedTargets.length; index++) {
     const interned = internedTargets[index];
     if (
-      interned !== undefined && interned.pendingSamples === 0 &&
+      interned !== undefined && predicate(interned.target) && interned.pendingSamples === 0 &&
       interned.lastUsed < candidateUse
     ) {
       candidateIndex = index;
@@ -421,6 +437,15 @@ function evictUnusedDirectTarget(): boolean {
   return true;
 }
 
+function countDirectTargets(predicate: (target: DirectMetricsTarget) => boolean): number {
+  let count = 0;
+  for (let index = 0; index < internedTargets.length; index++) {
+    const interned = internedTargets[index];
+    if (interned !== undefined && predicate(interned.target)) count++;
+  }
+  return count;
+}
+
 function retainDirectTarget(target: DirectMetricsTarget): string | null {
   for (let index = 0; index < internedTargets.length; index++) {
     const interned = internedTargets[index];
@@ -429,12 +454,31 @@ function retainDirectTarget(target: DirectMetricsTarget): string | null {
       interned.target.url === target.url &&
       interned.target.serviceName === target.serviceName &&
       interned.target.serviceVersion === target.serviceVersion &&
+      interned.target.capacityScope === target.capacityScope &&
+      interned.target.internal === target.internal &&
       headersEqual(interned.target.headers, target.headers)
     ) {
       interned.pendingSamples++;
       interned.lastUsed = nextInternedTargetUse++;
       return interned.key;
     }
+  }
+  if (!target.internal) {
+    const scopeTargets = countDirectTargets((candidate) =>
+      !candidate.internal && candidate.capacityScope === target.capacityScope
+    );
+    if (
+      scopeTargets >= DIRECT_MAX_TARGETS_PER_SCOPE &&
+      !evictUnusedDirectTarget((candidate) =>
+        !candidate.internal && candidate.capacityScope === target.capacityScope
+      )
+    ) return null;
+
+    const projectTargets = countDirectTargets((candidate) => !candidate.internal);
+    if (
+      projectTargets >= DIRECT_MAX_PROJECT_TARGETS &&
+      !evictUnusedDirectTarget((candidate) => !candidate.internal)
+    ) return null;
   }
   if (
     internedTargets.length >= DIRECT_MAX_INTERNED_TARGETS &&
@@ -652,7 +696,7 @@ async function exportAndReleaseDirectGroup(group: DirectExportGroup): Promise<vo
   }
 }
 
-async function flushDirectMetrics(): Promise<void> {
+async function flushDirectMetricsBatch(): Promise<void> {
   if (directFlushTimer) {
     clearTimeout(directFlushTimer);
     directFlushTimer = null;
@@ -701,9 +745,23 @@ async function flushDirectMetrics(): Promise<void> {
   for (let index = 0; index < exports.length; index++) {
     await exports[index];
   }
+}
 
-  if (directQueue.length > 0) {
-    scheduleDirectFlush();
+let directFlushPromise: Promise<void> | null = null;
+
+async function flushDirectMetrics(): Promise<void> {
+  while (directQueue.length > 0 || directFlushPromise) {
+    if (directFlushPromise) {
+      await directFlushPromise;
+      continue;
+    }
+    const pending = flushDirectMetricsBatch();
+    directFlushPromise = pending;
+    try {
+      await pending;
+    } finally {
+      if (directFlushPromise === pending) directFlushPromise = null;
+    }
   }
 }
 
@@ -731,6 +789,7 @@ function enqueueDirectMetric(
 ): void {
   const target = resolveDirectMetricsTarget();
   if (target === null) return;
+  if (directQueue.length >= DIRECT_MAX_QUEUED_SAMPLES) return;
   const targetKey = retainDirectTarget(target);
   if (targetKey === null) return;
   const sample: DirectMetricSample = {

@@ -804,52 +804,78 @@ describe("metrics public SDK", () => {
               OTEL_METRICS_ENABLED: "true",
               OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
               OTEL_SERVICE_NAME: `project-${index}`,
+              VERYFRONT_PROJECT_ID: "project-a",
             }, () => metrics.counter("vf_project_metric_total", 1));
           }
+          await metrics.__flushForTests();
+          await runWithProjectEnv({
+            OTEL_METRICS_ENABLED: "true",
+            OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
+            OTEL_SERVICE_NAME: "project-b",
+            VERYFRONT_PROJECT_ID: "project-b",
+          }, () => metrics.counter("vf_project_metric_total", 1));
           await metrics.__flushForTests();
         },
       );
     });
 
-    assertEquals(metrics.__getDirectTargetCountForTests(), 100);
+    assertEquals(metrics.__getDirectTargetCountForTests(), 17);
   });
 
   it("keeps in-flight direct targets inside the global bound", async () => {
-    const releases: Array<() => void> = [];
+    let activeRequests = 0;
+    let maxActiveRequests = 0;
+    let requestCount = 0;
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    const firstGate = new Promise<void>((resolve) => releaseFirst = resolve);
+    const secondGate = new Promise<void>((resolve) => releaseSecond = resolve);
 
     await withEnv({ OTEL_METRICS_ENABLED: "true" }, async () => {
       await withMockFetch(
-        (() =>
-          new Promise<Response>((resolve) => {
-            releases.push(() => resolve(new Response("{}", { status: 200 })));
-          })) as typeof fetch,
+        (async () => {
+          requestCount++;
+          activeRequests++;
+          if (activeRequests > maxActiveRequests) maxActiveRequests = activeRequests;
+          await (requestCount <= 16 ? firstGate : secondGate);
+          activeRequests--;
+          return new Response("{}", { status: 200 });
+        }) as typeof fetch,
         async () => {
-          for (let index = 0; index < 100; index++) {
+          for (let index = 0; index < 16; index++) {
             await runWithProjectEnv({
               OTEL_METRICS_ENABLED: "true",
               OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
               OTEL_SERVICE_NAME: `first-${index}`,
+              VERYFRONT_PROJECT_ID: "project-a",
             }, () => metrics.counter("vf_project_metric_total", 1));
           }
           const firstFlush = metrics.__flushForTests();
-          for (let attempt = 0; attempt < 10 && releases.length < 100; attempt++) {
+          for (let attempt = 0; attempt < 10 && requestCount < 16; attempt++) {
             await Promise.resolve();
           }
 
-          for (let index = 0; index < 100; index++) {
+          for (let index = 0; index < 16; index++) {
             await runWithProjectEnv({
               OTEL_METRICS_ENABLED: "true",
               OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
-              OTEL_SERVICE_NAME: `second-${index}`,
+              OTEL_SERVICE_NAME: `first-${index}`,
+              VERYFRONT_PROJECT_ID: "project-a",
             }, () => metrics.counter("vf_project_metric_total", 1));
           }
           const secondFlush = metrics.__flushForTests();
-          const requestCount = releases.length;
-          for (const release of releases) release();
+          await Promise.resolve();
+          assertEquals(requestCount, 16);
+          releaseFirst();
+          for (let attempt = 0; attempt < 20 && requestCount < 32; attempt++) {
+            await Promise.resolve();
+          }
+          releaseSecond();
           await Promise.all([firstFlush, secondFlush]);
 
-          assertEquals(requestCount, 100);
-          assertEquals(metrics.__getDirectTargetCountForTests(), 100);
+          assertEquals(requestCount, 32);
+          assertEquals(maxActiveRequests, 16);
+          assertEquals(metrics.__getDirectTargetCountForTests(), 16);
         },
       );
     });
