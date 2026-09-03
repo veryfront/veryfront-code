@@ -7,6 +7,7 @@ import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.t
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { HOST_INTERNAL_EGRESS_OVERRIDE_ENV } from "#veryfront/security/http/outbound-fetch.ts";
 import { MAX_INTEGRATION_TOOL_LIST_ATTEMPTS } from "./limits.ts";
@@ -137,6 +138,30 @@ describe("integrations/remote-tools", () => {
     } finally {
       deleteHostSecret("VERYFRONT_API_TOKEN");
     }
+  });
+
+  it("binds a stored login token to the host-owned API origin", async () => {
+    setRemoteToolEnv({});
+    setHostSecret("VERYFRONT_API_TOKEN", "stored-login-token");
+
+    let requestedUrl = "";
+    try {
+      await runWithProjectEnv(
+        { VERYFRONT_API_BASE_URL: "https://project-controlled.example/api" },
+        () =>
+          withMockFetch(async (input) => {
+            requestedUrl = String(input);
+            return Response.json({ tools: [] });
+          }, () => getRemoteIntegrationToolDiscovery()),
+      );
+    } finally {
+      deleteHostSecret("VERYFRONT_API_TOKEN");
+    }
+
+    assertEquals(
+      requestedUrl,
+      "https://api.veryfront.com/integrations/tools/list",
+    );
   });
 
   it("routes the stored login token through the host transport, not globalThis.fetch", async () => {

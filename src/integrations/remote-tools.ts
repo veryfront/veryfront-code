@@ -213,12 +213,14 @@ function snapshotToolExecutionContext(
 // Per-request token resolution
 // ---------------------------------------------------------------------------
 
-// Captured before project code runs: `resolveRequestToken` passes the
+// Captured before project code runs: `resolveRequestAuth` passes the
 // host-private stored login token through this validator, so a project that
 // replaces `String.prototype.charCodeAt` must not observe the credential from
 // the method receiver.
 const applyIntrinsic = Reflect.apply;
 const stringCharCodeAt = String.prototype.charCodeAt;
+const stringReplace = String.prototype.replace;
+const DEFAULT_HOST_API_BASE_URL = "https://api.veryfront.com";
 
 function isValidApiToken(token: unknown): token is string {
   if (
@@ -240,20 +242,38 @@ function isValidApiToken(token: unknown): token is string {
  * Proxy mode requires a valid request-scoped project token. Single-project
  * runtimes may use their process-wide environment token.
  */
-function resolveRequestToken(context: RemoteIntegrationExecutionContext): string | undefined {
+function resolveHostOwnedApiBaseUrl(): string {
+  const hostBase = getHostEnv("VERYFRONT_API_BASE_URL");
+  if (hostBase) return hostBase;
+  const hostApiUrl = getHostEnv("VERYFRONT_API_URL");
+  return hostApiUrl
+    ? applyIntrinsic(stringReplace, hostApiUrl, ["/graphql", "/api"]) as string
+    : DEFAULT_HOST_API_BASE_URL;
+}
+
+function resolveRequestAuth(
+  context: RemoteIntegrationExecutionContext,
+): { baseUrl: string; token: string | undefined } {
+  const baseUrl = getApiBaseUrlEnv();
   if (context.hasExplicitCredential) {
-    return isValidApiToken(context.authToken) ? context.authToken : undefined;
+    return {
+      baseUrl,
+      token: isValidApiToken(context.authToken) ? context.authToken : undefined,
+    };
   }
 
   const requestContext = getCurrentRequestContext();
   if (requestContext) {
-    return isValidApiToken(requestContext.token) ? requestContext.token : undefined;
+    return {
+      baseUrl,
+      token: isValidApiToken(requestContext.token) ? requestContext.token : undefined,
+    };
   }
-  if (getEnvironmentConfig().proxyMode) return undefined;
+  if (getEnvironmentConfig().proxyMode) return { baseUrl, token: undefined };
 
-  // Single-project runtimes may also authenticate from a stored `veryfront
-  // login`. That credential is registered host-privately rather than exported
-  // into the process environment, so it never reaches the environment snapshot
+  // Single-project runtimes may also authenticate from a stored
+  // `veryfront login`. That credential is registered host-privately rather than
+  // exported into the process environment, so it never reaches the environment snapshot
   // `getApiTokenEnv()` reads; `getHostEnv` is the only reader that resolves it
   // and project code cannot reach it. Without this fallback a CLI-authenticated
   // `dev`, `start`, or `eval` run discovers no integration tools and every call
@@ -261,10 +281,13 @@ function resolveRequestToken(context: RemoteIntegrationExecutionContext): string
   // An unusable exported value (blank, or otherwise not a valid token) must not
   // shadow the stored credential, so the snapshot only wins when it is valid.
   const environmentToken = getApiTokenEnv();
-  if (isValidApiToken(environmentToken)) return environmentToken;
+  if (isValidApiToken(environmentToken)) return { baseUrl, token: environmentToken };
 
   const hostToken = getHostEnv("VERYFRONT_API_TOKEN");
-  return isValidApiToken(hostToken) ? hostToken : undefined;
+  return {
+    baseUrl: resolveHostOwnedApiBaseUrl(),
+    token: isValidApiToken(hostToken) ? hostToken : undefined,
+  };
 }
 
 function normalizeProjectSlug(projectSlug: unknown): string | undefined {
@@ -852,8 +875,7 @@ export async function getRemoteIntegrationToolDiscovery(
 ): Promise<RemoteIntegrationToolDiscoveryResult> {
   const requestContext = snapshotToolExecutionContext(context, false);
   requestContext.abortSignal?.throwIfAborted();
-  const baseUrl = getApiBaseUrlEnv();
-  const token = resolveRequestToken(requestContext);
+  const { baseUrl, token } = resolveRequestAuth(requestContext);
   if (!baseUrl || !token) return { status: "ok", tools: [] };
 
   try {
@@ -954,8 +976,7 @@ export async function executeRemoteIntegrationTool(
     throw new Error(`Tool "${toolName}" is not allowed by the source integration policy`);
   }
 
-  const baseUrl = getApiBaseUrlEnv();
-  const token = resolveRequestToken(requestContext);
+  const { baseUrl, token } = resolveRequestAuth(requestContext);
   if (!baseUrl || !token) {
     return { error: "no_api_token", message: "No API token available" };
   }
