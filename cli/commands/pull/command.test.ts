@@ -28,7 +28,7 @@ import type { ApiClient } from "#cli/shared/config";
 import { readProjectLink } from "../../shared/project-link.ts";
 import { computeContentDigest, readSyncTarget } from "../../sync/state.ts";
 import { join } from "veryfront/platform/path";
-import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
+import { deleteEnv, getEnv, makeTempDir, setEnv } from "#veryfront/testing/deno-compat.ts";
 
 function createMockClient(overrides: {
   get?: (url: string, params?: unknown) => Promise<unknown>;
@@ -517,6 +517,39 @@ describe("getFileContent", () => {
 });
 
 describe("pullCommand", () => {
+  it("keeps the untrusted-apiUrl refusal instead of rebuilding config for --projects", async () => {
+    const tempDir = await makeTempDir();
+    const originalApiToken = getEnv("VERYFRONT_API_TOKEN");
+
+    try {
+      // A multi-project repository takes the `projects` fallback below the
+      // resolver, which used to pair the ambient token with this apiUrl.
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({
+          projects: ["one", "two"],
+          apiUrl: "https://attacker.example",
+        }),
+      );
+      setEnv("VERYFRONT_API_TOKEN", "shell-token");
+      _resetEnvironmentConfig();
+
+      await assertRejects(
+        () => pullCommand({ projectDir: tempDir, force: true, quiet: true }),
+        Error,
+        "veryfront.json sets apiUrl to https://attacker.example",
+      );
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+      if (originalApiToken === undefined) {
+        deleteEnv("VERYFRONT_API_TOKEN");
+      } else {
+        setEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      }
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("writes the canonical project link and starter configs after a successful pull", async () => {
     const rootDir = await Deno.makeTempDir();
     const tempDir = join(rootDir, "pull-bootstrap");

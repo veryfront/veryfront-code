@@ -18,6 +18,7 @@ import { runCommand } from "#cli/process-command";
 import { createFileSystem, cwd } from "veryfront/platform";
 import {
   createApiClient,
+  isUntrustedApiUrlCredentialError,
   readConfigFile,
   resolveConfigWithAuth,
   type ResolvedConfig,
@@ -916,6 +917,12 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
         if (slugOverride) config = { ...config, projectSlug: slugOverride };
       } catch (error) {
         spinner.stop();
+
+        // Both fallbacks below rebuild the configuration from the same
+        // repository-supplied apiUrl and the ambient environment token, which
+        // is exactly the pairing the resolver just refused. Neither --projects
+        // nor --slug may reconstruct their way past it.
+        if (isUntrustedApiUrlCredentialError(error)) throw error;
 
         if (slugOverride && isProjectLinkResolutionError(error)) {
           const env = getEnvironmentConfig();
