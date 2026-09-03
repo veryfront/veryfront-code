@@ -334,6 +334,41 @@ describe("run-scoped provider replay checkpoint persistence", () => {
     await assertRejects(() => persist(tooManyNodes), VeryfrontError, "serializable node bound");
   });
 
+  it("keeps a throwing member of the checkpoint inside the opaque error boundary", async () => {
+    let requests = 0;
+    const persist = createRunScopedProviderReplayCheckpointPersister({
+      apiUrl: "https://api.example.test",
+      runId: RUN_ID,
+      runEventAppendToken: "<TOKEN>",
+      fetch: () => {
+        requests += 1;
+        return Promise.resolve(new Response(null, { status: 200 }));
+      },
+    });
+    if (!persist) throw new Error("Expected a checkpoint persister");
+
+    // Copying the checkpoint reflects over its members, so a Proxy trap
+    // supplied by project code runs during serialization and can throw a value
+    // it controls. That value must not reach run error handling.
+    const hostile = checkpoint();
+    hostile.providerBlocks[0]!.block = {
+      type: "thinking",
+      metadata: new Proxy({}, {
+        ownKeys() {
+          throw new Error("PROXY_TRAP_LEAK signature=<REDACTED>");
+        },
+      }),
+    };
+
+    const error = await assertRejects(
+      () => persist(hostile),
+      VeryfrontError,
+      "checkpoint is not serializable",
+    );
+    assertEquals(String(error).includes("PROXY_TRAP_LEAK"), false);
+    assertEquals(requests, 0);
+  });
+
   it("rejects a cancelled run before the append is prepared", async () => {
     let requests = 0;
     const persist = createRunScopedProviderReplayCheckpointPersister({

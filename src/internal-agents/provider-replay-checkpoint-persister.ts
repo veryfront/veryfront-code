@@ -204,6 +204,12 @@ function persistenceFailure(detail: string) {
   return DURABLE_RUN_EVENT_PERSISTENCE_FAILED.create({ detail });
 }
 
+/** True for the typed failures this module raises itself, which carry no payload. */
+function isPersistenceFailure(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "slug" in error &&
+    error.slug === DURABLE_RUN_EVENT_PERSISTENCE_FAILED.slug;
+}
+
 /** Trusted host callback that durably appends checkpoints before continuation. */
 export type ProviderReplayCheckpointPersister = (
   checkpoint: ProviderReplayCheckpoint,
@@ -234,7 +240,18 @@ export function createRunScopedProviderReplayCheckpointPersister(input: {
   return async (checkpoint, abortSignal) => {
     if (abortSignal?.aborted) throw getAbortReason(abortSignal);
 
-    const body = serializeCheckpointAppendBody(checkpoint);
+    // Copying the checkpoint can still run exotic member code — a Proxy trap
+    // reached through `Reflect.ownKeys` or `getOwnPropertyDescriptor` — which
+    // may throw a tenant-controlled value. Only this module's own typed
+    // failures may cross the boundary; everything else becomes opaque, exactly
+    // as it did when the body was serialized inside the request's try block.
+    let body: string;
+    try {
+      body = serializeCheckpointAppendBody(checkpoint);
+    } catch (error) {
+      if (isPersistenceFailure(error)) throw error;
+      throw persistenceFailure("Provider replay checkpoint is not serializable");
+    }
     const controller = new AbortController();
     const timeoutError = persistenceFailure("Provider replay checkpoint persistence timed out");
     const timeout = setTimeout(() => controller.abort(timeoutError), timeoutMs);
@@ -265,12 +282,7 @@ export function createRunScopedProviderReplayCheckpointPersister(input: {
     } catch (error) {
       if (abortSignal?.aborted) throw getAbortReason(abortSignal);
       if (controller.signal.aborted) throw controller.signal.reason ?? timeoutError;
-      if (
-        typeof error === "object" && error !== null && "slug" in error &&
-        error.slug === DURABLE_RUN_EVENT_PERSISTENCE_FAILED.slug
-      ) {
-        throw error;
-      }
+      if (isPersistenceFailure(error)) throw error;
       throw persistenceFailure("Provider replay checkpoint append failed");
     } finally {
       clearTimeout(timeout);
