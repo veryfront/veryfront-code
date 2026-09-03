@@ -1093,8 +1093,10 @@ describe("WebSocketManager", () => {
     assertEquals(capturedChangedPaths, ["app/page.tsx"]);
     assertEquals(capturedProject?.styleArtifactHash, "hash-1");
     assertEquals(capturedProject?.styleAssetPath, "/_vf/css/hash-1.css");
+    // The CSS caches are dropped once, after the new source snapshot is
+    // installed: clearing before that would only drop entries a concurrent
+    // request can refill from the snapshot the poke is replacing.
     assertEquals(styleEvents, [
-      "invalidate",
       "replace-snapshot",
       "invalidate",
       "pregenerate",

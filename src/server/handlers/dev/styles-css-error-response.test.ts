@@ -33,6 +33,7 @@ import {
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { invalidatePreparedProjectCSS } from "#veryfront/html/styles-builder/prepared-project-css-cache.ts";
 import { invalidateProjectCandidateManifests } from "#veryfront/rendering/orchestrator/css-candidate-manifest.ts";
+import { invalidateProjectCandidateScans } from "./styles-candidate-scanner.ts";
 import { invalidateProjectCssImportScans } from "./styles-css-import-scanner.ts";
 import { renderCSSDiagnostic, StylesCSSHandler } from "./styles-css.handler.ts";
 
@@ -47,7 +48,8 @@ function reset(): void {
   invalidateCompiler();
   invalidateProjectCSS(SLUG);
   invalidatePreparedProjectCSS(SLUG);
-  invalidateProjectCandidateManifests(SLUG);
+  invalidateProjectCandidateManifests();
+  invalidateProjectCandidateScans();
   invalidateProjectCssImportScans(SLUG);
 }
 

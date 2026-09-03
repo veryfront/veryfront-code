@@ -9,9 +9,7 @@
  */
 
 import { extractCandidates } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
-import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
 import {
-  createStyleScopeProfile,
   shouldIncludeStylePath,
   shouldTraverseStyleDirectory,
 } from "#veryfront/html/styles-builder/style-scope-profile.ts";
@@ -19,7 +17,11 @@ import { serverLogger } from "#veryfront/utils";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { getProjectCandidates } from "#veryfront/rendering/orchestrator/css-candidate-manifest.ts";
-import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
+import {
+  createProjectScanCache,
+  resolveScanCacheIdentity,
+  type ScanCacheIdentity,
+} from "./styles-scan-cache.ts";
 import type { HandlerContext } from "../types.ts";
 import { FRAMEWORK_CANDIDATES } from "./framework-candidates.generated.ts";
 
@@ -34,7 +36,21 @@ interface SourceFileProvider {
   getAllSourceFiles?: () =>
     | Array<{ path: string; content?: string }>
     | Promise<Array<{ path: string; content?: string }>>;
-  getContentContext?: () => ResolvedContentContext | null;
+}
+
+const candidateScanCache = createProjectScanCache("styles-project-candidate-scans");
+
+/**
+ * Invalidate cached candidate scans for one project scope (or all scopes).
+ *
+ * Scope precedence matches `invalidateProjectCssImportScans`: the resolved
+ * content slug for content-backed and proxy-admitted requests, and
+ * `ctx.projectDir` for a content-less, non-proxy local server, whose staleness
+ * is bounded by the mutable TTL because no invalidation callback is wired
+ * there.
+ */
+export function invalidateProjectCandidateScans(projectScope?: string): void {
+  candidateScanCache.invalidate(projectScope);
 }
 
 /**
@@ -43,64 +59,67 @@ interface SourceFileProvider {
  * Tries the FS adapter's `getAllSourceFiles()` first (available in proxy/remote
  * mode). Falls back to recursive local directory scanning when no adapter or
  * method is available (local dev mode).
+ *
+ * The walk is memoized per (content scope, content version, style profile) and
+ * concurrent scans for one key are coalesced into a single walk. The candidate
+ * manifest downstream memoizes only the extraction, never the walk, so without
+ * this an unauthenticated client could force one full source-tree walk per
+ * request on the public `/_vf_styles/styles.css` route -- and in local mode a
+ * full recursive disk walk that reads every source file.
  */
 export async function extractProjectCandidates(ctx: HandlerContext): Promise<Set<string>> {
-  const styleProfile = createStyleScopeProfile(ctx.config);
-  const wrappedFs = ctx.adapter.fs as { getUnderlyingAdapter?: () => unknown };
-
-  if (typeof wrappedFs.getUnderlyingAdapter !== "function") {
-    logger.debug(
-      "[StylesCandidateScanner] No FS adapter wrapper, falling back to local file scanning",
-    );
-    return scanLocalFiles(ctx.projectDir, ctx);
-  }
-
-  // Call method directly on wrappedFs to preserve 'this' context
-  const fsAdapter = wrappedFs.getUnderlyingAdapter() as {
-    getAllSourceFiles?: SourceFileProvider["getAllSourceFiles"];
-    getContentContext?: SourceFileProvider["getContentContext"];
-  };
-
-  if (typeof fsAdapter.getAllSourceFiles !== "function") {
-    logger.debug(
-      "[StylesCandidateScanner] FS adapter missing getAllSourceFiles, falling back to local file scanning",
-    );
-    return scanLocalFiles(ctx.projectDir, ctx);
-  }
+  const identity = resolveScanCacheIdentity(ctx);
+  const projectCandidates = await candidateScanCache.run(
+    identity,
+    () => scanProjectCandidates(ctx, identity),
+  );
 
   const candidates = new Set<string>(frameworkCandidates);
-  const files = await fsAdapter.getAllSourceFiles();
-  const contentContext = typeof fsAdapter.getContentContext === "function"
-    ? fsAdapter.getContentContext()
-    : null;
+  for (const cls of projectCandidates) candidates.add(cls);
+  return candidates;
+}
 
-  for (
-    const cls of getProjectCandidates({
-      projectScope: ctx.projectSlug ?? contentContext?.projectSlug ?? ctx.projectDir,
-      projectVersion: resolveStyleContentVersion(contentContext, {
-        releaseId: ctx.releaseId,
-        branch: ctx.parsedDomain?.branch,
-        environmentName: ctx.environmentName,
-      }),
-      projectDir: ctx.projectDir,
-      styleProfile,
-      files,
-      developmentMode: contentContext?.sourceType === "branch",
-    })
-  ) {
-    candidates.add(cls);
+/** Walk the project sources once and return the candidates they contribute. */
+async function scanProjectCandidates(
+  ctx: HandlerContext,
+  identity: ScanCacheIdentity,
+): Promise<string[]> {
+  const wrappedFs = ctx.adapter.fs as { getUnderlyingAdapter?: () => unknown };
+  // Call getUnderlyingAdapter on wrappedFs to preserve its 'this' context.
+  const fsAdapter = typeof wrappedFs.getUnderlyingAdapter === "function"
+    ? wrappedFs.getUnderlyingAdapter() as SourceFileProvider
+    : undefined;
+
+  if (typeof fsAdapter?.getAllSourceFiles !== "function") {
+    logger.debug(
+      "[StylesCandidateScanner] No FS adapter source listing, falling back to local file scanning",
+    );
+    return scanLocalFiles(ctx, identity);
   }
 
-  return candidates;
+  const files = await fsAdapter.getAllSourceFiles();
+
+  return [...getProjectCandidates({
+    projectScope: identity.scope,
+    projectVersion: identity.version,
+    projectDir: ctx.projectDir,
+    styleProfile: identity.styleProfile,
+    files,
+    developmentMode: identity.mutable,
+  })];
 }
 
 /**
  * Fallback: scan local files for Tailwind candidates when no FS adapter is available.
  * Used in local development mode where projects are read directly from disk.
  */
-async function scanLocalFiles(projectDir: string, ctx: HandlerContext): Promise<Set<string>> {
-  const styleProfile = createStyleScopeProfile(ctx.config);
-  const candidates = new Set<string>(frameworkCandidates);
+async function scanLocalFiles(
+  ctx: HandlerContext,
+  identity: ScanCacheIdentity,
+): Promise<string[]> {
+  const projectDir = ctx.projectDir;
+  const styleProfile = identity.styleProfile;
+  const candidates = new Set<string>();
   const fs = createFileSystem();
 
   const scanDir = async (dir: string): Promise<void> => {
@@ -148,5 +167,5 @@ async function scanLocalFiles(projectDir: string, ctx: HandlerContext): Promise<
     });
   }
 
-  return candidates;
+  return [...candidates];
 }

@@ -19,6 +19,7 @@ import {
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { invalidatePreparedProjectCSS } from "#veryfront/html/styles-builder/prepared-project-css-cache.ts";
 import { invalidateProjectCandidateManifests } from "#veryfront/rendering/orchestrator/css-candidate-manifest.ts";
+import { invalidateProjectCandidateScans } from "./styles-candidate-scanner.ts";
 import { invalidateProjectCssImportScans } from "./styles-css-import-scanner.ts";
 import { StylesCSSHandler } from "./styles-css.handler.ts";
 
@@ -181,10 +182,11 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
       // Unscoped: this adapter resolves no content context and the context is
       // not in proxy mode, so the scanner scopes its entry by `ctx.projectDir`
       // rather than by the slug — a slug-scoped poke would leave it cached.
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans();
 
       const result = await handler.handle(req, ctx);
@@ -198,7 +200,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans();
       unregister(CSSOptimizationEngineName);
       if (previousEngine !== undefined) {
@@ -225,7 +228,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans();
 
       const result = await handler.handle(req, ctx);
@@ -246,7 +250,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans();
     }
   });
@@ -269,7 +274,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans();
 
       const first = await handler.handle(req, ctx);
@@ -296,7 +302,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans();
     }
   });
@@ -316,7 +323,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans(PROJECT_SLUG);
 
       const first = await handler.handle(req, ctx);
@@ -342,7 +350,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans(PROJECT_SLUG);
     }
   });
@@ -365,7 +374,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans(PROJECT_SLUG);
 
       const first = await handler.handle(req, ctx);
@@ -377,7 +387,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
 
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans(PROJECT_SLUG);
       adapter.setFiles([]);
 
@@ -394,7 +405,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans(PROJECT_SLUG);
     }
   });
@@ -440,7 +452,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans(PROJECT_SLUG);
 
       const first = await handler.handle(req, ctx);
@@ -454,7 +467,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans(PROJECT_SLUG);
       adapter.setFiles([]);
 
@@ -471,7 +485,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans(PROJECT_SLUG);
     }
   });
@@ -516,7 +531,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans(PROJECT_SLUG);
 
       const result = await handler.handle(req, ctx);
@@ -533,7 +549,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans(PROJECT_SLUG);
     }
   });
@@ -576,7 +593,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans();
 
       const result = await handler.handle(req, ctx);
@@ -592,7 +610,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans();
     }
   });
@@ -633,7 +652,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans(PROJECT_SLUG);
 
       const result = await handler.handle(req, ctx);
@@ -649,7 +669,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans(PROJECT_SLUG);
     }
   });
@@ -696,7 +717,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans(PROJECT_SLUG);
 
       const result = await handler.handle(req, ctx);
@@ -712,7 +734,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans(PROJECT_SLUG);
     }
   });
@@ -743,7 +766,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans(PROJECT_SLUG);
 
       const result = await handler.handle(req, ctx);
@@ -761,7 +785,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans(PROJECT_SLUG);
     }
   });
@@ -792,7 +817,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans(PROJECT_SLUG);
 
       const result = await handler.handle(req, ctx);
@@ -815,7 +841,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      invalidateProjectCandidateManifests();
+      invalidateProjectCandidateScans();
       invalidateProjectCssImportScans(PROJECT_SLUG);
     }
   });

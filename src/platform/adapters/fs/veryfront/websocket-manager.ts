@@ -676,6 +676,19 @@ export class WebSocketManager {
     }, INVALIDATION_DEBOUNCE_MS);
   }
 
+  /**
+   * Drop this project's compiled and prepared CSS caches, including the style
+   * scans keyed by project scope. Returns nothing when no callback is wired.
+   */
+  private clearProjectCSSCaches(): Promise<void> | undefined {
+    if (!this.deps.invalidationCallbacks.clearProjectCSSCache || !this.deps.projectSlug) {
+      return undefined;
+    }
+    return Promise.resolve(
+      this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug),
+    );
+  }
+
   private async performSelectiveInvalidation(): Promise<void> {
     const startTime = currentTime();
     const changedPaths = Array.from(this.pendingChangedPaths);
@@ -765,10 +778,11 @@ export class WebSocketManager {
         );
       }
 
-      if (this.deps.invalidationCallbacks.clearProjectCSSCache && this.deps.projectSlug) {
-        invalidations.push(
-          this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug),
-        );
+      // A branch poke clears the CSS caches after `replaceSourceSnapshot`
+      // installs the new sources instead of here, so a concurrent request
+      // cannot refill them from the snapshot this poke is replacing.
+      if (contentContext?.sourceType !== "branch") {
+        invalidations.push(this.clearProjectCSSCaches());
       }
 
       const pendingInvalidations = invalidations.filter(
@@ -788,12 +802,10 @@ export class WebSocketManager {
             files,
             sourceSnapshotVersion,
           );
+          await this.clearProjectCSSCaches();
           if (appliedSnapshotVersion === undefined) {
             reloadSuperseded = true;
           } else {
-            if (this.deps.invalidationCallbacks.clearProjectCSSCache && this.deps.projectSlug) {
-              await this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug);
-            }
             preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
             const currentSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
             if (
@@ -811,6 +823,9 @@ export class WebSocketManager {
             });
           }
         } catch (error) {
+          // The snapshot replacement did not complete, so nothing above cleared
+          // the CSS caches for this poke.
+          await this.clearProjectCSSCaches();
           logger.warn("Failed to fetch files during selective invalidation", {
             error,
           });
@@ -951,10 +966,10 @@ export class WebSocketManager {
         );
       }
 
-      if (this.deps.invalidationCallbacks.clearProjectCSSCache && this.deps.projectSlug) {
-        invalidations.push(
-          this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug),
-        );
+      // See the selective path: a branch poke clears the CSS caches after the
+      // new snapshot is installed instead of here.
+      if (contentContext?.sourceType !== "branch") {
+        invalidations.push(this.clearProjectCSSCaches());
       }
 
       const pendingInvalidations = invalidations.filter(
@@ -985,12 +1000,10 @@ export class WebSocketManager {
             files,
             sourceSnapshotVersion,
           );
+          await this.clearProjectCSSCaches();
           if (appliedSnapshotVersion === undefined) {
             reloadSuperseded = true;
           } else {
-            if (this.deps.invalidationCallbacks.clearProjectCSSCache && this.deps.projectSlug) {
-              await this.deps.invalidationCallbacks.clearProjectCSSCache(this.deps.projectSlug);
-            }
             preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
             const currentSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
             if (
@@ -1008,6 +1021,9 @@ export class WebSocketManager {
             });
           }
         } catch (error) {
+          // The snapshot replacement did not complete, so nothing above cleared
+          // the CSS caches for this poke.
+          await this.clearProjectCSSCaches();
           logger.warn("Failed to fetch files during invalidation", { error });
         }
       }

@@ -4,6 +4,11 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import type { HandlerContext } from "#veryfront/server/handlers/types.ts";
+import { invalidateProjectCandidateManifests } from "#veryfront/rendering/orchestrator/css-candidate-manifest.ts";
+import {
+  extractProjectCandidates,
+  invalidateProjectCandidateScans,
+} from "#veryfront/server/handlers/dev/styles-candidate-scanner.ts";
 import {
   extractProjectCssImports,
   invalidateProjectCssImportScans,
@@ -14,6 +19,10 @@ const PROJECT_SLUG = "style-callback-project";
 const LAYOUT_FILE = {
   path: "/project/app/layout.tsx",
   content: 'import "./styles.css";\nexport default ({ children }) => children;',
+};
+const PAGE_FILE = {
+  path: "/project/app/page.tsx",
+  content: '<div className="text-cyan-500">Hi</div>',
 };
 
 describe("server/style-callbacks", () => {
@@ -97,6 +106,53 @@ describe("server/style-callbacks", () => {
       assertEquals(scanCount, 1, "an unrelated project's push must not evict this scan");
     } finally {
       invalidateProjectCssImportScans();
+    }
+  });
+
+  it("drops the project's cached candidate scan when its style caches are cleared", async () => {
+    // The candidate scan is memoized under the same immutable release key, so
+    // a content push that reached only the manifest would keep serving the
+    // previous release's Tailwind candidates until the entry was evicted.
+    const adapter = createMockAdapter();
+    let files: Array<{ path: string; content: string }> = [PAGE_FILE];
+    let scanCount = 0;
+    const underlyingAdapter = {
+      getAllSourceFiles: () => {
+        scanCount++;
+        return Promise.resolve(files);
+      },
+      getContentContext: (): ResolvedContentContext =>
+        ({
+          sourceType: "release",
+          projectSlug: PROJECT_SLUG,
+          releaseId: "rel-candidates",
+        }) as ResolvedContentContext,
+    };
+    const ctx = {
+      projectDir: "/project",
+      adapter: {
+        ...adapter,
+        fs: { ...adapter.fs, getUnderlyingAdapter: () => underlyingAdapter },
+      },
+      securityConfig: null,
+      projectSlug: PROJECT_SLUG,
+    } as unknown as HandlerContext;
+
+    try {
+      invalidateProjectCandidateScans();
+      invalidateProjectCandidateManifests();
+
+      assertEquals((await extractProjectCandidates(ctx)).has("text-cyan-500"), true);
+      assertEquals(scanCount, 1);
+
+      files = [];
+      createServerStyleInvalidationCallbacks().clearProjectCSSCache?.(PROJECT_SLUG);
+
+      assertEquals((await extractProjectCandidates(ctx)).has("text-cyan-500"), false);
+      assertEquals(scanCount, 2, "clearing the project's style caches must retire the scan");
+    } finally {
+      invalidateProjectCandidateScans();
+      invalidateProjectCandidateManifests();
     }
   });
 });
