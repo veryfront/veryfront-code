@@ -1602,12 +1602,18 @@ it("uses canonical production read-back in human and JSON modes", async () => {
 
 it("deploys production from a dirty worktree when the pushed digest matches the release", async () => {
   const projectDir = await Deno.makeTempDir();
-  const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+  const envKeys = [
+    "GITHUB_SHA",
+    "VERYFRONT_API_TOKEN",
+    "VERYFRONT_API_URL",
+    "VERYFRONT_PROJECT_SLUG",
+  ];
   const savedEnv = envKeys.map((key) => Deno.env.get(key));
   const releaseSource = "export default function Dashboard() { return null; }\n";
   const requests: string[] = [];
 
   try {
+    Deno.env.delete("GITHUB_SHA");
     await Deno.mkdir(`${projectDir}/pages`, { recursive: true });
     await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
     await Deno.writeTextFile(`${projectDir}/veryfront.json`, '{"projectSlug":"my-project"}\n');
