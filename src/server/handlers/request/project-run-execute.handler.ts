@@ -339,14 +339,36 @@ export interface ProjectWorkflowRedisTargetScope {
   runtimeTargetBranchId?: string | null;
 }
 
+/**
+ * Reduce a runtime target selection to its one canonical form.
+ *
+ * `runtimeTargetKind` is optional on the wire and an omitted kind means the
+ * default branch, exactly as `resolveControlPlaneBranchBinding` treats it. The
+ * identifier fields are also only meaningful for the kind that owns them. If
+ * either were encoded verbatim, two wire representations of the same target
+ * would derive different Redis namespaces and approval recovery started under
+ * one representation could not see runs waiting under the other.
+ */
+function canonicalWorkflowRedisTarget(
+  target: ProjectWorkflowRedisTargetScope,
+): { kind: string; environmentId: string; branchId: string } {
+  const kind = target.runtimeTargetKind ?? "main_branch";
+  return {
+    kind,
+    environmentId: kind === "environment" ? target.runtimeTargetEnvironmentId ?? "" : "",
+    branchId: kind === "preview_branch" ? target.runtimeTargetBranchId ?? "" : "",
+  };
+}
+
 export function projectWorkflowRedisPrefix(
   projectId: string,
   target: ProjectWorkflowRedisTargetScope = {},
 ): string {
+  const canonical = canonicalWorkflowRedisTarget(target);
   const projectScope = encodeWorkflowRedisScope(projectId);
-  const targetKind = encodeWorkflowRedisScope(target.runtimeTargetKind ?? "");
-  const environmentScope = encodeWorkflowRedisScope(target.runtimeTargetEnvironmentId ?? "");
-  const branchScope = encodeWorkflowRedisScope(target.runtimeTargetBranchId ?? "");
+  const targetKind = encodeWorkflowRedisScope(canonical.kind);
+  const environmentScope = encodeWorkflowRedisScope(canonical.environmentId);
+  const branchScope = encodeWorkflowRedisScope(canonical.branchId);
   return `vf:workflow:project:${projectScope}:target:${targetKind}:environment:${environmentScope}:branch:${branchScope}:`;
 }
 

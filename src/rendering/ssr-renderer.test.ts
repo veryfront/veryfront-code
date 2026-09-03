@@ -24,6 +24,18 @@ import { resolveCommittedHeadFromHTML } from "./orchestrator/html-head.ts";
 
 type PipeableSSRStream = ReturnType<NonNullable<ReactDOMServer["renderToPipeableStream"]>>;
 
+/**
+ * React's own nonce option type, read back off the injected render signature.
+ *
+ * React 19 widened `nonce` from a bare string to a string-or-per-directive
+ * object, so binding the observed value to the render option's declared type
+ * keeps this test compiling against whichever shape the installed React
+ * typings expose instead of pinning it to `string`.
+ */
+type ReadableStreamNonceOption = NonNullable<
+  Parameters<NonNullable<ReactDOMServer["renderToReadableStream"]>>[1]
+>["nonce"];
+
 function createPipeableSSRStream(
   pipeImpl: (writable: NodeJS.WritableStream) => void,
   abortImpl: () => void = () => {},
@@ -94,7 +106,7 @@ describe("rendering/ssr-renderer", () => {
   });
 
   it("forwards the response nonce to React-owned streaming scripts", async () => {
-    let observedNonce: string | undefined;
+    let observedNonce: ReadableStreamNonceOption;
     const streamAllReady: Promise<void> = Promise.resolve();
     __injectReactDOMServerForTests({
       renderToString: () => "<div>unused</div>",

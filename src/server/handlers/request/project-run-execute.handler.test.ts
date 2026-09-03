@@ -63,7 +63,7 @@ describe("projectWorkflowRedisPrefix", () => {
   it("namespaces durable workflow state per project", () => {
     assertEquals(
       projectWorkflowRedisPrefix("proj-1"),
-      "vf:workflow:project:proj-1:target::environment::branch::",
+      "vf:workflow:project:proj-1:target:main_branch:environment::branch::",
     );
     assertEquals(
       projectWorkflowRedisPrefix("proj-1") === projectWorkflowRedisPrefix("proj-2"),
@@ -87,15 +87,65 @@ describe("projectWorkflowRedisPrefix", () => {
     const whitespacePrefixed = projectWorkflowRedisConfig(" proj-1");
 
     assertEquals(canonical, {
-      prefix: "vf:workflow:project:proj-1:target::environment::branch::",
-      streamKey: "vf:workflow:project:proj-1:target::environment::branch::stream",
-      groupName: "vf:workflow:project:proj-1:target::environment::branch::workers",
+      prefix: "vf:workflow:project:proj-1:target:main_branch:environment::branch::",
+      streamKey: "vf:workflow:project:proj-1:target:main_branch:environment::branch::stream",
+      groupName: "vf:workflow:project:proj-1:target:main_branch:environment::branch::workers",
     });
     assertEquals(whitespacePrefixed, {
-      prefix: "vf:workflow:project:.20.proj-1:target::environment::branch::",
-      streamKey: "vf:workflow:project:.20.proj-1:target::environment::branch::stream",
-      groupName: "vf:workflow:project:.20.proj-1:target::environment::branch::workers",
+      prefix: "vf:workflow:project:.20.proj-1:target:main_branch:environment::branch::",
+      streamKey: "vf:workflow:project:.20.proj-1:target:main_branch:environment::branch::stream",
+      groupName: "vf:workflow:project:.20.proj-1:target:main_branch:environment::branch::workers",
     });
+  });
+
+  it("canonicalizes an omitted runtime target kind to the default branch", () => {
+    // The control-plane wire format leaves runtimeTargetKind optional and
+    // resolveControlPlaneBranchBinding reads an omitted kind as main_branch.
+    // Both spellings must land in one namespace or an approval waiting under
+    // the explicit spelling is invisible to a recovery scan started under the
+    // implicit one.
+    assertEquals(
+      projectWorkflowRedisPrefix("proj-1", {}),
+      projectWorkflowRedisPrefix("proj-1", { runtimeTargetKind: "main_branch" }),
+    );
+  });
+
+  it("ignores identifiers that do not belong to the selected target kind", () => {
+    // A default-branch or environment run carries no preview branch id, so a
+    // stray identifier must not split one target across two namespaces.
+    const mainBranch = projectWorkflowRedisPrefix("proj-1", {
+      runtimeTargetKind: "main_branch",
+    });
+    assertEquals(
+      projectWorkflowRedisPrefix("proj-1", {
+        runtimeTargetKind: "main_branch",
+        runtimeTargetEnvironmentId: "env-1",
+        runtimeTargetBranchId: "branch-1",
+      }),
+      mainBranch,
+    );
+    assertEquals(
+      projectWorkflowRedisPrefix("proj-1", {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "env-1",
+        runtimeTargetBranchId: "branch-1",
+      }),
+      projectWorkflowRedisPrefix("proj-1", {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "env-1",
+      }),
+    );
+    assertEquals(
+      projectWorkflowRedisPrefix("proj-1", {
+        runtimeTargetKind: "preview_branch",
+        runtimeTargetEnvironmentId: "env-1",
+        runtimeTargetBranchId: "branch-1",
+      }),
+      projectWorkflowRedisPrefix("proj-1", {
+        runtimeTargetKind: "preview_branch",
+        runtimeTargetBranchId: "branch-1",
+      }),
+    );
   });
 
   it("namespaces durable workflow state per runtime target", () => {
