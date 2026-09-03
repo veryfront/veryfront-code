@@ -1489,8 +1489,9 @@ export class RenderPipeline {
 
   /**
    * Build a cache key that is safe for multi-tenant + query-param aware caching.
-   * Returns null when request contains sensitive headers (Authorization/Cookie) and
-   * no explicit cacheKey override was provided, to avoid leaking personalized HTML.
+   * Returns null when request contains sensitive headers (Authorization/Cookie) or an
+   * admitted application identity, and no explicit cacheKey override was provided, to
+   * avoid leaking personalized HTML.
    *
    * Query param handling uses config.queryParamOptions for filtering (utm_*, gclid, etc.).
    */
@@ -1513,6 +1514,10 @@ export class RenderPipeline {
         composition,
       );
     }
+    // Trusted-proxy identities arrive via headers that are stripped from the
+    // application request before this check runs, so an identity-bearing
+    // render must never share the anonymous slug-based cache key.
+    if (options?.applicationIdentity != null) return null;
     const req = options?.request;
     if (req) {
       if (requestHasCacheSensitiveState(req)) return null;

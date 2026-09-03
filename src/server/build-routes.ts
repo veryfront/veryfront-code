@@ -38,24 +38,29 @@ function shouldIncludeRoute(path: string, include?: string[], exclude?: string[]
   return true;
 }
 
-/**
- * Order two discovered routes by route path, then by source file.
- *
- * Discovery walks directories in `readDir` order, which the filesystem is free
- * to vary between machines and even between two checkouts on one machine (ext4
- * returns hash order, not creation or lexical order). Every build artifact
- * derived from the route list — the SSG page list, the route manifest, the
- * order pages are rendered in — would inherit that variation, so a build of one
- * commit would not reproduce byte for byte. Codepoint comparison keeps the
- * order independent of the host's locale and ICU data as well.
- */
-function compareRoutesByPath(
-  left: { path: string; file: string },
-  right: { path: string; file: string },
-): number {
-  if (left.path !== right.path) return left.path < right.path ? -1 : 1;
-  if (left.file === right.file) return 0;
-  return left.file < right.file ? -1 : 1;
+function compareStrings(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+// Route discovery walks the project with `readDir`, which yields entries in
+// filesystem order -- insertion order on some filesystems, hash order on
+// others. Leaving that order in place makes the build's route list, and every
+// artifact derived from it (`ssgPaths`, the build manifest, build logs),
+// depend on how the checkout happened to land on disk.
+//
+// The route path alone is not a total order: two sources can collapse onto one
+// route (`pages/about.tsx` and `pages/about/index.tsx` both become `/about`,
+// and a nested `app/app/page.tsx` re-roots onto `/`). Ties there would keep
+// their filesystem order, and consumers keyed on the route path -- code
+// splitting derives one entry name per route -- would still bundle a different
+// source per checkout. The source file breaks the tie, so the full ordering is
+// reproducible across machines and runs.
+function byPagesRoute(a: RouteInfo, b: RouteInfo): number {
+  return compareStrings(a.path, b.path) || compareStrings(a.file, b.file);
+}
+
+function byAppRoute(a: AppRouteInfo, b: AppRouteInfo): number {
+  return compareStrings(a.path, b.path) || compareStrings(a.pageFile, b.pageFile);
 }
 
 export async function collectPagesRoutes(
@@ -89,7 +94,7 @@ export async function collectPagesRoutes(
     routes.push({ path: pathForRoute, file: file.path, slug });
   }
 
-  return routes.sort(compareRoutesByPath);
+  return routes.sort(byPagesRoute);
 }
 
 /**
@@ -118,12 +123,7 @@ export async function collectAppRoutes(
 
   return collected
     .filter((r) => shouldIncludeRoute(r.path, include, exclude))
-    .sort((left, right) =>
-      compareRoutesByPath(
-        { path: left.path, file: left.pageFile },
-        { path: right.path, file: right.pageFile },
-      )
-    );
+    .sort(byAppRoute);
 }
 
 function isForceDynamic(source: string): boolean {
