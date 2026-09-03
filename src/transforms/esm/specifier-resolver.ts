@@ -37,11 +37,39 @@ import {
 
 const ReflectApply = Reflect.apply;
 const RegExpTest = RegExp.prototype.test;
+const StringCharCodeAt = String.prototype.charCodeAt;
 const StringSlice = String.prototype.slice;
 const StringStartsWith = String.prototype.startsWith;
 
 function regexpTest(pattern: RegExp, value: string): boolean {
   return ReflectApply(RegExpTest, pattern, [value]) as boolean;
+}
+
+const BACKSLASH_CODE = 0x5c;
+const DELETE_CODE = 0x7f;
+const LAST_C0_CONTROL_CODE = 0x1f;
+
+/**
+ * True when a path contains a character that changes how the WHATWG URL parser
+ * segments it.
+ *
+ * `\` is a path separator under special-scheme parsing, so `..\` is a dot
+ * segment. NUL, TAB, CR and LF are *removed* before dot segments are
+ * collapsed, so `..<TAB>/` is a traversal that no dot-segment pattern applied
+ * to the authored text can see. Every C0 control and DEL is rejected rather
+ * than just the strippable subset, so a parser change cannot widen the hole.
+ *
+ * The scan uses this module's snapshotted intrinsics and the string's own
+ * `length`, so a poisoned prototype cannot defeat it.
+ */
+function hasUnsafePathCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = ReflectApply(StringCharCodeAt, value, [index]) as number;
+    if (code <= LAST_C0_CONTROL_CODE || code === BACKSLASH_CODE || code === DELETE_CODE) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function stringSlice(value: string, start: number, end?: number): string {
@@ -117,10 +145,46 @@ function canonicalizeHttpSpecifier(
   return resolved.toString();
 }
 
+const MODULE_TRANSPORT_PREFIX = "/_vf_modules/";
+
 function isLocalMappedSpecifier(specifier: string): boolean {
-  return stringStartsWith(specifier, "/_vf_modules/") ||
+  return stringStartsWith(specifier, MODULE_TRANSPORT_PREFIX) ||
     stringStartsWith(specifier, "_vf_modules/") ||
     stringStartsWith(specifier, "file://");
+}
+
+/**
+ * Origin used to canonicalize module-transport paths when the caller has no
+ * module-server origin. `.invalid` is reserved (RFC 2606) and can never
+ * resolve, so it only ever supplies WHATWG path normalization — the same
+ * normalization the browser or importing runtime applies to the emitted
+ * specifier — and never a fetchable target.
+ */
+const CONTAINMENT_BASE = "https://module-transport.invalid/";
+
+/**
+ * True when `specifier` still lands inside `/_vf_modules/` after the URL
+ * parser has collapsed dot segments, mapped backslashes and stripped the
+ * characters (NUL/TAB/CR/LF) it removes before parsing.
+ *
+ * A prefix test alone is not containment: `/_vf_modules/../_veryfront/…`
+ * starts with the transport prefix yet normalizes out of it.
+ */
+function isContainedModuleTransportSpecifier(specifier: string): boolean {
+  // A `file://` target names an already-cached artifact on disk, not a
+  // same-origin transport URL, so it cannot be normalized onto an arbitrary
+  // application route and this containment rule does not apply to it.
+  if (stringStartsWith(specifier, "file://")) return true;
+
+  let resolved: URL;
+  try {
+    resolved = new URL(specifier, CONTAINMENT_BASE);
+  } catch {
+    return false;
+  }
+
+  return `${resolved.origin}/` === CONTAINMENT_BASE &&
+    stringStartsWith(resolved.pathname, MODULE_TRANSPORT_PREFIX);
 }
 
 /**
@@ -167,34 +231,55 @@ async function resolveSpecifier(
     // this module's snapshotted intrinsics so poisoned prototypes cannot
     // defeat the guard, and as a pure guard so accepted paths keep the exact
     // `AliasStrategy.rewrite` byte shape composed below.
+    //
+    // The authored suffix is a query string or fragment and can carry tenant
+    // credentials (`@/module?token=…`), so the diagnostics below name the
+    // alias by its path alone — AGENTS.md, "Secret and internal-detail
+    // safety", forbids echoing such values into error messages.
+    const reportedAlias = suffix === "" ? `@/${pathOnly}` : `@/${pathOnly}<redacted suffix>`;
     if (
       pathOnly === "" ||
       regexpTest(/(^|\/)\.\.?(\/|$)/, pathOnly) ||
       regexpTest(/%2e/i, pathOnly) ||
-      regexpTest(/[\\\0]/, pathOnly)
+      hasUnsafePathCharacter(pathOnly)
     ) {
       throw new Error(
-        `Refusing to resolve project alias ${specifier}: its path escapes the /_vf_modules/ module transport`,
+        `Refusing to resolve project alias ${reportedAlias}: its path escapes the /_vf_modules/ module transport`,
       );
     }
 
     const mappedAlias = resolveImport(specifier, options.importMap);
-    if (mappedAlias !== specifier && isLocalMappedSpecifier(mappedAlias)) return mappedAlias;
+    if (mappedAlias !== specifier && isLocalMappedSpecifier(mappedAlias)) {
+      // A configured "@/" mapping is not exempt from containment. A target
+      // like "/_vf_modules/../_veryfront/modules/" keeps the transport prefix
+      // that `isLocalMappedSpecifier` matches, yet the importing runtime
+      // normalizes the emitted specifier straight back out of the transport.
+      // Validate the resolved target, not its literal prefix.
+      if (!isContainedModuleTransportSpecifier(mappedAlias)) {
+        throw new Error(
+          `Refusing to resolve project alias ${reportedAlias}: its import-map target resolves outside the /_vf_modules/ module transport`,
+        );
+      }
+      return mappedAlias;
+    }
 
     const normalizedPath = normalizeExtension(pathOnly);
     const jsPath = regexpTest(/\.(js|mjs|cjs|css)$/, normalizedPath)
       ? normalizedPath
       : `${normalizedPath}.js`;
-    const projectModulePath = `/_vf_modules/${jsPath}${suffix}`;
+    const projectModulePath = `${MODULE_TRANSPORT_PREFIX}${jsPath}${suffix}`;
+    // Canonicalize the composed path even when there is no module-server
+    // origin. That branch returns the path for the importing runtime to
+    // resolve itself, so it needs the same post-composition containment check
+    // rather than trusting the character guards above to have been exhaustive.
     const moduleServerOrigin = parseHttpBase(options.moduleServerOrigin);
-    if (!moduleServerOrigin) return projectModulePath;
-
-    const projectModuleUrl = new URL(projectModulePath, moduleServerOrigin);
-    if (!stringStartsWith(projectModuleUrl.pathname, "/_vf_modules/")) {
+    const projectModuleUrl = new URL(projectModulePath, moduleServerOrigin ?? CONTAINMENT_BASE);
+    if (!stringStartsWith(projectModuleUrl.pathname, MODULE_TRANSPORT_PREFIX)) {
       throw new Error(
-        `Refusing to resolve project alias ${specifier}: it resolved outside the /_vf_modules/ module transport`,
+        `Refusing to resolve project alias ${reportedAlias}: it resolved outside the /_vf_modules/ module transport`,
       );
     }
+    if (!moduleServerOrigin) return projectModulePath;
 
     return resolveSpecifier(
       projectModuleUrl.toString(),

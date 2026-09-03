@@ -135,6 +135,23 @@ describe("server/build-routes", () => {
       );
     });
 
+    it("orders routes by path regardless of directory-read order", async () => {
+      // `readDir` order is a filesystem detail (ext4 returns hash order), so
+      // an unsorted walk makes the SSG page list, the route manifest and the
+      // render order vary between machines for one commit. The mock yields
+      // entries in insertion order, so listing them non-lexically here
+      // reproduces exactly that.
+      const adapter = createMockAdapter({
+        "/project/pages/blog.mdx": "# Blog",
+        "/project/pages/index.mdx": "# Home",
+        "/project/pages/about.mdx": "# About",
+      });
+
+      const routes = await collectPagesRoutes(adapter, "/project");
+
+      assertEquals(routes.map((route) => route.path), ["/", "/about", "/blog"]);
+    });
+
     it("discovers .mdx files", async () => {
       const adapter = createMockAdapter({
         "/project/pages/hello.mdx": "# Hello",
@@ -381,6 +398,18 @@ describe("server/build-routes", () => {
         Error,
         "app traversal denied",
       );
+    });
+
+    it("orders app routes by path regardless of directory-read order", async () => {
+      const adapter = createMockAdapter({
+        "/project/app/docs/page.tsx": "export default function Docs() {}",
+        "/project/app/page.tsx": "export default function Home() {}",
+        "/project/app/blog/page.tsx": "export default function Blog() {}",
+      });
+
+      const routes = await collectAppRoutes(adapter, "/project");
+
+      assertEquals(routes.map((route) => route.path), ["/", "/blog", "/docs"]);
     });
 
     it("discovers page.tsx at app root", async () => {

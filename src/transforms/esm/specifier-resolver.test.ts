@@ -443,6 +443,74 @@ describe("transforms/esm/specifier-resolver", () => {
       );
     });
 
+    it("rejects URL-stripped whitespace between dot segments in @/ aliases", async () => {
+      // The WHATWG URL parser removes TAB, CR and LF *before* it collapses dot
+      // segments, so "..<TAB>/" reaches the importing runtime as ".." and
+      // escapes the transport even though the authored text matches no
+      // dot-segment pattern. The origin-less branch returns the composed path
+      // verbatim, so it is the one that must fail closed here.
+      for (const separator of ["\t", "\r", "\n"]) {
+        const specifier = `@/..${separator}/_veryfront/modules/foo`;
+        const code = `import escape from ${JSON.stringify(specifier)};`;
+        await assertRejects(
+          () => buildReplacements(code, undefined, defaultOptions, noopCache),
+          Error,
+          "escapes the /_vf_modules/ module transport",
+          `@/..<U+${separator.charCodeAt(0).toString(16).padStart(4, "0")}>/… must fail closed`,
+        );
+      }
+    });
+
+    it("rejects import-map @/ targets that normalize out of the module transport", async () => {
+      // The configured target keeps the "/_vf_modules/" prefix, so a prefix
+      // test accepts it, but the browser normalizes the emitted specifier to
+      // "/_veryfront/modules/foo" — an arbitrary same-origin path cached as an
+      // executable module.
+      const code = `import escape from "@/foo";`;
+      const cacheCalls: string[] = [];
+      await assertRejects(
+        () =>
+          buildReplacements(
+            code,
+            undefined,
+            {
+              ...defaultOptions,
+              importMap: { imports: { "@/": "/_vf_modules/../_veryfront/modules/" } },
+            },
+            async (url) => {
+              cacheCalls.push(url);
+              return "/tmp/cache/http-alias.mjs";
+            },
+          ),
+        Error,
+        "resolves outside the /_vf_modules/ module transport",
+      );
+      assertEquals(cacheCalls, []);
+    });
+
+    it("omits the authored query and fragment from @/ alias rejection messages", async () => {
+      // A rejected alias may carry credentials in its query or fragment, and
+      // AGENTS.md forbids echoing those into error messages.
+      const secretSuffix = "?token=EXAMPLE-CREDENTIAL-VALUE#EXAMPLE-FRAGMENT";
+      const code = `import escape from "@/../_veryfront/modules/foo${secretSuffix}";`;
+      const error = await assertRejects(
+        () => buildReplacements(code, undefined, defaultOptions, noopCache),
+        Error,
+        "escapes the /_vf_modules/ module transport",
+      );
+
+      assertEquals(
+        error.message.includes("EXAMPLE-CREDENTIAL-VALUE"),
+        false,
+        "the authored query string must never reach the error message",
+      );
+      assertEquals(
+        error.message.includes("EXAMPLE-FRAGMENT"),
+        false,
+        "the authored fragment must never reach the error message",
+      );
+    });
+
     it("rejects dot-segment @/ aliases before configured prefix mappings apply", async () => {
       // A configured "@/" -> "/_vf_modules/" prefix mapping would otherwise
       // emit "/_vf_modules/../..." as a local specifier and hand the escape to

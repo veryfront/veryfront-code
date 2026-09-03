@@ -38,6 +38,26 @@ function shouldIncludeRoute(path: string, include?: string[], exclude?: string[]
   return true;
 }
 
+/**
+ * Order two discovered routes by route path, then by source file.
+ *
+ * Discovery walks directories in `readDir` order, which the filesystem is free
+ * to vary between machines and even between two checkouts on one machine (ext4
+ * returns hash order, not creation or lexical order). Every build artifact
+ * derived from the route list — the SSG page list, the route manifest, the
+ * order pages are rendered in — would inherit that variation, so a build of one
+ * commit would not reproduce byte for byte. Codepoint comparison keeps the
+ * order independent of the host's locale and ICU data as well.
+ */
+function compareRoutesByPath(
+  left: { path: string; file: string },
+  right: { path: string; file: string },
+): number {
+  if (left.path !== right.path) return left.path < right.path ? -1 : 1;
+  if (left.file === right.file) return 0;
+  return left.file < right.file ? -1 : 1;
+}
+
 export async function collectPagesRoutes(
   adapter: RuntimeAdapter,
   projectDir: string,
@@ -69,7 +89,7 @@ export async function collectPagesRoutes(
     routes.push({ path: pathForRoute, file: file.path, slug });
   }
 
-  return routes;
+  return routes.sort(compareRoutesByPath);
 }
 
 /**
@@ -96,7 +116,14 @@ export async function collectAppRoutes(
 
   logger.debug(`Found ${collected.length} App Router static routes`);
 
-  return collected.filter((r) => shouldIncludeRoute(r.path, include, exclude));
+  return collected
+    .filter((r) => shouldIncludeRoute(r.path, include, exclude))
+    .sort((left, right) =>
+      compareRoutesByPath(
+        { path: left.path, file: left.pageFile },
+        { path: right.path, file: right.pageFile },
+      )
+    );
 }
 
 function isForceDynamic(source: string): boolean {
