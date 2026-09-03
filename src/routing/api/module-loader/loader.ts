@@ -1,4 +1,4 @@
-import { computeHash, isCompiledBinary, serverLogger } from "#veryfront/utils";
+import { computeCodeHash, computeHash, isCompiledBinary, serverLogger } from "#veryfront/utils";
 import type {
   BuildResult,
   BundleOptions,
@@ -55,6 +55,7 @@ import {
 } from "./project-source-snapshot.ts";
 import { tryGetRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
 import { getProjectEnvSnapshot } from "#veryfront/server/project-env/storage.ts";
+import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
 export {
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
@@ -69,6 +70,13 @@ export {
 } from "./external-import-rewriter.ts";
 
 const logger = serverLogger.component("api");
+const IntrinsicMap = Map;
+const IntrinsicReflectApply = Reflect.apply;
+const IntrinsicReflectOwnKeys = Reflect.ownKeys;
+const MapPrototypeDelete = Map.prototype.delete;
+const MapPrototypeGet = Map.prototype.get;
+const MapPrototypeSet = Map.prototype.set;
+const trustedRequestContextAccessor = currentRequestContext;
 
 /**
  * A specifier the HTTP plugin fetches rather than a path. URL schemes are
@@ -2079,10 +2087,7 @@ export function getUserDependencies(
  * overlay. A module whose top-level init ran under one tenant's or
  * environment's env overlay is never reused under another.
  */
-const bundledModules = new Map<string, Promise<APIRoute>>();
-
-/** Bundled routes a dev session can hold before the oldest is dropped. */
-const MAX_BUNDLED_MODULES = 64;
+const bundledModules = new IntrinsicMap<string, Promise<APIRoute>>();
 
 /**
  * Identity of the scope a bundled module may be reused within.
@@ -2097,47 +2102,65 @@ const MAX_BUNDLED_MODULES = 64;
  * reuse stays within one scope. Local single-tenant loads carry neither and
  * keep their current key.
  */
-async function bundledModuleScopeDiscriminator(): Promise<string> {
+export async function bundledModuleScopeDiscriminator(): Promise<string> {
   const scopeId = tryGetRegistryScopeId() ?? "";
+  const environmentName = trustedRequestContextAccessor()?.environmentName ?? "";
   const envSnapshot = getProjectEnvSnapshot();
-  let envDigest = "";
+  let serializedEnv = "";
   if (envSnapshot) {
-    // Snapshot keys are sorted and contain no NUL or "=", and values contain
-    // no NUL, so this serialization is canonical and collision-free.
-    const entries: string[] = [];
-    for (const key of Object.keys(envSnapshot)) {
-      entries.push(`${key}=${envSnapshot[key]}`);
+    // Project code executes in this realm and can replace ordinary Object and
+    // Array methods. The snapshot is a frozen, null-prototype record whose own
+    // keys were inserted in deterministic order, so captured own-key traversal
+    // plus length framing gives a canonical encoding without crossing a
+    // mutable prototype.
+    const keys = IntrinsicReflectOwnKeys(envSnapshot);
+    for (let index = 0; index < keys.length; index += 1) {
+      const key = keys[index];
+      if (typeof key !== "string") continue;
+      const value = envSnapshot[key]!;
+      serializedEnv += `${key.length}:${key}${value.length}:${value}`;
     }
-    envDigest = await computeHash(entries.join("\u0000"));
   }
-  return `${scopeId}\u0000${envDigest}`;
+
+  // Raw UTF-16 framing keeps lone surrogates distinct from U+FFFD. TextEncoder
+  // normalizes both to the same UTF-8 replacement bytes.
+  return await computeCodeHash({
+    code: scopeId,
+    css: environmentName,
+    sourceMap: serializedEnv,
+  });
 }
 
 async function bundledModuleKey(owner: string, code: string): Promise<string> {
-  return await computeHash(`${owner}\u0000${code}`);
+  return await computeCodeHash({ code: owner, css: code });
 }
 
-function loadModuleFromCode(
+export async function loadModuleFromCode(
   code: string,
   fs: FileSystem,
   owner: string,
 ): Promise<APIRoute> {
-  return bundledModuleKey(owner, code).then((key) => {
-    const cached = bundledModules.get(key);
-    if (cached) return cached;
+  const key = await bundledModuleKey(owner, code);
+  const cached = IntrinsicReflectApply(MapPrototypeGet, bundledModules, [key]) as
+    | Promise<APIRoute>
+    | undefined;
+  if (cached) return await cached;
 
-    const loading = importModuleFromCode(code, fs);
-    bundledModules.set(key, loading);
+  const loading = importModuleFromCode(code, fs);
+  IntrinsicReflectApply(MapPrototypeSet, bundledModules, [key, loading]);
 
-    // A failed build must not be remembered as this route's module.
-    loading.catch(() => bundledModules.delete(key));
-
-    if (bundledModules.size > MAX_BUNDLED_MODULES) {
-      const oldest = bundledModules.keys().next();
-      if (!oldest.done) bundledModules.delete(oldest.value);
+  // Deno retains every imported ESM record for the life of the process. Keep
+  // one matching lookup entry too: evicting only this map caused a later visit
+  // to import the same scope under a fresh temp URL, retaining a duplicate ESM
+  // record and resetting its module state each time.
+  try {
+    return await loading;
+  } catch (error) {
+    if (IntrinsicReflectApply(MapPrototypeGet, bundledModules, [key]) === loading) {
+      IntrinsicReflectApply(MapPrototypeDelete, bundledModules, [key]);
     }
-    return loading;
-  });
+    throw error;
+  }
 }
 
 async function importModuleFromCode(

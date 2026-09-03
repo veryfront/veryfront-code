@@ -10,6 +10,7 @@ import {
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join, toFileUrl } from "#veryfront/compat/path";
 import {
+  bundledModuleScopeDiscriminator,
   bundlerForcesTypeScript,
   canDirectImportSpecifier,
   generateCompiledBinaryRequireShim,
@@ -18,6 +19,7 @@ import {
   isBareModuleSpecifier,
   isSpecifierResolutionError,
   loadHandlerModule as loadHandlerModuleRaw,
+  loadModuleFromCode,
   lookupImportMapEntry,
   prepareHandlerModule,
   readDenoImportMap,
@@ -46,10 +48,63 @@ import type { APIRoute, AppRouteContext, AppRouteHandler } from "./types.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 
 const fs = createFileSystem();
 const appRouteContext: AppRouteContext = { params: {}, identity: null, env: {} };
 const denoIt = isDeno ? it : it.skip;
+
+describe("bundledModuleScopeDiscriminator", () => {
+  const hostedScope = (environmentName: string, value: string) =>
+    runWithRequestContext(
+      {
+        projectSlug: "project-one",
+        projectId: "project-one-id",
+        token: "test-token",
+        productionMode: true,
+        releaseId: "release-one",
+        environmentName,
+      },
+      () => runWithProjectEnv({ TENANT_VALUE: value }, bundledModuleScopeDiscriminator),
+    );
+
+  it("includes the named environment when project and release match", async () => {
+    assertNotEquals(
+      await hostedScope("production", "same"),
+      await hostedScope("staging", "same"),
+    );
+  });
+
+  it("preserves raw UTF-16 identity in environment values", async () => {
+    assertNotEquals(
+      await hostedScope("production", "\uD800"),
+      await hostedScope("production", "\uFFFD"),
+    );
+  });
+
+  it("does not use project-controlled Object or Array helpers", async () => {
+    const originalKeys = Object.keys;
+    const originalJoin = Array.prototype.join;
+    const originalPush = Array.prototype.push;
+    const poison = () => {
+      throw new Error("ambient environment serialization method must not run");
+    };
+
+    let discriminator: string | undefined;
+    try {
+      Object.keys = poison as typeof Object.keys;
+      Array.prototype.join = poison as typeof Array.prototype.join;
+      Array.prototype.push = poison as typeof Array.prototype.push;
+      discriminator = await hostedScope("production", "safe");
+    } finally {
+      Object.keys = originalKeys;
+      Array.prototype.join = originalJoin;
+      Array.prototype.push = originalPush;
+    }
+
+    assertEquals(discriminator?.length, 64);
+  });
+});
 
 describe("canDirectImportSpecifier", () => {
   it("routes import-map-eligible bare and scoped names through the bundler", () => {
@@ -876,6 +931,28 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       await getText(after),
       "after",
       "a bundled route must not keep serving a stale module after its source changes",
+    );
+  });
+
+  it("keeps one reusable module identity beyond the former lookup limit", async () => {
+    const owner = `retained-module-${crypto.randomUUID()}`;
+    const code = [
+      "let count = 0;",
+      "export function GET() { return new Response(String(++count)); }",
+    ].join("\n");
+
+    const first = await loadModuleFromCode(code, fs, owner);
+    assertEquals(await getText(first), "1");
+
+    for (let index = 0; index < 65; index += 1) {
+      await loadModuleFromCode(code, fs, `${owner}-${index}`);
+    }
+
+    const reused = await loadModuleFromCode(code, fs, owner);
+    assertEquals(
+      await getText(reused),
+      "2",
+      "returning to an older scope must reuse its retained ESM module",
     );
   });
 
