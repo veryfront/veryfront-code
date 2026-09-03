@@ -19,6 +19,7 @@ import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 import { invalidateRSCHandlersForProject } from "#veryfront/server/services/rsc/endpoints/handler-registry.ts";
 import { invalidateProjectCandidateScans } from "../handlers/dev/styles-candidate-scanner.ts";
 import { invalidateProjectCssImportScans } from "../handlers/dev/styles-css-import-scanner.ts";
+import { invalidateProjectCandidateManifests } from "#veryfront/rendering/orchestrator/css-candidate-manifest.ts";
 
 const logger = serverLogger.component("dev");
 
@@ -161,6 +162,7 @@ export class RequestHandler {
     // usually lands inside the scan cache's short mutable TTL. The scope is the
     // directory those entries are keyed by, so no other project is affected.
     invalidateProjectCandidateScans(this.projectDir);
+    invalidateProjectCandidateManifests(this.projectDir);
     invalidateProjectCssImportScans(this.projectDir);
 
     resetApiHandler(this.projectDir).catch((error) => {

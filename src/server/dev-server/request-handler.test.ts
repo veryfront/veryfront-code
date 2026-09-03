@@ -69,14 +69,15 @@ describe("server/dev-server/request-handler", () => {
     __injectCacheForTests(createHandlerCache());
     const projectDir = "/project/styles-scan";
     let sourceWalks = 0;
+    let source = {
+      path: `${projectDir}/app/page.tsx`,
+      content: 'import "./page.css";\n<div className="text-amber-500" />',
+    };
     const base = createMockAdapter();
     const underlying = {
       getAllSourceFiles: () => {
         sourceWalks++;
-        return Promise.resolve([{
-          path: `${projectDir}/app/page.tsx`,
-          content: 'import "./page.css";\n<div className="text-amber-500" />',
-        }]);
+        return Promise.resolve([source]);
       },
       getContentContext: () => null,
     };
@@ -95,17 +96,25 @@ describe("server/dev-server/request-handler", () => {
     try {
       reset();
 
-      await extractProjectCandidates(ctx);
+      const beforeCandidates = await extractProjectCandidates(ctx);
       await extractProjectCandidates(ctx);
       await extractProjectCssImports(ctx);
       await extractProjectCssImports(ctx);
       assertEquals(sourceWalks, 2, "each scan must be memoized between requests");
+      assertEquals(beforeCandidates.has("text-amber-500"), true);
 
+      source = {
+        path: `${projectDir}/app/page.tsx`,
+        content: 'import "./changed.css";\n<div className="text-blue-500" />',
+      };
       requestHandler.invalidateRuntimeHandler();
 
-      await extractProjectCandidates(ctx);
-      await extractProjectCssImports(ctx);
+      const afterCandidates = await extractProjectCandidates(ctx);
+      const afterImports = await extractProjectCssImports(ctx);
       assertEquals(sourceWalks, 4, "a file change must retire both memoized scans");
+      assertEquals(afterCandidates.has("text-blue-500"), true);
+      assertEquals(afterCandidates.has("text-amber-500"), false);
+      assertEquals(afterImports, [`${projectDir}/app/changed.css`]);
     } finally {
       reset();
     }
