@@ -1600,6 +1600,10 @@ export class DAGExecutor {
       scope.declaredNodeIds,
       ownedNodeIds,
     );
+    // A map materializes each WorkflowDefinition item as a generated
+    // sub-workflow wrapper. Track that wrapper too, or its completed ownerless
+    // state can be seeded into a later sibling that declares the same child id.
+    producedNodeIds.add(node.id);
     scope.subWorkflowNodeIds.set(ownerPath, producedNodeIds);
 
     // Diff the sub-run against the states it actually started from. Diffing the

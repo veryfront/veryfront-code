@@ -3696,6 +3696,35 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates["orders_0/review"]?.status, "running");
     });
 
+    it("does not seed a completed generated map wrapper into a later sub-workflow", async () => {
+      const nodes: WorkflowNode[] = [
+        map("orders", {
+          items: [{}],
+          processor: {
+            id: "order-workflow",
+            steps: [{ id: "build", dependsOn: [], config: { type: "step" } as any }],
+          },
+        }),
+        {
+          ...subWorkflow("release", {
+            workflow: {
+              id: "release-workflow",
+              steps: [waitForApproval("orders_0", { message: "Approve the release" })],
+            },
+          }),
+          dependsOn: ["orders"],
+        },
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, false);
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNode, "orders_0");
+      assertEquals(result.nodeStates.release?.status, "running");
+      assertEquals(result.nodeStates.orders_0?.status, "running");
+    });
+
     it("keeps statically defined sibling sub-workflows in one batch", async () => {
       const staticRelease = (id: string, approvalId: string): WorkflowNode => ({
         ...subWorkflow(id, {
