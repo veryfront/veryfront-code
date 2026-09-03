@@ -13,7 +13,7 @@ import type { MarkdownRendererProps } from "veryfront/markdown";
  *
  * Assistant answers are untrusted input, so this renderer also owns the URL
  * policy: only http(s), mailto, and relative URLs survive, images render as
- * plain links instead of auto-loading remote content, and links open in a new
+ * inert text instead of auto-loading remote content, and links open in a new
  * tab without leaking the opener or referrer. Keep an equivalent policy in any
  * renderer you swap in.
  */
@@ -22,8 +22,15 @@ const LINK_REL = "noopener noreferrer nofollow";
 
 /** Allow http(s), mailto, and relative URLs; drop every other scheme. */
 function sanitizeUrl(url: string): string {
-  if (/^(https?|mailto):/i.test(url)) return url;
-  return /^[a-z][a-z0-9+.-]*:/i.test(url) ? "" : url;
+  // Browsers ignore ASCII spaces and control characters while parsing a
+  // scheme, so `java&#9;script:` and ` data:` navigate exactly like the bare
+  // scheme does. Match against a copy with those characters removed so an
+  // obfuscated scheme is recognised and dropped.
+  const probe = Array.from(url)
+    .filter((char) => char > " " && char !== "\u007f")
+    .join("");
+  if (/^(https?|mailto):/i.test(probe)) return url;
+  return /^[a-z][a-z0-9+.-]*:/i.test(probe) ? "" : url;
 }
 
 export function MarkdownRenderer({ source }: MarkdownRendererProps): React.JSX.Element {
@@ -38,11 +45,11 @@ export function MarkdownRenderer({ source }: MarkdownRendererProps): React.JSX.E
           </a>
         ),
         // Auto-loading images would let an injected answer beacon to arbitrary
-        // hosts; render the target as a link the reader can choose to open.
+        // hosts. Render inert text, not an anchor: Markdown allows a linked
+        // image (`[![alt](src)](href)`), and an anchor here would nest inside
+        // that link, which is invalid HTML and breaks hydration.
         img: ({ src, alt }) => (
-          <a href={typeof src === "string" && src ? src : undefined} target="_blank" rel={LINK_REL}>
-            {alt || "image"}
-          </a>
+          <span title={typeof src === "string" ? src : undefined}>{alt || "image"}</span>
         ),
       }}
     >
