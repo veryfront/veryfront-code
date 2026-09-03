@@ -9,6 +9,7 @@ import type {
   EvalMetricResult,
   EvalMetricSummary,
   EvalRecord,
+  EvalReport,
   EvalReportDatasetMetadata,
   EvalReportMetadata,
   EvalReportSummary,
@@ -339,16 +340,30 @@ export function summarizeEvalRecords(records: EvalRecord[]): EvalReportSummary {
   };
 }
 
-/** Create a JSON-serializable eval report from executed records. */
-export function createEvalReport(input: {
+/** Input accepted by {@link createEvalReport}. */
+export interface CreateEvalReportInput {
   definition: EvalDefinition;
   records: EvalRecord[];
   runId: string;
   startedAt: Date;
   endedAt: Date;
-  dataset?: EvalReportDatasetMetadata & { hash: string };
+  dataset?: EvalReportDatasetMetadata;
   metadata?: EvalReportMetadata;
-}): LocalEvalReport {
+}
+
+/**
+ * Create a JSON-serializable eval report from executed records.
+ *
+ * Dataset metadata from {@link createEvalDatasetMetadata} always carries a content hash, so
+ * passing it returns a {@link LocalEvalReport} whose `dataset.hash` stays required. Callers
+ * holding the wider {@link EvalReportDatasetMetadata}, whose hash a sanitized export can omit,
+ * still get an {@link EvalReport}.
+ */
+export function createEvalReport(
+  input: CreateEvalReportInput & { dataset?: EvalReportDatasetMetadata & { hash: string } },
+): LocalEvalReport;
+export function createEvalReport(input: CreateEvalReportInput): EvalReport;
+export function createEvalReport(input: CreateEvalReportInput): EvalReport {
   return {
     kind: "eval-report",
     schemaVersion: EVAL_REPORT_SCHEMA_VERSION,
