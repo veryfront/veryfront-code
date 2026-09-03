@@ -71,11 +71,17 @@ function createDatasetHashInput(dataset: EvalDataset, examples: EvalExample[]) {
   };
 }
 
-/** Create stable dataset metadata for report consumers and CI artifacts. */
+/**
+ * Create stable dataset metadata for report consumers and CI artifacts.
+ *
+ * The return type restates `hash` as required: locally created metadata always carries the
+ * content hash. Only {@link EvalReportDatasetMetadata} itself leaves it optional, because export
+ * redaction strips the hash from the copies exporters receive.
+ */
 export async function createEvalDatasetMetadata(
   dataset: EvalDataset,
   examples: EvalExample[],
-): Promise<EvalReportDatasetMetadata> {
+): Promise<EvalReportDatasetMetadata & { hash: string }> {
   const hashInput = createDatasetHashInput(dataset, examples);
   return {
     kind: dataset.kind,

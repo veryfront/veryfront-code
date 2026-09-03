@@ -172,6 +172,22 @@ describe("EvalReportExporterRegistry", () => {
     });
   });
 
+  it("leaves reports without dataset metadata untouched", () => {
+    // `EvalReport.dataset` is absent whenever the run had no resolvable dataset identity, so
+    // redaction must not synthesize an empty dataset object for exporters to trip over.
+    const report = createReport();
+    delete report.dataset;
+
+    assertEquals(redactEvalReportForExport(report).dataset, undefined);
+    assertEquals(
+      redactEvalReportForExport(report, {
+        includeDatasetPath: true,
+        includeDatasetHash: true,
+      }).dataset,
+      undefined,
+    );
+  });
+
   it("uses call-time exporter membership throughout an in-flight export", async () => {
     const registry = createEvalReportExporterRegistry();
     const started = Promise.withResolvers<void>();

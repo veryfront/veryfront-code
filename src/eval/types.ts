@@ -36,6 +36,14 @@ export interface EvalReportExportRedaction {
    * they follow this setting on both record and summary metrics.
    */
   includeMetricEvidence?: boolean;
+  /** Include dataset source paths. Defaults to false. */
+  includeDatasetPath?: boolean;
+  /**
+   * Include the deterministic dataset content hash. Defaults to false. The hash is computed
+   * over every example's id, input, reference, and metadata without a salt, so it identifies
+   * dataset content across projects and runs and can be brute-forced for low-entropy datasets.
+   */
+  includeDatasetHash?: boolean;
   metadataAllowlist?: string[];
 }
 
