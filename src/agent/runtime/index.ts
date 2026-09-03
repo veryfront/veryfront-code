@@ -1356,6 +1356,15 @@ export class AgentRuntime {
     // not poison the queue for later turns, hence the swallowed catch on the
     // stored chain; callers still observe the rejection through the returned
     // promise.
+    //
+    // The queue covers only the turn-input commit, which is the write a
+    // caller controls. The assistant and tool `memory.add` calls inside the
+    // agent loop run outside it, so a long-running turn's model output can
+    // still land between another turn's validation and its write - those
+    // messages are model-authored and exempt from input validation, so they
+    // cannot forge a caller-controlled merge. Queueing is per runtime
+    // instance, so a hung memory backend delays other turns on the same agent;
+    // that is the same backend outage those turns would hit on their own write.
     const task = this.#turnCommitQueue.then(() => this.#commitTurnMessages(inputMessages, context));
     this.#turnCommitQueue = task.then(() => undefined, () => undefined);
     return task;

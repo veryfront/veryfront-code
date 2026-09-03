@@ -394,26 +394,30 @@ function extractMessageInputText(message: Message): string[] {
 }
 
 /**
- * Assembled text for each run of adjacent system messages.
+ * Runs of adjacent same-role messages a provider converter merges into one turn.
  *
- * `toOpenAICompatibleMessages` (src/provider/runtime-loader.ts) folds adjacent
- * system messages into one instruction joined with a blank line, after
- * `convertToTextGenerationRuntimeMessage` has already assembled each message's
- * parts (`getTextFromParts` concatenates with no separator; other adapters use
- * a blank line). A blocked phrase split across sibling system messages
- * therefore reassembles at the provider, so each merged run is validated in
- * both per-message assembled forms the converters can produce. A blank system
- * message does not end a run: the converter drops it outright, leaving the
- * messages on either side of it adjacent.
+ * For `system`, `toOpenAICompatibleMessages` (src/provider/runtime-loader.ts)
+ * folds adjacent system messages into one instruction joined with a blank
+ * line, after `convertToTextGenerationRuntimeMessage` has already assembled
+ * each message's parts (`getTextFromParts` concatenates with no separator;
+ * other adapters use a blank line). For `user`, `pushAnthropicUserContent`
+ * (extensions/ext-llm-anthropic/src/anthropic-request-builder.ts) appends a
+ * user message's content blocks onto the preceding user message, so adjacent
+ * user messages reach Anthropic as one turn whose text blocks sit back to
+ * back. Either way a blocked phrase split across the message boundary
+ * reassembles at the provider, so each run is validated in every assembled
+ * form the converters can produce. A blank message does not end a run: the
+ * converter drops it outright, leaving the messages on either side adjacent.
  *
  * Messages of other roles end the run even when provider conversion would drop
  * them (an assistant message with no sendable content, a tool message with no
  * surviving results). Mirroring the converter's drop rules here would pin
- * validation to converter internals for no added coverage: the hoisted run in
- * `extractMergedSystemRuns` already assembles every system message in the
- * conversation, so any pair a dropped message sits between is covered there.
+ * validation to converter internals for no added coverage: for system messages
+ * the hoisted run in `extractMergedSystemRuns` already assembles every system
+ * message in the conversation, so any pair a dropped message sits between is
+ * covered there.
  */
-function extractAdjacentSystemRuns(messages: Message[]): Message[][] {
+function extractAdjacentRuns(messages: Message[], role: Message["role"]): Message[][] {
   const runs: Message[][] = [];
   let run: Message[] = [];
 
@@ -425,11 +429,11 @@ function extractAdjacentSystemRuns(messages: Message[]): Message[][] {
   };
 
   for (const message of messages) {
-    if (message.role !== "system") {
+    if (message.role !== role) {
       flushRun();
       continue;
     }
-    if (isBlankSystemText(message)) continue;
+    if (isBlankText(message)) continue;
     run.push(message);
   }
   flushRun();
@@ -441,7 +445,7 @@ function messageTextParts(message: Message): string[] {
   return message.parts.filter(isTextPart).map((part) => part.text);
 }
 
-function isBlankSystemText(message: Message): boolean {
+function isBlankText(message: Message): boolean {
   return messageTextParts(message).join("").trim().length === 0;
 }
 
@@ -450,7 +454,7 @@ function isBlankSystemText(message: Message): boolean {
  * instruction.
  *
  * `toOpenAICompatibleMessages` folds only *adjacent* system messages
- * (`extractAdjacentSystemRuns` mirrors that walk), but the Anthropic request
+ * (`extractAdjacentRuns` mirrors that walk), but the Anthropic request
  * builder (extensions/ext-llm-anthropic/src/anthropic-request-builder.ts)
  * hoists every system message in the prompt into `systemParts` and joins them
  * all with a blank line into one system string, and the Google request builder
@@ -464,12 +468,12 @@ function isBlankSystemText(message: Message): boolean {
  * per-run rewrite of its member messages.
  */
 function extractMergedSystemRuns(messages: Message[]): Message[][] {
-  const runs = extractAdjacentSystemRuns(messages);
+  const runs = extractAdjacentRuns(messages, "system");
 
   // Mirror the converters' blank handling: a system message whose assembled
   // text is blank is dropped before the hoist, so it joins nothing.
   const hoisted = messages.filter(
-    (message) => message.role === "system" && !isBlankSystemText(message),
+    (message) => message.role === "system" && !isBlankText(message),
   );
   // A single system message is covered by the per-message extraction.
   if (hoisted.length < 2) return runs;
@@ -482,14 +486,25 @@ function extractMergedSystemRuns(messages: Message[]): Message[][] {
   return alreadyCovered ? runs : [...runs, hoisted];
 }
 
-function extractMergedSystemRunTexts(messages: Message[]): string[] {
+/**
+ * Every grouping of caller-authored messages a provider converter can merge
+ * into one turn: the system runs above, plus each run of adjacent user
+ * messages, which `pushAnthropicUserContent` concatenates into a single user
+ * turn.
+ */
+function extractMergedRuns(messages: Message[]): Message[][] {
+  return [...extractMergedSystemRuns(messages), ...extractAdjacentRuns(messages, "user")];
+}
+
+function extractMergedRunTexts(messages: Message[]): string[] {
   const runTexts = new Set<string>();
-  for (const run of extractMergedSystemRuns(messages)) {
+  for (const run of extractMergedRuns(messages)) {
     for (const partSeparator of ASSEMBLED_TEXT_SEPARATORS) {
-      // The OpenAI-compatible converter and the Anthropic builder join run
-      // members with a blank line, but the Google builder sends each system
-      // message as its own `systemInstruction` part and Gemini's server-side
-      // part concatenation separator is unspecified, so the bare
+      // The OpenAI-compatible converter and the Anthropic builder join system
+      // run members with a blank line, but the Google builder sends each
+      // system message as its own `systemInstruction` part and Gemini's
+      // server-side part concatenation separator is unspecified, as is
+      // Anthropic's between the text blocks of a merged user turn, so the bare
       // concatenation of the run is assembled as well.
       for (const runSeparator of ASSEMBLED_TEXT_SEPARATORS) {
         runTexts.add(
@@ -505,7 +520,7 @@ function extractMergedSystemRunTexts(messages: Message[]): string[] {
 
 function extractInputValidationTexts(input: AgentContext["input"]): string[] {
   if (typeof input === "string") return [input];
-  return [...input.flatMap(extractMessageInputText), ...extractMergedSystemRunTexts(input)];
+  return [...input.flatMap(extractMessageInputText), ...extractMergedRunTexts(input)];
 }
 
 /**
@@ -594,20 +609,21 @@ function sanitizeStructuredInput(validator: InputValidator, messages: Message[])
 }
 
 /**
- * Sanitize across system messages the provider merges.
+ * Sanitize across messages the provider merges into one turn.
  *
  * The provider folds a merged system run into one instruction joined with a
  * blank line (adjacent runs on OpenAI-compatible providers; every system
  * message in the prompt on Anthropic and Google, see
- * `extractMergedSystemRuns`), so a harmful sequence split across the message
- * boundary ("<script" + ">alert(1)</script>") escapes per-message sanitization
- * yet reassembles at the provider. When any assembled run form still changes
- * under sanitization, the run's text is collapsed into the first message's
- * first text part, sanitized to a fixpoint over the provider-assembled form,
- * and the later messages lose their text parts; the converter then drops those
- * now-blank system layers, so the provider sees exactly the sanitized text.
- * The hoisted run is processed last, so when it needs a rewrite its collapse
- * supersedes any per-run rewrite of the same messages.
+ * `extractMergedSystemRuns`) and concatenates adjacent user messages into one
+ * Anthropic user turn, so a harmful sequence split across the message boundary
+ * ("<script" + ">alert(1)</script>") escapes per-message sanitization yet
+ * reassembles at the provider. When any assembled run form still changes under
+ * sanitization, the run's text is collapsed into the first message's first
+ * text part, sanitized to a fixpoint over the provider-assembled form, and the
+ * later messages lose their text parts; the converter then drops those
+ * now-blank layers, so the provider sees exactly the sanitized text. The
+ * hoisted system run is processed last among the system runs, so when it needs
+ * a rewrite its collapse supersedes any per-run rewrite of the same messages.
  *
  * Collapsing relocates text: when the hoisted run spans system messages that
  * user or assistant turns sit between, the sanitized instruction ends up at the
@@ -616,16 +632,18 @@ function sanitizeStructuredInput(validator: InputValidator, messages: Message[])
  * the turns they followed. Sanitization already rewrites caller text by
  * definition, and this only happens for input a rewrite was required for
  * (`sanitize: true`), so correctness is preserved at the cost of position.
+ * Adjacent user runs are contiguous by construction, so collapsing one does
+ * not move text past any other turn.
  */
-function sanitizeMergedSystemRuns(validator: InputValidator, messages: Message[]): Message[] {
+function sanitizeMergedRuns(validator: InputValidator, messages: Message[]): Message[] {
   const rewrites = new Map<Message, Message["parts"]>();
 
-  for (const run of extractMergedSystemRuns(messages)) {
+  for (const run of extractMergedRuns(messages)) {
     // The run-level join is "\n\n" on OpenAI-compatible providers and the
     // Anthropic builder, but the Google builder ships each system message as
     // a separate `systemInstruction` part whose server-side concatenation
-    // separator is unspecified, so the bare concatenation must trigger a
-    // rewrite too.
+    // separator is unspecified, as is Anthropic's between the text blocks of a
+    // merged user turn, so the bare concatenation must trigger a rewrite too.
     const runNeedsRewrite = ASSEMBLED_TEXT_SEPARATORS.some((partSeparator) =>
       ASSEMBLED_TEXT_SEPARATORS.some((runSeparator) => {
         const assembled = run
@@ -687,10 +705,10 @@ async function assertInputTextsValid(
 }
 
 /**
- * Reject a merged system run that sanitization would still rewrite.
+ * Reject a merged run that sanitization would still rewrite.
  *
- * Within one turn such a run is repaired in place
- * (`sanitizeMergedSystemRuns`), but the cross-turn hook sees the assembled
+ * Within one turn such a run is repaired in place (`sanitizeMergedRuns`),
+ * but the cross-turn hook sees the assembled
  * conversation only after the earlier half of the run is already persisted
  * memory, which it cannot rewrite. Per-turn sanitization has already run by
  * then, so only a payload split across the memory/input boundary can still
@@ -731,7 +749,7 @@ function sanitizeAgentInput(
   // deletion), and the post-sanitize revalidation only re-checks blocked
   // patterns, not sanitize completeness.
   if (typeof input === "string") return sanitizeTextToFixpoint(validator, input);
-  return sanitizeMergedSystemRuns(validator, sanitizeStructuredInput(validator, input));
+  return sanitizeMergedRuns(validator, sanitizeStructuredInput(validator, input));
 }
 
 function sameTexts(left: string[], right: string[]): boolean {
@@ -745,12 +763,13 @@ export type TurnMessageValidator = (messages: Message[]) => Promise<void>;
  * Cross-turn validation hooks, keyed by the turn's middleware context.
  *
  * The middleware sees only this turn's `context.input`, but conversation
- * memory can end with a system message from an earlier turn that failed or was
- * cancelled before an assistant reply was persisted. The provider folds that
- * tail together with this turn's leading system messages into one instruction
- * (`toOpenAICompatibleMessages` joins adjacent system messages with a blank
- * line), so a blocked phrase split across turns reassembles at the provider
- * without any single turn's input ever containing it. The runtime closes that
+ * memory can end with a caller-authored message from an earlier turn that
+ * failed or was cancelled before an assistant reply was persisted. The
+ * provider folds that tail together with this turn's leading messages of the
+ * same role into one turn (`toOpenAICompatibleMessages` joins adjacent system
+ * messages with a blank line; `pushAnthropicUserContent` concatenates adjacent
+ * user messages), so a blocked phrase split across turns reassembles at the
+ * provider without any single turn's input ever containing it. The runtime closes that
  * gap by invoking the registered hook with the full conversation it is about
  * to persist and dispatch (memory history plus this turn's input) before the
  * turn is committed, so a hostile merge is rejected without poisoning memory.
@@ -801,19 +820,19 @@ export function securityMiddleware(
     context: AgentContext,
     next: () => Promise<AgentResponse>,
   ): Promise<AgentResponse> => {
-    // Register the cross-turn check before this turn is committed: adjacent
-    // system runs must also be validated across the memory/input boundary,
-    // which only the runtime can see. Compose with any validator an earlier
-    // security middleware registered on the same context.
+    // Register the cross-turn check before this turn is committed: merged
+    // system runs and adjacent user runs must also be validated across the
+    // memory/input boundary, which only the runtime can see. Compose with any
+    // validator an earlier security middleware registered on the same context.
     const previousTurnValidator = turnMessageValidators.get(context);
     turnMessageValidators.set(context, async (messages) => {
       if (previousTurnValidator) await previousTurnValidator(messages);
-      const runTexts = extractMergedSystemRunTexts(messages);
+      const runTexts = extractMergedRunTexts(messages);
       await assertInputTextsValid(inputValidator, runTexts, config.onViolation);
       assertTextsNeedNoSanitization(
         inputValidator,
         runTexts,
-        "Merged system messages assemble content sanitization removes",
+        "Merged messages assemble content sanitization removes",
         config.onViolation,
       );
     });
