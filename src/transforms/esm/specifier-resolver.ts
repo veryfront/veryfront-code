@@ -16,6 +16,7 @@ import {
   appendSameOriginSSRDependencyPinningKey,
   normalizeExtension,
 } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import { isContainedProjectAliasPath } from "#veryfront/transforms/shared/alias-containment.ts";
 import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
 import { isServerOnlyPackage } from "../shared/server-only-packages.ts";
@@ -37,39 +38,11 @@ import {
 
 const ReflectApply = Reflect.apply;
 const RegExpTest = RegExp.prototype.test;
-const StringCharCodeAt = String.prototype.charCodeAt;
 const StringSlice = String.prototype.slice;
 const StringStartsWith = String.prototype.startsWith;
 
 function regexpTest(pattern: RegExp, value: string): boolean {
   return ReflectApply(RegExpTest, pattern, [value]) as boolean;
-}
-
-const BACKSLASH_CODE = 0x5c;
-const DELETE_CODE = 0x7f;
-const LAST_C0_CONTROL_CODE = 0x1f;
-
-/**
- * True when a path contains a character that changes how the WHATWG URL parser
- * segments it.
- *
- * `\` is a path separator under special-scheme parsing, so `..\` is a dot
- * segment. NUL, TAB, CR and LF are *removed* before dot segments are
- * collapsed, so `..<TAB>/` is a traversal that no dot-segment pattern applied
- * to the authored text can see. Every C0 control and DEL is rejected rather
- * than just the strippable subset, so a parser change cannot widen the hole.
- *
- * The scan uses this module's snapshotted intrinsics and the string's own
- * `length`, so a poisoned prototype cannot defeat it.
- */
-function hasUnsafePathCharacter(value: string): boolean {
-  for (let index = 0; index < value.length; index++) {
-    const code = ReflectApply(StringCharCodeAt, value, [index]) as number;
-    if (code <= LAST_C0_CONTROL_CODE || code === BACKSLASH_CODE || code === DELETE_CODE) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function stringSlice(value: string, start: number, end?: number): string {
@@ -221,28 +194,21 @@ async function resolveSpecifier(
   // would resolve one specifier to two different module URLs.
   if (stringStartsWith(specifier, "@/")) {
     const { path: pathOnly, suffix } = splitSpecifierSuffix(stringSlice(specifier, 2));
-    // The alias path is tenant-authored. Dot segments — raw, percent-encoded
-    // ("%2e%2e"), or backslash-separated (WHATWG parsing maps "\" to "/") —
-    // survive into the URL resolution below, where parsing collapses them and
-    // can move the resolved path out of `/_vf_modules/`, turning the import
-    // into a same-origin fetch of an arbitrary path that is then cached as an
-    // executable module. Refuse them outright — the same containment the MDX
-    // loader enforces via `canonicalizeContainedModulePath`, checked here with
-    // this module's snapshotted intrinsics so poisoned prototypes cannot
-    // defeat the guard, and as a pure guard so accepted paths keep the exact
-    // `AliasStrategy.rewrite` byte shape composed below.
+    // The alias path is tenant-authored and decides where the composed
+    // `/_vf_modules/` URL finally points, so it has to satisfy the shared
+    // containment rule before anything is composed from it. That rule lives in
+    // `transforms/shared/alias-containment.ts` and is enforced identically by
+    // `AliasStrategy.rewrite` and the SSR adapter, so the browser, SSR and
+    // module-cache paths cannot drift apart. It is a pure guard, so an
+    // accepted path keeps the exact `AliasStrategy.rewrite` byte shape
+    // composed below.
     //
     // The authored suffix is a query string or fragment and can carry tenant
     // credentials (`@/module?token=…`), so the diagnostics below name the
     // alias by its path alone — AGENTS.md, "Secret and internal-detail
     // safety", forbids echoing such values into error messages.
     const reportedAlias = suffix === "" ? `@/${pathOnly}` : `@/${pathOnly}<redacted suffix>`;
-    if (
-      pathOnly === "" ||
-      regexpTest(/(^|\/)\.\.?(\/|$)/, pathOnly) ||
-      regexpTest(/%2e/i, pathOnly) ||
-      hasUnsafePathCharacter(pathOnly)
-    ) {
+    if (!isContainedProjectAliasPath(pathOnly)) {
       throw new Error(
         `Refusing to resolve project alias ${reportedAlias}: its path escapes the /_vf_modules/ module transport`,
       );

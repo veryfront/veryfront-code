@@ -498,6 +498,9 @@ describe("transforms/esm/specifier-resolver", () => {
         Error,
         "escapes the /_vf_modules/ module transport",
       );
+      // The testing front door types assertRejects as Promise<unknown>, so the
+      // rejection reason has to be narrowed before its message is read.
+      if (!(error instanceof Error)) throw new Error("Expected an Error rejection");
 
       assertEquals(
         error.message.includes("EXAMPLE-CREDENTIAL-VALUE"),

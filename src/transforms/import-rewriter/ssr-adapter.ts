@@ -5,6 +5,7 @@ import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
+import { assertContainedProjectAliasPath } from "#veryfront/transforms/shared/alias-containment.ts";
 import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
 import { getConfiguredServerExternalRuntimeSpecifier } from "#veryfront/transforms/shared/server-only-packages.ts";
 import {
@@ -430,10 +431,23 @@ async function getCacheBusterAsync(
   return getDefaultCacheBuster(target, options);
 }
 
+/**
+ * Rewrite one authored `@/` alias — `specifierPath` is the text after `@/` —
+ * into its SSR module-transport URL.
+ *
+ * The URL is composed by concatenating the authored path onto
+ * `/_vf_modules/`, so an alias carrying dot segments would be emitted as
+ * `/_vf_modules/../…` and normalized straight back out of the transport by the
+ * SSR importer, turning the import into a same-origin fetch of an arbitrary
+ * path that is then cached as an executable module. Containment is therefore
+ * checked before anything is composed, from the same shared rule
+ * `AliasStrategy.rewrite` and `transforms/esm/specifier-resolver.ts` apply.
+ */
 function buildAliasRewrite(
   specifierPath: string,
   options: SSRRewriteOptions,
 ): { target: SSRImportRewriteTarget; prefix: string } {
+  assertContainedProjectAliasPath(specifierPath);
   const { crossProjectRef } = options;
   const jsPath = specifierPath.endsWith(".js") ? specifierPath : `${specifierPath}.js`;
 

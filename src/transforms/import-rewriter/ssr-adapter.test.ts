@@ -545,3 +545,49 @@ describe("ssr-adapter — bare import matcher edge cases", () => {
     assertEquals(rewriteSSRImportsCompat(code, opts), code);
   });
 });
+
+// The alias rewrite composes `/_vf_modules/<authored path>`, so a dot segment
+// in the authored path survives concatenation and is collapsed only by the SSR
+// importer — landing the import on an arbitrary same-origin path that is then
+// cached as an executable module. Both the sync regex rewriter and the async
+// parser-driven one compose from the same helper and must both refuse it.
+describe("ssr-adapter — @/ alias module-transport containment", () => {
+  const opts = { projectSlug: "p", branch: "b", cacheBuster: "v1" };
+  const escapes = [
+    "@/../_veryfront/modules/foo",
+    "@/components/../../_veryfront/modules/foo",
+    "@/%2e%2e/_veryfront/modules/foo",
+    "@/..\\_veryfront/modules/foo",
+  ];
+
+  for (const specifier of escapes) {
+    it(`refuses ${JSON.stringify(specifier)} synchronously`, () => {
+      assertThrows(
+        () => rewriteSSRImportsCompat(`import x from "${specifier}";`, opts),
+        Error,
+        "escapes the /_vf_modules/ module transport",
+      );
+    });
+  }
+
+  it("refuses an escaping alias in the async parser-driven path", async () => {
+    let thrown: unknown;
+    try {
+      await rewriteSSRImportsCompatAsync(
+        `import x from "@/../_veryfront/modules/foo";`,
+        opts,
+      );
+    } catch (error) {
+      thrown = error;
+    }
+    assert(thrown instanceof Error, "expected the async rewrite to reject the escaping alias");
+    assert(thrown.message.includes("escapes the /_vf_modules/ module transport"));
+  });
+
+  it("still rewrites a contained alias", () => {
+    assertEquals(
+      rewriteSSRImportsCompat(`import x from "@/components/Card";`, opts),
+      `import x from "/_vf_modules/components/Card.js?ssr=true&project=p&branch=b&v=v1";`,
+    );
+  });
+});
