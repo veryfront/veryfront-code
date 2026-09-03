@@ -101,10 +101,12 @@ interface IgnoreRule {
   negated: boolean;
   regex: RegExp;
   anchored: boolean;
-  leadingDoubleStar: boolean;
-  literalPrefix: string;
-  descendantPrefixRegexes: RegExp[];
+  crossDirectorySinglePattern: boolean;
+  descendantSegments: Array<RegExp | null>;
 }
+
+const MAX_IGNORE_PATTERN_LENGTH = 4_096;
+const MAX_IGNORE_PATTERN_SEGMENTS = 128;
 
 /**
  * Load ignore patterns from .vfignore file
@@ -202,27 +204,32 @@ function patternToRule(rawPattern: string, caseInsensitive = false): IgnoreRule 
   if (directoryOnly) pattern = pattern.slice(0, -1);
   if (!pattern) return null;
 
+  const pathSegments = pattern.split("/");
+  if (
+    pattern.length > MAX_IGNORE_PATTERN_LENGTH ||
+    pathSegments.length > MAX_IGNORE_PATTERN_SEGMENTS
+  ) {
+    throw new Error(
+      `.vfignore patterns must not exceed ${MAX_IGNORE_PATTERN_LENGTH} characters or ` +
+        `${MAX_IGNORE_PATTERN_SEGMENTS} path segments.`,
+    );
+  }
+
   const hasSlash = pattern.includes("/");
   const hasGlob = /[*?]/.test(pattern);
   const body = globToRegex(pattern);
   const prefix = anchored ? "^" : "(^|/)";
   const suffix = directoryOnly || (!hasSlash && !hasGlob) ? "(/|$)" : "$";
-  const wildcardIndex = pattern.search(/[*?]/);
-  const literalPrefix = (wildcardIndex === -1 ? pattern : pattern.slice(0, wildcardIndex))
-    .replace(/\/+$/, "");
-  const pathSegments = pattern.split("/");
-  const descendantPrefixRegexes = pathSegments.slice(0, -1).map((_, index) => {
-    const prefixBody = globToRegex(pathSegments.slice(0, index + 1).join("/"));
-    return new RegExp(`${anchored ? "^" : "(^|/)"}${prefixBody}$`, caseInsensitive ? "i" : "");
-  });
+  const descendantSegments = pathSegments.map((segment) =>
+    segment === "**" ? null : new RegExp(`^${globToRegex(segment)}$`, caseInsensitive ? "i" : "")
+  );
 
   return {
     negated,
     regex: new RegExp(`${prefix}${body}${suffix}`, caseInsensitive ? "i" : ""),
     anchored,
-    leadingDoubleStar: pattern.startsWith("**"),
-    literalPrefix,
-    descendantPrefixRegexes,
+    crossDirectorySinglePattern: !hasSlash && pattern.includes("**"),
+    descendantSegments,
   };
 }
 
@@ -249,20 +256,35 @@ function isProtected(relativePath: string): boolean {
 
 function negatedRuleTargetsDescendant(rule: IgnoreRule, normalizedPath: string): boolean {
   if (!rule.negated || rule.regex.test(normalizedPath)) return false;
-  // A wildcard before the first literal segment can match a descendant below
-  // any directory, so a protected directory stops that negation from ever
-  // being evaluated on a concrete child.
-  if (!rule.literalPrefix) {
-    return !rule.anchored || rule.leadingDoubleStar ||
-      rule.descendantPrefixRegexes.some((prefix) => prefix.test(normalizedPath));
+  if (rule.crossDirectorySinglePattern) return true;
+  if (!rule.anchored && rule.descendantSegments.length === 1) return true;
+
+  const pathSegments = normalizedPath.split("/");
+  const matchesFrom = (start: number): boolean => {
+    const memo = new Map<string, boolean>();
+    const visit = (patternIndex: number, pathIndex: number): boolean => {
+      const key = `${patternIndex}:${pathIndex}`;
+      const cached = memo.get(key);
+      if (cached !== undefined) return cached;
+      if (pathIndex === pathSegments.length) return patternIndex < rule.descendantSegments.length;
+      if (patternIndex === rule.descendantSegments.length) return false;
+
+      const matcher = rule.descendantSegments[patternIndex];
+      const matches = matcher === null
+        ? visit(patternIndex + 1, pathIndex) || visit(patternIndex, pathIndex + 1)
+        : matcher?.test(pathSegments[pathIndex]!) === true &&
+          visit(patternIndex + 1, pathIndex + 1);
+      memo.set(key, matches);
+      return matches;
+    };
+    return visit(0, start);
+  };
+
+  if (rule.anchored) return matchesFrom(0);
+  for (let start = 0; start < pathSegments.length; start++) {
+    if (matchesFrom(start)) return true;
   }
-  if (rule.descendantPrefixRegexes.some((prefix) => prefix.test(normalizedPath))) return true;
-  const candidates = rule.anchored
-    ? [normalizedPath]
-    : normalizedPath.split("/").map((_, index, parts) => parts.slice(index).join("/"));
-  return candidates.some((candidate) =>
-    rule.literalPrefix === candidate || rule.literalPrefix.startsWith(`${candidate}/`)
-  );
+  return false;
 }
 
 /**

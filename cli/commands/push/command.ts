@@ -1183,7 +1183,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             await buildManagedRemoteSnapshot(latestRemoteFiles, ignoreChecker),
           );
           if (conflicts.length > 0) {
-            throw pushConflictError(conflicts);
+            throw pushConflictError(conflicts, protectedDeleteContext());
           }
         } finally {
           spinner.stop();
@@ -1551,7 +1551,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               stillApplied.uploads,
               stillApplied.deletes,
             );
-            throw pushConflictError(conflicts);
+            throw pushConflictError(conflicts, protectedDeleteContext());
           }
           pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);
         } else if (pruneRemoteMissing) {
@@ -1579,14 +1579,15 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             };
             if (lateUploadResult.conflicts.length > 0) {
               await writeVerifiedAppliedSyncTarget();
-              throw pushConflictError(lateUploadResult.conflicts);
+              throw pushConflictError(lateUploadResult.conflicts, protectedDeleteContext());
             }
             if (lateUploadResult.failed > 0) {
               await writeVerifiedAppliedSyncTarget();
-              throw new Error(
+              throw pushMutationError(
                 `Push failed for ${lateUploadResult.failed} file${
                   lateUploadResult.failed === 1 ? "" : "s"
                 } during forced prune reconciliation`,
+                protectedDeleteContext(),
               );
             }
           }
@@ -1633,7 +1634,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             );
             if (repairedConflicts.length > 0) {
               await writeVerifiedAppliedSyncTarget(repairedRemoteFiles);
-              throw pushConflictError(repairedConflicts);
+              throw pushConflictError(repairedConflicts, protectedDeleteContext());
             }
             pushedSourceDigest = await computePushedSourceDigest(ops, repairedRemoteFiles);
           } else {
@@ -1657,14 +1658,15 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           };
           if (repairUploadResult.conflicts.length > 0) {
             await writeVerifiedAppliedSyncTarget();
-            throw pushConflictError(repairUploadResult.conflicts);
+            throw pushConflictError(repairUploadResult.conflicts, protectedDeleteContext());
           }
           if (repairUploadResult.failed > 0) {
             await writeVerifiedAppliedSyncTarget();
-            throw new Error(
+            throw pushMutationError(
               `Push failed for ${repairUploadResult.failed} file${
                 repairUploadResult.failed === 1 ? "" : "s"
               } during forced push verification`,
+              protectedDeleteContext(),
             );
           }
           if (repairUploadResult.uploaded > 0) {
@@ -1690,7 +1692,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           );
           if (conflicts.length > 0) {
             await writeVerifiedAppliedSyncTarget(latestRemoteFiles);
-            throw pushConflictError(conflicts);
+            throw pushConflictError(conflicts, protectedDeleteContext());
           }
           pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);
           pushedSyncFiles = await buildSyncFilesAfterAppliedChanges(

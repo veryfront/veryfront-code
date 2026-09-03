@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import { stub } from "#std/testing/mock";
@@ -255,6 +255,14 @@ describe("cli/sync/ignore", () => {
       assertEquals(checker.isIgnored("build"), true);
       assertEquals(checker.isIgnored("src/build"), true);
       assertEquals(checker.isIgnored("building"), false);
+    });
+
+    it("bounds repository-controlled ignore rule complexity", () => {
+      assertThrows(
+        () => createIgnoreChecker([`${"segment/".repeat(128)}file.ts`]),
+        Error,
+        ".vfignore patterns must not exceed",
+      );
     });
   });
 

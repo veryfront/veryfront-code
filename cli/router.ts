@@ -139,8 +139,13 @@ function commandNameForJson(args: ParsedArgs): string {
 function safeJsonErrorContext(context: unknown): Record<string, unknown> | undefined {
   if (context === undefined) return undefined;
   const redacted = redactForSerialization(context);
-  return redacted !== null && typeof redacted === "object" && !Array.isArray(redacted)
-    ? redacted as Record<string, unknown>
+  if (redacted === null || typeof redacted !== "object" || Array.isArray(redacted)) {
+    return undefined;
+  }
+  const protectedDeleted = (redacted as Record<string, unknown>).protectedDeleted;
+  return Array.isArray(protectedDeleted) &&
+      protectedDeleted.every((path) => typeof path === "string")
+    ? { protectedDeleted }
     : undefined;
 }
 
