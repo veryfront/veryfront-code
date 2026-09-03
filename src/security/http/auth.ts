@@ -180,6 +180,65 @@ function resolveConfiguredAuth(value: unknown): ResolvedAuth {
   return Object.freeze({ kind: "bearer", token: bearer.token });
 }
 
+function resolveRequestAuth(ctx: HandlerContext): ResolvedAuth | null {
+  const explicitAuth = readExplicitAuth(ctx.securityConfig);
+  if (explicitAuth.state === "invalid") return INVALID_AUTH;
+  if (explicitAuth.state === "present") return resolveConfiguredAuth(explicitAuth.value);
+
+  const username: unknown = ctx.adapter.env.get("VERYFRONT_BASIC_USER");
+  const password: unknown = ctx.adapter.env.get("VERYFRONT_BASIC_PASS");
+  const token: unknown = ctx.adapter.env.get("VERYFRONT_BEARER_TOKEN");
+  const hasUsername = username !== undefined;
+  const hasPassword = password !== undefined;
+  const hasToken = token !== undefined;
+
+  if (!hasUsername && !hasPassword && !hasToken) return null;
+
+  if (
+    hasUsername &&
+    hasPassword &&
+    !hasToken &&
+    typeof username === "string" &&
+    username.length > 0 &&
+    typeof password === "string" &&
+    password.length > 0
+  ) {
+    return Object.freeze({
+      kind: "basic",
+      username,
+      password,
+      realm: "Secure Area",
+    });
+  }
+
+  if (
+    !hasUsername &&
+    !hasPassword &&
+    hasToken &&
+    typeof token === "string" &&
+    token.length > 0
+  ) {
+    return Object.freeze({ kind: "bearer", token });
+  }
+
+  return INVALID_AUTH;
+}
+
+/**
+ * Whether this project gates requests behind a credential.
+ *
+ * Handlers that emit cache directives need the same answer `AuthHandler` acts
+ * on, so both read one resolver. An unresolvable config counts as gated: it
+ * 401s every browser request, and a response nobody may read must not be
+ * announced to shared caches as public either.
+ *
+ * This is a policy question about the project, not an admission decision about
+ * the request: it says a gate exists, never that the caller passed it.
+ */
+export function isAuthGateEnabled(ctx: HandlerContext): boolean {
+  return resolveRequestAuth(ctx) !== null;
+}
+
 export class AuthHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "AuthHandler",
@@ -295,47 +354,7 @@ export class AuthHandler extends BaseHandler {
   }
 
   private resolveAuth(ctx: HandlerContext): ResolvedAuth | null {
-    const explicitAuth = readExplicitAuth(ctx.securityConfig);
-    if (explicitAuth.state === "invalid") return INVALID_AUTH;
-    if (explicitAuth.state === "present") return resolveConfiguredAuth(explicitAuth.value);
-
-    const username: unknown = ctx.adapter.env.get("VERYFRONT_BASIC_USER");
-    const password: unknown = ctx.adapter.env.get("VERYFRONT_BASIC_PASS");
-    const token: unknown = ctx.adapter.env.get("VERYFRONT_BEARER_TOKEN");
-    const hasUsername = username !== undefined;
-    const hasPassword = password !== undefined;
-    const hasToken = token !== undefined;
-
-    if (!hasUsername && !hasPassword && !hasToken) return null;
-
-    if (
-      hasUsername &&
-      hasPassword &&
-      !hasToken &&
-      typeof username === "string" &&
-      username.length > 0 &&
-      typeof password === "string" &&
-      password.length > 0
-    ) {
-      return Object.freeze({
-        kind: "basic",
-        username,
-        password,
-        realm: "Secure Area",
-      });
-    }
-
-    if (
-      !hasUsername &&
-      !hasPassword &&
-      hasToken &&
-      typeof token === "string" &&
-      token.length > 0
-    ) {
-      return Object.freeze({ kind: "bearer", token });
-    }
-
-    return INVALID_AUTH;
+    return resolveRequestAuth(ctx);
   }
 
   private checkBasicAuth(
