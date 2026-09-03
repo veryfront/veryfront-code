@@ -53,6 +53,7 @@ import {
   type GitSource,
   normalizeControlPlane,
   type ProjectTarget,
+  resolveDeletedGitSourcePaths,
   resolveGitSource,
   writePushReceipt,
 } from "../../shared/deployment-provenance.ts";
@@ -142,6 +143,8 @@ export interface PushOptions {
   quiet?: boolean;
   /** Reject when HEAD no longer matches the commit that selected this push. */
   expectedCommitSha?: string | null;
+  /** Discover tracked deletions inside the same snapshot used for this push. */
+  discoverDeletedGitPaths?: boolean;
 }
 
 /**
@@ -157,6 +160,7 @@ export interface PushSourceSnapshot {
   files: UploadOp[];
   gitSource: GitSource;
   sourceDigest: string;
+  deletedGitPaths?: string[];
 }
 
 /**
@@ -308,12 +312,16 @@ export async function capturePushSourceSnapshot(
   projectDir: string,
   ignoreChecker: IgnoreChecker,
   expectedCommitSha?: string | null,
+  discoverDeletedGitPaths = false,
 ): Promise<PushSourceSnapshot> {
   const gitSourceBefore = await resolveGitSource(projectDir);
   if (expectedCommitSha !== undefined && gitSourceBefore.commitSha !== expectedCommitSha) {
     throw sourceChangedError();
   }
   const { files, sourceDigest } = await capturePushSourceDigest(projectDir, ignoreChecker);
+  const deletedGitPaths = discoverDeletedGitPaths
+    ? await resolveDeletedGitSourcePaths(projectDir)
+    : undefined;
   const trackedSourceFiles = await sourceFilesForGitTracking(projectDir, files);
   const filesTracked = await areSourceFilesTracked(projectDir, trackedSourceFiles);
   const gitSource = await resolveGitSource(projectDir);
@@ -323,6 +331,7 @@ export async function capturePushSourceSnapshot(
     files,
     gitSource: { ...gitSource, clean: gitSource.clean && filesTracked },
     sourceDigest,
+    ...(deletedGitPaths ? { deletedGitPaths } : {}),
   };
 }
 
@@ -1038,12 +1047,14 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           projectDir,
           ignoreChecker,
           options.expectedCommitSha,
+          options.discoverDeletedGitPaths ?? false,
         );
       } catch (error) {
         spinner.stop();
         throw error;
       }
       const ops = sourceSnapshot.files;
+      for (const path of sourceSnapshot.deletedGitPaths ?? []) selectedPrunePaths.add(path);
       const localPaths = new Set(ops.map((op) => op.path));
 
       let target: PushRemoteTarget = projectExists

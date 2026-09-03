@@ -41,7 +41,6 @@ import {
   PUSH_RECEIPT_RELATIVE_PATH,
   type PushReceipt,
   readPushReceipt,
-  resolveDeletedGitSourcePaths,
   resolveGitSource,
   validatePushReceipt,
 } from "../deployment-provenance.ts";
@@ -356,12 +355,12 @@ async function ensureProjectLinkedForDeploy(
 /**
  * How an `ensure-pushed` deploy has to upload the local source, if at all.
  *
- * - `"bootstrap"` — no receipt exists, so there is no remote state to
+ * - `"bootstrap"`: no receipt exists, so there is no remote state to
  *   reconcile against and the first push may write the branch outright.
- * - `"refresh"`  — a receipt for *this* deploy target exists but no longer
+ * - `"refresh"`: a receipt for *this* deploy target exists but no longer
  *   describes the checkout, so the source is pushed again under the normal
  *   conflict checks.
- * - `"none"`     — nothing to push, either because the receipt still describes
+ * - `"none"`: nothing to push, either because the receipt still describes
  *   the checkout or because deploy must refuse rather than upload.
  */
 export type BootstrapPushKind = "none" | "bootstrap" | "refresh";
@@ -1724,20 +1723,21 @@ export function createDeployProject(options: {
 
       if (bootstrapPush) {
         await step(observer, "push-source", async () => {
-          const prunePaths = bootstrapPushKind === "refresh"
-            ? await resolveDeletedGitSourcePaths(request.projectDir)
-            : undefined;
+          const refreshWithoutGit = bootstrapPushKind === "refresh" &&
+            localSource?.gitSource.commitSha === null;
           await pushCommand({
             projectDir: request.projectDir,
             branch,
             // Only the very first push of a project has no receipt to
             // reconcile against, so only it may write the branch outright.
             // Refreshing an established push keeps normal remote-conflict
-            // checks. It prunes only tracked paths deleted in this checkout,
-            // preserving intentional remote-only files from Studio or another
-            // collaborator.
+            // checks. Git-backed refreshes discover tracked deletions inside
+            // the push snapshot, preserving intentional remote-only files.
+            // A directory outside Git has no deletion ownership evidence, so
+            // its local source is authoritative and the refresh fully prunes.
             force: bootstrapPushKind === "bootstrap",
-            prunePaths,
+            prune: refreshWithoutGit,
+            discoverDeletedGitPaths: bootstrapPushKind === "refresh" && !refreshWithoutGit,
             expectedCommitSha: bootstrapPushKind === "refresh"
               ? localSource?.gitSource.commitSha
               : undefined,

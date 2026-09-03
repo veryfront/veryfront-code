@@ -134,6 +134,7 @@ function createDeployFetchHandler(options: {
   deletedPaths?: string[];
   releaseFiles?: Map<string, string>;
   branchCreates?: string[];
+  onRequest?: (request: Request) => void | Promise<void>;
 }) {
   let environmentReads = 0;
   const releaseSource = options.releaseSource ?? PUSHED_SOURCE;
@@ -152,6 +153,7 @@ function createDeployFetchHandler(options: {
     const url = new URL(request.url);
     const requestKey = `${request.method} ${url.pathname}${url.search}`;
     options.requests.push(requestKey);
+    await options.onRequest?.(request);
 
     if (request.method === "GET" && url.hostname === "my-project.production.veryfront.com") {
       return new Response("ready");
@@ -498,7 +500,6 @@ it("re-pushes uncommitted work instead of redeploying the source it replaced", a
     await Deno.writeTextFile(`${projectDir}/app.ts`, STALE_SOURCE);
     // A tracked file deleted here must be pruned from the branch; a remote-only
     // file nobody deleted must survive.
-    await Deno.remove(`${projectDir}/legacy.ts`);
 
     const requests: string[] = [];
     const uploadedPaths: string[] = [];
@@ -512,6 +513,8 @@ it("re-pushes uncommitted work instead of redeploying the source it replaced", a
       { path: "veryfront.json", content: '{"projectSlug":"my-project"}\n' },
       { path: "studio-page.tsx", content: STUDIO_SOURCE },
     ]);
+    let pushStarted = false;
+    let deletedDuringPush = false;
 
     await withMockFetch(
       createDeployFetchHandler({
@@ -520,6 +523,92 @@ it("re-pushes uncommitted work instead of redeploying the source it replaced", a
         uploadedPaths,
         uploadedFiles,
         deletedPaths,
+        releaseFiles: uploadedFiles,
+        releaseSource: STALE_SOURCE,
+        async onRequest() {
+          if (!pushStarted || deletedDuringPush) return;
+          deletedDuringPush = true;
+          await Deno.remove(`${projectDir}/legacy.ts`);
+        },
+      }),
+      () =>
+        boundedDeployProject().execute({
+          projectDir,
+          branch: "main",
+          environment: "production",
+          mode: "apply",
+          source: { kind: "ensure-pushed", refreshStaleSource: true },
+        }, {
+          onEvent(event) {
+            if (
+              event.kind === "step" && event.step === "push-source" && event.phase === "started"
+            ) {
+              pushStarted = true;
+            }
+          },
+        }),
+    );
+
+    assertEquals(uploadedPaths.includes("app.ts"), true);
+    assertEquals(uploadedFiles.get("app.ts"), STALE_SOURCE);
+    assertEquals(deletedPaths, ["legacy.ts"]);
+    assertEquals(uploadedFiles.get("studio-page.tsx"), STUDIO_SOURCE);
+    assertEquals(
+      requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`),
+      true,
+    );
+  }, { "legacy.ts": LEGACY_SOURCE });
+});
+
+it("refreshes changed digest-only source outside Git", async () => {
+  const projectDir = await makeTempDir();
+  await withDeployEnv(projectDir, async ({ sourceDigest }) => {
+    await Deno.remove(`${projectDir}/.git`, { recursive: true });
+    Deno.env.delete("GITHUB_SHA");
+    await writePushReceipt(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      commitSha: null,
+      sourceDigest,
+      localSourceDigest: sourceDigest,
+      clean: false,
+      pushedAt: "2026-07-10T09:20:00.000Z",
+    });
+    await writeSyncTarget(projectDir, {
+      controlPlane: "https://control.example.test/api",
+      projectId: PROJECT_ID,
+      projectSlug: "my-project",
+      branch: "main",
+      files: {
+        "app.ts": {
+          digest: await computeContentDigest(PUSHED_SOURCE),
+          versionId: remoteVersionId("app.ts"),
+        },
+        "veryfront.json": {
+          digest: await computeContentDigest('{"projectSlug":"my-project"}\n'),
+          versionId: remoteVersionId("veryfront.json"),
+        },
+      },
+    });
+    await Deno.writeTextFile(`${projectDir}/app.ts`, STALE_SOURCE);
+
+    const requests: string[] = [];
+    const uploadedFiles = new Map<string, string>([
+      ["app.ts", PUSHED_SOURCE],
+      ["veryfront.json", '{"projectSlug":"my-project"}\n'],
+    ]);
+    const refreshedSourceDigest = await computeSourceDigest([
+      { path: "app.ts", content: STALE_SOURCE },
+      { path: "veryfront.json", content: '{"projectSlug":"my-project"}\n' },
+    ]);
+
+    await withMockFetch(
+      createDeployFetchHandler({
+        requests,
+        sourceDigest: refreshedSourceDigest,
+        uploadedFiles,
         releaseFiles: uploadedFiles,
         releaseSource: STALE_SOURCE,
       }),
@@ -533,15 +622,9 @@ it("re-pushes uncommitted work instead of redeploying the source it replaced", a
         }),
     );
 
-    assertEquals(uploadedPaths.includes("app.ts"), true);
     assertEquals(uploadedFiles.get("app.ts"), STALE_SOURCE);
-    assertEquals(deletedPaths, ["legacy.ts"]);
-    assertEquals(uploadedFiles.get("studio-page.tsx"), STUDIO_SOURCE);
-    assertEquals(
-      requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`),
-      true,
-    );
-  }, { "legacy.ts": LEGACY_SOURCE });
+    assertEquals(requests.includes(`POST /api/projects/${PROJECT_ID}/deployments`), true);
+  });
 });
 
 it("refuses to promote a receipt the working tree no longer matches", async () => {
