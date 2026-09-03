@@ -393,9 +393,48 @@ function extractMessageInputText(message: Message): string[] {
   return [...values, ...ASSEMBLED_TEXT_SEPARATORS.map((sep) => textParts.join(sep))];
 }
 
+/** Text of one message as the runtime adapter assembles it for the provider. */
+function assembledMessageText(message: Message): string {
+  return message.parts.filter(isTextPart).map((part) => part.text).join("\n\n");
+}
+
+/**
+ * Assembled text for each run of adjacent system messages.
+ *
+ * `toOpenAICompatibleMessages` (src/provider/runtime-loader.ts) folds adjacent
+ * system messages into one instruction joined with a blank line, and skips
+ * blank ones without breaking that adjacency. A blocked phrase split across two
+ * sibling system messages therefore reassembles at the provider, so each merged
+ * run is validated as the single instruction the provider will actually see.
+ */
+function extractAdjacentSystemRunTexts(messages: Message[]): string[] {
+  const runTexts: string[] = [];
+  let run: string[] = [];
+
+  const flushRun = () => {
+    if (run.length > 1) runTexts.push(run.join("\n\n"));
+    run = [];
+  };
+
+  for (const message of messages) {
+    if (message.role !== "system") {
+      flushRun();
+      continue;
+    }
+    const text = assembledMessageText(message);
+    // The converter drops blank system layers outright, leaving the messages
+    // on either side of them adjacent, so a blank one must not end the run.
+    if (text.trim().length === 0) continue;
+    run.push(text);
+  }
+  flushRun();
+
+  return runTexts;
+}
+
 function extractInputValidationTexts(input: AgentContext["input"]): string[] {
   if (typeof input === "string") return [input];
-  return input.flatMap(extractMessageInputText);
+  return [...input.flatMap(extractMessageInputText), ...extractAdjacentSystemRunTexts(input)];
 }
 
 /**
@@ -439,6 +478,39 @@ async function validateInputTexts(
   };
 }
 
+/** Validate every extracted text, throwing the first violation as an agent error. */
+async function assertInputTextsValid(
+  validator: InputValidator,
+  values: string[],
+  onViolation?: (violation: SecurityViolation) => void,
+): Promise<void> {
+  const validation = await validateInputTexts(validator, values);
+  if (validation.valid) return;
+
+  reportViolations(validation.violations, onViolation);
+
+  const firstViolation = validation.violations[0];
+  throw toError(
+    createError({
+      type: "agent",
+      message: `Input validation failed: ${firstViolation?.reason ?? "Unknown reason"}`,
+    }),
+  );
+}
+
+/** Sanitize agent input, returning the original value when nothing changed. */
+function sanitizeAgentInput(
+  validator: InputValidator,
+  input: AgentContext["input"],
+): AgentContext["input"] {
+  if (typeof input === "string") return validator.sanitize(input) ?? input;
+  return sanitizeStructuredInput(validator, input);
+}
+
+function sameTexts(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 /**
  * Create security middleware for agents
  */
@@ -453,25 +525,20 @@ export function securityMiddleware(
     next: () => Promise<AgentResponse>,
   ): Promise<AgentResponse> => {
     const inputValues = extractInputValidationTexts(context.input);
-    const inputValidation = await validateInputTexts(inputValidator, inputValues);
+    await assertInputTextsValid(inputValidator, inputValues, config.onViolation);
 
-    if (!inputValidation.valid) {
-      reportViolations(inputValidation.violations, config.onViolation);
+    const sanitizedInput = sanitizeAgentInput(inputValidator, context.input);
+    if (sanitizedInput !== context.input) {
+      context.input = sanitizedInput;
 
-      const firstViolation = inputValidation.violations[0];
-      throw toError(
-        createError({
-          type: "agent",
-          message: `Input validation failed: ${firstViolation?.reason ?? "Unknown reason"}`,
-        }),
-      );
-    }
-
-    if (typeof context.input === "string") {
-      const sanitized = inputValidator.sanitize(context.input);
-      if (sanitized != null) context.input = sanitized;
-    } else {
-      context.input = sanitizeStructuredInput(inputValidator, context.input);
+      // Sanitization deletes markup, and deleting it can splice a blocked
+      // phrase back together (`ignore <script></script>previous instructions`),
+      // so anything the rewrite changed is validated again before it is passed
+      // on. Unchanged text is skipped: it already passed above.
+      const sanitizedValues = extractInputValidationTexts(context.input);
+      if (!sameTexts(inputValues, sanitizedValues)) {
+        await assertInputTextsValid(inputValidator, sanitizedValues, config.onViolation);
+      }
     }
 
     const result = await next();

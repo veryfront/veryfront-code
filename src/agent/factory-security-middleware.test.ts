@@ -224,6 +224,47 @@ describe("resolveSecurityMiddleware", () => {
     );
   });
 
+  it("still persists a turn a middleware answered without calling next", async () => {
+    // `cacheMiddleware` returns a cached response without invoking the
+    // continuation. That turn was accepted, so it must reach memory even though
+    // the agent loop never ran.
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/short-circuit-persistence",
+      // deno-lint-ignore require-await
+      async doGenerate() {
+        throw new Error("the short-circuiting middleware must answer instead of the model");
+      },
+      // deno-lint-ignore require-await
+      async doStream() {
+        throw new Error("Expected generate path");
+      },
+    };
+
+    const shortCircuit: AgentMiddleware = () =>
+      Promise.resolve(createAgentResponse({ text: "cached answer" }));
+
+    const assistant = agent({
+      id: "short-circuit-persistence",
+      model: "hosted/short-circuit-persistence",
+      system: "You are helpful.",
+      skills: false,
+      maxSteps: 1,
+      memory: { type: "conversation" },
+      middleware: [shortCircuit],
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const result = await assistant.generate({ input: "what is the weather?" });
+
+    assertEquals(result.text, "cached answer");
+    assertEquals(
+      (await assistant.getMemoryStats()).totalMessages,
+      1,
+      "a short-circuited turn must still record its user message",
+    );
+  });
+
   it("applies child agent middleware when the agent is called as a streaming tool", async () => {
     const model: ModelRuntime = {
       provider: "hosted",

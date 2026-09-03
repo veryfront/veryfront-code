@@ -1527,18 +1527,26 @@ export class AgentRuntime {
           platform: detectPlatform(),
         };
 
+        // Persist only after the middleware chain accepted this turn. Committing
+        // to memory first would store a rejected (hostile) message, and the next
+        // benign turn would replay it to the provider without ever being
+        // validated again. A middleware that answers without calling `next()`
+        // (a cache hit) still accepted the turn, so `persistTurn` runs after the
+        // chain resolves when the continuation never reached it.
+        let turnPersisted = false;
+        const persistTurn = async (): Promise<Message[]> => {
+          turnPersisted = true;
+          return await this.prepareTurnMessages(
+            resolveValidatedTurnInput(agentContext.input, inputMessages, inputMessages),
+          );
+        };
+
         const chain = new MiddlewareChain(this.config.middleware);
-        return chain.execute(
+        const response = await chain.execute(
           agentContext,
           async () => {
             try {
-              // Persist only after the middleware chain accepted this turn.
-              // Committing to memory first would store a rejected (hostile)
-              // message, and the next benign turn would replay it to the
-              // provider without ever being validated again.
-              const messages = await this.prepareTurnMessages(
-                resolveValidatedTurnInput(agentContext.input, inputMessages, inputMessages),
-              );
+              const messages = await persistTurn();
               return await runWithRemoteIntegrationToolDiscoveryScope(() =>
                 this.#executeAgentLoop(
                   systemPrompt,
@@ -1571,6 +1579,9 @@ export class AgentRuntime {
             }
           },
         );
+
+        if (!turnPersisted) await persistTurn();
+        return response;
       }).catch(async (error) => {
         await failProviderReplayCheckpointTurn(providerReplayCheckpointEmission);
         throw error;
@@ -1679,6 +1690,19 @@ export class AgentRuntime {
       };
       const chain = new MiddlewareChain(this.config.middleware);
 
+      // Persist only after the middleware chain accepted this turn, so a
+      // rejected message never lands in memory to be replayed to the provider on
+      // a later, benign turn. A middleware that answers without calling `next()`
+      // (a cache hit) still accepted the turn, so `persistTurn` runs after the
+      // chain resolves when the continuation never reached it.
+      let turnPersisted = false;
+      const persistTurn = async (): Promise<Message[]> => {
+        turnPersisted = true;
+        return await this.prepareTurnMessages(
+          resolveValidatedTurnInput(agentContext.input, messages, inputMessages),
+        );
+      };
+
       // Hold the in-flight agent-loop promise so stream cancellation can detach a
       // no-op rejection handler. When the client cancels, we abort the shared
       // signal; the loop (model fetch / tool execution) then rejects with an
@@ -1712,12 +1736,7 @@ export class AgentRuntime {
               agentContext,
               async () => {
                 try {
-                  // Persist only after the middleware chain accepted this turn,
-                  // so a rejected message never lands in memory and gets
-                  // replayed to the provider on a later, benign turn.
-                  const memoryMessages = await this.prepareTurnMessages(
-                    resolveValidatedTurnInput(agentContext.input, messages, inputMessages),
-                  );
+                  const memoryMessages = await persistTurn();
                   return await runWithRemoteIntegrationToolDiscoveryScope(() =>
                     this.#executeAgentLoopStreaming(
                       systemPrompt,
@@ -1748,6 +1767,7 @@ export class AgentRuntime {
               },
             );
             const response = await inFlight;
+            if (!turnPersisted) await persistTurn();
             throwIfAborted(streamAbortSignal);
             callbacks?.onFinish?.(response);
             throwIfAborted(streamAbortSignal);
