@@ -446,6 +446,12 @@ function assertReceiptDescribesLocalSource(
   receipt: PushReceipt,
   expected: PushReceiptExpectation,
 ): void {
+  if (receipt.commitSha && expected.commitSha === null) {
+    throw new Error(
+      "The latest push came from a Git commit, but this project no longer resolves to one. " +
+        "Restore the checkout or run veryfront push again from the current source.",
+    );
+  }
   if (receipt.localSourceDigest !== undefined) {
     if (expected.localSourceDigest === null || expected.localSourceDigest === undefined) {
       throw new Error(

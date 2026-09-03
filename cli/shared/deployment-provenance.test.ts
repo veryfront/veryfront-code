@@ -189,8 +189,27 @@ describe("validatePushReceipt", () => {
           })
         ),
       Error,
-      "The latest push came from a clean checkout, but this project no longer resolves to a Git commit. " +
-        "Run veryfront push again to deploy the current source.",
+      "The latest push came from a Git commit, but this project no longer resolves to one.",
+    );
+  });
+
+  it("rejects a matching digest when a Git-backed receipt loses its commit", async () => {
+    const localSourceDigest = `sha256:${"1".repeat(64)}`;
+    await assertRejects(
+      () =>
+        Promise.resolve().then(() =>
+          validatePushReceipt({ ...RECEIPT, localSourceDigest }, {
+            controlPlane: RECEIPT.controlPlane,
+            projectId: RECEIPT.projectId,
+            projectSlug: RECEIPT.projectSlug,
+            branch: RECEIPT.branch,
+            commitSha: null,
+            clean: false,
+            localSourceDigest,
+          })
+        ),
+      Error,
+      "no longer resolves to one",
     );
   });
 
