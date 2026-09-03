@@ -9,6 +9,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  createFileSystem,
   makeTempDir,
   mkdir,
   readDir,
@@ -18,6 +19,7 @@ import {
   writeTextFile,
 } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path";
+import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { FRAMEWORK_ROOT } from "./constants.ts";
 import {
@@ -224,6 +226,46 @@ describe("transformJsxImports", () => {
         "the first cached module must not be overwritten by the second",
       );
       assertEquals((await readTextFile(secondPath)).includes("default"), true);
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("arms the age-based sweep even when a render is served entirely from cache", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-sweep-armed-test-" });
+    const sourcePath = "/tmp/source/AllCached.tsx";
+    const source = "export const AllCached = () => <b />;";
+    const adapter = {
+      fs: {
+        readFile: (path: string) => {
+          if (path !== sourcePath) throw new Error(`unexpected read: ${path}`);
+          return Promise.resolve(source);
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    try {
+      const cachedPath = join(tempDir, buildMdxJsxCacheFileName(sourcePath, source));
+      await writeTextFile(
+        cachedPath,
+        "import React from 'react';\nexport const AllCached = () => null;",
+      );
+
+      const transformed = await transformJsxImports(
+        `import AllCached from "file://${sourcePath}";`,
+        adapter,
+        tempDir,
+      );
+
+      // Served entirely from cache: no artifact written, so no write-driven
+      // prune ever runs. A replacement process after a restart must still get
+      // the scan that collects variants retired before it booted.
+      assertEquals(extractCachedJsxPath(transformed), cachedPath);
+      assertEquals(
+        __importTransformerInternals.hasScheduledJsxCachePrune(tempDir),
+        true,
+        "a cached-only render must re-arm the sweep a process restart lost",
+      );
     } finally {
       await remove(tempDir, { recursive: true });
     }
@@ -526,6 +568,12 @@ describe("transformJsxImports", () => {
 });
 
 describe("readProjectJsxSourceWithinLimit", () => {
+  afterEach(() => {
+    // Every transform arms the directory's unref'd sweep timer; drop it so no
+    // test observes a neighbour's pending cleanup.
+    __importTransformerInternals.cancelScheduledJsxCachePrunes();
+  });
+
   it("falls back to the prefix reader when no strict reader is advertised", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-prefix-reader-test-" });
     const sourcePath = "/tmp/source/Prefix.tsx";
@@ -1107,6 +1155,37 @@ describe("pruneSupersededJsxArtifacts", () => {
     }
   });
 
+  it("re-reads the shared mtime before removing, so another process's use wins", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-shared-mtime-test-" });
+    const artifactPath = join(tempDir, "jsx-refreshed-elsewhere.mjs");
+    const nowMs = afterGracePeriod();
+
+    try {
+      await writeTextFile(artifactPath, "export const v = 0;");
+      // Another process's cache hit refreshes the shared mtime between this
+      // pruner's scan and its removal. That process's memos are invisible
+      // here, so only the file's own clock records the use.
+      const fs = createFileSystem();
+      if (!fs.utime) throw new Error("the test runtime must support utime");
+      await fs.utime(artifactPath, new Date(nowMs), new Date(nowMs));
+
+      const removal = await removeJsxArtifactUnlessServed(artifactPath, nowMs);
+      if (removal.removed) throw new Error("a freshly used artifact must be preserved");
+      assertEquals(
+        removal.retryAtMs > nowMs,
+        true,
+        "the preserved artifact must earn a fresh grace period from its refreshed use",
+      );
+      assertEquals(
+        (await readTextFile(artifactPath)).length > 0,
+        true,
+        "removal must honor a use it can only see on disk",
+      );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
   it("keeps a referenced artifact and schedules a follow-up for its release", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-jsx-prune-active-ref-test-" });
     const sourcePath = "/tmp/source/Referenced.tsx";
@@ -1301,6 +1380,76 @@ describe("jsx artifact references", () => {
     } finally {
       await remove(tempDir, { recursive: true });
     }
+  });
+
+  it("remembers its own refresh so an unknown mtime does not force another write", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-touch-memo-test-" });
+    const artifactPath = join(tempDir, "jsx-touched-memo.mjs");
+
+    try {
+      await writeTextFile(artifactPath, "export const v = 0;");
+      const base = (await stat(artifactPath)).mtime?.getTime() ?? 0;
+
+      // The retain path holds no fresh stat, so it reports the mtime as
+      // unknown; the first heartbeat writes through.
+      await refreshJsxArtifactMtime(artifactPath, 0, base + JSX_CACHE_VARIANT_MIN_AGE_MS);
+      const refreshed = (await stat(artifactPath)).mtime?.getTime() ?? 0;
+      assertEquals(refreshed > base, true, "an unknown mtime must be refreshed once");
+
+      // Moments later the caller still knows no mtime, but the memo remembers
+      // the write: a module with many cached JSX imports must not pay one
+      // metadata write per import per render.
+      await refreshJsxArtifactMtime(artifactPath, 0, base + JSX_CACHE_VARIANT_MIN_AGE_MS + 1_000);
+      assertEquals(
+        (await stat(artifactPath)).mtime?.getTime() ?? 0,
+        refreshed,
+        "a refresh this process just wrote must satisfy the next heartbeat",
+      );
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
+  });
+});
+
+describe("mapJsxTransformsWithCleanup", () => {
+  const { mapJsxTransformsWithCleanup } = __importTransformerInternals;
+
+  it("runs cleanup after in-flight callbacks settle when acquisition times out", async () => {
+    const events: string[] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => (releaseFirst = resolve));
+
+    // One permit: the first callback holds it past the acquisition timeout, so
+    // the second item's wait rejects the whole map outside any callback's try.
+    const failure = mapJsxTransformsWithCleanup(
+      ["holds-the-permit", "times-out-waiting"],
+      async (item: string) => {
+        await firstGate;
+        events.push(`settled:${item}`);
+        return item;
+      },
+      () => {
+        events.push("cleanup");
+        return Promise.resolve();
+      },
+      { semaphore: new Semaphore(1), timeoutMs: 25 },
+    ).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+    // Let the queued acquisition time out while the first callback still holds
+    // the only permit, then let that callback finish its write.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    releaseFirst();
+
+    const error = await failure;
+    assertExists(error, "an acquisition timeout must still reject the transform");
+    assertEquals(
+      events,
+      ["settled:holds-the-permit", "cleanup"],
+      "cleanup must run after the started callback's write, so the write is covered",
+    );
   });
 });
 
