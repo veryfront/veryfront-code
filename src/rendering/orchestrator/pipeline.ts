@@ -759,6 +759,9 @@ export class RenderPipeline {
     };
     const projectSlug = options?.projectSlug || options?.projectId || "unknown";
     const projectId = options?.projectId ?? this.config.projectId ?? this.config.projectDir;
+    // Mirror the fallback in resolveModuleLoaderConfig so stale-cache recovery
+    // classifies and purges the same namespace the module loader compiled into.
+    const contentSourceId = options?.contentSourceId ?? this.config.contentSourceId;
     const cacheKey = this.buildCacheKey(slug, options, dependencyPinningCacheKey);
 
     let cacheResult: Awaited<ReturnType<typeof this.config.cacheCoordinator.checkCache>> | null =
@@ -1118,7 +1121,7 @@ export class RenderPipeline {
           adapter: this.config.adapter,
           projectId,
           projectSlug,
-          contentSourceId: options?.contentSourceId,
+          contentSourceId,
           slug,
           pagePath: slug,
           mode: this.config.mode,
@@ -1130,7 +1133,7 @@ export class RenderPipeline {
             slug,
             projectId,
             projectSlug,
-            contentSourceId: options?.contentSourceId,
+            contentSourceId,
           });
           return await renderOnce();
         }

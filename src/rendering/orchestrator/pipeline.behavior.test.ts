@@ -1341,6 +1341,62 @@ describe("RenderPipeline behavior", () => {
     assertEquals(sourceRefreshes, 1);
   });
 
+  it("renderPage recovers preview caches from the pipeline's configured content source", async () => {
+    const slug = "/behavior-configured-preview-stale-mdx";
+    let renderAttempts = 0;
+    let sourceRefreshes = 0;
+    // The pipeline carries the preview content source in its own config and the
+    // request supplies no override, which is how resolveModuleLoaderConfig
+    // resolves the namespace. Recovery must use the same fallback.
+    const pipeline = createPipeline("/project/pages/behavior-configured-preview-stale-mdx.mdx", {
+      mode: "production",
+      contentSourceId: "preview-main",
+      adapter: {
+        env: { get: () => undefined },
+        fs: {
+          exists: async () => false,
+          refreshSourceSnapshot: () => {
+            sourceRefreshes++;
+            return Promise.resolve();
+          },
+        },
+      } as any,
+      pageRenderer: {
+        preparePageBundles: async () => {
+          renderAttempts++;
+          if (renderAttempts === 1) {
+            throw new Error(
+              "The requested module 'file:///cache/vfmod.mjs' does not provide an export named 'default'",
+            );
+          }
+
+          return {
+            pageElement: {},
+            pageBundle: {},
+          };
+        },
+      } as any,
+    } as Partial<RenderPipelineConfig>);
+
+    const result = await pipeline.renderPage(slug, {
+      delivery: "string",
+      projectId: "project-1",
+      projectSlug: "project-slug",
+    });
+
+    assertEquals(result.html, "<!doctype html><html><body>ok</body></html>");
+    assertEquals(
+      renderAttempts,
+      2,
+      "a preview source configured on the pipeline must still get its recovery retry",
+    );
+    assertEquals(
+      sourceRefreshes,
+      1,
+      "recovery must classify the configured content source, not the missing request override",
+    );
+  });
+
   it("renderPage does not recover caches for a released production content source", async () => {
     const slug = "/behavior-release-stale-mdx";
     let renderAttempts = 0;
