@@ -38,6 +38,16 @@ function shouldIncludeRoute(path: string, include?: string[], exclude?: string[]
   return true;
 }
 
+// Route discovery walks the project with `readDir`, which yields entries in
+// filesystem order -- insertion order on some filesystems, hash order on
+// others. Leaving that order in place makes the build's route list, and every
+// artifact derived from it (`ssgPaths`, the build manifest, build logs),
+// depend on how the checkout happened to land on disk. Sorting by route path
+// makes the build reproducible across machines and runs.
+function byRoutePath<T extends { path: string }>(a: T, b: T): number {
+  return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+}
+
 export async function collectPagesRoutes(
   adapter: RuntimeAdapter,
   projectDir: string,
@@ -69,7 +79,7 @@ export async function collectPagesRoutes(
     routes.push({ path: pathForRoute, file: file.path, slug });
   }
 
-  return routes;
+  return routes.sort(byRoutePath);
 }
 
 /**
@@ -96,7 +106,9 @@ export async function collectAppRoutes(
 
   logger.debug(`Found ${collected.length} App Router static routes`);
 
-  return collected.filter((r) => shouldIncludeRoute(r.path, include, exclude));
+  return collected
+    .filter((r) => shouldIncludeRoute(r.path, include, exclude))
+    .sort(byRoutePath);
 }
 
 function isForceDynamic(source: string): boolean {

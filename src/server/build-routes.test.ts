@@ -301,6 +301,20 @@ describe("server/build-routes", () => {
       const routes = await collectPagesRoutes(adapter, "/project", ["/nonexistent"]);
       assertEquals(routes, []);
     });
+
+    it("orders routes by path regardless of directory iteration order", async () => {
+      // `readDir` yields entries in filesystem order, which differs between
+      // filesystems and between runs on the same machine. The route list feeds
+      // `ssgPaths` and the build manifest, so it must not inherit that order.
+      const adapter = createMockAdapter({
+        "/project/pages/zebra.mdx": "# Zebra",
+        "/project/pages/blog.mdx": "# Blog",
+        "/project/pages/index.mdx": "# Home",
+        "/project/pages/about.mdx": "# About",
+      });
+      const routes = await collectPagesRoutes(adapter, "/project");
+      assertEquals(routes.map((r) => r.path), ["/", "/about", "/blog", "/zebra"]);
+    });
   });
 
   describe("collectAppRoutes", () => {
@@ -533,6 +547,17 @@ describe("server/build-routes", () => {
       const routes = await collectAppRoutes(adapter, "/project");
       assertEquals(routes.length, 1);
       assertEquals(routes[0]!.segmentDirs, ["/project/app", "/project/app/blog"]);
+    });
+
+    it("orders routes by path regardless of directory iteration order", async () => {
+      const adapter = createMockAdapter({
+        "/project/app/zebra/page.tsx": "export default function Z() {}",
+        "/project/app/docs/page.tsx": "export default function D() {}",
+        "/project/app/page.tsx": "export default function Home() {}",
+        "/project/app/about/page.tsx": "export default function A() {}",
+      });
+      const routes = await collectAppRoutes(adapter, "/project");
+      assertEquals(routes.map((r) => r.path), ["/", "/about", "/docs", "/zebra"]);
     });
   });
 });
