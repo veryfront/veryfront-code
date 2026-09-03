@@ -84,6 +84,30 @@ export function extractUserToken(cookieHeader: string): string | undefined {
 }
 
 /**
+ * Remove the platform `authToken` pair from a Cookie header before a request
+ * crosses into tenant-controlled project code. The cookie carries a Veryfront
+ * credential (a user session JWT, or an exchanged environment access token);
+ * the proxy consumes it via {@linkcode extractUserToken} and forwards the
+ * resolved identity through `x-token`, so the raw credential must never be
+ * observable by deployed pages, API routes, or middleware. Every other cookie
+ * is preserved verbatim for the application. Returns `undefined` when nothing
+ * remains.
+ */
+export function stripUserTokenCookie(cookieHeader: string): string | undefined {
+  const kept: string[] = [];
+  for (const part of cookieHeader.split(";")) {
+    const trimmed = part.trim();
+    if (trimmed === "") continue;
+    const separatorIndex = trimmed.indexOf("=");
+    const name = separatorIndex === -1 ? trimmed : trimmed.slice(0, separatorIndex).trim();
+    if (name === "authToken") continue;
+    kept.push(trimmed);
+  }
+  if (kept.length === 0) return undefined;
+  return kept.join("; ");
+}
+
+/**
  * Token service deployments report an unknown project identity with either
  * HTTP 400 (legacy) or HTTP 404. Classify that contract at the typed HTTP
  * boundary without coupling the proxy to response prose.
