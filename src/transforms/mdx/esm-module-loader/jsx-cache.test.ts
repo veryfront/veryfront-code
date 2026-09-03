@@ -28,15 +28,20 @@ import {
   MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH,
   MDX_JSX_CACHE_NAMESPACE_PREFIX,
 } from "./cache-format.ts";
+import { __importTransformerInternals, transformJsxImports } from "./import-transformer.ts";
 import {
-  __importTransformerInternals,
+  __jsxCacheInternals,
+  ensureCachedJsxModulePatched,
+  ensureJsxCacheSweepArmed,
   JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS,
   JSX_CACHE_VARIANT_MIN_AGE_MS,
+  markJsxArtifactServed,
   MAX_JSX_CACHE_VARIANTS_PER_PATH,
+  pruneSupersededJsxArtifacts,
+  refreshJsxArtifactMtime,
   retainJsxArtifactsReferencedIn,
-  transformJsxImports,
-} from "./import-transformer.ts";
-import { __jsxCacheInternals, ensureCachedJsxModulePatched } from "./jsx-cache.ts";
+  withJsxArtifactLock,
+} from "./jsx-cache.ts";
 import { MAX_MDX_MODULE_CODE_BYTES, ModuleSourceLimitError } from "./module-fetcher/limits.ts";
 
 function limitErrorMessage(error: unknown): string {
@@ -170,7 +175,7 @@ describe("transformJsxImports", () => {
     // Every prune pass now arms an unref'd follow-up timer (idle collection
     // never depends on a future write); drop it so no test observes a
     // neighbour's pending cleanup.
-    __importTransformerInternals.cancelScheduledJsxCachePrunes();
+    __jsxCacheInternals.cancelScheduledJsxCachePrunes();
   });
 
   it("uses a distinct cached JSX module when source content changes at the same path", async () => {
@@ -262,7 +267,7 @@ describe("transformJsxImports", () => {
       // the scan that collects variants retired before it booted.
       assertEquals(extractCachedJsxPath(transformed), cachedPath);
       assertEquals(
-        __importTransformerInternals.hasScheduledJsxCachePrune(tempDir),
+        __jsxCacheInternals.hasScheduledJsxCachePrune(tempDir),
         true,
         "a cached-only render must re-arm the sweep a process restart lost",
       );
@@ -571,7 +576,7 @@ describe("readProjectJsxSourceWithinLimit", () => {
   afterEach(() => {
     // Every transform arms the directory's unref'd sweep timer; drop it so no
     // test observes a neighbour's pending cleanup.
-    __importTransformerInternals.cancelScheduledJsxCachePrunes();
+    __jsxCacheInternals.cancelScheduledJsxCachePrunes();
   });
 
   it("falls back to the prefix reader when no strict reader is advertised", async () => {
@@ -607,6 +612,45 @@ describe("readProjectJsxSourceWithinLimit", () => {
     } finally {
       const { stop } = await import("veryfront/extensions/bundler");
       await stop();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("refuses a strict reader that returns more bytes than the limit it was given", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-jsx-strict-overrun-test-" });
+    const projectDir = "/srv/deployments/tenant-42/project";
+    const sourcePath = `${projectDir}/components/Overrun.tsx`;
+    const adapter = {
+      fs: {
+        readFile: () => {
+          throw new Error("unbounded readFile must not be used when a strict reader exists");
+        },
+        // A reader that ignores its ceiling is the case the shared bounded
+        // reader re-checks for: without the length check on the returned
+        // bytes, the strict branch every production adapter takes would admit
+        // the payload the limit exists to refuse.
+        readFileBytesWithinLimit: (_path: string, byteLimit: number) =>
+          Promise.resolve(new Uint8Array(byteLimit + 1)),
+      },
+    } as unknown as RuntimeAdapter;
+
+    try {
+      await assertRejects(
+        () =>
+          transformJsxImports(
+            `import Overrun from "file://${sourcePath}";`,
+            adapter,
+            tempDir,
+            projectDir,
+          ),
+        ModuleSourceLimitError,
+        "components/Overrun.tsx",
+      );
+
+      const written: string[] = [];
+      for await (const entry of readDir(tempDir)) written.push(entry.name);
+      assertEquals(written, [], "a refused source must not leave a cached artifact behind");
+    } finally {
       await remove(tempDir, { recursive: true });
     }
   });
@@ -679,14 +723,11 @@ describe("pruneSupersededJsxArtifacts", () => {
     cancelScheduledJsxCachePrunes,
     collectExcessJsxArtifacts,
     hasScheduledJsxCachePrune,
-    markJsxArtifactServed,
-    pruneSupersededJsxArtifacts,
     readArtifactModifiedAtMs,
     releaseJsxArtifact,
     removeJsxArtifactUnlessServed,
     retainJsxArtifact,
-    withJsxArtifactLock,
-  } = __importTransformerInternals;
+  } = __jsxCacheInternals;
 
   afterEach(() => {
     // A pass that leaves protected variants behind arms an unref'd follow-up
@@ -1298,9 +1339,8 @@ describe("jsx artifact references", () => {
   const {
     cancelScheduledJsxCachePrunes,
     jsxArtifactActiveRefCount,
-    refreshJsxArtifactMtime,
     wasJsxArtifactRecentlyServed,
-  } = __importTransformerInternals;
+  } = __jsxCacheInternals;
 
   afterEach(() => {
     cancelScheduledJsxCachePrunes();
@@ -1322,7 +1362,7 @@ describe("jsx artifact references", () => {
         `export default Pinned;`,
       ].join("\n");
 
-      const release = await retainJsxArtifactsReferencedIn(code);
+      const release = await retainJsxArtifactsReferencedIn(code, tempDir);
       assertEquals(
         jsxArtifactActiveRefCount(artifactPath),
         1,
@@ -1348,8 +1388,49 @@ describe("jsx artifact references", () => {
   it("holds no references for a module that imports no JSX artifacts", async () => {
     const release = await retainJsxArtifactsReferencedIn(
       `import { a } from "https://example.com/a.js";\nexport const b = a;`,
+      "/tmp/vf-jsx-empty-cache",
     );
     release();
+  });
+
+  it("ignores an artifact-shaped import from outside the cache directory", async () => {
+    const cacheDir = await makeTempDir({ prefix: "vf-jsx-foreign-cache-" });
+    const outsideDir = await makeTempDir({ prefix: "vf-jsx-foreign-source-" });
+
+    try {
+      // Only file:// specifiers ending in a JSX/TS extension are rewritten, so
+      // a tenant can write this import into MDX and have it survive untouched.
+      // Name shape alone must not make it a cache artifact: pinning it would
+      // touch a path this cache does not own and evict genuine served marks.
+      const foreignPath = join(outsideDir, "jsx-not-an-artifact.mjs");
+      await writeTextFile(foreignPath, "export const v = 1;");
+      const foreignMtime = (await stat(foreignPath)).mtime?.getTime() ?? 0;
+
+      const release = await retainJsxArtifactsReferencedIn(
+        `import foreign from "file://${foreignPath}";\nexport default foreign;`,
+        cacheDir,
+      );
+      assertEquals(
+        jsxArtifactActiveRefCount(foreignPath),
+        0,
+        "an artifact-shaped path outside the cache directory must not be pinned",
+      );
+      assertEquals(
+        (await stat(foreignPath)).mtime?.getTime() ?? 0,
+        foreignMtime,
+        "a path outside the cache directory must not receive a metadata write",
+      );
+
+      release();
+      assertEquals(
+        wasJsxArtifactRecentlyServed(foreignPath, Date.now()),
+        false,
+        "a foreign path must never occupy the served-artifact memo",
+      );
+    } finally {
+      await remove(outsideDir, { recursive: true });
+      await remove(cacheDir, { recursive: true });
+    }
   });
 
   it("refreshes a stale artifact mtime so other processes see the use", async () => {
@@ -1570,13 +1651,46 @@ describe("normalized module memo", () => {
   });
 });
 
+describe("scheduled prune bound", () => {
+  const {
+    cancelScheduledJsxCachePrunes,
+    hasScheduledJsxCachePrune,
+    MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES,
+  } = __jsxCacheInternals;
+
+  afterEach(() => {
+    cancelScheduledJsxCachePrunes();
+  });
+
+  it("evicts the oldest pending directory instead of growing without bound", () => {
+    // One process can serve many projects, and an idle-horizon follow-up stays
+    // pending for hours, so the set of directories holding a timer needs a
+    // ceiling of its own: a change whose premise is bounding growth must not
+    // add in-process state that grows with the projects ever rendered.
+    const directories = MAX_PENDING_JSX_CACHE_PRUNE_DIRECTORIES + 4;
+    for (let entry = 0; entry < directories; entry++) {
+      ensureJsxCacheSweepArmed(`/tmp/vf-jsx-sweep-bound/${entry}`);
+    }
+
+    assertEquals(
+      hasScheduledJsxCachePrune(`/tmp/vf-jsx-sweep-bound/${directories - 1}`),
+      true,
+      "the most recently armed directory must keep its pending sweep",
+    );
+    assertEquals(
+      hasScheduledJsxCachePrune("/tmp/vf-jsx-sweep-bound/0"),
+      false,
+      "reaching the ceiling must retire the directory armed longest ago",
+    );
+  });
+});
+
 describe("served artifact memo", () => {
   const {
-    markJsxArtifactServed,
     MAX_SERVED_ARTIFACT_MEMO_ENTRIES,
     servedArtifactMemoSize,
     wasJsxArtifactRecentlyServed,
-  } = __importTransformerInternals;
+  } = __jsxCacheInternals;
 
   it("evicts the oldest artifact instead of resetting or growing without bound", () => {
     // Every render of a changing source path adds another artifact path, so

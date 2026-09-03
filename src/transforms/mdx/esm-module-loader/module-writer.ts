@@ -43,12 +43,12 @@ import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { extractFrameworkBundlePaths } from "../../shared/framework-bundle-paths.ts";
 import {
   pinSameOriginSSRModuleImports,
-  retainJsxArtifactsReferencedIn,
   rewriteMdxRootDependencyImports,
   rewriteProjectAliasImports,
   transformJsxImports,
   transformReactToLocalPaths,
 } from "./import-transformer.ts";
+import { retainJsxArtifactsReferencedIn } from "./jsx-cache.ts";
 import {
   findMissingFrameworkBundles,
   findVfModuleImports,
@@ -282,7 +282,7 @@ export async function doLoadModuleESM(
     // of this load: HTTP caching and bundle recovery below have no time bound,
     // and the grace period alone must not be what keeps a prune pass from
     // deleting an artifact before the dynamic import consumes it.
-    releaseJsxArtifacts = await retainJsxArtifactsReferencedIn(rewritten);
+    releaseJsxArtifacts = await retainJsxArtifactsReferencedIn(rewritten, esmCacheDir);
 
     if (/\bconst\s+MDXLayout\b/.test(rewritten) && !/export\s+\{[^}]*MDXLayout/.test(rewritten)) {
       rewritten += "\nexport { MDXLayout as __vfLayout };\n";

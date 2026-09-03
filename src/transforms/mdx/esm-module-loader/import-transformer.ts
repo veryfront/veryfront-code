@@ -12,7 +12,11 @@ import { SERVER_ONLY_IN_CLIENT } from "#veryfront/errors";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
 import { transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
-import { unrefTimer } from "#veryfront/platform/compat/process.ts";
+import {
+  captureBoundedTextReader,
+  copyFixedUint8ArrayWithinLimit,
+} from "#veryfront/platform/adapters/bounded-text-reader.ts";
+import { captureFileSystemCapabilities } from "#veryfront/platform/adapters/file-system-capabilities.ts";
 import { getLocalReactPaths, isReactSpecifier } from "#veryfront/platform/compat/react-paths.ts";
 import { sanitizePathForDisplay } from "#veryfront/security/path-validation.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
@@ -41,24 +45,24 @@ import {
   LOG_PREFIX_MDX_LOADER,
 } from "./constants.ts";
 import { getLocalFs } from "./cache/index.ts";
-import {
-  buildMdxJsxCacheFileName,
-  buildMdxJsxCacheFileNamePrefix,
-  MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH,
-  MDX_JSX_CACHE_NAMESPACE_PREFIX,
-  MDX_JSX_CACHE_ROOT_PREFIX,
-} from "./cache-format.ts";
+import { buildMdxJsxCacheFileName } from "./cache-format.ts";
 import { rewriteDntImports } from "./module-fetcher/index.ts";
 import {
   assertMdxModuleImportCount,
   assertMdxModuleSourceSize,
   MAX_MDX_MODULE_CODE_BYTES,
-  MAX_MDX_MODULE_IMPORTS_PER_FILE,
   MAX_MDX_MODULE_TRANSFORM_CONCURRENCY,
   ModuleSourceLimitError,
   utf8ByteLength,
 } from "./module-fetcher/limits.ts";
-import { ensureCachedJsxModulePatched } from "./jsx-cache.ts";
+import {
+  ensureCachedJsxModulePatched,
+  ensureJsxCacheSweepArmed,
+  markJsxArtifactServed,
+  pruneSupersededJsxArtifacts,
+  refreshJsxArtifactMtime,
+  withJsxArtifactLock,
+} from "./jsx-cache.ts";
 import type { ESMLoaderContext } from "./types.ts";
 
 const URI_SCHEME_PATTERN = /^[A-Za-z][A-Za-z\d+.-]*:/;
@@ -272,6 +276,20 @@ function isProjectSourceFile(filePath: string, projectDir?: string): boolean {
   return projectDir !== undefined && isWithinDirectory(projectDir, filePath);
 }
 
+/** Label the shared capability capture reports its own failures under. */
+const JSX_SOURCE_READER_LABEL = "MDX JSX source reader";
+
+const strictUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
+
+/** Decode source bytes as strict UTF-8, matching the shared bounded reader. */
+function decodeStrictUtf8(bytes: Uint8Array, sourceIdentity: string): string {
+  try {
+    return strictUtf8Decoder.decode(bytes);
+  } catch (cause) {
+    throw new TypeError(`${sourceIdentity} must contain valid UTF-8`, { cause });
+  }
+}
+
 /**
  * Read one project JSX/TSX source without materializing more than the
  * MDX module source limit.
@@ -286,567 +304,68 @@ function isProjectSourceFile(filePath: string, projectDir?: string): boolean {
  * has a whole-object ceiling far above this limit (Cloudflare KV admits 25 MiB)
  * implement `readFileBytesWithinLimit` and not `readFileBytesBounded`, so
  * without this order those runtimes would fall through to `readFile` and
- * materialize the very payload the limit exists to refuse.
+ * materialize the very payload the limit exists to refuse. Every production
+ * adapter takes that branch, and it runs through the repo's shared bounded
+ * reader: capabilities are captured without invoking accessors or Proxy traps,
+ * the returned byte length is re-checked so a reader that hands back more than
+ * it was asked for is still refused, and the bytes are decoded as strict UTF-8.
  */
 async function readProjectJsxSourceWithinLimit(
   fs: NonNullable<ESMLoaderContext["adapter"]>["fs"],
   filePath: string,
   sourceIdentity: string,
 ): Promise<string> {
-  if (fs.readFileBytesWithinLimit) {
+  const capabilities = captureFileSystemCapabilities(fs, JSX_SOURCE_READER_LABEL, "byte-read");
+  const wholeFileReader = capabilities.wholeFileReader;
+  const usesSharedBoundedReader = capabilities.readFileBytesWithinLimit !== undefined ||
+    (wholeFileReader !== undefined && wholeFileReader.maximumBytes <= MAX_MDX_MODULE_CODE_BYTES);
+
+  if (usesSharedBoundedReader) {
     try {
-      const bytes = await fs.readFileBytesWithinLimit(filePath, MAX_MDX_MODULE_CODE_BYTES);
-      return new TextDecoder().decode(bytes);
+      const read = await captureBoundedTextReader(fs, JSX_SOURCE_READER_LABEL).readUtf8(
+        filePath,
+        MAX_MDX_MODULE_CODE_BYTES,
+        sourceIdentity,
+      );
+      return read.content;
     } catch (error) {
-      // The contract for this capability is to reject an oversized source with
-      // a RangeError rather than report its size, so the size stays unknown.
-      if (error instanceof RangeError) {
+      // The shared reader reports an overflow as a TypeError carrying the
+      // RangeError the reader (or the fixed-copy admission behind it) raised;
+      // a decode failure carries no RangeError and stays as it is. Refusing to
+      // read past the ceiling is the point, so the size stays unknown.
+      if (error instanceof TypeError && error.cause instanceof RangeError) {
         throw new ModuleSourceLimitError(sourceIdentity, undefined, MAX_MDX_MODULE_CODE_BYTES);
       }
       throw error;
     }
   }
 
-  if (fs.readFileBytesBounded) {
+  if (capabilities.readFileBytesBounded) {
     // One byte past the ceiling distinguishes an exactly-sized file from an
-    // oversized one without reading the rest of an oversized file.
-    const bytes = await fs.readFileBytesBounded(filePath, MAX_MDX_MODULE_CODE_BYTES + 1);
+    // oversized one without reading the rest of an oversized file. The fixed
+    // copy is what makes the length trustworthy: a prefix reader that returns
+    // more than it was asked for overflows here instead of being admitted.
+    let bytes: Uint8Array;
+    try {
+      bytes = copyFixedUint8ArrayWithinLimit(
+        await capabilities.readFileBytesBounded(filePath, MAX_MDX_MODULE_CODE_BYTES + 1),
+        MAX_MDX_MODULE_CODE_BYTES + 1,
+        sourceIdentity,
+      );
+    } catch (error) {
+      if (error instanceof RangeError) {
+        throw new ModuleSourceLimitError(sourceIdentity, undefined, MAX_MDX_MODULE_CODE_BYTES);
+      }
+      throw error;
+    }
     assertMdxModuleSourceSize(sourceIdentity, bytes.byteLength);
-    return new TextDecoder().decode(bytes);
+    return decodeStrictUtf8(bytes, sourceIdentity);
   }
 
   const raw = await fs.readFile(filePath);
-  const sourceCode = typeof raw === "string" ? raw : new TextDecoder().decode(raw);
+  const sourceCode = typeof raw === "string" ? raw : decodeStrictUtf8(raw, sourceIdentity);
   assertMdxModuleSourceSize(sourceIdentity, utf8ByteLength(sourceCode));
   return sourceCode;
-}
-
-/**
- * Cached content variants retained per source path.
- *
- * Deleting every variant but the one this pass wrote is not safe: a render
- * that transformed an older generation of the same path is still holding the
- * `file://` specifier of its own artifact, and deleting it breaks that render's
- * module load. The window is sized above the default per-project request
- * ceiling (`maxConcurrentPerProject`, 20) so ordinary concurrency never reaches
- * it; {@link JSX_CACHE_VARIANT_MIN_AGE_MS} and the active references a render
- * holds until its parent import settles are what actually guarantee an
- * in-flight artifact survives when that ceiling is raised.
- */
-export const MAX_JSX_CACHE_VARIANTS_PER_PATH = 32;
-
-/**
- * Age an artifact must reach before it can be retired.
- *
- * A retention count alone assumes concurrency stays below the window. This
- * floor removes the assumption for the moments before a render pins its
- * artifacts: an artifact a transform just returned is by definition younger
- * than the grace period, so no prune pass can delete it in the gap between
- * `transformJsxImports` returning and the render acquiring its active
- * references via {@link retainJsxArtifactsReferencedIn}. Once those references
- * exist they, not this floor, are what carry the artifact through the rest of
- * the render, however long its module-recovery phase runs.
- */
-export const JSX_CACHE_VARIANT_MIN_AGE_MS = 60_000;
-
-/**
- * Age a variant inside the per-path window must reach, measured from its last
- * use, before it is retired as idle.
- *
- * The per-path window alone bounds only paths that keep receiving writes: a
- * tenant that renames its imported source on every edit leaves one variant per
- * retired path, each in a prefix group too small for the window to touch, so
- * per-project disk growth would again track edit history. Idle collection is
- * the directory-wide backstop: any artifact whose last use (mtime, refreshed
- * by cache hits) is older than this floor is deleted no matter how few
- * variants share its prefix, so the cache converges on the artifacts the
- * project actually served recently.
- */
-export const JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS = 6 * 60 * 60 * 1_000;
-
-/**
- * How stale an artifact's mtime may grow before a cache hit refreshes it.
- *
- * A hit refreshes the file's mtime so "last use" is visible across processes
- * — the in-memory served memo and active references are not — which is what
- * lets one process's grace check protect an artifact another process (for
- * example one draining during a rolling deploy) just served. The interval
- * keeps the refresh to at most one metadata write per artifact per interval.
- */
-const JSX_CACHE_MTIME_REFRESH_INTERVAL_MS = JSX_CACHE_VARIANT_MIN_AGE_MS / 4;
-
-/**
- * Per-project request ceiling this cache's memos are sized against
- * (`maxConcurrentPerProject` in `server/runtime-handler/project-isolation.ts`;
- * kept as a local mirror so the transform layer does not import server
- * runtime configuration).
- */
-const SUPPORTED_CONCURRENT_RENDERS_PER_PROJECT = 20;
-
-/**
- * Bound on the artifacts this process remembers as recently served.
- *
- * Sized to twice the supported in-flight fan-out — the per-project request
- * ceiling times the per-module import ceiling — so reaching capacity can only
- * ever evict marks that no supported load pattern still relies on. Active
- * references, not this memo, are what protect a render across its long
- * post-transform phases; the memo only has to cover the moments between a
- * transform returning and those references being acquired.
- */
-const MAX_SERVED_ARTIFACT_MEMO_ENTRIES = 2 * SUPPORTED_CONCURRENT_RENDERS_PER_PROJECT *
-  MAX_MDX_MODULE_IMPORTS_PER_FILE;
-
-/**
- * When this process last handed each artifact path to a render.
- *
- * An artifact's mtime records when it was written, not when it was last used,
- * so a cache hit on an artifact older than the grace period would otherwise be
- * eligible for deletion between the moment a render selects its `file://` URL
- * and the moment `doLoadModuleESM` imports the rewritten parent. Recording the
- * hit keeps the artifact out of pruning for one further grace period.
- */
-const servedArtifactTimestamps = new Map<string, number>();
-
-function markJsxArtifactServed(transformedPath: string, servedAtMs: number = Date.now()): void {
-  // Delete-before-set keeps the map in recency order, so reaching capacity
-  // evicts the artifact served longest ago instead of wiping the whole memo
-  // and momentarily dropping the protection every in-flight hit relies on.
-  servedArtifactTimestamps.delete(transformedPath);
-  if (servedArtifactTimestamps.size >= MAX_SERVED_ARTIFACT_MEMO_ENTRIES) {
-    const oldest = servedArtifactTimestamps.keys().next().value;
-    if (oldest !== undefined) servedArtifactTimestamps.delete(oldest);
-  }
-  servedArtifactTimestamps.set(transformedPath, servedAtMs);
-}
-
-function wasJsxArtifactRecentlyServed(transformedPath: string, nowMs: number): boolean {
-  const servedAtMs = servedArtifactTimestamps.get(transformedPath);
-  return servedAtMs !== undefined && nowMs - servedAtMs < JSX_CACHE_VARIANT_MIN_AGE_MS;
-}
-
-/**
- * Artifacts currently pinned by an in-flight render, by reference count.
- *
- * A render acquires a reference to every artifact its rewritten module imports
- * (via {@link retainJsxArtifactsReferencedIn}) and releases it after the parent
- * dynamic import settles. Unlike the served memo, which is a fixed-age lease,
- * a reference is unconditional: no prune pass removes a referenced artifact,
- * however long the render's HTTP-caching and bundle-recovery phases run.
- */
-const jsxArtifactActiveRefs = new Map<string, number>();
-
-function retainJsxArtifact(artifactPath: string): void {
-  jsxArtifactActiveRefs.set(artifactPath, (jsxArtifactActiveRefs.get(artifactPath) ?? 0) + 1);
-}
-
-function releaseJsxArtifact(artifactPath: string): void {
-  const count = jsxArtifactActiveRefs.get(artifactPath);
-  if (count === undefined) return;
-  if (count <= 1) jsxArtifactActiveRefs.delete(artifactPath);
-  else jsxArtifactActiveRefs.set(artifactPath, count - 1);
-}
-
-/**
- * When this process last wrote each artifact's mtime forward.
- *
- * `retainJsxArtifactsReferencedIn` holds no fresh stat to compare against, so
- * without this memo every render of a module with cached JSX imports would pay
- * one `utime` per import up front and again on each heartbeat, turning hot
- * cache hits into metadata-write and lock contention. Remembering the last
- * refresh keeps the write-through to at most one per artifact per interval,
- * whatever mtime the caller happens to know. Bounded and evicted in recency
- * order like the served memo; an evicted entry only costs one extra `utime`.
- */
-const mtimeRefreshTimestamps = new Map<string, number>();
-
-function recordJsxArtifactMtimeRefresh(artifactPath: string, refreshedAtMs: number): void {
-  mtimeRefreshTimestamps.delete(artifactPath);
-  if (mtimeRefreshTimestamps.size >= MAX_SERVED_ARTIFACT_MEMO_ENTRIES) {
-    const oldest = mtimeRefreshTimestamps.keys().next().value;
-    if (oldest !== undefined) mtimeRefreshTimestamps.delete(oldest);
-  }
-  mtimeRefreshTimestamps.set(artifactPath, refreshedAtMs);
-}
-
-/**
- * Refresh an artifact's mtime so its last use is visible to other processes.
- *
- * Best effort on a best-effort signal: a runtime without `utime` (or a failed
- * refresh) falls back to the in-process served memo, which still protects
- * every render this process owns.
- */
-async function refreshJsxArtifactMtime(
-  artifactPath: string,
-  modifiedAtMs: number,
-  nowMs: number = Date.now(),
-): Promise<void> {
-  const lastRefreshedMs = Math.max(
-    modifiedAtMs,
-    mtimeRefreshTimestamps.get(artifactPath) ?? 0,
-  );
-  if (nowMs - lastRefreshedMs < JSX_CACHE_MTIME_REFRESH_INTERVAL_MS) return;
-  const localFs = getLocalFs();
-  if (!localFs.utime) return;
-  try {
-    await localFs.utime(artifactPath, new Date(nowMs), new Date(nowMs));
-    recordJsxArtifactMtimeRefresh(artifactPath, nowMs);
-  } catch (_) {
-    /* expected: a concurrent prune may have removed the artifact already */
-  }
-}
-
-/**
- * Pin every JSX cache artifact the rewritten module imports until the caller
- * releases them, keeping each one's on-disk recency fresh in the meantime.
- *
- * `doLoadModuleESM` performs HTTP caching and bundle recovery between the JSX
- * transform returning its `file://` specifiers and the dynamic import that
- * consumes them, and that phase has no time bound. The references keep every
- * prune pass in this process away from the artifacts for that whole span, and
- * the periodic mtime refresh keeps other processes' grace checks away from
- * them too. The returned release is idempotent and must be called once the
- * parent import has settled, success or failure.
- */
-export async function retainJsxArtifactsReferencedIn(code: string): Promise<() => void> {
-  const artifactPaths: string[] = [];
-  for (const imported of await parseImports(code)) {
-    const specifier = imported.n;
-    if (!specifier?.startsWith("file://")) continue;
-    const artifactPath = specifier.slice("file://".length);
-    const name = artifactPath.split("/").at(-1) ?? "";
-    if (!name.startsWith(MDX_JSX_CACHE_ROOT_PREFIX) || !name.endsWith(".mjs")) continue;
-    artifactPaths.push(artifactPath);
-    retainJsxArtifact(artifactPath);
-  }
-  if (artifactPaths.length === 0) return () => {};
-
-  // A module may import the same artifact under several specifiers; one
-  // refresh per artifact is what "last use" needs, so the duplicates stay
-  // only in the reference counts, which release symmetrically below.
-  const uniqueArtifactPaths = [...new Set(artifactPaths)];
-  const refreshAll = async () => {
-    await Promise.all(
-      uniqueArtifactPaths.map((artifactPath) => refreshJsxArtifactMtime(artifactPath, 0)),
-    );
-  };
-  await refreshAll();
-  const heartbeat = setInterval(() => void refreshAll(), JSX_CACHE_MTIME_REFRESH_INTERVAL_MS);
-  unrefTimer(heartbeat);
-
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    clearInterval(heartbeat);
-    const nowMs = Date.now();
-    for (const artifactPath of artifactPaths) {
-      // The import just completed, so the module is as recently used as a
-      // fresh cache hit: the served mark bridges the release and any
-      // immediately following prune pass.
-      markJsxArtifactServed(artifactPath, nowMs);
-      releaseJsxArtifact(artifactPath);
-    }
-  };
-}
-
-/**
- * Per-artifact operation queues, dropped once the last queued operation
- * settles, so the map holds only paths with an operation in flight.
- */
-const jsxArtifactLocks = new Map<string, Promise<void>>();
-
-/**
- * Serialize the operations on one artifact path that must not interleave: a
- * cache hit verifying the file and recording it as served, a transform
- * rewriting it, and a prune pass removing it. Without this, a hit could verify
- * the artifact after the pruner checked the served memo but before its
- * `remove` landed, and the rewritten parent would import a just-deleted path.
- */
-async function withJsxArtifactLock<T>(
-  artifactPath: string,
-  operation: () => Promise<T>,
-): Promise<T> {
-  const previous = jsxArtifactLocks.get(artifactPath) ?? Promise.resolve();
-  const run = previous.then(operation);
-  const settled = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  jsxArtifactLocks.set(artifactPath, settled);
-  void settled.then(() => {
-    if (jsxArtifactLocks.get(artifactPath) === settled) {
-      jsxArtifactLocks.delete(artifactPath);
-    }
-  });
-  return await run;
-}
-
-async function readArtifactModifiedAtMs(path: string): Promise<number> {
-  try {
-    return (await getLocalFs().stat(path)).mtime?.getTime() ?? 0;
-  } catch (_) {
-    /* expected: a concurrent transform may have removed the variant already */
-    return 0;
-  }
-}
-
-/** Slack a scheduled follow-up adds so the variants it targets have aged out. */
-const JSX_CACHE_PRUNE_RETRY_SLACK_MS = 1_000;
-
-/** At most one pending follow-up prune per cache directory. */
-const scheduledJsxCachePrunes = new Map<
-  string,
-  { timer: ReturnType<typeof setTimeout>; fireAtMs: number }
->();
-
-/**
- * Schedule a follow-up prune for variants a preservation rule protected.
- *
- * The prune pass otherwise runs only when a transform writes an artifact, so a
- * burst that puts a path over its window inside one grace period and then goes
- * idle would leave the excess on disk until an unrelated future write. One
- * timer per directory, always at the earliest requested deadline: a pending
- * idle-horizon follow-up hours out must not swallow a grace-period retry due
- * in seconds. The timer is unref'd: cleanup of superseded cache files is never
- * a reason to keep the process alive.
- */
-function scheduleJsxCachePruneRetry(esmCacheDir: string, delayMs: number): void {
-  const fireAtMs = Date.now() + delayMs;
-  const pending = scheduledJsxCachePrunes.get(esmCacheDir);
-  if (pending) {
-    if (pending.fireAtMs <= fireAtMs) return;
-    clearTimeout(pending.timer);
-  }
-  const timer = setTimeout(() => {
-    scheduledJsxCachePrunes.delete(esmCacheDir);
-    collectExcessJsxArtifacts(esmCacheDir, new Map(), Date.now()).catch((error) => {
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} Scheduled JSX cache prune failed`, {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
-  }, delayMs);
-  unrefTimer(timer);
-  scheduledJsxCachePrunes.set(esmCacheDir, { timer, fireAtMs });
-}
-
-/** Cache directories whose recurring sweep this process has already armed. */
-const armedJsxCacheSweeps = new Set<string>();
-
-/**
- * Arm the directory-wide sweep the first time a transform touches a cache
- * directory, whether or not it writes anything.
- *
- * Scheduled follow-up prunes live in process memory, so a process restart
- * loses them. A replacement process serving an unchanged project entirely from
- * cache records no written artifacts and would otherwise never scan, leaving
- * variants retired before the restart on disk past the idle floor
- * indefinitely. One pass per directory per process restores the age-based
- * collection; that pass then keeps its own follow-ups armed for as long as
- * uncollectable artifacts remain. It fires one grace period out — nothing
- * younger is collectable, and deferring it keeps a process's startup burst
- * free of an extra directory scan.
- */
-function ensureJsxCacheSweepArmed(esmCacheDir: string): void {
-  if (armedJsxCacheSweeps.has(esmCacheDir)) return;
-  armedJsxCacheSweeps.add(esmCacheDir);
-  scheduleJsxCachePruneRetry(
-    esmCacheDir,
-    JSX_CACHE_VARIANT_MIN_AGE_MS + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
-  );
-}
-
-/** Drop every pending follow-up prune and armed sweep (test isolation only). */
-function cancelScheduledJsxCachePrunes(): void {
-  for (const pending of scheduledJsxCachePrunes.values()) clearTimeout(pending.timer);
-  scheduledJsxCachePrunes.clear();
-  armedJsxCacheSweeps.clear();
-}
-
-/** Outcome of one removal attempt; a preserved artifact names its retry time. */
-type JsxArtifactRemoval = { removed: true } | { removed: false; retryAtMs: number };
-
-/**
- * Remove one artifact unless a render still holds it.
- *
- * The re-checks run under the same per-path lock the cache-hit verification
- * runs under, so selection and removal cannot interleave: a hit that got the
- * lock first has marked the artifact served (or pinned it with an active
- * reference) by the time these checks run, and a removal that got there first
- * leaves the hit a missing file, which it reports as a miss and regenerates.
- * A preserved artifact reports when it next becomes collectable so the caller
- * can schedule a follow-up rather than wait for an unrelated future write.
- */
-async function removeJsxArtifactUnlessServed(
-  artifactPath: string,
-  nowMs: number,
-): Promise<JsxArtifactRemoval> {
-  return await withJsxArtifactLock(artifactPath, async () => {
-    const checkedAtMs = Math.max(nowMs, Date.now());
-    if (jsxArtifactActiveRefs.has(artifactPath)) {
-      // Release time is the parent import settling, which has no schedule of
-      // its own; poll again one grace period out.
-      return { removed: false, retryAtMs: checkedAtMs + JSX_CACHE_VARIANT_MIN_AGE_MS };
-    }
-    const servedAtMs = servedArtifactTimestamps.get(artifactPath);
-    if (servedAtMs !== undefined && checkedAtMs - servedAtMs < JSX_CACHE_VARIANT_MIN_AGE_MS) {
-      return { removed: false, retryAtMs: servedAtMs + JSX_CACHE_VARIANT_MIN_AGE_MS };
-    }
-    // The memos above are process-local, but the selection this removal acts
-    // on may be a scan old enough for another process — one draining during a
-    // rolling deploy — to have cache-hit the artifact and refreshed its mtime
-    // in the meantime. The shared mtime is re-read here, under the lock and
-    // immediately before the remove, so that refresh is honored rather than
-    // raced: an artifact another process just marked in use gets a fresh grace
-    // period instead of a deletion.
-    const modifiedAtMs = await readArtifactModifiedAtMs(artifactPath);
-    if (modifiedAtMs > 0 && checkedAtMs - modifiedAtMs < JSX_CACHE_VARIANT_MIN_AGE_MS) {
-      return { removed: false, retryAtMs: modifiedAtMs + JSX_CACHE_VARIANT_MIN_AGE_MS };
-    }
-    try {
-      await getLocalFs().remove(artifactPath);
-    } catch (_) {
-      /* expected: a concurrent transform may have removed the variant already */
-    }
-    mtimeRefreshTimestamps.delete(artifactPath);
-    return { removed: true };
-  });
-}
-
-/**
- * Retire the oldest cached content variants of every source path in the cache.
- *
- * Artifact names are content-keyed, so a project that keeps changing the same
- * path would otherwise accumulate one persistent `jsx-*.mjs` file per variant.
- *
- * The pass covers every path the directory holds, not only the paths this
- * transform wrote: a burst of changes can leave a path over its window with
- * every variant still inside the grace period, and if the writer stopped there
- * would be nothing left to trigger its cleanup. Recovering each entry's
- * per-path prefix from its own fixed-width name keeps that generality at one
- * `readDir` and one map lookup per entry, rather than multiplying entries by
- * the number of paths written.
- *
- * It runs only after a transform wrote something, so a render served entirely
- * from cache never pays for it; a pass that has to leave over-window variants
- * behind schedules its own follow-up instead of waiting for a future write.
- */
-async function pruneSupersededJsxArtifacts(
-  esmCacheDir: string,
-  writtenArtifacts: ReadonlyMap<string, string>,
-  nowMs: number = Date.now(),
-): Promise<void> {
-  if (writtenArtifacts.size === 0) return;
-
-  const currentByPrefix = new Map<string, string>();
-  for (const [filePath, currentFileName] of writtenArtifacts) {
-    currentByPrefix.set(buildMdxJsxCacheFileNamePrefix(filePath), currentFileName);
-  }
-  await collectExcessJsxArtifacts(esmCacheDir, currentByPrefix, nowMs);
-}
-
-/**
- * One prune pass over `esmCacheDir`. `currentByPrefix` protects the artifacts
- * the caller just wrote; a scheduled follow-up passes none and relies on the
- * grace period and idle floor alone. Beyond the per-path variant window, the
- * pass retires any variant idle past {@link JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS}
- * — the directory-wide backstop that keeps retired source paths from leaking
- * one artifact each — and reclaims artifacts stranded under a superseded
- * cache namespace: recognisably this loader's files, but unreachable since the
- * roll, so no variant window can ever cover them again.
- */
-async function collectExcessJsxArtifacts(
-  esmCacheDir: string,
-  currentByPrefix: ReadonlyMap<string, string>,
-  nowMs: number,
-): Promise<void> {
-  const localFs = getLocalFs();
-
-  const variantsByPrefix = new Map<string, string[]>();
-  const strandedNamespaceArtifacts: string[] = [];
-  try {
-    for await (const entry of localFs.readDir(esmCacheDir)) {
-      if (!entry.isFile) continue;
-      if (!entry.name.startsWith(MDX_JSX_CACHE_NAMESPACE_PREFIX)) {
-        if (entry.name.startsWith(MDX_JSX_CACHE_ROOT_PREFIX)) {
-          strandedNamespaceArtifacts.push(entry.name);
-        }
-        continue;
-      }
-      if (entry.name.length <= MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH) continue;
-
-      const prefix = entry.name.slice(0, MDX_JSX_CACHE_FILE_NAME_PREFIX_LENGTH);
-      if (entry.name === currentByPrefix.get(prefix)) continue;
-
-      const variants = variantsByPrefix.get(prefix);
-      if (variants) variants.push(entry.name);
-      else variantsByPrefix.set(prefix, [entry.name]);
-    }
-  } catch (error) {
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to scan JSX cache artifacts for pruning`, {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return;
-  }
-
-  /** Earliest moment a variant this pass left behind becomes collectable. */
-  let retryAtMs: number | undefined;
-  const noteRetry = (readyAtMs: number) => {
-    retryAtMs = retryAtMs === undefined ? readyAtMs : Math.min(retryAtMs, readyAtMs);
-  };
-
-  for (const name of strandedNamespaceArtifacts) {
-    const artifactPath = join(esmCacheDir, name);
-    // The grace period still applies, and cache hits refresh mtime, so during
-    // a rolling deploy a draining process on the previous namespace keeps the
-    // artifacts it is still serving visibly fresh to this check.
-    const modifiedAtMs = await readArtifactModifiedAtMs(artifactPath);
-    if (nowMs - modifiedAtMs < JSX_CACHE_VARIANT_MIN_AGE_MS) {
-      noteRetry(modifiedAtMs + JSX_CACHE_VARIANT_MIN_AGE_MS);
-      continue;
-    }
-    const removal = await removeJsxArtifactUnlessServed(artifactPath, nowMs);
-    if (!removal.removed) noteRetry(removal.retryAtMs);
-  }
-
-  for (const [prefix, variants] of variantsByPrefix) {
-    // The artifact just written, when there is one, counts against the window.
-    const retained = MAX_JSX_CACHE_VARIANTS_PER_PATH - (currentByPrefix.has(prefix) ? 1 : 0);
-
-    const dated = await Promise.all(
-      variants.map(async (name) => ({
-        name,
-        modifiedAtMs: await readArtifactModifiedAtMs(join(esmCacheDir, name)),
-      })),
-    );
-    dated.sort((left, right) => right.modifiedAtMs - left.modifiedAtMs);
-
-    for (const [index, { name, modifiedAtMs }] of dated.entries()) {
-      const artifactPath = join(esmCacheDir, name);
-      const servedAtMs = servedArtifactTimestamps.get(artifactPath) ?? 0;
-      const lastUsedMs = Math.max(modifiedAtMs, servedAtMs);
-      // A variant over the per-path window goes as soon as its grace period
-      // ends. A variant inside the window is bounded by idle age instead:
-      // without that, a path retired by a rename keeps its last variants
-      // forever, and disk growth tracks edit history again. Cache hits refresh
-      // mtime, so an artifact still being served never reads as idle.
-      const collectableAtMs = index >= retained
-        ? lastUsedMs + JSX_CACHE_VARIANT_MIN_AGE_MS
-        : lastUsedMs + JSX_CACHE_VARIANT_MAX_IDLE_AGE_MS;
-      if (collectableAtMs > nowMs) {
-        noteRetry(collectableAtMs);
-        continue;
-      }
-      const removal = await removeJsxArtifactUnlessServed(artifactPath, nowMs);
-      if (!removal.removed) noteRetry(removal.retryAtMs);
-    }
-  }
-
-  if (retryAtMs !== undefined) {
-    scheduleJsxCachePruneRetry(
-      esmCacheDir,
-      Math.max(retryAtMs - nowMs, 0) + JSX_CACHE_PRUNE_RETRY_SLACK_MS,
-    );
-  }
 }
 
 /**
@@ -896,32 +415,15 @@ async function mapJsxTransformsWithCleanup<T, R>(
 }
 
 /**
- * Reachable for the cache-retention and redaction tests, which need to drive
- * the prune pass and the source identity directly rather than through a full
- * JSX transform.
+ * Reachable for the source-admission tests, which need to drive the source
+ * classification, the redacted identity and the map's failure path directly
+ * rather than through a full JSX transform.
  */
 export const __importTransformerInternals = {
-  cancelScheduledJsxCachePrunes,
-  collectExcessJsxArtifacts,
   describeProjectSource,
-  hasScheduledJsxCachePrune: (esmCacheDir: string): boolean =>
-    scheduledJsxCachePrunes.has(esmCacheDir),
   isFrameworkSourceFile,
   isProjectSourceFile,
-  jsxArtifactActiveRefCount: (artifactPath: string): number =>
-    jsxArtifactActiveRefs.get(artifactPath) ?? 0,
   mapJsxTransformsWithCleanup,
-  markJsxArtifactServed,
-  MAX_SERVED_ARTIFACT_MEMO_ENTRIES,
-  refreshJsxArtifactMtime,
-  releaseJsxArtifact,
-  retainJsxArtifact,
-  servedArtifactMemoSize: (): number => servedArtifactTimestamps.size,
-  pruneSupersededJsxArtifacts,
-  readArtifactModifiedAtMs,
-  removeJsxArtifactUnlessServed,
-  wasJsxArtifactRecentlyServed,
-  withJsxArtifactLock,
 };
 
 /**
