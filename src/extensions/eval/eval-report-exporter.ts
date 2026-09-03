@@ -9,6 +9,7 @@
  */
 
 import type {
+  EvalGateFailureSummary,
   EvalMetricResult,
   EvalRecord,
   EvalReport,
@@ -171,19 +172,41 @@ function redactMetricResults(
   });
 }
 
-function redactMetricSummaries(
+function redactGateFailures(
+  gateFailures: EvalGateFailureSummary[],
+  redaction: EvalReportExportRedaction,
+): EvalGateFailureSummary[] {
+  return gateFailures.map((failure) => {
+    const redacted: EvalGateFailureSummary = { ...failure };
+    if (!redaction.includeMetricExplanations) {
+      delete redacted.explanation;
+    }
+    if (!redaction.includeMetricEvidence) {
+      delete redacted.evidence;
+    }
+    return redacted;
+  });
+}
+
+function redactSummary(
   summary: EvalReport["summary"],
   redaction: EvalReportExportRedaction,
 ): EvalReport["summary"] {
-  if (redaction.includeMetricEvidence) return summary;
-  return {
-    ...summary,
-    metrics: summary.metrics.map((metric) => {
-      const redacted = { ...metric };
-      delete redacted.label;
-      return redacted;
-    }),
-  };
+  const redacted: EvalReport["summary"] = { ...summary };
+  if (!redaction.includeMetricEvidence) {
+    redacted.metrics = summary.metrics.map((metric) => {
+      const redactedMetric = { ...metric };
+      delete redactedMetric.label;
+      return redactedMetric;
+    });
+  }
+  // Every gate failure copies the blocking result's explanation and evidence verbatim, so citation
+  // labels and retrieved-source labels reach the summary too. They leave on the same terms as the
+  // record-level metric they came from.
+  if (summary.gateFailures) {
+    redacted.gateFailures = redactGateFailures(summary.gateFailures, redaction);
+  }
+  return redacted;
 }
 
 function cloneRedaction(
@@ -236,7 +259,7 @@ export function redactEvalReportForExport(
   return {
     ...cloned,
     ...(cloned.dataset ? { dataset: redactDatasetMetadata(cloned.dataset, redaction) } : {}),
-    summary: redactMetricSummaries(cloned.summary, redaction),
+    summary: redactSummary(cloned.summary, redaction),
     records: cloned.records.map((record) => redactRecord(record, redaction)),
   };
 }

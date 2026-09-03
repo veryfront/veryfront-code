@@ -43,11 +43,15 @@ export interface EvalReportExportRedaction {
   includeRetrievedContext?: boolean;
   /** Include answer citation payloads. Defaults to false. */
   includeCitations?: boolean;
-  /** Include metric/check explanations. Defaults to false. */
+  /**
+   * Include metric/check explanations. Defaults to false. Applies to record results and to the
+   * summary gate failures that copy them.
+   */
   includeMetricExplanations?: boolean;
   /**
-   * Include metric/check evidence payloads. Defaults to false. Metric labels restate the same
-   * configured parameters, so they follow this setting on both record and summary metrics.
+   * Include metric/check evidence payloads. Defaults to false. Applies to record results and to the
+   * summary gate failures that copy them. Metric labels restate the same configured parameters, so
+   * they follow this setting on both record and summary metrics.
    */
   includeMetricEvidence?: boolean;
   /** Include dataset source paths. Defaults to false. */
