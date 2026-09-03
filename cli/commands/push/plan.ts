@@ -33,7 +33,12 @@ export interface PlanPushChangesOptions {
   remoteFiles: readonly PushRemoteFile[];
   baselineFiles: Readonly<Record<string, SyncFileSnapshot>>;
   deletePaths: readonly string[];
-  /** Protected remote paths selected for unconditional cleanup during prune. */
+  /**
+   * Protected remote paths selected for unconditional cleanup during prune.
+   * Only entries that also appear in {@link PlanPushChangesOptions.deletePaths}
+   * are honoured: a protected path outside that set would be dropped from the
+   * sync baseline without ever being queued for deletion.
+   */
   protectedDeletePaths?: readonly string[];
   force: boolean;
   /** Treat the exact remote snapshot as the baseline for a newly created branch. */
@@ -64,7 +69,10 @@ function requiredContent(file: PushRemoteFile): string {
 export async function planPushChanges(
   options: PlanPushChangesOptions,
 ): Promise<PushChangePlan> {
-  const protectedDeletePaths = new Set(options.protectedDeletePaths ?? []);
+  const requestedDeletePaths = new Set(options.deletePaths);
+  const protectedDeletePaths = new Set(
+    (options.protectedDeletePaths ?? []).filter((path) => requestedDeletePaths.has(path)),
+  );
   const remoteByPath = new Map<string, PushRemoteFile>();
   const remoteDigests = new Map<string, string>();
   const nextFiles: Record<string, SyncFileSnapshot> = {};

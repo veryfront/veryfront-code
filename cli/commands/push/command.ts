@@ -378,6 +378,7 @@ function outputPushResult(
   branchName: string,
   uploaded: number,
   deleted: number,
+  protectedDeleted: readonly string[],
   duration?: number,
 ): void {
   const urls = buildPushUrls(projectSlug, branchName);
@@ -392,6 +393,7 @@ function outputPushResult(
         dryRun: false,
         uploaded,
         deleted,
+        protectedDeleted: [...protectedDeleted],
         studioUrl: urls.studio,
         previewUrl: urls.preview,
       },
@@ -422,6 +424,7 @@ function outputPushDryRunResult(
   projectExists: boolean,
   wouldUpload: number,
   wouldDelete: number,
+  protectedWouldDelete: readonly string[],
 ): void {
   const urls = buildPushUrls(projectSlug, branchName);
   streamJsonLine({
@@ -434,6 +437,7 @@ function outputPushDryRunResult(
       projectExists,
       wouldUpload,
       wouldDelete,
+      protectedWouldDelete: [...protectedWouldDelete],
       studioUrl: projectExists ? urls.studio : null,
       previewUrl: projectExists ? urls.preview : null,
     },
@@ -708,10 +712,12 @@ function findRemoteFilesMissingLocally(
   return remoteFiles
     .map((file) => file.path)
     .filter((path) =>
-      ignoreChecker.isProtected(path) ||
-      (ignoreChecker.isSupportedExtension(path) &&
-        !ignoreChecker.isIgnored(path) &&
-        !localPaths.has(path))
+      !localPaths.has(path) &&
+      // A protected path bypasses the extension and ignore filters: it is never
+      // scanned locally, so prune is the only way to remove a copy that an older
+      // CLI uploaded or that was authored in the web editor.
+      (ignoreChecker.isProtected(path) ||
+        (ignoreChecker.isSupportedExtension(path) && !ignoreChecker.isIgnored(path)))
     );
 }
 
@@ -1098,6 +1104,12 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         (ignoreChecker.isSupportedExtension(file.path) && !ignoreChecker.isIgnored(file.path))
       );
       const protectedDeletePaths = toDelete.filter((path) => ignoreChecker.isProtected(path));
+      // Protected paths are planner input only. The sync baseline must never
+      // record them, because `plan.nextFiles` excludes them and no later pull or
+      // push would ever reconcile such an entry away.
+      const syncBaselineRemoteFiles = managedRemoteFiles.filter((file) =>
+        !ignoreChecker.isProtected(file.path)
+      );
       const plan = await planPushChanges({
         localFiles: ops,
         remoteFiles: managedRemoteFiles,
@@ -1246,6 +1258,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               projectExists,
               0,
               0,
+              protectedDeletePaths,
             );
           } else if (dryRun) {
             logInfo("Dry run complete. No files would change.");
@@ -1255,6 +1268,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               branchName,
               0,
               forcedPruneDeleteCount,
+              protectedDeletePaths,
               Date.now() - startTime,
             );
           }
@@ -1264,15 +1278,20 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       spinner.stop();
 
-      if (protectedDeletePaths.length > 0 && !quiet && !jsonOutput) {
+      // JSON runs get the same list as a structured field on the result
+      // envelope, so this human-readable form is the non-JSON counterpart. It
+      // stays outside the `quiet` gate because the delete is destructive and
+      // `--quiet` emits no result envelope at all.
+      if (protectedDeletePaths.length > 0 && !jsonOutput) {
         logWarning(
-          `Prune removes ${protectedDeletePaths.length} protected remote ${
-            protectedDeletePaths.length === 1 ? "path" : "paths"
-          } that .vfignore cannot re-include: ${protectedDeletePaths.join(", ")}.`,
+          `Prune ${dryRun ? "would remove" : "removes"} ${protectedDeletePaths.length} protected ` +
+            `remote ${
+              protectedDeletePaths.length === 1 ? "path" : "paths"
+            } that .vfignore cannot re-include: ${protectedDeletePaths.join(", ")}.`,
         );
-        logInfo(
-          "Use veryfront push --prune --dry-run first to review them.",
-        );
+        if (!dryRun) {
+          logInfo("Rotate any credential these paths contained.");
+        }
       }
 
       if (!quiet && !jsonOutput && (dryRun || isVerbose())) {
@@ -1297,6 +1316,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             projectExists,
             uploadOps.length,
             deleteOps.length,
+            protectedDeletePaths,
           );
         } else if (!quiet) {
           const parts = buildConfirmParts(uploadOps, deleteOps.map((op) => op.path));
@@ -1335,7 +1355,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           config,
           project,
           branchName,
-          managedRemoteFiles,
+          syncBaselineRemoteFiles,
           uploadOps.filter((op) => appliedUploads.has(op.path)),
           appliedDeletes,
         );
@@ -1374,7 +1394,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           config,
           project,
           branchName,
-          managedRemoteFiles,
+          syncBaselineRemoteFiles,
           stillApplied.uploads,
           stillApplied.deletes,
         );
@@ -1399,7 +1419,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           config,
           project,
           branchName,
-          managedRemoteFiles,
+          syncBaselineRemoteFiles,
           uploadOps.filter((op) => appliedUploads.has(op.path)),
           [],
         );
@@ -1414,7 +1434,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           config,
           project,
           branchName,
-          managedRemoteFiles,
+          syncBaselineRemoteFiles,
           uploadOps.filter((op) => appliedUploads.has(op.path)),
           [],
         );
@@ -1445,7 +1465,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           config,
           project,
           branchName,
-          managedRemoteFiles,
+          syncBaselineRemoteFiles,
           uploadOps.filter((op) => appliedUploads.has(op.path)),
           deleteOps.filter((op) => appliedDeletes.has(op.path)),
         );
@@ -1488,7 +1508,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               config,
               project,
               branchName,
-              managedRemoteFiles,
+              syncBaselineRemoteFiles,
               stillApplied.uploads,
               stillApplied.deletes,
             );
@@ -1677,6 +1697,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         branchName,
         uploadResult.uploaded,
         deleteResult.deleted,
+        protectedDeletePaths,
         Date.now() - startTime,
       );
     },

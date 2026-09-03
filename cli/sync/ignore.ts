@@ -4,7 +4,7 @@
 
 import { join } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
-import { cliLogger } from "#cli/utils";
+import { cliLogger, logWarning } from "#cli/utils";
 import { isNotFoundError, lstat } from "veryfront/fs";
 
 /** Default patterns always ignored */
@@ -39,10 +39,14 @@ const DEFAULT_IGNORE_PATTERNS: readonly string[] = [
  * They hold credentials, local CLI state, and Git internals, so a negation such
  * as `!.env*.json` must not make `veryfront push` read and upload them.
  *
- * The trailing-slash `.env*/` pattern also covers the plain file form, because a
- * directory-only pattern compiles to a suffix of `(/` or end of string. It
- * matches `.env.production.json` and `.env/credentials.json` alike, so a
- * separate `.env` glob entry would be redundant.
+ * The two `.env` entries are deliberately stricter than the `.env*` default:
+ * they cover `.env` itself and dot-suffixed variants such as `.env.local` and
+ * `.env.production.json`, but not unrelated names that merely start with `.env`
+ * (`.envoy`, `.environments`, `.envs`). Those keep the `.env*` default ignore
+ * and stay negatable, so a project that publishes files from such a directory
+ * is not forced to rename it. Both entries end in `/` so they match a directory
+ * too: a directory-only pattern compiles to a suffix of `/` or end of string,
+ * which also matches the plain file form.
  *
  * The set stays narrower than `DEFAULT_IGNORE_PATTERNS`. Build caches and
  * third-party tool metadata such as `.cache`, `.deno`, `.turbo`, `.vercel`, and
@@ -50,7 +54,8 @@ const DEFAULT_IGNORE_PATTERNS: readonly string[] = [
  * to publish a file under them, so those stay negatable.
  */
 const PROTECTED_IGNORE_PATTERNS: readonly string[] = [
-  ".env*/",
+  ".env/",
+  ".env.*/",
   ".veryfront",
   ".git",
 ];
@@ -221,6 +226,10 @@ function isProtectedPath(normalizedPath: string): boolean {
  */
 export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker {
   const rules = toRules(patterns);
+  // A dropped negation silently changes what push and pull reconcile, so warn
+  // at the default log level. Deduplicated per checker because every path is
+  // tested many times during a single scan.
+  const warnedOverrides = new Set<string>();
 
   function isIgnored(relativePath: string): boolean {
     const normalizedPath = relativePath.replace(/\\/g, "/");
@@ -232,9 +241,13 @@ export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker 
     }
 
     if (!ignored && isProtectedPath(normalizedPath)) {
-      cliLogger.debug(
-        `Keeping protected path ignored: .vfignore cannot re-include "${normalizedPath}".`,
-      );
+      if (!warnedOverrides.has(normalizedPath)) {
+        warnedOverrides.add(normalizedPath);
+        logWarning(
+          `Ignoring protected path "${normalizedPath}". A .vfignore negation cannot re-include ` +
+            "a .env, .veryfront, or .git path.",
+        );
+      }
       return true;
     }
 

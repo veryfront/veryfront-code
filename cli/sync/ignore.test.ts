@@ -132,7 +132,6 @@ describe("cli/sync/ignore", () => {
         ".git",
         "!.env*.json",
         "!.env/**",
-        "!.envs/**",
         "!.veryfront",
         "!.veryfront/**",
         "!.git/**",
@@ -142,7 +141,6 @@ describe("cli/sync/ignore", () => {
       assertEquals(checker.isIgnored("config/.env.staging.yaml"), true);
       assertEquals(checker.isIgnored(".env/credentials.json"), true);
       assertEquals(checker.isIgnored(".env.d/production.json"), true);
-      assertEquals(checker.isIgnored(".envs/production.json"), true);
       assertEquals(checker.isIgnored(".ENV.PRODUCTION.JSON"), true);
       assertEquals(checker.isIgnored(".ENV/credentials.json"), true);
       assertEquals(checker.isIgnored(".veryfront"), true);
@@ -150,6 +148,19 @@ describe("cli/sync/ignore", () => {
       assertEquals(checker.isIgnored(".git/config"), true);
       assertEquals(checker.isProtected(".env/credentials.json"), true);
       assertEquals(checker.isProtected("src/app.ts"), false);
+    });
+
+    it("should keep negations working for names that only start with .env", () => {
+      const checker = createIgnoreChecker([
+        ".env*",
+        "!.envoy/**",
+        "!.environments/**",
+      ]);
+
+      assertEquals(checker.isIgnored(".envoy/config.json"), false);
+      assertEquals(checker.isIgnored(".environments/prod.json"), false);
+      assertEquals(checker.isProtected(".envoy/config.json"), false);
+      assertEquals(checker.isProtected(".environments/prod.json"), false);
     });
 
     it("should handle directory-trailing-slash patterns", () => {

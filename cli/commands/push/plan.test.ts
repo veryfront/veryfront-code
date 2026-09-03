@@ -203,6 +203,24 @@ describe("planPushChanges", () => {
     assertEquals(plan.nextFiles, {});
   });
 
+  it("ignores a protected path that is not also queued for deletion", async () => {
+    const digest = await computeContentDigest("secret\n");
+    const plan = await planPushChanges({
+      localFiles: [],
+      remoteFiles: [{ path: ".env/credentials.json", content: "secret\n", version_id: VERSION_2 }],
+      baselineFiles: {},
+      deletePaths: [],
+      protectedDeletePaths: [".env/credentials.json"],
+      force: false,
+    });
+
+    assertEquals(plan.deletes, []);
+    assertEquals(plan.conflicts, []);
+    assertEquals(plan.nextFiles, {
+      ".env/credentials.json": { digest, versionId: VERSION_2 },
+    });
+  });
+
   it("lets force intentionally bypass overwrite preconditions", async () => {
     const localDigest = await computeContentDigest("local\n");
     const plan = await planPushChanges({

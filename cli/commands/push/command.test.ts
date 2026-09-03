@@ -414,6 +414,7 @@ describe("push JSON output", () => {
           projectExists: true,
           wouldUpload: 0,
           wouldDelete: 0,
+          protectedWouldDelete: [],
           studioUrl: "https://veryfront.com/projects/json-project?branch=main",
           previewUrl: "https://json-project.preview.veryfront.com",
         },
@@ -470,6 +471,7 @@ describe("push JSON output", () => {
           projectExists: true,
           wouldUpload: 1,
           wouldDelete: 0,
+          protectedWouldDelete: [],
           studioUrl: "https://veryfront.com/projects/json-project?branch=main",
           previewUrl: "https://json-project.preview.veryfront.com",
         },
@@ -599,6 +601,72 @@ describe("push JSON output", () => {
       setJsonMode(false);
       console.log = originalLog;
       globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("names the pruned protected paths in the JSON result", async () => {
+    const originalLog = console.log;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "json-project");
+        _resetEnvironmentConfig();
+        setJsonMode(true);
+
+        const deleted: string[] = [];
+        const fetchHandler = async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/json-project") {
+            return Response.json({ id: "proj_json", slug: "json-project" });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/json-project/files") {
+            return Response.json({
+              data: [
+                {
+                  path: "app.ts",
+                  content: "export const value = 1;\n",
+                  version_id: "00000000-0000-4000-8000-000000000010",
+                },
+                ...(deleted.includes(".env.production.json") ? [] : [{
+                  path: ".env.production.json",
+                  content: '{"apiKey":"<REDACTED>"}\n',
+                  version_id: "00000000-0000-4000-8000-000000000020",
+                }]),
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "DELETE") {
+            deleted.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        };
+
+        await withMockFetch(fetchHandler, async () => {
+          const dryRunOutput: string[] = [];
+          console.log = captureConsoleLog(dryRunOutput);
+          await pushCommand({ projectDir, dryRun: true, prune: true });
+          assertEquals(JSON.parse(dryRunOutput[0]!).data.protectedWouldDelete, [
+            ".env.production.json",
+          ]);
+
+          const pushOutput: string[] = [];
+          console.log = captureConsoleLog(pushOutput);
+          await pushCommand({ projectDir, prune: true });
+          assertEquals(JSON.parse(pushOutput[0]!).data.protectedDeleted, [".env.production.json"]);
+        });
+      });
+    } finally {
+      setJsonMode(false);
+      console.log = originalLog;
       envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
       _resetEnvironmentConfig();
     }
