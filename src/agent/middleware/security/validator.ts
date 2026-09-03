@@ -435,10 +435,9 @@ function extractAdjacentSystemRuns(messages: Message[]): Message[][] {
     // mark a tool result conversion keeps as dropped and merge system runs
     // the provider keeps apart.
     isProviderDropped(message);
-    const textParts = message.parts.filter(isTextPart).map((part) => part.text);
     // The converter drops blank system layers outright, leaving the messages
     // on either side of them adjacent, so a blank one must not end the run.
-    if (textParts.join("").trim().length === 0) continue;
+    if (isBlankSystemText(message)) continue;
     run.push(message);
   }
   flushRun();
@@ -450,9 +449,50 @@ function messageTextParts(message: Message): string[] {
   return message.parts.filter(isTextPart).map((part) => part.text);
 }
 
-function extractAdjacentSystemRunTexts(messages: Message[]): string[] {
+function isBlankSystemText(message: Message): boolean {
+  return messageTextParts(message).join("").trim().length === 0;
+}
+
+/**
+ * Every grouping of system messages a provider converter can merge into one
+ * instruction.
+ *
+ * `toOpenAICompatibleMessages` folds only *adjacent* system messages
+ * (`extractAdjacentSystemRuns` mirrors that walk), but the Anthropic request
+ * builder (extensions/ext-llm-anthropic/src/anthropic-request-builder.ts)
+ * hoists every system message in the prompt into `systemParts` and joins them
+ * all with a blank line into one system string, and the Google request builder
+ * (extensions/ext-llm-google/src/google-request-builder.ts) likewise collects
+ * every system message into a single `systemInstruction`, regardless of the
+ * user, assistant, or tool turns between them. A blocked phrase split across
+ * system messages that a surviving turn keeps apart on OpenAI-compatible
+ * providers therefore still reassembles on those providers, so the full
+ * hoisted sequence is validated and sanitized alongside each adjacent run. The
+ * hoisted run comes last so a sanitization rewrite of it supersedes any
+ * per-run rewrite of its member messages.
+ */
+function extractMergedSystemRuns(messages: Message[]): Message[][] {
+  const runs = extractAdjacentSystemRuns(messages);
+
+  // Mirror the converters' blank handling: a system message whose assembled
+  // text is blank is dropped before the hoist, so it joins nothing.
+  const hoisted = messages.filter(
+    (message) => message.role === "system" && !isBlankSystemText(message),
+  );
+  // A single system message is covered by the per-message extraction.
+  if (hoisted.length < 2) return runs;
+
+  const alreadyCovered = runs.some(
+    (run) =>
+      run.length === hoisted.length &&
+      run.every((message, index) => message === hoisted[index]),
+  );
+  return alreadyCovered ? runs : [...runs, hoisted];
+}
+
+function extractMergedSystemRunTexts(messages: Message[]): string[] {
   const runTexts = new Set<string>();
-  for (const run of extractAdjacentSystemRuns(messages)) {
+  for (const run of extractMergedSystemRuns(messages)) {
     for (const separator of ASSEMBLED_TEXT_SEPARATORS) {
       runTexts.add(
         run.map((message) => messageTextParts(message).join(separator)).join("\n\n"),
@@ -464,7 +504,7 @@ function extractAdjacentSystemRunTexts(messages: Message[]): string[] {
 
 function extractInputValidationTexts(input: AgentContext["input"]): string[] {
   if (typeof input === "string") return [input];
-  return [...input.flatMap(extractMessageInputText), ...extractAdjacentSystemRunTexts(input)];
+  return [...input.flatMap(extractMessageInputText), ...extractMergedSystemRunTexts(input)];
 }
 
 /**
@@ -558,21 +598,25 @@ function sanitizeStructuredInput(validator: InputValidator, messages: Message[])
 }
 
 /**
- * Sanitize across adjacent system messages.
+ * Sanitize across system messages the provider merges.
  *
- * The provider folds an adjacent system run into one instruction joined with a
- * blank line, so a harmful sequence split across the message boundary
- * ("<script" + ">alert(1)</script>") escapes per-message sanitization yet
- * reassembles at the provider. When any assembled run form still changes under
- * sanitization, the run's text is collapsed into the first message's first
- * text part, sanitized to a fixpoint over the provider-assembled form, and the
- * later messages lose their text parts; the converter then drops those
+ * The provider folds a merged system run into one instruction joined with a
+ * blank line (adjacent runs on OpenAI-compatible providers; every system
+ * message in the prompt on Anthropic and Google, see
+ * `extractMergedSystemRuns`), so a harmful sequence split across the message
+ * boundary ("<script" + ">alert(1)</script>") escapes per-message sanitization
+ * yet reassembles at the provider. When any assembled run form still changes
+ * under sanitization, the run's text is collapsed into the first message's
+ * first text part, sanitized to a fixpoint over the provider-assembled form,
+ * and the later messages lose their text parts; the converter then drops those
  * now-blank system layers, so the provider sees exactly the sanitized text.
+ * The hoisted run is processed last, so when it needs a rewrite its collapse
+ * supersedes any per-run rewrite of the same messages.
  */
-function sanitizeAdjacentSystemRuns(validator: InputValidator, messages: Message[]): Message[] {
+function sanitizeMergedSystemRuns(validator: InputValidator, messages: Message[]): Message[] {
   const rewrites = new Map<Message, Message["parts"]>();
 
-  for (const run of extractAdjacentSystemRuns(messages)) {
+  for (const run of extractMergedSystemRuns(messages)) {
     const runNeedsRewrite = ASSEMBLED_TEXT_SEPARATORS.some((separator) => {
       const assembled = run
         .map((message) => messageTextParts(message).join(separator))
@@ -640,7 +684,7 @@ async function assertInputTextsValid(
  * Reject a merged system run that sanitization would still rewrite.
  *
  * Within one turn such a run is repaired in place
- * (`sanitizeAdjacentSystemRuns`), but the cross-turn hook sees the assembled
+ * (`sanitizeMergedSystemRuns`), but the cross-turn hook sees the assembled
  * conversation only after the earlier half of the run is already persisted
  * memory, which it cannot rewrite. Per-turn sanitization has already run by
  * then, so only a payload split across the memory/input boundary can still
@@ -681,7 +725,7 @@ function sanitizeAgentInput(
   // deletion), and the post-sanitize revalidation only re-checks blocked
   // patterns, not sanitize completeness.
   if (typeof input === "string") return sanitizeTextToFixpoint(validator, input);
-  return sanitizeAdjacentSystemRuns(validator, sanitizeStructuredInput(validator, input));
+  return sanitizeMergedSystemRuns(validator, sanitizeStructuredInput(validator, input));
 }
 
 function sameTexts(left: string[], right: string[]): boolean {
@@ -758,7 +802,7 @@ export function securityMiddleware(
     const previousTurnValidator = turnMessageValidators.get(context);
     turnMessageValidators.set(context, async (messages) => {
       if (previousTurnValidator) await previousTurnValidator(messages);
-      const runTexts = extractAdjacentSystemRunTexts(messages);
+      const runTexts = extractMergedSystemRunTexts(messages);
       await assertInputTextsValid(inputValidator, runTexts, config.onViolation);
       assertTextsNeedNoSanitization(
         inputValidator,
