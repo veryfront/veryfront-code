@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertStringIncludes } from "#std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "#std/assert";
 import { makeTempDir } from "#veryfront/testing/deno-compat";
 import { parse } from "npm:@babel/parser@7.29.2";
 import {
@@ -1020,6 +1020,40 @@ Deno.test("project writes stay bound to the file opened before a path swap", asy
   }
 });
 
+Deno.test("project writes support regular files on Windows", async () => {
+  if (Deno.build.os !== "windows") return;
+
+  const project = await makeTempDir();
+  const target = `${project}/app.ts`;
+  try {
+    await Deno.writeTextFile(target, "original");
+    await writeTextFileInsideProject(target, await Deno.realPath(project), "updated");
+    assertEquals(await Deno.readTextFile(target), "updated");
+  } finally {
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
+Deno.test("project writes refuse to create a missing manifest", async () => {
+  const project = await makeTempDir();
+  const target = `${project}/package.json`;
+  try {
+    let thrown: unknown;
+    try {
+      await writeTextFileInsideProject(target, await Deno.realPath(project), "{}\n", {
+        allowMissing: true,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    assert(thrown instanceof Error);
+    assertStringIncludes(thrown.message, "Create package.json");
+    await assertRejects(() => Deno.lstat(target), Deno.errors.NotFound);
+  } finally {
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // main() integration: version conflicts are preflighted
 // ---------------------------------------------------------------------------
@@ -1063,6 +1097,46 @@ Deno.test(
       assertEquals(report.rewrites.map((rewrite) => rewrite.file), [`${link}/app.ts`]);
     } finally {
       await Deno.remove(parent, { recursive: true });
+    }
+  },
+);
+
+Deno.test(
+  "POSIX report paths preserve literal backslashes in file names",
+  async () => {
+    if (Deno.build.os === "windows") return;
+
+    const project = await makeTempDir();
+    const sourceName = "foo\\bar.ts";
+    try {
+      await Deno.writeTextFile(
+        `${project}/${sourceName}`,
+        'import { x } from "https://esm.sh/lodash@4.17.21";\n',
+      );
+      await Deno.writeTextFile(
+        `${project}/package.json`,
+        JSON.stringify({ name: "test", dependencies: {} }, null, 2) + "\n",
+      );
+
+      let report: { rewrites: Array<{ file: string }> } | undefined;
+      const originalLog = console.log.bind(console);
+      console.log = (message: string) => {
+        try {
+          report = JSON.parse(message);
+        } catch { /* ignore non-JSON lines */ }
+      };
+      try {
+        await main(["--", project]);
+      } finally {
+        console.log = originalLog;
+      }
+
+      assert(report !== undefined);
+      assertEquals(report.rewrites.map((rewrite) => rewrite.file), [
+        `${project}/${sourceName}`,
+      ]);
+    } finally {
+      await Deno.remove(project, { recursive: true });
     }
   },
 );

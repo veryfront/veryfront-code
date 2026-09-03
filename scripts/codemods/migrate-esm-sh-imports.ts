@@ -540,6 +540,43 @@ function sameFileIdentity(opened: Deno.FileInfo, current: Deno.FileInfo): boolea
   return opened.dev === current.dev && opened.ino !== null && opened.ino === current.ino;
 }
 
+async function replaceTextFileInsideProject(
+  path: string,
+  projectRoot: string,
+  content: string,
+): Promise<void> {
+  const parent = parentDirOf(path);
+  const tempPath = `${parent}${PATH_SEPARATOR}.veryfront-codemod-${crypto.randomUUID()}.tmp`;
+  const tempFile = await Deno.open(tempPath, { write: true, createNew: true });
+  let tempFileOpen = true;
+  try {
+    // The temporary file was created atomically and this handle cannot be
+    // redirected by a later path replacement.
+    await assertPathInsideProject(tempPath, projectRoot);
+    const bytes = new TextEncoder().encode(content);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const written = await tempFile.write(bytes.subarray(offset));
+      if (written === 0) throw new Error("Could not finish writing the migration result");
+      offset += written;
+    }
+    tempFile.close();
+    tempFileOpen = false;
+    // Renaming a sibling replaces the directory entry itself instead of
+    // following a final-component symlink. If an ancestor moved, the source
+    // path no longer resolves and the rename fails without touching a target.
+    await assertPathInsideProject(path, projectRoot);
+    await assertPathInsideProject(tempPath, projectRoot);
+    await Deno.rename(tempPath, path);
+  } finally {
+    if (tempFileOpen) tempFile.close();
+    try {
+      await assertPathInsideProject(tempPath, projectRoot);
+      await Deno.remove(tempPath);
+    } catch { /* already renamed, missing, or no longer safe to address by path */ }
+  }
+}
+
 /**
  * Write through a verified file handle so a later path swap cannot redirect
  * truncation or content outside the project.
@@ -550,6 +587,22 @@ export async function writeTextFileInsideProject(
   content: string,
   { allowMissing = false }: { allowMissing?: boolean } = {},
 ): Promise<void> {
+  await assertPathInsideProject(path, projectRoot, { allowMissing });
+  if (Deno.build.os === "windows") {
+    try {
+      await Deno.lstat(path);
+    } catch (error) {
+      if (allowMissing && error instanceof Deno.errors.NotFound) {
+        throw new Error(
+          "The migration does not create a missing file. Create package.json in the project root, then run it again.",
+        );
+      }
+      throw error;
+    }
+    await replaceTextFileInsideProject(path, projectRoot, content);
+    return;
+  }
+
   let file: Deno.FsFile;
   try {
     file = await Deno.open(path, { read: true, write: true });
@@ -557,9 +610,12 @@ export async function writeTextFileInsideProject(
     if (!allowMissing || !(error instanceof Deno.errors.NotFound)) {
       throw error;
     }
-    // createNew refuses a final-component symlink or a file planted after the
-    // failed open. The post-open containment and identity checks still apply.
-    file = await Deno.open(path, { read: true, write: true, createNew: true });
+    // JavaScript runtimes do not expose handle-relative no-follow creation.
+    // Refuse rather than creating through a parent path that could have been
+    // replaced after validation.
+    throw new Error(
+      "The migration does not create a missing file. Create package.json in the project root, then run it again.",
+    );
   }
 
   try {
@@ -817,7 +873,9 @@ async function main(args: string[]): Promise<void> {
     ) {
       throw new Error("Refusing to report a path outside the project directory");
     }
-    const normalizedRelative = projectRelative.replaceAll("\\", "/");
+    const normalizedRelative = Deno.build.os === "windows"
+      ? projectRelative.replaceAll("\\", "/")
+      : projectRelative;
     return normalizedRelative ? `${displayRoot}/${normalizedRelative}` : displayRoot;
   };
 
