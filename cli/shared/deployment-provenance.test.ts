@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
+import { deleteEnv, getEnv, makeTempDir, setEnv } from "#veryfront/testing/deno-compat.ts";
 import {
   clearPushReceipt,
   computeSourceDigest,
@@ -527,9 +527,9 @@ describe("resolveGitSource", () => {
   it("distinguishes non-Git directories from unborn repositories", async () => {
     const nonGitDir = await makeTempDir();
     const unbornDir = await makeTempDir();
-    const originalGithubSha = Deno.env.get("GITHUB_SHA");
+    const originalGithubSha = getEnv("GITHUB_SHA");
     try {
-      Deno.env.delete("GITHUB_SHA");
+      deleteEnv("GITHUB_SHA");
       assertEquals((await resolveGitSource(nonGitDir)).repositoryAvailable, false);
       const initialized = await new Deno.Command("git", {
         args: ["init", "--quiet"],
@@ -543,8 +543,8 @@ describe("resolveGitSource", () => {
       assertEquals(unborn.repositoryAvailable, true);
       assertEquals(unborn.indeterminate, undefined);
     } finally {
-      if (originalGithubSha === undefined) Deno.env.delete("GITHUB_SHA");
-      else Deno.env.set("GITHUB_SHA", originalGithubSha);
+      if (originalGithubSha === undefined) deleteEnv("GITHUB_SHA");
+      else setEnv("GITHUB_SHA", originalGithubSha);
       await Deno.remove(nonGitDir, { recursive: true });
       await Deno.remove(unbornDir, { recursive: true });
     }
@@ -552,8 +552,8 @@ describe("resolveGitSource", () => {
 
   it("resolves the committed SHA and detects later working-tree changes", async () => {
     const projectDir = await Deno.makeTempDir();
-    const originalGithubSha = Deno.env.get("GITHUB_SHA");
-    const originalGitDir = Deno.env.get("GIT_DIR");
+    const originalGithubSha = getEnv("GITHUB_SHA");
+    const originalGitDir = getEnv("GIT_DIR");
     const runGit = async (...args: string[]) => {
       const result = await new Deno.Command("git", {
         args,
@@ -569,7 +569,7 @@ describe("resolveGitSource", () => {
     };
 
     try {
-      Deno.env.delete("GITHUB_SHA");
+      deleteEnv("GITHUB_SHA");
       await runGit("init", "--quiet");
       await runGit("config", "user.email", "test@veryfront.com");
       await runGit("config", "user.name", "Veryfront Test");
@@ -578,25 +578,25 @@ describe("resolveGitSource", () => {
       await runGit("commit", "--quiet", "-m", "initial");
       await writePushReceipt(projectDir, RECEIPT);
 
-      Deno.env.set("GIT_DIR", `${projectDir}/not-a-repository`);
+      setEnv("GIT_DIR", `${projectDir}/not-a-repository`);
       const clean = await resolveGitSource(projectDir);
-      if (originalGitDir === undefined) Deno.env.delete("GIT_DIR");
-      else Deno.env.set("GIT_DIR", originalGitDir);
+      if (originalGitDir === undefined) deleteEnv("GIT_DIR");
+      else setEnv("GIT_DIR", originalGitDir);
       assertEquals(clean.commitSha?.length, 40);
       assertEquals(clean.clean, true);
 
-      Deno.env.set("GITHUB_SHA", "a".repeat(40));
+      setEnv("GITHUB_SHA", "a".repeat(40));
       const mismatchedCiSource = await resolveGitSource(projectDir);
       assertEquals(mismatchedCiSource.commitSha, null);
       assertEquals(mismatchedCiSource.clean, false);
       assertEquals(mismatchedCiSource.indeterminate, true);
 
-      Deno.env.set("GITHUB_SHA", "not-a-commit");
+      setEnv("GITHUB_SHA", "not-a-commit");
       const invalidCiSource = await resolveGitSource(projectDir);
       assertEquals(invalidCiSource.commitSha, null);
       assertEquals(invalidCiSource.clean, false);
       assertEquals(invalidCiSource.indeterminate, true);
-      Deno.env.delete("GITHUB_SHA");
+      deleteEnv("GITHUB_SHA");
 
       // The CLI writes its own bookkeeping (the project link, the receipt)
       // under .veryfront/, and none of it is ever uploaded, so a project that
@@ -616,10 +616,10 @@ describe("resolveGitSource", () => {
       assertEquals(dirty.commitSha, clean.commitSha);
       assertEquals(dirty.clean, false);
     } finally {
-      if (originalGitDir === undefined) Deno.env.delete("GIT_DIR");
-      else Deno.env.set("GIT_DIR", originalGitDir);
-      if (originalGithubSha === undefined) Deno.env.delete("GITHUB_SHA");
-      else Deno.env.set("GITHUB_SHA", originalGithubSha);
+      if (originalGitDir === undefined) deleteEnv("GIT_DIR");
+      else setEnv("GIT_DIR", originalGitDir);
+      if (originalGithubSha === undefined) deleteEnv("GITHUB_SHA");
+      else setEnv("GITHUB_SHA", originalGithubSha);
       await Deno.remove(projectDir, { recursive: true });
     }
   });
@@ -629,8 +629,8 @@ describe("resolveGitSource", () => {
     // GITHUB_SHA that CI exports for the run executing this suite. Left set,
     // resolveGitSource reports a CI/checkout mismatch and every checkout here
     // reads as dirty, hiding what this test is about.
-    const originalGithubSha = Deno.env.get("GITHUB_SHA");
-    Deno.env.delete("GITHUB_SHA");
+    const originalGithubSha = getEnv("GITHUB_SHA");
+    deleteEnv("GITHUB_SHA");
     const repositoryDir = await makeTempDir();
     const projectDir = `${repositoryDir}/packages/site`;
     const runGit = async (...args: string[]) => {
@@ -676,9 +676,42 @@ describe("resolveGitSource", () => {
       assertEquals((await resolveGitSource(projectDir)).clean, false);
       assertEquals(await resolveDeletedGitSourcePaths(projectDir), ["app.ts"]);
     } finally {
-      if (originalGithubSha === undefined) Deno.env.delete("GITHUB_SHA");
-      else Deno.env.set("GITHUB_SHA", originalGithubSha);
+      if (originalGithubSha === undefined) deleteEnv("GITHUB_SHA");
+      else setEnv("GITHUB_SHA", originalGithubSha);
       await Deno.remove(repositoryDir, { recursive: true });
+    }
+  });
+
+  it("refuses a CI SHA when HEAD cannot be resolved", async () => {
+    // `git status` succeeds in an unborn repository but `git rev-parse HEAD`
+    // does not. Trusting GITHUB_SHA here would hand back a commit that was
+    // never verified locally, letting a Git-backed receipt carrying the same
+    // SHA validate against a checkout that cannot prove it.
+    const projectDir = await makeTempDir();
+    const originalGithubSha = getEnv("GITHUB_SHA");
+    try {
+      const runGit = async (...args: string[]) => {
+        const command = new Deno.Command("git", {
+          args,
+          cwd: projectDir,
+          stdout: "null",
+          stderr: "null",
+        });
+        await command.output();
+      };
+      await runGit("init", "--quiet");
+      await runGit("config", "user.email", "test@veryfront.com");
+      await runGit("config", "user.name", "Veryfront Test");
+
+      setEnv("GITHUB_SHA", "b".repeat(40));
+      const source = await resolveGitSource(projectDir);
+
+      assertEquals(source.commitSha, null);
+      assertEquals(source.indeterminate, true);
+    } finally {
+      if (originalGithubSha === undefined) deleteEnv("GITHUB_SHA");
+      else setEnv("GITHUB_SHA", originalGithubSha);
+      await Deno.remove(projectDir, { recursive: true });
     }
   });
 

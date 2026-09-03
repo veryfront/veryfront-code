@@ -281,7 +281,15 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
   const repositoryAvailable = head.success || status.success || gitMetadataPresent;
   const probesIndeterminate = (head.success && normalizedHeadSha === null) ||
     (head.success && !status.success) ||
-    (!head.success && !status.success && gitMetadataPresent);
+    (!head.success && !status.success && gitMetadataPresent) ||
+    // `git status` can succeed where `git rev-parse HEAD` cannot — an unborn
+    // repository, or a checkout that has lost its Git metadata. Without this
+    // the CI-supplied SHA would be returned as `commitSha` even though no
+    // local commit was ever verified, letting a Git-backed receipt carrying
+    // the same SHA pass validation against a checkout that can no longer
+    // prove it. Only a CI SHA is affected: with no environment SHA there is
+    // nothing to vouch for, so that case keeps its existing behaviour.
+    (!head.success && normalizedEnvSha !== null);
   const indeterminate = !sourcesAgree || probesIndeterminate;
   const commitSha = indeterminate ? null : normalizedEnvSha ?? normalizedHeadSha;
 
