@@ -54,6 +54,12 @@ function createMockEnv(overrides: Partial<EnvironmentConfig> = {}): EnvironmentC
   } as EnvironmentConfig;
 }
 
+/** Put a process variable back the way the test found it. */
+function restoreEnv(key: string, original: string | undefined): void {
+  if (original === undefined) Deno.env.delete(key);
+  else Deno.env.set(key, original);
+}
+
 function projectIdOf(config: ResolvedConfig): string | undefined {
   return (config as ResolvedConfig & { projectId?: string }).projectId;
 }
@@ -453,6 +459,115 @@ describe("resolveConfig", () => {
       } else {
         Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
       }
+    }
+  });
+
+  it("refuses an env-file token whose value was expanded from a shell secret", async () => {
+    const tempDir = await makeTempDir();
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const originalCiSecret = Deno.env.get("GITHUB_TOKEN");
+    const ciSecret = "ghs_shell_secret_do_not_forward";
+
+    try {
+      __resetEnvLoaderForTests();
+      Deno.env.delete("VERYFRONT_API_URL");
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      // The repository names the host and names which of the operator's
+      // secrets to spend on it. `loadEnv` expands the reference, so the token
+      // reads as env-file supplied while its value is the shell's.
+      Deno.env.set("GITHUB_TOKEN", ciSecret);
+      await Deno.writeTextFile(
+        join(tempDir, ".env"),
+        "VERYFRONT_API_URL=https://attacker.example\nVERYFRONT_API_TOKEN=$GITHUB_TOKEN\n",
+      );
+      await loadEnv({ cwd: tempDir });
+
+      assertEquals(Deno.env.get("VERYFRONT_API_TOKEN"), ciSecret);
+
+      const env = createMockEnv({
+        apiUrl: "https://attacker.example",
+        apiToken: ciSecret,
+        projectSlug: "test-project",
+      });
+
+      const error = await assertRejects(() => resolveConfig(tempDir, env), Error);
+      assertInstanceOf(error, Error);
+
+      assertEquals(isUntrustedApiUrlCredentialError(error), true);
+      assertEquals(error.message.includes(ciSecret), false);
+      assertEquals(error.message.includes("attacker.example"), true);
+    } finally {
+      __resetEnvLoaderForTests();
+      await Deno.remove(tempDir, { recursive: true });
+
+      restoreEnv("VERYFRONT_API_URL", originalApiUrl);
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      restoreEnv("GITHUB_TOKEN", originalCiSecret);
+    }
+  });
+
+  it("still accepts an env-file token written literally beside the API URL", async () => {
+    const tempDir = await makeTempDir();
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const originalOther = Deno.env.get("SELF_HOSTED_TOKEN_PART");
+
+    try {
+      __resetEnvLoaderForTests();
+      Deno.env.delete("VERYFRONT_API_URL");
+      Deno.env.delete("VERYFRONT_API_TOKEN");
+      Deno.env.delete("SELF_HOSTED_TOKEN_PART");
+      // Expansion against an entry in the same file keeps the value repository
+      // content, so the self-hosted layout must keep working.
+      await Deno.writeTextFile(
+        join(tempDir, ".env"),
+        "SELF_HOSTED_TOKEN_PART=file-part\n" +
+          "VERYFRONT_API_URL=https://api.self-hosted.test\n" +
+          "VERYFRONT_API_TOKEN=vf-$SELF_HOSTED_TOKEN_PART\n",
+      );
+      await loadEnv({ cwd: tempDir });
+
+      const env = createMockEnv({
+        apiUrl: "https://api.self-hosted.test",
+        apiToken: "vf-file-part",
+        projectSlug: "test-project",
+      });
+
+      const config = await resolveConfig(tempDir, env);
+
+      assertEquals(config.apiUrl, "https://api.self-hosted.test");
+      assertEquals(config.apiToken, "vf-file-part");
+    } finally {
+      __resetEnvLoaderForTests();
+      await Deno.remove(tempDir, { recursive: true });
+
+      restoreEnv("VERYFRONT_API_URL", originalApiUrl);
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      restoreEnv("SELF_HOSTED_TOKEN_PART", originalOther);
+    }
+  });
+
+  it("does not tell the developer to assign the pathless origin to VERYFRONT_API_URL", async () => {
+    const tempDir = await makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({ apiUrl: "https://control.example/api" }),
+      );
+
+      const env = createMockEnv({ apiToken: "shell-token", projectSlug: "test-project" });
+
+      const error = await assertRejects(() => resolveConfig(tempDir, env), Error);
+      assertInstanceOf(error, Error);
+
+      // Copying the bare origin would drop the /api base path and send every
+      // request to the wrong place, so no assignment is offered at all.
+      assertEquals(error.message.includes("VERYFRONT_API_URL=https://control.example"), false);
+      assertEquals(error.message.includes("VERYFRONT_API_URL"), true);
+      assertEquals(error.message.includes("base path"), true);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
     }
   });
 

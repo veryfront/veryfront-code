@@ -6,7 +6,17 @@ import { isNotFoundError, readTextFile } from "#veryfront/platform/compat/fs.ts"
 
 const logger = serverLogger.component("env");
 
-const envSources = new Map<string, string>();
+interface EnvSourceRecord {
+  file: string;
+  /**
+   * True when `$NAME` expansion pulled part of this value out of the real
+   * process environment. The file supplied the template, but the secret came
+   * from the operator's shell, so the value is not purely repository content.
+   */
+  expandedFromProcessEnv: boolean;
+}
+
+const envSources = new Map<string, EnvSourceRecord>();
 let envLoaded = false;
 
 /** Load environment variables from `.env` files (`.env`, `.env.{NODE_ENV|DENO_ENV}`, `.env.local`). */
@@ -31,12 +41,12 @@ export async function loadEnv(
       const content = await readTextFile(file);
       const vars = parseEnvFile(content);
 
-      for (const [key, value] of Object.entries(vars)) {
+      for (const [key, { value, expandedFromProcessEnv }] of Object.entries(vars)) {
         const existing = getEnv(key);
         if (existing && !override) continue;
 
         setEnv(key, value);
-        envSources.set(key, file);
+        envSources.set(key, { file, expandedFromProcessEnv });
         totalVars++;
 
         // Log only the key name and value length — never any part of the value.
@@ -68,8 +78,28 @@ export async function loadEnv(
   );
 }
 
-function parseEnvFile(content: string): Record<string, string> {
+/** One `.env` entry, with the provenance of the value after expansion. */
+interface ParsedEnvEntry {
+  value: string;
+  expandedFromProcessEnv: boolean;
+}
+
+function parseEnvFile(content: string): Record<string, ParsedEnvEntry> {
+  const entries: Record<string, ParsedEnvEntry> = {};
+  // Plain values for `$NAME` references to entries earlier in the same file.
   const vars: Record<string, string> = {};
+  // Keys whose value already carries something from the process environment.
+  // Referencing one of them taints the referring value in turn.
+  const tainted = new Set<string>();
+
+  const record = (key: string, raw: string): void => {
+    const { value, expandedFromProcessEnv } = expandVariables(raw, vars, tainted);
+    entries[key] = { value, expandedFromProcessEnv };
+    vars[key] = value;
+    if (expandedFromProcessEnv) tainted.add(key);
+    else tainted.delete(key);
+  };
+
   const lines = content.split("\n");
 
   let currentKey: string | null = null;
@@ -86,7 +116,7 @@ function parseEnvFile(content: string): Record<string, string> {
       }
 
       currentValue += `\n${line.substring(0, endQuoteIndex)}`;
-      vars[currentKey!] = expandVariables(currentValue, vars);
+      record(currentKey!, currentValue);
 
       currentKey = null;
       currentValue = "";
@@ -110,7 +140,7 @@ function parseEnvFile(content: string): Record<string, string> {
 
       const endQuoteIndex = value.indexOf(quoteChar);
       if (endQuoteIndex !== -1) {
-        vars[key] = expandVariables(value.substring(0, endQuoteIndex), vars);
+        record(key, value.substring(0, endQuoteIndex));
         continue;
       }
 
@@ -128,22 +158,45 @@ function parseEnvFile(content: string): Record<string, string> {
       value = value.substring(0, commentMatch.index).trim();
     }
 
-    vars[key] = expandVariables(value, vars);
+    record(key, value);
   }
 
-  return vars;
+  return entries;
 }
 
-function expandVariables(value: string, vars: Record<string, string>): string {
-  value = value.replace(/\$\{([^}]+)\}/g, (_, varName: string) => {
-    return vars[varName] ?? getEnv(varName) ?? "";
-  });
+/**
+ * Substitute `$NAME` and `${NAME}` references, reporting where they resolved.
+ *
+ * A reference resolves against earlier entries in the same file first and falls
+ * back to the real process environment. That fallback is how a checked-in
+ * `.env` can quote the operator's own shell secret, so the caller is told when
+ * it happened: the resulting value is no longer purely repository content.
+ */
+function expandVariables(
+  value: string,
+  vars: Record<string, string>,
+  taintedVars: ReadonlySet<string>,
+): { value: string; expandedFromProcessEnv: boolean } {
+  let expandedFromProcessEnv = false;
 
-  value = value.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, varName: string) => {
-    return vars[varName] ?? getEnv(varName) ?? "";
-  });
+  const substitute = (varName: string): string => {
+    const fromFile = vars[varName];
+    if (fromFile !== undefined) {
+      if (taintedVars.has(varName)) expandedFromProcessEnv = true;
+      return fromFile;
+    }
+    const fromProcess = getEnv(varName);
+    if (fromProcess !== undefined) {
+      expandedFromProcessEnv = true;
+      return fromProcess;
+    }
+    return "";
+  };
 
-  return value;
+  value = value.replace(/\$\{([^}]+)\}/g, (_, varName: string) => substitute(varName));
+  value = value.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, varName: string) => substitute(varName));
+
+  return { value, expandedFromProcessEnv };
 }
 
 /** Check whether `.env` file loading is supported in the current runtime. */
@@ -161,11 +214,30 @@ export function hasEnvLoaded(): boolean {
   return envLoaded;
 }
 
-export function getEnvSource(
-  key: string,
-): { source: "env-file"; file: string } | { source: "process" } | { source: "unset" } {
-  const file = envSources.get(key);
-  if (file) return { source: "env-file", file };
+/** Where a variable's value came from, for callers that must trust one origin. */
+export type EnvSource =
+  | {
+    source: "env-file";
+    file: string;
+    /**
+     * True when `$NAME` expansion copied part of the value out of the process
+     * environment. The file chose the shape, the shell supplied the secret, so
+     * such a value must not be treated as content the repository owns.
+     */
+    expandedFromProcessEnv: boolean;
+  }
+  | { source: "process" }
+  | { source: "unset" };
+
+export function getEnvSource(key: string): EnvSource {
+  const record = envSources.get(key);
+  if (record) {
+    return {
+      source: "env-file",
+      file: record.file,
+      expandedFromProcessEnv: record.expandedFromProcessEnv,
+    };
+  }
 
   const value = getEnv(key);
   if (value !== undefined) return { source: "process" };

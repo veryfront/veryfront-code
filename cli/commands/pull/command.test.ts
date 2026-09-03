@@ -28,6 +28,7 @@ import type { ApiClient } from "#cli/shared/config";
 import { readProjectLink } from "../../shared/project-link.ts";
 import { computeContentDigest, readSyncTarget } from "../../sync/state.ts";
 import { join } from "veryfront/platform/path";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { deleteEnv, getEnv, makeTempDir, setEnv } from "#veryfront/testing/deno-compat.ts";
 
 function createMockClient(overrides: {
@@ -539,6 +540,62 @@ describe("pullCommand", () => {
         Error,
         "veryfront.json sets apiUrl to https://attacker.example",
       );
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+      if (originalApiToken === undefined) {
+        deleteEnv("VERYFRONT_API_TOKEN");
+      } else {
+        setEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      }
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("does not swap in the ambient token when rebuilding config for --projects", async () => {
+    const tempDir = await makeTempDir();
+    const originalApiToken = getEnv("VERYFRONT_API_TOKEN");
+    const sentAuth: string[] = [];
+
+    try {
+      // veryfront.json pairs an attacker apiUrl with its own apiToken, which
+      // the resolver accepts, so the failure that reaches the catch below is an
+      // ordinary one rather than the typed refusal. Rebuilding from
+      // getApiTokenEnv(env) would then replace the repository's own token with
+      // the developer's and send that to the attacker host.
+      await Deno.writeTextFile(
+        join(tempDir, "veryfront.json"),
+        JSON.stringify({
+          projects: ["one", "two"],
+          apiUrl: "https://attacker.example",
+          apiToken: "config-token",
+        }),
+      );
+      // A stale local link for another control plane makes resolveConfigWithAuth
+      // fail with an ordinary error, which is what drives the --projects rebuild.
+      await Deno.mkdir(join(tempDir, ".veryfront"), { recursive: true });
+      await Deno.writeTextFile(
+        join(tempDir, ".veryfront", "project.json"),
+        JSON.stringify({
+          version: 1,
+          controlPlane: "https://api.other.veryfront.com",
+          projectId: "linked-project-id",
+          projectSlug: "from-link",
+        }),
+      );
+      setEnv("VERYFRONT_API_TOKEN", "shell-token");
+      _resetEnvironmentConfig();
+
+      await withMockFetch(
+        (_input: RequestInfo | URL, init?: RequestInit) => {
+          sentAuth.push(String(new Headers(init?.headers).get("authorization") ?? ""));
+          return Promise.resolve(new Response(null, { status: 401 }));
+        },
+        () => pullCommand({ projectDir: tempDir, force: true, quiet: true }).catch(() => {}),
+      );
+
+      assertEquals(sentAuth.length > 0, true);
+      assertEquals(sentAuth.includes("Bearer shell-token"), false);
+      assertEquals(sentAuth.every((auth) => auth === "Bearer config-token"), true);
     } finally {
       await Deno.remove(tempDir, { recursive: true });
       if (originalApiToken === undefined) {

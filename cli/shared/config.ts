@@ -9,7 +9,7 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { basename, join } from "veryfront/platform/path";
 import { createFileSystem, cwd, getEnv } from "veryfront/platform";
-import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
+import { type EnvironmentConfig, getApiTokenEnv, getEnvironmentConfig } from "veryfront/config";
 import { getEnvSource } from "veryfront/utils/env-loader";
 import { cliLogger, VERSION } from "#cli/utils";
 import { readToken } from "../auth/token-store.ts";
@@ -344,6 +344,12 @@ async function collectAmbientSecrets(env: EnvironmentConfig): Promise<string[]> 
  * operator's real shell token into the URL. Any ambient credential still
  * visible after that reduction is replaced with `<REDACTED>`. Only the env
  * file's name is shown, never its path on this machine.
+ *
+ * Because the shown URL is the origin alone, it is never offered as a value to
+ * copy into `VERYFRONT_API_URL`: a self-hosted endpoint such as
+ * `https://control.example/api` needs its base path, and assigning the bare
+ * origin would send every request to the wrong path. The message names the
+ * variable and leaves the exact endpoint to the developer, who knows it.
  */
 function describeUntrustedApiUrl(trust: ApiUrlTrust, ambientSecrets: readonly string[]): string {
   const safeApiUrl = redactAmbientSecrets(toDisplayApiUrl(trust.apiUrl), ambientSecrets);
@@ -354,8 +360,9 @@ function describeUntrustedApiUrl(trust: ApiUrlTrust, ambientSecrets: readonly st
     } file sets ${trust.steeringEnvKey} to ${safeApiUrl}`;
 
   return `${steer}. Veryfront does not send credentials from your shell environment or ` +
-    `'veryfront login' to that host. Add a matching apiToken to veryfront.json, or set ` +
-    `VERYFRONT_API_URL=${safeApiUrl} in your shell to confirm this API host.`;
+    `'veryfront login' to that host. Add a matching apiToken to veryfront.json, or, if you ` +
+    `trust ${safeApiUrl}, set VERYFRONT_API_URL in your shell to that API endpoint, including ` +
+    `any base path it needs, to confirm this API host.`;
 }
 
 /**
@@ -374,7 +381,13 @@ function isRepositorySuppliedCredential(
   if (candidate.apiTokenSource !== "env-file" || trust.steeringEnvFile === undefined) return false;
 
   const tokenSource = getEnvSource("VERYFRONT_API_TOKEN");
-  return tokenSource.source === "env-file" && tokenSource.file === trust.steeringEnvFile;
+  if (tokenSource.source !== "env-file" || tokenSource.file !== trust.steeringEnvFile) return false;
+
+  // `loadEnv` expands `$NAME` against the real process environment, so an entry
+  // such as `VERYFRONT_API_TOKEN=$GITHUB_TOKEN` looks like it came from the
+  // file while its value is the operator's shell secret. The repository chose
+  // which secret to name; it never owned the secret itself.
+  return !tokenSource.expandedFromProcessEnv;
 }
 
 async function resolveApiTokenForMode(
@@ -488,6 +501,85 @@ export async function resolveApiCredentialCandidatesForAuth(
   // supplied, never a shell, stored-login, or unrelated .env token.
   if (!trust.repositorySteered) return candidates;
   return candidates.filter((entry) => isRepositorySuppliedCredential(entry, trust));
+}
+
+/**
+ * Refuse to mint a new credential for a host a project `.env` file chose.
+ *
+ * `login` and `ensureAuthenticated` validate a freshly obtained token against
+ * `env`, whose `apiUrl` is whatever `VERYFRONT_API_URL` holds, and `loadEnv`
+ * fills that variable from a cloned `.env` before any command runs. Filtering
+ * the preflight candidates does not cover this: a brand new token is by
+ * definition the developer's own, so an empty candidate list must stop the
+ * login rather than fall through to one. A `veryfront.json` `apiUrl` does not
+ * reach `env`, so only the env-file case is a live path here.
+ */
+export async function assertApiUrlAcceptsNewCredential(
+  env: EnvironmentConfig = getEnvironmentConfig(),
+  projectDir: string = cwd(),
+): Promise<void> {
+  const configFile = await readConfigJsonFile(projectDir);
+  const trust = resolveApiUrlTrust(env, configFile);
+  if (!trust.repositorySteered || trust.steeringEnvFile === undefined) return;
+
+  throw new UntrustedApiUrlCredentialError(
+    describeUntrustedApiUrl(trust, await collectAmbientSecrets(env)),
+  );
+}
+
+/**
+ * Pick the API host and a credential it may receive, for callers that rebuild
+ * a configuration outside `resolveConfig`.
+ *
+ * `pull` reconstructs a config in its `catch` when `--slug` or a `projects`
+ * list is in play. Checking only for `UntrustedApiUrlCredentialError` there is
+ * not enough: when `veryfront.json` pairs an attacker `apiUrl` with its own
+ * `apiToken` the resolver accepts that pairing, so a later project-link failure
+ * is an ordinary error, and rebuilding with `getApiTokenEnv(env)` would swap
+ * the repository's token for the developer's and send it to that host. This
+ * applies the same trust rule to the rebuild, and refuses when nothing the
+ * repository supplied is available.
+ */
+export async function resolveApiCredentialForFallback(
+  env: EnvironmentConfig,
+  configFile: VeryfrontConfig | null,
+): Promise<{ apiUrl: string; apiToken: string | null }> {
+  const trust = resolveApiUrlTrust(env, configFile);
+  const candidates: ApiCredentialCandidate[] = [];
+
+  // Same precedence the fallbacks used before: the environment token first,
+  // then the veryfront.json apiToken.
+  const envToken = getApiTokenEnv(env);
+  if (envToken) {
+    const envSource = getEnvSource("VERYFRONT_API_TOKEN");
+    candidates.push({
+      apiToken: envToken,
+      apiTokenSource: envSource.source === "env-file" ? "env-file" : "env",
+      validationEnv: env,
+      authoritative: envSource.source !== "env-file",
+    });
+  }
+  if (configFile?.apiToken) {
+    candidates.push({
+      apiToken: configFile.apiToken,
+      apiTokenSource: "config-file",
+      validationEnv: env,
+      authoritative: true,
+    });
+  }
+
+  const eligible = trust.repositorySteered
+    ? candidates.filter((entry) => isRepositorySuppliedCredential(entry, trust))
+    : candidates;
+
+  const [candidate] = eligible;
+  if (!candidate && trust.repositorySteered) {
+    throw new UntrustedApiUrlCredentialError(
+      describeUntrustedApiUrl(trust, await collectAmbientSecrets(env)),
+    );
+  }
+
+  return { apiUrl: trust.apiUrl, apiToken: candidate?.apiToken ?? null };
 }
 
 async function resolveConfigBase(

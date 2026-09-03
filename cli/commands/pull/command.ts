@@ -12,7 +12,6 @@ import type { InferSchema } from "veryfront/extensions/schema";
 import { dirname, isAbsolute, join, relative, resolve } from "veryfront/platform/path";
 import { isNotFoundError, lstat } from "veryfront/fs";
 import { cliLogger } from "#cli/utils";
-import { resolveCliApiUrl } from "#cli/shared/constants";
 import { env } from "#cli/process-env";
 import { runCommand } from "#cli/process-command";
 import { createFileSystem, cwd } from "veryfront/platform";
@@ -20,13 +19,14 @@ import {
   createApiClient,
   isUntrustedApiUrlCredentialError,
   readConfigFile,
+  resolveApiCredentialForFallback,
   resolveConfigWithAuth,
   type ResolvedConfig,
 } from "#cli/shared/config";
 import { confirmPrompt, isTTY, logError, logInfo, logSuccess, logWarning } from "#cli/utils";
 import { createNoopSpinner, createSpinner } from "#cli/ui";
 import { isInteractive } from "../../shared/interactive.ts";
-import { getApiTokenEnv, getEnvironmentConfig } from "veryfront/config";
+import { getEnvironmentConfig } from "veryfront/config";
 import {
   ERROR_REGISTRY,
   type ErrorSlug,
@@ -924,15 +924,17 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
         // nor --slug may reconstruct their way past it.
         if (isUntrustedApiUrlCredentialError(error)) throw error;
 
+        // Rethrowing that error is not sufficient on its own. When
+        // veryfront.json pairs an attacker apiUrl with its own apiToken the
+        // resolver accepts the pairing, so a later project-link failure arrives
+        // here as an ordinary error while the host is still repository-steered.
+        // Both rebuilds therefore re-apply the trust rule, which refuses rather
+        // than substituting the developer's ambient token for the repository's.
         if (slugOverride && isProjectLinkResolutionError(error)) {
           const env = getEnvironmentConfig();
-          const token = getApiTokenEnv(env) ?? configFile?.apiToken;
-          if (token) {
-            config = {
-              apiUrl: resolveCliApiUrl(env, configFile?.apiUrl),
-              apiToken: token,
-              projectSlug: slugOverride,
-            };
+          const { apiUrl, apiToken } = await resolveApiCredentialForFallback(env, configFile);
+          if (apiToken) {
+            config = { apiUrl, apiToken, projectSlug: slugOverride };
           } else {
             throw error;
           }
@@ -940,18 +942,14 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
           if (!projects?.length) throw error;
 
           const env = getEnvironmentConfig();
-          const token = getApiTokenEnv(env) ?? configFile?.apiToken;
-          if (!token) {
+          const { apiUrl, apiToken } = await resolveApiCredentialForFallback(env, configFile);
+          if (!apiToken) {
             throw new Error(
               "VERYFRONT_API_TOKEN environment variable or apiToken in veryfront.json is required when using --projects",
             );
           }
 
-          config = {
-            apiUrl: resolveCliApiUrl(env, configFile?.apiUrl),
-            apiToken: token,
-            projectSlug: "",
-          };
+          config = { apiUrl, apiToken, projectSlug: "" };
         }
       }
 

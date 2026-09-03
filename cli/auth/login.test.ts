@@ -1795,6 +1795,72 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("refuses to mint a new credential for a host a project .env chose", async () => {
+      const originalLog = console.log;
+      const originalError = console.error;
+      const output: string[] = [];
+      const requestedUrls: string[] = [];
+      const projectDir = await makeTempDir({ prefix: "login-steered-env-file-" });
+      const originalApiUrl = getEnv("VERYFRONT_API_URL");
+
+      try {
+        // Filtering the preflight candidates leaves an empty list here, and an
+        // empty list on its own is not fail-closed: login would go on to obtain
+        // a brand new token and validate it against env.apiUrl, which the
+        // cloned .env file chose. A new token is always the developer's own, so
+        // no candidate could ever make this host acceptable.
+        const { __resetEnvLoaderForTests, loadEnv } = await import("veryfront/utils/env-loader");
+        __resetEnvLoaderForTests();
+        deleteEnv("VERYFRONT_API_URL");
+        await Deno.writeTextFile(
+          `${projectDir}/.env`,
+          "VERYFRONT_API_URL=https://attacker.example\n",
+        );
+        await loadEnv({ cwd: projectDir });
+
+        console.log = (message?: unknown) => output.push(String(message));
+        console.error = (message?: unknown) => output.push(String(message));
+        setNonInteractive(true);
+
+        const { withCwd } = await import("#veryfront/testing/cwd.ts");
+        const { login } = await import("./login.ts");
+
+        await withMockFetch(
+          (input: RequestInfo | URL) => {
+            requestedUrls.push(String(input));
+            return Promise.resolve(Response.json({ id: "u", email: "u@example.com" }));
+          },
+          () =>
+            assertRejects(
+              () =>
+                withCwd(
+                  projectDir,
+                  () =>
+                    login(undefined, {
+                      ...testEnv,
+                      apiUrl: "https://attacker.example",
+                      apiToken: undefined,
+                    }, projectDir),
+                ),
+              Error,
+              "sets VERYFRONT_API_URL to https://attacker.example",
+            ),
+        );
+
+        assertEquals(requestedUrls, []);
+      } finally {
+        const { __resetEnvLoaderForTests } = await import("veryfront/utils/env-loader");
+        __resetEnvLoaderForTests();
+        if (originalApiUrl === undefined) deleteEnv("VERYFRONT_API_URL");
+        else setEnv("VERYFRONT_API_URL", originalApiUrl);
+        console.log = originalLog;
+        console.error = originalError;
+        resetInteractiveMode();
+        await safeDeleteToken();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
     it("ignores a schema-invalid veryfront.json token before reporting a stored login in JSON mode", async () => {
       const originalFetch = globalThis.fetch;
       const originalLog = console.log;

@@ -395,7 +395,7 @@ describe("env-loader", () => {
       await loadEnv({ cwd: tempDir, override: true });
       assertEquals(
         getEnvSource(key),
-        { source: "env-file", file: `${tempDir}/.env` },
+        { source: "env-file", file: `${tempDir}/.env`, expandedFromProcessEnv: false },
         "a value loaded from .env must be attributed to the file",
       );
 
@@ -412,11 +412,62 @@ describe("env-loader", () => {
       // trusted origin, so a project .env must never be reported as one.
       assertEquals(
         getEnvSource(key),
-        { source: "env-file", file: `${tempDir}/.env` },
+        { source: "env-file", file: `${tempDir}/.env`, expandedFromProcessEnv: false },
         "a project .env value must outrank the process env in provenance",
       );
 
       cleanupKeys(key);
+    });
+
+    it("should flag a value expanded from the process environment", async () => {
+      const secretKey = createKey("SOURCE_SHELL_SECRET");
+      const key = createKey("SOURCE_EXPANDED");
+      setEnv(secretKey, "shell-secret-value");
+      await writeEnvFile(".env", `${key}=$${secretKey}`);
+
+      await loadEnv({ cwd: tempDir, override: true });
+      assertEquals(getEnv(key), "shell-secret-value", "the shell value must be substituted in");
+      assertEquals(
+        getEnvSource(key),
+        { source: "env-file", file: `${tempDir}/.env`, expandedFromProcessEnv: true },
+        "a value the file copied out of the shell is not purely repository content",
+      );
+
+      cleanupKeys(key, secretKey);
+    });
+
+    it("should propagate expansion provenance through an in-file reference", async () => {
+      const secretKey = createKey("SOURCE_CHAIN_SECRET");
+      const middleKey = createKey("SOURCE_CHAIN_MIDDLE");
+      const key = createKey("SOURCE_CHAIN_LEAF");
+      setEnv(secretKey, "chained-shell-secret");
+      await writeEnvFile(".env", `${middleKey}=$${secretKey}\n${key}=\${${middleKey}}`);
+
+      await loadEnv({ cwd: tempDir, override: true });
+      assertEquals(getEnv(key), "chained-shell-secret", "the chained value must resolve");
+      assertEquals(
+        getEnvSource(key),
+        { source: "env-file", file: `${tempDir}/.env`, expandedFromProcessEnv: true },
+        "referencing a tainted entry must taint the referring value too",
+      );
+
+      cleanupKeys(key, middleKey, secretKey);
+    });
+
+    it("should not flag a value expanded only from entries in the same file", async () => {
+      const baseKey = createKey("SOURCE_LOCAL_BASE");
+      const key = createKey("SOURCE_LOCAL_LEAF");
+      await writeEnvFile(".env", `${baseKey}=local\n${key}=\${${baseKey}}-suffix`);
+
+      await loadEnv({ cwd: tempDir, override: true });
+      assertEquals(getEnv(key), "local-suffix", "the in-file reference must resolve");
+      assertEquals(
+        getEnvSource(key),
+        { source: "env-file", file: `${tempDir}/.env`, expandedFromProcessEnv: false },
+        "a value assembled entirely from the file stays repository content",
+      );
+
+      cleanupKeys(key, baseKey);
     });
 
     it("should report a key present only in the process env as process", async () => {
