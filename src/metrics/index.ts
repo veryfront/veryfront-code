@@ -23,7 +23,10 @@ import { getGlobalMetricsAPI } from "#veryfront/observability/tracing/api-shim.t
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { getDenoRuntime } from "#veryfront/platform/compat/runtime.ts";
-import { isProjectEnvActive } from "#veryfront/server/project-env/storage.ts";
+import {
+  getTrustedProjectEnvIdentity,
+  isProjectEnvActive,
+} from "#veryfront/server/project-env/storage.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 
 export type MetricAttributeValue = string | number | boolean | null | undefined;
@@ -72,6 +75,7 @@ const gauges = new Map<
 >();
 const directQueue: DirectMetricSample[] = [];
 const directSampleTargets = new WeakMap<DirectMetricSample, string>();
+const directTargetExportTails = new Map<string, Promise<void>>();
 const directCounterTotals = new Map<string, { value: number; startTimeUnixNano: string }>();
 const directHistogramTotals = new Map<
   string,
@@ -91,6 +95,8 @@ const DIRECT_MAX_INTERNED_TARGETS = DIRECT_MAX_BATCH_SIZE;
 const DIRECT_MAX_PROJECT_TARGETS = 90;
 const DIRECT_MAX_TARGETS_PER_SCOPE = 16;
 const DIRECT_MAX_QUEUED_SAMPLES = 1_000;
+const DIRECT_MAX_PROJECT_PENDING_SAMPLES = 900;
+const DIRECT_MAX_PENDING_SAMPLES_PER_SCOPE = DIRECT_MAX_BATCH_SIZE;
 const HISTOGRAM_BOUNDS = [0, 10, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000];
 const apply = Reflect.apply;
 const NativeAbortController = AbortController;
@@ -105,6 +111,10 @@ const arrayPush = Array.prototype.push;
 const arraySplice = Array.prototype.splice;
 const mapDelete = Map.prototype.delete;
 const mapForEach = Map.prototype.forEach;
+const mapGet = Map.prototype.get;
+const mapSet = Map.prototype.set;
+const mapClear = Map.prototype.clear;
+const promiseThen = Promise.prototype.then;
 const stringStartsWith = String.prototype.startsWith;
 const weakMapDelete = WeakMap.prototype.delete;
 const weakMapGet = WeakMap.prototype.get;
@@ -312,6 +322,18 @@ function resolveDirectServiceIdentity(): Pick<
   };
 }
 
+function resolveDirectCapacityScope(): string {
+  const requestContext = getCurrentRequestContext();
+  if (requestContext?.projectId) return requestContext.projectId;
+  if (requestContext?.projectSlug) return requestContext.projectSlug;
+
+  const trustedIdentity = getTrustedProjectEnvIdentity();
+  return trustedIdentity?.projectId ??
+    trustedIdentity?.projectSlug ??
+    trustedIdentity?.environmentId ??
+    "project:unattributed";
+}
+
 function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
   const projectOtlpUrl = resolveProjectOtlpMetricsUrl();
   if (isDedicatedRuntime() && projectOtlpUrl) {
@@ -322,10 +344,7 @@ function resolveDirectMetricsTarget(): DirectMetricsTarget | null {
           readProjectEnv("OTEL_EXPORTER_OTLP_HEADERS"),
       ),
       ...resolveDirectServiceIdentity(),
-      capacityScope: getCurrentRequestContext()?.projectId ??
-        readProjectEnv("VERYFRONT_PROJECT_ID") ??
-        readProjectEnv("VERYFRONT_PROJECT_SLUG") ??
-        "project:unknown",
+      capacityScope: resolveDirectCapacityScope(),
       internal: false,
     };
   }
@@ -444,6 +463,31 @@ function countDirectTargets(predicate: (target: DirectMetricsTarget) => boolean)
     if (interned !== undefined && predicate(interned.target)) count++;
   }
   return count;
+}
+
+function countPendingDirectSamples(
+  predicate: (target: DirectMetricsTarget) => boolean = () => true,
+): number {
+  let count = 0;
+  for (let index = 0; index < internedTargets.length; index++) {
+    const interned = internedTargets[index];
+    if (interned !== undefined && predicate(interned.target)) {
+      count += interned.pendingSamples;
+    }
+  }
+  return count;
+}
+
+function hasDirectSampleCapacity(target: DirectMetricsTarget): boolean {
+  if (countPendingDirectSamples() >= DIRECT_MAX_QUEUED_SAMPLES) return false;
+  if (target.internal) return true;
+  if (
+    countPendingDirectSamples((candidate) => !candidate.internal) >=
+      DIRECT_MAX_PROJECT_PENDING_SAMPLES
+  ) return false;
+  return countPendingDirectSamples((candidate) =>
+    !candidate.internal && candidate.capacityScope === target.capacityScope
+  ) < DIRECT_MAX_PENDING_SAMPLES_PER_SCOPE;
 }
 
 function retainDirectTarget(target: DirectMetricsTarget): string | null {
@@ -696,12 +740,7 @@ async function exportAndReleaseDirectGroup(group: DirectExportGroup): Promise<vo
   }
 }
 
-async function flushDirectMetricsBatch(): Promise<void> {
-  if (directFlushTimer) {
-    clearTimeout(directFlushTimer);
-    directFlushTimer = null;
-  }
-
+function dispatchDirectMetricsBatch(): void {
   if (directQueue.length === 0) return;
 
   // Group by the target each sample was bound to when it was enqueued. The
@@ -738,29 +777,49 @@ async function flushDirectMetricsBatch(): Promise<void> {
   // Start every target request before awaiting any of them. Each request owns
   // a deadline, so one tenant endpoint cannot block another target or retain a
   // removed batch indefinitely.
-  const exports = new Array<Promise<void>>(groups.length);
   for (let index = 0; index < groups.length; index++) {
-    exports[index] = exportAndReleaseDirectGroup(groups[index]!);
-  }
-  for (let index = 0; index < exports.length; index++) {
-    await exports[index];
+    const group = groups[index]!;
+    const previous = apply(mapGet, directTargetExportTails, [group.key]) as
+      | Promise<void>
+      | undefined;
+    const start = () => exportAndReleaseDirectGroup(group);
+    const pending = previous
+      ? apply(promiseThen, previous, [start, start]) as Promise<void>
+      : start();
+    apply(mapSet, directTargetExportTails, [group.key, pending]);
+    const removeIfCurrent = () => {
+      if (apply(mapGet, directTargetExportTails, [group.key]) === pending) {
+        apply(mapDelete, directTargetExportTails, [group.key]);
+      }
+    };
+    void apply(promiseThen, pending, [removeIfCurrent, removeIfCurrent]);
   }
 }
 
-let directFlushPromise: Promise<void> | null = null;
+function dispatchQueuedDirectMetrics(): void {
+  if (directFlushTimer) {
+    clearTimeout(directFlushTimer);
+    directFlushTimer = null;
+  }
+  while (directQueue.length > 0) dispatchDirectMetricsBatch();
+}
+
+function snapshotDirectTargetExports(): Promise<void>[] {
+  const exports: Promise<void>[] = [];
+  const collect = (pending: Promise<void>): void => {
+    exports[exports.length] = pending;
+  };
+  apply(mapForEach, directTargetExportTails, [collect]);
+  return exports;
+}
 
 async function flushDirectMetrics(): Promise<void> {
-  while (directQueue.length > 0 || directFlushPromise) {
-    if (directFlushPromise) {
-      await directFlushPromise;
-      continue;
-    }
-    const pending = flushDirectMetricsBatch();
-    directFlushPromise = pending;
-    try {
-      await pending;
-    } finally {
-      if (directFlushPromise === pending) directFlushPromise = null;
+  while (true) {
+    dispatchQueuedDirectMetrics();
+    const exports = snapshotDirectTargetExports();
+    if (exports.length === 0) return;
+    for (let index = 0; index < exports.length; index++) {
+      await exports[index];
     }
   }
 }
@@ -789,7 +848,7 @@ function enqueueDirectMetric(
 ): void {
   const target = resolveDirectMetricsTarget();
   if (target === null) return;
-  if (directQueue.length >= DIRECT_MAX_QUEUED_SAMPLES) return;
+  if (!hasDirectSampleCapacity(target)) return;
   const targetKey = retainDirectTarget(target);
   if (targetKey === null) return;
   const sample: DirectMetricSample = {
@@ -876,6 +935,7 @@ export const metrics = {
     directQueue.length = 0;
     directCounterTotals.clear();
     directHistogramTotals.clear();
+    apply(mapClear, directTargetExportTails, []);
     internedTargets.length = 0;
     nextInternedTargetId = 0;
     nextInternedTargetUse = 0;

@@ -9,8 +9,10 @@ import {
 import {
   getProjectEnv,
   getProjectEnvSnapshot,
+  getTrustedProjectEnvIdentity,
   isProjectEnvActive,
   runWithProjectEnv,
+  runWithTrustedProjectEnv,
 } from "./storage.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -23,6 +25,25 @@ describe("project-env/storage", () => {
     runWithProjectEnv({ FOO: "bar" }, () => {
       assertEquals(getProjectEnv("FOO"), "bar");
     });
+  });
+
+  it("keeps runtime identity separate from project environment values", () => {
+    runWithProjectEnv({ VERYFRONT_PROJECT_ID: "forged-project" }, () => {
+      assertEquals(getTrustedProjectEnvIdentity(), undefined);
+    });
+
+    runWithTrustedProjectEnv(
+      { VERYFRONT_PROJECT_ID: "forged-project" },
+      { projectId: "trusted-project", environmentId: "trusted-environment" },
+      () => {
+        const identity = getTrustedProjectEnvIdentity();
+        assertEquals(identity, {
+          projectId: "trusted-project",
+          environmentId: "trusted-environment",
+        });
+        assertEquals(Object.isFrozen(identity!), true);
+      },
+    );
   });
 
   it("uses context operations captured before project prototype mutation", () => {

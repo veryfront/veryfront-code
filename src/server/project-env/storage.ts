@@ -11,9 +11,21 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { registerTrustedProjectEnvSnapshot } from "#veryfront/platform/compat/process/env.ts";
 import { createProjectEnvSnapshot, type ProjectEnvSnapshot } from "./snapshot.ts";
 
-const projectEnvStorage = new AsyncLocalStorage<ProjectEnvSnapshot>();
+export interface TrustedProjectEnvIdentity {
+  projectId?: string;
+  projectSlug?: string;
+  environmentId?: string;
+}
+
+interface ProjectEnvStore {
+  snapshot: ProjectEnvSnapshot;
+  identity?: Readonly<TrustedProjectEnvIdentity>;
+}
+
+const projectEnvStorage = new AsyncLocalStorage<ProjectEnvStore>();
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicObjectDefineProperty = Object.defineProperty;
+const IntrinsicObjectFreeze = Object.freeze;
 const AsyncLocalStoragePrototype = AsyncLocalStorage.prototype;
 const AsyncLocalStorageDisable = AsyncLocalStoragePrototype.disable;
 const AsyncLocalStorageEnterWith = AsyncLocalStoragePrototype.enterWith;
@@ -41,9 +53,9 @@ IntrinsicObjectDefineProperty(projectEnvStorage, "run", {
   writable: false,
 });
 
-function getProjectEnvStore(): ProjectEnvSnapshot | undefined {
+function getProjectEnvStore(): ProjectEnvStore | undefined {
   return IntrinsicReflectApply(AsyncLocalStorageGetStore, projectEnvStorage, []) as
-    | ProjectEnvSnapshot
+    | ProjectEnvStore
     | undefined;
 }
 
@@ -56,9 +68,29 @@ export function runWithProjectEnv<T>(
   fn: () => T,
 ): T {
   return IntrinsicReflectApply(AsyncLocalStorageRun, projectEnvStorage, [
-    createProjectEnvSnapshot(vars),
+    { snapshot: createProjectEnvSnapshot(vars) },
     fn,
   ]) as T;
+}
+
+/** Run with project env values plus identity resolved at the authenticated runtime boundary. */
+export function runWithTrustedProjectEnv<T>(
+  vars: Readonly<Record<string, string>>,
+  identity: TrustedProjectEnvIdentity,
+  fn: () => T,
+): T {
+  return IntrinsicReflectApply(AsyncLocalStorageRun, projectEnvStorage, [
+    {
+      snapshot: createProjectEnvSnapshot(vars),
+      identity: IntrinsicObjectFreeze({ ...identity }),
+    },
+    fn,
+  ]) as T;
+}
+
+/** Return only the runtime-owned identity, never project-provided environment values. */
+export function getTrustedProjectEnvIdentity(): Readonly<TrustedProjectEnvIdentity> | undefined {
+  return getProjectEnvStore()?.identity;
 }
 
 /**
@@ -66,7 +98,7 @@ export function runWithProjectEnv<T>(
  * Returns undefined if no project env overlay is active or key is not present.
  */
 export function getProjectEnv(key: string): string | undefined {
-  return getProjectEnvStore()?.[key];
+  return getProjectEnvStore()?.snapshot[key];
 }
 
 /**
@@ -84,7 +116,7 @@ export function isProjectEnvActive(): boolean {
  * Used to forward env vars to isolated workers in proxy mode.
  */
 export function getProjectEnvSnapshot(): ProjectEnvSnapshot | undefined {
-  return getProjectEnvStore();
+  return getProjectEnvStore()?.snapshot;
 }
 
 registerTrustedProjectEnvSnapshot(getProjectEnvSnapshot);

@@ -8,7 +8,10 @@ import {
   setGlobalMetricsAPI,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
-import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
+import {
+  runWithProjectEnv,
+  runWithTrustedProjectEnv,
+} from "#veryfront/server/project-env/storage.ts";
 import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { metrics } from "./index.ts";
@@ -629,6 +632,62 @@ describe("metrics public SDK", () => {
     ]);
   });
 
+  it("dispatches another project while a tenant target pipeline is stalled", async () => {
+    const requestedUrls: string[] = [];
+    const stalledResponse = Promise.withResolvers<Response>();
+
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-a,env-b",
+      OTEL_METRICS_ENABLED: "true",
+    }, async () => {
+      await withMockFetch(
+        ((url: string | URL | Request) => {
+          const requestedUrl = String(url);
+          requestedUrls[requestedUrls.length] = requestedUrl;
+          return requestedUrl === "https://stalled.example/v1/metrics"
+            ? stalledResponse.promise
+            : Promise.resolve(new Response("{}", { status: 200 }));
+        }) as typeof fetch,
+        async () => {
+          metrics.__setDirectExportTimeoutForTests(5_000);
+          runWithTrustedProjectEnv(
+            {
+              OTEL_METRICS_ENABLED: "true",
+              OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://stalled.example/v1/metrics",
+            },
+            { projectId: "project-a", environmentId: "env-a" },
+            () => {
+              for (let index = 0; index < 1_000; index++) {
+                metrics.counter("vf_stalled_metric_total", 1);
+              }
+            },
+          );
+
+          runWithTrustedProjectEnv(
+            {
+              OTEL_METRICS_ENABLED: "true",
+              OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://later.example/v1/metrics",
+            },
+            { projectId: "project-b", environmentId: "env-b" },
+            () => metrics.counter("vf_later_metric_total", 1),
+          );
+          const flush = metrics.__flushForTests();
+          for (let attempt = 0; attempt < 20 && requestedUrls.length < 2; attempt++) {
+            await Promise.resolve();
+          }
+
+          assertEquals(requestedUrls, [
+            "https://stalled.example/v1/metrics",
+            "https://later.example/v1/metrics",
+          ]);
+          stalledResponse.resolve(new Response("{}", { status: 200 }));
+          await flush;
+        },
+      );
+    });
+  });
+
   it("does not expose internal metrics credentials to replaced target-grouping intrinsics", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const observed: string[] = [];
@@ -800,20 +859,28 @@ describe("metrics public SDK", () => {
         (() => Promise.resolve(new Response("{}", { status: 200 }))) as typeof fetch,
         async () => {
           for (let index = 0; index < 150; index++) {
-            await runWithProjectEnv({
-              OTEL_METRICS_ENABLED: "true",
-              OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
-              OTEL_SERVICE_NAME: `project-${index}`,
-              VERYFRONT_PROJECT_ID: "project-a",
-            }, () => metrics.counter("vf_project_metric_total", 1));
+            runWithTrustedProjectEnv(
+              {
+                OTEL_METRICS_ENABLED: "true",
+                OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
+                OTEL_SERVICE_NAME: `project-${index}`,
+                VERYFRONT_PROJECT_ID: `forged-project-${index}`,
+              },
+              { projectId: "project-a", environmentId: "env-a" },
+              () => metrics.counter("vf_project_metric_total", 1),
+            );
           }
           await metrics.__flushForTests();
-          await runWithProjectEnv({
-            OTEL_METRICS_ENABLED: "true",
-            OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
-            OTEL_SERVICE_NAME: "project-b",
-            VERYFRONT_PROJECT_ID: "project-b",
-          }, () => metrics.counter("vf_project_metric_total", 1));
+          runWithTrustedProjectEnv(
+            {
+              OTEL_METRICS_ENABLED: "true",
+              OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
+              OTEL_SERVICE_NAME: "project-b",
+              VERYFRONT_PROJECT_ID: "forged-project-a",
+            },
+            { projectId: "project-b", environmentId: "env-b" },
+            () => metrics.counter("vf_project_metric_total", 1),
+          );
           await metrics.__flushForTests();
         },
       );
