@@ -8,6 +8,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import * as React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { type MDXLoadModuleOptions, mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
@@ -16,6 +17,7 @@ import {
   __resetStaleMdxEsmRecoveryStateForTests,
   handleMDXPage,
   prepareMDXPageBundles,
+  recoverStaleMdxEsmPreviewCaches,
 } from "./page-rendering.ts";
 import { PageRenderer } from "./page-renderer.ts";
 import {
@@ -300,6 +302,62 @@ describe("rendering/page-rendering", () => {
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;
     }
+  });
+
+  it("keeps a refreshed namespace from being evicted as the oldest tracked entry", async () => {
+    using time = new FakeTime();
+    let sourceRefreshes = 0;
+
+    const adapter = {
+      fs: {
+        refreshSourceSnapshot: () => {
+          sourceRefreshes++;
+          return Promise.resolve();
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    const recover = (contentSourceId: string) =>
+      recoverStaleMdxEsmPreviewCaches({
+        adapter,
+        projectSlug: "project-slug",
+        contentSourceId,
+        slug: "probe",
+        pagePath: "/probe",
+        mode: "production",
+      });
+
+    // "preview-hot" is tracked first, so with insertion-order eviction it is
+    // the head of the map even after a later recovery refreshes it.
+    assertEquals(await recover("preview-hot"), true);
+
+    // A second namespace stays young enough to survive the prune below, so the
+    // size cap has a genuinely older entry to evict.
+    time.tick(20_000);
+    assertEquals(await recover("preview-cold"), true);
+
+    // Past the cooldown, "preview-hot" recovers again and becomes the most
+    // recently used namespace.
+    time.tick(11_000);
+    assertEquals(await recover("preview-hot"), true);
+
+    // Fill the tracking map to its 512 namespace ceiling. The overflow must
+    // evict "preview-cold", not the namespace that just recovered.
+    for (let index = 0; index < 511; index++) {
+      assertEquals(await recover(`preview-filler-${index}`), true);
+    }
+
+    const refreshesBeforeReprobe = sourceRefreshes;
+    assertEquals(
+      await recover("preview-hot"),
+      false,
+      "the most recently recovered namespace must still be on cooldown after the size cap evicts",
+    );
+    assertEquals(
+      sourceRefreshes,
+      refreshesBeforeReprobe,
+      "an evicted cooldown entry would let the namespace refresh its source snapshot again immediately",
+    );
   });
 
   it("creates MDX elements with the requested project React version", async () => {

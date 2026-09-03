@@ -45,8 +45,19 @@ const STALE_MDX_ESM_RECOVERY_MAX_TRACKED_NAMESPACES = 512;
 
 /** Namespace key -> epoch ms at which its last recovery started. */
 const staleMdxEsmRecoveryAttempts = new Map<string, number>();
+
+/**
+ * Holder for one in-flight recovery. The promise is wrapped so the map stores a
+ * plain identity token: the `finally` block below compares the stored entry
+ * against the one it created, and comparing a wrapper keeps that check from
+ * reading as a forgotten `await` on a bare promise.
+ */
+interface StaleMdxEsmRecoveryRun {
+  promise: Promise<boolean>;
+}
+
 /** Namespace key -> in-flight recovery, so concurrent renders share one pass. */
-const staleMdxEsmRecoveryInFlight = new Map<string, Promise<boolean>>();
+const staleMdxEsmRecoveryInFlight = new Map<string, StaleMdxEsmRecoveryRun>();
 
 // HEURISTIC: detect stale-cache ESM export mismatches by matching runtime
 // error messages. Both the "does not provide an export named" phrasing and the
@@ -62,7 +73,7 @@ export function isMdxEsmExportMismatchError(error: unknown): boolean {
 
 /**
  * Stale-cache recovery is a PREVIEW affordance: only a mutable content source
- * — a local checkout or a branch preview — can drift out of step with the ESM
+ * (a local checkout or a branch preview) can drift out of step with the ESM
  * modules compiled and cached for it. An immutable release source that raises
  * the same error is serving a genuinely broken build, and the message match is
  * a heuristic that user code (including generateMetadata) can produce, so
@@ -152,7 +163,7 @@ export async function recoverStaleMdxEsmPreviewCaches(
 
   const key = getStaleMdxEsmRecoveryKey(options);
   const inFlight = staleMdxEsmRecoveryInFlight.get(key);
-  if (inFlight) return await inFlight;
+  if (inFlight) return await inFlight.promise;
 
   const now = Date.now();
   const attemptedAt = staleMdxEsmRecoveryAttempts.get(key);
@@ -169,14 +180,19 @@ export async function recoverStaleMdxEsmPreviewCaches(
     return false;
   }
 
+  // Delete before re-inserting so a refreshed key moves to the end of the map.
+  // Map iteration order is fixed at first insert, so a plain `set` on an
+  // existing key would leave the most recently recovered namespace sitting at
+  // the head of the size-cap eviction order below.
+  staleMdxEsmRecoveryAttempts.delete(key);
   staleMdxEsmRecoveryAttempts.set(key, now);
   pruneStaleMdxEsmRecoveryAttempts(now);
 
-  const recovery = performStaleMdxEsmRecovery(options);
+  const recovery: StaleMdxEsmRecoveryRun = { promise: performStaleMdxEsmRecovery(options) };
   staleMdxEsmRecoveryInFlight.set(key, recovery);
 
   try {
-    return await recovery;
+    return await recovery.promise;
   } finally {
     if (staleMdxEsmRecoveryInFlight.get(key) === recovery) {
       staleMdxEsmRecoveryInFlight.delete(key);
