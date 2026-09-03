@@ -5,7 +5,7 @@ import type { ModelRuntime } from "#veryfront/provider";
 import { agent, resolveSecurityMiddleware } from "./factory.ts";
 import { agentAsTool } from "./composition/composition.ts";
 import { AgentRuntime } from "./runtime/index.ts";
-import type { AgentContext, AgentMiddleware, AgentResponse } from "./types.ts";
+import type { AgentContext, AgentMiddleware, AgentResponse, Message } from "./types.ts";
 
 function createDummyMiddleware(label: string): AgentMiddleware {
   const fn: AgentMiddleware = async (_ctx: AgentContext, next: () => Promise<AgentResponse>) => {
@@ -262,6 +262,70 @@ describe("resolveSecurityMiddleware", () => {
       (await assistant.getMemoryStats()).totalMessages,
       1,
       "a short-circuited turn must still record its user message",
+    );
+  });
+
+  it("dispatches in-place stream middleware rewrites to the provider", async () => {
+    // The stream context must carry the normalized messages: a middleware that
+    // mutates a message in place keeps the array identity, and that mutation
+    // has to be what is persisted and sent to the provider.
+    const prompts: string[] = [];
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/stream-inplace-rewrite",
+      // deno-lint-ignore require-await
+      async doGenerate() {
+        throw new Error("Expected streaming path");
+      },
+      // deno-lint-ignore require-await
+      async doStream(options: unknown) {
+        prompts.push(JSON.stringify((options as { prompt?: unknown }).prompt));
+        return {
+          stream: createTextStream([
+            { type: "text-delta", text: "ok" },
+            { type: "finish" },
+          ]),
+        };
+      },
+    };
+
+    const rewriteInPlace: AgentMiddleware = (ctx, next) => {
+      if (typeof ctx.input !== "string" && ctx.input[0]) {
+        // Replace the first element without replacing the array.
+        ctx.input[0] = {
+          ...ctx.input[0],
+          parts: [{ type: "text", text: "rewritten by middleware" }],
+        };
+      }
+      return next();
+    };
+
+    const assistant = agent({
+      id: "stream-inplace-rewrite",
+      model: "hosted/stream-inplace-rewrite",
+      system: "You are helpful.",
+      skills: false,
+      maxSteps: 1,
+      middleware: [rewriteInPlace],
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const messages: Message[] = [
+      { id: "msg_1", role: "user", parts: [{ type: "text", text: "original request" }] },
+    ];
+    const result = await assistant.stream({ messages });
+    await result.toDataStreamResponse().text();
+
+    assertEquals(prompts.length, 1);
+    assertEquals(
+      prompts[0]?.includes("rewritten by middleware"),
+      true,
+      "the in-place rewrite must reach the provider",
+    );
+    assertEquals(
+      prompts[0]?.includes("original request"),
+      false,
+      "the pre-middleware text must not be dispatched",
     );
   });
 

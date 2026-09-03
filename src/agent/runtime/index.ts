@@ -1537,7 +1537,7 @@ export class AgentRuntime {
         const persistTurn = async (): Promise<Message[]> => {
           turnPersisted = true;
           return await this.prepareTurnMessages(
-            resolveValidatedTurnInput(agentContext.input, inputMessages, inputMessages),
+            resolveValidatedTurnInput(agentContext.input, inputMessages),
           );
         };
 
@@ -1681,10 +1681,13 @@ export class AgentRuntime {
         throw error;
       }
 
+      // The context carries the normalized clones, not the caller's raw array:
+      // a middleware that mutates a message in place must be mutating the same
+      // objects that are later persisted and dispatched to the provider.
       const agentContext: AgentContext = {
         agentId: this.id,
         model: resolvedModelString,
-        input: messages,
+        input: inputMessages,
         data: context,
         platform: detectPlatform(),
       };
@@ -1699,7 +1702,7 @@ export class AgentRuntime {
       const persistTurn = async (): Promise<Message[]> => {
         turnPersisted = true;
         return await this.prepareTurnMessages(
-          resolveValidatedTurnInput(agentContext.input, messages, inputMessages),
+          resolveValidatedTurnInput(agentContext.input, inputMessages),
         );
       };
 

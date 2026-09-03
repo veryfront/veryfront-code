@@ -224,8 +224,30 @@ describe("input-utils", () => {
     ];
 
     it("reuses the normalized messages when middleware left the input untouched", () => {
-      const original = "hi";
-      assertEquals(resolveValidatedTurnInput(original, original, normalized), normalized);
+      assertEquals(resolveValidatedTurnInput(normalized, normalized), normalized);
+    });
+
+    it("keeps in-place middleware mutations of the normalized messages", () => {
+      const mutable = normalizeInput([
+        {
+          id: "msg_1",
+          role: "user" as const,
+          parts: [{ type: "text" as const, text: "hi" }],
+          timestamp: 1000,
+        },
+      ]);
+      // A middleware that mutates a message in place keeps the array identity.
+      mutable[0] = {
+        id: "msg_1",
+        role: "system" as const,
+        parts: [{ type: "text" as const, text: "rewritten" }],
+        timestamp: 1000,
+      };
+
+      const result = resolveValidatedTurnInput(mutable, mutable);
+
+      assertEquals(result, mutable, "the mutated normalized array must be persisted as-is");
+      assertEquals(result[0]?.role, "system");
     });
 
     it("re-normalizes when middleware rewrote the input", () => {
@@ -238,7 +260,7 @@ describe("input-utils", () => {
         },
       ];
 
-      const result = resolveValidatedTurnInput(rewritten, "hi", normalized);
+      const result = resolveValidatedTurnInput(rewritten, normalized);
 
       assertEquals(result.length, 1);
       assertEquals(result[0]?.id, "msg_2");
@@ -246,7 +268,7 @@ describe("input-utils", () => {
     });
 
     it("normalizes a middleware-supplied string back into messages", () => {
-      const result = resolveValidatedTurnInput("sanitized", "raw", normalized);
+      const result = resolveValidatedTurnInput("sanitized", normalized);
 
       assertEquals(result.length, 1);
       assertEquals(result[0]?.role, "user");

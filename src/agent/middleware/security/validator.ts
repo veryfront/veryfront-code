@@ -1,6 +1,7 @@
 import type { AgentContext, AgentResponse, Message } from "../../types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { getOutputSchemaParser } from "../../output-schema.ts";
+import { isProviderDroppedMessage } from "../../runtime/text-generation-runtime-message-converter.ts";
 
 export interface SecurityConfig {
   /** Input validation rules */
@@ -393,48 +394,76 @@ function extractMessageInputText(message: Message): string[] {
   return [...values, ...ASSEMBLED_TEXT_SEPARATORS.map((sep) => textParts.join(sep))];
 }
 
-/** Text of one message as the runtime adapter assembles it for the provider. */
-function assembledMessageText(message: Message): string {
-  return message.parts.filter(isTextPart).map((part) => part.text).join("\n\n");
-}
-
 /**
  * Assembled text for each run of adjacent system messages.
  *
  * `toOpenAICompatibleMessages` (src/provider/runtime-loader.ts) folds adjacent
- * system messages into one instruction joined with a blank line, and skips
- * blank ones without breaking that adjacency. A blocked phrase split across two
- * sibling system messages therefore reassembles at the provider, so each merged
- * run is validated as the single instruction the provider will actually see.
+ * system messages into one instruction joined with a blank line, after
+ * `convertToTextGenerationRuntimeMessage` has already assembled each message's
+ * parts (`getTextFromParts` concatenates with no separator; other adapters use
+ * a blank line). A blocked phrase split across sibling system messages
+ * therefore reassembles at the provider, so each merged run is validated in
+ * both per-message assembled forms the converters can produce. Only a message
+ * that actually survives provider conversion ends a run: dropped ones (blank
+ * system layers, assistant messages with no sendable content, tool messages
+ * with no results) leave their neighbours adjacent.
  */
 function extractAdjacentSystemRunTexts(messages: Message[]): string[] {
-  const runTexts: string[] = [];
-  let run: string[] = [];
+  const runTexts = new Set<string>();
+  let run: string[][] = [];
 
   const flushRun = () => {
-    if (run.length > 1) runTexts.push(run.join("\n\n"));
+    // Runs of a single message are already covered by the per-message
+    // extraction, including its own assembled forms.
+    if (run.length > 1) {
+      for (const separator of ASSEMBLED_TEXT_SEPARATORS) {
+        runTexts.add(run.map((textParts) => textParts.join(separator)).join("\n\n"));
+      }
+    }
     run = [];
   };
 
   for (const message of messages) {
     if (message.role !== "system") {
-      flushRun();
+      // A message the converter drops entirely leaves the system messages on
+      // either side of it adjacent, so it must not end the run.
+      if (!isProviderDroppedMessage(message)) flushRun();
       continue;
     }
-    const text = assembledMessageText(message);
+    const textParts = message.parts.filter(isTextPart).map((part) => part.text);
     // The converter drops blank system layers outright, leaving the messages
     // on either side of them adjacent, so a blank one must not end the run.
-    if (text.trim().length === 0) continue;
-    run.push(text);
+    if (textParts.join("").trim().length === 0) continue;
+    run.push(textParts);
   }
   flushRun();
 
-  return runTexts;
+  return [...runTexts];
 }
 
 function extractInputValidationTexts(input: AgentContext["input"]): string[] {
   if (typeof input === "string") return [input];
   return [...input.flatMap(extractMessageInputText), ...extractAdjacentSystemRunTexts(input)];
+}
+
+/**
+ * Apply sanitization until the text stops changing.
+ *
+ * Deleting one harmful sequence can splice the characters around it into
+ * another (`<scri<script>x</script>pt>alert(1)</script>` needs two passes), so
+ * a single pass is not enough for text that already needed a rewrite. Every
+ * pass only deletes, so the loop terminates.
+ */
+function sanitizeTextToFixpoint(validator: InputValidator, text: string): string {
+  let current = text;
+  for (
+    let next = validator.sanitize(current);
+    next !== undefined && next !== current;
+    next = validator.sanitize(current)
+  ) {
+    current = next;
+  }
+  return current;
 }
 
 /**
@@ -451,13 +480,41 @@ function sanitizeStructuredInput(validator: InputValidator, messages: Message[])
     if (!VALIDATED_INPUT_ROLES.has(message.role)) return message;
 
     let messageChanged = false;
-    const parts = message.parts.map((part) => {
+    let parts = message.parts.map((part) => {
       if (!isTextPart(part)) return part;
       const sanitized = validator.sanitize(part.text);
       if (sanitized === undefined || sanitized === part.text) return part;
       messageChanged = true;
       return { ...part, text: sanitized };
     });
+
+    // A harmful sequence can also span sibling text parts ("<scr" + "ipt>…"):
+    // each part is clean on its own, yet the provider concatenates the parts
+    // back into the full payload (`getTextFromParts` in src/agent/types.ts).
+    // When any assembled form still changes under sanitization, the part
+    // boundary itself is hiding the payload, so the text parts are collapsed
+    // into one fully sanitized part instead of being kept apart.
+    const textValues = parts.filter(isTextPart).map((part) => part.text);
+    const assembledNeedsRewrite = textValues.length > 1 &&
+      ASSEMBLED_TEXT_SEPARATORS.some((separator) => {
+        const assembled = textValues.join(separator);
+        return (validator.sanitize(assembled) ?? assembled) !== assembled;
+      });
+    if (assembledNeedsRewrite) {
+      const collapsedText = sanitizeTextToFixpoint(validator, textValues.join(""));
+      const collapsedParts: typeof parts = [];
+      let collapsed = false;
+      for (const part of parts) {
+        if (!isTextPart(part)) {
+          collapsedParts.push(part);
+        } else if (!collapsed) {
+          collapsed = true;
+          collapsedParts.push({ ...part, text: collapsedText });
+        }
+      }
+      parts = collapsedParts;
+      messageChanged = true;
+    }
 
     if (!messageChanged) return message;
     changed = true;

@@ -383,6 +383,23 @@ export function convertToTextGenerationRuntimeMessage(
   }
 }
 
+/**
+ * Whether conversion drops `message` from the provider prompt entirely.
+ *
+ * `convertToTextGenerationRuntimeMessages` skips assistant messages with no
+ * sendable content, and tool messages whose parts yield no tool-result content
+ * are discarded after conversion. The messages on either side of a dropped one
+ * become adjacent at the provider, so input validation uses this predicate to
+ * mirror that adjacency when it assembles runs of system messages.
+ */
+export function isProviderDroppedMessage(message: Message): boolean {
+  if (!hasProviderSendableAssistantContent(message)) return true;
+  if (message.role !== "tool") return false;
+
+  const toolNamesById = new Map<string, string>();
+  return !message.parts.some((part) => getTextGenerationToolResultPart(part, toolNamesById));
+}
+
 function hasProviderSendableAssistantContent(message: Message): boolean {
   if (message.role !== "assistant") return true;
   if (readAttachedProviderMetadata(message) !== undefined) return true;
