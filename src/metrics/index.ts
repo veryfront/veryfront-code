@@ -54,10 +54,6 @@ interface DirectMetricSample {
   value: number;
   attributes: Record<string, AttributeValue>;
   timestampUnixNano: string;
-  // Opaque export target identity captured at enqueue time. The secret-bearing
-  // target remains in the private intern table instead of crossing mutable
-  // Array methods with this process-global queue.
-  targetKey: string;
 }
 
 interface DirectExportGroup {
@@ -73,6 +69,7 @@ const gauges = new Map<
   { instrument: ObservableGauge; samples: Map<string, GaugeSample> }
 >();
 const directQueue: DirectMetricSample[] = [];
+const directSampleTargets = new WeakMap<DirectMetricSample, string>();
 const directCounterTotals = new Map<string, { value: number; startTimeUnixNano: string }>();
 const directHistogramTotals = new Map<
   string,
@@ -88,6 +85,7 @@ let directFlushTimer: ReturnType<typeof setTimeout> | null = null;
 const DIRECT_FLUSH_DELAY_MS = 1_000;
 const DIRECT_EXPORT_TIMEOUT_MS = 10_000;
 const DIRECT_MAX_BATCH_SIZE = 100;
+const DIRECT_MAX_INTERNED_TARGETS = DIRECT_MAX_BATCH_SIZE;
 const HISTOGRAM_BOUNDS = [0, 10, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000];
 const apply = Reflect.apply;
 const NativeAbortController = AbortController;
@@ -98,6 +96,14 @@ const AbortControllerSignalGetter = Object.getOwnPropertyDescriptor(
 )?.get;
 const objectKeys = Object.keys;
 const arraySort = Array.prototype.sort;
+const arrayPush = Array.prototype.push;
+const arraySplice = Array.prototype.splice;
+const mapDelete = Map.prototype.delete;
+const mapForEach = Map.prototype.forEach;
+const stringStartsWith = String.prototype.startsWith;
+const weakMapDelete = WeakMap.prototype.delete;
+const weakMapGet = WeakMap.prototype.get;
+const weakMapSet = WeakMap.prototype.set;
 const hostBtoa = typeof globalThis.btoa === "function" ? globalThis.btoa : undefined;
 const mathMin = Math.min;
 const NativeTextEncoder = TextEncoder;
@@ -368,13 +374,54 @@ function headersEqual(
 // runs on captured intrinsics and primitive operators only: in a dedicated
 // runtime, project code can replace `Object.entries`, `Array.prototype.sort`,
 // `String.prototype.localeCompare` and `JSON.stringify`, and any of those would
-// otherwise be handed the credential. The table is bounded by the number of
-// distinct export targets in the process, i.e. by co-located environments.
-const internedTargets: Array<{ target: DirectMetricsTarget; key: string }> = [];
+// otherwise be handed the credential. A fixed LRU bound prevents mutable
+// project telemetry settings from retaining an unbounded number of targets.
+interface InternedDirectMetricsTarget {
+  target: DirectMetricsTarget;
+  key: string;
+  pendingSamples: number;
+  lastUsed: number;
+}
+
+const internedTargets: InternedDirectMetricsTarget[] = [];
 let nextInternedTargetId = 0;
+let nextInternedTargetUse = 0;
 let directExportTimeoutMs = DIRECT_EXPORT_TIMEOUT_MS;
 
-function directTargetKey(target: DirectMetricsTarget): string {
+function deleteDirectTotalsForTarget(targetKey: string): void {
+  const prefix = `${targetKey}:`;
+  const deleteMatching = (_value: unknown, key: string, totals: Map<string, unknown>): void => {
+    if (apply(stringStartsWith, key, [prefix])) {
+      apply(mapDelete, totals, [key]);
+    }
+  };
+  apply(mapForEach, directCounterTotals, [deleteMatching]);
+  apply(mapForEach, directHistogramTotals, [deleteMatching]);
+}
+
+function evictUnusedDirectTarget(): boolean {
+  let candidateIndex = -1;
+  let candidateUse = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < internedTargets.length; index++) {
+    const interned = internedTargets[index];
+    if (
+      interned !== undefined && interned.pendingSamples === 0 &&
+      interned.lastUsed < candidateUse
+    ) {
+      candidateIndex = index;
+      candidateUse = interned.lastUsed;
+    }
+  }
+  if (candidateIndex === -1) return false;
+  const evicted = apply(arraySplice, internedTargets, [
+    candidateIndex,
+    1,
+  ]) as InternedDirectMetricsTarget[];
+  if (evicted[0]) deleteDirectTotalsForTarget(evicted[0].key);
+  return true;
+}
+
+function retainDirectTarget(target: DirectMetricsTarget): string | null {
   for (let index = 0; index < internedTargets.length; index++) {
     const interned = internedTargets[index];
     if (
@@ -384,18 +431,39 @@ function directTargetKey(target: DirectMetricsTarget): string {
       interned.target.serviceVersion === target.serviceVersion &&
       headersEqual(interned.target.headers, target.headers)
     ) {
+      interned.pendingSamples++;
+      interned.lastUsed = nextInternedTargetUse++;
       return interned.key;
     }
   }
+  if (
+    internedTargets.length >= DIRECT_MAX_INTERNED_TARGETS &&
+    !evictUnusedDirectTarget()
+  ) {
+    return null;
+  }
   const key = `t${nextInternedTargetId++}`;
-  internedTargets[internedTargets.length] = { target, key };
+  internedTargets[internedTargets.length] = {
+    target,
+    key,
+    pendingSamples: 1,
+    lastUsed: nextInternedTargetUse++,
+  };
   return key;
 }
 
-function directTargetForKey(key: string): DirectMetricsTarget | undefined {
+function takeDirectTargetForSample(
+  sample: DirectMetricSample,
+): { key: string; target: DirectMetricsTarget } | undefined {
+  const key = apply(weakMapGet, directSampleTargets, [sample]) as string | undefined;
+  apply(weakMapDelete, directSampleTargets, [sample]);
+  if (key === undefined) return undefined;
   for (let index = 0; index < internedTargets.length; index++) {
     const interned = internedTargets[index];
-    if (interned?.key === key) return interned.target;
+    if (interned?.key === key) {
+      interned.pendingSamples--;
+      return { key, target: interned.target };
+    }
   }
   return undefined;
 }
@@ -579,7 +647,7 @@ async function flushDirectMetrics(): Promise<void> {
   // queue is shared across concurrent project environments, so a single
   // ambient-context target resolution here would misroute other tenants'
   // samples.
-  const batch = directQueue.splice(0, DIRECT_MAX_BATCH_SIZE);
+  const batch = apply(arraySplice, directQueue, [0, DIRECT_MAX_BATCH_SIZE]) as DirectMetricSample[];
   // Plain arrays and index loops rather than a Map or iterator protocol: a
   // group holds the target, and `target.headers` can carry the internal-proxy
   // credential, so it must not be handed to `Map.prototype.set` or to
@@ -588,7 +656,9 @@ async function flushDirectMetrics(): Promise<void> {
   for (let index = 0; index < batch.length; index++) {
     const sample = batch[index];
     if (sample === undefined) continue;
-    const key = sample.targetKey;
+    const binding = takeDirectTargetForSample(sample);
+    if (!binding) continue;
+    const { key, target } = binding;
     let group: DirectExportGroup | undefined;
     for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
       const candidate = groups[groupIndex];
@@ -598,8 +668,6 @@ async function flushDirectMetrics(): Promise<void> {
       }
     }
     if (!group) {
-      const target = directTargetForKey(key);
-      if (!target) continue;
       group = { key, target, samples: [] };
       groups[groups.length] = group;
     }
@@ -646,15 +714,17 @@ function enqueueDirectMetric(
 ): void {
   const target = resolveDirectMetricsTarget();
   if (target === null) return;
-  const targetKey = directTargetKey(target);
-  directQueue.push({
+  const targetKey = retainDirectTarget(target);
+  if (targetKey === null) return;
+  const sample: DirectMetricSample = {
     kind,
     name,
     value,
     attributes,
     timestampUnixNano: getUnixNanoTimestamp(),
-    targetKey,
-  });
+  };
+  apply(weakMapSet, directSampleTargets, [sample, targetKey]);
+  apply(arrayPush, directQueue, [sample]);
   if (directQueue.length >= DIRECT_MAX_BATCH_SIZE) {
     void flushDirectMetrics();
     return;
@@ -720,6 +790,9 @@ export const metrics = {
   __setDirectExportTimeoutForTests(timeoutMs: number): void {
     directExportTimeoutMs = timeoutMs;
   },
+  __getDirectTargetCountForTests(): number {
+    return internedTargets.length;
+  },
   __resetForTests(): void {
     counters.clear();
     histograms.clear();
@@ -729,6 +802,7 @@ export const metrics = {
     directHistogramTotals.clear();
     internedTargets.length = 0;
     nextInternedTargetId = 0;
+    nextInternedTargetUse = 0;
     directExportTimeoutMs = DIRECT_EXPORT_TIMEOUT_MS;
     if (directFlushTimer) {
       clearTimeout(directFlushTimer);

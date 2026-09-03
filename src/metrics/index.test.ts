@@ -633,17 +633,21 @@ describe("metrics public SDK", () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const observed: string[] = [];
     const nativeStringify = JSON.stringify;
+    const nativePush = Array.prototype.push;
+    const recordObserved = (value: string): void => {
+      Reflect.apply(nativePush, observed, [value]);
+    };
 
     // Record every value a replaced intrinsic would be able to read. Each spy
     // delegates to the captured native so behaviour is unchanged.
     const record = (values: unknown[]): void => {
       for (const value of values) {
         if (typeof value === "string") {
-          observed[observed.length] = value;
+          recordObserved(value);
           continue;
         }
         try {
-          observed[observed.length] = String(nativeStringify(value));
+          recordObserved(String(nativeStringify(value)));
         } catch {
           // Unserializable values cannot carry the credential as data.
         }
@@ -652,7 +656,6 @@ describe("metrics public SDK", () => {
 
     const nativeEntries = Object.entries;
     const nativeMap = Array.prototype.map;
-    const nativePush = Array.prototype.push;
     const nativeSplice = Array.prototype.splice;
     const nativeSort = Array.prototype.sort;
     const nativeLocaleCompare = String.prototype.localeCompare;
@@ -693,6 +696,16 @@ describe("metrics public SDK", () => {
           } as typeof Array.prototype.map;
           Array.prototype.push = function (this: unknown[], ...values: unknown[]) {
             record([this, ...values]);
+            const incoming = values.find((value) =>
+              typeof value === "object" && value !== null && "targetKey" in value
+            ) as { targetKey?: unknown } | undefined;
+            if (typeof incoming?.targetKey === "string") {
+              for (const queued of this) {
+                if (typeof queued === "object" && queued !== null && "targetKey" in queued) {
+                  (queued as { targetKey?: unknown }).targetKey = incoming.targetKey;
+                }
+              }
+            }
             return nativePush.apply(this, values);
           } as typeof Array.prototype.push;
           Array.prototype.splice = function (
@@ -749,6 +762,22 @@ describe("metrics public SDK", () => {
     });
 
     assertEquals(requests.length, 2, "both targets must still be exported");
+    const exportedNames = new Map(
+      requests.map((request) => [
+        request.url,
+        JSON.parse(String(request.init?.body)).resourceMetrics[0].scopeMetrics[0].metrics.map(
+          (metric: { name: string }) => metric.name,
+        ),
+      ]),
+    );
+    assertEquals(
+      exportedNames.get("http://veryfront-api:80/internal/metrics/otlp/v1/metrics"),
+      ["vf_internal_metric_total"],
+    );
+    assertEquals(
+      exportedNames.get("https://collector.example/v1/metrics"),
+      ["vf_project_metric_total"],
+    );
 
     const encodedCredential = "aW50ZXJuYWwtdXNlcjppbnRlcm5hbC1wYXNz";
     const leaked = observed.filter((value) =>
@@ -759,6 +788,30 @@ describe("metrics public SDK", () => {
       [],
       "target grouping must never pass the internal proxy credential through a replaceable intrinsic",
     );
+  });
+
+  it("bounds distinct direct targets created from mutable project environment values", async () => {
+    await withEnv({
+      SERVER_ID: "server-1",
+      ENVIRONMENT_IDS: "env-project",
+      OTEL_METRICS_ENABLED: "true",
+    }, async () => {
+      await withMockFetch(
+        (() => Promise.resolve(new Response("{}", { status: 200 }))) as typeof fetch,
+        async () => {
+          for (let index = 0; index < 150; index++) {
+            await runWithProjectEnv({
+              OTEL_METRICS_ENABLED: "true",
+              OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://collector.example/v1/metrics",
+              OTEL_SERVICE_NAME: `project-${index}`,
+            }, () => metrics.counter("vf_project_metric_total", 1));
+          }
+          await metrics.__flushForTests();
+        },
+      );
+    });
+
+    assertEquals(metrics.__getDirectTargetCountForTests(), 100);
   });
 
   it("routes dedicated runtime host OTLP metrics through the internal API proxy without project env", async () => {
