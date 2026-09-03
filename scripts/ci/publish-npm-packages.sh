@@ -120,14 +120,19 @@ verify_npm_compatibility_artifact() {
 }
 
 # npm answers a burst of publishes with `409 Conflict - Failed to save
-# packument`; the conflicting write sometimes still lands.
+# packument`; the conflicting write sometimes still lands. The GitHub Actions
+# OIDC endpoint that `--provenance` calls for each publish separately fails a
+# single request under the same back-to-back loop (IDENTITY_TOKEN_READ_ERROR)
+# without ever reaching the registry, so retrying it through this same loop is
+# safe: the registry recheck below just reports the version still absent, and
+# the publish is retried as if it were a fresh attempt.
 NPM_PUBLISH_CONFLICT_ATTEMPTS="${NPM_PUBLISH_CONFLICT_ATTEMPTS:-5}"
 NPM_PUBLISH_CONFLICT_DELAY_SECONDS="${NPM_PUBLISH_CONFLICT_DELAY_SECONDS:-15}"
 
 is_transient_publish_conflict() {
   CONFLICT_OUTPUT_CANDIDATE="$1"
   printf '%s\n' "${CONFLICT_OUTPUT_CANDIDATE}" \
-    | grep -Eq 'npm error code E409|409 Conflict|Failed to save packument'
+    | grep -Eq 'npm error code E409|409 Conflict|Failed to save packument|IDENTITY_TOKEN_READ_ERROR'
 }
 
 # npm rejects a reused name/version with "You cannot publish over the
