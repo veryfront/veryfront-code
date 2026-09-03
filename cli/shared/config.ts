@@ -130,10 +130,20 @@ async function readConfigFileResolution(
   // project code (remote-mode commands) disable this lane entirely.
   for (const ext of [".ts", ".js"]) {
     const configPath = join(projectDir, `veryfront.config${ext}`);
+    let configExists: boolean;
 
     try {
-      if (!(await fs.exists(configPath))) continue;
+      configExists = await fs.exists(configPath);
+    } catch (error) {
+      cliLogger.debug(`Failed to inspect config file ${configPath}:`, error);
+      if (!allowModuleConfigExecution) {
+        skippedModuleConfigFile ??= `veryfront.config${ext}`;
+      }
+      continue;
+    }
+    if (!configExists) continue;
 
+    try {
       if (!allowModuleConfigExecution) {
         // Record that a module config exists so callers can refuse to guess a
         // project reference rather than silently inferring a different one.

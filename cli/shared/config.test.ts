@@ -236,6 +236,24 @@ describe("resolveConfigWithAuthNoModule", () => {
     }, { prefix: "vf-no-module-only-" });
   });
 
+  it("refuses inference when a module config presence probe fails", async () => {
+    await withTempDir(async (tempDir) => {
+      await Deno.symlink("veryfront.config.ts", join(tempDir, "veryfront.config.ts"));
+      await Deno.writeTextFile(
+        join(tempDir, "package.json"),
+        JSON.stringify({ name: "inferred-project" }),
+      );
+
+      await withoutTenantEnvironment(() =>
+        assertRejects(
+          () => resolveConfigWithAuthNoModule(tempDir, noModuleEnv()),
+          Error,
+          "veryfront.config.ts is the only project reference in this directory",
+        )
+      );
+    }, { prefix: "vf-no-module-probe-" });
+  });
+
   it("still infers a project when no module config exists", async () => {
     await withTempDir(async (tempDir) => {
       await Deno.writeTextFile(
