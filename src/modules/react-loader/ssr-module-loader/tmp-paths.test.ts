@@ -69,9 +69,12 @@ describe("modules/react-loader/ssr-module-loader/tmp-paths", () => {
     // Namespace segments are lossless rather than hashed, so their length is
     // part of every cached module path. Hosts without long-path support cap a
     // path at 260 characters, and a realistic deep route must stay under it.
-    for (const contentSourceId of ["preview-58x4ga9b", "X".repeat(100)]) {
+    const representativeCacheRoot = `/cache/${"u".repeat(51)}`;
+    for (
+      const contentSourceId of ["preview-58x4ga9b", "X".repeat(36), "X".repeat(100)]
+    ) {
       const tmpDir = buildTmpDirPath(
-        "/cache/representative-user-cache/veryfront-mdx-esm",
+        representativeCacheRoot,
         "3f7c1a12-9e0b-4f2a-8c31-7a5d2b6e4f90",
         contentSourceId,
         "0.1.7",
