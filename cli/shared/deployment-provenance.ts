@@ -2,7 +2,7 @@ import { env } from "#cli/process-env";
 import { createFileSystem, getEnv } from "veryfront/platform";
 import { runCommand } from "#cli/process-command";
 import { isNotFoundError, lstat, realPath } from "veryfront/fs";
-import { join, relative } from "veryfront/platform/path";
+import { dirname, join, relative } from "veryfront/platform/path";
 import { DEPLOYMENT_ERROR } from "veryfront/errors";
 import type { ApiClient } from "./config.ts";
 
@@ -181,6 +181,27 @@ export function getProjectTarget(
   return client.get<ProjectTarget>(`/projects/${projectReference}`);
 }
 
+async function hasGitMetadata(projectDir: string): Promise<boolean> {
+  let current: string;
+  try {
+    current = await realPath(projectDir);
+  } catch {
+    return true;
+  }
+
+  while (true) {
+    try {
+      await lstat(join(current, ".git"));
+      return true;
+    } catch (error) {
+      if (!isNotFoundError(error)) return true;
+    }
+    const parent = dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
+
 export async function resolveGitSource(projectDir: string): Promise<GitSource> {
   const envSha = getEnv("GITHUB_SHA")?.trim();
   const gitEnv = env();
@@ -250,12 +271,16 @@ export async function resolveGitSource(projectDir: string): Promise<GitSource> {
     : null;
   const sourcesAgree = (!envSha || normalizedEnvSha !== null) &&
     (!normalizedEnvSha || !normalizedHeadSha || normalizedEnvSha === normalizedHeadSha);
-  const commitSha = sourcesAgree ? normalizedEnvSha ?? normalizedHeadSha : null;
+  const probesIndeterminate = (head.success && normalizedHeadSha === null) ||
+    (head.success && !status.success) ||
+    (!head.success && !status.success && await hasGitMetadata(projectDir));
+  const indeterminate = !sourcesAgree || probesIndeterminate;
+  const commitSha = indeterminate ? null : normalizedEnvSha ?? normalizedHeadSha;
 
   return {
     commitSha,
     clean: sourcesAgree && status.success && (status.stdout ?? "").trim() === "",
-    ...(!sourcesAgree ? { indeterminate: true } : {}),
+    ...(indeterminate ? { indeterminate: true } : {}),
   };
 }
 

@@ -490,6 +490,20 @@ describe("push receipt persistence", () => {
 });
 
 describe("resolveGitSource", () => {
+  it("marks failed probes with local Git metadata as indeterminate", async () => {
+    const projectDir = await makeTempDir();
+    try {
+      await Deno.writeTextFile(`${projectDir}/.git`, "invalid git metadata\n");
+      const source = await resolveGitSource(projectDir);
+
+      assertEquals(source.commitSha, null);
+      assertEquals(source.clean, false);
+      assertEquals(source.indeterminate, true);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("resolves the committed SHA and detects later working-tree changes", async () => {
     const projectDir = await Deno.makeTempDir();
     const originalGithubSha = Deno.env.get("GITHUB_SHA");
