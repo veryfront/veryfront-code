@@ -6,6 +6,17 @@ versions are listed at
 
 ## Unreleased
 
+### Breaking: project API URLs no longer steer ambient credentials
+
+Veryfront no longer sends a shell, `.env`, or stored CLI credential to the
+`apiUrl` in a project's `veryfront.json` during login, `whoami`, or an
+authentication preflight. Those credentials use the API URL selected by your
+environment, or the default Veryfront API URL when you do not set one. A token
+defined in the same `veryfront.json` still uses that file's `apiUrl`.
+
+If you use a self-hosted control plane with an ambient credential, set
+`VERYFRONT_API_URL` or `VERYFRONT_API_BASE_URL` in your trusted environment.
+
 ### Breaking: Redis workflow `runTtl` no longer expires runs
 
 `RedisBackendConfig.runTtl` is now a deprecated no-op. It previously started a
