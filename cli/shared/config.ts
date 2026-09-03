@@ -84,6 +84,13 @@ interface ConfigFileResolution {
   jsonProjectSlug?: string;
   moduleProjectSlug?: string;
   moduleProjectSlugFile?: string;
+  /**
+   * Name of a module config that exists but was deliberately not
+   * executed because the caller forbids running local project code. Its
+   * `projectSlug` (if any) is therefore unknown, so inferring a reference from
+   * project files would silently target a different project.
+   */
+  skippedModuleConfigFile?: string;
 }
 
 export type ProjectReferenceSource =
@@ -109,16 +116,40 @@ export const ENVIRONMENT_PROJECT_REFERENCE_NAMES = [
 
 export type EnvironmentProjectReferenceName = typeof ENVIRONMENT_PROJECT_REFERENCE_NAMES[number];
 
-async function readConfigFileResolution(projectDir: string): Promise<ConfigFileResolution> {
+async function readConfigFileResolution(
+  projectDir: string,
+  allowModuleConfigExecution = true,
+): Promise<ConfigFileResolution> {
   const fs = createFileSystem();
 
   let moduleProjectSlug: string | undefined;
   let moduleProjectSlugFile: string | undefined;
-  for (const ext of [".ts", ".js"]) {
+  let skippedModuleConfigFile: string | undefined;
+  // Importing a veryfront.config module executes arbitrary code from the working
+  // tree with full CLI process permissions. Callers that must not run local
+  // project code (remote-mode commands) disable this lane entirely.
+  for (const ext of [".ts", ".js", ".mjs"]) {
     const configPath = join(projectDir, `veryfront.config${ext}`);
+    let configExists: boolean;
 
     try {
-      if (!(await fs.exists(configPath))) continue;
+      configExists = await fs.exists(configPath);
+    } catch {
+      cliLogger.debug(`Failed to inspect veryfront.config${ext}.`);
+      if (!allowModuleConfigExecution) {
+        skippedModuleConfigFile ??= `veryfront.config${ext}`;
+      }
+      continue;
+    }
+    if (!configExists) continue;
+
+    try {
+      if (!allowModuleConfigExecution) {
+        // Record that a module config exists so callers can refuse to guess a
+        // project reference rather than silently inferring a different one.
+        skippedModuleConfigFile ??= `veryfront.config${ext}`;
+        continue;
+      }
 
       const module = await import(`file://${configPath}`);
       const config = module.default ?? module;
@@ -147,6 +178,7 @@ async function readConfigFileResolution(projectDir: string): Promise<ConfigFileR
     jsonProjectSlug: jsonConfig?.projectSlug,
     moduleProjectSlug,
     moduleProjectSlugFile,
+    skippedModuleConfigFile,
   };
 }
 
@@ -332,9 +364,10 @@ async function resolveConfigBase(
   projectDir: string | undefined,
   env: EnvironmentConfig,
   interactive: boolean,
+  allowModuleConfigExecution: boolean,
 ): Promise<ResolvedConfigDetails> {
   const dir = projectDir ?? cwd();
-  const configFileResolution = await readConfigFileResolution(dir);
+  const configFileResolution = await readConfigFileResolution(dir, allowModuleConfigExecution);
   const configFile = configFileResolution.config;
 
   const apiUrl = resolveCliApiUrl(env, configFile?.apiUrl);
@@ -387,6 +420,15 @@ async function resolveConfigBase(
         projectSlug = projectLink.projectSlug;
         projectId = projectLink.projectId;
         projectReferenceSource = { kind: "local-link", name: ".veryfront/project.json" };
+      } else if (configFileResolution.skippedModuleConfigFile) {
+        // The only remaining reference would be inferred from package.json or
+        // the directory name, which can name a different project this token can
+        // reach. The project's own declaration lives in the module config we
+        // refuse to execute, so fail closed instead of guessing.
+        throw new Error(
+          `${configFileResolution.skippedModuleConfigFile} is the only project reference in this directory, and this command never executes local project code. ` +
+            "Set VERYFRONT_PROJECT_SLUG, add projectSlug to veryfront.json, or link the project with 'veryfront link'.",
+        );
       } else {
         projectSlug = await inferProjectSlug(dir);
         projectReferenceSource = { kind: "inferred", name: "project files" };
@@ -411,9 +453,9 @@ async function resolveConfigBase(
   };
 }
 
-function createConfigResolver(interactive: boolean) {
+function createConfigResolver(interactive: boolean, allowModuleConfigExecution = true) {
   return async (projectDir?: string, env?: EnvironmentConfig): Promise<ResolvedConfig> =>
-    (await resolveConfigByMode(projectDir, env, interactive)).config;
+    (await resolveConfigByMode(projectDir, env, interactive, allowModuleConfigExecution)).config;
 }
 
 export const resolveConfig = createConfigResolver(false);
@@ -426,6 +468,18 @@ export const resolveConfig = createConfigResolver(false);
  */
 export const resolveConfigWithAuth = createConfigResolver(true);
 
+/**
+ * Resolve config with interactive authentication without executing any local
+ * project code.
+ *
+ * Never imports a veryfront.config module from the working tree. Remote-mode
+ * commands run source already pushed to Veryfront, so resolving credentials
+ * for them must not execute code from a possibly untrusted local checkout.
+ * Project identity comes only from veryfront.json, environment variables, the
+ * local project link, or inference from project files.
+ */
+export const resolveConfigWithAuthNoModule = createConfigResolver(true, false);
+
 export function resolveConfigWithAuthDetails(
   projectDir?: string,
   env?: EnvironmentConfig,
@@ -437,8 +491,14 @@ function resolveConfigByMode(
   projectDir: string | undefined,
   env: EnvironmentConfig | undefined,
   interactive: boolean,
+  allowModuleConfigExecution = true,
 ): Promise<ResolvedConfigDetails> {
-  return resolveConfigBase(projectDir, env ?? getEnvironmentConfig(), interactive);
+  return resolveConfigBase(
+    projectDir,
+    env ?? getEnvironmentConfig(),
+    interactive,
+    allowModuleConfigExecution,
+  );
 }
 
 export interface ApiReadOptions {
