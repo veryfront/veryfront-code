@@ -128,9 +128,16 @@ export function resolveScanCacheIdentity(ctx: HandlerContext): ScanCacheIdentity
     contentContext,
     ctx.isProxyMode ? proxyContentVersionFallback(ctx) : {},
   );
+  // A slug can be reassigned while the old and new projects remain distinct by
+  // canonical ID. The proxy admits that ID, so include it in the cache key to
+  // keep same-slug projects from sharing or joining a source walk. Invalidation
+  // remains slug-scoped through `scope`, matching control-plane callbacks.
+  const projectPartition = ctx.isProxyMode && ctx.projectId
+    ? `${ctx.projectId}\u0000${contentScope}`
+    : contentScope;
 
   return {
-    key: `${contentScope}\u0000${projectVersion}\u0000${styleProfile.hash}`,
+    key: `${projectPartition}\u0000${projectVersion}\u0000${styleProfile.hash}`,
     // The stored invalidation scope resolves with the same precedence as the
     // key's content scope above: a content push invalidates by the resolved
     // content slug, so a scope derived any other way could leave a

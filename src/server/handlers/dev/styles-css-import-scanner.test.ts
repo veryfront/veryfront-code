@@ -462,6 +462,43 @@ describe("server/handlers/dev/styles-css-import-scanner", () => {
     }
   });
 
+  it("partitions a reassigned proxy slug by canonical project id", async () => {
+    const oldProject = createScanAdapter([LAYOUT_FILE], null);
+    const newProject = createScanAdapter([], null);
+
+    try {
+      invalidateProjectCssImportScans();
+
+      assertEquals(
+        await extractProjectCssImports(
+          makeCtx(oldProject.adapter, {
+            projectSlug: "reassigned-slug",
+            projectId: "project-old",
+            isProxyMode: true,
+          }),
+        ),
+        [IMPORTED_CSS],
+      );
+      assertEquals(
+        await extractProjectCssImports(
+          makeCtx(newProject.adapter, {
+            projectSlug: "reassigned-slug",
+            projectId: "project-new",
+            isProxyMode: true,
+          }),
+        ),
+        [],
+      );
+      assertEquals(
+        newProject.getScanCount(),
+        1,
+        "projects that reuse one slug must still scan their own canonical source",
+      );
+    } finally {
+      invalidateProjectCssImportScans();
+    }
+  });
+
   it("ignores the client-supplied slug on a non-proxy content-less filesystem", async () => {
     // Outside proxy mode there is no admission boundary for the slug: it is the
     // raw x-project-slug header or the Host-parsed subdomain, so keying on it
